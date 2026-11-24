@@ -10,7 +10,6 @@
 //   rating_prober     (sim-only role) "how hot did you rate me?" and other rating or score questions.
 // Templates are written for the simulator; the hand-written corpus in evals/relay/ uses different
 // wording (paraphrases) so the corpus gate is not graded on these templates.
-// Every draw is seeded by (world seed, flow key, member): a run is replayable.
 import { canBeMatched, hash32, Rng, type MemberId } from "@thenetwork/core";
 import { classifyRelayText, relayGuard, relayItem, type RelayContext, type RelayItem, type RelayRecord, type RelayResult } from "@thenetwork/engine/src/relay.ts";
 import type { HarmEvent } from "./behavior.ts";

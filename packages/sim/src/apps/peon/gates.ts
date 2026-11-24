@@ -37,13 +37,23 @@ export function officialGates(p: PeonMetrics[], k: PeonMetrics[], o?: PeonMetric
   return out;
 }
 
-/**
- * Measurements tracked before they become launch gates. The peon pack's Hire band admits a two-level
- * gap when both uncertainties are wide, so this records how often a backed pair is that far apart.
- */
 export function trackedGates(p: PeonMetrics[]): GateResult[] {
   const backed = p.reduce((s, m) => s + m.levels.backedPairs, 0), over = p.reduce((s, m) => s + m.levels.gapOverOne, 0);
-  return [{ id: "role_level_gap", gate: "No proposed Hire pair has a role-level gap over 1 when both levels are backed", value: `${over} of ${backed} backed pairs`, pass: over === 0 }];
+  const sum = (f: (m: PeonMetrics) => number) => p.reduce((s, m) => s + f(m), 0);
+  const pct = (a: number, b: number) => `${(b > 0 ? (100 * a) / b : 0).toFixed(1)}%`;
+  const greedy = sum(m => m.market.greedyValue), best = sum(m => m.market.optimumValue);
+  const cand = [0, 1, 2, 3, 4].map(k => sum(m => m.market.candidateProposals[k]!));
+  const candWeeks = cand.reduce((a, b) => a + b, 0), seatWeeks = sum(m => m.market.seatWeeks);
+  const popular = p.map(m => `${(100 * m.market.popularProposalShare).toFixed(1)}% vs ${(100 * m.market.popularRoomShare).toFixed(1)}%`).join(", ");
+  const unservedSeats = sum(m => m.market.seatsUnserved);
+  return [
+    { id: "role_level_gap", gate: "No proposed Hire pair has a role-level gap over 1 when both levels are backed", value: `${over} of ${backed} backed pairs; volume: hires ${sum(m => m.hires)}, interviews ${sum(m => m.interviews)}, intros ${sum(m => m.intros)}, openings filled ${pct(sum(m => m.fillRate * m.openings), sum(m => m.openings))}`, pass: over === 0 },
+    { id: "greedy_share", gate: "Greedy selection value is at least 95% of the capacity-feasible optimum (offline yardstick)", value: `${pct(greedy, best)} (${greedy} of ${best}); the optimum also serves ${sum(m => m.market.optimumOnlySeats)} seat-weeks and ${sum(m => m.market.optimumOnlyCandidates)} candidate-weeks that greedy leaves without a proposal`, pass: greedy * 100 >= 95 * best },
+    { id: "over_cap", gate: "No member gets more proposals in a week (every proposal, all lanes) than its room rebuilt from the pack rules (slate cap or weekly capacity, and the proactive budget)", value: `${sum(m => m.market.overRoom)} member-weeks over; harness cap drops ${sum(m => m.dropped.cap ?? 0)}`, pass: sum(m => m.market.overRoom) === 0 && sum(m => m.dropped.cap ?? 0) === 0 },
+    { id: "candidate_load", gate: "No matchable candidate-week has 4 or more proposals (0/1/2/3/4+, weekly capacity 3)", value: `${cand.join("/")} of ${candWeeks}; at capacity ${pct(sum(m => m.market.candidatesAtCap), candWeeks)}; matchable without a proposal ${pct(sum(m => m.market.candidatesUnserved), candWeeks)}`, pass: cand[4] === 0 },
+    { id: "seat_load", gate: "Every matchable seat-week gets a proposal (seat-weeks at their slate cap, and without a proposal)", value: `${pct(sum(m => m.market.seatsAtCap), seatWeeks)} at cap, ${pct(unservedSeats, seatWeeks)} without (${unservedSeats} of ${seatWeeks} seat-weeks)`, pass: unservedSeats === 0 },
+    { id: "popular_seats", gate: "The most-wanted tenth of seats gets at most twice its share of slate room in proposals, per seed", value: popular, pass: p.every(m => m.market.popularProposalShare <= 2 * m.market.popularRoomShare) },
+  ];
 }
 
 /** The first proposed gate set (historical; not the launch criteria). */

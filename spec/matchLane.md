@@ -2,7 +2,7 @@
 
 A lane is one kind of relationship: a friend, a date, a cofounder, an introduction, a hire, a mentor or an investor. This library gives each lane its shape, its sides, its private standing offset and its one table of limits. It also says which app offers which lane. The [reciprocal pair value](pairValue.md) supplies the pair arithmetic that each lane uses.
 
-The engine shell supplies, for each membership in a pair check, the integer `PairSide`: the utility of the other member, the private standing and its uncertainty, and the exchange value. The shell extracts memberships from each app pack. The pack still owns consent: its ontology lanes in `packages/engine/src/pack.ts` are opt-in categories, not relationship lanes. The shell keeps every hard pair rule (minors are never matched, blocks, holds, pauses, geography) in its one pair gate, and calls `lanePairValue` only for a pair that passes that gate. Standing is private: it never appears in member-facing text, explanations or relay. The flow models are the [matching engine](models/matching_engine.md) and the [candidate pool](models/candidate_pool.md). The product stories are [Story F11](product/stories.md#story-f11--consider-a-one-to-one-introduction), [Story F12](product/stories.md#story-f12--join-a-small-group) and [Story F33](product/stories.md#story-f33--choose-a-hiring-introduction).
+The engine shell supplies, for each membership in a pair check, the integer `PairSide`: the utility of the other member, the private standing and its uncertainty, and the exchange value. The shell extracts memberships from each app pack. The pack still owns consent: its ontology lanes in `packages/engine/src/pack.ts` are opt-in categories, not relationship lanes. The shell keeps every hard pair rule (the [friend introduction age rule](friendIntroAge.md), blocks, holds, pauses, geography) in its one pair gate, and calls `lanePairValue` only for a pair that passes that gate. Standing is private: it never appears in member-facing text, explanations or relay. The flow models are the [matching engine](models/matching_engine.md) and the [candidate pool](models/candidate_pool.md). The product stories are [Story F11](product/stories.md#story-f11--consider-a-one-to-one-introduction), [Story F12](product/stories.md#story-f12--join-a-small-group) and [Story F33](product/stories.md#story-f33--choose-a-hiring-introduction).
 
 ## Story: Peers meet as equals
 
@@ -56,7 +56,7 @@ The table below is the starting table. Each number is a decision. Change a numbe
 | Date | 350 | 15 | 10 | 10 | no | 0 | 100 | 0 | 2 | 10 | 600 | 0/0/0 |
 | Cofounder | 400 | 20 | 8 | 10 | yes | 200 | 50 | 0 | 2 | 10 | 600 | 0/0/0 |
 | Intro | 350 | 20 | 8 | 10 | yes | 200 | 50 | 0 | 3 | 12 | 600 | 3/6/400 |
-| Hire | 400 | 15 | 5 | 15 | no | 0 | 100 | 0 | 3 | 10 | 600 | 0/0/0 |
+| Hire | 400 | 22 | 5 | 15 | no | 0 | 100 | 0 | 3 | 10 | 600 | 0/0/0 |
 | Mentor | 350 | 15 | 5 | 10 | no | 0 | 100 | 25 | 2 | 8 | 400 | 0/0/0 |
 | Invest | 400 | 15 | 5 | 15 | no | 0 | 100 | 0 | 2 | 8 | 400 | 0/0/0 |
 
@@ -71,7 +71,9 @@ The table below is the starting table. Each number is a decision. Change a numbe
   The margins are small: repeat passes by 0.5 points and harm is 0.48x against 0.5x. Harm events rise with the number of meetups (0.27x to 0.48x). On the tuning seeds 1 to 4 (`packages/sim/src/apps/friends/cli.ts --seeds 1-4`), the shipped state gives repeat 28.2%, V14 37.3%, borough 0.83 and harm 0.61x, against 19.4%, 20.4%, 0.82 and 0.28x before; repeat and harm do not reach their gates there.
   The Friend lane also serves ntwrk social pairs, social events, social groups and newcomer welcome circles. On the ntwrk planted worlds (`sim --only matching --quick --matching-pack ntwrk`), 300 and 350 against 150 and 150 gave the same 276 pairs, 6 groups, 110 circles, standing correlation 0.800 and worse-side utility 583.2; ARI 0.660 to 0.661, purity 0.754 to 0.755, pair precision 0.584 to 0.586; touches per profile at N 1,000 116.0 to 167.4 (checks 15.6 to 15.7). On the network consent arms (21 days, seeds 1 to 3), meetings went from 130 to 158 (gate more than 140), held plans from 0,0,0 to 0,0,2, everyone-yes 0.858 to 0.857, invite-yes 0.929 to 0.926, and the judge found 0 invariants at 150 (at 300 and 350, seed 1 had one `decliner_exposed`, which this change does not cause).
   The circle pair floor equals the utility floor. For Friend this keeps every valued pair eligible for a circle: a valued pair has both utilities at the utility floor or above, the harmonic mean of two utilities is between them (spec/pairValue.md, "The two utilities combine as an integer harmonic mean"), and Friend's penalty per point is 0, so the standing penalty is 0 (spec/pairValue.md, "Each point of gap above the free gap lowers the value"). In a lane with a penalty above 0 this does not hold.
-- **Parity band and free gap.** Decision: the private standing gap, after the offset, must stay inside the band plus both uncertainties, and the gap inside the free gap costs nothing. Friend has no vertical standing, so its band is the full range. Date uses a band of 15 points on the private appearance standing, plus both uncertainties. Date uses a free gap of 10 points, not 5. With 5, each point of a small gap that is inside the rating noise lowered the pair value, and members at the edge of the rating range, where fewer partners sit near them, lost their weekly assignment to pairs in the middle. On the slop block's pinned seeds (13 to 16, 4 weeks, 300 per city, with the exposure floor in the weekly assignment), the lowest rating quintile's dates against the overall rate went from 0.839 to 0.928 (gate 0.85 or more). Dates per member-month against random went from 0.822 to 0.834, and second dates per seed against random went from 1.811 to 1.541. On seeds 1 to 8, the same change moved the lowest quintile from 0.853 to 0.960 and kept second dates per member-month at 0.041. The penalty per point past the free gap stays 10, so each point of a large gap still costs the same; only the first 10 points are free. Cofounder and Intro use track record and allow a wider band than Hire and Invest. The reply and acceptance rate by standing gap tunes it, and the parity gate counter (pairs past the band) must stay 0.
+- **Parity band and free gap.** Decision: the private standing gap, after the offset, must stay inside the band plus both uncertainties, and the gap inside the free gap costs nothing. Friend has no vertical standing, so its band is the full range. Date uses a band of 15 points on the private appearance standing, plus both uncertainties. Date uses a free gap of 10 points, not 5. With 5, each point of a small gap that is inside the rating noise lowered the pair value, and members at the edge of the rating range, where fewer partners sit near them, lost their weekly assignment to pairs in the middle. On the slop block's pinned seeds (13 to 16, 4 weeks, 300 per city, with the exposure floor in the weekly assignment), the lowest rating quintile's dates against the overall rate went from 0.839 to 0.928 (gate 0.85 or more). Dates per member-month against random went from 0.822 to 0.834, and second dates per seed against random went from 1.811 to 1.541. On seeds 1 to 8, the same change moved the lowest quintile from 0.853 to 0.960 and kept second dates per member-month at 0.041. The penalty per point past the free gap stays 10, so each point of a large gap still costs the same; only the first 10 points are free. Cofounder and Intro use track record and allow a wider band than Invest. Hire's band follows from its 25-point role levels (below). Only peon.biz offers Hire (`laneOffered`), and the profile builder (`packages/engine/src/match/profile.ts`) drops every membership in a lane that the pack's app does not offer. So a network-pack profile with an explicit `lane:Hire` tag never becomes a Hire profile, and the Hire row applies only to peon role levels. If another app offers Hire later, measure its band again, because its standings do not come from role levels. The reply and acceptance rate by standing gap tunes it, and the parity gate counter (pairs past the band) must stay 0.
+- **Hire level gap: a posting's level is exact.** Decision (2026-11-17): a seat's role level is a staff-reviewed property of the posting, so it has the floor uncertainty of 3 (spec/memberStanding.md, "A standing that staff reviewed as a property of the offer has the floor uncertainty"), not the 18 of one reviewed fact. One role level is 25 standing points. Before, 15 + 18 + 18 = 51 admitted two levels. Measured with `sim --only peon` (pinned seeds 13 to 16, 8 weeks), the band and every other number unchanged, before and after: proposed pairs with a backed candidate level and a gap above one level 142 of 4,767 to 0 of 4,624; hires 179 to 179 (1.03x to 1.03x keyword, 0.90x to 0.90x oracle); interviews 714 to 698 (per hire against keyword 0.75x to 0.73x, gate 0.75x or less); intros 7,056 to 6,775; openings filled 20.7% to 20.7%; 90-day retention +1.7 to +1.7 points; under-applied hires 1.04x to 1.04x; impact ratio 0.94 to 0.95; safety gates 0 to 0. The trade: candidate-weeks with at least one eligible Hire pair went from 10,964 to 10,589 and seat-weeks from 1,853 to 1,808, because those weeks had only two-level pairs.
+- **Hire band 22: one level for every candidate.** Decision (2026-11-18): with the posting at the floor and band 15, the limit is 15 + 3 + the candidate's uncertainty, so a candidate with seven or more reviewed facts (uncertainty 6 or less) lost every role one level up or down (15 + 3 + 6 = 24, below 25): more evidence gave fewer roles, and the one-level step that a hiring team accepts was gone. Band 22 gives a limit from 22 + 3 + 3 = 28 to 22 + 3 + 20 = 45, so a one-level gap (25) passes for every candidate and a two-level gap (50) passes for none. Every band from 19 (19 + 3 + 3 = 25) to 26 (26 + 3 + 20 = 49) has both properties; 22 sits in the middle, 3 points above one level at the floor and 5 points below two levels for an unbacked candidate. Only 15 and 22 were measured. Measured with `sim --only peon`, band 15 against band 22: role-level gap 0 of 4,624 to 0 of 4,625; hires 179 to 179; interviews 698 to 698 (0.73x to 0.73x); intros 6,775 to 6,776; openings filled 20.7% to 20.7%; impact ratio 0.95 to 0.95; matchable candidate-weeks 10,589 to 10,591, seat-weeks 1,808 to 1,808; every other gate unchanged. The simulated families have six skills, so almost no simulated candidate reaches seven reviewed facts; the engine case `packages/engine/test/peon-standing.integration.test.ts` holds the candidate at seven and at ten reviewed facts. Against the base engine (band 15, posting uncertainty 18; `sim --only peon`, same seeds), both options remove only two-level pairs and cost the same: hires 179 to 179 and every gate unchanged, but matchable candidate-weeks 10,964 to 10,591 (373 fewer), matchable seat-weeks 1,853 to 1,808 (45 fewer), candidate-weeks with a proposal 4,896 to 4,748, seat-weeks with a proposal 1,787 to 1,752, and intros 7,056 to 6,776. The step is not free: it removes pairs that a hiring team could see before. Band 22 is the shipped decision; band 15 with the posting at the floor (option A) is the alternative, and it is worse only for candidates with seven or more reviewed facts. With band 22 the prover ran out of resources on `lawLanePairValueSymmetric` (band 15 proved). The proof file `spec/matchLane.proof.dfy` proves the law in steps: the pair value of spec/pairValue.md is symmetric when the offset changes sign, and the lane offsets of two compatible sides are opposite.
 - **Penalty per point.** Decision: each point of gap past the free gap lowers the pair value by this much. Hire and Invest use the largest penalty, because a level mismatch costs both sides most there. The acceptance rate by gap inside the band tunes it.
 - **Balance, exchange floor and tolerance.** Decision: Cofounder and Intro require a balanced exchange. Each side must receive at least 200 and the two values may differ by at most 50 percent of the larger. Mentor has no balance rule, because the Offering side consents to the asymmetry. Hire and Invest use the parity band and offset as their two-way check. The share of accepted introductions that one side reports as one-sided tunes it.
 - **Offset.** Decision: a mentor sits 25 standing points above a mentee. Every other lane has offset 0: an employer seat meets a candidate of its level, and a fund meets founders of its traction tier. The mentee acceptance rate by gap tunes it.
@@ -116,7 +118,7 @@ pure def laneLimits(lane: MatchLane): LaneLimits =
         circleMinimum: 3, circleMaximum: 6, circlePairFloor: 400
       }
     | Hire => {
-        rules: { utilityFloor: 400, parityBand: 15, parityFreeGap: 5, parityPenaltyPerPoint: 15,
+        rules: { utilityFloor: 400, parityBand: 22, parityFreeGap: 5, parityPenaltyPerPoint: 15,
                  balanceRequired: false, exchangeFloor: 0, balanceTolerancePercent: 100 },
         standingOffset: 0, weeklyCapacity: 3, searchLimit: 10, searchBudget: 600,
         circleMinimum: 0, circleMaximum: 0, circlePairFloor: 0
@@ -268,4 +270,76 @@ pure def lawEveryAppHasALane(app: str): bool =
     (laneOffered(app, Friend) or laneOffered(app, Date) or laneOffered(app, Cofounder) or
       laneOffered(app, Intro) or laneOffered(app, Hire) or laneOffered(app, Mentor) or
       laneOffered(app, Invest))
+```
+
+## Story: Friendship lanes offer teen introductions
+
+> As a person aged 13 to 17, I want introductions only for friendship, on friends.help and in the Friend lane of The Network, so that no app matches me for dates or work.
+
+### Only the friendship lanes of friends.help and ntwrk admit a teen introduction
+
+A teen introduction can occur only in app `friends` or app `ntwrk`: in the Friend lane of either app, in the categories `social` and `hobby` of `friends`, or in the category `social` of `ntwrk`. A group plan with a teen (a table, a crew or an activity partner plan) occurs only in app `friends`. Every caller of the [friend introduction age rule](friendIntroAge.md) computes its `friendshipLane` argument with these definitions, and no caller compares app or category strings for this decision. The pack declaration `minors: "teenFriendship"` on a pack lane is valid only where `teenFriendCategory` holds, and the run-time decision always calls these definitions. Changed (owner decision 2026-11-22): before this rule no lane admitted a person aged 13 to 17; the owner allowed friendship introductions for teens, and this rule keeps them inside friends.help. Changed (owner decision 2026-11-22, answers A2 to A5): the owner answered "friends.help and ntwrk", so the Friend lane and the `social` category of The Network also admit a teen introduction, slop.date and peon.biz still never do, and teen group plans stay on friends.help.
+
+```quint
+pure val categoryValues = Set("social", "hobby", "romance", "professional", "help", "events", "growth")
+
+pure def teenFriendApp(app: str): bool = app == "friends" or app == "ntwrk"
+
+pure def teenFriendLane(app: str, lane: MatchLane): bool = teenFriendApp(app) and lane == Friend
+
+pure def teenFriendCategory(app: str, category: str): bool =
+  (app == "friends" and (category == "social" or category == "hobby")) or (app == "ntwrk" and category == "social")
+
+pure def teenGroupPlanApp(app: str): bool = app == "friends"
+
+pure def lawTeenLanesOnlyInFriendApps(app: str, lane: MatchLane, category: str): bool =
+  (teenFriendLane(app, lane) or teenFriendCategory(app, category) or teenGroupPlanApp(app)) implies (app == "friends" or app == "ntwrk")
+
+pure def lawNoTeenOnSlopOrPeon(lane: MatchLane, category: str): bool =
+  not(teenFriendLane("slop", lane) or teenFriendLane("peon", lane) or teenFriendCategory("slop", category)
+    or teenFriendCategory("peon", category) or teenGroupPlanApp("slop") or teenGroupPlanApp("peon"))
+
+pure def lawTeenFriendLaneSameOnBothApps(lane: MatchLane): bool = teenFriendLane("friends", lane) == teenFriendLane("ntwrk", lane)
+
+pure def lawNtwrkTeenCategoryIsSocial(category: str): bool = teenFriendCategory("ntwrk", category) implies category == "social"
+
+pure def lawTeenFriendLaneIsOffered(app: str, lane: MatchLane): bool = teenFriendLane(app, lane) implies laneOffered(app, lane)
+
+pure def lawTeenPlansOnlyOnFriends(app: str): bool = teenGroupPlanApp(app) implies app == "friends"
+```
+
+### A teen is never in a date or work lane
+
+No app admits a teen introduction in the Date, Cofounder, Intro, Hire, Mentor or Invest lane, or in the `romance` or `professional` category. Changed (owner decision 2026-11-22): the owner allowed friendship introductions for teens only, so dates and work stay closed to every person under 18 in every app.
+
+```quint
+pure def lawNoTeenDateOrWork(app: str): bool =
+  not(teenFriendLane(app, Date)) and not(teenFriendLane(app, Hire)) and not(teenFriendLane(app, Cofounder))
+    and not(teenFriendLane(app, Invest)) and not(teenFriendLane(app, Mentor)) and not(teenFriendLane(app, Intro))
+    and not(teenFriendCategory(app, "romance")) and not(teenFriendCategory(app, "professional"))
+```
+
+### Only a known friendship generator makes a teen item
+
+A teen item comes only from a generator that this rule names. In app `ntwrk` these are the one-to-one introduction from a live intent (`intent_to_capability`), the Friend circle (`group_composer`) and the member request (`request`). In app `friends` these are the friend circle, the activity partner, the member request, the weekly plan, the repeat from the Network's plan history (`friends_repeat`) and the crew. A generator that this rule does not name is adults only, so a new generator never admits a minor without a change to this rule. The repeat generators, the event generator, the warm path, help requests, the newcomer welcome, network growth, gathering repeats and the player generator are never teen generators. The Network's weekly plans and monthly gatherings on `ntwrk` are adults only. Changed (owner decision 2026-11-22, answers A2 to A5): before this rule every engine generator in `friends` that passed the age rule could make a teen item; the owner opened the ntwrk Friend lane and small teen groups, so the build names each generator that may make a teen item, and every other generator stays adults only.
+
+```quint
+pure val generatorValues = Set("intent_to_capability", "group_composer", "request", "friend_circle", "activity_partner",
+  "plan", "friends_repeat", "crew", "same_table_again", "second_encounter", "event_anchor", "warm_path", "help_request",
+  "newcomer_welcome", "network_growth", "plans_buddy", "gathering_second_encounter", "player", "nc_detection")
+
+pure def teenGenerator(app: str, generator: str): bool =
+  (app == "ntwrk" and (generator == "intent_to_capability" or generator == "group_composer" or generator == "request"))
+    or (app == "friends" and (generator == "friend_circle" or generator == "activity_partner" or generator == "request"
+      or generator == "plan" or generator == "friends_repeat" or generator == "crew"))
+
+pure def lawTeenGeneratorOnlyInFriendApps(app: str, generator: str): bool = teenGenerator(app, generator) implies teenFriendApp(app)
+
+pure def lawNtwrkHasNoTeenPlans(generator: str): bool =
+  (generator == "plan" or generator == "friends_repeat" or generator == "crew") implies not(teenGenerator("ntwrk", generator))
+
+pure def lawRepeatsAndContributorsNeverTeen(app: str): bool =
+  not(teenGenerator(app, "second_encounter") or teenGenerator(app, "same_table_again") or teenGenerator(app, "event_anchor")
+    or teenGenerator(app, "warm_path") or teenGenerator(app, "help_request") or teenGenerator(app, "newcomer_welcome")
+    or teenGenerator(app, "network_growth") or teenGenerator(app, "gathering_second_encounter") or teenGenerator(app, "player"))
 ```

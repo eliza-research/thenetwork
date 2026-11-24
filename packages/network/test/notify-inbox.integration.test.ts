@@ -62,7 +62,7 @@ test.skipIf(!pgAvailable)("the inbox repairs accepted messages once and shows on
   const clock = new SimClock(Date.UTC(2026, 10, 16, 19));
   const phone = "+12125550387";
   const service = new NetworkService({
-    url, clock, photoStorage: null, log: () => {}, env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off" },
+    url, clock, photoStorage: null, log: () => {}, env: { PLATFORM_ENV: "dev" },
     networks: [{ id: "friends:nyc", matchingEnabled: false }, { id: "peon:nyc", matchingEnabled: false }],
   });
   try {
@@ -126,18 +126,19 @@ test.skipIf(!pgAvailable)("the inbox repairs accepted messages once and shows on
 
     const [discarded] = await sql`select id from notify.inbox_items where subject_id='closed-friends'`;
     const limited = "T-7F3K9Q";
+    const passes = () => true;
     await notify.store.insertToken({ token: limited, personId, itemIds: [`inb_${discarded.id}`], issuedAt: clock.now(), expiresAt: clock.now() + MINUTE });
-    expect(await service.updatesFor(personId, "friends", "claude", "T-ZZZZZZ")).toEqual([]);
+    expect(await service.updatesFor(personId, "friends", "claude", "T-ZZZZZZ", passes)).toEqual([]);
     expect(await sql`select id from notify.inbox_items where person_id=${personId} and seen_at is not null`).toEqual([]);
-    expect(await service.updatesFor(personId, "friends", "claude", limited)).toEqual([]);
+    expect(await service.updatesFor(personId, "friends", "claude", limited, passes)).toEqual([]);
     expect((await sql`select seen_at from notify.inbox_items where id=${discarded.id}`)[0].seen_at).toBeInstanceOf(Date);
-    const visible = await service.updatesFor(personId, "friends", "claude");
+    const visible = await service.updatesFor(personId, "friends", "claude", undefined, passes);
     expect(visible.map(item => item.summary)).toEqual([
       "An earlier walk reminder.", "The walk is tomorrow.", "A standalone update.", "The walk is in two hours.",
     ]);
-    expect(await service.updatesFor(personId, "friends", "web")).toEqual([]);
+    expect(await service.updatesFor(personId, "friends", "web", undefined, passes)).toEqual([]);
     expect((await sql`select seen_at from notify.inbox_items where subject_id='peon-opp#other-app-text'`)[0].seen_at).toBeNull();
-    expect((await service.updatesFor(personId, "peon", "claude")).map(item => item.summary)).toEqual(["A call in another app."]);
+    expect((await service.updatesFor(personId, "peon", "claude", undefined, passes)).map(item => item.summary)).toEqual(["A call in another app."]);
   } finally {
     await service.close();
     await sql.close();

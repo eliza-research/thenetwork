@@ -6,6 +6,7 @@
 import type { City } from "@thenetwork/core";
 import type { Persona } from "../persona.ts";
 import { Rng, hash32 } from "@thenetwork/core";
+import type { Coins } from "../coins.ts";
 import { localParts } from "../time.ts";
 
 /**
@@ -32,6 +33,7 @@ export function hiddenFree(p: Persona, t: number, seed: number | string, city: C
 
 /** Something that knows where a persona is (Oracle.presentIn). */
 export interface PresenceCheck { presentIn(p: Persona, city: City, t: number): boolean }
+interface WorldTruth extends PresenceCheck { readonly coins: Coins }
 
 /** Free at `t` for a meeting in `city`: in that city then (trips count) and free in its week. */
 export function freeFor(p: Persona, t: number, city: City, seed: number | string, presence: PresenceCheck): boolean {
@@ -41,14 +43,9 @@ export function freeFor(p: Persona, t: number, city: City, seed: number | string
 /** Share of members booked at a time they are not free who do not come (the rest rearrange). */
 export const UNAVAILABLE_NO_SHOW = 0.7;
 
-/**
- * Hidden truth: the meeting for `proposalId` at `at` clashes with the persona's week and the persona
- * will not come (p = UNAVAILABLE_NO_SHOW when not free, keyed by seed, proposal and persona, as in the
- * harness's fix 3). Persona agents and the World use the same draw, so they agree.
- */
-export function timeConflict(p: Persona, proposalId: string, at: number, city: City, seed: number | string, presence: PresenceCheck): boolean {
-  if (freeFor(p, at, city, seed, presence)) return false;
-  return new Rng(hash32(seed, "unavailable", proposalId, p.id)).next() < UNAVAILABLE_NO_SHOW;
+export function timeConflict(p: Persona, proposalId: string, at: number, city: City, seed: number | string, truth: WorldTruth): boolean {
+  if (freeFor(p, at, city, seed, truth)) return false;
+  return new Rng(hash32(seed, "unavailable", truth.coins.key(`unavailable|${p.id}|${at}`, proposalId))).next() < UNAVAILABLE_NO_SHOW;
 }
 
 /** The keys of the offered options the persona is free for, in offer order. */

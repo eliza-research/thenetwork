@@ -17,9 +17,13 @@ export declare function lawComplianceGoesFirst(signedTurnBlocks: boolean): boole
 /** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) @throws {never} */
 export declare function earlierWebhookCancellable(selectedTurn: boolean, compliance: boolean): boolean;
 /** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) @throws {never} */
+export declare function canStartWebhook(turn: WebhookTurn, attempts: number, stopCommand: boolean): boolean;
+/** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) @throws {never} */
+export declare function startWebhook(turn: WebhookTurn, attempts: number, stopCommand: boolean): WebhookTurn;
+/** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) @throws {never} */
 export declare function canRecordHandled(turn: WebhookTurn): boolean;
 /** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) @throws {never} */
-export declare function recordHandled(turn: WebhookTurn, stopCommand: boolean): WebhookTurn;
+export declare function recordHandled(turn: WebhookTurn): WebhookTurn;
 /** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) @throws {never} */
 export declare function canRecordCompletion(turn: WebhookTurn): boolean;
 /** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) @throws {never} */
@@ -31,13 +35,15 @@ export declare function lawNeverCancelCompliance(selectedTurn: boolean): boolean
 /** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) @throws {never} */
 export declare function stepDoneRequiresCompletion(before: WebhookTurn, via: string, after: WebhookTurn): boolean;
 /** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) @throws {never} */
-export declare function recordFailure(turn: WebhookTurn, attempts: number, stopCommand: boolean): WebhookTurn;
+export declare function recordFailure(turn: WebhookTurn): WebhookTurn;
+/** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) @throws {never} */
+export declare function alwaysStopNeverDropped(turn: WebhookTurn): boolean;
 /** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) @throws {never} */
 export declare function sometimesCanRetryWebhook(turn: WebhookTurn): boolean;
 /** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) @throws {never} */
 export declare function canRecordFailure(turn: WebhookTurn): boolean;
 /** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) @throws {never} */
-export declare function lawStopNeverDrops(turn: WebhookTurn, attempts: number): boolean;
+export declare function lawStopNeverDrops(turn: WebhookTurn): boolean;
 /** Story: Handle my pending messages in order while prioritizing consent / Report the received row's stored result after draining (spec/webhookInbox.md) @throws {never} */
 export declare function webhookAnswer(done: boolean, failed: boolean): WebhookAnswer;
 /** Do the rules allow this event in this state? @throws {never} */

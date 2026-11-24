@@ -9,17 +9,14 @@ import type { AppId } from "./apps.ts";
 import { readCapped } from "./body.ts";
 import { PgPeopleStore } from "./pg-store.ts";
 import { keyedHash } from "./phone.ts";
-import { LIVE_MEMBERSHIP, PHOTO_APPS, PHOTO_CONSENT, PHOTO_MAX_BYTES, RATER_MAX_PHOTOS, type PhotoRefusal, type PhotoService } from "./photos.ts";
+import { privateJson } from "./photo-pages.ts";
+import { LIVE_MEMBERSHIP, newPhotoBatchId, PHOTO_APPS, PHOTO_CONSENT, PHOTO_MAX_BYTES, RATER_MAX_PHOTOS, type PhotoRefusal, type PhotoService } from "./photos.ts";
 
 export const PHOTO_UPLOAD_PATH = "/api/photos/upload";
 const PHOTO_UPLOAD_LINK_HEADER = "x-photo-upload-link";
 const PHOTO_UPLOAD_PAGE = "/photos/add";
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 const BODY_CAP = PHOTO_MAX_BYTES + 64 * 1024;
-const privateJson = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: {
-  "content-type": "application/json; charset=utf-8", "cache-control": "no-store",
-  "referrer-policy": "no-referrer", "x-content-type-options": "nosniff",
-} });
 const linkOf = (row: Record<string, unknown>): PhotoUploadLink => ({
   phase: row.used_at === null ? "UploadLinkOpen" : "UploadLinkSpent",
   issuedAt: new Date(row.issued_at as Date).getTime(), expiresAt: new Date(row.expires_at as Date).getTime(),
@@ -161,8 +158,9 @@ export class PhotoUploadLinks {
       };
       return tx ? check(tx) : this.o.sql.begin(check);
     };
+    const batchId = newPhotoBatchId();
     for (const bytes of photos) {
-      const r = await this.o.photos.upload(outcome.personId, app, bytes, PHOTO_CONSENT.version, admit);
+      const r = await this.o.photos.upload(outcome.personId, app, bytes, PHOTO_CONSENT.version, admit, batchId);
       if (r.ok) stored.push(r.value.id); else refused.push(r.reason);
     }
     this.o.log?.(`[photos] upload link used: ${stored.length} stored, ${refused.length} refused`);

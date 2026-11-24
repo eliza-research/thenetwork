@@ -1,11 +1,4 @@
-// networkPack: The Network (ntwrk) as an AppPack. Matching runs on the generic match core
-// (packages/engine/src/match): `vectors` gives ntwrk's lane memberships, tags and private standing,
-// and the generators read pairs and circles from it.
-//
-// Import-cycle safety: this module is imported by world.ts, engine.ts, attention.ts and plans.ts
-// for their default `pack` argument (evaluated at call time). Its top level therefore reads only
-// leaf data; function values from non-leaf modules are wrapped in arrows, and `generators` and
-// `vectors` are getters.
+import { canBeMatched } from "@thenetwork/core";
 import { DEFAULT_ATTENTION } from "../../config.ts";
 import { cityBucketGeo } from "../../geo.ts";
 import type { PackVectors } from "../../match/profile.ts";
@@ -24,7 +17,6 @@ import { networkVectors } from "./vectors.ts";
 let elig: EligibilityPolicy | undefined;
 const eligibility = (): EligibilityPolicy => (elig ??= {
   minMatchAge: 18,
-  // Founder decision 2026-10-05: 13-17 may join and use the agent alone; never matched or connected.
   accountTiers: [{ minAge: 13, maxAge: 17, matchable: false, label: "personal agent (13-17)" }],
   memberRules: NETWORK_MEMBER_RULES,
   pairRules: NETWORK_PAIR_RULES,
@@ -32,14 +24,12 @@ const eligibility = (): EligibilityPolicy => (elig ??= {
   candidatePostRules: NETWORK_CANDIDATE_POST_RULES,
 });
 
-/** Pack version. Not written to run logs for networkPack (byte-identity rule 2). */
 export const NETWORK_PACK_VERSION = "network-pack-1.0.0";
 
 export const networkPack: AppPack = {
   id: "ntwrk",
   version: NETWORK_PACK_VERSION,
   ontology: networkOntology,
-  // A getter: rules.ts sits in the filters / world import cycle.
   get eligibility(): EligibilityPolicy { return eligibility(); },
   geo: cityBucketGeo,
   get generators(): readonly GeneratorSpec[] { return NETWORK_GENERATORS; },
@@ -49,11 +39,9 @@ export const networkPack: AppPack = {
     socialRisk: (c, v) => (c.category === "romance" ? v + 0.1 : v),
   },
   selection: {
-    // No pack asks: ntwrk offers no Date lane (laneOffered), so a romance preference question would ask for nothing it can use.
     askQuestions: ASK_QUESTIONS,
   },
   consent: {
-    // Attention v1.2 iteration 4: wanter first, the reveal is the booked plan with an easy opt-out.
     default: { kind: "probe_first", order: "wanter_first", reveal: "opt_out", anonymousProbe: true },
     byKind: { group: { kind: "group_rsvp", quorum: 3, lateJoinHours: 6 }, event_coattend: { kind: "group_rsvp", quorum: 2, lateJoinHours: 6 } },
   },
@@ -61,9 +49,7 @@ export const networkPack: AppPack = {
     config: DEFAULT_ATTENTION,
     shipsAloneLane: "romance",
     noWarmMentionLanes: ["romance"],
-    // Was attention.ts itemGate: romance items only for opted-in adults. A view without
-    // categoriesOptIn has no romance consent: fail closed (engine-attention-plans-7).
-    itemGate: (m, it) => (it.category === "romance" && (!(typeof m.age === "number" && Number.isFinite(m.age) && m.age >= 18) || !(m.categoriesOptIn ?? []).includes("romance")) ? "romance_not_allowed" : null),
+    itemGate: (m, it) => (it.category === "romance" && (!canBeMatched(m.age) || !(m.categoriesOptIn ?? []).includes("romance")) ? "romance_not_allowed" : null),
     probeAllowed: (lane, othersCount) => !(lane === "romance" && othersCount !== 1),
     laneActivity: GENERIC_ACTIVITY,
     probeText: (ctx, activity, a, ar) => networkProbeText(ctx, activity, a, ar),

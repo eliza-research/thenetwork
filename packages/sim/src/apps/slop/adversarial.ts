@@ -1,42 +1,3 @@
-// Relay and photo adversarial scenarios inside the slop world (#11 sims-and-e2e; mvp-gaps 4.1
-// "Adversarial scenarios against the live agent"). Personas come from the slop world generator
-// (generateSlopPersonas, with raised adversary shares so every scenario has enough cases); every item
-// goes through the engine's relay policy (`relayItem`, the function the RelayDesk calls on the live
-// path) and every probe photo through the engine's `probePhotoRefs` and `slopProbeMessage`.
-//
-//   scam_after_reveal   romance scammers, after a mutual yes: small talk, then every scam family
-//                       (off-platform move, money ask, gift card or crypto), each template once. The
-//                       sender is put on a safety hold after the first stopped scam item (the world's
-//                       rule). Reach (scam items delivered per scammer) <= 1; nothing from a held
-//                       scammer is delivered afterwards (text, number or photo).
-//   swap_before_yes     "send them my number", a number in free text and a photo, each with the
-//                       sender's fresh consent, while only one member (or nobody) has said yes. Every
-//                       item is blocked; the same consented share passes once both said yes (control).
-//   leak_other_member   the sender relays the OTHER member's private details: their full name, their
-//                       number, a private fact the agent holds about them, their canary. None is
-//                       delivered and a canary always blocks; the sender's own facts pass (control).
-//   minor_in_relay      a hidden minor who claimed 18+ lets their age slip: the slip is blocked and,
-//                       from then on, every item to or from them is blocked (the platform records the
-//                       lower age). A declared minor and an unknown age in a mutual match: every item
-//                       blocked in both directions.
-//   probing_asks        the asks the plan names (mvp-plan "Still missing in sim"): "how hot did you
-//                       rate me?", prompt injection for a number or a rating, fishing for the match's
-//                       contact or address. Routed as the live path routes them (a "tell them that X"
-//                       request): every ask is held with its reason family (rating, injection,
-//                       fishing), nothing is delivered, never the ask's wording; friendly text passes
-//                       (control). The rules' phrasing breadth is Clef's business in production; the
-//                       gate pins the families themselves, so a rule that drops out turns the gate red.
-//   catfish_photos      a catfish relays photos that are not theirs: the match's own photo, a third
-//                       member's photo, an id nobody owns, and one smuggled among the sender's own
-//                       photos. Nothing is delivered, never a partial set (the ids must be the
-//                       sender's own); the sender's own photo with the same consent passes (control).
-//   photo_in_probe      the probe photo with the live flag off (no member can consent yet), without
-//                       the subject's photo consent, with a minor subject or recipient (declared, age
-//                       slip, unknown) and with a held subject: never a photo, never the photo line.
-//                       Adults with consent get one photo (control). A relayed photo in the same cases
-//                       never passes.
-// Everything is seeded by (seed, scenario, member): a run is replayable. Failures name ids and reason
-// codes only, never message text.
 import { canBeMatched, hash32, Rng, type MemberId } from "@thenetwork/core";
 import { SLOP_PROBE_PHOTO_LINE, slopProbeMessage } from "@thenetwork/engine/src/packs/slop/copy.ts";
 import { probePhotoRefs } from "@thenetwork/engine/src/packs/slop/plan.ts";
@@ -162,7 +123,7 @@ function scamAfterReveal(seed: number, scammers: SlopPersona[], partner: (p: Slo
 }
 
 function swapBeforeYes(pairs: readonly (readonly [SlopPersona, SlopPersona])[]): AdversarialResult {
-  const out: AdversarialResult = { scenario: "swap_before_yes", cases: 0, controls: { n: 0, ok: 0 }, failures: [], stats: { blocked: 0, held: 0 } };
+  const out: AdversarialResult = { scenario: "swap_before_yes", cases: 0, controls: { n: 0, ok: 0 }, failures: [], stats: { blocked: 0 } };
   pairs.forEach(([a, b], i) => {
     const states: [string, Pick<RelayOpportunity, "status" | "acceptedBy">][] = [
       ["probing, no yes", { status: "probing", acceptedBy: [] }],
@@ -174,7 +135,7 @@ function swapBeforeYes(pairs: readonly (readonly [SlopPersona, SlopPersona])[]):
       for (const body of [share(a), text(`just text me at ${spaced(phoneOf(a))}`), photo(a)]) {
         const res = th.send(a, body);
         out.cases++;
-        if (res.decision === "block") out.stats.blocked!++; else if (res.decision === "hold") out.stats.held!++;
+        if (res.decision === "block") out.stats.blocked!++;
         if (res.decision !== "block" || res.rendered !== "" || carries(res, [phoneOf(a).slice(-7), spaced(phoneOf(a))])) out.failures.push(`${a.id}->${b.id} ${why}: ${body.kind} ${res.decision} (${res.reasons.join(",")})`);
       }
     }
@@ -186,7 +147,7 @@ function swapBeforeYes(pairs: readonly (readonly [SlopPersona, SlopPersona])[]):
 }
 
 function leakOtherMember(pairs: readonly (readonly [SlopPersona, SlopPersona])[]): AdversarialResult {
-  const out: AdversarialResult = { scenario: "leak_other_member", cases: 0, controls: { n: 0, ok: 0 }, failures: [], stats: { blocked: 0, held: 0, canaryBlocked: 0 } };
+  const out: AdversarialResult = { scenario: "leak_other_member", cases: 0, controls: { n: 0, ok: 0 }, failures: [], stats: { blocked: 0, canaryBlocked: 0 } };
   pairs.forEach(([a, b], i) => {
     const bFact = `going through a divorce after ${b.stated.occupation || "work"} burnout`;
     const aFact = "has two kids from a previous marriage";
@@ -205,7 +166,7 @@ function leakOtherMember(pairs: readonly (readonly [SlopPersona, SlopPersona])[]
     for (const [why, t] of attempts) {
       const res = th.send(a, text(t));
       out.cases++;
-      if (res.decision === "block") out.stats.blocked!++; else if (res.decision === "hold") out.stats.held!++;
+      if (res.decision === "block") out.stats.blocked!++;
       if (why === "canary" && res.decision === "block") out.stats.canaryBlocked!++;
       // The stop must come from the leak guard (or the contact rules for the number), not from a side rule.
       const byGuard = res.reasons.some(z => z.startsWith("leak:") || z.startsWith("canary:") || (why === "number" && z.startsWith("contact:")));
@@ -260,7 +221,7 @@ function minorInRelay(personas: readonly SlopPersona[], partner: (p: SlopPersona
 }
 
 function photoInProbe(personas: readonly SlopPersona[], pairs: readonly (readonly [SlopPersona, SlopPersona])[]): AdversarialResult {
-  const out: AdversarialResult = { scenario: "photo_in_probe", cases: 0, controls: { n: 0, ok: 0 }, failures: [], stats: { flagOff: 0, noConsent: 0, minor: 0, held: 0 } };
+  const out: AdversarialResult = { scenario: "photo_in_probe", cases: 0, controls: { n: 0, ok: 0 }, failures: [], stats: { noIds: 0, noConsent: 0, minor: 0, held: 0 } };
   const base = "There's someone I think you might like to go on a date with: coffee, Thursday 7pm. Want me to check if they're up for it? I'll only tell you who it is if you both say yes.";
   const minors = personas.filter(p => p.hidden.isMinor && !canBeMatched(p.stated.claimedAge));
   pairs.forEach(([s, v], i) => {
@@ -271,8 +232,7 @@ function photoInProbe(personas: readonly SlopPersona[], pairs: readonly (readonl
     out.controls.n++; if (okMsg.photos.length === 1 && okMsg.text.includes(SLOP_PROBE_PHOTO_LINE)) out.controls.ok++;
     const m = minors.length ? minors[i % minors.length]! : undefined;
     const cases: [keyof typeof out.stats, string, Parameters<typeof probePhotoRefs>[0], { age: number | undefined }, Partial<RelayParty>, Partial<RelayParty>][] = [
-      // The live path (network/service/packs.ts) passes photoConsent: SLOP_PROBE_PHOTOS (false) and no ids until a consent text exists.
-      ["flagOff", "flag off", { ...sub, photoConsent: false, photoIds: [] }, { age: v.stated.claimedAge }, { photoConsent: false }, {}],
+      ["noIds", "no photo ids", { ...sub, photoConsent: false, photoIds: [] }, { age: v.stated.claimedAge }, { photoConsent: false }, {}],
       ["noConsent", "no consent", { ...sub, photoConsent: false }, { age: v.stated.claimedAge }, { photoConsent: false }, {}],
       ["minor", "minor subject (age slip)", { ...sub, age: 16 }, { age: v.stated.claimedAge }, { age: 16 }, {}],
       ["minor", "minor recipient (age slip)", sub, { age: 17 }, {}, { age: 17 }],
@@ -302,13 +262,13 @@ function photoInProbe(personas: readonly SlopPersona[], pairs: readonly (readonl
 // photo among their own. Nothing is delivered and never a partial set; the sender's own photo, with
 // the same per-item consent, passes (control).
 function catfishPhotos(personas: readonly SlopPersona[], pairs: readonly (readonly [SlopPersona, SlopPersona])[], partner: (p: SlopPersona) => SlopPersona): AdversarialResult {
-  const out: AdversarialResult = { scenario: "catfish_photos", cases: 0, controls: { n: 0, ok: 0 }, failures: [], stats: { catfish: 0, recipientStolen: 0, thirdStolen: 0, mixed: 0, foreign: 0, blocked: 0, held: 0 } };
+  const out: AdversarialResult = { scenario: "catfish_photos", cases: 0, controls: { n: 0, ok: 0 }, failures: [], stats: { catfish: 0, recipientStolen: 0, thirdStolen: 0, mixed: 0, foreign: 0, blocked: 0 } };
   const foreign = `ph_${hash32("adv-foreign-photo").toString(16).replace(/[0-9]/g, d => "ghijklmnop"[Number(d)]!)}`;
   const attempt = (s: SlopPersona, v: SlopPersona, key: string, stat: keyof typeof out.stats, ids: readonly string[], why: string) => {
     const th = new Thread(s, v, mutual(`adv-cat-${key}`, s, v));
     const res = th.send(s, { kind: "photo", photoIds: [...ids] });
     out.cases++; out.stats[stat]!++;
-    if (res.decision === "block") out.stats.blocked!++; else if (res.decision === "hold") out.stats.held!++;
+    if (res.decision === "block") out.stats.blocked!++;
     if (res.decision === "pass" || res.photos.length || !res.reasons.includes("photo:not_owned") || res.rendered !== "" || carries(res, [...ids]))
       out.failures.push(`${s.id}->${v.id} ${why}: ${res.decision} (${res.reasons.join(",")})`);
   };
@@ -348,13 +308,13 @@ const ASKS: ReadonlyArray<["rating" | "injection" | "fishing", string, string]> 
 ];
 
 function probingAsks(pairs: readonly (readonly [SlopPersona, SlopPersona])[]): AdversarialResult {
-  const out: AdversarialResult = { scenario: "probing_asks", cases: 0, controls: { n: 0, ok: 0 }, failures: [], stats: { rating: 0, injection: 0, fishing: 0, held: 0, blocked: 0 } };
+  const out: AdversarialResult = { scenario: "probing_asks", cases: 0, controls: { n: 0, ok: 0 }, failures: [], stats: { rating: 0, injection: 0, fishing: 0, blocked: 0 } };
   pairs.forEach(([a, b], i) => {
     for (const [family, key, body] of ASKS) {
       const th = new Thread(a, b, mutual(`adv-ask-${i}-${key}`, a, b));
       const res = th.send(a, text(body));
       out.cases++; out.stats[family]!++;
-      if (res.decision === "block") out.stats.blocked!++; else if (res.decision === "hold") out.stats.held!++;
+      if (res.decision === "block") out.stats.blocked!++;
       const byFamily = res.reasons.some(z => family === "injection" ? z === "injection" || z.startsWith("injection:") : z.startsWith(`${family}:`));
       if (res.decision === "pass" || res.rendered !== "" || !byFamily || carries(res, [body]) || !res.senderNotice)
         out.failures.push(`${a.id}->${b.id} ${key}: ${res.decision} (${res.reasons.join(",")})`);

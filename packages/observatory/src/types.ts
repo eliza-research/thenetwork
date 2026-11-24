@@ -6,10 +6,13 @@ import type {
   ParticipationState, Presence, ScoreComponents,
 } from "@thenetwork/core";
 import type { OracleSummary } from "@thenetwork/core";
-import type { SearchTally } from "@thenetwork/engine";
-import type { ReviewPlanPreview } from "../../network/src/network.ts";
+import type { SearchOutcome, SearchTally } from "@thenetwork/engine";
+import type { JudgeVerdictName } from "@thenetwork/engine/src/reviewJudge.ts";
+import type { ReviewPlanPreview, ReviewProbePreview, ReviewProbeText } from "../../network/src/network.ts";
 
 export type StaffPlanPreview = ReviewPlanPreview & { app: string };
+export type StaffProbePreview = ReviewProbePreview & { app: string };
+export type { ReviewProbeText };
 
 export type Mode = "game" | "real";
 
@@ -128,7 +131,6 @@ export interface ObsOpportunity {
   venue?: { name: string; lat: number; lng: number };
   /** Where it came from in the consent network (engine, request, plans, second_encounter...). */
   origin?: string;
-  /** Human review (PRD 32.8): every proactive opportunity waits here before any member is contacted. */
   review?: ReviewInfo;
   /**
    * Hours since it was created (open) or from creation to its last change (closed). Computed when the
@@ -175,6 +177,10 @@ export interface ReviewInfo {
   rerolls?: number;
   /** Approved, but a gate failed on the re-check (e.g. "busy_elsewhere", "held", "matching_paused"): nobody was contacted. */
   invalidated?: string;
+  approver?: "judge" | "staff";
+  exceptionReason?: string;
+  judgeVerdict?: JudgeVerdictName;
+  judgeExplanation?: string;
 }
 /** A reviewer's action (PRD 32.8). "edit" changes texts, then approves. "reroll" swaps a participant and keeps it waiting. */
 export type ReviewDecision = "approve" | "reject" | "edit" | "reroll";
@@ -206,6 +212,7 @@ export interface EngineRunSummary {
   emptyStatesByReason: Record<string, number>;
   /** The bounded candidate search totals (spec/candidateSearch.md); zero when no search ran. */
   search: SearchTally;
+  searchOutcomes: SearchOutcome[];
   timingsMs: Record<string, number>;
   /** Highest-scoring configurations considered (selected or not), for "why did the alternatives lose". */
   top: { key: string; generator: string; participants: MemberId[]; score: number; eligible: boolean; reason?: string; selected: boolean; components: ScoreComponents }[];
@@ -327,8 +334,7 @@ export interface ObsRequest {
 
 export interface NetworkInfo {
   kind: "consent" | "stub";
-  /** Review gate (PRD 32.8): "human" = a person approves each opportunity; "auto" = a simulated reviewer (sim only). */
-  review: { mode: "human" | "auto"; queued: number; approved: number; rejected: number; expired: number };
+  review: { queued: number; approved: number; rejected: number; expired: number };
   counters: Record<string, number>;
   gateReasons: Record<string, number>;
   requests: { total: number; fulfilled: number; probing: number; waiting: number; plans: number };
@@ -456,8 +462,8 @@ export interface StaffUser {
   /** The roles with their app. A grant without an app ("email:role") is "role@*". */
   grants: RoleGrant[];
   via: "token" | "sso";
-  /** SSO: when the Cloudflare Access token expires (ms). Sockets close then (they are re-checked on a timer too). */
   expiresAt?: number;
+  secondFactor?: boolean;
 }
 
 export interface AuditEntry {
@@ -514,7 +520,7 @@ export interface SafetyInfo {
   canBan?: boolean;
 }
 /** What a post-date report says happened. "other" when the reporter's words did not fit a kind. */
-export type ReportKind = "harassment" | "lying" | "no_show" | "unsafe" | "scam" | "minor" | "other";
+export type ReportKind = "harassment" | "lying" | "no_show" | "unsafe" | "scam" | "minor" | "older_than_stated" | "other";
 export interface SafetyReport {
   id: string;
   kind: ReportKind;
@@ -553,7 +559,7 @@ export type HeldQueue = "leak" | "relay";
  * left out for a member under 18 or with an unknown age (`textHidden`).
  */
 export interface HeldText {
-  id: string; queue: HeldQueue; kind?: string; to?: string; memberId?: string; createdAt?: number;
+  id: string; queue: HeldQueue; kind?: string; to?: string; memberId?: string; createdAt?: number; deadline?: number;
   /** Why it was held (the leak guard's labels, or the relay check's reason codes). */
   reasons: string[];
   text?: string;
@@ -566,13 +572,13 @@ export interface ConfigChange {
   /** Sim time (game) or wall time (real). */
   at: number;
   actor: string;
-  key: "matching" | "review_mode";
+  key: "matching";
   from: string | boolean | null;
   to: string | boolean;
 }
 export interface ConfigInfo {
   matchingEnabled: boolean;
-  reviewMode: "human" | "auto" | null;
+  reviewJudge: { awaiting: number; exceptions: number; exceptionsOverdue: number } | null;
   /** Network options in force (read-only display). */
   network: Record<string, number | boolean | string | null>;
   /** The outreach numbers (packages/network/src/outreach.ts), read-only. */
@@ -660,15 +666,14 @@ export type ControlCommand =
     /** The review revision the reviewer saw (Review.rerolls); another one is refused as "review_stale". */
     revision?: number;
   }
-  | { type: "review_mode"; mode: "human" | "auto" }
   /** Admin only: the "proactive matching on in NYC" switch. */
   | { type: "matching"; on: boolean }
   | { type: "refresh" } | { type: "shadow_run"; city?: City };
 
 export interface ControlResult {
   ok: boolean; error?: string; data?: unknown;
-  /** Machine-readable reason when refused or invalidated (e.g. "participant_minor", "busy_elsewhere", "matching_paused", "forbidden"). */
   code?: string;
+  reach?: "app" | "all";
 }
 
 // ---------------------------------------------------------------- per-app Member 360 (admin-console 3.3.1)

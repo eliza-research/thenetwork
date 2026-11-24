@@ -2,222 +2,210 @@
 
 ## Story: Staff review desk
 
-A reviewer needs each decision to apply to the selected opportunity and its drafts before the deadline.
+Staff need each decision on an item that the judge held to apply to that item and its drafts before the deadline.
 
 ### Safety rules and reachability
 
-Check selection, repeat actions, deadline, direction, and draft ownership. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
+Check selection, repeat actions, deadline, direction, draft ownership, the judge's approval and the teen stop. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
 Imported from `quint/review_desk.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
-The browser calls the [staff review controller](../staffReview.md) for selected card, mode, draft scope, and response ownership. The standalone model also explores server races and matching controls.
+The browser calls the [staff review controller](../staffReview.md) for selected card, mode, draft scope, and response ownership. The pure defs in this model have the names of that spec. The model also has the server decisions (`ConsentNetwork.decide`, `reviewBlock`, `stopApproved`, the teen stop) and the matching switch as an environment.
+
+The [automated review](../automatedReview.md) decides every item on the server. An arrived item waits for the review judge (`AwaitingJudge`). The judge approves it (`judgeApprove`, approver `judge`; a roster with a minor is read with the strict rubric, `teenRosterIsJudgedStrictly`), holds it for staff (`judgeHold`: a flag, an unsure reply or a judge that cannot run), gives no judgment in time (`judgeOverdue`: the network tick holds it while matching is on), or answers for an old revision (`judgeStale`: nothing changes). A judge approval whose gates fail closes the item (`invalidated`). The page queue shows only held items (`HeldForStaff`). Staff approve, edit or re-roll only a held item (`not_held_for_staff` otherwise) and reject any open item; a re-roll puts the new revision back to the judge. Every staff approve, edit or re-roll needs a named staff member: no reviewer is refused (`reviewer_required`), and the judge's own name, `JUDGE_REVIEWER`, is refused (`reviewer_reserved`). Staff stop an approved item before its reveal (`stopApproved`); a stop refuses only a missing reviewer (`reviewer_required`), as `ConsentNetwork.stopApproved` and the automated review spec do. `heldItemNeedsStaff` states that a held revision is approved only by staff and that staff approve only a held revision; `noContactWithoutApprover` states that a probe goes out only after an approval that names its approver and was not stopped. Changed (owner decisions D15 to D17 of 2026-11-22): the judge replaces the staff reviewer, and staff decide only the items that it holds.
+
+The server approves a roster with a minor only while teen introductions are not stopped and only when the roster passes `teenFriendAgeRule` of [friend introductions with a minor](../friendIntroAge.md) (here an oracle set of allowed teen pairs; the rule itself is in the [opportunity](opportunity.md) and [candidate pool](candidate_pool.md) models). Readiness is derived: a person with an exact birth date and no doubt is teen ready (`teenReadyOf`); this model has no doubt, and the [opportunity](opportunity.md) and [oauth_mcp](oauth_mcp.md) models cover a readiness loss. The [teen introduction stop](../teenIntroSwitch.md) is the state `teenStopped`, false at the start. One `admin` or `safety` staff member stops teen introductions (`teenStop`) and one `admin` turns them on again (`teenResume`); each step writes an audit row. The stop expires every item with a minor that is in review and closes every approved item with a minor that is not revealed (`teenSwitchOffNoMinor`). This model has one network and pairs only; the [opportunity](opportunity.md) model has the groups that close as a whole. Changed (owner decision 2026-11-22, answers A2 to A5): teen introductions are on from the start with one staff stop, because the owner chose "On at launch, no extra checks".
+
+The convention of [staff_console](staff_console.md) applies: the intended action is in `step` and `safety` checks it; a `*Code` action outside `step` follows the code where it differs.
+
+Known drift:
+
+- REVIEW-KEYREPEAT (web): `onKey` in `ReviewQueue` (`packages/observatory/web/review.tsx`) does not ignore key-repeat events, so a held `a` approves the next card when the answer moves the selection. The intended `keyPress` in `step` ignores a repeat event, and `repeatNeverDecides` is in `safety`. `keyPressCode` follows the code: `heldKeyDecidesTest` shows the rule fail, and `heldKeyIgnoredTest` shows the intended handler.
+- REVIEW-TEENPAGE (web): `approveBlock` in `review.tsx` blocks every known minor, so the page never sends an approve for a held teen item; staff approve it through the server route (`otherReviewerOf`). The page must show the `teen` review details and let staff approve.
+
+Outside the model: the server refusals `note_required` (the page asks for the note first, `requireReviewNote`) and `gathering_repeat_fixed_pair` (a monthly gathering repeat, which this queue does not hold), and the launch scope of the matching switch.
 
 ```quint
 // -*- mode: Bluespec; -*-
 // quint-check: max-steps=30 max-samples=20000
 //
-// review_desk: the staff review desk and the matching switch of the Observatory, on the browser side.
+// review_desk: the staff review desk and the matching switch of the Observatory, on the browser side,
+// with the server decisions as an environment.
 //
-// WHAT THIS MODELS
-//   - The review queue (ReviewQueue and ReviewActions in packages/observatory/web/review.tsx). Items
-//     arrive, close, expire and come back after a re-roll. The selected card is derived on each render
-//     (focus link, then the held selection, then the head of the list sorted by deadline). The
-//     reviewer presses keys (held keys give repeat events), clicks buttons, opens modes (reject, edit,
+// WHAT THIS MODELS (compared with vibestack-matching on 2026-11-18)
+//   - The review queue (ReviewQueue, useReviewCtl, act and ReviewActions in packages/observatory/web/review.tsx).
+//     Items arrive, close, expire and come back after a re-roll. The selected card is derived on each render
+//     by selectedReviewCard (focus, then the held selection, then the head of the list sorted by deadline).
+//     The draft controller is the generated controller of spec/staffReview.md
+//     (packages/core/src/generated/staffReview.ts): bindCard, changeReviewMode, requireReviewNote,
+//     ownsReviewResponse, settleReview. Each pure def below has the name and the decision of that spec.
+//     The card key (reviewKey) is the opportunity id and its review revision (Review.rerolls). In the code
+//     it also holds the app, the data mode, the sign-in epoch, the deadline and the participants; a re-roll
+//     changes all of them together, so the revision stands for them here.
+//   - The reviewer presses keys (held keys give repeat events), clicks buttons, opens modes (reject, edit,
 //     re-roll), types drafts and a note, and closes and opens the drawer (the queue unmounts).
-//   - The decisions in flight (store.decide and its `deciding` set in store.ts). Answers come late,
-//     in any order, or fail. A failed answer can follow a decision that the server applied.
-//   - The matching switch with two presses (Config in admin.tsx), for two admins. Each admin reads the
-//     switch value from a fetch that can be stale.
-//   Each LemmaScript step function in packages/observatory/web/logic/review.ts is a pure def here with
-//   the same name and the same decision: ctlOk, rebind, choose, leaveMode, keyStep, toggleMode, settle,
-//   moveOnAfter, approveBlock, flip. Each shell event is an action that calls it and does not decide again.
-//   The server and the other reviewer are a nondeterministic environment.
+//   - The decisions in flight (store.decide and its `deciding` set in store.ts). Each decision carries the
+//     revision that the page showed. Answers come late, in any order, or fail. A failed answer can follow
+//     a decision that the server applied.
+//   - The server decision (ConsentNetwork.decide and reviewBlock in packages/network/src/network.ts, served
+//     by POST /review/:oppId in packages/network/service/service.ts, which refuses a body without a revision).
+//     Automated review (owner decision 2026-11-22, D15 to D17; spec/automatedReview.md): the server phase of
+//     an item is AwaitingJudge, HeldForStaff, Decided or Stopped. The review judge is an environment
+//     (judgeApprove, judgeHold, judgeOverdue, judgeStale: ConsentNetwork.recordJudgment and the tick's
+//     holdUnjudged); staff decide only held items (not_held_for_staff) and may reject any open item; staff
+//     stop an approved item before its reveal (stopApproved). The page queue shows the held items only.
+//   - The matching switch (Config in packages/observatory/web/admin.tsx, the workspace controller of
+//     spec/consoleWorkspace.md) for two admins. The first press asks; the confirm press sends
+//     `on: !c.matchingEnabled` from the same fetched config. A reload of the config drops the asked state
+//     (edit.of !== c), and so does the 4 s timer.
 //
 // BOUNDS
 //   Items 1..3. People 1..4: 1 and 2 are adults, 3 is a minor, 4 is unknown to the page. Pairs of
 //   participants come from PAIRS. Two reasons (reason 2 is "other" and needs a note). Time 0..MAX_T
 //   ticks; a deadline is 2..4 ticks after arrival or re-roll. Two admins. At most 2 queue instances
-//   (one remount). The page clock can lag the real clock.
-//
-// RUN (from the repository root; quint 0.33.1; there is no Apalache in this setup)
-//   quint typecheck quint/review_desk.qnt
-//   quint test quint/review_desk.qnt                 # 7 replayed traces (run ...Test)
-//   quint run quint/review_desk.qnt --invariant=safety --max-samples=2000 --max-steps=20 --seed=11
-//   quint run quint/review_desk.qnt --invariant=<name> --max-samples=2000 --max-steps=20 --seed=11
-//   Each witness_<name> must be VIOLATED (the state is reachable). witness_lateAnswerElsewhere is a
-//   long path: use --max-samples=20000 --max-steps=30 (lateAnswerStaysTest also reaches it).
-//   decisionOnlyToReviewerChoice (the remount variant of bug 3) is fixed and is now part of safety:
-//   quint run quint/review_desk.qnt --invariant=decisionOnlyToReviewerChoice --max-samples=20000 --max-steps=20 --seed=11
-//   (and --seed=29). remountMovesChoiceTest replays the old trace and shows that it now holds.
-//   serverApproveBeforeDeadline (bug 4 of the slice report, server side) is fixed: ConsentNetwork.reviewBlock
-//   refuses every decision at or past the deadline (network.ts reviewBlock, transitions.ts reviewLate,
-//   SD-009). It is now part of safety.
-//   approveMatchesSeenPeople (gap G6, server side) is fixed: each decision carries the review revision
-//   that the page showed (store.ts decide sends Review.rerolls), POST /review/:oppId refuses a decision
-//   without one, and ConsentNetwork.decide refuses another revision as "review_stale"
-//   (spec/reviewDeadline.md, "A decision applies only to the revision the reviewer saw"). It is now part of safety.
+//   (one remount). The page clock is not modelled: the page no longer checks the deadline.
 //
 // OUTSIDE THE MODEL
-//   - React timing. ASSUMPTION: after each store change or state set, React renders before the next
-//     event (discrete events and useSyncExternalStore flush on the sync lane). So each action ends
-//     with its render. The `live` ref of the queue is then always the last render.
-//   - The text of drafts and notes. A draft is the id of the item whose texts were loaded, plus a flag
-//     "changed". editsOf gives edits only when the drafts changed. A note is the id of the card on
-//     which it was typed.
-//   - The opportunity panel (panels.tsx) has its own controller with key={f.id}. Not modelled.
-//   - Errors and toasts (bug 6), the score disclosure, Enter on a focused button (bug 14), popovers.
-//   - The server rules are oracles: participant checks (reviewBlock), the 4 s timer is ARM_T ticks,
-//     the app switch that clears the pending press is the same as the timer.
-//   - Report actions (reportOffer) and the line text (reviewStatus) have no browser state machine
-//     here. LemmaScript proves them.
-//   - Integers are small; the proof has ideal numbers. NaN is outside both.
+//   - React timing. ASSUMPTION: after each store change or state set, React renders and runs its layout
+//     effects before the next event. So each action ends with its render, and the `live` refs are the
+//     last render.
+//   - The text of drafts and notes. A draft is the card key whose texts were loaded, plus a flag
+//     "changed". editsOf gives edits only when the drafts changed. A note is the card key on which it was
+//     typed. The browser shell clears both when the bound card key changes (clearDraft).
+//   - The plan preview gate for planner proposals (usePlanPreview, planPreviewMatchesCard): approval is
+//     blocked until the preview of the same app, id, revision and deadline loads. spec/staffReview.md proves
+//     that decision. Here it is part of the nondeterministic environment of approveBlock (not modelled).
+//   - The opportunity panel (panels.tsx) mounts its own ReviewActions with its own controller. Not modelled.
+//   - Errors and toasts, the score disclosure, the app and sign-in scope of a response, popovers.
+//   - The registry gate of the matching switch (spec/runtimeUnit.md, setMatching refuses "on" when the registry
+//     row does not allow matching). This model's network is allowed; staff_console models the refusal.
+//   - The approval re-check after a staff approve (approvalCheck, review_invalidated) and edit leak checks
+//     (editBlock). The model keeps decision "approve" with the version it was approved at.
+//   - The server refusals note_required (the page asks for the note first) and gathering_repeat_fixed_pair
+//     (monthly gathering repeats, not in this queue).
+//   - The judge packet, its hash, the call limits and the claim of the judge worker (spec/automatedReview.md
+//     proves judgeCallDecision and judgeClaimDecision). Here a judgment is one atomic step.
 module review_desk {
 
   // ---------------------------------------------------------------- constants
   pure val ITEMS = Set(1, 2, 3)
   pure val MAX_T = 8
-  pure val ARM_T = 2
   pure val REASONS = 2
   pure val CAN_ACT = true
-  pure val PAIRS = Set([1, 2], [2, 1], [1, 3], [2, 4])
+  pure val PAIRS = Set([1, 2], [2, 1], [1, 3], [2, 4], [5, 6], [1, 5], [3, 5])
   pure val ADMINS = Set(1, 2)
-  // Bug 4 is fixed: network.ts reviewBlock refuses every decision (approve, edit, reject, re-roll) with
-  // "review_expired" when reviewLate(now, deadline), that is now >= deadline. true = the shipping server.
-  pure val SERVER_CHECKS_DEADLINE = true
-  // G6 is fixed: ConsentNetwork.decide refuses a decision whose revision is not the current one
-  // (reviewRevisionCurrent, "review_stale"). Version here is the review revision. true = the shipping server.
-  pure val SERVER_CHECKS_REVISION = true
+  // Staff ids (not people): 1 and 2 are admins (admin 1 also has the safety role), 3 is a safety staff member,
+  // 4 is a reviewer in the normal role; the page's reviewer is 4. NO_REVIEWER: a decision with no reviewer
+  // (reviewer_required); JUDGE_REVIEWER: the judge's own reviewer name (reviewer_reserved). Neither is staff.
+  pure val STAFF = Set(1, 2, 3, 4)
+  pure val SAFETY = Set(1, 3)
+  pure val NO_REVIEWER = 0
+  pure val JUDGE_REVIEWER = 9
+  pure val REVIEWERS = STAFF.union(Set(NO_REVIEWER, JUDGE_REVIEWER))
+  // The judge wait limit (judgeWaitLimitMs) in ticks.
+  pure val JUDGE_WAIT = 1
+  // People 5 (16) and 6 (17) are born within 2 years: the one roster that teenFriendAgeRule allows while teen
+  // introductions are not stopped (an oracle for groupAgeAllowed).
+  pure val TEEN_PAIRS = Set([5, 6], [6, 5])
+  // People with an exact birth date on record (person 3 has only a typed age).
+  pure val BIRTH_EXACT = Set(5, 6)
 
-  // ---------------------------------------------------------------- core types (logic/review.ts)
-  // Mode: "idle" | "reject" | "edit" | "reroll". Ids are ints; 0 is the empty id "".
-  type Ctl = { mode: str, boundId: int, draftsId: int, chosen: bool }
-  // Key: "a" | "r" | "e" | "s" | "digit" | "esc"
-  type Press = { key: str, digit: int, repeat: bool, blocked: bool, canAct: bool, reasons: int, swaps: int }
-  // Cmd tag: "nothing" | "approve" | "reject" | "reroll"
-  type Cmd = { tag: str, id: int, withEdits: bool, digit: int }
-  type Step = { ctl: Ctl, cmd: Cmd }
+  // ---------------------------------------------------------------- generated controller (spec/staffReview.md)
+  // ReviewMode: "IdleReview" | "RejectReview" | "EditReview" | "RerollReview". A card key {id: 0} is "".
+  type Key = { id: int, ver: int }
+  type Ctl = { cardKey: Key, revision: int, mode: str, noteNeeded: bool }
+  pure val NOKEY: Key = { id: 0, ver: 0 }
+  pure val INITIAL: Ctl = { cardKey: NOKEY, revision: 0, mode: "IdleReview", noteNeeded: false }
+
+  pure def selectedReviewCard(pend: List[int], focused: int, held: int): int =
+    if (focused != 0 and has(pend, focused)) focused
+    else if (held != 0 and has(pend, held)) held
+    else if (pend.length() > 0) pend[0]
+    else 0
+
+  pure def canBindCard(c: Ctl, k: Key): bool = k != c.cardKey
+  pure def bindCard(c: Ctl, k: Key): Ctl = { cardKey: k, revision: c.revision + 1, mode: "IdleReview", noteNeeded: false }
+  pure def canChangeReviewMode(c: Ctl): bool = c.cardKey != NOKEY
+  pure def changeReviewMode(c: Ctl, m: str, toggle: bool): Ctl =
+    { ...c, mode: if (toggle and m == c.mode) "IdleReview" else m, noteNeeded: false }
+  pure def canRequireReviewNote(c: Ctl): bool = c.cardKey != NOKEY and c.mode == "RejectReview"
+  pure def requireReviewNote(c: Ctl): Ctl = { ...c, noteNeeded: true }
+  pure def alwaysRequiredNoteBelongsToRejection(c: Ctl): bool = c.noteNeeded implies c.mode == "RejectReview"
+  pure def ownsReviewResponse(c: Ctl, k: Key, rev: int): bool = c.cardKey != NOKEY and c.cardKey == k and c.revision == rev
+  pure def settleReview(c: Ctl): Ctl = { ...c, revision: c.revision + 1, mode: "IdleReview", noteNeeded: false }
+
+  // step(): an event that the rules do not allow leaves the controller unchanged.
+  pure def stepBind(c: Ctl, k: Key): Ctl = if (canBindCard(c, k)) bindCard(c, k) else c
+  pure def stepMode(c: Ctl, m: str, toggle: bool): Ctl = if (canChangeReviewMode(c)) changeReviewMode(c, m, toggle) else c
+  pure def stepNote(c: Ctl): Ctl = if (canRequireReviewNote(c)) requireReviewNote(c) else c
+  pure def stepSettle(c: Ctl, k: Key, rev: int): Ctl = if (ownsReviewResponse(c, k, rev)) settleReview(c) else c
+
+  // ---------------------------------------------------------------- page decisions (review.tsx)
   type Person = { minor: bool, declined: bool }
-  type Pending = { active: bool, target: bool }
-  type Flip = { pending: Pending, send: bool, on: bool }
-
-  pure val NOTHING: Cmd = { tag: "nothing", id: 0, withEdits: false, digit: 0 }
-
   // People as the page knows them (store.members). Person 4 is not in the map.
   pure val PEOPLE: int -> Person = Map(
     1 -> { minor: false, declined: false },
     2 -> { minor: false, declined: false },
-    3 -> { minor: true, declined: false })
+    3 -> { minor: true, declined: false },
+    5 -> { minor: true, declined: false },
+    6 -> { minor: true, declined: false })
 
-  // ---------------------------------------------------------------- core step functions
-  // Each def has the name and the decision of the function in packages/observatory/web/logic/review.ts.
-
-  pure def ctlOk(c: Ctl): bool =
-    and {
-      c.draftsId == 0 or c.draftsId == c.boundId,
-      c.mode != "edit" or c.draftsId == c.boundId,
-      c.chosen or (c.mode == "idle" and c.draftsId == 0),
-    }
-
-  pure def rebind(ctl: Ctl, selId: int): Ctl =
-    if (ctl.boundId == selId) ctl
-    else { mode: "idle", boundId: selId, draftsId: 0, chosen: false }
-
-  pure def choose(ctl: Ctl, id: int): Ctl =
-    val c = rebind(ctl, id)
-    { mode: c.mode, boundId: c.boundId, draftsId: c.draftsId, chosen: true }
-
-  pure def leaveMode(c: Ctl): Ctl =
-    { mode: "idle", boundId: c.boundId, draftsId: if (c.mode == "edit") 0 else c.draftsId, chosen: c.chosen }
-
-  pure def keyStep(ctl0: Ctl, selId: int, p: Press): Step =
-    val ctl = rebind(ctl0, selId)
-    if (p.key == "esc") { ctl: leaveMode(ctl), cmd: NOTHING }
-    else if (p.repeat or not(p.canAct)) { ctl: ctl, cmd: NOTHING }
-    // The first press on a card that nobody chose only marks it as chosen.
-    else if (ctl0.boundId != selId or not(ctl0.chosen)) { ctl: choose(ctl0, selId), cmd: NOTHING }
-    else if (p.key == "a")
-      if (p.blocked) { ctl: ctl, cmd: NOTHING }
-      else { ctl: ctl, cmd: { tag: "approve", id: selId, withEdits: ctl.draftsId == selId, digit: 0 } }
-    else if (p.key == "digit")
-      if (ctl.mode == "reject" and p.digit >= 1 and p.digit <= p.reasons)
-        { ctl: ctl, cmd: { tag: "reject", id: selId, withEdits: false, digit: p.digit } }
-      else if (ctl.mode == "reroll" and p.digit >= 1 and p.digit <= p.swaps)
-        { ctl: ctl, cmd: { tag: "reroll", id: selId, withEdits: false, digit: p.digit } }
-      else { ctl: ctl, cmd: NOTHING }
-    else if (p.key == "r") { ctl: { mode: "reject", boundId: selId, draftsId: ctl.draftsId, chosen: true }, cmd: NOTHING }
-    else if (p.key == "s")
-      if (p.swaps < 1) { ctl: ctl, cmd: NOTHING }
-      else { ctl: { mode: "reroll", boundId: selId, draftsId: ctl.draftsId, chosen: true }, cmd: NOTHING }
-    else { ctl: { mode: "edit", boundId: selId, draftsId: selId, chosen: true }, cmd: NOTHING }
-
-  pure def toggleMode(ctl: Ctl, id: int, m: str): Ctl =
-    val c = choose(ctl, id)
-    if (c.mode == m) leaveMode(c)
-    else { mode: m, boundId: id, draftsId: if (m == "edit") id else c.draftsId, chosen: true }
-
-  pure def settle(ctl: Ctl, id: int): Ctl =
-    if (ctl.boundId != id) ctl
-    else { mode: "idle", boundId: id, draftsId: 0, chosen: ctl.chosen }
-
-  // An answer moves the selection only in a mounted queue, and only when the reviewer did not choose another card.
-  pure def moveOnAfter(mounted: bool, ctl: Ctl, id: int): bool =
-    mounted and (not(ctl.chosen) or ctl.boundId == id)
-
-  // Block: "read_only" | "minor" | "declined" | "matching_off" | "expired" | "idle".
-  // A person that the page does not know blocks like a minor.
-  pure def approveBlock(canAct: bool, ids: List[int], people: int -> Person, matchingOff: bool, now: int, deadline: int): str =
+  // approveBlock in review.tsx: read-only, plan preview (not modelled), a known minor, a declined
+  // participant, matching off. The page does not check the deadline and does not block a person it does
+  // not know: the server refuses both.
+  pure def approveBlock(canAct: bool, ids: List[int], matchingOff: bool): str =
     if (not(canAct)) "read_only"
-    else if (ids.foldl(false, (b, i) => b or not(people.keys().contains(i)) or people.get(i).minor)) "minor"
-    else if (ids.foldl(false, (b, i) => b or (people.keys().contains(i) and people.get(i).declined))) "declined"
+    else if (ids.foldl(false, (b, i) => b or (PEOPLE.keys().contains(i) and PEOPLE.get(i).minor))) "minor"
+    else if (ids.foldl(false, (b, i) => b or (PEOPLE.keys().contains(i) and PEOPLE.get(i).declined))) "declined"
     else if (matchingOff) "matching_off"
-    else if (now < deadline) "idle"
-    else "expired"
-
-  pure def flip(p: Pending, current: bool): Flip =
-    if (not(p.active)) { pending: { active: true, target: not(current) }, send: false, on: current }
-    else if (p.target == current) { pending: { active: false, target: current }, send: false, on: current }
-    else { pending: { active: false, target: current }, send: true, on: p.target }
+    else "idle"
 
   // ---------------------------------------------------------------- environment and shell types
-  // decision: "pending" | "approve" | "reject" | "expired". A re-roll with no alternate closes the
-  // item with decision "pending" and inReview false.
-  type SrvItem = { arrived: bool, inReview: bool, decision: str, deadline: int, version: int,
-                   parts: List[int], decidedAt: int, approvedVersion: int }
-  // What the page store holds for an item (pushed by the server, possibly late).
+  // phase: "AwaitingJudge" | "HeldForStaff" | "Decided" | "Stopped". decision: "pending" | "approve" |
+  // "reject" | "expired" | "invalidated" | "stopped". A re-roll with no alternate and a close leave
+  // decision "pending" with phase "Decided". approver: "none" | "judge" | "staff". waitFrom: the start of
+  // the judge wait (queuedAt, or judgeWaitFrom after a re-roll). heldVersion: the revision the judge held
+  // (-1 for none). rubricMinor: the judge read the roster with the strict rubric. contacted: a probe went
+  // out; revealed: the reveal went out. teenOnAtApproval is a ghost.
+  type SrvItem = { arrived: bool, phase: str, decision: str, deadline: int, version: int,
+                   parts: List[int], decidedAt: int, approvedVersion: int, waitFrom: int,
+                   approver: str, heldVersion: int, rubricMinor: bool, teenOnAtApproval: bool,
+                   contacted: bool, revealed: bool }
   type ViewItem = { known: bool, inReview: bool, deadline: int, version: int, parts: List[int] }
-  type Drafts = { from: int, changed: bool }
-  // The queue component (one mount). inst counts mounts.
-  type Browser = { inst: int, ctl: Ctl, drafts: Drafts, note: int, awaiting: bool,
-                   selHeld: int, sel: int, pending: List[int] }
-  // The last render of an unmounted queue: its closures still run when an old answer arrives.
-  type OldQueue = { inst: int, ctl: Ctl, sel: int, pending: List[int] }
-  // One decision request. The fields after `kind` are ghost facts for the invariants.
-  type Req = { rid: int, inst: int, id: int, kind: str, editsFrom: int, noteFrom: int,
-               repeat: bool, sel: int, boundBefore: int, chosenBefore: bool, choiceBefore: int,
-               draftsBefore: Drafts, blocked: bool, pageNow: int, pageDeadline: int, version: int }
-  type Ans = { rid: int, inst: int, id: int, kind: str, ok: bool }
-  type Admin = { pending: Pending, armedAt: int, cfg: bool, asked: bool }
+  type Drafts = { key: Key, changed: bool }
+  // The queue component (one mount). inst counts mounts; the old instance is unmounted.
+  type Browser = { inst: int, ctl: Ctl, drafts: Drafts, note: Key, selHeld: int, sel: int, pending: List[int] }
+  // One decision request. key and rev are what response() captured; the rest are ghost facts.
+  type Req = { rid: int, inst: int, id: int, kind: str, key: Key, rev: int, editsFrom: Key, noteFrom: Key,
+               repeat: bool, sel: int, modeBefore: str, draftsBefore: Drafts, blocked: bool, version: int }
+  type Ans = { req: Req, ok: bool }
+  type Admin = { asking: bool, armedAt: int, cfg: bool, asked: bool }
   type MReq = { mid: int, admin: int, on: bool, asked: bool }
 
   type State = {
-    now: int, pageNow: int,
+    now: int,
     srv: int -> SrvItem, matchingOn: bool,
     mirror: int -> ViewItem, viewMatchingOn: bool,
     focus: int, deciding: Set[int],
-    br: Browser, old: OldQueue,
-    // ghost: the card that the reviewer last chose (see decisionOnlyToReviewerChoice).
-    choice: int,
+    br: Browser,
     inflight: Set[Req], answers: Set[Ans], sent: Set[Req], nextRid: int,
+    // ghost: the answers that moved the selection, with whether the queue owned them.
+    moves: Set[{ rid: int, owned: bool }],
     admins: int -> Admin, mflight: Set[MReq], msent: Set[MReq], nextMid: int,
+    // The stored teen stop (spec/teenIntroSwitch.md teenIntrosStoredOn): teenStopped is "the key teenStop is
+    // present". teenAudit: the audit rows of the stop and resume steps, in order.
+    teenStopped: bool, teenAudit: List[{ by: int, on: bool }],
     // ghost counters for witnesses
-    repeats: int, lateElsewhere: int, oldAnswers: int, raceSkips: int,
+    repeats: int, lateElsewhere: int, oldAnswers: int, raceDrops: int,
   }
 
   var s: State
 
   // ---------------------------------------------------------------- shell helpers
+  pure def reviewOpen(it: SrvItem): bool = it.phase == "AwaitingJudge" or it.phase == "HeldForStaff"
+  // reviewQueue(): the page lists only the items the judge held for staff.
   pure def viewOf(it: SrvItem): ViewItem =
-    { known: it.arrived, inReview: it.inReview, deadline: it.deadline, version: it.version, parts: it.parts }
+    { known: it.arrived, inReview: it.phase == "HeldForStaff", deadline: it.deadline, version: it.version, parts: it.parts }
 
   // reviewPending: the items in review, sorted by deadline, then id.
   pure def pendingOf(m: int -> ViewItem): List[int] =
@@ -231,126 +219,76 @@ module review_desk {
   pure def indexOf(l: List[int], x: int): int =
     range(0, l.length()).foldl(-1, (acc, i) => if (acc < 0 and l[i] == x) i else acc)
 
-  // useReviewCtl.commit: what is typed for one item leaves with that item.
-  pure def commitB(b: Browser, nxt: Ctl): Browser =
-    val left = nxt.boundId != b.ctl.boundId
-    { ...b,
-      ctl: nxt,
-      note: if (left) 0 else b.note,
-      drafts: if (left or nxt.draftsId == 0) { from: 0, changed: false } else b.drafts,
-      awaiting: if (left or nxt.mode != b.ctl.mode) false else b.awaiting }
+  pure def keyOf(m: int -> ViewItem, id: int): Key = if (id == 0) NOKEY else { id: id, ver: m.get(id).version }
 
-  // applyStep: commit, then load the drafts of item o when the step opened the editor.
-  pure def applyStepB(b: Browser, o: int, nxt: Ctl): Browser =
-    val b1 = commitB(b, nxt)
-    if (nxt.draftsId == o and b.ctl.draftsId != o) { ...b1, drafts: { from: o, changed: false } } else b1
+  pure val NODRAFT: Drafts = { key: NOKEY, changed: false }
 
-  // The render of ReviewQueue: derive `sel`, then the controller follows it in the same render, then
-  // the effect holds the card (setSelId).
+  // useReviewCtl: save(next); a changed binding also runs clearDraft (note, drafts, error).
+  pure def saveB(b: Browser, nxt: Ctl): Browser =
+    if (nxt.cardKey != b.ctl.cardKey or nxt.revision != b.ctl.revision) { ...b, ctl: nxt, note: NOKEY, drafts: NODRAFT }
+    else { ...b, ctl: nxt }
+
+  // The render of ReviewQueue: derive the selected card, bind the controller to its key.
+  // `selId` (selHeld) is React state: the render does not change it.
   pure def render(st: State): State =
     val pend = pendingOf(st.mirror)
-    val b = st.br
-    val sel = if (st.focus != 0 and has(pend, st.focus)) st.focus
-              else if (b.selHeld != 0 and has(pend, b.selHeld)) b.selHeld
-              else if (pend.length() > 0) pend[0]
-              else 0
-    val b1 = if (sel != 0 and b.ctl.boundId != sel)
-               commitB(b, if (st.focus == sel) choose(b.ctl, sel) else rebind(b.ctl, sel))
-             else b
-    { ...st, br: { ...b1, sel: sel, pending: pend, selHeld: if (sel != 0) sel else b1.selHeld } }
+    val sel = selectedReviewCard(pend, st.focus, st.br.selHeld)
+    val b = saveB(st.br, stepBind(st.br.ctl, keyOf(st.mirror, sel)))
+    { ...st, br: { ...b, sel: sel, pending: pend } }
 
-  // select(o) in ReviewQueue: the reviewer's choice (j, k, a card head, or the move after a decision).
-  pure def selectB(st: State, n: int): State =
-    { ...st, br: { ...commitB(st.br, choose(st.br.ctl, n)), selHeld: n }, focus: n }
+  // select(o): setSelId and store.focus.
+  pure def selectB(st: State, n: int): State = { ...st, br: { ...st.br, selHeld: n }, focus: n }
 
   pure def blockedOf(st: State, o: int): bool =
-    val m = st.mirror.get(o)
-    approveBlock(CAN_ACT, m.parts, PEOPLE, not(st.viewMatchingOn), st.pageNow, m.deadline) != "idle"
+    approveBlock(CAN_ACT, st.mirror.get(o).parts, not(st.viewMatchingOn)) != "idle"
 
-  // store.decide: one decision per item at a time. A second press while the first is in flight sends nothing.
-  pure def sendReq(st: State, b0: Browser, o: int, kind: str, editsFrom: int, repeat: bool): State =
+  // act(): response() captures the bound key and revision; store.decide sends one decision per item at a
+  // time with the revision the page shows. A second press while the first is in flight sends nothing.
+  pure def act(st: State, o: int, kind: str, repeat: bool): State =
     if (st.deciding.contains(o)) st
     else
+      val b = st.br
       val m = st.mirror.get(o)
-      val r: Req = { rid: st.nextRid, inst: b0.inst, id: o, kind: kind, editsFrom: editsFrom, noteFrom: b0.note,
-                     repeat: repeat, sel: b0.sel, boundBefore: b0.ctl.boundId, chosenBefore: b0.ctl.chosen,
-                     choiceBefore: st.choice, draftsBefore: b0.drafts, blocked: blockedOf(st, o),
-                     pageNow: st.pageNow, pageDeadline: m.deadline, version: m.version }
+      val edit = kind == "approve" and b.ctl.mode == "EditReview" and b.drafts.key == b.ctl.cardKey and b.drafts.changed
+      val r: Req = { rid: st.nextRid, inst: b.inst, id: o, kind: if (edit) "edit" else kind,
+                     key: b.ctl.cardKey, rev: b.ctl.revision, editsFrom: if (edit) b.drafts.key else NOKEY,
+                     noteFrom: b.note, repeat: repeat, sel: b.sel, modeBefore: b.ctl.mode,
+                     draftsBefore: b.drafts, blocked: blockedOf(st, o), version: m.version }
       { ...st, deciding: st.deciding.union(Set(o)), inflight: st.inflight.union(Set(r)),
                sent: st.sent.union(Set(r)), nextRid: st.nextRid + 1 }
 
-  // press() in review.tsx: the proved reducer decides, the shell runs what it returned.
-  // b0 is the controller that the press reads (after the click's choose on the button path).
-  pure def doPress(st0: State, o: int, key: str, digit: int, repeat: bool): State =
-    val b0 = st0.br
-    val m = st0.mirror.get(o)
-    val step = keyStep(b0.ctl, o, { key: key, digit: digit, repeat: repeat, blocked: blockedOf(st0, o),
-                                    canAct: CAN_ACT, reasons: REASONS, swaps: m.parts.length() })
-    val b1 = applyStepB(b0, o, step.ctl)
-    // ghost: a fresh key press on the visible card is a choice of that card (recorded after the send).
-    val st1 = { ...st0, br: b1, repeats: if (repeat) st0.repeats + 1 else st0.repeats }
-    val cmd = step.cmd
-    val st2 =
-      if (cmd.tag == "approve")
-        // act(): editsOf(o, c.drafts) gives edits only when withEdits and the drafts changed.
-        val edit = cmd.withEdits and b0.drafts.from != 0 and b0.drafts.changed
-        sendReq(st1, b0, o, if (edit) "edit" else "approve", if (edit) b0.drafts.from else 0, repeat)
-      else if (cmd.tag == "reject")
-        if (cmd.digit == REASONS and b0.note == 0) { ...st1, br: { ...b1, awaiting: true } }
-        else sendReq(st1, b0, o, "reject", 0, repeat)
-      else if (cmd.tag == "reroll") sendReq(st1, b0, o, "reroll", 0, repeat)
-      else st1
-    { ...st2, choice: if (not(repeat) and key != "esc") o else st2.choice }
-
-  // afterDecision (the live queue, or the closure of an unmounted one): moveOnAfter decides. An
-  // unmounted queue (live = false) does nothing: its `mounted` ref is false. `allowed` is the ghost
-  // rule: the move counts as the reviewer's choice only when their last choice was the decided item,
-  // or is no longer in the queue.
-  pure def afterDecision(st: State, core: Ctl, pend: List[int], sel: int, id: int, live: bool): State =
-    if (not(moveOnAfter(live, core, id))) st
-    else
-      val i = indexOf(pend, id)
-      val n = if (i < 0) sel
-              else if (i + 1 < pend.length()) pend[i + 1]
-              else if (i >= 1) pend[i - 1]
-              else 0
-      val allowed = st.choice == id or not(has(st.br.pending, st.choice))
-      val st1 = if (n == 0) (if (live) { ...st, br: { ...st.br, selHeld: 0 } } else st)
-                else selectB(st, n)
-      if (n != 0 and allowed) { ...st1, choice: n } else st1
-
   // ---------------------------------------------------------------- init
-  pure val NO_ITEM: SrvItem = { arrived: false, inReview: false, decision: "pending", deadline: 0, version: 0,
-                                parts: [], decidedAt: -1, approvedVersion: -1 }
+  pure val NO_ITEM: SrvItem = { arrived: false, phase: "Decided", decision: "pending", deadline: 0, version: 0,
+                                parts: [], decidedAt: -1, approvedVersion: -1, waitFrom: 0,
+                                approver: "none", heldVersion: -1, rubricMinor: false, teenOnAtApproval: false,
+                                contacted: false, revealed: false }
   pure val NO_VIEW: ViewItem = { known: false, inReview: false, deadline: 0, version: 0, parts: [] }
-  pure val IDLE: Ctl = { mode: "idle", boundId: 0, draftsId: 0, chosen: false }
 
   action init = { nondet on = Set(true, false).oneOf() initWith(on) }
   action initWith(on: bool): bool = all {
     s' = {
-      now: 0, pageNow: 0,
+      now: 0,
       srv: ITEMS.mapBy(_ => NO_ITEM), matchingOn: on,
       mirror: ITEMS.mapBy(_ => NO_VIEW), viewMatchingOn: on,
       focus: 0, deciding: Set(),
-      br: { inst: 1, ctl: IDLE, drafts: { from: 0, changed: false }, note: 0, awaiting: false,
-            selHeld: 0, sel: 0, pending: [] },
-      old: { inst: 0, ctl: IDLE, sel: 0, pending: [] },
-      choice: 0,
+      br: { inst: 1, ctl: INITIAL, drafts: NODRAFT, note: NOKEY, selHeld: 0, sel: 0, pending: [] },
       inflight: Set(), answers: Set(), sent: Set(), nextRid: 1,
-      admins: ADMINS.mapBy(_ => { pending: { active: false, target: false }, armedAt: 0, cfg: on, asked: false }),
+      moves: Set(),
+      admins: ADMINS.mapBy(_ => { asking: false, armedAt: 0, cfg: on, asked: false }),
       mflight: Set(), msent: Set(), nextMid: 1,
-      repeats: 0, lateElsewhere: 0, oldAnswers: 0, raceSkips: 0,
+      teenStopped: false, teenAudit: [],
+      repeats: 0, lateElsewhere: 0, oldAnswers: 0, raceDrops: 0,
     },
   }
 
   // ---------------------------------------------------------------- environment actions
   action tick = all { s.now < MAX_T, s' = { ...s, now: s.now + 1 } }
-  // The page clock follows the pushed clock; it can lag (G4: it stops while the socket is down).
-  action pageClockSync = all { s.pageNow < s.now, s' = render({ ...s, pageNow: s.now }) }
 
+  // The proposal path refuses a roster with a minor while teen introductions are stopped (participant_minor).
   action arriveItem(id: int, d: int, pair: List[int]): bool = all {
     not(s.srv.get(id).arrived),
-    s' = { ...s, srv: s.srv.set(id, { ...NO_ITEM, arrived: true, inReview: true, deadline: s.now + d, parts: pair }) },
+    not(hasMinor(pair)) or not(s.teenStopped),
+    s' = { ...s, srv: s.srv.set(id, { ...NO_ITEM, arrived: true, phase: "AwaitingJudge", deadline: s.now + d, waitFrom: s.now, parts: pair }) },
   }
   action arrive = {
     nondet id = ITEMS.filter(i => not(s.srv.get(i).arrived)).oneOf()
@@ -359,26 +297,105 @@ module review_desk {
     arriveItem(id, d, pair)
   }
 
-  // The server tick expires an item at or after its deadline. The tick can come late.
+  // The server tick (advance, canExpireReview) expires an open item at or after its deadline: awaiting the
+  // judge or held for staff. The tick can come late.
   action serverExpire = {
-    nondet id = ITEMS.filter(i => s.srv.get(i).inReview and s.now >= s.srv.get(i).deadline).oneOf()
-    s' = { ...s, srv: s.srv.set(id, { ...s.srv.get(id), inReview: false, decision: "expired" }) }
+    nondet id = ITEMS.filter(i => reviewOpen(s.srv.get(i)) and s.now >= s.srv.get(i).deadline).oneOf()
+    s' = { ...s, srv: s.srv.set(id, { ...s.srv.get(id), phase: "Decided", decision: "expired" }) }
   }
 
-  // Another reviewer decides or re-rolls an item.
+  // The review judge (spec/automatedReview.md recordJudgment): a judgment for the open revision, before the
+  // deadline, while matching is on (matching_paused refuses it). An approval whose gates fail (reviewBlock
+  // and approvalCheck: a minor outside the rule, a declined or unknown person) closes the item
+  // (review_invalidated). A roster with a minor is read with the strict rubric (reviewRubric).
+  action judgeApproveOf(id: int): bool = all {
+    s.srv.get(id).phase == "AwaitingJudge",
+    s.now < s.srv.get(id).deadline,
+    s.matchingOn,
+    val it = s.srv.get(id)
+    s' = { ...s, srv: s.srv.set(id,
+      if (partsOk(it.parts, not(s.teenStopped)))
+        { ...it, phase: "Decided", decision: "approve", decidedAt: s.now, approvedVersion: it.version, approver: "judge",
+          rubricMinor: hasMinor(it.parts), teenOnAtApproval: not(s.teenStopped) }
+      else { ...it, phase: "Decided", decision: "invalidated", decidedAt: s.now }) },
+  }
+  // A flag, an unsure reply or a judge that cannot run (no provider, a limit, a model error): held for staff.
+  action judgeHoldOf(id: int): bool = all {
+    s.srv.get(id).phase == "AwaitingJudge",
+    s.now < s.srv.get(id).deadline,
+    s.matchingOn,
+    s' = { ...s, srv: s.srv.set(id, { ...s.srv.get(id), phase: "HeldForStaff", heldVersion: s.srv.get(id).version }) },
+  }
+  // holdUnjudged in the network tick: no judgment within the wait limit while matching is on (judge_overdue).
+  action judgeOverdueOf(id: int): bool = all {
+    s.srv.get(id).phase == "AwaitingJudge",
+    s.matchingOn,
+    s.now - s.srv.get(id).waitFrom >= JUDGE_WAIT,
+    s' = { ...s, srv: s.srv.set(id, { ...s.srv.get(id), phase: "HeldForStaff", heldVersion: s.srv.get(id).version }) },
+  }
+  // A judgment for another revision or another packet (judgment_stale, judgment_stale_packet) changes nothing.
+  action judgeStaleOf(id: int, ver: int): bool = all {
+    s.srv.get(id).phase == "AwaitingJudge",
+    ver != s.srv.get(id).version,
+    s' = s,
+  }
+  action judge = {
+    nondet id = ITEMS.filter(i => s.srv.get(i).phase == "AwaitingJudge").oneOf()
+    nondet ver = Set(0, 1, 2).oneOf()
+    any { judgeApproveOf(id), judgeHoldOf(id), judgeOverdueOf(id), judgeStaleOf(id, ver) }
+  }
+
+  // The send path after an approval: the first probe, then the reveal (begin, startProbes, the reveal).
+  action probeOf(id: int): bool = all {
+    s.srv.get(id).decision == "approve", not(s.srv.get(id).contacted),
+    s' = { ...s, srv: s.srv.set(id, { ...s.srv.get(id), contacted: true }) },
+  }
+  action revealOf(id: int): bool = all {
+    s.srv.get(id).decision == "approve", s.srv.get(id).contacted, not(s.srv.get(id).revealed),
+    s' = { ...s, srv: s.srv.set(id, { ...s.srv.get(id), revealed: true }) },
+  }
+  action send = {
+    nondet id = ITEMS.filter(i => s.srv.get(i).decision == "approve").oneOf()
+    any { probeOf(id), revealOf(id) }
+  }
+
+  // Staff stop an approved item before its reveal (stopApproved, canStopApproved). A stop with no reviewer
+  // is refused (reviewer_required); a stop only makes contact less likely, so no other name is refused.
+  action stopApprovedOf(id: int, who: int): bool = all {
+    who != NO_REVIEWER,
+    s.srv.get(id).decision == "approve", s.srv.get(id).approver != "none", not(s.srv.get(id).revealed),
+    s' = { ...s, srv: s.srv.set(id, { ...s.srv.get(id), phase: "Stopped", decision: "stopped" }) },
+  }
+  action stopApproved = {
+    nondet id = ITEMS.filter(i => s.srv.get(i).decision == "approve").oneOf()
+    nondet who = REVIEWERS.oneOf()
+    stopApprovedOf(id, who)
+  }
+
+  // Another staff member decides or re-rolls an item through the same server rules, before the deadline:
+  // a named staff member (reviewer_required, reviewer_reserved); approve and re-roll only a held item
+  // (not_held_for_staff); reject any open item. "close" is a server close (closeUnjudgeable, a gate).
   action otherReviewer = {
-    nondet id = ITEMS.filter(i => s.srv.get(i).inReview).oneOf()
+    nondet id = ITEMS.filter(i => reviewOpen(s.srv.get(i))).oneOf()
     nondet what = Set("approve", "reject", "reroll", "close").oneOf()
     nondet pair = PAIRS.oneOf()
-    otherReviewerOf(id, what, pair)
+    nondet who = REVIEWERS.oneOf()
+    otherReviewerOf(id, what, pair, who)
   }
-  action otherReviewerOf(id: int, what: str, pair: List[int]): bool = all {
-    s.srv.get(id).inReview,
+  action otherReviewerOf(id: int, what: str, pair: List[int], who: int): bool = all {
+    reviewOpen(s.srv.get(id)),
+    s.now < s.srv.get(id).deadline,
+    what != "close" implies STAFF.contains(who),
+    (what == "approve" or what == "reroll") implies s.srv.get(id).phase == "HeldForStaff",
+    what == "approve" implies serverApproveOk(s.srv.get(id).parts, not(s.teenStopped), s.matchingOn),
+    what == "reroll" implies (not(hasMinor(pair)) or not(s.teenStopped)),
     val it = s.srv.get(id)
     val it2 =
-      if (what == "reroll") { ...it, deadline: s.now + 3, version: it.version + 1, parts: pair }
-      else if (what == "close") { ...it, inReview: false }
-      else { ...it, inReview: false, decision: what, decidedAt: s.now }
+      if (what == "reroll") { ...it, phase: "AwaitingJudge", deadline: s.now + 3, version: it.version + 1, parts: pair, waitFrom: s.now }
+      else if (what == "close") { ...it, phase: "Decided" }
+      else if (what == "approve") { ...it, phase: "Decided", decision: what, decidedAt: s.now, approvedVersion: it.version,
+                                    approver: "staff", teenOnAtApproval: not(s.teenStopped) }
+      else { ...it, phase: "Decided", decision: what, decidedAt: s.now }
     s' = { ...s, srv: s.srv.set(id, it2) },
   }
 
@@ -390,13 +407,24 @@ module review_desk {
   action push = { nondet id = ITEMS.filter(i => s.srv.get(i).arrived).oneOf() pushItem(id) }
   action pushMatching = s' = render({ ...s, viewMatchingOn: s.matchingOn })
 
-  pure def partsOk(parts: List[int]): bool =
-    parts.foldl(true, (b, i) => b and PEOPLE.keys().contains(i) and not(PEOPLE.get(i).minor) and not(PEOPLE.get(i).declined))
+  // reviewBlock: a participant who is declined or unknown refuses approve and edit. A roster with a minor passes
+  // only while teen introductions are not stopped and the roster passes teenFriendAgeRule (owner decision 2026-11-22).
+  pure def hasMinor(parts: List[int]): bool =
+    parts.foldl(false, (b, i) => b or (PEOPLE.keys().contains(i) and PEOPLE.get(i).minor))
+  // spec/friendIntroAge.md teenReady, derived: an exact birth date and no doubt (this model has no doubt).
+  pure def teenReadyOf(p: int): bool = BIRTH_EXACT.contains(p)
+  pure def partsOk(parts: List[int], teenOn: bool): bool =
+    parts.foldl(true, (b, i) => b and PEOPLE.keys().contains(i) and not(PEOPLE.get(i).declined))
+      and (not(hasMinor(parts)) or (teenOn and TEEN_PAIRS.contains(parts) and parts.foldl(true, (b, i) => b and teenReadyOf(i))))
+  pure def serverApproveOk(parts: List[int], teenOn: bool, matchingOn: bool): bool =
+    partsOk(parts, teenOn) and matchingOn
 
-  // The server applies one decision (ConsentNetwork.decide under its lock, after reviewBlock). `lost`:
-  // the answer that reaches the page says "failed", whether or not the server applied it. reviewBlock
-  // refuses any decision past the deadline, and an approve (or edit) with matching off or with a
-  // participant who is a minor, declined or unknown.
+  // ConsentNetwork.decide in one unit of work. In order: not in review; at or past the deadline the item
+  // expires now (advance) and the decision is refused (review_expired); another revision is refused
+  // (review_stale); approve, edit and re-roll of an item that is not held for staff are refused
+  // (not_held_for_staff); reviewBlock refuses approve and edit for a minor, declined or unknown participant
+  // and while matching is off. `lost`: the answer that reaches the page says "failed", whether or not
+  // the server applied it.
   action serverApply = {
     nondet r = s.inflight.oneOf()
     nondet lost = Set(true, false).oneOf()
@@ -409,152 +437,179 @@ module review_desk {
     s.inflight.exists(x => x.rid == rid),
     val r = s.inflight.filter(x => x.rid == rid).getOnlyElement()
     val it = s.srv.get(r.id)
-    val accept = it.inReview and (not(SERVER_CHECKS_DEADLINE) or s.now < it.deadline) and
-      (not(SERVER_CHECKS_REVISION) or r.version == it.version) and
-      (r.kind == "reject" or r.kind == "reroll" or (partsOk(it.parts) and s.matchingOn))
+    val late = reviewOpen(it) and s.now >= it.deadline
+    val accept = reviewOpen(it) and not(late) and r.version == it.version and
+      (r.kind == "reject" or (it.phase == "HeldForStaff" and
+        (r.kind == "reroll" or serverApproveOk(it.parts, not(s.teenStopped), s.matchingOn))))
     val doIt = accept and (not(lost) or applied)
     val it2 =
-      if (not(doIt)) it
+      if (late) { ...it, phase: "Decided", decision: "expired" }
+      else if (not(doIt)) it
       else if (r.kind == "reroll")
-        if (alt) { ...it, deadline: s.now + 3, version: it.version + 1, parts: pair }
-        else { ...it, inReview: false }
-      else if (r.kind == "reject") { ...it, inReview: false, decision: "reject", decidedAt: s.now }
-      else { ...it, inReview: false, decision: "approve", decidedAt: s.now, approvedVersion: r.version }
+        if (alt and (not(hasMinor(pair)) or not(s.teenStopped))) { ...it, phase: "AwaitingJudge", deadline: s.now + 3, version: it.version + 1, parts: pair, waitFrom: s.now }
+        else { ...it, phase: "Decided" }
+      else if (r.kind == "reject") { ...it, phase: "Decided", decision: "reject", decidedAt: s.now }
+      else { ...it, phase: "Decided", decision: "approve", decidedAt: s.now, approvedVersion: r.version,
+             approver: "staff", teenOnAtApproval: not(s.teenStopped) }
     s' = { ...s,
       srv: s.srv.set(r.id, it2),
       inflight: s.inflight.exclude(Set(r)),
-      answers: s.answers.union(Set({ rid: r.rid, inst: r.inst, id: r.id, kind: r.kind, ok: accept and not(lost) })),
+      answers: s.answers.union(Set({ req: r, ok: accept and not(lost) })),
     }
   }
 
   // ---------------------------------------------------------------- shell actions (reviewer)
-  // An answer reaches the page, in any order. store.decide removes the id from `deciding`; act()
-  // settles the controller on success; onDone runs afterDecision for approve and reject.
-  action deliver = { nondet a = s.answers.oneOf() deliverAns(a.rid) }
+  // An answer reaches the page, in any order. store.decide removes the id from `deciding` (finally).
+  // act(): response.current() is mounted and ownsReviewResponse(live ctl, key, rev). Only then, and only
+  // for an accepted answer, settle; then afterDecision (approve and reject) selects the neighbour.
+  action deliver = { nondet a = s.answers.oneOf() deliverAns(a.req.rid) }
   action deliverAns(rid: int): bool = all {
-    s.answers.exists(x => x.rid == rid),
-    val a = s.answers.filter(x => x.rid == rid).getOnlyElement()
-    val st0 = { ...s, answers: s.answers.exclude(Set(a)), deciding: s.deciding.exclude(Set(a.id)) }
-    val live = a.inst == s.br.inst
-    val elsewhere = s.br.ctl.chosen and s.br.ctl.boundId != a.id
+    s.answers.exists(x => x.req.rid == rid),
+    val a = s.answers.filter(x => x.req.rid == rid).getOnlyElement()
+    val r = a.req
+    val st0 = { ...s, answers: s.answers.exclude(Set(a)), deciding: s.deciding.exclude(Set(r.id)) }
+    val live = r.inst == s.br.inst
+    val current = live and ownsReviewResponse(s.br.ctl, r.key, r.rev)
+    // ghost, read without the controller: the decided card is still the one on view, at the same revision.
+    val owned = live and s.br.sel == r.id and keyOf(s.mirror, r.id) == r.key
     val st1 =
-      if (not(a.ok)) st0
-      else if (live)
-        val st2 = { ...st0, br: commitB(st0.br, settle(st0.br.ctl, a.id)) }
-        if (a.kind == "reroll") st2 else afterDecision(st2, st2.br.ctl, st2.br.pending, st2.br.sel, a.id, true)
-      else if (a.kind == "reroll") st0
-      else afterDecision(st0, s.old.ctl, s.old.pending, s.old.sel, a.id, false)
+      if (not(a.ok and current)) st0
+      else
+        val st2 = { ...st0, br: saveB(st0.br, stepSettle(st0.br.ctl, r.key, r.rev)) }
+        if (r.kind == "reroll") st2
+        else
+          val pend = st2.br.pending
+          val i = indexOf(pend, st2.br.sel)
+          val n = if (i >= 0 and i + 1 < pend.length()) pend[i + 1] else if (i >= 1) pend[i - 1] else 0
+          val st3 = if (n != 0) selectB(st2, n) else { ...st2, br: { ...st2.br, selHeld: 0 } }
+          { ...st3, moves: st3.moves.union(Set({ rid: r.rid, owned: owned })) }
     s' = render({ ...st1,
-      lateElsewhere: if (a.ok and live and elsewhere) st1.lateElsewhere + 1 else st1.lateElsewhere,
+      lateElsewhere: if (a.ok and live and not(current)) st1.lateElsewhere + 1 else st1.lateElsewhere,
       oldAnswers: if (a.ok and not(live)) st1.oldAnswers + 1 else st1.oldAnswers }),
   }
 
-  // The queue keyboard handler (capture phase). It filters keys as onKey does, then calls press().
+  // The queue keyboard handler (capture phase). The intended handler ignores a key-repeat event.
+  // keyPressCode is the code of review.tsx onKey, which reads no KeyboardEvent.repeat (REVIEW-KEYREPEAT).
   action keyPress = {
     nondet key = Set("a", "r", "e", "s", "digit", "esc").oneOf()
     nondet digit = Set(1, 2, 3).oneOf()
     nondet repeat = Set(true, false).oneOf()
     keyPressOf(key, digit, repeat)
   }
-  action keyPressOf(key: str, digit: int, repeat: bool): bool = {
+  action keyPressCode = {
+    nondet key = Set("a", "r", "e", "s", "digit", "esc").oneOf()
+    nondet digit = Set(1, 2, 3).oneOf()
+    nondet repeat = Set(true, false).oneOf()
+    keyPressCodeOf(key, digit, repeat)
+  }
+  action keyPressOf(key: str, digit: int, repeat: bool): bool = keyPressBy(false, key, digit, repeat)
+  action keyPressCodeOf(key: str, digit: int, repeat: bool): bool = keyPressBy(true, key, digit, repeat)
+  action keyPressBy(code: bool, key: str, digit: int, repeat: bool): bool = {
     val b = s.br
     val o = b.sel
-    val mode = b.ctl.mode
+    val c = b.ctl
+    val st = { ...s, repeats: if (repeat) s.repeats + 1 else s.repeats }
+    val swaps = if (o == 0) 0 else s.mirror.get(o).parts.length()
     all {
-      o != 0,
-      if (key == "esc") mode != "idle"
-      else if (key == "digit") (mode == "reject" and digit <= 8) or (mode == "reroll" and digit <= s.mirror.get(o).parts.length())
-      else CAN_ACT,
-      s' = render(doPress(s, o, key, digit, repeat)),
+      if (key == "esc") c.mode != "IdleReview" else o != 0,
+      s' = render(
+        if (repeat and not(code)) st
+        else if (key == "esc") { ...st, br: saveB(b, stepMode(c, "IdleReview", false)) }
+        else if (key == "a") (if (CAN_ACT and not(blockedOf(s, o))) act(st, o, "approve", repeat) else st)
+        else if (key == "r") { ...st, br: saveB(b, stepMode(c, "RejectReview", false)) }
+        else if (key == "s") (if (CAN_ACT and swaps >= 1) { ...st, br: saveB(b, stepMode(c, "RerollReview", false)) } else st)
+        else if (key == "e") { ...st, br: saveB({ ...b, drafts: { key: c.cardKey, changed: false } }, stepMode(c, "EditReview", false)) }
+        else if (c.mode == "RejectReview")
+          if (digit > REASONS) st
+          else if (digit == REASONS and b.note == NOKEY) { ...st, br: saveB(b, stepNote(c)) }
+          else act(st, o, "reject", repeat)
+        else if (c.mode == "RerollReview")
+          if (digit > swaps) st else act(st, o, "reroll", repeat)
+        else st),
     }
   }
 
   // j, k or a click on a card head: select(o).
   action selectCard = { nondet n = ITEMS.filter(i => has(s.br.pending, i)).oneOf() selectCardOf(n) }
-  action selectCardOf(n: int): bool = {
-    all { has(s.br.pending, n), s' = render({ ...selectB(s, n), choice: n }) }
-  }
+  action selectCardOf(n: int): bool = all { has(s.br.pending, n), s' = render(selectB(s, n)) }
 
   // A focus link from the map, the pipeline or a search result.
   action focusLink = { nondet n = ITEMS.filter(i => s.mirror.get(i).known).oneOf() focusLinkOf(n) }
-  action focusLinkOf(n: int): bool = {
-    all { s.mirror.get(n).known, s' = render({ ...s, focus: n, choice: if (has(s.br.pending, n)) n else s.choice }) }
-  }
+  action focusLinkOf(n: int): bool = all { s.mirror.get(n).known, s' = render({ ...s, focus: n }) }
 
-  // Buttons on the selected card. click(): the click chooses this card, then press().
+  // Buttons on the selected card (only the selected card shows its body). Approve is disabled when blocked.
   action clickButton = {
-    nondet key = Set("a", "digit").oneOf()
+    nondet key = Set("approve", "reject", "reroll").oneOf()
     nondet digit = Set(1, 2, 3).oneOf()
     clickButtonOf(key, digit)
   }
   action clickButtonOf(key: str, digit: int): bool = {
     val o = s.br.sel
-    val mode = s.br.ctl.mode
+    val c = s.br.ctl
     all {
       o != 0, CAN_ACT,
-      if (key == "a") not(blockedOf(s, o))   // the Approve button is disabled when blocked
-      else (mode == "reject" and digit <= REASONS) or (mode == "reroll" and digit <= s.mirror.get(o).parts.length()),
-      s' = render(doPress({ ...s, br: commitB(s.br, choose(s.br.ctl, o)), choice: o }, o, key, digit, false)),
+      if (key == "approve") not(blockedOf(s, o))
+      else if (key == "reject") c.mode == "RejectReview" and digit <= REASONS
+      else c.mode == "RerollReview" and digit <= s.mirror.get(o).parts.length(),
+      s' = render(
+        if (key == "reject" and digit == REASONS and s.br.note == NOKEY) { ...s, br: saveB(s.br, stepNote(c)) }
+        else act(s, o, key, false)),
     }
   }
 
-  // The Edit, Re-roll and Reject buttons: toggle().
+  // The Edit, Re-roll and Reject buttons: toggle(), which loads the current texts when it opens the editor.
   action clickToggle = {
-    nondet m = Set("edit", "reroll", "reject").oneOf()
-    val o = s.br.sel
+    nondet m = Set("EditReview", "RerollReview", "RejectReview").oneOf()
+    val b = s.br
+    val nxt = stepMode(b.ctl, m, true)
     all {
-      o != 0, CAN_ACT,
-      s' = render({ ...s, br: { ...applyStepB(s.br, o, toggleMode(s.br.ctl, o, m)), awaiting: false }, choice: o }),
+      b.sel != 0, CAN_ACT,
+      s' = render({ ...s, br: saveB(if (nxt.mode == "EditReview") { ...b, drafts: { key: b.ctl.cardKey, changed: false } } else b, nxt) }),
     }
   }
 
   // Typing in the editor (only shown in edit mode on the selected card) or in the note field.
   action typeDraft = all {
-    s.br.sel != 0, s.br.ctl.mode == "edit", s.br.ctl.boundId == s.br.sel,
+    s.br.sel != 0, s.br.ctl.mode == "EditReview", s.br.drafts.key == s.br.ctl.cardKey,
     s' = { ...s, br: { ...s.br, drafts: { ...s.br.drafts, changed: true } } },
   }
-  action typeNote = all { s.br.sel != 0, s' = { ...s, br: { ...s.br, note: s.br.sel } } }
+  action typeNote = all { s.br.sel != 0, s' = { ...s, br: { ...s.br, note: s.br.ctl.cardKey } } }
 
-  // The drawer closes and opens again: the queue unmounts and mounts. useReviewCtl(initial) marks the
-  // first card as chosen. `deciding` and `focus` live in the store and stay.
+  // The drawer closes and opens again: the queue unmounts (mounted = false) and mounts with the initial
+  // controller and no held selection. `deciding` and `focus` live in the store and stay.
   action remount = all {
     s.br.inst < 2,
-    val pend = pendingOf(s.mirror)
-    val init = if (s.focus != 0 and has(pend, s.focus)) s.focus else if (pend.length() > 0) pend[0] else 0
     s' = render({ ...s,
-      old: { inst: s.br.inst, ctl: s.br.ctl, sel: s.br.sel, pending: s.br.pending },
-      br: { inst: s.br.inst + 1, ctl: { mode: "idle", boundId: init, draftsId: 0, chosen: init != 0 },
-            drafts: { from: 0, changed: false }, note: 0, awaiting: false, selHeld: 0, sel: 0, pending: [] },
-      choice: init }),
+      br: { inst: s.br.inst + 1, ctl: INITIAL, drafts: NODRAFT, note: NOKEY, selHeld: 0, sel: 0, pending: [] } }),
   }
 
   // ---------------------------------------------------------------- shell actions (admins)
-  // A press on the matching switch: flip() decides; the shell sends only what it returned.
+  // The first press asks (pressMatchingSwitch); the confirm press (confirmMatchingSwitch) sends
+  // `on: !cfg`, where cfg is the config that the page held at the first press.
   action adminPress = { nondet a = ADMINS.oneOf() adminPressOf(a) }
   action adminPressOf(a: int): bool = {
     val ad = s.admins.get(a)
-    val step = flip(ad.pending, ad.cfg)
-    // ghost: the label read on the first press ("Turn off" when the page shows on).
-    val asked = if (not(ad.pending.active)) not(ad.cfg) else ad.asked
-    val ad2 = { ...ad, pending: step.pending, armedAt: if (step.pending.active) s.now else ad.armedAt, asked: asked }
-    val m: MReq = { mid: s.nextMid, admin: a, on: step.on, asked: asked }
-    s' = { ...s,
-      admins: s.admins.set(a, ad2),
-      mflight: if (step.send) s.mflight.union(Set(m)) else s.mflight,
-      msent: if (step.send) s.msent.union(Set(m)) else s.msent,
-      nextMid: if (step.send) s.nextMid + 1 else s.nextMid,
-      raceSkips: if (ad.pending.active and not(step.send)) s.raceSkips + 1 else s.raceSkips }
+    val m: MReq = { mid: s.nextMid, admin: a, on: not(ad.cfg), asked: ad.asked }
+    if (not(ad.asking))
+      s' = { ...s, admins: s.admins.set(a, { ...ad, asking: true, armedAt: s.now, asked: not(ad.cfg) }) }
+    else
+      s' = { ...s,
+        admins: s.admins.set(a, { ...ad, asking: false }),
+        mflight: s.mflight.union(Set(m)), msent: s.msent.union(Set(m)), nextMid: s.nextMid + 1 }
   }
-  // The 4 s timer (or an app switch) clears the first press.
+  // The 4 s timer ends the confirmation (endConfirmation).
   action adminTimeout = {
     nondet a = ADMINS.oneOf()
     val ad = s.admins.get(a)
-    all { ad.pending.active, s.now - ad.armedAt >= ARM_T,
-          s' = { ...s, admins: s.admins.set(a, { ...ad, pending: { active: false, target: false } }) } }
+    all { ad.asking, s.now > ad.armedAt, s' = { ...s, admins: s.admins.set(a, { ...ad, asking: false }) } }
   }
-  // useFetch reloads the config: the page now shows the server value.
+  // useFetch reloads the config: the page shows the server value, and the old ask is dropped (edit.of !== c).
   action adminReload = { nondet a = ADMINS.oneOf() adminReloadOf(a) }
-  action adminReloadOf(a: int): bool = s' = { ...s, admins: s.admins.set(a, { ...s.admins.get(a), cfg: s.matchingOn }) }
+  action adminReloadOf(a: int): bool = {
+    val ad = s.admins.get(a)
+    s' = { ...s, admins: s.admins.set(a, { ...ad, cfg: s.matchingOn, asking: false }),
+                 raceDrops: if (ad.asking) s.raceDrops + 1 else s.raceDrops }
+  }
   // The server applies one switch command, in any order.
   action serverMatching = { nondet m = s.mflight.oneOf() serverMatchingOf(m.mid) }
   action serverMatchingOf(mid: int): bool = all {
@@ -563,84 +618,128 @@ module review_desk {
     s' = { ...s, matchingOn: m.on, mflight: s.mflight.exclude(Set(m)) },
   }
 
+  // ---------------------------------------------------------------- the teen stop (server, POST /teen-intros)
+  // spec/teenIntroSwitch.md: teen introductions are on from the start. One admin or safety staff member stops
+  // them: every item with a minor in review (awaiting the judge or held) expires unsent, and every approved item
+  // with a minor that is not revealed closes (teenSweep, teen_intros_off). After the reveal the model has no
+  // further step. One admin turns them on again (the key is deleted).
+  // Each step writes one audit row. Abstraction: the model takes a stop only while on and a resume only while
+  // stopped, so that the audit list stays short.
+  action teenStop(a: int): bool = all {
+    ADMINS.union(SAFETY).contains(a), not(s.teenStopped),
+    s' = { ...s, teenStopped: true, teenAudit: s.teenAudit.append({ by: a, on: false }),
+           srv: ITEMS.mapBy(i => if (reviewOpen(s.srv.get(i)) and hasMinor(s.srv.get(i).parts))
+                                   { ...s.srv.get(i), phase: "Decided", decision: "expired" }
+                                 else if (s.srv.get(i).decision == "approve" and hasMinor(s.srv.get(i).parts) and not(s.srv.get(i).revealed))
+                                   { ...s.srv.get(i), phase: "Stopped", decision: "stopped" }
+                                 else s.srv.get(i)) },
+  }
+  action teenResume(a: int): bool = all {
+    ADMINS.contains(a), s.teenStopped,
+    s' = { ...s, teenStopped: false, teenAudit: s.teenAudit.append({ by: a, on: true }) },
+  }
+  action teenStep = {
+    nondet a = STAFF.oneOf()
+    any { teenStop(a), teenResume(a) }
+  }
+
   action step = any {
-    tick, pageClockSync, arrive, serverExpire, otherReviewer, push, pushMatching, serverApply,
+    tick, arrive, serverExpire, judge, send, stopApproved, otherReviewer, push, pushMatching, serverApply,
     deliver, keyPress, selectCard, focusLink, clickButton, clickToggle, typeDraft, typeNote, remount,
-    adminPress, adminTimeout, adminReload, serverMatching,
+    adminPress, adminTimeout, adminReload, serverMatching, teenStep,
   }
 
   // ---------------------------------------------------------------- invariants
-  // Rule: logic/review.ts, the controller rule ctlOk. LemmaScript: every step function ensures
-  // ctlOk(\result) (rebind, choose, leaveMode, keyStep, toggleMode, settle).
-  val ctlOkHolds = ctlOk(s.br.ctl)
+  // spec/staffReview.md alwaysRequiredNoteBelongsToRejection (the generated `inv`).
+  val requiredNoteBelongsToRejection = alwaysRequiredNoteBelongsToRejection(s.br.ctl)
 
-  // Rule: AGENTS.md "Every proactive proposal ... must go through human review"; slice report
-  // I1 (bugs 1, 16). LemmaScript: keyStep, ensures `cmd.tag === "approve" ==> cmd.id === selId &&
-  // ctl0.boundId === selId && ctl0.chosen` (and the same for reject and reroll). Here: each decision
-  // goes to the card on view, and the controller was bound to it and chosen before the press.
-  val decisionOnlyToChosenItem = s.sent.forall(r => r.id == r.sel and r.boundBefore == r.id and r.chosenBefore)
+  // The controller is bound to the card on view, and its drafts and note belong to that binding.
+  // spec/staffReview.md "A changed card or revision starts a fresh draft".
+  val ctlBoundToSelection = and {
+    s.br.ctl.cardKey == keyOf(s.mirror, s.br.sel),
+    s.br.drafts.key == NOKEY or s.br.drafts.key == s.br.ctl.cardKey,
+    s.br.note == NOKEY or s.br.note == s.br.ctl.cardKey,
+  }
 
-  // Rule: as above, judged by a ghost that does not read the core: the card that the reviewer last
-  // chose (j, k, a click, a focus link, a key press, the mount default, or the move after their own
-  // decision). Shell: afterDecision and select in review.tsx. LemmaScript: moveOnAfter, ensures
-  // `!mounted ==> !\result` and `ctl.chosen && ctl.boundId !== id ==> !\result`. The remount variant
-  // of bug 3 is fixed: an answer for an unmounted queue no longer calls store.focus.
-  val decisionOnlyToReviewerChoice = s.sent.forall(r => r.id == r.choiceBefore)
+  // Each staff decision goes to the card on view, with the key and revision that the controller held for it.
+  val decisionOnlyToVisibleCard = s.sent.forall(r => r.id == r.sel and r.key == { id: r.id, ver: r.version })
 
-  // Rule: slice report I2 (bug 2), "a person reviews every proposal". LemmaScript: keyStep, ensures
-  // `p.repeat ==> \result.cmd.tag === "nothing"`.
-  val repeatNeverDecides = s.sent.forall(r => not(r.repeat))
+  // spec/staffReview.md "An old response cannot clear or move a newer selection": an answer moves the
+  // selection only when it belongs to the mounted queue and the card on view at the same revision.
+  val oldResponseNeverMovesSelection = s.moves.forall(m => m.owned)
 
-  // Rule: docs/admin-console.md 3.2 "an expired proposal is never sent late"; slice report I4 (bug 4,
-  // page side). LemmaScript: approveBlock, ensures `\result === "idle" <==> (... && now < deadline &&
-  // ...)`; keyStep, ensures `cmd.tag === "approve" ==> ... && !p.blocked`. The page sends an approve
-  // only when its own clock is before the deadline that it shows, and approval is not blocked.
-  val approveOnlyBeforeDeadline =
-    s.sent.forall(r => (r.kind == "approve" or r.kind == "edit") implies (not(r.blocked) and r.pageNow < r.pageDeadline))
+  // The page sends an approve only when its own approveBlock is idle (the Approve button is disabled and
+  // the a key is ignored otherwise).
+  val approveOnlyWhenUnblocked = s.sent.forall(r => (r.kind == "approve" or r.kind == "edit") implies not(r.blocked))
 
-  // Rule: the same rule, on the server. Bug 4 is fixed: network.ts reviewBlock refuses a decision when
-  // reviewLate(now, deadline), so an approve after the deadline is refused even before the tick expires
-  // the item, and even when the page clock lags (G4). LemmaScript: transitions.ts reviewLate,
-  // `ensures \result <==> now >= deadline`; quint/opportunity.qnt decidedBeforeDeadline.
+  // spec/reviewDeadline.md "An opportunity expires at its review deadline": the server approves only
+  // before the deadline (decide and reviewBlock, reviewLate).
   val serverApproveBeforeDeadline =
     ITEMS.forall(i => s.srv.get(i).decision == "approve" and s.srv.get(i).approvedVersion >= 0
                       implies s.srv.get(i).decidedAt < s.srv.get(i).deadline)
 
-  // Rule: slice report J5 (bug 11): the confirm press sends the direction the first press asked for.
-  // LemmaScript: flip, ensures `\result.send ==> p.active && \result.on === p.target && \result.on !== current`.
-  val confirmSendsAskedDirection = s.msent.forall(m => m.on == m.asked)
-
-  // Rule: slice report bug 1 (A's plan sent to B), S4. LemmaScript: ctlOk (drafts belong to the bound
-  // item), keyStep ensures `cmd.withEdits === (ctl0.draftsId === selId)` and `\result.ctl.draftsId ===
-  // selId && ctl0.draftsId !== selId ==> p.key === "e" && ...`; rebind ensures the drafts never follow
-  // the selection. Edits and the note go only to the item they were written for.
-  val draftsBoundToItem = and {
-    s.sent.forall(r => (r.kind == "edit" implies r.editsFrom == r.id) and (r.noteFrom == 0 or r.noteFrom == r.id)),
-    s.br.drafts.from == s.br.ctl.draftsId,
-  }
-
-  // Rule: slice report I6 (bug 5): an approve after an edit sends the edit. LemmaScript: keyStep,
-  // ensures `cmd.withEdits === (ctl0.draftsId === selId)`.
-  val approveCarriesOwnDrafts =
-    s.sent.forall(r => (r.kind == "approve" or r.kind == "edit") implies
-      ((r.kind == "edit") iff (r.draftsBefore.from == r.id and r.draftsBefore.changed)))
-
-  // Rule: slice report gap G6 (fixed). A decision carries the review revision that the reviewer saw,
-  // and the server refuses another one, so an approve never lands after another reviewer re-rolled the
-  // item to people the reviewer did not see. Spec: reviewDeadline.md, "A decision applies only to the
-  // revision the reviewer saw" (reviewRevisionCurrent, lawSeenReviewRevisionIsCurrent, lawRerolledReviewIsStale).
+  // spec/reviewDeadline.md "A decision applies only to the revision the reviewer saw".
   val approveMatchesSeenPeople =
     ITEMS.forall(i => s.srv.get(i).decision == "approve" and s.srv.get(i).approvedVersion >= 0
                       implies s.srv.get(i).approvedVersion == s.srv.get(i).version)
 
+  // The confirm press sends the direction the first press asked for.
+  val confirmSendsAskedDirection = s.msent.forall(m => m.on == m.asked)
+
+  // Edits and the note go only to the card key (card and revision) they were written for.
+  val draftsBoundToItem =
+    s.sent.forall(r => (r.kind == "edit" implies r.editsFrom == r.key) and (r.noteFrom == NOKEY or r.noteFrom == r.key))
+
+  // An approve in edit mode with changed drafts sends the edit; otherwise a plain approve.
+  val approveCarriesOwnDrafts =
+    s.sent.forall(r => (r.kind == "approve" or r.kind == "edit") implies
+      ((r.kind == "edit") iff (r.modeBefore == "EditReview" and r.draftsBefore.key == r.key and r.draftsBefore.changed)))
+
+  // Owner decision 2026-11-22 (spec/friendIntroAge.md teenFriendAgeRule): an approved roster with a minor was
+  // approved while teen introductions were on, the roster passes the rule, and every person in it is teen ready
+  // (an exact birth date and no doubt).
+  val teenFriendAgeRule = ITEMS.forall(i => (s.srv.get(i).decision == "approve" and hasMinor(s.srv.get(i).parts)) implies
+    (s.srv.get(i).teenOnAtApproval and TEEN_PAIRS.contains(s.srv.get(i).parts)
+      and s.srv.get(i).parts.foldl(true, (b, p) => b and teenReadyOf(p))))
+  // While teen introductions are stopped no item with a minor is approved, no item with a minor is in review, and
+  // no approved item with a minor waits for its reveal: the stop closes each one, and the proposal path and the
+  // re-roll add none while they are stopped.
+  val teenSwitchOffNoMinor = and {
+    ITEMS.forall(i => (s.srv.get(i).decision == "approve" and hasMinor(s.srv.get(i).parts)) implies s.srv.get(i).teenOnAtApproval),
+    s.teenStopped implies ITEMS.forall(i => not(reviewOpen(s.srv.get(i)) and hasMinor(s.srv.get(i).parts))),
+    s.teenStopped implies ITEMS.forall(i => not(s.srv.get(i).decision == "approve" and hasMinor(s.srv.get(i).parts) and not(s.srv.get(i).revealed))),
+  }
+  // spec/teenIntroSwitch.md lawTeenRosterIsJudgedStrictly: the judge reads a roster with a minor with the strict rubric.
+  val teenRosterIsJudgedStrictly = ITEMS.forall(i =>
+    (s.srv.get(i).approver == "judge" and hasMinor(s.srv.get(i).parts)) implies s.srv.get(i).rubricMinor)
+  // spec/automatedReview.md stepHeldItemNeedsStaff: a revision the judge held is approved only by staff, and staff
+  // approve only a revision the judge held (canStaffDecide).
+  pure def heldNeedsStaffOf(it: SrvItem): bool =
+    (it.approvedVersion >= 0 and it.approver != "none") implies ((it.heldVersion == it.approvedVersion) iff (it.approver == "staff"))
+  val heldItemNeedsStaff = ITEMS.forall(i => heldNeedsStaffOf(s.srv.get(i)))
+  // spec/automatedReview.md alwaysApprovalNamesApprover and contactApproved: a probe or a reveal goes out only
+  // after an approval that names its approver; a stopped item sends no reveal after the stop.
+  pure def contactHasApproverOf(it: SrvItem): bool = and {
+    (it.contacted or it.revealed) implies (it.approver != "none" and it.approvedVersion >= 0),
+    (it.decision == "approve" or it.decision == "stopped") iff (it.approver != "none" and it.approvedVersion >= 0),
+    it.revealed implies it.contacted,
+  }
+  val noContactWithoutApprover = ITEMS.forall(i => contactHasApproverOf(s.srv.get(i)))
+  // Only an admin resumes; an admin or a safety staff member stops.
+  val teenAuditByStaffRole = s.teenAudit.foldl(true, (b, r) => b and (if (r.on) ADMINS.contains(r.by) else ADMINS.union(SAFETY).contains(r.by)))
+
   val safety = and {
-    ctlOkHolds, decisionOnlyToChosenItem, decisionOnlyToReviewerChoice, repeatNeverDecides, approveOnlyBeforeDeadline,
-    serverApproveBeforeDeadline, confirmSendsAskedDirection, draftsBoundToItem, approveCarriesOwnDrafts,
-    approveMatchesSeenPeople,
+    requiredNoteBelongsToRejection, ctlBoundToSelection, decisionOnlyToVisibleCard, oldResponseNeverMovesSelection,
+    approveOnlyWhenUnblocked, serverApproveBeforeDeadline, approveMatchesSeenPeople, confirmSendsAskedDirection,
+    draftsBoundToItem, approveCarriesOwnDrafts, repeatNeverDecides,
+    teenFriendAgeRule, teenSwitchOffNoMinor, teenRosterIsJudgedStrictly, teenAuditByStaffRole,
+    heldItemNeedsStaff, noContactWithoutApprover,
   }
 
+  // A key-repeat event never sends a decision. keyPressCode (review.tsx onKey) breaks it: heldKeyDecidesTest.
+  val repeatNeverDecides = s.sent.forall(r => not(r.repeat))
+
   // ---------------------------------------------------------------- reachability witnesses
-  // Each must be VIOLATED by `quint run`: the state is reachable, so a pass above is not vacuous.
   val witness_approveSent = not(s.sent.exists(r => r.kind == "approve"))
   val witness_editSent = not(s.sent.exists(r => r.kind == "edit"))
   val witness_rejectSent = not(s.sent.exists(r => r.kind == "reject"))
@@ -648,73 +747,184 @@ module review_desk {
   val witness_repeatPressed = s.repeats == 0
   val witness_lateAnswerElsewhere = s.lateElsewhere == 0
   val witness_oldQueueAnswer = s.oldAnswers == 0
+  val witness_answerMoved = s.moves.size() == 0
   val witness_itemExpired = not(ITEMS.exists(i => s.srv.get(i).decision == "expired"))
   val witness_flipSent = s.msent.size() == 0
-  val witness_flipRaceSkipped = s.raceSkips == 0
-  val witness_awaitingOther = not(s.br.awaiting)
+  val witness_flipRaceDropped = s.raceDrops == 0
+  val witness_noteNeeded = not(s.br.ctl.noteNeeded)
+  val witness_teenApproved = not(ITEMS.exists(i => s.srv.get(i).decision == "approve" and hasMinor(s.srv.get(i).parts)))
+  val witness_judgeApproved = not(ITEMS.exists(i => s.srv.get(i).approver == "judge"))
+  val witness_staffApprovedHeld = not(ITEMS.exists(i => s.srv.get(i).approver == "staff"))
+  val witness_heldExpired = not(ITEMS.exists(i => s.srv.get(i).heldVersion >= 0 and s.srv.get(i).decision == "expired"))
+  val witness_stopped = not(ITEMS.exists(i => s.srv.get(i).decision == "stopped"))
 
   // ---------------------------------------------------------------- replayed traces
-  // Three items with the same deadline, so the queue order is 1, 2, 3.
+  // Three items with the same deadline, each held for staff by the judge, so the queue order is 1, 2, 3.
   action threeItems = initWith(true)
     .then(arriveItem(1, 4, [1, 2])).then(arriveItem(2, 4, [1, 2])).then(arriveItem(3, 4, [2, 1]))
+    .then(judgeHoldOf(1)).then(judgeHoldOf(2)).then(judgeHoldOf(3))
     .then(pushItem(1)).then(pushItem(2)).then(pushItem(3))
 
-  // Bug 16 is fixed: an item that nobody chose is never approved by the first press.
-  run firstPressOnlyChoosesTest = threeItems
+  // The head card is bound on render; the first press on it approves it (the page has no "chosen" step).
+  run firstPressApprovesHeadTest = threeItems
     .then(keyPressOf("a", 0, false))
-    .then(all { assert(s.sent.size() == 0 and s.br.ctl.chosen and s.br.ctl.boundId == 1), s' = s })
+    .then(all { assert(s.br.ctl.cardKey == { id: 1, ver: 0 } and s.sent.exists(r => r.id == 1 and r.kind == "approve")), s' = s })
 
-  // Bug 2 is fixed: a held key (repeat events) decides nothing.
-  run heldKeyTest = threeItems.then(selectCardOf(1))
-    .then(keyPressOf("a", 0, true)).then(keyPressOf("a", 0, true))
-    .then(all { assert(s.sent.size() == 0), s' = s })
-
-  // Bug 1 is fixed: drafts typed on item 1 do not go with a decision on item 2.
+  // Drafts typed on item 1 do not go with a decision on item 2.
   run draftsStayTest = threeItems.then(selectCardOf(1))
     .then(keyPressOf("e", 0, false)).then(typeDraft)
     .then(focusLinkOf(2))
     .then(keyPressOf("a", 0, false))
-    .then(all { assert(s.sent.forall(r => r.kind == "approve" and r.id == 2 and r.editsFrom == 0)
-                       and s.br.drafts.from == 0), s' = s })
+    .then(all { assert(s.sent.forall(r => r.kind == "approve" and r.id == 2 and r.editsFrom == NOKEY)
+                       and s.br.drafts == NODRAFT), s' = s })
 
-  // Bug 16 and bug 1 are fixed: the reviewer chose 1 and opened the editor. Another reviewer rejects
-  // 1 and the push removes it. The selection moves by itself to 2, with no mode and no drafts; the
-  // next press only chooses 2.
-  run selectionMovesUnchosenTest = threeItems.then(selectCardOf(1))
+  // A re-roll by another reviewer changes the revision of the card on view: the item goes back to the judge,
+  // leaves the queue, and comes back at the new revision when the judge holds it again. The draft starts again.
+  run rerollClearsDraftTest = threeItems.then(selectCardOf(1))
     .then(keyPressOf("e", 0, false)).then(typeDraft)
-    .then(otherReviewerOf(1, "reject", [1, 2])).then(pushItem(1))
-    .then(all { assert(s.br.sel == 2 and not(s.br.ctl.chosen) and s.br.ctl.mode == "idle" and s.br.drafts.from == 0), s' = s })
-    .then(keyPressOf("a", 0, false))
-    .then(all { assert(s.sent.size() == 0 and s.br.ctl.chosen), s' = s })
+    .then(otherReviewerOf(1, "reroll", [2, 1], 4)).then(pushItem(1))
+    .then(all { assert(s.br.sel == 2 and s.srv.get(1).phase == "AwaitingJudge"), s' = s })
+    .then(judgeHoldOf(1)).then(pushItem(1))
+    .then(all { assert(s.br.ctl.cardKey == { id: 1, ver: 1 } and s.br.ctl.mode == "IdleReview" and s.br.drafts == NODRAFT), s' = s })
 
-  // Bug 3 is fixed in the live queue: approve 1, choose 3, the late answer for 1 leaves the card on 3.
+  // The late answer for 1 arrives after the reviewer selected 3: the card stays on 3.
   run lateAnswerStaysTest = threeItems.then(selectCardOf(1))
     .then(keyPressOf("a", 0, false))
     .then(selectCardOf(3))
     .then(serverApplyReq(1, false, true, false, [1, 2]))
     .then(deliverAns(1))
-    .then(all { assert(s.br.sel == 3 and s.br.ctl.boundId == 3 and s.br.ctl.chosen and s.lateElsewhere == 1), s' = s })
+    .then(all { assert(s.br.sel == 3 and s.lateElsewhere == 1 and s.moves.size() == 0), s' = s })
 
-  // Bug 11 is fixed: admin 1 presses "Turn off", admin 2 turns it off, admin 1 reloads and confirms.
-  // Nothing is sent: the switch is already where admin 1 asked.
-  run flipRaceTest = threeItems
-    .then(adminPressOf(1)).then(adminPressOf(2)).then(adminPressOf(2))
-    .then(serverMatchingOf(1)).then(adminReloadOf(1)).then(adminPressOf(1))
-    .then(all { assert(not(s.matchingOn) and s.msent.size() == 1 and s.raceSkips == 1), s' = s })
+  // The owned answer for 1 moves the selection to its neighbour 2.
+  run ownedAnswerMovesTest = threeItems.then(selectCardOf(1))
+    .then(keyPressOf("a", 0, false))
+    .then(serverApplyReq(1, false, true, false, [1, 2]))
+    .then(deliverAns(1))
+    .then(all { assert(s.br.sel == 2 and s.focus == 2 and s.moves == Set({ rid: 1, owned: true })), s' = s })
 
-  // The remount variant of bug 3 is fixed (found by this model): approve 1, close and open the
-  // drawer, choose 3. The late answer for 1 reaches the old queue. Its afterDecision does nothing
-  // (moveOnAfter: not mounted), so the card stays on 3 and the next press approves 3.
-  // Before the fix, the old queue called store.focus(2) and the next press approved 2.
-  run remountMovesChoiceTest = threeItems.then(selectCardOf(1))
+  // An answer for an unmounted queue does nothing: the card stays on 3 after the remount.
+  run remountKeepsChoiceTest = threeItems.then(selectCardOf(1))
     .then(keyPressOf("a", 0, false))
     .then(remount)
     .then(selectCardOf(3))
     .then(serverApplyReq(1, false, true, false, [1, 2]))
     .then(deliverAns(1))
-    .then(all { assert(s.br.sel == 3 and s.br.ctl.chosen and s.choice == 3 and s.oldAnswers == 1), s' = s })
+    .then(all { assert(s.br.sel == 3 and s.oldAnswers == 1 and s.moves.size() == 0), s' = s })
+
+  // A decision at the deadline is refused and the item expires at once.
+  run lateDecisionExpiresTest = threeItems.then(selectCardOf(1))
     .then(keyPressOf("a", 0, false))
-    .then(all { assert(decisionOnlyToReviewerChoice and decisionOnlyToChosenItem
-                       and s.sent.exists(r => r.id == 3 and r.kind == "approve")), s' = s })
+    .then(tick).then(tick).then(tick).then(tick)
+    .then(serverApplyReq(1, false, true, false, [1, 2]))
+    .then(all { assert(s.srv.get(1).decision == "expired" and s.answers.forall(a => not(a.ok))), s' = s })
+
+  // Admin 1 asks "Turn off", admin 2 turns it off, admin 1's config reloads: the ask is dropped and
+  // nothing more is sent.
+  run flipRaceTest = threeItems
+    .then(adminPressOf(1)).then(adminPressOf(2)).then(adminPressOf(2))
+    .then(serverMatchingOf(1)).then(adminReloadOf(1))
+    .then(all { assert(not(s.matchingOn) and s.msent.size() == 1 and s.raceDrops == 1 and not(s.admins.get(1).asking)), s' = s })
+
+  // Code (REVIEW-KEYREPEAT, open): hold the a key. The first keydown approves 1; the answer moves the
+  // selection to 2; the next repeat event approves 2, which the reviewer did not press for.
+  run heldKeyDecidesTest = threeItems
+    .then(keyPressOf("a", 0, false))
+    .then(serverApplyReq(1, false, true, false, [1, 2]))
+    .then(deliverAns(1))
+    .then(keyPressCodeOf("a", 0, true))
+    .then(all { assert(not(repeatNeverDecides) and s.sent.exists(r => r.id == 2 and r.repeat)), s' = s })
+
+  // Intended: the same held key sends only the first approve.
+  run heldKeyIgnoredTest = threeItems
+    .then(keyPressOf("a", 0, false))
+    .then(serverApplyReq(1, false, true, false, [1, 2]))
+    .then(deliverAns(1))
+    .then(keyPressOf("a", 0, true))
+    .then(all { assert(repeatNeverDecides and s.repeats == 1 and not(s.sent.exists(r => r.id == 2))), s' = s })
+
+  // Owner decisions 2026-11-22 (A2 to A5, D15 to D17). Teen introductions are on from the start; the judge
+  // approves a teen pair with the strict rubric and no staff member reads it.
+  action teenOnItem = initWith(true).then(arriveItem(1, 4, [5, 6]))
+  run teenJudgeApprovesTest = teenOnItem
+    .then(judgeApproveOf(1))
+    .then(all { assert(s.srv.get(1).decision == "approve" and s.srv.get(1).approver == "judge" and s.srv.get(1).rubricMinor and safety), s' = s })
+  // Staff cannot approve an item that waits for the judge (not_held_for_staff).
+  run staffApproveAwaitingTest = teenOnItem.then(otherReviewerOf(1, "approve", [5, 6], 4)).fail()
+  // Staff may reject an item that waits for the judge; a later judgment finds it decided.
+  run staffRejectAwaitingTest = teenOnItem
+    .then(otherReviewerOf(1, "reject", [5, 6], 4))
+    .then(all { assert(s.srv.get(1).decision == "reject" and safety), s' = s })
+  run judgeAfterRejectTest = teenOnItem.then(otherReviewerOf(1, "reject", [5, 6], 4)).then(judgeApproveOf(1)).fail()
+  // A held item needs a named staff member: none and the judge's own name are refused.
+  action heldTeenItem = teenOnItem.then(judgeHoldOf(1))
+  run heldNoReviewerTest = heldTeenItem.then(otherReviewerOf(1, "approve", [5, 6], NO_REVIEWER)).fail()
+  run heldJudgeNameTest = heldTeenItem.then(otherReviewerOf(1, "approve", [5, 6], JUDGE_REVIEWER)).fail()
+  // The judge does not decide a held item again; staff approve it.
+  run heldNeedsStaffTest = heldTeenItem.then(judgeApproveOf(1)).fail()
+  run heldStaffApprovesTest = heldTeenItem
+    .then(otherReviewerOf(1, "approve", [5, 6], 4))
+    .then(all { assert(s.srv.get(1).approver == "staff" and s.srv.get(1).heldVersion == 0 and safety), s' = s })
+  // A held item that nobody decides expires at its deadline, unsent.
+  run heldExpiresTest = heldTeenItem
+    .then(tick).then(tick).then(tick).then(tick).then(serverExpire)
+    .then(all { assert(s.srv.get(1).decision == "expired" and not(s.srv.get(1).contacted) and safety), s' = s })
+  // No judgment within the wait limit: the tick holds the item while matching is on, never while it is paused.
+  run judgeOverdueTest = teenOnItem.then(tick).then(judgeOverdueOf(1))
+    .then(all { assert(s.srv.get(1).phase == "HeldForStaff" and safety), s' = s })
+  run judgeOverduePausedTest = initWith(false).then(arriveItem(1, 4, [1, 2])).then(tick).then(judgeOverdueOf(1)).fail()
+  // A judgment for another revision changes nothing.
+  run judgeStaleTest = teenOnItem.then(judgeStaleOf(1, 1))
+    .then(all { assert(s.srv.get(1).phase == "AwaitingJudge" and safety), s' = s })
+  // The judge approves an adult pair.
+  run adultJudgeApprovesTest = initWith(true)
+    .then(arriveItem(1, 4, [1, 2]))
+    .then(judgeApproveOf(1))
+    .then(all { assert(s.srv.get(1).decision == "approve" and not(s.srv.get(1).rubricMinor) and safety), s' = s })
+  // A minor with an adult never passes: the judge's approval closes the item (review_invalidated).
+  run teenAdultPairTest = initWith(true)
+    .then(arriveItem(1, 4, [1, 5]))
+    .then(judgeApproveOf(1))
+    .then(all { assert(s.srv.get(1).decision == "invalidated" and safety), s' = s })
+  // A minor without an exact birth date is not teen ready: the pair is not approved.
+  run teenUnreadyTest = initWith(true)
+    .then(arriveItem(1, 4, [3, 5]))
+    .then(judgeApproveOf(1))
+    .then(all { assert(s.srv.get(1).decision == "invalidated" and safety), s' = s })
+  // Staff stop an approved item after its first probe and before its reveal; nothing more goes out.
+  run stopBeforeRevealTest = initWith(true)
+    .then(arriveItem(1, 4, [1, 2])).then(judgeApproveOf(1)).then(probeOf(1))
+    .then(stopApprovedOf(1, 4))
+    .then(all { assert(s.srv.get(1).decision == "stopped" and safety), s' = s })
+  run stoppedNoRevealTest = initWith(true)
+    .then(arriveItem(1, 4, [1, 2])).then(judgeApproveOf(1)).then(probeOf(1))
+    .then(stopApprovedOf(1, 4)).then(revealOf(1)).fail()
+  // After the reveal the item cannot be stopped (not_stoppable).
+  run revealedNotStoppableTest = initWith(true)
+    .then(arriveItem(1, 4, [1, 2])).then(judgeApproveOf(1)).then(probeOf(1)).then(revealOf(1))
+    .then(stopApprovedOf(1, 4)).fail()
+  // A stop with no reviewer is refused (reviewer_required).
+  run stopNoReviewerTest = initWith(true)
+    .then(arriveItem(1, 4, [1, 2])).then(judgeApproveOf(1)).then(probeOf(1))
+    .then(stopApprovedOf(1, NO_REVIEWER)).fail()
+  // The stop closes an approved teen item after its first probe: no reveal follows.
+  run teenStopClosesApprovedTest = teenOnItem
+    .then(judgeApproveOf(1)).then(probeOf(1)).then(teenStop(3))
+    .then(all { assert(s.srv.get(1).decision == "stopped" and safety), s' = s })
+  run teenStopNoRevealTest = teenOnItem
+    .then(judgeApproveOf(1)).then(probeOf(1)).then(teenStop(3)).then(revealOf(1)).fail()
+  // While teen introductions are stopped, a teen pair does not enter review.
+  run teenStoppedTest = initWith(true).then(teenStop(3)).then(arriveItem(1, 4, [5, 6])).fail()
+  // A reviewer without the admin or safety role cannot stop; a safety staff member cannot resume.
+  run teenStopNeedsRoleTest = initWith(true).then(teenStop(4)).fail()
+  run teenResumeNeedsAdminTest = initWith(true).then(teenStop(3)).then(teenResume(3)).fail()
+  // One admin resumes: a teen pair enters review again, and each step wrote one audit row.
+  run teenResumeTest = initWith(true)
+    .then(teenStop(3)).then(teenResume(1))
+    .then(arriveItem(1, 4, [5, 6]))
+    .then(all { assert(not(s.teenStopped) and s.teenAudit == [{ by: 3, on: false }, { by: 1, on: true }] and safety), s' = s })
+  // The stop expires the teen item that waits for the judge.
+  run teenStopExpiresTest = teenOnItem
+    .then(teenStop(3))
+    .then(all { assert(s.srv.get(1).decision == "expired" and not(reviewOpen(s.srv.get(1))) and safety), s' = s })
 }
 ```

@@ -11,11 +11,11 @@ import type { EntityTags, Membership } from "../../match/profile.ts";
 import type { GeneratorSpec } from "../../pack.ts";
 import type { Candidate } from "../../types.ts";
 import type { World } from "../../world.ts";
+import { cofounderFactsOf, cofounderFactTags, cofounderMustHavesFit } from "../network/cofounderFacts.ts";
 import { intentWant } from "../network/vectors.ts";
 import { jobOf } from "./profile.ts";
 import { isSeatId } from "./seats.ts";
 
-/** The Peon peer's explicit consent, projected by the app-scoped standing-intent store. */
 export function peonCofounderIntentOf(w: World, id: MemberId): Intent | undefined {
   const member = w.get(id);
   if (!member) return undefined;
@@ -39,14 +39,15 @@ export function peonCofounderMembership(w: World, id: MemberId): Membership | un
 
 export function peonCofounderPair(w: World, a: MemberId, b: MemberId): boolean {
   return peonCofounderMayPair(!!peonCofounderIntentOf(w, a), !!peonCofounderIntentOf(w, b),
-    w.get(a)?.m.homeCity === w.get(b)?.m.homeCity);
+    w.get(a)?.m.homeCity === w.get(b)?.m.homeCity)
+    && cofounderMustHavesFit(w, a, b, "peon");
 }
 
-/** The express goal describes what a peer seeks. It supplies no offer of skill. */
 export function peonCofounderTags(w: World, id: MemberId): EntityTags {
   const intent = peonCofounderIntentOf(w, id)!;
   const want = intentWant(w, intent);
-  const offers: string[] = [], seeks = want.seeks.filter(t => !want.pools.includes(t)), interests = [...want.interests];
+  const facts = cofounderFactTags(cofounderFactsOf(w, id, "peon"));
+  const offers: string[] = [...facts.offers], seeks = [...want.seeks.filter(t => !want.pools.includes(t)), ...facts.seeks], interests = [...want.interests];
   for (const f of w.get(id)!.match) {
     if (f.app !== "peon" || f.tags.some(t => t.toLowerCase().startsWith("peon:"))) continue;
     if (!standingFacetReadable(f.scope, f.provenance, f.confirmedByMember === true, f.sensitive !== undefined, f.inferred === true)) continue;
@@ -58,7 +59,6 @@ export function peonCofounderTags(w: World, id: MemberId): EntityTags {
   return { offers, seeks, interests };
 }
 
-/** The bounded lane search supplies one pair per two peers. Record both exact intents. */
 export const peonCofounderGenerator: GeneratorSpec = {
   name: "peon_cofounder",
   run({ w }) {

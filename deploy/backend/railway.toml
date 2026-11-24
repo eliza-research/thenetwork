@@ -9,7 +9,7 @@ dockerfilePath = "deploy/backend/Dockerfile"
 watchPatterns = ["packages/**", "deploy/backend/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "tsconfig.json"]
 
 [deploy]
-# The Dockerfile's CMD runs deploy/backend/server.ts; migrations run on boot under the advisory lock.
+startCommand = "node --import tsx deploy/backend/server.ts"
 healthcheckPath = "/healthz"
 # The first boot applies every migration before it listens.
 healthcheckTimeout = 120

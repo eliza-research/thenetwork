@@ -20,14 +20,14 @@ test.skipIf(!pgAvailable)("a queued profiling question reaches only the member w
   const secret = "synthetic-engine-question-delivery";
   const people = [{ name: "Alex", e164: "+12125550801" }, { name: "Drew", e164: "+12125550802" }];
   const calls: SendRequest[] = [];
-  const adapter = new BlooioAdapter({ app: app.id, from: "+12125550800", clock, liveGate: () => true, log: () => {}, provider: {
+  const adapter = new BlooioAdapter({ app: app.id, from: "+12125550800", clock, log: () => {}, provider: {
     kind: "sim", send: async request => {
       calls.push(request);
       return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent" };
     },
   } });
   const service = new NetworkService({ url, clock, log: () => {}, photoStorage: null, adapter, networks: [{ id: runtimeId }],
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret }, network: { plans: false, growth: false } });
+    env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret }, network: { plans: false, growth: false } });
   try {
     await service.start();
     const members: Spec[] = [];

@@ -6,7 +6,7 @@
 import { boundedHelperCanRank, needsSecondHomeHelper } from "../../../../core/src/generated/boundedHelp.ts";
 import { circleCoherent } from "../../../../core/src/generated/groupFormation.ts";
 import { welcomePairMayRank } from "../../../../core/src/generated/currentPairRestrictions.ts";
-import { laneLimits, laneOffered, type MatchLane } from "../../../../core/src/generated/matchLane.ts";
+import { laneLimits, laneOffered, teenFriendCategory, type MatchLane } from "../../../../core/src/generated/matchLane.ts";
 import { noPairValue } from "../../../../core/src/generated/pairValue.ts";
 import { directIntentKeepsHobby } from "../../../../core/src/generated/networkIntentLane.ts";
 import { recentRepeatSource, repeatEventMayAnchor, sameEncounterConsent } from "../../../../core/src/generated/repeatEncounter.ts";
@@ -132,7 +132,8 @@ function anchoredCandidate(w: World, pair: AnchoredPair, rest: Pick<MatchedField
   const { profile, partner, value, intent, offer, cofounderIntents } = pair;
   const a = profile.memberId, b = partner.memberId;
   // spec/networkIntentLane.md, "A direct introduction keeps its hobby purpose"
-  const hobby = directIntentKeepsHobby(rest.generator === "intent_to_capability", profile.lane === "Friend", intent.category === "hobby");
+  const hobby = directIntentKeepsHobby(rest.generator === "intent_to_capability", profile.lane === "Friend", intent.category === "hobby")
+    && (teenFriendCategory(w.pack.id, "hobby") || (!isMinor(w, a) && !isMinor(w, b)));
   const category = hobby ? "hobby" : laneCategory(profile.lane);
   return pairCandidate(w, profile, partner, value, {
     ...rest, category, roles: { [a]: roleOf(profile), [b]: roleOf(partner) }, format: "one_to_one",

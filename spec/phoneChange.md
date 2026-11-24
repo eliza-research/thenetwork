@@ -1,8 +1,8 @@
 # Change the phone on my account
 
-A member uses their current app session to request a code for a new number and then confirm the move. The API requires a fresh login to request a code. The OTP service verifies the new number. The storage transaction still owns the identity move, consent history, old sessions, pending messages, age floor, grants, and audit record.
+A member whose number changed tells their own agent. The agent sends the app's one-purpose phone-change link, `https://<domain>/phone`, and never asks for the new number or a code. A member who texts `CHANGE NUMBER` (or "change my number", "update my phone number") on the text line gets the same link in one short reply, on the site origin that the app's other member links use. The `/phone` page is one of the one-purpose pages that each site serves (owner decision 2026-11-22, D7). In the browser, the person signs in on the current number: with a platform code on an OTP site, or with a Cloud phone proof on a Cloud sign-in site. That fresh sign-in is the confirmation from the old number of [Story F25](product/stories.md#story-f25--keep-my-account-when-my-number-changes). The person then enters the new number and the platform code that the OTP service sends to it. The OTP service verifies the new number in both sign-in modes, so the agent and Eliza Cloud never see that code. The link is the only entry point: the sites show no account page, and the agent's own connector grant is not a fresh proof of the current number. A person who no longer holds the current number cannot give that confirmation and writes to help@ntwrk.party for steward recovery. The storage transaction still owns the identity move, consent history, old sessions, pending messages, age floor, grants, and audit record. Changed (owner decision 2026-11-22, D7): nothing on the text line sent the link -> `CHANGE NUMBER` gets it, because one-purpose pages are allowed.
 
-The shell's store move keeps the person's member IDs and history. In the same transaction, it moves the current native connector grants bound to that person and their current same-app signup drafts. It ends active grants tied to the released number when their authority is sealed to that number or their owner cannot be confirmed. It ends those tokens, removes their private drafts and audits the revocation. The member can reconnect an affected assistant. The store move ends old phone sessions. The shell routes a person-bound member only through their current verified phone. Legacy channel aliases apply only to members without a platform person, and a current verified phone takes priority over a legacy alias at the same address.
+The shell's store move keeps the person's member IDs and history. In the same transaction, it moves the current native connector grants bound to that person. It ends active grants tied to the released number when their authority is sealed to that number or their owner cannot be confirmed. It ends those tokens and audits the revocation. The member can reconnect an affected assistant. The store move ends old phone sessions, including Cloud sessions, ends messages still queued for the old number, and removes the old number's identity, so the old number gets no more messages. The shell routes a person-bound member only through their current verified phone. The [phone identity](models/phone_identity.md) and [identity lifecycle](models/identity_sagas.md) models keep the storage interleavings. Legacy channel aliases apply only to members without a platform person, and a current verified phone takes priority over a legacy alias at the same address.
 
 ## Story: Keep my account when my phone changes
 
@@ -25,13 +25,13 @@ pure def lawAnUnboundOrHeldMemberGetsNoPhoneChangeLink(sameMember: bool, members
 
 ### The request uses the existing account
 
-A new challenge cannot target the current number. Both operations check the current phone, hold and account owner before progressing. The shell checks the account and returns its trusted result.
+A new challenge needs a fresh sign-in on the current number and cannot target the current number. The fresh sign-in is a platform code or a Cloud phone proof from the last ten minutes; both sign-in modes give the same proof of the old number. A Cloud phone proof's time is the Eliza Cloud identity's `issuedAt`: the issue time of the Cloud phone session token that Cloud's `/network/sign-in` page mints after it verifies a new SMS code. This backend cannot tell that token from one that Cloud issued again without a new code, so on a Cloud sign-in site the freshness of the old-number proof depends on Eliza Cloud. Both operations check the current phone, hold and account owner before progressing. The shell checks the account and returns its trusted result. Changed (2026-11-22): the site route checked the fresh sign-in and accepted only a platform code -> this rule checks it and a Cloud phone proof counts, because Cloud sign-in sites refused every change and left Story F25 with no entry point.
 
 ```quint
 type PhoneChangePhase = Beginning | CheckingStartOwner | CheckingConfirmOwner | CheckingStartPolicy | AwaitingRateLimit | AwaitingCodeSend |
   AwaitingPendingWrite | PendingRecorded | AwaitingPendingRead | AwaitingVerification | AwaitingMovePolicy |
   AwaitingMove | Moved | Refused
-type PhoneChangeFailure = NoFailure | SameNumber | ReviewNeeded | NoPerson | RateLimited | NoPendingChange | InvalidCode | NumberInUse
+type PhoneChangeFailure = NoFailure | StaleSignIn | SameNumber | ReviewNeeded | NoPerson | RateLimited | NoPendingChange | InvalidCode | NumberInUse
 type CurrentPhone = OwnedPhone | UnavailablePhone | WrongPerson
 type MovePolicy = MoveAllowed | MoveBlocked | NumberTaken
 type MoveOutcome = MoveApplied | MoveNumberTaken | MoveMissingPhone | MoveBanned | MoveRequestStale
@@ -41,9 +41,15 @@ pure val initial: PhoneChange = { phase: Beginning, failure: NoFailure, codeVeri
 
 pure def canRequestChallenge(change: PhoneChange): bool = change.phase == Beginning
 
-pure def requestChallenge(change: PhoneChange, sameNumber: bool): PhoneChange =
-  if (sameNumber) { ...change, phase: Refused, failure: SameNumber }
+pure def requestChallenge(change: PhoneChange, freshSignIn: bool, sameNumber: bool): PhoneChange =
+  if (not(freshSignIn)) { ...change, phase: Refused, failure: StaleSignIn }
+  else if (sameNumber) { ...change, phase: Refused, failure: SameNumber }
   else { ...change, phase: CheckingStartOwner }
+
+pure def lawStaleSignInCannotStart(change: PhoneChange, sameNumber: bool): bool =
+  requestChallenge(change, false, sameNumber).phase == Refused and requestChallenge(change, false, sameNumber).failure == StaleSignIn
+
+pure def sometimesRefusesStaleSignIn(change: PhoneChange): bool = change.failure == StaleSignIn
 
 pure def canBeginConfirmation(change: PhoneChange): bool = change.phase == Beginning
 
@@ -70,6 +76,13 @@ The account has three start requests per day. The store must grant a slot while 
 
 ```quint
 pure val phoneChangesPerDay: int = 3
+pure val phoneChangeWindowMs: int = 24 * 60 * 60 * 1000
+pure val atValues = Set(-1, 0, 1, 86399999, 86400000, 86400001)
+pure def phoneChangeSlotWaitMs(at: int): int =
+  phoneChangeWindowMs - at % phoneChangeWindowMs
+
+pure def lawSlotRetryEndsWithTheDay(at: int): bool =
+  at >= 0 implies phoneChangeSlotWaitMs(at) > 0 and phoneChangeSlotWaitMs(at) <= phoneChangeWindowMs
 
 pure val waitMsValues = Set(0, 1, 999, 1000, 1001, 30000, 86400000)
 
@@ -169,4 +182,16 @@ pure def sometimesPendingRecorded(change: PhoneChange): bool = change.phase == P
 pure def sometimesMoved(change: PhoneChange): bool = change.phase == Moved
 pure def sometimesRefusesCode(change: PhoneChange): bool = change.failure == InvalidCode
 pure def sometimesRefusesTakenNumber(change: PhoneChange): bool = change.failure == NumberInUse
+```
+
+### Direct phone verification is required here
+
+When the app uses a direct phone session, the browser gets a new session for the new number after a verified move. An app that uses Cloud identity refuses these number-change endpoints until the authority can prove a fresh verification of the replacement phone. A new token issue time alone does not prove that verification.
+
+
+```quint
+pure def phoneChangeVerificationAvailable(cloudSignIn: bool): bool = not(cloudSignIn)
+
+pure def lawCloudIdentityAloneCannotChangeANumber(cloudSignIn: bool): bool =
+  cloudSignIn implies not(phoneChangeVerificationAvailable(cloudSignIn))
 ```

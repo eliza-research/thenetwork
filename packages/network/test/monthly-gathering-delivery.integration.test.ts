@@ -21,9 +21,9 @@ test.skipIf(!pgAvailable)("a reviewed listing invitation already waiting in the 
   const app = APPS.ntwrk;
   const sent: SendRequest[] = [];
   const startService = () => new NetworkService({ url, clock, photoStorage: null, notify: false, log: () => {},
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret },
+    env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret },
     networks: [{ id: "ntwrk:nyc", matchingEnabled: true }], devMatching: ["ntwrk:nyc"],
-    adapter: () => new BlooioAdapter({ app: "ntwrk", from: line, clock, liveGate: () => true, log: () => {},
+    adapter: () => new BlooioAdapter({ app: "ntwrk", from: line, clock, log: () => {},
       provider: { kind: "sim", async send(request) {
         sent.push(request);
         return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent", acceptedAt: clock.now() };

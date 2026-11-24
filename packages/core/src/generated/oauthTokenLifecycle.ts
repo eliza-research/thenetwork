@@ -21,7 +21,7 @@ export type Event =
   | { type: "readCode"; clientMatches: boolean; used: boolean; live: boolean }
   | { type: "readCodeBinding"; redirectMatches: boolean; verifierMatches: boolean; resourceMatches: boolean }
   | { type: "readRefresh"; refreshMatches: boolean }
-  | { type: "readGrant"; grantLive: boolean; eligible: boolean }
+  | { type: "readGrant"; grantLive: boolean }
   | { type: "readAuthority"; credentialLive: boolean; authority: TokenAuthority }
   | { type: "readRefreshBinding"; scopeAllowed: boolean; resourceMatches: boolean; bothLive: boolean }
   | { type: "readCodeExchange"; result: CodeExchangeResult }
@@ -127,9 +127,9 @@ export function lawBannedAccessTokenIsInvalid(credentialLive: boolean): boolean 
 
 /** Story: Use and renew an approved connector grant / The request needs current grant authority and must stay within its consent (spec/oauthTokenLifecycle.md) */
 //@ pure
-export function readGrant(flow: TokenFlow, grantLive: boolean, eligible: boolean): TokenFlow {
+export function readGrant(flow: TokenFlow, grantLive: boolean): TokenFlow {
   //@ ensures (inv(flow) && canReadGrant(flow)) ==> stepTokensRequireStorage(flow, "readGrant", \result)
-  return grantLive && eligible ? ({ ...flow, phase: "CheckingAuthority" } as TokenFlow) : refuse("InvalidGrant", flow);
+  return grantLive ? ({ ...flow, phase: "CheckingAuthority" } as TokenFlow) : refuse("InvalidGrant", flow);
 }
 
 /** Story: Use and renew an approved connector grant / The request needs current grant authority and must stay within its consent (spec/oauthTokenLifecycle.md) */
@@ -251,7 +251,7 @@ export function step(current: TokenFlow, event: Event): TokenFlow {
   if (event.type === "readCode") return canReadCode(current) ? readCode(current, event.clientMatches, event.used, event.live) : current;
   if (event.type === "readCodeBinding") return canReadCodeBinding(current) ? readCodeBinding(current, event.redirectMatches, event.verifierMatches, event.resourceMatches) : current;
   if (event.type === "readRefresh") return canReadRefresh(current) ? readRefresh(current, event.refreshMatches) : current;
-  if (event.type === "readGrant") return canReadGrant(current) ? readGrant(current, event.grantLive, event.eligible) : current;
+  if (event.type === "readGrant") return canReadGrant(current) ? readGrant(current, event.grantLive) : current;
   if (event.type === "readAuthority") return canReadAuthority(current) ? readAuthority(current, event.credentialLive, event.authority) : current;
   if (event.type === "readRefreshBinding") return canReadRefreshBinding(current) ? readRefreshBinding(current, event.scopeAllowed, event.resourceMatches, event.bothLive) : current;
   if (event.type === "readCodeExchange") return canReadCodeExchange(current) ? readCodeExchange(current, event.result) : current;
@@ -276,7 +276,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "readCode" && typeof raw.clientMatches === "boolean" && typeof raw.used === "boolean" && typeof raw.live === "boolean") return { type: "readCode", clientMatches: raw.clientMatches, used: raw.used, live: raw.live };
   if (raw.type === "readCodeBinding" && typeof raw.redirectMatches === "boolean" && typeof raw.verifierMatches === "boolean" && typeof raw.resourceMatches === "boolean") return { type: "readCodeBinding", redirectMatches: raw.redirectMatches, verifierMatches: raw.verifierMatches, resourceMatches: raw.resourceMatches };
   if (raw.type === "readRefresh" && typeof raw.refreshMatches === "boolean") return { type: "readRefresh", refreshMatches: raw.refreshMatches };
-  if (raw.type === "readGrant" && typeof raw.grantLive === "boolean" && typeof raw.eligible === "boolean") return { type: "readGrant", grantLive: raw.grantLive, eligible: raw.eligible };
+  if (raw.type === "readGrant" && typeof raw.grantLive === "boolean") return { type: "readGrant", grantLive: raw.grantLive };
   if (raw.type === "readAuthority" && typeof raw.credentialLive === "boolean" && (raw.authority === "Current" || raw.authority === "Invalid" || raw.authority === "Unavailable")) return { type: "readAuthority", credentialLive: raw.credentialLive, authority: raw.authority };
   if (raw.type === "readRefreshBinding" && typeof raw.scopeAllowed === "boolean" && typeof raw.resourceMatches === "boolean" && typeof raw.bothLive === "boolean") return { type: "readRefreshBinding", scopeAllowed: raw.scopeAllowed, resourceMatches: raw.resourceMatches, bothLive: raw.bothLive };
   if (raw.type === "readCodeExchange" && (raw.result === "CodeNotCommitted" || raw.result === "CodeAlreadyUsed" || raw.result === "CodePairCommitted")) return { type: "readCodeExchange", result: raw.result };

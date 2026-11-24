@@ -128,17 +128,17 @@ test("native simulation inputs reject invalid values and support intentional emp
   const seed = 7;
   const network = new StubNetwork({ seed });
   for (const days of [0, -1, NaN, Infinity]) {
-    await expect(runWorld({ seed, days, personas: [], network })).rejects.toThrow(/world days/);
+    await expect(runWorld({ app: "ntwrk", seed, days, personas: [], network })).rejects.toThrow(/world days/);
   }
   for (const speed of [0, -1, NaN, Infinity]) {
-    await expect(runWorld({ seed, speed, mode: "accelerated", days: 1, personas: [], network })).rejects.toThrow(/accelerated speed/);
+    await expect(runWorld({ app: "ntwrk", seed, speed, mode: "accelerated", days: 1, personas: [], network })).rejects.toThrow(/accelerated speed/);
   }
   expect(() => generatePersonas({ seed, n: 2.5 })).toThrow(/personas/);
   for (const field of ["adversarialRate", "minorShare", "disclosureRate"] as const) {
     expect(() => generatePersonas({ seed, n: 2, [field]: Infinity })).toThrow(field);
   }
   expect(generatePersonas({ seed, n: 0, adversarialRate: 0, minorShare: 1, disclosureRate: 1 })).toEqual([]);
-  const control = await runWorld({ seed, days: 0.5, personas: [], network, writeLog: false });
+  const control = await runWorld({ app: "ntwrk", seed, days: 0.5, personas: [], network, writeLog: false });
   expect(control.records.filter(record => record.type === "persona")).toEqual([]);
 });
 

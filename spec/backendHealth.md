@@ -63,3 +63,5 @@ pure def sometimesReportsDraining(s: BackendHealth): bool = reportsStatus(s, Dra
 pure def sometimesReportsDatabaseDown(s: BackendHealth): bool = reportsStatus(s, DatabaseDown)
 pure def sometimesReportsLateTick(s: BackendHealth): bool = reportsStatus(s, TickLate)
 ```
+
+Conformance. test/fixtures/backendHealthWorker.ts sends each /healthz request to its own backend through the public fetch handler. The worker gives the database ping as an effect that waits until checkDatabase answers, so CheckingDatabase is a request that waits on the ping, and CheckingTicks is a successful ping that waits until checkTicks sets the tick clock. The ping body (`select 1` in deploy/backend/server.ts) and the network service stay outside this check (the worker gives staticService, a service that always answers ok); deploy/backend/backend.test.ts ('migrates on boot, serves /healthz ...') starts the real server on Postgres and reads /healthz.

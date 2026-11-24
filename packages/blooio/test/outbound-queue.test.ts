@@ -435,4 +435,181 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     // The collected row itself never reaches the provider.
     expect(calls.length).toBe(0);
   });
+
+  test("SD-090: a proactive send whose acceptance expires unknown keeps its person-cap slot", async () => {
+    const now = new SimClock(Date.UTC(2026, 9, 13, 16));
+    const refunds: string[] = [];
+    const provider: ChannelAdapter = {
+      kind: "sim",
+      async send() { throw new ChannelSendError("provider timed out", "unknown"); },
+      async receipt() { throw new ChannelSendError("lookup", "unknown", 503); },
+    };
+    const q = queue(a, provider, { clock: now, checks: checks({ capTake: async () => true, capRelease: async row => { refunds.push(row.id); } }) });
+    await q.enqueue(a, [{ id: "sd090-probe", to: "+12125558090", kind: "proactive", text: "Would you like to meet Sam?", timeZone: NY }]);
+    await q.drain();
+    expect(await q.statusOf("sd090-probe")).toBe("unknown_acceptance");
+    now.advance(7 * 60 * 60_000);
+    expect(await q.drain()).toContainEqual(expect.objectContaining({ id: "sd090-probe", status: "failed_unknown" }));
+    expect(refunds).toEqual([]);
+  });
+
+  test.each(["stale check", "claim transaction"])("SD-299 / SD-117: an error in the %s delays the row; the next drain sends it with the same key", async where => {
+    const now = new SimClock(Date.UTC(2026, 9, 13, 16));
+    const id = where === "stale check" ? "sd299-digest" : "sd117-reminder";
+    const { calls, provider } = recorder();
+    let fails = 1;
+    const fail = () => { if (fails-- > 0) throw new Error("canceling statement due to lock timeout"); };
+    const q = queue(a, provider, { clock: now, checks: checks(where === "stale check"
+      ? { stale: () => { fail(); return false; } } : { lockAdmission: async () => { fail(); } }) });
+    await q.enqueue(a, [{ id, to: "+12125558299", kind: "transactional", text: "Your weekly digest is ready.", timeZone: NY }]);
+    expect(await q.drain()).toContainEqual(expect.objectContaining({ id, status: "retry_scheduled" }));
+    expect(calls).toEqual([]);
+    const [row] = await a`select attempts, next_attempt_at from platform.outbound where id = ${id}`;
+    expect([row.attempts, new Date(row.next_attempt_at).getTime()]).toEqual([1, now.now() + 30_000]);
+    now.advance(30_000);
+    await q.drain();
+    expect(await q.statusOf(id)).toBe("sent");
+    expect(calls.map(c => c.idempotencyKey)).toEqual([`tn:${id}`]);
+  });
+
+  test("SD-147: a conversation-limit answer while the person writes back leaves the row due, not held", async () => {
+    const now = new SimClock(Date.UTC(2026, 9, 13, 16));
+    const to = "+12125558147";
+    let q!: OutboundQueue;
+    let limited = true;
+    const calls: string[] = [];
+    const provider: ChannelAdapter = {
+      kind: "sim",
+      async send(req) {
+        calls.push(req.idempotencyKey);
+        if (!limited) return { providerMessageId: `sim:${req.idempotencyKey}:${calls.length}`, status: "sent" };
+        limited = false;
+        now.advance(1000);
+        expect(await q.inbound(to)).toBe(0);
+        throw new ChannelSendError("conversation limit", "await_recipient", 429, "conversation_limit");
+      },
+    };
+    q = queue(a, provider, { clock: now });
+    await q.enqueue(a, [{ id: "sd147-reminder", to, kind: "transactional", text: "Your plan starts at 7.", timeZone: NY }]);
+    await q.drain();
+    expect(await q.statusOf("sd147-reminder")).toBe("pending");
+    await q.drain();
+    expect(await q.statusOf("sd147-reminder")).toBe("sent");
+  });
+
+  test("SD-148: a gateway reply counts in the unanswered streak when its turn receipt accepts it", async () => {
+    const now = new SimClock(Date.UTC(2026, 9, 13, 16));
+    const { calls, provider } = recorder();
+    const q = queue(a, provider, { clock: now });
+    const to = "+12125558148";
+    const reply = (id: string) => ({ id, memberId: "sd148-member", to, kind: "reply" as const, text: "Here is what I found." });
+    await a.begin(tx => q.recordCollected(tx, [reply("sd148-accepted"), reply("sd148-unknown")]));
+    await a.begin(tx => q.collectedReceipt(tx, ["sd148-accepted"], "accepted", now.now()));
+    await a.begin(tx => q.collectedReceipt(tx, ["sd148-unknown"], "unknown", now.now()));
+    const [conv] = await a`select unanswered, last_outbound_at from platform.line_conversations where line = ${LINE} and address = ${to}`;
+    expect([conv?.unanswered, conv && new Date(conv.last_outbound_at).getTime()]).toEqual([1, now.now()]);
+    expect([await q.statusOf("sd148-accepted"), await q.statusOf("sd148-unknown")]).toEqual(["sent", "send_unknown"]);
+    expect(calls).toEqual([]);
+  });
+
+  test("Q-outbound_queue-1: a STOP that commits during the checks stops a direct text to a non-member", async () => {
+    const now = new SimClock(Date.UTC(2026, 9, 13, 16));
+    const { calls, provider } = recorder();
+    let stopped = false;
+    const q = queue(a, provider, { clock: now, checks: checks({
+      optedOut: () => stopped,
+      leaks: () => { stopped = true; return {}; },
+    }) });
+    await q.enqueue(a, [{ id: "q1-invite", to: "+12125558001", kind: "transactional", text: "You are invited to The Network.", timeZone: NY }]);
+    await q.drain();
+    expect(await q.statusOf("q1-invite")).toBe("refused_opted_out");
+    expect(calls).toEqual([]);
+  });
+
+  test("SD-337 / SD-091: a failed acceptance gets no send time; a receipt owner's accepted text to a non-member keeps no address or text", async () => {
+    const now = new SimClock(Date.UTC(2026, 9, 13, 16));
+    const blooio: ChannelAdapter = { kind: "sim", async send(req) { return { providerMessageId: `sim:${req.idempotencyKey}`, status: "failed" }; } };
+    const cloud: ChannelAdapter = {
+      kind: "sim",
+      async send(req) { return { providerMessageId: `cloud:${req.idempotencyKey}`, status: "queued" }; },
+      async receipt(req) { return { providerMessageId: `cloud:${req.idempotencyKey}`, status: "queued" }; },
+    };
+    const failed = queue(a, blooio, { clock: now });
+    await failed.enqueue(a, [{ id: "sd337-failed", to: "+12125558337", kind: "transactional", text: "Your plan update.", timeZone: NY }]);
+    await failed.drain();
+    const [f] = await a`select status, sent_at from platform.outbound where id = 'sd337-failed'`;
+    expect([f.status, f.sent_at]).toEqual(["failed", null]);
+    const owner = queue(a, cloud, { clock: now });
+    await owner.enqueue(a, [{ id: "sd091-invite", to: "+12125558091", kind: "transactional", text: "You are invited to The Network.", timeZone: NY }]);
+    await owner.drain();
+    const [c] = await a`select status, ended_at, to_address, body, sent_at from platform.outbound where id = 'sd091-invite'`;
+    expect([c.status, c.ended_at === null, c.to_address, c.body, c.sent_at === null]).toEqual(["accepted", false, null, null, false]);
+  });
+
+  test("a receipt owner's accepted nonmember send keeps the recipient cap after acceptance erases its address", async () => {
+    const local = new SimClock(Date.UTC(2026, 9, 13, 17));
+    const line = "+12125550529";
+    const calls: string[] = [];
+    const cloud: ChannelAdapter = {
+      kind: "sim",
+      async send(req) { calls.push(req.idempotencyKey); return { providerMessageId: `cloud:${req.idempotencyKey}`, status: "queued" }; },
+      async receipt(req) { return { providerMessageId: `cloud:${req.idempotencyKey}`, status: "queued" }; },
+    };
+    const q = queue(a, cloud, { clock: local, line, perRecipientPerHour: 1 });
+    const payload = { to: "+12125553225", kind: "transactional", text: "Your invitation is ready.", timeZone: NY } as const;
+    await q.enqueue(a, [{ id: "owner-window-first", ...payload }]);
+    await q.drain();
+    const [first] = await a`select status,to_address,body,sent_at from platform.outbound where id='owner-window-first'`;
+    expect([first.status, first.to_address, first.body, first.sent_at === null]).toEqual(["accepted", null, null, false]);
+    await q.enqueue(a, [{ id: "owner-window-next", ...payload, text: "Your invitation is still available." }]);
+    await q.drain();
+    const [next] = await a`select status,attempts,note from platform.outbound where id='owner-window-next'`;
+    expect({ next, calls }).toEqual({ next: { status: "retry_scheduled", attempts: 0, note: "per-recipient hourly cap" }, calls: ["tn:owner-window-first"] });
+    const key = recipientWindowHasher("synthetic-recipient-window");
+    expect(await a`select recipient_key,sent_at from platform.outbound_recipient_window where outbound_id='owner-window-first'`)
+      .toEqual([{ recipient_key: key(line, payload.to), sent_at: first.sent_at }]);
+  });
+
+  test("SD-100: a gateway reply whose turn receipt never comes, or comes as unknown, ends failed_unknown after the receipt deadline, and a late accepted receipt still records it as sent", async () => {
+    const now = new SimClock(Date.UTC(2026, 9, 14, 16));
+    const { calls, provider } = recorder();
+    const alerts: string[] = [];
+    const q = queue(a, provider, { clock: now, onAlert: (id, alert) => { alerts.push(`${id}:${alert}`); } });
+    const to = "+12125558100";
+    const answeredTo = "+12125558101";
+    const reply = (id: string) => ({ id, memberId: "sd100-member", to, kind: "reply" as const, text: "Here is the plan for Saturday." });
+    const collectedAt = now.now();
+    await a.begin(tx => q.recordCollected(tx, [reply("sd100-collected"), reply("sd100-unknown"),
+      { ...reply("sd100-answered"), memberId: "sd100-answered-member", to: answeredTo }]));
+    await a.begin(tx => q.collectedReceipt(tx, ["sd100-unknown"], "unknown", now.now()));
+    now.advance(5 * 60 * 60_000);
+    await q.drain();
+    expect([await q.statusOf("sd100-collected"), await q.statusOf("sd100-unknown")]).toEqual(["collected", "send_unknown"]);
+    now.advance(2 * 60 * 60_000);
+    const changes = await q.drain();
+    expect(changes).toContainEqual(expect.objectContaining({ id: "sd100-collected", memberId: "sd100-member", status: "failed_unknown" }));
+    expect(changes).toContainEqual(expect.objectContaining({ id: "sd100-unknown", memberId: "sd100-member", status: "failed_unknown" }));
+    const rows = await a`select id, status, ended_at, body from platform.outbound where id in ('sd100-collected', 'sd100-unknown') order by id`;
+    expect(rows.map((r: any) => [r.id, r.status, r.ended_at !== null, r.body])).toEqual([
+      ["sd100-collected", "failed_unknown", true, "Here is the plan for Saturday."],
+      ["sd100-unknown", "failed_unknown", true, "Here is the plan for Saturday."],
+    ]);
+    expect(alerts).toEqual(expect.arrayContaining(["sd100-collected:gateway_receipt_expired", "sd100-unknown:gateway_receipt_expired"]));
+    await a.begin(tx => q.collectedReceipt(tx, ["sd100-unknown"], "unknown", now.now()));
+    expect(await q.statusOf("sd100-unknown")).toBe("failed_unknown");
+    await a.begin(tx => q.collectedReceipt(tx, ["sd100-collected"], "accepted", now.now()));
+    const [late] = await a`select status, sent_at, ended_at from platform.outbound where id = 'sd100-collected'`;
+    expect([late.status, late.sent_at?.getTime(), late.ended_at !== null]).toEqual(["sent", collectedAt, true]);
+    const [conversation] = await a`select unanswered from platform.line_conversations where line = ${q.line} and address = ${to}`;
+    expect(conversation?.unanswered).toBe(1);
+    expect(await q.statusOf("sd100-answered")).toBe("failed_unknown");
+    await q.inbound(answeredTo);
+    await a.begin(tx => q.collectedReceipt(tx, ["sd100-answered"], "accepted", now.now()));
+    const [answered] = await a`select status, sent_at from platform.outbound where id = 'sd100-answered'`;
+    expect([answered.status, answered.sent_at?.getTime()]).toEqual(["sent", collectedAt]);
+    const [answeredConversation] = await a`select unanswered, last_outbound_at from platform.line_conversations
+      where line = ${q.line} and address = ${answeredTo}`;
+    expect([answeredConversation?.unanswered, answeredConversation?.last_outbound_at?.getTime()]).toEqual([0, collectedAt]);
+    expect(calls).toEqual([]);
+  });
 });

@@ -3,7 +3,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { APPS, type AppId, type AppInfo } from "../src/apps.ts";
 import { createPublicApi, type PublicApi, type PublicApiOptions } from "../src/api.ts";
-import { detectKeyword, keywordEvent, lastEvents, resolveConsent, stopScope } from "../src/consent.ts";
+import { detectKeyword, keywordEvent, lastEvents, resolveConsent } from "../src/consent.ts";
 import { InvitationUnavailable } from "../src/invite-links.ts";
 import type { OtpProvider } from "../src/otp.ts";
 import { PgPeopleStore } from "../src/pg-store.ts";
@@ -111,13 +111,13 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
         checked.push(app);
         return app === "ntwrk" && value === token ? referral : undefined;
       },
-      commitReferredJoin: async ({ app, person, membership, e164, referral }) => {
+      commitReferredJoin: async ({ app, person, membership, e164, referral, session }) => {
         expect(await store.getMembership(person.id, app.id)).toBeUndefined();
         expect(await store.lastConsent(e164, app.id)).toEqual({});
         if (invitationLost) throw new InvitationUnavailable();
         await store.putMembership(membership);
         await store.addConsent({ e164, app: app.id, state: "opted_in", source: "web_form", at: membership.joinedAt! });
-        await store.attachPerson(e164, person.id);
+        await store.attachPerson(e164, person.id, session ?? null, membership.joinedAt!);
         attributed.push(referral);
       },
       onJoin: () => { throw new Error("Referred signup uses only its commit hook"); },
@@ -151,9 +151,21 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     const underage = newPhone();
     const minor = await login(c, "slop", underage);
     expect((await call(c, "slop", "POST", "/api/join", { ...body, age: 12, consent: consentOf("slop") }, minor)).body.error).toBe("under_age");
-    expect((await join(c, "slop", minor, 29)).body.error).toBe("under_age");
+    expect((await join(c, "slop", minor, 29)).body.error).toBe("unauthorized");
+    expect((await join(c, "slop", await login(c, "slop", underage), 29)).body.error).toBe("under_age");
     expect(await c.api.accounts.personFor(underage)).toBeUndefined();
     expect(attributed).toEqual([referral]);
+  });
+
+  test("POST /api/join takes a birthdate in place of an age: a date that is not real is invalid_birthdate, both fields are invalid", async () => {
+    const c = make(store), phone = newPhone();
+    const cookie = await login(c, "friends", phone);
+    const send = (fields: Record<string, unknown>) => call(c, "friends", "POST", "/api/join", { firstName: "Ana", consent: consentOf("friends"), ...fields }, cookie);
+    expect(await send({ birthdate: "2010-02-30" })).toMatchObject({ status: 400, body: { ok: false, error: "invalid_birthdate", message: "Enter your birth date as year, month and day." } });
+    expect(await send({ birthdate: "2010-03-15", age: 16 })).toMatchObject({ status: 400, body: { ok: false, error: "invalid" } });
+    expect(await c.api.accounts.personFor(phone)).toBeUndefined();
+    expect(await send({ birthdate: "2010-03-15" })).toMatchObject({ status: 200, body: { ok: true } });
+    expect(c.ages).toEqual([16]);
   });
 
   test("otp/start: the same status and body for a known and an unknown phone, and at least the minimum time", async () => {
@@ -225,8 +237,10 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     const ntwrk = await login(c, "ntwrk", phone);
     expect((await join(c, "ntwrk", ntwrk, 15)).body.error).toBe("invite_only");
     const inv = await c.api.accounts.invite(APPS.ntwrk, phone);
-    expect((await call(c, "ntwrk", "GET", "/api/me", undefined, ntwrk)).body).toMatchObject({ membership: { state: "invited" }, canJoin: true });
-    expect((await join(c, "ntwrk", ntwrk, 15)).status).toBe(200);
+    expect((await call(c, "ntwrk", "GET", "/api/me", undefined, ntwrk)).status).toBe(401);
+    const invited = await login(c, "ntwrk", phone);
+    expect((await call(c, "ntwrk", "GET", "/api/me", undefined, invited)).body).toMatchObject({ membership: { state: "invited" }, canJoin: true });
+    expect((await join(c, "ntwrk", invited, 15)).status).toBe(200);
     // The join keeps the invited member id (an invite may already name it).
     expect(c.joined.at(-1)).toBe(inv!.memberId);
     const slop = await login(c, "slop", phone);
@@ -261,14 +275,16 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     expect(ex.text).not.toContain(friendsMember);
     expect(ex.body.consent.map((e: any) => e.state)).toEqual(["opted_in"]);
 
-    // Share needs both memberships; the grant names only base-profile fields. The answer is the same
-    // whether or not the person uses the other app (it must not list their apps).
-    expect((await call(c, "slop", "POST", "/api/me/share", { fromApp: "friends", fields: ["orientation"] }, slop)).status).toBe(200);
-    const notMember = await call(c, "slop", "POST", "/api/me/share", { fromApp: "peon", fields: ["first_name"] }, slop);
-    expect([notMember.status, notMember.body]).toEqual([200, { ok: true }]);
+    for (const path of ["/api/me/share", "/api/me/share/revoke"]) {
+      expect(await call(c, "slop", "POST", path, { fromApp: "friends", fields: ["interests"] }, slop)).toMatchObject({ status: 404, body: { error: "not_found" } });
+    }
     expect(await store.shareGrants(person!.id)).toEqual([]);
-    expect((await call(c, "slop", "POST", "/api/me/share", { fromApp: "friends", fields: ["first_name", "city"] }, slop)).status).toBe(200);
-    expect((await store.shareGrants(person!.id)).map(g => `${g.fromApp}>${g.toApp}:${g.fields.join(",")}`)).toEqual(["friends>slop:first_name,city"]);
+    const who = { e164: phone, personId: person!.id };
+    expect(await c.api.accounts.share(APPS.slop, who, "friends", ["orientation"])).toBe(false);
+    expect(await c.api.accounts.share(APPS.slop, who, "peon", ["interests"])).toBe(false);
+    expect(await store.shareGrants(person!.id)).toEqual([]);
+    expect(await c.api.accounts.share(APPS.slop, who, "friends", ["interests"])).toBe(true);
+    expect((await store.shareGrants(person!.id)).map(g => `${g.fromApp}>${g.toApp}:${g.fields.join(",")}`)).toEqual(["friends>slop:interests"]);
 
     expect((await call(c, "slop", "POST", "/api/me/delete", { scope: "app" }, slop)).status).toBe(200);
     expect(c.forgotten.length).toBe(1);
@@ -310,10 +326,11 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     const c = make(store), phone = newPhone();
     const cookie = await login(c, "slop", phone);
     expect((await join(c, "slop", cookie, 12)).body.error).toBe("under_age");
-    expect((await join(c, "slop", cookie, 25)).body.error).toBe("under_age");
+    expect((await join(c, "slop", cookie, 25)).body.error).toBe("unauthorized");
+    expect((await join(c, "slop", await login(c, "slop", phone), 25)).body.error).toBe("under_age");
     expect((await join(c, "peon", await login(c, "peon", phone), 30)).body.error).toBe("under_age");
     expect(await store.findPhone(phone)).toBeUndefined(); // still nothing stored for the app: only the age floor
-    expect(await store.ageFloor(c.api.accounts.phoneHash(phone))).toBe(12);
+    expect((await store.ageFloorRecord(c.api.accounts.phoneHash(phone)))?.age).toBe(12);
   });
 
   test("PLAT-03 delete everything keeps the age floor and the blocks: 15, deleted, back at 25 is still 15; a block still holds", async () => {
@@ -372,12 +389,12 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
 
   test("a global web STOP from an app the person has no membership on still pauses their other apps", async () => {
     const stopped: string[] = [];
-    const c = make(store, { env: { PLATFORM_ENV: "dev", PLATFORM_STOP_SCOPE: "global" }, onStop: ({ personId, memberId, scope }) => { stopped.push(`${personId}:${memberId ?? "-"}:${scope}`); } });
+    const c = make(store, { env: { PLATFORM_ENV: "dev" }, onStop: ({ personId, memberId }) => { stopped.push(`${personId}:${memberId ?? "-"}`); } });
     const phone = newPhone();
     await join(c, "peon", await login(c, "peon", phone), 30);
     const person = await c.api.accounts.personFor(phone);
     expect((await call(c, "slop", "POST", "/api/me/stop", {}, await login(c, "slop", phone))).status).toBe(200);
-    expect(stopped).toEqual([`${person!.id}:-:global`]);
+    expect(stopped).toEqual([`${person!.id}:-`]);
     expect(await c.api.accounts.optedIn("peon", phone)).toBe(false);
   });
 
@@ -433,18 +450,16 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     expect((await call(c, "slop", "GET", "/api/me", undefined, a.setCookie.split(";")[0])).status).toBe(200);
   });
 
-  test("PLAT-12 STOP on the web stops every app by default (PRD 40.3); only PLATFORM_STOP_SCOPE=app keeps it to one app; leave is one app", async () => {
-    for (const env of [{ PLATFORM_ENV: "dev" }, { PLATFORM_ENV: "dev", PLATFORM_STOP_SCOPE: "app" }] as Record<string, string>[]) {
-      const c = make(store, { env }), phone = newPhone();
-      const b = await login(c, "friends", phone);
-      await join(c, "friends", b, 33);
-      await join(c, "peon", await login(c, "peon", phone), 33);
-      expect((await call(c, "friends", "POST", "/api/me/stop", {}, b)).status).toBe(200);
-      expect(await c.api.accounts.optedIn("friends", phone)).toBe(false);
-      expect(await c.api.accounts.optedIn("peon", phone)).toBe(env.PLATFORM_STOP_SCOPE === "app");
-      // The default STOP records one event for every app (app null).
-      if (!env.PLATFORM_STOP_SCOPE) expect((await store.lastConsent(phone, "slop")).global).toMatchObject({ app: null, state: "opted_out" });
-    }
+  test("PLAT-12 STOP on the web stops every app (PRD 40.3); leave is one app", async () => {
+    const stopper = make(store, { env: { PLATFORM_ENV: "dev" } }), stopped = newPhone();
+    const b = await login(stopper, "friends", stopped);
+    await join(stopper, "friends", b, 33);
+    await join(stopper, "peon", await login(stopper, "peon", stopped), 33);
+    expect((await call(stopper, "friends", "POST", "/api/me/stop", {}, b)).status).toBe(200);
+    expect(await stopper.api.accounts.optedIn("friends", stopped)).toBe(false);
+    expect(await stopper.api.accounts.optedIn("peon", stopped)).toBe(false);
+    expect((await store.lastConsent(stopped, "slop")).global).toMatchObject({ app: null, state: "opted_out" });
+    expect((await store.lastConsent(stopped, "friends")).app).toMatchObject({ app: "friends", state: "opted_in" });
     // The leave button: that app only.
     const c = make(store), phone = newPhone();
     const f = await login(c, "friends", phone);
@@ -486,15 +501,15 @@ describe("consent ledger", () => {
     for (const a of Object.values(APPS)) { expect(a.brand.stop).toContain("any app on this number"); expect(a.brand.stop + a.brand.help).not.toContain("not affected"); }
     expect(app("slop").id).toBe("slop");
   });
-  test("keywords on a line: STOP is this app (or every app with the global switch), STOP ALL is every app, START is this app", () => {
+  test("keywords on any app's line: STOP and STOP ALL are every app with the every-app reply, START is this app", () => {
     const p = "+12125550199";
-    expect(keywordEvent(detectKeyword("Stop!")!, p, APPS.slop, 1, { scope: "app" }).event).toMatchObject({ app: "slop", state: "opted_out" });
-    expect(keywordEvent(detectKeyword("stop")!, p, APPS.slop, 1, { scope: "global" }).event).toMatchObject({ app: null, state: "opted_out" });
-    expect(keywordEvent(detectKeyword("STOP ALL")!, p, APPS.peon, 1, { scope: "app" }).event).toMatchObject({ app: null, state: "opted_out" });
+    for (const app of Object.values(APPS)) {
+      for (const word of ["Stop!", "stop", "STOP ALL"]) {
+        expect(keywordEvent(detectKeyword(word)!, p, app, 1, { line: "+12125550100" })).toEqual({ event: expect.objectContaining({ app: null, state: "opted_out" }), reply: app.brand.stop });
+      }
+    }
     expect(keywordEvent(detectKeyword(" start ")!, p, APPS.peon, 1).event).toMatchObject({ app: "peon", state: "opted_in" });
     expect(keywordEvent("help", p, APPS.friends, 1).event).toBeUndefined();
-    // Without a scope setting, STOP is every app (the shared line).
-    expect(keywordEvent("stop", p, APPS.slop, 1, { scope: stopScope({}) }).event).toMatchObject({ app: null });
     expect(detectKeyword("stop by later")).toBeUndefined();
   });
 });

@@ -5,11 +5,13 @@
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY } from "@thenetwork/core";
+import { birthDateLower } from "../../core/src/generated/memberAge.ts";
 import { rowsFromGame, writeRows } from "../db/writer.ts";
 import { GameSource } from "../src/sources/game.ts";
 import { HIDDEN_MESSAGE, RealSource } from "../src/sources/real.ts";
 import { PgAudit } from "../src/staff.ts";
-import type { ObsState } from "../src/types.ts";
+import { edgeId } from "../src/store.ts";
+import type { ObsDelta, ObsState } from "../src/types.ts";
 import { dropTestDb, pgAvailable, testDb } from "./pg.ts";
 
 const T = 300_000;
@@ -21,20 +23,27 @@ describe.skipIf(!pgAvailable)("real mode: admin-console data from Postgres", () 
   let gs: ObsState, rs: ObsState;
   beforeAll(async () => {
     url = await testDb();
-    g = new GameSource({ pushMs: 3_600_000, tickMs: 3_600_000, seed: 1, review: "human", scenario: "spam_wave" });
+    g = new GameSource({ pushMs: 3_600_000, tickMs: 3_600_000, seed: 1, judge: "hold-every-item", scenario: "spam_wave" });
     await g.init();
     await g.control({ type: "step", ms: DAY });
-    // A reviewer edits one item and re-rolls another; an admin flips the matching switch; then the simulated reviewer takes over.
-    const q = g.state().opportunities.filter(o => o.state === "IN_REVIEW");
-    await g.control({ type: "review", oppId: q[0]!.id, decision: "edit", objective: "a coffee nearby", secondsSpent: 45 }, "rev@example.org");
-    await g.control({ type: "review", oppId: q[1]!.id, decision: "reroll", swapOut: q[1]!.participants[1], secondsSpent: 12 }, "rev@example.org");
+    const q = g.state().opportunities.filter(o => o.state === "IN_REVIEW" && o.review?.exceptionReason);
+    expect(q.length).toBeGreaterThanOrEqual(2);
+    expect((await g.control({ type: "review", oppId: q[0]!.id, decision: "edit", objective: "a coffee nearby", secondsSpent: 45 }, "rev@example.org")).ok).toBe(true);
+    expect((await g.control({ type: "review", oppId: q[1]!.id, decision: "reroll", swapOut: q[1]!.participants[1], secondsSpent: 12 }, "rev@example.org")).ok).toBe(true);
     await g.control({ type: "matching", on: false }, "admin@example.org");
     await g.control({ type: "matching", on: true }, "admin@example.org");
-    await g.control({ type: "review_mode", mode: "auto" }, "admin@example.org");
     await g.control({ type: "step", ms: 4 * DAY });
     gs = g.state();
     const sql = new SQL(url);
     await writeRows(sql, rowsFromGame(g), { truncate: true });
+    const births = g.world.snapshot().members.filter(m => m.birthExact === true && m.birthKey !== undefined);
+    expect(births.length).toBeGreaterThan(0);
+    for (const m of births) {
+      const person = crypto.randomUUID(), birth = m.birthKey!;
+      await sql`insert into platform.people (id, lowest_age, birth_date, birth_lower, birth_upper, birth_youngest, birth_first_exact)
+        values (${person}, ${m.age ?? null}, ${birth}, ${birthDateLower(birth)}, ${birth}, ${birth}, true)`;
+      await sql`update network.members set person_id = ${person} where id = ${m.id}`;
+    }
     await sql.close();
     // Compare the same observation time. Wall time must not make future simulated meetings overdue.
     vi.setSystemTime(new Date(gs.clock.now));
@@ -56,11 +65,18 @@ describe.skipIf(!pgAvailable)("real mode: admin-console data from Postgres", () 
     expect(reviewed.some(o => o.review?.rerolls === 1)).toBe(true);
     const strip = (xs: ObsState["requests"]) => (xs ?? []).map(({ ageHours: _a, ...r }) => r).sort((a, b) => a.id.localeCompare(b.id));
     expect(strip(rs.requests)).toEqual(strip(gs.requests));
-    expect(rs.network).toMatchObject({ kind: "consent", matchingEnabled: true, review: { mode: "human" } });
+    expect(rs.network).toMatchObject({ kind: "consent", matchingEnabled: true });
     expect(rs.network!.counters).toEqual(gs.network!.counters);
     expect(rs.network!.trust).toEqual(gs.network!.trust);
     // Trust levels reach the member list in real mode too.
     for (const m of gs.members.filter(x => x.trust && x.trust !== "ok")) expect([m.id, rs.members.find(x => x.id === m.id)?.trust]).toEqual([m.id, m.trust]);
+  });
+
+  test("with no Network service answer, matching reads as locked and the switch comes from the Network's stored state only", async () => {
+    expect(rs.env.matchingLocked).toBe(true);
+    expect(rs.stats.alerts!.filter(a => a.key === "matching_off").map(a => a.level)).toEqual(["info"]);
+    expect(rs.network?.matchingEnabled).toBe(true);
+    expect((await real.config()).matchingEnabled).toBe(true);
   });
 
   test("scorecard and growth match game mode where the data is the same; alerts are computed", () => {
@@ -153,8 +169,7 @@ describe.skipIf(!pgAvailable)("real mode: admin-console data from Postgres", () 
     expect(rsf.hold.sort()).toEqual(gsf.hold.sort());
     expect((await real.safetyAction({ action: "close", caseId: rsf.cases[0]!.id }, "x")).ok).toBe(false);
     const cfg = await real.config();
-    // Both switches name the staff member who changed them (setReviewMode(mode, actor)).
-    expect(cfg.history.map(h => [h.key, h.from, h.to, h.actor])).toEqual([["matching", true, false, "admin@example.org"], ["matching", false, true, "admin@example.org"], ["review_mode", "human", "auto", "admin@example.org"]]);
+    expect(cfg.history.map(h => [h.key, h.from, h.to, h.actor])).toEqual([["matching", true, false, "admin@example.org"], ["matching", false, true, "admin@example.org"]]);
     expect(cfg.canChange).toBe(false);
     const said = g.world.channel.all().find(m => m.direction === "outbound" && !m.system && /\b[A-Za-z]{8,}\b/.test(m.body))!;
     const hits = await real.search(said.body.match(/\b[A-Za-z]{8,}\b/)![0]);
@@ -241,5 +256,109 @@ describe.skipIf(!pgAvailable)("real mode: admin-console data from Postgres", () 
     await sql.close();
     const conn = (real as unknown as { sql: SQL }).sql;
     expect(await fail(() => conn`insert into network.staff_audit (actor, action) values ('x', 'y')`)).toMatch(/read-only/);
+  });
+
+  test("conversation search never returns a relayed message, whose words are another member's", async () => {
+    const sql = new SQL(url);
+    try {
+      const member = real.state().members.find(m => m.joined)!;
+      const at = new Date(real.state().clock.now - 60_000);
+      await sql`insert into network.messages (id, app_id, member_id, direction, body, status, type, ts) values
+        ('relay-search-1', 'ntwrk', ${member.id}, 'outbound', 'They said: quokkarelayword at the park', 'delivered', 'relay', ${at}),
+        ('relay-search-2', 'ntwrk', ${member.id}, 'outbound', 'Your plan: quokkaagentword at the park', 'delivered', 'info', ${at})`;
+      expect((await real.search("quokkaagentword")).map(h => [h.kind, h.memberId])).toEqual([["message", member.id]]);
+      expect(await real.search("quokkarelayword")).toEqual([]);
+    } finally {
+      await sql`delete from network.messages where id in ('relay-search-1', 'relay-search-2')`;
+      await sql.close();
+    }
+  });
+
+  test("a deleted edge leaves console memory at the next poll, and the delta tells viewers to read the state again", async () => {
+    const sql = new SQL(url);
+    const deltas: ObsDelta[] = [];
+    const stop = real.subscribe(d => deltas.push(d));
+    try {
+      const shown = real.state().edges[0]!;
+      expect(shown).toBeDefined();
+      const removed = await sql`delete from network.edges where app_id = 'ntwrk' and type = ${shown.type}
+        and ((from_id = ${shown.from} and to_id = ${shown.to}) or (from_id = ${shown.to} and to_id = ${shown.from})) returning id`;
+      expect(removed.length).toBeGreaterThan(0);
+      await real.control({ type: "refresh" });
+      expect(real.state().edges.map(e => e.id)).not.toContain(edgeId(shown.type, shown.from, shown.to));
+      expect(deltas.some(d => d.reset === true)).toBe(true);
+    } finally {
+      stop();
+      await sql.close();
+    }
+  });
+
+  test("a failed read of the state view keeps the Network's stored minor flag of the last good poll", async () => {
+    const sql = new SQL(url);
+    const [adult] = await sql`select m.id from network.members m
+      join network.network_state s on s.app_id = m.app_id
+      cross join lateral jsonb_array_elements(s.state->'members') stored
+      where m.app_id = 'ntwrk' and m.age >= 18 and stored->>'id' = m.id and (stored->>'minor')::boolean is false
+        and not exists (select 1 from network.events e where e.app_id = m.app_id and e.payload->>'memberId' = m.id
+          and e.type in ('age_unknown', 'age_resolved', 'minor_signal', 'age_conflict'))
+      order by m.id limit 1`;
+    expect(adult).toBeDefined();
+    let broken = false;
+    try {
+      await sql`update network.network_state set state = jsonb_set(state, '{members}', (select jsonb_agg(case when m->>'id' = ${adult.id} then m || '{"minor": true}'::jsonb else m end) from jsonb_array_elements(state->'members') m))
+        where app_id = 'ntwrk'`;
+      await real.control({ type: "refresh" });
+      expect(real.state().members.find(m => m.id === adult.id)?.minor).toBe(true);
+      await sql.begin(async tx => {
+        await tx.unsafe("alter view network.network_state_console_ntwrk rename to obs_failing_app_view");
+        await tx.unsafe("create view network.network_state_console_ntwrk as select * from network.obs_failing_app_view where 1 / (select count(*) from network.obs_failing_app_view where false)::int = 1");
+        await tx.unsafe("alter view network.network_state_console rename to obs_failing_shared_view");
+        await tx.unsafe("create view network.network_state_console as select * from network.obs_failing_shared_view where 1 / (select count(*) from network.obs_failing_shared_view where false)::int = 1");
+      });
+      broken = true;
+      await real.control({ type: "refresh" });
+      expect(real.state().env.error).toMatch(/Read failed/);
+      expect(real.state().members.find(m => m.id === adult.id)?.minor).toBe(true);
+    } finally {
+      if (broken) await sql.begin(async tx => {
+        await tx.unsafe("drop view network.network_state_console_ntwrk");
+        await tx.unsafe("alter view network.obs_failing_app_view rename to network_state_console_ntwrk");
+        await tx.unsafe("drop view network.network_state_console");
+        await tx.unsafe("alter view network.obs_failing_shared_view rename to network_state_console");
+      });
+      await real.control({ type: "refresh" });
+      await sql.close();
+    }
+    expect(real.state().env.error).toBeUndefined();
+  });
+
+  test("a login check that fails reads nothing, and a later poll checks the login again before it reads", async () => {
+    const sql = new SQL(url);
+    const db = new URL(url).pathname.slice(1);
+    const maintenance = new URL(url);
+    maintenance.pathname = "/postgres";
+    const admin = new SQL({ url: maintenance.href, max: 1 });
+    const source = new RealSource({ url, pollMs: 3_600_000, pushMs: 3_600_000, service: false });
+    try {
+      await sql.unsafe("create schema if not exists obs_login_check");
+      await sql.unsafe("create view obs_login_check.pg_roles as select * from pg_catalog.pg_roles where 1 / (select count(*) from pg_catalog.pg_roles where false)::int = 1");
+      await sql.unsafe(`alter database ${db} set search_path = obs_login_check, pg_catalog, "$user", public`);
+      await admin.unsafe(`alter database ${db} allow_connections false`);
+      await source.init();
+      expect(source.state().members).toEqual([]);
+      expect(source.state().env.error).toContain("Could not check the database login");
+      expect(await source.member(rs.members[0]!.id)).toBeUndefined();
+      await admin.unsafe(`alter database ${db} allow_connections true`);
+      await source.control({ type: "refresh" });
+      expect(source.state().members.length).toBeGreaterThan(0);
+      expect(source.state().env.error).toBeUndefined();
+    } finally {
+      await source.dispose();
+      await admin.unsafe(`alter database ${db} allow_connections true`);
+      await admin.close();
+      await sql.unsafe(`alter database ${db} reset search_path`);
+      await sql.unsafe("drop schema if exists obs_login_check cascade");
+      await sql.close();
+    }
   });
 });

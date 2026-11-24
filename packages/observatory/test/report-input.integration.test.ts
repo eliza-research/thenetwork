@@ -10,7 +10,7 @@ const preview = (...args: string[]) => spawnSync(process.execPath,
 test.each([
   ["--engine", "unsupported"],
   ["--network", "unsupported"],
-  ["--review", "unsupported"],
+  ["--judge", "unsupported"],
   ["--seed", "not-a-number"],
   ["--seed", ""],
 ])("the report refuses %s with invalid value %j", (option, value) => {

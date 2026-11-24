@@ -65,8 +65,6 @@ function parkEvent(row: Record<string, unknown>, checkedAt: number): PublishedPa
     starts_at: new Date(start).toISOString(), ends_at: new Date(end).toISOString(), category: HOBBY.test(categories) ? "hobby" : "events", tags,
   };
 }
-
-/** Run one complete scan. The app never starts this job during request handling or a tick. */
 export async function importPublicEvents(sql: SQL, clock: Clock, request: typeof fetch = fetch): Promise<{ published: boolean; events: number }> {
   const checkedAt = clock.now();
   const url = new URL(FEED);

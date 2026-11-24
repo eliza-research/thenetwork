@@ -573,7 +573,7 @@ const historyColumns: DataColumn[] = [{ key: "v", label: "v" }, { key: "at", lab
 
 export function Config() {
   const s = useStore();
-  const r = useFetch<ConfigInfo>(() => store.config(), `${s.mode}|${s.network?.matchingEnabled}|${s.network?.review.mode}`);
+  const r = useFetch<ConfigInfo>(() => store.config(), `${s.mode}|${s.network?.matchingEnabled}`);
   const viewer = useViewer(s.mode === "real" ? (s.canAct() ? "RealWithService" : "RealWithoutService") : "SimulatedWorld");
   const c = r.data;
   const packLocked = !!s.env?.matchingLocked;
@@ -608,7 +608,6 @@ export function Config() {
             canConfirm={canConfirmMatchingSwitch(ws)}
             onPress={press}
             onConfirm={confirm}
-            review={c.reviewMode ?? "–"}
             error={phase === "ConfigFailed" && edit?.of === c ? edit.error : undefined}
           />
           <DataTable columns={historyColumns} empty={c.history.length ? undefined : "No changes yet."}>

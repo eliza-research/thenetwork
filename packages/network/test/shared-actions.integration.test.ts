@@ -18,7 +18,7 @@ const phone="+12125550181";
 let sql:SQL,service:NetworkService,server:HttpServer,memberId:string,personId:string;
 let escaped=0;
 const start=async()=>{
-  service=new NetworkService({url,clock,photoStorage:null,instance:"signed-actions-integration",env:{PLATFORM_ENV:"dev",CLEF_RATINGS:"off",SERVICE_TURN_SECRET:secret},
+  service=new NetworkService({url,clock,photoStorage:null,instance:"signed-actions-integration",env:{PLATFORM_ENV:"dev",SERVICE_TURN_SECRET:secret},
     networks:[{id:"friends:nyc",matchingEnabled:false},{id:"slop:nyc",matchingEnabled:false}],network:{seed:1},log:()=>{},
     adapter:()=>{const a=new DryRunAdapter(()=>{});a.deliver=async rows=>{escaped+=rows.length;return rows.map(row=>({id:row.id,status:"dry_run"}));};a.direct=async()=>{escaped++;return "dry_run";};return a;}});
   await service.start();server=await serveHttp({hostname:"127.0.0.1",port:0,fetch:req=>service.fetch(req)});
@@ -87,7 +87,7 @@ test("updates use the canonical app inbox and replay its original receipt; uncer
   const first=await post(UPDATES_PATH,action());expect(first.status).toBe(200);expect(first.headers.get("cache-control")).toBe("no-store");const updates=await first.json();expect(updates).toEqual({items:[{summary:"Approved own update"}]});
   expect((await sql`select seen_on from notify.inbox_items where person_id=${personId} and subject_id='signed-update-closed'`)[0].seen_on).toBe("web");
   expect(await (await post(UPDATES_PATH,action())).json()).toEqual(updates);
-  expect(await service.updatesFor(personId,"friends","web")).toEqual([]);
+  expect(await service.updatesFor(personId,"friends","web",undefined,()=>true)).toEqual([]);
   const opened=await post(TURN_PATH,turn("unknown-updates-open","Tell me something about the weather"));expect((await opened.json() as any).outcome).toBe("open");
   await service.notify!.add({personId,app:"friends",eventType:"fixture",subjectId:"read-fault",urgency:"normal",summary:"Unread after a failed read"},clock.now());
   const beforeSurface=await sql`select * from notify.surface_signals where person_id=${personId} order by surface`;
@@ -108,6 +108,17 @@ test("updates use the canonical app inbox and replay its original receipt; uncer
   expect((await sql`select seen_at from notify.inbox_items where person_id=${personId} and app_id='slop' and subject_id='other-app'`)[0].seen_at).toBeNull();
   const row=(await sql`select action_receipts from platform.inbound where id='msg:blooio:unknown-updates-open'`)[0];
   expect(Object.values(row.action_receipts).map((value:any)=>value.state)).toEqual(["unresolved"]);
+},60_000);
+
+test("an update that fails the output gate is withheld from the shared line and stays unseen",async()=>{
+  await service.notify!.add({personId,app:"friends",eventType:"fixture",subjectId:"leaky-shared",urgency:"normal",summary:"Ari says: text me at 415 555 0102."},clock.now());
+  await service.notify!.add({personId,app:"friends",eventType:"fixture",subjectId:"clean-shared",urgency:"normal",summary:"Your plan is on Saturday."},clock.now());
+  const opened=await post(TURN_PATH,turn("leak-updates-open","Tell me something about the weather"));expect((await opened.json() as any).outcome).toBe("open");
+  const read=await post(UPDATES_PATH,action("leak-updates-open"));expect(read.status).toBe(200);
+  const summaries=((await read.json()) as {items:{summary:string}[]}).items.map(item=>item.summary);
+  expect(summaries).toContain("Your plan is on Saturday.");expect(summaries).not.toContain("Ari says: text me at 415 555 0102.");
+  expect((await sql`select seen_at from notify.inbox_items where person_id=${personId} and subject_id='clean-shared'`)[0].seen_at).not.toBeNull();
+  expect((await sql`select seen_at from notify.inbox_items where person_id=${personId} and subject_id='leaky-shared'`)[0].seen_at).toBeNull();
 },60_000);
 
 test("an effect transaction fault rolls back canonical state and replay never repeats it; STOP revokes cached actions",async()=>{

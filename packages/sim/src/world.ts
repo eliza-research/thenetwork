@@ -6,7 +6,7 @@ import { requirePositiveSimulationValue } from "./input.ts";
 import { writePath } from "../../core/src/runtime/files.ts";
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { DAY, HOUR, MINUTE, SimClock, type MemberId, type Proposal } from "@thenetwork/core";
+import { DAY, HOUR, MINUTE, SimClock, type AppId, type MemberId, type Proposal } from "@thenetwork/core";
 import type { OracleSummary, RunRecord, RunRecordInput } from "@thenetwork/core";
 import { bookedCancellationPrefix } from "../../core/src/generated/outboundAdmission.ts";
 import { computeMetrics, type Metrics } from "./judge/metrics.ts";
@@ -17,8 +17,10 @@ import type { Engine, InboundMessage, MeetingReport, NetworkContext, NetworkUnde
 import { Oracle, type OracleOptions, type OracleVerdict } from "./oracle.ts";
 import type { Persona } from "./persona.ts";
 import { Rng, hash32 } from "@thenetwork/core";
+import { signature } from "./coins.ts";
 import { Scheduler, type RunMode } from "./scheduler.ts";
 import { buildSnapshot, quietHoursOf } from "./snapshot.ts";
+import { giveStatedBirthDates } from "./generator.ts";
 import { simulatedNameMatcher } from "./simulated-names.ts";
 import { nextLocalHour } from "./time.ts";
 import { planEnjoyment, type PlanAgentOptions } from "./plans.ts";
@@ -38,6 +40,7 @@ export interface WorldOptions {
   personas: Persona[];
   days: number;
   network: NetworkUnderTest;
+  app: AppId;
   /** Optional matching engine; called nightly per city, proposals handed to network.submitProposal. */
   engine?: Engine;
   agent?: PersonaAgent;
@@ -99,6 +102,7 @@ export interface WorldResult {
 
 export const DEFAULT_START = Date.UTC(2026, 9, 5, 7); // Mon Oct 5 2026, 00:00 in SF
 const REPO_ROOT = resolve(import.meta.dirname, "../../..");
+const statedBirthOf = (p: Persona): { birthKey?: number } => (p.public.birthKey !== undefined ? { birthKey: p.public.birthKey } : {});
 
 export class World {
   readonly clock: SimClock;
@@ -121,7 +125,8 @@ export class World {
   private cancelledDeliveries = new Set<string>(); // `${meetingId}|${memberId}` terminal notices received
   private namesIn: ReturnType<typeof simulatedNameMatcher>;
   private meetingSeq = 0;
-  private spawnSeq = 0;
+  private meetingCoins = new Map<string, string>();
+  private invitesBy = new Map<MemberId, number>();
   private ctx?: NetworkContext;
   private wall0 = 0;
   readonly runId: string;
@@ -131,6 +136,7 @@ export class World {
   constructor(private opts: WorldOptions) {
     requirePositiveSimulationValue(opts.days, "world days");
     this.start = opts.start ?? DEFAULT_START;
+    giveStatedBirthDates(opts.personas, opts.seed, this.start);
     this.clock = new SimClock(this.start);
     this.channel = new SimChannel(this.clock, { seed: opts.seed, failureRate: opts.failureRate });
     this.personas = new Map(opts.personas.map(p => [p.id, p]));
@@ -185,7 +191,9 @@ export class World {
       recordMeeting: m => this.scheduleMeeting(m),
       invite: (inviterId, friendName) => {
         const inviter = this.personas.get(inviterId);
-        const made = inviter && this.opts.spawnFriend?.(inviter, friendName, ++this.spawnSeq);
+        const seq = (this.invitesBy.get(inviterId) ?? 0) + 1;
+        this.invitesBy.set(inviterId, seq);
+        const made = inviter && this.opts.spawnFriend?.(inviter, friendName, seq);
         if (!made) return undefined;
         this.spawn(made.persona, this.clock.now() + made.joinDelayMs);
         return made.persona.id;
@@ -218,7 +226,7 @@ export class World {
       const added = m.participants.filter(p => !existing.participants.includes(p));
       existing.participants = [...existing.participants, ...added];
       this.rec({ type: "meeting_scheduled", meetingId: existing.id, proposalId: m.proposalId, participants: existing.participants, at: m.at, city: m.city });
-      const morning = nextLocalHour(m.at - 14 * HOUR, m.city, 8) + this.rng.int(0, 60) * MINUTE;
+      const morning = nextLocalHour(m.at - 14 * HOUR, m.city, 8) + this.rng.fork("morning", this.meetingCoin(existing)).int(0, 60) * MINUTE;
       for (const pid of added) {
         const memory = this.memories.get(pid);
         if (memory?.forceFlake && !memory.forceFlakeFor) memory.forceFlakeFor = { meetingId: existing.id, proposalId: m.proposalId };
@@ -234,11 +242,28 @@ export class World {
     }
     this.rec({ type: "meeting_scheduled", meetingId: id, proposalId: m.proposalId, participants: m.participants, at: m.at, city: m.city });
     // Morning-of flake check (8-9am local on the meeting day, or now if that has passed).
-    const morning = nextLocalHour(m.at - 14 * HOUR, m.city, 8) + this.rng.int(0, 60) * MINUTE;
+    const morning = nextLocalHour(m.at - 14 * HOUR, m.city, 8) + this.rng.fork("morning", this.meetingCoin({ ...m, id })).int(0, 60) * MINUTE;
     for (const pid of m.participants) this.scheduler.at(Math.min(morning, m.at - 30 * MINUTE), "flake_check", { meetingId: id, personaId: pid });
     this.scheduler.at(m.at, "meeting", { meetingId: id });
     return id;
   }
+
+  private messageCoin(p: Persona, msg: SimMessage): string {
+    const m = msg.meta ?? {};
+    const prop = m.proposalId ? this.proposals.get(m.proposalId) : undefined;
+    const about = m.probe?.category ?? m.plan?.activity ?? prop?.category ?? "-";
+    const people = m.probe?.participants ?? m.participants ?? prop?.participants ?? [];
+    return this.oracle.coins.key(`msg|${p.id}|${m.type ?? "-"}|${about}|${signature(people)}|d${this.dayOf(this.clock.now())}`, msg.id);
+  }
+  private meetingCoin(m: { id: string; participants: MemberId[]; at: number }): string {
+    let coin = this.meetingCoins.get(m.id);
+    if (coin === undefined) {
+      coin = this.oracle.coins.key(`meet|${signature(m.participants)}|d${this.dayOf(m.at)}`, m.id);
+      this.meetingCoins.set(m.id, coin);
+    }
+    return coin;
+  }
+  private dayOf(t: number): number { return Math.floor((t - this.start) / DAY); }
 
   private upcomingBooking(proposalId: string, memberId: MemberId, now: number, at?: number) {
     return [...this.meetings.values()].reverse().find(meeting => meeting.proposalId === proposalId && meeting.at > now
@@ -304,6 +329,7 @@ export class World {
   /** Add a persona mid-run (growth); they join at `joinAt` (sim ms). */
   spawn(p: Persona, joinAt: number) {
     if (this.personas.has(p.id)) return;
+    giveStatedBirthDates([p], this.opts.seed, this.start);
     this.personas.set(p.id, p);
     this.memories.set(p.id, newMemory());
     this.oracle.addPersona(p);
@@ -314,6 +340,7 @@ export class World {
       id: p.id, name: p.name, archetype: p.archetype, adversarial: p.hidden.adversarial, homeCity: p.homeCity,
       joinDay: Math.floor((joinAt - this.start) / DAY), trueAge: p.hidden.trueAge, claimedAge: p.public.claimedAge, quietHours: quietHoursOf(p),
       canary: p.hidden.privateDisclosure?.canary, privateFact: p.hidden.privateDisclosure?.fact, romanceOptIn: p.hidden.romance.optIn,
+      ...statedBirthOf(p),
     } });
     this.scheduler.at(joinAt, "join", { personaId: p.id });
   }
@@ -366,7 +393,7 @@ export class World {
     s.on<{ day: number }>("day", ev => { this.opts.onDay?.(ev.data.day); });
 
     this.rec({ type: "run_start", runId: this.runId, seed: this.opts.seed, start: this.start, config: {
-      days, personas: this.opts.personas.length, network: network.name, engine: this.opts.engine?.name ?? null,
+      days, personas: this.opts.personas.length, network: network.name, app: this.opts.app, engine: this.opts.engine?.name ?? null,
       agent: this.agent.mode, mode: this.opts.mode ?? "discrete", tickMinutes: this.opts.tickMinutes ?? 60, replyTracking: true,
     } });
     for (const p of this.opts.personas) {
@@ -374,6 +401,7 @@ export class World {
         id: p.id, name: p.name, archetype: p.archetype, adversarial: p.hidden.adversarial, homeCity: p.homeCity,
         joinDay: p.joinDay, trueAge: p.hidden.trueAge, claimedAge: p.public.claimedAge, quietHours: quietHoursOf(p),
         canary: p.hidden.privateDisclosure?.canary, privateFact: p.hidden.privateDisclosure?.fact, romanceOptIn: p.hidden.romance.optIn,
+        ...statedBirthOf(p),
       } });
     }
 
@@ -442,7 +470,7 @@ export class World {
     const p = this.personas.get(msg.memberId);
     const mem = this.memories.get(msg.memberId);
     if (!p || !mem || mem.optedOut) return;
-    const pctx = this.personaCtx(p, msg.id);
+    const pctx = this.personaCtx(p, this.messageCoin(p, msg));
     const reply = await this.agent.respond(pctx, msg);
     this.rec({ type: "decision", memberId: p.id, messageId: msg.id, messageType: reply.messageType, intent: reply.intent,
       decision: reply.decision, proposalId: reply.proposalId, delayMs: reply.delayMs, tracksReplyReceipt: true });
@@ -496,9 +524,10 @@ export class World {
     const clash = this.clashes(m, p);
     const forced = mem.forceFlakeFor?.meetingId === meetingId ? mem.forceFlake : undefined;
     if (this.notices.has(key) || this.cancelledDeliveries.has(key) || (!forced && !clash && (!pr || pr.plannedShow))) return;
-    const r = this.rng.fork("flake", meetingId, personaId);
+    const coin = this.meetingCoin(m);
+    const r = this.rng.fork("flake", coin, personaId);
     if (forced === "notice" || (!forced && r.bool(clash ? 0.8 : 0.45))) {
-      const text = templateText(this.personaCtx(p, `flake${meetingId}`), { intent: "flake_notice", messageType: "reminder", decision: "none", delayMs: 0 });
+      const text = templateText(this.personaCtx(p, `flake${coin}`), { intent: "flake_notice", messageType: "reminder", decision: "none", delayMs: 0 });
       this.personaSend(p, text, { noticeMeetingId: m.id });
     }
   }
@@ -537,7 +566,7 @@ export class World {
     const plan = this.opts.plans ? this.planOf(m, prop) : undefined;
     if (plan && showed.length >= 2) {
       // The plan oracle: activity fit x group chemistry x logistics (plans.ts).
-      const e = planEnjoyment(this.oracle, this.opts.seed, { id: m.proposalId, ...plan }, showed);
+      const e = planEnjoyment(this.oracle, this.opts.seed, { id: this.oracle.coins.key(`plan|${signature(showed)}|${plan.activity ?? "-"}|d${this.dayOf(m.at)}`, m.proposalId), ...plan }, showed);
       for (const id of showed) attendance[id]!.enjoyment = e[id] ?? 0;
     } else if (showed.length >= 2) {
       const v = this.oracle.evaluate({ id: `${m.proposalId}:actual`, kind: prop?.kind ?? "intro", participants: showed, city: m.city, window: { start: m.at, end: m.at }, category: prop?.category, objective: prop?.objective });

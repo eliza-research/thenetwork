@@ -24,7 +24,7 @@ import { INTERESTS } from "../../packages/engine/src/packs/network/vocabulary.ts
 import { pairKey } from "../../packages/engine/src/world.ts";
 import { PolicyPersonaAgent, World } from "../../packages/sim/src/index.ts";
 import { friendFactory, nycPersonas } from "../../packages/network/harness/index.ts";
-import { ConsentNetwork } from "../../packages/network/src/index.ts";
+import { ConsentNetwork, simulatedReviewJudge } from "../../packages/network/src/index.ts";
 import { planLedger } from "../../packages/network/src/plans.ts";
 import { Trust } from "../../packages/network/src/trust.ts";
 import { buildSite, DRAFT_MARKERS, SITES } from "../../sites/sites.ts";
@@ -53,10 +53,10 @@ async function networkGates(b: Block) {
   const seed = 3, days = 9;
   const personas = await nycPersonas();
   const start = (await fileAt(`${DATA_DIR}/manifest.json`).json()).snapshotNow as number;
-  const net = new ConsentNetwork({ seed, review: "auto", engine: { cities: ["nyc"] } });
+  const net = new ConsentNetwork({ seed, inlineJudge: simulatedReviewJudge({ exceptions: false }), engine: { cities: ["nyc"] } });
   const R: RunRecord[] = [];
   const rosterAtNo = new Map<Log, readonly MemberId[]>();
-  const w = new World({ seed, personas, days, start, writeLog: false, network: net, agent: new PolicyPersonaAgent(start), spawnFriend: friendFactory({ seed }), onRecord: r => {
+  const w = new World({ seed, personas, days, start, app: net.app.id, writeLog: false, network: net, agent: new PolicyPersonaAgent(start), spawnFriend: friendFactory({ seed }), onRecord: r => {
     R.push(r);
     if (r.type !== "network_log" || (r.kind !== "probe_answer" && r.kind !== "time_answer")
       || r.detail.yes !== false || r.detail.expired || r.detail.plan) return;
@@ -332,7 +332,7 @@ async function sitesGates(b: Block) {
         }
         expect(skill).toContain("help@ntwrk.party");
         expect([s.domain, readFileSync(join(r.out, "_worker.js"), "utf8").includes(DEFAULT_BACKEND_ORIGIN)]).toEqual([s.domain, true]);
-        expect([s.domain, /13 or older/i.test(skill) && /18 (and|or) older/i.test(skill)]).toEqual([s.domain, true]);
+        expect([s.domain, /13 or older/i.test(skill) && /18 (and|or) older|under 18/i.test(skill)]).toEqual([s.domain, true]);
         if (s.app === "ntwrk") continue;
         expect([s.domain, /STOP[^\n]*every (app|text)/.test(skill) && skill.includes(`"leave ${s.domain}"`)]).toEqual([s.domain, true]);
         const sms = join(r.out, "terms.html");

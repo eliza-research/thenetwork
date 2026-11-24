@@ -7,11 +7,12 @@
 import { expect, test } from "vitest";
 import { HOUR } from "@thenetwork/core";
 import { Mini } from "./mini.ts";
+import { simulatedReviewJudge, holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 const newcomer = (id: string, name: string) => ({ id, name, age: 30, area: "Williamsburg", interests: ["board games", "live music"], wants: [{ objective: "make a few new friends in the city", category: "social" as const }] });
 
 test("a weekend preference is a yes only to the offered weekend times", async () => {
-  const w = new Mini([newcomer("a", "Ana Diaz"), newcomer("b", "Ben Ito")], { review: "auto" });
+  const w = new Mini([newcomer("a", "Ana Diaz"), newcomer("b", "Ben Ito")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   // Both said they are free on weekday evenings: the probe offers a weekday evening and the weekend.
   for (const id of ["a", "b"]) w.facets.push({ id: `${id}:availability`, memberId: id, kind: "availability_pattern", value: "weekday evenings", tags: ["evening:Mon", "evening:Tue", "evening:Wed", "evening:Thu"], scope: "agent_private", provenance: "said", confidence: 0.9, validFrom: w.clock.now(), source: "chat", observedAt: w.clock.now(), inferred: false, confirmedByMember: true });
   await w.onboard("a", "b");
@@ -29,7 +30,7 @@ test("a reviewed offer keeps exclusions and the member's time-of-day limit", asy
   const ids = ["a", "b"];
   const starts = [Date.UTC(2026, 9, 8, 23), Date.UTC(2026, 9, 10, 15), Date.UTC(2026, 9, 11, 18)];
   const w = new Mini([newcomer("a", "Ana Diaz"), newcomer("b", "Ben Ito")], {
-    plans: false, growth: false, review: "human",
+    plans: false, growth: false, inlineJudge: holdEveryItem.inline,
     hooks: { timeOptions: () => starts.map(start => ({ start, end: start + HOUR })) },
   });
   await w.onboard(...ids);
@@ -59,7 +60,7 @@ test("a past date reference neither books nor replaces the active time choice", 
   const world = new Mini([
     { id: "rae", name: "Rae", age: 29, romance: { is: "woman", seeks: ["man"] } },
     { id: "sam", name: "Sam", age: 31, romance: { is: "man", seeks: ["woman"] } },
-  ], { app: "slop", plans: false, growth: false, review: "human", hooks: {
+  ], { app: "slop", plans: false, growth: false, inlineJudge: holdEveryItem.inline, hooks: {
     timeOptions: () => [thursday, saturday, sunday].map(start => ({ start, end: start + HOUR })),
     venue: () => ({ id: "test-cafe", name: "Cafe", neighborhood: "Downtown", lat: 40.7, lng: -74 }),
   }, understand: async (text, ctx) => text === pastReply ? {
@@ -99,7 +100,7 @@ test.each([
   const world = new Mini([
     { id: "rae", name: "Rae", age: 29, romance: { is: "woman", seeks: ["man"] } },
     { id: "sam", name: "Sam", age: 31, romance: { is: "man", seeks: ["woman"] } },
-  ], { app: "slop", plans: false, growth: false, review: "human", hooks: {
+  ], { app: "slop", plans: false, growth: false, inlineJudge: holdEveryItem.inline, hooks: {
     timeOptions: () => starts.map(start => ({ start, end: start + HOUR })),
     venue: () => ({ id: "test-cafe", name: "Cafe", neighborhood: "Downtown", lat: 40.7, lng: -74 }),
   } });

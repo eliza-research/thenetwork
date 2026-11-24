@@ -8,7 +8,7 @@ Slop runs this phase after consented photo storage changes when the rating and s
 
 ### Only an eligible member with available photo bytes reaches the rater
 
-The shell checks the app, ban, adult age, app eligibility, and live membership before reading photo bytes. It records the ordered list of the newest eligible photo rows and uses only the available bytes from that selection. A change to the selection or authority before handing the bytes to the rater ends the attempt. Missing inputs or a response without a score end the attempt without a write. Provider exceptions follow the shell's retry and logging rules.
+The shell checks the app, ban, adult age, app eligibility, and live membership before reading photo bytes. It records the ordered list of the newest eligible photo rows and supplies photos only when it reads the bytes of every selected row. A selected row without stored bytes ends the attempt, so the rater never scores part of the selection. This changed from "use the available bytes" because a missing object let a score describe fewer photos than the member has. A change to the selection or authority before handing the bytes to the rater ends the attempt. Missing inputs or a response without a score end the attempt without a write. Provider exceptions follow the shell's retry and logging rules.
 
 ```quint
 type RatingPhase = CheckingSubject | ReadingPhotos | AwaitingScore | CheckingReturnedScore |

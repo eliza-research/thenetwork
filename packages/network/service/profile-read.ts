@@ -5,7 +5,6 @@ import type { Membership } from "../../platform/src/store.ts";
 
 export type ProfileReadRequest = { decision: ProfileRead; app?: AppId };
 
-/** Only an explicit own-profile read selects an app within a sentence. */
 export function profileReadRequest(
   text: string,
   apps: Record<AppId, Pick<AppInfo, "id" | "domain">> = APPS,
@@ -25,8 +24,6 @@ export function profileReadRequest(
     .trim()
     .replace(/[.!?]+$/u, "");
   t = t.replace(/^(?:can|could) you (?:please )?/u, "");
-  // A trailing courtesy or urgency word is not the app's name: "show my Friends profile please" is the
-  // same read as "show my Friends profile". The front of the sentence already allows "Please ...".
   for (let i = 0; i < 2; i++)
     t = t.replace(/[.,;!?\s]+(?:thank you|thanks|right now|real quick|please|asap|pls|now)$/u, "").trim();
   const read =
@@ -55,7 +52,6 @@ export function profileReadRequest(
   return { decision, app: decision.intent === "NamedRead" ? app : undefined };
 }
 
-/** Stored member-supplied fields only; no inferred facts, suggestions or model call. */
 export function savedProfileText(app: AppInfo, membership: Membership, age?: number): string {
   const p = membership.profile;
   const neighborhood = typeof p.neighborhood === "string" ? p.neighborhood : undefined;
@@ -76,7 +72,5 @@ export function savedProfileText(app: AppInfo, membership: Membership, age?: num
     typeof p.zip === "string" && p.zip.trim() ? `Postal code: ${p.zip}` : undefined,
   ].filter(Boolean);
   const text = `Here is your saved ${app.name} profile:\n${fields.join("\n")}\n\nI left it unchanged.`;
-  // The existing signed Cloud delivery contract caps a handled reply at 1,600.
-  // Refuse the oversized display explicitly; never truncate saved user fields.
   return savedProfileFitsReply(text.length) ? text : "Your saved profile is too long for one text. I left it unchanged.";
 }

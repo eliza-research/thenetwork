@@ -3,7 +3,8 @@
 // enrich these with realistic bios and voices afterwards.
 import { requireSimulationCount, requireSimulationShare } from "./input.ts";
 import type { City } from "@thenetwork/core";
-import { Rng, clamp01 } from "@thenetwork/core";
+import { Rng, clamp01, earliestDayKeyOf, hash32 } from "@thenetwork/core";
+import { teenFriendMaxAge, teenFriendMinAge } from "../../core/src/generated/friendIntroAge.ts";
 import {
   BOUNDARIES, DESIRES, FIRST_NAMES, INTERESTS, LAST_NAMES, NEIGHBORHOODS, PRIVATE_DISCLOSURES,
   SKILLS, STYLES, desireById, type WritingStyle,
@@ -38,6 +39,8 @@ export interface GeneratorOptions {
    * DEFAULT_MINOR_SHARE; 0 disables. Separate from the adversarial "minor" who lies about age.
    */
   minorShare?: number;
+  minorLiarShare?: number;
+  adultPoserShare?: number;
   /** Share of personas with an agent-private disclosure + canary (default 0.3). */
   disclosureRate?: number;
   /** Personas join over days [0, joinSpreadDays) (default 7); ~60% join on day 0-1. */
@@ -152,7 +155,49 @@ function generateWorld(opts: GeneratorOptions): { personas: Persona[]; latent?: 
     for (const p of personas) for (const d of p.hidden.desires) d.lapsesAt = drawLapse(lr.fork(p.id, d.id), start + p.joinDay * 86_400_000, mean);
   }
   if (opts.richness) attachKnowledge(personas, root.fork("richness"), opts.richness === true ? DEFAULT_RICHNESS_MIX : opts.richness, opts.knowledgeNow ?? KNOWLEDGE_NOW_DEFAULT);
+  statedTeenAges(personas, opts.seed, opts.minorLiarShare ?? 0, opts.adultPoserShare ?? 0);
   return { personas, latent };
+}
+
+export const TEEN_WORLD = { minorShare: 0.15, minorLiarShare: 0.2, adultPoserShare: 0.02 } as const;
+
+const POSER_AGES: [number, number] = [19, 40];
+const LIAR_AGES: [number, number] = [18, 21];
+const POSED_AGES: [number, number] = [14, 17];
+
+function restate(p: Persona, claimedAge: number) {
+  p.public.bio = p.public.bio.replace(`, ${p.public.claimedAge}, `, `, ${claimedAge}, `);
+  p.public.claimedAge = claimedAge;
+}
+
+function statedTeenAges(personas: Persona[], seed: number | string, liarShare: number, poserShare: number) {
+  for (const p of personas) {
+    const r = new Rng(hash32("ntwrk-teen-age", seed, p.id));
+    const coin = r.next(), age = r.next();
+    const honestMinor = !p.hidden.adversarial && p.hidden.trueAge < 18 && p.public.claimedAge === p.hidden.trueAge;
+    const poserCandidate = !p.hidden.adversarial && p.hidden.trueAge >= POSER_AGES[0] && p.hidden.trueAge <= POSER_AGES[1];
+    if (honestMinor && coin < liarShare) restate(p, LIAR_AGES[0] + Math.floor(age * (LIAR_AGES[1] - LIAR_AGES[0] + 1)));
+    else if (poserCandidate && coin < poserShare) {
+      restate(p, POSED_AGES[0] + Math.floor(age * (POSED_AGES[1] - POSED_AGES[0] + 1)));
+      p.hidden.poser = true;
+    }
+  }
+}
+
+export function birthKeyForAgeOn(age: number, dayKey: number, r: Rng): number {
+  const month = Math.trunc(dayKey / 100) % 100, startYear = Math.trunc(dayKey / 10000);
+  const birthMonth = ((month - 1 + r.int(1, 11)) % 12) + 1, birthDay = r.int(2, 27);
+  const monthDay = birthMonth * 100 + birthDay;
+  return (startYear - age - (monthDay > dayKey % 10000 ? 1 : 0)) * 10000 + monthDay;
+}
+
+export function giveStatedBirthDates(personas: readonly Persona[], seed: number | string, startMs: number) {
+  const dayKey = earliestDayKeyOf(startMs);
+  for (const p of personas) {
+    const age = p.public.claimedAge;
+    if (p.public.birthKey !== undefined || age < teenFriendMinAge || age > teenFriendMaxAge + 1) continue;
+    p.public.birthKey = birthKeyForAgeOn(age, dayKey, new Rng(hash32("ntwrk-birth", seed, p.id)));
+  }
 }
 
 /** Assign richness tiers (exact quotas) and simulate chat coverage + connected sources. */

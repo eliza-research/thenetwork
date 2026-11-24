@@ -1,8 +1,3 @@
-// The admin console for four apps (docs/research/2026-10-08-platform-architecture.md section 5).
-// The app list, names, domains and ages come from the platform registry (packages/platform/src/apps.ts):
-// a rename there changes the console too. This file adds what only the console needs: the review
-// reason codes and the review SLA per app, and whether an app's engine pack has shipped (slop and peon
-// matching stays off until it has).
 import { APP_IDS, APPS, isAppId, type AppId } from "../../platform/src/apps.ts";
 import { REVIEW_REASONS, type ReviewReason } from "./types.ts";
 
@@ -12,15 +7,6 @@ export { APP_IDS, APPS, isAppId, type AppId };
 export type AppScope = AppId | "*";
 /** The app a request without `app` belongs to (the console before the four apps). */
 export const DEFAULT_APP: AppId = "ntwrk";
-
-/**
- * Apps whose engine pack has shipped: matching may run and the review queue takes their items. slop.date
- * is the first pilot (slopPack, critical path item 6). peon stays off in the console: its matching runs
- * locally only (AGENTS.md decision 4).
- */
-export const PACK_READY: ReadonlySet<AppId> = new Set<AppId>(APP_IDS.filter(a => a !== "peon"));
-export const matchingAllowed = (app: AppId) => PACK_READY.has(app);
-export const MATCHING_OFF_TEXT = "matching off until pack";
 
 /**
  * One review reason code. `base` is the PRD 32.8 code the Network stores (its decide() and the
@@ -92,12 +78,12 @@ export const appBanner = (app: AppId) => app.toUpperCase();
 /** Public facts the console shows about an app (the switcher, the banner, the review queue). */
 export interface ConsoleApp {
   id: AppId; name: string; domain: string; minJoinAge: number; minMatchAge: number;
-  matchingAllowed: boolean; reasons: AppReason[]; slaHours: number;
+  reasons: AppReason[]; slaHours: number;
 }
 export function consoleApps(sla = slaHours()): ConsoleApp[] {
   return APP_IDS.map(a => ({
     id: a, name: APPS[a].name, domain: APPS[a].domain, minJoinAge: APPS[a].minJoinAge, minMatchAge: APPS[a].minMatchAge,
-    matchingAllowed: matchingAllowed(a), reasons: APP_REASONS[a], slaHours: sla[a],
+    reasons: APP_REASONS[a], slaHours: sla[a],
   }));
 }
 

@@ -25,7 +25,7 @@ test("experiment reports the median of completed native request durations", asyn
   const evenMedian = Math.round((shortest.hours + longest.hours) / 2);
   expect(evenMedian).not.toBe(Math.round(longest.hours));
   const network = new ConsentNetwork({ seed: 1, matchingEnabled: false });
-  const world = new World({ seed: 1, days: 14, personas: [], network, writeLog: false });
+  const world = new World({ seed: 1, days: 14, app: "ntwrk", personas: [], network, writeLog: false });
   await world.begin();
   const state = network.exportState();
   state.requests = [shortest, longest].map(({ start, fulfilledAt }) => ({

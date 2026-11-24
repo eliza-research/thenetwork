@@ -131,8 +131,7 @@ Put your values in `.env` only. `.env` is in `.gitignore`. [.env.example](.env.e
 | `CLOUDFLARE_ACCOUNT_ID` | The Cloudflare account of the Workers AI token. `scripts/wrangler.sh` also needs it. | With `CLOUDFLARE_AI_TOKEN` | Cloudflare dashboard |
 | `CLEF_MODEL` | Photo rater model: `clef` (default) or `clef-flash`. | Optional | |
 | `RELAY_CLEF_MODEL` | Relay classifier model: `clef-flash` (default) or `clef`. | Optional | |
-| `CLEF_RATINGS` | Photo ratings. Unset or `on` means on. `off` turns them off. | Optional | |
-| `CLEF_WEIGHTS_PATH` | A fitted Clef weights file. Unset uses the placeholder weights. A file with no version and provenance is refused. | Optional | `pnpm run clef fit` output |
+| `CLEF_WEIGHTS_PATH` | A fitted Clef weights file. Unset uses the placeholder weights. A file with no version and provenance is refused, and the backend does not start. | Optional | `pnpm run clef fit` output |
 | `OBSERVATORY_PG_PORT`, `OBSERVATORY_PG_DIR` | Port (default 54339) and data folder (default `runs/pg`) of the dev Postgres. The integration and e2e tests use it. | Optional | |
 | `PG_BIN_DIR` | Folder of the Postgres client programs, if they are not on PATH. | Optional | |
 | `REQUIRE_PG` | `1` makes a Postgres test or sim block fail instead of skip when there is no Postgres. CI sets it. | Optional. Set it to prove that no Postgres case skipped. | |
@@ -147,7 +146,7 @@ Put your values in `.env` only. `.env` is in `.gitignore`. [.env.example](.env.e
 
 ### 5.2 Variables you must not set locally
 
-- **Live sends.** `BLOOIO_ALLOW_SEND`, `NTWRK_LIVE_APPROVED`, `<APP>_LIVE_APPROVED` (for example `SLOP_LIVE_APPROVED`) and `NETWORK_CHANNEL`. Without them every send is dry-run. Real texts go to real people. Only the founder approves live sends.
+- **Live sends.** `NETWORK_CHANNEL` alone makes sends real, for every app (owner decision 2026-11-22). Without it every send is dry-run. Real texts go to real people. Only the founder approves live sends.
 - **Deploys.** `NTWRK_ALLOW_DEPLOY`. `scripts/wrangler.sh` refuses a deploy without it. Only the founder approves deploys.
 - **Production secrets and operations.** `BLOOIO_API_KEY`, `BLOOIO_WEBHOOK_SECRET`, `TWILIO_*`, `TURNSTILE_*`, `PLATFORM_HASH_KEY`, `LEAK_LABEL_KEY`, `PLATFORM_PROXY_SECRET`, `PLATFORM_SESSION_SECRET`, `SERVICE_TURN_SECRET`, `MIGRATION_DATABASE_URL`, `R2_*`, `ALERT_*`, `OPS_*`, `COST_*`, `BACKUP_*`, `OBSERVATORY_CF_ACCESS_*` and the other names in [docs/deploy.md](docs/deploy.md) sections 2.3, 7 and 8. The dev scripts make safe local values where they need one.
 
@@ -189,14 +188,14 @@ behavior, show a real-LLM run (section 7.2).
 
 The engine is in `packages/engine` ([README](packages/engine/README.md)). For each app, a pack (`src/packs/<app>/`) supplies the rules, generators and scoring hooks. One engine run does these steps:
 
-1. Hard filters (`filters.ts`). Minors are never in any role. Blocks, holds, budgets and opt-ins are applied.
+1. Hard filters (`filters.ts`). A minor is in no role, except a friendship roster on friends.help or in the ntwrk Friend lane that passes `groupAgeAllowed`, `teenIntroShape` and `teenRosterSizeAllowed` from a known friendship generator (`teenGenerator`) ([friendIntroAge](spec/friendIntroAge.md), [matchLane](spec/matchLane.md), owner decision 2026-11-22). Blocks, holds, budgets and opt-ins are applied.
 2. Retrieval (`retrieval.ts`). Semantic, tag and two-hop graph channels, with an exposure floor for new and low-exposure members.
 3. Generators. They propose pairs and groups (`group.ts` for 3-6 people).
 4. Scoring (`scoring.ts`). NetValue, floors and thresholds.
 5. Optional LLM judge passes (`judgeScreen.ts`, `judge.ts`, `judgeDeep.ts`) on `recommenderLLM()`. A judge can only remove a candidate or add risk. It cannot undo a hard filter.
 6. One global selection (`policy.ts`) under budgets, with a seeded exploration slice and fairness reports.
 
-The ConsentNetwork (`packages/network`) calls the engine once a day. A person reviews every proposal before any member is contacted.
+The ConsentNetwork (`packages/network`) calls the engine once a day. Every proposal gets one recorded approval before any member is contacted: the review judge (`gpt-6-luna`, strict rubric when the roster has a minor) or, for an item the judge holds, a named staff member (owner decisions D15 to D17 of 2026-11-22). A held item expires unsent at its deadline.
 
 ### 7.2 Runs with real LLM calls
 
@@ -212,8 +211,10 @@ Start small.
 | slop.date onboarding with the LLM reader arm | `pnpm run sim --only onboard --llm` |
 | The relay scam classifier on Clef (Workers AI) | `pnpm run relay-eval --live --budget-usd 1` |
 | Clef photo features (consented photos only) | `pnpm run clef features --photos <dir> --manifest consent.jsonl --out features.jsonl --budget-usd 5 --live` |
+| The review judge on the live qualification corpus (recall on `must_flag` rows, approval rate on `may_approve` rows) | `pnpm run review-eval --live --budget-usd 1 --max-requests 90` |
+| The review judge and the engine judge on one slop.date join, with low budgets | `NETWORK_REVIEW_JUDGE_BUDGET_USD=0.5 NETWORK_REVIEW_JUDGE_MAX_REQUESTS=20 pnpm exec vitest run --testTimeout 300000 packages/network/test/slop-date-path.integration.test.ts --test-name-pattern 'join, onboard'` |
 
-The service's engine judge is off by default. For a bounded real-model qualification, use `NETWORK_ENGINE_JUDGE=1` with the budget, request limit and dry-run command in [the service README](packages/network/service/README.md#matching-judge-in-staging). This does not enable matching, approve proposals or enable sends. The sim adapter (`packages/sim/src/engineAdapter.ts`) still does not supply an LLM to the engine. If your change touches `judge*.ts`, agree the measurement method with a maintainer in the issue before you start.
+The review judge and the engine judge are always on in staging and production (owner decisions D15 to D17 of 2026-11-22). Each has a daily budget and request limit per app; see [the service README](packages/network/service/README.md#review-judge-and-engine-judge). In `PLATFORM_ENV=dev` a test injects a judge (`ServiceOptions.reviewJudge`, `engineJudge`); without one, no model is called and every item is held for staff. `pnpm run sim` uses a deterministic stand-in judge and never calls a model: say so when you report a run. The stand-in does not read text: text safety is measured only by the live qualification corpus. The sim adapter (`packages/sim/src/engineAdapter.ts`) still does not supply an LLM to the engine. If your change touches `judge*.ts`, agree the measurement method with a maintainer in the issue before you start.
 
 In the PR, give the provider, the exact model ID, the request settings, the number of calls and the cost.
 
@@ -224,7 +225,7 @@ Use this method for every quality change:
 1. Pick one score from section 10. Record the baseline on the PR target branch with a fixed command and fixed seeds.
 2. Make one change.
 3. Run the same command with the same seeds. Record the result.
-4. Keep the change only if the score improves and every safety gate stays at its value. Canary leaks, invariant violations and minor contacts are always 0.
+4. Keep the change only if the score improves and every safety gate stays at its value. Canary leaks, invariant violations, minor contacts that break `teenFriendAgeRule` and the `teen_*` gates are always 0.
 5. Repeat from step 2. Report every attempt, also the attempts that failed.
 6. Before the PR, confirm the result on seeds and corpora that you did not tune on. Example: `evals/relay/relay-heldout-2.jsonl` is never used to tune.
 7. Give the sample size. For a small difference, give a confidence interval or a significance test.
@@ -316,10 +317,11 @@ These numbers measure real progress. A change to line coverage or test count is 
 | Pair recall and member recall | Simulated world run | Higher is better |
 | Exposure fairness (Gini, members with no proposal) | Simulated world run | Lower is better |
 | Gate values per app (second dates, hires, repeat meetups) | `pnpm run sim` | Blocking gates pass. Tracked gates move toward the target. |
-| Relay recall and false-hold rate | `pnpm run relay-eval` on heldout-2 | Higher recall, lower false holds |
-| Canary leaks, invariant violations, minor contacts | Every simulated run | Always 0 |
+| Relay recall and false-block rate | `pnpm run relay-eval` on heldout-2 | Higher recall, lower false blocks |
+| Canary leaks, invariant violations, minor contacts that break `teenFriendAgeRule` (every minor contact while teen introductions are stopped) | Every simulated run | Always 0 |
+| `teen_adult_contact`, `teen_gap_contact`, `teen_lane_contact`, `teen_unready_contact`, `teen_switch_off_contact`, `teen_relay_contact`, `teen_group_contact`, `teen_place_contact`, `teen_stop_equals_pre_feature` (the stopped teen world equals the reference world byte for byte) | Every simulated run, every arm | Always 0 |
 
-Safety scores are gates. A PR that makes a canary leak, an invariant violation or a minor contact non-zero is not accepted, even if other scores improve.
+Safety scores are gates. A PR that makes a canary leak, an invariant violation, a minor contact that breaks `teenFriendAgeRule` or a `teen_*` gate non-zero is not accepted, even if other scores improve.
 
 ## 11. Issues
 
@@ -508,7 +510,11 @@ Write every issue and PR so that a person who is not technical can understand it
 
 - Network code reads time only from `Clock`. Do not use `Date.now()`, `new Date()` with no argument, or `Math.random()` in Network code (PRD 31.1).
 - Network code never reads hidden persona truth. Only the simulator, the oracle and the judges can read it.
-- Every outbound message goes through the leak guard (`packages/core/src/guard.ts`). Every proactive proposal and member request goes through human review (PRD 28.5, 32.8). Simulator runs use a simulated reviewer (`review: "auto"`). Say so when you report a run.
-- Members under 18 are never matched or connected to other members.
+- Every outbound message goes through the leak guard (`packages/core/src/guard.ts`). Every opportunity, whatever its origin, gets one recorded approval before any member is contacted: the review judge, or a named staff member for an item the judge holds (owner decisions D15 to D17 of 2026-11-22). A held item expires unsent at its deadline. Simulator runs use a deterministic stand-in judge (`simulatedReviewJudge`). Say so when you report a run.
+- Members under 18 get friendship introductions only, on friends.help and in the ntwrk Friend lane, under `teenFriendAgeRule` ([friendIntroAge](spec/friendIntroAge.md)). They never get dates, work, photos, a looks rating, a number relay or a photo relay. slop.date and peon.biz never match a minor. Nobody aged 19 or more is ever connected to a minor.
+- Every person in a teen introduction is teen ready and aged 13 to 18. Birth dates are at most 2 calendar years apart.
+- The review judge approves a teen introduction with the strict rubric, or staff approve an item that the judge holds.
+- A group plan, table or crew with a minor is on friends.help only (`teenGroupPlanApp`). An ntwrk Friend circle can also hold a minor. Every group with a minor has 2 to 6 people (`teenRosterSizeAllowed`), and every pair with a minor passes the rule. A friends.help group with a minor meets at an all-ages public place.
+- Teen introductions are on by default. One staff member can stop them on every app (`teenStop`).
 - Use `defaultLLM()`, `judgeLLM()` and `recommenderLLM()` in `packages/core/src/llm.ts`. Do not add a new LLM client or provider.
 - Do not commit `.env`, `runs/` or real member data.

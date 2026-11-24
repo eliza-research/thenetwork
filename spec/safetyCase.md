@@ -57,6 +57,7 @@ An actor is required. Lifting a hold requires an existing trust hold. Closing a 
 
 ```quint
 type StaffActionResult = AllowedAction | ActorRequired | NotOnHold | UnknownCase | AlreadyClosed | UnknownReport | UnknownMember | NoMinorSignal | AgeUnknown | RecordMinor | StatedMinor
+  | TeenBarred | TeenOlderReported
 
 pure def holdLiftResult(actorPresent: bool, currentlyHeld: bool): StaffActionResult =
   if (not(actorPresent)) ActorRequired else if (currentlyHeld) AllowedAction else NotOnHold
@@ -140,8 +141,10 @@ A direct statement about a person can use digits, a spelled age, or a
 compound form such as “16-year-old.” “My date was sixteen” can open the
 same review as “he's sixteen.” Ignore times, prices, ages of relatives
 or objects, questions, and qualified or quoted statements. A statement
-that the member reports about a counterpart can place a safety hold in
-the existing app and does not overwrite that person's stated age.
+that the member reports about a counterpart can place a safety hold,
+which holds that person on every app under the rule "A minor signal on
+one app holds the person on every app until a later clear", and does
+not overwrite that person's stated age.
 
 ```quint
 pure def acceptsMinorReportEvidence(eligibleSubject: bool, minorAgeSignal: bool, affirmative: bool): bool =
@@ -325,4 +328,110 @@ pure def minorClearResult(actorPresent: bool, memberKnown: bool, hasSignal: bool
   else if (recordMinor) RecordMinor
   else if (statedMinor) StatedMinor
   else AllowedAction
+```
+
+### Staff clear doubt about a teen's age only for a clean teen birth date
+
+A member aged 13 to 17 with an exact birth date is teen ready without a staff step. A stored doubt (a minor signal, a minor report or an age conflict) keeps the member out of every teen pool until a staff member with the `safety` or `admin` role clears it. This clear is the one resolution route for a doubt, not a step for every teen; it also covers the minor signal that the age block stored for every member who was a minor before the teen decision. The clear is allowed only for a known actor and a known member who has a doubt to clear, whose record has an exact birth date that passes `teenPartnerAge` of [friend introductions with a minor](friendIntroAge.md) on the teen check days, whose phone has no teen-pool bar, and who has no `older_than_stated` or `lying` report. A `minor` report about a known minor is a stored doubt and not a bar: the person minor signal and the teen pool hold keep the member out of the teen pools of the other apps until the clear. A clear never removes the minor mark, a bar or an `older_than_stated` report. A clear dismisses the open and held `minor` reports about the member, and it leaves every other report as it is. Changed (owner decision 2026-11-22, A2 to A5): a safety reviewer confirmed every teen age before the first introduction, a `minor` report barred the phone and the clear kept the open `minor` reports -> only a stored doubt needs a staff clear, the clear dismisses the `minor` reports, and the rule reads the teen age from `teenPartnerAge`, because the owner chose no extra checks and the shell had computed the teen age by hand.
+
+```quint
+import friendIntroAge as FriendAge from "./friendIntroAge"
+
+pure val birthKeyValues = Set(19950101, 20071122, 20100315, 20131122, 20131123)
+pure val minDayValues = Set(20261122)
+pure val maxDayValues = Set(20261122, 20261123)
+
+pure def teenDoubtClearResult(actorPresent: bool, memberKnown: bool, hasDoubt: bool, birthExact: bool, birthKey: int,
+    minDay: int, maxDay: int, barred: bool, olderOrLyingReport: bool): StaffActionResult =
+  if (not(actorPresent)) ActorRequired
+  else if (not(memberKnown)) UnknownMember
+  else if (not(hasDoubt)) NoMinorSignal
+  else if (not(birthExact) or not(FriendAge::teenPartnerAge(birthKey, minDay, maxDay))) AgeUnknown
+  else if (barred) TeenBarred
+  else if (olderOrLyingReport) TeenOlderReported
+  else AllowedAction
+
+pure def lawTeenDoubtClearNeverClearsABar(actorPresent: bool, memberKnown: bool, hasDoubt: bool, birthExact: bool, birthKey: int,
+    minDay: int, maxDay: int, olderOrLyingReport: bool): bool =
+  teenDoubtClearResult(actorPresent, memberKnown, hasDoubt, birthExact, birthKey, minDay, maxDay, true, olderOrLyingReport) != AllowedAction
+
+pure def lawTeenDoubtClearNeverClearsOlderReport(actorPresent: bool, memberKnown: bool, hasDoubt: bool, birthExact: bool, birthKey: int,
+    minDay: int, maxDay: int, barred: bool): bool =
+  teenDoubtClearResult(actorPresent, memberKnown, hasDoubt, birthExact, birthKey, minDay, maxDay, barred, true) != AllowedAction
+
+pure def lawTeenDoubtClearNeedsExactTeenBirth(actorPresent: bool, memberKnown: bool, hasDoubt: bool, birthExact: bool, birthKey: int,
+    minDay: int, maxDay: int, barred: bool, olderOrLyingReport: bool): bool =
+  teenDoubtClearResult(actorPresent, memberKnown, hasDoubt, birthExact, birthKey, minDay, maxDay, barred, olderOrLyingReport) == AllowedAction
+    implies (actorPresent and memberKnown and hasDoubt and birthExact and FriendAge::teenPartnerAge(birthKey, minDay, maxDay)
+      and not(barred) and not(olderOrLyingReport))
+
+pure def lawTeenDoubtClearRefusesAnAdultBirth(barred: bool): bool =
+  teenDoubtClearResult(true, true, true, true, 19950101, 20261122, 20261122, barred, false) == AgeUnknown
+```
+
+### A minor signal on one app holds the person on every app until a later clear
+
+A minor report or a minor signal on one app is a fact about the person, so it holds the person out of matching on every app where the person is a member, including an app that the person joins later. The signal stays open on an app until staff clear it there after the signal time. A signal that comes after a clear opens again. The person signal ends, and its row in `platform.person_minor_signals` is deleted, only when every live membership of the person has a clear at or after the signal time; a membership that was never cleared keeps it, so a person who joins a new app after one-app clears on some apps only is still held there. A membership that its app has not loaded yet is loaded from its record when the person signal is open for it, so staff can clear it like any other. The per-app console views (`matching_ages_<app>`) do not show the signal time, because a signal can come from another app and its time would tell one-app staff about an event on that app; only the base view that the service reads has it. Changed (audit ST-D3): a report or a signal marked only the member on its own app, a membership that was not loaded refused the clear, and the per-app views showed the signal time -> the signal holds the person on every app until each membership is cleared, because the person stayed matchable on the other apps and one-app staff learned about an event on another app.
+
+```quint
+pure def personMinorSignalOpen(signalKnown: bool, signalAt: int, clearedKnown: bool, clearedAt: int): bool =
+  signalKnown and (not(clearedKnown) or signalAt > clearedAt)
+
+pure val signalAtValues = Set(-1, 0, 1, 2)
+pure val clearedAtValues = Set(-1, 0, 1, 2)
+
+pure def lawAnUnclearedMinorSignalHoldsThePerson(signalAt: int): bool =
+  personMinorSignalOpen(true, signalAt, false, 0)
+
+pure def lawAClearAtOrAfterTheSignalEndsIt(signalAt: int, clearedAt: int): bool =
+  clearedAt >= signalAt implies not(personMinorSignalOpen(true, signalAt, true, clearedAt))
+
+pure def lawANewSignalAfterAClearHoldsAgain(signalAt: int, clearedAt: int): bool =
+  signalAt > clearedAt implies personMinorSignalOpen(true, signalAt, true, clearedAt)
+
+pure def lawNoSignalHoldsNobody(signalAt: int, clearedKnown: bool, clearedAt: int): bool =
+  not(personMinorSignalOpen(false, signalAt, clearedKnown, clearedAt))
+
+pure def personMinorSignalEndsEverywhere(everyMembershipCleared: bool, signalAt: int, earliestClearAt: int): bool =
+  everyMembershipCleared and not(personMinorSignalOpen(true, signalAt, true, earliestClearAt))
+
+pure val earliestClearAtValues = Set(-1, 0, 1, 2)
+
+pure def lawAnUnclearedMembershipKeepsThePersonSignal(signalAt: int, earliestClearAt: int): bool =
+  not(personMinorSignalEndsEverywhere(false, signalAt, earliestClearAt))
+
+pure def lawASignalAfterTheEarliestClearStays(signalAt: int, earliestClearAt: int): bool =
+  signalAt > earliestClearAt implies not(personMinorSignalEndsEverywhere(true, signalAt, earliestClearAt))
+
+pure def lawClearsAtOrAfterTheSignalEverywhereEndIt(signalAt: int, earliestClearAt: int): bool =
+  earliestClearAt >= signalAt implies personMinorSignalEndsEverywhere(true, signalAt, earliestClearAt)
+```
+
+### A block or a report about a person closes every open opportunity of the pair
+
+A block, a report, and a check-in report about a person who met the reporter all block the pair. Each open opportunity that has both people on its active roster closes: one in review, one that probes, and one that is booked ([opportunity lifecycle](opportunityLifecycle.md), `closesForBlock`; on a booked opportunity the active roster is the people who said yes, and on an earlier stage it is the active participants). The members of a booked opportunity hear that it is off, and the message does not say who acted. A block made on another app reaches this app as a person block, and the next tick closes the open opportunities of that pair here too. A check-in report also counts toward the subject's trust score in the same way as a report in a message from someone who met the subject. A group opportunity closes for all its members too, because a plan that keeps both people of a blocked pair would put them in one meeting, and a plan that drops only one of them would tell the others or the person who is dropped that something happened between them. A friends plan does not seat a member next to a person that the member blocked (`planFriendSeatFits`), so only a block made after the plan formed closes it. The pair's opportunities close before the report is filed, because a report from someone who met the subject can hold the subject, and that hold would otherwise close a shared booking as "participant dropped" with no word to the other person. The cancellation of a booked opportunity goes to every participant except the person who acted, when that person is known (a block or a report in a message, a check-in report); when the tick finds a block from the snapshot, the actor is not known and every participant hears it. A person who already left the opportunity does not close it for the others. Changed (audits ST-D1, ST-D7 and SD-229): only a block in a message on the same app closed the pair's opportunities, and check-in reports did not count toward trust -> a block on any app, a report and a check-in report close every shared opportunity and the cancellation recipients come from `pairBlockCancellationGoesTo`, because two people who blocked each other on another app or in a check-in stayed booked together.
+
+```quint
+pure def pairOpportunityClosesOnBlock(open: bool, bothOnIt: bool): bool = open and bothOnIt
+
+pure def pairBlockCancellationGoesTo(booked: bool, actorKnown: bool, isActor: bool): bool =
+  booked and (not(actorKnown) or not(isActor))
+
+pure def lawOtherOpportunitiesStay(open: bool, bothOnIt: bool): bool =
+  not(bothOnIt) implies not(pairOpportunityClosesOnBlock(open, bothOnIt))
+
+pure def lawAClosedOpportunityStaysClosed(bothOnIt: bool): bool =
+  not(pairOpportunityClosesOnBlock(false, bothOnIt))
+
+pure def lawTheKnownActorGetsNoCancellation(booked: bool): bool =
+  not(pairBlockCancellationGoesTo(booked, true, true))
+
+pure def lawTheOthersOfABookingHearItIsOff(actorKnown: bool): bool =
+  pairBlockCancellationGoesTo(true, actorKnown, false)
+
+pure def lawWithAnUnknownActorEveryParticipantHears(isActor: bool): bool =
+  pairBlockCancellationGoesTo(true, false, isActor)
+
+pure def lawNoCancellationBeforeABooking(actorKnown: bool, isActor: bool): bool =
+  not(pairBlockCancellationGoesTo(false, actorKnown, isActor))
 ```

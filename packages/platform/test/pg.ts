@@ -32,5 +32,5 @@ export async function migratedDb(name: string): Promise<string> {
 
 export async function dropDb(url: string) {
   if (!pgAvailable) return;
-  await admin(`drop database if exists ${new URL(url).pathname.slice(1)} with (force)`).catch(() => {});
+  await admin(`drop database if exists ${new URL(url).pathname.slice(1)} with (force)`);
 }

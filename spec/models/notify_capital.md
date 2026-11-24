@@ -37,7 +37,7 @@ Imported from `quint/notify_capital.qnt` at `30d950e`. See [model index](README.
 // Machines: notify-item, notify-weekly-cap, assistant-surface-signal (Part A); capital-member-eligibility,
 // capital-event-intake, capital-vouch-lifecycle, capital-plan-commitment, capital-entry-reversal (credit
 // only), capital-service-persistence (Part B). capital-fraud-review, capital-rate-windows and
-// capital-lever-locks have no production trigger (runtime.ts:126 builds the ledger with reader: false,
+// capital-lever-locks have no production trigger (runtime.ts builds the ledger with reader: false,
 // so no flag, no fraud item, no lever read), so their actions are left out. Multipliers, decay and the
 // period cap are fixed at 1 (an abstraction: they change amounts, not which state is reached).
 //
@@ -47,6 +47,28 @@ Imported from `quint/notify_capital.qnt` at `30d950e`. See [model index](README.
 // `safety` holds every invariant that the code on this branch keeps. The invariants that still fail
 // are named values outside `safety`; each has a comment with the register id and the reason it is
 // not fixed (skipped, not reproduced, refuted, or a residual found by this model).
+//
+// COMPARISON WITH BRANCH vibestack-matching (2026-11-18). The code by name: (Notifier.plan, dispatch, recordSent,
+// stillNeeded in packages/notify/src/scheduler.ts; PgNotifyStore.addItem, recordDelivery;
+// service.ts delivered, notifyRecipient, notifySink; runtime.ts start, save, writeUnit, forget;
+// packages/network/src/capital.ts capitalWiring). In agreement: the weekly cap (default 2, the
+// weeklyDigest decision keeps only requested items over the cap), MAX_IGNORED_STREAK, the dedupe key,
+// the delivery id hash, recordDelivery (one transaction, locks the pending items in id order, refuses
+// a known id or a notified, seen or expired item: SD-150), stillNeeded, the recipient (first member
+// with an address, The Network first, proactiveAllowed true), the ledger built with reader: false.
+// CLOSED in the code on this branch (2026-11-21, checked in the code; the model keeps the fixed behavior):
+//  - SD-151: Notifier.recordSent calls PgNotifyStore.addDelivered, which inserts the item, the net:<id> delivery
+//    and notified_at in one transaction [noRepeatOfNetworkText]
+//    (packages/network/test/notify-recorded-text.integration.test.ts).
+//  - SD-153: migration 0074 adds network.capital_events.seq; runtime.ts start() replays `order by seq`.
+//  - SD-156: capitalWiring.onLedger answers whether the ledger took the event, and writeUnit stores only the
+//    events it took, in emit order (packages/network/test/capital-ledger.integration.test.ts).
+//  - SD-150 (cap part, found by this model): PgNotifyStore.recordDelivery checks the weekly cap again
+//    under a lock of the person, so two overlapping replicas cannot both record a counting digest
+//    [schedulerRespectsCap] (packages/notify/test/wiring.test.ts "SD-150").
+// OPEN (not compared): the Part B ledger actions were not compared with spec/capitalLedger.md or packages/capital
+// on this branch; they are left as they were imported. Only Part A, the capital persistence and (2026-11-22) the
+// credit amounts ATTEND, FEEDBACK, HELP and VOUCH (equal to the default `credit` in config.ts) were compared.
 module notify_capital {
 
   // ================================================================================================
@@ -57,16 +79,16 @@ module notify_capital {
   // Network texts. Model a subject by its text ID. The stored subject may also carry the exact
   // opportunity ID (SD-303, SD-430).
   pure val TEXTS = Set(1, 2)
-  // Items from Notifier.add (scheduler.ts:95-98). No production producer calls it yet (notify
+  // Items from Notifier.add (scheduler.ts). No production producer calls it yet (notify
   // README "Not yet: producers"); the API, its tests and a future producer do. Only these items can
   // be pending, so only they reach dispatch.
   pure val ADDED = Set(3, 4)
   pure val SUBJECTS = TEXTS.union(ADDED)
   pure val REPLICAS = Set("r1", "r2")
-  // weeklyCap. The code default is 2 (scheduler.ts:59). The model uses 1 so that two counting texts
-  // are already over the cap; the cap logic (scheduler.ts:134-142) is the same for any value.
+  // weeklyCap. The code default is 2 (scheduler.ts). The model uses 1 so that two counting texts
+  // are already over the cap; the cap logic (scheduler.ts) is the same for any value.
   pure val CAP = 1
-  // surface.ts:39
+  // surface.ts
   pure val MAX_IGNORED_STREAK = 2
 
   // The dedupe key is person|app|event|subject (store.ts dedupeKey). One person: the subject is the
@@ -77,16 +99,16 @@ module notify_capital {
   // or "ntf" (a scheduler delivery). `text` is the Network text that created the item (0 for add).
   type Item = { exists: bool, text: int, requested: bool, seen: bool, notified: str }
   // A member-facing Network text (network.messages) and its projection into the inbox
-  // (runtime.ts:718-744, service.ts:647-664).
+  // (runtime.ts, service.ts).
   type NetText = { sent: bool, proactive: bool, projected: bool }
   // notify.deliveries. The scheduler's delivery id is a hash of the person and the item ids
-  // (scheduler.ts:84-85), so a delivery is keyed by its item set.
+  // (scheduler.ts), so a delivery is keyed by its item set.
   type Deliv = { items: Set[int], counts: bool, target: str, outcome: str }
   // platform.outbound row of a scheduler text (row id = delivery id). `via` is the app of the network
-  // member the text goes out on (service.ts:698-711). `pausedLeak` records, at send time, that the
+  // member the text goes out on (service.ts). `pausedLeak` records, at send time, that the
   // text carried a proactive item of an app whose member was paused.
   type QRow = { status: str, proactive: bool, via: str, pausedLeak: bool }
-  // One replica's dispatch in flight (scheduler.ts:176-203).
+  // One replica's dispatch in flight (scheduler.ts).
   type Rep = { phase: str, items: Set[int], counts: bool, target: str, via: str }
   // notify.surface_signals for the assistant surface "claude".
   type Sig = { exists: bool, everCreated: bool, active: bool, streak: int, usedWhileDropped: bool }
@@ -110,11 +132,11 @@ module notify_capital {
   // ------------------------------------------------------------------------------------------------
   // Derived reads
 
-  // peopleWithPending and unseen().filter(notifiedAt undefined) (pg-store.ts, scheduler.ts:125).
+  // peopleWithPending and unseen.filter(notifiedAt undefined) (pg-store.ts, scheduler.ts).
   def pending: Set[int] = SUBJECTS.filter(s => items.get(s).exists and not(items.get(s).seen) and items.get(s).notified == "")
 
-  // The notify recipient: the first live member, The Network first (service.ts:698-711). It does not
-  // read the item's app, and proactiveAllowed is always true (service.ts:707).
+  // The notify recipient: the first live member, The Network first (service.ts). It does not
+  // read the item's app, and proactiveAllowed is always true (service.ts).
   def recipientApp: str =
     if (ms.get("ntwrk") == "active") "ntwrk" else if (ms.get("slop") == "active") "slop" else ""
 
@@ -124,20 +146,20 @@ module notify_capital {
     TEXTS.filter(t => netDel.get(t) and netDelCounts.get(t)).size()
     + ntf.keys().filter(k => ntf.get(k).counts).size()
 
-  // A surface is usable when active and its streak is under 2 (surface.ts:47).
+  // A surface is usable when active and its streak is under 2 (surface.ts).
   def claudeUsable: bool = sig.exists and sig.active and sig.streak < MAX_IGNORED_STREAK
 
   // resolveDelivery is an oracle (a score): it can pick the assistant only when it is usable.
   def targets: Set[str] = if (claudeUsable) Set("imessage", "claude") else Set("imessage")
 
-  // The surface_signals insert trigger (retention.sql:58-76): a person with a membership that is not
+  // The surface_signals insert trigger (retention.sql): a person with a membership that is not
   // removed keeps or gets signals; after erasure the insert is skipped.
   def signalsAllowed: bool = APPS.exists(a => ms.get(a) != "removed")
 
   // ------------------------------------------------------------------------------------------------
   // Actions: the Network side
 
-  // A Network send that the adapter accepted (runtime.ts:676-679). The Network does its own consent
+  // A Network send that the adapter accepted (runtime.ts). The Network does its own consent
   // checks; it does not send a proactive text to a paused member.
   action netSend(t: int, proactive: bool): bool = all {
     not(net.get(t).sent),
@@ -149,11 +171,11 @@ module notify_capital {
   }
 
   // projectNotifications -> delivered -> recordSent -> store.addDelivered: ONE transaction
-  // (scheduler.ts:105-110, pg-store.ts addDelivered; SD-151 fix 472cecb). It inserts the item (or
+  // (scheduler.ts, pg-store.ts addDelivered; SD-151 fix 472cecb). It inserts the item (or
   // finds it by its dedupe key, modeled here by the text ID) and, when the item is
   // not notified, records the net:<id> delivery of that item alone. A throw rolls back both, so an
   // item made from a Network text is never pending. The projection selects members whose account is
-  // not removed (runtime.ts:725); the inbox insert trigger refuses a removed scope (retention.sql:29-38).
+  // not removed (runtime.ts); the inbox insert trigger refuses a removed scope (retention.sql).
   action projRecord(t: int): bool = {
     val x = net.get(t)
     val it = items.get(t)
@@ -173,7 +195,7 @@ module notify_capital {
     }
   }
 
-  // Notifier.add -> store.addItem (scheduler.ts:95-98): insert or find by the dedupe key. No
+  // Notifier.add -> store.addItem (scheduler.ts): insert or find by the dedupe key. No
   // production producer calls it (see ADDED). The insert trigger refuses a removed scope.
   action notifyAdd(s: int, requested: bool): bool = all {
     ADDED.contains(s),
@@ -188,7 +210,7 @@ module notify_capital {
   // Actions: the scheduler (Notifier.dispatch, one replica). Each await between two commits is a
   // separate action, so the other replica, the projection and the member can run in between.
 
-  // plan (scheduler.ts:118-147, 157-173). Writes nothing but tokens (not modelled). Due time and
+  // plan (scheduler.ts). Writes nothing but tokens (not modelled). Due time and
   // quiet hours are oracles: a hold is simply no step.
   action plan(r: str, target: str): bool = {
     val via = recipientApp
@@ -207,10 +229,10 @@ module notify_capital {
     }
   }
 
-  // The re-read before record (scheduler.ts:178-183): keep items still unseen and unnotified. With
+  // The re-read before record (scheduler.ts): keep items still unseen and unnotified. With
   // fewer items the plan is rebuilt (a new id, a new surface choice) for the recipient read again
-  // (directory.get, scheduler.ts:181); with no recipient left the plan is cancelled (scheduler.ts:182).
-  // The cap is not checked again.
+  // (directory.get, scheduler.ts); with no recipient left the plan is cancelled (scheduler.ts).
+  // The cap is checked again when the plan is recorded (recordDelivery).
   action reread(r: str, target: str): bool = {
     val x = rep.get(r)
     val fresh = x.items.filter(s => items.get(s).exists and not(items.get(s).seen) and items.get(s).notified == "")
@@ -226,16 +248,19 @@ module notify_capital {
     }
   }
 
-  // recordDelivery for the scheduler's delivery, one transaction (scheduler.ts:186-191,
+  // recordDelivery for the scheduler's delivery, one transaction (scheduler.ts,
   // pg-store.ts deliveryIn). SD-150 fix a66f44e: it locks the items (select for update) and records
   // nothing when the delivery id exists, or an item is gone or already notified. dispatch then
-  // cancels the plan (scheduler.ts:191).
+  // cancels the plan (scheduler.ts). SD-150 cap fix (spec/notificationDispatch.md
+  // digestWithinWeeklyCap): under a lock of the person, a counting digest is recorded only while the
+  // counted deliveries are under the cap.
   action recordDelivery(r: str): bool = {
     val x = rep.get(r)
     val open = x.items.forall(s => items.get(s).exists and items.get(s).notified == "")
+    val withinCap = not(x.counts) or capCount < CAP
     all {
       x.phase == "checked",
-      if (ntf.keys().contains(x.items) or not(open)) all {
+      if (ntf.keys().contains(x.items) or not(open) or not(withinCap)) all {
         rep' = rep.set(r, IDLE), ntf' = ntf, items' = items,
       } else all {
         rep' = rep.set(r, { ...x, phase: "recorded" }),
@@ -246,7 +271,7 @@ module notify_capital {
     }
   }
 
-  // sink.enqueue -> notifySink (service.ts:713-725): a unit of work queues a system send on the
+  // sink.enqueue -> notifySink (service.ts): a unit of work queues a system send on the
   // member of `via`. The queue row id is the delivery id; a second enqueue of the same id is a no-op.
   action enqueue(r: str): bool = {
     val x = rep.get(r)
@@ -261,7 +286,7 @@ module notify_capital {
   }
 
   // A replica stops (crash, deploy, a throw) anywhere in dispatch. "A crash after this and before
-  // enqueue loses one text, never sends two" (scheduler.ts:185).
+  // enqueue loses one text, never sends two" (scheduler.ts).
   action crash(r: str): bool = all {
     rep.get(r).phase != "idle",
     rep' = rep.set(r, IDLE),
@@ -272,7 +297,7 @@ module notify_capital {
   // ------------------------------------------------------------------------------------------------
   // Actions: the outbound queue (oracle)
 
-  // stillNeeded at send time (scheduler.ts:209-215, channel.ts:185): the delivery exists, every
+  // stillNeeded at send time (scheduler.ts, channel.ts): the delivery exists, every
   // original item exists and is not expired, and at least one item is unseen.
   def stillNeeded(k: Set[int]): bool =
     ntf.keys().contains(k) and k.forall(s => items.get(s).exists) and k.exists(s => not(items.get(s).seen))
@@ -348,7 +373,7 @@ module notify_capital {
     ms' = ms, paused' = paused,
   }
 
-  // OAuth grant on or off (service.ts:693-696, pg-store.ts setActive). It does not touch the streak.
+  // OAuth grant on or off (service.ts, pg-store.ts setActive). It does not touch the streak.
   action setActive(b: bool): bool = all {
     signalsAllowed, not(sig.exists and sig.active == b),
     sig' = if (sig.exists) { ...sig, active: b } else { ...sig, exists: true, everCreated: true, active: b },
@@ -373,7 +398,7 @@ module notify_capital {
   }
 
   // "leave <app>": the canonical removal and notify.forget_data(person, app) in one transaction
-  // (runtime.ts:586-620, retention.sql:78-129). Items of the app go, deliveries are trimmed and an
+  // (runtime.ts, retention.sql). Items of the app go, deliveries are trimmed and an
   // empty one is deleted, queue rows of that member are dropped. SD-341 fix 428e246 (retention.sql
   // and migration 0057): signals stay when another membership is not removed (active or invited),
   // the same rule as the insert trigger.
@@ -401,14 +426,14 @@ module notify_capital {
   def sentRows: Set[Set[int]] = queue.keys().filter(k => queue.get(k).status == "sent")
 
   // packages/notify/README.md "each person gets at most one message per send" and "replicas may
-  // overlap safely: a delivery id is recorded once"; scheduler.ts:185 "never sends two";
-  // deploy/backend/backend.ts:454-455. An inbox item is in at most one scheduler delivery (and so in
+  // overlap safely: a delivery id is recorded once"; scheduler.ts "never sends two";
+  // deploy/backend/backend.ts. An inbox item is in at most one scheduler delivery (and so in
   // at most one text). Was SD-150; holds since a66f44e (recordDelivery refuses a notified item).
   val oneNotifyTextPerItem: bool =
     SUBJECTS.forall(s => ntf.keys().filter(k => k.contains(s)).size() <= 1)
     and SUBJECTS.forall(s => sentRows.filter(k => k.contains(s)).size() <= 1)
 
-  // service.ts:642-645 "already delivered ... nothing texts them again"; scheduler.ts:100-104
+  // service.ts "already delivered ... nothing texts them again"; scheduler.ts
   // recordSent "the scheduler never texts it again". An item made from a Network text is never in a
   // scheduler delivery. Was SD-151; holds since 472cecb (addDelivered is one transaction).
   val noRepeatOfNetworkText: bool =
@@ -424,7 +449,7 @@ module notify_capital {
     ntf.keys().forall(k => not(ntf.get(k).counts and queue.keys().contains(k)
       and queue.get(k).status.in(Set("refused", "expired", "dropped"))))
 
-  // scheduler.ts:3-5: every unnotified item goes in the next message. An item whose only text was
+  // scheduler.ts: every unnotified item goes in the next message. An item whose only text was
   // refused stays pending for a later text or a surface.
   // NOT IN `safety`: SD-095, skipped (same reason as refusedNotCounted).
   val refusedItemsStayPending: bool =
@@ -432,19 +457,15 @@ module notify_capital {
       and queue.keys().filter(k => k.contains(s)).forall(k => queue.get(k).status.in(Set("refused", "expired")))
       and queue.keys().exists(k => k.contains(s))))
 
-  // scheduler.ts:6-7 and PRD 32.9: at most weeklyCap counting scheduler texts in 7 days.
-  // NOT IN `safety`: SD-150, residual found by this model after a66f44e. The fix stops one item in
-  // two texts, but two overlapping replicas still pass the cap: r1 plans {3}; item 4 arrives; r2
-  // plans {3,4} (the cap check sees no delivery yet); r1 records {3}; r2's re-read keeps {4} and
-  // dispatch rebuilds the plan without a new cap check (scheduler.ts:182-183), so {4} is recorded
-  // and sent too. Run test `replicaRebuildCapTest`. It needs two overlapping replicas (deploy/backend/backend.ts:454-455
-  // says replicas may overlap and relies on the delivery id, which does not stop this case) and a
-  // Notifier.add producer (none in production), so no production path reaches it today.
-  // A fix (a cap check when dispatch rebuilds a plan) needs its own failing integration test.
+  // scheduler.ts and PRD 32.9: at most weeklyCap counting scheduler texts in 7 days.
+  // Was the SD-150 residual found by this model after a66f44e: r1 plans {3}; item 4 arrives; r2 plans
+  // {3,4}; r1 records {3}; r2's re-read keeps {4} and the rebuilt plan was recorded with no new cap
+  // check. Holds since recordDelivery checks the cap under a lock of the person (replicaRebuildCapTest;
+  // packages/notify/test/wiring.test.ts "SD-150").
   val schedulerRespectsCap: bool =
     sentRows.filter(k => queue.get(k).proactive).size() <= CAP
 
-  // scheduler.ts:29-30: paused or held, only requested items go out; AGENTS.md per-app consent.
+  // scheduler.ts: paused or held, only requested items go out; AGENTS.md per-app consent.
   // No proactive item of a paused app goes out in a scheduler text.
   // NOT IN `safety`: SD-152, skipped (needs a founder or product decision on which app's member
   // carries a digest of several apps and on per-item per-app consent in the Recipient contract; no
@@ -452,7 +473,7 @@ module notify_capital {
   val pausedAppGetsNoProactive: bool =
     sentRows.forall(k => not(queue.get(k).pausedLeak))
 
-  // surface.ts:3-4: a surface whose links went unused twice drops out "until the member uses it
+  // surface.ts: a surface whose links went unused twice drops out "until the member uses it
   // again". After a use, the surface is not dropped.
   // NOT IN `safety`: SD-339, not reproduced in production (disputed). Production prefs have no
   // explicit surface and no production dispatch points at an assistant since the SD-151 fix; the
@@ -462,7 +483,7 @@ module notify_capital {
   val droppedSurfaceReturnsOnUse: bool =
     not(sig.usedWhileDropped) or sig.streak < MAX_IGNORED_STREAK
 
-  // retention.sql:116-118: "Preserve them for another live or pending (invited) membership".
+  // retention.sql: "Preserve them for another live or pending (invited) membership".
   // Signals that existed are gone only when every membership is removed. Was SD-341; holds since 428e246.
   val signalsKeptForPending: bool =
     not(sig.everCreated and not(sig.exists) and APPS.exists(a => ms.get(a) != "removed"))
@@ -476,6 +497,7 @@ module notify_capital {
   val notifySafety: bool = and {
     oneNotifyTextPerItem,
     noRepeatOfNetworkText,
+    schedulerRespectsCap,
     signalsKeptForPending,
     everyNetworkTextInInbox,
   }
@@ -487,7 +509,7 @@ module notify_capital {
   pure val MEMBERS = Set("a", "b", "c")
   pure val MEMBERS_SORTED = ["a", "b", "c"]
   pure val TMAX = 3
-  // Amounts in tenths of NC (config.ts:67-68): attendance 2, feedback 0.5, help 3, vouch 10.
+  // Amounts in tenths of NC (packages/capital/src/config.ts, the default `credit`): attendance 2, feedback 0.5, help 3, vouch 10.
   pure val ATTEND = 20
   pure val FEEDBACK = 5
   pure val HELP = 30
@@ -504,7 +526,7 @@ module notify_capital {
   type HRec = { exists: bool, helper: str, recipient: str, resolved: bool }
   // A ledger entry. `peer` is the counterpart of a help credit (its recipient), "" otherwise.
   type Entry = { member: str, cat: str, amount: int, peer: str }
-  // The CapitalLedger state (ledger.ts:40-54), abstracted.
+  // The CapitalLedger state (ledger.ts), abstracted.
   type Ledger = { members: str -> MRec, plans: str -> PRec, help: HRec, entries: List[Entry],
                   seen: Set[(str, str)], lastT: int, rejects: int }
 
@@ -526,14 +548,14 @@ module notify_capital {
   pure def hasCredit(L: Ledger, m: str, cat: str): bool =
     L.entries.foldl(false, (b, e) => b or (e.member == m and e.cat == cat))
 
-  // tiesOf (ledger.ts:345-357): members tied to `v` by member-controlled credits in either
+  // tiesOf (ledger.ts): members tied to `v` by member-controlled credits in either
   // direction. In the model the only member-controlled credit is help (the plan is an engine intro,
   // so its attendance is not pair-chosen). SD-350 fix 5781195: the window is
   // controlledPairWindowDays (90 days); the model's four time points are all inside it.
   pure def tied(L: Ledger, v: str, w: str): bool =
     L.entries.foldl(false, (b, e) => b or (e.cat == "help" and ((e.member == v and e.peer == w) or (e.member == w and e.peer == v))))
 
-  // tryVouchCredit (ledger.ts:359-367).
+  // tryVouchCredit (ledger.ts).
   pure def tryVouch(L: Ledger, m: str): Ledger = {
     val r = L.members.get(m)
     if (r.vouchedBy == "" or r.vouchCredited or not(r.eligible) or not(r.activated) or not(r.valueIn)) L
@@ -544,14 +566,14 @@ module notify_capital {
     }
   }
 
-  // The switch in record (ledger.ts:141-330), for the event types the model emits.
+  // The switch in record (ledger.ts), for the event types the model emits.
   pure def applyEv(L: Ledger, e: Ev): Ledger =
     if (e.typ == "member_joined") {
       if (L.members.get(e.member).known) L
       else { ...L, members: L.members.set(e.member, { ...NO_M, known: true, eligible: e.flag,
                vouchedBy: if (e.other == e.member) "" else e.other }) }
     } else if (e.typ == "age_updated") {
-      // ledger.ts:151-157: eligibility follows the current age.
+      // ledger.ts: eligibility follows the current age.
       val r = L.members.get(e.member)
       if (not(r.known)) L else { ...L, members: L.members.set(e.member, { ...r, eligible: e.flag }) }
     } else if (e.typ == "member_activated") {
@@ -560,7 +582,7 @@ module notify_capital {
     } else if (e.typ == "value_received") {
       val r = L.members.get(e.member)
       val providers = e.others.filter(w => w != r.vouchedBy and w != e.member and not(tied(L, r.vouchedBy, w)) and eligibleIn(L, w))
-      // confirmed = providers in confirmedBy (ledger.ts:176-181); no organizer check-in in the model.
+      // confirmed = providers in confirmedBy (ledger.ts); no organizer check-in in the model.
       val confirmed = if (e.flag) providers else Set()
       if (not(r.known) or r.vouchedBy == "" or r.valueIn) L
       else if (providers == Set() or confirmed == Set()) L
@@ -592,7 +614,7 @@ module notify_capital {
       }
     } else L
 
-  // record (ledger.ts:131-138): idempotent by id, refuses an event older than lastT.
+  // record (ledger.ts): idempotent by id, refuses an event older than lastT.
   pure def accepts(L: Ledger, e: Ev): bool = L.seen.contains((e.typ, e.key)) or e.t >= L.lastT
   pure def record(L: Ledger, e: Ev): Ledger =
     if (L.seen.contains((e.typ, e.key))) L
@@ -605,7 +627,7 @@ module notify_capital {
   // the insert order, which is the emit order. The stored events are a list in seq order.
   pure def replay(S: List[Ev]): Ledger = recordAll(EMPTY_LEDGER, S)
 
-  // What a restart must keep (ledger.ts:59-60): balances, eligibility, vouch and plan state.
+  // What a restart must keep (ledger.ts): balances, eligibility, vouch and plan state.
   pure def view(L: Ledger): { bal: str -> int, members: str -> MRec, plans: str -> PRec, help: HRec } =
     { bal: MEMBERS.mapBy(m => balance(L, m)), members: L.members, plans: L.plans, help: L.help }
 
@@ -624,11 +646,11 @@ module notify_capital {
                             saidGood: false, confirmedRoster: false, gotValue: false }
   pure val NET0: NetC = { m: MEMBERS.mapBy(_ => NO_NETM), plan: Set(), planDone: false, helpDone: false }
 
-  // The runtime's in-memory ledger (runtime.ts:126, capital.ts capitalWiring).
+  // The runtime's in-memory ledger (runtime.ts, capital.ts capitalWiring).
   var mem: Ledger
-  // Unit.capital (runtime.ts:61, 171): since SD-156 fix 95c3d82, only the events the live ledger accepted.
+  // Unit.capital (runtime.ts): since SD-156 fix 95c3d82, only the events the live ledger accepted.
   var unit: List[Ev]
-  // network.capital_events in seq order (migrations 0007 and 0057; runtime.ts:571-574, 537).
+  // network.capital_events in seq order (migrations 0007 and 0057; runtime.ts).
   var pg: List[Ev]
   // Ghost: every event any unit ever committed (pg before forget deletes rows), in seq order.
   var pgAll: List[Ev]
@@ -646,7 +668,7 @@ module notify_capital {
 
   pure def planKey(m: str): str = if (m == "a") "o1a" else if (m == "b") "o1b" else "o1c"
 
-  // onLedger (runtime.ts:171, capital.ts capitalWiring): the live ledger records the event (a refusal
+  // onLedger (runtime.ts, capital.ts capitalWiring): the live ledger records the event (a refusal
   // is caught and counted). SD-156 fix 95c3d82: onLedger returns whether the ledger accepted it, and
   // only accepted events go into the unit. All events of one emit share t = now, so they are all
   // accepted or all refused (except an id the ledger saw, which is accepted as a no-op).
@@ -677,7 +699,7 @@ module notify_capital {
   }
 
   // The Network learns the member is a minor (a stated age of 16, a minor signal, a report, the
-  // record; network.ts:751-757, 931, 4776). It sets m.minor and drops the member. SD-049 fix
+  // record; network.ts). It sets m.minor and drops the member. SD-049 fix
   // f3f09b7: ledgerAge emits age_updated with age null for a member the ledger knows. The key is
   // `${id}:minor:${now}`; the model flips a member to minor at most once, so the key is the member.
   action cLearnMinor(m: str): bool = all {
@@ -727,7 +749,7 @@ module notify_capital {
          { ...netc, helpDone: true }),
   }
 
-  // writeUnit (runtime.ts:571-574): the unit's events are stored in the save transaction,
+  // writeUnit (runtime.ts): the unit's events are stored in the save transaction,
   // `on conflict (app_id, id) do nothing`, each new row with the next seq. The Network state commits
   // with them (a unit with only Network state, such as a post answer, commits too).
   action cCommit: bool = all {
@@ -739,7 +761,7 @@ module notify_capital {
   }
 
   // The unit fails before commit: the unit is dropped and the Network state reloads at the next
-  // unit (runStored). The in-memory ledger keeps what it recorded (runtime.ts:171).
+  // unit (runStored). The in-memory ledger keeps what it recorded (runtime.ts).
   action cAbort: bool = all {
     unit != [] or netc != netCommitted,
     unit' = [], netc' = netCommitted, aborted' = true,
@@ -747,8 +769,8 @@ module notify_capital {
     clockSteppedBack' = clockSteppedBack, forgotten' = forgotten, restarts' = restarts,
   }
 
-  // Leave or delete: a unit that forgets the member (runtime.ts:586-620). It deletes every stored
-  // event whose JSON names the id (runtime.ts:604). The in-memory ledger is not changed.
+  // Leave or delete: a unit that forgets the member (runtime.ts). It deletes every stored
+  // event whose JSON names the id (runtime.ts). The in-memory ledger is not changed.
   action cForget(m: str): bool = all {
     unit == [], netc == netCommitted, live(m),
     pg' = pg.select(e => not(names(e, m))),
@@ -759,7 +781,7 @@ module notify_capital {
     aborted' = aborted, restarts' = restarts,
   }
 
-  // Process restart (runtime.ts:377-378): the ledger replays the stored events `order by seq`.
+  // Process restart (runtime.ts): the ledger replays the stored events `order by seq`.
   action cRestart: bool = all {
     restarts < 2,
     mem' = replay(pg), unit' = [], netc' = netCommitted, restarts' = restarts + 1,
@@ -782,17 +804,18 @@ module notify_capital {
   // ------------------------------------------------------------------------------------------------
   // Invariants (Part B)
 
-  // AGENTS.md age policy and decision 1 (minors are never matched); PRD 39.2.6 "under-18s excluded";
-  // ledger.ts:6-7 and :151-157 "a member found to be a minor stops accruing now". A member the
+  // AGENTS.md age policy and decision 1 (minors are never matched, except a teen friendship item under
+  // teenFriendAgeRule, which is not in this model; the ledger keeps a minor out); PRD 39.2.6 "under-18s excluded";
+  // ledger.ts: "a member found to be a minor stops accruing now". A member the
   // Network treats as a minor is not eligible in the ledger.
   // NOT IN `safety` in this full form. SD-049 is fixed (f3f09b7, age_updated), and the fixed rule is
   // `noMinorEligibleInOrder` below. Two residual routes remain, both found by this model:
   //  (1) a failed unit: the ledger keeps the adult member_joined of the failed unit (memory before
   //      commit, SD-344, refuted in the register); the Network reloads, the member joins again as a
-  //      minor, and the ledger skips the same id (ledger.ts:134). Run test `minorAfterAbortTest`.
-  //  (2) the wall clock steps back: the live ledger refuses age_updated (t < lastT, ledger.ts:135);
+  // minor, and the ledger skips the same id (ledger.ts). Run test `minorAfterAbortTest`.
+  // (2) the wall clock steps back: the live ledger refuses age_updated (t < lastT, ledger.ts);
   //      since SD-156 the refused event is not stored either. Run test `minorClockBackTest`.
-  // Both are latent: nothing reads the ledger in production (runtime.ts:126, reader: false). A fix
+  // Both are latent: nothing reads the ledger in production (runtime.ts, reader: false). A fix
   // needs a design decision (a ledger that follows the committed state, or a clock-skew rule).
   val noMinorEligible: bool =
     MEMBERS.forall(m => not(netc.m.get(m).minor and eligibleIn(mem, m)))
@@ -800,7 +823,7 @@ module notify_capital {
   // The SD-049 rule for traces where every unit committed and the clock did not step back.
   val noMinorEligibleInOrder: bool = aborted or clockSteppedBack or noMinorEligible
 
-  // ledger.ts:59-60 "A restart keeps balances, levers and audit"; store.ts:1-2 and capital.md I5:
+  // ledger.ts "A restart keeps balances, levers and audit"; store.ts and capital.md I5:
   // the ledger state is a function of the accepted events in accepted order. After a commit, the
   // replay of everything stored equals the live ledger (no forget, no failed unit in the trace;
   // those have their own invariants). Was SD-153 and SD-156; holds since 777711f and 95c3d82.
@@ -811,7 +834,7 @@ module notify_capital {
   // the replay of what is stored after forget with the replay of everything committed, for the
   // members that were not forgotten.
   // NOT IN `safety`: SD-155, refuted in the register (latent: nothing reads the replayed ledger in
-  // production). member_joined:c names its voucher b, so forget(b) deletes it (runtime.ts:604).
+  // production). member_joined:c names its voucher b, so forget(b) deletes it (runtime.ts).
   val forgetKeepsOthers: bool = {
     val after = replay(pg)
     val before = replay(pgAll)
@@ -976,7 +999,7 @@ module notify_capital {
   // ================================================================================================
   // Run tests: concrete traces from the code and the tests.
 
-  // packages/network/service/service.ts:647-664 and tests/e2e/notify.e2e.test.ts: a delivered send
+  // packages/network/service/service.ts and tests/e2e/notify.e2e.test.ts: a delivered send
   // becomes one item with delivery net:<id>, and the scheduler has nothing to send.
   run projectionRecordsTest =
     initWith("notify", "active")
@@ -1016,9 +1039,8 @@ module notify_capital {
       .then(all { queueSend(Set(3)), capitalUnchanged })
       .expect(and { oneNotifyTextPerItem, schedulerRespectsCap, safety })
 
-  // SD-150 residual (cap part, see schedulerRespectsCap): r2's re-read runs after r1's record, so
-  // dispatch rebuilds r2's plan with {4} and records it without a new cap check. Each item is in
-  // one text (the SD-150 fix holds), but two counting texts go out with a cap of 1.
+  // SD-150 cap part (fixed): r2's re-read runs after r1's record, so dispatch rebuilds r2's plan
+  // with {4}; the record refuses it because r1's counting digest used the cap of 1. Item 4 stays pending.
   run replicaRebuildCapTest =
     initWith("notify", "active")
       .then(all { notifyAdd(3, false), capitalUnchanged })
@@ -1028,12 +1050,12 @@ module notify_capital {
       .then(all { reread("r1", "imessage"), capitalUnchanged })
       .then(all { recordDelivery("r1"), capitalUnchanged })
       .then(all { reread("r2", "imessage"), capitalUnchanged })
+      .expect(rep.get("r2").items == Set(4))
       .then(all { recordDelivery("r2"), capitalUnchanged })
+      .expect(and { rep.get("r2").phase == "idle", ntf.keys() == Set(Set(3)), pending == Set(4) })
       .then(all { enqueue("r1"), capitalUnchanged })
-      .then(all { enqueue("r2"), capitalUnchanged })
       .then(all { queueSend(Set(3)), capitalUnchanged })
-      .then(all { queueSend(Set(4)), capitalUnchanged })
-      .expect(and { oneNotifyTextPerItem, not(schedulerRespectsCap), safety })
+      .expect(and { oneNotifyTextPerItem, schedulerRespectsCap, safety })
 
   // SD-095 (skipped): the queue refuses the text (person cap, consent); the delivery still counts
   // and the item stays notified, so no later text carries it. Only through Notifier.add.

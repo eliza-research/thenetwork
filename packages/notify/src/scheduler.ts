@@ -23,7 +23,7 @@ import { isQuietAt } from "../../blooio/src/quiet-hours.ts";
 import { composeText, composeThreadText } from "./compose.ts";
 import { assistantLink, buttonPageLink, updatePrompt } from "./links.ts";
 import { TOKEN_PATTERN } from "./reference.ts";
-import type { DigestAssistantLink, NotifyStore } from "./store.ts";
+import { WEEK_MS, type DigestAssistantLink, type NotifyStore } from "./store.ts";
 import { resolveDelivery, type Delivery, type SurfacePrefs } from "./surface.ts";
 import { newToken, TOKEN_TTL_MS, type TaskToken } from "./tokens.ts";
 import { isAssistant, type Assistant, type Channel, type InboxItem, type InboxItemInput, type Surface } from "./types.ts";
@@ -73,7 +73,9 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
   rand: randomInt,
 };
 
-const WEEK_MS = 7 * 24 * 3600_000;
+function requireSummary(input: InboxItemInput): void {
+  if (!input.summary.trim()) throw new Error("inbox item needs a summary");
+}
 
 export interface SendPlan {
   personId: string;
@@ -111,7 +113,7 @@ export class Notifier {
 
   /** Producers (engine, plans, reminders) add items here. Deduped on (person, app, event, subject). */
   add(input: InboxItemInput, now: number) {
-    if (!input.summary.trim()) throw new Error("inbox item needs a summary");
+    requireSummary(input);
     return this.store.addItem(input, now);
   }
 
@@ -122,10 +124,8 @@ export class Notifier {
    */
   async recordSent(input: InboxItemInput, d: { deliveryId: string; channel: Channel; countsTowardCap: boolean; sentAt: number }) {
     if (d.deliveryId.startsWith("ntf_")) throw new Error("ntf_ delivery ids belong to the scheduler");
-    const r = await this.add(input, d.sentAt);
-    if (r.item.notifiedAt === undefined)
-      await this.store.recordDelivery({ deliveryId: d.deliveryId, personId: input.personId, itemIds: [r.item.id], target: d.channel, countsTowardCap: d.countsTowardCap, sentAt: d.sentAt });
-    return r;
+    requireSummary(input);
+    return this.store.addDelivered(input, { deliveryId: d.deliveryId, target: d.channel, countsTowardCap: d.countsTowardCap, sentAt: d.sentAt });
   }
 
   private dueAt(i: InboxItem): number {
@@ -231,9 +231,8 @@ export class Notifier {
           deliveryId: final.deliveryId, personId: final.personId, itemIds: final.itemIds,
           target: final.delivery.mode === "thread" ? final.channel
             : final.delivery.mode === "deeplink" ? final.delivery.assistant : final.delivery.assistants[primaryDigestAssistantIndex],
-          countsTowardCap: final.countsTowardCap, sentAt: now,
-          assistantLink: final.assistantLink,
-        }),
+          countsTowardCap: final.countsTowardCap, sentAt: now, assistantLink: final.assistantLink,
+        }, this.cfg.weeklyCap),
         enqueue: async final => sink.enqueue({
           idempotencyKey: final.deliveryId, channel: final.channel, to: final.to, text: final.text,
           kind: final.countsTowardCap ? "proactive" : "transactional",
@@ -323,7 +322,7 @@ export class Notifier {
    * items; without, every unseen item; with `app`, only that app's. Everything returned is marked seen.
    */
   async readUpdates(callerPersonId: string, surface: Surface, now: number, token?: string,
-    opts: { app?: string; visible?: (items: InboxItem[]) => Promise<InboxItem[]> } = {}): Promise<InboxItem[]> {
+    opts: { app?: string; visible?: (items: InboxItem[]) => Promise<InboxItem[]>; withheld?: (items: InboxItem[]) => InboxItem[] } = {}): Promise<InboxItem[]> {
     await this.store.touch(callerPersonId, surface, now);
     // A surface bound to one app (an MCP grant) never sees another app's items: cross-app privacy.
     let items = (await this.store.unseen(callerPersonId, now)).filter(i => appAllowsInboxItem(opts.app !== undefined, i.app === opts.app));
@@ -338,7 +337,8 @@ export class Notifier {
     }
     if (!canRecordInboxSeen(read)) return [];
     const visible = opts.visible ? await opts.visible(items) : items;
-    const seen = new Set(await this.store.markSeen(callerPersonId, surface, now, items.map(i => i.id)));
+    const kept = new Set((opts.withheld?.(items) ?? []).map(i => i.id));
+    const seen = new Set(await this.store.markSeen(callerPersonId, surface, now, items.filter(i => !kept.has(i.id)).map(i => i.id)));
     return stepAcknowledgement(read, { type: "recordInboxSeen" }).phase === "InboxSeen" ? visible.filter(i => seen.has(i.id)) : [];
   }
 

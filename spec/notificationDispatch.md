@@ -8,7 +8,7 @@ A scheduler plan is tentative until the inbox and recipient are read again. A Vi
 
 ### Re-read the planned items before recording a digest
 
-Keep only items that remain unseen, unnotified and unexpired. A recipient who no longer allows proactive updates can still get requested items. Cancel the original plan if no items remain or the recipient is unavailable. Rebuild the digest if some items were removed, the recipient's address, channel or time zone changed, or a prepared assistant link no longer covers the item app. Reuse the original plan while its items, destination and link authority still fit.
+Keep only items that remain unseen, unnotified and unexpired. A recipient who no longer allows proactive updates can still get requested items. Cancel the original plan if no items remain or the recipient is unavailable. Rebuild the digest if some items were removed, the recipient's address, channel or time zone changed, or a prepared assistant link no longer covers the item app. Reuse the original plan while its items, destination and link authority still fit. A re-read counts only what it can see: a plan names at least one item and the re-read keeps between none and all of them, so the re-read now refuses any other counts; before, the rule accepted counts the scheduler never forms, such as a negative remaining count.
 
 ```quint
 type DigestPhase =
@@ -30,7 +30,11 @@ pure def lawExpiredItemLeavesTheDigest(seen: bool, notified: bool, expiresAt: in
 
 pure def inboxItemAllowedForRecipient(requested: bool, proactiveAllowed: bool): bool = requested or proactiveAllowed
 
-pure def canRereadItems(digest: DigestFlow): bool = digest.phase == DigestStarting
+pure def rereadCountsPossible(plannedCount: int, remainingCount: int): bool =
+  plannedCount >= 1 and remainingCount >= 0 and remainingCount <= plannedCount
+
+pure def canRereadItems(digest: DigestFlow, plannedCount: int, remainingCount: int): bool =
+  digest.phase == DigestStarting and rereadCountsPossible(plannedCount, remainingCount)
 pure def rereadItems(digest: DigestFlow, plannedCount: int, remainingCount: int, recipientAvailable: bool, destinationChanged: bool): DigestFlow =
   { phase:
     if (remainingCount == 0 or not(recipientAvailable)) DigestCancelled
@@ -43,11 +47,17 @@ pure def lawMissingRecipientCancels(plannedCount: int, remainingCount: int, dest
 
 ### The sink receives only a recorded digest
 
-Record the final plan before asking the sink to enqueue it. The store locks the selected items and requires every item to belong to the recipient and remain unseen, unnotified and unexpired at recording. It rejects repeated IDs and overlapping claims. A recording rejection cancels that plan, using its final delivery ID. Count the plan as queued only after the sink accepts it.
+Record the final plan before asking the sink to enqueue it. The store locks the selected items and requires every item to belong to the recipient and remain unseen, unnotified and unexpired at recording. It rejects repeated IDs and overlapping claims. A recording rejection cancels that plan, using its final delivery ID. Count the plan as queued only after the sink accepts it. A digest that counts toward the weekly cap is recorded only while the person's counted messages of the last seven days, read under a lock of that person, are under the cap; otherwise the plan is cancelled and its items stay pending. Changed 2026-11-21: the cap was checked only when the plan was made, so two overlapping scheduler replicas could each record a counting digest and pass the cap (SD-150, found by the notify_capital model).
 
 ```quint
 pure def digestItemSetCanBeRecorded(itemCount: int, pendingOwnedCount: int): bool =
   itemCount > 0 and itemCount == pendingOwnedCount
+
+pure def digestWithinWeeklyCap(countsTowardCap: bool, countedSends: int, weeklyCap: int): bool =
+  not(countsTowardCap) or countedSends < weeklyCap
+
+pure def lawRecordedCountingDigestStaysUnderCap(countedSends: int, weeklyCap: int): bool =
+  digestWithinWeeklyCap(true, countedSends, weeklyCap) implies countedSends + 1 <= weeklyCap
 
 pure def canRecordDigest(digest: DigestFlow): bool =
   digest.phase == ReusingDigest or digest.phase == RebuildingDigest
@@ -95,3 +105,5 @@ pure def lawUnreadableQueuedLinkCannotSend(sameRecipient: bool, boundLink: bool,
 pure def lawForeignQueuedDigestCannotSend(threadCopy: bool, boundLink: bool, appScoped: bool, referenceLive: bool, allAssistantsReadable: bool): bool =
   not(queuedDigestClaimAllowed(false, threadCopy, boundLink, appScoped, referenceLive, allAssistantsReadable))
 ```
+
+Conformance. test/fixtures/notificationDispatchWorker.ts runs the Notifier on the Postgres inbox, one person for each key. The first event selects the flow. For rereadItems the worker adds the planned items, holds the re-read of the items, applies the event to the inbox (seen items, no recipient, a new number), and then holds the rebuild, the delivery record and the enqueue. Each held effect is the phase. A failed record is an item that the person saw after the re-read. For readQueuedDigest the worker records a digest with two items, holds stillNeeded on its read of the items, and the revalidation event erases an item, makes one expire, or marks the items seen.

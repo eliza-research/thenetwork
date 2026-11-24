@@ -12,7 +12,7 @@ test.skipIf(!pgAvailable)("authorized staff approve an exact public gathering dr
   const sql = new SQL(url);
   const clock = new SimClock(START);
   const service = new NetworkService({ url, clock, photoStorage: null, notify: false, log: () => {},
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off" },
+    env: { PLATFORM_ENV: "dev" },
     networks: [{ id: "ntwrk:nyc", matchingEnabled: false }, { id: "friends:nyc", matchingEnabled: false }],
     tokens: "admin@ntwrk:ntwrk-admin,admin@friends:friends-admin,reviewer@ntwrk:ntwrk-reviewer", consoleToken: "ntwrk-admin",
   });

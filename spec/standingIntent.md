@@ -1,6 +1,6 @@
 # Standing intent freshness
 
-[Story F9](product/stories.md#story-f9--keep-a-standing-intent) asks the Network to keep looking until the member stops or the intent expires. The [profile learning](models/profile_learning.md) and [matching engine](models/matching_engine.md) models describe the surrounding flows. The shell supplies the stored status and computes the deadline from the member's recorded statement and its horizon. The shell keeps the statement time of a learned desire when a matching run reads that desire again; only a fresh statement by the member sets a new time. The shell removes a desire that the member withdraws from the learned desires, so that a withdrawn desire stays out of learned matching evidence.
+[Story F9](product/stories.md#story-f9--keep-a-standing-intent) asks the Network to keep looking until the member stops or the intent expires. The [profile learning](models/profile_learning.md) and [matching engine](models/matching_engine.md) models describe the surrounding flows. The shell supplies the stored status and computes the deadline from the member's recorded statement and its horizon. The shell keeps the statement time of a learned desire when a matching run reads that desire again; only a fresh statement by the member sets a new time. A pause or a close of a learned want keeps the desire and its statement time and records the control in member state, so that a paused or closed want stays out of learned matching evidence and an UNDO can restore it. Changed (owner decision 2026-11-22): before, a withdrawal deleted the learned desire, so it could not be undone.
 
 ## Story: Match only on a current standing intent
 
@@ -108,4 +108,33 @@ An extra search considers opportunities anchored to a live standing intent and e
 ```quint
 pure def standingIntentCandidateInScope(scoped: bool, matchesIntent: bool, eventFitsIntent: bool): bool =
   not(scoped) or matchesIntent or eventFitsIntent
+```
+
+### One renewal question before a searched want lapses
+
+Seven days or less before the deadline of a live learned want that the Network is searching for, ask the member once whether they are still looking. The Network is searching for the want when a people request of the member for that want is not withdrawn and not closed, and the member can be matched. Ask at most once for each deadline, inside the daily limit of proactive messages. A send that the daily limit or another send rule refused waits one day before the next try. A KEEP reply is a fresh statement by the member and starts a new sixty-day deadline; the same open request still counts as the search, so the new deadline gets its own one question. With no answer the want lapses at its deadline as before; expiry stops new work only. A paused or closed want is not asked about. Job postings and stored intents get no renewal question. Changed (owner decision 2026-11-22, D5): a want lapsed with no word to the member -> the member is asked once before the deadline, a refused send waits a day, and the same open request counts after a KEEP, because only the member's own words end a standing thing.
+
+```quint
+pure val renewalAskDays: int = 7
+pure val renewalRetryMs: int = 86400000
+
+pure def standingRenewalAskDue(live: bool, searching: bool, daysLeft: int, askedThisDeadline: bool, refusedAgoMs: int): bool =
+  live and searching and daysLeft > 0 and daysLeft <= renewalAskDays and not(askedThisDeadline)
+    and (refusedAgoMs < 0 or refusedAgoMs >= renewalRetryMs)
+
+pure val daysLeftValues = Set(0, 1, 7, 8)
+pure val refusedAgoMsValues = Set(-1, 0, 86399999, 86400000)
+
+pure def lawOneRenewalAskPerDeadline(live: bool, searching: bool, daysLeft: int, refusedAgoMs: int): bool =
+  not(standingRenewalAskDue(live, searching, daysLeft, true, refusedAgoMs))
+
+pure def lawNoRenewalAskEarly(live: bool, searching: bool, askedThisDeadline: bool, refusedAgoMs: int): bool =
+  not(standingRenewalAskDue(live, searching, renewalAskDays + 1, askedThisDeadline, refusedAgoMs))
+
+pure def lawPausedOrClosedIsNotAsked(searching: bool, daysLeft: int, askedThisDeadline: bool, refusedAgoMs: int): bool =
+  not(standingRenewalAskDue(false, searching, daysLeft, askedThisDeadline, refusedAgoMs))
+
+pure def lawRefusedAskWaitsADay(live: bool, searching: bool, daysLeft: int, askedThisDeadline: bool): bool =
+  not(standingRenewalAskDue(live, searching, daysLeft, askedThisDeadline, 0))
+    and not(standingRenewalAskDue(live, searching, daysLeft, askedThisDeadline, renewalRetryMs - 1))
 ```

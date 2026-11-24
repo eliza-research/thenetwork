@@ -8,7 +8,7 @@ The [case and report spec](safetyCase.md) governs decisions inside one Network r
 
 ### Staff act within their resolved scope
 
-Staff with safety authority on every app may act on the person's relevant memberships. An app-scoped action only includes the requested runtime. Discovery skips invited and removed memberships. The requested member remains the fallback target when there is no linked person. The hold audit records the authorized scope without recording a membership count.
+Staff with safety authority on every app may act on the person's relevant memberships. An app-scoped action only includes the requested runtime. Discovery skips invited and removed memberships. The requested member remains the fallback target when there is no linked person. The hold audit records the authorized scope without recording a membership count. The hold and the minor-signal clear answer the staff member with their reach: `all` when the staff member has authority on every app and the member has a linked person, otherwise `app`. The reach comes from the staff member's authority, so it never tells how many apps the person uses. Changed (audit SD-070): the service returned no reach -> it answers with its reach, because the console said "on every app" also when it acted on one app only.
 
 ```quint
 pure def staffSafetyMembershipLive(membership: str): bool =
@@ -18,6 +18,12 @@ pure def staffSafetySelectsTarget(everywhere: bool, requestedRuntime: bool): boo
   everywhere or requestedRuntime
 
 pure def staffSafetyAuditScope(targets: int): str = if (targets > 1) "every_app" else "this_app"
+
+pure def staffSafetyActionReach(allAppsAuthority: bool, linkedPerson: bool): str =
+  if (allAppsAuthority and linkedPerson) "all" else "app"
+
+pure def lawAppStaffReachOneApp(linkedPerson: bool): bool =
+  staffSafetyActionReach(false, linkedPerson) == "app"
 
 pure def lawLocalStaffTargetStaysInScope(requestedRuntime: bool): bool =
   staffSafetySelectsTarget(false, requestedRuntime) implies requestedRuntime
@@ -50,7 +56,7 @@ pure def sometimesCanHoldRelatedTargets(flow: ServiceSafetyFlow): bool = flow.ph
 
 Commit a successful staff hold for a linked person with the primary runtime decision. An app-scoped actor sets a hold for the requested app. An all-app actor can place a global hold. An authorized lift clears the requested app only. An app-scoped actor can lift a local hold but cannot release global coverage. An all-app actor can release one app from global coverage while the other apps retain it. A new global hold covers all apps again. Recheck ownership and the exact current decision when committing a lift or projecting a related runtime. Keep the scope and decision data private. When migrating older records, preserve an active, identifiable prior staff hold in the app that recorded it.
 
-An ordinary leave removes the app membership and personal data while retaining the scoped restriction. The person can join again and receive permitted replies and safety notices. The matching snapshot and final contact claims check the current app's restriction even if its runtime projection is pending. Whole-account erasure removes the hold record with the other personal data under the existing account privacy procedure.
+An ordinary leave removes the app membership and personal data while retaining the scoped restriction. The person can join again and receive permitted replies and safety notices. The matching snapshot and final contact claims check the current app's restriction even if its runtime projection is pending. Whole-account erasure keeps the hold record, as it keeps a ban and the person's tombstone, so a later join by the same number revives the person with the hold. Only the staff release of a held number to a new holder removes it. Changed (audit SIG70): erasure removed the hold -> the hold stays, because a held person who erased the account and joined again was matched without staff review of the hold.
 
 ```quint
 pure def durableStaffHoldScope(allAppsAuthority: bool, currentApp: str): str =
@@ -64,6 +70,11 @@ pure def durableStaffHoldLiftAllowed(globallyCovered: bool, allAppsAuthority: bo
 
 pure def durableStaffHoldSnapshotStatus(accountStatus: str, staffHeld: bool): str =
   if (staffHeld) "restricted" else accountStatus
+
+pure def erasureKeepsStaffHold(releasedToNewHolder: bool): bool = not(releasedToNewHolder)
+
+pure def lawErasedThenRejoinedNumberStaysHeld(accountStatus: str): bool =
+  durableStaffHoldSnapshotStatus(accountStatus, erasureKeepsStaffHold(false)) == "restricted"
 
 pure def lawLocalStaffCannotReleaseGlobalHold(globallyCovered: bool): bool =
   globallyCovered implies not(durableStaffHoldLiftAllowed(globallyCovered, false))
@@ -94,7 +105,7 @@ pure def lawCarriedTrustHoldRequiresOneCurrentOwner(canonicalBan: bool, staffHol
 
 ### Keep the requested and result audits in order
 
-The audit stages are a run of their own, apart from the hold and ban runs. The action runs only after the request audit is recorded. An action that returns gets a subsequent result audit, and only after the action. Preserve the existing best-effort handling for a result-audit failure.
+The audit stages are a run of their own, apart from the hold and ban runs. The action runs only after the request audit is recorded. An action that returns gets a subsequent result audit, and only after the action. Preserve the existing best-effort handling for a result-audit failure. Changed (audit OPS27): the leak-review release and drop and the inbound turn release acted before their only audit row, and the phone-hold decision wrote no result row -> they follow this run too, because a step without its audit rows could not be traced.
 
 ```quint
 pure def canRecordRequestedSafetyAudit(flow: ServiceSafetyFlow): bool = flow.phase == ServiceSafetyStarting
@@ -170,7 +181,7 @@ pure def lawNoDuplicateLockedBanPhone(hash: str): bool = not(includeLockedBanPho
 
 ### An interrupted ban resumes from its saved authority
 
-Record each ban once under the person write lock. The saved ban takes effect immediately. Keep the ban pending until phone suppression, rating cleanup, and all current app restrictions finish. An authorized retry uses the original decision and finishes pending work without writing another ban. The saved report ID goes only to the runtime that holds it for that member. The runtime records the hold and account restriction together. Record completion only after every runtime update commits. A later completed duplicate returns already banned.
+Record each ban once under the person write lock. The saved ban takes effect immediately. Keep the ban pending until phone suppression, rating cleanup, all current app restrictions, and the deletion of the connector signup drafts of every banned number in every app finish. The draft deletion runs after the runtime updates and before completion, so a failed deletion leaves the ban pending for the retry. Changed 2026-11-22 (owner decision of 2026-11-22, carry-over of the connector review): the code already deleted the drafts before it recorded completion, but this list did not name that step, so the rule and the code did not agree. An authorized retry uses the original decision and finishes pending work without writing another ban. The saved report ID goes only to the runtime that holds it for that member. The runtime records the hold and account restriction together. Record completion only after every runtime update commits. A later completed duplicate returns already banned.
 
 ```quint
 pure def lawIncompleteRecordedBanCanResume(flow: ServiceSafetyFlow): bool =
@@ -193,4 +204,98 @@ pure def staffBanSnapshotStatus(accountStatus: str, banned: bool): str =
 
 pure def lawBannedEnrollmentCannotCommit(liveOwner: bool, verifiedBinding: bool): bool =
   not(staffBanEnrollmentAllowed(liveOwner, verifiedBinding, true))
+```
+
+## Story: Route an agent signal to an accountable decision
+
+> As a member who tells the shared agent about a safety problem, or that I want no more introductions, I want that signal to reach a person or to take effect, and never to wait unread. When it pauses my matching, I want to be told once what was paused and how to undo it.
+
+### An agent signal goes to the decision that owns it
+
+The shared agent sends a signal only inside the member's own open turn, and the service checks that turn and the member's active membership first. A safety concern opens or joins that member's safety case with the reason code `agent_safety_concern` and no evidence text, and it waits for safety staff. An opt-out pauses matching in that app only, with the same setting that the member's "pause matching" command writes. It does not change carrier consent: only STOP on the shared line does that, and the signal response has no consent fence for the gateway. A travel signal stays private context. When the work for a safety concern fails, its receipt stays unresolved and the service raises an operations alert that names the app and the member, so a person looks at it. Changed (audits COV05 and SIG-unresolved-concern): safety concerns and opt-outs were stored as proposals that nobody decided, and a failed concern raised no alert -> a concern opens a safety case, an opt-out pauses matching, and a failed concern raises an alert, because the signals changed nothing and never reached safety staff.
+
+```quint
+import participationControls as Controls from "./participationControls"
+
+type AgentSignalRoute = SignalOpensSafetyCase | SignalPausesApp | SignalKeptAsContext
+
+pure def agentSignalRoute(kind: str): AgentSignalRoute =
+  if (kind == "safety_concern") SignalOpensSafetyCase
+  else if (kind == "opt_out") SignalPausesApp
+  else SignalKeptAsContext
+
+pure def agentSignalWaitsForStaff(kind: str): bool = agentSignalRoute(kind) == SignalOpensSafetyCase
+
+pure def agentOptOutParticipation(kind: str, saved: str): str =
+  if (agentSignalRoute(kind) == SignalPausesApp) Controls::participationControlState(true) else saved
+
+pure def lawAgentSafetyConcernReachesStaff(kind: str): bool =
+  kind == "safety_concern" implies agentSignalWaitsForStaff(kind)
+
+pure def lawAgentOptOutPausesOnlyMatching(saved: str): bool =
+  agentOptOutParticipation("opt_out", saved) == "paused" and not(agentSignalWaitsForStaff("opt_out"))
+
+pure def lawOtherSignalsLeaveParticipation(kind: str, saved: str): bool =
+  kind != "opt_out" implies agentOptOutParticipation(kind, saved) == saved
+```
+
+### An applied agent pause gives the member one confirmation
+
+When an opt-out signal changes the saved setting of the member to paused, the service gives the member exactly one confirmation. The confirmation says that matching is paused in that app, and that the member can say ‘resume matching’ to undo the pause. A signal that changes nothing, because matching is already paused, gives no confirmation. A retry of the same signal replays its stored receipt and does not run again. The service makes the decision in the transaction that holds the lock on the member row and writes the pause, the confirmation and the receipt, so two replicas cannot both confirm one pause. The text confirmation is a reply to the action of the member in their own open turn through the shared agent. It is not proactive outreach, so it does not use a slot of the daily cap of three proactive messages: that cap counts proactive messages only. The outbound queue still applies the reply window, the consent ledger, the opt-out of the member and the leak guard to the text at send time. When the texts of the member are off (the consent ledger of their number or their member row says opted out), the service does not text the confirmation. It adds an inbox update. The agent of the member reads that update through the connector, and the updates read of the shared line shows it after the member sends START. The connector and the updates read apply the output leak gate to it. The inbox update is a requested item, so after the member sends START the notify digest can text it if their agent did not read it first. Thus its words stay true before START, after START and after the member resumes: it says that matching on that app was paused as the member asked, that the member can text ‘resume matching’ on the line of that app to undo it, and that a member who turned texts off replies START first. Other signal kinds give no confirmation. A STOP that commits after the pause stops the queued text at send time: the member then gets no confirmation, and is not texted after STOP. Changed (owner decision 2026-11-22, D7): an agent opt-out paused matching silently -> the member gets one confirmation with the undo, by text or as an inbox update whose words stay true after START, because the member did not know that the pause took effect or how to undo it.
+
+```quint
+type AgentPauseConfirmation = PauseConfirmedByReplyText | PauseConfirmedInInbox | PauseNotConfirmed
+
+pure def agentPauseConfirmation(kind: str, pauseApplied: bool, textsOff: bool): AgentPauseConfirmation =
+  if (agentSignalRoute(kind) != SignalPausesApp or not(pauseApplied)) PauseNotConfirmed
+  else if (textsOff) PauseConfirmedInInbox
+  else PauseConfirmedByReplyText
+
+pure val kindValues = Set("opt_out", "travel", "safety_concern", "pause")
+pure val pauseAppliedValues = Set(true, false)
+pure val textsOffValues = Set(true, false)
+
+pure def lawAppliedPauseGetsOneConfirmation(textsOff: bool): bool =
+  agentPauseConfirmation("opt_out", true, textsOff) != PauseNotConfirmed
+
+pure def lawUnchangedPauseGetsNoConfirmation(kind: str, textsOff: bool): bool =
+  agentPauseConfirmation(kind, false, textsOff) == PauseNotConfirmed
+
+pure def lawOptedOutMemberIsNeverTexted(kind: str, pauseApplied: bool): bool =
+  agentPauseConfirmation(kind, pauseApplied, true) != PauseConfirmedByReplyText
+
+pure def lawTextsOnGetTheReplyText(pauseApplied: bool): bool =
+  pauseApplied implies agentPauseConfirmation("opt_out", pauseApplied, false) == PauseConfirmedByReplyText
+
+pure def lawOnlyAPauseIsConfirmed(kind: str, pauseApplied: bool, textsOff: bool): bool =
+  agentSignalRoute(kind) != SignalPausesApp implies agentPauseConfirmation(kind, pauseApplied, textsOff) == PauseNotConfirmed
+```
+
+### Safety staff decide a waiting agent signal once
+
+A signal that waits for staff is listed for reviewer and safety staff in that app. Only a safety staff member in that app can decide it, with a reason, and the service writes the request audit before the decision. The decision marks the signal reviewed or dismissed. A decided signal keeps its decision. The member's safety case stays open until staff use the existing hold, lift or close actions. The operations alert counts only waiting signals. Only a safety concern waits: an opt-out takes effect when it arrives. A migration applied the pause of each opt-out signal that an older version stored as waiting, unless the member changed the setting after it, and marked those signals reviewed. The service refuses a staff member without the safety role before it reads the signal, and gives the same role answer to the decision. The evidence of a member who is under 18 or whose age is in doubt is shown only to safety staff, who decide the concern; reviewer staff see that the signal exists and that its evidence is withheld. Changed (audits COV05, signals-r19-1, signals-r19-2 and signals-r19-4): no staff action resolved a signal, old opt-outs stayed waiting unapplied, the decision had a constant role answer, and every reviewer read a minor's evidence -> safety staff decide a waiting concern, the migration applied the old pauses, the role check is real, and a minor's evidence is for safety staff only, because the alert could not clear and a minor's words reached more staff than needed.
+
+```quint
+type AgentSignalPhase = SignalWaiting | SignalReviewed | SignalDismissed
+
+pure def agentSignalDecisionAllowed(safetyRole: bool, phase: AgentSignalPhase): bool =
+  safetyRole and phase == SignalWaiting
+
+pure def agentSignalAfterDecision(phase: AgentSignalPhase, safetyRole: bool, dismiss: bool): AgentSignalPhase =
+  if (agentSignalDecisionAllowed(safetyRole, phase)) { if (dismiss) SignalDismissed else SignalReviewed } else phase
+
+pure def lawDecidedAgentSignalStaysDecided(phase: AgentSignalPhase, safetyRole: bool, dismiss: bool): bool =
+  phase != SignalWaiting implies agentSignalAfterDecision(phase, safetyRole, dismiss) == phase
+
+pure def lawOnlySafetyStaffDecideAgentSignals(phase: AgentSignalPhase, dismiss: bool): bool =
+  agentSignalAfterDecision(phase, false, dismiss) == phase
+
+pure def agentSignalEvidenceShown(safetyRole: bool, ageInDoubt: bool): bool =
+  safetyRole or not(ageInDoubt)
+
+pure def lawReviewerNeverReadsMinorEvidence(ageInDoubt: bool): bool =
+  ageInDoubt implies not(agentSignalEvidenceShown(false, ageInDoubt))
+
+pure def lawAdultEvidenceShownToReviewers(safetyRole: bool): bool =
+  agentSignalEvidenceShown(safetyRole, false)
 ```

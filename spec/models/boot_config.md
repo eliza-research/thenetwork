@@ -8,7 +8,9 @@ An operator needs the service to start with complete configuration and accept re
 
 Check required configuration, dev shortcuts, and proxy-secret changes. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [startup configuration spec](../bootPolicy.md) generates the runtime checks for the two entry points, declared environment, dev shortcuts, and database service role. This imported model also covers operator actions, provider setup and proxy rotation. Its historical entry-point comments describe the code at import time.
+The [startup configuration spec](../bootPolicy.md) generates the runtime checks for the two entry points, declared environment, dev shortcuts, and database service role. This imported model also covers operator actions, provider setup and proxy rotation.
+
+The configuration fact `modelProvider` says that `JUDGE_PROVIDER` and `RECOMMENDER_PROVIDER` each have an API key (`providerKeyPresent`; spec/bootPolicy.md `modelProviderMissing`): a deployed start without it is refused. The running service's judge (`svcJudge`): a staging or production service always runs the model review judge (`judgeFor`), a dev service only an injected one, and the entries inject none. The constructor refuses a deployed service that injects a judge (`judge_injection`); `upDeployedJudged` states it. Changed (owner decisions D15 to D17 of 2026-11-22): the review mode is removed, because the review judge decides every item.
 
 Imported from `quint/boot_config.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -22,27 +24,28 @@ Imported from `quint/boot_config.qnt` at `30d950e`. See [model index](README.md)
 //
 // WHAT THIS MODELS
 //   Part A, the process. Four entry points, each with the gate its code runs NOW:
-//   - main.ts (packages/network/service/main.ts:33): assertBootConfig, so bootConfigProblems and the
+// - main.ts (packages/network/service/main.ts): assertBootConfig, so bootConfigProblems and the
 //     LemmaScript functions of packages/platform/src/env-core.ts (declaredEnv, productionEnv,
 //     devAllowed, deployedReady, bootProblems; each is a pure def here with the same decision). Then
-//     main.ts:36-37 reads the database URL with `||` (W3-458, fixed), and outside dev main.ts:39-45
+// main.ts reads the database URL with `||` (W3-458, fixed), and outside dev main.ts
 //     refuses a superuser, BYPASSRLS or owner login (Q-boot_config-W4-3, fixed).
-//   - server.ts (deploy/backend/server.ts:31; the production entry: Dockerfile CMD, railway.toml). It
-//     runs backend.ts loadConfig (backend.ts:85-107), which calls assertBootConfig first, so the same
-//     bootProblems gate as main.ts, and then its own checks (Q-boot_config-W4-1, fixed; W3-448). Then
-//     server.ts:44-51 moves platform.settings.environment from 'dev' to PLATFORM_ENV once
-//     (PLATFORM_DB_ENVIRONMENT_INIT=1, deployed only), and server.ts:57-60 refuses a superuser,
+// - server.ts (deploy/backend/server.ts; the production entry: Dockerfile CMD, railway.toml). It
+//     runs backend.ts loadConfig, whose spec/bootPolicy.md backendBoot refuses all that the bootProblems
+//     gate of main.ts refuses, and then its own checks (Q-boot_config-W4-1, fixed; W3-448). Then
+// server.ts moves platform.settings.environment from 'dev' to PLATFORM_ENV once
+// (PLATFORM_DB_ENVIRONMENT_INIT=1, deployed only), and server.ts refuses a superuser,
 //     BYPASSRLS or owner login (deployed only).
-//   - scripts/platform-dev.ts: no gate. It refuses isProduction (:45), then WRITES process.env
-//     (PLATFORM_ENV ??= "dev" at :47, PLATFORM_PROXY_SECRET ||= 32 random bytes at :61) before it builds
+//   - scripts/platform-dev.ts: no gate. In main() it refuses isProduction, then WRITES process.env
+//     (PLATFORM_ENV ??= "dev", PLATFORM_PROXY_SECRET ||= 32 random bytes) before it builds
 //     the service. `snap` is the environment the callers read after these writes (W3-452).
-//   - packages/mcp/src/dev-server.ts:11: devShortcutsAllowed() only, memory stores, no service.
-//   After the gate, the NetworkService constructor, its public API (built at boot by server.ts:93) and
-//   start() can still refuse (W3-454): the review option (service.ts:336), SERVICE_TURN_SECRET
-//   (service.ts:104-110,343), the hash key (service.ts:348, api.ts:133), the OTP provider
-//   (otp.ts:110-115: the console provider outside dev throws), the Turnstile verifier (turnstile.ts:47:
-//   the bypass outside dev throws), the staff tokens outside dev (service.ts:351-354, W3-457, fixed) and
-//   the database environment row, also a missing one (service.ts:521-525, Q-boot_config-W4-2, fixed).
+// - packages/mcp/src/dev-server.ts: devShortcutsAllowed only, memory stores, no service.
+// After the gate, the NetworkService constructor, its public API (built at boot by server.ts) and
+//   start() can still refuse (W3-454): a deployed service with an injected review or engine judge
+//   (service.ts, "reviewJudge and engineJudge injection is for tests in PLATFORM_ENV=dev"), SERVICE_TURN_SECRET
+// (service.ts), the hash key (service.ts, api.ts), the OTP provider
+// (otp.ts: the console provider outside dev throws), the Turnstile verifier (turnstile.ts:
+// the bypass outside dev throws), the staff tokens outside dev (service.ts, W3-457, fixed) and
+// the database environment row, also a missing one (service.ts, Q-boot_config-W4-2, fixed).
 //   A refused start exits 1. Railway restarts ON_FAILURE at most 5 times (railway.toml), then the
 //   service stays down until a new deployment (W3-455).
 //   Each caller of devShortcutsAllowed is one shortcut kind with the guard its code uses (W3-456).
@@ -54,7 +57,7 @@ Imported from `quint/boot_config.qnt` at `30d950e`. See [model index](README.md)
 //   dashboard rollback target). The run: environment approval, then for each project in matrix order
 //   (max-parallel 1, fail-fast false) Inspect -> [PATCH -> readback] -> build and deploy -> smoke.
 //   The backend accepts PLATFORM_PROXY_SECRET and, during a rotation, PLATFORM_PROXY_SECRET_PREVIOUS
-//   (backend.ts:93,253-262). The edge decision itself is proved in auth_edge; here it is one def.
+// (backend.ts). The edge decision itself is proved in auth_edge; here it is one def.
 //
 // BOUNDS
 //   PLATFORM_ENV and NODE_ENV take every value class the core tells apart, plus one unknown value.
@@ -63,8 +66,8 @@ Imported from `quint/boot_config.qnt` at `30d950e`. See [model index](README.md)
 //   (a random walk of 20 steps seldom completes four jobs), not a witness.
 //
 // LENGTH UNITS (W3-455)
-//   env-core.ts:73 and backend.ts:105 count PLATFORM_PROXY_SECRET, PLATFORM_HASH_KEY and
-//   PLATFORM_SESSION_SECRET in UTF-16 code units (`.length`). env.ts:58 counts LEAK_LABEL_KEY in
+// env-core.ts and backend.ts count PLATFORM_PROXY_SECRET, PLATFORM_HASH_KEY and
+// PLATFORM_SESSION_SECRET in UTF-16 code units (`.length`). env.ts counts LEAK_LABEL_KEY in
 //   UTF-8 bytes (TextEncoder) for env-core.ts BootFacts.leakKeyBytes. docs/deploy.md asks for "32+ random bytes". A string of n UTF-16 units
 //   has at least n UTF-8 bytes, so the unit check is the stricter one and the byte rule holds for each
 //   secret. The model gives the proxy, hash and session lengths in units and the leak key in bytes.
@@ -77,51 +80,64 @@ Imported from `quint/boot_config.qnt` at `30d950e`. See [model index](README.md)
 //   - db: NETWORK_DATABASE_URL or DATABASE_URL is a non-empty string. netUrlBlank: NETWORK_DATABASE_URL
 //     is set to "" (main.ts `??` took "" before the W3-458 fix; `||` now takes DATABASE_URL).
 //   - The PLATFORM_DEV_* switches are one boolean: devSwitch (at least one is set to a value).
-//   - NETWORK_REVIEW_MODE: Unset, Human ("human"), Auto (any other value, "" included).
+//   - modelProvider: JUDGE_PROVIDER and RECOMMENDER_PROVIDER (default "surplus") each have an API key
+//     (llm.ts providerKeyPresent "present"). An unknown provider name is a refusal in every environment; the
+//     model leaves it out (backend.test.ts covers it).
 //   - TURNSTILE_SECRET_KEY is one boolean: turnstile (set and not "").
 //   - MIGRATION_DATABASE_URL: "unset", "same" (equal to the service URL) or "distinct".
 //   - The shortest NETWORK_SERVICE_TOKENS token and NETWORK_SERVICE_CONSOLE_TOKEN: a length (0 = unset).
 //   - A Pages origin binding: "good" (the declared backend), "stale" (another https origin) or "unset"
-//     (the built-in BACKEND_ORIGIN is used, pages-worker.ts:24; the build uses the declared backend).
+// (the built-in BACKEND_ORIGIN is used, pages-worker.ts; the build uses the declared backend).
 //   - Each Cloudflare or GitHub failure (an Inspect that needs owner review, a Turnstile widget that
 //     does not cover the host, an API error, a build or wrangler error, a smoke failure) is a
 //     nondeterministic failure.
 //   - The problem texts are outside the model; only "no problem" matters for each gate.
+//   - Secret values are outside the model; only their lengths are in it. So two refusals that compare
+//     values are not modeled: a session secret equal to the hash key (spec/bootPolicy.md sharedBoot
+//     sessionReused, used by both entries; createPublicApi also refuses it outside dev) and a turn secret
+//     that is also a staff token. For a configuration in the model, bootOk and loadConfigOk assume
+//     distinct values. Tests: backend.test.ts "every refused boot fact", service-entry.integration.test.ts
+//     "refuses a session secret that is the hash key", blooio-otp.integration.test.ts.
+//   - The photo storage rule (spec/bootPolicy.md photoStorageSetup) is outside the model: the model has no
+//     photo storage variable. loadConfig refuses a deployed backend without PHOTO_STORAGE=r2 after
+//     backendBoot; the model assumes that each deployed configuration in it sets that variable. backend.test.ts
+//     "a deployed backend needs private photo storage" covers it.
 //
 // ASSUMPTIONS (named; no code makes them true)
 //   - W3-452: no code snapshots the environment. Each caller reads `o.env ?? process.env` when it is
-//     built (api.ts:130, serve.ts:38, service.ts:337, handler.ts:155). The production entries pass no
+// built (api.ts, serve.ts, service.ts, handler.ts). The production entries pass no
 //     `env` and write no variable, so their callers read the environment the gate read. platform-dev.ts
 //     writes two variables before it builds anything; `snap` has those writes. Tests inject `env`; a
 //     test is not an entry point.
-//   - NETWORK_REVIEW_MODE and PLATFORM_DEV_* have no reader outside env.ts and env-core.ts (W3-450).
-//     The review mode of a running service is the `review` option of its constructor: both entries pass
-//     none, so the ConsentNetwork default "human" holds, and service.ts:336 refuses any other value.
-//     The model keeps the two env-core.ts clauses (they are a tripwire for an operator who sets them).
-//     Human review of each proposal is proved in quint/opportunity.qnt, not here.
+//   - PLATFORM_DEV_* have no reader outside env.ts and env-core.ts (W3-450). The model keeps the env-core.ts
+//     clause (a tripwire for an operator who sets them). The review judge of a running service comes from
+//     judgeFor (owner decision 2026-11-22, D15 to D17): the model judge in staging and production, and in dev
+//     only a judge that ServiceOptions injects; both entries inject none. The recorded approval of each
+//     proposal is proved in the opportunity and review_desk models, not here.
 //   - A Pages deployment keeps the bindings it was made with. A dashboard rollback brings back the
 //     bundle and the bindings of that older deployment; it does not change the stored project bindings
 //     (docs/deploy.md 2.7 "A deployment rollback does not restore this project setting").
 //   - The platform.settings environment row is missing only when somebody deletes it (migration 0003
 //     inserts 'dev' with `on conflict do nothing`). The model has that as an operator action.
 //   - The owner edits that row only while no process of the deployment runs. The service logins can
-//     only read it (migration 0004:163 grant select; 0007:237 revoke update), and start() checks it
-//     once (service.ts:523-525). An owner edit while the service runs changes the 555-01xx guard at
+//     only read it (the grant select of migration 0004_network_apps; the revoke update of migration 0007_friends_platform_safety), and start() checks it
+//     once (service.ts). An owner edit while the service runs changes the 555-01xx guard at
 //     once whatever the process does, so no process check can see it; it is outside the model.
 //
 // OUTSIDE THE MODEL
-//   - REQUIRED_TABLES (service.ts:511-516), BACKEND_EXTRA_HOSTS and STAGING_SITE_ORIGINS, the ports
-//     and binds, the channel and live-send flags (AGENTS.md environment section: every send is dry-run
-//     without them; runtime_ops and outbound_queue model the sends).
-//   - The token grammar of parseTokenGrants (explicitApp only in production, service.ts:353); only the
+// - REQUIRED_TABLES (service.ts), BACKEND_EXTRA_HOSTS and STAGING_SITE_ORIGINS, the ports
+//     and binds, the send channel (spec/bootPolicy.md "The configured channel alone decides whether a send
+//     is real": every send is a dry run without NETWORK_CHANNEL; runtime_ops and outbound_queue model the
+//     sends), and the Workers AI token without its account (spec/bootPolicy.md workersAiSetupMissing). Production
+//     without the Workers AI pair is in the model: both entries refuse it (clefKeys).
+// - The token grammar of parseTokenGrants (explicitApp only in production, service.ts); only the
 //     shortest token length is modelled.
-//   - main.ts:57 trustForwardedHost on the server.ts path: server.ts:82 passes false.
+// - main.ts trustForwardedHost on the server.ts path: server.ts passes false.
 //   - AVAILABILITY of the sites after runbook step 3 is a named value outside `safety`
 //     (availabilityAfterDrop below), with its reason.
 module boot_config {
 
   // ---------------------------------------------------------------- types (own, small)
-  type Review = Unset | Human | Auto
   type Config = {
     platformEnv: str,   // "" when unset
     nodeEnv: str,       // "" when unset
@@ -131,16 +147,16 @@ module boot_config {
     hashLen: int,       // UTF-16 units
     sessionLen: int,    // UTF-16 units
     db: bool,
-    review: Review,
+    modelProvider: bool,  // JUDGE_PROVIDER and RECOMMENDER_PROVIDER have an API key
     devSwitch: bool,
     // wave 4
     netUrlBlank: bool,      // NETWORK_DATABASE_URL="" (W3-458)
     leakBytes: int,         // LEAK_LABEL_KEY in UTF-8 bytes (W3-455)
     mig: str,               // MIGRATION_DATABASE_URL: "unset" | "same" | "distinct"
     migrateOnBoot: bool,    // MIGRATE_ON_BOOT is not "0"
-    svcLoginOk: bool,       // the service login is not a superuser, BYPASSRLS or the owner (server.ts:57-60)
+    svcLoginOk: bool, // the service login is not a superuser, BYPASSRLS or the owner (server.ts)
     initFlag: bool,         // PLATFORM_DB_ENVIRONMENT_INIT=1
-    turnRoute: bool,        // NETWORK_CHANNEL=eliza_cloud or NETWORK_ROUTE_AUTHORITY_POLICY set (service.ts:106)
+    turnRoute: bool, // NETWORK_CHANNEL=eliza_cloud or NETWORK_ROUTE_AUTHORITY_POLICY set (service.ts)
     turnLen: int,           // SERVICE_TURN_SECRET (0 = unset)
     staffTokenLen: int,     // the shortest NETWORK_SERVICE_TOKENS token (0 = no token)
     consoleTokenLen: int,   // NETWORK_SERVICE_CONSOLE_TOKEN (0 = unset)
@@ -157,15 +173,15 @@ module boot_config {
   pure val ENTRIES = Set("main", "backend", "platformDev", "mcpDev")
   // The callers of devShortcutsAllowed (W3-456), one kind each.
   pure val SHORTCUTS = Set(
-    "otpConsole",         // otp.ts:36 DevConsoleProvider
-    "turnstileBypass",    // turnstile.ts:41 DevTurnstileBypass
-    "devKeys",            // api.ts:132-135 and service.ts:348: DEV_HASH_KEY, DEV_SESSION_SECRET, cookies without Secure
-    "devMatching",        // service.ts:383
-    "mcpDev",             // serve.ts:39 and handler.ts:194: MCP without Turnstile site key, http issuers
-    "privateOpenAiApps",  // handler.ts:157
-    "trustFwdMain",       // main.ts:57, then api.ts:136 and handler.ts:195
+    "otpConsole", // otp.ts DevConsoleProvider
+    "turnstileBypass", // turnstile.ts DevTurnstileBypass
+    "devKeys", // api.ts and service.ts: DEV_HASH_KEY, DEV_SESSION_SECRET, cookies without Secure
+    "devMatching", // service.ts
+    "mcpDev", // serve.ts and handler.ts: MCP without Turnstile site key, http issuers
+    "privateOpenAiApps", // handler.ts
+    "trustFwdMain", // main.ts, then api.ts and handler.ts
   )
-  pure val PROJECTS = ["slop-date", "ntwrk-party", "peon-biz", "friends-help"]   // deploy-sites.yml:101-105, in order
+  pure val PROJECTS = ["slop-date", "ntwrk-party", "peon-biz", "friends-help"]   // the deploy-sites.yml sites matrix, in order
   pure val PROJECT_SET = Set("slop-date", "ntwrk-party", "peon-biz", "friends-help")
   pure val MAX_SECRET = 3
 
@@ -184,9 +200,9 @@ module boot_config {
   pure def deployedReady(c: Config): bool = and {
     c.otpOk, c.turnstile,
     c.proxyLen >= MIN_SECRET_LENGTH, c.hashLen >= MIN_SECRET_LENGTH, c.sessionLen >= MIN_SECRET_LENGTH,
-    c.leakBytes >= MIN_SECRET_LENGTH,   // env-core.ts:100 (Q-boot_config-W4-3)
+    c.leakBytes >= MIN_SECRET_LENGTH, // env-core.ts (Q-boot_config-W4-3)
     c.db,
-    c.review != Auto,
+    c.modelProvider,
     not(c.devSwitch),
   }
 
@@ -200,15 +216,17 @@ module boot_config {
   // ---------------------------------------------------------------- the other gates, as the code does them NOW
   pure def dev(c: Config): bool = devAllowed(c.platformEnv, c.nodeEnv)
   pure def declared(c: Config): str = declaredEnv(c.platformEnv, c.nodeEnv)
-  // backend.ts:91 `deployed = env === "staging" || env === "production"`.
+  // backend.ts `deployed = env === "staging" || env === "production"`.
   pure def deployed(c: Config): bool = declared(c) == "staging" or declared(c) == "production"
   // The rules below name "a staging or production process". A process whose environment says
   // production is one, whatever PLATFORM_ENV says (env.ts header: fail closed).
   pure def liveLike(c: Config): bool = deployed(c) or productionEnv(c.nodeEnv, c.platformEnv)
 
-  // backend.ts loadConfig (85-107). assertBootConfig first (89, Q-boot_config-W4-1), then its own
-  // checks: the database URL with || in every environment (92-94), the migration login (99-102) and the
-  // proxy secret length in every environment (104). The duplicates of the gate are removed.
+  // backend.ts loadConfig: spec/bootPolicy.md backendBoot and backendBootRefused. For the facts in the model it
+  // refuses what the gate refuses (an undeclared environment, dev that says production, the OTP provider, Turnstile,
+  // the proxy, hash, session and leak keys, the model provider, dev switches; the value comparisons and the photo storage
+  // setup are abstractions, see the header), and adds its own checks: the database URL with || in
+  // every environment, the migration login and the proxy secret length in every environment.
   pure def loadConfigOk(c: Config): bool =
     val d = deployed(c)
     and {
@@ -217,45 +235,59 @@ module boot_config {
       not(d and c.migrateOnBoot and c.mig == "unset"),
       not(d and c.mig == "same"),
       c.proxyLen == 0 or c.proxyLen >= MIN_SECRET_LENGTH,
+      // spec/bootPolicy.md backendBoot (audit OPS29, PER33): deployed, the turn secret and the staff tokens are
+      // required at 32+; the Turnstile site key and the catalog ingest login are required too (folded into
+      // `turnstile` and not modeled separately).
+      not(d) or (c.turnLen >= MIN_SECRET_LENGTH and c.staffTokenLen >= MIN_SECRET_LENGTH),
     }
+  // Not modeled: spec/bootPolicy.md "Exactly one system answers the carrier's inbound messages" (audit SHA43) is a
+  // routing choice, not a refusal. With NETWORK_CHANNEL=eliza_cloud loadConfig sets blooioWebhook false and both
+  // listeners answer 404 webhook_not_served on /webhooks/blooio (backend.test.ts covers it). main.ts passes the same
+  // decision to serveService (packages/network/test/service-entry.integration.test.ts covers it). The rule that the
+  // turn secret is never also a staff token is not modeled (no token values here); the same test covers it.
 
-  // The review option each entry passes to the NetworkService constructor (main.ts:51-55,
-  // server.ts:74-90: `network: { seed }`, no review), so the ConsentNetwork default.
-  pure def entryReview(e: str, c: Config): Review = Human
+  // Whether an entry passes ServiceOptions.reviewJudge or engineJudge to the NetworkService constructor
+  // (main.ts, server.ts: neither does). Only tests inject a judge, in PLATFORM_ENV=dev.
+  pure def entryInjectsJudge(e: str, c: Config): bool = false
+  // judgeFor: the model review judge in staging and production; in dev only an injected one.
+  pure def serviceJudged(e: str, c: Config): bool = not(dev(c)) or entryInjectsJudge(e, c)
 
   // The refusals after the gate, in code order (W3-454). "" when the service comes up.
   pure def serviceRefusal(c: Config, e: str, dbEnv: str): str =
-    if (entryReview(e, c) != Human) "review_mode"                                                // service.ts:336
-    else if ((c.turnLen > 0 or c.turnRoute) and c.turnLen < MIN_SECRET_LENGTH) "turn_secret"      // service.ts:104-110
-    else if (c.hashLen == 0 and not(dev(c))) "hash_key"                                           // service.ts:348, api.ts:133
-    else if (not(dev(c)) and c.staffTokenLen > 0 and c.staffTokenLen < MIN_SECRET_LENGTH) "staff_token"     // service.ts:352-353 (W3-457)
-    else if (not(dev(c)) and c.consoleTokenLen > 0 and c.consoleTokenLen < MIN_SECRET_LENGTH) "console_token" // service.ts:354 (W3-457)
-    else if (not(c.otpOk) and not(dev(c))) "otp_provider"                                         // otp.ts:110-115 then otp.ts:36
-    else if (not(c.turnstile) and not(dev(c))) "turnstile_verifier"                               // turnstile.ts:47 then turnstile.ts:41
-    else if (declared(c) != "" and dbEnv != declared(c)) "db_env"                                 // service.ts:523-525: a missing row too (Q-boot_config-W4-2)
+    if (entryInjectsJudge(e, c) and not(dev(c))) "judge_injection"                               // service.ts judgeFor
+    else if ((c.turnLen > 0 or c.turnRoute) and c.turnLen < MIN_SECRET_LENGTH) "turn_secret" // service.ts
+    else if (c.hashLen == 0 and not(dev(c))) "hash_key" // service.ts, api.ts
+    else if (not(dev(c)) and c.staffTokenLen > 0 and c.staffTokenLen < MIN_SECRET_LENGTH) "staff_token" // service.ts (W3-457)
+    else if (not(dev(c)) and c.consoleTokenLen > 0 and c.consoleTokenLen < MIN_SECRET_LENGTH) "console_token" // service.ts (W3-457)
+    else if (not(c.otpOk) and not(dev(c))) "otp_provider" // otp.ts
+    else if (not(c.turnstile) and not(dev(c))) "turnstile_verifier" // turnstile.ts
+    else if (declared(c) != "" and dbEnv != declared(c)) "db_env" // service.ts: a missing row too (Q-boot_config-W4-2)
     else ""
 
-  // Construction takes a dev fallback when a provider or key is not configured (otp.ts:115,
-  // turnstile.ts:48, api.ts:133-135, service.ts:348). Each fallback asks devShortcutsAllowed.
+  // Construction takes a dev fallback when a provider or key is not configured (otp.ts,
+  // turnstile.ts, api.ts, service.ts). Each fallback asks devShortcutsAllowed.
   pure def constructShortcut(c: Config): bool =
     dev(c) and (not(c.otpOk) or not(c.turnstile) or c.hashLen == 0 or c.sessionLen == 0)
 
   // The guard each caller of a dev shortcut uses (W3-456). Every one asks devShortcutsAllowed on the
-  // environment it reads; main.ts:57 decides with the gate's result (`env === "dev"`) and the local
-  // bind, and createPublicApi (api.ts:136) then asks devShortcutsAllowed again.
+  // environment it reads; main.ts decides with the gate's result (`env === "dev"`) and the local
+  // bind, and createPublicApi (api.ts) then asks devShortcutsAllowed again.
   pure def callerAllows(k: str, e: str, c: Config): bool =
     if (k == "trustFwdMain") and { e == "main", c.localBind, declared(c) == "dev", dev(c) }
     else dev(c)
 
-  // relay-endpoint.ts:86: production (isProduction) without the Workers AI keys holds every relayed
-  // text for staff; staging and dev run on the rules alone. Recorded for W3-454 (the staging split).
-  pure def relayHoldsAll(c: Config, clef: bool): bool = productionEnv(c.nodeEnv, c.platformEnv) and not(clef)
+  // relay-endpoint.ts relayClassifierFromEnv: without the Workers AI keys the service gets a classifier that cannot
+  // run, in every environment, so it blocks every relayed text (owner decision 2026-11-22, D18, refix: staging and
+  // dev ran on the rules alone before). Both entries refuse that production start first (spec/bootPolicy.md
+  // workersAiSetupMissing). The simulator, platform-dev and the tests inject a simulated classifier (relayClassifier);
+  // the model abstracts that injection as clefKeys.
+  pure def relayBlocksAll(clef: bool): bool = not(clef)
 
   // ---------------------------------------------------------------- the edge (auth_edge proves it; one def here)
   // backend.ts normalizeEdge (253-262): the current secret, else the previous one during a rotation.
   pure def accepts(s: int, cur: int, prev: int): bool = s != 0 and (s == cur or (prev != 0 and s == prev))
-  // pages-worker.ts:24: a project variable wins; an unset one falls back to the built origin, which the
-  // workflow builds from the declared backend (deploy-sites.yml:190).
+  // pages-worker.ts: a project variable wins; an unset one falls back to the built origin, which the
+  // workflow builds from the declared backend (deploy-sites.yml "Production build" step).
   pure def effOrigin(o: str): str = if (o == "unset") "good" else o
 
   // ---------------------------------------------------------------- state, part A
@@ -269,8 +301,8 @@ module boot_config {
   var failures: int         // failed starts in this deployment (Railway restart budget)
   var lastRefusal: str      // why the last start failed
   var dbEnv: str            // platform.settings environment row: "missing" | "dev" | "staging" | "production"
-  var svcReview: Review     // the review mode of the running service
-  var relayHold: bool       // the running service holds every relayed text for staff
+  var svcJudge: bool        // the running service decides reviews with a review judge
+  var relayBlock: bool      // the running service blocks every relayed text (no classifier)
   var clefKeys: bool        // CLOUDFLARE_AI_TOKEN and CLOUDFLARE_ACCOUNT_ID are set
   var lastShortcut: str
 
@@ -293,7 +325,7 @@ module boot_config {
 
   pure val EMPTY: Config = {
     platformEnv: "", nodeEnv: "", otpOk: false, turnstile: false,
-    proxyLen: 0, hashLen: 0, sessionLen: 0, db: false, review: Unset, devSwitch: false,
+    proxyLen: 0, hashLen: 0, sessionLen: 0, db: false, modelProvider: false, devSwitch: false,
     netUrlBlank: false, leakBytes: 0, mig: "unset", migrateOnBoot: true, svcLoginOk: true, initFlag: false,
     turnRoute: false, turnLen: 0, staffTokenLen: 0, consoleTokenLen: 0, localBind: true,
   }
@@ -311,9 +343,9 @@ module boot_config {
     failures' = 0,
     lastRefusal' = "",
     dbEnv' = "dev",
-    svcReview' = Unset,
-    relayHold' = false,
-    clefKeys' = false,
+    svcJudge' = false,
+    relayBlock' = false,
+    clefKeys' = true,
     lastShortcut' = "",
     stored' = ALL_GOOD,
     running' = ALL_GOOD,
@@ -341,10 +373,10 @@ module boot_config {
   action procKeep = all {
     cfg' = cfg, started' = started, snap' = snap, shortcutsUsed' = shortcutsUsed, refused' = refused,
     entry' = entry, stage' = stage, failures' = failures, lastRefusal' = lastRefusal, dbEnv' = dbEnv,
-    svcReview' = svcReview, relayHold' = relayHold, clefKeys' = clefKeys, lastShortcut' = lastShortcut,
+    svcJudge' = svcJudge, relayBlock' = relayBlock, clefKeys' = clefKeys, lastShortcut' = lastShortcut,
   }
   // The rest of part A is unchanged (each action names what it changes).
-  action keepRun = all { svcReview' = svcReview, relayHold' = relayHold, clefKeys' = clefKeys, lastShortcut' = lastShortcut }
+  action keepRun = all { svcJudge' = svcJudge, relayBlock' = relayBlock, clefKeys' = clefKeys, lastShortcut' = lastShortcut }
 
   // ---------------------------------------------------------------- actions, part A
   // An operator changes the configuration of a stopped process (a new deployment). Railway's restart
@@ -361,7 +393,7 @@ module boot_config {
     nondet l2 = LENGTHS.oneOf()
     nondet l3 = LENGTHS.oneOf()
     nondet d = Set(true, false).oneOf()
-    nondet r = Set(Unset, Human, Auto).oneOf()
+    nondet r = Set(true, false).oneOf()
     nondet s = Set(true, false).oneOf()
     nondet nb = Set(true, false).oneOf()
     nondet lk = LENGTHS.oneOf()
@@ -378,13 +410,13 @@ module boot_config {
     all {
       not(started),
       cfg' = { platformEnv: p, nodeEnv: n, otpOk: o, turnstile: t, proxyLen: l1, hashLen: l2, sessionLen: l3,
-               db: d, review: r, devSwitch: s, netUrlBlank: nb, leakBytes: lk, mig: mg, migrateOnBoot: mob,
+               db: d, modelProvider: r, devSwitch: s, netUrlBlank: nb, leakBytes: lk, mig: mg, migrateOnBoot: mob,
                svcLoginOk: slo, initFlag: ini, turnRoute: tr, turnLen: tl, staffTokenLen: stl,
                consoleTokenLen: ctl, localBind: lb },
       clefKeys' = ck,
       stage' = "down", failures' = 0,
       started' = started, snap' = snap, shortcutsUsed' = shortcutsUsed, refused' = refused, entry' = entry,
-      lastRefusal' = lastRefusal, dbEnv' = dbEnv, svcReview' = svcReview, relayHold' = relayHold,
+      lastRefusal' = lastRefusal, dbEnv' = dbEnv, svcJudge' = svcJudge, relayBlock' = relayBlock,
       lastShortcut' = lastShortcut,
       sitesKeep,
     }
@@ -412,7 +444,7 @@ module boot_config {
       else if (k == 4) { ...r, initFlag: b }
       else if (k == 5) { ...r, netUrlBlank: b }
       else if (k == 6) { ...r, otpOk: b }
-      else if (k == 7) { ...r, review: if (b) Auto else Unset }
+      else if (k == 7) { ...r, modelProvider: b }
       else if (k == 8) { ...r, turnRoute: b, turnLen: l }
       else { ...r, mig: if (b) "same" else "unset" }
     all {
@@ -420,7 +452,7 @@ module boot_config {
       cfg' = c, clefKeys' = ck,
       stage' = "down", failures' = 0,
       started' = started, snap' = snap, shortcutsUsed' = shortcutsUsed, refused' = refused, entry' = entry,
-      lastRefusal' = lastRefusal, dbEnv' = dbEnv, svcReview' = svcReview, relayHold' = relayHold,
+      lastRefusal' = lastRefusal, dbEnv' = dbEnv, svcJudge' = svcJudge, relayBlock' = relayBlock,
       lastShortcut' = lastShortcut,
       sitesKeep,
     }
@@ -448,20 +480,25 @@ module boot_config {
     keepRun,
   }
 
-  // main.ts:31 assertBootConfig(env) before anything else.
+  // main.ts assertBootConfig(env) before anything else.
   action boot = all {
     stage == "down",
     if (bootOk(cfg)) pass("main", cfg, "gated") else startFails("gate", true, dbEnv),
     sitesKeep,
   }
 
-  // main.ts:36-37: `NETWORK_DATABASE_URL || DATABASE_URL`, so a blank NETWORK_DATABASE_URL gives
-  // DATABASE_URL, as the gate reads it (W3-458, fixed). Then outside dev main.ts:39-45 refuses a
-  // superuser, BYPASSRLS or owner service login, as server.ts:57-60 (Q-boot_config-W4-3, fixed).
+  // main.ts, right after the gate: spec/bootPolicy.md lineAndStaffProblems (review of audit OPS29), so a
+  // deployed main.ts refuses a short or missing turn secret or staff token, as loadConfig does.
+  // main.ts: `NETWORK_DATABASE_URL || DATABASE_URL`, so a blank NETWORK_DATABASE_URL gives
+  // DATABASE_URL, as the gate reads it (W3-458, fixed). Then outside dev main.ts refuses a
+  // superuser, BYPASSRLS or owner service login, as server.ts (Q-boot_config-W4-3, fixed).
   action mainDbUrl = all {
     stage == "gated", entry == "main",
-    if (not(snap.db))
-      // The gate checked the database only for a deployed environment (env-core.ts:101,130).
+    if (deployed(snap) and not(snap.turnLen >= MIN_SECRET_LENGTH and snap.staffTokenLen >= MIN_SECRET_LENGTH))
+      startFails("main_line_and_staff", false, dbEnv)
+    else if (productionEnv(snap.nodeEnv, snap.platformEnv) and not(clefKeys)) startFails("main_workers_ai", false, dbEnv)
+    else if (not(snap.db))
+      // The gate checked the database only for a deployed environment (env-core.ts).
       startFails(if (deployed(snap)) "main_db_url_after_gate" else "main_db_url", false, dbEnv)
     else if (declared(snap) != "dev" and not(snap.svcLoginOk)) startFails("service_login", false, dbEnv)
     else all {
@@ -472,14 +509,15 @@ module boot_config {
     sitesKeep,
   }
 
-  // server.ts:31 loadConfig (W3-448).
+  // server.ts loadConfig (W3-448).
   action bootBackend = all {
     stage == "down",
-    if (loadConfigOk(cfg)) pass("backend", cfg, "gated") else startFails("gate", true, dbEnv),
+    if (loadConfigOk(cfg) and not(productionEnv(cfg.nodeEnv, cfg.platformEnv) and not(clefKeys))) pass("backend", cfg, "gated")
+    else startFails("gate", true, dbEnv),
     sitesKeep,
   }
 
-  // server.ts:34-60. Migrations (outside the model), then the one-way environment init (its own
+  // server.ts. Migrations (outside the model), then the one-way environment init (its own
   // transaction, kept when the next check refuses), then the service-login check.
   action backendInit = {
     val moved = if (deployed(snap) and snap.initFlag and dbEnv == "dev") declared(snap) else dbEnv
@@ -495,7 +533,7 @@ module boot_config {
     }
   }
 
-  // scripts/platform-dev.ts:45-61: refuse isProduction, then PLATFORM_ENV ??= "dev",
+  // scripts/platform-dev.ts: refuse isProduction, then PLATFORM_ENV ??= "dev",
   // refuse anything but dev, then PLATFORM_PROXY_SECRET ||= 32 random bytes. No boot gate.
   action bootPlatformDev = {
     val written = { ...cfg,
@@ -509,14 +547,14 @@ module boot_config {
     }
   }
 
-  // packages/mcp/src/dev-server.ts:11: devShortcutsAllowed(), memory stores, the console OTP provider.
+  // packages/mcp/src/dev-server.ts: devShortcutsAllowed, memory stores, the console OTP provider.
   action bootMcpDev = all {
     stage == "down",
     if (dev(cfg)) all {
       started' = true, stage' = "up", snap' = cfg, entry' = "mcpDev",
       refused' = refused, failures' = failures, lastRefusal' = lastRefusal,
       shortcutsUsed' = true, lastShortcut' = "otpConsole",
-      cfg' = cfg, dbEnv' = dbEnv, svcReview' = svcReview, relayHold' = relayHold, clefKeys' = clefKeys,
+      cfg' = cfg, dbEnv' = dbEnv, svcJudge' = svcJudge, relayBlock' = relayBlock, clefKeys' = clefKeys,
     } else startFails("mcp_dev", true, dbEnv),
     sitesKeep,
   }
@@ -529,8 +567,8 @@ module boot_config {
       if (why != "") startFails(why, false, dbEnv)
       else all {
         stage' = "up",
-        svcReview' = entryReview(entry, snap),
-        relayHold' = relayHoldsAll(snap, clefKeys),
+        svcJudge' = serviceJudged(entry, snap),
+        relayBlock' = relayBlocksAll(clefKeys),
         shortcutsUsed' = (shortcutsUsed or constructShortcut(snap)),
         lastShortcut' = if (constructShortcut(snap)) "construct" else lastShortcut,
         started' = started, snap' = snap, entry' = entry, refused' = refused, failures' = failures,
@@ -548,8 +586,8 @@ module boot_config {
       callerAllows(k, entry, snap),
       shortcutsUsed' = true, lastShortcut' = k,
       cfg' = cfg, started' = started, snap' = snap, refused' = refused, entry' = entry, stage' = stage,
-      failures' = failures, lastRefusal' = lastRefusal, dbEnv' = dbEnv, svcReview' = svcReview,
-      relayHold' = relayHold, clefKeys' = clefKeys,
+      failures' = failures, lastRefusal' = lastRefusal, dbEnv' = dbEnv, svcJudge' = svcJudge,
+      relayBlock' = relayBlock, clefKeys' = clefKeys,
       sitesKeep,
     }
   }
@@ -561,7 +599,7 @@ module boot_config {
     shortcutsUsed' = true,
     cfg' = cfg, started' = started, snap' = snap, refused' = refused,
     entry' = entry, stage' = stage, failures' = failures, lastRefusal' = lastRefusal, dbEnv' = dbEnv,
-    svcReview' = svcReview, relayHold' = relayHold, clefKeys' = clefKeys, lastShortcut' = "devAllowed",
+    svcJudge' = svcJudge, relayBlock' = relayBlock, clefKeys' = clefKeys, lastShortcut' = "devAllowed",
     sitesKeep,
   }
 
@@ -570,7 +608,7 @@ module boot_config {
     started,
     started' = false, shortcutsUsed' = false, stage' = "down", entry' = "",
     cfg' = cfg, snap' = snap, refused' = refused, failures' = failures, lastRefusal' = lastRefusal,
-    dbEnv' = dbEnv, svcReview' = Unset, relayHold' = false, clefKeys' = clefKeys, lastShortcut' = lastShortcut,
+    dbEnv' = dbEnv, svcJudge' = false, relayBlock' = false, clefKeys' = clefKeys, lastShortcut' = lastShortcut,
     sitesKeep,
   }
 
@@ -632,8 +670,8 @@ module boot_config {
   // The job goes on to the build and deploy steps of the same project.
   action toDeploy = all { runStep' = "deploy", runOp' = runOp, runCur' = runCur, runApproved' = runApproved, runFailed' = runFailed }
 
-  // deploy-sites.yml:124-181, one project. Refusals before any change (:146-149, :159, :179), then the
-  // PATCH (:172) and its readback (:173-176), which can fail after the PATCH changed the bindings.
+  // deploy-sites.yml step "Inspect production bindings and optionally repair backend routing", one project.
+  // Refusals before any change, then the PATCH and its readback, which can fail after the PATCH changed the bindings.
   action inspectWith(extFail: bool, readbackFail: bool): bool = {
     val p = PROJECTS[runCur]
     val b = stored.get(p)
@@ -642,7 +680,7 @@ module boot_config {
     val refuse = or {
       extFail,
       not(rotate) and b.secret == 0,
-      runOp == "deploy" and b.origin == "stale",   // :178-179 "explicit manual repair approval is required"
+      runOp == "deploy" and b.origin == "stale",   // the inspect step: "explicit manual repair approval is required"
     }
     val patch = not(refuse) and repair and (b.origin != "good" or rotate)
     val after = { secret: if (rotate) ghSecret else b.secret, origin: if (patch) "good" else b.origin }
@@ -665,7 +703,7 @@ module boot_config {
     inspectWith(extFail, readbackFail)
   }
 
-  // :183-200 build, then wrangler pages deploy. The new deployment takes the stored bindings.
+  // Steps "Production build" and "Deploy to Cloudflare Pages": build, then wrangler pages deploy. The new deployment takes the stored bindings.
   action deployWith(buildFail: bool): bool = {
     val p = PROJECTS[runCur]
     all {
@@ -687,7 +725,7 @@ module boot_config {
     deployWith(buildFail)
   }
 
-  // :201-210 smoke check. With --api it fails when the site cannot reach the backend; without it
+  // Step "Smoke check". With --api it fails when the site cannot reach the backend; without it
   // (a push with BACKEND_LIVE not "true") it checks the static pages only. No rollback on failure.
   action smokeWith(apiFlag: bool, other: bool): bool = {
     val p = PROJECTS[runCur]
@@ -756,12 +794,13 @@ module boot_config {
   val startedOnlyDeclared = not(started) or declaredEnv(snap.platformEnv, snap.nodeEnv) != ""
 
   // Rule: a production or staging process has the OTP provider, Turnstile, the three secrets of at
-  // least 32 characters, LEAK_LABEL_KEY of at least 32 bytes, a database, review mode human, and no dev
-  // switch (env.ts bootConfigProblems comment; env-core.ts bootProblems ensures "... ==> deployedReady(f)").
-  // The review and dev-switch clauses are a tripwire only (W3-450, ASSUMPTIONS).
+  // least 32 characters, LEAK_LABEL_KEY of at least 32 bytes, a database, a key for the judge and recommender
+  // providers (owner decision 2026-11-22, D15 to D17), and no dev switch (env.ts bootConfigProblems comment;
+  // env-core.ts bootProblems ensures "... ==> deployedReady(f)"). The dev-switch clause is a tripwire only
+  // (W3-450, ASSUMPTIONS).
   val startedDeployedIsReady =
     not(started and declaredEnv(snap.platformEnv, snap.nodeEnv) != "dev") or and {
-      snap.otpOk, snap.turnstile, snap.db, snap.review != Auto, not(snap.devSwitch),
+      snap.otpOk, snap.turnstile, snap.db, snap.modelProvider, not(snap.devSwitch),
       snap.proxyLen >= 32, snap.hashLen >= 32, snap.sessionLen >= 32, snap.leakBytes >= 32,
     }
 
@@ -782,43 +821,50 @@ module boot_config {
   }
 
   // Rule: a staging or production process keys the leak guard's labels with LEAK_LABEL_KEY of at
-  // least 32 bytes (AGENTS.md audit hand-offs "LEAK_LABEL_KEY in production"; backend.ts:105 comment;
-  // docs/deploy.md 2.3; env-core.ts:100). It failed on server.ts dev+production (W4-1) and on main.ts
+  // least 32 bytes (AGENTS.md audit hand-offs "LEAK_LABEL_KEY in production"; backend.ts comment;
+  // docs/deploy.md 2.3; env-core.ts). It failed on server.ts dev+production (W4-1) and on main.ts
   // (W4-3); both are fixed.
   val upLiveLeakKeyed = not(stage == "up" and liveLike(snap)) or snap.leakBytes >= MIN_SECRET_LENGTH
 
   // Rule: a staging or production process has a session secret of its own of at least 32 characters,
   // never the hash key (docs/deploy.md 2.3 PLATFORM_SESSION_SECRET; env.ts bootConfigProblems comment, SD-164).
-  // api.ts:135 falls back to the hash key outside dev. It failed on server.ts dev+production (W4-1, fixed).
+  // api.ts falls back to the hash key outside dev. It failed on server.ts dev+production (W4-1, fixed).
   val upLiveOwnSessionSecret = not(stage == "up" and liveLike(snap)) or snap.sessionLen >= MIN_SECRET_LENGTH
 
   // Rule: deployed, the service login is never a superuser, BYPASSRLS or the owner, so RLS and the
-  // grants apply (docs/deploy.md 2.1; server.ts:56 comment). It failed on server.ts dev+production
+  // grants apply (docs/deploy.md 2.1; server.ts comment). It failed on server.ts dev+production
   // (W4-1) and on main.ts (W4-3); both are fixed.
   val upLiveServiceLogin = not(stage == "up" and liveLike(snap)) or snap.svcLoginOk
 
   // Rule: the database and the process agree on the environment; the 555-01xx guard reads the
-  // database's (service.ts:519 comment; migration 0003 refuse_synthetic_phone). It failed when the row
+  // database's (service.ts comment; migration 0003 refuse_synthetic_phone). It failed when the row
   // was missing (Q-boot_config-W4-2, fixed).
   val upDbAgrees = not(stage == "up" and liveLike(snap)) or dbEnv == declared(snap)
 
   // Rule: every deployed secret is at least 32 characters (env.ts bootConfigProblems comment; the
-  // Observatory refuses shorter staff tokens, observatory/src/server.ts:273). It failed (W3-457, fixed).
+  // Observatory refuses shorter staff tokens, observatory/src/server.ts). It failed (W3-457, fixed).
   val upLiveStaffTokensLong = not(stage == "up" and liveLike(snap)) or and {
     snap.staffTokenLen == 0 or snap.staffTokenLen >= MIN_SECRET_LENGTH,
     snap.consoleTokenLen == 0 or snap.consoleTokenLen >= MIN_SECRET_LENGTH,
   }
 
-  // Rule: every proactive proposal and member request goes through human review (AGENTS.md code
-  // invariants); the service refuses any other mode (service.ts:336).
-  val upReviewHuman = not(stage == "up" and entry != "mcpDev") or svcReview == Human
+  // Rule (owner decision 2026-11-22, D15 to D17; AGENTS.md code invariants): every opportunity gets one recorded
+  // approval before contact, by the review judge or by staff for a held item. A staging or production service
+  // that is up runs the model review judge and has a key for its provider; a dev service without an injected
+  // judge holds every item for staff (no_provider).
+  val upDeployedJudged = not(stage == "up" and entry != "mcpDev" and not(dev(snap))) or (svcJudge and snap.modelProvider)
 
-  // Rule: production without the Workers AI keys holds every relayed text for staff (AGENTS.md Relay).
+  // Rule (owner decision 2026-11-22, D18; spec/bootPolicy.md workersAiSetupMissing): production never runs without the
+  // Workers AI keys, because the relay classifier decides alone; an entry refuses that start.
   val upProductionRelayClosed =
-    not(stage == "up" and entry != "mcpDev" and productionEnv(snap.nodeEnv, snap.platformEnv) and not(clefKeys)) or relayHold
+    not(stage == "up" and entry != "mcpDev" and productionEnv(snap.nodeEnv, snap.platformEnv) and not(clefKeys))
+
+  // Rule (owner decision 2026-11-22, D18, refix; spec/relayDecision.md "A classifier that cannot run blocks the text"):
+  // a running service without the Workers AI keys never relays a text that no classifier read, in any environment.
+  val upRelayNeverUnchecked = not(stage == "up" and entry != "mcpDev" and not(clefKeys) and not(relayBlock))
 
   // Rule: the gate is the start condition: what a process misses before it may start (env.ts
-  // bootConfigProblems comment; main.ts:30-32). It failed while main.ts read the URL with `??` (W3-458, fixed).
+  // bootConfigProblems comment; main.ts). It failed while main.ts read the URL with `??` (W3-458, fixed).
   val mainDbMatchesGate = lastRefusal != "main_db_url_after_gate"
 
   // A dead service stays down until a new deployment (railway.toml).
@@ -833,7 +879,7 @@ module boot_config {
   // Rule: the proxy secret binding changes only on the explicit repair-proxy-and-deploy operation
   // (deploy-sites.yml header; docs/deploy.md 3.4, founder approval only).
   val sitesSecretOnlyByRotation = not(ghostSecretNoRotation)
-  // Rule: a push never changes a binding (deploy-sites.yml:178-179 "explicit manual repair approval").
+  // Rule: a push never changes a binding (deploy-sites.yml inspect step, "explicit manual repair approval").
   val sitesPushNeverPatches = not(ghostPushPatched)
   // Rule: no unsigned request reaches the API (backend.ts header; auth_edge proves the decision).
   val edgeRefusesUnsigned = not(accepts(0, bSecret, bPrev))
@@ -848,8 +894,9 @@ module boot_config {
     upLiveServiceLogin,
     upDbAgrees,
     upLiveStaffTokensLong,
-    upReviewHuman,
+    upDeployedJudged,
     upProductionRelayClosed,
+    upRelayNeverUnchecked,
     mainDbMatchesGate,
     deadIsDown,
     startedMatchesStage,
@@ -883,7 +930,7 @@ module boot_config {
   val witness_neverBackendUp = not(stage == "up" and entry == "backend")
   // The gate passed and the service still refused (W3-454).
   val witness_neverRefusedAfterGate = not(refused == 0 and failures > 0)
-  // The environment row moved from dev to the declared environment (server.ts:44-51).
+  // The environment row moved from dev to the declared environment (server.ts).
   val witness_neverDbInit = not(dbEnv == "production" and stage == "up" and entry == "backend")
   // Railway gave up: the service stays down (W3-455).
   val witness_neverDead = stage != "dead"
@@ -891,8 +938,8 @@ module boot_config {
   val witness_neverPlatformDevShortcut = not(entry == "platformDev" and cfg.platformEnv == "" and shortcutsUsed)
   // main.ts trusts X-Forwarded-Host on a local dev bind.
   val witness_neverTrustFwd = lastShortcut != "trustFwdMain"
-  // Staging without the Workers AI keys runs on the rules alone (the isProduction split).
-  val witness_neverStagingRulesOnly = not(stage == "up" and declared(snap) == "staging" and not(clefKeys) and not(relayHold))
+  // Staging without the Workers AI keys starts and blocks every relayed text (owner decision 2026-11-22, D18, refix).
+  val witness_neverStagingRelayBlocked = not(stage == "up" and declared(snap) == "staging" and not(clefKeys) and relayBlock)
   // A site runs a secret the backend no longer accepts (the M-148 availability break).
   val witness_neverSiteDownAfterDrop = not(dropped and PROJECT_SET.exists(p => not(accepts(running.get(p).secret, bSecret, bPrev))))
   // A run ends with some projects failed.
@@ -901,7 +948,7 @@ module boot_config {
   // ---------------------------------------------------------------- traces
   pure val READY: Config = {
     platformEnv: "production", nodeEnv: "production", otpOk: true, turnstile: true,
-    proxyLen: 32, hashLen: 32, sessionLen: 32, db: true, review: Human, devSwitch: false,
+    proxyLen: 32, hashLen: 32, sessionLen: 32, db: true, modelProvider: true, devSwitch: false,
     netUrlBlank: false, leakBytes: 32, mig: "distinct", migrateOnBoot: true, svcLoginOk: true, initFlag: false,
     turnRoute: true, turnLen: 32, staffTokenLen: 32, consoleTokenLen: 32, localBind: false,
   }
@@ -916,6 +963,15 @@ module boot_config {
     dbEnv' = v,
     cfg' = cfg, started' = started, snap' = snap, shortcutsUsed' = shortcutsUsed, refused' = refused,
     entry' = entry, stage' = stage, failures' = failures, lastRefusal' = lastRefusal, keepRun,
+    sitesKeep,
+  }
+  // Owner decision 2026-11-22, D18: set the Workers AI pair directly (a test step).
+  action setClefKeys(b: bool): bool = all {
+    stage != "up",
+    clefKeys' = b,
+    cfg' = cfg, started' = started, snap' = snap, shortcutsUsed' = shortcutsUsed, refused' = refused,
+    entry' = entry, stage' = stage, failures' = failures, lastRefusal' = lastRefusal, dbEnv' = dbEnv,
+    svcJudge' = svcJudge, relayBlock' = relayBlock, lastShortcut' = lastShortcut,
     sitesKeep,
   }
   action check(ok: bool): bool = all { assert(ok), procKeep, sitesKeep }
@@ -933,7 +989,7 @@ module boot_config {
   run bootGateTest = all {
     assert(bootOk(READY)),
     assert(not(bootOk({ ...READY, hashLen: 10 }))),
-    assert(not(bootOk({ ...READY, review: Auto }))),
+    assert(not(bootOk({ ...READY, modelProvider: false }))),
     assert(not(bootOk({ ...READY, devSwitch: true }))),
     assert(not(bootOk({ ...READY, platformEnv: "", nodeEnv: "" }))),
     assert(not(bootOk({ ...EMPTY, platformEnv: "dev", nodeEnv: "production" }))),
@@ -941,12 +997,12 @@ module boot_config {
   }
 
   // W3-448, after the Q-boot_config-W4-1 fix: loadConfig runs the gate, so it refuses all that the gate
-  // refuses (dev that says production, NETWORK_REVIEW_MODE=auto, a dev switch, no LEAK_LABEL_KEY). Its own
+  // refuses (dev that says production, no model provider key, a dev switch, no LEAK_LABEL_KEY). Its own
   // checks stay: a database in dev too, the migration login, and the proxy secret length in dev.
   run loadConfigGateTest = all {
     assert(loadConfigOk(READY)),
     assert(not(loadConfigOk({ ...EMPTY, platformEnv: "dev", nodeEnv: "production", db: true }))),
-    assert(not(loadConfigOk({ ...READY, review: Auto }))),
+    assert(not(loadConfigOk({ ...READY, modelProvider: false }))),
     assert(not(loadConfigOk({ ...READY, devSwitch: true }))),
     assert(not(loadConfigOk({ ...READY, leakBytes: 10 }))),
     assert(not(bootOk({ ...READY, leakBytes: 0 }))),
@@ -984,7 +1040,19 @@ module boot_config {
       .then(backendInit)
       .then(check(dbEnv == "production" and stage == "service"))
       .then(construct)
-      .then(check(stage == "up" and svcReview == Human and safety))
+      .then(check(stage == "up" and svcJudge and safety))
+
+  // Owner decision 2026-11-22, D18 (spec/bootPolicy.md workersAiSetupMissing): production without the Workers AI pair
+  // starts on neither entry, because the relay classifier decides alone.
+  run productionWithoutWorkersAiTest =
+    init
+      .then(setCfg({ ...READY, initFlag: true }))
+      .then(setClefKeys(false))
+      .then(bootBackend)
+      .then(check(not(started) and refused == 1 and lastRefusal == "gate"))
+      .then(boot)
+      .then(mainDbUrl)
+      .then(check(not(started) and lastRefusal == "main_workers_ai" and upProductionRelayClosed and safety))
 
   // Without PLATFORM_DB_ENVIRONMENT_INIT a fresh database says dev and start() refuses.
   run backendFreshDbRefusedTest =
@@ -1010,11 +1078,11 @@ module boot_config {
       .then(bootMcpDev)
       .then(check(not(started) and refused == 4 and safety))
 
-  // W3-450: server.ts now refuses production with NETWORK_REVIEW_MODE=auto or a PLATFORM_DEV_* switch,
-  // because loadConfig runs the gate (Q-boot_config-W4-1 fix).
-  run backendIgnoresReviewModeTest =
+  // W3-450 and owner decision 2026-11-22 (D15 to D17): server.ts refuses production without a model provider key
+  // or with a PLATFORM_DEV_* switch, because loadConfig runs the gate (Q-boot_config-W4-1 fix).
+  run backendNeedsModelProviderTest =
     init
-      .then(setCfg({ ...READY, review: Auto, initFlag: true }))
+      .then(setCfg({ ...READY, modelProvider: false, initFlag: true }))
       .then(bootBackend)
       .then(check(not(started) and refused == 1))
       .then(setCfg({ ...READY, devSwitch: true, initFlag: true }))
@@ -1038,13 +1106,12 @@ module boot_config {
       .then(check(stage == "down" and lastRefusal == "db_env" and upDbAgrees))
 
   // W3-457 (fixed): outside dev a 10-character staff token or console token is refused; in dev it is not.
+  // spec/bootPolicy.md backendBoot refuses the short staff token at the gate, before the environment row moves.
   run shortStaffTokenTest =
     init
       .then(setCfg({ ...READY, staffTokenLen: 10, initFlag: true }))
       .then(bootBackend)
-      .then(backendInit)
-      .then(construct)
-      .then(check(stage == "down" and lastRefusal == "staff_token" and dbEnv == "production"))
+      .then(check(stage == "down" and lastRefusal == "gate" and refused == 1 and dbEnv == "dev"))
       .then(setCfg({ ...READY, platformEnv: "staging", nodeEnv: "", consoleTokenLen: 10 }))
       .then(setDbEnv("staging"))
       .then(bootBackend)
@@ -1070,7 +1137,7 @@ module boot_config {
       .then(check(stage == "up" and safety))
 
   // Q-boot_config-W4-3 (fixed): main.ts refuses production without LEAK_LABEL_KEY (the gate), and
-  // with a superuser service login (main.ts:39-45).
+  // with a superuser service login (main.ts).
   run mainProductionNoLeakKeyTest =
     init
       .then(setCfg({ ...READY, leakBytes: 0 }))
@@ -1097,7 +1164,7 @@ module boot_config {
       .then(construct)
       .then(check(stage == "up" and snap.platformEnv == "dev" and shortcutsUsed and safety))
 
-  // main.ts:57: the local dev bind trusts X-Forwarded-Host; the same config in production cannot.
+  // main.ts: the local dev bind trusts X-Forwarded-Host; the same config in production cannot.
   run trustForwardedHostTest =
     init
       .then(setCfg({ ...EMPTY, platformEnv: "dev", localBind: true }))

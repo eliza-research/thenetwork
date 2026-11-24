@@ -3,7 +3,10 @@ import { serveHttp } from "../../core/src/runtime/http.ts";
 import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { createHash, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
+import { MIGRATIONS_DIR } from "../../observatory/db/migrate.ts";
 import { SimClock } from "@thenetwork/core";
 import { svcSign, svcVerify } from "../../core/src/svc/svc-auth.ts";
 import { PROFILE_REVIEW_DISCONNECT_PATH, PROFILE_REVIEW_DISCONNECT_PROOF_PATH,
@@ -31,8 +34,8 @@ beforeEach(async () => {
 });
 afterAll(async () => { await sql.close(); const admin = new SQL(`${base}/postgres`); await admin.unsafe(`drop database ${db}`); await admin.close(); });
 
-async function seed(retain: boolean, accepted: boolean, createdAt = now - 2000) {
-  const store = new ProfileSuggestions(sql, async () => true);
+async function seed(retain: boolean, accepted: boolean, createdAt = now - 2000, issuedAt = createdAt) {
+  const store = new ProfileSuggestions(sql, async () => ({ issuedAt }));
   const suggestion: SourceSuggestion = { connectionId, source: "gmail", observedAt: createdAt - 1000,
     kind: "interest", value: "I enjoy climbing", tags: ["climbing"], confidence: .8, scope: "agent_private" };
   const batch = (await store.propose(owner, { windowStart: createdAt - 5000, windowEnd: createdAt,
@@ -109,6 +112,51 @@ test("revoked cleanup uses real SQL with active-source authorization false and l
     expect((await sql`select status from platform.profile_suggestions where batch_id=${newer.id}`)[0].status).toBe("accepted");
     expect(JSON.stringify(deleted.body)).not.toContain(connectionId);
   } finally { await f.close(); }
+});
+
+test("the revocation cutoff compares Cloud times only, so Network clock skew neither keeps a revoked fact nor removes a reconnect fact", async () => {
+  const revoked = await seed(false, true, now - 500, now - 1500);
+  const reconnected = await seed(false, true, now - 1500, now - 500);
+  const f = await fixture();
+  try {
+    const result = await f.post();
+    expect(result.body).toEqual({ kind: "connection_cleanup", operation: "disconnect", counts: { pending: 0, retainedAccepted: 0, linkedFacts: 0 } });
+    expect((await sql`select status from platform.profile_suggestions where batch_id=${revoked.id}`)[0].status).toBe("withdrawn");
+    expect((await sql`select status from platform.profile_suggestions where batch_id=${reconnected.id}`)[0].status).toBe("accepted");
+    expect(await sql`select id from network.facets`).toHaveLength(1);
+  } finally { await f.close(); }
+});
+
+test("a source authorization at the same Cloud time as the revocation is covered by the cleanup", async () => {
+  const sameTime = await seed(false, true, now - 2000, now - 1000);
+  const f = await fixture();
+  try {
+    expect((await f.post()).body).toEqual({ kind: "connection_cleanup", operation: "disconnect", counts: { pending: 0, retainedAccepted: 0, linkedFacts: 0 } });
+    expect(await sql`select status,fact_id from platform.profile_suggestions where batch_id=${sameTime.id}`).toEqual([{ status: "withdrawn", fact_id: null }]);
+    expect(await sql`select id from network.facets`).toHaveLength(0);
+  } finally { await f.close(); }
+});
+
+test("a suggestion row saved before the source-time migration with the Network batch time is covered by a later revocation after migration 0079", async () => {
+  const legacy = await seed(false, true, now - 500);
+  expect(await sql`select 1 from platform.profile_suggestions s join platform.profile_suggestion_batches b on b.id=s.batch_id
+    where s.batch_id=${legacy.id} and s.source_authorized_at=b.created_at`).toHaveLength(1);
+  await sql.unsafe(readFileSync(join(MIGRATIONS_DIR, "0079_profile_suggestion_legacy_source_time.sql"), "utf8"));
+  const f = await fixture();
+  try {
+    expect((await f.post()).body).toEqual({ kind: "connection_cleanup", operation: "disconnect", counts: { pending: 0, retainedAccepted: 0, linkedFacts: 0 } });
+    expect(await sql`select status,fact_id from platform.profile_suggestions where batch_id=${legacy.id}`).toEqual([{ status: "withdrawn", fact_id: null }]);
+    expect(await sql`select id from network.facets`).toHaveLength(0);
+  } finally { await f.close(); }
+});
+
+test("migration 0079 keeps the Cloud time of a row saved after the source-time migration, even when it equals the batch time", async () => {
+  const legacy = await seed(false, true, now - 500);
+  await sql`update public.__migrations set applied_at=${new Date(now - 300)} where id='0076_profile_suggestion_source_time'`;
+  const current = await seed(false, true, now - 100);
+  await sql.unsafe(readFileSync(join(MIGRATIONS_DIR, "0079_profile_suggestion_legacy_source_time.sql"), "utf8"));
+  expect(new Date((await sql`select source_authorized_at from platform.profile_suggestions where batch_id=${legacy.id}`)[0].source_authorized_at).getTime()).toBe(0);
+  expect(new Date((await sql`select source_authorized_at from platform.profile_suggestions where batch_id=${current.id}`)[0].source_authorized_at).getTime()).toBe(now - 100);
 });
 
 test("wrong owner/event/operation/request hash, unsigned proof and stale scope deny without SQL writes", async () => {

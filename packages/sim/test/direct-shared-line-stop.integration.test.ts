@@ -37,7 +37,7 @@ test.each([
   expect(leaveTarget(text)).toBe(leave);
   const keyword = detectKeyword(text);
   expect(keyword).toBe(stops ? "stop" : undefined);
-  const global = keyword ? keywordEvent(keyword, phone, APPS.friends, now, { scope: "global" }).event : undefined;
+  const global = keyword ? keywordEvent(keyword, phone, APPS.friends, now).event : undefined;
   expect(global?.app === null).toBe(stops);
   for (const app of apps) {
     const appEvent = keywordEvent("start", phone, app, now - 1).event;

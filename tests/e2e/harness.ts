@@ -15,11 +15,12 @@ import { SimClock } from "../../packages/core/src/clock.ts";
 import { calendarDateOfDay, signupClockDay } from "../../packages/core/src/generated/authorizationPages.ts";
 import { createBackend, ipOf, loadConfig } from "../../deploy/backend/backend.ts";
 import { pkceS256 } from "../../packages/mcp/src/util.ts";
-import { createMcpHandler, platformHooks, type McpHandler } from "../../packages/mcp/src/index.ts";
+import { type McpHandler } from "../../packages/mcp/src/index.ts";
 import { BlooioAdapter, DryRunAdapter } from "../../packages/network/service/channel.ts";
 import type { ChannelAdapter } from "../../packages/blooio/src/types.ts";
 import { createServiceMcp } from "../../packages/network/service/serve.ts";
 import { NetworkService, WEBHOOK_PATH } from "../../packages/network/service/service.ts";
+import { holdEveryItem, type ReviewJudge } from "../../packages/engine/src/reviewJudge.ts";
 import { type AppId, type AppInfo, DEFAULT_HOST_MAP } from "../../packages/platform/src/apps.ts";
 import type { OtpProvider } from "../../packages/platform/src/otp.ts";
 import { LocalDiskPhotoStorage } from "../../packages/platform/src/photos.ts";
@@ -29,6 +30,7 @@ import { serveSite } from "../../scripts/sites-dev.ts";
 import { buildSite, SITES, type Site } from "../../sites/sites.ts";
 
 export { pgAvailable };
+if (!pgAvailable && process.env.REQUIRE_PG === "1") throw new Error("tests/e2e needs Postgres (REQUIRE_PG=1)");
 
 export const PROXY_SECRET = "e2e-proxy-secret-0123456789abcdef0123456789abcdef";
 export const WEBHOOK_SECRET = "whsec_e2e_shared";
@@ -86,7 +88,6 @@ export interface Stack {
   /** A staff call on the service (the staff port is private; the test calls the service directly). */
   staff(path: string, body: unknown): Promise<Response>;
   setPrivateOpenAiApps(apps: readonly AppId[]): Promise<void>;
-  setCustomChatGptSlopPersonIds(ids?: readonly string[]): void;
   close(): Promise<void>;
 }
 
@@ -98,6 +99,8 @@ export async function startStack(o: {
   slopPhotoReviewer?: boolean;
   extraNetwork?: "ntwrk:sf";
   simulatedOutbound?: { provider: ChannelAdapter & { kind: "sim" }; line: string };
+  reviewJudge?: ReviewJudge;
+  staffTokens?: string;
 } = {}): Promise<Stack> {
   const url = await migratedDb(`e2e_${++stackSequence}`);
   if (o.slopCity || o.extraNetwork) {
@@ -119,13 +122,14 @@ export async function startStack(o: {
   const hostMap: Record<string, AppId> = { ...DEFAULT_HOST_MAP };
   const tokens = [`admin:${ADMIN_TOKEN}`];
   if (o.slopPhotoReviewer) tokens.push(`safety@slop:${SAFETY_TOKEN}`);
+  if (o.staffTokens) tokens.push(o.staffTokens);
   const svc = await NetworkService.fromDatabase({
     url, clock, env, instance: "e2e", tokens: tokens.join(","), webhookSecret: WEBHOOK_SECRET,
-    network: { seed: 1 }, log: () => {},
+    network: { seed: 1 }, log: () => {}, reviewJudge: o.reviewJudge ?? holdEveryItem.judge,
     // Every test browser is 127.0.0.1: the per-IP OTP limits (unit-tested in packages/platform) would stop the suite.
     publicApi: { otp, minStartMs: 0, minVerifyMs: 0, ipOf, hostMap, otpLimits: { perIpPerHour: 10_000, verifyPerIpPerHour: 10_000 } },
     adapter: (_net, rt) => outbound ? new BlooioAdapter({ clock, provider: outbound.provider, from: outbound.line,
-      app: rt.app.id, city: rt.city, env, log: () => {}, liveGate: () => true }) : new DryRunAdapter(() => {}),
+      app: rt.app.id, city: rt.city, env, log: () => {} }) : new DryRunAdapter(() => {}),
     // Photos on (a local folder): the age gate is tested end to end, with an adult control.
     photoStorage: new LocalDiskPhotoStorage(photoDir),
   });
@@ -160,18 +164,6 @@ export async function startStack(o: {
   let evt = 0;
   return {
     url, clock, svc, get mcp() { return mcp!; }, otp, backendOrigin, sites,
-    // Test-only stage-configured handler on the owned stack. Production provider wiring is unchanged.
-    setCustomChatGptSlopPersonIds(ids) {
-      mcp = createMcpHandler({
-        store: mcp!.store, env: { PLATFORM_ENV: "staging" }, customChatGptSlopPersonIds: ids,
-        proxySecret: PROXY_SECRET, hostMap, issuer: app => devOrigins[app.id]!, now: () => clock.now(), log: () => {},
-        platform: platformHooks({
-          store: svc.people, accounts: svc.publicApi.accounts, otp: svc.publicApi.otp, sessions: svc.publicApi.sessions,
-          app: id => svc.apps[id], cookieName: id => `sid_${id}`, secureCookie: false,
-          submitProfile: (person, app, phone, text) => svc.submitProfile(person, app, phone, text),
-        }),
-      });
-    },
     async setPrivateOpenAiApps(apps) {
       const old = mcp;
       mcp = await createServiceMcp(svc, { env, databaseUrl: url, proxySecret: PROXY_SECRET, devOrigins, privateOpenAiApps: apps, migrate: false, log: () => {} });
@@ -259,14 +251,14 @@ export const VERIFIER = "e2e-verifier-" + "A1b2C3d4e5F6g7H8i9J0k-._~".repeat(2);
 export const REDIRECT = "https://client.example/callback";
 
 /** An MCP client's OAuth dance on one site, through the site router: register, authorize, sign in, approve, token. */
-export async function connectMcp(st: Stack, app: AppId, phone: string, o: { browser?: Browser; path?: "/mcp" | "/mcp/openai"; redirect?: string } = {}) {
+export async function connectMcp(st: Stack, app: AppId, phone: string, o: { browser?: Browser; path?: "/mcp" | "/mcp/openai"; redirect?: string; scope?: string } = {}) {
   const b = o.browser ?? new Browser();
   const redirect = o.redirect ?? REDIRECT;
   const reg = await st.site(app, "/oauth/register", { json: { client_name: "E2E Assistant", redirect_uris: [redirect], token_endpoint_auth_method: "none" } });
   const client = (await reg.json()) as Record<string, any>;
   if (reg.status !== 201 && reg.status !== 200) return { reg, client, token: undefined, html: "" };
   const resource = `${st.sites[app].origin}${o.path ?? "/mcp"}`;
-  const q = new URLSearchParams({ response_type: "code", client_id: client.client_id, redirect_uri: redirect, code_challenge: pkceS256(VERIFIER), code_challenge_method: "S256", state: "e2e", resource });
+  const q = new URLSearchParams({ response_type: "code", client_id: client.client_id, redirect_uri: redirect, code_challenge: pkceS256(VERIFIER), code_challenge_method: "S256", state: "e2e", resource, ...(o.scope ? { scope: o.scope } : {}) });
   const page = await st.site(app, `/oauth/authorize?${q}`, { browser: b });
   let html = await page.text();
   let done = page;

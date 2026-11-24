@@ -6,6 +6,7 @@
 // extraction. Nothing here reads hidden truth. 17.5 exclusions (home entry, childcare, money,
 // medical, substances) never appear: every activity is low or medium risk at a public place.
 import type { Category, City } from "@thenetwork/core";
+import { allAgesMarkValid, teenFriendMinAge } from "../../../../core/src/generated/friendIntroAge.ts";
 
 export type Daypart = "weekday_evening" | "weekend_day" | "weekend_evening";
 export type ActivityKind = "activity" | "volunteer" | "event";
@@ -25,11 +26,19 @@ export interface ActivityType {
   dayparts: Daypart[];
   kind: ActivityKind;
   category: Category;
+  allAges: boolean;
+  adultPlans: boolean;
 }
 
-const A = (id: string, label: string, family: string, tags: string[], objectives: string[], o: Partial<ActivityType> = {}): ActivityType => ({
+export interface AgeMarks { allAges: boolean; adultPlans: boolean }
+const ADULTS: AgeMarks = { allAges: false, adultPlans: true };
+const ALL_AGES: AgeMarks = { allAges: true, adultPlans: true };
+const TEEN_GROUPS: AgeMarks = { allAges: true, adultPlans: false };
+
+const A = (id: string, label: string, family: string, tags: string[], objectives: string[], ages: AgeMarks, o: Partial<Omit<ActivityType, keyof AgeMarks>> = {}): ActivityType => ({
   id, label, family, tags, objectives, groupSize: [3, 6], durationMin: 120, costTier: 1, setting: "indoor", intensity: 0,
-  needsBooking: false, ageMin: 18, riskClass: "low", dayparts: ["weekday_evening", "weekend_day", "weekend_evening"], kind: "activity", category: "social", ...o,
+  needsBooking: false, ageMin: ages.allAges ? teenFriendMinAge : 18, riskClass: "low", dayparts: ["weekday_evening", "weekend_day", "weekend_evening"], kind: "activity", category: "social", ...o,
+  allAges: ages.allAges, adultPlans: ages.adultPlans,
 });
 const DAY_ONLY: Daypart[] = ["weekend_day"];
 const EVENINGS: Daypart[] = ["weekday_evening", "weekend_evening"];
@@ -37,45 +46,57 @@ const EVENINGS: Daypart[] = ["weekday_evening", "weekend_evening"];
 /** About 30 activities in 9 families. Plans are category "social" (D15: never romance). */
 export const ACTIVITIES: ActivityType[] = [
   // active
-  A("bouldering", "bouldering", "active", ["climbing", "climbing_belay"], ["climbing_partner"], { groupSize: [2, 6], costTier: 2, intensity: 2 }),
-  A("group_run", "an easy group run", "active", ["running"], ["run_club"], { groupSize: [2, 6], costTier: 0, setting: "outdoor", intensity: 1, durationMin: 60, dayparts: ["weekday_evening", "weekend_day"] }),
-  A("day_hike", "a day hike", "active", ["hiking"], [], { costTier: 0, setting: "outdoor", intensity: 1, durationMin: 240, dayparts: DAY_ONLY }),
-  A("group_ride", "a group bike ride", "active", ["cycling"], [], { groupSize: [2, 6], costTier: 0, setting: "outdoor", intensity: 2, dayparts: DAY_ONLY }),
-  A("tennis", "tennis", "active", ["tennis", "tennis_coach"], ["tennis_partner"], { groupSize: [2, 4], costTier: 1, setting: "outdoor", intensity: 2, dayparts: ["weekday_evening", "weekend_day"] }),
-  A("pickleball", "pickleball", "active", ["pickleball"], [], { groupSize: [2, 6], setting: "outdoor", intensity: 1, dayparts: ["weekday_evening", "weekend_day"] }),
-  A("pickup_basketball", "pickup basketball", "active", ["basketball"], [], { costTier: 0, setting: "outdoor", intensity: 2, dayparts: ["weekday_evening", "weekend_day"] }),
-  A("park_yoga", "yoga in the park", "wellness", ["yoga"], [], { costTier: 0, setting: "outdoor", intensity: 1, durationMin: 75, dayparts: DAY_ONLY }),
-  A("group_sit", "a meditation drop-in", "wellness", ["meditation"], [], { costTier: 1, durationMin: 60 }),
+  A("bouldering", "bouldering", "active", ["climbing", "climbing_belay"], ["climbing_partner"], ALL_AGES, { groupSize: [2, 6], costTier: 2, intensity: 2 }),
+  A("group_run", "an easy group run", "active", ["running"], ["run_club"], ALL_AGES, { groupSize: [2, 6], costTier: 0, setting: "outdoor", intensity: 1, durationMin: 60, dayparts: ["weekday_evening", "weekend_day"] }),
+  A("day_hike", "a day hike", "active", ["hiking"], [], ADULTS, { costTier: 0, setting: "outdoor", intensity: 1, durationMin: 240, dayparts: DAY_ONLY }),
+  A("group_ride", "a group bike ride", "active", ["cycling"], [], ADULTS, { groupSize: [2, 6], costTier: 0, setting: "outdoor", intensity: 2, dayparts: DAY_ONLY }),
+  A("tennis", "tennis", "active", ["tennis", "tennis_coach"], ["tennis_partner"], ALL_AGES, { groupSize: [2, 4], costTier: 1, setting: "outdoor", intensity: 2, dayparts: ["weekday_evening", "weekend_day"] }),
+  A("pickleball", "pickleball", "active", ["pickleball"], [], ALL_AGES, { groupSize: [2, 6], setting: "outdoor", intensity: 1, dayparts: ["weekday_evening", "weekend_day"] }),
+  A("pickup_basketball", "pickup basketball", "active", ["basketball"], [], ALL_AGES, { costTier: 0, setting: "outdoor", intensity: 2, dayparts: ["weekday_evening", "weekend_day"] }),
+  A("park_yoga", "yoga in the park", "wellness", ["yoga"], [], ALL_AGES, { costTier: 0, setting: "outdoor", intensity: 1, durationMin: 75, dayparts: DAY_ONLY }),
+  A("group_sit", "a meditation drop-in", "wellness", ["meditation"], [], ADULTS, { costTier: 1, durationMin: 60 }),
   // music and arts
-  A("live_show", "a live show", "music", ["live_music", "rock_music", "electronic_music"], ["start_band"], { costTier: 2, dayparts: EVENINGS }),
-  A("jazz_night", "a jazz set", "music", ["jazz", "piano"], [], { costTier: 2, dayparts: EVENINGS }),
-  A("open_mic", "an open mic night", "music", ["rock_music", "guitar", "vocals", "writing"], ["start_band"], { costTier: 0, dayparts: EVENINGS }),
-  A("film_screening", "an indie film screening", "arts", ["film"], ["film_buddies"], { costTier: 1, dayparts: EVENINGS }),
-  A("open_studio", "a ceramics open studio", "arts", ["ceramics", "pottery_wheel"], ["ceramics_class"], { costTier: 2, needsBooking: true }),
-  A("sketch_session", "a drop-in sketch session", "arts", ["painting"], [], { costTier: 1 }),
-  A("photo_walk", "a photo walk", "arts", ["photography", "photography_pro"], ["photo_walks"], { groupSize: [2, 6], costTier: 0, setting: "outdoor", dayparts: DAY_ONLY }),
-  A("theater_night", "a play", "arts", ["theater"], [], { costTier: 3, dayparts: EVENINGS, needsBooking: true }),
-  A("dance_class", "a drop-in dance class", "arts", ["dancing"], [], { costTier: 1, intensity: 1, dayparts: EVENINGS }),
+  A("live_show", "a live show", "music", ["live_music", "rock_music", "electronic_music"], ["start_band"], ADULTS, { costTier: 2, dayparts: EVENINGS }),
+  A("jazz_night", "a jazz set", "music", ["jazz", "piano"], [], ADULTS, { costTier: 2, dayparts: EVENINGS }),
+  A("open_mic", "an open mic night", "music", ["rock_music", "guitar", "vocals", "writing"], ["start_band"], ADULTS, { costTier: 0, dayparts: EVENINGS }),
+  A("film_screening", "an indie film screening", "arts", ["film"], ["film_buddies"], ADULTS, { costTier: 1, dayparts: EVENINGS }),
+  A("open_studio", "a ceramics open studio", "arts", ["ceramics", "pottery_wheel"], ["ceramics_class"], ADULTS, { costTier: 2, needsBooking: true }),
+  A("sketch_session", "a drop-in sketch session", "arts", ["painting"], [], ALL_AGES, { costTier: 1 }),
+  A("photo_walk", "a photo walk", "arts", ["photography", "photography_pro"], ["photo_walks"], ALL_AGES, { groupSize: [2, 6], costTier: 0, setting: "outdoor", dayparts: DAY_ONLY }),
+  A("theater_night", "a play", "arts", ["theater"], [], ADULTS, { costTier: 3, dayparts: EVENINGS, needsBooking: true }),
+  A("dance_class", "a drop-in dance class", "arts", ["dancing"], [], ADULTS, { costTier: 1, intensity: 1, dayparts: EVENINGS }),
   // ideas and play
-  A("book_club", "a book club at a cafe", "ideas", ["books", "philosophy"], [], { costTier: 1 }),
-  A("writing_session", "a writing session at the library", "ideas", ["writing", "writing_editor"], ["writing_group"], { groupSize: [2, 6], costTier: 0, dayparts: ["weekday_evening", "weekend_day"] }),
-  A("board_game_cafe", "board games at a cafe", "play", ["board_games"], [], { costTier: 1, dayparts: EVENINGS }),
-  A("chess_park", "chess in the park", "play", ["chess", "chess_strong"], ["chess_games"], { groupSize: [2, 6], costTier: 0, setting: "outdoor", dayparts: DAY_ONLY }),
+  A("book_club", "a book club at a cafe", "ideas", ["books", "philosophy"], [], ADULTS, { costTier: 1 }),
+  A("writing_session", "a writing session at the library", "ideas", ["writing", "writing_editor"], ["writing_group"], ALL_AGES, { groupSize: [2, 6], costTier: 0, dayparts: ["weekday_evening", "weekend_day"] }),
+  A("board_game_cafe", "board games at a cafe", "play", ["board_games"], [], ADULTS, { costTier: 1, dayparts: EVENINGS }),
+  A("chess_park", "chess in the park", "play", ["chess", "chess_strong"], ["chess_games"], ALL_AGES, { groupSize: [2, 6], costTier: 0, setting: "outdoor", dayparts: DAY_ONLY }),
   // food (restaurants and cafes; everyone pays their own way)
-  A("restaurant_dinner", "dinner at a restaurant", "food", ["cooking", "chef", "hosting"], ["dinner_club", "new_friends"], { costTier: 2, dayparts: EVENINGS, needsBooking: true }),
-  A("coffee_crawl", "a coffee crawl", "food", ["coffee"], [], { costTier: 1, durationMin: 90, dayparts: DAY_ONLY }),
-  A("wine_bar", "a wine bar", "food", ["wine"], [], { costTier: 2, ageMin: 21, dayparts: EVENINGS }),
-  A("night_market", "a night market food crawl", "food", ["cooking", "coffee"], ["new_friends"], { costTier: 1, setting: "outdoor", dayparts: ["weekend_evening"] }),
+  A("restaurant_dinner", "dinner at a restaurant", "food", ["cooking", "chef", "hosting"], ["dinner_club", "new_friends"], ADULTS, { costTier: 2, dayparts: EVENINGS, needsBooking: true }),
+  A("coffee_crawl", "a coffee crawl", "food", ["coffee"], [], ALL_AGES, { costTier: 1, durationMin: 90, dayparts: DAY_ONLY }),
+  A("wine_bar", "a wine bar", "food", ["wine"], [], ADULTS, { costTier: 2, ageMin: 21, dayparts: EVENINGS }),
+  A("night_market", "a night market food crawl", "food", ["cooking", "coffee"], ["new_friends"], ADULTS, { costTier: 1, setting: "outdoor", dayparts: ["weekend_evening"] }),
   // tech and work, as social plans (no pitching, no money)
-  A("tech_meetup", "a tech meetup", "tech", ["ai", "startups", "crypto", "hardware", "climate_tech", "ml_engineering", "fundraising", "design", "hardware_eng", "climate_policy"], ["meet_founders", "climate_people", "hardware_collab"], { costTier: 0, dayparts: ["weekday_evening"], category: "social" }),
+  A("tech_meetup", "a tech meetup", "tech", ["ai", "startups", "crypto", "hardware", "climate_tech", "ml_engineering", "fundraising", "design", "hardware_eng", "climate_policy"], ["meet_founders", "climate_people", "hardware_collab"], ADULTS, { costTier: 0, dayparts: ["weekday_evening"], category: "social" }),
   // civic: volunteer shifts at existing organizations (growth doc section 3: fulfilling, zero resource draw)
-  A("food_bank_shift", "a food bank volunteer shift", "civic", ["volunteering"], ["new_friends"], { costTier: 0, intensity: 1, durationMin: 180, kind: "volunteer", dayparts: DAY_ONLY }),
-  A("park_cleanup", "a park cleanup", "civic", ["volunteering", "gardening", "urbanism", "dogs"], [], { costTier: 0, setting: "outdoor", intensity: 1, durationMin: 150, kind: "volunteer", dayparts: DAY_ONLY }),
-  A("community_garden", "a community garden workday", "civic", ["gardening", "volunteering"], [], { costTier: 0, setting: "outdoor", intensity: 1, durationMin: 180, kind: "volunteer", dayparts: DAY_ONLY }),
-  A("walking_tour", "a neighborhood history walk", "civic", ["urbanism", "photography"], [], { costTier: 0, setting: "outdoor", durationMin: 90, dayparts: DAY_ONLY }),
-  A("dog_park", "a dog park meetup", "civic", ["dogs"], [], { groupSize: [2, 6], costTier: 0, setting: "outdoor", durationMin: 60, dayparts: DAY_ONLY }),
+  A("food_bank_shift", "a food bank volunteer shift", "civic", ["volunteering"], ["new_friends"], ADULTS, { costTier: 0, intensity: 1, durationMin: 180, kind: "volunteer", dayparts: DAY_ONLY }),
+  A("park_cleanup", "a park cleanup", "civic", ["volunteering", "gardening", "urbanism", "dogs"], [], ALL_AGES, { costTier: 0, setting: "outdoor", intensity: 1, durationMin: 150, kind: "volunteer", dayparts: DAY_ONLY }),
+  A("community_garden", "a community garden workday", "civic", ["gardening", "volunteering"], [], ALL_AGES, { costTier: 0, setting: "outdoor", intensity: 1, durationMin: 180, kind: "volunteer", dayparts: DAY_ONLY }),
+  A("walking_tour", "a neighborhood history walk", "civic", ["urbanism", "photography"], [], ALL_AGES, { costTier: 0, setting: "outdoor", durationMin: 90, dayparts: DAY_ONLY }),
+  A("dog_park", "a dog park meetup", "civic", ["dogs"], [], ADULTS, { groupSize: [2, 6], costTier: 0, setting: "outdoor", durationMin: 60, dayparts: DAY_ONLY }),
+  A("museum_visit", "a museum visit", "arts", ["painting", "photography", "film", "theater"], [], TEEN_GROUPS, { groupSize: [2, 6], durationMin: 120, costTier: 1, setting: "indoor", dayparts: DAY_ONLY }),
+  A("library_games", "board games at the library", "play", ["board_games", "chess"], [], TEEN_GROUPS, { groupSize: [2, 6], durationMin: 120, costTier: 0, setting: "indoor", dayparts: DAY_ONLY }),
+  A("rec_center_games", "pickup games at a recreation center", "active", ["basketball", "pickleball", "tennis"], [], TEEN_GROUPS, { groupSize: [2, 6], durationMin: 90, costTier: 0, setting: "indoor", intensity: 2, dayparts: DAY_ONLY }),
+  A("bowling", "bowling", "play", ["board_games"], [], TEEN_GROUPS, { groupSize: [3, 6], durationMin: 90, costTier: 1, setting: "indoor", dayparts: DAY_ONLY }),
+  A("park_picnic", "a picnic in the park", "food", ["cooking", "coffee"], [], TEEN_GROUPS, { groupSize: [3, 6], durationMin: 120, costTier: 0, setting: "outdoor", dayparts: DAY_ONLY }),
 ];
 export const activityById = new Map(ACTIVITIES.map(a => [a.id, a]));
+
+const ADULT_ACTIVITY_TAGS: ReadonlySet<string> = new Set(["wine", "hosting"]);
+
+export const activityAllAges = (a: Pick<ActivityType, "allAges" | "ageMin" | "riskClass" | "tags">): boolean =>
+  a.allAges === true && allAgesMarkValid(true, a.ageMin, a.riskClass === "low", a.tags.some(t => ADULT_ACTIVITY_TAGS.has(t)));
+
+export const venueAllAges = (v: Pick<Venue, "allAges" | "ageMin">): boolean => v.allAges === true && allAgesMarkValid(true, v.ageMin, true, false);
 
 /** Activities whose tags include an event's tag (public listings become plan activities with a fixed venue and time). */
 export function activitiesForTags(tags: readonly string[]): ActivityType[] {
@@ -93,4 +114,5 @@ export interface Venue {
   hours: { weekday: [number, number]; weekend: [number, number] };
   capacity?: number; bookingUrl?: string; org?: string;
   public: true; source: "maps" | "listing" | "curated"; freshAt?: number;
+  allAges: boolean; adultPlans: boolean;
 }

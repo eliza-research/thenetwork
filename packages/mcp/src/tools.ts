@@ -8,45 +8,42 @@ import {
 } from "../../core/src/generated/mcpSignupDraft.ts";
 import {
   type Connection, type GrantOwnerDecision, type MemberStatus, type NextStep, type Scope as ConnectorScope, type ToolName as ConnectorTool,
-  canCallCheckStatus, canCallGetUpdates, canCallPrepareSignup, canCallPublicTool, canCallReadProfile, canCallSubmitProfile, grantCovers,
-  decideGrantOwner, initial as connectionInitial, nextStepFor, scopeFor, toolAllowedFor, toolListed,
+  callLookingForTool, callPhotoTool, canCallCheckStatus, canCallGetUpdates, canCallLookingForTool, canCallPhotoTool, canCallPrepareSignup, canCallPublicTool, canCallReadProfile, canCallSubmitProfile, grantCovers,
+  decideGrantOwner, initial as connectionInitial, nextStepFor, resultShowsLookingFor, scopeFor, toolAllowedFor, toolListed,
 } from "../../core/src/generated/connectorTools.ts";
 import { publicSignupUsesBrowser } from "../../core/src/generated/siteEnrollment.ts";
+import { minorNoticeFor, type MinorNotice } from "../../core/src/generated/textEnrollment.ts";
+import { photoSlotsMax } from "../../core/src/generated/photoRelayItem.ts";
 import { profileSubmissionAccepted } from "../../core/src/generated/mcpProfileSubmission.ts";
 import { appsOn, connectorApp, connectorSurface, DATING_AGE_RULE, type McpApp, type McpAppId, type Surface, WORK_AGE_RULE } from "./apps.ts";
-import type { AssistantKind, PlatformHooks, PublicStatus, SavedProfileFields } from "./hooks.ts";
+import type { AssistantKind, LookingForEntry, LookingForResult, LookingForView, PhotoHoldingsView, PhotoRequestStatus, PlatformHooks, PublicStatus, SavedProfileFields } from "./hooks.ts";
 import type { Grant, Scope, OAuthStore, SignupDraftFields } from "./store.ts";
-import { outputLeaks } from "./leaks.ts";
+import { outputLeaks, passesOutputGate } from "./leaks.ts";
 
-export const TOOL_NAMES = ["app_info", "start_signup", "check_status", "read_profile", "submit_profile", "get_updates", "prepare_signup"] as const;
+export const TOOL_NAMES = ["app_info", "start_signup", "check_status", "read_profile", "submit_profile", "get_updates", "prepare_signup",
+  "list_looking_for", "pause_looking_for", "resume_looking_for", "my_photos", "photo_request"] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 export const connectorTool: Record<ToolName, ConnectorTool> = {
   app_info: "AppInfoTool", start_signup: "StartSignupTool", check_status: "CheckStatusTool",
-  read_profile: "ReadProfileTool", submit_profile: "SubmitProfileTool", get_updates: "GetUpdatesTool", prepare_signup: "PrepareSignupTool",
+  read_profile: "ReadProfileTool", submit_profile: "SubmitProfileTool", get_updates: "GetUpdatesTool",
+  prepare_signup: "PrepareSignupTool", list_looking_for: "ListLookingForTool", pause_looking_for: "PauseLookingForTool",
+  resume_looking_for: "ResumeLookingForTool", my_photos: "MyPhotosTool", photo_request: "PhotoRequestTool",
 };
-/** The OAuth scope of each generated scope; a public tool needs none (spec/connectorTools.md, "Public tools need no sign-in"). */
-const oauthScope: Record<ConnectorScope, Scope | null> = { NoScope: null, MembershipRead: "membership:read", ProfileWrite: "profile:write", ProfileRead: "profile:read" };
+const oauthScope: Record<ConnectorScope, Scope | null> = { NoScope: null, MembershipRead: "membership:read", ProfileWrite: "profile:write", ProfileRead: "profile:read", PhotosUse: "photos:use" };
 /** The OAuth scope that each tool needs, from the generated `scopeFor` (spec/connectorTools.md, "Public tools need no sign-in"). */
 export const TOOL_SCOPE = Object.fromEntries(TOOL_NAMES.map(t => [t, oauthScope[scopeFor(connectorTool[t])]])) as Record<ToolName, Scope | null>;
 
-/** Whether the token's scopes cover the tool (spec/connectorTools.md, "Public tools need no sign-in"). */
 export const tokenCovers = (tool: ToolName, scopes: readonly Scope[]): boolean =>
-  grantCovers(connectorTool[tool], scopes.includes("membership:read"), scopes.includes("profile:write"), scopes.includes("profile:read"));
+  grantCovers(connectorTool[tool], scopes.includes("membership:read"), scopes.includes("profile:write"), scopes.includes("profile:read"), scopes.includes("photos:use"));
 
-/**
- * The model connection of one MCP request (spec/connectorTools.md, "what the shell owns"): connected with a token,
- * anonymous without one, with the profile write scope only when the token holds it, and with an approved profile
- * that is not sent yet (the agent owns the read-back). The platform reads the member status inside the tool.
- */
 export function connectionOf(host: McpApp, surface: Surface, scopes: readonly Scope[] | null, sentToday = 0): Connection {
   return {
     ...connectionInitial, phase: scopes ? "Connected" : "Anonymous", host: connectorApp[host.id], surface: connectorSurface[surface],
-    hasWrite: !!scopes?.includes("profile:write"), hasProfileRead: !!scopes?.includes("profile:read"),
+    hasWrite: !!scopes?.includes("profile:write"), hasProfileRead: !!scopes?.includes("profile:read"), hasPhotos: !!scopes?.includes("photos:use"),
     profileApproved: true, profileSent: false, sentToday,
   };
 }
 
-/** The generated guard of each tool call (spec/connectorTools.md). */
 export function canCallTool(c: Connection, tool: ToolName): boolean {
   switch (tool) {
     case "app_info": case "start_signup": return canCallPublicTool(c, connectorTool[tool]);
@@ -55,8 +52,13 @@ export function canCallTool(c: Connection, tool: ToolName): boolean {
     case "get_updates": return canCallGetUpdates(c);
     case "submit_profile": return canCallSubmitProfile(c);
     case "prepare_signup": return canCallPrepareSignup(c);
+    case "list_looking_for": case "pause_looking_for": case "resume_looking_for": return canCallLookingForTool(c, connectorTool[tool]);
+    case "my_photos": case "photo_request": return canCallPhotoTool(c, connectorTool[tool]);
   }
 }
+
+const STANDING_REF = /^INT-[A-P]{12}$/;
+export const STANDING_INPUT_REF = /^(?:INT-[A-P]{12}|I-[A-F0-9]{12})$/;
 
 /** An update reference from a Network text (packages/notify task tokens): a pointer, never a credential. */
 export const UPDATE_TOKEN = /^T-[2-9A-HJKMNP-TV-Z]{6}$/;
@@ -67,7 +69,9 @@ export const PROFILE_MAX_CHARS = 1200;
 export const INSTRUCTIONS =
   "Helps a person learn about apps powered by The Network and sign themselves up. Never ask for, accept or relay a phone number or a verification code. " +
   "The person completes signup and authorization themselves. Never send a message on their behalf. start_signup points to the app's published signup instructions. " +
-  "check_status works only after the person signs in and authorizes access in that app's browser, and shows only their own status in that one app. submit_profile sends that app what the person chose to tell you about themselves. No tool returns anything about other people or other apps.";
+  "check_status works only after the person signs in and authorizes access in that app's browser, and shows only their own status in that one app. submit_profile sends that app what the person chose to tell you about themselves. No tool returns anything about other people or other apps. " +
+  "list_looking_for shows what an app is looking for for the person; pause_looking_for and resume_looking_for change one thing only after the person asks. " +
+  "On slop.date, my_photos lists the person's own photos without the photos, and photo_request passes their own words; only the person confirms a photo send, on their phone.";
 
 const annotations = (title: string) => ({ title, readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
 
@@ -95,6 +99,19 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
     consent_rules: { type: "array", items: text },
     links: object({ privacy: text, terms: text, sms_terms: nullableText, support: text }),
   });
+  const standingRef = { type: "string", pattern: STANDING_REF.source };
+  const lookingForSchema = object({
+    ref: standingRef, number: { type: "integer", minimum: 1 }, kind: { type: "string", enum: ["want", "intent", "request", "posting"] },
+    summary: text, status: { type: "string", enum: ["active", "paused", "waiting_on_you", "open"] }, in_progress: { type: "boolean" }, ends_on: nullableText,
+  });
+  const checkItem = object({ ref: standingRef, summary: text, reason: { type: "string", enum: ["said_not_wanted", "ended_recently"] } });
+  const lookingForInput = { type: "object", properties: { app: { type: "string", enum: [host.id], description: `Optional. Always ${host.id}.` },
+    ref: { type: "string", pattern: STANDING_INPUT_REF.source, description: "The ref of one thing from list_looking_for, like INT-DPJKAAMBLCNE." } }, required: ["ref"], additionalProperties: false };
+  const lookingForChangeOutput = object({
+    app: ownApp, changed: { type: "boolean" }, item: { anyOf: [{ type: "null" }, lookingForSchema] },
+    reason: { enum: [null, "unknown_ref", "daily_limit", "closed", "posting", "adults_only", "texts_off", "not_member"] }, next_step: text,
+  });
+  const changeAnnotations = (title: string) => ({ title, readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false });
   return [
     {
       name: "app_info",
@@ -116,9 +133,9 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
     },
     {
       name: "prepare_signup", title: "Save my signup draft",
-      description: "After verified phone sign-in and OAuth approval, save only the first name and optional home city the person explicitly approved for this app. The person continues signup in their agent and approves their details and text consent there. Never creates a person, membership or text consent. One draft per grant; no age, phone, code, gender or match preferences.",
+      description: "After verified phone sign-in and OAuth approval, save only the first name and optional home city the person explicitly approved for this app. To finish browser signup, the person connects again, chooses Finish signup when the connection page offers it, and enters the approved details there. Never creates a person, membership or text consent. One draft per grant; no age, phone, code, gender or match preferences.",
       inputSchema: { type: "object", properties: { app: { type: "string", enum: [host.id] }, firstName: { type: "string", minLength: 1, maxLength: 50 }, homeCity: { type: "string", enum: ["nyc", "sf"] } }, required: ["firstName"], additionalProperties: false },
-      outputSchema: object({ prepared: { type: "boolean", const: true }, app: ownApp, url: text, next_step: text }),
+      outputSchema: object({ prepared: { type: "boolean", const: true }, app: ownApp, next_step: text }),
       annotations: { title: "Save my signup draft", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       ...schemes("prepare_signup"),
     },
@@ -146,7 +163,7 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
     {
       name: "submit_profile",
       title: `Send my profile to ${host.name}`,
-      description: `After the person joined ${host.name} and allowed access, sends ${host.name} what they told you about themselves in this conversation (what they are looking for, interests, when and where they are free), in their own words, as if they had texted it. Read it back to them and send it only after they agree. Never include a phone number, a code, an email address, a birthday, an age or anything about another person.`,
+      description: `After the person joined ${host.name} and allowed access, sends ${host.name} what they told you about themselves in this conversation (what they are looking for, interests, when and where they are free), in their own words, as if they had texted it. Read it back to them and send it only after they agree. Never include a phone number, a code, an email address, a birthday, an age or anything about another person. Sending a profile only adds. It keeps existing requests open even when the text leaves them out.`,
       inputSchema: {
         type: "object",
         properties: {
@@ -156,11 +173,64 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
         required: ["about"], additionalProperties: false,
       },
       outputSchema: { type: "object", anyOf: [
-        object({ app: ownApp, submitted: { type: "boolean", const: true }, next_step: text }),
+        object({ app: ownApp, submitted: { type: "boolean", const: true }, looking_for: { type: "array", items: lookingForSchema },
+          check_with_person: { type: "array", items: checkItem }, next_step: text }),
         object({ app: ownApp, submitted: { type: "boolean", const: false }, status, next_step: text }),
       ] },
       annotations: { title: `Send my profile to ${host.name}`, readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       ...schemes("submit_profile"),
+    },
+    {
+      name: "list_looking_for",
+      title: `What ${host.name} is looking for`,
+      description: `Use when the person asks what ${host.name} is looking for on their behalf. Returns their own active and paused wants, requests and posts in ${host.name}, each with a ref, and what they closed in the last 30 days. Changes nothing.`,
+      inputSchema: { type: "object", properties: { app: { type: "string", enum: [host.id], description: `Optional. Always ${host.id}.` } }, additionalProperties: false },
+      outputSchema: object({ app: ownApp, looking_for: { type: "array", items: lookingForSchema },
+        closed_recently: { type: "array", items: object({ ref: standingRef, summary: text, closed_on: text }) }, next_step: text }),
+      annotations: annotations(`What ${host.name} is looking for`),
+      ...schemes("list_looking_for"),
+    },
+    {
+      name: "pause_looking_for",
+      title: `Pause one ${host.name} search`,
+      description: `Use only after the person asks you, in this conversation, to pause one thing from list_looking_for. Pass its ref. ${host.name} texts them a confirmation with how to undo it. You cannot close anything: to close one for good, the person replies CLOSE to that text.`,
+      inputSchema: lookingForInput,
+      outputSchema: lookingForChangeOutput,
+      annotations: changeAnnotations(`Pause one ${host.name} search`),
+      ...schemes("pause_looking_for"),
+    },
+    {
+      name: "resume_looking_for",
+      title: `Turn one ${host.name} search back on`,
+      description: `Use only after the person asks you, in this conversation, to turn one paused thing from list_looking_for back on. Pass its ref. ${host.name} texts them a confirmation. A closed thing cannot be resumed here.`,
+      inputSchema: lookingForInput,
+      outputSchema: lookingForChangeOutput,
+      annotations: changeAnnotations(`Turn one ${host.name} search back on`),
+      ...schemes("resume_looking_for"),
+    },
+    {
+      name: "my_photos",
+      title: `My ${host.name} photos`,
+      description: `Use when the person asks which photos ${host.name} has or who has each. Returns each of their own photos by number, its name if they gave one and the day it was added, and the first name and state of each match who was offered it. It never returns a photo, an id or a link. Changes nothing.`,
+      inputSchema: { type: "object", properties: { app: { type: "string", enum: [host.id], description: `Optional. Always ${host.id}.` } }, additionalProperties: false },
+      outputSchema: object({ app: ownApp, text, photos: { type: "array", items: object({
+        number: { type: "integer", minimum: 1, maximum: photoSlotsMax }, name: nullableText, addedOn: { type: "string", pattern: ADDED_ON.source },
+        sharedWith: { type: "array", items: object({ firstName: text, state: { type: "string", enum: [...PHOTO_SHARE_STATES] } }) },
+      }) } }),
+      annotations: annotations(`My ${host.name} photos`),
+      ...schemes("my_photos"),
+    },
+    {
+      name: "photo_request",
+      title: `Ask ${host.name} to send, name or take back a photo`,
+      description: `Use only after the person asks you, in this conversation, to send one of their own photos to a match, to name a photo, or to take one back. Pass the person's own words, like "send Maya the beach one". Never pass a photo id, a code or a link. You cannot confirm a send; the person replies YES on their phone.`,
+      inputSchema: { type: "object", properties: {
+        app: { type: "string", enum: [host.id], description: `Optional. Always ${host.id}.` },
+        words: { type: "string", minLength: 1, maxLength: PHOTO_WORDS_MAX, description: "The person's own words about the photo." },
+      }, required: ["words"], additionalProperties: false },
+      outputSchema: object({ app: ownApp, status: { type: "string", enum: Object.keys(PHOTO_REQUEST_TEXT) }, text }),
+      annotations: { title: `Ask ${host.name} to send, name or take back a photo`, readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      ...schemes("photo_request"),
     },
     {
       name: "get_updates",
@@ -217,17 +287,26 @@ export function contactOrCode(text: string): boolean {
   return false;
 }
 
-export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host: McpApp): { ok: true; app?: string; about?: string; token?: string; draft?: SignupDraftFields } | { ok: false; message: string } {
+const PHOTO_NUMBER_LIST = /\b(?:photos?|pics?|pictures?|numbers?)\s+#?([1-6](?:(?:\s*,\s*|\s+and\s+|\s*&\s*|\s+)#?[1-6])*)(?!\s*[\d(#])/gi;
+
+function withoutPhotoNumbers(text: string): string {
+  return text.replace(PHOTO_NUMBER_LIST, (all: string, list: string) => {
+    const numbers = list.match(/[1-6]/g) ?? [];
+    return new Set(numbers).size === numbers.length ? " " : all;
+  });
+}
+
+export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host: McpApp): { ok: true; app?: string; about?: string; token?: string; ref?: string; words?: string; draft?: SignupDraftFields } | { ok: false; message: string } {
   if (args === undefined || args === null) args = {};
   if (typeof args !== "object" || Array.isArray(args)) return { ok: false, message: "Arguments must be an object." };
   const a = args as Record<string, unknown>;
-  const extra = Object.keys(a).filter(k => k !== "app" && !(name === "submit_profile" && k === "about") && !(name === "get_updates" && k === "update_token") && !(name === "prepare_signup" && ["firstName", "homeCity"].includes(k)));
-  // Refuse unlisted fields. Only prepare_signup takes an approved first name and home city.
+  const changesLookingFor = name === "pause_looking_for" || name === "resume_looking_for";
+  const extra = Object.keys(a).filter(k => k !== "app" && !(name === "submit_profile" && k === "about") && !(name === "get_updates" && k === "update_token") && !(name === "prepare_signup" && (k === "firstName" || k === "homeCity")) && !(changesLookingFor && k === "ref") && !(name === "photo_request" && k === "words"));
   if (extra.length) return { ok: false, message: `This tool does not take ${extra.map(k => `"${k.slice(0, 40)}"`).join(", ")}. It never takes phone numbers, codes or personal details.` };
   if (name === "prepare_signup") {
     if (!signupDraftRequestAllowed(host.id, a.app !== undefined, a.app === host.id)) return { ok: false, message: "This draft is not available for that app." };
     const firstName = typeof a.firstName === "string" ? a.firstName.trim() : "";
-    if (!firstName || firstName.length > 50 || !/^[\p{L}][\p{L}\p{M}'’-]{0,49}$/u.test(firstName) || contactOrCode(firstName) || (a.homeCity !== undefined && a.homeCity !== "nyc" && a.homeCity !== "sf")) return { ok: false, message: "Use only the approved first name and a supported home city." };
+    if (!/^[\p{L}][\p{L}\p{M}'’-]{0,49}$/u.test(firstName) || contactOrCode(firstName) || (a.homeCity !== undefined && a.homeCity !== "nyc" && a.homeCity !== "sf")) return { ok: false, message: "Use only the approved first name and a supported home city." };
     return { ok: true, app: host.id, draft: { firstName, ...(a.homeCity ? { homeCity: a.homeCity as "nyc" | "sf" } : {}) } };
   }
   if (name === "submit_profile") {
@@ -236,6 +315,21 @@ export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host
     if (contactOrCode(about)) return { ok: false, message: "Leave out phone numbers, codes and email addresses: the app never takes them from an assistant." };
     if (a.app !== undefined && a.app !== host.id) return { ok: false, message: `This connection covers ${host.name} only.` };
     return { ok: true, app: host.id, about };
+  }
+  if (name === "list_looking_for" || changesLookingFor) {
+    if (a.app !== undefined && a.app !== host.id) return { ok: false, message: `This connection covers ${host.name} only.` };
+    if (!changesLookingFor) return { ok: true, app: host.id };
+    const ref = typeof a.ref === "string" ? a.ref.trim().toUpperCase() : "";
+    if (!STANDING_INPUT_REF.test(ref)) return { ok: false, message: "ref must look like INT-DPJKAAMBLCNE, from list_looking_for." };
+    return { ok: true, app: host.id, ref };
+  }
+  if (name === "my_photos" || name === "photo_request") {
+    if (a.app !== undefined && a.app !== host.id) return { ok: false, message: `This connection covers ${host.name} only.` };
+    if (name === "my_photos") return { ok: true, app: host.id };
+    const words = typeof a.words === "string" ? a.words.normalize("NFKC").replace(/\s+/g, " ").trim() : "";
+    if (words.length < 1 || words.length > PHOTO_WORDS_MAX) return { ok: false, message: `words must be 1 to ${PHOTO_WORDS_MAX} characters: the person's own words.` };
+    if (contactOrCode(withoutPhotoNumbers(words))) return { ok: false, message: "Leave out phone numbers, codes and email addresses." };
+    return { ok: true, app: host.id, words };
   }
   if (name === "get_updates") {
     if (a.app !== undefined && a.app !== host.id) return { ok: false, message: `This connection covers ${host.name} only.` };
@@ -271,7 +365,7 @@ function publicInfo(a: McpApp, dating: boolean) {
       how: a.joinMode === "invite" ? invitationGuidance(a) : a.keyword
         ? `The person texts "${a.keyword}" as their first message to The Network's line. ` + (publicSignupUsesBrowser(a.id)
           ? `They can also open ${publicSignupUrl(a)} and verify their own phone there.` : skillSignup(a))
-        : `The person texts The Network's line with no keyword. The agent asks what they are looking for (${dating ? "friends, dating or work" : "friends or work"}) and adds the right apps. For a person aged 13 to 17, the agent never adds ${dating ? "dating or work" : "work"}, and today nobody under 18 is introduced to anyone. ${skillSignup(a)}`,
+        : `The person texts The Network's line with no keyword. The agent asks what they are looking for (${dating ? "friends, dating or work" : "friends or work"}) and adds the right apps. For a person aged 13 to 17, the agent never adds ${dating ? "dating or work" : "work"}, and any introduction for someone under 18 is a friendship introduction under the age rules. ${skillSignup(a)}`,
     },
     ages: { join: a.ages.join, matching: a.ages.match },
     adults_only: dating ? a.adultsOnly : a.adultsOnly.map(rule => rule === DATING_AGE_RULE ? WORK_AGE_RULE : rule),
@@ -287,18 +381,33 @@ function publicInfo(a: McpApp, dating: boolean) {
 
 const memberStatus: Record<PublicStatus, MemberStatus> = { not_joined: "NotJoined", invited: "Invited", onboarding: "Onboarding", active: "Active", stopped: "Stopped", on_hold: "OnHold" };
 
-const NEXT_TEXT: Record<NextStep, (a: McpApp) => string> = {
-  GetInvitation: a => `Not joined. ${invitationGuidance(a)}`,
-  JoinOnSite: a => `Not joined. ${publicSignupUsesBrowser(a.id) ? `Open ${publicSignupUrl(a)} to sign up.` : skillSignup(a)}`,
-  AcceptInvitation: a => `Invited. Reply to the invitation text or ${publicSignupUsesBrowser(a.id) ? `open ${publicSignupUrl(a)}.` : `follow ${publicSignupUrl(a)} and finish signup in the app's browser.`}`,
+const connectAgain = (a: McpApp) =>
+  `disconnect ${a.name} in your agent's connector settings, then connect it again. On the connection page, choose Finish signup, enter your details, check the text message terms, then allow access.`;
+const textKeyword = (a: McpApp) => (a.keyword ? ` Or text "${a.keyword}" as your first message to The Network's line.` : "");
+
+const MINOR_SINGLE_PLAYER = "You are signed up. Since you're under 18, I won't introduce you to other members, but I can suggest public places and events.";
+
+const MINOR_SIGNED_UP: Record<MinorNotice, string> = {
+  MinorTeenFriendNotice: "You are signed up. People under 18 are introduced only for friendship, to people close to their age.",
+  MinorBirthdayNotice: `${MINOR_SINGLE_PLAYER} If you tell me your birthday (month, day and year), I can look for friends close to your age.`,
+  MinorSinglePlayerNotice: MINOR_SINGLE_PLAYER,
+  MinorSlopNotice: "You are signed up. slop.date doesn't match anyone under 18 for dates. Friendship introductions for people under 18 happen on friends.help and ntwrk.party.",
+  MinorPeonNotice: "You are signed up. peon.biz doesn't match anyone under 18 for work. I can still help you myself. Friendship introductions for people under 18 happen on friends.help and ntwrk.party.",
+};
+
+const NEXT_TEXT: Record<NextStep, (a: McpApp, minor: MinorNotice | undefined) => string> = {
+  GetInvitation: a => `Not joined. ${a.name} is invite-only. With an invitation, ${connectAgain(a)} Enter the invitation on that page. ` +
+    `Without one, ask a member who knows you, or the team, for an invitation.`,
+  JoinOnSite: a => `Not joined. ${publicSignupUsesBrowser(a.id) ? `Open ${publicSignupUrl(a)} to sign up.` : `To finish signup, ${connectAgain(a)}`}${textKeyword(a)}`,
+  AcceptInvitation: a => `Invited. Reply to the invitation text or ${publicSignupUsesBrowser(a.id) ? `open ${publicSignupUrl(a)}.` : connectAgain(a)}`,
   ReplyToLastText: () => "Joining is not finished. Reply to the last text from the agent to finish.",
-  AlreadySignedUp: () => "You are signed up.",
+  AlreadySignedUp: (_a, minor) => (minor ? MINOR_SIGNED_UP[minor] : "You are signed up."),
   TextStart: () => `Messages are stopped. To start again, text START to the line.`,
   EmailSupport: a => `On hold. The person should email ${a.links.support.replace("mailto:", "")}.`,
 };
 
 /** The next-step text for a status (spec/connectorTools.md, "The member status decides which member tool can act"). */
-const nextStep = (status: PublicStatus, a: McpApp): string => NEXT_TEXT[nextStepFor(memberStatus[status], a.joinMode === "invite")](a);
+const nextStep = (status: PublicStatus, a: McpApp, minor?: MinorNotice): string => NEXT_TEXT[nextStepFor(memberStatus[status], a.joinMode === "invite")](a, minor);
 
 export interface CallContext {
   apps: Record<McpAppId, McpApp>;
@@ -306,8 +415,10 @@ export interface CallContext {
   host: McpApp;
   hooks: PlatformHooks;
   grant: Grant | null;
-  store?: OAuthStore;
-  now?: number;
+  scopes: readonly Scope[];
+  store: OAuthStore;
+  now: number;
+  log: (line: string) => void;
   /** Which assistant the OAuth client is (by its redirect hosts): chatgpt, claude, grok, or web. */
   assistant?: AssistantKind;
 }
@@ -348,6 +459,65 @@ function savedProfileResult(fields: SavedProfileFields | undefined, forbidden: s
   return first_name || about || neighborhood || home_region || interests.length ? { first_name, about, interests, neighborhood, home_region } : null;
 }
 
+const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+
+const PHOTO_WORDS_MAX = 300;
+const ADDED_ON = /^\d{4}-\d{2}-\d{2}$/;
+const PHOTO_SHARE_STATES = new Set(["asked", "checking", "ready", "taken_back"] as const);
+const PHOTO_PRIVATE = [/https?:\/\//i, /\bwww\./i, /\bp(?:h|ri|of|dr)_[a-z0-9]+/i, /\b[0-9a-f]{16,}\b/i, /\/photos\//i];
+
+const PHOTO_LIST_TEXT = "These are the person's own photos, numbered from the oldest. You never see the photos. To name one, the person says \"call photo 2 beach\". To stop sharing one, \"take back photo 2\". To delete one, \"delete photo 2\".";
+const PHOTO_UNAVAILABLE_TEXT = "Photos are not available for this person here.";
+const PHOTO_REQUEST_TEXT: Record<PhotoRequestStatus, string> = {
+  texted: "I texted the person the photo to check. They reply YES to that text to send it.",
+  done: "Done. The person got the details by text.",
+  refused: "That can't be done. The person can text MY PHOTOS to see their photos.",
+  unavailable: PHOTO_UNAVAILABLE_TEXT,
+};
+
+function photoTextClean(value: string, forbidden: string[]): boolean {
+  return !PHOTO_PRIVATE.some(re => re.test(value)) && outputLeaks(value, { forbidden, contacts: true }).length === 0;
+}
+
+function shownPhotos(view: PhotoHoldingsView, forbidden: string[]) {
+  return {
+    text: photoTextClean(view.text, forbidden) ? view.text : PHOTO_LIST_TEXT,
+    photos: view.photos
+      .filter(p => Number.isInteger(p.number) && p.number >= 1 && p.number <= photoSlotsMax && ADDED_ON.test(p.addedOn))
+      .map(p => ({
+        number: p.number,
+        name: p.name !== null && photoTextClean(p.name, forbidden) ? p.name : null,
+        addedOn: p.addedOn,
+        sharedWith: p.sharedWith.filter(x => PHOTO_SHARE_STATES.has(x.state) && photoTextClean(x.firstName, forbidden)).map(x => ({ firstName: x.firstName, state: x.state })),
+      })),
+  };
+}
+
+const lookingForItem = (e: LookingForEntry) => ({
+  ref: e.ref, number: e.number, kind: e.kind, summary: e.summary, status: e.status, in_progress: e.inProgress, ends_on: e.endsAt === null ? null : isoDay(e.endsAt),
+});
+
+function shownLookingFor(view: LookingForView | undefined, forbidden: string[]) {
+  const safe = (e: { ref: string; summary: string }) => STANDING_REF.test(e.ref) && outputLeaks(e.summary, { forbidden }).length === 0;
+  return {
+    looking_for: (view?.entries ?? []).filter(safe).map(lookingForItem),
+    closed_recently: (view?.closedRecently ?? []).filter(safe).map(e => ({ ref: e.ref, summary: e.summary, closed_on: isoDay(e.closedAt) })),
+    check_with_person: (view?.checkWithPerson ?? []).filter(safe).map(e => ({ ref: e.ref, summary: e.summary, reason: e.reason })),
+  };
+}
+
+type LookingForRefusal = Extract<LookingForResult, { kind: "refused" }>["reason"];
+
+const LOOKING_FOR_REFUSED: Record<LookingForRefusal, (a: McpApp) => string> = {
+  unknown_ref: () => "That ref is not on the person's current list. Call list_looking_for again.",
+  daily_limit: a => `No change: three changes were already made through assistants today. The person can text “pause <ref>” or “resume <ref>” to ${a.name}.`,
+  closed: a => `No change: the person closed this one. If they want it again, they can tell ${a.name} by text.`,
+  posting: a => `Job posts change only by text: the person texts “close my <title> post” to ${a.name}.`,
+  adults_only: a => `No change. The person can text “resume <ref>” to ${a.name}.`,
+  texts_off: a => `No change: texts are off for this number, so ${a.name} cannot confirm it.`,
+  not_member: a => `No change: the person is not an active member of ${a.name}. Call check_status for the next step.`,
+};
+
 export async function callTool(name: ToolName, args: unknown, c: CallContext): Promise<ToolOutcome> {
   const listed = appsOn(c.apps, c.surface, c.host.id);
   const enumIds = listed.map(a => a.id);
@@ -377,32 +547,28 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
     }
     case "prepare_signup": {
       const g = c.grant, store = c.store;
-      const preparedConnection = stepDraftPreparation(initialDraftPreparation, {
-        type: "observeConnection", grantReady: !!(g && store), guardReady: !!(c.hooks.withSignupAgePolicy && c.hooks.setSignupAgeCleanup),
-      });
-      if (preparedConnection.phase === "GrantRefused" || !g || !store) return { kind: "invalid_grant" };
-      if (preparedConnection.phase !== "CheckAge" || !c.hooks.withSignupAgePolicy) return { kind: "error", message: "Follow this app's signup instructions in your agent." };
-      const started = performance.now(), requestedAt = c.now ?? Date.now();
-      return c.hooks.withSignupAgePolicy(g.phoneKey, g.app, async allowed => {
-        const preparedAge = stepDraftPreparation(preparedConnection, { type: "observeAge", allowed });
-        if (preparedAge.phase !== "CheckOwner") return { kind: "error", message: "We cannot save the signup draft. Check the joining requirements in this app's signup instructions." };
-        const owner = await checkGrantOwner(c.hooks, g);
-        const refusal = grantOwnerRefusal(owner);
-        if (refusal) return refusal;
-        const person = g.personId;
-        const preparedOwner = stepDraftPreparation(preparedAge, { type: "observeOwner", ownerMatches: owner === "GrantOwnerMatches" });
-        if (preparedOwner.phase !== "CheckMembership") return { kind: "invalid_grant" };
-        const status = person === null ? "not_joined" : await c.hooks.status(person, g.app, g.phoneKey);
-        const preparedMembership = stepDraftPreparation(preparedOwner, { type: "observeMembership", status });
-        if (preparedMembership.phase !== "WriteDraft") return { kind: "error", message: "Use your existing profile; this form is for joining." };
-        const at = requestedAt + Math.ceil(performance.now() - started);
-        const expiresAt = signupDraftDeadline(requestedAt + signupDraftLifetimeMs, g.expiresAt);
-        const saved = await store.putSignupDraft({ grantId: g.id, app: g.app, phoneKey: g.phoneKey, fields: chk.draft!, expiresAt, consumedAt: null }, at);
-        const finished = stepDraftPreparation(preparedMembership, { type: "observeWrite", saved });
-        return finished.phase === "Prepared" ? { kind: "ok", data: { prepared: true, app: g.app, url: publicSignupUrl(c.apps[g.app]),
-          next_step: "Your draft is saved. Follow the signup instructions in your agent and approve your details and text consent there." } }
-          : { kind: "error", message: "This connection already saved a draft or is no longer valid. Follow this app's signup instructions in your agent." };
-      });
+      const connection = stepDraftPreparation(initialDraftPreparation, { type: "observeConnection", grantReady: !!g });
+      if (connection.phase !== "CheckAge" || !g) return { kind: "invalid_grant" };
+      const aged = stepDraftPreparation(connection, { type: "observeAge", allowed: await c.hooks.signupAgeAllowed(g.phoneKey, g.app, c.now) });
+      if (aged.phase !== "CheckOwner") return { kind: "error", message: "We cannot save the signup draft. Check the joining requirements in this app's signup instructions." };
+      const owner = await checkGrantOwner(c.hooks, g);
+      const refusal = grantOwnerRefusal(owner);
+      if (refusal) return refusal;
+      const owned = stepDraftPreparation(aged, { type: "observeOwner", ownerMatches: owner === "GrantOwnerMatches" });
+      if (owned.phase !== "CheckMembership") return { kind: "invalid_grant" };
+      const status = g.personId === null ? "not_joined" : await c.hooks.status(g.personId, g.app, g.phoneKey);
+      const member = stepDraftPreparation(owned, { type: "observeMembership", status });
+      if (member.phase !== "WriteDraft") return { kind: "error", message: "This person already has a membership here. Use check_status for the next step." };
+      const saved = await store.putSignupDraft({ grantId: g.id, app: g.app, phoneKey: g.phoneKey, fields: chk.draft!, expiresAt: signupDraftDeadline(c.now + signupDraftLifetimeMs, g.expiresAt), consumedAt: null }, c.now);
+      const written = stepDraftPreparation(member, { type: "observeWrite", saved });
+      if (written.phase !== "RecheckAge") return { kind: "error", message: "This connection already saved a draft or is no longer valid. Follow this app's signup instructions in your agent." };
+      const finished = stepDraftPreparation(written, { type: "observeAgeAfterWrite", allowed: await c.hooks.signupAgeAllowed(g.phoneKey, g.app, c.now) });
+      if (finished.phase !== "Prepared") {
+        await store.deleteSignupDrafts(g.phoneKey, g.app);
+        return { kind: "error", message: "We cannot save the signup draft. Check the joining requirements in this app's signup instructions." };
+      }
+      const a = c.apps[g.app];
+      return { kind: "ok", data: { prepared: true, app: g.app, next_step: `The draft is saved for ${signupDraftLifetimeMs / 60_000} minutes. To finish signup, ${connectAgain(a)} On that page, enter the first name and home city that the person approved in this conversation.` } };
     }
     case "check_status": {
       const g = c.grant;
@@ -411,7 +577,11 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       if (refusal) return refusal;
       const status: PublicStatus = g.personId === null ? "not_joined" : await c.hooks.status(g.personId, g.app, g.phoneKey);
       const a = c.apps[g.app];
-      return { kind: "ok", data: { app: a.id, status, next_step: nextStep(status, a), manage_url: a.links.support } };
+      const personId = g.personId;
+      const notice = personId !== null && await c.hooks.minorMember(personId, g.phoneKey)
+        ? (await c.hooks.minorNotice?.(personId, g.app, g.phoneKey)) ?? minorNoticeFor(a.id, false, false, false, true)
+        : undefined;
+      return { kind: "ok", data: { app: a.id, status, next_step: nextStep(status, a, notice), manage_url: a.links.support } };
     }
     case "read_profile": {
       const g = c.grant;
@@ -419,7 +589,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       const refusal = grantOwnerRefusal(await checkGrantOwner(c.hooks, g));
       if (refusal) return refusal;
       try {
-        const fields = g.personId ? await c.hooks.readProfile?.(g.personId, g.app, g.phoneKey) : undefined;
+        const fields = g.personId ? await c.hooks.readProfile(g.personId, g.app, g.phoneKey) : undefined;
         return { kind: "ok", data: { app: g.app, profile: savedProfileResult(fields, [g.phoneKey, g.personId ?? ""]) } };
       } catch {
         return { kind: "grant_unavailable" };
@@ -434,7 +604,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       const a = c.apps[g.app];
       const { submitProfile, profileSubmissionFingerprint } = c.hooks;
       const store = c.store;
-      if (!submitProfile || !profileSubmissionFingerprint || !store || c.now === undefined) return { kind: "error", message: "Profiles cannot be sent here yet." };
+      if (!submitProfile || !profileSubmissionFingerprint) return { kind: "error", message: "Profiles cannot be sent here." };
       const status: PublicStatus = person === null ? "not_joined" : await c.hooks.status(person, g.app, g.phoneKey);
       // Only a joined, live member: the profile never creates a member and never reaches a stopped or held one.
       if (person === null || !toolAllowedFor("SubmitProfileTool", memberStatus[status])) return { kind: "ok", data: { app: a.id, submitted: false, status, next_step: nextStep(status, a) } };
@@ -471,7 +641,115 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
         // If intake happened before a crash or storage error, leave the pending claim fenced.
         return unresolved;
       }
-      return { kind: "ok", data: { app: a.id, submitted: true, next_step: `${a.name} has it. It may text the person a short question or two.` } };
+      const reads = resultShowsLookingFor(c.scopes.includes("profile:read"));
+      let view: LookingForView | undefined;
+      try {
+        view = await c.hooks.lookingFor?.(person, g.app, g.phoneKey);
+      } catch (e) {
+        c.log(`[mcp] ${g.app} submit_profile looking_for read failed grant=${g.id}: ${(e as Error).message}`);
+        return { kind: "ok", data: { app: a.id, submitted: true, looking_for: [], check_with_person: [],
+          next_step: `${a.name} has it. What is active for the person could not be read now: call list_looking_for later to check. Change nothing unless they ask.` } };
+      }
+      const shown = shownLookingFor(view, [g.phoneKey, person]);
+      return { kind: "ok", data: { app: a.id, submitted: true, looking_for: reads ? shown.looking_for : [], check_with_person: reads ? shown.check_with_person : [],
+        next_step: !shown.check_with_person.length ? `${a.name} has it. It may text the person a short question or two.`
+          : reads ? `${a.name} has it. Some of it may not match what is active for the person: see check_with_person. Ask them about each one. Change nothing unless they ask.`
+          : `${a.name} has it. Some of it may not match what is active for the person. Ask them to text “what am I looking for” to ${a.name} to check. Change nothing unless they ask.` } };
+    }
+    case "list_looking_for": {
+      const g = c.grant;
+      if (!g || g.app !== c.host.id) return { kind: "invalid_grant" };
+      const refusal = grantOwnerRefusal(await checkGrantOwner(c.hooks, g));
+      if (refusal) return refusal;
+      const a = c.apps[g.app];
+      const hook = c.hooks.lookingFor;
+      if (!hook) return { kind: "error", message: "This list is not available here." };
+      const status: PublicStatus = g.personId === null ? "not_joined" : await c.hooks.status(g.personId, g.app, g.phoneKey);
+      const connection = { ...connectionOf(c.host, c.surface, c.scopes), status: memberStatus[status] };
+      if (g.personId === null || callLookingForTool(connection, "ListLookingForTool", true, false).lastResult === "LookingForUnavailable")
+        return { kind: "ok", data: { app: a.id, looking_for: [], closed_recently: [], next_step: nextStep(status, a) } };
+      let view: LookingForView | undefined;
+      try {
+        view = await hook(g.personId, g.app, g.phoneKey);
+      } catch (e) {
+        c.log(`[mcp] ${g.app} list_looking_for read failed grant=${g.id}: ${(e as Error).message}`);
+        return { kind: "error", message: "The list cannot be read right now. Try again shortly." };
+      }
+      if (!view) {
+        const current: PublicStatus = await c.hooks.status(g.personId, g.app, g.phoneKey);
+        return { kind: "ok", data: { app: a.id, looking_for: [], closed_recently: [], next_step: nextStep(current, a) } };
+      }
+      const shown = shownLookingFor(view, [g.phoneKey, g.personId]);
+      return { kind: "ok", data: { app: a.id, looking_for: shown.looking_for, closed_recently: shown.closed_recently,
+        next_step: shown.looking_for.length
+          ? `Tell the person what is active. To pause one, call pause_looking_for after they ask. To close one for good, the person texts “close <ref>” to ${a.name}.`
+          : `Nothing is active for the person in ${a.name}. If they want something, send it with submit_profile.` } };
+    }
+    case "pause_looking_for": case "resume_looking_for": {
+      const g = c.grant;
+      if (!g || g.app !== c.host.id) return { kind: "invalid_grant" };
+      const refusal = grantOwnerRefusal(await checkGrantOwner(c.hooks, g));
+      if (refusal) return refusal;
+      const a = c.apps[g.app];
+      const hook = c.hooks.changeLookingFor;
+      if (!hook) return { kind: "error", message: "Changes are not available here." };
+      const status: PublicStatus = g.personId === null ? "not_joined" : await c.hooks.status(g.personId, g.app, g.phoneKey);
+      const connection = { ...connectionOf(c.host, c.surface, c.scopes), status: memberStatus[status] };
+      if (g.personId === null || callLookingForTool(connection, connectorTool[name], true, false).lastResult === "LookingForUnavailable")
+        return { kind: "ok", data: { app: a.id, changed: false, item: null, reason: "not_member", next_step: nextStep(status, a) } };
+      const change = name === "pause_looking_for" ? "pause" : "resume";
+      let result: LookingForResult;
+      try {
+        result = await hook(g.personId, g.app, g.phoneKey, g.id, chk.ref!, change);
+      } catch (e) {
+        c.log(`[mcp] ${g.app} ${name} failed grant=${g.id}: ${(e as Error).message}`);
+        return { kind: "error", message: "The change is unconfirmed. Call list_looking_for to check before trying again." };
+      }
+      if (result.kind === "refused")
+        return { kind: "ok", data: { app: a.id, changed: false, item: null, reason: result.reason, next_step: LOOKING_FOR_REFUSED[result.reason](a) } };
+      const [item] = resultShowsLookingFor(c.scopes.includes("profile:read"))
+        ? shownLookingFor({ entries: [result.entry], closedRecently: [], checkWithPerson: [] }, [g.phoneKey, g.personId]).looking_for : [];
+      const changed = callLookingForTool(connection, connectorTool[name], true, result.kind === "applied").lastResult === "LookingForChanged";
+      return { kind: "ok", data: { app: a.id, changed, item: item ?? null, reason: null,
+        next_step: result.kind === "unchanged" ? "No change: it was already in that state."
+          : change === "pause" ? `Paused. ${a.name} texted the person a confirmation. They can reply UNDO to turn it back on, or CLOSE to close it for good.`
+          : `Turned back on. ${a.name} texted the person a confirmation.` } };
+    }
+    case "my_photos": case "photo_request": {
+      const g = c.grant;
+      if (!g || g.app !== c.host.id) return { kind: "invalid_grant" };
+      const refusal = grantOwnerRefusal(await checkGrantOwner(c.hooks, g));
+      if (refusal) return refusal;
+      const a = c.apps[g.app];
+      const hook = name === "my_photos" ? c.hooks.photoHoldings : c.hooks.photoRequest;
+      if (!hook) return { kind: "error", message: "Photos are not available here." };
+      const status: PublicStatus = g.personId === null ? "not_joined" : await c.hooks.status(g.personId, g.app, g.phoneKey);
+      const adult = g.personId !== null && !await c.hooks.minorMember(g.personId, g.phoneKey);
+      const forbidden = [g.phoneKey, g.personId ?? ""];
+      const called = callPhotoTool({ ...connectionOf(c.host, c.surface, c.scopes), status: memberStatus[status] }, connectorTool[name], g.personId !== null, adult);
+      if (g.personId === null || called.lastResult === "PhotoToolUnavailable") {
+        const unavailable = toolAllowedFor(connectorTool[name], memberStatus[status]) ? PHOTO_UNAVAILABLE_TEXT : nextStep(status, a);
+        return { kind: "ok", data: name === "my_photos" ? { app: a.id, text: unavailable, photos: [] } : { app: a.id, status: "unavailable", text: unavailable } };
+      }
+      if (name === "my_photos") {
+        let view: PhotoHoldingsView | undefined;
+        try {
+          view = await c.hooks.photoHoldings!(g.personId, g.app, g.phoneKey);
+        } catch (e) {
+          c.log(`[mcp] ${g.app} my_photos read failed grant=${g.id}: ${(e as Error).message}`);
+          return { kind: "error", message: "The photo list cannot be read right now. Try again shortly." };
+        }
+        if (!view) return { kind: "ok", data: { app: a.id, text: PHOTO_UNAVAILABLE_TEXT, photos: [] } };
+        return { kind: "ok", data: { app: a.id, ...shownPhotos(view, forbidden) } };
+      }
+      try {
+        const answer = await c.hooks.photoRequest!(g.personId, g.app, g.phoneKey, chk.words!);
+        const text = answer.text && photoTextClean(answer.text, forbidden) ? answer.text : PHOTO_REQUEST_TEXT[answer.status];
+        return { kind: "ok", data: { app: a.id, status: answer.status, text } };
+      } catch (e) {
+        c.log(`[mcp] ${g.app} photo_request failed grant=${g.id}: ${(e as Error).message}`);
+        return { kind: "error", message: "The photo request is unconfirmed. The person can text MY PHOTOS to check before trying again." };
+      }
     }
     case "get_updates": {
       const g = c.grant;
@@ -481,8 +759,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       const a = c.apps[g.app];
       if (!c.hooks.updates) return { kind: "error", message: "Updates are not available here yet." };
       // Someone else's reference, an unknown one or an expired one reads as "nothing new", like an empty inbox.
-      // The output leak gate: a summary with a phone, email, internal id or timestamp is withheld (leaks.ts).
-      const updates = g.personId === null ? [] : (await c.hooks.updates(g.personId, g.app, c.assistant ?? "web", chk.token)).filter(u => outputLeaks(u.summary).length === 0);
+      const updates = g.personId === null ? [] : (await c.hooks.updates(g.personId, g.app, c.assistant ?? "web", chk.token, passesOutputGate)).filter(u => passesOutputGate(u.summary));
       return { kind: "ok", data: { app: a.id, updates, next_step: updates.length ? "Tell the person briefly. They answer by replying to the text." : `Nothing new from ${a.name}.` } };
     }
   }

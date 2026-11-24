@@ -1,25 +1,19 @@
-// Real-world mode: the Network's Postgres `network` schema (db/schema.sql), read-only. Every
-// connection runs with default_transaction_read_only=on and the adapter only issues SELECTs;
-// channel_identities (phones, emails) is never read. Unless OBSERVATORY_REVEAL_PII=1 (local use
-// only): names are "First L.", what members wrote (inbound messages, feedback) never leaves the
-// database (only its length and time), the agent's texts are PII-scrubbed, and agent-private
-// facets are withheld (audit P1-2). This connection never writes: review decisions, safety actions
-// and the matching switch go to the Network service's staff API when NETWORK_SERVICE_URL and
-// NETWORK_SERVICE_TOKEN are set (sources/service.ts), and are refused otherwise. "Shadow" engine runs
-// build a WorldSnapshot from the database and run engine-v1 on it in memory; proposals are shown as
-// ghosts and never written (PRD 34.6).
 import { SQL } from "../../../core/src/runtime/postgres.ts";
 import { heldMeetingMinimum, observatoryMeetingHeld, observatoryProposalCounts } from "../../../core/src/generated/observatoryRoster.ts";
 import { consoleBookingReceiptCurrent, consoleDeliveryEvidenceAllowed, consoleDeliveryGuard, consolePreparedBodyWithheld, type ConsoleDeliveryGuard } from "../../../core/src/generated/consoleMemberView.ts";
 import { confirmationWindowHours } from "../../../core/src/generated/meetingSettlement.ts";
 import {
-  DAY, isMinor, validAge, type City, type EdgeType, type WorldSnapshot,
+  canBeMatched, DAY, earliestDayKeyOf, isMinor, latestDayKeyOf, validAge, type AgeSide, type City, type EdgeType, type WorldSnapshot,
 } from "@thenetwork/core";
-import { OUTREACH, SIM_AUTO_REVIEWER } from "@thenetwork/network";
+import { ageOnDay } from "../../../core/src/generated/memberAge.ts";
+import { groupAgeAllowed, teenReady, teenRosterSizeAllowed } from "../../../core/src/generated/friendIntroAge.ts";
+import { teenFriendApp, teenFriendCategory, teenGenerator } from "../../../core/src/generated/matchLane.ts";
+import { JUDGE_VERDICTS } from "@thenetwork/engine/src/reviewJudge.ts";
+import { copy, OUTREACH, teenMeetingEndOf } from "@thenetwork/network";
 import { CONNECTION } from "@thenetwork/network";
 import { facetOf, intentOf, loadSnapshot, presenceOf } from "@thenetwork/network/service/snapshot";
 import { confirmedProactiveDeliveryStatuses } from "../../../core/src/generated/consolePanels.ts";
-import { runEngineSummarized } from "../engineCapture.ts";
+import { runEngineSummarized, storedRunSummary, type StoredRunSummary } from "../engineCapture.ts";
 import { describe, onTimeline, requestLabel, type EventRow } from "../events.ts";
 import { ALERT_WINDOW, growthStats, healthAlerts, hours, reportsFromCases, safetyInfo, scorecard, type MsgMeta } from "../health.ts";
 import { memberFacets } from "../appProfile.ts";
@@ -29,32 +23,23 @@ import { edgeId, emptyCounters, Store, zeroCounts } from "../store.ts";
 import type {
   BiasReportView, HeldQueue, HeldText, BookedPlan, ConfigChange, ConfigInfo, ControlCommand, ControlResult, DeliveryReason, EngineRunSummary, EnvInfo, FeedKind, MemberDetail, MemberPhoto, MemberStatus, MemberTimeline, NetworkInfo,
   ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsMessage, ObsOpportunity, ObsRequest, ObsState, OpportunityDetail, ParticipantStatus, ReviewInfo,
-  SafetyAction, SafetyInfo, SearchHit, TimelineEntry,
+  HealthAlert, SafetyAction, SafetyInfo, SearchHit, TimelineEntry,
 } from "../types.ts";
-import { appUrlEnv, DEFAULT_APP, MATCHING_OFF_TEXT, matchingAllowed, slaHours, type AppId } from "../apps.ts";
-import { serviceAlerts, ServiceClient, serviceFromEnv, type ServiceConfig } from "./service.ts";
+import { appUrlEnv, DEFAULT_APP, slaHours, type AppId } from "../apps.ts";
+import { SERVICE_TIMEOUT, serviceAlerts, ServiceClient, serviceFromEnv, type ServiceConfig } from "./service.ts";
 import type { GatheringRequest } from "../gatherings.ts";
+import type { StaffStepForward } from "../staffSteps.ts";
 import { staffSearchHitVisible } from "../../../core/src/generated/staffSearch.ts";
 import { staffHistoryHasEarlier, staffHistoryPageSize } from "../../../core/src/generated/staffHistory.ts";
 import { Listeners, searchPattern, snippet, type DataSource, type HistoryCursor, type ViewOptions } from "./source.ts";
 
 export interface RealOptions {
   url?: string;
-  /** The app this source shows (default ntwrk). Every query keeps to its rows (app_id). */
   app?: AppId;
-  /**
-   * The app's own read login (a member of network_observatory_<app>, migration 0004): row-level
-   * security keeps the connection to the app as well. Default: OBSERVATORY_DATABASE_URL_<APP>.
-   * Without it the shared login reads with the app_id filter only.
-   */
   appUrl?: string;
-  /** Poll interval in ms (default 10000). */
   pollMs?: number;
-  /** Show raw names and message text (local use only). */
   revealPii?: boolean;
-  /** Push interval in ms (default 500). */
   pushMs?: number;
-  /** The Network service for staff actions. Default: NETWORK_SERVICE_URL and NETWORK_SERVICE_TOKEN. false: none (read-only). */
   service?: ServiceConfig | false;
 }
 
@@ -98,36 +83,110 @@ function deliveryOf(app: AppId, row: MessageEvidenceKey, evidence?: DeliveryEvid
   return { guard: guardLabel[check], status, withheld, reason: record?.reason };
 }
 
-/** How the Network treats a member's age at one moment (network.md 6.3). */
 interface AgeState { minor: boolean; unknown: boolean }
-/**
- * The Network's age state: the latest per member (its stored state, else its age events), each change
- * with its time (the events), and the availability opt-ins (calendar, weekly check-in).
- */
 interface AgeInfo {
   latest: Map<string, AgeState>;
   changes: Map<string, (AgeState & { at: number })[]>;
   optIns: Map<string, { calendar?: boolean; weekly?: boolean }>;
+  teenHistory: Map<string, TeenEvent[]>;
+  flags: Map<string, TeenFlags>;
+}
+interface TeenFlags { minorSignal: boolean; minorReported: boolean; olderReported: boolean; ageConflict: boolean; ageUnknown: boolean }
+
+interface TeenSwitchRow { at: number; on: boolean }
+interface TeenAgeRow {
+  birthKey?: number; birthExact?: boolean; ageConflict?: boolean; teenBarred?: boolean;
+  minorSignal?: boolean; minorReported?: boolean; olderReported?: boolean;
+}
+interface TeenEvent { at: number; kind: "signal" | "cleared" | "reported" | "older" | "conflict" | "unknown" | "resolved" }
+interface TeenEvidence {
+  app: AppId; readable: boolean; problem?: string; switches: TeenSwitchRow[];
+  members: ReadonlyMap<string, TeenAgeRow>; history: ReadonlyMap<string, readonly TeenEvent[]>;
+}
+interface TeenFlagsAt { signal: boolean; reported: boolean; older: boolean; conflict: boolean; unknown: boolean }
+
+function teenFlagsAt(history: readonly TeenEvent[], t: number): TeenFlagsAt {
+  const f: TeenFlagsAt = { signal: false, reported: false, older: false, conflict: false, unknown: false };
+  for (const e of history) {
+    if (e.at > t) break;
+    if (e.kind === "signal") f.signal = true;
+    else if (e.kind === "cleared") { f.signal = false; f.reported = false; f.conflict = false; }
+    else if (e.kind === "reported") f.reported = true;
+    else if (e.kind === "older") f.older = true;
+    else if (e.kind === "conflict") f.conflict = true;
+    else if (e.kind === "unknown") f.unknown = true;
+    else f.unknown = false;
+  }
+  return f;
+}
+
+function teenSwitchOnAt(rows: readonly TeenSwitchRow[], t: number): boolean {
+  let on = true;
+  for (const r of rows) { if (r.at > t) break; on = r.on; }
+  return on;
+}
+
+function teenSideAt(e: TeenEvidence, id: string, t: number, atT: boolean): AgeSide {
+  const m = e.members.get(id);
+  if (!m || m.birthKey === undefined) return { adult: false, ready: false, birthKey: 0 };
+  const h = teenFlagsAt(e.history.get(id) ?? [], atT ? t : Infinity);
+  const conflict = h.conflict || h.unknown || (!atT && m.ageConflict === true);
+  const signal = h.signal || (!atT && m.minorSignal === true);
+  const reported = h.reported || (!atT && m.minorReported === true);
+  const older = h.older || (!atT && m.olderReported === true);
+  const ready = teenReady(m.birthExact === true, conflict, signal, reported, older, m.teenBarred === true);
+  const adult = canBeMatched(ageOnDay(m.birthKey, earliestDayKeyOf(t))) && !conflict && !signal && !reported;
+  return { adult, ready, birthKey: m.birthKey };
+}
+
+function teenRuleHeldAt(e: TeenEvidence, ids: readonly string[], category: string | undefined, t: number, until = t): boolean {
+  if (!e.readable || !teenRosterSizeAllowed(true, ids.length) || category === undefined) return false;
+  if (!teenSwitchOnAt(e.switches, t)) return false;
+  const lane = teenFriendCategory(e.app, category);
+  const minDay = earliestDayKeyOf(t), maxDay = latestDayKeyOf(Math.max(t, until));
+  const side = (id: string, atT: boolean): AgeSide => teenSideAt(e, id, t, atT);
+  return groupAgeAllowed(true, lane, minDay, maxDay, ids.map(id => side(id, true)))
+    && groupAgeAllowed(true, lane, minDay, maxDay, ids.map(id => side(id, false)));
+}
+
+const TEEN_NOTICE_TYPES = new Set(["info", "cancellation"]);
+
+function teenScopeNoticeAt(e: TeenEvidence, memberId: string, body: string, t: number, others: readonly string[]): boolean {
+  if (!e.readable || !teenFriendApp(e.app) || !teenSwitchOnAt(e.switches, t) || !body.includes(copy.minorTeenFriends)) return false;
+  const rest = body.split(copy.minorTeenFriends).join(" ");
+  if (offersConnection(rest) || namesAny(rest, others)) return false;
+  return teenSideAt(e, memberId, t, true).ready && teenSideAt(e, memberId, t, false).ready;
+}
+
+function namesAny(body: string, others: readonly string[]): boolean {
+  return others.some(name => name.length >= 2 && new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(body));
+}
+
+function teenNoticeNamesNobody(body: string, type: string | null | undefined, others: readonly string[]): boolean {
+  if (!TEEN_NOTICE_TYPES.has(type ?? "") || offersConnection(body)) return false;
+  return !namesAny(body, others);
 }
 const AGE_EVENTS = ["age_unknown", "age_resolved", "minor_signal", "age_conflict"];
-/** A valid record age under 18 (core policy; a missing age is handled apart: unknown). */
+const TEEN_EVENTS = ["safety_action", "minor_reported", "teen_age_contradicted"];
 const recordMinor = (age: number | null | undefined) => validAge(age) && isMinor(age);
 
-/**
- * Whether the console treats a member as under 18. With the Network's view: its flag, or a record age
- * under 18. Without it: the record age, and a missing age fails closed (treated as under 18).
- */
+function teenEventKind(type: string, action: unknown): TeenEvent["kind"] | undefined {
+  if (type === "minor_signal") return "signal";
+  if (type === "safety_action") return action === "clear_teen_doubt" || action === "clear_minor_signal" ? "cleared" : action === "older_than_stated" ? "older" : undefined;
+  if (type === "minor_reported") return "reported";
+  if (type === "teen_age_contradicted") return "older";
+  if (type === "age_conflict") return "conflict";
+  if (type === "age_unknown") return "unknown";
+  if (type === "age_resolved") return "resolved";
+  return undefined;
+}
+
 export function ageView(recordAge: number | null, net?: AgeState): { minor: boolean; ageUnknown?: true } {
   if (net) return { minor: net.minor || recordMinor(recordAge), ...(net.unknown ? { ageUnknown: true as const } : {}) };
   return recordAge === null ? { minor: true, ageUnknown: true } : { minor: recordMinor(recordAge) };
 }
 
-/**
- * Was this member treated as under 18 at time t: a record age under 18, or the Network's age state
- * then. It agrees with ageView(): with no age event yet, the Network's stored view decides, else the
- * record age, and a missing age fails closed (audit observatory-19).
- */
-export function minorAt(info: AgeInfo, id: string, recordAge: number | null | undefined, t: number): boolean {
+export function minorAt(info: Pick<AgeInfo, "latest" | "changes">, id: string, recordAge: number | null | undefined, t: number): boolean {
   if (recordMinor(recordAge)) return true;
   let st: AgeState | undefined;
   for (const c of info.changes.get(id) ?? []) { if (c.at > t) break; st = c; }
@@ -137,7 +196,6 @@ export function minorAt(info: AgeInfo, id: string, recordAge: number | null | un
   return !validAge(recordAge);
 }
 
-/** Why a database login may not serve the console, or undefined (audit observatory-9). */
 export function loginProblem(r: { su: boolean; bypass: boolean; ro: string; inAppRole: boolean | null }, o: { local: boolean; isolation: "rls_role" | "app_filter"; app: string }): string | undefined {
   if (r.ro !== "on") return "the console's connection is not read-only";
   if (o.isolation === "rls_role" && r.inAppRole !== true) return `the app's read login is not a member of network_observatory_${o.app}`;
@@ -145,11 +203,6 @@ export function loginProblem(r: { su: boolean; bypass: boolean; ro: string; inAp
   return undefined;
 }
 
-/**
- * The newest console row of each network (city) of one app, merged into one: lists are joined,
- * counters and gate reasons summed, deferred sends added up, and matching is on only where every
- * city has it on (audit observatory-11). Newest saved_at first.
- */
 export function mergeStateRows(rows: Record<string, unknown>[]): Record<string, unknown> | undefined {
   if (rows.length <= 1) return rows[0];
   const parse = (v: unknown) => (typeof v === "string" && /^[[{]/.test(v.trim()) ? JSON.parse(v) : v);
@@ -179,6 +232,7 @@ export class RealSource implements DataSource {
   readonly mode = "real" as const;
   readonly store: Store;
   private sql?: SQL;
+  private unchecked?: SQL;
   private listeners = new Listeners<ObsDelta>();
   private timers: ReturnType<typeof setInterval>[] = [];
   private reveal: boolean;
@@ -187,24 +241,18 @@ export class RealSource implements DataSource {
   private lastActivity = 0;
   private shadowIds = new Set<string>();
   private shadowRuns: EngineRunSummary[] = [];
-  /** The Network's stored state is in the database (read through network.network_state_console): what the console shows from it. */
   private netState?: { matchingEnabled: boolean; deferred: number; savedAt: number; trust: Map<string, "ok" | "watch" | "hold">; info: NetworkInfo };
   private networkDirty = false;
-  /** OBSERVATORY_REVEAL_PII was set for a database that is not local, or not marked dev: refused (admin-console 4.4). */
+  private serviceMatchingAllowed?: boolean;
   private revealRefused = false;
-  /** The database login is not fit for the console (loginProblem): nothing is read. */
   private refused?: string;
-  /** The Network service's staff API (review, safety, matching), when configured. */
   private service?: ServiceClient;
-  /** A shadow run in progress (one at a time; audit observatory-22). */
   private shadowing?: Promise<ControlResult>;
-  /** The Network's age state and opt-ins, from the last load. */
-  private ages: AgeInfo = { latest: new Map(), changes: new Map(), optIns: new Map() };
-  /** Record ages from the last load (minor contacts). */
+  private ages: AgeInfo = { latest: new Map(), changes: new Map(), optIns: new Map(), teenHistory: new Map(), flags: new Map() };
   private recordAges = new Map<string, number | null>();
+  private firstNames = new Map<string, string>();
 
   readonly app: AppId;
-  /** How rows are kept to the app: the app's read login (RLS) and the filter, or the filter only. */
   private isolation: "rls_role" | "app_filter";
 
   constructor(private opts: RealOptions = {}) {
@@ -213,8 +261,6 @@ export class RealSource implements DataSource {
     this.isolation = appUrl ? "rls_role" : "app_filter";
     this.url = appUrl ?? opts.url ?? process.env.NETWORK_DATABASE_URL ?? process.env.DATABASE_URL;
     const want = opts.revealPii ?? process.env.OBSERVATORY_REVEAL_PII === "1";
-    // The global reveal is for local databases only; staff use the per-member, audited reveal.
-    // ... and a database that says it is a development one (platform.settings environment = dev), checked in init().
     this.reveal = want && !!this.url && isLocal(this.url);
     this.revealRefused = want && !this.reveal;
     const svc = opts.service === false ? undefined : opts.service ?? serviceFromEnv();
@@ -224,55 +270,70 @@ export class RealSource implements DataSource {
   }
 
   private env(error?: string): EnvInfo {
-    // OBSERVATORY_ENV_LABEL names the environment (e.g. STAGING); local databases say so.
     const where = process.env.OBSERVATORY_ENV_LABEL ?? (this.url && isLocal(this.url) ? "LOCAL DATABASE" : "PRODUCTION DATA");
     return {
       mode: "real", label: this.url ? `${where} · read-only${this.reveal ? " · PII REVEALED" : " · PII scrubbed"}${this.revealRefused ? " · OBSERVATORY_REVEAL_PII refused (database not local or not dev)" : ""}` : "REAL WORLD · not connected",
       dataset: "network schema", database: this.url ? redactUrl(this.url) : undefined, error: error ?? this.refused,
       capabilities: { canStep: false, canIntervene: false, hiddenTruth: false, readOnly: true, staffActions: !!this.service }, piiRevealed: this.reveal,
       ...(this.service ? { service: this.service.url } : {}),
-      app: this.app, appIsolation: this.isolation, ...(matchingAllowed(this.app) ? {} : { matchingLocked: true }),
+      app: this.app, appIsolation: this.isolation, ...(this.serviceMatchingAllowed !== true ? { matchingLocked: true } : {}),
     };
   }
 
   async init() {
     if (!this.url) { this.store.setEnv(this.env("No database configured. Set NETWORK_DATABASE_URL to the Network's Postgres (network schema).")); return; }
-    this.sql = new SQL({ url: this.url, max: 4, idleTimeout: 30, connection: { default_transaction_read_only: "on", application_name: `network-observatory-${this.app}`, statement_timeout: "20000" } });
-    // The login is checked, not assumed: read-only, the app's role for an app login, and never a superuser outside this machine.
-    try {
-      const [who] = await this.sql`select r.rolsuper as su, r.rolbypassrls as bypass, current_setting('transaction_read_only') as ro,
-          (select pg_has_role(current_user, oid, 'member') from pg_roles where rolname = ${`network_observatory_${this.app}`}) as in_app_role
-        from pg_roles r where r.rolname = current_user` as any[];
-      const why = loginProblem({ su: !!who?.su, bypass: !!who?.bypass, ro: String(who?.ro), inAppRole: who?.in_app_role ?? null }, { local: isLocal(this.url), isolation: this.isolation, app: this.app });
-      if (why) { this.refused = `Refused: ${why}.`; await this.sql.close(); this.sql = undefined; this.store.setEnv(this.env()); return; }
-    } catch (e) { this.store.setEnv(this.env(`Could not check the database login: ${(e as Error).message}`)); }
-    if (this.reveal) {
-      // The global reveal needs a development database as well as a local one (a tunnel to production also looks local).
-      const env = await this.sql!`select value from platform.settings where key = 'environment'`.then((r: any[]) => r[0]?.value as string | undefined, () => undefined);
-      if (env !== "dev") { this.reveal = false; this.revealRefused = true; }
-    }
-    try {
-      await this.load();
-      this.store.setEnv(this.env());
-    } catch (e) {
-      this.store.setEnv(this.env(`Could not read the network schema: ${(e as Error).message}`));
-    }
+    this.unchecked = new SQL({ url: this.url, max: 4, idleTimeout: 30, connection: { default_transaction_read_only: "on", application_name: `network-observatory-${this.app}`, statement_timeout: "20000" } });
+    await this.refresh();
+    if (!this.sql && !this.unchecked) return;
     this.timers.push(setInterval(() => { this.reload(); }, this.opts.pollMs ?? 10_000));
     this.timers.push(setInterval(() => this.push(), this.opts.pushMs ?? 500));
+  }
+
+  private async checkLogin(): Promise<boolean> {
+    const sql = this.unchecked;
+    if (!sql || !this.url) return false;
+    let who: { su?: boolean; bypass?: boolean; ro?: unknown; in_app_role?: boolean | null } | undefined;
+    try {
+      [who] = await sql<{ su: boolean; bypass: boolean; ro: string; in_app_role: boolean | null }[]>`select r.rolsuper as su, r.rolbypassrls as bypass, pg_catalog.current_setting('transaction_read_only') as ro,
+          (select pg_catalog.pg_has_role(current_user, a.oid, 'member') from pg_catalog.pg_roles a where a.rolname = ${`network_observatory_${this.app}`}) as in_app_role
+        from pg_catalog.pg_roles r where r.rolname = current_user`;
+    } catch (e) {
+      this.store.setEnv(this.env(`Could not check the database login: ${(e as Error).message}`));
+      return false;
+    }
+    this.unchecked = undefined;
+    const why = loginProblem({ su: !!who?.su, bypass: !!who?.bypass, ro: String(who?.ro), inAppRole: who?.in_app_role ?? null }, { local: isLocal(this.url), isolation: this.isolation, app: this.app });
+    if (why) { this.refused = `Refused: ${why}.`; await sql.close(); this.store.setEnv(this.env()); return false; }
+    if (this.reveal) {
+      const env = await sql`select value from platform.settings where key = 'environment'`.then((r: any[]) => r[0]?.value as string | undefined, () => undefined);
+      if (env !== "dev") { this.reveal = false; this.revealRefused = true; }
+    }
+    this.sql = sql;
+    this.store.setEnv(this.env());
+    return true;
+  }
+
+  private async refresh() {
+    if (!this.sql && !(await this.checkLogin())) return;
+    try {
+      await this.load();
+      const env = this.env();
+      if (JSON.stringify(env) !== JSON.stringify(this.store.env)) this.store.setEnv(env);
+    } catch (e) {
+      this.store.setEnv(this.env(`Read failed: ${(e as Error).message}`));
+    }
   }
 
   async dispose() {
     for (const t of this.timers) clearInterval(t);
     this.timers = [];
     await this.sql?.close();
+    await this.unchecked?.close();
   }
 
   private reload() {
-    if (this.loading || !this.sql) return this.loading ?? Promise.resolve();
-    this.loading = this.load()
-      .then(() => { if (this.store.env.error) this.store.setEnv(this.env()); })
-      .catch(e => { this.store.setEnv(this.env(`Read failed: ${(e as Error).message}`)); })
-      .finally(() => { this.loading = null; });
+    if (this.loading || (!this.sql && !this.unchecked)) return this.loading ?? Promise.resolve();
+    this.loading = this.refresh().finally(() => { this.loading = null; });
     return this.loading;
   }
 
@@ -296,29 +357,18 @@ export class RealSource implements DataSource {
     c.day = Math.floor((c.now - c.start) / DAY) + 1;
   }
 
-  /**
-   * This app's Network state, one console row per city merged into one (mergeStateRows): the app's
-   * own view (migration 0005), else the shared view with the app's ids ('<app>:<city>'; a legacy id
-   * with no ':' is ntwrk). Columns come from a fixed list in this file, never from a caller. A
-   * database without either gives none.
-   */
   private async stateRow(cols: string): Promise<any[]> {
     const sql = this.sql;
     if (!sql) return [];
-    const view = `network.network_state_console_${this.app}`;
-    const rows = await sql.unsafe(`select ${cols} from ${view} order by saved_at desc`).catch(() =>
-      sql.unsafe(`select ${cols} from network.network_state_console where split_part(id, ':', 1) = $1 or ($1 = 'ntwrk' and position(':' in id) = 0) order by saved_at desc`, [this.app]).catch(() => []));
+    const rows = await sql.unsafe(`select ${cols} from network.network_state_console_${this.app} order by saved_at desc`);
     const one = mergeStateRows(rows as Record<string, unknown>[]);
     return one ? [one] : [];
   }
 
-  // ------------------------------------------------------------------ load
   private async load() {
     const sql = this.sql!;
     const s = this.store;
     const app = this.app;
-    // A query with a parameter reads float4 ("real") columns in binary: 0.616 comes back as 0.6159999966.
-    // Those columns are read through text (::text::float8), which gives the value as stored.
     const [members, msgAgg, partAgg, edges, opps, parts, runs, events, totals, reviews, ages, bookedMsgs, picksEv] = await Promise.all([
       sql`select id, name, home_city, home_area, account_status, participation_state, opted_out, age, invited_by, community, occupation, joined_at from network.members where app_id = ${app}`,
       sql`select member_id, count(*) filter (where direction = 'inbound')::int as msgs_in, count(*) filter (where direction = 'outbound')::int as msgs_out,
@@ -338,7 +388,7 @@ export class RealSource implements DataSource {
             count(p.enjoyment) filter (where p.status = 'attended' and h.id is not null)::int as enjoyment_n
           from network.participations p left join held h on h.id = p.opportunity_id
           where p.app_id = ${app} and p.role = 'participant' group by p.member_id`,
-      sql`select from_id, to_id, type, strength::text::float8 as strength, explicit, created_at from network.edges where app_id = ${app} order by from_id, to_id, type`,
+      sql<{ from_id: string; to_id: string; type: EdgeType; strength: number; explicit: boolean; created_at: Date | string | null }[]>`select from_id, to_id, type, strength::text::float8 as strength, explicit, created_at from network.edges where app_id = ${app} order by from_id, to_id, type`,
       sql`select id, kind, state, source, generator, category, city, objective, score::text::float8 as score, components, explanations, exploration, meeting_at, reason, run_id, created_at, updated_at from network.opportunities where app_id = ${app}`,
       sql<ParticipationRow[]>`select p.opportunity_id,p.member_id,p.role,p.status,p.enjoyment::text::float8 as enjoyment,
         rv.opportunity_id is not null as reviewed, coalesce(rv.decision='approve',false) as approved, rv.invalidated is not null as invalidated,
@@ -353,7 +403,7 @@ export class RealSource implements DataSource {
         from network.participations p
         left join network.review_items rv on rv.app_id=p.app_id and rv.opportunity_id=p.opportunity_id
         where p.app_id=${app}`,
-      sql`select summary from network.matching_runs where app_id = ${app} order by at desc, id desc limit 40`,
+      sql<{ summary: StoredRunSummary }[]>`select summary from network.matching_runs where app_id = ${app} order by at desc, id desc limit 40`,
       // Only types the feed shows: probes and refusals would push everything else out of the last 300.
       sql`select id, at, actor_type, actor_id, type, object_type, object_id, payload from network.events where app_id = ${app} and type = any(${`{${FEED_TYPES.join(",")}}`}::text[]) order by at desc, id desc limit 300`,
       sql`select
@@ -368,9 +418,12 @@ export class RealSource implements DataSource {
             (select count(*) from network.events where app_id = ${app} and type = 'invariant_violation')::int as invariants,
             (select greatest(coalesce(max(ts), 'epoch'), (select coalesce(max(updated_at), 'epoch') from network.opportunities where app_id = ${app})) from network.messages where app_id = ${app}) as last_activity,
             (select min(joined_at) from network.members where app_id = ${app}) as first_join`,
-      // Older databases may not have the review table (or its newer columns) yet: show what there is rather than fail.
-      sql`select opportunity_id, queued_at, deadline, decision, reason, note, reviewer, decided_at, origin, seconds_spent::text::float8 as seconds_spent, edits, rerolls, invalidated from network.review_items where app_id = ${app}`
-        .catch(() => sql`select opportunity_id, queued_at, deadline, decision, reason, note, reviewer, decided_at from network.review_items where app_id = ${app}`).catch(() => []),
+      sql`select r.opportunity_id, r.queued_at, r.deadline, r.decision, r.reason, r.note, r.reviewer, r.decided_at, r.origin, r.seconds_spent::text::float8 as seconds_spent,
+        r.edits, r.rerolls, r.invalidated, r.approver, r.exception_reason, r.judge_verdict,
+        (select j.explanation from network.review_judgments j where j.app_id = r.app_id and j.opportunity_id = r.opportunity_id and j.revision = r.rerolls
+          and j.status = 'decided' and j.reason = r.exception_reason and j.verdict = r.judge_verdict and j.verdict <> 'approve'
+          order by j.decided_at desc limit 1) as judge_explanation
+        from network.review_items r where r.app_id = ${app}`,
       this.ageInfo(sql),
       sql.unsafe<BookingReceiptView[]>(`select app_id, opportunity_id, member_id, booking_at, received_at
         from network.booking_receipts_${app} where app_id=$1`, [app]),
@@ -397,10 +450,11 @@ export class RealSource implements DataSource {
       }
     }
     this.recordAges = new Map((members as any[]).map(r => [r.id as string, r.age as number | null]));
+    this.firstNames = new Map();
     for (const r of members as any[]) {
+      if (typeof r.name === "string") this.firstNames.set(r.id, r.name.trim().split(/\s+/)[0]!);
       const mm = msgBy.get(r.id) as any, pp = partBy.get(r.id) as any;
       const state: MemberStatus = r.opted_out ? "opted_out" : r.account_status === "invited" ? "not_joined" : r.participation_state;
-      // A member declined at join (under 13) is stored as the id and 'removed' only: no name or city.
       const declined = r.account_status === "removed" && r.name === null;
       const age = declined ? { minor: true } : ageView(r.age, ages.latest.get(r.id));
       const opt = ages.optIns.get(r.id);
@@ -475,11 +529,10 @@ export class RealSource implements DataSource {
       }
       upsertIfChanged(s.opps, o, x => s.upsertOpp(x));
     }
-    const dbRuns = (runs as any[]).map(r => r.summary as EngineRunSummary).reverse();
+    const dbRuns = runs.map(r => storedRunSummary(r.summary)).reverse();
     const allRuns = [...dbRuns, ...this.shadowRuns];
     if (JSON.stringify(allRuns.map(r => r.id)) !== JSON.stringify(s.runs.map(r => r.id))) { s.runs.length = 0; for (const r of allRuns) s.addRun(r); }
 
-    // Counters: everything the stats panel needs, computed in SQL.
     const c = zeroCounts();
     c.messages = t.messages; c.inbound = t.inbound; c.outbound = t.outbound; c.proactive = t.proactive; c.invites = t.invites;
     c.meetingsScheduled = t.meetings_scheduled; c.blocks = t.blocks; c.adversarialAttempts = t.adversarial; c.invariantViolations = t.invariants;
@@ -502,17 +555,11 @@ export class RealSource implements DataSource {
     await this.loadNetwork(sql);
   }
 
-  /**
-   * How the Network treats each member's age (network.md 6.3) and their availability opt-ins: the
-   * latest from its stored state (network.network_state_console), else from its events, the way the
-   * game projector reads them; every change with its time from the events. A member the Network has
-   * not seen yet has no entry: the record age decides.
-   */
   private async ageInfo(sql: SQL): Promise<AgeInfo> {
-    const info: AgeInfo = { latest: new Map(), changes: new Map(), optIns: new Map() };
+    const info: AgeInfo = { latest: new Map(), changes: new Map(), optIns: new Map(), teenHistory: new Map(), flags: new Map() };
     const [st, ev] = await Promise.all([
       this.stateRow("members"),
-      sql`select at, type, payload from network.events where app_id = ${this.app} and type = any(${`{${[...AGE_EVENTS, "calendar_consent", "weekly_checkin_consent"].join(",")}}`}::text[]) order by at, id`.catch(() => []),
+      sql`select at, type, payload from network.events where app_id = ${this.app} and type = any(${`{${[...AGE_EVENTS, ...TEEN_EVENTS, "calendar_consent", "weekly_checkin_consent"].join(",")}}`}::text[]) order by at, id`,
     ]);
     for (const e of ev as any[]) {
       const id = e.payload?.memberId as string | undefined;
@@ -521,6 +568,9 @@ export class RealSource implements DataSource {
         info.optIns.set(id, { ...info.optIns.get(id), [e.type === "calendar_consent" ? "calendar" : "weekly"]: e.payload.on !== false });
         continue;
       }
+      const kind = teenEventKind(e.type, e.payload?.action);
+      if (kind) info.teenHistory.set(id, [...(info.teenHistory.get(id) ?? []), { at: ms(e.at) ?? 0, kind }]);
+      if (!AGE_EVENTS.includes(e.type)) continue;
       const list = info.changes.get(id) ?? [];
       const cur = list.at(-1) ?? { minor: false, unknown: false };
       const next = e.type === "age_unknown" ? { minor: true, unknown: true } : e.type === "age_resolved" ? { minor: !!e.payload.minor, unknown: false } : { ...cur, minor: true };
@@ -532,38 +582,68 @@ export class RealSource implements DataSource {
     const stored = (typeof raw === "string" ? JSON.parse(raw) : raw) as any[] | undefined;
     for (const m of stored ?? []) {
       if (typeof m?.id !== "string") continue;
-      // A missing flag fails closed (treated as under 18).
       info.latest.set(m.id, { minor: m.minor !== false, unknown: !!m.ageUnknown });
+      info.flags.set(m.id, { minorSignal: m.minorSignal === true, minorReported: m.minorReported === true, olderReported: m.olderReported === true, ageConflict: m.ageConflict === true, ageUnknown: m.ageUnknown === true });
       if (m.calendar !== undefined || m.weekly !== undefined) info.optIns.set(m.id, { calendar: !!m.calendar, weekly: !!m.weekly });
     }
     return info;
   }
 
-  /**
-   * Minor contacts (must be 0), as the judge counts them in game mode: outbound messages about an
-   * opportunity (or a probe) while the recipient
-   * or anyone in that opportunity was treated as under 18, by the record age or the Network's age
-   * state at that moment; and, to a minor, a connection-type message or one that offers a connection.
-   */
-  private minorContacts(rows: { member_id: string; ts: Date | string; opportunity_id: string | null; type?: string | null; body?: string | null }[]): number {
-    let n = 0;
+  private async minorContacts(sql: SQL, rows: { member_id: string; ts: Date | string; opportunity_id: string | null; type?: string | null; body?: string | null }[]): Promise<{ n: number; teenProblem?: string }> {
+    const counted: { t: number; memberId: string; body: string; type: string | null; o?: ObsOpportunity; scopeNotice?: true }[] = [];
     for (const r of rows) {
       const t = ms(r.ts) ?? 0;
       const minor = (id: string) => minorAt(this.ages, id, this.recordAges.get(id), t);
       const o = r.opportunity_id ? this.store.opps.get(r.opportunity_id) : undefined;
       const who = new Set([r.member_id, ...(o && o.source !== "shadow" ? o.participants : [])]);
-      if ((r.opportunity_id || r.type === "probe") && [...who].some(minor)) { n++; continue; }
-      // The judge's message rules too (judge metrics.ts): a connection-type message to a minor, or any
-      // message to a minor that offers a connection ("Want me to see if anyone else is up for one?").
-      if (minor(r.member_id) && (CONNECT_TYPES.has(r.type ?? "") || offersConnection(r.body ?? ""))) n++;
+      const row = { t, memberId: r.member_id, body: r.body ?? "", type: r.type ?? null, ...(o && o.source !== "shadow" ? { o } : {}) };
+      if ((r.opportunity_id || r.type === "probe") && [...who].some(minor)) { counted.push(row); continue; }
+      if (minor(r.member_id) && (CONNECT_TYPES.has(r.type ?? "") || offersConnection(r.body ?? ""))) counted.push(CONNECT_TYPES.has(r.type ?? "") ? row : { ...row, scopeNotice: true });
     }
-    return n;
+    const teenItem = (o?: ObsOpportunity): o is ObsOpportunity => !!o && o.category !== undefined && teenFriendCategory(this.app, o.category) && teenGenerator(this.app, o.generator);
+    if (!counted.some(c => teenItem(c.o) || c.scopeNotice)) return { n: counted.length };
+    const evidence = await this.teenEvidence(sql);
+    const held = new Set<string>();
+    let n = 0;
+    for (const c of [...counted].sort((a, b) => a.t - b.t)) {
+      if (c.scopeNotice && teenScopeNoticeAt(evidence, c.memberId, c.body, c.t, [...this.firstNames].flatMap(([id, name]) => id === c.memberId || name.toLowerCase() === this.firstNames.get(c.memberId)?.toLowerCase() ? [] : [name]))) continue;
+      if (!teenItem(c.o)) { n++; continue; }
+      const roster = [...new Set([...c.o.participants, ...c.o.alternates, c.memberId])];
+      const until = teenMeetingEndOf(c.o.meetingAt !== undefined ? { meetingAt: c.o.meetingAt } : {}, c.t);
+      if (teenRuleHeldAt(evidence, roster, c.o.category, c.t, until)) { held.add(c.o.id); continue; }
+      const others = roster.filter(id => id !== c.memberId).flatMap(id => this.firstNames.get(id) ?? []);
+      if (held.has(c.o.id) && teenNoticeNamesNobody(c.body, c.type, others)) continue;
+      n++;
+    }
+    return { n, ...(evidence.problem !== undefined ? { teenProblem: evidence.problem } : {}) };
   }
 
-  /**
-   * The Network's stored state (read-only), requests, health alerts, the scorecard and growth. Every
-   * part is optional: a database without these tables shows the rest.
-   */
+  private async teenEvidence(sql: SQL): Promise<TeenEvidence> {
+    const app = this.app;
+    let events: { at: Date | string; payload: unknown }[], snap: WorldSnapshot;
+    try {
+      [events, snap] = await Promise.all([
+        sql<{ at: Date | string; payload: unknown }[]>`select at, payload from network.events where app_id = ${app} and type = 'teen_intros_switch' order by at, id`,
+        this.snapshot(),
+      ]);
+    } catch (e) {
+      return { app, readable: false, problem: (e as Error).message, switches: [], members: new Map(), history: new Map() };
+    }
+    const detail = (d: unknown) => (typeof d === "string" ? JSON.parse(d) : d ?? {}) as Record<string, unknown>;
+    const switches: TeenSwitchRow[] = events.map(r => ({ at: ms(r.at) ?? 0, on: detail(r.payload).on === true }));
+    const members = new Map<string, TeenAgeRow>();
+    for (const m of snap.members) {
+      const f = this.ages.flags.get(m.id);
+      members.set(m.id, {
+        ...(m.birthKey !== undefined ? { birthKey: m.birthKey } : {}), birthExact: m.birthExact === true,
+        ageConflict: m.ageConflict === true || f?.ageConflict === true || f?.ageUnknown === true,
+        teenBarred: m.teenBarred === true,
+        minorSignal: f?.minorSignal === true, minorReported: f?.minorReported === true, olderReported: f?.olderReported === true,
+      });
+    }
+    return { app, readable: true, switches, members, history: this.ages.teenHistory };
+  }
+
   private async loadNetwork(sql: SQL) {
     const s = this.store;
     const app = this.app;
@@ -578,15 +658,15 @@ export class RealSource implements DataSource {
       // Messages about an opportunity that went out (or would have, dry-run): not refused, held or blocked.
       // Every message that went out (or would have, dry-run): not refused, held or blocked. The text is read
       // here only to apply the judge's connection-offer rule; it never leaves this function.
-      sql`select member_id, ts, opportunity_id, type, body from network.messages
+      sql<{ member_id: string; ts: Date | string; opportunity_id: string | null; type: string | null; body: string | null }[]>`select member_id, ts, opportunity_id, type, body from network.messages
           where app_id = ${app} and direction = 'outbound' and not system and status !~ '^(refused|suppressed|blocked|parked|held)'`,
-      sql`select max(at) as at from network.matching_runs where app_id = ${app}`,
+      sql<{ at: Date | string | null }[]>`select max(at) as at from network.matching_runs where app_id = ${app}`,
       sql`select count(*)::int as n from network.review_items where app_id = ${app} and decision = 'expired' and decided_at >= ${since}`.catch(() => [{ n: 0 }]),
       this.service?.health(),
       sql<{ yes: number; total: number }[]>`select count(*) filter(where payload->>'worthwhile'='true')::int as yes,count(*)::int as total
         from network.events where app_id=${app} and type='interruption_feedback' and payload->>'worthwhile' in ('true','false')`,
     ]);
-    // Network state (stored by the Network's PgStore).
+    this.serviceMatchingAllowed = service && !("error" in service) ? service.matchingAllowed : undefined;
     const row = (st as any[])[0];
     if (row) {
       const trust = new Map<string, "ok" | "watch" | "hold">(((typeof row.trust === "string" ? JSON.parse(row.trust) : row.trust) ?? []).map((t: any) => [t.id, t.level]));
@@ -596,8 +676,7 @@ export class RealSource implements DataSource {
       const reqRows = reqs as any[];
       const info: NetworkInfo = {
         kind: "consent", counters, gateReasons: gate, matchingEnabled: row.matching !== false,
-        // The stored state never holds the review mode: production is always "human" (runbook-real 7.1).
-        review: { mode: "human", queued: open, approved: counters.reviewApproved ?? 0, rejected: counters.reviewRejected ?? 0, expired: counters.reviewExpired ?? 0 },
+        review: { queued: open, approved: counters.reviewApproved ?? 0, rejected: counters.reviewRejected ?? 0, expired: counters.reviewExpired ?? 0 },
         requests: {
           total: reqRows.filter(r => r.kind === "people").length, fulfilled: reqRows.filter(r => r.outcome === "fulfilled").length, probing: reqRows.filter(r => r.outcome === "probing").length,
           waiting: reqRows.filter(r => r.kind === "people" && r.outcome === "none").length, plans: reqRows.filter(r => r.kind === "plans").length,
@@ -612,7 +691,6 @@ export class RealSource implements DataSource {
         if (level && m.trust !== level) { m.trust = level; s.touchMember(m.id); }
       }
     }
-    // Requests (never the member's words: only what the classifier read).
     const requests: ObsRequest[] = (reqs as any[]).filter(r => s.members.has(r.member_id)).map(r => {
       const at = ms(r.created_at) ?? 0, done = ms(r.fulfilled_at);
       return {
@@ -622,21 +700,22 @@ export class RealSource implements DataSource {
       };
     });
     s.setRequests(requests);
-    // Health alerts.
     const refusals: Record<string, number> = {};
     let guardBlocked = 0;
     for (const r of ev24 as any[]) { if (r.type === "guard_blocked") guardBlocked += r.n; else refusals[r.reason ?? "unknown"] = (refusals[r.reason ?? "unknown"] ?? 0) + r.n; }
     const opps = [...s.opps.values()].filter(o => o.source !== "shadow");
     const all = evAll as any[];
     const leaks = all.filter(e => e.type === "invariant_violation" && /leak|canary/i.test(e.rule ?? "")).length;
-    const minorContacts = this.minorContacts(contacts as any[]);
+    const { n: minorContacts, teenProblem } = await this.minorContacts(sql, contacts);
+    const teenAlert: HealthAlert[] = teenProblem === undefined ? [] : [{ level: "bad", key: "teen_evidence_unreadable", count: 1,
+      text: `Teen evidence unreadable: ${teenProblem}. Every teen friendship contact counts as a minor contact until it can be read.` }];
     const alerts = healthAlerts({
-      now, start: this.store.clock.start, reviewOpen: opps.filter(o => o.state === "IN_REVIEW" && o.review).map(o => ({ deadline: o.review!.deadline, queuedAt: o.review!.queuedAt })),
-      sla: { app: this.app, hours: slaHours()[this.app] }, matchingLocked: !matchingAllowed(this.app),
+      now, start: this.store.clock.start, reviewOpen: opps.filter(o => o.state === "IN_REVIEW" && o.review?.exceptionReason).map(o => ({ deadline: o.review!.deadline, queuedAt: o.review!.queuedAt })),
+      sla: { app: this.app, hours: slaHours()[this.app] }, matchingLocked: this.serviceMatchingAllowed !== true,
       reviewExpired: (expired as any[])[0]?.n ?? 0, deferred: this.netState?.deferred ?? null, refusals, guardBlocked,
-      lastEngineRun: ms((lastRun as any[])[0]?.at), expectEngine: !!this.netState || s.runs.some(r => !r.shadow), matchingEnabled: this.netState?.matchingEnabled ?? matchingAllowed(this.app),
+      lastEngineRun: ms(lastRun[0]?.at), expectEngine: !!this.netState || s.runs.some(r => !r.shadow), matchingEnabled: this.netState?.matchingEnabled ?? false,
       invariants: s.counts.invariantViolations, canaryLeaks: leaks, minorContacts,
-      extra: service ? serviceAlerts(service, Date.now()) : [],
+      extra: [...teenAlert, ...(service ? serviceAlerts(service, Date.now()) : [])],
     });
     // Scorecard and growth.
     const inviteRows = all.filter(e => e.type === "invite");
@@ -646,7 +725,7 @@ export class RealSource implements DataSource {
     const messages: MsgMeta[] = (msgs as any[]).map(m => ({ memberId: m.member_id, ts: ms(m.ts) ?? 0, direction: m.direction, proactive: m.proactive, status: m.status }));
     const card = scorecard({
       now, start: this.store.clock.start, members, opps, messages, requests, invites: s.counts.invites, accepts: s.counts.accepts,
-      reviewSeconds: opps.reduce((a, o) => a + (o.review?.secondsSpent ?? 0), 0), sentProposals: opps.filter(o => o.review?.decision === "approve" && !o.review.invalidated && o.review.reviewer !== SIM_AUTO_REVIEWER).length,
+      reviewSeconds: opps.reduce((a, o) => a + (o.review?.secondsSpent ?? 0), 0), sentProposals: opps.filter(o => o.review?.decision === "approve" && !o.review.invalidated).length,
       inviters, minorContacts, leaks, worthwhileAnswers: survey[0] ?? { yes: 0, total: 0 },
     });
     const growth = growthStats({ members, opps, requests, invitees, invitesSent: inviteRows.length, growthAsks: all.filter(e => e.type === "growth_ask").length, inviters });
@@ -686,7 +765,6 @@ export class RealSource implements DataSource {
     }
   }
 
-  // ------------------------------------------------------------------ detail
   async member(id: string, opts: ViewOptions = {}): Promise<MemberDetail | undefined> {
     const m = this.store.member(id);
     if (!m || !this.sql) return undefined;
@@ -704,7 +782,6 @@ export class RealSource implements DataSource {
     return {
       member: rv && p.name ? { ...m, name: p.name } : m,
       profile: { bio: p.bio ? scrubText(p.bio, rv) : undefined, occupation: p.occupation ?? undefined, neighborhood: p.home_area ?? undefined },
-      // Scores never; slop's dating facts only while revealed (checked on the raw tags, before scrubbing removes them).
       facets: memberFacets(this.app, (facets as any[]).map(facetOf), rv).map(f => scrubFacet(f, rv)),
       intents: (intents as any[]).map(i => ({ ...intentOf(i), objective: scrubText(i.objective, rv), details: i.details ? scrubText(i.details, rv) : undefined, desiredPeople: i.desired_people ? scrubText(i.desired_people, rv) : undefined })),
       presence: (presence as any[]).map(presenceOf),
@@ -727,7 +804,6 @@ export class RealSource implements DataSource {
       order by ts desc, id desc limit ${staffHistoryPageSize(false) + 1}`);
   }
 
-  /** Reads only the app's shaped evidence, including when the queue has advanced past the message projection. */
   private async deliveryEvidence(messages: MessageEvidenceKey[]): Promise<Map<string, DeliveryEvidence>> {
     const sql = this.sql;
     const ids = messages.filter(row => row.direction === "outbound" && !row.system).map(row => row.id);
@@ -764,7 +840,6 @@ export class RealSource implements DataSource {
       ...messages.rows.map((r): TimelineEntry => { const message = this.messageOf(r, rv, evidence.get(r.id)); return { t: message.ts, kind: "message", message }; }),
       ...events.rows.filter(e => onTimeline(e, id, theirs)).map((e): TimelineEntry => ({ t: ms(e.at as Date | string) ?? 0, kind: "event", event: describe(e, name) })),
     ];
-    // Stable: at the same instant, what the system did comes before the message it sent.
     entries.sort((a, b) => a.t - b.t || (a.kind === b.kind ? 0 : a.kind === "event" ? -1 : 1));
     const d = (pending as any[])[0]?.d;
     const list = (typeof d === "string" ? JSON.parse(d) : d) ?? [];
@@ -775,7 +850,6 @@ export class RealSource implements DataSource {
     };
   }
 
-  /** Unless PII is revealed, what a member wrote never leaves the database (the queries select only its length). */
   private messageOf(r: any, rv = this.reveal, evidence?: DeliveryEvidence): ObsMessage {
     const hidden = r.direction === "inbound" && !rv;
     const ts = ms(r.ts) ?? 0;
@@ -797,6 +871,10 @@ export class RealSource implements DataSource {
       ...(Array.isArray(edits) && edits.length ? { edits } : {}),
       ...(r.rerolls ? { rerolls: Number(r.rerolls) } : {}),
       ...(r.invalidated ? { invalidated: r.invalidated } : {}),
+      ...(r.approver === "judge" || r.approver === "staff" ? { approver: r.approver } : {}),
+      ...(typeof r.exception_reason === "string" && r.exception_reason ? { exceptionReason: r.exception_reason } : {}),
+      ...((JUDGE_VERDICTS as readonly unknown[]).includes(r.judge_verdict) ? { judgeVerdict: r.judge_verdict } : {}),
+      ...(typeof r.judge_explanation === "string" && r.judge_explanation ? { judgeExplanation: scrubText(r.judge_explanation.slice(0, 1200), this.reveal) } : {}),
     };
   }
 
@@ -826,14 +904,10 @@ export class RealSource implements DataSource {
   }
 
   inOpenReview(memberId: string): boolean {
-    for (const o of this.store.opps.values()) if (o.state === "IN_REVIEW" && o.participants.includes(memberId)) return true;
+    for (const o of this.store.opps.values()) if (o.state === "IN_REVIEW" && o.review?.exceptionReason && o.participants.includes(memberId)) return true;
     return false;
   }
 
-  /**
-   * Safety cases: from the Network's stored state when it is here, else rebuilt from trust and
-   * abuse events. Read-only: staff act through the Network admin API, not this console.
-   */
   async safety(): Promise<SafetyInfo> {
     const sql = this.sql;
     const now = this.store.clock.now;
@@ -861,7 +935,6 @@ export class RealSource implements DataSource {
       }
     }
     const trust = this.netState?.trust ?? new Map(cases.map(c => [c.memberId, c.level]));
-    // Post-date reports: the service's report store, else what the cases show (report_received after a date).
     const fromService = this.service ? await this.service.reports() : undefined;
     const reports = fromService && !("error" in fromService) ? fromService.filter(r => this.store.members.has(r.subjectId)) : reportsFromCases(cases, opps);
     return safetyInfo({
@@ -870,22 +943,16 @@ export class RealSource implements DataSource {
     });
   }
 
-  /** slop photos come from the Network service (the server already checked role, reason and age, and wrote the audit row). */
   async photos(memberId: string, actor: string, reason: string): Promise<{ ok: true; photos: MemberPhoto[] } | ControlResult> {
     if (!this.service) return { ok: false, code: "service_missing", error: "photos are kept by the Network service: set NETWORK_SERVICE_URL and NETWORK_SERVICE_TOKEN" };
     return this.service.photos(actor, memberId, reason);
   }
 
-  /** The weekly bias monitor of this app's network, from the Network service (it writes the reports; this login only reads). */
   async bias(actor: string): Promise<{ ok: true; reports: BiasReportView[] } | { ok: false; error: string }> {
     if (!this.service) return { ok: false, error: "the bias monitor runs in the Network service: set NETWORK_SERVICE_URL and NETWORK_SERVICE_TOKEN" };
     return this.service.bias(actor);
   }
 
-  /**
-   * Held texts from the Network service. A text about or to a member who is under 18 here, or whose age
-   * is unknown, is never shown (the service should not send one; this is the console's own check).
-   */
   async held(queue: HeldQueue, actor: string): Promise<{ ok: true; items: HeldText[] } | { ok: false; code: string; error: string }> {
     if (!this.service) return { ok: false, code: "not_available", error: "held texts are kept by the Network service: set NETWORK_SERVICE_URL and NETWORK_SERVICE_TOKEN" };
     const r = await this.service.held(actor, queue);
@@ -904,15 +971,18 @@ export class RealSource implements DataSource {
     return this.afterAction(await this.service.heldDecision(actor, queue, id, decision, reason, photoReviewToken));
   }
 
-  /** Through the Network service (its staff API), never this connection. Without it: refused. */
   async safetyAction(a: SafetyAction, actor: string): Promise<ControlResult> {
     if (!this.service) return { ok: false, error: "real-world mode is read-only: set NETWORK_SERVICE_URL and NETWORK_SERVICE_TOKEN to act through the Network service", code: "read_only" };
     return this.afterAction(await this.service.safety(actor, a));
   }
 
+  staffStepForward(): StaffStepForward | undefined {
+    const service = this.service;
+    return service ? (actor, method, path, body) => service.staffStep(actor, method, path, body) : undefined;
+  }
+
   get gatheringServiceAvailable() { return this.service !== undefined; }
 
-  /** Authoring remains exclusively on the Network service. */
   monthlyGatherings(actor: string, request: GatheringRequest) {
     return this.service?.monthlyGatherings(actor, request);
   }
@@ -921,31 +991,36 @@ export class RealSource implements DataSource {
     return this.service?.reviewPlanPreview(actor, id, revision);
   }
 
-  /** A staff action the service applied: read the database again so every viewer sees it. */
+  reviewProbePreview(actor: string, id: string, revision: number) {
+    return this.service?.reviewProbePreview(actor, id, revision);
+  }
+
   private async afterAction(r: ControlResult): Promise<ControlResult> {
-    if (r.ok || r.code === "not_in_review") { await this.loading; await this.reload(); this.push(); }
+    if (r.ok || r.code === "not_in_review" || r.code === SERVICE_TIMEOUT) { await this.loading; await this.reload(); this.push(); }
     return r;
   }
 
   async config(): Promise<ConfigInfo> {
     const sql = this.sql;
-    const rows = sql ? await sql`select at, actor_id, type, payload from network.events where app_id = ${this.app} and type in ('matching_switch', 'review_mode') order by at, id` : [];
+    const rows = sql ? await sql`select at, actor_id, type, payload from network.events where app_id = ${this.app} and type = 'matching_switch' order by at, id` : [];
     const history: ConfigChange[] = [];
-    const last: Record<string, string | boolean | null> = { matching: true, review_mode: "human" };
+    let last = true;
     for (const r of rows as any[]) {
-      const key = r.type === "matching_switch" ? "matching" : "review_mode";
-      const to = key === "matching" ? !!r.payload?.on : String(r.payload?.mode);
-      if (last[key] === to) continue;
-      history.push({ version: history.length + 1, at: ms(r.at) ?? 0, actor: String(r.payload?.actor ?? r.actor_id ?? "unknown"), key, from: last[key] ?? null, to });
-      last[key] = to;
+      const to = !!r.payload?.on;
+      if (last === to) continue;
+      history.push({ version: history.length + 1, at: ms(r.at) ?? 0, actor: String(r.payload?.actor ?? r.actor_id ?? "unknown"), key: "matching", from: last, to });
+      last = to;
     }
+    const now = this.store.clock.now;
+    const open = [...this.store.opps.values()].filter(o => o.state === "IN_REVIEW" && o.review);
+    const held = open.filter(o => o.review!.exceptionReason);
     return {
-      matchingEnabled: this.netState?.matchingEnabled ?? matchingAllowed(this.app), reviewMode: this.netState ? "human" : null, network: {},
+      matchingEnabled: this.netState?.matchingEnabled ?? false, network: {},
+      reviewJudge: this.netState ? { awaiting: open.length - held.length, exceptions: held.length, exceptionsOverdue: held.filter(o => now >= o.review!.deadline).length } : null,
       outreach: JSON.parse(JSON.stringify(OUTREACH)), history, canChange: !!this.service,
     };
   }
 
-  /** Outbound agent messages (scrubbed unless revealed) and system events. Never what a member wrote. */
   async search(q: string, limit = 100): Promise<SearchHit[]> {
     const sql = this.sql;
     if (!sql || limit <= 0) return [];
@@ -974,7 +1049,7 @@ export class RealSource implements DataSource {
     const [messages, events] = await Promise.all([
       collect(
         before => sql<MessageRow[]>`select id, member_id, ts, ts::text as cursor_at, direction, status, system, body, type, opportunity_id
-          from network.messages where app_id = ${this.app} and direction = 'outbound' and not system and body ilike ${like}
+          from network.messages where app_id = ${this.app} and direction = 'outbound' and not system and coalesce(type, '') <> 'relay' and body ilike ${like}
           ${before ? sql`and (ts, id) < (${before.cursor_at}::timestamptz, ${before.id})` : sql``}
           order by ts desc, id desc limit ${batch}`,
         async rows => {
@@ -1012,17 +1087,13 @@ export class RealSource implements DataSource {
     return [...messages, ...events].sort((a, b) => b.t - a.t).slice(0, limit);
   }
 
-  // ------------------------------------------------------------------ controls
   async control(cmd: ControlCommand, actor = "unknown"): Promise<ControlResult> {
     try {
       if (cmd.type === "refresh") { await this.reload(); this.push(); return { ok: true }; }
       if (cmd.type === "shadow_run") {
-        // One shadow run at a time: a second press waits for the first and gets its result.
         this.shadowing ??= this.shadowRun(cmd.city).finally(() => { this.shadowing = undefined; });
         return await this.shadowing;
       }
-      // Staff actions go to the Network service, which runs the same checks as the Network (decide()).
-      if (cmd.type === "matching" && cmd.on && !matchingAllowed(this.app)) return { ok: false, error: `${this.app}: ${MATCHING_OFF_TEXT}`, code: "matching_locked" };
       if (cmd.type === "review" || cmd.type === "matching") {
         if (!this.service) return { ok: false, error: `real-world mode is read-only: set NETWORK_SERVICE_URL and NETWORK_SERVICE_TOKEN to send "${cmd.type}" to the Network service`, code: "read_only" };
         return this.afterAction(cmd.type === "review" ? await this.service.review(actor, cmd) : await this.service.matching(actor, cmd.on));
@@ -1033,12 +1104,6 @@ export class RealSource implements DataSource {
     }
   }
 
-  /**
-   * The engine's input, built from the database with the production service's builder
-   * (packages/network/service/snapshot.ts). Under an app's read login, person-to-person blocks come
-   * from the app's own view (platform.person_blocks_<app>, migration 0010): that login cannot read
-   * the whole table.
-   */
   async snapshot(): Promise<WorldSnapshot> {
     if (!this.sql) throw new Error("not connected");
     this.tickClock();
@@ -1081,32 +1146,24 @@ export class RealSource implements DataSource {
   }
 }
 
-/** Network events shown in the real-mode feed (the text comes from describe()). */
 const NET_FEED: Record<string, FeedKind> = {
   review_decision: "review", review_expired: "review", review_invalidated: "review", matching_switch: "config", trust: "trust",
   safety_action: "trust", abuse: "adversarial", guard_blocked: "guard", join_declined: "trust", minor_signal: "trust", age_unknown: "trust",
   age_resolved: "trust", age_conflict: "trust",
-  // The rule only: an invariant's detail can name a canary.
   invariant_violation: "invariant",
 };
-/** Every event type the real-mode feed shows. */
 const FEED_TYPES = [
   "member_joined", "opportunity_proposed", "member_accepted", "member_declined", "meeting_scheduled", "interaction_occurred", "feedback_given",
   "member_blocked", "member_opted_out", "safety_flag", ...Object.keys(NET_FEED),
 ];
 
-/**
- * The SQL client for the snapshot builder under an app's read login: every reference to
- * platform.person_blocks and platform.matching_ages read the app's own views instead.
- * The builder's queries are otherwise passed through unchanged.
- */
+const APP_VIEWS = ["platform.person_blocks", "platform.matching_ages", "platform.teen_pair_avoid_members"];
+
 export function appSnapshotSql(sql: SQL, app: string): SQL {
   const suffix = app.replace(/[^a-z]/g, "");
   const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    if (!strings.some(x => x.includes("platform.person_blocks") || x.includes("platform.matching_ages"))) return (sql as any)(strings, ...values);
-    const swapped = strings.map(x => x.replaceAll("platform.person_blocks", `platform.person_blocks_${suffix}`)
-      .replaceAll("platform.matching_ages", `platform.matching_ages_${suffix}`));
-    // The query builder needs the raw segments of a tagged template.
+    if (!strings.some(x => APP_VIEWS.some(v => x.includes(v)))) return (sql as any)(strings, ...values);
+    const swapped = strings.map(x => APP_VIEWS.reduce((q, v) => q.replaceAll(v, `${v}_${suffix}`), x));
     const raw = Object.freeze([...swapped]);
     const rebuilt = Object.freeze(Object.defineProperty([...swapped], "raw", { value: raw, enumerable: false })) as unknown as TemplateStringsArray;
     return (sql as any)(rebuilt, ...values);
@@ -1120,9 +1177,7 @@ function upsertIfChanged<T extends { id: string }>(map: Map<string, T>, next: T,
 }
 
 
-/** Message types that connect a member to another member (judge metrics.ts CONNECT_TYPES): never sent to a minor. */
 const CONNECT_TYPES = new Set(["probe", "proposal", "relay", "growth_ask", "scheduling", "reminder", "cancellation", "feedback_request", "confirmation"]);
-/** A connection offer that is not negated, as the judge reads it ("I won't introduce you" is the minor notice). */
 function offersConnection(text: string): boolean {
   for (const m of text.matchAll(new RegExp(CONNECTION.source, "gi"))) {
     if (!/\b(won'?t|will not|can'?t|cannot|never|not|no)\b[^.,;!?]*$/i.test(text.slice(Math.max(0, m.index! - 40), m.index!))) return true;

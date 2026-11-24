@@ -29,7 +29,7 @@ test("a delivered plan refusal creates no repeat-interest edge in the simulated 
       return { action: "ignore", intent: "ignore", messageType: message.meta?.type ?? "info", decision: "none", delayMs: 0 };
     },
   };
-  const world = new World({ seed: 4, personas, days: 4, network, agent, plans: true, writeLog: false });
+  const world = new World({ app: "ntwrk", seed: 4, personas, days: 4, network, agent, plans: true, writeLog: false });
   await world.begin();
   await world.advanceTo(world.clock.now() + 36 * HOUR);
   expect(world.snapshot().members).toHaveLength(2);

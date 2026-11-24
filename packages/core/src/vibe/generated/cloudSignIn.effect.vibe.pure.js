@@ -4,6 +4,8 @@ import * as M from "./cloudSignIn.js";
 export const homeHelpCloudPath = M.homeHelpCloudPath;
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
 export const cloudClockSkewMs = M.cloudClockSkewMs;
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
+export const cloudProofLifeMs = M.cloudProofLifeMs;
 /** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) @throws {never} */
 export const validHandoff = M.validHandoff;
 /** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) @throws {never} */
@@ -31,6 +33,8 @@ export function lawHomeHelpCloudFailureIsFixed(callbackApp, pendingApp, path, st
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
 export function cloudIssuedAtWithinSkew(issuedAtMs, asOf) { return M.cloudIssuedAtWithinSkew(issuedAtMs, asOf); }
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
+export function cloudProofLifeValid(issuedAtMs, expiresAtMs) { return M.cloudProofLifeValid(issuedAtMs, expiresAtMs); }
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
 export function cloudSessionStartedAt(issuedAtMs, asOf) { return M.cloudSessionStartedAt(issuedAtMs, asOf); }
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
 export function cloudIdentityTimesValid(issuedAtMs, expiresAtMs, asOf) { return M.cloudIdentityTimesValid(issuedAtMs, expiresAtMs, asOf); }
@@ -44,6 +48,10 @@ export function recordExchange(signIn, exchangeAccepted) { return M.recordExchan
 export function canCheckIdentity(signIn) { return M.canCheckIdentity(signIn); }
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
 export function checkIdentity(signIn, identityAvailable, identityValid) { return M.checkIdentity(signIn, identityAvailable, identityValid); }
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
+export function lawCloudProofLivesAtMostOneHour(issuedAtMs, asOf) { return M.lawCloudProofLivesAtMostOneHour(issuedAtMs, asOf); }
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
+export function lawOneHourProofIsAcceptedWhenIssued(issuedAtMs) { return M.lawOneHourProofIsAcceptedWhenIssued(issuedAtMs); }
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
 export function lawCloudIdentityNeedsFutureExpiry(issuedAtMs, asOf) { return M.lawCloudIdentityNeedsFutureExpiry(issuedAtMs, asOf); }
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */

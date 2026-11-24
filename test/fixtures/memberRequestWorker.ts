@@ -11,11 +11,11 @@ const candidate = {
 let network: Mini;
 let effects: RequestEffect[];
 const activeCandidate = () => network.net.memberList().some(member => member.id === candidate.id && member.stage === "active");
-const reviewIds = () => network.net.reviewQueue().map(review => review.oppId);
+const reviewIds = () => network.net.exportState().opps.filter(opportunity => opportunity.stage === "review").map(opportunity => opportunity.id);
 
 await serveJourney<Event>({
   async reset() {
-    network = new Mini([requester], { seed: 1, review: "human", onboardingRequests: false });
+    network = new Mini([requester], { seed: 1, inlineJudge: undefined, onboardingRequests: false });
     await network.onboard(requester.id);
     effects = [];
     return null;
@@ -60,7 +60,7 @@ await serveJourney<Event>({
     if (!last) request = "NoRequest";
     else if (last.withdrawn && last.closed && last.outcome === "none") request = "WithdrawnRequest";
     else if (last.outcome === "none" && !last.closed) request = "WaitingForCandidate";
-    else if (last.outcome === "probing" && last.oppId && reviewIds().includes(last.oppId)) request = "PendingHumanReview";
+    else if (last.outcome === "probing" && last.oppId && reviewIds().includes(last.oppId)) request = "PendingReview";
     else throw new Error("The request is outside the expected waiting, review, and withdrawal states");
     return { candidateAvailable: activeCandidate(), request, requestCount: requests.length, attempts: last?.tries ?? 0 };
   },

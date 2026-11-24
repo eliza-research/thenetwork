@@ -1,56 +1,23 @@
 import { setTimeout as waitForMs } from "node:timers/promises";
-// Private member photos (slop.date only; founder decision 2026-10-08: photos and any rating from
-// them are for adults only (founder decision 9: the stated age, no ID check), never for members aged
-// 13-17, and scores are agent_private and never shown to anyone).
-//
-// Rules, in the order they are checked:
-//  - Photos are off unless storage is configured (PHOTO_STORAGE): every route answers photos_off.
-//  - Upload (the site, or a photo sent by text after the photo consent): a signed-in member of an app
-//    that takes photos (PHOTO_APPS), with the photo consent of the current version (PHOTO_CONSENT),
-//    not banned, whose person is an adult (lowest age 18 or more, never unknown) and passes the app's
-//    own check (`eligible`: for slop, a member stated 18+ with no failed staff age check; decision 9).
-//    JPEG, PNG or WebP only (checked on the bytes, not the header), at most PHOTO_MAX_BYTES and
-//    PHOTO_MAX_PER_PERSON. Metadata is stripped before anything is stored, by an allowlist: only the
-//    parts a decoder needs are kept (stripMetadata), so EXIF with GPS, XMP, comments, text chunks and
-//    anything unknown never reach storage. A refused photo is never stored and never rated.
-//  - Storage: object storage under a random key (R2 in production, a 0700 folder in dev). There is no
-//    public URL. Staff see a photo only through the backend: the service's audited photo route makes
-//    a signed link that works for 5 minutes (viewUrl / view).
-//  - Rating: an engine AppearanceRater (production: photoRaterFromEnv, Cloudflare Workers AI Clef;
-//    AGENTS.md decisions 12 and 13). Ratings are ON by default (founder, 2026-10-09: CLEF_RATINGS
-//    unset or `on`; `off` turns them off). Without CLEF_WEIGHTS_PATH the engine's placeholder Clef
-//    weights are used (status on_placeholder) until fitted weights pass the P2 decision rule; a weights
-//    file must carry a version and a provenance record or it is refused. Without the Workers AI token
-//    and account id nothing is rated (off_env). It rates the MEMBER from their newest photos (at most 4,
-//    at most 4 MiB each, bytes only, never a URL) after every upload or delete, only for a verified
-//    adult with a live membership who is not banned (checked before any byte is read: zero rater calls
-//    otherwise, and checked again when the rater returns and after the write: a score is discarded if
-//    the age dropped under 18, a ban landed, the member left or the selected photo set changed),
-//    with retries on API errors (withRetry; each try is a cost row). The score goes to `onRating` (the
-//    service stores it with the engine's appearanceFacet, agent_private) and is never returned by any
-//    route or shown in the console. No rater: ratings are off and everything else works.
-//  - Delete: the member deletes one photo (the rating is dropped, then made again from what is left);
-//    leaving the app or deleting everything deletes them all; a person whose lowest age drops under 18
-//    loses them all (deleteFor), and their rating with them.
-import { personAgeAt } from "./age.ts";
 import { fileAt } from "../../core/src/runtime/files.ts";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { ObjectStore } from "../../core/src/runtime/object-store.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
-import { ratingMaxBytes, ratingMaxPhotos, uploadMaxBytes, uploadMaxPerPerson, photoSlotsFull } from "../../core/src/generated/photoPolicy.ts";
+import { ratingMaxBytes, ratingMaxPhotos, uploadMaxBytes, uploadMaxPerPerson, photoSlotsFull, photoSubjectAllowed } from "../../core/src/generated/photoPolicy.ts";
 import {
   canCheckReturnedScore, canCheckWrittenScore, canRecordScoreRemoval, canRecordScoreWrite, canReceiveScore, canSupplyPhotos,
   initial as ratingInitial, ratingPhotoSelectionCurrent, step as stepRating,
 } from "../../core/src/generated/photoRating.ts";
 import {
   canCheckSlots, canCleanImage, canFinishRerate, canRecordRatingClear, canRecordRemovedBytes, canRecordRemovedRow,
-  canRecordUploadBytes, canRecordUploadRow, canScreenFile,
-  initial as photoChangeInitial, type PhotoChange, step as stepPhotoChange,
+  canRecordUploadBytes, canRecordUploadDiscard, canRecordUploadRow, canReserveRow, canScreenFile,
+  initial as photoChangeInitial, photoHoldAllowed, ratingHoldAllowed, type PhotoChange, step as stepPhotoChange, unfinishedPhotoDue,
 } from "../../core/src/generated/photoRetention.ts";
 import { canBeMatched } from "../../core/src/policy.ts";
-import { PgPeopleStore } from "./pg-store.ts";
+import { effectiveAgeAt } from "./age.ts";
+import { ageFloorColumns, ageStandingOf, PgPeopleStore } from "./pg-store.ts";
 import type { AppId } from "./apps.ts";
 import { readCapped } from "./body.ts";
 import type { MembershipState, PeopleStore } from "./store.ts";
@@ -59,27 +26,12 @@ import { makeClefRaterFromEnv, type ClefRaterOptions } from "../../engine/src/pa
 import { DEFAULT_CLEF_WEIGHTS, validateClefWeights, type ClefWeights } from "../../engine/src/packs/slop/clefWeights.ts";
 import { isOpaquePhotoId } from "../../engine/src/relay.ts";
 
-/** Why the rater is on or off (server.ts logs it at start, with the weights version). */
-export type RaterStatus = "on" | "on_placeholder" | "off_flag" | "off_env" | "refused_weights";
+type RaterStatus = "on" | "on_placeholder" | "off_env" | "refused_weights";
 
-/**
- * The slop.date photo rater from the environment (AGENTS.md decisions 12 and 13, "Clef ratings" and
- * founder decision 5 of 2026-10-09). Ratings are ON by default: CLEF_RATINGS unset or `on` means on,
- * `off` turns them off, and any other value is refused (off) so a typo never rates anyone by surprise.
- * On, it needs CLOUDFLARE_AI_TOKEN and CLOUDFLARE_ACCOUNT_ID (without them: off_env; photos still work
- * and nothing is rated). Weights: with no CLEF_WEIGHTS_PATH the engine's placeholder weights are used
- * (status on_placeholder) until fitted weights pass the P2 decision rule; a file given by
- * CLEF_WEIGHTS_PATH must be fitted weights with a version and a provenance record (what it was fitted
- * on), or it is refused and ratings stay off. The rater is the engine's Clef behind its adults-only
- * guard, with up to 3 tries on an API error.
- */
 export async function photoRaterFromEnv(
   env: Record<string, string | undefined>,
   o: { fetch?: ClefRaterOptions["fetch"]; sleep?: (ms: number) => Promise<void>; log?: (s: string) => void; readFile?: (path: string) => Promise<string> } = {},
 ): Promise<{ rater?: AppearanceRater; status: RaterStatus; weights?: string; detail?: string }> {
-  const flag = (env.CLEF_RATINGS ?? "").trim().toLowerCase();
-  if (flag === "off") return { status: "off_flag" };
-  if (flag !== "" && flag !== "on") return { status: "off_flag", detail: `CLEF_RATINGS must be on or off (got ${JSON.stringify(env.CLEF_RATINGS)})` };
   if (!env.CLOUDFLARE_AI_TOKEN || !env.CLOUDFLARE_ACCOUNT_ID) return { status: "off_env", detail: "CLOUDFLARE_AI_TOKEN and CLOUDFLARE_ACCOUNT_ID are required" };
   let w: ClefWeights = DEFAULT_CLEF_WEIGHTS;
   if (env.CLEF_WEIGHTS_PATH) {
@@ -100,23 +52,19 @@ export async function photoRaterFromEnv(
 
 export type PhotoType = "image/jpeg" | "image/png" | "image/webp";
 export const PHOTO_TYPES: readonly PhotoType[] = ["image/jpeg", "image/png", "image/webp"];
-/** Apps that take photos. */
 export const PHOTO_APPS: readonly AppId[] = ["slop"];
 export const PHOTO_MAX_BYTES = uploadMaxBytes;
 export const PHOTO_MAX_PER_PERSON = uploadMaxPerPerson;
-/** A staff link to one photo works this long. */
 export const PHOTO_VIEW_TTL_MS = 5 * 60_000;
-/** The photo consent a site shows next to the upload button (draft copy: needs the founder's approval and the CONTRIBUTING 3.5 videos). */
 export const PHOTO_CONSENT = {
-  version: "2026-10-08",
-  text: "I agree that slop.date may store these photos privately. The matchmaker may use them, privately, to learn who I might like and who might like me. No other member sees them, no score from them is ever shown to anyone, and a person on the safety team looks at them only after a report. Photos are for adults (18+) only. I can delete them anytime.",
+  version: "2026-11-23",
+  text: "I agree that slop.date may store these photos privately. The matchmaker may use them, privately, to learn who I might like and who might like me. No other member sees them unless I ask the agent to send one to a match, and no score from them is ever shown to anyone. A person on the safety team looks at a photo after a report, and at a photo that I send to a match when the automatic check does not clear it. Photos are for adults (18+) only. I can delete them and their rating by texting DELETE PHOTOS, except after a ban, when the safety team keeps them.",
 } as const;
 
-/**
- * A new photo id: "ph_" and 24 hex characters. Ids with a run of 7 or more digits are drawn again, so
- * every id passes the engine's `isOpaquePhotoId` (which refuses digit runs because they read as phone
- * numbers); about a quarter of plain random hex ids have such a run.
- */
+export function newPhotoBatchId(): string { return randomBytes(16).toString("hex"); }
+const PHOTO_LABEL = /^[a-z0-9]+([ -][a-z0-9]+){0,2}$/;
+const PHOTO_LABEL_MAX = 24;
+
 export function newPhotoId(): string {
   for (;;) {
     const id = `ph_${randomBytes(12).toString("hex")}`;
@@ -126,31 +74,23 @@ export function newPhotoId(): string {
 
 export interface PhotoRow {
   id: string; personId: string; app: AppId; storageKey: string; contentType: PhotoType; bytes: number; sha256: string;
-  consentVersion: string; createdAt: number;
+  consentVersion: string; createdAt: number; label: string | null; batchId: string | null;
 }
-/** The rater: the engine's member-level AppearanceRater (production: makeClefRaterFromEnv). */
+export type PhotoLabelResult = "ok" | "taken" | "not_found";
 export type PhotoRater = AppearanceRater;
-/** Photos one rating reads (Clef takes at most 4 images, each at most 4 MiB, as base64). */
 export const RATER_MAX_PHOTOS = ratingMaxPhotos;
 export const RATER_MAX_BYTES = ratingMaxBytes;
 
-/** An error worth another try: a network failure, a timeout, or an API answer of 429 or 5xx (ClefError carries the status). */
 export function retryable(e: unknown): boolean {
   const status = (e as { status?: unknown })?.status;
   if (typeof status === "number") return status === 408 || status === 429 || status >= 500;
-  // fetch failures are TypeErrors; a timeout is a TimeoutError or AbortError. Anything else (a photo too large, a bad answer) is not retried.
   return e instanceof TypeError || (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError"));
 }
 
 export interface RetryOptions { attempts?: number; baseMs?: number; sleep?: (ms: number) => Promise<void>; log?: (s: string) => void }
 const retried = new WeakMap<AppearanceRater, { inner: AppearanceRater; options: RetryOptions }>();
-/** The rater inside a withRetry wrapper and its options (the cost ledger meters each try: cost.ts meterRater). */
 export const retryParts = (r: AppearanceRater) => retried.get(r);
 
-/**
- * The rater with retries on API errors: up to `attempts` calls with a doubling wait (the wait goes
- * through `sleep`, so a simulation never waits). A refusal (null) is an answer, never retried.
- */
 export function withRetry(r: AppearanceRater, o: RetryOptions = {}): AppearanceRater {
   const attempts = Math.max(1, o.attempts ?? 3), base = o.baseMs ?? 500, sleep = o.sleep ?? (ms => waitForMs(ms));
   const wrapped: AppearanceRater = {
@@ -169,8 +109,6 @@ export function withRetry(r: AppearanceRater, o: RetryOptions = {}): AppearanceR
   return wrapped;
 }
 
-// ------------------------------------------------------------------------------------ bytes
-/** The image type from the first bytes (never from a header or a file name). */
 export function sniffType(b: Uint8Array): PhotoType | undefined {
   if (b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
   if (b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47 && b[4] === 0x0d && b[5] === 0x0a && b[6] === 0x1a && b[7] === 0x0a) return "image/png";
@@ -181,42 +119,22 @@ const ascii = (b: Uint8Array, at: number, n: number) => String.fromCharCode(...b
 
 export class BadImage extends Error {}
 
-/**
- * The image with its metadata removed, by an allowlist: only what a decoder needs is copied, and
- * everything else (EXIF and its GPS block, XMP, IPTC, ICC profiles, comments, text chunks, maker
- * notes, chunks nobody has named yet) is dropped. The pixels are not touched. A malformed file throws
- * BadImage (never stored).
- *   JPEG  SOI, DQT, SOF*, DHT, DAC, DRI, DNL, SOS with its scan data, EOI; APP0 only as a bare JFIF
- *         header (its thumbnail removed) and APP14 only as the 12-byte Adobe colour-transform header.
- *   PNG   IHDR, PLTE, IDAT, IEND, tRNS, gAMA and sRGB (colour only, no text). iCCP is dropped: its
- *         profile name and description are free text.
- *   WebP  VP8, VP8L, VP8X, ALPH, ANIM and ANMF (and inside each frame only ALPH, VP8 and VP8L). The
- *         VP8X flags for ICC, EXIF and XMP are cleared.
- */
 export function stripMetadata(b: Uint8Array, type: PhotoType): Uint8Array {
   if (type === "image/jpeg") return stripJpeg(b);
   if (type === "image/png") return stripPng(b);
   return stripWebp(b);
 }
 
-/** JPEG markers a decoder needs (besides SOI, SOS, EOI and the bare markers): SOF0-SOF15 without DHT (C4), JPG (C8) and DAC (CC), then DHT, DAC, DQT, DNL, DRI. */
 const JPEG_KEEP = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf, 0xc4, 0xcc, 0xdb, 0xdc, 0xdd]);
 
-/**
- * JPEG: segments are copied only when JPEG_KEEP has them, scan by scan (progressive files have
- * several), and nothing after the first EOI. Phones append whole second images after EOI (MPF
- * pictures, depth maps, motion-photo trailers) with their own EXIF and GPS: those never survive.
- */
 function stripJpeg(b: Uint8Array): Uint8Array {
   const out: Uint8Array[] = [b.subarray(0, 2)];
   let i = 2, scanned = false, jfif = false;
   while (i < b.length) {
     if (b[i] !== 0xff) throw new BadImage("jpeg: marker expected");
     const m = b[i + 1]!;
-    if (m === 0xd9) { out.push(b.subarray(i, i + 2)); return concat(out); } // EOI: anything after it is dropped
+    if (m === 0xd9) { out.push(b.subarray(i, i + 2)); return concat(out); }
     if (m === 0xda) {
-      // SOS: its header, then the entropy-coded data up to the next real marker (0xFF00 is a stuffed
-      // byte, 0xFFD0-0xFFD7 are restart markers, 0xFFFF is fill).
       if (i + 4 > b.length) throw new BadImage("jpeg: truncated");
       const len = (b[i + 2]! << 8) | b[i + 3]!;
       if (len < 2 || i + 2 + len > b.length) throw new BadImage("jpeg: bad segment");
@@ -233,7 +151,6 @@ function stripJpeg(b: Uint8Array): Uint8Array {
       i = j; scanned = true;
       continue;
     }
-    // Bare markers (no length): TEM, restart markers; 0xFF is fill before a marker.
     if (m === 0x01 || (m >= 0xd0 && m <= 0xd7)) { out.push(b.subarray(i, i + 2)); i += 2; continue; }
     if (m === 0xff) { i += 1; continue; }
     if (i + 4 > b.length) throw new BadImage("jpeg: truncated");
@@ -242,13 +159,11 @@ function stripJpeg(b: Uint8Array): Uint8Array {
     const payload = b.subarray(i + 4, i + 2 + len);
     if (JPEG_KEEP.has(m)) out.push(b.subarray(i, i + 2 + len));
     else if (m === 0xe0 && !jfif && payload.length >= 14 && ascii(payload, 0, 5) === "JFIF\0") {
-      // JFIF: version, units and density only; the thumbnail (and anything after it) is dropped.
       out.push(Uint8Array.of(0xff, 0xe0, 0x00, 0x10), payload.subarray(0, 12), Uint8Array.of(0, 0));
       jfif = true;
-    } else if (m === 0xee && payload.length === 12 && ascii(payload, 0, 5) === "Adobe") out.push(b.subarray(i, i + 2 + len)); // the colour transform of CMYK/YCCK files: flags only
+    } else if (m === 0xee && payload.length === 12 && ascii(payload, 0, 5) === "Adobe") out.push(b.subarray(i, i + 2 + len));
     i += 2 + len;
   }
-  // A file cut off after its scan data (no EOI): keep the image, close it.
   if (scanned) { out.push(Uint8Array.of(0xff, 0xd9)); return concat(out); }
   throw new BadImage("jpeg: no image data");
 }
@@ -276,7 +191,6 @@ function stripPng(b: Uint8Array): Uint8Array {
 
 const WEBP_KEEP = new Set(["VP8 ", "VP8L", "VP8X", "ALPH", "ANIM", "ANMF"]);
 const WEBP_FRAME_KEEP = new Set(["ALPH", "VP8 ", "VP8L"]);
-/** RIFF chunks from `at` to `end`, each with its padding; only the types in `keep`. */
 function riffChunks(b: Uint8Array, at: number, end: number, keep: Set<string>): Uint8Array[] {
   const chunks: Uint8Array[] = [];
   let i = at;
@@ -287,7 +201,6 @@ function riffChunks(b: Uint8Array, at: number, end: number, keep: Set<string>): 
     if (i + 8 + len > end) throw new BadImage("webp: bad chunk");
     if (keep.has(type)) {
       if (type === "ANMF") {
-        // A frame: its 16-byte header, then its own chunks (only the image ones are kept).
         if (len < 16) throw new BadImage("webp: bad frame");
         const inner = concat(riffChunks(b, i + 24, i + 8 + len, WEBP_FRAME_KEEP));
         const size = 16 + inner.length;
@@ -296,7 +209,7 @@ function riffChunks(b: Uint8Array, at: number, end: number, keep: Set<string>): 
         chunks.push(head, inner);
       } else {
         const c = b.slice(i, i + 8 + Math.min(padded, end - i - 8));
-        if (type === "VP8X" && c.length > 8) c[8] = c[8]! & ~0x2c; // the ICC (0x20), EXIF (0x08) and XMP (0x04) flags
+        if (type === "VP8X" && c.length > 8) c[8] = c[8]! & ~0x2c;
         chunks.push(c);
       }
     }
@@ -323,8 +236,6 @@ function concat(parts: Uint8Array[]): Uint8Array {
   return out;
 }
 
-// ------------------------------------------------------------------------------------ storage
-/** Where the bytes live. Keys are random hex, never a name or a phone. */
 export interface PhotoStorage {
   kind: "local" | "r2";
   put(key: string, bytes: Uint8Array, type: PhotoType): Promise<void>;
@@ -334,7 +245,6 @@ export interface PhotoStorage {
 const KEY_RE = /^[a-f0-9]{48}$/;
 const checkKey = (k: string) => { if (!KEY_RE.test(k)) throw new Error("bad photo key"); return k; };
 
-/** Dev only: a local folder (0700) with one 0600 file per photo. */
 export class LocalDiskPhotoStorage implements PhotoStorage {
   readonly kind = "local" as const;
   private readonly dir: string;
@@ -349,7 +259,6 @@ export class LocalDiskPhotoStorage implements PhotoStorage {
   async delete(key: string) { await rm(this.path(key), { force: true }); }
 }
 
-/** Cloudflare R2 (S3-compatible) through the Node S3 client. The bucket must be private (no public access, no r2.dev URL). Not exercised in tests. */
 export class R2PhotoStorage implements PhotoStorage {
   readonly kind = "r2" as const;
   private readonly s3: ObjectStore;
@@ -359,16 +268,13 @@ export class R2PhotoStorage implements PhotoStorage {
   async put(key: string, bytes: Uint8Array, type: PhotoType) { await this.s3.write(`photos/${checkKey(key)}`, bytes, { type }); }
   async get(key: string) {
     const f = this.s3.file(`photos/${checkKey(key)}`);
-    try { return new Uint8Array(await f.arrayBuffer()); } catch { return undefined; }
+    try { return new Uint8Array(await f.arrayBuffer()); } catch (e) { if (objectMissing(e)) return undefined; throw e; }
   }
   async delete(key: string) { await this.s3.delete(`photos/${checkKey(key)}`); }
 }
+const objectMissing = (e: unknown) =>
+  e instanceof Error && (e.name === "NoSuchKey" || (e as Error & { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode === 404);
 
-/**
- * Storage from the environment. PHOTO_STORAGE=r2: R2_ENDPOINT (or R2_ACCOUNT_ID), R2_BUCKET,
- * R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY. PHOTO_STORAGE=local (PLATFORM_ENV=dev only): PHOTO_DIR
- * (default ./runs/photos). Anything else: undefined, and photos are off.
- */
 export function photoStorageFromEnv(env: Record<string, string | undefined> = process.env): PhotoStorage | undefined {
   if (env.PHOTO_STORAGE === "r2") {
     const endpoint = env.R2_ENDPOINT ?? (env.R2_ACCOUNT_ID ? `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com` : undefined);
@@ -383,66 +289,192 @@ export function photoStorageFromEnv(env: Record<string, string | undefined> = pr
   return undefined;
 }
 
-// ------------------------------------------------------------------------------------ rows
 type PhotoAdmission = (tx?: SQL) => Promise<PhotoRefusal | undefined>;
-
+interface UnfinishedPhoto { row: PhotoRow; reserved: boolean; hidden: boolean; changedAt: number }
+export interface PhotoHolder { personId: string; app: AppId }
 export interface PhotoStore {
-  publish(r: PhotoRow, admit: PhotoAdmission): Promise<PhotoRefusal | undefined>;
+  reserve(r: PhotoRow, admit: PhotoAdmission): Promise<PhotoRefusal | undefined>;
+  confirm(row: PhotoRow, at: number, admit: PhotoAdmission): Promise<boolean>;
   get(id: string): Promise<PhotoRow | undefined>;
   list(personId: string, app?: AppId): Promise<PhotoRow[]>;
+  hide(personId: string, at: number, scope: { app?: AppId; id?: string; ownerLocked?: boolean }): Promise<PhotoRow[]>;
   delete(id: string): Promise<void>;
+  unfinished(limit: number): Promise<UnfinishedPhoto[]>;
+  holders(limit: number, at: number): Promise<PhotoHolder[]>;
+  setLabel(personId: string, app: AppId, id: string, label: string | null): Promise<PhotoLabelResult>;
 }
+interface MemoryPhotoRow extends PhotoRow { storedAt: number | null; hiddenAt: number | null }
 export class MemoryPhotoStore implements PhotoStore {
-  readonly rows = new Map<string, PhotoRow>();
-  async publish(r: PhotoRow, admit: PhotoAdmission): Promise<PhotoRefusal | undefined> {
-    const refused = await admit();
-    if (refused) return refused;
-    const count = [...this.rows.values()].filter(row => row.personId === r.personId).length;
-    if (photoSlotsFull(count)) return "too_many";
-    this.rows.set(r.id, { ...r });
+  readonly rows = new Map<string, MemoryPhotoRow>();
+  private readonly locks = new Map<string, Promise<unknown>>();
+  private async locked<T>(personId: string, fn: () => Promise<T>): Promise<T> {
+    const before = this.locks.get(personId) ?? Promise.resolve();
+    const run = before.then(fn, fn);
+    this.locks.set(personId, run.catch(() => undefined));
+    return run;
   }
-  async get(id: string) { const r = this.rows.get(id); return r && { ...r }; }
-  async list(personId: string, app?: AppId) { return [...this.rows.values()].filter(r => r.personId === personId && (!app || r.app === app)).sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1)).map(r => ({ ...r })); }
+  private live(r: MemoryPhotoRow) { return r.storedAt !== null && r.hiddenAt === null; }
+  private copy(r: MemoryPhotoRow): PhotoRow { const { storedAt: _s, hiddenAt: _h, ...row } = r; return { ...row }; }
+  async reserve(r: PhotoRow, admit: PhotoAdmission) {
+    return this.locked(r.personId, async () => {
+      const refused = await admit();
+      if (refused) return refused;
+      const held = [...this.rows.values()].filter(x => x.personId === r.personId && x.hiddenAt === null).length;
+      if (photoSlotsFull(held)) return "too_many";
+      const last = Math.max(-Infinity, ...[...this.rows.values()].filter(x => x.personId === r.personId).map(x => x.createdAt));
+      this.rows.set(r.id, { ...r, createdAt: Math.max(r.createdAt, last + 1), storedAt: null, hiddenAt: null });
+      return undefined;
+    });
+  }
+  async confirm(row: PhotoRow, at: number, admit: PhotoAdmission) {
+    return this.locked(row.personId, async () => {
+      const r = this.rows.get(row.id);
+      if (!r || r.storedAt !== null || r.hiddenAt !== null || await admit()) return false;
+      r.storedAt = at;
+      return true;
+    });
+  }
+  async get(id: string) { const r = this.rows.get(id); return r && this.live(r) ? this.copy(r) : undefined; }
+  async list(personId: string, app?: AppId) {
+    return [...this.rows.values()].filter(r => this.live(r) && r.personId === personId && (!app || r.app === app))
+      .sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1)).map(r => this.copy(r));
+  }
+  async hide(personId: string, at: number, scope: { app?: AppId; id?: string; ownerLocked?: boolean }) {
+    return this.locked(personId, async () => {
+      const hidden: PhotoRow[] = [];
+      for (const r of this.rows.values()) {
+        if (r.personId !== personId || (r.hiddenAt !== null && (!scope.ownerLocked || r.storedAt === null)) || (scope.app && r.app !== scope.app) || (scope.id && r.id !== scope.id)) continue;
+        r.hiddenAt ??= at;
+        if (r.storedAt !== null) hidden.push(this.copy(r));
+      }
+      return hidden;
+    });
+  }
   async delete(id: string) { this.rows.delete(id); }
+  async unfinished(limit: number) {
+    return [...this.rows.values()].filter(r => r.storedAt === null || r.hiddenAt !== null).slice(0, limit)
+      .map(r => ({ row: this.copy(r), reserved: r.storedAt === null, hidden: r.hiddenAt !== null, changedAt: r.hiddenAt ?? r.createdAt }));
+  }
+  async holders(limit: number) {
+    const seen = new Map<string, PhotoHolder>();
+    for (const r of this.rows.values()) if (r.hiddenAt === null) seen.set(`${r.personId}:${r.app}`, { personId: r.personId, app: r.app });
+    return [...seen.values()].slice(0, limit);
+  }
+  async setLabel(personId: string, app: AppId, id: string, label: string | null): Promise<PhotoLabelResult> {
+    return this.locked(personId, async () => {
+      const r = this.rows.get(id);
+      if (!r || !this.live(r) || r.personId !== personId || r.app !== app) return "not_found";
+      if (label !== null && [...this.rows.values()].some(x => x.id !== id && x.hiddenAt === null && x.personId === personId && x.app === app && x.label === label)) return "taken";
+      r.label = label;
+      return "ok";
+    });
+  }
 }
 const photoRow = (r: Record<string, any>): PhotoRow => ({
   id: r.id, personId: r.person_id, app: r.app_id, storageKey: r.storage_key, contentType: r.content_type, bytes: r.bytes, sha256: r.sha256,
-  consentVersion: r.consent_version, createdAt: new Date(r.created_at).getTime(),
+  consentVersion: r.consent_version, createdAt: new Date(r.created_at).getTime(), label: r.label ?? null, batchId: r.batch_id ?? null,
 });
-/** platform.photos (migration 0011). A deleted photo's row is removed (the bytes first). */
 export class PgPhotoStore implements PhotoStore {
   constructor(private readonly sql: SQL) {}
-  async publish(r: PhotoRow, admit: PhotoAdmission): Promise<PhotoRefusal | undefined> {
+  async reserve(r: PhotoRow, admit: PhotoAdmission) {
     return this.sql.begin(async tx => {
-      // Verified signup holds this same row lock through its eligibility write and photo cleanup.
-      const [person] = await tx`select id from platform.people where id=${r.personId}::uuid and deleted_at is null for update`;
-      if (!person) return "adults_only";
-      await tx`select set_config('app.app_id', ${r.app}, true),
-        set_config('app.age_as_of', ${new Date(r.createdAt).toISOString()}, true)`;
+      const [person] = await tx`select id from platform.people where id = ${r.personId}::uuid and deleted_at is null for update`;
+      if (!person) return "adults_only" as const;
+      await tx`select set_config('app.app_id', ${r.app}, true)`;
       const refused = await admit(tx);
       if (refused) return refused;
-      const [stored] = await tx<{ n: number }[]>`select count(*)::int as n from platform.photos
-        where person_id=${r.personId}::uuid and deleted_at is null`;
-      if (photoSlotsFull(stored.n)) return "too_many";
-      await tx`insert into platform.photos (id, person_id, app_id, storage_key, content_type, bytes, sha256, consent_version, created_at)
-        values (${r.id}, ${r.personId}, ${r.app}, ${r.storageKey}, ${r.contentType}, ${r.bytes}, ${r.sha256}, ${r.consentVersion}, ${new Date(r.createdAt)})`;
+      const [held] = await tx<{ n: number }[]>`select count(*)::int as n from platform.photos where person_id = ${r.personId}::uuid and deleted_at is null`;
+      if (photoSlotsFull(held?.n ?? 0)) return "too_many" as const;
+      const [last] = await tx<{ at: Date | null }[]>`select max(created_at) as at from platform.photos where person_id = ${r.personId}::uuid`;
+      const createdAt = Math.max(r.createdAt, last?.at ? new Date(last.at).getTime() + 1 : -Infinity);
+      await tx`insert into platform.photos (id, person_id, app_id, storage_key, content_type, bytes, sha256, consent_version, created_at, stored_at, batch_id)
+        values (${r.id}, ${r.personId}, ${r.app}, ${r.storageKey}, ${r.contentType}, ${r.bytes}, ${r.sha256}, ${r.consentVersion}, ${new Date(createdAt)}, null, ${r.batchId})`;
+      return undefined;
     });
   }
-  async get(id: string) { const [r] = await this.sql`select * from platform.photos where id = ${id} and deleted_at is null`; return r ? photoRow(r) : undefined; }
+  async confirm(row: PhotoRow, at: number, admit: PhotoAdmission) {
+    return this.sql.begin(async tx => {
+      const [person] = await tx`select id from platform.people where id = ${row.personId}::uuid and deleted_at is null for update`;
+      if (!person) return false;
+      await tx`select set_config('app.app_id', ${row.app}, true), set_config('app.age_as_of', ${new Date(at).toISOString()}, true)`;
+      if (await admit(tx)) return false;
+      return (await tx`update platform.photos set stored_at = ${new Date(at)}
+        where id = ${row.id} and person_id = ${row.personId}::uuid and app_id = ${row.app}
+          and stored_at is null and deleted_at is null returning id`).length === 1;
+    });
+  }
+  async get(id: string) {
+    const [r] = await this.sql`select * from platform.photos where id = ${id} and stored_at is not null and deleted_at is null`;
+    return r ? photoRow(r) : undefined;
+  }
   async list(personId: string, app?: AppId, lock = false) {
     const rows = app
-      ? await this.sql`select * from platform.photos where person_id = ${personId}::uuid and app_id = ${app} and deleted_at is null
+      ? await this.sql`select * from platform.photos where person_id = ${personId}::uuid and app_id = ${app} and stored_at is not null and deleted_at is null
         order by created_at, id ${lock ? this.sql`for share` : this.sql``}`
-      : await this.sql`select * from platform.photos where person_id = ${personId}::uuid and deleted_at is null order by created_at, id`;
+      : await this.sql`select * from platform.photos where person_id = ${personId}::uuid and stored_at is not null and deleted_at is null order by created_at, id`;
     return (rows as Record<string, any>[]).map(photoRow);
   }
+  async hide(personId: string, at: number, scope: { app?: AppId; id?: string; ownerLocked?: boolean }) {
+    return this.sql.begin(async tx => {
+      if (!scope.ownerLocked) await tx`select id from platform.people where id = ${personId}::uuid for update`;
+      const rows = await tx`update platform.photos set deleted_at = coalesce(deleted_at, ${new Date(at)})
+        where person_id = ${personId}::uuid
+          and (deleted_at is null ${scope.ownerLocked ? tx`or stored_at is not null` : tx``})
+          ${scope.app ? tx`and app_id = ${scope.app}` : tx``} ${scope.id ? tx`and id = ${scope.id}` : tx``}
+        returning *`;
+      return (rows as Record<string, any>[]).filter(r => r.stored_at !== null).map(photoRow)
+        .sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1));
+    });
+  }
   async delete(id: string) { await this.sql`delete from platform.photos where id = ${id}`; }
+  async setLabel(personId: string, app: AppId, id: string, label: string | null): Promise<PhotoLabelResult> {
+    try {
+      const rows = await this.sql`update platform.photos set label = ${label}
+        where id = ${id} and person_id = ${personId}::uuid and app_id = ${app} and stored_at is not null and deleted_at is null returning id`;
+      return rows.length === 1 ? "ok" : "not_found";
+    } catch (e) {
+      if ((e as { code?: unknown }).code === "23505") return "taken";
+      throw e;
+    }
+  }
+  async unfinished(limit: number) {
+    const rows = await this.sql`select * from platform.photos where stored_at is null or deleted_at is not null
+      order by coalesce(deleted_at, created_at), id limit ${limit}`;
+    return (rows as Record<string, any>[]).map(r => ({
+      row: photoRow(r), reserved: r.stored_at === null, hidden: r.deleted_at !== null,
+      changedAt: new Date(r.deleted_at ?? r.created_at).getTime(),
+    }));
+  }
+  async holders(limit: number, at: number) {
+    const out: PhotoHolder[] = [];
+    let after = { personId: "", app: "" };
+    for (;;) {
+      const rows = await this.sql<Record<string, any>[]>`select distinct on (ph.person_id::text, ph.app_id) ph.person_id::text as holder_id, ph.app_id as holder_app,
+          m.state as membership_state, p.*, ${ageFloorColumns(this.sql)}
+        from platform.photos ph
+        left join platform.people p on p.id = ph.person_id
+        left join platform.age_floor f on f.phone_hash = p.phone_hash
+        left join platform.memberships m on m.person_id = ph.person_id and m.app_id = ph.app_id
+        where ph.deleted_at is null and (ph.person_id::text, ph.app_id) > (${after.personId}, ${after.app})
+        order by ph.person_id::text, ph.app_id limit ${HOLDER_PAGE}`;
+      for (const r of rows) {
+        const standing = ageStandingOf(r);
+        const live = !!standing.person && standing.person.deletedAt === null && canBeMatched(effectiveAgeAt(standing, at))
+          && LIVE_MEMBERSHIP.includes(r.membership_state);
+        if (!live) out.push({ personId: r.holder_id, app: r.holder_app });
+        if (out.length >= limit) return out;
+      }
+      if (rows.length < HOLDER_PAGE) return out;
+      const last = rows[rows.length - 1]!;
+      after = { personId: last.holder_id, app: last.holder_app };
+    }
+  }
 }
 
-// ------------------------------------------------------------------------------------ service
 export type PhotoRefusal = "photos_off" | "app_not_allowed" | "consent_required" | "adults_only" | "not_verified" | "banned" | "too_large" | "bad_type" | "bad_image" | "too_many" | "not_found" | "not_member" | "photo_set_changed";
-/** Membership states in which a member may be rated (left or removed: never). */
 export const LIVE_MEMBERSHIP: readonly MembershipState[] = ["active", "paused", "onboarding"];
+const SWEEP_BATCH = 64;
+const HOLDER_PAGE = 512;
 export type PhotoResult<T> = { ok: true; value: T } | { ok: false; reason: PhotoRefusal };
 
 function ratingRows(rows: PhotoRow[]): PhotoRow[] {
@@ -455,21 +487,12 @@ export interface PhotoServiceOptions {
   people: PeopleStore;
   meta: PhotoStore;
   storage?: PhotoStorage;
-  /** Key for the staff view links (derived from PLATFORM_HASH_KEY). */
   signingKey: string;
   now?: () => number;
-  /** The appearance rater (wrap it in withRetry). Undefined: ratings are off; uploads still work. */
   rater?: PhotoRater;
-  /**
-   * The app's own adult check for this person, beyond the lowest age (slop: the member's stated age
-   * is 18+ and no staff age check failed; decision 9). The service reads the network rows. Default: refuse (fail closed).
-   */
   eligible?: (personId: string, app: AppId, tx?: SQL) => Promise<boolean>;
-  /** A staff ban on the person or any of their phones (platform.bans). A banned person's photo is never taken. Default: not banned. */
   banned?: (personId: string, tx?: SQL) => Promise<boolean>;
-  /** The member's rating from their photos: the service stores it with appearanceFacet (agent_private). Never returned by a route. */
   onRating?: (personId: string, app: AppId, score: AppearanceScore, subject: RatingSubject, selected: string[]) => Promise<RatingWriteResult>;
-  /** A photo is gone (removed, left, deleted, a minor age, a ban): the service deletes the member's rating. */
   onRemoved?: (personId: string, app: AppId, photoId: string) => Promise<void>;
   log?: (s: string) => void;
 }
@@ -480,19 +503,20 @@ export class PhotoService {
   get enabled() { return !!this.o.storage; }
   get rating() { return !!this.o.rater; }
 
-  /** An adult on this app: lowest age 18+ (an unknown age fails) and the app's own check (slop: no failed staff age check). */
+  private async adultNow(people: PeopleStore, personId: string): Promise<{ live: boolean; adult: boolean }> {
+    const standing = await people.ageStanding(personId, null);
+    const live = !!standing.person && standing.person.deletedAt === null;
+    return { live, adult: live && canBeMatched(effectiveAgeAt(standing, this.now())) };
+  }
+
   async adult(personId: string, app: AppId, tx?: SQL): Promise<PhotoRefusal | undefined> {
-    const store = tx ? new PgPeopleStore(tx) : this.o.people;
-    const p = await store.getPerson(personId);
-    if (!p || p.deletedAt !== null || !canBeMatched(await personAgeAt(store, p, this.now()))) return "adults_only";
+    const people = tx ? new PgPeopleStore(tx) : this.o.people;
+    const { adult } = await this.adultNow(people, personId);
+    if (!photoSubjectAllowed(adult, await people.minorSignalOpen(personId))) return "adults_only";
     if (!(await (this.o.eligible?.(personId, app, tx) ?? Promise.resolve(false)))) return "not_verified";
     return undefined;
   }
 
-  /**
-   * Whether this person may give a photo to this app now: photos on, an app that takes photos, not
-   * banned, an adult. Checked before any byte is read (an MMS photo is not even fetched otherwise).
-   */
   async mayTake(personId: string, app: AppId, tx?: SQL): Promise<PhotoRefusal | undefined> {
     if (!this.o.storage) return "photos_off";
     if (!PHOTO_APPS.includes(app)) return "app_not_allowed";
@@ -500,15 +524,14 @@ export class PhotoService {
     return this.adult(personId, app, tx);
   }
 
-  async upload(personId: string, app: AppId, input: Uint8Array, consentVersion: string | undefined, authorizeLink?: PhotoAdmission): Promise<PhotoResult<{ id: string }>> {
+  async upload(personId: string, app: AppId, input: Uint8Array, consentVersion: string | undefined, authorizeLink?: PhotoAdmission, batchId: string = newPhotoBatchId()): Promise<PhotoResult<{ id: string }>> {
     if (!this.o.storage) return { ok: false, reason: "photos_off" };
     let change = stepPhotoChange(photoChangeInitial, {
       type: "beginUpload", appAllowed: PHOTO_APPS.includes(app), consentCurrent: consentVersion === PHOTO_CONSENT.version,
     });
     if (change.phase === "UnsupportedApp") return { ok: false, reason: "app_not_allowed" };
     if (change.phase === "ConsentMissing") return { ok: false, reason: "consent_required" };
-    const admit: PhotoAdmission = async tx => (await this.mayTake(personId, app, tx)) ?? await authorizeLink?.(tx);
-    const who = await admit();
+    const who = (await this.mayTake(personId, app)) ?? await authorizeLink?.();
     change = stepPhotoChange(change, { type: "checkUploader", eligible: who === undefined });
     if (!canScreenFile(change)) return { ok: false, reason: who ?? "adults_only" };
     const tooLarge = input.length > PHOTO_MAX_BYTES;
@@ -520,32 +543,32 @@ export class PhotoService {
     change = stepPhotoChange(change, { type: "checkSlots", available: !photoSlotsFull(count) });
     if (!canCleanImage(change)) return { ok: false, reason: "too_many" };
     let bytes: Uint8Array | undefined;
-    try { bytes = stripMetadata(input, type); } catch { /* The image did not pass parsing. */ }
+    try { bytes = stripMetadata(input, type); } catch { bytes = undefined; }
     change = stepPhotoChange(change, { type: "cleanImage", cleaned: bytes !== undefined });
-    if (!bytes || !canRecordUploadBytes(change)) return { ok: false, reason: "bad_image" };
+    if (!bytes || !canReserveRow(change)) return { ok: false, reason: "bad_image" };
     const id = newPhotoId();
     const key = randomBytes(24).toString("hex");
+    if (!/^[a-f0-9]{32}$/.test(batchId)) throw new Error("bad photo batch id");
+    const row: PhotoRow = { id, personId, app, storageKey: key, contentType: type, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), consentVersion: PHOTO_CONSENT.version, createdAt: this.now(), label: null, batchId };
+    const admit: PhotoAdmission = async tx => (await this.ratingRefusal(personId, app, undefined, tx)) ?? await authorizeLink?.(tx);
+    const reserved = await this.o.meta.reserve(row, admit);
+    change = stepPhotoChange(change, { type: "reserveRow", admitted: reserved === undefined });
+    if (!canRecordUploadBytes(change)) return { ok: false, reason: reserved ?? "not_member" };
     await this.o.storage.put(key, bytes, type);
     change = stepPhotoChange(change, { type: "recordUploadBytes" });
     if (!canRecordUploadRow(change)) throw new Error("photo bytes did not advance the upload");
-    const refused = await this.o.meta.publish({
-      id, personId, app, storageKey: key, contentType: type, bytes: bytes.length,
-      sha256: createHash("sha256").update(bytes).digest("hex"), consentVersion: PHOTO_CONSENT.version, createdAt: this.now(),
-    }, admit);
-    if (refused) {
+    const confirmed = await this.o.meta.confirm(row, this.now(), admit);
+    change = stepPhotoChange(change, { type: "recordUploadRow", confirmed });
+    if (canRecordUploadDiscard(change)) {
       await this.o.storage.delete(key);
-      return { ok: false, reason: refused };
+      await this.o.meta.delete(id);
+      change = stepPhotoChange(change, { type: "recordUploadDiscard" });
+      return { ok: false, reason: change.phase === "ChangeRefused" ? (await admit()) ?? "not_member" : "not_member" };
     }
-    change = stepPhotoChange(change, { type: "recordUploadRow" });
     if (!(await this.finishPhotoChange(change, personId, app))) throw new Error("photo upload did not complete");
     return { ok: true, value: { id } };
   }
 
-  /**
-   * Whether a rating of this person on this app may be made or kept now: photos on, not banned, an
-   * adult (lowest age and the app's own check), a live membership of the app and, when `photoIds` is
-   * given, every one of those photos still there. Undefined: yes.
-   */
   private async ratingRefusal(personId: string, app: AppId, photoIds?: readonly string[], tx?: SQL): Promise<PhotoRefusal | undefined> {
     const who = await this.mayTake(personId, app, tx);
     if (who) return who;
@@ -555,7 +578,6 @@ export class PhotoService {
     return undefined;
   }
 
-  /** With tx, the production writer has locked the person; hold the photo rows until that write ends. */
   async ratingSelectionRefusal(personId: string, app: AppId, selected: string[], tx?: SQL): Promise<PhotoRefusal | undefined> {
     const refusal = await this.ratingRefusal(personId, app, undefined, tx);
     if (refusal) return refusal;
@@ -564,29 +586,20 @@ export class PhotoService {
     return selected.some(id => !rows.some(row => row.id === id)) ? "not_found" : "photo_set_changed";
   }
 
-  /**
-   * Rate the member from their newest photos (at most RATER_MAX_PHOTOS, each at most RATER_MAX_BYTES)
-   * with the configured rater. Refused (no rater call, nothing written) for anyone who is not a
-   * verified adult with a live membership now, or is banned. A rater call takes seconds, so everything
-   * is checked again when it returns (the lowest age can drop under 18, a ban can land, the member can
-   * leave or change their selected photos meanwhile). After the write, a change clears the exact
-   * version this attempt wrote. No rater: nothing happens. Returns whether a score was kept.
-   */
   async rate(personId: string, app: AppId): Promise<{ rated: boolean; refused?: PhotoRefusal }> {
     const rater = this.o.rater;
     if (!rater || !this.o.storage) return { rated: false };
     const who = await this.ratingRefusal(personId, app);
     let attempt = stepRating(ratingInitial, { type: "screenSubject", eligible: who === undefined });
     if (!canSupplyPhotos(attempt)) return { rated: false, refused: who };
-    const person = await this.o.people.getPerson(personId);
-    const age = person && await personAgeAt(this.o.people, person, this.now());
-    if (age == null || !canBeMatched(age)) return { rated: false, refused: "adults_only" };
+    const age = effectiveAgeAt(await this.o.people.ageStanding(personId, null), this.now());
+    if (age === undefined || !canBeMatched(age)) return { rated: false, refused: "adults_only" };
     const subject: RatingSubject = { age, ageVerified: true };
     const rows = ratingRows(await this.o.meta.list(personId, app));
     const selected = rows.map(row => row.id);
     const photos: { id: string; bytes: Uint8Array }[] = [];
     for (const r of rows) { const bytes = await this.o.storage.get(r.storageKey); if (bytes) photos.push({ id: r.id, bytes }); }
-    const ready = photos.length ? await this.ratingSelectionRefusal(personId, app, selected) : "not_found";
+    const ready = photos.length && photos.length === rows.length ? await this.ratingSelectionRefusal(personId, app, selected) : "not_found";
     attempt = stepRating(attempt, { type: "supplyPhotos", hasPhotos: ready === undefined });
     if (!canReceiveScore(attempt)) return { rated: false, refused: ready };
     const s = await rater.rate(subject, photos);
@@ -614,8 +627,6 @@ export class PhotoService {
     return late === undefined ? { rated } : { rated, refused: late };
   }
 
-  /** Selected-item path only. Revalidates owner/app/adult/live membership and immutable bytes.
-   * This grants neither review nor delivery: PhotoRelayService enforces that separate authority. */
   async relayPhoto(personId: string, app: AppId, id: string, expected?: { sha256: string; bytes: number; contentType: PhotoType }, tx?: SQL): Promise<PhotoRow | undefined> {
     if (await this.ratingRefusal(personId, app, [id], tx)) return;
     const row = await (tx ? new PgPhotoStore(tx) : this.o.meta).get(id);
@@ -632,18 +643,23 @@ export class PhotoService {
     return { bytes, contentType: row.contentType };
   }
 
-  /** The member's own photos (no bytes, no score). */
   async list(personId: string, app: AppId) { return (await this.o.meta.list(personId, app)).map(r => ({ id: r.id, createdAt: r.createdAt, bytes: r.bytes, contentType: r.contentType })); }
 
-  /** The member deletes one of their photos: the rating goes with it and is made again from what is left. */
-  async remove(personId: string, app: AppId, id: string): Promise<boolean> {
-    const r = await this.o.meta.get(id);
-    return r?.id === id ? this.erasePhoto(r, personId, app, true) : false;
+  async rows(personId: string, app: AppId, tx?: SQL): Promise<PhotoRow[]> { return (tx ? new PgPhotoStore(tx) : this.o.meta).list(personId, app); }
+
+  async setLabel(personId: string, app: AppId, id: string, label: string | null): Promise<PhotoLabelResult | "invalid"> {
+    if (label !== null && (label.length > PHOTO_LABEL_MAX || !PHOTO_LABEL.test(label))) return "invalid";
+    if (await this.mayTake(personId, app)) return "not_found";
+    return this.o.meta.setLabel(personId, app, id, label);
   }
 
-  /** Every photo of a person (on one app, or every app): leave, delete everything, a minor age, a ban. Bytes first, then rows. */
-  async deleteFor(personId: string, app?: AppId): Promise<number> {
-    const rows = await this.o.meta.list(personId, app);
+  async remove(personId: string, app: AppId, id: string): Promise<boolean> {
+    const [row] = await this.o.meta.hide(personId, this.now(), { app, id });
+    return row?.id === id ? this.erasePhoto(row, personId, app, true) : false;
+  }
+
+  async deleteFor(personId: string, app?: AppId, ownerLocked = false): Promise<number> {
+    const rows = await this.o.meta.hide(personId, this.now(), { app, ownerLocked });
     let removed = 0;
     for (const r of rows) if (await this.erasePhoto(r, personId, app, false)) removed++;
     if (removed) this.o.log?.(`[photos] deleted ${removed} photo(s)${app ? ` on ${app}` : ""}`);
@@ -657,13 +673,52 @@ export class PhotoService {
     if (!canRecordRemovedBytes(change)) return false;
     await this.o.storage?.delete(row.storageKey);
     change = stepPhotoChange(change, { type: "recordRemovedBytes" });
-    if (!canRecordRemovedRow(change)) return false;
-    await this.o.meta.delete(row.id);
-    change = stepPhotoChange(change, { type: "recordRemovedRow" });
     if (!canRecordRatingClear(change)) return false;
     await this.o.onRemoved?.(personId, row.app, row.id);
     change = stepPhotoChange(change, { type: "recordRatingClear" });
+    if (!canRecordRemovedRow(change)) return false;
+    await this.o.meta.delete(row.id);
+    change = stepPhotoChange(change, { type: "recordRemovedRow" });
     return this.finishPhotoChange(change, personId, row.app);
+  }
+
+  async holdAllowed(personId: string, app: AppId): Promise<boolean> {
+    const { live, adult } = await this.adultNow(this.o.people, personId);
+    const m = await this.o.people.getMembership(personId, app);
+    const appAdultCheckPassed = await (this.o.eligible?.(personId, app) ?? Promise.resolve(false));
+    return photoHoldAllowed(live, adult, appAdultCheckPassed, !!m && LIVE_MEMBERSHIP.includes(m.state));
+  }
+
+  async ratingAllowed(personId: string, app: AppId): Promise<boolean> {
+    return ratingHoldAllowed(await this.holdAllowed(personId, app), (await this.o.meta.list(personId, app)).length);
+  }
+
+  async sweep(candidates: readonly PhotoHolder[] = []): Promise<{ finished: number; erased: number; failed: number }> {
+    const at = this.now(), rerate = new Map<string, PhotoHolder>();
+    let finished = 0, erased = 0, failed = 0;
+    const attempt = async (what: string, step: () => Promise<void>) => {
+      try { await step(); } catch (e) { failed++; this.o.log?.(`[photos] sweep: ${what} failed and waits for the next tick: ${(e as Error).message}`); }
+    };
+    for (const u of await this.o.meta.unfinished(SWEEP_BATCH)) {
+      if (!unfinishedPhotoDue(u.reserved, u.hidden, u.changedAt, at)) continue;
+      await attempt(`photo ${u.row.id}`, async () => {
+        await this.o.storage?.delete(u.row.storageKey);
+        if (!u.reserved) await this.o.onRemoved?.(u.row.personId, u.row.app, u.row.id);
+        await this.o.meta.delete(u.row.id);
+        if (!u.reserved) rerate.set(`${u.row.personId}:${u.row.app}`, { personId: u.row.personId, app: u.row.app });
+        finished++;
+      });
+    }
+    for (const h of rerate.values()) await this.rate(h.personId, h.app).catch(e => this.o.log?.(`[photos] rating failed: ${(e as Error).message}`));
+    const holders = new Map<string, PhotoHolder>();
+    for (const h of [...(await this.o.meta.holders(SWEEP_BATCH, at)), ...candidates]) holders.set(`${h.personId}:${h.app}`, h);
+    for (const h of holders.values()) {
+      await attempt(`holder ${h.personId} on ${h.app}`, async () => {
+        if (!(await this.holdAllowed(h.personId, h.app))) erased += await this.deleteFor(h.personId, h.app);
+      });
+    }
+    if (finished || erased || failed) this.o.log?.(`[photos] sweep finished ${finished} change(s), erased ${erased} photo(s), ${failed} failed`);
+    return { finished, erased, failed };
   }
 
   private async finishPhotoChange(change: PhotoChange, personId: string, app: AppId): Promise<boolean> {
@@ -672,10 +727,6 @@ export class PhotoService {
     return stepPhotoChange(change, { type: "finishRerate" }).phase === "ChangeFinished";
   }
 
-  /**
-   * Signed links for staff (the service's photo route, after its audit row): adults only, checked
-   * again here. Each link works for PHOTO_VIEW_TTL_MS through GET /api/photos/view/<id>.
-   */
   async staffLinks(personId: string, app: AppId, base: string): Promise<PhotoResult<{ id: string; url: string; expiresAt: number }[]>> {
     if (!this.o.storage) return { ok: false, reason: "photos_off" };
     const who = await this.adult(personId, app);
@@ -687,7 +738,6 @@ export class PhotoService {
 
   private sign(id: string, exp: number) { return createHmac("sha256", `photo-view:${this.o.signingKey}`).update(`${id}.${exp}`).digest("base64url"); }
 
-  /** The bytes behind a signed staff link, or undefined (bad or old signature, deleted photo, or the person is no longer an adult). */
   async view(id: string, exp: number, sig: string): Promise<{ bytes: Uint8Array; contentType: PhotoType } | undefined> {
     if (!this.o.storage || !Number.isFinite(exp) || exp < this.now() || exp > this.now() + PHOTO_VIEW_TTL_MS) return undefined;
     const want = Buffer.from(this.sign(id, exp)), got = Buffer.from(sig);
@@ -698,19 +748,9 @@ export class PhotoService {
     return bytes && { bytes, contentType: r.contentType };
   }
 
-  /**
-   * The /api/photos routes, for the public API (api.ts). `personId` is the signed-in person (null:
-   * not signed in, or no person yet). Undefined: not a photo route.
-   *   GET  /api/photos/consent         the consent text and version
-   *   GET  /api/photos                 {eligible, photos}: may this person add a photo; their own photos (ids only)
-   *   POST /api/photos                 the image bytes (Content-Type image/*), X-Photo-Consent: <version>
-   *   POST /api/photos/delete          {id}
-   *   GET  /api/photos/view/<id>?exp=&sig=   a signed staff link
-   */
   async route(req: Request, path: string, app: AppId, who: () => Promise<string | null | "unauthorized">): Promise<Response | undefined> {
     if (path !== "/api/photos" && !path.startsWith("/api/photos/")) return undefined;
     const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } });
-    // A ban answers like a join refused for review: it never says "banned".
     const refuse = (reason: PhotoRefusal) => json(reason === "photos_off" ? 503 : reason === "too_large" ? 413 : reason === "adults_only" || reason === "not_verified" || reason === "banned" ? 403 : reason === "not_found" ? 404 : 400, { ok: false, error: reason === "banned" ? "review" : reason });
     if (req.method === "GET" && path === "/api/photos/consent") return json(200, { ...PHOTO_CONSENT, apps: PHOTO_APPS });
     const view = /^\/api\/photos\/view\/(ph_[a-f0-9]{24})$/.exec(path);
@@ -724,12 +764,8 @@ export class PhotoService {
     const person = await who();
     if (person === "unauthorized") return json(401, { ok: false, error: "unauthorized" });
     if (!person) return refuse("adults_only");
-    // `eligible`: whether this person may add a photo here now (an adult, not banned, an app that takes
-    // photos). The settings page shows the photo section only when it is true or a photo is still there to
-    // delete, so a 13-17 member is never shown the consent text or an upload control.
     if (req.method === "GET" && path === "/api/photos") return json(200, { ok: true, eligible: (await this.mayTake(person, app)) === undefined, photos: await this.list(person, app) });
     if (req.method === "POST" && path === "/api/photos") {
-      // Read with a cap: a chunked body (no Content-Length) is abandoned as soon as it passes the limit.
       const buf = await readCapped(req, PHOTO_MAX_BYTES);
       if (buf === "too_large") return refuse("too_large");
       const r = await this.upload(person, app, buf, req.headers.get("x-photo-consent") ?? undefined);
@@ -737,7 +773,7 @@ export class PhotoService {
     }
     if (req.method === "POST" && path === "/api/photos/delete") {
       let id: unknown;
-      try { id = ((await req.json()) as Record<string, unknown>)?.id; } catch { /* not JSON */ }
+      try { id = ((await req.json()) as Record<string, unknown>)?.id; } catch { id = undefined; }
       if (typeof id !== "string" || !/^ph_[a-f0-9]{24}$/.test(id)) return json(400, { ok: false, error: "invalid" });
       return (await this.remove(person, app, id)) ? json(200, { ok: true }) : refuse("not_found");
     }

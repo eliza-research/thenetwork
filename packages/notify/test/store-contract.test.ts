@@ -40,8 +40,8 @@ function contract(name: string, make: () => Promise<NotifyStore>) {
     test("deliveries: once per id, mark items notified, cap window, outcomes", async () => {
       const a = (await s.addItem({ ...base, personId: "c3", subjectId: "a" }, T0)).item;
       const d = { deliveryId: "ntf_c3a", personId: "c3", itemIds: [a.id], target: "imessage" as const, countsTowardCap: true, sentAt: T0 + 100 };
-      expect(await s.recordDelivery(d)).toBe(true);
-      expect(await s.recordDelivery(d)).toBe(false);
+      expect(await s.recordDelivery(d, 2)).toBe(true);
+      expect(await s.recordDelivery(d, 2)).toBe(false);
       expect((await s.getItems([a.id]))[0]).toMatchObject({ notifiedAt: T0 + 100, deliveryId: "ntf_c3a" });
       expect(await s.peopleWithPending(T0 + 200)).not.toContain("c3");
       expect(await s.capSendsSince("c3", T0)).toEqual([T0 + 100]);
@@ -51,7 +51,7 @@ function contract(name: string, make: () => Promise<NotifyStore>) {
       expect(await s.actOnDelivery("ntf_c3a", "imessage", T0 + 300)).toBe(true);
       expect(await s.actOnDelivery("ntf_c3a", "imessage", T0 + 301)).toBe(false);
       const b = (await s.addItem({ ...base, personId: "c3", subjectId: "b" }, T0)).item;
-      await s.recordDelivery({ ...d, deliveryId: "ntf_c3b", itemIds: [b.id] });
+      await s.recordDelivery({ ...d, deliveryId: "ntf_c3b", itemIds: [b.id] }, 2);
       const expired = await s.expireDeliveries(T0 + 101, T0 + 400);
       expect(expired.map(x => x.deliveryId)).toContain("ntf_c3b");
       expect((await s.getDelivery("ntf_c3b"))!.outcome).toBe("ignored");
@@ -75,7 +75,7 @@ function contract(name: string, make: () => Promise<NotifyStore>) {
       const deliver = async (name: string, target: "claude" | "imessage", sentAt: number) => {
         const item = (await s.addItem({ ...base, personId, subjectId: name }, T0)).item;
         const deliveryId = `ntf_${name}`;
-        expect(await s.recordDelivery({ deliveryId, personId, itemIds: [item.id], target, countsTowardCap: false, sentAt })).toBe(true);
+        expect(await s.recordDelivery({ deliveryId, personId, itemIds: [item.id], target, countsTowardCap: false, sentAt }, 2)).toBe(true);
         return deliveryId;
       };
       const ignored = [await deliver("first-unused", "claude", T0), await deliver("second-unused", "claude", T0)];

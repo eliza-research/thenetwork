@@ -6,7 +6,6 @@ import type { Accounts } from "../../platform/src/accounts.ts";
 export interface MemberCommandOwner { app: AppInfo; memberId: string; e164: string }
 interface MemberRow { home_city: City; home_area: string | null; prefs: Partial<Preferences> }
 
-/** Read the same canonical, app-local member before executing or replaying an own-profile command. */
 export async function memberCommandOwner(tx: SQL, accounts: Pick<Accounts, "activeMembership">, owner: MemberCommandOwner) {
   const { app, memberId, e164 } = owner;
   const binding = await accounts.activeMembership(app, { e164, personId: null });

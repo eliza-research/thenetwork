@@ -21,14 +21,16 @@ import { Accounts } from "../../packages/platform/src/accounts.ts";
 import { APPS, type AppId } from "../../packages/platform/src/apps.ts";
 import { keyedHash } from "../../packages/platform/src/phone.ts";
 import { MemoryPeopleStore } from "../../packages/platform/src/store.ts";
-import { MemoryPhotoStore, PHOTO_CONSENT, PhotoService, photoRaterFromEnv, withRetry, type PhotoStorage, type PhotoType } from "../../packages/platform/src/photos.ts";
+import { LIVE_MEMBERSHIP, MemoryPhotoStore, PHOTO_APPS, PHOTO_CONSENT, PhotoService, photoRaterFromEnv, withRetry, type PhotoStorage, type PhotoType } from "../../packages/platform/src/photos.ts";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
 import type { OtpProvider } from "../../packages/platform/src/otp.ts";
 import { platformHooks } from "../../packages/mcp/src/hooks.ts";
 import { PhotoIntake, PHOTO_TEXT } from "../../packages/network/service/photoIntake.ts";
+import type { PhotoUploadLinks } from "../../packages/platform/src/photo-upload-link.ts";
+import { initial as linkInitial, step as stepLink, uploadLinkDailyLimitReached, uploadLinkHolderAllowed, type UploadLinkHolder } from "../../packages/core/src/generated/photoUploadLink.ts";
 import { biasReport, type BiasMember, type BiasOpp } from "../../packages/network/service/bias.ts";
 import { reviewerOfRecord, slaAlerts } from "../../packages/network/service/service.ts";
-import { APP_REASONS, DEFAULT_SLA_HOURS, PACK_READY, toNetworkReason } from "../../packages/observatory/src/apps.ts";
+import { APP_REASONS, DEFAULT_SLA_HOURS, toNetworkReason } from "../../packages/observatory/src/apps.ts";
 import { checkInReport, URGENT_REPORTS } from "../../packages/network/src/reports.ts";
 import { runScenario, type NetScenario } from "../../packages/network/harness/index.ts";
 import type { StaffUser } from "../../packages/observatory/src/types.ts";
@@ -80,11 +82,47 @@ class FakeWorkersAI {
   rater() { return makeClefRater({ token: "fake-token", accountId: "fake-account", fetch: this.fetch }); }
 }
 
+function memoryUploadLinks(people: MemoryPeopleStore, photos: PhotoService, now: () => number): Pick<PhotoUploadLinks, "issue" | "refusal" | "recordConsent"> {
+  const issued = new Map<string, number[]>();
+  const holder = async (personId: string, app: AppId) => {
+    const refusal = await photos.mayTake(personId, app);
+    const m = await people.getMembership(personId, app);
+    const liveMember = !!m && LIVE_MEMBERSHIP.includes(m.state);
+    const h: UploadLinkHolder = {
+      takesPhotos: refusal !== "photos_off" && refusal !== "app_not_allowed" && PHOTO_APPS.includes(app),
+      adult: refusal !== "adults_only" && refusal !== "not_verified", banned: refusal === "banned", held: false, liveMember,
+    };
+    return { h, m, refusal: refusal ?? (liveMember ? undefined : "not_member" as const) };
+  };
+  return {
+    async refusal(personId, app) {
+      const { h, refusal } = await holder(personId, app);
+      return uploadLinkHolderAllowed(h) ? undefined : { ok: false, reason: refusal ?? "adults_only" } as const;
+    },
+    async recordConsent(personId, app) {
+      const { h, m } = await holder(personId, app);
+      if (!uploadLinkHolderAllowed(h) || !m) return false;
+      await people.putMembership({ ...m, profile: { ...m.profile, photoConsent: PHOTO_CONSENT.version, photoConsentAt: now(), photoConsentSource: "text" } });
+      return true;
+    },
+    async issue(personId, app) {
+      const at = now();
+      const today = (issued.get(personId) ?? []).filter(t => t >= at - DAY);
+      if (uploadLinkDailyLimitReached(today.length)) return { ok: false, reason: "daily_limit" } as const;
+      const { h, refusal } = await holder(personId, app);
+      const link = stepLink(linkInitial, { type: "issueUploadLink", holder: h, at });
+      if (link.phase !== "UploadLinkOpen") return { ok: false, reason: refusal ?? "adults_only" } as const;
+      issued.set(personId, [...today, at]);
+      return { ok: true, url: `https://slop.date/photos/add#link-${personId}-${today.length}`, expiresAt: link.expiresAt } as const;
+    },
+  };
+}
+
 /** The offline world: people, memberships, photos, the rater and the text intake on memory stores. */
 function offlineWorld(o: { rater?: boolean } = {}) {
   let now = T0;
   const people = new MemoryPeopleStore();
-  const accounts = new Accounts(people, { hashKey: HASH_KEY, now: () => now, env: { PLATFORM_ENV: "dev" }, apps: id => APPS[id] });
+  const accounts = new Accounts(people, { hashKey: HASH_KEY, now: () => now, apps: id => APPS[id] });
   const storage = new MemoryStorage();
   const meta = new MemoryPhotoStore();
   const ai = new FakeWorkersAI();
@@ -102,7 +140,7 @@ function offlineWorld(o: { rater?: boolean } = {}) {
   const fetched: string[] = [];
   const replies: { to: string; text: string }[] = [];
   const intake = new PhotoIntake({
-    people, accounts, photos, phoneKey: e => keyedHash(HASH_KEY, `phone:${e}`), now: () => now,
+    people, accounts, photos, links: memoryUploadLinks(people, photos, () => now), phoneKey: e => keyedHash(HASH_KEY, `phone:${e}`), now: () => now,
     fetchMedia: async url => { fetched.push(url); return jpegWithExif(); },
     reply: async (to, text) => { replies.push({ to, text }); },
   });
@@ -114,7 +152,7 @@ function offlineWorld(o: { rater?: boolean } = {}) {
     return { e164, personId: p.id };
   };
   const rows = async (personId: string) => (await meta.list(personId)).length;
-  return { people, accounts, photos, intake, storage, meta, ai, ratings, sleeps, fetched, replies, member, rows, tick: (ms: number) => { now += ms; } };
+  return { people, accounts, photos, intake, storage, meta, ai, ratings, sleeps, fetched, replies, member, rows, at: () => now, tick: (ms: number) => { now += ms; } };
 }
 
 export async function safetyBlock(b: Block): Promise<void> {
@@ -236,7 +274,7 @@ export async function safetyBlock(b: Block): Promise<void> {
     await w.photos.remove(a.personId, "slop", (two as { value: { id: string } }).value.id);
     expect([w.ratings.has(a.personId), await w.rows(a.personId)]).toEqual([false, 0]);
     // The person states 17: the lowest age wins, and nothing is rated or stored again.
-    await w.people.noteAge(a.personId, 17);
+    await w.people.recordAgeReading(a.personId, (await w.people.phoneHashesOf(a.personId))[0]!, { kind: "age", age: 17 }, w.at());
     const before = w.ai.calls;
     expect((await w.photos.upload(a.personId, "slop", jpegWithExif(), PHOTO_CONSENT.version)).ok).toBe(false);
     expect(await w.photos.rate(a.personId, "slop")).toEqual({ rated: false, refused: "adults_only" });
@@ -244,7 +282,7 @@ export async function safetyBlock(b: Block): Promise<void> {
     expect(calls).toBeGreaterThan(0);
   });
 
-  await b.run("rater env: CLEF_RATINGS is on by default (off turns it off); it needs the token; no weights file means the placeholder weights; a file needs version and provenance; zero calls for a minor", async () => {
+  await b.run("rater env: ratings are on whenever the token and account are set; no weights file means the placeholder weights; a file needs version and provenance; zero calls for a minor", async () => {
     const env = { CLOUDFLARE_AI_TOKEN: "fake-token", CLOUDFLARE_ACCOUNT_ID: "fake-account" };
     const placeholder = JSON.stringify(DEFAULT_CLEF_WEIGHTS);
     const fitted = JSON.stringify({ ...DEFAULT_CLEF_WEIGHTS, version: "fit-sim-1", placeholder: false, provenance: { fitter: "sim", fittedAt: "2026-10-09T00:00:00Z", photos: 0, labels: 0, raters: 0 } });
@@ -253,13 +291,10 @@ export async function safetyBlock(b: Block): Promise<void> {
     const files: Record<string, string> = { "/w/placeholder.json": placeholder, "/w/fitted.json": fitted, "/w/noprov.json": noProv, "/w/nover.json": noVersion };
     const ai = new FakeWorkersAI();
     const build = (e: Record<string, string | undefined>) => photoRaterFromEnv(e, { fetch: ai.fetch, sleep: async () => {}, readFile: async p => { const f = files[p]; if (f === undefined) throw new Error(`no file ${p}`); return f; } });
-    expect((await build({ ...env, CLEF_RATINGS: "off", CLEF_WEIGHTS_PATH: "/w/fitted.json" })).status).toBe("off_flag");
-    expect((await build({ ...env, CLEF_RATINGS: "of" })).status).toBe("off_flag"); // a typo never turns ratings on
     expect((await build({ CLEF_WEIGHTS_PATH: "/w/fitted.json" })).status).toBe("off_env");
-    for (const flag of [undefined, "on", " ON "]) {
-      const r = await build({ ...env, CLEF_RATINGS: flag });
-      expect([r.status, r.weights, typeof r.rater?.rate]).toEqual(["on_placeholder", DEFAULT_CLEF_WEIGHTS.version, "function"]);
-    }
+    expect((await build({ CLOUDFLARE_AI_TOKEN: "fake-token", CLEF_WEIGHTS_PATH: "/w/fitted.json" })).status).toBe("off_env");
+    const placeholderOn = await build(env);
+    expect([placeholderOn.status, placeholderOn.weights, typeof placeholderOn.rater?.rate]).toEqual(["on_placeholder", DEFAULT_CLEF_WEIGHTS.version, "function"]);
     for (const p of ["/w/placeholder.json", "/w/noprov.json", "/w/nover.json", "/w/missing.json"]) {
       const r = await build({ ...env, CLEF_WEIGHTS_PATH: p });
       expect([r.status, r.rater]).toEqual(["refused_weights", undefined]);
@@ -353,13 +388,12 @@ export async function safetyBlock(b: Block): Promise<void> {
   });
 
   // ------------------------------------------------------------------ review
-  await b.run("review: the reviewer of record is the signed-in person only with the console token; slop is in PACK_READY; slop SLA alerts at 6 h, once", () => {
+  await b.run("review: the reviewer of record is the signed-in person only with the console token; slop SLA alerts at 6 h, once", () => {
     const user: StaffUser = { id: "token:admin#0badc0de", roles: ["admin"], via: "token" } as StaffUser;
     const req = (token: string) => new Request("http://staff/review/x", { headers: { authorization: `Bearer ${token}`, "x-network-staff-id": "pat@example.com" } });
-    expect(reviewerOfRecord(req("console-token-0123456789"), user, "console-token-0123456789").id).toBe("pat@example.com");
-    expect(reviewerOfRecord(req("other-token-0123456789"), user, "console-token-0123456789").id).toBe(user.id);
-    expect(reviewerOfRecord(req("console-token-0123456789"), user, undefined).id).toBe(user.id);
-    expect(PACK_READY.has("slop")).toBe(true);
+    expect(reviewerOfRecord(req("console-token-0123456789"), user, "console-token-0123456789").user.id).toBe("pat@example.com");
+    expect(reviewerOfRecord(req("other-token-0123456789"), user, "console-token-0123456789").user.id).toBe(user.id);
+    expect(reviewerOfRecord(req("console-token-0123456789"), user, undefined).user.id).toBe(user.id);
     // The slop rubric: its own codes, each stored as a PRD 32.8 base code with the slop code kept in the note.
     expect(APP_REASONS.slop.map(r => r.code)).toEqual(["weak_reason", "preference_mismatch", "safety_concern", "privacy_risk", "wrong_timing", "tone", "duplicate", "other"]);
     expect(toNetworkReason("slop", "preference_mismatch", "she wants 30+")).toEqual({ reason: "weak_reason", note: "[preference_mismatch] she wants 30+" });

@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import { DAY, HOUR } from "@thenetwork/core";
 import { Mini, START } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 test("group attendance: a no-show report identifies the silent member", async () => {
     const cases = [
@@ -31,7 +32,7 @@ test("group attendance: a no-show report identifies the silent member", async ()
       if (flow === "pair" && ["quoted", "unidentified_cohort"].includes(c.kind)) continue;
       const ids = ["a", "b", "c", "d"].slice(0, flow === "pair" ? 2 : flow === "group" ? 3 : 4);
       const w = new Mini(ids.map((id, i) => ({ id, name: ["Ana Diaz", "Ben Ito", "Cara Li", "Dan May"][i]!, age: 30, area: flow === "plan" ? "Prospect Heights" : "Greenpoint", interests: flow === "plan" ? ["coffee", "climbing"] : ["hiking", "outdoors"] })),
-        { seed, review: "human", growth: false, plans: flow === "plan", matchingEnabled: true });
+        { seed, inlineJudge: holdEveryItem.inline, growth: false, plans: flow === "plan", matchingEnabled: true });
       w.clock.set(START + (flow === "plan" ? 3 : 4) * DAY);
       await w.onboard(...ids);
       let id: string;

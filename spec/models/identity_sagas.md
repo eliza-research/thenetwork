@@ -8,7 +8,7 @@ A person needs identity and consent to follow their account through phone change
 
 Check bans, new ownership, STOP, and reconciliation after interrupted account changes. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [phone change spec](../phoneChange.md) generates the account service's challenge and confirmation transitions. The [account privacy spec](../accountPrivacy.md) generates the service decisions for app leave, full-account erasure and an app-scoped export. This saga models storage state, interleavings, consent and related cleanup.
+The [phone change spec](../phoneChange.md) generates the account service's challenge and confirmation transitions. The [account privacy spec](../accountPrivacy.md) generates the service decisions for app leave, full-account erasure and an app-scoped export. This saga models storage state, interleavings, consent and related cleanup. The staff support route for help@ntwrk.party and the privacy replay after a restore call the same `deleteAll`, `leave` and `exportApp` as the member path, so the erase and leave actions of this model also stand for those callers; the support route's admission, target echo and code check are generated from the account privacy spec and are not in this model.
 
 Imported from `quint/identity_sagas.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -39,13 +39,13 @@ Imported from `quint/identity_sagas.qnt` at `30d950e`. See [model index](README.
 //    start action runs the code's own guards, so a retry that the code refuses is visible.
 //  - Other actors (the holder of a number, staff, the Network, the carrier, the clock) run at any time.
 //  - Hashes are the phone names ("A" stands for keyedHash("phone:A")). The eliza notice uses its own
-//    hash domain (service.ts:1164), so the model keys it by the phone in a separate set.
+// hash domain (service.ts), so the model keys it by the phone in a separate set.
 //  - Ghost state (record `g`) holds what really happened: who holds a number (`holder`, `humanOf`),
 //    what a person asked for, and counters for the witnesses. Network code never reads it.
 //
 // Assumptions (not facts about the code):
 //  - A carrier gives a number to another human only when it is nobody's verified number, or when it
-//    was silent for the stale period (accounts.ts:9-10 is the same assumption).
+// was silent for the stale period (accounts.ts is the same assumption).
 //  - The holder of a number is the only sender from it. A number change needs a code from the new
 //    number, so only its holder can confirm it.
 //  - A legacy `network.channel_identities` row exists only if the init chooses one (platform-identity D7).
@@ -164,7 +164,7 @@ module identity_sagas {
   pure def newer(a: Ev, b: Ev): bool = a.at > b.at or (a.at == b.at and a.seq > b.seq)
   pure def lastEv(evs: Set[Ev]): Ev = evs.fold(EV0, (acc, e) => if (newer(e, acc)) e else acc)
 
-  // consent.ts:37-43 resolveConsent on the two last events (pg-store.ts:137-145).
+  // consent.ts resolveConsent on the two last events (pg-store.ts).
   pure def resolvedOut(w0: World, ph: str, a: str): bool = {
     val ae = lastEv(w0.ledger.filter(e => e.ph == ph and e.app == a))
     val ge = lastEv(w0.ledger.filter(e => e.ph == ph and e.app == "*"))
@@ -173,32 +173,32 @@ module identity_sagas {
     else not(not(ae.out) and ae.at > ge.at)
   }
 
-  // The phone row of a person (one phone per person: pg-store.ts:178).
+  // The phone row of a person (one phone per person: pg-store.ts).
   pure def phoneOf(w0: World, p: int): str =
     PHONES.fold("", (acc, ph) => if (w0.phones.get(ph).exists and w0.phones.get(ph).owner == p) ph else acc)
 
   pure def ownerOf(w0: World, ph: str): int = if (w0.phones.get(ph).exists) w0.phones.get(ph).owner else 0
 
-  // accounts.ts:142-147 personFor: no person for a held number or a tombstone.
+  // accounts.ts personFor: no person for a held number or a tombstone.
   pure def personFor(w0: World, ph: str): int = {
     val r = w0.phones.get(ph)
     if (r.exists and not(r.hold) and w0.people.get(r.owner).live) r.owner else 0
   }
 
-  // pg-store.ts:173-176 isBanned(phoneHash, personId).
+  // pg-store.ts isBanned(phoneHash, personId).
   pure def codeBanned(w0: World, hash: str, p: int): bool =
     w0.bans.exists(b => (hash != "" and b.hash == hash) or (b.scope == "person" and p != 0 and b.person == p))
 
-  // accounts.ts:166-168 banned(e164, person).
+  // accounts.ts banned(e164, person).
   pure def bannedPh(w0: World, ph: str, p: int): bool = codeBanned(w0, ph, if (p != 0) p else ownerOf(w0, ph))
 
-  // service.ts:1623-1629 personBanned (photos.mayTake reads it).
+  // service.ts personBanned (photos.mayTake reads it).
   pure def personBanned(w0: World, p: int): bool = codeBanned(w0, w0.people.get(p).hash, p)
 
   pure def stale(w0: World, ph: str): bool =
     w0.phones.get(ph).exists and w0.now - w0.phones.get(ph).lastSeen > STALE
 
-  // accounts.ts:176-184 seen: two statements with no transaction (read, then hold or touch).
+  // accounts.ts seen: two statements with no transaction (read, then hold or touch).
   pure def seen(w0: World, ph: str): { nw: World, out: str } = {
     val r = w0.phones.get(ph)
     if (not(r.exists)) { nw: w0, out: "new" }
@@ -330,16 +330,16 @@ module identity_sagas {
     PHONES.exists(ph => w.holder.get(ph) == w.humanOf.get(p) and (routesText(w, ph, a) != 0
       or ((personFor(w, ph) == p or ownHeld(ph, p)) and LIVE_MEM.contains(w.mem.get((p, a))))))
 
-  // A staff retry of POST /holds (accounts.ts:196-197).
+  // A staff retry of POST /holds (accounts.ts).
   def chRetryOk(ph: str): bool = w.phones.get(ph).exists and w.phones.get(ph).hold
 
-  // A member's retry of delete everything (api.ts:626-636: a session, not held).
+  // A member's retry of delete everything (api.ts: a session, not held).
   def delRetryOk(p: int): bool = otherHeld(p) or { val ph = phoneOf(w, p); ph != "" and (personFor(w, ph) == p or ownHeld(ph, p)) }
 
   // ------------------------------------------------------------------ invariants (rules, not code)
 
   // AGENTS.md founder decision 3 (2026-10-09), PRD 40.5 and lines 1777, 1817, and the ban comment at
-  // service.ts:1727-1731: once a ban is in force, the person is never matched on any app (memberships
+  // service.ts: once a ban is in force, the person is never matched on any app (memberships
   // restricted, the Network holds the member). A ban saga is not one transaction, so the rule holds once
   // the saga is done: while it runs, and while a stopped saga waits for the staff retry that the code
   // accepts (retryCompletes checks that this retry exists). Reproduced SD-005 (crash, then the retry was
@@ -366,7 +366,7 @@ module identity_sagas {
     and g.chPending.forall(ph => (s.ch.pc > 0 and s.ch.ph == ph) or chRetryOk(ph))
     and g.delPending.forall(p => (s.del.pc > 0 and s.del.p == p) or delRetryOk(p))
 
-  // platform-identity.md 2.4 `no-pair-divergence` and the leave comment at accounts.ts:420: an active
+  // platform-identity.md 2.4 `no-pair-divergence` and the leave comment at accounts.ts: an active
   // membership has its Network member, except while a saga runs or waits for a retry that the code
   // allows (a crashed delete everything is finished by the member's retry: retryCompletes checks that).
   // Reproduced SD-029 (leave; fixed in a3d1797), SD-017 (a late whole-row write; fixed in 709be0b) and
@@ -382,7 +382,7 @@ module identity_sagas {
     busy(k._1) or g.delPending.contains(k._1) or (g.leavePending.contains(k) and leaveRetryOk(k._1, k._2))
     or g.u13Stopped.contains(k) or chWaits(k._1) or w.mem.get(k) != "active" or w.net.get(k) == "active")
 
-  // AGENTS.md founder decision 3 and accounts.ts:16-18 ("a banned person or number never moves"): the
+  // AGENTS.md founder decision 3 and accounts.ts ("a banned person or number never moves"): the
   // number a banned person uses is a banned number. Reproduced SD-056 (a phone ban during a move; fixed
   // in 20f421e: ban() also bans the person's number now, movePhone refuses a banned person).
   val banCoversPerson = g.banDecided.forall(p =>
@@ -397,13 +397,13 @@ module identity_sagas {
     w.holder.get(ph) != w.humanOf.get(p) or not(PERSONS.exists(q =>
       q != p and w.people.get(q).live and ownerOf(w, ph) == q and APPS.exists(a => w.mem.get((q, a)) == "active")))))
 
-  // service.ts:1752 "The photos stay for the safety team": a banned person's photos are not deleted by
+  // service.ts "The photos stay for the safety team": a banned person's photos are not deleted by
   // their own leave or delete. Reproduced SD-275, SD-256 (leave by text) and SD-178 (delete everything);
   // fixed in 8e96df9 (onForget keeps a banned person's photos). The under-13 rule (photos are for adults
   // only, service.ts ageLowered) comes first: an under-13 decline removes the photos and the ghost record.
   val banKeepsPhotos = g.photosAtBan.forall(k => w.photos.contains(k))
 
-  // accounts.ts:189-193 and 208 ("never revived for the new owner"), api.test.ts:302-303: after a
+  // accounts.ts ("never revived for the new owner"), api.test.ts: after a
   // new_owner decision no join of that number gets the old owner's person. Reproduced SD-016 (fixed in
   // 2f0dbed: the decision is one transaction).
   val newOwnerNotRevived = not(g.revivedForOther)
@@ -425,17 +425,17 @@ module identity_sagas {
     or PERSONS.exists(q => w.people.get(q).live and w.humanOf.get(q) == t._1)
     or w.suppression.contains(t._2) or APPS.forall(a => resolvedOut(w, t._2, a)))
 
-  // accounts.ts:9-10: a number is put on hold because it was silent for 12 months. Reproduced SD-381
+  // accounts.ts: a number is put on hold because it was silent for 12 months. Reproduced SD-381
   // (fixed in a0536cc: lifting the hold also writes last_seen_at).
   val holdMeansSilent = PHONES.forall(ph =>
     not(w.phones.get(ph).exists and w.phones.get(ph).hold) or w.phones.get(ph).holdAt - w.phones.get(ph).lastSeen > STALE)
 
-  // accounts.ts:9-10 and PRD line 1771 (a number silent for 12 months waits for staff review): no
+  // accounts.ts and PRD line 1771 (a number silent for 12 months waits for staff review): no
   // proactive text reaches a human who is not the member. Reproduced SD-098 (fixed in 9d84e7d:
   // consentRefused refuses a held or stale number).
   val noSendToOtherHuman = not(g.wrongHuman)
 
-  // README "Rules the code keeps" (a held number has no person) and runtime.ts:394 ("a number on hold is
+  // README "Rules the code keeps" (a held number has no person) and runtime.ts ("a number on hold is
   // nobody's address"): a text from one human never reaches another person's member. Reproduced SD-026
   // (fixed in a75f361: a legacy phone row counts only for a member with no person).
   val noRouteToOtherHuman = not(g.misrouted)
@@ -445,13 +445,13 @@ module identity_sagas {
   // and Q-identity_sagas-2 (fixed in 5b6566a).
   val noPlainPhoneAfterDelete = g.erasedPhones.forall(ph => not(w.lineRows.contains(ph)) and not(w.ledger.exists(e => e.ph == ph)))
 
-  // runtime.ts:520 ("Nothing that names the member stays") and PRD F24 / SEC-005: after a forget or a
+  // runtime.ts ("Nothing that names the member stays") and PRD F24 / SEC-005: after a forget or a
   // delete, no row names the member or the person. Reproduced SD-124 (fixed in 0c49218) and SD-385 (fixed
   // in 9b127be, migration 0044).
   val forgetLeavesNoRows =
     g.forgotten.forall(t => not(w.runs.contains(t))) and g.erasedPersons.forall(p => not(w.receipts.exists(k => k._1 == p)))
 
-  // PRD 11.5 line 383 ("Removing a member ... revokes every key"), service.ts:761-765: a forgotten member
+  // PRD 11.5 line 383 ("Removing a member ... revokes every key"), service.ts: a forgotten member
   // has no live agent grant. Reproduces SD-089 (under-13 decline; a failed listener is swallowed).
   // NOT in `safety`: SD-089 is a defect of module oauth_mcp, outside this branch's defect list, and it is
   // not fixed here. The code still violates this rule (run test u13GrantsTest).
@@ -464,15 +464,15 @@ module identity_sagas {
   // the ghost now; the invariant stays as the regression guard of SD-108.
   val moveCompletes = not(g.moveFailedAfterCode)
 
-  // store.ts:169-175 (movePhone moves "the one-time Eliza notice"). Reproduced SD-379 (fixed in c0f2317).
+  // store.ts (movePhone moves "the one-time Eliza notice"). Reproduced SD-379 (fixed in c0f2317).
   val noticeFollowsMove = g.noticed.forall(p =>
     not(w.people.get(p).live) or { val ph = phoneOf(w, p); ph == "" or w.notices.contains(ph) })
 
-  // PRD line 551 and F24 ("Members can export their own data"), accounts.ts:446. Reproduced SD-378
+  // PRD line 551 and F24 ("Members can export their own data"), accounts.ts. Reproduced SD-378
   // (photos; fixed in decd288) and SD-294 (agent_private facts the member stated; fixed in 7b6413b).
   val exportComplete = not(g.exportGap)
 
-  // accounts.ts:246 and 373 (a new opt-in lifts the suppression of a delete): the number of a live,
+  // accounts.ts (a new opt-in lifts the suppression of a delete): the number of a live,
   // not banned person is not suppressed once no saga runs for them. New finding Q-identity_sagas-1 (fixed
   // in c759b9a: movePhone lifts the suppression of the new number in its transaction).
   val liveNumberNotSuppressed = PERSONS.forall(p =>
@@ -483,7 +483,7 @@ module identity_sagas {
       ph == "" or not(w.suppression.contains(ph)) or codeBanned(w, ph, p)
     })
 
-  // README "Rules the code keeps" and accounts.ts:431-437: after a delete of everything the person's
+  // README "Rules the code keeps" and accounts.ts: after a delete of everything the person's
   // number keeps the suppression hash and the age floor (until the person joins again). The floor moves
   // with a number change by design (SD-274, refuted), so one of the person's numbers must keep it.
   // New finding Q-identity_sagas-2 (delete everything concurrent with a number change; fixed in 5b6566a).
@@ -491,7 +491,7 @@ module identity_sagas {
     g.selfDeleted.forall(ph => w.suppression.contains(ph))
     and (g.selfDeleted == Set() or g.selfDeleted.exists(ph => w.floors.contains(ph)))
 
-  // Control: a held number has no person (accounts.ts:141-147), and a ban row is never removed.
+  // Control: a held number has no person (accounts.ts), and a ban row is never removed.
   val heldHasNoPerson = PHONES.forall(ph => not(w.phones.get(ph).hold) or personFor(w, ph) == 0)
 
   val safety = and {
@@ -627,8 +627,8 @@ module identity_sagas {
       { ...g, holderStop: g.holderStop.filter(t => t._2 != ph), last: "carrier reassigns (phone, human)", args: [ph, h] }),
   }
 
-  // A normal text from the holder (service.ts:1043 routing, 1061 seen, then memberMessage). The line
-  // keeps a conversation row with the plain address (outbound-queue.ts:640-641).
+  // A normal text from the holder (service.ts routing, 1061 seen, then memberMessage). The line
+  // keeps a conversation row with the plain address (outbound-queue.ts).
   action inbound(ph: str, a: str): bool = {
     val h = w.holder.get(ph)
     val target = routesText(w, ph, a)
@@ -671,7 +671,7 @@ module identity_sagas {
   }
 
   // A join by text or web for the holder of ph, one atomic action under the join lock (the join steps
-  // themselves are quint/join_age.qnt). accounts.ts:351-395, service.ts:1435-1463, pg-store.ts:64-73.
+  // themselves are quint/join_age.qnt). accounts.ts, service.ts, pg-store.ts.
   action join(ph: str, a: str): bool = {
     val h = w.holder.get(ph)
     val sn = seen(w, ph)
@@ -714,7 +714,7 @@ module identity_sagas {
   }
 
   // A proactive send to member (p, a): the Network's address is the person's platform phone. Admission:
-  // outbound-queue.ts:470-485 (member active, binding with hold null, membership active) and
+  // outbound-queue.ts (member active, binding with hold null, membership active) and
   // service.ts consentRefused (held or silent for 12 months since 9d84e7d, SD-098; suppressed, banned,
   // opted out).
   pure def sendAllowed(w0: World, p: int, a: str): bool = {
@@ -746,14 +746,14 @@ module identity_sagas {
     set3({ ...w, runs: w.runs.union(Set((p, a, w.gen.get((p, a))))) }, s, { ...g, last: "matching run names the member (app)", args: [a] }),
   }
 
-  // A profile-suggestion connection receipt of a member of app a (insert only; service.ts:443-444).
+  // A profile-suggestion connection receipt of a member of app a (insert only; service.ts).
   action connReceipt(p: int, a: str): bool = all {
     w.people.get(p).live,
     LIVE_MEM.contains(w.mem.get((p, a))),
     set3({ ...w, receipts: w.receipts.union(Set((p, a))) }, s, { ...g, last: "connection receipt (app)", args: [a] }),
   }
 
-  // A photo upload by the person (photos.ts:457-473, mayTake: not banned).
+  // A photo upload by the person (photos.ts, mayTake: not banned).
   action uploadPhoto(p: int): bool = all {
     w.people.get(p).live,
     Set("active", "paused").contains(w.mem.get((p, "slop"))),
@@ -855,7 +855,7 @@ module identity_sagas {
     }
   }
 
-  // ------------------------------------------------------------------ leave (accounts.ts:421-429)
+  // ------------------------------------------------------------------ leave (accounts.ts)
   // By text: "leave <app>" (service.ts inbound leave). STOP is not the message; seen runs first. Since
   // a3d1797 (SD-029) a number that routes to no member of the app still leaves when its person has a live
   // membership of the app (not removed, not invited): a leave that stopped after the forget unit.
@@ -871,7 +871,7 @@ module identity_sagas {
       if (sn.out == "held") set3(w0, s, { ...g, last: "leave text from a held number: not handled", args: [] })
       else if (target == 0) set3(w0, s, { ...g, last: "leave by text: no member, falls to the join flow (app, phone)", args: [a, ph] })
       else if (p == 0)
-        // A member with no platform person (legacy): consent, then forget (service.ts:1086).
+        // A member with no platform person (legacy): consent, then forget (service.ts).
         set3(addEv(forgetUnit(w0, target, a), ph, a, true, w.now), s,
           { ...g, forgotten: g.forgotten.union(Set((target, a, w.gen.get((target, a))))), last: "leave by a legacy member", args: [a] })
       else
@@ -924,24 +924,24 @@ module identity_sagas {
         set3(forgetUnit(w, p, a), { ...s, leave: { ...l, pc: 4 } },
           { ...g, forgotten: g.forgotten.union(Set((p, a, w.gen.get((p, a))))), last: "leave: network forget unit committed", args: [] })
       } else if (l.pc == 4) {
-        // forgetListeners: an error is logged and swallowed (service.ts:763-765).
+        // forgetListeners: an error is logged and swallowed (service.ts).
         set3({ ...w, grants: if (l.failListener) w.grants else w.grants.exclude(Set((p, a))) }, { ...s, leave: { ...l, pc: 5 } },
           { ...g, last: if (l.failListener) "leave: OAuth listener failed (swallowed)" else "leave: OAuth grants revoked", args: [] })
       } else if (l.pc == 5) {
-        // forgetMembership (pg-store.ts:293-302); the trigger drops the app's connection receipts (0044).
+        // forgetMembership (pg-store.ts); the trigger drops the app's connection receipts (0044).
         set3({ ...dropReceipts(w, p, Set(a)), mem: w.mem.set((p, a), "removed") }, { ...s, leave: { ...l, pc: 0 } },
           { ...g, leavePending: g.leavePending.exclude(Set((p, a))), leaveDone: g.leaveDone + 1, last: "leave: membership removed, done", args: [] })
       } else blocked,
     }
   }
 
-  // ------------------------------------------------------------------ delete everything (accounts.ts:432-444)
+  // ------------------------------------------------------------------ delete everything (accounts.ts)
   action delStart(ph: str): bool = {
     val p = personFor(w, ph)
     all {
       s.del.pc == 0,
       w.phones.get(ph).exists,
-      not(w.phones.get(ph).hold),                  // api.ts:628
+      not(w.phones.get(ph).hold), // api.ts
       not(stale(w, ph)),                           // a session lives 30 days; its login marked the number seen
       p != 0,
       set3(w, { ...s, del: { pc: 1, p: p, ph: ph, left: APPS.filter(a => w.mem.get((p, a)) != "none" and w.mem.get((p, a)) != "removed") } },
@@ -1020,7 +1020,7 @@ module identity_sagas {
     }
   }
 
-  // ------------------------------------------------------------------ number change (accounts.ts:249-274)
+  // ------------------------------------------------------------------ number change (accounts.ts)
   // mvStart: the code from the new number is verified (verify answers true once): the holder of dst.
   action mvStart(p: int, dst: str): bool = {
     val src = phoneOf(w, p)
@@ -1029,6 +1029,9 @@ module identity_sagas {
       src != "", src != dst,
       not(w.phones.get(src).hold), not(stale(w, src)),
       personFor(w, src) == p,
+      // spec/phoneChange.md, "The request uses the existing account": the start needs a fresh sign-in on src
+      // (a platform code or a Cloud phone proof; both prove that the person's human holds src).
+      w.holder.get(src) == w.humanOf.get(p),
       w.holder.get(dst) == w.humanOf.get(p),
       set3(w, { ...s, mv: { pc: 1, p: p, src: src, dst: dst } }, { ...g, last: "number change: code verified (from, to)", args: [src, dst] }),
     }
@@ -1073,7 +1076,7 @@ module identity_sagas {
     }
   }
 
-  // ------------------------------------------------------------------ under-13 decline in chat (service.ts:1292-1310)
+  // ------------------------------------------------------------------ under-13 decline in chat (service.ts)
   // The Network declines the member in its unit (forget of this app's member commits), then statedAge.
   action u13Start(ph: str, a: str): bool = {
     val p = personFor(w, ph)
@@ -1092,7 +1095,7 @@ module identity_sagas {
     all {
       u.pc > 0,
       if (u.pc == 1)
-        // recordAge -> ageLowered (< 18): every photo and rating goes (service.ts:779).
+        // recordAge -> ageLowered (< 18): every photo and rating goes (service.ts).
         // The adults-only rule comes before the safety copy of a ban (banKeepsPhotos): the ghost record goes too.
         set3({ ...w, floors: w.floors.union(Set(u.ph)), photos: w.photos.filter(k => k._1 != p), ratings: w.ratings.exclude(Set(p)) },
           { ...s, u13: { ...u, pc: 2 } }, { ...g, photosAtBan: g.photosAtBan.filter(k => k._1 != p), last: "under-13: recordAge", args: [] })

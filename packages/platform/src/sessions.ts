@@ -7,7 +7,7 @@
 //  - Delete everything needs a fresh login (within 10 minutes): a stolen old cookie cannot do it.
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import {
-  freshSignIn, initial, sessionDeadline, sessionGraceMs, sessionMaxMs, sessionRotateMs, sessionStepUpMs, sessionTtlMs, step,
+  freshSignIn, initial, sessionDeadline, sessionGraceMs, sessionMaxMs, sessionRotateMs, sessionRowLive, sessionStepUpMs, sessionTtlMs, step, type SessionFlow,
 } from "../../core/src/generated/webSession.ts";
 import type { AppId } from "./apps.ts";
 import type { PeopleStore, Session } from "./store.ts";
@@ -36,12 +36,16 @@ export class SessionService {
 
   /** A new session. `startedAt` is the OTP login time (a rotation keeps it). */
   async create(app: AppId, e164: string, personId: string | null, rotatedFrom: string | null = null, startedAt?: number, expiresBefore?: number, delegatedCloud?: true): Promise<{ token: string; session: Session }> {
+    const next = this.next(app, e164, personId, rotatedFrom, startedAt, expiresBefore, delegatedCloud);
+    await this.store.putSession(next.session);
+    return next;
+  }
+
+  private next(app: AppId, e164: string, personId: string | null, rotatedFrom: string | null, startedAt?: number, expiresBefore?: number, delegatedCloud?: true): { token: string; session: Session } {
     const token = `${delegatedCloud ? "cloud." : ""}${newToken()}`, at = this.now(), started = startedAt ?? at;
     const expiresAt = sessionDeadline(at, started, this.opts.ttlMs ?? SESSION_TTL_MS, this.opts.maxMs ?? SESSION_MAX_MS,
       expiresBefore !== undefined, expiresBefore ?? 0);
-    const session: Session = { tokenHash: this.hash(token), app, e164, personId, createdAt: at, startedAt: started, expiresAt, rotatedFrom, revokedAt: null };
-    await this.store.putSession(session);
-    return { token, session };
+    return { token, session: { tokenHash: this.hash(token), app, e164, personId, createdAt: at, startedAt: started, expiresAt, rotatedFrom, revokedAt: null } };
   }
 
   /**
@@ -63,12 +67,20 @@ export class SessionService {
     if (!s || flow.phase === "Refused") return undefined;
     if (flow.phase === "Usable") return { session: s, token, rotated: false };
     if (flow.phase !== "RevokingOld") return undefined;
-    await this.store.revokeSession(s.tokenHash, flow.revokeAt);
-    flow = step(flow, { type: "recordRevocation" });
-    if (flow.phase !== "IssuingReplacement") return undefined;
-    const cloud = token.startsWith("cloud.");
-    const next = await this.create(app, s.e164, s.personId, s.tokenHash, s.startedAt, cloud ? s.expiresAt : undefined, cloud ? true : undefined);
-    if (step(flow, { type: "recordReplacement" }).phase === "Rotated") return { ...next, rotated: true };
+    const revoking = flow, cloud = token.startsWith("cloud.");
+    let revoked: SessionFlow = revoking, next: { token: string; session: Session } | undefined;
+    await this.store.rotateSession(s.tokenHash, s.e164, revoking.revokeAt, current => {
+      const now = this.now();
+      revoked = step(revoking, { type: "recordRevocation",
+        rowLive: !!current && sessionRowLive(current.app === app, current.expiresAt, current.revokedAt !== null, current.revokedAt ?? 0, now),
+        rotatedMeanwhile: current?.revokedAt != null });
+      next = revoked.phase === "IssuingReplacement"
+        ? this.next(app, s.e164, current?.personId ?? s.personId, s.tokenHash, s.startedAt, cloud ? s.expiresAt : undefined, cloud ? true : undefined) : undefined;
+      return next?.session;
+    });
+    if (revoked.phase === "Usable") return { session: s, token, rotated: false };
+    if (revoked.phase !== "IssuingReplacement" || !next) return undefined;
+    if (step(revoked, { type: "recordReplacement" }).phase === "Rotated") return { ...next, rotated: true };
   }
 
   /** True when the session's OTP login is recent enough for delete everything. */

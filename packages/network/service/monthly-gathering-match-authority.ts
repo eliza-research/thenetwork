@@ -24,8 +24,6 @@ function validSource(source: GatheringRepeatSource): boolean {
     && source.members.every(id => typeof id === "string" && id.length > 0) && source.members[0] < source.members[1]
     && /^[0-9a-f]{64}$/.test(source.consentVersion);
 }
-
-/** Caller holds the runtime lock. Read the active window without inventing a new epoch for a repeated scan. */
 export async function currentGatheringRepeatSources(tx: SQL, accounts: FollowupAccounts, app: AppInfo, now: number, state?: NetworkState): Promise<GatheringRepeatSource[]> {
   if (app.id !== "ntwrk") return [];
   const events = await tx<{ id: string; revision: number }[]>`select event.id,event.revision from network.monthly_gatherings event
@@ -44,8 +42,6 @@ export async function currentGatheringRepeatSources(tx: SQL, accounts: FollowupA
   for (const event of events) result.push(...await gatheringRepeatSourcesForEvent(tx, accounts, app, event, now, { state }));
   return result;
 }
-
-/** State is already locked when claiming. Lock the event before the two persons, including the peer. */
 export async function lockGatheringMatchSource(tx: SQL, app: AppInfo, source: GatheringRepeatSource): Promise<void> {
   if (app.id !== "ntwrk" || !validSource(source)) return;
   const [event] = await tx`select id from network.monthly_gatherings where app_id=${app.id} and city='nyc'
@@ -60,8 +56,6 @@ export async function lockGatheringMatchSource(tx: SQL, app: AppInfo, source: Ga
     where membership.app_id=${app.id} and membership.member_id=any(${tx.array(source.members, "TEXT")})
     order by membership.person_id,phone.e164 for share of membership,phone`;
 }
-
-/** Used under claim locks before contact and as a read-only check during human review and reply replay. */
 export async function gatheringMatchSourceCurrent(tx: SQL, accounts: FollowupAccounts, app: AppInfo, source: GatheringRepeatSource,
   now: number, recipient?: GatheringFollowupRecipient, state?: NetworkState): Promise<boolean> {
   if (app.id !== "ntwrk" || !validSource(source) || (recipient && !source.members.includes(recipient.memberId))) return false;

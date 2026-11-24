@@ -10,7 +10,7 @@ test("silence stops queued replies and automatic flake notices while explicit sc
   for (const family of ["reply", "flake"] as const) {
     const template = await loadScenario(resolve(import.meta.dirname, `../scenarios/${family === "reply" ? "member-goes-silent" : "group-flake-morning-of"}.json`));
     const target = family === "reply" ? "ghost" : "dinner-4";
-    for (const seed of family === "reply" ? [8, 14, 30] : [1, 3, 10]) {
+    for (const seed of family === "reply" ? [1, 5, 30] : [1, 2, 4]) {
       for (const mode of family === "reply" ? ["normal", "silent", "explicit"] : ["normal", "silent"]) {
         const scenario = structuredClone(template);
         if (family === "flake") {

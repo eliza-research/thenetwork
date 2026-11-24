@@ -12,6 +12,8 @@ Imported from `quint/plan_crew.qnt` at `30d950e`. See [model index](README.md) f
 Production offer transitions and the handoff decision use [Recurring crew offers](../crewOffer.md). This standalone model keeps its abstract time and eligibility changes from the source branch. The model's held outcome represents a booked session that reached the feedback step. The model starts with an offered crew. The [Friends planning rules](../friendsWeek.md#a-friends-repeat-uses-its-own-completed-table-and-a-fresh-review) cover the earlier repeat-interest feedback.
 The [Friends weekly planner](../friendsWeek.md) reserves prospective crew sessions and offers before repeats and new plans.
 
+A friends.help crew can hold members aged 13 to 17 when every pair with a minor passes the teen pair rule and the crew meets at an all-ages place for an all-ages activity ([friend introductions with a minor](../friendIntroAge.md) `groupAgeAllowed`, `teenPlaceAllowed`; engine `crewSessionPlan` returns no session unless `teenGroupReason` passes and the place rule holds). The model chooses at the start whether the crew is a teen crew (`teenCrew`) and whether its place is all-ages now (`placeAllAges`, read from the catalog entry by id, never from the stored plan copy). In a teen crew the set `minors` stands for the members who fail the rule now (19 on the session's end day, a lost readiness, a report or a bar, a stop of teen introductions), so `noSessionAMinorKnows` is the teen plan rule for a teen crew, and while teen introductions are stopped it is the minors policy. `teenPlanPlace` states that a teen crew at a place that is not all-ages gets no session. Organizing reach is outside this model (`withReach` gives a crew with a minor no reach; `teen-friend-intro.integration.test.ts`). Changed (owner decision 2026-11-22, answer A4): a friends.help crew may hold a minor under the rule, because the owner chose "Also small teen groups".
+
 ```quint
 // -*- mode: Bluespec; -*-
 // quint-check: max-steps=30 max-samples=10000 verify-steps=12
@@ -40,10 +42,14 @@ module plan_crew {
   // ------------------------------------------------------------------------------------------------
   // Constants
 
-  pure val MEMBERS = Set("a", "b", "c")
+  pure val MEMBERS = Set("a", "b", "c", "d")
   pure val CREW0 = Set("a", "b", "c")
+  // The members asked about the plan the crew came from: the crew, and d, who was asked and declined. The crew
+  // meets at that plan's time and place (crewSource and knowsCrew, network.ts). In the code the set also holds the
+  // members asked about each earlier plan whose time and place that plan keeps (timeAndPlaceChain, network.ts).
+  pure val SOURCE_ASKED = Set("a", "b", "c", "d")
   pure val MAXT = 13
-  pure val CREW_TIMEOUT = 3    // crew offer resolves after 3 days (network.ts:3221)
+  pure val CREW_TIMEOUT = 3 // crew offer resolves after 3 days (network.ts)
   pure val HANDOFF = 3         // pcfg.crews.handOffAfterSessions
   pure val CREW_MIN = 3        // pcfg.crews.minMembers
   pure val MAXWEEK = 4
@@ -60,69 +66,99 @@ module plan_crew {
   var crewNo: Set[str]
   var crewMembers: Set[str]
   var crewTold: Set[str]       // heard crewFormed / crewNotFormed
-  var crewSessions: List[int]  // crew.sessions: PLAN ids (here: the slot), network.ts:3232
+  var crewSessions: List[int] // crew.sessions: PLAN ids (here: the slot), network.ts
   var crewOpps: int -> str     // session opportunity id -> review | held | failed
   var crewOppSlot: int -> int  // session opportunity id -> slot
   var crewWeek: int            // the next free slot (time)
   var crewHandedOff: bool
   var crewEndTold: bool        // members heard that the weekly crew ended
+  // Owner decision 2026-11-22, answer A4: a friends.help teen crew (minors = the members who fail the rule), and
+  // whether its place and activity are all-ages now (teenPlaceAllowed).
+  var teenCrew: bool
+  var placeAllAges: bool
 
-  /** planSeatOk (network.ts:2888) with busyOk: an adult, not opted out, trust ok. */
+  /** planSeatOk (network.ts) with busyOk: an adult, not opted out, trust ok. */
   def seatOk(m: str): bool = not(minors.contains(m)) and not(optedOut.contains(m)) and not(watch.contains(m))
 
   // ------------------------------------------------------------------------------------------------
   // Init
 
-  action init = all {
+  action initCrew(tc: bool, aa: bool): bool = all {
     now' = 0, optedOut' = Set(), watch' = Set(), minors' = Set(),
     crewStage' = "offered", crewYes' = Set(), crewNo' = Set(), crewMembers' = CREW0, crewTold' = Set(),
     crewSessions' = List(), crewOpps' = Map(), crewOppSlot' = Map(), crewWeek' = 0, crewHandedOff' = false,
-    crewEndTold' = false,
+    crewEndTold' = false, teenCrew' = tc, placeAllAges' = aa,
+  }
+  // An adult crew (the place rule does not apply to it).
+  action initAdult = initCrew(false, true)
+  action init = {
+    nondet tc = Set(true, false).oneOf()
+    nondet aa = Set(true, false).oneOf()
+    initCrew(tc, aa)
   }
 
-  action keepEnv = all { now' = now, optedOut' = optedOut, watch' = watch, minors' = minors }
+  action keepEnv = all { now' = now, optedOut' = optedOut, watch' = watch, minors' = minors, teenCrew' = teenCrew, placeAllAges' = placeAllAges }
   action keepCrew = all {
     crewStage' = crewStage, crewYes' = crewYes, crewNo' = crewNo, crewMembers' = crewMembers, crewTold' = crewTold,
     crewSessions' = crewSessions, crewOpps' = crewOpps, crewOppSlot' = crewOppSlot, crewWeek' = crewWeek,
-    crewHandedOff' = crewHandedOff, crewEndTold' = crewEndTold,
+    crewHandedOff' = crewHandedOff, crewEndTold' = crewEndTold, teenCrew' = teenCrew, placeAllAges' = placeAllAges,
   }
 
   // ------------------------------------------------------------------------------------------------
   // Actor events that the crew reads (the plan run model has the same events)
 
   action clock = all { now < MAXT, now' = now + 1, optedOut' = optedOut, watch' = watch, minors' = minors, keepCrew }
-  /** STOP (network.ts:675). */
+  /** STOP (network.ts). */
   action stop(m: str): bool = all {
     not(optedOut.contains(m)), optedOut' = optedOut.union(Set(m)),
     now' = now, watch' = watch, minors' = minors, keepCrew,
   }
-  /** Trust goes to watch (onTrustChange, network.ts:1188). */
+  /** Trust goes to watch (onTrustChange, network.ts). */
   action goWatch(m: str): bool = all {
     not(watch.contains(m)), watch' = watch.union(Set(m)),
     now' = now, optedOut' = optedOut, minors' = minors, keepCrew,
   }
-  /** A minor signal (network.ts:721). */
+  /**
+   * A minor signal (network.ts), and a decline for an age under the join age (declineUnderMinAge). dropMember
+   * closes every open session of a crew the minor belongs to: the minor knows its time and place
+   * (spec/opportunityLifecycle.md, "A new minor signal closes an opportunity involving that person"). It also
+   * removes the crew from the Network's crews and resolves its open offer unformed, so the crew stays ended after
+   * forget deletes the minor's id. Abstraction: the model keeps the crew and its members, and crewKnownToAMinor
+   * refuses every later session and the forming, which has the same effect on sessions. A record that goes under
+   * 18 with no inbound signal is read at the next tick, and also at the moment a session books, falls back or takes
+   * a late yes (planMembersAdult reads the crew members and the askees of the crew's source table): the session
+   * never books for the adults first, so this one atomic step models both.
+   */
   action minorSignal(m: str): bool = all {
     not(minors.contains(m)), minors' = minors.union(Set(m)),
-    now' = now, optedOut' = optedOut, watch' = watch, keepCrew,
+    crewOpps' = if (crewMembers.contains(m) or SOURCE_ASKED.contains(m)) crewOpps.keys().mapBy(k => if (crewOpps.get(k) == "review") "failed" else crewOpps.get(k)) else crewOpps,
+    crewStage' = crewStage, crewYes' = crewYes, crewNo' = crewNo, crewMembers' = crewMembers, crewTold' = crewTold,
+    crewSessions' = crewSessions, crewOppSlot' = crewOppSlot, crewWeek' = crewWeek,
+    crewHandedOff' = crewHandedOff, crewEndTold' = crewEndTold, teenCrew' = teenCrew, placeAllAges' = placeAllAges,
+    now' = now, optedOut' = optedOut, watch' = watch,
   }
+
+  /** spec/opportunityLifecycle.md, "A minor signal ends the recurring plans that the minor knows". */
+  def crewKnownToAMinor: bool = crewMembers.union(SOURCE_ASKED).exists(id => minors.contains(id))
 
   // ------------------------------------------------------------------------------------------------
   // Crew actions
 
-  // resolveCrew (formal-main network.ts:3460-3473): a yes counts only from a member who may still take a seat
+  // resolveCrew (formal-main network.ts): a yes counts only from a member who may still take a seat
   // (planSeatOk with busyOk: not a minor, not opted out, trust ok); crewOptIn needs CREW_MIN of them, and only
   // they hear crewFormed or crewNotFormed.
+  // A crew whose invitees include a known minor never forms (recurrenceAllowed).
   action resolveCrew(yes0: Set[str]): bool = {
     val yes = yes0.filter(id => seatOk(id))
+    val forms = yes.size() >= CREW_MIN and not(crewKnownToAMinor)
     all {
-      crewStage' = if (yes.size() >= CREW_MIN) "formed" else "none",
-      crewMembers' = if (yes.size() >= CREW_MIN) crewMembers.intersect(yes) else crewMembers,
+      crewStage' = if (forms) "formed" else "none",
+      crewMembers' = if (forms) crewMembers.intersect(yes) else crewMembers,
       crewTold' = crewTold.union(yes),
     }
   }
 
-  /** onCrewAnswer (network.ts:3192): when everyone answered, resolveCrew (network.ts:3203). */
+  /** onCrewAnswer (network.ts): when everyone answered, resolveCrew (network.ts). */
   action crewAnswer(m: str, yes: bool): bool = crewAnswerCurrent(m, yes, true)
 
   action crewAnswerCurrent(m: str, yes: bool, receiptCurrent: bool): bool = all {
@@ -138,7 +174,7 @@ module plan_crew {
     crewHandedOff' = crewHandedOff, crewEndTold' = crewEndTold, keepEnv,
   }
 
-  /** The offer resolves after 3 days (network.ts:3221). */
+  /** The offer resolves after 3 days (network.ts). */
   action crewTimeout = all {
     crewStage == "offered", now > CREW_TIMEOUT,
     resolveCrew(crewYes), crewYes' = crewYes, crewNo' = crewNo,
@@ -147,14 +183,14 @@ module plan_crew {
   }
 
   /**
-   * crewSessions (network.ts:3270-3290): no open session for the crew; then the hand-off when 3 sessions took
+   * crewSessions (network.ts): no open session for the crew; then the hand-off when 3 sessions took
    * place (stage done: SD-444 counting fixed; still no member hears it, the skipped notice part); then enough
    * seats; then the dedupe on the plan id, which the crew and the slot fix (SD-144 fixed).
    */
   action crewTick = crewTickWithVenue(true)
 
   action crewTickWithVenue(venueCurrent: bool): bool = all {
-    crewStage == "formed", not(crewHandedOff),
+    crewStage == "formed", not(crewHandedOff), not(crewKnownToAMinor),
     crewOpps.keys().forall(k => crewOpps.get(k) != "review"),
     val held = crewOpps.keys().filter(k => crewOpps.get(k) == "held").size()
     val slot = crewWeek
@@ -165,6 +201,8 @@ module plan_crew {
       crewSessions' = crewSessions, crewOpps' = crewOpps, crewOppSlot' = crewOppSlot, crewHandedOff' = true,
     } else all {
       venueCurrent,
+      // engine crewSessionPlan: a teen crew gets a session only at an all-ages place (teenPlaceAllowed).
+      not(teenCrew) or placeAllAges,
       crewMembers.filter(id => seatOk(id)).size() >= CREW_MIN,
       not(dup),
       crewSessions' = crewSessions.append(planId),
@@ -213,15 +251,15 @@ module plan_crew {
   // Safety invariants (written from the rules, not from the code)
 
   /**
-   * SD-144 (fixed). One session proposal per crew slot. Rule: the dedupe in crewSessions (network.ts:3230) and "weekly,
-   * same time and place, each session opt-in and reviewed like any plan" (network.ts:3214). Code: the dedupe
+   * SD-144 (fixed). One session proposal per crew slot. Rule: the dedupe in crewSessions (network.ts) and "weekly,
+   * same time and place, each session opt-in and reviewed like any plan" (network.ts). Code: the dedupe
    * looked up plan ids in a map keyed by opportunity ids, so it never matched.
    */
   val sessionSlotOnce: bool =
     crewSessions.indices().forall(i => crewSessions.indices().forall(j => i == j or crewSessions[i] != crewSessions[j]))
 
   /**
-   * SD-444 counting part (fixed). The crew is handed off after 3 sessions (network.ts:3215 "the Network hands the crew off
+   * SD-444 counting part (fixed). The crew is handed off after 3 sessions (network.ts "the Network hands the crew off
    * after 3 sessions"), not after 3 proposals: a failed session does not count.
    */
   val handoffCountsSessions: bool =
@@ -229,9 +267,9 @@ module plan_crew {
 
   /**
    * SD-444 notice part (SKIPPED: needs new member text and a founder decision on what the handoff means in the
-   * Network, which has no group chat). crewFormed promises "Your weekly crew is on" (copy.ts:154); when the last
+   * Network, which has no group chat). crewFormed promises "Your weekly crew is on" (copy.ts); when the last
    * session is over after the hand-off, the members hear that the weekly crew ended. Code: only a log line
-   * (network.ts:3277). Kept out of `safety`; `crewHandoffTest` shows it still fails.
+   * (network.ts). Kept out of `safety`; `crewHandoffTest` shows it still fails.
    */
   val crewEndHeard: bool =
     (crewHandedOff and crewOpps.keys().forall(k => crewOpps.get(k) != "review")) implies crewEndTold
@@ -239,7 +277,18 @@ module plan_crew {
   /** A crew forms only with members who opted in (crewOptIn, founder decision 2026-10-08). */
   val crewOptedIn: bool = crewStage == "formed" implies (crewMembers.subseteq(crewYes) and crewMembers.size() >= CREW_MIN)
 
-  val safety: bool = and { sessionSlotOnce, handoffCountsSessions, crewOptedIn }
+  /** No session of a crew waits in review while a crew member is a known minor. */
+  val noSessionAMinorKnows: bool =
+    crewKnownToAMinor implies crewOpps.keys().forall(k => crewOpps.get(k) != "review")
+
+  /**
+   * Owner decision 2026-11-22, answer A4 (spec/friendIntroAge.md groupAgeAllowed, teenPlaceAllowed): in a teen crew
+   * `noSessionAMinorKnows` is the teen plan rule (no session in review while a member fails the rule), so it has no
+   * second name; a teen crew at a place that is not all-ages gets no session.
+   */
+  val teenPlanPlace: bool = (teenCrew and not(placeAllAges)) implies crewSessions == List()
+
+  val safety: bool = and { sessionSlotOnce, handoffCountsSessions, crewOptedIn, noSessionAMinorKnows, teenPlanPlace }
 
   // The invariant of the skipped defect (SD-444 notice part). It fails today; see its comment.
   val skippedDefects: bool = crewEndHeard
@@ -255,16 +304,16 @@ module plan_crew {
   // Run tests (concrete traces)
 
   run unfinishedCrewOfferCannotAcceptTest =
-    init.then(crewAnswerCurrent("a", true, false)).fail()
+    initAdult.then(crewAnswerCurrent("a", true, false)).fail()
 
   run closedVenueCannotCreateCrewSessionTest =
-    init
+    initAdult
       .then(crewAnswer("a", true)).then(crewAnswer("b", true)).then(crewAnswer("c", true))
       .then(crewTickWithVenue(false)).fail()
 
   /** SD-144 fixed: a session that fails in review is not proposed again for the same slot. */
   run sd144SlotOnceTest =
-    init
+    initAdult
       .then(crewAnswer("a", true)).then(crewAnswer("b", true)).then(crewAnswer("c", true))
       .then(crewTick).then(crewSessionEnd(100, false))
       // crewTick is disabled here: slot 0's plan id is already in crew.sessions.
@@ -277,7 +326,7 @@ module plan_crew {
    * notice part is skipped: nobody hears that the crew ended (crewEndHeard fails).
    */
   run crewHandoffTest =
-    init
+    initAdult
       .then(crewAnswer("a", true)).then(crewAnswer("b", true)).then(crewAnswer("c", true))
       .then(crewTick).then(crewSessionEnd(100, false))
       .then(crewWeekPass).then(crewTick).then(crewSessionEnd(101, false))
@@ -288,12 +337,47 @@ module plan_crew {
       .then(crewTick)
       .expect(crewHandedOff and crewSessions.length() == 5 and handoffCountsSessions and not(crewEndHeard) and safety)
 
+  /** A crew member found to be a minor ends the crew: the open session closes and no new session follows. */
+  run minorEndsCrewTest =
+    initAdult
+      .then(crewAnswer("a", true)).then(crewAnswer("b", true)).then(crewAnswer("c", true))
+      .then(crewTick)
+      .then(minorSignal("b"))
+      .expect(crewOpps.get(100) == "failed" and noSessionAMinorKnows and safety)
+      .then(crewWeekPass).then(crewTick)
+      .fail()
+
+  /** d, who was asked about the plan the crew came from and is not in the crew, is found to be a minor: the crew ends. */
+  run minorAskedAboutSourceEndsCrewTest =
+    initAdult
+      .then(crewAnswer("a", true)).then(crewAnswer("b", true)).then(crewAnswer("c", true))
+      .then(crewTick)
+      .then(minorSignal("d"))
+      .expect(crewOpps.get(100) == "failed" and noSessionAMinorKnows and safety)
+      .then(crewWeekPass).then(crewTick)
+      .fail()
+
   /** A member who goes on watch leaves the crew short of seats: no session is proposed. */
   run crewSeatsTest =
-    init
+    initAdult
       .then(crewAnswer("a", true)).then(crewAnswer("b", true)).then(crewAnswer("c", true))
       .then(goWatch("b"))
       .expect(crewStage == "formed" and crewMembers.filter(id => seatOk(id)).size() < CREW_MIN and safety)
+      .then(crewTick)
+      .fail()
+
+  /** Answer A4: a teen crew at an all-ages place gets a session; one member failing the rule ends the crew. */
+  run teenCrewSessionTest =
+    initCrew(true, true)
+      .then(crewAnswer("a", true)).then(crewAnswer("b", true)).then(crewAnswer("c", true))
+      .then(crewTick)
+      .expect(crewOpps.get(100) == "review" and safety)
+      .then(minorSignal("b"))
+      .expect(crewOpps.get(100) == "failed" and noSessionAMinorKnows and safety)
+  /** Answer A4: a teen crew at a place that is not all-ages gets no session. */
+  run teenCrewBarTest =
+    initCrew(true, false)
+      .then(crewAnswer("a", true)).then(crewAnswer("b", true)).then(crewAnswer("c", true))
       .then(crewTick)
       .fail()
 }

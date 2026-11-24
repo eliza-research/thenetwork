@@ -2,6 +2,7 @@ import { HOUR } from "../../packages/core/src/index.ts";
 import type { Event, GroupEffect, Hiker, ReviewedGroupJourney } from "../../packages/core/src/generated/reviewedGroupJourney.ts";
 import { Mini, type Spec } from "../../packages/network/test/mini.ts";
 import { serveJourney } from "./serveJourney.ts";
+import { holdEveryItem, simulatedReviewJudge, type InlineReviewJudge } from "../../packages/engine/src/reviewJudge.ts";
 
 const hikers = ["FirstHiker", "SecondHiker", "ThirdHiker"] as const satisfies readonly Hiker[];
 const people: Record<Hiker, Spec> = {
@@ -13,6 +14,7 @@ const names = /\b(?:Ari|Bo|Cy)\b/i;
 let world: Mini;
 let groupId: string;
 let effects: GroupEffect[];
+let judge: InlineReviewJudge = () => null;
 
 function group() {
   const item = world.net.exportState().opps.find(opportunity => opportunity.id === groupId);
@@ -61,11 +63,12 @@ function groupEffects(messages: Mini["sent"]): GroupEffect[] {
 // spec/reviewedGroupJourney.md, "Story: Join a reviewed public hike only after the group agrees"
 await serveJourney<Event>({
   async reset() {
+    judge = () => null;
     world = new Mini(Object.values(people).map(person => ({
       // Neighbors of the venue: a member's known trip must fit the travel limit (spec/planFormation.md).
       ...person, area: "Inwood", interests: ["hiking"], shareable: true,
     })), {
-      review: "human",
+      inlineJudge: packet => judge(packet),
       growth: false,
       maxNewPerDay: 0,
       plansConfig: { minInvite: 3, size: { max: 3, target: 3 }, partnerPlans: false },
@@ -76,12 +79,12 @@ await serveJourney<Event>({
       }
     }
     await world.run(HOUR);
-    const reviews = world.net.reviewQueue().filter(item => item.origin === "planner");
+    const reviews = world.net.exportState().opps.filter(item => item.origin === "planner" && item.stage === "review");
     const [review] = reviews;
-    if (reviews.length !== 1 || !review || review.proposal.kind !== "group") {
-      throw new Error("Expected the planner to submit one group hike for human review");
+    if (reviews.length !== 1 || !review || review.kind !== "group") {
+      throw new Error("Expected the planner to submit one group hike for review");
     }
-    groupId = review.oppId;
+    groupId = review.id;
     const { plan } = group();
     if (plan?.activityId !== "day_hike" || plan.venueId !== "inwood-hill" || plan.quorum !== 3 || plan.alternates.length !== 0 ||
         !hikers.every(hiker => plan.invited.includes(people[hiker].id)) || plan.window.start !== Date.UTC(2026, 9, 10, 18)) {
@@ -96,8 +99,14 @@ await serveJourney<Event>({
     const from = world.mark();
     const current = group();
     switch (event.type) {
-      case "reviewGroup": {
-        const result = world.net.decide(groupId, event.approved ? "approve" : "reject", { reviewer: "local-reviewer", reason: "weak_reason" });
+      case "judgeGroup": {
+        if (current.stage !== "review" || current.review?.exception !== undefined) return "refused";
+        judge = event.approved ? simulatedReviewJudge({ exceptions: false }) : holdEveryItem.inline;
+        try { await world.net.tick(world.clock.now()); } finally { judge = () => null; }
+        break;
+      }
+      case "staffDecideGroup": {
+        const result = world.net.decide(groupId, event.approved ? "approve" : "reject", { reviewer: "local-reviewer", reason: "weak_reason", revision: 0 });
         if (!result.ok) return "refused";
         break;
       }
@@ -131,7 +140,8 @@ await serveJourney<Event>({
   observe(): ReviewedGroupJourney {
     const current = group();
     let phase: ReviewedGroupJourney["phase"];
-    if (current.stage === "review" && world.net.reviewQueue().some(item => item.oppId === groupId)) phase = "AwaitingGroupReview";
+    if (current.stage === "review" && current.review?.exception === undefined) phase = "AwaitingGroupJudge";
+    else if (current.stage === "review" && world.net.reviewQueue().some(item => item.oppId === groupId)) phase = "GroupHeldForStaff";
     else if (current.stage === "probing" && current.review?.decision === "approve") phase = "GroupInvited";
     else if (current.stage === "scheduled" && current.review?.decision === "approve") phase = "HikeBooked";
     else if (current.stage === "closed" && current.review?.decision === "reject") phase = "ReviewDenied";

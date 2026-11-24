@@ -8,7 +8,7 @@ The app's Cloud callback turns an approved handoff into a site session. The Vibe
 
 ### The callback requires a live handoff for this app
 
-The callback must carry a sealed pending handoff for the routed app, matching state and an allowed return path. It must contain the verifier and be before the handoff expiry. The code must have the expected format. The shell validates binding, type and syntax before the model permits an exchange.
+The callback must carry a sealed pending handoff for the routed app, matching state and an allowed return path. It must contain the verifier and be before the handoff expiry. The code must have the expected format. The shell validates binding, type and syntax before the model permits an exchange. The allowed return paths are `/join`, the phone-change page `/phone`, the private home-help address page `/home-help` and the connector's `/oauth/cloud-return` path with its request ID. The home-help link carries the plan code and revision in its fragment, and a browser does not send a fragment to a server, so the callback returns to a bare `/home-help` and the server does not keep the plan across the sign-in. The `/home-help` page keeps its fragment in session storage before it starts the Cloud sign-in and reads it back on the return, so the member gets the same plan without opening the link again. Changed (owner decision D7 of 2026-11-22, one-purpose pages): `/home-help` was added, because the home-help address step sends members to that page and it calls the site API with a site session, so a Cloud sign-in site could not sign the member in there.
 
 ```quint
 type SignInPhase = AwaitingHandoff | AwaitingExchange | AwaitingIdentity | AwaitingPhone | AwaitingSession | SignedIn | RejectCallback | DenySignIn | CloudUnavailable
@@ -65,16 +65,26 @@ pure def lawHomeHelpCloudFailureIsFixed(callbackApp: str, pendingApp: str, path:
 
 ### Cloud must accept the exchange and return a live identity
 
-The authority must accept the app-bound code exchange. The returned identity contains verified account and phone fields and a valid timestamp window. At the time of the check, its expiry must be in the future and its positive issue time may be at most 30 seconds ahead of the local clock (`cloudIdentityTimesValid`). Session start uses the earlier of issue time and local time. A successful exchange with no identity returns an unavailable response. An exchange refusal or an invalid identity returns a denial.
+The authority must accept the app-bound code exchange. The returned identity contains verified account and phone fields and a valid timestamp window. At the time of the check, its expiry must be in the future, its positive issue time may be at most 30 seconds ahead of the local clock, and its expiry may be at most one hour after its issue time (`cloudIdentityTimesValid`). The staging callback and the production delegation parser use this one check. Session start uses the earlier of issue time and local time. A successful exchange with no identity returns an unavailable response. An exchange refusal or an invalid identity returns a denial. The issue time is the issue time of the Cloud phone session token. This backend cannot tell a token that Cloud minted after a new SMS code from a token that Cloud issued again without a new code, so a fresh issue time is an assumption about Eliza Cloud, not a proof of a new phone verification. The backend itself does not check that a new code was sent. Changed: the production delegation parser and the staging callback now use this one check, so the staging callback also applies the one-hour proof life (a longer staging proof gave a Cloud session that lived past the daily session rotation) and the production parser also accepts an issue time up to 30 seconds ahead of the local clock (before, it refused any issue time ahead of the local clock, so a Cloud clock a few seconds ahead refused a valid sign-in); the issue time is described because [phone change](phoneChange.md) uses it as the fresh sign-in on the current number.
 
 ```quint
 pure val cloudClockSkewMs: int = 30 * 1000
+pure val cloudProofLifeMs: int = 60 * 60 * 1000
 
 pure def cloudIssuedAtWithinSkew(issuedAtMs: int, asOf: int): bool =
   issuedAtMs > 0 and issuedAtMs <= asOf + cloudClockSkewMs
 
+pure def cloudProofLifeValid(issuedAtMs: int, expiresAtMs: int): bool =
+  expiresAtMs <= issuedAtMs + cloudProofLifeMs
+
 pure def cloudIdentityTimesValid(issuedAtMs: int, expiresAtMs: int, asOf: int): bool =
-  cloudIssuedAtWithinSkew(issuedAtMs, asOf) and liveBeforeDeadline(asOf, expiresAtMs)
+  cloudIssuedAtWithinSkew(issuedAtMs, asOf) and liveBeforeDeadline(asOf, expiresAtMs) and cloudProofLifeValid(issuedAtMs, expiresAtMs)
+
+pure def lawCloudProofLivesAtMostOneHour(issuedAtMs: int, asOf: int): bool =
+  not(cloudIdentityTimesValid(issuedAtMs, issuedAtMs + cloudProofLifeMs + 1, asOf))
+
+pure def lawOneHourProofIsAcceptedWhenIssued(issuedAtMs: int): bool =
+  issuedAtMs > 0 implies cloudIdentityTimesValid(issuedAtMs, issuedAtMs + cloudProofLifeMs, issuedAtMs)
 
 pure def lawCloudIdentityNeedsFutureExpiry(issuedAtMs: int, asOf: int): bool =
   not(cloudIdentityTimesValid(issuedAtMs, asOf, asOf))

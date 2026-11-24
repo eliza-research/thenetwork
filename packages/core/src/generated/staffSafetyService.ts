@@ -1,5 +1,6 @@
 // GENERATED from spec/staffSafetyService.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
+import { quietHoursOffHour as participationControls_quietHoursOffHour, participationControlAllowed as participationControls_participationControlAllowed, participationCategoryAllowed as participationControls_participationCategoryAllowed, changeParticipationCategory as participationControls_changeParticipationCategory, controlRomanceOptIn as participationControls_controlRomanceOptIn, participationControlState as participationControls_participationControlState, controlQuietHoursValid as participationControls_controlQuietHoursValid, quietHoursEmpty as participationControls_quietHoursEmpty, lawQuietHoursOffIsEmpty as participationControls_lawQuietHoursOffIsEmpty, lawNonDatingCategoryLeavesDatingPermission as participationControls_lawNonDatingCategoryLeavesDatingPermission, quietHoursCommandComplete as participationControls_quietHoursCommandComplete, lawMissingEndpointNeedsClarification as participationControls_lawMissingEndpointNeedsClarification } from "./participationControls.ts";
 
 /** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md) */
 export type ServiceSafetyPhase = "ServiceSafetyStarting" | "HoldRemainingTargets" | "HoldDidNotApply" | "BanNeedsCrossApp" | "BanNoPerson" | "ReadingBanPhones" | "BanNoPhone" | "ReadingExistingBan" | "BanAlreadyExists" | "ApplyingPhoneBan" | "ApplyingPersonBan" | "ResumingBanProjection" | "PerformingAuditedAction" | "RecordingAuditResult";
@@ -7,6 +8,12 @@ export type ServiceSafetyPhase = "ServiceSafetyStarting" | "HoldRemainingTargets
 export interface ServiceSafetyFlow { phase: ServiceSafetyPhase; phoneOnly: boolean }
 /** Story: Resolve a minor signal without dismissing a valid concern / Age clearance dismisses only the selected member's open minor reports (spec/staffSafetyService.md) */
 export type StaffClearSummary = "ClearRefused" | "ClearSucceeded" | "ClearNoSignal";
+/** Story: Route an agent signal to an accountable decision / An agent signal goes to the decision that owns it (spec/staffSafetyService.md) */
+export type AgentSignalRoute = "SignalOpensSafetyCase" | "SignalPausesApp" | "SignalKeptAsContext";
+/** Story: Route an agent signal to an accountable decision / An applied agent pause gives the member one confirmation (spec/staffSafetyService.md) */
+export type AgentPauseConfirmation = "PauseConfirmedByReplyText" | "PauseConfirmedInInbox" | "PauseNotConfirmed";
+/** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
+export type AgentSignalPhase = "SignalWaiting" | "SignalReviewed" | "SignalDismissed";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -42,6 +49,19 @@ export function staffSafetySelectsTarget(everywhere: boolean, requestedRuntime: 
 //@ pure
 export function staffSafetyAuditScope(targets: number): string {
   return targets > 1 ? "every_app" : "this_app";
+}
+
+/** Story: Hold a member without exposing their other memberships / Staff act within their resolved scope (spec/staffSafetyService.md) */
+//@ pure
+export function staffSafetyActionReach(allAppsAuthority: boolean, linkedPerson: boolean): string {
+  return allAppsAuthority && linkedPerson ? "all" : "app";
+}
+
+/** Story: Hold a member without exposing their other memberships / Staff act within their resolved scope (spec/staffSafetyService.md) */
+//@ pure
+export function lawAppStaffReachOneApp(linkedPerson: boolean): boolean {
+  //@ ensures \result === true
+  return staffSafetyActionReach(false, linkedPerson) === "app";
 }
 
 /** Story: Hold a member without exposing their other memberships / Staff act within their resolved scope (spec/staffSafetyService.md) */
@@ -105,6 +125,19 @@ export function durableStaffHoldLiftAllowed(globallyCovered: boolean, allAppsAut
 //@ pure
 export function durableStaffHoldSnapshotStatus(accountStatus: string, staffHeld: boolean): string {
   return staffHeld ? "restricted" : accountStatus;
+}
+
+/** Story: Hold a member without exposing their other memberships / A staff hold survives ordinary app membership changes (spec/staffSafetyService.md) */
+//@ pure
+export function erasureKeepsStaffHold(releasedToNewHolder: boolean): boolean {
+  return !releasedToNewHolder;
+}
+
+/** Story: Hold a member without exposing their other memberships / A staff hold survives ordinary app membership changes (spec/staffSafetyService.md) */
+//@ pure
+export function lawErasedThenRejoinedNumberStaysHeld(accountStatus: string): boolean {
+  //@ ensures \result === true
+  return durableStaffHoldSnapshotStatus(accountStatus, erasureKeepsStaffHold(false)) === "restricted";
 }
 
 /** Story: Hold a member without exposing their other memberships / A staff hold survives ordinary app membership changes (spec/staffSafetyService.md) */
@@ -298,6 +331,132 @@ export function staffBanSnapshotStatus(accountStatus: string, banned: boolean): 
 export function lawBannedEnrollmentCannotCommit(liveOwner: boolean, verifiedBinding: boolean): boolean {
   //@ ensures \result === true
   return !staffBanEnrollmentAllowed(liveOwner, verifiedBinding, true);
+}
+
+/** Story: Route an agent signal to an accountable decision / An agent signal goes to the decision that owns it (spec/staffSafetyService.md) */
+//@ pure
+export function agentSignalRoute(kind: string): AgentSignalRoute {
+  return kind === "safety_concern" ? "SignalOpensSafetyCase" : (kind === "opt_out" ? "SignalPausesApp" : "SignalKeptAsContext");
+}
+
+/** Story: Route an agent signal to an accountable decision / An agent signal goes to the decision that owns it (spec/staffSafetyService.md) */
+//@ pure
+export function agentSignalWaitsForStaff(kind: string): boolean {
+  return agentSignalRoute(kind) === "SignalOpensSafetyCase";
+}
+
+/** Story: Route an agent signal to an accountable decision / An agent signal goes to the decision that owns it (spec/staffSafetyService.md) */
+//@ pure
+export function agentOptOutParticipation(kind: string, saved: string): string {
+  return agentSignalRoute(kind) === "SignalPausesApp" ? participationControls_participationControlState(true) : saved;
+}
+
+/** Story: Route an agent signal to an accountable decision / An agent signal goes to the decision that owns it (spec/staffSafetyService.md) */
+//@ pure
+export function lawAgentSafetyConcernReachesStaff(kind: string): boolean {
+  //@ ensures \result === true
+  return !(kind === "safety_concern") || agentSignalWaitsForStaff(kind);
+}
+
+/** Story: Route an agent signal to an accountable decision / An agent signal goes to the decision that owns it (spec/staffSafetyService.md) */
+//@ pure
+export function lawAgentOptOutPausesOnlyMatching(saved: string): boolean {
+  //@ ensures \result === true
+  return agentOptOutParticipation("opt_out", saved) === "paused" && !agentSignalWaitsForStaff("opt_out");
+}
+
+/** Story: Route an agent signal to an accountable decision / An agent signal goes to the decision that owns it (spec/staffSafetyService.md) */
+//@ pure
+export function lawOtherSignalsLeaveParticipation(kind: string, saved: string): boolean {
+  //@ ensures \result === true
+  return !(kind !== "opt_out") || agentOptOutParticipation(kind, saved) === saved;
+}
+
+/** Story: Route an agent signal to an accountable decision / An applied agent pause gives the member one confirmation (spec/staffSafetyService.md) */
+//@ pure
+export function agentPauseConfirmation(kind: string, pauseApplied: boolean, textsOff: boolean): AgentPauseConfirmation {
+  return agentSignalRoute(kind) !== "SignalPausesApp" || !pauseApplied ? "PauseNotConfirmed" : (textsOff ? "PauseConfirmedInInbox" : "PauseConfirmedByReplyText");
+}
+
+/** Story: Route an agent signal to an accountable decision / An applied agent pause gives the member one confirmation (spec/staffSafetyService.md) */
+//@ pure
+export function lawAppliedPauseGetsOneConfirmation(textsOff: boolean): boolean {
+  //@ ensures \result === true
+  return agentPauseConfirmation("opt_out", true, textsOff) !== "PauseNotConfirmed";
+}
+
+/** Story: Route an agent signal to an accountable decision / An applied agent pause gives the member one confirmation (spec/staffSafetyService.md) */
+//@ pure
+export function lawUnchangedPauseGetsNoConfirmation(kind: string, textsOff: boolean): boolean {
+  //@ ensures \result === true
+  return agentPauseConfirmation(kind, false, textsOff) === "PauseNotConfirmed";
+}
+
+/** Story: Route an agent signal to an accountable decision / An applied agent pause gives the member one confirmation (spec/staffSafetyService.md) */
+//@ pure
+export function lawOptedOutMemberIsNeverTexted(kind: string, pauseApplied: boolean): boolean {
+  //@ ensures \result === true
+  return agentPauseConfirmation(kind, pauseApplied, true) !== "PauseConfirmedByReplyText";
+}
+
+/** Story: Route an agent signal to an accountable decision / An applied agent pause gives the member one confirmation (spec/staffSafetyService.md) */
+//@ pure
+export function lawTextsOnGetTheReplyText(pauseApplied: boolean): boolean {
+  //@ ensures \result === true
+  return !pauseApplied || agentPauseConfirmation("opt_out", pauseApplied, false) === "PauseConfirmedByReplyText";
+}
+
+/** Story: Route an agent signal to an accountable decision / An applied agent pause gives the member one confirmation (spec/staffSafetyService.md) */
+//@ pure
+export function lawOnlyAPauseIsConfirmed(kind: string, pauseApplied: boolean, textsOff: boolean): boolean {
+  //@ ensures \result === true
+  return !(agentSignalRoute(kind) !== "SignalPausesApp") || agentPauseConfirmation(kind, pauseApplied, textsOff) === "PauseNotConfirmed";
+}
+
+/** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
+//@ pure
+export function agentSignalEvidenceShown(safetyRole: boolean, ageInDoubt: boolean): boolean {
+  return safetyRole || !ageInDoubt;
+}
+
+/** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
+//@ pure
+export function lawReviewerNeverReadsMinorEvidence(ageInDoubt: boolean): boolean {
+  //@ ensures \result === true
+  return !ageInDoubt || !agentSignalEvidenceShown(false, ageInDoubt);
+}
+
+/** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
+//@ pure
+export function lawAdultEvidenceShownToReviewers(safetyRole: boolean): boolean {
+  //@ ensures \result === true
+  return agentSignalEvidenceShown(safetyRole, false);
+}
+
+/** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
+//@ pure
+export function agentSignalDecisionAllowed(safetyRole: boolean, phase: AgentSignalPhase): boolean {
+  return safetyRole && phase === "SignalWaiting";
+}
+
+/** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
+//@ pure
+export function agentSignalAfterDecision(phase: AgentSignalPhase, safetyRole: boolean, dismiss: boolean): AgentSignalPhase {
+  return agentSignalDecisionAllowed(safetyRole, phase) ? (dismiss ? "SignalDismissed" : "SignalReviewed") : phase;
+}
+
+/** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
+//@ pure
+export function lawDecidedAgentSignalStaysDecided(phase: AgentSignalPhase, safetyRole: boolean, dismiss: boolean): boolean {
+  //@ ensures \result === true
+  return !(phase !== "SignalWaiting") || agentSignalAfterDecision(phase, safetyRole, dismiss) === phase;
+}
+
+/** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
+//@ pure
+export function lawOnlySafetyStaffDecideAgentSignals(phase: AgentSignalPhase, dismiss: boolean): boolean {
+  //@ ensures \result === true
+  return agentSignalAfterDecision(phase, false, dismiss) === phase;
 }
 
 /** Do the rules allow this event in this state? */

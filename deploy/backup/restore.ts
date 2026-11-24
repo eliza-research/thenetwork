@@ -1,21 +1,4 @@
 #!/usr/bin/env -S node --import=tsx
-// Restore a backup into a NEW scratch database and check it against the backup's manifest (docs/deploy.md
-// section 8; the restore drill is runbook-real.md section 8). It never writes into an existing database.
-//   node --import tsx --env-file-if-exists=.env deploy/backup/restore.ts --from ./runs/backup/<stamp> --db restore_drill_20261008
-//   node --import tsx --env-file-if-exists=.env deploy/backup/restore.ts --r2 postgres/production/<stamp> --db restore_drill_20261008
-//   node --import tsx --env-file-if-exists=.env deploy/backup/restore.ts --r2 latest --db restore_drill_20261008     # the newest complete backup under BACKUP_PREFIX
-// The target server is RESTORE_DATABASE_URL (a login that may create databases; any database on that
-// server, usually the maintenance one). Exit 0: every table has the row count of the manifest.
-// Keep the scratch database only as long as the drill or the comparison needs it, then drop it.
-//
-// Safety (docs/deploy.md 8.2): a restore never changes a role or a privilege of the source server.
-//  - The drill (default) restores with --no-owner --no-privileges: no ALTER OWNER, GRANT or REVOKE at all.
-//  - --keep-privileges (a real recovery, runbook-real.md 8.3) keeps owners and grants, which apply to the
-//    objects of the new database only.
-//  - roles.sql (CREATE/ALTER ROLE for the whole server) runs only with --roles, and only on a server
-//    that is not the source (an empty replacement cluster). On the source server it is refused.
-//  - The source's own database on the source server is refused, as are the live names and any database that exists.
-//  - An encrypted backup (manifest.encryption) needs BACKUP_ENCRYPTION_KEY to decrypt after download.
 import { fileAt, writePath } from "../../packages/core/src/runtime/files.ts";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -24,16 +7,12 @@ import { join } from "node:path";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { initial, shouldApplyRoles, step } from "../../packages/core/src/generated/databaseRestore.ts";
 import { pgEnv } from "./backup.ts";
+import { endRestoredTexts, replayPrivacy, type PrivacyReplayResult, type RestoredTextsResult } from "./privacy-replay.ts";
 import { backupBucketFromEnv, backupKey, compareCounts, decryptFile, pgBin, redactUrls, rowCounts, run, safeDbName, sameServer, withDatabase, type BackupKey, type Manifest } from "./lib.ts";
 
-export interface RestoreResult { db: string; url: string; manifest: Manifest; mismatches: ReturnType<typeof compareCounts>; ms: number }
+interface RestoreResult { db: string; url: string; manifest: Manifest; mismatches: ReturnType<typeof compareCounts>; privacy?: PrivacyReplayResult; texts?: RestoredTextsResult; ms: number }
 
-/**
- * Restore the backup in `dir` into the new database `db` on the server of `serverUrl`, then compare row
- * counts. `keepPrivileges`: keep owners and grants (inside the new database only). `roles`: also run
- * roles.sql, refused unless the target server is not the source server.
- */
-export async function restore(o: { serverUrl: string; db: string; dir: string; keepPrivileges?: boolean; roles?: boolean; log?: (msg: string, f?: Record<string, unknown>) => void }): Promise<RestoreResult> {
+export async function restore(o: { serverUrl: string; db: string; dir: string; keepPrivileges?: boolean; roles?: boolean; replayFrom?: string; sourceLost?: boolean; log?: (msg: string, f?: Record<string, unknown>) => void }): Promise<RestoreResult> {
   const t0 = performance.now();
   // spec/databaseRestore.md, "The target must be a valid scratch database name"
   let state = step(initial, { type: "checkName", name: o.db, validName: safeDbName(o.db) });
@@ -48,11 +27,13 @@ export async function restore(o: { serverUrl: string; db: string; dir: string; k
     sameServer: Boolean(manifest.source && sameServer(manifest.source, { host: target.PGHOST!, port: target.PGPORT! })),
     ownDatabase: o.db === manifest.database, rolesRequested: Boolean(o.roles), keepPrivileges: Boolean(o.keepPrivileges),
     encrypted: Boolean(manifest.encryption), dumpPresent: Boolean(manifest.encryption && manifest.files?.dump && existsSync(join(o.dir, manifest.files.dump))),
+    replaySource: Boolean(o.replayFrom), sourceLost: Boolean(o.sourceLost),
   } });
   switch (state.reason) {
     case "OwnDatabase": throw new Error(`refusing to restore into the backup's own database "${o.db}" on its own server`);
     case "RolesOnSource": throw new Error("refusing --roles: roles.sql changes roles for the whole server, and this is the source server (or the backup does not name its source)");
     case "NeedsDecryption": throw new Error("the backup is encrypted: download it with restore.ts --r2 (BACKUP_ENCRYPTION_KEY), which decrypts it");
+    case "NeedsReplaySource": throw new Error("a recovery needs --replay (RESTORE_SOURCE_DATABASE_URL) or --source-lost: erasures, STOPs, leaves and bans after the backup must not be lost silently");
   }
   const admin = new SQL({ url: o.serverUrl, max: 1 });
   try {
@@ -64,7 +45,6 @@ export async function restore(o: { serverUrl: string; db: string; dir: string; k
   } finally { await admin.close(); }
   const url = withDatabase(o.serverUrl, o.db);
   const env = pgEnv(url);
-  // Roles (without passwords) only on another server, and only when asked: errors for roles that already exist are expected and ignored.
   const rolesFile = manifest.files.roles && join(o.dir, manifest.files.roles);
   if (rolesFile && shouldApplyRoles(state, existsSync(rolesFile))) {
     await run([pgBin("psql"), "--no-password", "--quiet", "-v", "ON_ERROR_STOP=0", "-f", rolesFile], { env: { ...env, PGOPTIONS: "-c client_min_messages=error" } }).catch(e => o.log?.("roles: some statements failed", { error: redactUrls((e as Error).message) }));
@@ -77,15 +57,16 @@ export async function restore(o: { serverUrl: string; db: string; dir: string; k
   try { got = await rowCounts(sql); } finally { await sql.close(); }
   const mismatches = compareCounts(manifest.rowCounts, got);
   state = step(state, { type: "recordCounts", countsAgree: mismatches.length === 0 });
-  if (state.phase !== "Finished") throw new Error("restore did not complete the row-count check");
-  return { db: o.db, url, manifest, mismatches, ms: Math.round(performance.now() - t0) };
+  let privacy: PrivacyReplayResult | undefined;
+  if (state.phase === "ReplayingPrivacy") {
+    privacy = await replayPrivacy({ sourceUrl: o.replayFrom!, targetUrl: url, queuedAt: new Date() });
+    state = step(state, { type: "recordPrivacyReplay" });
+  }
+  if (state.phase !== "Finished") throw new Error("restore did not complete the row-count check and the privacy replay");
+  const texts = o.sourceLost && !state.replayPrivacy ? await endRestoredTexts({ targetUrl: url, at: new Date() }) : undefined;
+  return { db: o.db, url, manifest, mismatches, ...(privacy ? { privacy } : {}), ...(texts ? { texts } : {}), ms: Math.round(performance.now() - t0) };
 }
 
-/**
- * Download a backup prefix from the bucket into `dir`. "latest": the newest prefix under BACKUP_PREFIX that
- * has a manifest. An encrypted backup is decrypted with `key` (default BACKUP_ENCRYPTION_KEY); the
- * encrypted copies are removed, and the manifest written to `dir` describes the plain files.
- */
 export async function download(prefix: string, dir: string, env: Record<string, string | undefined> = process.env, key?: BackupKey): Promise<string> {
   const bucket = backupBucketFromEnv(env);
   if (prefix === "latest") {
@@ -122,18 +103,22 @@ export async function download(prefix: string, dir: string, env: Record<string, 
 
 if (import.meta.main) {
   const { parseArgs } = await import("node:util");
-  const { values: a } = parseArgs({ options: { from: { type: "string" }, r2: { type: "string" }, db: { type: "string" }, "keep-privileges": { type: "boolean", default: false }, roles: { type: "boolean", default: false } } });
+  const { values: a } = parseArgs({ options: { from: { type: "string" }, r2: { type: "string" }, db: { type: "string" }, "keep-privileges": { type: "boolean", default: false }, roles: { type: "boolean", default: false }, replay: { type: "boolean", default: false }, "source-lost": { type: "boolean", default: false } } });
   const line = (level: string, msg: string, f: Record<string, unknown> = {}) => console.log(JSON.stringify({ t: new Date().toISOString(), level, msg, svc: "restore", ...f }));
   const serverUrl = process.env.RESTORE_DATABASE_URL;
-  if (!serverUrl || !a.db || (!a.from && !a.r2)) { line("error", "usage: RESTORE_DATABASE_URL=... restore.ts (--from <dir> | --r2 <prefix>|latest) --db <new scratch database> [--keep-privileges] [--roles (another server only)]"); process.exit(2); }
+  const replayFrom = a.replay ? process.env.RESTORE_SOURCE_DATABASE_URL : undefined;
+  if (!serverUrl || !a.db || (!a.from && !a.r2) || (a.replay && !replayFrom)) { line("error", "usage: RESTORE_DATABASE_URL=... [RESTORE_SOURCE_DATABASE_URL=...] restore.ts (--from <dir> | --r2 <prefix>|latest) --db <new scratch database> [--keep-privileges (--replay | --source-lost)] [--roles (another server only)]"); process.exit(2); }
   const tmp = a.from ? undefined : await mkdtemp(join(tmpdir(), "network-restore-"));
   try {
     let dir = a.from!;
     if (tmp) { const p = await download(a.r2!, tmp); dir = tmp; line("info", "downloaded", { prefix: p }); }
-    const r = await restore({ serverUrl, db: a.db, dir, keepPrivileges: a["keep-privileges"], roles: a.roles, log: (m, f) => line("warn", m, f) });
+    const r = await restore({ serverUrl, db: a.db, dir, keepPrivileges: a["keep-privileges"], roles: a.roles, replayFrom, sourceLost: a["source-lost"], log: (m, f) => line("warn", m, f) });
+    if (a["source-lost"]) line("warn", "source database stated lost: privacy changes after the backup were not replayed; record the lost window (docs/runbook-privacy.md section 3)", { backupAt: r.manifest.createdAt });
     const rows = Object.values(r.manifest.rowCounts).reduce((s, n) => s + n, 0);
     line(r.mismatches.length ? "error" : "info", "restore checked", {
       db: r.db, backupAt: r.manifest.createdAt, tables: Object.keys(r.manifest.rowCounts).length, rows, mismatches: r.mismatches.length, ms: r.ms,
+      ...(r.privacy ? { privacyReplay: r.privacy } : {}),
+      ...(r.texts ? { restoredTexts: r.texts } : {}),
       ...(r.mismatches.length ? { first: r.mismatches.slice(0, 10) } : {}),
     });
     process.exitCode = r.mismatches.length ? 1 : 0;

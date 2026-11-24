@@ -10,7 +10,7 @@ export const ntwrkTerms: LegalText = {
   sections: [
     {
       heading: "Membership",
-      body: <p>Membership is by invitation. You must be at least 13. Members under 18 receive personal help and recommendations and are never matched on dates or for work. Today, no member under 18 is introduced to anyone. If introductions ever open to members under 18, they will be friendship introductions only, with people within 2 years of their own age. You agree to give accurate information about yourself, including your birth date or age, and to keep your phone number current.</p>,
+      body: <p>Membership is by invitation. You must be at least 13. Members under 18 receive personal help and recommendations and are never matched on dates or for work. Members under 18 may be introduced only for friendship with people aged 13 to 18 born at most 2 years apart. Each introduction must pass an automatic check or staff review. You agree to give accurate information about yourself, including your birth date or age, and to keep your phone number current.</p>,
     },
     {
       sms: {

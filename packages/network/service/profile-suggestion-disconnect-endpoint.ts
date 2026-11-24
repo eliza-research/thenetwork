@@ -5,31 +5,16 @@ import { PROFILE_REVIEW_DISCONNECT_PATH, parseProfileReviewDisconnectRequest, pa
   type ProfileReviewDisconnectRequest, type ProfileReviewDisconnectProof } from "../../core/src/svc/profile-review-disconnect.ts";
 import type { SuggestionOwner } from "./profile-suggestions.ts";
 
-/** Must verify the dedicated signed Cloud revoked-owner response, independent of source-read consent. */
 export type SuggestionRevokedOwnerResolver = (request: ProfileReviewDisconnectRequest, requestSha256: string) => Promise<ProfileReviewDisconnectProof | null>;
 export interface ConnectionCleanupCounts { pending: number; retainedAccepted: number; linkedFacts: number }
 export interface ProfileSuggestionDisconnectDeps {
   secret: string; now: () => number; valid: () => boolean;
-  /** Mandatory: fresh signed Cloud response, canonical owner/membership and actual revoked event.
-   * No active OAuth grant/source-read proof, cached identity, or model arguments may supply authority.
-   * Canonical actual revocation event must supply immutable revokedAt and owner/source join.
-   * Explicit operation authority is required: delete is NEVER inferred from disconnect/retention.
-   * Callback payload is exactly {request,requestSha256}; digest preserves original raw cleanup body.
-   * Return null if owner, membership, connection ownership or event/operation binding is unavailable. */
   resolveRevokedOwner: (request: ProfileReviewDisconnectRequest, requestSha256: string) => Promise<unknown | null>;
-  /** Mandatory storage adapter: ONE transaction rechecks current person/member/app/owner join,
-   * proof expiry and revoked-event ownership; consumes nonce+request hash atomically with mutation.
-   * disconnect honors retention; delete removes all connection-linked suggestions/facts regardless
-   * of retention; readback returns counts only. No call to active source authorization is allowed.
-   * Never affect batches created AFTER proof.revokedAt, including reconnect/replay; apply cutoff
-   * in every suggestion/fact mutation and count readback. Recheck fence immediately before commit.
-   * Return null on replay or any join/authority drift. */
   applyRevokedConnection: (owner: SuggestionOwner, request: ProfileReviewDisconnectRequest,
     proof: ProfileReviewDisconnectProof, fence: () => boolean) => Promise<ConnectionCleanupCounts | null>;
 }
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status,
   headers: { "content-type": "application/json", "cache-control": "no-store" } });
-/** Signed cleanup wire works after revocation; omission of either mandatory resolver fails closed. */
 export async function profileSuggestionDisconnectEndpoint(req: Request, d: ProfileSuggestionDisconnectDeps): Promise<Response> {
   const url = new URL(req.url);
   if (url.pathname !== PROFILE_REVIEW_DISCONNECT_PATH || url.search) return json({ error: "not_found" }, 404);
@@ -62,7 +47,6 @@ export async function profileSuggestionDisconnectEndpoint(req: Request, d: Profi
     if (!counts || !fence()) return json({ error: "cleanup_denied" }, 403);
     const numbers = [counts.pending, counts.retainedAccepted, counts.linkedFacts];
     if (numbers.some(n => !Number.isSafeInteger(n) || n < 0)) return json({ error: "cleanup_unavailable" }, 503);
-    // Explicit allowlist: no connection details, source content, profile text or proof crosses back.
     return json({ kind: "connection_cleanup", operation: request.operation,
       counts: { pending: counts.pending, retainedAccepted: counts.retainedAccepted, linkedFacts: counts.linkedFacts } });
   } catch { return json({ error: "cleanup_unavailable" }, 503); }

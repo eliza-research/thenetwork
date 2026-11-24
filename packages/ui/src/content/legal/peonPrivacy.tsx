@@ -14,7 +14,7 @@ export const peonPrivacy: LegalText = {
         <>
           <ul>
             <li><strong>Your phone number</strong>, to check that it is yours and to text you.</li>
-            <li><strong>Your age</strong>. You type your birth date on the signup page, or you tell us your age. We count your age from the birth date and keep the age, not the birth date. We use it only to apply the age rules: who can join, and that members under 18 are never matched on dates or for work. Other members never see it.</li>
+            <li><strong>Your age</strong>. You type your birth date on the signup page, or you tell us your age. We use age to apply the rules for joining and introductions. After you confirm signup in the browser, we can keep your exact birth date privately if you are aged 13 to 18. We use it to apply the rules for friendship introductions. Other members never see it.</li>
             <li><strong>Your short profile</strong>: first name, area (neighbourhood or ZIP code), interests and one line about you.</li>
             <li><strong>What you tell the peon.biz agent</strong> by text.</li>
             <li><strong>Work details</strong> you tell the agent: the work you want or the role you are filling, skills, schedule, area and pay range.</li>
@@ -63,7 +63,7 @@ export const peonPrivacy: LegalText = {
     },
     {
       heading: "Age",
-      body: <p>You must be 13 or older to join. Members aged 13 to 17 can use the agent for their own questions only. peon.biz never matches them for work. Today, no member under 18 is introduced to anyone. If introductions ever open to members under 18, they will be friendship introductions only, with people within 2 years of their own age. We ask for your birth date or your age at signup to apply these rules. Only adults 18 and older are matched. If you tell us different ages, we use the lowest one. We do not knowingly collect data from children under 13; if we learn of any, we delete it.</p>,
+      body: <p>You must be 13 or older to join. Members aged 13 to 17 can use the agent for their own questions only. peon.biz never matches them for work. Friendship introductions for people under 18 happen on friends.help and ntwrk.party. We ask for your birth date or your age at signup to apply these rules. Only adults 18 and older are matched. If you tell us different ages, we use the lowest one. We do not knowingly collect data from children under 13; if we learn of any, we delete it.</p>,
     },
     {
       heading: "Security and changes",

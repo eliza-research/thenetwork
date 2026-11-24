@@ -7,7 +7,7 @@ import { Mini } from "./mini.ts";
 
 describe("no invite link: an unmet request does not wait for a friend's name", () => {
   test("a lone capitalized reply after requestNoneYet is not taken as a friend to invite", async () => {
-    const w = new Mini([{ id: "r", name: "Rae Kim", age: 30, area: "Greenpoint", interests: ["climbing"] }], { review: "auto", growth: true });
+    const w = new Mini([{ id: "r", name: "Rae Kim", age: 30, area: "Greenpoint", interests: ["climbing"] }], { growth: true });
     await w.onboard("r");
     await w.run(DAY);
     await w.say("r", "Anyone around who'd want to find a regular climbing partner? I'm near Greenpoint.");

@@ -49,9 +49,56 @@ pure def stepSaveFollowsAction(before: RuntimeUnit, via: str, after: RuntimeUnit
 pure def sometimesCanSave(unit: RuntimeUnit): bool = unit.phase == StateSaved
 ```
 
+### The engine runs on a snapshot outside the store lock
+
+A tick that reaches its engine run under the lock does not compute there. It records the engine request from the state that it loaded, ends that unit without a save, and releases the lock. The engine run, with its model judge, then computes without the lock, so inbound turns and staff actions do not wait for it. A second unit waits for the lock, loads the newest state, ticks again, and uses the computed result in place of the engine call. While a computation of this store is in flight in this process, a new tick of this process does not start. A tick of another process can still take the free lock; its commit then loads the newest state, so it never commits the same daily run twice, but each such process pays for its own engine run and model judge (docs/deploy.md asks for one ticking replica for this reason). A tick computes at most twice; when its commit still asks for a different run, the tick saves nothing and the next tick starts again. The commit unit ticks at the time that the tick started, not at the time that the computation ended: the result is compared with an input built at that time. So the expiries, the deferred-send timing, and the last tick time of that commit are late by the compute time; the delivery queue checks quiet hours, caps, consent, and bans again at send time with its own clock. Changed (audit OPS23): the engine and its model judge ran under the lock -> they run without it, because a signed turn waited behind the daily run past the 8 second turn limit.
+
+```quint
+pure val maxEngineAttempts: int = 2
+
+pure def tickMayStartBesideEngine(engineInFlight: bool): bool = not(engineInFlight)
+
+pure def engineAttemptAllowed(attempt: int): bool = attempt >= 0 and attempt < maxEngineAttempts
+
+pure def lawComputingTickSkips(engineInFlight: bool): bool = engineInFlight implies not(tickMayStartBesideEngine(engineInFlight))
+```
+
+### A prepared engine result commits only for members whose evidence did not change
+
+The commit uses the computed result only for the same run: the same run key (the kind of run and its New York day), the same engine configuration, and the same shared evidence. Otherwise the tick computes again. Each entry of the engine input has one owner. A public event is its own evidence, an entry that names a member is evidence of each member that it names, and only the rest (the run time and entries that name no member and no event) is shared. A proposal, an engine question, or a standing row of the result commits only when no owner that it names (its members, and the public event that anchors a proposal) has different evidence in the commit's input than in the computed input. The commit then applies every eligibility gate of the tick to the newest state (opt-out, blocks, age, holds, bans), and the delivery queue checks consent and bans again at send time. A peon job seat is an engine member whose record names its hiring manager (`seatOwner`), so a change of the seat's posting or of the manager's company facts changes the seat's evidence. A seat proposal does not name the manager, so other changes by the manager do not drop it. The commit routes the seat to the manager from the newest state, checks the hire evidence again, and then applies every gate above to the manager. The prepared run also uses the calendar free/busy view that the runtime loads again before the commit unit takes the lock, not the view that it loaded for the capture unit. Changed (audits OPS23, tickLock-r17-4 and tickLock-r17-5): the engine ran under the lock on one snapshot, public events were shared evidence, and the calendar view was loaded once for the whole tick -> the commit checks the evidence of each owner, an event drops only its own proposal, and the calendar view is loaded again before the commit, because a member who stopped, was banned or changed during the run, or a time that became busy, must not reach a member from the old snapshot.
+
+```quint
+type EvidenceOwner = SharedEvidence | MemberEvidence | EventEvidence
+
+pure def evidenceOwner(publicEvent: bool, namesMember: bool): EvidenceOwner =
+  if (publicEvent) EventEvidence else if (namesMember) MemberEvidence else SharedEvidence
+
+pure def lawMemberEntryIsNeverShared(publicEvent: bool, namesMember: bool): bool =
+  namesMember implies evidenceOwner(publicEvent, namesMember) != SharedEvidence
+
+pure def lawEventEntryIsItsOwnEvidence(publicEvent: bool, namesMember: bool): bool =
+  publicEvent implies evidenceOwner(publicEvent, namesMember) == EventEvidence
+
+pure def preparedRunUsable(sameKey: bool, sameConfig: bool, sameSharedEvidence: bool): bool =
+  sameKey and sameConfig and sameSharedEvidence
+
+pure def preparedItemCommits(runUsable: bool, named: Set[str], changed: Set[str]): bool =
+  runUsable and not(named.exists(owner => changed.contains(owner)))
+
+pure def lawChangedOwnerNeverCommits(runUsable: bool, named: Set[str], changed: Set[str], owner: str): bool =
+  (named.contains(owner) and changed.contains(owner)) implies not(preparedItemCommits(runUsable, named, changed))
+
+pure def lawUnchangedItemOfUsableRunCommits(named: Set[str], changed: Set[str]): bool =
+  named.forall(owner => not(changed.contains(owner))) implies preparedItemCommits(true, named, changed)
+
+pure def lawStaleRunNeverCommits(sameKey: bool, sameConfig: bool, sameSharedEvidence: bool, named: Set[str], changed: Set[str]): bool =
+  not(preparedRunUsable(sameKey, sameConfig, sameSharedEvidence))
+    implies not(preparedItemCommits(preparedRunUsable(sameKey, sameConfig, sameSharedEvidence), named, changed))
+```
+
 ### Runtime follow-up depends on the adapter and whether the tick ran
 
-The registry can disable matching in loaded state. At startup, an adapter with a durable queue recovers waiting work and loads the network before draining. Other adapters repair the current notification projection. Only a tick that ran invokes its configured follow-up hook or repairs projections for an adapter without a durable queue.
+The registry row (`platform.networks.matching_enabled`) alone decides whether a network may run matching, and an admin may turn its matching switch on only when that row allows it. The registry can disable matching in loaded state. Changed (owner decision 2026-11-22): friends and peon no longer need a separate live decision (`<APP>_LIVE_APPROVED=1`) before they match in production, because the owner approved every app; the launch-scope rule that kept them local only is removed, and the service and the admin console read the registry row. At startup, an adapter with a durable queue recovers waiting work and loads the network before draining. Other adapters repair the current notification projection. Only a tick that ran invokes its configured follow-up hook or repairs projections for an adapter without a durable queue.
 
 ```quint
 pure def matchingDisabledByRegistry(matchingAllowed: bool): bool = not(matchingAllowed)
@@ -64,3 +111,5 @@ pure def startupPlan(queuedAdapter: bool): StartupPlan =
 pure def tickRepairsProjection(ran: bool, queuedAdapter: bool): bool = ran and not(queuedAdapter)
 pure def tickRunsFollowup(ran: bool, hookConfigured: bool): bool = ran and hookConfigured
 ```
+
+Conformance. test/fixtures/runtimeUnitWorker.ts runs one stored unit of work (runStored) for each key on its own network row. The load, the action and the save wait until an event releases them, so each phase is the effect that the shell waits on. The restore runs at once when the load returns a snapshot; RestoringSnapshot is a restore that recordRestore has not named.

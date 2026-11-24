@@ -64,6 +64,7 @@ export interface HiddenTruth {
   privateDisclosure?: { fact: string; canary: string };
   trips: Trip[];
   adversarial?: AdversarialKind;
+  poser?: true;
   /**
    * How much the Network knows about this persona (hidden; evals stratify by it). Set when the
    * generator runs with `richness`; absent means the legacy "full public profile is known" view.
@@ -81,6 +82,8 @@ export interface PublicProfile {
    */
   statedIntents: { desireId: string; text: string; category: Category; statedAt?: number }[];
   claimedAge: number;
+  birthKey?: number;
+  verified?: boolean;
   bio: string;
   /** Short sample of how they write, used by LLM persona agents. */
   voiceSample?: string;

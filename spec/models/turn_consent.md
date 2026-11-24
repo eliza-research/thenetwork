@@ -23,7 +23,12 @@ The whole-flow model starts with that reader's result.
 Imported from `quint/turn_consent.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
-// quint-check: max-steps=30 max-samples=20000 verify-steps=3
+// quint-check: max-steps=30 max-samples=60000 verify-steps=3
+//
+// max-samples is 60000 so that witness_pauseConfirmedAgain stays reachable: a second change of the pause setting needs
+// two open turns and a resume (or a pause in each app) in one run, and the search with seed 0x5eed first reaches it
+// near sample 53000. The witness is the rule of spec/staffSafetyService.md, not its opposite: a pause that a resume
+// undid is a new change, so the next applied pause has its own confirmation (agentPauseResumedTest).
 //
 // The signed turn, the consent ledger, its projections and the gateway's consent mirror
 // (docs/research/2026-11-07-state-machines.md section 6.2, machines M-001..M-013, M-106..M-111).
@@ -51,7 +56,7 @@ Imported from `quint/turn_consent.qnt` at `30d950e`. See [model index](README.md
 //     while it ran). Run ids: message m, run k -> m + 10 * k. The gateway waits for the answer of its latest request.
 //   - Readers are oracles. The message kind is chosen when the person sends it: "Stop" is a text that
 //     detectKeyword reads as STOP, including a direct repeat or a permanent refusal. "StopLikely" is a
-//     remaining unmatched request. The routing decision (service.ts:964-1010) is an oracle,
+//     remaining unmatched request. The routing decision (service.ts NetworkService.route) is an oracle,
 //     except START after a global STOP, which goes to the app the STOP named (SD-318 fix).
 //   - Gateway assumptions (upstream code, not in this repository): the gateway retries a retryable answer
 //     and a timed-out request with the same messageId; it stops at a final answer; it copies a handled
@@ -60,7 +65,7 @@ Imported from `quint/turn_consent.qnt` at `30d950e`. See [model index](README.md
 //     it sends the collected replies only when the fence lets the app send. It retries one message for hours, never
 //     past the inbox retention of 7 days ("a provider retries for hours, not weeks", inbox.ts purge).
 //   - The Network's reply to a member is an oracle; the Network refuses replies to a member whose
-//     network row is opted out (network.ts:1992, 4221), so the reply depends on the projection, not
+//     network row is opted out (network.ts Network.send through checkRecipient), so the reply depends on the projection, not
 //     on the ledger.
 module turn_consent {
   // ------------------------------------------------------------------ constants
@@ -68,9 +73,9 @@ module turn_consent {
   pure val MSGS: Set[int] = Set(1, 2, 3, 4)
   pure val KINDS: Set[str] = Set("Stop", "StopLikely", "Start", "Help", "Leave", "Join", "Chat")
   pure val TICK_STEPS: Set[int] = Set(1, 5, 21, 2 * DAY + 1, 8 * DAY, 31 * DAY)
-  /** inbox.ts:42 PROCESSING_LEASE_MS = 2 min. */
+  /** spec/signedInbox.md processingLeaseMs = 2 min (inbox.ts Inbox.signed). */
   pure val LEASE: int = 4
-  /** inbox.ts:46 UNRESOLVED_BLOCK_MS = 10 min. */
+  /** spec/signedInbox.md unresolvedBlockMs = 10 min (inbox.ts Inbox.signed). */
   pure val BLOCK: int = 20
   pure val DAY: int = 2880
   /** service.ts stopHint gap: 30 days. */
@@ -114,6 +119,8 @@ module turn_consent {
     member: str -> str, optOut: str -> bool, pendingJoin: str,
     hintLast: str -> int, hintLog: str -> Set[int],
     signals: int -> str, staffHandled: Set[int], ctx: int,
+    /** The saved "pause matching" setting per app, and the confirmation of each agent pause that changed it (via text or inbox). */
+    matchingPaused: str -> bool, pauseNotices: int -> { via: str, textsOff: bool }, pauseChanges: int,
     /** consent_events.named_app of a global STOP, by its ref (migration 0042, SD-318). */
     named: int -> str
   }
@@ -210,7 +217,7 @@ module turn_consent {
     val a = if (wk.phase == 0) routeApp(wd, msg) else wk.app
     if (msg.kind == "Stop") {
       if (wk.phase == 0) {
-        // service.ts stop: keywordEvent (global on the shared line, namedApp = the routed app), recordConsent once per ref,
+        // service.ts stop: keywordEvent (every app on any line, namedApp = the routed app), recordConsent once per ref,
         // turn.consent, turn.confirmation.
         val e = { app: "", state: "out", at: cat, seq: 0, ref: m, src: "stop" }
         val wd1 = addConsent(wd, e)
@@ -314,7 +321,7 @@ module turn_consent {
                   consent: if (ok) { has: true, state: "in", scope: "app", app: target, at: cat } else wk.consent,
                   replies: if (ok) wk.replies.union(Set("reply")) else wk.replies } }
         } else {
-          // The join ask; a stated age is kept in pending_texts (c2). collectGate (service.ts direct) refuses the ask when
+          // The join ask; a stated age is kept in pending_texts (c2). directReplyCollectable (service.ts direct) refuses the ask when
           // the app's ledger reads opted out; the hint goes instead.
           val h = hint(wd, target, t, isBanned)
           val ask = if (isOut(wd.ledger, target)) Set() else Set("reply")
@@ -327,7 +334,7 @@ module turn_consent {
           { wd: wd, gh: gh, wk: { ...wk, app: a, phase: 9 } }
         } else {
           // stopHint, then the member's unit of work. The Network answers only a member whose row is not opted out, and
-          // collectGate (runtime.ts writeUnit) refuses its reply when the app's ledger reads opted out.
+          // storedReplyAdmitted (service.ts sharedTurn) refuses the answer with its reply when the app's ledger reads opted out.
           val h = hint(wd, target, t, isBanned)
           val netReply = c1 and not(wd.optOut.get(target)) and not(isOut(wd.ledger, target))
           { wd: h.wd,
@@ -338,7 +345,7 @@ module turn_consent {
       } else if (isBanned) {
         { wd: wd, gh: gh, wk: { ...wk, app: a, phase: 9 } }
       } else {
-        // A non-member's text: the join ask (refused by collectGate when the app's ledger reads opted out), then stopHint.
+        // A non-member's text: the join ask (refused by directReplyCollectable when the app's ledger reads opted out), then stopHint.
         val h = hint(wd, target, t, isBanned)
         val ask = if (isOut(wd.ledger, target)) Set() else Set("reply")
         { wd: h.wd, gh: gh, wk: { ...wk, app: a, phase: 9, replies: wk.replies.union(ask).union(if (h.sent) Set("compliance") else Set()) } }
@@ -397,7 +404,8 @@ module turn_consent {
       workers' = Map(),
       w' = { ledger: ledger0, fence: Set(), seq: 2, member: mem, optOut: Map("A" -> false, "B" -> false), pendingJoin: "",
              hintLast: Map("A" -> -1, "B" -> -1), hintLog: Map("A" -> Set(), "B" -> Set()),
-             signals: Map(), staffHandled: Set(), ctx: 0, named: Map() },
+             signals: Map(), staffHandled: Set(), ctx: 0, named: Map(),
+             matchingPaused: Map("A" -> false, "B" -> false), pauseNotices: Map(), pauseChanges: 0 },
       g' = { echoBad: false, busyKw: false, bannedReply: false, leaveOptIn: false, actedAfterStop: false,
              doneErr: false, replyAfterStop: false, crashes: 0, intents: ledger0, runs: Map(), lastPurge: 0, cutShort: false },
       banned' = isBanned,
@@ -487,6 +495,11 @@ module turn_consent {
         else { ...NORESP, kind: "err", err: "turn_unresolved", retry: false }
       // sharedTurn replay of an open turn (SD-313 fix): the current context when an open turn is still allowed
       // (sharedContext is taken as available on a replay); turn_context_changed only when it is not.
+      // In the code, service.ts sharedTurn also answers 409 turn_context_changed, final, when the member binding changed
+      // (openReplayAnswer with storedReplyAdmitted). When the number is admitted and the binding is the same member but
+      // sharedContext is unavailable on the replay, the code answers handled with the fixed reply through the collected
+      // leak guard and stores that handled answer (openReplayFixedReply, 2026-11-22). The model does not choose an
+      // unavailable context, so that fixed-reply replay is outside the model.
       val ans2: Resp = if (ans.kind != "open") admitted(w, ans)
         else if (openAllowed(ans.app)) { ...ans, ctx: w.ctx }
         else { ...NORESP, kind: "err", err: "turn_context_changed", retry: false }
@@ -549,7 +562,7 @@ module turn_consent {
   }
 
   /**
-   * service.ts sharedTurn, storedTurnAdmitted: a handled answer (the first one or a replay) that holds a non-compliance
+   * service.ts sharedTurn, storedReplyAdmitted: a handled answer (the first one or a replay) that holds a non-compliance
    * reply goes out only while the number is still admitted (numberAllowed: no hold, no ban, the app's ledger not opted
    * out); otherwise turn_context_changed, final. Banned and held numbers get no such reply in this model, so the ledger
    * decides. The onboarding prompt (an unknown age) is outside the model.
@@ -632,7 +645,8 @@ module turn_consent {
   /**
    * The run completes (inbox.ts signed, service.ts sharedTurn): done where processing, with the response. An open
    * turn needs no collected reply, an active membership with an opt-in and a context (ctxOk is the oracle for
-   * sharedContext: facets and the leak check; SD-212/215 fixed in the oracle's code, SD-216 not reproduced). A row
+   * sharedContext: facets and the leak check; SD-212/215 fixed in the oracle's code, SD-216 not reproduced). An open
+   * turn without a context answers handled with the one fixed reply (audit SHA40; before, no reply). A row
    * that is no longer processing makes the done update throw: failOut.
    */
   action complete(r: int, lost: bool, ctxOk: bool): bool = all {
@@ -643,8 +657,11 @@ module turn_consent {
     val proc = rows.keys().contains(m) and rows.get(m).st == "processing"
     val a = wk.app
     val openOk = wk.open and wk.replies.size() == 0 and openAllowed(a) and ctxOk
+    // spec/sharedContext.md, "A member whose context is unavailable still gets an answer": the fixed reply, decided now.
+    val unavailable = wk.open and wk.replies.size() == 0 and openAllowed(a) and not(ctxOk)
     val resp: Resp =
       if (openOk) { ...NORESP, kind: "open", app: a, ctx: w.ctx }
+      else if (unavailable) { ...NORESP, kind: "handled", consent: wk.consent, replies: Set("reply"), app: a, rseq: w.seq }
       else { ...NORESP, kind: "handled", consent: wk.consent, replies: wk.replies, app: a, rseq: wk.rseq }
     if (proc) {
       val ans = answer(gw, w, g, m, r, resp, lost)
@@ -741,14 +758,52 @@ module turn_consent {
     now' = now, sent' = sent, gw' = gw, workers' = workers, banned' = banned, held' = held,
   }
 
-  /** The agent records an opt_out or safety_concern signal on an open turn (service.ts sharedAction signals): status proposed. */
+  /** The agent records a safety_concern signal on an open turn (agent-signals.ts recordAgentSignals): status proposed,
+      and the member's safety case gets the agent_safety_concern event in the same unit. */
   action proposeSignal(m: int): bool = all {
     rows.keys().contains(m), rows.get(m).st == "done", rows.get(m).resp.kind == "open", not(w.signals.keys().contains(m)),
     w' = { ...w, signals: w.signals.put(m, "proposed") },
     now' = now, sent' = sent, gw' = gw, rows' = rows, workers' = workers, g' = g, banned' = banned, held' = held,
   }
 
-  /** Staff read GET /signals and decide with POST /signals (SD-036 fix): the facet status is confirmed or rejected. */
+  /** The agent records an opt_out signal on an open turn (agent-signals.ts recordAgentSignals): it pauses matching in that
+      app at once with the "pause matching" setting, never waits for staff and never changes carrier consent. When the
+      setting changed, the member gets one confirmation (spec/staffSafetyService.md, "An applied agent pause gives the
+      member one confirmation"): a reply text, or an inbox update when the app's ledger or member row reads opted out.
+      Abstraction: service.ts sharedAction checks the membership before the transaction of the decision, so a STOP can
+      commit between that check and the ledger read of the decision; this action merges them and reads the ledger as it is.
+      Abstraction: pauseNotices records the confirmation that the decision queues, not its delivery. A STOP that commits
+      after this step makes the outbound queue refuse the text (refused_opted_out), so the member then gets no confirmation;
+      pauseConfirmedOnce does not cover that race. The notify digest that can text an unread inbox update after START is
+      outside this model. */
+  action applyOptOutSignal(m: int): bool = all {
+    rows.keys().contains(m), rows.get(m).st == "done", rows.get(m).resp.kind == "open", not(w.signals.keys().contains(m)),
+    rows.get(m).resp.app.in(APPS),
+    pauseSignal(m, rows.get(m).resp.app),
+  }
+
+  action pauseSignal(m: int, a: str): bool = {
+    val changed = not(w.matchingPaused.get(a))
+    val textsOff = isOut(w.ledger, a) or w.optOut.get(a)
+    all {
+      w' = { ...w, signals: w.signals.put(m, "applied"), matchingPaused: w.matchingPaused.set(a, true),
+             pauseNotices: if (changed) w.pauseNotices.put(m, { via: if (textsOff) "inbox" else "text", textsOff: textsOff }) else w.pauseNotices,
+             pauseChanges: if (changed) w.pauseChanges + 1 else w.pauseChanges },
+      now' = now, sent' = sent, gw' = gw, rows' = rows, workers' = workers, g' = g, banned' = banned, held' = held,
+    }
+  }
+
+  /** "resume matching" on the shared line (participation-controls.ts saveParticipationControl): only the member of an
+      active membership whose ledger and member row read opted in (member-command.ts memberCommandOwner). The signed turn
+      that carries the command is merged into this one step. */
+  action resumeMatching(a: str): bool = all {
+    a.in(APPS), w.member.get(a) == "active", resolve(w.ledger, a) == "in", not(w.optOut.get(a)), not(banned), not(held),
+    w.matchingPaused.get(a),
+    w' = { ...w, matchingPaused: w.matchingPaused.set(a, false) },
+    now' = now, sent' = sent, gw' = gw, rows' = rows, workers' = workers, g' = g, banned' = banned, held' = held,
+  }
+
+  /** Safety staff decide with POST /signals/<id> (agent-signals.ts handleAgentSignalReview, SD-036 fix): the facet status is confirmed or rejected. */
   action staffHandle(m: int): bool = all {
     w.signals.keys().contains(m), w.signals.get(m) == "proposed", not(w.staffHandled.contains(m)),
     w' = { ...w, staffHandled: w.staffHandled.union(Set(m)), signals: w.signals.set(m, "decided") },
@@ -804,6 +859,8 @@ module turn_consent {
       staffResolve(m),
       purge,
       proposeSignal(m),
+      applyOptOutSignal(m),
+      resumeMatching(app),
       staffHandle(m),
       contextChange,
       tick(d),
@@ -841,7 +898,7 @@ module turn_consent {
     rows.keys().filter(k => rows.get(k).st == "processing" and rows.get(k).mine and rows.get(k).comp == c).size() <= 1)
 
   /**
-   * stopAllApps. Rule: PRD 40.3 / founder decision 7: on the shared line STOP stops every app. When the newest
+   * stopAllApps. Rule: PRD 40.3 / founder decision 7 / owner decision 2026-11-22: STOP stops every app on any line. When the newest
    * consent intent the person sent is a STOP and it reached the ledger, every app resolves opted_out.
    */
   val stopAllApps: bool = g.intents.forall(i =>
@@ -931,8 +988,8 @@ module turn_consent {
    * noReplyAfterStop. Rule: service.ts stopHint and founder decision 2026-10-11 #22: after STOP only the hint and
    * confirmations go out. A non-compliance reply that a run decided after it had read an opted-out ledger is never
    * delivered past the fence. Signed path only (the legacy path never feeds the fence).
-   * Q-turn_consent-5 is closed in the backend: collectGate (decisions.ts; service.ts direct, runtime.ts writeUnit)
-   * refuses a non-compliance reply when the app's ledger reads opted out, and storedTurnAdmitted (service.ts
+   * Q-turn_consent-5 is closed in the backend: directReplyCollectable (spec/signedInbox.md; service.ts direct)
+   * refuses a non-compliance direct reply when the app's ledger reads opted out, and storedReplyAdmitted (service.ts
    * sharedTurn) refuses a handled answer with such a reply when the ledger reads opted out at answer time. In the
    * model the direct path's read and collect are one step (in the code they are two statements). The fence half of
    * SD-029 and Q-turn_consent-1 (the fence never learns the opt-out) is checked by fenceMatchesLedger.
@@ -966,6 +1023,15 @@ module turn_consent {
   /** signalHasExit. Rule: service.ts "they wait for a person in GET /signals": a handled signal leaves the queue. (SD-036: fixed) */
   val signalHasExit: bool = w.staffHandled.forall(s => w.signals.get(s) != "proposed")
 
+  /** pauseConfirmedOnce. Rule: spec/staffSafetyService.md, "An applied agent pause gives the member one confirmation":
+      each change of the setting to paused has exactly one confirmation, and a signal that changes nothing has none. */
+  val pauseConfirmedOnce: bool = w.pauseNotices.keys().size() == w.pauseChanges
+    and w.pauseNotices.keys().forall(k => w.signals.keys().contains(k) and w.signals.get(k) == "applied")
+
+  /** pauseNeverTextedWhenOptedOut. Same rule: a member whose texts are off gets the inbox update and never the text. */
+  val pauseNeverTextedWhenOptedOut: bool = w.pauseNotices.keys().forall(k =>
+    w.pauseNotices.get(k).via == (if (w.pauseNotices.get(k).textsOff) "inbox" else "text"))
+
   val safety: bool = and {
     stopNeverLost,
     stopNeverHeldBack,
@@ -983,6 +1049,8 @@ module turn_consent {
     processingEnds,
     doneTurnAnswered,
     signalHasExit,
+    pauseConfirmedOnce,
+    pauseNeverTextedWhenOptedOut,
     noReplyAfterStop,
   }
 
@@ -1003,6 +1071,12 @@ module turn_consent {
     and workers.keys().exists(r => workers.get(r).msg == k and not(workers.get(r).alive))))
   /** A stop hint goes out. */
   val witness_hint: bool = not(APPS.exists(a => w.hintLog.get(a).size() > 0))
+  /** An agent pause is confirmed by a reply text. */
+  val witness_pauseTexted: bool = not(w.pauseNotices.keys().exists(k => w.pauseNotices.get(k).via == "text"))
+  /** An agent pause after a STOP is confirmed in the inbox. */
+  val witness_pauseInInbox: bool = not(w.pauseNotices.keys().exists(k => w.pauseNotices.get(k).via == "inbox"))
+  /** A resumed member pauses again and gets a second confirmation. */
+  val witness_pauseConfirmedAgain: bool = not(w.pauseChanges >= 2)
   /** A compliance turn is claimed again after its claim was swept or resolved (SD-001 fix): a second run of a message. */
   val witness_reclaim: bool = not(MSGS.exists(m => runsOf(g.runs, m) >= 2))
   /** A STOP runs while an ordinary turn of the sender holds its claim (SD-002 fix). */
@@ -1282,6 +1356,44 @@ module turn_consent {
       .then(staffHandle(1))
       .expect(w.signals.get(1) == "decided" and signalHasExit and safety)
 
+  /** agent-signals.integration.test.ts: an opt-out confirms the pause once by a reply text; a repeated signal confirms nothing. */
+  run agentPauseConfirmedOnceTest =
+    initWith("active", "none", false, false)
+      .then(sendText(1, "Chat", "A", "gw"))
+      .then(gwCall(1)).then(work(1, false, false)).then(complete(1, false, true))
+      .then(applyOptOutSignal(1))
+      .then(sendText(2, "Chat", "A", "gw"))
+      .then(gwCall(2)).then(work(2, false, false)).then(complete(2, false, true))
+      .then(applyOptOutSignal(2))
+      .expect(and {
+        w.pauseNotices.keys() == Set(1), w.pauseNotices.get(1).via == "text", w.signals.get(2) == "applied",
+        w.pauseChanges == 1, safety,
+      })
+
+  /** agent-signals.integration.test.ts: an opt-out after a STOP is confirmed in the inbox and never by a text. */
+  run agentPauseAfterStopTest =
+    initWith("active", "active", false, false)
+      .then(sendText(1, "Chat", "A", "gw"))
+      .then(gwCall(1)).then(work(1, false, false)).then(complete(1, false, true))
+      .then(sendText(2, "Stop", "A", "gw"))
+      .then(gwCall(2))
+      .then(work(2, false, false)).then(work(2, false, false)).then(work(2, false, false)).then(work(2, false, false))
+      .then(complete(2, false, false))
+      .then(applyOptOutSignal(1))
+      .expect(and { w.pauseNotices.get(1).via == "inbox", w.pauseNotices.get(1).textsOff, safety })
+
+  /** agent-signals.integration.test.ts: resume matching undoes the pause, and the next applied pause is confirmed again. */
+  run agentPauseResumedTest =
+    initWith("active", "none", false, false)
+      .then(sendText(1, "Chat", "A", "gw"))
+      .then(gwCall(1)).then(work(1, false, false)).then(complete(1, false, true))
+      .then(applyOptOutSignal(1))
+      .then(resumeMatching("A"))
+      .then(sendText(2, "Chat", "A", "gw"))
+      .then(gwCall(2)).then(work(2, false, false)).then(complete(2, false, true))
+      .then(applyOptOutSignal(2))
+      .expect(and { w.pauseChanges == 2, w.pauseNotices.get(2).via == "text", w.matchingPaused.get("A"), safety })
+
   /** SD-073 (fixed): a banned member's text is not handled or answered. */
   run sd073BannedTest =
     initWith("active", "none", true, false)
@@ -1409,8 +1521,8 @@ module turn_consent {
       .expect(gw.get(1).ans.consent.state == "out" and isOut(w.fence, "A") and fenceMatchesLedger and safety)
 
   /**
-   * Q-turn_consent-5 (closed by collectGate): a leave of A runs in the compliance slot beside a chat to A. The leave
-   * commits; the chat of the non-member gets no join ask (collectGate reads the opted-out ledger), only the hint.
+   * Q-turn_consent-5 (closed by directReplyCollectable): a leave of A runs in the compliance slot beside a chat to A. The leave
+   * commits; the chat of the non-member gets no join ask (directReplyCollectable reads the opted-out ledger), only the hint.
    */
   run q5ReplyBeforeFenceTest =
     initWith("active", "none", false, false)

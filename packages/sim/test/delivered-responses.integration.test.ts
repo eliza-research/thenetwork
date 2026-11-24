@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import { DAY, type RunRecord } from "@thenetwork/core";
 import { ConsentNetwork } from "../../network/src/network.ts";
+import { simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";
 import { PolicyPersonaAgent } from "../src/agent/policy.ts";
 import type { AgentReply, PersonaAgent } from "../src/agent/types.ts";
 import { generatePersonas } from "../src/generator.ts";
@@ -24,9 +25,9 @@ test("response metrics count replies that reached the channel, retaining legacy 
         return reply;
       },
     };
-    const w = await runWorld({ seed, days, writeLog: false, agent, actions,
+    const w = await runWorld({ app: "ntwrk", seed, days, writeLog: false, agent, actions,
       personas: generatePersonas({ n: 40, seed, joinSpreadDays: 1, minorShare: 0, adversarialRate: 0 }),
-      network: kind === "consent" ? new ConsentNetwork({ seed, review: "auto", growth: false, plans: false }) : new StubNetwork({ seed }),
+      network: kind === "consent" ? new ConsentNetwork({ seed, inlineJudge: simulatedReviewJudge({ exceptions: false }), growth: false, plans: false }) : new StubNetwork({ seed }),
     });
     const expected: Metrics["responses"] = { invitesDelivered: 0, accepted: 0, declined: 0, countered: 0, ignored: 0, acceptRate: 0, probes: { asked: 0, yes: 0, no: 0, ignored: 0 } };
     const inbound = w.channel.all().filter(m => m.direction === "inbound" && m.status === "delivered");
@@ -67,11 +68,11 @@ test("response metrics count replies that reached the channel, retaining legacy 
     if (w.metrics.invariants.total || w.metrics.errors) failures.push(`${kind}/${seed}/${days}: invariant or runtime error`);
     return observed;
   }
-  const initial = await run(1, 10, "stub");
+  const initial = await run(4, 10, "stub");
   const delayed = initial.find(x => x.reply.messageType === "proposal" && x.reply.decision === "accept" && x.at + x.reply.delayMs > DEFAULT_START + 10 * DAY)!;
   if (!delayed) throw new Error("The generated world must contain the late acceptance");
-  await run(1, 11, "stub");
-  await run(1, 12, "stub", [{ at: delayed.at + delayed.reply.delayMs / 2, action: { do: "opt_out", persona: delayed.memberId } }]);
+  await run(4, 11, "stub");
+  await run(4, 12, "stub", [{ at: delayed.at + delayed.reply.delayMs / 2, action: { do: "opt_out", persona: delayed.memberId } }]);
   await run(1, 10, "reactions");
   for (const seed of [1, 2, 3]) await run(seed, 10, "consent");
   expect({ pending: pending > 0, suppressed: suppressed > 0, probeReplies: probeReplies > 0, reactions: reactions > 0, failures })

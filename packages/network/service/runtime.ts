@@ -17,7 +17,7 @@
 //    network-service-2).
 //  - Nothing here reads another app's rows; the person cap across apps (service.ts) goes through a
 //    SECURITY DEFINER function that returns ids only.
-import { DAY, LeakGuard } from "@thenetwork/core";
+import { CITY_TZ, DAY, LeakGuard } from "@thenetwork/core";
 import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { calendarBridgeOwnerAllowed, calendarSchedulingPurpose } from "../../core/src/generated/calendarFreeBusy.ts";
@@ -41,12 +41,14 @@ import { isLateArrivalPairBooking, parseLateArrivalDeliveryId } from "../src/gro
 import { rescheduleOfferKey, RESCHEDULE_QUEUE_PREFIX } from "../src/rescheduling.ts";
 import { standingIntentLive } from "../../core/src/standing-intent.ts";
 import { standingEvidenceKey } from "@thenetwork/engine/src/match/standing.ts";
+import { buildWorld, localEmbed, resolveConfig, type EngineConfigInput } from "@thenetwork/engine";
+import type { DateStandingValidity } from "@thenetwork/engine/src/packs/slop/standing.ts";
 import { inviteJoinNoticeLifetimeMs } from "../../core/src/generated/outreachPolicy.ts";
 import {
-  contextFacetEligible, contextFacetLimit, contextFacetSizeLimit, contextMode, contextSinglePlayer,
+  contextActiveItemCount, contextFacetEligible, contextFacetKept, contextFacetSizeLimit, contextItemLabel, contextMatchItemShown, contextMode, contextSinglePlayer,
   initial as initialContext, step as stepContext, type ContextMode,
 } from "../../core/src/generated/sharedContext.ts";
-import { bookedReminderKey, bookingNoticeReceiptKey, ConsentNetwork, gatheringRepeatOppPrefix, gatheringRepeatProbeKey, meetingFeedbackKey, pendingSlopIntroductions, presentInNyc, relayDispatchCheck, replacementProbeKey, SIM_AUTO_REVIEWER, storedCalendarOwnerOptedIn, storedInviteNoticePartyCurrent, storedLateArrivalCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
+import { bookedReminderKey, bookingNoticeReceiptKey, ConsentNetwork, gatheringRepeatOppPrefix, gatheringRepeatProbeKey, meetingFeedbackKey, pendingSlopIntroductions, presentInNyc, relayDispatchCheck, replacementProbeKey, reviewApproved, reviewStateOf, storedTeenStop, storedCalendarOwnerOptedIn, storedInviteNoticePartyCurrent, storedLateArrivalCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
 import { interruptionFeedbackKey } from "../src/interruption-feedback.ts";
 import { planProbeReceiptSlot, probeReplyReceiptKey } from "../src/network.ts";
 import { appTagFacet } from "../src/apphooks.ts";
@@ -57,10 +59,10 @@ import { RELAY_SWAP_TTL_MS, SWAP_WITHDRAWN, type RelayCanonical } from "../src/r
 import { loadRelayRows, PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
 import { capitalWiring, type CapitalEvent } from "../src/capital.ts";
 import type { AppId, AppInfo } from "../../platform/src/apps.ts";
-import { automatedFacetPredicate, effectiveParticipation, facetOf, intentOf, loadSnapshot, presenceOf } from "./snapshot.ts";
+import { automatedFacetPredicate, birthColumns, effectiveAgeOf, effectiveParticipation, facetOf, intentOf, loadSnapshot, presenceOf, type AgeRow } from "./snapshot.ts";
 import { reconcileLegacyIntentRows } from "./standing-intent-reconciliation.ts";
 import { appWiring, type AppWiring } from "./packs.ts";
-import { BlooioAdapter, currentBookingReceipt, currentBookingReceipts, DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, type Delivery, type Outbound } from "./channel.ts";
+import { collectedReplyGuard, currentBookingReceipt, currentBookingReceipts, DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, type Delivery, type Outbound } from "./channel.ts";
 import { normalizeAddress } from "../../blooio/src/phone.ts";
 import type { InboundTurn, CollectedReply, AtomicReplyReason } from "./inbox.ts";
 import { BOUNDED_HOME_HELP_PROMPT } from "./bounded-home-help-intake.ts";
@@ -69,16 +71,17 @@ import { gatheringInvitationAdmission } from "./monthly-gathering-delivery.ts";
 import { gatheringNoticeAdmission } from "./monthly-gathering-notices.ts";
 import { currentGatheringRepeatSources, gatheringMatchSourceCurrent, lockGatheringMatchSource } from "./monthly-gathering-match-authority.ts";
 import { gatheringRepeatContactAllowed } from "../../core/src/generated/gatheringRepeatDelivery.ts";
-import { parseApprovedRelayPhotos, type TurnContext } from "../../core/src/svc/contract.ts";
-import { ADULT_AGE, canBeMatched } from "../../core/src/policy.ts";
+import type { TurnContext } from "../../core/src/svc/contract.ts";
+import { canBeMatched } from "../../core/src/policy.ts";
+import { earliestDayKeyOf, latestDayKeyOf } from "../../core/src/birth-date.ts";
+import { groupAgeAllowed, teenPartnerAge, teenReady } from "../../core/src/generated/friendIntroAge.ts";
+import { teenFriendApp, teenFriendCategory } from "../../core/src/generated/matchLane.ts";
+import { personMinorSignalOpen } from "../../core/src/generated/safetyCase.ts";
 import { recordedChatAge } from "../../core/src/generated/memberAge.ts";
 import { profileAgeCounts } from "../../core/src/generated/siteEnrollment.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
-import { atomicMemberReplyMatches } from "../../core/src/generated/signedInbox.ts";
+import { atomicMemberReplyMatches, collectedReplyMayLeave } from "../../core/src/generated/signedInbox.ts";
 import type { RecordedMemberAge } from "../../platform/src/store.ts";
-import type { PhotoRelayService } from "../../platform/src/photo-relay.ts";
-import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
-import { isDeepStrictEqual } from "node:util";
 import type { Accounts } from "../../platform/src/accounts.ts";
 import type { HeldMemberInvitation, ReferralJoin } from "../../platform/src/invite-links.ts";
 import { inviteReviewContactToken, type InviteRelationship, type MemberInviteEvidence, type MemberInviteRequest } from "../src/invitation.ts";
@@ -86,7 +89,8 @@ import { outputLeaks } from "../../mcp/src/leaks.ts";
 // The Observatory's event shape and run summaries, so the console reads what this writes.
 import { eventOf, membersOf, type EventRow } from "../../observatory/src/events.ts";
 
-import { NOT_SENT, type QueueRow, type RecipientCheck, type RecipientWindowKey } from "../../blooio/src/outbound-queue.ts";
+import { GATEWAY_WAITING, NOT_SENT, WAITING, type QueueRow, type RecipientCheck, type RecipientWindowKey } from "../../blooio/src/outbound-queue.ts";
+import { StateView } from "./state-view.ts";
 import { summarizeRun } from "../../observatory/src/engineCapture.ts";
 import type { JobPosting } from "../src/jobs.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
@@ -124,7 +128,7 @@ export interface Unit {
   privateHomeHelpTurn?: true;
   atomicReply?: AtomicReplyReason;
   memberInvitation?: StagedMemberInvitation;
-  standingIntent?: StoredStandingIntentChange;
+  standingIntents: StoredStandingIntentChange[];
   legacyIntentState?: NetworkState;
   /** A signed member command prepares its own reply inside the save transaction. */
   memberCommand?: (tx: SQL) => Promise<void>;
@@ -143,10 +147,13 @@ export interface Unit {
   /** peon job postings saved in this unit (a manager's confirmed text, or staff): their rows go in the save transaction. */
   postings: JobPosting[];
   ages: StatedAge[];
+  minorSignals: { memberId: MemberId; at: number }[];
+  teenBars: { memberId: MemberId; reason: "older_than_stated"; at: number }[];
+  teenPairs: [MemberId, MemberId][];
   recordedAges?: (RecordedMemberAge & { memberId: MemberId })[];
 }
-type StatedAge = { memberId: MemberId; age: number };
-const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set(), postings: [], ages: [] });
+type StatedAge = { memberId: MemberId; age: number; birthDate?: number };
+const newUnit = (): Unit => ({ standingIntents: [], sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set(), postings: [], ages: [], minorSignals: [], teenBars: [], teenPairs: [] });
 
 /** What the service gives each runtime: the shared connection and clock, and the checks that span apps. */
 export interface RuntimeHost {
@@ -155,11 +162,10 @@ export interface RuntimeHost {
   instance: string;
   log: (line: string) => void;
   conversationNetworkId?(app: AppId, homeCity: string): string | undefined;
-  accounts?: Pick<Accounts, "activeMembership" | "lowestAge" | "phoneHash" | "projectRecordedAge">;
+  accounts?: Pick<Accounts, "activeMembership" | "lowestAge" | "phoneHash" | "ageRecord" | "projectRecordedAge">;
   readonly outboundRecipientKey: RecipientWindowKey;
-  photoRelay?: PhotoRelayService;
   /** Canonical read checks inside an existing admission transaction, without another pool lease. */
-  accountsFor?(tx: SQL): Pick<Accounts, "activeMembership" | "lowestAge" | "phoneHash">;
+  accountsFor?(tx: SQL): Pick<Accounts, "activeMembership" | "lowestAge" | "phoneHash" | "personFor" | "recordBirthDate" | "ageRecord" | "barTeenPool">;
   inboundTurn?(): InboundTurn | undefined;
   collectReplies?(tx: SQL, replies: CollectedReply[], reason?: AtomicReplyReason): Promise<void>;
   stageMemberInvitation?(rt: NetworkRuntime, request: MemberInviteRequest): StagedMemberInvitation | undefined;
@@ -194,7 +200,6 @@ export interface RuntimeOptions {
    * own city unless the app's wiring sets its markets: owning a conversation is not a matching market.
    */
   cities: readonly City[];
-  /** platform.networks.matching_enabled: false keeps matching off whatever the stored switch says. */
   matchingAllowed: boolean;
   network?: Omit<NetworkOptions, "store" | "onEngineRun" | "app">;
   calendarScheduling?: CalendarSchedulingBridge;
@@ -209,13 +214,14 @@ export class NetworkRuntime {
   readonly net: ConsentNetwork;
   readonly pg: PgStore;
   readonly store: NetworkStore;
+  readonly view: StateView;
   readonly adapter: ChannelAdapter;
   /** The network capital ledger (packages/capital): every event the Network emits is recorded here and stored in network.capital_events. Its levers are not read yet. */
   readonly capital = capitalWiring(undefined, { reader: false });
-  /** platform.networks.matching_enabled for this network. */
   matchingAllowed: boolean;
   /** This app's engine pack, its engine config and its hooks (packs.ts). */
   readonly wiring: AppWiring;
+  private readonly engineConfig: EngineConfigInput;
   private readonly calendarScheduling?: CalendarSchedulingBridge;
   private readonly calendarViews = new AsyncLocalStorage<ReadonlyMap<MemberId, CalendarSchedulingObservation>>();
   private snap?: WorldSnapshot;
@@ -256,28 +262,33 @@ export class NetworkRuntime {
   constructor(private readonly host: RuntimeHost, o: RuntimeOptions) {
     this.id = o.id; this.app = o.app; this.city = o.city; this.cities = o.cities; this.matchingAllowed = o.matchingAllowed;
     this.pg = new PgStore(host.sql, o.id);
+    this.view = new StateView(o.id);
     this.store = this.serviceStore();
     this.wiring = appWiring(o.app.id);
     this.calendarScheduling = o.network?.calendarFreeBusy ? undefined : o.calendarScheduling;
     const w = this.wiring;
+    this.engineConfig = { cities: o.cities.filter(c => c === o.city), ...w.engine, ...o.network?.engine };
     this.net = new ConsentNetwork({
       matchingEnabled: false,
       // The app's pack and the engine config it was tuned with (options may override single fields).
       ...(w.pack ? { pack: w.pack } : {}), ...(w.hooks ? { hooks: w.hooks } : {}), ...(w.plansConfig ? { plansConfig: w.plansConfig } : {}), ...(w.plans !== undefined ? { plans: w.plans } : {}),
       ...o.network,
       ...(this.calendarScheduling ? { calendarFreeBusy: scope => scope.app === this.app.id && scope.purpose === calendarSchedulingPurpose ? this.calendarViews.getStore()?.get(scope.memberId) : undefined } : {}),
-      engine: { cities: o.cities.filter(c => c === o.city), ...w.engine, ...o.network?.engine },
-      app: o.app, review: "human", store: this.store,
+      engine: this.engineConfig,
+      app: o.app, inlineJudge: undefined, store: this.store,
       onEngineRun: (log, proposals, at) => {
         const s = summarizeRun(log, proposals, { at, city: this.city as City, wallMs: Math.round(log.timingsMs.total ?? 0) });
         this.unit.runs.push({ id: this.app.id === "ntwrk" ? s.id : `${this.app.id}.${s.id}`, app_id: this.app.id, at: new Date(at), city: this.city, engine_version: s.engineVersion, proposals: s.proposals, wall_ms: s.wallMs, summary: s });
       },
-      onLedger: e => { this.capital.onLedger(e); this.unit.capital.push(e); },
+      onLedger: e => { this.unit.capital.push(e); },
       onAgeStated: (memberId, age, o) => {
         if (profileAgeCounts(o.explicit, o.declined, canBeMatched(age))) {
-          this.unit.ages.push({ memberId, age: recordedChatAge(age, this.app.minJoinAge, o.declined) });
+          this.unit.ages.push({ memberId, age: recordedChatAge(age, this.app.minJoinAge, o.declined), ...(o.birthDate !== undefined ? { birthDate: o.birthDate } : {}) });
         }
       },
+      onMinorSignal: memberId => { this.unit.minorSignals.push({ memberId, at: this.clock.now() }); },
+      onTeenBar: (memberId, reason) => { this.unit.teenBars.push({ memberId, reason, at: this.clock.now() }); },
+      onTeenPairAvoid: pairs => { this.unit.teenPairs.push(...pairs); },
       // peon (#9): a posting the manager confirmed (or staff saved) is written with the unit (writeUnit).
       onPosting: p => { this.unit.postings.push(p); },
       memberInviteTurnAllowed: (memberId, messageId) => this.signedMemberTurn(memberId, messageId),
@@ -303,7 +314,7 @@ export class NetworkRuntime {
   }
 
   private get sql() { return this.host.sql; }
-  private get clock() { return this.host.clock; }
+  get clock() { return this.host.clock; }
   /** The service's connection pool (the persisted queue writes platform.outbound with it). */
   get db(): SQL { return this.host.sql; }
   /** This instance's name (the queue's lease owner). */
@@ -339,29 +350,43 @@ export class NetworkRuntime {
   async capRelease(id: string): Promise<void> { await this.host.capRelease?.([id]); }
 
   // ------------------------------------------------------------------ relay (packages/network/src/relay.ts)
-  /**
-   * The canonical owners' view of relay members: the member row (active account, not opted out), and on the
-   * platform the membership bound to the member's address with its consent ledger (STOP), bans, phone hold
-   * and suppression (accounts.activeMembership), and the lowest known age (an adult only). Fails closed: a
-   * member with no row, no address or no binding is not eligible. `tx` reads the member rows in that transaction.
-   */
-  async relayParties(ids: MemberId[], tx?: SQL): Promise<Map<MemberId, RelayCanonical>> {
+  async relayParties(ids: MemberId[], tx?: SQL, stored?: readonly NetworkState[]): Promise<Map<MemberId, RelayCanonical>> {
     const out = new Map<MemberId, RelayCanonical>();
     if (!ids.length) return out;
-    const read = (t: SQL) => t`select m.id,m.person_id,m.account_status,m.opted_out,(authority.staff_held or authority.report_held) as safety_held,
-      (select p.e164 from platform.phone_identities p where p.person_id=m.person_id order by p.e164 limit 1) as e164
-      from network.members m left join platform.matching_ages authority on authority.app_id=m.app_id and authority.member_id=m.id
-      where m.app_id=${this.app.id} and m.id in ${t(ids)}`;
-    const rows = (tx ? await read(tx) : await this.scoped(read)) as Row[];
+    const read = async (t: SQL) => {
+      const rows = await t`select m.id,m.person_id,m.account_status,m.opted_out,(authority.staff_held or authority.report_held) as safety_held,authority.minor_signal_at,
+        (select p.e164 from platform.phone_identities p where p.person_id=m.person_id order by p.e164 limit 1) as e164,
+        authority.teen_pool_held as teen_held
+        from network.members m left join platform.matching_ages authority on authority.app_id=m.app_id and authority.member_id=m.id
+        where m.app_id=${this.app.id} and m.id in ${t(ids)}`;
+      const states = stored ?? (await t<{ state: NetworkState | string }[]>`select state from network.network_state where id=${this.pg.id}`)
+        .map(s => (typeof s.state === "string" ? JSON.parse(s.state) : s.state) as NetworkState);
+      return { rows: rows as Row[], states };
+    };
+    const { rows, states } = tx ? await read(tx) : await this.scoped(read);
     const accounts = tx ? this.host.accountsFor?.(tx) ?? this.host.accounts : this.host.accounts;
+    const now = this.clock.now();
     for (const id of ids) {
       const r = rows.find(x => x.id === id), e164 = r?.e164 as string | undefined;
-      let bound = false, adult = false;
-      if (accounts && r?.person_id && e164) {
+      const state = states.find(s => s.members.some(x => x.id === id));
+      const sm = state?.members.find(x => x.id === id);
+      let bound = false, adult = false, teen = false, birthKey = 0;
+      if (accounts && r?.person_id && e164 && state && sm && !state.declinedIds.includes(id)) {
         const binding = await accounts.activeMembership(this.app, { e164, personId: r.person_id as string });
-        if (binding?.membership.memberId === id) { bound = true; adult = canBeMatched(await accounts.lowestAge(e164, binding.person)); }
+        if (binding?.membership.memberId === id) {
+          bound = true;
+          const record = await accounts.ageRecord(e164, binding.person);
+          birthKey = record.birthKey ?? 0;
+          const signalAt = r.minor_signal_at !== null && r.minor_signal_at !== undefined ? new Date(r.minor_signal_at as string | Date).getTime() : undefined;
+          const signalOpen = personMinorSignalOpen(signalAt !== undefined, signalAt ?? 0, sm.minorClearedAt !== undefined, sm.minorClearedAt ?? 0) || sm.minorSignal === true;
+          const doubt = record.ageConflict || sm.ageConflict === true || sm.ageUnknown === true;
+          adult = canBeMatched(await accounts.lowestAge(e164, binding.person)) && sm.minor !== true && !signalOpen && !doubt && sm.minorReported !== true;
+          teen = record.birthKey !== undefined
+            && teenReady(record.birthExact, doubt, signalOpen, sm.minorReported === true, sm.olderReported === true, record.teenBarred || r.teen_held === true)
+            && teenPartnerAge(record.birthKey, earliestDayKeyOf(now), latestDayKeyOf(now));
+        }
       }
-      out.set(id, { adult, optedOut: !r || r.opted_out === true || !bound, held: !r || r.account_status !== "active" || r.safety_held === true });
+      out.set(id, { adult, optedOut: !r || r.opted_out === true || !bound, held: !r || r.account_status !== "active" || r.safety_held === true, teenReady: teen, birthKey });
     }
     return out;
   }
@@ -385,7 +410,7 @@ export class NetworkRuntime {
     const [message] = await tx`select id from network.messages where app_id=${app} and id=${row.id}
       and direction='outbound' and type='relay' and member_id=${delivery.to} and opportunity_id=${delivery.oppId} and body=${notice}`;
     if (!message || await this.canonicalPairBlocked(tx, delivery.from, delivery.to)) return refused;
-    const parties = await this.relayParties([delivery.from, delivery.to], tx);
+    const parties = await this.relayParties([delivery.from, delivery.to], tx, [saved.state]);
     if (![delivery.from, delivery.to].every(id => {
       const party = parties.get(id);
       return party?.adult && !party.optedOut && !party.held;
@@ -430,17 +455,17 @@ export class NetworkRuntime {
     if (!current(first) || !current(second) || await this.canonicalPairBlocked(tx, first, second)) return refused;
     const members = await tx`select id, prefs, participation_state, participation_window, opted_out from network.members
       where app_id=${app} and id in ${tx(opp.participants)} order by id for share`;
-    const parties = await this.relayParties(opp.participants, tx);
+    const parties = await this.relayParties(opp.participants, tx, [saved!.state]);
     const eligible = members.length === 2 && members.every(member => {
       const party = parties.get(member.id);
       const trust = saved!.state.trust?.find(record => record.id === member.id)?.level ?? "ok";
-      return party?.adult === true && !party.held && !party.optedOut && trust === "ok" && storedInviteNoticePartyCurrent(saved!.state, member.id)
+      return party?.adult === true && !party.held && !party.optedOut && trust === "ok" && storedInviteNoticePartyCurrent(saved!.state, member.id, now)
         && member.prefs?.categoriesOptIn?.includes("professional") && member.prefs?.formats?.includes("one_to_one")
         && !member.prefs?.onlyWhenAsked && effectiveParticipation(member as Parameters<typeof effectiveParticipation>[0], now).state !== "paused";
     });
     const active = cofounderPairCurrent(first !== second, true, true, eligible);
     const bothAccepted = opp.participants.every(id => opp.status.some(([key, status]) => key === id && status === "yes") && opp.contacted.includes(id));
-    return cofounderDeliveryAllowed(active, opp.review?.decision === "approve", revealing, bothAccepted) ? { ok: true } : refused;
+    return cofounderDeliveryAllowed(active, reviewApproved(opp.review), revealing, bothAccepted) ? { ok: true } : refused;
   }
 
   private peonHireContacts(tx: SQL, memberId: MemberId, ids: readonly string[]) {
@@ -464,17 +489,17 @@ export class NetworkRuntime {
     const slot = managerProbe ? saved.state.members.find(member => member.id === memberId)?.awaiting : undefined;
     if (!managerQuestionDeliveryCurrent(managerProbe, slot?.kind === "probe" && slot.oppId === opp.id, slot?.probeReceiptId === contact.id)) return false;
     const original = opp.sentAt?.[memberId];
-    const deadline = managerProbe ? managerQuestionDeadline(opp.deadline, original !== undefined, original ?? 0, probeResponseMs) : opp.deadline;
+    const deadline = managerProbe ? managerQuestionDeadline(opp.deadline, original !== undefined, original ?? 0, probeResponseMs(false, false)) : opp.deadline;
     const phase = reveal ? opp.stage === "scheduled" && now < (opp.meetingAt ?? 0) && opp.bookedTold?.includes(memberId) === true
       : opp.stage === "probing" && now < deadline && opp.contacted.includes(memberId) && statuses.get(memberId) === "probing";
     const accepted = (id: MemberId) => statuses.get(id) === (reveal ? "yes" : "available") && opp.contacted.includes(id);
-    const humanReview = review?.decision === "approve" && !review.invalidated && !!review.reviewer && review.reviewer !== SIM_AUTO_REVIEWER;
-    if (!hireContactAllowed(true, humanReview, phase, memberId === seat.manager, reveal, accepted(candidate), accepted(seat.manager))) return false;
+    const approved = reviewApproved(review);
+    if (!hireContactAllowed(true, approved, phase, memberId === seat.manager, reveal, accepted(candidate), accepted(seat.manager))) return false;
     if (await this.canonicalPairBlocked(tx, candidate, seat.manager)) return false;
-    const parties = await this.relayParties(participants, tx);
+    const parties = await this.relayParties(participants, tx, [saved.state]);
     if (!participants.every(id => {
       const party = parties.get(id);
-      return party?.adult === true && !party.held && !party.optedOut && storedInviteNoticePartyCurrent(saved.state, id);
+      return party?.adult === true && !party.held && !party.optedOut && storedInviteNoticePartyCurrent(saved.state, id, now);
     })) return false;
     const [intents, facets] = await Promise.all([
       tx`select * from network.intents where app_id='peon' and member_id in ${tx(participants)} order by member_id,id`,
@@ -536,13 +561,13 @@ export class NetworkRuntime {
     const now = this.clock.now();
     const stageCurrent = reveal ? opp.stage === "scheduled" : opp.stage === "probing" && opp.contacted.includes(row.memberId!)
       && opp.status.some(([memberId, status]) => memberId === row.memberId && status === "probing");
-    const approved = stageCurrent && opp.review?.decision === "approve" && !opp.review.invalidated;
+    const approved = stageCurrent && reviewApproved(opp.review);
     const accepted = opp.participants.every(id => opp.status.some(([memberId, status]) => memberId === id && status === "yes"));
     if (!slopPairContactAllowed(approved, first !== second, reveal, accepted)) return refused;
-    if (!opp.participants.every(id => storedInviteNoticePartyCurrent(state, id) && !state.trust?.some(t => t.id === id && t.level !== "ok"))) return refused;
+    if (!opp.participants.every(id => storedInviteNoticePartyCurrent(state, id, now) && !state.trust?.some(t => t.id === id && t.level !== "ok"))) return refused;
     const pair = [first, second].sort().join("|");
     if (state.blocks.includes(pair) || state.avoid.includes(pair) || await this.canonicalPairBlocked(tx, first, second)) return refused;
-    for (const party of (await this.relayParties(opp.participants, tx)).values()) if (!party.adult || party.held || party.optedOut) return refused;
+    for (const party of (await this.relayParties(opp.participants, tx, [state])).values()) if (!party.adult || party.held || party.optedOut) return refused;
 
     const [members, facets, presence, blocks] = await Promise.all([
       tx`select m.id,m.name,m.home_city,m.prefs,m.participation_state,m.participation_window,m.joined_at,m.unanswered_proactive,a.age
@@ -575,17 +600,7 @@ export class NetworkRuntime {
     return check(prepared, opp.participants) ? { ok: true } : refused;
   }
 
-  /**
-   * Final dispatch admission of a relayed row, inside the outbound queue's admission transaction after
-   * every asynchronous gate (outbound ids "relay:<item>", and "relay:<item>:ask" for the swap question).
-   * The item must be one the relay desk passed (network.relay_records, written with the queued row) for
-   * exactly this recipient and not rejected since; the newest stored state must still hold the open
-   * two-person match of these members with both of them eligible (relayDispatchCheck); no block between
-   * them in the canonical edges or person blocks; and both members pass the canonical checks (relayParties).
-   * The stored state is read FOR SHARE, so a unit that closes the match either commits first (and is seen
-   * here) or waits for this admission.
-   */
-  async relayAdmission(tx: SQL, row: { id: string; memberId?: string | null; oppId?: string; approvedPhotos?: ApprovedRelayPhoto[] }): Promise<RecipientCheck> {
+  async relayAdmission(tx: SQL, row: { id: string; memberId?: string | null; oppId?: string }): Promise<RecipientCheck> {
     const no = (reason: string): RecipientCheck => ({ ok: false, reason });
     const id = /^relay:([^:]+)(:ask)?$/.exec(row.id);
     if (!id || !row.memberId) return no("relay:unknown");
@@ -593,7 +608,7 @@ export class NetworkRuntime {
     const [saved] = await tx`select state from network.network_state where id=${this.pg.id} for share`;
     if (!saved?.state) return no("relay:no_state");
     const state = (typeof saved.state === "string" ? JSON.parse(saved.state) : saved.state) as NetworkState;
-    let from: MemberId | undefined, matchId: string | undefined;
+    let from: MemberId | undefined, matchId: string | undefined, textItem = false;
     if (id[2]) {
       const now = this.clock.now();
       const request = state.relay?.swaps.find(swap => swap.itemId === id[1] && swap.matchId === row.oppId && swap.to === to);
@@ -601,36 +616,33 @@ export class NetworkRuntime {
       matchId = request.matchId;
       from = request.from;
     } else {
-      const [rec] = await tx<{ opportunity_id: string; from_member: MemberId; to_member: MemberId; decision: string; review: string | null; reasons: string[] }[]>`
-        select opportunity_id,from_member,to_member,decision,review,reasons from network.relay_records where app_id=${app} and item_id=${id[1]!}`;
+      const [rec] = await tx<{ opportunity_id: string; kind: string; from_member: MemberId; to_member: MemberId; decision: string; review: string | null; reasons: string[] }[]>`
+        select opportunity_id,kind,from_member,to_member,decision,review,reasons from network.relay_records where app_id=${app} and item_id=${id[1]!}`;
       if (!rec || rec.to_member !== to) return no("relay:not_passed");
       const withdrawn = rec.reasons.includes(SWAP_WITHDRAWN);
       if (!relayRecordMayDispatch(rec.decision === "pass", rec.review === "rejected", withdrawn)) return no(withdrawn ? SWAP_WITHDRAWN : "relay:not_passed");
       from = rec.from_member;
       matchId = rec.opportunity_id;
+      textItem = rec.kind === "text";
       if (row.oppId && row.oppId !== matchId) return no("relay:pair");
     }
     if (!from || !matchId) return no("relay:pair");
-    const pair = await this.relayPairAdmission(tx, state, from, to, matchId);
-    if (!pair.ok) return pair;
-    if (row.approvedPhotos?.length) {
-      if (row.approvedPhotos.length!==1 || !this.host.photoRelay) return no("photo:unavailable");
-      const photo=row.approvedPhotos[0]!;
-      if (photo.itemId!==id[1] || photo.app!==app || photo.threadId!==matchId || photo.senderMemberId!==from || photo.recipientMemberId!==to)
-        return no("photo:scope");
-      const current=await this.host.photoRelay.approved(photo.itemId,tx);
-      if (!current || !isDeepStrictEqual(current,photo)) return no("photo:revoked");
-    }
-    return {ok:true};
+    return this.relayPairAdmission(tx, state, from, to, matchId, textItem);
   }
 
-  private async relayPairAdmission(tx: SQL, state: NetworkState, from: MemberId, to: MemberId, matchId: string): Promise<RecipientCheck> {
+  private async relayPairAdmission(tx: SQL, state: NetworkState, from: MemberId, to: MemberId, matchId: string, textOnly: boolean): Promise<RecipientCheck> {
     const no = (reason: string): RecipientCheck => ({ ok: false, reason });
-    const why = relayDispatchCheck(state, { matchId, from, to, now: this.clock.now() });
+    const now = this.clock.now();
+    const why = relayDispatchCheck(state, { matchId, from, to, now, teenText: textOnly });
     if (why) return no(why);
     if (await this.canonicalPairBlocked(tx, from, to)) return no("party:blocked");
-    for (const [, c] of await this.relayParties([from, to], tx)) {
-      if (!c.adult) return no("party:age");
+    const parties = await this.relayParties([from, to], tx, [state]);
+    const opp = state.opps.find(x => x.id === matchId);
+    const teen = textOnly && !!opp && opp.teenRuleAt !== undefined && teenFriendApp(this.app.id) && !storedTeenStop(state) && teenFriendCategory(this.app.id, opp.category)
+      && groupAgeAllowed(true, true, earliestDayKeyOf(now), latestDayKeyOf(now),
+        [from, to].map(id => { const c = parties.get(id); return { adult: c?.adult === true, ready: c?.teenReady === true, birthKey: c?.birthKey ?? 0 }; }));
+    for (const [, c] of parties) {
+      if (!c.adult && !teen) return no("party:age");
       if (c.optedOut) return no("party:opted_out");
       if (c.held) return no("party:held");
     }
@@ -701,16 +713,16 @@ export class NetworkRuntime {
     const initialBooking = message.type === "proposal" && !message.id.startsWith(RESCHEDULE_QUEUE_PREFIX);
     if (!probe && !initialBooking) return exactMessage;
     const exactPair = !!source && participants.length === 2 && source.members.every(id => participants.includes(id));
-    const humanApproved = review?.decision === "approve" && !review.invalidated && !!review.reviewer && review.reviewer !== SIM_AUTO_REVIEWER;
+    const approved = reviewApproved(review);
     const lifecycle = probe
       ? opportunity.stage === "probing" && statuses.get(memberId) === "probing" && message.id === gatheringRepeatProbeKey(opportunity.id, memberId, message.type === "scheduling")
       : opportunity.stage === "scheduled" && participants.every(id => statuses.get(id) === "yes" && opportunity.contacted.includes(id))
         && opportunity.bookedTold?.includes(memberId) === true;
-    const rollout = this.matchingAllowed && state.matchingEnabled;
+    const matchingOn = this.matchingAllowed && state.matchingEnabled;
     const accounts = this.host.accountsFor?.(tx);
-    const current = !!accounts && !!source && rollout && exactPair && humanApproved && lifecycle && exactMessage
+    const current = !!accounts && !!source && matchingOn && exactPair && approved && lifecycle && exactMessage
       && await gatheringMatchSourceCurrent(tx, accounts, this.app, source, this.clock.now(), { memberId, e164: address }, state);
-    return gatheringRepeatContactAllowed(rollout, exactPair, humanApproved, lifecycle, exactMessage, current);
+    return gatheringRepeatContactAllowed(matchingOn, exactPair, approved, lifecycle, exactMessage, current);
   }
 
   async gatheringRepeatClaim(tx: SQL, row: QueueRow): Promise<boolean> {
@@ -721,7 +733,7 @@ export class NetworkRuntime {
       where app_id=${this.app.id} and id=${row.id} and opportunity_id=${row.oppId} and member_id=${row.memberId} and direction='outbound'`;
     if (!message) return row.id.startsWith("relay:");
     if (message.type === "probe" || message.type === "scheduling" || message.type === "proposal") {
-      if (row.mediaUrls.length || row.approvedPhotos?.length) return false;
+      if (row.mediaUrls.length) return false;
     }
     return this.gatheringRepeatMessageCurrent(tx, state, message, row.memberId, row.to, row.text);
   }
@@ -769,9 +781,9 @@ export class NetworkRuntime {
     const states = new Map(stateRows.map(row => [row.id as string, (typeof row.state === "string" ? JSON.parse(row.state) : row.state) as NetworkState]));
     if (![...members].every(([member, network]) => {
       const state = states.get(network);
-      return state && storedInviteNoticePartyCurrent(state, member);
+      return state && storedInviteNoticePartyCurrent(state, member, this.clock.now());
     })) return false;
-    const parties = await this.relayParties([...members.keys()], tx);
+    const parties = await this.relayParties([...members.keys()], tx, [...states.values()]);
     return [...parties.values()].every(party => party.adult && !party.optedOut && !party.held);
   }
 
@@ -793,7 +805,7 @@ export class NetworkRuntime {
       const sender = rows.find((r: Row) => r.person_id === input.senderPersonId);
       const recipient = rows.find((r: Row) => r.id !== sender?.id);
       if (!sender?.person_id || !recipient?.person_id || recipient.person_id === sender.person_id) return;
-      const allowed = await this.relayPairAdmission(tx, state, sender.id as MemberId, recipient.id as MemberId, op.id);
+      const allowed = await this.relayPairAdmission(tx, state, sender.id as MemberId, recipient.id as MemberId, op.id, false);
       if (!allowed.ok) return;
       return { senderPersonId: sender.person_id as string, senderMemberId: sender.id as string,
         recipientPersonId: recipient.person_id as string, recipientMemberId: recipient.id as string };
@@ -829,7 +841,7 @@ export class NetworkRuntime {
    */
   async start() {
     // The ledger starts from what is stored (events this process did not emit), oldest first.
-    for (const r of await this.scoped(tx => tx`select event from network.capital_events where app_id = ${this.app.id} order by t, id`) as any[]) {
+    for (const r of await this.scoped(tx => tx<{ event: CapitalEvent | string }[]>`select event from network.capital_events where app_id = ${this.app.id} order by seq`)) {
       try { this.capital.ledger.record(typeof r.event === "string" ? JSON.parse(r.event) : r.event); } catch { /* out of order: counted by the wiring only for new events */ }
     }
     // spec/runtimeUnit.md, "Runtime follow-up depends on the adapter and whether the tick ran"
@@ -848,6 +860,7 @@ export class NetworkRuntime {
         this.unit = newUnit();
         await this.refresh();
         const state = await this.loadState();
+        await this.scoped(tx => this.view.load(tx));
         this.net.setGatheringRepeatSources([]);
         if (state?.matchingEnabled && this.matchingAllowed && this.id === "ntwrk:nyc" && this.host.accountsFor) {
           // A read failure must retry the unit. Only a successful scan may retire an unbooked source.
@@ -863,7 +876,7 @@ export class NetworkRuntime {
       save: async (state: NetworkState) => {
         const u = this.unit;
         // PgStore.save sets app.app_id for its own transaction; the unit's rows go in the same one.
-        await this.pg.save({ ...state, legacyIntentRowsReconciled: true }, tx => this.writeUnit(tx, u));
+        await this.pg.save({ ...state, legacyIntentRowsReconciled: true }, async tx => { await this.writeUnit(tx, u); await this.view.saved(tx); });
         if (u.recordedAges) this.recordedAges.push(...u.recordedAges);
         this.committed.push(...u.sends.filter(s => !u.collected.has(s.id)));
         this.unit = newUnit();
@@ -888,6 +901,12 @@ export class NetworkRuntime {
       return [{ key: probeReplyReceiptKey(opp.id, member.id, slot), id: slot.probeReceiptId ?? formerInvite?.deliveryId ?? null,
         member_id: member.id, opportunity_id: opp.id, opened_at: new Date(slot.at).toISOString(), plan: false }];
     });
+    for (const member of state.members) {
+      const ended = member.endedProbe;
+      if (!ended || ended.told) continue;
+      pending.push({ key: ended.receiptKey, id: ended.receiptId ?? null, member_id: member.id, opportunity_id: ended.oppId,
+        opened_at: new Date(ended.sentAt).toISOString(), plan: !!ended.plan });
+    }
     const members = new Map(state.members.map(member => [member.id, member]));
     for (const opp of state.opps) {
       if (!opp.plan || !opp.planRun || (opp.stage !== "probing" && opp.stage !== "scheduled")) continue;
@@ -1038,14 +1057,17 @@ export class NetworkRuntime {
     await this.scoped(async tx => {
       const [snapshot, names] = await Promise.all([
         loadSnapshot(tx, now, { app, city: this.city, homeCities: homes, includeMaturedSignup: true }),
-        tx`select i.id,i.invited_by,i.name from network.members i join network.members v on v.app_id=i.app_id and v.id=i.invited_by
+        tx<(AgeRow & { id: string; invited_by: string; name: string | null })[]>`select i.id,i.invited_by,i.name,a.age as matching_age,
+            ((i.age is null or p.id is null or p.lowest_age is null) and a.birth_date is null and not a.signup_age_observed) as age_missing, ${birthColumns(tx)}
+          from network.members i join network.members v on v.app_id=i.app_id and v.id=i.invited_by
           join platform.matching_ages a on a.app_id=i.app_id and a.member_id=i.id
+          left join platform.people p on p.id=i.person_id
           where i.app_id=${app} and v.home_city in ${tx([...homes])} and i.home_city not in ${tx([...homes])}
-            and i.joined_at>${new Date(now - inviteJoinNoticeLifetimeMs)} and i.account_status='active' and not i.opted_out and a.age>=${ADULT_AGE}`,
+            and i.joined_at>${new Date(now - inviteJoinNoticeLifetimeMs)} and i.account_status='active' and not i.opted_out order by i.id`,
       ]);
       this.snap = snapshot;
-      this.joinedInviteeNames = new Map(names.flatMap(row => {
-        const first = (row.name as string | null)?.trim().split(/\s+/)[0];
+      this.joinedInviteeNames = new Map(names.filter(row => canBeMatched(effectiveAgeOf(row, now))).flatMap(row => {
+        const first = row.name?.trim().split(/\s+/)[0];
         return first ? [[`${row.invited_by}\0${row.id}`, first] as const] : [];
       }));
     });
@@ -1096,8 +1118,6 @@ export class NetworkRuntime {
       send: (memberId, body, o) => {
         const t = this.clock.now();
         const meta = o?.meta ?? {};
-        const approvedPhotos = meta.approvedPhotos === undefined ? undefined : parseApprovedRelayPhotos(meta.approvedPhotos);
-        if (meta.approvedPhotos !== undefined && !approvedPhotos) throw new Error("Invalid deferred approved photo payload");
         const baseId = o?.idempotencyKey ?? `${memberId}:${t}:${this.nonce}${++this.seq}`;
         const oppId = meta.proposalId ?? meta.probe?.key;
         const cofounderContact = !!oppId && this.net.opps.get(oppId)?.lane === "Cofounder"
@@ -1126,7 +1146,7 @@ export class NetworkRuntime {
           // re-engagement or a check-in), so the queue's quiet hours and caps still apply to those.
           kind: o?.reply && (causal || this.replyingTo === memberId) ? "reply" : meta.proactive ? "proactive" : "transactional",
           // A probe names its opportunity only in meta.probe (anonymous to the member); the row links it either way.
-          ...(approvedPhotos ? { approvedPhotos } : {}), ...(meta.invitationJoins ? { invitationJoins: meta.invitationJoins } : {}),
+          ...(meta.invitationJoins ? { invitationJoins: meta.invitationJoins } : {}),
           ...(type === "proposal" && meta.booked && meta.participants?.length ? { bookingRoster: [...meta.participants] } : {}),
           type, oppId, proactive: !!meta.proactive, system: false, ts: t,
         });
@@ -1140,6 +1160,7 @@ export class NetworkRuntime {
       recordMeeting: m => { ev({ t: this.clock.now(), type: "meeting_scheduled", meetingId: m.proposalId, proposalId: m.proposalId, participants: m.participants, at: m.at, city: m.city }); return m.proposalId; },
       recordBlock: (from, to) => { this.unit.blocks.push([from, to]); ev({ t: this.clock.now(), type: "block", from, to }); },
       log: (kind, detail) => ev({ t: this.clock.now(), type: "network_log", kind, detail }),
+      queueStandingIntentChange: change => { this.unit.standingIntents.push(change); },
     };
   }
 
@@ -1149,6 +1170,19 @@ export class NetworkRuntime {
     if (turn?.app === this.app.id && turn.memberId === memberId && (kind === "reply" || kind === "compliance")
       && normalizeAddress(this.memberToAddr.get(memberId) ?? "") === normalizeAddress(turn.from)) this.unit.collected.add(id);
     this.unit.sends.push({ id, memberId, to: this.memberToAddr.get(memberId), body, ...(mediaUrls?.length ? { mediaUrls } : {}), kind, type, proactive: false, system: true, ts: this.clock.now() });
+  }
+
+  uniqueId(key: string): string {
+    return `${key}:${this.nonce}${++this.seq}`;
+  }
+
+  guardedSystemReply(memberId: MemberId, id: string, body: string, type: string): boolean {
+    if (new LeakGuard({ ...this.net.leakSources([memberId]), canaryShapes: true }).check(body).length) {
+      this.host.log(`[alert] a ${type} text failed the leak guard (${this.id}, ${id})`);
+      return false;
+    }
+    this.system(memberId, id, body, "reply", type);
+    return true;
   }
 
   /** A directly requested result for this signed member. Source links grant only a per-reply contact exception. */
@@ -1222,7 +1256,42 @@ export class NetworkRuntime {
         const recorded = await store.recordMemberAge(app, observation.memberId, e164,
           accounts.phoneHash(e164), observation.age, this.clock.now());
         if (recorded) u.recordedAges.push({ ...recorded, memberId: observation.memberId });
+        const birthAccounts = this.host.accountsFor?.(tx);
+        if (recorded?.personId && observation.birthDate !== undefined && birthAccounts) {
+          await birthAccounts.recordBirthDate(e164, await birthAccounts.personFor(e164), observation.birthDate);
+        }
       }
+    }
+    const barAccounts = this.host.accountsFor?.(tx);
+    for (const bar of u.teenBars) {
+      const e164 = this.addressOf(bar.memberId);
+      if (barAccounts && e164) await barAccounts.barTeenPool(e164, bar.reason, bar.at);
+    }
+    const hashOf = (id: MemberId) => { const e164 = this.addressOf(id); return e164 && this.host.accounts ? this.host.accounts.phoneHash(e164) : undefined; };
+    const accounts = this.host.accounts;
+    if (teenFriendApp(app) && accounts) {
+      const held = this.net.teenPoolHolds().map(hashOf).filter((h): h is string => !!h);
+      const own = [...this.memberToAddr.values()].map(e164 => accounts.phoneHash(e164));
+      if (held.length) {
+        await tx`insert into platform.teen_pool_holds (phone_hash, app_id, at)
+          select h, ${app}, ${new Date(this.clock.now())}::timestamptz from unnest(${tx.array(held, "TEXT")}) as h
+          on conflict (phone_hash, app_id) do nothing`;
+      }
+      await tx`delete from platform.teen_pool_holds where app_id=${app} and phone_hash = any(${tx.array(own, "TEXT")})
+        and not (phone_hash = any(${tx.array(held, "TEXT")}))`;
+    }
+    for (const [a, b] of u.teenPairs) {
+      const first = hashOf(a), second = hashOf(b);
+      if (!first || !second || first === second) continue;
+      const [low, high] = first < second ? [first, second] : [second, first];
+      await tx`insert into platform.teen_pair_avoid (phone_hash_a, phone_hash_b, at) values (${low}, ${high}, ${new Date(this.clock.now())})
+        on conflict (phone_hash_a, phone_hash_b) do nothing`;
+    }
+    for (const signal of u.minorSignals) {
+      await tx`insert into platform.person_minor_signals (person_id, at)
+        select m.person_id, ${new Date(signal.at)}::timestamptz from network.members m
+        where m.app_id = ${app} and m.id = ${signal.memberId} and m.person_id is not null
+        on conflict (person_id) do update set at = greatest(platform.person_minor_signals.at, excluded.at)`;
     }
     const personIds = new Map<string, string>();
     if (u.forget.size) {
@@ -1232,12 +1301,11 @@ export class NetworkRuntime {
       for (const row of rows as Row[]) personIds.set(row.member_id as string, row.id as string);
     }
     const named = new Set<string>([...u.sends.map(s => s.memberId), ...(u.inbound ? [u.inbound.member_id as string] : []),
-      ...(u.standingIntent ? [u.standingIntent.memberId] : []), ...u.blocks.flat(), ...u.optOut.keys(), ...u.postings.map(p => p.managerId)]);
+      ...u.standingIntents.map(change => change.memberId), ...u.blocks.flat(), ...u.optOut.keys(), ...u.postings.map(p => p.managerId)]);
     const known = new Set<string>();
     if (named.size) for (const r of await tx`select id from network.members where app_id = ${app} and id in ${tx([...named])}`) known.add(r.id);
     const ok = (id: string) => known.has(id) && !u.forget.has(id);
-    if (u.standingIntent) {
-      const change = u.standingIntent;
+    for (const change of u.standingIntents) {
       if (!ok(change.memberId)) throw new Error("Standing intent owner is unavailable");
       const rows = await tx`update network.intents set status = ${change.status}
         where app_id = ${app} and id = ${change.id} and member_id = ${change.memberId}
@@ -1258,7 +1326,7 @@ export class NetworkRuntime {
       await tx`insert into network.messages ${tx({ ...u.inbound, ...privateFields, app_id: app })} on conflict (id) do nothing`;
     }
     const turn = this.host.inboundTurn?.();
-    const queue = this.adapter instanceof BlooioAdapter ? this.adapter.queue : undefined;
+    const queue = u.collected.size ? collectedReplyGuard(this.adapter) : undefined;
     for (const send of u.sends) {
       if (!send.invitationJoins?.length) continue;
       if (!ok(send.memberId) || send.invitationJoins.some(member => u.forget.has(member)) || !await this.invitationNoticeCurrent(tx, send.memberId, send.invitationJoins)) {
@@ -1278,7 +1346,7 @@ export class NetworkRuntime {
       const approvedContact = bookedLink ?? reviewToken;
       const contactAllow = u.collectedPublicLinks?.get(s.id) ?? (approvedContact ? [approvedContact] : undefined);
       const reasons = await queue.collectedLeaks(tx, { id: s.id, ...(u.forget.has(s.memberId) ? {} : { memberId: s.memberId }), to: s.to, kind: s.kind, text: s.body, contactAllow });
-      if (reasons.length) {
+      if (!collectedReplyMayLeave(reasons.length)) {
         u.collected.delete(s.id);
         if (s.type === "solo_events" || s.type === "contribution_history" || s.type === "participation_controls"
           || privateMemberMessage(s.type) || (u.atomicReply && s.type === u.atomicReply)) {
@@ -1336,7 +1404,7 @@ export class NetworkRuntime {
     }
     const events = u.events.filter(e => !membersOf(e).some(id => u.forget.has(id))).map(e => ({ ...e, app_id: app, at: new Date(e.at) }));
     for (let i = 0; i < events.length; i += 500) await tx`insert into network.events ${tx(events.slice(i, i + 500))}`;
-    const capital = u.capital.filter(e => !u.forget.has((e as { member?: string }).member ?? "")).map(e => ({
+    const capital = u.capital.filter(e => this.capital.onLedger(e)).filter(e => !u.forget.has((e as { member?: string }).member ?? "")).map(e => ({
       app_id: app, id: e.id, type: e.type, member_id: (e as { member?: string }).member ?? null, t: new Date(e.t), event: e,
     }));
     for (let i = 0; i < capital.length; i += 500) await tx`insert into network.capital_events ${tx(capital.slice(i, i + 500))} on conflict (app_id, id) do nothing`;
@@ -1370,6 +1438,8 @@ export class NetworkRuntime {
         sender=null,event=null,sender_hash=null,member_id=null,app_id=null
         where request_hash is not null and app_id=${app} and (member_id=${id} or sender_hash=${senderHash ?? null})
         and id<>${turn?.id ?? ""}`;
+      await tx`delete from platform.teen_pool_holds where app_id = ${app}
+        and (phone_hash = ${senderHash ?? null} or phone_hash in (select phone_hash from platform.people where id = ${personIds.get(id) ?? null}))`;
       await tx`delete from network.messages where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.feedback where app_id = ${app} and (from_id = ${id} or about_id = ${id})`;
       // Every event that names them, by the same keys the writer reads (membersOf): actor, object and the payload.
@@ -1378,7 +1448,9 @@ export class NetworkRuntime {
         or payload->>'target' = ${id} or payload->>'by' = ${id}
         or coalesce(payload->'participants', '[]'::jsonb) @> to_jsonb(${id}::text) or coalesce(payload->'members', '[]'::jsonb) @> to_jsonb(${id}::text)
         or jsonb_exists(coalesce(payload->'attendance', '{}'::jsonb), ${id}))`;
+      await tx`delete from network.review_judgments where app_id = ${app} and ${id} = any(member_ids)`;
       await tx`delete from network.capital_events where app_id = ${app} and (member_id = ${id} or position(${`"${id}"`} in event::text) > 0)`;
+      await tx`delete from platform.profile_suggestion_batches where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.facets where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.intents where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.presence where app_id = ${app} and member_id = ${id}`;
@@ -1473,10 +1545,32 @@ export class NetworkRuntime {
    */
   private async drainQueue() {
     let ds: Delivery[];
-    try { ds = await this.adapter.deliver([]); } catch (e) { this.host.log(`[deliver] the queue waits for the next tick (${this.id}): ${(e as Error).message}`); return; }
-    const mine = ds.filter(d => d.memberId && (d.app ?? this.app.id) === this.app.id);
-    await this.storeStatuses(mine);
+    const current = () => this.scoped(tx => this.view.isCurrent(tx));
+    const reload = async () => (await this.store.withTickLock(async () => {
+      await this.importStored();
+      this.view.imported();
+      return true as const;
+    })) === true;
+    try {
+      if (!await current() && !await reload()) {
+        this.host.log(`[deliver] the queue waits for the next tick (${this.id}): the state lock is busy`);
+        return;
+      }
+      ds = await this.adapter.deliver([]);
+      if (!await current()) {
+        if (await reload()) ds = [...ds, ...await this.adapter.deliver([])];
+        else this.host.log(`[deliver] the rest of the queue waits for the next tick (${this.id}): the state lock is busy`);
+      }
+    } catch (e) { this.host.log(`[deliver] the queue waits for the next tick (${this.id}): ${(e as Error).message}`); return; }
+    await this.drained(ds);
     await this.projectNotifications();
+  }
+
+  async drained(ds: Delivery[]) {
+    await this.storeStatuses(ds.filter(d => d.memberId && (d.app ?? this.app.id) === this.app.id));
+    await this.scoped(tx => tx`update network.messages m set status = o.status from platform.outbound o
+      where m.app_id = ${this.app.id} and m.direction = 'outbound' and o.app_id = m.app_id and o.id = m.id and o.member_id = m.member_id
+      and m.status = any(${tx.array([...WAITING_STATUSES, ...GATEWAY_WAITING], "TEXT")}) and o.status <> all(${tx.array([...WAITING, ...GATEWAY_WAITING], "TEXT")})`);
   }
 
   /** Repair the existing Notify projection after acceptance, including a crash after its SQL commit. */
@@ -1512,7 +1606,9 @@ export class NetworkRuntime {
     const rows = ds.filter(d => d.status !== this.adapter.storedStatus && (!only || only.has(d.id)));
     if (!rows.length) return;
     await this.scoped(async tx => {
-      for (const d of rows) await tx`update network.messages set status = ${d.status} where app_id = ${this.app.id} and id = ${d.id} and direction = 'outbound'`;
+      for (const d of rows) await tx`update network.messages m set status = coalesce((select o.status from platform.outbound o
+        where o.app_id = m.app_id and o.id = m.id and o.member_id = m.member_id), ${d.status})
+        where m.app_id = ${this.app.id} and m.id = ${d.id} and m.direction = 'outbound'`;
     });
   }
 
@@ -1531,7 +1627,7 @@ export class NetworkRuntime {
 
   async calendarSchedulingOwner(e164: string, memberId: MemberId): Promise<CalendarSchedulingOwner | undefined> {
     const state = await this.pg.load();
-    return this.scoped(tx => this.currentCalendarOwner(tx, e164, memberId, storedCalendarOwnerOptedIn(state, memberId)));
+    return this.scoped(tx => this.currentCalendarOwner(tx, e164, memberId, storedCalendarOwnerOptedIn(state, memberId, this.clock.now())));
   }
 
   private async withSchedulingCalendar<T>(target: CalendarSchedulingTarget | undefined, operation: () => Promise<T>): Promise<T> {
@@ -1558,14 +1654,16 @@ export class NetworkRuntime {
         const current = await bridge.load(owner);
         if (current) view.set(owner.memberId, current);
       }));
-    } catch { /* No valid calendar authority is available for this scheduling unit. */ view.clear(); }
+    } catch (e) {
+      this.host.log(`[calendar] no free/busy view for this unit (${this.id}): ${(e as Error).message}`);
+      view.clear();
+    }
     return this.calendarViews.run(view, operation);
   }
 
-  /** One tick under the lock (skipped when another holder has it), then delivery. */
   async tick(): Promise<boolean> {
     const now = this.clock.now();
-    const ran = await this.withSchedulingCalendar({ kind: "tick" }, () => runTick(this.net, this.store, this.clock.now()));
+    const ran = await runTick(this.net, this.store, this.clock.now(), unit => this.withSchedulingCalendar({ kind: "tick" }, unit));
     this.lastTick = { at: now, ran };
     if (this.retry.length) this.committed.unshift(...this.retry.splice(0));
     await this.deliver();
@@ -1582,22 +1680,34 @@ export class NetworkRuntime {
     return out;
   }
 
+  private async importStored(): Promise<void> {
+    const s = await this.store.load();
+    if (s) this.net.importState(s);
+    this.unit = newUnit();
+  }
+
   /** The review queue, oldest first, from the newest stored state. Read-only: nothing is saved (audit network-service-19). */
   reviewQueue() {
     return this.store.withLock(async () => {
-      const s = await this.store.load();
-      if (s) this.net.importState(s);
-      this.unit = newUnit();
-      return this.net.reviewQueue();
+      await this.importStored();
+      return this.net.reviewQueue().map(item => ({ ...item, judged: this.net.opps.get(item.oppId)?.review?.judged }));
+    });
+  }
+
+  dateStanding(): Promise<DateStandingValidity | undefined> {
+    const of = this.wiring.dateStanding;
+    if (!of) return Promise.resolve(undefined);
+    return this.store.withLock(async () => {
+      await this.refresh();
+      await this.importStored();
+      return of(buildWorld(this.net.packInput(this.clock.now()), resolveConfig(this.engineConfig), localEmbed));
     });
   }
 
   /** Read the newest stored state without saving anything (like reviewQueue). */
   readState<T>(fn: (n: ConsentNetwork) => T): Promise<T> {
     return this.store.withLock(async () => {
-      const s = await this.store.load();
-      if (s) this.net.importState(s);
-      this.unit = newUnit();
+      await this.importStored();
       return fn(this.net);
     });
   }
@@ -1638,17 +1748,33 @@ export class NetworkRuntime {
       // spec/sharedContext.md, "Check the public labels and each confirmed shareable fact"
       const labels = stepContext(memberContext, { type: "checkLabels", labelsSafe: safe(firstName) && safe(member.homeCity) });
       if (labels.phase !== "CheckingFacets") return null;
+      const newest = (f: { observedAt?: number; validFrom?: number }) => f.observedAt ?? f.validFrom ?? 0;
       const facets = snapshot.facets.filter(f => contextFacetEligible(f.memberId === memberId, f.scope === "shareable", f.confirmedByMember === true,
-        !!f.sensitive, (f.validFrom === undefined || f.validFrom <= snapshot.now) && (f.validTo === undefined || f.validTo > snapshot.now)) && safe(f.value)).map(f => f.value);
-      // The deployed plugin contract rejects larger context. Withhold it whole; never truncate a fact.
+        !!f.sensitive, (f.validFrom === undefined || f.validFrom <= snapshot.now) && (f.validTo === undefined || f.validTo > snapshot.now)) && safe(f.value))
+        .filter(f => f.value.length <= contextFacetSizeLimit)
+        .sort((a, b) => newest(b) - newest(a) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+        .filter((f, rank) => contextFacetKept(rank, f.value.length)).map(f => f.value);
       const ready = stepContext(labels, { type: "checkFacets", facetCount: facets.length,
-        oversized: facets.length <= contextFacetLimit && facets.some(f => f.length > contextFacetSizeLimit),
+        oversized: facets.some(f => f.length > contextFacetSizeLimit),
       });
       if (ready.phase !== "ContextReady") return null;
       const present = presentInNyc(snapshot, member.id, snapshot.now, snapshot.now + 6 * DAY);
+      const ageEligible = canBeMatched(await accounts.lowestAge(e164, binding.person));
+      await this.importStored();
+      const live = this.net.relayLiveMatches(memberId as MemberId).map(x => ({ ...x,
+        day: `${x.meeting ? "meeting" : "introduced"} ${new Intl.DateTimeFormat("en-US", { timeZone: CITY_TZ[this.city as City], month: "short", day: "numeric" }).format(x.match.at)}` }));
+      const shown = live.flatMap(({ match, otherFirstName, day }) => {
+        const sameName = live.filter(x => x.otherFirstName.toLowerCase() === otherFirstName.toLowerCase());
+        const label = contextItemLabel(sameName.length, sameName.filter(x => x.day === day).length);
+        if (label === "ItemLabelLeftOut") return [];
+        const summary = label === "ItemLabelName" ? `Match with ${otherFirstName}` : `Match with ${otherFirstName} (${day})`;
+        const itemSafe = (text: string) => outputLeaks(text, { forbidden: forbidden.filter(x => x.toLowerCase() !== otherFirstName.toLowerCase()), facts, contacts: true }).length === 0;
+        return contextMatchItemShown(true, this.net.teenItemListed(match.id, ageEligible), !!otherFirstName && itemSafe(summary) && itemSafe(match.id)) ? [{ id: match.id, kind: "match", summary }] : [];
+      });
+      const activeItems = shown.slice(0, contextActiveItemCount(shown.length));
       return {
         firstName, city: member.homeCity, state, stateFrom: participation.active?participation.window!.from:null, stateUntil: participation.active?participation.window!.until:null, facets,
-        activeItems: null, singlePlayer: contextSinglePlayer(present, present && canBeMatched(await accounts.lowestAge(e164, binding.person))),
+        activeItems: activeItems.length ? activeItems : null, singlePlayer: contextSinglePlayer(present, present && ageEligible),
       };
     });
   }
@@ -1667,17 +1793,23 @@ export class NetworkRuntime {
     ]);
     const state = await this.loadState();
     const now = this.clock.now();
-    const review = state?.opps.filter(o => o.stage === "review" && o.review) ?? [];
+    const open = state?.opps.filter(o => o.stage === "review" && o.review) ?? [];
+    const review = open.filter(o => reviewStateOf(o).phase === "HeldForStaff");
+    const awaiting = open.filter(o => reviewStateOf(o).phase === "AwaitingJudge");
+    const exceptionsOverdue = review.filter(o => now >= o.review!.deadline).length;
     const byStatus = Object.fromEntries((statuses as any[]).map(r => [r.status, r.n]));
     const channel = Object.fromEntries(Object.entries(byStatus).filter(([s]) => /^(refused|suppressed|parked|blocked|failed|held|expired)/.test(s)));
     return {
-      ok: true, instance: this.host.instance, network: this.id, app: this.app.id, city: this.city, channel: this.adapter.name, reviewMode: "human" as const,
+      ok: true, instance: this.host.instance, network: this.id, app: this.app.id, city: this.city, channel: this.adapter.name,
+      reviewJudge: { awaiting: awaiting.length, oldestAwaitingMs: awaiting.length ? now - Math.min(...awaiting.map(o => o.review!.judgeWaitFrom ?? o.review!.queuedAt)) : null,
+        exceptions: review.length, exceptionsOverdue },
       matchingAllowed: this.matchingAllowed,
       matchingEnabled: this.matchingAllowed && (state?.matchingEnabled ?? this.net.matchingEnabled()),
+      teenIntrosEnabled: teenFriendApp(this.app.id) && !storedTeenStop(state),
       lastTick: { thisInstance: this.lastTick ?? null, stored: state?.lastTick || null, savedAt: saved ? new Date((saved as any).saved_at).getTime() : null },
       lockHolder: holder ? { pid: holder.pid, application: holder.application_name } : null,
       backlog: {
-        review: review.length, reviewOverdue: review.filter(o => now >= o.review!.deadline).length, deferred: state?.deferred.length ?? 0,
+        review: review.length, reviewOverdue: exceptionsOverdue, deferred: state?.deferred.length ?? 0,
         outboundWaiting: WAITING_STATUSES.reduce((n, st) => n + (byStatus[st] ?? 0), 0) + this.retry.length,
       },
       refusals: { sendRefused: state?.counters.sendRefused ?? 0, guardBlocked: state?.counters.guardBlocked ?? 0, channel },

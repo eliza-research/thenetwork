@@ -25,7 +25,7 @@ A supplied signup marker must match the app, verified phone and current person, 
 ```quint
 type EnrollmentPhase = AwaitingAccountView | AccountChanged | AwaitingProfile | InvalidProfile | AwaitingConsent | ConsentMismatch |
   AwaitingEligibility | NeedsReview | AwaitingMembership | NeedsInvite | InvalidInvitation | AwaitingAge | BelowJoinAge |
-  ReturnExisting | AwaitingPersistence | Created | JoinHookFailed
+  ReturnExisting | AwaitingRepair | AwaitingPersistence | Created | JoinHookFailed
 type Enrollment = {
   phase: EnrollmentPhase,
   viewChecked: bool,
@@ -57,7 +57,7 @@ pure def checkAccountView(joining: Enrollment, viewMatches: bool): Enrollment =
 
 ### Decode the profile and accept current consent before locking the account
 
-Reject a malformed profile. Text consent must be explicit and include the app's current wording, current version or both. Every supplied field must decode and agree with the current consent. A blank or malformed field does not become an omitted field. Typed in-process callers already hold a validated profile and start at the consent step.
+Reject a malformed profile. Text consent must be explicit and include the app's current wording, current version or both. Every supplied field must decode and agree with the current consent. A blank or malformed field does not become an omitted field. Typed in-process callers already hold a validated profile and start at the consent step. Changed (owner decision 2026-11-22): the profile carries exactly one of `birthdate` (year-month-day) or `age`, so the service can track when the person turns a new year; both or neither is a malformed profile, and a well-formed date that is not a real date, is in the future or is before 1900 is refused with `invalid_birthdate` before anything is stored.
 
 ```quint
 pure def canDecodeProfile(joining: Enrollment): bool = joining.phase == AwaitingProfile and joining.viewChecked
@@ -90,6 +90,12 @@ pure def joinConsentEvidenceAllowed(evidence: JoinConsentEvidence): bool =
 pure def lawEverySuppliedJoinConsentFieldMustAgree(evidence: JoinConsentEvidence): bool =
   ((evidence.wordingSupplied and not(evidence.wordingAccepted)) or
     (evidence.versionSupplied and not(evidence.versionAccepted))) implies not(joinConsentEvidenceAllowed(evidence))
+
+pure def joinAgeFieldsValid(hasBirthDate: bool, hasAge: bool): bool =
+  (hasBirthDate or hasAge) and not(hasBirthDate and hasAge)
+
+pure def lawBothOrNeitherAgeFieldIsMalformed(hasBirthDate: bool, hasAge: bool): bool =
+  (hasBirthDate iff hasAge) implies not(joinAgeFieldsValid(hasBirthDate, hasAge))
 
 pure def canConfirmConsent(joining: Enrollment): bool = joining.phase == AwaitingConsent and joining.validProfile and joining.viewChecked
 
@@ -150,20 +156,39 @@ pure def checkMembership(joining: Enrollment, membershipFacts: MembershipFacts):
 
 ### The effective age controls the result of a new or repeated join
 
-Use the existing lowest age rule. A repeated join records the age statement before returning the existing membership. A new join that fails the age rule records the age statement without creating a membership, even when its explicit member invitation is unavailable. Passing the age rule starts persistence only for a new membership with no unavailable invitation.
+Use the existing lowest age rule. A repeated join records the age statement before returning the existing membership. A repeated join of an active membership that has no Network member runs the join hook again before it returns the membership. A new join that fails the age rule records the age statement without creating a membership, even when its explicit member invitation is unavailable. Passing the age rule starts persistence only for a new membership with no unavailable invitation. Every join records its age statement (a birth date or a typed age) before the age check, also when the join then stops for an unavailable invitation, a review refusal or a failed join hook, because the person who controls the verified phone made the statement, and a later lower age or a conflict must still see it. The effective age comes from the recorded readings at the Clock day, so it rises on the birthday and a lower stated age still wins. Changed (audit JA-3 and owner decision 2026-11-22, D1): a repeated join skipped the hook and an age was a stored number -> the repeated join runs the hook and the age comes from the readings at the Clock day, because a membership with no Network member answered success forever and the owner stores a birth date. For a phone with no person, only the coarse typed-age reading reaches the phone's age floor, never the exact birth date.
 
 ```quint
 pure def canCheckJoinAge(joining: Enrollment): bool =
   joining.phase == AwaitingAge and joining.currentEligibility and joining.viewChecked and joining.validProfile and joining.currentConsent
 
-pure def checkJoinAge(joining: Enrollment, ageEligible: bool): Enrollment =
+pure def checkJoinAge(joining: Enrollment, ageEligible: bool, memberMissing: bool): Enrollment =
   { ...joining, ageAllowed: ageEligible,
-    phase: if (not(ageEligible)) BelowJoinAge else if (joining.rejoin) ReturnExisting else if (joining.invalidReferral) InvalidInvitation else AwaitingPersistence }
+    phase: if (not(ageEligible)) BelowJoinAge
+      else if (joining.rejoin) (if (memberMissing) AwaitingRepair else ReturnExisting)
+      else if (joining.invalidReferral) InvalidInvitation else AwaitingPersistence }
+
+pure def canFinishRepair(joining: Enrollment): bool =
+  joining.phase == AwaitingRepair and joining.rejoin and joining.ageAllowed
+    and joining.currentEligibility and joining.viewChecked and joining.validProfile and joining.currentConsent
+
+pure def finishRepair(joining: Enrollment, hookSucceeded: bool): Enrollment =
+  { ...joining, phase: if (hookSucceeded) ReturnExisting else JoinHookFailed }
+```
+
+### A decline below the join age ends the number's unbound access
+
+When the effective age is below the age at which anyone may join, the decline also ends every session of the number that has no person and deletes the number's pending text joins. The age floor stays. A decline for an app's higher minimum age leaves them, because the person may still use the other apps. Changed (audits AE-4 and JA-5): an under-13 web decline left the number's sessions, cookies and pending text join -> the decline ends those sessions and deletes those joins, because nothing may stay stored for a person under 13.
+
+```quint
+import memberAge as Age from "./memberAge"
+
+pure def declineEndsUnboundAccess(effectiveAge: int): bool = Age::confirmedUnderage(effectiveAge)
 ```
 
 ### Success for a new membership follows the join hook
 
-An ordinary join writes the membership, consent and person link, then runs the join hook. A hook failure forgets the new membership and records the failed opt-in's reversal. A referred join commits the app membership, consent, session attachment, Network attribution and invitation use together. A failed referral commit leaves those writes for the next verified attempt. A successful response reports the stored membership.
+An ordinary join writes the membership, consent and person link, then runs the join hook. A hook failure runs the app's forget hook, forgets the new membership and records the failed opt-in's reversal, also when the failure is a review refusal, which then answers review. A failed repair of a repeated join does the same to the existing membership. The forget hook of a failed join removes only the Network member: the app's photos, the agent's grants and the signup drafts stay, because the person is still signing up and retries with the same agent. Changed (audits JA-4 and SIG68): the forget hook did not run, and then it also removed the photos, grants and drafts -> it runs and removes only the Network member, because a Network member made before the failure stayed, a review refusal kept the membership, and a transient failure took the agent's authorization mid-signup. A referred join commits the app membership, consent, session attachment, Network attribution and invitation use together. A failed referral commit leaves those writes for the next verified attempt. A successful response reports the stored membership.
 
 ```quint
 pure def canFinishJoin(joining: Enrollment): bool =
@@ -172,6 +197,14 @@ pure def canFinishJoin(joining: Enrollment): bool =
 
 pure def finishJoin(joining: Enrollment, hookSucceeded: bool): Enrollment =
   { ...joining, phase: if (hookSucceeded) Created else JoinHookFailed }
+
+pure def joinFailureForgetsMembership(referred: bool): bool = not(referred)
+
+pure def forgetEndsAppAccess(joinFailed: bool): bool = not(joinFailed)
+
+pure def lawFailedOrdinaryJoinForgetsOnlyTheMember(joining: Enrollment): bool =
+  (canFinishJoin(joining) and not(joining.referred))
+    implies (finishJoin(joining, false).phase == JoinHookFailed and joinFailureForgetsMembership(joining.referred) and not(forgetEndsAppAccess(true)))
 ```
 
 ### The approved profile reaches onboarding and its stated age counts
@@ -228,4 +261,121 @@ pure def sometimesAccountChanged(joining: Enrollment): bool = joining.phase == A
 pure def sometimesNeedsInvite(joining: Enrollment): bool = joining.phase == NeedsInvite
 pure def sometimesInvalidInvitation(joining: Enrollment): bool = joining.phase == InvalidInvitation
 pure def sometimesBelowJoinAge(joining: Enrollment): bool = joining.phase == BelowJoinAge
+pure def sometimesRepairsMember(joining: Enrollment): bool = joining.phase == AwaitingRepair
+```
+
+## Story: Keep the age readings of a person and a phone
+
+> As a member who stated a birth date, I want my age to rise on my birthday wherever my readings go, so that a change of number or a new account on my phone never makes my age wrong.
+
+Owner decision 2026-11-22: the service tracks the birth date, so each age statement is a range of possible birth dates ([member age](memberAge.md#each-age-statement-is-a-range-of-possible-birth-dates)). The platform keeps these readings on the person and on the phone's age floor. The rules below decide how the platform writes them.
+
+### Readings of two records merge without a new date
+
+When the readings of one record join the readings of another record, the merge keeps the largest lower key, the smallest upper key and the latest youngest key of the two records. The phone floor joins a new person this way, and on a change of number the floor of the new number joins the person this way. No reading gets a new date, so the age still rises on each birthday after the merge, and a conflict in either record stays a conflict. A record merges with no record as itself. Changed (owner decision 2026-11-22): on a change of number the service stated the old integer floor again as a typed age on the day of the change; after a birthday that typed age conflicted with an exact birth date, so the person lost the birthday rise and the teen pool got a permanent bar. The records now merge as they are.
+
+```quint
+pure def mergeAgeReadings(hasEarlier: bool, earlier: Age::BirthReadings, added: Age::BirthReadings): Age::BirthReadings =
+  if (not(hasEarlier)) added
+  else {
+    lower: Age::laterBirthKey(earlier.lower, added.lower),
+    upper: if (earlier.upper <= added.upper) earlier.upper else added.upper,
+    youngest: Age::laterBirthKey(earlier.youngest, added.youngest)
+  }
+
+pure def lawMergeKeepsEveryYoungestReading(earlier: Age::BirthReadings, added: Age::BirthReadings): bool =
+  val merged = mergeAgeReadings(true, earlier, added)
+  merged.youngest >= earlier.youngest and merged.youngest >= added.youngest
+
+pure def lawMergeNarrowsTheRange(earlier: Age::BirthReadings, added: Age::BirthReadings): bool =
+  val merged = mergeAgeReadings(true, earlier, added)
+  merged.lower >= earlier.lower and merged.lower >= added.lower and merged.upper <= earlier.upper and merged.upper <= added.upper
+
+pure def lawMergeKeepsAConflict(earlier: Age::BirthReadings, added: Age::BirthReadings): bool =
+  val merged = mergeAgeReadings(true, earlier, added)
+  (earlier.lower >= earlier.upper or added.lower >= added.upper) implies merged.lower >= merged.upper
+
+pure def lawMergeWithNoRecordKeepsTheRecord(earlier: Age::BirthReadings, added: Age::BirthReadings): bool =
+  val merged = mergeAgeReadings(false, earlier, added)
+  merged.lower == added.lower and merged.upper == added.upper and merged.youngest == added.youngest
+
+pure val earlierValues = Set(
+  { lower: 20100314, upper: 20100315, youngest: 20100315 },
+  { lower: 20091122, upper: 20101122, youngest: 20101122 },
+  { lower: 20120314, upper: 20100315, youngest: 20120315 },
+  { lower: 20141121, upper: 20151122, youngest: 20151122 })
+pure val addedValues = Set(
+  { lower: 20090101, upper: 20100101, youngest: 20100101 },
+  { lower: 20100314, upper: 20100315, youngest: 20100315 },
+  { lower: 20131121, upper: 20141122, youngest: 20141122 },
+  { lower: 20120314, upper: 20100315, youngest: 20120315 })
+```
+
+### A verified browser join can keep a private teen birth reading
+
+A verified connector or direct-site signup can keep the exact birth date in the person's private age authority when the age on the Clock date is 13 through 18. Enrollment, its invitation if any, and ownership must still be valid at the write. The match can use the reading only under the [teen friendship rules](friendIntroAge.md). An older member gives only a numeric age. A refusal keeps no birth date. The private date when a minor reaches adult eligibility, and an independent younger age statement, still apply.
+
+```quint
+pure def browserEnrollmentKeepsPrivateBirth(membershipAccepted: bool, bindingCurrent: bool, age: int): bool =
+  Age::verifiedBrowserBirthMayBeKept(membershipAccepted and bindingCurrent, age)
+
+pure def lawBrowserEnrollmentBirthNeedsCurrentAcceptedOwner(membershipAccepted: bool, bindingCurrent: bool, age: int): bool =
+  browserEnrollmentKeepsPrivateBirth(membershipAccepted, bindingCurrent, age) implies
+    (membershipAccepted and bindingCurrent)
+```
+
+### A birth date below the join age is kept only as a typed age
+
+A stated birth date stays on the person as an exact date only when a person exists and the age that the person's readings give with that date is at least 13. Otherwise the statement is kept as the typed age that it gives on the Clock day. So a refused person under 13 never has a birth date on record, and a phone with no person keeps only the coarse typed age. Changed (owner decision 2026-11-22): the service now asks for a birth date, and this decision moved from the platform code into this rule.
+
+```quint
+pure def exactReadingKept(statesBirthDate: bool, hasPerson: bool, ageWithBirthDate: int): bool =
+  statesBirthDate and hasPerson and Age::joinableAge(ageWithBirthDate)
+
+pure def lawUnderageBirthDateIsNeverKept(statesBirthDate: bool, hasPerson: bool, ageWithBirthDate: int): bool =
+  not(Age::joinableAge(ageWithBirthDate)) implies not(exactReadingKept(statesBirthDate, hasPerson, ageWithBirthDate))
+
+pure def lawBirthDateWithoutAPersonIsOnlyTyped(statesBirthDate: bool, ageWithBirthDate: int): bool =
+  not(exactReadingKept(statesBirthDate, false, ageWithBirthDate))
+
+pure val ageWithBirthDateValues = Set(-1, 0, 12, 13, 17, 18, 120, 121)
+```
+
+### The phone floor keeps the lowest age that a statement gives
+
+The phone's age floor gets the typed-age reading of the lower of two ages: the age of the statement, and the age that the merged readings give after the statement. When the merged readings give no usable age, the floor keeps the age of the statement. So the floor never gets an age above the statement, and it follows a lower age that the person stated before. A later numeric statement from a person with a verified browser eligibility date only adds that numeric statement to the floor. The birthday reading still applies separately, so an older typed age cannot freeze the earlier birthday age. Changed (owner decision 2026-11-22): the service now asks for a birth date, and this decision moved from the platform code into this rule.
+
+```quint
+pure def floorStatedAge(statedAge: int, mergedAge: int): int =
+  if (Age::ageInRange(mergedAge)) Age::lowerAge(statedAge, mergedAge) else statedAge
+
+pure def floorAgeAfterReading(statedAge: int, mergedAge: int, privateSignup: bool, typed: bool): int =
+  if (privateSignup and typed) statedAge else floorStatedAge(statedAge, mergedAge)
+
+pure def lawPrivateBrowserAgeNeverBecomesATypedFloor(statedAge: int, mergedAge: int): bool =
+  floorAgeAfterReading(statedAge, mergedAge, true, true) == statedAge
+
+pure def lawFloorNeverRaisesTheStatedAge(statedAge: int, mergedAge: int): bool =
+  floorStatedAge(statedAge, mergedAge) <= statedAge
+
+pure def lawFloorFollowsALowerMergedAge(statedAge: int, mergedAge: int): bool =
+  (Age::ageInRange(mergedAge) and mergedAge < statedAge) implies floorStatedAge(statedAge, mergedAge) == mergedAge
+
+pure val statedAgeValues = Set(0, 12, 13, 15, 17, 18, 30)
+pure val mergedAgeValues = Set(-1, 0, 12, 15, 18, 30, 121)
+```
+
+### The review of a teen item learns whether the first age reading was a birth date
+
+The review packet of a teen item says whether the first age reading of each person was a usable birth date: the review judge reads it for every teen item, and staff read it on the card of an item that the judge held. The first reading is the first statement on the person or on the phone's age floor: a typed age, an age that a record held, or a birth date. When the answer is on record, it never changes. When it is not on record yet, it is true only when no earlier reading exists and the statement is a birth date that gives an age of at least 13. A new person on a phone that has an age floor takes the floor's answer, and a floor without an answer reads false. Erasure keeps a coarse floor whose answer is false, so a person who returns after erasure never reads true. When the floors of two numbers merge on a change of number, the merged floor reads false. Changed (owner decision 2026-11-22, D2): a new person copied the floor readings but no answer, and a safety reviewer read the fact in a confirm step -> a new person takes the floor's answer, and the fact goes to the review judge and to the staff card of a held item, because the confirm step is gone and the judge approves every introduction.
+
+```quint
+pure def firstReadingExact(hasStored: bool, storedExact: bool, hadReading: bool, statesUsableBirthDate: bool): bool =
+  if (hasStored) storedExact else (not(hadReading) and statesUsableBirthDate)
+
+pure def lawAnEarlierReadingIsNeverFirstExact(hadReading: bool, statesUsableBirthDate: bool): bool =
+  hadReading implies not(firstReadingExact(false, false, hadReading, statesUsableBirthDate))
+
+pure def lawTheStoredAnswerNeverChanges(storedExact: bool, hadReading: bool, statesUsableBirthDate: bool): bool =
+  firstReadingExact(true, storedExact, hadReading, statesUsableBirthDate) iff storedExact
 ```

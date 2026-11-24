@@ -5,6 +5,7 @@ import { gini } from "@thenetwork/engine/src/policy.ts";
 import { minimumObservedRatio } from "../gates.ts";
 import { sealedGroups } from "./persona.ts";
 import type { PeonRunResult } from "./world.ts";
+import { marketMeasures, type MarketMeasures } from "./yardstick.ts";
 
 /**
  * Selection-rate stages for the four-fifths check (29 CFR 1607.4(D); NYC LL144 style). Each stage
@@ -57,6 +58,7 @@ export interface PeonMetrics {
   discrimination: { employers: number; detected: number; falseFlags: number; requests: number; requestsApplied: number };
   /** Proposed intros whose candidate level is backed, and those with a role-level gap over 1 (spec/matchLane.md, Hire). */
   levels: { backedPairs: number; gapOverOne: number };
+  market: MarketMeasures;
   impact: ImpactTable;
 }
 
@@ -138,6 +140,7 @@ export function peonMetrics(r: PeonRunResult, o: { requestsApplied?: number } = 
       requests: discCos.filter(c => c.discriminatoryRequest).length, requestsApplied: o.requestsApplied ?? 0,
     },
     levels: { backedPairs: levelGaps.length, gapOverOne: levelGaps.filter(gap => gap > 1).length },
+    market: marketMeasures(r.markets),
     impact: impactTable(r, real.map(c => c.id)),
   };
 }

@@ -8,7 +8,7 @@
 
 ### Offer one app-bound confirmation after the person approves the draft
 
-Use the app from the person's current signup. Offer the handoff after the person has approved the exact draft and current text consent wording. Apply the existing join-age, invite and held-account rules. A session already verified on that app may satisfy the phone step. The request must remain app-bound, short lived and single use. An agent without the required connector access explains the limitation before collecting a profile.
+Use the app from the person's current signup. Offer the handoff after the person has approved the exact draft and current text consent wording. Apply the existing join-age, invite and held-account rules. A session already verified on that app may satisfy the phone step. The request must remain app-bound, short lived and single use. An agent without the required connector access explains the limitation before collecting a profile. Changed: the server now records the offer too, because no shipping code ran these rules (audit COV06); the Finish signup step of the connection page records the person's approval of the exact form and the current text consent wording as the approval.
 
 ```quint
 type HandoffPhase = DraftingHandoff | AwaitingPhoneConfirmation | AwaitingSignupGrant | ReadyForSignupProfile |
@@ -31,7 +31,7 @@ pure def alwaysHandoffNeedsPriorApproval(handoff: PhoneHandoff): bool =
 
 ### Only the browser and the authorized connector complete the handoff
 
-Complete phone verification and confirm the signup on the same app. The server checks the verified owner, current signup requirements and the exact live handoff. A successful signup creates or resumes that app's eligible membership. The person authorizes the connector for the same app and owner. A wrong app, changed owner, expired request, blocked membership or refused consent cannot authorize a write. The owning server supplies these facts.
+Complete phone verification and confirm the signup on the same app. The server checks the verified owner, current signup requirements and the exact live handoff. A successful signup creates or resumes that app's eligible membership. The person authorizes the connector for the same app and owner. A wrong app, changed owner, expired request, blocked membership or refused consent cannot authorize a write. The owning server supplies these facts. Changed: the Finish signup step now confirms the phone through this rule after the join, and the grant issuance of an enrolled request records the grant through it, so a refused handoff stops the join or the grant (audit COV06). Changed: the authorization request now stores the handoff state, the offered state while the join runs and the confirmed state after it, and the grant steps that stored state; before, the grant stepped a fixed confirmed state, so a refused or missing stored handoff could still get a grant. A request without a stored handoff, or with one that is not waiting for the grant, gets no grant. Changed (audit COV06): the grant applied the step, which leaves a state unchanged when the grant cannot be recorded, so a stored state already ready for the profile passed without the app, owner and write checks; the server now records the grant only when `canRecordSignupGrant` allows it and refuses every other stored state.
 
 ```quint
 type SignupConfirmation = { sameApp: bool, ownerVerified: bool, eligibleEnrollment: bool, requestLive: bool }

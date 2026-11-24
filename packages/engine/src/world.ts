@@ -3,7 +3,7 @@
 // one id space and compared in another).
 import { MatchRun } from "./match/run.ts";
 import type { Category, City, Edge, EdgeType, Facet, FacetKind, Intent, Member, MemberId, Presence } from "@thenetwork/core";
-import { canBeMatched, DAY } from "@thenetwork/core";
+import { canBeMatched, DAY, earliestDayKeyOf, latestDayKeyOf } from "@thenetwork/core";
 import { mayFollowMemberAlias } from "../../core/src/generated/datingRadius.ts";
 import { matchingExpiryCooldown, matchingPairHistory } from "../../core/src/generated/matchingHistory.ts";
 import { standingIntentLive } from "../../core/src/standing-intent.ts";
@@ -76,7 +76,6 @@ export class World {
   readonly positive = new Map<MemberId, Map<MemberId, number>>();
   readonly edgeTypes = new Map<string, Set<EdgeType>>();
   readonly holds = new Set<MemberId>();
-  /** Members under 18 (or with no valid age). Never connected to anyone (minors policy, PRD 17.4). */
   readonly minors = new Set<MemberId>();
   readonly negativeFeedback = new Map<string, number>();
   readonly feedback: FeedbackRecord[];
@@ -94,6 +93,9 @@ export class World {
   readonly embed: EmbedFn;
   readonly dim: number;
   readonly canonical: (id: MemberId) => MemberId;
+  readonly teenIntros: boolean;
+  readonly minDay: number;
+  readonly maxDay: number;
 
   /** The app pack (default networkPack). Identity travels beside the config, never inside it (byte-identity rule 1). */
   readonly pack: AppPack;
@@ -117,6 +119,9 @@ export class World {
   constructor(readonly input: EngineInput, readonly cfg: EngineConfig, embed: EmbedFn, pack: AppPack = networkPack) {
     this.pack = pack;
     this.now = input.now;
+    this.teenIntros = input.teenIntros === true;
+    this.minDay = earliestDayKeyOf(input.now);
+    this.maxDay = latestDayKeyOf(input.now);
     this.embed = embed;
     const memberIds = new Set(input.members.map(member => member.id));
     this.canonical = memberIdResolver(input, memberIds);

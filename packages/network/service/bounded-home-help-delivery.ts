@@ -49,7 +49,7 @@ export async function stageApprovedHomeHelp(rt: NetworkRuntime, store: BoundedHo
 
 /** The actual recipient runtime is the sole owner of its outreach counters and stable queue row. */
 export async function queueReviewedHomeHelp(rt: NetworkRuntime, store: BoundedHomeHelpConsent, homes: readonly string[], now: number): Promise<void> {
-  if (!(rt.adapter instanceof BlooioAdapter) || !rt.adapter.live) return;
+  if (!(rt.adapter instanceof BlooioAdapter)) return;
   const app = rt.app.id;
   const candidates = await rt.scoped(tx => tx<{ notice_id: string; recipient_id: string }[]>`select c.notice_id,c.recipient_id
     from network.bounded_home_help_consent c join network.bounded_home_help p on p.app_id=c.app_id and p.id=c.plan_id and p.revision=c.revision

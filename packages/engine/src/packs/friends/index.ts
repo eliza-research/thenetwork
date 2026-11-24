@@ -1,13 +1,5 @@
 // friendsPack: friends.help (app id "friends"; formerly buddies.nyc), NYC first, as an AppPack.
 // docs/results/2026-10-08-friends-pack.md has the design, the simulator and the gate results.
-//
-// Policy in one paragraph (PRD 40.2 / 40.6; domain research Part C): groups of 3-6 at public venues
-// first, one-to-one activity partners second (only after a group meetup); an anonymous,
-// activity-first probe with time options, names only at quorum; the same people again near home
-// ("same table again"), a crew offered after one great plan and handed to its own chat after three
-// sessions; venues minimize the group's longest transit trip; romance is excluded entirely (no lane,
-// rules at member / pair / configuration level, no romance framing in any copy); members aged 13-17
-// may join but are never matched (core); unverified members and members with a safety cue are held.
 import { DEFAULT_ATTENTION } from "../../config.ts";
 import { cityBucketGeo } from "../../geo.ts";
 import type { AppPack, EligibilityPolicy, GeneratorSpec, GeoModel } from "../../pack.ts";
@@ -48,7 +40,6 @@ export const friendsGeo: GeoModel = {
 let elig: EligibilityPolicy | undefined;
 const eligibility = (): EligibilityPolicy => (elig ??= {
   minMatchAge: 18,
-  // PRD 40.3: 13-17 may join every app and get the personal agent; never matched, probed or placed in a plan.
   accountTiers: [{ minAge: 13, maxAge: 17, matchable: false, label: "personal agent (13-17)" }],
   memberRules: friendsMemberRules(),
   pairRules: friendsPairRules(),
@@ -64,8 +55,8 @@ export const friendsPack: AppPack = {
   ontology: {
     // No romance lane: friends.help never matches for dating ("friends, not dates").
     lanes: [
-      { id: "social", adultOnly: true },
-      { id: "hobby", adultOnly: true },
+      { id: "social", minors: "teenFriendship" },
+      { id: "hobby", minors: "teenFriendship" },
     ],
     contributorRoles: CONTRIBUTOR_ROLES,
     // Familiar = someone the member said they'd see again (or already knows); a bare "met" is not warm.

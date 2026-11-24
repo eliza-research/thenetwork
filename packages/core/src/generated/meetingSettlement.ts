@@ -23,6 +23,12 @@ export interface AttendanceFinding { mark: AttendanceMark; logFeedback: boolean;
 export interface AttendanceAvailability { recorded: boolean; at: number }
 /** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md) */
 export type CheckInSource = "NoCheckIn" | "MissingNames" | "PresentNames" | "BookedParticipants";
+/** Story: Choose a report or a block after a meeting that went wrong / A check-in answer that describes a problem asks once whether to report or block (spec/meetingSettlement.md) */
+export type CheckInReading = "CheckInFine" | "CheckInConcern" | "CheckInCue" | "CheckInUrgent";
+/** Story: Choose a report or a block after a meeting that went wrong / A check-in answer that describes a problem asks once whether to report or block (spec/meetingSettlement.md) */
+export type CheckInSafetyStep = "CheckInNoStep" | "CheckInAsk" | "CheckInFileNow";
+/** Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes (spec/meetingSettlement.md) */
+export type CheckInSafetyAnswer = "AnswerReport" | "AnswerBlock" | "AnswerNeither" | "AnswerUnclear";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -37,6 +43,8 @@ export const dayBeforeReminderEndMs: number = exact_meetingSettlement(12 * 36000
 export const nearMeetingReminderLeadMs: number = exact_meetingSettlement(3 * 3600000);
 /** Story: Ask for feedback and close attendance once / A settled Friends plan teaches the actual booked time (spec/meetingSettlement.md) */
 export const availabilityHistoryLimit: number = 40;
+/** Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes (spec/meetingSettlement.md) */
+export const checkInSafetyAnswerMs: number = exact_meetingSettlement(24 * 3600000);
 /** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md) */
 export const confirmationWindowHours: number = 48;
 /** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
@@ -137,6 +145,25 @@ export function bookingNoticeReceived(receiptStatus: string, sentAt: number, che
 
 /** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
 //@ pure
+export function bookingNoticeReceiptMayArrive(receiptStatus: string, gatewayReply: boolean): boolean {
+  return receiptStatus === "collected" || receiptStatus === "send_unknown" || receiptStatus === "sending" || receiptStatus === "unknown_acceptance" || (receiptStatus === "failed_unknown" && gatewayReply);
+}
+
+/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
+//@ pure
+export function bookingNoticePending(receiptStatus: string, gatewayReply: boolean): boolean {
+  return receiptStatus === "pending" || receiptStatus === "retry_scheduled" || receiptStatus === "deferred_quiet_hours" || receiptStatus === "held_awaiting_reply" || receiptStatus === "parked_leak_review" || bookingNoticeReceiptMayArrive(receiptStatus, gatewayReply);
+}
+
+/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
+//@ pure
+export function lawExpiredGatewayNoticeMayGetReceipt(receiptStatus: string): boolean {
+  //@ ensures \result === true
+  return !(receiptStatus === "failed_unknown") || bookingNoticeReceiptMayArrive(receiptStatus, true);
+}
+
+/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
+//@ pure
 export function queuedReminderClaim(bookingCurrent: boolean, noticeAccepted: boolean, noticePending: boolean): ReminderClaim {
   return !bookingCurrent ? "RefuseReminder" : (noticeAccepted ? "SendReminder" : (noticePending ? "WaitForBookingNotice" : "RefuseReminder"));
 }
@@ -146,6 +173,27 @@ export function queuedReminderClaim(bookingCurrent: boolean, noticeAccepted: boo
 export function lawFutureBookingReceiptIsNotEvidence(receiptStatus: string, sentAt: number, checkedAt: number): boolean {
   //@ ensures \result === true
   return !(sentAt > checkedAt) || !bookingNoticeReceived(receiptStatus, sentAt, checkedAt);
+}
+
+/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
+//@ pure
+export function lawExpiredProviderNoticeGetsNoReceipt(receiptStatus: string): boolean {
+  //@ ensures \result === true
+  return !(receiptStatus === "failed_unknown") || !bookingNoticePending(receiptStatus, false);
+}
+
+/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
+//@ pure
+export function lawArrivingReceiptIsPending(receiptStatus: string, gatewayReply: boolean): boolean {
+  //@ ensures \result === true
+  return !bookingNoticeReceiptMayArrive(receiptStatus, gatewayReply) || bookingNoticePending(receiptStatus, gatewayReply);
+}
+
+/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
+//@ pure
+export function lawReceivedNoticeIsNotPending(receiptStatus: string, gatewayReply: boolean): boolean {
+  //@ ensures \result === true
+  return !bookingNoticeReceived(receiptStatus, 0, 0) || !bookingNoticePending(receiptStatus, gatewayReply);
 }
 
 /** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
@@ -160,12 +208,6 @@ export function lawReminderClaimNeedsNotice(bookingCurrent: boolean, noticePendi
 export function lawReminderCannotWaitOnExpiredBooking(noticeAccepted: boolean, noticePending: boolean): boolean {
   //@ ensures \result === true
   return queuedReminderClaim(false, noticeAccepted, noticePending) === "RefuseReminder";
-}
-
-/** Story: Hear about a booked meeting the day before / Claim a cancellation only for a member who received booking details (spec/meetingSettlement.md) */
-//@ pure
-export function bookingNoticeReceiptMayArrive(receiptStatus: string): boolean {
-  return receiptStatus === "collected" || receiptStatus === "send_unknown" || receiptStatus === "sending" || receiptStatus === "unknown_acceptance";
 }
 
 /** Story: Hear about a booked meeting the day before / Claim a cancellation only for a member who received booking details (spec/meetingSettlement.md) */
@@ -529,6 +571,141 @@ export function verifiedMeetingValueAllowed(attended: boolean, worthwhile: boole
 export function lawMeetingValueCannotConfirmItself(attended: boolean, worthwhile: boolean): boolean {
   //@ ensures \result === true
   return !verifiedMeetingValueAllowed(attended, worthwhile, 0);
+}
+
+/** Story: Choose a report or a block after a meeting that went wrong / A check-in answer that describes a problem asks once whether to report or block (spec/meetingSettlement.md) */
+//@ pure
+export function checkInReading(cueRead: boolean, urgentCue: boolean, concernRead: boolean): CheckInReading {
+  return cueRead && urgentCue ? "CheckInUrgent" : (cueRead ? "CheckInCue" : (concernRead ? "CheckInConcern" : "CheckInFine"));
+}
+
+/** Story: Choose a report or a block after a meeting that went wrong / A check-in answer that describes a problem asks once whether to report or block (spec/meetingSettlement.md) */
+//@ pure
+export function checkInSafetyStep(reading: CheckInReading, groupPlan: boolean, adultPair: boolean, teenPair: boolean): CheckInSafetyStep {
+  return reading === "CheckInFine" || groupPlan ? "CheckInNoStep" : (reading === "CheckInUrgent" ? "CheckInFileNow" : (!(adultPair || teenPair) ? "CheckInNoStep" : "CheckInAsk"));
+}
+
+/** Story: Choose a report or a block after a meeting that went wrong / A check-in answer that describes a problem asks once whether to report or block (spec/meetingSettlement.md) */
+//@ pure
+export function lawFineAnswerAsksNothing(groupPlan: boolean, adultPair: boolean, teenPair: boolean): boolean {
+  //@ ensures \result === true
+  return checkInSafetyStep("CheckInFine", groupPlan, adultPair, teenPair) === "CheckInNoStep";
+}
+
+/** Story: Choose a report or a block after a meeting that went wrong / A check-in answer that describes a problem asks once whether to report or block (spec/meetingSettlement.md) */
+//@ pure
+export function lawNoCueAndNoConcernIsFine(urgentCue: boolean): boolean {
+  //@ ensures \result === true
+  return checkInReading(false, urgentCue, false) === "CheckInFine";
+}
+
+/** Story: Choose a report or a block after a meeting that went wrong / A check-in answer that describes a problem asks once whether to report or block (spec/meetingSettlement.md) */
+//@ pure
+export function lawUrgentCueFilesAtOnceOutsideAPlan(adultPair: boolean, teenPair: boolean): boolean {
+  //@ ensures \result === true
+  return checkInSafetyStep("CheckInUrgent", false, adultPair, teenPair) === "CheckInFileNow";
+}
+
+/** Story: Choose a report or a block after a meeting that went wrong / A check-in answer that describes a problem asks once whether to report or block (spec/meetingSettlement.md) */
+//@ pure
+export function lawUrgentCueIsNeverAsked(groupPlan: boolean, adultPair: boolean, teenPair: boolean): boolean {
+  //@ ensures \result === true
+  return checkInSafetyStep("CheckInUrgent", groupPlan, adultPair, teenPair) !== "CheckInAsk";
+}
+
+/** Story: Choose a report or a block after a meeting that went wrong / A check-in answer that describes a problem asks once whether to report or block (spec/meetingSettlement.md) */
+//@ pure
+export function lawNonUrgentCueAsksInAPair(adultPair: boolean, teenPair: boolean): boolean {
+  //@ ensures \result === true
+  return !(adultPair || teenPair) || checkInSafetyStep("CheckInCue", false, adultPair, teenPair) === "CheckInAsk";
+}
+
+/** Story: Choose a report or a block after a meeting that went wrong / A check-in answer that describes a problem asks once whether to report or block (spec/meetingSettlement.md) */
+//@ pure
+export function lawQuestionNeedsAPair(reading: CheckInReading, groupPlan: boolean): boolean {
+  //@ ensures \result === true
+  return checkInSafetyStep(reading, groupPlan, false, false) !== "CheckInAsk";
+}
+
+/** Story: Choose a report or a block after a meeting that went wrong / A check-in answer that describes a problem asks once whether to report or block (spec/meetingSettlement.md) */
+//@ pure
+export function lawGroupPlanGetsNoStep(reading: CheckInReading, adultPair: boolean, teenPair: boolean): boolean {
+  //@ ensures \result === true
+  return checkInSafetyStep(reading, true, adultPair, teenPair) === "CheckInNoStep";
+}
+
+/** Story: Choose a report or a block after a meeting that went wrong / A check-in answer that describes a problem asks once whether to report or block (spec/meetingSettlement.md) */
+//@ pure
+export function lawConcernAsksInAPair(teenPair: boolean): boolean {
+  //@ ensures \result === true
+  return checkInSafetyStep("CheckInConcern", false, true, teenPair) === "CheckInAsk" && checkInSafetyStep("CheckInConcern", false, teenPair, true) === "CheckInAsk";
+}
+
+/** Story: Choose a report or a block after a meeting that went wrong / A check-in answer that describes a problem asks once whether to report or block (spec/meetingSettlement.md) */
+//@ pure
+export function lawTeenPairGetsTheAdultPairStep(reading: CheckInReading): boolean {
+  //@ ensures \result === true
+  return checkInSafetyStep(reading, false, false, true) === checkInSafetyStep(reading, false, true, false);
+}
+
+/** Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes (spec/meetingSettlement.md) */
+//@ pure
+export function checkInSafetyAnswerCurrent(questionAt: number, answerAt: number, answerHandledAt: number): boolean {
+  return questionAt <= answerAt && answerAt <= answerHandledAt && exact_meetingSettlement(answerHandledAt - questionAt) <= checkInSafetyAnswerMs;
+}
+
+/** Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes (spec/meetingSettlement.md) */
+//@ pure
+export function checkInSafetyAnswerApplies(namesChoice: boolean, otherQuestionOpen: boolean): boolean {
+  return namesChoice || !otherQuestionOpen;
+}
+
+/** Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes (spec/meetingSettlement.md) */
+//@ pure
+export function checkInSafetyAnswer(wantsReport: boolean, wantsBlock: boolean, declines: boolean): CheckInSafetyAnswer {
+  return declines && (wantsReport || wantsBlock) ? "AnswerUnclear" : (wantsReport ? "AnswerReport" : (wantsBlock ? "AnswerBlock" : (declines ? "AnswerNeither" : "AnswerUnclear")));
+}
+
+/** Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes (spec/meetingSettlement.md) */
+//@ pure
+export function lawBareAnswerWaitsForTheOtherQuestion(otherQuestionOpen: boolean): boolean {
+  //@ ensures \result === true
+  return checkInSafetyAnswerApplies(false, otherQuestionOpen) === !otherQuestionOpen;
+}
+
+/** Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes (spec/meetingSettlement.md) */
+//@ pure
+export function lawLateAnswerLapses(questionAt: number, answerAt: number): boolean {
+  //@ ensures \result === true
+  return !checkInSafetyAnswerCurrent(questionAt, answerAt, exact_meetingSettlement(exact_meetingSettlement(questionAt + checkInSafetyAnswerMs) + 1));
+}
+
+/** Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes (spec/meetingSettlement.md) */
+//@ pure
+export function lawEarlyAnswerIsNotTheAnswer(questionAt: number, answerHandledAt: number): boolean {
+  //@ ensures \result === true
+  return !checkInSafetyAnswerCurrent(questionAt, exact_meetingSettlement(questionAt - 1), answerHandledAt);
+}
+
+/** Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes (spec/meetingSettlement.md) */
+//@ pure
+export function lawReportAndBlockFilesTheReport(otherQuestionOpen: boolean): boolean {
+  //@ ensures \result === true
+  return checkInSafetyAnswerApplies(true, otherQuestionOpen) && checkInSafetyAnswer(true, true, false) === "AnswerReport";
+}
+
+/** Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes (spec/meetingSettlement.md) */
+//@ pure
+export function lawRefusalWithAChoiceActsOnNobody(wantsReport: boolean, wantsBlock: boolean): boolean {
+  //@ ensures \result === true
+  return checkInSafetyAnswer(wantsReport, wantsBlock, true) !== "AnswerReport" && checkInSafetyAnswer(wantsReport, wantsBlock, true) !== "AnswerBlock";
+}
+
+/** Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes (spec/meetingSettlement.md) */
+//@ pure
+export function lawUnclearAnswerActsOnNobody(declines: boolean): boolean {
+  //@ ensures \result === true
+  return checkInSafetyAnswer(false, false, declines) !== "AnswerReport" && checkInSafetyAnswer(false, false, declines) !== "AnswerBlock";
 }
 
 /** Do the rules allow this event in this state? */

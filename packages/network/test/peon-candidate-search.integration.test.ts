@@ -5,7 +5,9 @@ import { peonPack, PEON_ENGINE_CONFIG, runEngine } from "@thenetwork/engine";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 import { APPS } from "../../platform/src/apps.ts";
+import { STANDING_COPY } from "../src/standing-intents.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { pgAvailable } from "../../observatory/test/pg.ts";
 import { BlooioAdapter, DryRunAdapter, type Delivery, type Outbound } from "../service/channel.ts";
@@ -33,9 +35,9 @@ class PeonTestCarrier extends BlooioAdapter {
 
 function start() {
   service = new NetworkService({ url, clock, instance: "peon-candidate-search", log: () => {}, photoStorage: null, notify: false,
-    tokens: "admin:adm-tok", env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret },
+    tokens: "admin:adm-tok", env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret }, reviewJudge: holdEveryItem.judge,
     networks: [{ id: "ntwrk:nyc", matchingEnabled: false }, { id: "peon:nyc" }],
-    adapter: (_net, rt) => rt.app.id === "peon" ? new PeonTestCarrier({ from: "+12125550100", clock, app: "peon", liveGate: () => true,
+    adapter: (_net, rt) => rt.app.id === "peon" ? new PeonTestCarrier({ from: "+12125550100", clock, app: "peon",
       log: () => {}, provider: { kind: "sim", send: async request => {
         accepted.add(request.idempotencyKey);
         return { providerMessageId: request.idempotencyKey, status: "sent" };
@@ -57,6 +59,7 @@ async function turn(messageId: string, from: string, text: string, receivedAt = 
 
 async function peonReviewItem(memberId: string) {
   await service.runtimeFor("peon")!.tick();
+  await service.reviewJudgeTick();
   const review = await (await service.fetch(new Request("http://127.0.0.1/apps/peon/review", {
     headers: { authorization: "Bearer adm-tok" },
   }))).json();
@@ -211,20 +214,26 @@ test.skipIf(!pgAvailable)("a signed Peon candidate read-back becomes a Hire prof
   const listed = await turn("list-search", pausedPhone, "LIST MY INTENTS");
   const reference = "INT-MPGPEEACABCL";
   const legacyReference = "I-CF6F4402012B";
-  expect(listed.body.replies.join("\n")).toContain(`${reference} · active · Find work as a data analyst`);
+  const searchLine = listed.body.replies.join("\n").split("\n").find((line: string) => line.includes("Find work as a data analyst"));
+  expect(searchLine).toMatch(/^\d+\. .* · active( · introduction in progress)?( · ends [^·]+)? · INT-[A-P]{12}$/);
+  expect(searchLine!.endsWith(` · ${reference}`)).toBe(true);
+  const summary = searchLine!.replace(/^\d+\. /, "").split(" · ")[0]!;
+  const inProgress = searchLine!.includes(" · introduction in progress");
   const status = async () => (await db`select status from network.intents where app_id='peon' and member_id=${memberId} and details='peon:search'`)[0]?.status;
   for (const [id, otherReference] of [["new", reference], ["legacy", legacyReference]]) {
     const denied = await turn(`pause-other-member-search-${id}`, manager, `PAUSE INTENT ${otherReference}`);
-    expect(denied.body.replies[0]).toContain("I couldn't identify one saved intent");
+    expect(denied.body.replies).toEqual([STANDING_COPY.unknown]);
     expect(await status()).toBe("active");
   }
-  expect((await turn("pause-search", pausedPhone, `PAUSE INTENT ${reference}`)).body.replies).toEqual([`Paused intent ${reference}.`]);
+  const pausedReply = (await turn("pause-search", pausedPhone, `PAUSE INTENT ${reference}`)).body.replies;
+  expect(pausedReply).toEqual([STANDING_COPY.paused([summary], inProgress)]);
   expect(await status()).toBe("paused");
   holdPeonQueue = false;
   await runtime.deliver();
   expect(accepted.has(`tn:${pausedProbe.id}`)).toBe(false);
   expect((await queuedProbe(pausedItem.oppId, memberId))?.status).toMatch(/^(suppressed_ineligible|expired)$/);
-  expect((await turn("close-search-legacy", pausedPhone, `CLOSE INTENT ${legacyReference.toLowerCase()}`)).body.replies).toEqual([`Closed intent ${reference}.`]);
+  const closedReply = (await turn("close-search-legacy", pausedPhone, `CLOSE INTENT ${legacyReference.toLowerCase()}`)).body.replies;
+  expect(closedReply).toEqual([STANDING_COPY.closed([summary])]);
   expect(await status()).toBe("closed");
 });
 

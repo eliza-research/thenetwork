@@ -37,7 +37,7 @@ pure val initial: ProfileRead = {
 
 ### Only explicit read requests enter the read path
 
-A message that lacks a profile-read form, lacks the word profile, or asks for a change continues the normal turn. A read of another profile enters the refusal path. An incomplete own-profile request or an unrecognized app name needs clarification. An explicit recognized app is available for routing on the shared line. A dedicated line still keeps its own app.
+A message that lacks a profile-read form, lacks the word profile, or asks for a change continues the normal turn. A read of another profile enters the refusal path. An incomplete own-profile request or an unrecognized app name needs clarification. An explicit recognized app is available for routing on the shared line. A dedicated line still keeps its own app. The shell removes a trailing courtesy or urgency word (please, thanks, now and similar words) before it reads the app name, so "show my Friends profile please" is the same read as "show my Friends profile". Changed 2026-11-22: this sentence moves a code comment into the rule; the behaviour is the same.
 
 ```quint
 pure def readIntent(facts: ReadFacts): ReadIntent =

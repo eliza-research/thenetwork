@@ -37,10 +37,10 @@ export async function drainWebhookSender<Row extends PendingWebhook>(effects: Dr
         const row = selection === "RunCompliance" ? compliance : selection === "RunOldest" ? oldest : undefined
         if (row === undefined) return handled
 
-        let attempt = initial
+        let attempt = try apply(initial, { type: "startWebhook", attempts: row.attempts, stopCommand: row.stopCommand })
         const result = effect {
           const outcome = try io(() => effects.handle(row))
-          attempt = try apply(attempt, { type: "recordHandled", stopCommand: row.stopCommand })
+          attempt = try apply(attempt, { type: "recordHandled" })
           const cancelIds = attempt.phase === "CancelEarlier"
             ? window.filter(item => earlierWebhookCancellable(item.id === row.id, item.compliance)).map(item => item.id)
             : []
@@ -55,10 +55,9 @@ export async function drainWebhookSender<Row extends PendingWebhook>(effects: Dr
         }
         const { failure } = result
         if (!(failure instanceof WebhookDrainIO)) throw failure
-        const attempts = row.attempts + 1
-        const failed = try apply(attempt, { type: "recordFailure", attempts, stopCommand: row.stopCommand })
+        const failed = try apply(attempt, { type: "recordFailure" })
         const drop = failed.phase === "DropWebhook"
-        try io(() => effects.fail(row, attempts, drop, failure.cause))
+        try io(() => effects.fail(row, failed.attempts, drop, failure.cause))
         if (!drop) return handled
       }
     })

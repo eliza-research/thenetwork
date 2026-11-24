@@ -2,23 +2,28 @@
 // interface with two implementations: MemoryPeopleStore (tests, dev) and PgPeopleStore (pg-store.ts).
 // Times are epoch milliseconds. Phone numbers are E.164.
 import type { City } from "../../core/src/types.ts";
-import { confirmedUnderage, keepLaterEligibilityDate, lowerAge, recordedAgeFloorApplies, signupAgeAt } from "../../core/src/generated/memberAge.ts";
+import { type BirthReadings, confirmedUnderage, keepLaterEligibilityDate, lowerAge, recordedAgeFloorApplies } from "../../core/src/generated/memberAge.ts";
 import { browserSignupMemberAllowed } from "../../core/src/generated/oauthBrowserAuthorization.ts";
 import { phoneChangePastRetention, rateCounterCutoff, rowBeforeCutoff, sessionPastRetention, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
 import { lockedPhoneMoveAllowed, pendingWindowOpen } from "../../core/src/generated/phoneChange.ts";
 import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
 import { includeLockedBanPhone, staffBanEnrollmentAllowed } from "../../core/src/generated/staffSafetyService.ts";
+import { unboundSessionEnds, unboundSessionTakesNewPerson } from "../../core/src/generated/webSession.ts";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
 import { lastEvents } from "./consent.ts";
+import { type AgeReading, type AgeStanding, ageWrite, createdFirstExact, createdReadings, effectiveAgeAt, floorAfterErasure, mergedFloors, movedPersonAge, verifiedBrowserBirthWrite, type TeenBarReason } from "./age.ts";
 
 export type PhoneMethod = "otp_sms" | "otp_whatsapp" | "inbound_message" | "staff";
 export type MembershipState = "invited" | "onboarding" | "active" | "paused" | "restricted" | "removed";
 
-export interface Person { id: string; lowestAge: number | null; createdAt: number; deletedAt: number | null }
+export interface BirthRecord { readings: BirthReadings; birthDate: number | null; firstExact: boolean | null }
+export interface Person { id: string; lowestAge: number | null; createdAt: number; deletedAt: number | null; birth: BirthRecord | null }
+export interface AgeFloorRecord { age: number; at: number; readings: BirthReadings | null; firstExact: boolean | null }
+export interface TeenAgeFactsRow { firstExact: boolean | null; lineType: string | null; createdAt: number; apps: AppId[] }
 /** A text flow waiting for the person's next message (platform.pending_texts): a join that has asked for name and age, The Network's "what are you looking for?", a SHARE offer, or the photo consent asked after a photo by text. */
 export type PendingKind = "join" | "looking_for" | "share" | "photo_consent";
-export interface PendingText { phoneHash: string; kind: PendingKind; app: AppId; name: string | null; age: number | null; homeCity?: City; at: number }
+export interface PendingText { phoneHash: string; kind: PendingKind; app: AppId; name: string | null; age: number | null; birthDate?: number | null; homeCity?: City; at: number }
 export type PhoneHold = "recycled_number";
 export interface PhoneIdentity {
   e164: string; personId: string; verifiedAt: number; method: PhoneMethod; lastSeenAt: number | null;
@@ -89,19 +94,22 @@ const rateKind = (bucket: string) => bucket.split(":", 1)[0]!;
 /** A rate-limit rule for hit(): a hit over `limit` in the window, or within `minGapMs` of the last counted hit, is refused and not counted. */
 export interface HitRule { limit?: number; minGapMs?: number }
 export interface HitResult { count: number; prevAt: number | null; ok: boolean }
+export interface RateBucket { key: string; windowMs: number }
+export interface RateBucketRead { used: number; prevAt: number | null }
 export interface RecordedMemberAge { personId: string | null; phoneHash: string }
 export interface SignupAge { initialMinorAge: number; eligibleAt: number }
+export interface SignupBirth { birthKey: number; eligibility?: SignupAge }
 
 export async function reconcileRecordedAgeFloor(
-  store: Pick<PeopleStore, "ageFloor" | "findPhoneByHash" | "withPhoneAgeGuard">,
+  store: Pick<PeopleStore, "ageFloorRecord" | "findPhoneByHash" | "withPhoneAgeGuard">,
   { personId, phoneHash }: RecordedMemberAge,
   cleanup?: (phoneHash: string, age: number) => Promise<void>,
 ): Promise<void> {
   if (!cleanup) return;
   await store.withPhoneAgeGuard(phoneHash, async () => {
-    const age = await store.ageFloor(phoneHash);
+    const floor = await store.ageFloorRecord(phoneHash);
     const owner = await store.findPhoneByHash(phoneHash);
-    if (age !== undefined && recordedAgeFloorApplies(personId ?? "", owner?.personId ?? "")) await cleanup(phoneHash, age);
+    if (floor && recordedAgeFloorApplies(personId ?? "", owner?.personId ?? "")) await cleanup(phoneHash, floor.age);
   });
 }
 
@@ -114,31 +122,29 @@ export interface PeopleStore {
    * A person with their verified phone. A person who deleted everything with this phone (a tombstone
    * with the same keyed phone hash) comes back as the same person, so blocks made against them hold.
    */
-  createPerson(p: { id: string; e164: string; method: PhoneMethod; at: number; lowestAge: number | null; phoneHash?: string }): Promise<Person>;
+  createPerson(p: { id: string; e164: string; method: PhoneMethod; at: number; lowestAge: number | null; phoneHash?: string; joiningSession?: string | null }): Promise<Person>;
   touchPhone(e164: string, at: number): Promise<void>;
   /** Put a number on hold for staff review (or clear the hold with null). */
   setPhoneHold(e164: string, hold: PhoneHold | null, at: number): Promise<void>;
   heldPhones(): Promise<PhoneIdentity[]>;
-  /** The lowest age ever stated for a keyed phone hash (no app, no person; kept after a delete of everything). */
-  ageFloor(phoneHash: string): Promise<number | undefined>;
-  signupAgeAt(personId: string, now: number): Promise<number | undefined>;
-  saveSignupAge(member: Membership, e164: string, phoneHash: string, age: SignupAge): Promise<boolean>;
-  noteAgeFloor(phoneHash: string, age: number, at: number): Promise<number>;
-  clearAgeFloor(phoneHash: string): Promise<void>;
-  /** Independent keyed-phone guard for age recording and temporary facts. Its callback must not acquire withLock. */
+  ageFloorRecord(phoneHash: string): Promise<AgeFloorRecord | undefined>;
   withPhoneAgeGuard<T>(phoneHash: string, fn: () => Promise<T>): Promise<T>;
-  /** One canonical temporary-data cleanup consumer; awaited before an age recording returns. */
   setAgeFloorCleanup(fn: (phoneHash: string, age: number) => Promise<void>): void;
-  /** Reconcile temporary phone facts from a committed age while the binding still matches. */
   cleanupRecordedAgeFloor(recorded: RecordedMemberAge): Promise<void>;
-  /** Record a stated or recorded age: the person keeps the lowest one. Returns the new lowest age. */
-  noteAge(personId: string, age: number): Promise<number>;
+  recordAgeReading(personId: string | null, phoneHash: string, stated: AgeReading, at: number): Promise<number | undefined>;
+  ageStanding(personId: string | null, phoneHash: string | null): Promise<AgeStanding>;
+  teenBarred(phoneHash: string): Promise<boolean>;
+  barTeenPool(phoneHash: string, reason: TeenBarReason, at: number): Promise<void>;
+  teenAgeFacts(personId: string): Promise<TeenAgeFactsRow | undefined>;
+  minorSignalOpen(personId: string): Promise<boolean>;
+  saveSignupAge(member: Membership, e164: string, phoneHash: string, age: SignupAge, at: number): Promise<boolean>;
+  saveSignupBirth(member: Membership, e164: string, phoneHash: string, birth: SignupBirth, at: number): Promise<boolean>;
 
   memberships(personId: string): Promise<Membership[]>;
   getMembership(personId: string, app: AppId): Promise<Membership | undefined>;
   putMembership(m: Membership): Promise<void>;
   /** Commit the exact member, opt-in and session binding if current ownership and bans allow enrollment. */
-  admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string): Promise<boolean>;
+  admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string, joiningSession: string | null): Promise<boolean>;
   restrictBannedMemberships(personId: string): Promise<void>;
 
   /** Append an event. False when an event with the same (e164, ref) is already there (a retried message). */
@@ -181,15 +187,12 @@ export interface PeopleStore {
   putSession(s: Session): Promise<void>;
   getSession(tokenHash: string): Promise<Session | undefined>;
   revokeSession(tokenHash: string, at: number): Promise<void>;
-  /** Sessions of a verified phone that had no person get the person after a join. */
-  attachPerson(e164: string, personId: string): Promise<void>;
+  rotateSession(tokenHash: string, e164: string, revokeAt: number, decide: (current: Session | undefined) => Session | undefined): Promise<void>;
+  attachPerson(e164: string, personId: string, joiningSession: string | null, at: number): Promise<void>;
+  endUnboundAccess(e164: string, phoneHash: string, at: number): Promise<void>;
 
-  /**
-   * Count one hit in a fixed window, atomically. With a rule, a hit that would pass the limit or come
-   * within the gap is refused and not counted (ok false), so refused hits never extend a lock.
-   * Returns the count with this hit (or the count so far when refused) and the last counted hit before it.
-   */
   hit(bucket: string, windowMs: number, at: number, rule?: HitRule): Promise<HitResult>;
+  hitAll<T>(buckets: readonly RateBucket[], at: number, decide: (seen: RateBucketRead[]) => { count: boolean; value: T }): Promise<T>;
 
   /** Run fn while holding a lock on `key` (one holder per key across processes on Postgres). */
   withLock<T>(key: string, fn: () => Promise<T>): Promise<T>;
@@ -230,7 +233,8 @@ export class MemoryPeopleStore implements PeopleStore {
   readonly grants = new Map<string, ShareGrant>();
   readonly blocks = new Map<string, { from: string; to: string; originApp: AppId; at: number }>();
   readonly suppression = new Map<string, { reason: string; at: number }>();
-  readonly ageFloors = new Map<string, { age: number; at: number }>();
+  readonly ageFloors = new Map<string, AgeFloorRecord>();
+  readonly teenBars = new Map<string, { reason: TeenBarReason; at: number }>();
   private readonly signupAges = new Map<string, SignupAge>();
   readonly challenges = new Map<string, OtpChallenge>();
   readonly sessions = new Map<string, Session>();
@@ -250,40 +254,26 @@ export class MemoryPeopleStore implements PeopleStore {
     return undefined;
   }
   async getPerson(id: string) { return this.people.get(id); }
-  async createPerson(p: { id: string; e164: string; method: PhoneMethod; at: number; lowestAge: number | null; phoneHash?: string }) {
+  async createPerson(p: { id: string; e164: string; method: PhoneMethod; at: number; lowestAge: number | null; phoneHash?: string; joiningSession?: string | null }) {
     if (this.phones.has(p.e164)) throw new Error("phone already linked");
     const back = p.phoneHash ? [...this.personHash].find(([id, h]) => h === p.phoneHash && this.people.get(id)?.deletedAt !== null)?.[0] : undefined;
+    const floor = p.phoneHash ? this.ageFloors.get(p.phoneHash) : undefined;
+    const readings = createdReadings(floor, p.lowestAge, p.at);
+    const birth = readings ? { readings, birthDate: null, firstExact: createdFirstExact(floor) } : null;
     const person: Person = back
-      ? Object.assign(this.people.get(back)!, { deletedAt: null, lowestAge: p.lowestAge })
-      : { id: p.id, lowestAge: p.lowestAge, createdAt: p.at, deletedAt: null };
+      ? Object.assign(this.people.get(back)!, { deletedAt: null, lowestAge: p.lowestAge, birth })
+      : { id: p.id, lowestAge: p.lowestAge, createdAt: p.at, deletedAt: null, birth };
     this.people.set(person.id, person);
     if (p.phoneHash) this.personHash.set(person.id, p.phoneHash);
     p = { ...p, id: person.id };
     this.phones.set(p.e164, { e164: p.e164, personId: p.id, verifiedAt: p.at, method: p.method, lastSeenAt: p.at, hold: null });
+    await this.attachPerson(p.e164, p.id, p.joiningSession ?? null, p.at);
     return person;
   }
   async touchPhone(e164: string, at: number) { const ph = this.phones.get(e164); if (ph) ph.lastSeenAt = at; }
   async setPhoneHold(e164: string, hold: PhoneHold | null) { const ph = this.phones.get(e164); if (ph) ph.hold = hold; }
   async heldPhones() { return [...this.phones.values()].filter(p => p.hold !== null).map(p => ({ ...p })); }
-  async ageFloor(phoneHash: string) { return this.ageFloors.get(phoneHash)?.age; }
-  async signupAgeAt(personId: string, now: number) {
-    const saved = this.signupAges.get(personId);
-    return saved && signupAgeAt(saved.initialMinorAge, saved.eligibleAt, now);
-  }
-  async saveSignupAge(member: Membership, e164: string, phoneHash: string, age: SignupAge) {
-    if (!browserSignupMemberAllowed(member.state)) return false;
-    return this.withLock(`person-phone-binding:${member.personId}`, async () => {
-      const current = this.members.get(`${member.app}:${member.personId}`);
-      if (current?.memberId !== member.memberId || current.state !== member.state || current.review !== null
-        || !await this.enrollmentOwnerAllowed(member.personId, e164, phoneHash)) return false;
-      const previous = this.signupAges.get(member.personId);
-      this.signupAges.set(member.personId, previous ? {
-        initialMinorAge: lowerAge(previous.initialMinorAge, age.initialMinorAge),
-        eligibleAt: keepLaterEligibilityDate(previous.eligibleAt, age.eligibleAt),
-      } : { ...age });
-      return true;
-    });
-  }
+  async ageFloorRecord(phoneHash: string) { const f = this.ageFloors.get(phoneHash); return f && { ...f }; }
   private readonly ageLocks = new Map<string, Promise<unknown>>();
   private ageCleanup?: (phoneHash: string, age: number) => Promise<void>;
   setAgeFloorCleanup(fn: (phoneHash: string, age: number) => Promise<void>) { this.ageCleanup = fn; }
@@ -293,24 +283,74 @@ export class MemoryPeopleStore implements PeopleStore {
     this.ageLocks.set(phoneHash, tail);
     try { return await run; } finally { if (this.ageLocks.get(phoneHash) === tail) this.ageLocks.delete(phoneHash); }
   }
-  async noteAgeFloor(phoneHash: string, age: number, at: number) {
-    return this.withPhoneAgeGuard(phoneHash, async () => {
-      const cur = this.ageFloors.get(phoneHash);
-      const lowest = cur ? Math.min(cur.age, age) : age;
-      this.ageFloors.set(phoneHash, { age: lowest, at: cur && cur.age <= age ? cur.at : at });
-      await this.ageCleanup?.(phoneHash, lowest);
-      return lowest;
-    });
-  }
   cleanupRecordedAgeFloor(recorded: RecordedMemberAge) {
     return reconcileRecordedAgeFloor(this, recorded, this.ageCleanup);
   }
-  async clearAgeFloor(phoneHash: string) { this.ageFloors.delete(phoneHash); }
-  async noteAge(personId: string, age: number) {
+  async recordAgeReading(personId: string | null, phoneHash: string, stated: AgeReading, at: number) {
+    return this.withPhoneAgeGuard(phoneHash, async () => {
+      const person = personId ? this.people.get(personId) : undefined;
+      if (personId && !person) throw new Error("no person");
+      this.writeAgeReading(person, phoneHash, stated, at);
+      const standing = await this.ageStanding(personId, phoneHash);
+      if (standing.floor) await this.ageCleanup?.(phoneHash, standing.floor.age);
+      return effectiveAgeAt(standing, at);
+    });
+  }
+  async saveSignupAge(member: Membership, e164: string, phoneHash: string, age: SignupAge, at: number) {
+    return this.withLock(`person-phone-binding:${member.personId}`, async () => {
+      if (!await this.signupMemberAllowed(member, e164, phoneHash, at)) return false;
+      this.writeSignupAge(member.personId, age);
+      return true;
+    });
+  }
+  async saveSignupBirth(member: Membership, e164: string, phoneHash: string, birth: SignupBirth, at: number) {
+    return this.withLock(`person-phone-binding:${member.personId}`, async () => {
+      if (!await this.signupMemberAllowed(member, e164, phoneHash, at)) return false;
+      const change = verifiedBrowserBirthWrite(await this.ageStanding(member.personId, phoneHash), birth.birthKey, at);
+      const person = this.people.get(member.personId);
+      if (!change || !person) return false;
+      person.birth = { readings: change.readings, birthDate: change.birthDate, firstExact: change.firstExact };
+      if (birth.eligibility) this.writeSignupAge(member.personId, birth.eligibility);
+      if (change.bar) this.barTeenPoolNow(phoneHash, "conflict", at);
+      return true;
+    });
+  }
+  private async signupMemberAllowed(member: Membership, e164: string, phoneHash: string, at: number): Promise<boolean> {
+    const current = this.members.get(`${member.app}:${member.personId}`);
+    return browserSignupMemberAllowed(member.state) && current?.memberId === member.memberId && current.state === member.state
+      && current.review === null && await this.enrollmentOwnerAllowed(member.personId, e164, phoneHash, at);
+  }
+  private writeSignupAge(personId: string, age: SignupAge) {
+    const previous = this.signupAges.get(personId);
+    this.signupAges.set(personId, previous ? {
+      initialMinorAge: lowerAge(previous.initialMinorAge, age.initialMinorAge),
+      eligibleAt: keepLaterEligibilityDate(previous.eligibleAt, age.eligibleAt),
+    } : { ...age });
+  }
+  private writeAgeReading(person: Person | undefined, phoneHash: string, stated: AgeReading, at: number) {
+    const w = ageWrite({ person, floor: this.ageFloors.get(phoneHash) }, stated, at);
+    if (!w) return;
+    if (person && w.person) Object.assign(person, { lowestAge: w.person.lowestAge, birth: { readings: w.person.readings, birthDate: w.person.birthDate, firstExact: w.person.firstExact } });
+    this.ageFloors.set(phoneHash, w.floor);
+    if (w.bar) this.barTeenPoolNow(phoneHash, "conflict", at);
+  }
+  private barTeenPoolNow(phoneHash: string, reason: TeenBarReason, at: number) {
+    if (!this.teenBars.has(phoneHash)) this.teenBars.set(phoneHash, { reason, at });
+  }
+  async ageStanding(personId: string | null, phoneHash: string | null): Promise<AgeStanding> {
+    const person = personId ? this.people.get(personId) : undefined;
+    const hash = phoneHash ?? (personId ? this.personHash.get(personId) : undefined);
+    const floor = hash ? this.ageFloors.get(hash) : undefined;
+    return { person: person && { ...person }, floor: floor && { ...floor }, signup: personId ? this.signupAges.get(personId) : undefined };
+  }
+  async teenBarred(phoneHash: string) { return this.teenBars.has(phoneHash); }
+  async barTeenPool(phoneHash: string, reason: TeenBarReason, at: number) { this.barTeenPoolNow(phoneHash, reason, at); }
+  async minorSignalOpen(_personId: string) { return false; }
+  async teenAgeFacts(personId: string) {
     const p = this.people.get(personId);
-    if (!p) throw new Error("no person");
-    p.lowestAge = p.lowestAge === null ? age : Math.min(p.lowestAge, age);
-    return p.lowestAge;
+    if (!p || p.deletedAt !== null) return undefined;
+    const apps = [...this.members.values()].filter(m => m.personId === personId && m.state !== "removed").map(m => m.app).sort();
+    return { firstExact: p.birth?.firstExact ?? null, lineType: null, createdAt: p.createdAt, apps };
   }
 
   async memberships(personId: string) { return [...this.members.values()].filter(m => m.personId === personId).map(m => ({ ...m })); }
@@ -319,21 +359,21 @@ export class MemoryPeopleStore implements PeopleStore {
     for (const x of this.members.values()) if (x.memberId === m.memberId && (x.app !== m.app || x.personId !== m.personId)) throw new Error("member id in use");
     this.members.set(`${m.app}:${m.personId}`, { ...m, profile: { ...m.profile } });
   }
-  private async enrollmentOwnerAllowed(personId: string, e164: string, phoneHash: string): Promise<boolean> {
+  private async enrollmentOwnerAllowed(personId: string, e164: string, phoneHash: string, at: number): Promise<boolean> {
     const owner = this.people.get(personId);
     const phone = this.phones.get(e164);
     const owned = phone?.personId === personId && phone.hold === null;
-    const age = Math.min(owner?.lowestAge ?? Infinity, this.ageFloors.get(phoneHash)?.age ?? Infinity);
-    return !confirmedUnderage(age)
+    const age = effectiveAgeAt(await this.ageStanding(personId, phoneHash), at);
+    return !confirmedUnderage(age ?? -1)
       && staffBanEnrollmentAllowed(!!owner && owner.deletedAt === null, owned, await this.isBanned(phoneHash, personId));
   }
-  async admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string): Promise<boolean> {
+  async admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string, joiningSession: string | null): Promise<boolean> {
     return this.withLock(`person-phone-binding:${m.personId}`, async () => {
-      if (!await this.enrollmentOwnerAllowed(m.personId, consent.e164, phoneHash)) return false;
+      if (!await this.enrollmentOwnerAllowed(m.personId, consent.e164, phoneHash, consent.at)) return false;
       await this.unsuppress(phoneHash);
       await this.putMembership(m);
       await this.addConsent(consent);
-      await this.attachPerson(consent.e164, m.personId);
+      await this.attachPerson(consent.e164, m.personId, joiningSession, consent.at);
       return true;
     });
   }
@@ -375,6 +415,7 @@ export class MemoryPeopleStore implements PeopleStore {
       const rows = includeLockedBanPhone(b.phoneHash ?? "", currentHash)
         ? [b, { ...b, id: `${b.id}:moved`, phoneHash: currentHash }] : [b];
       for (const row of rows) if (!this.bans.some(x => x.id === row.id)) this.bans.push({ ...row });
+      for (const h of new Set([b.phoneHash, currentHash])) if (h) await this.barTeenPool(h, "ban", b.at);
       for (const g of this.grants.values()) if (b.personId && g.personId === b.personId && g.revokedAt === null) g.revokedAt = b.at;
       const hashes = [...(b.phoneHash ? [b.phoneHash] : []), ...(b.personId ? await this.phoneHashesOf(b.personId) : [])];
       for (const h of hashes) await this.deletePending(h);
@@ -421,10 +462,31 @@ export class MemoryPeopleStore implements PeopleStore {
     return true;
   }
 
-  async putSession(s: Session) { this.sessions.set(s.tokenHash, { ...s }); }
+  async putSession(s: Session) {
+    const phone = s.personId === null ? this.phones.get(s.e164) : undefined;
+    this.sessions.set(s.tokenHash, unboundSessionTakesNewPerson(phone !== undefined, true) && phone ? { ...s, personId: phone.personId } : { ...s });
+  }
   async getSession(tokenHash: string) { const s = this.sessions.get(tokenHash); return s && { ...s }; }
   async revokeSession(tokenHash: string, at: number) { const s = this.sessions.get(tokenHash); if (s) s.revokedAt = s.revokedAt === null ? at : Math.min(s.revokedAt, at); }
-  async attachPerson(e164: string, personId: string) { for (const s of this.sessions.values()) if (s.e164 === e164 && s.personId === null) s.personId = personId; }
+  async rotateSession(tokenHash: string, e164: string, revokeAt: number, decide: (current: Session | undefined) => Session | undefined) {
+    const current = this.sessions.get(tokenHash);
+    const next = decide(current && current.e164 === e164 ? { ...current } : undefined);
+    if (!next) return;
+    await this.revokeSession(tokenHash, revokeAt);
+    this.sessions.set(next.tokenHash, { ...next });
+  }
+  async attachPerson(e164: string, personId: string, joiningSession: string | null, at: number) {
+    const numberHasPerson = this.phones.get(e164)?.personId === personId;
+    for (const s of this.sessions.values()) {
+      if (s.e164 !== e164 || s.personId !== null) continue;
+      if (unboundSessionTakesNewPerson(numberHasPerson, s.tokenHash === joiningSession)) s.personId = personId;
+      else if (unboundSessionEnds(numberHasPerson, s.tokenHash === joiningSession)) await this.revokeSession(s.tokenHash, at);
+    }
+  }
+  async endUnboundAccess(e164: string, phoneHash: string, at: number) {
+    for (const s of this.sessions.values()) if (s.e164 === e164 && s.personId === null) await this.revokeSession(s.tokenHash, at);
+    await this.deletePending(phoneHash);
+  }
 
   async hit(bucket: string, windowMs: number, at: number, rule: HitRule = {}) {
     const windowStart = at - (at % windowMs);
@@ -436,6 +498,16 @@ export class MemoryPeopleStore implements PeopleStore {
     }
     this.limits.set(bucket, { windowStart, count: count + 1, lastAt: at });
     return { count: count + 1, prevAt, ok: true };
+  }
+
+  async hitAll<T>(buckets: readonly RateBucket[], at: number, decide: (seen: RateBucketRead[]) => { count: boolean; value: T }): Promise<T> {
+    const seen = buckets.map(b => {
+      const cur = this.limits.get(b.key), windowStart = at - (at % b.windowMs);
+      return { used: cur && cur.windowStart === windowStart ? cur.count : 0, prevAt: cur?.lastAt ?? null };
+    });
+    const d = decide(seen);
+    if (d.count) buckets.forEach((b, i) => this.limits.set(b.key, { windowStart: at - (at % b.windowMs), count: seen[i]!.used + 1, lastAt: at }));
+    return d.value;
   }
 
   async withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -490,11 +562,20 @@ export class MemoryPeopleStore implements PeopleStore {
       if (this.phones.has(m.newE164)) return "number_in_use";
       this.phones.delete(m.oldE164);
       this.phones.set(m.newE164, { e164: m.newE164, personId: m.personId, verifiedAt: at, method: "otp_sms", lastSeenAt: at, hold: null });
+      await this.attachPerson(m.newE164, m.personId, null, at);
       for (const e of this.consent) if (e.e164 === m.oldE164) e.e164 = m.newE164;
       this.personHash.set(m.personId, m.newHash);
       this.suppression.delete(m.newHash);
       const floor = this.ageFloors.get(m.oldHash);
-      if (floor) { this.ageFloors.delete(m.oldHash); await this.noteAgeFloor(m.newHash, floor.age, floor.at); }
+      if (floor) { this.ageFloors.delete(m.oldHash); this.ageFloors.set(m.newHash, mergedFloors(floor, this.ageFloors.get(m.newHash))); }
+      const bar = this.teenBars.get(m.oldHash);
+      if (bar) await this.barTeenPool(m.newHash, bar.reason, bar.at);
+      const mover = this.people.get(m.personId);
+      const moved = movedPersonAge({ person: mover, floor: this.ageFloors.get(m.newHash) }, at);
+      if (mover && moved) {
+        Object.assign(mover, { lowestAge: moved.person.lowestAge, birth: { readings: moved.person.readings, birthDate: moved.person.birthDate, firstExact: moved.person.firstExact } });
+        if (moved.bar) this.barTeenPoolNow(m.newHash, "conflict", at);
+      }
       for (const [k, s] of this.sessions) if (s.e164 === m.oldE164) this.sessions.delete(k);
       for (const [k, c] of this.challenges) if (c.e164 === m.oldE164) this.challenges.delete(k);
       for (const [k, p] of this.pending) if (p.phoneHash === m.oldHash) this.pending.delete(k);
@@ -525,11 +606,9 @@ export class MemoryPeopleStore implements PeopleStore {
         this.suppression.delete(hash);
       } else {
         if (!this.suppression.has(hash)) this.suppression.set(hash, { reason: "deleted", at });
-        const birthdayAge = person ? await this.signupAgeAt(person.id, at) : undefined;
-        const age = Math.min(person?.lowestAge ?? Infinity, birthdayAge ?? Infinity);
-        if (hasAgeToPreserve(!!person, Number.isFinite(age)) && age < (this.ageFloors.get(hash)?.age ?? Infinity)) {
-          this.ageFloors.set(hash, { age, at });
-        }
+        const before = this.ageFloors.get(hash);
+        const erased = person ? floorAfterErasure({ person, floor: before, signup: this.signupAges.get(person.id) }, at) : undefined;
+        if (hasAgeToPreserve(!!person, erased !== undefined) && erased) this.ageFloors.set(hash, erased);
       }
       for (const [k, p] of this.pending) if (p.phoneHash === hash) this.pending.delete(k);
     }
@@ -544,7 +623,7 @@ export class MemoryPeopleStore implements PeopleStore {
       // Blocks stay (a safety fact): the tombstone keeps them, and a new join by this phone revives it.
       for (const [k, ph] of this.phones) if (ph.personId === personId) this.phones.delete(k);
       this.signupAges.delete(personId);
-      if (person) Object.assign(person, { lowestAge: null, deletedAt: at });
+      if (person) Object.assign(person, { lowestAge: null, deletedAt: at, birth: null });
       for (const [k, c] of this.phoneChanges) if (c.personId === personId) this.phoneChanges.delete(k);
     }
     return true;

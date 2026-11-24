@@ -43,6 +43,10 @@ export function boundedHomeHelpVenueCommand(text: string): BoundedHomeHelpVenueC
 
 export const BOUNDED_HOME_HELP_CONSENT_CLARIFICATION = "To answer, copy an exact command from the home-help message. Include the plan ID and revision. Leave out the street address.";
 
+function homeHelpAddressCommand(key: { id: string; revision: number }): string {
+  return `HOME HELP ADDRESS ${homeHelpPlanCode(key.id)} ${key.revision}`;
+}
+
 /** Decode text from the signed member turn. The app, member, and phone come from the authenticated turn. */
 export function boundedHomeHelpConsentCommand(text: string): BoundedHomeHelpConsentCommand | undefined {
   const line = text.trim();
@@ -86,6 +90,7 @@ const REPLY = {
 };
 
 /** Acknowledge only the sender's own choice. A stale or ineligible command gets the same answer. */
-export function boundedHomeHelpConsentReply(result: keyof typeof REPLY | undefined): string {
-  return result ? REPLY[result] : "That home-help plan is unavailable. Check the plan ID and revision on your message.";
+export function boundedHomeHelpConsentReply(result: keyof typeof REPLY | undefined, key: { id: string; revision: number }): string {
+  if (!result) return "That home-help plan is unavailable. Check the plan ID and revision on your message.";
+  return result === "Accepted" ? `${REPLY.Accepted} To check the private address step, send:\n${homeHelpAddressCommand(key)}` : REPLY[result];
 }

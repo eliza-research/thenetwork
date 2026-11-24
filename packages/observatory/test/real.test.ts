@@ -3,6 +3,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY } from "@thenetwork/core";
+import { emptySearchTally } from "@thenetwork/engine";
 import { DATA_DIR, readJsonl, type EdgeRecord, type FacetRecord } from "../../../scripts/synthetic/common.ts";
 import { rowsFromDataset, rowsFromGame, writeRows } from "../db/writer.ts";
 import { GameSource } from "../src/sources/game.ts";
@@ -174,5 +175,25 @@ describe.skipIf(!pgAvailable)("RealSource (Postgres)", () => {
     expect(safety.minors.inOpportunities.map(x => x.memberId)).toEqual(["signal"]);
     expect(safety.minors.members).toEqual(["signal"]);
     expect(safety.minors.unknownAge.sort()).toEqual(["quiet", "unseen"]);
+  }, T);
+  test("a run summary stored before the search outcomes existed reads with an empty search tally and no outcomes", async () => {
+    const now = new Date();
+    const summary = {
+      id: "run-old", at: now.getTime(), city: "nyc", engineVersion: "engine-v1", proposals: 0, wallMs: 5,
+      funnel: { generated: 0, passedHardFilters: 0, deduped: 0, eligible: 0, belowThreshold: 0, budgetSkips: 0, selected: 0, exploration: 0, dealbreakers: 0 },
+      byGenerator: {}, proposalsByGenerator: {}, rejectedBy: {}, memberFunnel: {},
+      fairness: { gini: 0, top10Share: 0, zeroExposureShare: 0, newcomerCoverage: 0, viableCoverage: 0, lorenz: [], membersWithProposal: 0, eligibleMembers: 0 },
+      emptyStates: 0, emptyStatesByReason: {}, timingsMs: {}, top: [], proposalIds: [],
+    };
+    const rows = {
+      members: [], channel_identities: [], facets: [], intents: [], presence: [], edges: [], review_items: [], messages: [], feedback: [], events: [], requests: [],
+      opportunities: [], participations: [], network_state: [],
+      matching_runs: [{ id: summary.id, at: now, city: "nyc", engine_version: summary.engineVersion, proposals: 0, wall_ms: 5, summary }],
+    };
+    await writeRows(sql, rows as unknown as Parameters<typeof writeRows>[1], { truncate: true });
+    const r = await open();
+    const run = r.state().engineRuns.find(x => x.id === "run-old");
+    expect(run?.searchOutcomes).toEqual([]);
+    expect(run?.search).toEqual(emptySearchTally);
   }, T);
 });

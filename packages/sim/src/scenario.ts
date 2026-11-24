@@ -155,7 +155,7 @@ export function scenarioWorldOptions(s: Scenario, o: ScenarioRunOptions): WorldO
     actions.push({ at: resolveAt(a.at, start, cityOf(a.persona)), action });
   }
   return {
-    seed, personas, days: s.days, start, network: o.network(s, seed), engine: o.engine, agent: o.agent, actions,
+    seed, personas, days: s.days, start, network: o.network(s, seed), app: "ntwrk", engine: o.engine, agent: o.agent, actions,
     writeLog: o.writeLog ?? false, runsDir: o.runsDir, runId: `scenario-${s.name}-s${seed}`,
   };
 }

@@ -12,7 +12,7 @@
 import type { MemberId } from "@thenetwork/core";
 import { DAY } from "@thenetwork/core";
 import { friendsCandidateCanMeet, friendsSeatFitsFormat } from "../../../../core/src/generated/friendsPlanningSeats.ts";
-import { memberReason, pairReason } from "../../filters.ts";
+import { isMinor, memberReason, pairReason } from "../../filters.ts";
 import { circleCandidate, pairCandidate, searchFor, type GenCtx } from "../../genkit.ts";
 import type { Circle } from "../../match/circles.ts";
 import type { MatchProfile } from "../../match/profile.ts";
@@ -78,7 +78,7 @@ export function sameTableAgain(ctx: GenCtx): Candidate[] {
     const startsAsGroup = ids.length >= 3;
     const fit = (id: MemberId, group: boolean) => {
       const format = group ? "small_group" : "one_to_one";
-      return w.get(id)?.m.prefs.formats.includes(format) === true
+      return !isMinor(w, id) && w.get(id)?.m.prefs.formats.includes(format) === true
         && memberReason(w, id, { category: "social", role: "peer", format, timeSensitive: false }) === null;
     };
     const firstPass = ids.filter(id => fit(id, startsAsGroup)).slice(0, 6);

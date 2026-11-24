@@ -1,7 +1,10 @@
 // GENERATED from spec/outreachPolicy.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
+import { maxOpenings as postingPolicy_maxOpenings, payRangeAllowed as postingPolicy_payRangeAllowed, confirmPosting as postingPolicy_confirmPosting, postingDraftCurrent as postingPolicy_postingDraftCurrent, missingPostingFields as postingPolicy_missingPostingFields, postingNeedsArea as postingPolicy_postingNeedsArea, inboundMayCommand as postingPolicy_inboundMayCommand, openingsInRange as postingPolicy_openingsInRange, openingCountNeedsCorrection as postingPolicy_openingCountNeedsCorrection, lawPayRangeIsOrdered as postingPolicy_lawPayRangeIsOrdered, lawAssistantProfileNeverCommands as postingPolicy_lawAssistantProfileNeverCommands, lawEditedPostingNeedsReadback as postingPolicy_lawEditedPostingNeedsReadback, lawStalePostingCannotBeConfirmed as postingPolicy_lawStalePostingCannotBeConfirmed, lawClosedPostingIsNeverCurrent as postingPolicy_lawClosedPostingIsNeverCurrent, lawChangedPostingIsNeverCurrent as postingPolicy_lawChangedPostingIsNeverCurrent, lawNewDraftNeverOverwrites as postingPolicy_lawNewDraftNeverOverwrites, lawOnsiteDraftWithoutAreaNeedsAnswer as postingPolicy_lawOnsiteDraftWithoutAreaNeedsAnswer, lawOmittedCountUsesDefault as postingPolicy_lawOmittedCountUsesDefault, lawInvalidStatedCountNeedsCorrection as postingPolicy_lawInvalidStatedCountNeedsCorrection } from "./postingPolicy.ts";
 
 
+/** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
+export const unansweredInviteWaitMs: number = exact_outreachPolicy(72 * 3600000);
 /** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
 export const unansweredInviteLimit: number = 2;
 /** Story: Pause new offers after two unanswered invitations / Re-engagement requires current evidence of silence (spec/outreachPolicy.md) */
@@ -14,19 +17,47 @@ export const reengagementDeliveryPrefix: string = "reengagement:";
 export const personDailyCap: number = 3;
 /** Story: Hear when someone I invited joins / An eligible join receipt can ride on a current reply (spec/outreachPolicy.md) */
 export const inviteJoinNoticeLifetimeMs: number = 2592000000;
-/** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
-export const unansweredInviteWaitMs: number = exact_outreachPolicy(72 * 3600000);
+/** Story: Limit unsolicited messages across apps / An initial invitation fits the member's participation state budget (spec/outreachPolicy.md) */
+export const inviteBudgetDayMs: number = 86400000;
 
-/** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
+/** Story: Limit unsolicited messages across apps / An initial invitation fits the member's participation state budget (spec/outreachPolicy.md) */
 //@ pure
-export function unansweredInviteCountAfterInbound(count: number, inbound: boolean): number {
-  return inbound ? 0 : count;
+export function initialInviteInBudgetWindow(sentAt: number, now: number, budgetWindowDays: number): boolean {
+  return exact_outreachPolicy(now - sentAt) < exact_outreachPolicy(budgetWindowDays * inviteBudgetDayMs);
 }
 
-/** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
+/** Story: Limit unsolicited messages across apps / An initial invitation fits the member's participation state budget (spec/outreachPolicy.md) */
 //@ pure
-export function outreachEngagementSource(source: string): boolean {
-  return source === "thread";
+export function initialInviteBudgetSpent(sentInBudgetWindow: number, budgetLimit: number): boolean {
+  return sentInBudgetWindow >= budgetLimit;
+}
+
+/** Story: Limit unsolicited messages across apps / An initial invitation fits the member's participation state budget (spec/outreachPolicy.md) */
+//@ pure
+export function lawInvitationJustSentCounts(sentAt: number, budgetWindowDays: number): boolean {
+  //@ ensures \result === true
+  return !(budgetWindowDays > 0) || initialInviteInBudgetWindow(sentAt, sentAt, budgetWindowDays);
+}
+
+/** Story: Limit unsolicited messages across apps / An initial invitation fits the member's participation state budget (spec/outreachPolicy.md) */
+//@ pure
+export function lawZeroBudgetIsAlwaysSpent(sentInBudgetWindow: number): boolean {
+  //@ ensures \result === true
+  return !(sentInBudgetWindow >= 0) || initialInviteBudgetSpent(sentInBudgetWindow, 0);
+}
+
+/** Story: Limit unsolicited messages across apps / An initial invitation fits the member's participation state budget (spec/outreachPolicy.md) */
+//@ pure
+export function lawBudgetBelowLimitIsOpen(sentInBudgetWindow: number, budgetLimit: number): boolean {
+  //@ ensures \result === true
+  return !(sentInBudgetWindow < budgetLimit) || !initialInviteBudgetSpent(sentInBudgetWindow, budgetLimit);
+}
+
+/** Story: Limit unsolicited messages across apps / An initial invitation fits the member's participation state budget (spec/outreachPolicy.md) */
+//@ pure
+export function lawInvitationAtWindowEdgeLeavesTheWindow(sentAt: number, budgetWindowDays: number): boolean {
+  //@ ensures \result === true
+  return !initialInviteInBudgetWindow(sentAt, exact_outreachPolicy(sentAt + exact_outreachPolicy(budgetWindowDays * inviteBudgetDayMs)), budgetWindowDays);
 }
 
 /** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
@@ -39,6 +70,26 @@ export function unansweredInviteCounts(accepted: boolean, acceptedAt: number, ex
 //@ pure
 export function unansweredInvitePause(count: number): boolean {
   return count >= unansweredInviteLimit;
+}
+
+/** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
+//@ pure
+export function unansweredInviteCountAfterInbound(count: number, inbound: boolean): number {
+  return inbound ? 0 : count;
+}
+
+/** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
+//@ pure
+export function lawUnacceptedInvitationDoesNotCount(acceptedAt: number, expired: boolean, expiredAt: number, now: number): boolean {
+  //@ ensures \result === true
+  return !unansweredInviteCounts(false, acceptedAt, expired, expiredAt, now);
+}
+
+/** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
+//@ pure
+export function lawInvitationCountsAtTerminalExpiry(acceptedAt: number, expiredAt: number): boolean {
+  //@ ensures \result === true
+  return !(acceptedAt <= expiredAt) || unansweredInviteCounts(true, acceptedAt, true, expiredAt, expiredAt);
 }
 
 /** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
@@ -59,28 +110,14 @@ export function lawTooFewInvitationsDoNotPause(count: number): boolean {
 //@ pure
 export function lawInboundMessageEndsThePause(count: number): boolean {
   //@ ensures \result === true
-  return !unansweredInvitePause(unansweredInviteCountAfterInbound(count, outreachEngagementSource("thread")));
+  return !unansweredInvitePause(unansweredInviteCountAfterInbound(count, postingPolicy_inboundMayCommand("thread")));
 }
 
 /** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
 //@ pure
 export function lawAssistantProfileKeepsUnanswered(count: number): boolean {
   //@ ensures \result === true
-  return unansweredInviteCountAfterInbound(count, outreachEngagementSource("mcp")) === count;
-}
-
-/** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
-//@ pure
-export function lawUnacceptedInvitationDoesNotCount(acceptedAt: number, expired: boolean, expiredAt: number, now: number): boolean {
-  //@ ensures \result === true
-  return !unansweredInviteCounts(false, acceptedAt, expired, expiredAt, now);
-}
-
-/** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
-//@ pure
-export function lawInvitationCountsAtTerminalExpiry(acceptedAt: number, expiredAt: number): boolean {
-  //@ ensures \result === true
-  return !(acceptedAt <= expiredAt) || unansweredInviteCounts(true, acceptedAt, true, expiredAt, expiredAt);
+  return unansweredInviteCountAfterInbound(count, postingPolicy_inboundMayCommand("mcp")) === count;
 }
 
 /** Story: Pause new offers after two unanswered invitations / Re-engagement requires current evidence of silence (spec/outreachPolicy.md) */
@@ -116,9 +153,22 @@ export function outreachRequiresAdult(kind: string): boolean {
 
 /** Story: Keep minors out of introductions and recruiting / Recruiting is an adult-only message at the time it is sent (spec/outreachPolicy.md) */
 //@ pure
+export function outreachTeenItemKind(kind: string): boolean {
+  return kind === "probe" || kind === "reveal" || kind === "nudge" || kind === "scheduling" || kind === "reminder" || kind === "feedback" || kind === "relay";
+}
+
+/** Story: Keep minors out of introductions and recruiting / Recruiting is an adult-only message at the time it is sent (spec/outreachPolicy.md) */
+//@ pure
 export function lawRecruitingRequiresAdult(kind: string): boolean {
   //@ ensures \result === true
   return !(kind === "growth") || outreachRequiresAdult(kind);
+}
+
+/** Story: Keep minors out of introductions and recruiting / Recruiting is an adult-only message at the time it is sent (spec/outreachPolicy.md) */
+//@ pure
+export function lawRecruitingIsNeverATeenItemKind(kind: string): boolean {
+  //@ ensures \result === true
+  return !(kind === "growth" || kind === "invite_notice" || kind === "home_help_consent" || kind === "worthwhile" || kind === "reengage") || !outreachTeenItemKind(kind);
 }
 
 /** Story: Hear when someone I invited joins / An eligible join receipt can ride on a current reply (spec/outreachPolicy.md) */

@@ -4,91 +4,111 @@ import { reviewRevisionCurrent } from "../../../core/src/generated/reviewDeadlin
 import { friendPlanHasWindow, friendPlanReviewedWindowsValid } from "../../../core/src/generated/friendsPlanTimeChoice.ts";
 import { scrubText } from "../scrub.ts";
 import { sniffType, PHOTO_MAX_BYTES } from "../../../platform/src/photos.ts";
-// Real mode's write path: the Network service's staff API (packages/network/service, runbook-real
-// 6.5). The Observatory's own database login stays read-only; review decisions, safety actions and
-// the matching switch go to the service, which runs them under its lock, writes the Network's logs and
-// network.staff_audit, and answers with the Network's reason when it refuses.
-//   NETWORK_SERVICE_URL   the service (for example http://127.0.0.1:4848)
-//   NETWORK_SERVICE_TOKEN a token the service lists in NETWORK_SERVICE_TOKENS with the admin role
-//                         (or reviewer + safety + admin): the Observatory checks each staff member's
-//                         own role first, and the service checks the token's.
-// Header contract (the reviewer of record, platform plan 5.1; docs/admin-console.md 4.6):
-//   X-Network-Staff-Id  the signed-in staff member (an SSO email, or "token:<role>#<hash>"). The
-//                       console sends it on every staff action, after its own role check for the app.
-//                       The service must take it as the reviewer of record only from a request that
-//                       carries the console's own token (one it lists for the console), and ignore it
-//                       from any other token. Without it, the token's own id is the actor.
-//   ?app=<app> and X-Network-App: the app ("ntwrk", "slop", ...) whose network the action is for
-//                       (the service routes on ?app=; the header repeats it for its logs).
-// Safety reports, hold, ban and photos (docs/admin-console.md 3.7.1 is the contract; the console side
-// is built against it, the service side comes from the platform work):
-//   GET  /safety/reports                -> { ok, reports: [{ id, kind, reporterId, subjectId, opportunityId?, at, status, priorReports? }] }
-//   POST /safety/hold    { memberId, note, reportId? }            hold the person on every app
-//   POST /safety/ban     { memberId, by: "phone"|"person", note, reportId? }
-//   POST /safety/dismiss { reportId, note }
-//   POST /safety/clear-minor { memberId, note }   clearMinorSignal on every app of the person, minor reports dismissed
-//   GET  /members/<id>/photos  (X-Network-Reason: the typed reason) -> { ok, photos: [{ id, url, expiresAt? }] }
-//   GET  /bias                          -> { ok, reports: BiasReportView[] } (the weekly bias monitor; admin or analyst)
-// Held texts (the console's "Held texts" panel; the routes come from the messaging pipeline and the relay work):
-//   GET  /queue/leak-review             -> { ok, items: [{ id, kind, to (masked), text, reasons, createdAt, memberId? }] }
-//   POST /queue/leak-review/<id>        { decision: "release"|"drop", reason }  a release runs every other send check again
-//   GET  /staff/relay/held              -> { ok, items: [{ itemId, app, kind, from, to, reasons, createdAt, text? }] } (from and to are member ids)
-//   POST /staff/relay/<id>/release      { note }   (the console sends the reason as both reason and note)
-//   POST /staff/relay/<id>/reject       { note }
-// 409 { reason } is a refusal with the Network's reason; 404 means the service has no such route yet.
-import type { BiasReportView, ControlCommand, ControlResult, HealthAlert, HeldQueue, HeldText, MemberPhoto, ReportKind, SafetyAction, SafetyReport, StaffPlanPreview } from "../types.ts";
+import type { BiasReportView, ControlCommand, ControlResult, HealthAlert, HeldQueue, HeldText, MemberPhoto, ReportKind, ReviewProbeText, SafetyAction, SafetyReport, StaffPlanPreview, StaffProbePreview } from "../types.ts";
 import { REVIEW_BLOCK_ERRORS, SAFETY_ERRORS } from "./source.ts";
 
-/** Read exact reviewed intervals in the order staff and members see them. */
+export class PreviewUnavailableError extends Error {
+  constructor(readonly kind: "plan" | "probe") { super(`${kind} preview unavailable`); this.name = "PreviewUnavailableError"; }
+}
+
+export class ServiceUnreachableError extends Error {
+  constructor(readonly cause: unknown) { super(`the Network service did not answer: ${cause instanceof Error ? cause.message : String(cause)}`); this.name = "ServiceUnreachableError"; }
+}
+
 function reviewedPlanOptions(value: unknown, primary: { start: number; end: number }, probeDeadline: number): StaffPlanPreview["options"] {
   if (value === undefined) return;
-  if (!Array.isArray(value) || value.length > 3) throw new Error("plan preview unavailable");
+  if (!Array.isArray(value) || value.length > 3) throw new PreviewUnavailableError("plan");
   const options: NonNullable<StaffPlanPreview["options"]> = [];
   for (const slot of value) {
-    if (!slot || !Number.isSafeInteger(slot.start) || !Number.isSafeInteger(slot.end) || slot.start <= 0) throw new Error("plan preview unavailable");
+    if (!slot || !Number.isSafeInteger(slot.start) || !Number.isSafeInteger(slot.end) || slot.start <= 0) throw new PreviewUnavailableError("plan");
     options.push({ start: slot.start, end: slot.end });
   }
-  // spec/friendsPlanTimeChoice.md, "Review fixes the available windows"
   if (!friendPlanReviewedWindowsValid(options) || !friendPlanHasWindow(options, primary.start, primary.end)
-      || probeDeadline >= options[0]!.start) throw new Error("plan preview unavailable");
+      || probeDeadline >= options[0]!.start) throw new PreviewUnavailableError("plan");
   return options;
+}
+
+const PROBE_PREVIEW_MAX = 50;
+const PROBE_TEXT_MAX = 1600;
+const memberIdField = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 200;
+const probeCopyField = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= PROBE_TEXT_MAX;
+const unavailable = (): never => { throw new PreviewUnavailableError("probe"); };
+const optionalCopy = (value: unknown): string | undefined => (value === undefined ? undefined : probeCopyField(value) ? scrubText(value, false) : unavailable());
+
+function probeTextOf(value: unknown): ReviewProbeText {
+  const p = (value !== null && typeof value === "object" ? value : unavailable()) as Record<string, unknown>;
+  const reveal = (p.reveal !== null && typeof p.reveal === "object" ? p.reveal : unavailable()) as Record<string, unknown>;
+  const memberId = memberIdField(p.memberId) ? p.memberId : unavailable();
+  const text = p.text === null ? null : probeCopyField(p.text) ? scrubText(p.text, false) : unavailable();
+  const revealText = probeCopyField(reveal.text) ? scrubText(reveal.text, false) : unavailable();
+  const fallback = optionalCopy(p.fallback), revealFallback = optionalCopy(reveal.fallback);
+  return { memberId, text, ...(fallback !== undefined ? { fallback } : {}), reveal: { text: revealText, ...(revealFallback !== undefined ? { fallback: revealFallback } : {}) } };
+}
+
+function replacementOf(value: unknown): StaffProbePreview["replacements"][number] {
+  const r = (value !== null && typeof value === "object" ? value : unavailable()) as Record<string, unknown>;
+  const alternate = memberIdField(r.alternate) ? r.alternate : unavailable();
+  const replaces = memberIdField(r.replaces) ? r.replaces : unavailable();
+  const probes = Array.isArray(r.probes) && r.probes.length <= PROBE_PREVIEW_MAX ? r.probes : unavailable();
+  return { alternate, replaces, probes: probes.map(probeTextOf) };
+}
+
+export const SERVICE_TIMEOUT = "service_timeout";
+const SERVICE_TIMEOUT_TEXT = "the Network service did not answer in time: the action may have run, so read the state again before you repeat it";
+
+export function isTimeout(e: unknown): boolean {
+  return (e as { name?: unknown } | null)?.name === "TimeoutError";
+}
+
+export function serviceTimeout(): ControlResult {
+  return { ok: false, code: SERVICE_TIMEOUT, error: SERVICE_TIMEOUT_TEXT };
 }
 
 export interface ServiceConfig {
   url: string;
   token: string;
-  /** The app the console acts for: sent in X-Network-App (one service runs every app's network). */
   app?: string;
-  /** Request timeout in ms (default 15000). */
   timeoutMs?: number;
 }
 
-/** The service's GET /health (packages/network/service/service.ts health()). */
 export interface ServiceHealth {
-  ok: boolean; instance: string; channel: string; reviewMode: "human"; matchingEnabled: boolean;
-  lastTick: { thisInstance: { at: number; ran: boolean } | null; stored: number | null; savedAt: number | null };
-  lockHolder: { pid: number; application: string } | null;
-  backlog: { review: number; reviewOverdue: number; deferred: number; outboundWaiting: number };
-  refusals: { sendRefused: number; guardBlocked: number; channel: Record<string, number> };
+  channel: string; matchingAllowed: boolean;
+  lastTick: { stored: number | null; savedAt: number | null };
+  lockHolder: { application: string } | null;
+  backlog: { outboundWaiting: number };
+  refusals: { channel: Record<string, number> };
 }
 
-/** The service's last tick is late (it ticks every minute): warn after 5 minutes, bad after 15. */
+const record = (v: unknown): Record<string, unknown> | undefined => (v !== null && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : undefined);
+const timeOrNull = (v: unknown): number | null | undefined => (v === null ? null : Number.isSafeInteger(v) ? v as number : undefined);
+
+export function parseServiceHealth(json: unknown): ServiceHealth | undefined {
+  const h = record(json), tick = record(h?.lastTick), backlog = record(h?.backlog), channelRefusals = record(record(h?.refusals)?.channel);
+  const lock = h?.lockHolder === null ? null : record(h?.lockHolder);
+  if (!h || typeof h.channel !== "string" || typeof h.matchingAllowed !== "boolean" || !tick || !backlog || !channelRefusals) return;
+  const stored = timeOrNull(tick.stored), savedAt = timeOrNull(tick.savedAt);
+  if (stored === undefined || savedAt === undefined || !Number.isSafeInteger(backlog.outboundWaiting)) return;
+  if (lock !== null && typeof lock?.application !== "string") return;
+  const channel: Record<string, number> = {};
+  for (const [status, n] of Object.entries(channelRefusals)) {
+    if (!Number.isSafeInteger(n)) return;
+    channel[status] = n as number;
+  }
+  return { channel: h.channel, matchingAllowed: h.matchingAllowed, lastTick: { stored, savedAt },
+    lockHolder: lock === null ? null : { application: lock.application as string }, backlog: { outboundWaiting: backlog.outboundWaiting as number }, refusals: { channel } };
+}
+
 export const SERVICE_TICK_WARN = 5 * 60_000, SERVICE_TICK_BAD = 15 * 60_000;
 
-/** NETWORK_SERVICE_URL and NETWORK_SERVICE_TOKEN, when both are set. */
 export function serviceFromEnv(env: Record<string, string | undefined> = process.env): ServiceConfig | undefined {
   const url = env.NETWORK_SERVICE_URL?.trim(), token = env.NETWORK_SERVICE_TOKEN?.trim();
   return url && token ? { url, token } : undefined;
 }
 
-/** The staff member behind a console action (the reviewer of record). */
 export const STAFF_HEADER = "x-network-staff-id";
-/** The app the action is for. */
 export const APP_HEADER = "x-network-app";
-/** The typed reason for a photo read (the service writes it to its own audit). */
 export const REASON_HEADER = "x-network-reason";
-const REPORT_KINDS = new Set<ReportKind>(["harassment", "lying", "no_show", "unsafe", "scam", "minor", "other"]);
-/** A report row as the service sends it, before the console adds urgency and due times. */
+const REPORT_KINDS = new Set<ReportKind>(["harassment", "lying", "no_show", "unsafe", "scam", "minor", "older_than_stated", "other"]);
 export type ServiceReport = Pick<SafetyReport, "id" | "kind" | "reporterId" | "subjectId" | "opportunityId" | "at" | "status"> & { priorReports?: number };
 
 export class ServiceClient {
@@ -96,7 +116,6 @@ export class ServiceClient {
   constructor(private c: ServiceConfig) { this.url = c.url.replace(/\/+$/, ""); }
 
   private async call(method: "GET" | "POST", path: string, staff?: string, body?: unknown, extra: Record<string, string> = {}): Promise<{ status: number; json: Record<string, any> }> {
-    // The service picks the app's network from ?app= (packages/network/service/service.ts fetch).
     const r = await fetch(this.url + path + (this.c.app ? `${path.includes("?") ? "&" : "?"}app=${encodeURIComponent(this.c.app)}` : ""), {
       method, signal: AbortSignal.timeout(this.c.timeoutMs ?? 15_000),
       headers: {
@@ -104,18 +123,18 @@ export class ServiceClient {
         ...(staff ? { [STAFF_HEADER]: staff } : {}), ...(this.c.app ? { [APP_HEADER]: this.c.app } : {}), ...extra,
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-    });
+    }).catch((e: unknown) => { throw isTimeout(e) ? e : new ServiceUnreachableError(e); });
     return { status: r.status, json: await r.json().catch(() => ({})) as Record<string, any> };
   }
 
-  /** A staff action. 200: done. 409: the Network refused it (its reason as the code). Anything else: the service did not act. */
   private async act(path: string, staff: string, body: unknown, errors: Record<string, string>): Promise<ControlResult> {
     let res: { status: number; json: Record<string, any> };
     try { res = await this.call("POST", path, staff, body); } catch (e) {
-      return { ok: false, code: "service_unavailable", error: `the Network service did not answer: ${(e as Error).message}` };
+      if (isTimeout(e)) return serviceTimeout();
+      return { ok: false, code: "service_unavailable", error: (e as Error).message };
     }
     const { status, json } = res;
-    if (status === 200 && json.ok) return { ok: true };
+    if (status === 200 && json.ok) return json.reach === "app" || json.reach === "all" ? { ok: true, reach: json.reach } : { ok: true };
     if (status === 409) { const why = String(json.reason ?? "refused"); return { ok: false, code: why, error: errors[why] ?? `refused: ${why.replace(/_/g, " ")}` }; }
     if (status === 401 || status === 403) return { ok: false, code: "service_auth", error: `the Network service refused the console's token (${json.error ?? status})` };
     if (status === 404 && !json.reason) return { ok: false, code: "service_missing", error: `the Network service has no ${path} yet` };
@@ -124,7 +143,6 @@ export class ServiceClient {
 
   review(staff: string, cmd: Extract<ControlCommand, { type: "review" }>): Promise<ControlResult> {
     const { decision, reason, note, explanations, objective, swapOut, revision } = cmd;
-    // Time on one item counts at most 30 minutes (a card left open is not review work; audit observatory-10).
     const secondsSpent = cmd.secondsSpent === undefined ? undefined : Math.min(1800, Math.max(0, Number(cmd.secondsSpent) || 0));
     return this.act(`/review/${encodeURIComponent(cmd.oppId)}`, staff, { decision, reason, note, secondsSpent, explanations, objective, swapOut, revision }, REVIEW_BLOCK_ERRORS);
   }
@@ -139,7 +157,7 @@ export class ServiceClient {
         || p.end <= p.start || p.quorum < 1 || p.maxSeats < p.quorum
         || p.app !== (this.c.app ?? "ntwrk") || p.opportunityId !== id || !reviewRevisionCurrent(revision, p.revision)
         || !textField(p.activity) || !textField(p.place.name) || (p.place.area !== undefined && !textField(p.place.area))
-        || !Array.isArray(p.alternates) || !p.alternates.every(textField)) throw new Error("plan preview unavailable");
+        || !Array.isArray(p.alternates) || !p.alternates.every(textField)) throw new PreviewUnavailableError("plan");
     const options = reviewedPlanOptions(p.options, p, p.probeDeadline);
     return { app: p.app, opportunityId: p.opportunityId, revision: p.revision, deadline: p.deadline,
       activity: scrubText(p.activity, false), place: { name: scrubText(p.place.name, false), ...(p.place.area ? { area: scrubText(p.place.area, false) } : {}) },
@@ -147,7 +165,17 @@ export class ServiceClient {
       ...(options ? { options } : {}), alternates: p.alternates };
   }
 
-  /** The staff API owns authoring and review; only its accepted result reaches the workspace. */
+  async reviewProbePreview(staff: string, id: string, revision: number): Promise<StaffProbePreview | undefined> {
+    const { status, json } = await this.call("GET", `/review/${encodeURIComponent(id)}/probes?revision=${revision}`, staff);
+    if (status === 404 && json.error === "preview_unavailable") return;
+    const p = json.preview;
+    if (status !== 200 || !json.ok || !p || p.app !== (this.c.app ?? "ntwrk") || p.opportunityId !== id || !reviewRevisionCurrent(revision, p.revision)
+        || !Number.isSafeInteger(p.deadline) || !Array.isArray(p.probes) || p.probes.length > PROBE_PREVIEW_MAX
+        || !Array.isArray(p.replacements) || p.replacements.length > PROBE_PREVIEW_MAX) throw new PreviewUnavailableError("probe");
+    return { app: p.app, opportunityId: p.opportunityId, revision: p.revision, deadline: p.deadline,
+      probes: (p.probes as unknown[]).map(probeTextOf), replacements: (p.replacements as unknown[]).map(replacementOf) };
+  }
+
   async monthlyGatherings(staff: string, request: GatheringRequest): Promise<{ status: number; body: GatheringResponse }> {
     const base = "/apps/ntwrk/gatherings";
     const path = request.action === "review" ? `${base}/${encodeURIComponent(request.id)}/review` : base;
@@ -183,7 +211,6 @@ export class ServiceClient {
     }
   }
 
-  /** Post-date reports (GET /safety/reports). Rows the console cannot read are dropped. */
   async reports(): Promise<ServiceReport[] | { error: string }> {
     try {
       const { status, json } = await this.call("GET", "/safety/reports");
@@ -199,11 +226,10 @@ export class ServiceClient {
     } catch (e) { return { error: (e as Error).message }; }
   }
 
-  /** One member's photos (slop). The reason goes in X-Network-Reason; the service checks age and role again. */
   async photos(staff: string, memberId: string, reason: string): Promise<{ ok: true; photos: MemberPhoto[] } | ControlResult> {
     let res: { status: number; json: Record<string, any> };
     try { res = await this.call("GET", `/members/${encodeURIComponent(memberId)}/photos`, staff, undefined, { [REASON_HEADER]: reason.replace(/[\r\n]+/g, " ").slice(0, 500) }); } catch (e) {
-      return { ok: false, code: "service_unavailable", error: `the Network service did not answer: ${(e as Error).message}` };
+      return { ok: false, code: "service_unavailable", error: (e as Error).message };
     }
     const { status, json } = res;
     if (status === 200 && json.ok && Array.isArray(json.photos)) {
@@ -216,10 +242,10 @@ export class ServiceClient {
 
   matching(staff: string, on: boolean): Promise<ControlResult> { return this.act("/matching", staff, { on }, {}); }
 
-  /**
-   * Texts held for staff: the leak guard's parked texts or held relay items. Only the fields of HeldText
-   * pass (no score, no rating). 404 without a reason: the service has no such route yet ("not_available").
-   */
+  staffStep(staff: string, method: "GET" | "POST", path: string, body: Record<string, unknown> | undefined): Promise<{ status: number; json: Record<string, any> }> {
+    return this.call(method, path, staff, body);
+  }
+
   async held(staff: string, queue: HeldQueue): Promise<{ ok: true; items: HeldText[] } | { ok: false; code: string; error: string }> {
     try {
       const { status, json } = await this.call("GET", queue === "leak" ? "/queue/leak-review" : "/staff/relay/held", staff);
@@ -229,23 +255,21 @@ export class ServiceClient {
       return {
         ok: true,
         items: (json.items as Record<string, unknown>[]).flatMap((x): HeldText[] => {
-          // The service's held relay items name the item `id` (older services: `itemId`) and the sender `memberId` (or `from`).
-          const id = str(x.id, 300) ?? str(x.itemId, 300);
+          const id = str(x.id, 300);
           if (!id) return [];
-          const memberId = str(x.memberId, 200) ?? str(x.from, 200);
-          const at = Number(x.createdAt ?? x.at);
+          const memberId = str(x.memberId, 200);
+          const at = Number(x.createdAt ?? x.at), deadline = x.deadline === null || x.deadline === undefined ? NaN : Number(x.deadline);
           return [{
             id, queue, reasons: Array.isArray(x.reasons) ? x.reasons.filter((r): r is string => typeof r === "string").map(r => r.slice(0, 120)).slice(0, 20) : [],
             ...(str(x.kind, 60) ? { kind: str(x.kind, 60) } : {}), ...(str(x.to, 40) ? { to: maskTo(str(x.to, 40)!) } : {}),
-            ...(memberId ? { memberId } : {}), ...(Number.isFinite(at) ? { createdAt: at } : {}),
-            ...(x.minor === true ? { textHidden: "minor" as const } : str(x.text) ? { text: str(x.text) } : {}),
+            ...(memberId ? { memberId } : {}), ...(Number.isFinite(at) ? { createdAt: at } : {}), ...(Number.isSafeInteger(deadline) ? { deadline } : {}),
+            ...(x.minor === true ? { textHidden: "minor" as const } : queue === "leak" && str(x.text) ? { text: str(x.text) } : {}),
           }];
         }),
       };
     } catch (e) { return { ok: false, code: "service_unavailable", error: (e as Error).message }; }
   }
 
-  /** Binary proxy for ONE selected item, carrying the authenticated reviewer and app. */
   async heldPhoto(staff:string,id:string,reason:string):Promise<Response> {
     if(!/^pri_[a-f0-9]{32}$/.test(id))return Response.json({error:"Invalid selected photo"},{status:400});
     try{
@@ -261,16 +285,13 @@ export class ServiceClient {
     }catch{return Response.json({error:"The selected photo could not load. Try again or reject it."},{status:502});}
   }
 
-  /** Release or reject one held text, with the staff member's reason (5+ characters). */
   heldDecision(staff: string, queue: HeldQueue, id: string, decision: "release" | "reject", reason: string, photoReviewToken?:string): Promise<ControlResult> {
     const e = encodeURIComponent(id);
     return queue === "leak"
       ? this.act(`/queue/leak-review/${e}`, staff, { decision: decision === "reject" ? "drop" : "release", reason }, HELD_ERRORS)
-      // The service reads the reason as `note` (and accepts `reason`): it reaches the audit row.
       : this.act(`/staff/relay/${e}/${decision}`, staff, { reason, note: reason, ...(photoReviewToken?{photoReviewToken}:{}) }, HELD_ERRORS);
   }
 
-  /** The weekly bias monitor reports of the app's network, newest first (GET /bias; admin or analyst). */
   async bias(staff: string): Promise<{ ok: true; reports: BiasReportView[] } | { ok: false; error: string }> {
     try {
       const { status, json } = await this.call("GET", "/bias", staff);
@@ -282,24 +303,22 @@ export class ServiceClient {
   async health(): Promise<ServiceHealth | { error: string }> {
     try {
       const { status, json } = await this.call("GET", "/health");
-      return status === 200 && json.ok ? json as ServiceHealth : { error: String(json.error ?? `HTTP ${status}`) };
+      if (status !== 200 || !json.ok) return { error: String(json.error ?? `HTTP ${status}`) };
+      return parseServiceHealth(json) ?? { error: "the service /health answer has an unknown shape" };
     } catch (e) { return { error: (e as Error).message }; }
   }
 }
 
-/** Why a held text was not released or rejected. */
 export const HELD_ERRORS: Record<string, string> = {
   not_parked: "that text is no longer held", not_held: "that text is no longer held", reason_required: "a reason of 5 or more characters is required",
   unknown_item: "no such held text", opted_out: "the recipient opted out: nothing was sent", minor: "a member under 18 is involved: nothing was sent",
 };
 
-/** A phone number as staff may see it: the last two digits only (the service already masks; this is a second check). */
 function maskTo(to: string): string {
   const digits = to.replace(/\D/g, "");
   return digits.length >= 7 ? `…${digits.slice(-2)}` : to;
 }
 
-/** The service's health as alert lines (the Overview strip): unreachable, a late tick, channel refusals, and one line when all is well. */
 export function serviceAlerts(h: ServiceHealth | { error: string }, now: number): HealthAlert[] {
   if ("error" in h) return [{ level: "bad", key: "service_down", count: 0, text: `Network service unreachable: ${h.error}. Review and safety actions cannot run.` }];
   const out: HealthAlert[] = [];

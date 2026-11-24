@@ -90,9 +90,12 @@ describe("roles per app", () => {
     expect(healthAlerts({ ...base, reviewOpen: [item], sla: { app: "ntwrk", hours: 12 } }).find(a => a.key === "review_app_sla")).toBeUndefined();
   });
 
-  test("lab allows the shipped Slop pack and keeps Peon matching off", () => {
-    expect(labArgs({ arms: ["consent"], seeds: [1], days: 3, app: "peon" }, 1)).toContain("--matching-off");
-    expect(labArgs({ arms: ["consent"], seeds: [1], days: 3, app: "slop" }, 1)).not.toContain("--matching-off");
+  test("lab runs match for the Slop pack and for Peon (spec/runtimeUnit.md: a lab run is a local simulation)", () => {
+    for (const app of ["peon", "slop"] as const) {
+      const args = labArgs({ arms: ["consent"], seeds: [1], days: 3, app }, 1);
+      expect(args).not.toContain("--max-new");
+      expect(args).not.toContain("--matching-off");
+    }
   });
 });
 
@@ -104,7 +107,7 @@ describe("the console for four apps (game mode)", () => {
   const post = (tok: string, path: string, body: unknown) => as(tok, path, { method: "POST", body: JSON.stringify(body) });
   beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), "obs-apps-"));
-    obs = await createServer({ port: 0, development: false, tokens: TOK, audit: { dir: join(dir, "audit") }, lab: { dir: join(dir, "lab") }, game: { seed: 1, review: "human", pushMs: 3_600_000, tickMs: 3_600_000 } });
+    obs = await createServer({ port: 0, development: false, tokens: TOK, audit: { dir: join(dir, "audit") }, lab: { dir: join(dir, "lab") }, game: { seed: 1, judge: "hold-every-item", pushMs: 3_600_000, tickMs: 3_600_000 } });
   }, T);
   afterAll(async () => { await obs?.stop(); await rm(dir, { recursive: true, force: true }); });
 
@@ -178,7 +181,7 @@ describe("the console for four apps (game mode)", () => {
     expect(all.apps.map(a => a.app)).toEqual(["ntwrk", "slop", "peon", "friends"]);
     expect(all.apps.find(a => a.app === "peon")?.available).toBe(false); // its world was never opened
     const peon = await post("adm", "/api/control?app=peon", { type: "matching", on: true });
-    expect([peon.status, (await peon.json()).code]).toEqual([409, "matching_locked"]);
+    expect([peon.status, (await peon.json()).ok]).toEqual([200, true]);
   }, T);
 });
 
@@ -212,7 +215,7 @@ describe.skipIf(!pgAvailable)("real mode for four apps (Postgres)", () => {
   const admin = (q: (sql: SQL) => Promise<unknown>) => { const s = new SQL(url); return q(s).finally(() => s.close()); };
   beforeAll(async () => {
     url = await testDb();
-    g = new GameSource({ pushMs: 3_600_000, tickMs: 3_600_000, seed: 1, review: "human", personas: 40, days: 5 });
+    g = new GameSource({ pushMs: 3_600_000, tickMs: 3_600_000, seed: 1, judge: "hold-every-item", personas: 40, days: 5 });
     await g.init();
     await g.control({ type: "step", ms: DAY });
     await admin(async sql => {

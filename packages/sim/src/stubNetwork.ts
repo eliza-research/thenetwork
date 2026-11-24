@@ -467,6 +467,7 @@ export class StubNetwork implements NetworkUnderTest {
   }
 
   private send(m: MemberState, body: string, meta: SimMeta, deliveryKey?: string) {
+    if (m.optedOut) return;
     // Never repeat an acknowledgement: the same info/concierge text to the same member within
     // 10 minutes (e.g. two quick messages both answered "Thanks, noted...") is sent once.
     const now = this.ctx.clock.now();

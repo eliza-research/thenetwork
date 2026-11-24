@@ -1,9 +1,3 @@
-// The consent ledger per app (platform plan 4.3; PRD 40.3; founder decision 7). One line serves every
-// app, and carriers see one sender, so STOP stops every app (an event with app = null): on the shared
-// line, on the site's stop button, and as STOP ALL. Only an app's own line with
-// PLATFORM_STOP_SCOPE=app stops that app alone. "leave <app>" (and the site's leave button) leaves one
-// app. START opts in to one app. The ledger reads the last event per (e164, app) and per (e164, null);
-// a global opt-out wins over an older app opt-in, and a newer app opt-in (START, a new join) wins over it.
 import { appMayText } from "../../core/src/generated/carrierConsent.ts";
 import { appLeaveNamesDomain, KEYWORDS, keywordKey, optOutPhrase as coreOptOutPhrase, readAppLeaveName, stopCourtesyLanguage, stopStatementIsDirect } from "../../core/src/replies.ts";
 import { type AppId, type AppInfo, APPS } from "./apps.ts";
@@ -28,11 +22,6 @@ export interface ConsentEvent {
 
 /** The last event for the app and the last global event (the two rows the ledger reads). */
 export interface ConsentLast { app?: ConsentEvent; global?: ConsentEvent }
-
-/** STOP stops every app unless an app's own line is set to PLATFORM_STOP_SCOPE=app. */
-export function stopScope(env: Record<string, string | undefined> = process.env): StopScope {
-  return env.PLATFORM_STOP_SCOPE === "app" ? "app" : "global";
-}
 
 /** The consent state for one app from the two last events. No event = not opted in. */
 export function resolveConsent(last: ConsentLast): ConsentState | undefined {
@@ -101,14 +90,10 @@ export function leaveTarget(text: string, apps: Record<AppId, Pick<AppInfo, "id"
 }
 
 /** The consent event and the reply for a keyword received on an app's line. HELP writes no event. */
-export function keywordEvent(kw: Keyword, e164: string, app: AppInfo, at: number, opts: { line?: string; scope?: StopScope; ref?: string } = {}): { event?: ConsentEvent; reply: string } {
-  const scope = opts.scope ?? stopScope();
+export function keywordEvent(kw: Keyword, e164: string, app: AppInfo, at: number, opts: { line?: string; ref?: string } = {}): { event?: ConsentEvent; reply: string } {
   const base = { e164, line: opts.line ?? null, at, source: `keyword:${kw}`, ref: opts.ref ?? null };
   switch (kw) {
     case "stop":
-      return scope === "global"
-        ? { event: { ...base, app: null, state: "opted_out" }, reply: app.brand.stop }
-        : { event: { ...base, app: app.id, state: "opted_out" }, reply: app.brand.stopApp };
     case "stop_all":
       return { event: { ...base, app: null, state: "opted_out" }, reply: app.brand.stop };
     case "start":

@@ -6,6 +6,7 @@
 import { expect, test } from "vitest";
 import { DAY } from "@thenetwork/core";
 import { Mini } from "./mini.ts";
+import { simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";
 
 const climber = (id: string, name: string) => ({
   id, name, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"], skills: ["belaying"],
@@ -45,6 +46,10 @@ test.each([
   const from = w.mark();
   await w.say("a", "Anyone around who'd want to go climbing this week? I'm near Greenpoint.");
   const opp = [...w.net.opps.values()].find(o => o.participants.includes("a"))!;
+  expect(opp.stage).toBe("review");
+  const [work] = w.net.judgePackets().work.filter(x => x.packet.oppId === opp.id);
+  expect(w.net.recordJudgment(simulatedReviewJudge({ exceptions: false })(work!.packet)!)).toEqual({ ok: true });
+  expect(opp.review).toMatchObject({ decision: "approve", approver: "judge" });
   if (clarification) {
     if (w.probed("a")) await w.say("a", "yes");
     expect(w.probed("r")).toBe(true);
@@ -93,6 +98,10 @@ test("a declined invitee's join notice waits past the replacement's booking repl
   expect(await w.runUntil(() => w.probed("theo"))).toBe(true);
   await w.say("theo", "I'll pass for now.");
   expect(w.log("probe_answer").map(entry => entry.detail)).toContainEqual(expect.objectContaining({ oppId, memberId: "theo", yes: false }));
+  expect(w.log("probe_replaced").map(entry => entry.detail)).toContainEqual(expect.objectContaining({ oppId, out: "theo", in: "r", askedAgain: ["a"] }));
+  expect(w.probed("r")).toBe(false);
+  expect(await w.runUntil(() => w.probed("a"))).toBe(true);
+  await w.say("a", "Yes.");
   expect(await w.runUntil(() => w.probed("r"))).toBe(true);
   const opportunity = w.net.opps.get(oppId)!;
   expect(opportunity.participants).toEqual(["a", "r"]);

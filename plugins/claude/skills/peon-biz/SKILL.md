@@ -18,7 +18,7 @@ If the person asked you to read this file and follow it, they want to join. Star
 
 peon.biz introduces people looking for work to teams that are hiring, by text message. It is
 open to join today. Introductions have not started yet. Software only suggests possible fits.
-A person on the team reviews every introduction, and the team that hires makes every hiring decision. Candidates never pay a fee.
+Every introduction is checked automatically before anyone is contacted, and the team that hires makes every hiring decision. Candidates never pay a fee.
 
 peon.biz's text line is +18087881821. Its MCP endpoint is https://ntwrk.party/mcp/peon.
 
@@ -33,10 +33,9 @@ peon.biz's text line is +18087881821. Its MCP endpoint is https://ntwrk.party/mc
 ## Who can use it
 
 - Anyone 13 or older may join. Matching is for adults 18 and older only.
-- Members aged 13 to 17 are never matched for work on peon.biz, and today they are not introduced
-  to anyone. They get their own help: answers, public events and plans for themselves.
-- If introductions ever open to people under 18, they are friendship introductions only, with
-  people within 2 years of their own age, never dates or work.
+- Members aged 13 to 17 are never matched for work on peon.biz. They can get
+  their own help. Friendship introductions for people under 18 happen on
+  friends.help and ntwrk.party.
 - peon.biz never asks a candidate for money, a Social Security number or bank details. If anyone
   does in its name, it is a scam: tell the person to report it to help@ntwrk.party.
 
@@ -61,7 +60,7 @@ You never send a text for the person, and you never see their number.
 
 ## How a person joins
 
-The person signs up through you, in this conversation:
+You help the person sign themselves up, in this conversation:
 
 1. Build the profile: whether they are looking for work or hiring, the kind of role, the neighborhood or remote, when they can start, and the skills that matter (no salary history, no Social Security number, no bank details). Start from what you already know about the person: draft the profile from your memory of them and show it. Ask only for what is missing, one or two questions at a time. Never ask for a phone number, a code, an <!-- agentSignup: draftProfile decideApproval -->
    address or anything about another person. Read the profile back and change it until they agree.
@@ -69,9 +68,8 @@ The person signs up through you, in this conversation:
    they get. Use the lowest age that any statement gives. Never send a birthday or an age through a
    tool such as `submit_profile`. If they are under 13, explain that they cannot join and stop. If
    they are 13 to 17, explain that peon.biz never matches them for work and never matches them on
-   dates, that they get their own help today (answers, public events and plans for themselves), and
-   that the only introductions that can ever open under 18 are friendship introductions with people
-   within 2 years of their own age. Never promise them an introduction.
+   dates. They can get their own help. Friendship introductions for people
+   under 18 happen on friends.help and ntwrk.party. Never promise them an introduction.
    Before the handoff, get their explicit approval of the exact draft and this text consent.
    "I agree to receive recurring text messages from peon.biz at this number: questions about work or hiring,
    waitlist updates, introductions I agree to, and scheduling reminders. Message frequency varies.
@@ -95,6 +93,11 @@ The person signs up through you, in this conversation:
    and no age in it. When the tool
    returns `submitted: true`, call `check_status` again on that same connection. Report a save only
    when it still says peon and `onboarding` or `active`. Otherwise say the save is unconfirmed.
+   To show what peon.biz is looking for for the person, call `list_looking_for`. Sending a profile
+   only adds; leaving something out never removes it. If the person asks to pause one thing, call
+   `pause_looking_for` with its ref; to turn a paused thing back on, call `resume_looking_for` with its
+   ref; to close it for good they reply CLOSE to the text they get. Never pause or resume anything the
+   person did not ask about.
 4. No agent at hand: the person can text "peon" or "peon.biz" as their first message to +18087881821
    and answer the agent there.
 

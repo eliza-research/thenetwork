@@ -16,6 +16,7 @@ export type Event =
   | { type: "readSendPhoneDay"; allowed: boolean }
   | { type: "readSendGlobal"; allowed: boolean }
   | { type: "recordSend"; providerAccepted: boolean }
+  | { type: "withholdSend" }
   | { type: "finishStart" }
   | { type: "beginVerification"; codeWellFormed: boolean }
   | { type: "readCheckAddress"; allowed: boolean }
@@ -27,6 +28,10 @@ export type Event =
 
 /** Story: Prove ownership of my phone / Verification codes expire and have a limited number of attempts (spec/otpLimits.md) */
 export const otpChallengeMaxAttempts: number = 5;
+/** Story: Prove ownership of my phone / Code checks also have limits shared across apps (spec/otpLimits.md) */
+export const otpChecksPerPhoneHour: number = 10;
+/** Story: Prove ownership of my phone / Code checks also have limits shared across apps (spec/otpLimits.md) */
+export const otpChecksPerIpHour: number = 30;
 /** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
 export const otpSendsPerPhoneHour: number = 3;
 /** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
@@ -35,14 +40,10 @@ export const otpSendsPerPhoneDay: number = 6;
 export const otpSendsPerIpHour: number = 10;
 /** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
 export const otpSendGapMs: number = exact_otpLimits(30 * 1000);
-/** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
-export const otpSendsGlobalHour: number = 500;
-/** Story: Prove ownership of my phone / Code checks also have limits shared across apps (spec/otpLimits.md) */
-export const otpChecksPerPhoneHour: number = 10;
-/** Story: Prove ownership of my phone / Code checks also have limits shared across apps (spec/otpLimits.md) */
-export const otpChecksPerIpHour: number = 30;
 /** Story: Prove ownership of my phone / Verification codes expire and have a limited number of attempts (spec/otpLimits.md) */
 export const otpLifetimeMs: number = exact_otpLimits(exact_otpLimits(10 * 60) * 1000);
+/** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
+export const otpSendsGlobalHour: number = 500;
 /** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
 export const initial: ChallengeFlow = { phase: "Beginning", reason: "NoReason" };
 
@@ -50,6 +51,18 @@ export const initial: ChallengeFlow = { phase: "Beginning", reason: "NoReason" }
 //@ pure
 export function inv(current: ChallengeFlow): boolean {
   return true;
+}
+
+/** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
+//@ pure
+export function otpBucketAllows(used: number, limit: number): boolean {
+  return used < limit;
+}
+
+/** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
+//@ pure
+export function otpGapLeft(hasLast: boolean, lastCountedAt: number, at: number, minGapMs: number): number {
+  return hasLast ? exact_otpLimits(minGapMs - exact_otpLimits(at - lastCountedAt)) : 0;
 }
 
 /** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
@@ -117,6 +130,42 @@ export function readSendGlobal(flow: ChallengeFlow, allowed: boolean): Challenge
   return allowed ? ({ ...flow, phase: "Sending" } as ChallengeFlow) : ({ phase: "Refused", reason: "LimitedGlobal" } as ChallengeFlow);
 }
 
+/** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
+//@ pure
+export function otpStartCounts(flow: ChallengeFlow): boolean {
+  return flow.phase === "Sending";
+}
+
+/** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
+//@ pure
+export function otpPhoneHourAllows(used: number, limit: number, gapLeft: number): boolean {
+  return otpBucketAllows(used, limit) && gapLeft <= 0;
+}
+
+/** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
+//@ pure
+export function otpSendDecision(addressAllows: boolean, phoneHourAllows: boolean, gapLeft: number, dayAllows: boolean, globalAllows: boolean): ChallengeFlow {
+  const local_0: ChallengeFlow = readSendAddress(requestCode(initial), addressAllows);
+  const local_1: ChallengeFlow = canReadSendPhoneHour(local_0) ? readSendPhoneHour(local_0, phoneHourAllows, gapLeft) : local_0;
+  const local_2: ChallengeFlow = canReadSendPhoneDay(local_1) ? readSendPhoneDay(local_1, dayAllows) : local_1;
+  return canReadSendGlobal(local_2) ? readSendGlobal(local_2, globalAllows) : local_2;
+}
+
+/** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
+//@ pure
+export function lawStartCountsOnlyWhenAllFourAllow(addressAllows: boolean, phoneHourAllows: boolean, gapLeft: number, dayAllows: boolean, globalAllows: boolean): boolean {
+  //@ ensures \result === true
+  return otpStartCounts(otpSendDecision(addressAllows, phoneHourAllows, gapLeft, dayAllows, globalAllows)) === (addressAllows && phoneHourAllows && dayAllows && globalAllows);
+}
+
+/** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
+//@ pure
+export function lawRefusedStartHasLimitReason(addressAllows: boolean, phoneHourAllows: boolean, gapLeft: number, dayAllows: boolean, globalAllows: boolean): boolean {
+  //@ ensures \result === true
+  const local_3: ChallengeFlow = otpSendDecision(addressAllows, phoneHourAllows, gapLeft, dayAllows, globalAllows);
+  return !(!otpStartCounts(local_3)) || (local_3.phase === "Refused" && local_3.reason !== "NoReason" && local_3.reason !== "VerificationFailed");
+}
+
 /** Story: Prove ownership of my phone / Start keeps its public response private (spec/otpLimits.md) */
 //@ pure
 export function canRecordSend(flow: ChallengeFlow): boolean {
@@ -128,6 +177,19 @@ export function canRecordSend(flow: ChallengeFlow): boolean {
 export function recordSend(flow: ChallengeFlow, providerAccepted: boolean): ChallengeFlow {
   //@ ensures (inv(flow) && canRecordSend(flow)) ==> stepVerificationRequiresConsume(flow, "recordSend", \result)
   return { ...flow, phase: providerAccepted ? "RecordingChallenge" : "StartComplete" };
+}
+
+/** Story: Prove ownership of my phone / Start keeps its public response private (spec/otpLimits.md) */
+//@ pure
+export function canWithholdSend(flow: ChallengeFlow): boolean {
+  return flow.phase === "Sending";
+}
+
+/** Story: Prove ownership of my phone / Start keeps its public response private (spec/otpLimits.md) */
+//@ pure
+export function withholdSend(flow: ChallengeFlow): ChallengeFlow {
+  //@ ensures (inv(flow) && canWithholdSend(flow)) ==> stepVerificationRequiresConsume(flow, "withholdSend", \result)
+  return { ...flow, phase: "StartComplete" };
 }
 
 /** Story: Prove ownership of my phone / Start keeps its public response private (spec/otpLimits.md) */
@@ -261,6 +323,7 @@ export function enabled(current: ChallengeFlow, event: Event): boolean {
   if (event.type === "readSendPhoneDay") return canReadSendPhoneDay(current);
   if (event.type === "readSendGlobal") return canReadSendGlobal(current);
   if (event.type === "recordSend") return canRecordSend(current);
+  if (event.type === "withholdSend") return canWithholdSend(current);
   if (event.type === "finishStart") return canFinishStart(current);
   if (event.type === "beginVerification") return canBeginVerification(current);
   if (event.type === "readCheckAddress") return canReadCheckAddress(current);
@@ -283,6 +346,7 @@ export function step(current: ChallengeFlow, event: Event): ChallengeFlow {
   if (event.type === "readSendPhoneDay") return canReadSendPhoneDay(current) ? readSendPhoneDay(current, event.allowed) : current;
   if (event.type === "readSendGlobal") return canReadSendGlobal(current) ? readSendGlobal(current, event.allowed) : current;
   if (event.type === "recordSend") return canRecordSend(current) ? recordSend(current, event.providerAccepted) : current;
+  if (event.type === "withholdSend") return canWithholdSend(current) ? withholdSend(current) : current;
   if (event.type === "finishStart") return canFinishStart(current) ? finishStart(current) : current;
   if (event.type === "beginVerification") return canBeginVerification(current) ? beginVerification(current, event.codeWellFormed) : current;
   if (event.type === "readCheckAddress") return canReadCheckAddress(current) ? readCheckAddress(current, event.allowed) : current;
@@ -314,6 +378,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "readSendPhoneDay" && typeof raw.allowed === "boolean") return { type: "readSendPhoneDay", allowed: raw.allowed };
   if (raw.type === "readSendGlobal" && typeof raw.allowed === "boolean") return { type: "readSendGlobal", allowed: raw.allowed };
   if (raw.type === "recordSend" && typeof raw.providerAccepted === "boolean") return { type: "recordSend", providerAccepted: raw.providerAccepted };
+  if (raw.type === "withholdSend") return { type: "withholdSend" };
   if (raw.type === "finishStart") return { type: "finishStart" };
   if (raw.type === "beginVerification" && typeof raw.codeWellFormed === "boolean") return { type: "beginVerification", codeWellFormed: raw.codeWellFormed };
   if (raw.type === "readCheckAddress" && typeof raw.allowed === "boolean") return { type: "readCheckAddress", allowed: raw.allowed };

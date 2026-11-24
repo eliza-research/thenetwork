@@ -34,7 +34,7 @@ test.skipIf(!pgAvailable)("unresolved receipts stay out of the send failure deno
     sql = new SQL({ url, max: 2 });
     service = new NetworkService({ url, clock, networks: [{ id: "friends:nyc", matchingEnabled: false }],
       photoStorage: null, notify: false, env: { PLATFORM_ENV: "dev" }, log: () => {},
-      adapter: (_net, rt) => new BlooioAdapter({ clock, app: rt.app.id, from: "+12125550170", env: { PLATFORM_ENV: "dev" }, liveGate: () => true,
+      adapter: (_net, rt) => new BlooioAdapter({ clock, app: rt.app.id, from: "+12125550170", env: { PLATFORM_ENV: "dev" },
         provider: { kind: "sim", send: r => request("/send", r), receipt: r => request("/receipt", r) }, log: () => {} }) });
     const joined = await service.accounts.join(APPS.friends, { e164: phone, personId: null },
       { firstName: "Ari", age: 29, consent: { sms: true, wording: APPS.friends.consent.text } });

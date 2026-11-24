@@ -9,6 +9,7 @@ import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.t
 import { loadSnapshot } from "../service/snapshot.ts";
 import { ProfileSuggestions, type SuggestionOwner, type SourceSuggestion, type SuggestionAuthorization } from "../service/profile-suggestions.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
+import { APPS } from "../../platform/src/apps.ts";
 import { SimClock } from "@thenetwork/core";
 import { NetworkService } from "../service/service.ts";
 import { renderSuggestionReview, reviewSuggestionMessage } from "../service/profile-suggestion-review.ts";
@@ -22,6 +23,7 @@ import type { NetworkRoutePolicy } from "../service/route-authority.ts";
 import { LEARNING_CONSENT_CONTEXT_PATH, parseLearningConsentContextProof, type LearningConsentContextRequest, NETWORK_LEARNING_ENTRY_SELECTION_SHA256 } from "../../core/src/svc/learning-consent-context.ts";
 
 const now = Date.UTC(2026, 9, 17, 12);
+const grant = { issuedAt: now };
 const db = `profile_suggestions_${process.pid}`;
 const base = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}`;
 let sql: SQL;
@@ -50,7 +52,7 @@ beforeEach(async () => {
   await sql`insert into platform.memberships(person_id,app_id,member_id,state,first_name,profile) values(${owner.personId},'ntwrk','owned-member','active','Alex','{}')`;
   await sql`insert into network.members(id,app_id,person_id,name,age,home_city,account_status) values('owned-member','ntwrk',${owner.personId},'Alex',30,'nyc','active')`;
   active = true;
-  store = new ProfileSuggestions(sql, async (who, consent) => active && who.userId === owner.userId && who.organizationId === owner.organizationId && consent.connectionId === "owned-google-connection" && consent.allowedKinds.every(k => k === "interest"));
+  store = new ProfileSuggestions(sql, async (who, consent) => active && who.userId === owner.userId && who.organizationId === owner.organizationId && consent.connectionId === "owned-google-connection" && consent.allowedKinds.every(k => k === "interest") && grant);
 });
 afterAll(async () => {
   await sql.close();
@@ -168,7 +170,7 @@ test("no default data window, retention choice, contact details or sensitive inf
 
 test("the authorizer receives the exact chosen window, fields and retention; future calendar windows are not observation times", async () => {
   const seen: unknown[] = [];
-  const restricted = new ProfileSuggestions(sql, async (_owner, consent) => { seen.push(consent); return consent.windowEnd === now + 86_400_000 && !consent.retainOnDisconnect; });
+  const restricted = new ProfileSuggestions(sql, async (_owner, consent) => { seen.push(consent); return consent.windowEnd === now + 86_400_000 && !consent.retainOnDisconnect && grant; });
   expect(await restricted.propose(owner, input(), now)).toBeNull();
   const eventStart = now + 3_600_000;
   const b = await restricted.propose(owner, { ...input([{ ...candidate(), source: "google_calendar", observedAt: eventStart }]), windowStart: now, windowEnd: now + 86_400_000 }, now);
@@ -225,7 +227,7 @@ test("expired decisions and periodic cleanup erase pending values without waitin
   await store.propose(owner, input(), now);
   expect(await store.decide(owner, { batchId: a.id, revision: a.revision, decisions: [{ suggestionId: a.suggestions[0]!.id, action: "accept" }] }, a.expiresAt)).toEqual({ kind: "denied" });
   expect((await sql`select value from platform.profile_suggestions where batch_id=${a.id}`)[0].value).toBeNull();
-  await store.expirePending(owner.app, a.expiresAt);
+  await store.applyRetention(owner.app, a.expiresAt);
   expect((await sql`select value,status from platform.profile_suggestions`).every((r: any) => r.value === null && r.status === 'expired')).toBe(true);
   expect(await facets()).toHaveLength(0);
 });
@@ -276,10 +278,149 @@ test("a canonical ban blocks promotion but permits deleting owned suggestions", 
   expect(await facets()).toHaveLength(0);
 });
 
+test("a STOP in the consent ledger stops collection and acceptance before its projection reaches the member row", async () => {
+  const b = (await store.propose(owner, input(), now))!;
+  const accept = { batchId: b.id, revision: b.revision, decisions: [{ suggestionId: b.suggestions[0]!.id, action: "accept" as const }] };
+  await sql`insert into platform.phone_identities(e164,person_id,verified_at,method) values('+12125550100',${owner.personId},${new Date(now)},'inbound_message')`;
+  await sql`insert into platform.consent_events(e164,app_id,state,source,at) values('+12125550100',null,'opted_out','fixture',${new Date(now)})`;
+  expect((await sql`select opted_out from network.members where id='owned-member'`)[0].opted_out).toBe(false);
+  expect(await store.propose(owner, input(), now)).toBeNull();
+  expect(await store.decide(owner, accept, now)).toEqual({ kind: "denied" });
+  expect(await sql`select id from platform.profile_suggestion_batches`).toHaveLength(1);
+  expect(await facets()).toHaveLength(0);
+  await sql`insert into platform.consent_events(e164,app_id,state,source,at) values('+12125550100','ntwrk','opted_in','fixture',${new Date(now + 1)})`;
+  expect(await store.decide(owner, accept, now)).toMatchObject({ kind: "saved" });
+  expect(await facets()).toHaveLength(1);
+});
+
+test("a ban by phone or a hold that lands during the Cloud source calls stops the commit", async () => {
+  await sql`insert into platform.phone_identities(e164,person_id,verified_at,method) values('+12125550100',${owner.personId},${new Date(now)},'inbound_message')`;
+  const racing = (act: () => Promise<unknown>) => new ProfileSuggestions(sql, async () => { await act(); return grant; });
+  const banned = racing(() => sql`insert into platform.bans(id,scope,phone_hash,reason,banned_by) values('race-ban','phone','fixture-phone-hash','fixture','fixture')`);
+  expect(await banned.propose(owner, input(), now)).toBeNull();
+  expect(await sql`select id from platform.profile_suggestion_batches`).toHaveLength(0);
+  await sql`delete from platform.bans`;
+  const b = (await store.propose(owner, input(), now))!;
+  const held = racing(() => sql`update platform.phone_identities set hold='recycled_number' where person_id=${owner.personId}`);
+  expect(await held.decide(owner, { batchId: b.id, revision: b.revision, decisions: [{ suggestionId: b.suggestions[0]!.id, action: "accept" }] }, now)).toEqual({ kind: "denied" });
+  expect(await facets()).toHaveLength(0);
+  expect((await sql`select status from platform.profile_suggestions`)[0].status).toBe("proposed");
+});
+
+test("collection asks Cloud once for each distinct source and connection, not once for each suggestion", async () => {
+  const asked: string[] = [];
+  const counting = new ProfileSuggestions(sql, async (_who, consent) => { asked.push(`${consent.source}:${consent.connectionId}`); return grant; });
+  const calendar: SourceSuggestion = { ...candidate(), source: "google_calendar", value: "I enjoy group walks", tags: ["walking"] };
+  const b = await counting.propose(owner, input([candidate(), { ...candidate(), value: "I enjoy hiking", tags: ["hiking"] }, calendar]), now);
+  expect(b?.suggestions).toHaveLength(3);
+  expect(asked.sort()).toEqual(["gmail:owned-google-connection", "google_calendar:owned-google-connection"]);
+});
+
+test("a saved batch with a future Calendar event start renders for review, so the member is never told that nothing was saved", async () => {
+  const eventStart = now + 3_600_000;
+  const calendar: SourceSuggestion = { ...candidate(), source: "google_calendar", observedAt: eventStart, value: "I enjoy group walks", tags: ["walking"] };
+  const b = (await store.propose(owner, { ...input([calendar]), windowEnd: eventStart + 1000 }, now))!;
+  const text = renderSuggestionReview(b, owner, now);
+  expect(text).toContain("nothing saved yet");
+  expect(text).toContain("Calendar; observed");
+  const reject = await reviewSuggestionMessage(store, owner, b.id, `reject ${b.id}.${b.revision} 1`, now);
+  expect(reject).toMatchObject({ kind: "saved", rejected: [b.suggestions[0]!.id] });
+});
+
+test("leaving deletes the private suggestion batches with the member, even when the membership removal then fails", async () => {
+  await store.propose(owner, input(), now);
+  await sql`insert into platform.phone_identities(e164,person_id,verified_at,method) values('+12125550100',${owner.personId},${new Date(now - 1000)},'inbound_message')`;
+  await sql.unsafe(`create function platform.fail_membership_removal() returns trigger language plpgsql as $$ begin if new.state='removed' then raise exception 'fixture crash'; end if; return new; end $$;
+    create trigger fail_membership_removal before update on platform.memberships for each row execute function platform.fail_membership_removal()`);
+  const service = new NetworkService({ url: `${base}/${db}`, clock: new SimClock(now), env: { PLATFORM_ENV: "dev" }, networks: [{ id: "ntwrk:nyc" }], log: () => {} });
+  try {
+    await expect(service.accounts.leave(APPS.ntwrk, { e164: "+12125550100", personId: owner.personId })).rejects.toThrow("fixture crash");
+    expect((await sql`select state from platform.memberships where person_id=${owner.personId}`)[0].state).toBe("active");
+    expect(await sql`select id from platform.profile_suggestion_batches`).toHaveLength(0);
+    expect(await sql`select id from platform.profile_suggestions`).toHaveLength(0);
+  } finally { await service.close(); }
+});
+
+test("a STOP projection during the Cloud source calls does not wait for them, and the collection or acceptance then stops", async () => {
+  const projected: string[] = [];
+  const project = (state: string, optedOut: boolean) => sql.begin(async t => {
+    await t`set local lock_timeout = '2s'`;
+    await t`update platform.memberships set state=${state} where person_id=${owner.personId} and app_id='ntwrk'`;
+    await t`update network.members set opted_out=${optedOut} where app_id='ntwrk' and id='owned-member'`;
+  });
+  const stopDuringCall = new ProfileSuggestions(sql, async () => {
+    await project("paused", true).then(() => projected.push("projected"), () => projected.push("waited"));
+    return grant;
+  });
+  expect(await stopDuringCall.propose(owner, input(), now)).toBeNull();
+  expect(projected).toEqual(["projected"]);
+  expect(await sql`select id from platform.profile_suggestion_batches`).toHaveLength(0);
+  await project("active", false);
+  const b = (await store.propose(owner, input(), now))!;
+  expect(await stopDuringCall.decide(owner, { batchId: b.id, revision: b.revision,
+    decisions: [{ suggestionId: b.suggestions[0]!.id, action: "accept" }] }, now)).toEqual({ kind: "denied" });
+  expect(projected).toEqual(["projected", "projected"]);
+  expect(await facets()).toHaveLength(0);
+  expect((await sql`select status from platform.profile_suggestions`)[0].status).toBe("proposed");
+});
+
+test("a disconnect or withdrawal that commits during the Cloud source calls stops the collection that its cutoff covers", async () => {
+  const revokedDuringCall = new ProfileSuggestions(sql, async () => {
+    await sql`insert into platform.profile_suggestion_connection_receipts(request_nonce,request_hash,event_id,operation,app_id,person_id,member_id,user_id,organization_id,chat_id,connection_id,revoked_at,result)
+      values(${randomUUID()},${"a".repeat(64)},'revoked:race','disconnect','ntwrk',${owner.personId},'owned-member',${owner.userId},${owner.organizationId},${owner.chatId},'owned-google-connection',${new Date(now)},'{}'::jsonb)`;
+    return grant;
+  });
+  expect(await revokedDuringCall.propose(owner, input(), now)).toBeNull();
+  await sql`delete from platform.profile_suggestion_connection_receipts`;
+  const withdrawnDuringCall = new ProfileSuggestions(sql, async () => {
+    await sql`insert into platform.inbound(id,received_at,arrived_at,status,sender_hash,response,request_hash,action_receipts)
+      values('msg:blooio:withdrawal-race',${new Date(now)},${new Date(now)},'done','fixture-phone-hash',${{ outcome: "open", app: "ntwrk", memberId: "owned-member" }}::jsonb,${"b".repeat(64)},
+        ${{ [`profile-withdrawal-v2:${randomUUID()}`]: { state: "completed", operation: "withdraw", app: "ntwrk", connectionId: "owned-google-connection", cutoffAt: now } }}::jsonb)`;
+    return grant;
+  });
+  expect(await withdrawnDuringCall.propose(owner, input(), now)).toBeNull();
+  expect(await sql`select id from platform.profile_suggestion_batches`).toHaveLength(0);
+  const reconnected = new ProfileSuggestions(sql, async () => ({ issuedAt: now + 1 }));
+  expect(await reconnected.propose(owner, input(), now)).not.toBeNull();
+});
+
+test("retention removes finished suggestions and empty batches after the platform cutoff and keeps accepted facts", async () => {
+  const second: SourceSuggestion = { ...candidate(), value: "I enjoy hiking", tags: ["hiking"] };
+  const kept = (await store.propose(owner, input([candidate(), second]), now))!;
+  expect(await store.decide(owner, { batchId: kept.id, revision: kept.revision, decisions: [
+    { suggestionId: kept.suggestions[0]!.id, action: "accept" }, { suggestionId: kept.suggestions[1]!.id, action: "reject" }] }, now)).toMatchObject({ kind: "saved" });
+  const rejected = (await store.propose(owner, input(), now))!;
+  expect(await store.decide(owner, { batchId: rejected.id, revision: rejected.revision,
+    decisions: [{ suggestionId: rejected.suggestions[0]!.id, action: "reject" }] }, now)).toMatchObject({ kind: "saved" });
+  await store.propose(owner, input(), now);
+  const cutoffEdge = kept.expiresAt + 172_800_000;
+  await store.applyRetention(owner.app, cutoffEdge);
+  expect(await sql`select id from platform.profile_suggestions where status in ('rejected','expired')`).toHaveLength(3);
+  await store.applyRetention(owner.app, cutoffEdge + 1);
+  expect((await sql<{ id: string; status: string }[]>`select id,status from platform.profile_suggestions`).map(r => r.status)).toEqual(["accepted"]);
+  expect((await sql<{ id: string }[]>`select id from platform.profile_suggestion_batches`).map(r => r.id)).toEqual([kept.id]);
+  expect(await facets()).toHaveLength(1);
+});
+
+test("retention removes an accepted suggestion whose saved fact another path deleted, after the platform cutoff", async () => {
+  const b = (await store.propose(owner, input(), now))!;
+  expect(await store.decide(owner, { batchId: b.id, revision: b.revision,
+    decisions: [{ suggestionId: b.suggestions[0]!.id, action: "accept" }] }, now)).toMatchObject({ kind: "saved" });
+  const [accepted] = await sql`select fact_id from platform.profile_suggestions where batch_id=${b.id}`;
+  await sql`delete from network.facets where id=${accepted.fact_id}`;
+  expect(await sql`select status,fact_id from platform.profile_suggestions where batch_id=${b.id}`).toEqual([{ status: "accepted", fact_id: null }]);
+  const cutoffEdge = b.expiresAt + 172_800_000;
+  await store.applyRetention(owner.app, cutoffEdge);
+  expect(await sql`select status from platform.profile_suggestions where batch_id=${b.id}`).toEqual([{ status: "accepted" }]);
+  await store.applyRetention(owner.app, cutoffEdge + 1);
+  expect(await sql`select id from platform.profile_suggestions where batch_id=${b.id}`).toEqual([]);
+  expect(await sql`select id from platform.profile_suggestion_batches where id=${b.id}`).toEqual([]);
+});
+
 const httpSecret = "local-suggestion-review-fixture-secret-only";
-async function storedTurn(messageId: string, text: string, app = "ntwrk", memberId = "owned-member") {
+async function storedTurn(messageId: string, text: string, app = "ntwrk", memberId = "owned-member", senderHash = "fixture-phone-hash") {
   await sql`insert into platform.inbound(id,received_at,arrived_at,status,sender_hash,response,request_hash)
-    values(${`msg:blooio:${messageId}`},${new Date(now)},${new Date(now)},'done','fixture-phone-hash',${{ outcome: "open", app, memberId }}::jsonb,
+    values(${`msg:blooio:${messageId}`},${new Date(now)},${new Date(now)},'done',${senderHash},${{ outcome: "open", app, memberId }}::jsonb,
       ${createHash('sha256').update(`synthetic-signed-${messageId}`).digest('hex')})`;
   await sql`insert into network.messages(id,app_id,member_id,direction,body,ts)
     values(${`in:blooio:${messageId}`},${app},${memberId},'inbound',${text},${new Date(now)})`;
@@ -290,7 +431,7 @@ async function reviewHttp(resolveIdentity?: SuggestionIdentityResolver, authoriz
   const service = new NetworkService({ url: `${base}/${db}`, clock, env: { PLATFORM_ENV: routePolicy ? "staging" : "dev", SERVICE_TURN_SECRET: httpSecret,
     PLATFORM_HASH_KEY: "synthetic-review-factory-test-hash-key", ...(routePolicy ? { NETWORK_ROUTE_AUTHORITY_POLICY: JSON.stringify(routePolicy) } : {}), ...bootstrapEnv },
     networks: [{ id: "ntwrk:nyc" }], log: () => {}, profileSuggestionIdentity: resolveIdentity,
-    profileSuggestionAuthorization: bootstrapEnv ? undefined : authorizeSource ?? (async () => active) });
+    profileSuggestionAuthorization: bootstrapEnv ? undefined : authorizeSource ?? (async () => active && grant) });
   const server = await serveHttp({ hostname: "127.0.0.1", port: 0, fetch: service.fetch });
   return { clock, service, async stop() { await server.stop(true); await service.close(); },
     async context(input: LearningConsentContextRequest, changes?: { unsigned?: boolean; extra?: Record<string, unknown>; path?: string }) {
@@ -328,11 +469,14 @@ test("real HTTP review joins the signed stored turn, private preview, exact huma
     expect((await http.post("decide", "accept", b.id, { text })).body).toMatchObject({ kind: "saved", reviewText: "1 saved; 0 rejected." });
     expect(await facets()).toHaveLength(1);
     expect((await http.post("preview", "preview", b.id)).status).toBe(403);
-    expect((await http.post("decide", "accept", b.id, { text })).status).toBe(403);
+    expect((await http.post("decide", "accept", b.id, { text })).body).toMatchObject({ kind: "saved", reviewText: "1 saved; 0 rejected." });
     expect(await facets()).toHaveLength(1);
     await storedTurn("delete", `delete ${b.id}`);
     expect((await http.post("delete", "delete", b.id, { text: `delete ${b.id}` })).body.kind).toBe("deleted");
     expect(await facets()).toHaveLength(0);
+    expect((await http.post("delete", "delete", b.id, { text: `delete ${b.id}` })).body.kind).toBe("deleted");
+    await storedTurn("delete-again", `delete ${b.id}`);
+    expect((await http.post("delete", "delete-again", b.id, { text: `delete ${b.id}` })).status).toBe(403);
   } finally { await http.stop(); }
 });
 
@@ -381,6 +525,141 @@ test("HTTP edit, stale revision, source revoke and expiry cannot silently promot
     expect((await http.post("decide", "accept", b.id, { text })).status).toBe(403);
     expect(await facets()).toHaveLength(0);
     expect((await sql`select value,status from platform.profile_suggestions`)[0]).toMatchObject({ value: null, status: "expired" });
+  } finally { await http.stop(); }
+});
+
+test("HTTP review shows the private preview and decides only an exact command: a bare yes, a missing scope, an unknown item, a bad scope, a foreign token and an empty or long edit save nothing", async () => {
+  const b = (await store.propose(owner, input(), now))!;
+  const token = `${b.id}.${b.revision}`;
+  const http = await reviewHttp(boundIdentity);
+  try {
+    await storedTurn("show", "show my suggestions");
+    const preview = await http.post("preview", "show", b.id);
+    expect(preview.status).toBe(200);
+    for (const part of ["nothing saved yet", "Gmail; observed", "Source window:", "(America/Los_Angeles)", "remove these accepted facts", `accept ${token} 1 private`])
+      expect(preview.body.reviewText).toContain(part);
+    let n = 0;
+    const decide = async (text: string) => { const id = `command-${++n}`; await storedTurn(id, text); return http.post("decide", id, b.id, { text }); };
+    for (const text of ["yes", "approve all", `accept ${token} 1`, `accept ${token} 2 private`, `accept ${token} 1 shareable`, `accept ${b.id}.${b.revision + 1} 1 private`,
+      `accept ${randomUUID()}.${b.revision} 1 private`, `edit ${token} 1: `, `edit ${token} 1: ${"x".repeat(401)}`, `reject ${token} 1 matching`]) {
+      const r = await decide(text);
+      expect([text, r.status, r.body.kind]).toEqual([text, 403, "denied"]);
+    }
+    expect(await facets()).toHaveLength(0);
+    expect((await sql<{ status: string }[]>`select status from platform.profile_suggestions where batch_id=${b.id}`).map(r => r.status)).toEqual(["proposed"]);
+    expect((await sql`select revision from platform.profile_suggestion_batches where id=${b.id}`)[0]!.revision).toBe(b.revision);
+    expect((await decide(`accept ${token} 1 private`)).body).toMatchObject({ kind: "saved", accepted: [b.suggestions[0]!.id], rejected: [], reviewText: "1 saved; 0 rejected." });
+    expect(await facets()).toEqual([expect.objectContaining({ value: "I enjoy climbing", scope: "agent_private" })]);
+    await storedTurn("show-again", "show my suggestions");
+    expect((await http.post("preview", "show-again", b.id)).status).toBe(403);
+    expect((await decide(`reject ${token} 1`)).status).toBe(403);
+    expect(await facets()).toHaveLength(1);
+  } finally { await http.stop(); }
+});
+
+test("HTTP review never shows or decides a batch for another person, app, chat, Cloud user or organization, and records no decision for them", async () => {
+  const b = (await store.propose(owner, input(), now))!;
+  const text = `accept ${b.id}.${b.revision} 1 private`;
+  const own = { userId: owner.userId, organizationId: owner.organizationId, chatId: owner.chatId };
+  let binding = own;
+  await sql`insert into platform.memberships(person_id,app_id,member_id,state,first_name,profile) values(${owner.personId},'friends','owned-friends-member','active','Alex','{}')`;
+  await sql`insert into network.members(id,app_id,person_id,name,age,home_city,account_status) values('owned-friends-member','friends',${owner.personId},'Alex',30,'nyc','active')`;
+  const other = randomUUID();
+  await sql`insert into platform.people(id,lowest_age,phone_hash) values(${other},30,'other-phone-hash')`;
+  await sql`insert into platform.memberships(person_id,app_id,member_id,state,first_name,profile) values(${other},'ntwrk','other-member','active','Bo','{}')`;
+  await sql`insert into network.members(id,app_id,person_id,name,age,home_city,account_status) values('other-member','ntwrk',${other},'Bo',30,'nyc','active')`;
+  const http = await reviewHttp(async () => binding);
+  const receipts = async (id: string) => JSON.stringify((await sql`select action_receipts from platform.inbound where id=${`msg:blooio:${id}`}`)[0]?.action_receipts ?? {});
+  try {
+    let n = 0;
+    const attempt = async (label: string, turn: (id: string, body: string) => Promise<void>) => {
+      const shown = `wrong-show-${++n}`, decided = `wrong-decide-${n}`;
+      await turn(shown, "show my suggestions");
+      await turn(decided, text);
+      expect([label, (await http.post("preview", shown, b.id)).status]).toEqual([label, 403]);
+      expect([label, (await http.post("decide", decided, b.id, { text })).status]).toEqual([label, 403]);
+      expect(await receipts(decided), label).not.toContain(b.id);
+    };
+    for (const wrong of [{ userId: "other" }, { organizationId: "other" }, { chatId: "other" }]) {
+      binding = { ...own, ...wrong };
+      await attempt(Object.keys(wrong)[0]!, (id, body) => storedTurn(id, body));
+    }
+    binding = own;
+    await attempt("app", (id, body) => storedTurn(id, body, "friends", "owned-friends-member"));
+    await attempt("person", (id, body) => storedTurn(id, body, "ntwrk", "other-member", "other-phone-hash"));
+    expect(await facets()).toHaveLength(0);
+    expect((await sql<{ status: string }[]>`select status from platform.profile_suggestions where batch_id=${b.id}`).map(r => r.status)).toEqual(["proposed"]);
+    await storedTurn("owner-accept", text);
+    expect((await http.post("decide", "owner-accept", b.id, { text })).body).toMatchObject({ kind: "saved", reviewText: "1 saved; 0 rejected." });
+    expect(await facets()).toHaveLength(1);
+  } finally { await http.stop(); }
+});
+
+test("HTTP edit and scope change come back as a new preview, never as saved; the old revision then decides nothing; only the exact new command saves", async () => {
+  const b = (await store.propose(owner, input(), now))!;
+  const http = await reviewHttp(boundIdentity);
+  try {
+    let n = 0;
+    const decide = async (text: string) => { const id = `step-${++n}`; await storedTurn(id, text); return http.post("decide", id, b.id, { text }); };
+    const edited = await decide(`edit ${b.id}.1 1: I enjoy indoor climbing`);
+    expect(edited.status).toBe(200);
+    expect(edited.body).toMatchObject({ kind: "preview", batch: { id: b.id, revision: 2, suggestions: [{ value: "I enjoy indoor climbing", scope: "agent_private" }] } });
+    expect(edited.body.reviewText).toContain("nothing saved yet");
+    expect(edited.body.reviewText).toContain(`accept ${b.id}.2 1 private`);
+    expect(await facets()).toHaveLength(0);
+    expect((await decide(`accept ${b.id}.1 1 private`)).status).toBe(403);
+    const scoped = await decide(`accept ${b.id}.2 1 matching`);
+    expect(scoped.status).toBe(200);
+    expect(scoped.body).toMatchObject({ kind: "preview", batch: { revision: 3, suggestions: [{ value: "I enjoy indoor climbing", scope: "matchable" }] } });
+    expect(scoped.body.reviewText).toContain("nothing saved yet");
+    expect(scoped.body.reviewText).toContain("; matching)");
+    expect(await facets()).toHaveLength(0);
+    expect((await decide(`accept ${b.id}.2 1 matching`)).status).toBe(403);
+    expect((await decide(`accept ${b.id}.3 1 matching`)).body).toMatchObject({ kind: "saved", reviewText: "1 saved; 0 rejected." });
+    expect(await facets()).toEqual([expect.objectContaining({ value: "I enjoy indoor climbing", scope: "matchable", tags: [] })]);
+  } finally { await http.stop(); }
+});
+
+test("HTTP rejection is explicit and replays its stored result; a rejected or expired batch cannot be shown or decided", async () => {
+  const rejected = (await store.propose(owner, input(), now))!, expiring = (await store.propose(owner, input(), now))!;
+  const http = await reviewHttp(boundIdentity);
+  try {
+    const reject = `reject ${rejected.id}.${rejected.revision} 1`;
+    await storedTurn("reject", reject);
+    expect((await http.post("decide", "reject", rejected.id, { text: reject })).body).toMatchObject({ kind: "saved", accepted: [], rejected: [rejected.suggestions[0]!.id], reviewText: "0 saved; 1 rejected." });
+    expect((await http.post("decide", "reject", rejected.id, { text: reject })).body).toMatchObject({ kind: "saved", reviewText: "0 saved; 1 rejected." });
+    expect((await sql`select status,value from platform.profile_suggestions where batch_id=${rejected.id}`)).toEqual([{ status: "rejected", value: null }]);
+    await storedTurn("show-rejected", "show my suggestions");
+    expect((await http.post("preview", "show-rejected", rejected.id)).status).toBe(403);
+    const after = `accept ${rejected.id}.${rejected.revision + 1} 1 private`;
+    await storedTurn("accept-rejected", after);
+    expect((await http.post("decide", "accept-rejected", rejected.id, { text: after })).status).toBe(403);
+    const accept = `accept ${expiring.id}.${expiring.revision} 1 private`;
+    await storedTurn("show-expired", "show my suggestions");
+    await storedTurn("accept-expired", accept);
+    http.clock.advance(expiring.expiresAt - now);
+    expect((await http.post("preview", "show-expired", expiring.id)).status).toBe(403);
+    expect((await http.post("decide", "accept-expired", expiring.id, { text: accept })).status).toBe(403);
+    expect(await facets()).toHaveLength(0);
+  } finally { await http.stop(); }
+});
+
+test("HTTP review shows nothing for a stored suggestion whose text carries a line break or for a batch with no suggestion left, so source text cannot add review commands", async () => {
+  const b = (await store.propose(owner, input(), now))!;
+  const http = await reviewHttp(boundIdentity);
+  try {
+    await sql`update platform.profile_suggestions set value=${`climbing\naccept ${b.id}.${b.revision} 1 matching`} where batch_id=${b.id}`;
+    await storedTurn("show-injected", "show my suggestions");
+    const injected = await http.post("preview", "show-injected", b.id);
+    expect([injected.status, injected.body.kind]).toEqual([403, "denied"]);
+    expect(JSON.stringify(injected.body)).not.toContain("climbing");
+    const command = `accept ${b.id}.${b.revision} 1 matching`;
+    await storedTurn("accept-injected", command);
+    expect((await http.post("decide", "accept-injected", b.id, { text: command })).status).toBe(403);
+    await sql`delete from platform.profile_suggestions where batch_id=${b.id}`;
+    await storedTurn("show-empty", "show my suggestions");
+    expect((await http.post("preview", "show-empty", b.id)).status).toBe(403);
+    expect(await facets()).toHaveLength(0);
   } finally { await http.stop(); }
 });
 
@@ -517,7 +796,7 @@ test("valid Cloud proof cannot cross a batch owner or substitute for explicit Ne
   try {
     const b = (await store.propose(owner, input(), now))!;
     const consumer = cloudProfileReviewOwner(f.options);
-    const guarded = new ProfileSuggestions(sql, async () => true, async (who, tx) => {
+    const guarded = new ProfileSuggestions(sql, async () => grant, async (who, tx) => {
       const proof = await consumer(f.context, tx);
       return !!proof && who.userId === proof.userId && who.organizationId === proof.organizationId && who.chatId === proof.chatId;
     });
@@ -526,7 +805,7 @@ test("valid Cloud proof cannot cross a batch owner or substitute for explicit Ne
     expect(await facets()).toHaveLength(0);
     const same = { ...owner, ...f.identity };
     const sourceDenied = new ProfileSuggestions(sql, async () => false);
-    const privateStore = new ProfileSuggestions(sql, async () => true);
+    const privateStore = new ProfileSuggestions(sql, async () => grant);
     const ownBatch = (await privateStore.propose(same, input(), now))!;
     expect(await sourceDenied.decide(same, { batchId: ownBatch.id, revision: 1, decisions: [{ suggestionId: ownBatch.suggestions[0]!.id, action: "accept" }] }, now)).toEqual({ kind: "denied" });
     expect(await facets()).toHaveLength(0);
@@ -556,12 +835,19 @@ test("HTTP cannot save after proof or batch expiry during asynchronous source au
     await storedTurn(expires, text);
     let clock: SimClock;
     const http = await reviewHttp(async turn => ({ ...(await boundIdentity(turn, sql))!, validUntil: now + (expires === "proof" ? 1 : 120_000) }),
-      async () => { clock.advance(expires === "proof" ? 2 : 60_000); return true; });
+      async () => { clock.advance(expires === "proof" ? 2 : 60_000); return grant; });
     clock = http.clock;
     try {
-      expect((await http.post("decide", expires, b.id, { text })).status).toBe(503);
+      const answer = await http.post("decide", expires, b.id, { text });
       expect(await facets()).toHaveLength(0);
-      expect((await sql`select value,status from platform.profile_suggestions where batch_id=${b.id}`)[0]).toMatchObject({ value: "I enjoy climbing", status: "proposed" });
+      const [row] = await sql`select value,status from platform.profile_suggestions where batch_id=${b.id}`;
+      if (expires === "proof") {
+        expect(answer.status).toBe(503);
+        expect(row).toMatchObject({ value: "I enjoy climbing", status: "proposed" });
+      } else {
+        expect(answer).toEqual({ status: 403, body: { kind: "denied", reviewText: "I couldn’t apply that review. Ask to see your current suggestions." } });
+        expect(row).toMatchObject({ value: null, status: "expired" });
+      }
     } finally { await http.stop(); }
   }
 });
@@ -570,7 +856,7 @@ test("a fence expiring after database writes rolls the full review transaction b
   const b = (await store.propose(owner, input(), now))!;
   for (const editing of [false, true]) {
     let checks = 0;
-    const guarded = new ProfileSuggestions(sql, async () => true, undefined, { now: () => now, valid: () => ++checks < (editing ? 3 : 4) });
+    const guarded = new ProfileSuggestions(sql, async () => grant, undefined, { now: () => now, valid: () => ++checks < (editing ? 3 : 4) });
     await expect(guarded.decide(owner, { batchId: b.id, revision: 1, decisions: [{ suggestionId: b.suggestions[0]!.id, action: "accept",
       ...(editing ? { editedValue: "I enjoy hiking" } : {}) }] }, now)).rejects.toThrow("expired");
     expect(await facets()).toHaveLength(0);
@@ -582,7 +868,7 @@ test("a fence expiring after database writes rolls the full review transaction b
 async function scopedPending(f: Awaited<ReturnType<typeof ownerProofFixture>>) {
   const who = { ...owner, ...f.identity };
   const connectionId = randomUUID();
-  const batch = (await new ProfileSuggestions(sql, async () => true).propose(who, input([{ ...candidate(), connectionId }]), now))!;
+  const batch = (await new ProfileSuggestions(sql, async () => grant).propose(who, input([{ ...candidate(), connectionId }]), now))!;
   const text = `accept ${batch.id}.1 1 private`;
   f.context.batchId = batch.id;
   f.context.commandSha256 = digest(text);
@@ -597,22 +883,23 @@ async function reviewCommandTurn(f: Awaited<ReturnType<typeof ownerProofFixture>
     where id=${`msg:blooio:${id}`}`;
 }
 
-test("review bootstrap defaults off and requires an explicit isolated route, origin and key", async () => {
+test("review bootstrap is on exactly with the isolated route, origin and key, and needs no switch", async () => {
   expect(profileReviewFromEnv({}, () => now)).toEqual({});
-  expect(profileReviewFromEnv({ NETWORK_PROFILE_REVIEW_ENABLED: "0" }, () => now)).toEqual({});
-  expect(() => profileReviewFromEnv({ NETWORK_PROFILE_REVIEW_ENABLED: "yes" }, () => now)).toThrow();
-  expect(() => profileReviewFromEnv({ NETWORK_PROFILE_REVIEW_ENABLED: "1" }, () => now)).toThrow();
+  expect(profileReviewFromEnv({ NETWORK_CLOUD_DELIVERY_ORIGIN: "https://cloud.example", SERVICE_TURN_SECRET: httpSecret }, () => now)).toEqual({});
   const f = await ownerProofFixture();
   try {
-    const configured = profileReviewFromEnv({ NETWORK_PROFILE_REVIEW_ENABLED: "1", PLATFORM_ENV: "staging",
-      NETWORK_ROUTE_AUTHORITY_POLICY: JSON.stringify(f.policy), NETWORK_CLOUD_DELIVERY_ORIGIN: "https://cloud.example", SERVICE_TURN_SECRET: httpSecret }, () => now);
+    const route = { PLATFORM_ENV: "staging", NETWORK_ROUTE_AUTHORITY_POLICY: JSON.stringify(f.policy) };
+    expect(profileReviewFromEnv({ ...route, SERVICE_TURN_SECRET: httpSecret }, () => now)).toEqual({});
+    expect(profileReviewFromEnv({ ...route, NETWORK_CLOUD_DELIVERY_ORIGIN: "https://cloud.example" }, () => now)).toEqual({});
+    const configured = profileReviewFromEnv({ ...route,
+      NETWORK_CLOUD_DELIVERY_ORIGIN: "https://cloud.example", SERVICE_TURN_SECRET: httpSecret }, () => now);
     expect(typeof configured.profileSuggestionIdentity).toBe("function");
     expect(typeof configured.profileSuggestionAuthorization).toBe("function");
     expect(f.calls).toBe(0);
   } finally { await f.stop(); }
 });
 
-test("the normal service constructor registers the opted-in factory and still defaults missing consent to denied", async () => {
+test("the normal service constructor registers the configured factory and still defaults missing consent to denied", async () => {
   const f = await ownerProofFixture();
   const p = await scopedPending(f);
   const originalFetch = globalThis.fetch;
@@ -621,7 +908,7 @@ test("the normal service constructor registers the opted-in factory and still de
     const url = new URL(input instanceof Request ? input.url : String(input));
     return originalFetch(url.origin === "https://review-bootstrap.invalid" ? new URL(url.pathname, f.options.origin) : input, init);
   };
-  const http = await reviewHttp(undefined, undefined, f.policy, { NETWORK_PROFILE_REVIEW_ENABLED: "1", NETWORK_CLOUD_DELIVERY_ORIGIN: "https://review-bootstrap.invalid" });
+  const http = await reviewHttp(undefined, undefined, f.policy, { NETWORK_CLOUD_DELIVERY_ORIGIN: "https://review-bootstrap.invalid" });
   try {
     const args = { text: p.text, networkAuthority: f.policy.authority };
     expect((await http.post("decide", "owner-proof", p.batch.id, args)).status).toBe(403);
@@ -648,7 +935,7 @@ test("source authorization requires this exact transaction's canonical owner and
       expect(await callbacks.profileSuggestionAuthorization(p.who, p.consent, sql)).toBe(false);
       for (const wrong of [{ windowStart: p.consent.windowStart - 1 }, { retainOnDisconnect: true }, { connectionId: randomUUID() }, { source: "google_calendar" as const }])
         expect(await callbacks.profileSuggestionAuthorization(p.who, { ...p.consent, ...wrong }, tx)).toBe(false);
-      expect(await callbacks.profileSuggestionAuthorization(p.who, p.consent, tx)).toBe(true);
+      expect(await callbacks.profileSuggestionAuthorization(p.who, p.consent, tx)).toEqual(grant);
     });
     await sql.begin(async tx => { expect(await callbacks.profileSuggestionAuthorization(p.who, p.consent, tx)).toBe(false); });
   } finally { await f.stop(); }
@@ -786,7 +1073,7 @@ test("collection failure or authority expiry rolls pending data and idempotency 
   await storedTurn("collect-rollback", collectionText(batchId));
   const claim = { batchId, turnId: "msg:blooio:collect-rollback", requestSha256: digest("rollback") };
   let checks = 0;
-  const guarded = new ProfileSuggestions(sql, async () => true, undefined, { now: () => now, valid: () => ++checks < 3 });
+  const guarded = new ProfileSuggestions(sql, async () => grant, undefined, { now: () => now, valid: () => ++checks < 3 });
   await expect(guarded.propose(owner, input(), now, claim)).rejects.toThrow("expired");
   expect(await sql`select id from platform.profile_suggestion_batches`).toHaveLength(0);
   expect(await sql`select id from platform.profile_suggestions`).toHaveLength(0);
@@ -818,7 +1105,7 @@ test("collection replay retains its source deadline instead of rebinding owner a
   await store.propose(owner, input(), now, claim);
   let ownerReads = 0;
   let sourceRead = false;
-  const guarded = new ProfileSuggestions(sql, async () => { sourceRead = true; return true; }, async () => {
+  const guarded = new ProfileSuggestions(sql, async () => { sourceRead = true; return grant; }, async () => {
     ownerReads++; sourceRead = false; return true;
   });
   expect((await guarded.propose(owner, input(), now, claim))?.id).toBe(batchId);
@@ -891,9 +1178,20 @@ async function contextFixture() {
   const input: LearningConsentContextRequest = { version: 1, purpose: 'network_profile_learning_v1', selectionSha256: NETWORK_LEARNING_ENTRY_SELECTION_SHA256,
     review: { version: 1, channel: 'blooio', messageId: 'consent-identity', app: 'ntwrk', memberId: 'owned-member', batchId,
       action: 'collect', commandSha256: digest(`collect ${batchId}`), networkAuthority: f.policy.authority, requestNonce: randomUUID() } };
-  const http = await reviewHttp(undefined, undefined, f.policy);
+  const http = await reviewHttp(boundIdentity, undefined, f.policy);
   return { f, http, input, async stop() { await http.stop(); await f.stop(); } };
 }
+
+test("with profile review off the membership context signs no learning consent proof", async () => {
+  const t = await contextFixture();
+  const off = await reviewHttp(undefined, undefined, t.f.policy);
+  try {
+    expect((await t.http.context(t.input)).status).toBe(200);
+    const r = await off.context(t.input);
+    expect(r.status).toBe(503);
+    expect(r.body).toEqual({ error: "identity_unavailable" });
+  } finally { await off.stop(); await t.stop(); }
+});
 
 test("membership context derives and signs only the current Network person without consent or Cloud identity inputs", async () => {
   const t = await contextFixture();
@@ -986,7 +1284,7 @@ test("membership context refuses bans, holds and minors and caps proof at parent
     const people = new PgPeopleStore(sql);
     const membership = await people.getMembership(owner.personId, owner.app);
     if (!membership) throw new Error("Expected the verified profile fixture membership");
-    expect(await people.saveSignupAge(membership, "+12125550100", "fixture-phone-hash", { initialMinorAge: 17, eligibleAt: now + 1 })).toBe(true);
+    expect(await people.saveSignupAge(membership, "+12125550100", "fixture-phone-hash", { initialMinorAge: 17, eligibleAt: now + 1 }, now)).toBe(true);
     expect((await t.http.context(t.input)).status).toBe(403);
     expect(await store.propose(owner, input(), now)).toBeNull();
     expect(await store.propose(owner, input(), now + 1)).toMatchObject({ status: "pending" });
@@ -1002,7 +1300,7 @@ test("membership context refuses bans, holds and minors and caps proof at parent
 
 test("scoped collection endpoint enforces shared grammar and exact original scope through the owning SQL transaction", async () => {
   const f = await ownerProofFixture();
-  const http = await reviewHttp(async () => ({ userId: owner.userId, organizationId: owner.organizationId, chatId: owner.chatId }), async () => true, f.policy);
+  const http = await reviewHttp(async () => ({ userId: owner.userId, organizationId: owner.organizationId, chatId: owner.chatId }), async () => grant, f.policy);
   try {
     for (const [index, vector] of COLLECTION_COMMAND_VECTORS.entries()) {
       const batchId = randomUUID(), text = vector.text.replaceAll("11111111-1111-4111-8111-111111111111", batchId);
@@ -1066,7 +1364,7 @@ test("claimed collection store and Cloud owner independently refuse help, scope 
     await reviewCommandTurn(f, "independent-collect", text);
     const claim = { batchId, turnId: "msg:blooio:independent-collect", requestSha256: digest("independent envelope"), commandSha256: digest(text) };
     let sourceCalls = 0;
-    const guarded = new ProfileSuggestions(sql, async () => { sourceCalls++; return true; });
+    const guarded = new ProfileSuggestions(sql, async () => { sourceCalls++; return grant; });
     expect(await guarded.propose(owner, { ...proposal, timezone: "UTC" }, now, claim)).toBeNull();
     expect(sourceCalls).toBe(0);
     const context: SuggestionTurnIdentity = { ...f.context, action: "collect", batchId, messageId: "independent-collect",

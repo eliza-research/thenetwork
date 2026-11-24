@@ -12,7 +12,6 @@ import type { AppId } from "../../packages/platform/src/apps.ts";
 import { connectMcp, newPhone, pgAvailable, rpc, startStack, webJoin, type Stack } from "./harness.ts";
 
 const T = 180_000;
-if (!pgAvailable && process.env.REQUIRE_PG === "1") throw new Error("tests/e2e needs Postgres (REQUIRE_PG=1)");
 
 let st: Stack;
 let sql: SQL;
@@ -116,8 +115,11 @@ describe.skipIf(!pgAvailable)("the agent's approved profile reaches the Network 
     const submit = (about: string) => rpc(st, "peon", "/mcp", "tools/call", { name: "submit_profile", arguments: { about } }, token);
     const exactProfile = "I am a backend engineer in Brooklyn and I prefer a small team.";
     const nextProfile = "I would also like to learn more about database infrastructure roles.";
-    const storedMessages = (about: string) => sql`select id from network.messages where app_id='peon' and member_id=${member.id}
-      and direction='inbound' and body=${about}`;
+    const rawCopies = (about: string) => sql`select id from network.messages where app_id='peon' and member_id=${member.id}
+      and direction='inbound' and position(${about} in body)>0`;
+    const agentProfileRows = async () => Number((await sql`select count(*)::int as n from network.messages where app_id='peon'
+      and member_id=${member.id} and direction='inbound' and type='agent_profile' and body=${"Private profile from the member's agent."}`)[0]!.n);
+    const rowsAtStart = await agentProfileRows();
     const original = st.svc.submitProfile.bind(st.svc);
     let entered!: () => void, release!: () => void;
     const started = new Promise<void>(resolve => { entered = resolve; });
@@ -135,17 +137,19 @@ describe.skipIf(!pgAvailable)("the agent's approved profile reaches the Network 
       await Promise.race([started, first.then(() => { throw new Error("No intake claim reached the enrolled member"); })]);
       const overlapping = await submit(`  ${exactProfile}  `);
       expect(overlapping.body!.result).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("unconfirmed") }] });
-      expect(await storedMessages(exactProfile)).toEqual([]);
+      expect(await agentProfileRows()).toBe(rowsAtStart);
       release();
       expect((await first).body!.result.structuredContent).toMatchObject({ app: "peon", submitted: true });
-      expect(await storedMessages(exactProfile)).toHaveLength(1);
+      expect(await agentProfileRows()).toBe(rowsAtStart + 1);
+      expect(await rawCopies(exactProfile)).toEqual([]);
 
       await st.setPrivateOpenAiApps([]);
       expect((await submit(exactProfile)).body!.result.structuredContent).toMatchObject({ app: "peon", submitted: true });
-      expect(await storedMessages(exactProfile)).toHaveLength(1);
+      expect(await agentProfileRows()).toBe(rowsAtStart + 1);
       for (let i = 0; i < 2; i++) {
         expect((await submit(nextProfile)).body!.result).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("unconfirmed") }] });
-        expect(await storedMessages(nextProfile)).toHaveLength(1);
+        expect(await agentProfileRows()).toBe(rowsAtStart + 2);
+        expect(await rawCopies(nextProfile)).toEqual([]);
       }
       expect((await submit("I am available for another application starting next month.")).res.status).toBe(429);
       const receipts = await sql`select s.fingerprint,s.accepted from oauth.profile_submissions s

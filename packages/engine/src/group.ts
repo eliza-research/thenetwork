@@ -1,7 +1,3 @@
-// Group composer (Sections 14.6, 33.7): the coherent circles of a candidate pool, built by the one
-// circle builder (match/circles.ts) from the lane's bounded search edges, ranked by least misery and
-// admitted through the generated groupFormation machine. Produces a primary group plus ranked
-// alternates for quorum backfill.
 import type { Category, City, MemberId } from "@thenetwork/core";
 import {
   alternateAllowed, groupLocationAllowed, initial, poolEligible, step,
@@ -11,14 +7,13 @@ import { laneLimits, laneShape, type MatchLane } from "../../core/src/generated/
 import { pairValueScale } from "../../core/src/generated/pairValue.ts";
 import { groupHostEligible } from "../../core/src/generated/groupHost.ts";
 import { isMinor, memberReason } from "./filters.ts";
-import { buildCircles, type Circle } from "./match/circles.ts";
+import { buildCircles, repeatTables, type Circle } from "./match/circles.ts";
 import { compareText, type EntityId, type MatchProfile } from "./match/profile.ts";
 import { mutualEdges, type MatchEdge } from "./match/search.ts";
 import type { GroupStats, Role } from "./types.ts";
 import { pairKey, type World } from "./world.ts";
 
 export interface ComposeOptions {
-  /** Ordered candidate pool (already member-eligible), with anchor affinity per member. */
   pool: { id: MemberId; affinity: number }[];
   forced?: MemberId[];
   category: Category;
@@ -30,34 +25,29 @@ export interface ComposeOptions {
   format?: "small_group" | "event";
   alternates: number;
 }
-export interface ComposedGroup {
+interface ComposedGroup {
   primary: MemberId[]; alternates: MemberId[]; roles: Record<MemberId, Role>;
   stats: GroupStats; city: City;
   lane: MatchLane; entities: Record<MemberId, EntityId>;
 }
 
-/** The lane a group or plan category forms circles in. */
 export function groupLane(category: Category): MatchLane {
   return category === "romance" ? "Date" : category === "professional" ? "Intro" : "Friend";
 }
 
-/** Only a Peers lane with a circle maximum forms groups: never romance, never a two-sided lane. */
 export const formsGroups = (lane: MatchLane): boolean => laneShape(lane) === "Peers" && laneLimits(lane).circleMaximum > 0;
 
-/** A pool's lane profiles and eligible edges. */
-export interface PoolGraph {
+interface PoolGraph {
   readonly lane: MatchLane;
   readonly profiles: ReadonlyMap<MemberId, MatchProfile>;
   readonly edges: readonly MatchEdge[];
-  /** Member pairs of `edges`, best value first. */
   readonly pairs: readonly { readonly a: MemberId; readonly b: MemberId; readonly value: number }[];
-  /** The value of an edge in this pool. */
   value(a: MemberId, b: MemberId): number | undefined;
+  readonly incumbents: readonly (readonly EntityId[])[];
 }
 
 type PoolPairScore = (a: MatchProfile, b: MatchProfile, key: string) => number | undefined;
 
-/** Check each unordered pair in a pool whose size is bounded by its caller. */
 function scorePoolPairs(profiles: readonly MatchProfile[], score: PoolPairScore): MatchEdge[] {
   const edges: MatchEdge[] = [];
   for (const [i, first] of profiles.entries()) {
@@ -72,7 +62,6 @@ function scorePoolPairs(profiles: readonly MatchProfile[], score: PoolPairScore)
   return edges.sort((x, y) => y.value - x.value || compareText(x.key, y.key));
 }
 
-/** Use bounded discovery searches, or score the pairs directly when a caller has a bounded slot pool. */
 export function poolGraph(w: World, lane: MatchLane, ids: readonly MemberId[], score?: PoolPairScore): PoolGraph {
   const profiles = new Map<MemberId, MatchProfile>();
   for (const id of ids) {
@@ -92,20 +81,18 @@ export function poolGraph(w: World, lane: MatchLane, ids: readonly MemberId[], s
     if (row) row.set(y, value); else links.set(x, new Map([[y, value]]));
   };
   for (const p of pairs) { link(p.a, p.b, p.value); link(p.b, p.a, p.value); }
-  return { lane, profiles, edges, pairs, value: (a, b) => links.get(a)?.get(b) };
+  return {
+    lane, profiles, edges, pairs, value: (a, b) => links.get(a)?.get(b), incumbents: repeatTables(w, id => profiles.get(id)),
+  };
 }
 
-/** A circle of pool members with the evidence and limits that admit it (spec/groupFormation.md). */
 export interface GroupCircle { readonly members: readonly MemberId[]; readonly evidence: CircleEvidence; readonly limits: CircleLimits }
 
-// spec/groupFormation.md, "A primary circle values every pair and keeps a narrow standing spread":
-// a caller of its own size passes its own minimum and maximum.
 function circleLimits(lane: MatchLane, minimum: number, maximum: number): CircleLimits {
   const limits = laneLimits(lane);
   return { minimum, maximum: Math.min(maximum, limits.circleMaximum), pairFloor: limits.circlePairFloor, parityBand: limits.rules.parityBand };
 }
 
-/** Coherent circles of `minimum`..`maximum` pool members that contain every forced member; disjoint, deterministic. */
 export function poolCircles(graph: PoolGraph, forced: readonly MemberId[], minimum: number, maximum: number,
   rankCircle?: (circle: GroupCircle) => number | undefined): GroupCircle[] {
   if (!formsGroups(graph.lane)) return [];
@@ -120,14 +107,18 @@ export function poolCircles(graph: PoolGraph, forced: readonly MemberId[], minim
     return { members: [...forced, ...members.filter(id => !forced.includes(id))], evidence: circle.evidence, limits };
   };
   const containsForced = (circle: Circle) => forcedProfiles.every(profile => circle.members.includes(profile.id));
-  const circles = buildCircles(graph.edges, byEntity, { ...lane, circleMinimum: limits.minimum, circleMaximum: limits.maximum },
-    profile => profile.capacity, rankCircle && (c => containsForced(c) ? rankCircle(asGroup(c)) : undefined));
-  return circles
+  const buildLimits = { ...lane, circleMinimum: limits.minimum, circleMaximum: limits.maximum };
+  const incumbents = graph.incumbents
+    .map(ids => ids.filter(id => byEntity.has(id)))
+    .filter(ids => forcedProfiles.every(profile => ids.includes(profile.id)));
+  return buildCircles(graph.edges, byEntity, buildLimits, profile => profile.capacity, {
+    rankCircle: rankCircle && (c => containsForced(c) ? rankCircle(asGroup(c)) : undefined), incumbents,
+    forced: forcedProfiles.map(profile => profile.id),
+  })
     .filter(containsForced)
     .map(asGroup);
 }
 
-/** The pair of two pool members as a circle of two (an activity-partner plan), when they share an edge. */
 export function pairCircle(graph: PoolGraph, a: MemberId, b: MemberId): GroupCircle | undefined {
   const pa = graph.profiles.get(a), pb = graph.profiles.get(b), value = graph.value(a, b);
   if (!pa || !pb || value === undefined || !formsGroups(graph.lane)) return undefined;
@@ -142,7 +133,6 @@ export function pairCircle(graph: PoolGraph, a: MemberId, b: MemberId): GroupCir
   };
 }
 
-/** spec/groupFormation.md, "A primary group has a common place and meets its requirements": choose the circle. */
 export function chooseCircle(searching: Formation, circle: GroupCircle, hasHost: boolean): Formation {
   return step(searching, {
     type: "choosePrimary", members: [...circle.members], meetsMinimum: circle.members.length >= circle.limits.minimum,
@@ -150,20 +140,17 @@ export function chooseCircle(searching: Formation, circle: GroupCircle, hasHost:
   });
 }
 
-/** u_i = fit_i x (0.5 + 0.5 x mean_j pair(i, j)), each pair clamped to [0, 1]: the least-misery member utility. */
 export function leastMiseryUtility(fit: number, pairs: readonly number[]): number {
   const clamped = pairs.map(p => Math.max(0, Math.min(1, p)));
   const mean = clamped.length ? clamped.reduce((s, x) => s + x, 0) / clamped.length : 0;
   return fit * (0.5 + 0.5 * mean);
 }
 
-/** The order-free key of a circle's members: sorted ids, comma-joined. */
 export const circleKey = (members: readonly MemberId[]): string => [...members].sort(compareText).join(",");
 
 interface Ranked { circle: GroupCircle; min: number; mean: number; city: City; hours: number; hasHost: boolean }
 
 export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | null {
-  // spec/groupFormation.md, "Only eligible adults enter the group search"
   const forced = opts.forced ?? [];
   const lane = groupLane(opts.category);
   const searching = step(initial, { type: "startSearch", forcedEligible: forced.every(id => !isMinor(w, id)), hostRequired: opts.needHost });
@@ -194,7 +181,6 @@ export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | nu
       let formation = chooseCircle(searching, best.circle, best.hasHost);
       if (formation.phase !== "PrimaryChosen") continue;
       const primary = formation.primary;
-      // spec/groupFormation.md, "An alternate can join the primary group in its city"
       const alternates = poolIds
         .flatMap(id => {
           const values = primary.map(p => graph.value(p, id));
@@ -206,8 +192,6 @@ export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | nu
           return [{ id, compatible, sameCityOverlap, low: Math.min(...known), fit: affinity.get(id) ?? 0 }];
         })
         .sort((x, y) => y.low - x.low || y.fit - x.fit || compareText(x.id, y.id));
-      // In that order, an alternate is kept only with a pair value (the one pair gate) with every
-      // alternate kept before it, so any backfill values every pair (spec/groupFormation.md).
       const wanted = Math.max(0, Math.trunc(opts.alternates));
       formation = step(formation, { type: "openAlternates", alternateLimit: wanted });
       for (const alt of alternates) {
@@ -245,8 +229,6 @@ export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | nu
     }
     return null;
   };
-  // Each member lands in at most one circle, so when no circle without a host can serve, try again
-  // with each pool host forced in, in pool order (each call stays within the pool's search edges).
   const group = admit(rank(poolCircles(graph, forced, opts.minSize, opts.maxSize)));
   if (group || !opts.needHost) return group;
   for (const host of poolIds) {

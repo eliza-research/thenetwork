@@ -1,0 +1,26 @@
+{
+  "origin": "journey \"Story: Handle my pending messages in order while prioritizing consent\" / \"Completing a STOP clears earlier ordinary rows in the same write\"",
+  "seed": 1,
+  "trace": [
+    [
+      "sender-a",
+      {
+        "type": "startWebhook",
+        "attempts": 6,
+        "stopCommand": true
+      }
+    ],
+    [
+      "sender-a",
+      {
+        "type": "recordHandled"
+      }
+    ],
+    [
+      "sender-a",
+      {
+        "type": "recordCompletion"
+      }
+    ]
+  ]
+}

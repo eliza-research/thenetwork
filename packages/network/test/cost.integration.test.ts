@@ -31,7 +31,7 @@ test("each relay Clef call that reached Workers AI is a cost row for its app; a 
   const sink=new Tracked(sql),ledger=new CostLedger({sink,clock,rates:costRatesFromEnv({})});
   const meter=ledger.relayClefEvent("slop");
   meter({model:"clef-flash",outcome:"ok",ms:120,inputTokens:1500,hold:["scam"],block:[],uncertain:false});
-  meter({model:"clef-flash",outcome:"timeout",ms:2500,hold:[],block:[],uncertain:false,fallbackHold:true});
+  meter({model:"clef-flash",outcome:"timeout",ms:2500,hold:[],block:[],uncertain:false});
   meter({model:"clef-flash",outcome:"cached",ms:1,hold:[],block:[],uncertain:false});
   meter({model:"clef-flash",outcome:"miss",ms:1,hold:[],block:[],uncertain:false});
   await sink.flush();
@@ -49,8 +49,7 @@ test("each relay Clef call that reached Workers AI is a cost row for its app; a 
   await sink.flush();
   expect((await sql`select app_id,cost_usd::float8 as usd from network.cost_ledger`).map((r:any)=>[r.app_id,r.usd])).toEqual([["friends",0.0002]]);
 
-  // Without a Workers AI token the relay is rules only: no hook, so no call and no row.
-  expect(relayClassifierFromEnv({},()=>{},ledger)).toBeUndefined();
+  await expect(relayClassifierFromEnv({},()=>{},ledger)("slop")({text:"see you at 7",kind:"text",context:[],met:false})).rejects.toThrow("relay classifier not configured");
 },60_000);
 
 test("llmHooks writes one llm row per priced attempt with the real app and purpose",async()=>{

@@ -1,9 +1,3 @@
-// slop.date onboarding conversation: the read-back, corrections and the next question.
-// The network service runs the loop (docs/results/2026-10-09-slop-onboarding.md "Integration"):
-//   inbound text -> extractSlopProfile (or applyCorrection after a read-back) -> persist slopOnboardTags
-//   -> when every hard field is set and not yet confirmed: send readBack -> otherwise send nextQuestion.
-// Copy rules: one question per message, about the member only; the read-back repeats only what the
-// member said (or the one stated default: straight after an unclear seeks answer), and never identity, orientation, age, kids, faith or anything the rules did not read.
 import { parseReply } from "@thenetwork/core";
 import {
   confirmationAfterAnswer, countAfterPrompt, initial, nextQuestionReason, readbackAffirmed, readbackReason, step,
@@ -11,11 +5,9 @@ import {
 import type { Gender } from "./profile.ts";
 import { SLOP_ASK_QUESTIONS } from "./copy.ts";
 import {
-  extractSlopProfile, finalize, HARD_FIELDS, hasField, MAX_ASKS_PER_QUESTION, type Dealbreaker, type DateActivity, type ExtractOptions, type OnboardField, type SlopOnboarding,
+  extractSlopProfile, finalize, HARD_FIELDS, hasField, MAX_ASKS_PER_QUESTION, seeksAnswerOf, transStatusOf, type Dealbreaker, type DateActivity, type ExtractOptions, type OnboardField, type SlopOnboarding,
 } from "./extract.ts";
 export { MAX_ASKS_PER_QUESTION, readbackReason as SLOP_READBACK };
-
-// ------------------------------------------------------------------------------------------ read-back
 
 const PLURAL: Record<Gender, string> = { woman: "women", man: "men", nonbinary: "nonbinary people" };
 const DB_PHRASE: Record<Dealbreaker, string> = {
@@ -29,9 +21,7 @@ const INTEREST_PHRASE: Record<string, string> = { rock_music: "rock", electronic
 const MARKET_NAME: Record<string, string> = { nyc: "NYC", sf: "SF", la: "LA" };
 const list = (xs: string[]) => (xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
 
-/** Each fact the read-back states, with the field it comes from (the evals check every one was stated). */
 export interface ReadBackFact { field: OnboardField; text: string }
-/** Fields the read-back may repeat. Identity, orientation, age, values (kids, faith, smoking, drinking) never. */
 export const READBACK_FIELDS: readonly OnboardField[] = ["gender", "seeks", "ageRange", "distance", "location", "goal", "dealbreakers", "interests", "activities"];
 const MIN_CONF = 0.6;
 
@@ -40,8 +30,9 @@ export function readBackFacts(p: SlopOnboarding): ReadBackFact[] {
   if (p.minor || p.declined) return out;
   const ok = (f?: { confidence: number }) => !!f && f.confidence >= MIN_CONF;
   if (ok(p.gender)) out.push({ field: "gender", text: p.gender!.value === "nonbinary" ? "you're nonbinary" : `you're a ${p.gender!.value}` });
-  if (ok(p.seeks)) {
-    const s = p.seeks!.value;
+  const seeks = seeksAnswerOf(p);
+  if (ok(p.seeks) && seeks) {
+    const s = seeks;
     const who = s.length === 3 ? "people of any gender" : list(s.map(g => PLURAL[g]));
     out.push({ field: "seeks", text: `looking for ${who}` });
   }
@@ -63,11 +54,6 @@ export function readBackFacts(p: SlopOnboarding): ReadBackFact[] {
   return out;
 }
 
-/**
- * A short, warm SMS that repeats what the member told us, for them to confirm or correct:
- * "so: you're a woman looking for men 28-38 within 5 mi of 11211, into climbing and dinner; dealbreakers: smoking. right?"
- * Undefined when there is nothing to read back (and always for a minor or a declined person).
- */
 export function readBack(p: SlopOnboarding): string | undefined {
   const f = readBackFacts(p);
   if (!f.length) return undefined;
@@ -82,27 +68,15 @@ export function readBack(p: SlopOnboarding): string | undefined {
   return `so: ${parts.join("; ")}. right?`;
 }
 
-// ------------------------------------------------------------------------------------------ corrections
-
-/**
- * The member's answer to a read-back: "yep" confirms; "no, 30-40" or "actually women too" changes the
- * field and leaves the profile unconfirmed (the service reads back again). "no" alone changes nothing
- * and stays unconfirmed (the service asks what to fix). A hedged, conditional or questioning answer
- * ("right, maybe", "perfect, if 11211 includes Greenpoint", "right?") never confirms.
- */
 export function applyCorrection(p: SlopOnboarding, text: string, o: ExtractOptions = {}): SlopOnboarding {
   const next = extractSlopProfile([{ text, asked: o.asked }], p, o);
   const changed = JSON.stringify(view(next)) !== JSON.stringify(view(p));
   const reply = parseReply(text);
-  // spec/slopOnboarding.md, "Only a plain yes confirms the read-back"
   const affirmed = readbackAffirmed(reply.answer === "yes", reply.answer === "no",
     reply.constraints.length > 0 || READBACK_QUALIFIER.test(text), BARE_AFFIRMATION.test(text));
-  // spec/slopOnboarding.md, "A correction needs another confirmation"
   return finalize({ ...next, confirmed: confirmationAfterAnswer(changed, affirmed, next.minor || next.declined) });
 }
-/** An affirmation word the reply parser does not know, with nothing after it. */
 const BARE_AFFIRMATION = /^\s*(?:right|correct|exactly|that['’]?s (?:it|right)|you got it|perfect|yup|yep|ya|ye|100|👍)[.!\s]*$/i;
-/** A question, a hedge or a condition anywhere in the answer. */
 const READBACK_QUALIFIER = /\?|\b(?:maybe|idk|unsure|let me check|if|unless|wait)\b/i;
 const view = (p: SlopOnboarding) => ({
   g: p.gender?.value, o: p.orientation?.value, id: p.identity?.value, s: p.seeks?.value, a: p.ageRange?.value, d: p.distance?.value,
@@ -111,18 +85,18 @@ const view = (p: SlopOnboarding) => ({
   age: p.age?.value, minor: p.minor, declined: p.declined, v: Object.fromEntries(Object.entries(p.values).map(([k, x]) => [k, x?.value])),
 });
 
-// ------------------------------------------------------------------------------------------ next question
-
-/** Onboarding questions. The hard ones reuse the pack's ask texts (SLOP_ASK_QUESTIONS) and reasons. */
 export const SLOP_ONBOARD_QUESTIONS: Record<string, { field: OnboardField; text: string }> = {
   slop_age: { field: "age", text: "First, how old are you?" },
   slop_orientation: { field: "orientation", text: SLOP_ASK_QUESTIONS.slop_orientation! },
   slop_seeks: { field: "seeks", text: "Who are you hoping to meet: women, men, nonbinary people, or a mix? Name them so I get it right." },
+  slop_seeks_genders: { field: "seeks", text: "Which genders are you open to dating: women, men, nonbinary people? You can name more than one." },
   slop_gender: { field: "gender", text: "And how do you describe yourself: a woman, a man, nonbinary, or something else?" },
   slop_age_range: { field: "ageRange", text: SLOP_ASK_QUESTIONS.slop_age_range! },
   slop_distance: { field: "distance", text: SLOP_ASK_QUESTIONS.slop_distance! },
   slop_location: { field: "location", text: "What's your zip code or neighborhood? It's only used to work out rough distances." },
   slop_zip: { field: "location", text: SLOP_ASK_QUESTIONS.slop_zip! },
+  slop_trans_openness: { field: "transOpenness", text: "Some members share that they are trans. Are you open to dating trans people? Yes, no, or skip: if you skip, I read it as no." },
+  slop_shown_to: { field: "shownTo", text: "Do you also want to be shown to people who are looking for women, for men, both, or neither?" },
   slop_basics: { field: "dealbreakers", text: SLOP_ASK_QUESTIONS.slop_basics! },
   slop_goal: { field: "goal", text: "And what are you looking for right now: something casual, something long-term, or not sure yet?" },
   slop_interests: { field: "interests", text: "What are you into? A few things you love doing is plenty." },
@@ -130,11 +104,17 @@ export const SLOP_ONBOARD_QUESTIONS: Record<string, { field: OnboardField; text:
   slop_free: { field: "free", text: "Which evenings or weekend times are usually free for you?" },
 };
 
+const TRANS_QUESTION_FOR_TRANS_MEMBER = "Are you open to dating other trans people, or only trans people? Or skip: if you skip, I only suggest people who are not trans.";
+function questionText(p: SlopOnboarding, reason: string): string {
+  return reason === "slop_trans_openness" && transStatusOf(p.identity?.value) === "yes" ? TRANS_QUESTION_FOR_TRANS_MEMBER : SLOP_ONBOARD_QUESTIONS[reason]!.text;
+}
+
 function questionFacts(p: SlopOnboarding) {
   return {
-    ageMissing: !hasField(p, "age"), genderMissing: !hasField(p, "gender"), seeksMissing: !hasField(p, "seeks"),
+    ageMissing: !hasField(p, "age"), genderMissing: !hasField(p, "gender"), seeksMissing: !hasField(p, "seeks"), orientationStated: !!p.orientation,
     ageRangeMissing: !hasField(p, "ageRange"), distanceMissing: !hasField(p, "distance"),
     locationMissing: !hasField(p, "location"), unknownZip: !!p.location?.value.zip && !p.location.value.known,
+    transOpennessMissing: !hasField(p, "transOpenness"), shownToMissing: p.gender?.value === "nonbinary" && !hasField(p, "shownTo"),
     dealbreakersMissing: !hasField(p, "dealbreakers"), goalMissing: !hasField(p, "goal"),
     interestsMissing: !hasField(p, "interests"), activitiesMissing: !hasField(p, "activities"), freeMissing: !hasField(p, "free"),
   };
@@ -144,16 +124,13 @@ function unavailableQuestions(p: SlopOnboarding, skip: readonly string[]) {
   return Object.keys(SLOP_ONBOARD_QUESTIONS).filter(reason => skip.includes(reason) || !((p.askCounts[reason] ?? 0) < MAX_ASKS_PER_QUESTION));
 }
 
-/** The next question when the caller has already handled read-back. */
 export function nextQuestion(p: SlopOnboarding): { reason: string; field: OnboardField; text: string } | undefined {
   if (p.declined || p.minor) return undefined;
   const reason = nextQuestionReason(questionFacts(p), unavailableQuestions(p, []));
-  return reason ? { reason, ...SLOP_ONBOARD_QUESTIONS[reason]! } : undefined;
+  return reason ? { reason, field: SLOP_ONBOARD_QUESTIONS[reason]!.field, text: questionText(p, reason) } : undefined;
 }
 
-/** Route one service prompt from the current profile and its previous prompts. */
 export function nextOnboardingPrompt(p: SlopOnboarding, skip: readonly string[] = []): { reason: string; text: string } | undefined {
-  // spec/slopOnboarding.md, "Age restrictions stop dating onboarding before a prompt"
   const restricted = p.minor || p.declined;
   let prompt = step(initial, {
     type: "routeProfile", restricted, hardComplete: hardComplete(p), confirmed: !!p.confirmed,
@@ -165,15 +142,12 @@ export function nextOnboardingPrompt(p: SlopOnboarding, skip: readonly string[] 
     if (prompt.phase === "ReadbackReady") return { reason: prompt.reason, text: text! };
   }
   if (prompt.phase !== "QuestionSearch") return undefined;
-  // spec/slopOnboarding.md, "Ask the first missing field that can still be requested"
   prompt = step(prompt, { type: "chooseQuestion", facts: questionFacts(p), unavailable: unavailableQuestions(p, skip) });
-  return prompt.phase === "QuestionReady" ? { reason: prompt.reason, text: SLOP_ONBOARD_QUESTIONS[prompt.reason]!.text } : undefined;
+  return prompt.phase === "QuestionReady" ? { reason: prompt.reason, text: questionText(p, prompt.reason) } : undefined;
 }
 
-/** Record that a question was sent (the re-ask cap). */
 export function markAsked(p: SlopOnboarding, reason: string): SlopOnboarding {
   return { ...p, askCounts: { ...p.askCounts, [reason]: countAfterPrompt(p.askCounts[reason] ?? 0) } };
 }
 
-/** True when every hard field is set (the service then sends the read-back). */
 export const hardComplete = (p: SlopOnboarding): boolean => HARD_FIELDS.every(f => hasField(p, f));

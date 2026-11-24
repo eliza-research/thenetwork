@@ -24,6 +24,7 @@ import { privateVocabulary } from "../../packages/engine/src/explain.ts";
 import { checkMemberFacing } from "../../packages/engine/src/judgeCommon.ts";
 import { APPEARANCE_PREFIX, appearanceLeak } from "../../packages/engine/src/packs/slop/appearance.ts";
 import { cellIn, datingMarkets } from "../../packages/engine/src/packs/slop/profile.ts";
+import { mutuallyOpen } from "../../packages/core/src/generated/mutualOpenness.ts";
 import { limitMiles } from "../../packages/engine/src/packs/slop/geo.ts";
 import { makeSlopPack, mutualMarkets, planFromInput, SLOP_ASK_QUESTIONS, SLOP_ENGINE_CONFIG, slopPack, slopProfiles } from "../../packages/engine/src/packs/slop/index.ts";
 import { ageRangeOf } from "../../packages/engine/src/packs/slop/rules.ts";
@@ -36,14 +37,16 @@ import { slopLiveArm } from "./slop-live.ts";
 import type { EngineInput, EngineProposal } from "../../packages/engine/src/types.ts";
 import { World } from "../../packages/engine/src/world.ts";
 import { BODY_TYPE_DEFAULTS } from "../../packages/sim/src/apps/slop/bodyType.ts";
+import { statedOpenness } from "../../packages/sim/src/planted.ts";
 import { slopEngineInput, slopEngineMatcher } from "../../packages/sim/src/apps/slop/enginePack.ts";
-import { extraOf, gates3, runArm, type WorldSpec } from "../../packages/sim/src/apps/slop/packEval.ts";
+import { extraOf, gates3, identityRatios, runArm, type ArmResult, type Extra, type WorldSpec } from "../../packages/sim/src/apps/slop/packEval.ts";
+import { overlap, pairedLine } from "../../packages/sim/src/paired.ts";
 import { generateSlopPersonas, type SlopPersona } from "../../packages/sim/src/apps/slop/persona.ts";
 import { buildSlopSnapshot, RATER_DEFAULTS, SLOP_WORLD_START, type SlopNetworkState } from "../../packages/sim/src/apps/slop/snapshot.ts";
 import { BASELINES } from "../../packages/sim/src/apps/slop/baselines.ts";
 import { slopMetrics } from "../../packages/sim/src/apps/slop/metrics.ts";
 import { isSafe } from "../../packages/sim/src/apps/slop/oracle.ts";
-import { createSlopWorld, runSlopWorld, runSlopWorldAsync, type FlowRecord } from "../../packages/sim/src/apps/slop/world.ts";
+import { createSlopWorld, runSlopWorld, runSlopWorldAsync, type FlowRecord, type SlopMatcher, type SlopProposal } from "../../packages/sim/src/apps/slop/world.ts";
 import { mergeRelayStats } from "../../packages/sim/src/apps/slop/relay.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
@@ -57,7 +60,7 @@ const WORLD: WorldSpec = { verification: true, relay: { engine: true }, review: 
 // the AI only rates photos. The sim matches the product: the rater is on, the probe photo is off.
 const PACK_WORLD: WorldSpec = { rater: true };
 /** Gates that fail in every photos arm on held-out seeds today (docs/results/2026-10-08-slop-pack.md I5.4): tracked, not blocking. */
-const TRACKED = [/^Dates per member-month vs random/, /^Minor contacts \(age liars\) cut/, /^Adversary contacts cut/, /^Lowest group vs overall/, /^Same, feasible members/,
+const TRACKED = [/^Dates per member-month vs random/, /^Lowest stated identity group/, /^Minor contacts \(age liars\) cut/, /^Adversary contacts cut/, /^Lowest group vs overall/, /^Same, feasible members/,
   // Not in the founder's tracked list, but it does not pass on the pinned seeds (86.9%; I5.4 reports 87% on seeds 13-16 at 4 weeks).
   /^Harm events cut \(not counting/,
   // Founder decision 2026-10-11 (#22): no photo in the probe. Without it the sim's members accept on fit and the
@@ -65,13 +68,13 @@ const TRACKED = [/^Dates per member-month vs random/, /^Minor contacts \(age lia
   // 3.47x, 2.78x, 4.7%; without: 1.73x, 1.68x, 12.2%; dates per member-month rose from 0.82x to 1.01x). These
   // are known costs of the decision in the sim's model, tracked and not blocking (PRD 28.5: waived in writing).
   /^Second-date rate vs random/, /^Second dates per seed vs random/, /^Back-outs at reveal/];
-const SAFETY = [/^Declared-minor contacts/, /^Stated-filter violations/, /^Scammer median reach/];
+const SAFETY = [/^Declared-minor contacts/, /^Stated-filter violations/, /^Stated-openness violations/, /^Scammer median reach/];
 
 const emptySlopState = (): SlopNetworkState => ({ now: SLOP_WORLD_START + 12 * 3_600_000, week: 0, interactions: [], feedback: [], safetyHolds: [], inboundAsks: [], edges: [], paused: new Set(), asks: [], learned: new Map() });
 
 /** A slop engine input for the conformance rules: personas in sf / nyc / la, 15% minors, plus canary facets, blocks, holds and an id alias. */
 export function slopWorld(seed: number, o: { perCity?: number; minorShare?: number; personas?: SlopPersona[] } = {}): EngineInput {
-  const personas = o.personas ?? generateSlopPersonas({ seed, perCity: o.perCity ?? 40, minorShare: o.minorShare ?? 0.15 });
+  const personas = o.personas ?? generateSlopPersonas({ seed, perCity: o.perCity ?? 40, minorShare: o.minorShare ?? 0.15, statedOpenness: true });
   const input = slopEngineInput(buildSlopSnapshot(personas, emptySlopState()));
   const r = new Rng(seed * 7919 + 13);
   const ids = input.members.map(m => m.id);
@@ -91,12 +94,33 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
   const random = await runArm("random", spec.seeds, spec.weeks, spec.perCity, undefined, POPULATION);
   const pack = await runArm("slop", spec.seeds, spec.weeks, spec.perCity, { $world: PACK_WORLD }, { ...POPULATION, ...WORLD });
   b.track("fingerprint: random and slop arms", true, digest([random, pack]));
+  const gateValue = (g: { name: string; value: number }) => (g.name.includes("cut") ? `${(g.value * 100).toFixed(1)}%` : g.value.toFixed(3));
   for (const g of gates3(pack, random)) {
-    const value = g.name.includes("cut") ? `${(g.value * 100).toFixed(1)}%` : g.value.toFixed(3);
     const safety = SAFETY.some(r => r.test(g.name));
     const blocking = safety || (!o.quick && !TRACKED.some(r => r.test(g.name)));
-    b.gate(`gate ${g.name} (${g.target})`, g.pass, value, blocking);
+    b.gate(`gate ${g.name} (${g.target})`, g.pass, gateValue(g), blocking);
   }
+  const aa = await runArm("slop", spec.seeds, spec.weeks, spec.perCity, { $world: PACK_WORLD, $engineSalt: 1 }, { ...POPULATION, ...WORLD });
+  const row = (f: (a: ArmResult, i: number) => number) => pairedLine(pack.seeds.map((_, i) => f(pack, i)), aa.seeds.map((_, i) => f(aa, i)));
+  b.track("A/A slop (engine seed salted), dates", true, row((a, i) => a.metrics[i]!.dates));
+  b.track("A/A slop, second dates", true, row((a, i) => Math.round(a.metrics[i]!.secondDateRate * a.metrics[i]!.dates)));
+  b.track("A/A slop, expected P(good date) per proposal (oracle)", true, row((a, i) => a.metrics[i]!.expected.goodPerProposal));
+  b.track("A/A slop, expected P(second date) per proposal (oracle)", true, row((a, i) => a.metrics[i]!.expected.secondPerProposal));
+  b.track("A/A slop, expected good dates per member (oracle)", true, row((a, i) => a.metrics[i]!.expected.goodPerMember));
+  b.track("A/A slop, same dates (Jaccard of who dated whom, per seed)", true, pack.extra.map((e, i) => overlap(e.datePairs, aa.extra[i]!.datePairs).toFixed(2)).join(", "));
+
+  const st = pack.extra.flatMap(e => e.standing ? [e.standing] : []);
+  const sum = (f: (x: NonNullable<Extra["standing"]>) => number) => st.reduce((a, x) => a + f(x), 0);
+  b.track("Date standing: weekly snapshots that kept photo standing; last-week outcomes (positive / negative); placed members with a narrowed uncertainty", true,
+    `${sum(x => x.kept)}/${sum(x => x.weeks)} weeks kept; outcomes ${st.map(x => `${x.positives}/${x.negatives}`).join(", ")}; narrowed ${sum(x => x.narrowed)}/${sum(x => x.placed)} (${pct(sum(x => x.narrowed) / Math.max(1, sum(x => x.placed)))})`);
+
+  const openWorld: WorldSpec = { ...POPULATION, statedOpenness: true };
+  const openRandom = await runArm("random", spec.seeds, spec.weeks, spec.perCity, undefined, openWorld);
+  const openPack = await runArm("slop", spec.seeds, spec.weeks, spec.perCity, { $world: PACK_WORLD }, { ...openWorld, ...WORLD });
+  b.track("stated openness world: fingerprint of the random and slop arms", true, digest([openRandom, openPack]));
+  b.track("stated openness world: real members per seed, proposals and dates per member by stated identity group", true,
+    Object.entries(identityRatios(openPack).byGroup).map(([g, x]) => `${g} n ${x.n.toFixed(1)}, ${x.proposals.toFixed(2)} proposals (${x.ratio.toFixed(2)}x), ${x.dates.toFixed(2)} dates`).join("; "));
+  for (const g of gates3(openPack, openRandom)) b.gate(`stated openness world: gate ${g.name} (${g.target})`, g.pass, gateValue(g), SAFETY.some(r => r.test(g.name)));
 
   // ---- the relay in the world (critical path item 7): adversary personas after the reveal ----------
   const rs = mergeRelayStats(pack.extra.map(e => e.relay?.engine).filter(x => !!x) as never);
@@ -157,28 +181,41 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
     expect(absent.every(interaction => interaction.noShowBy === undefined)).toBe(true);
   });
   await b.run("world: a check-in report holds the offender (no new harassment victim after the first report)", () => {
-    const r = runSlopWorld({ seed: 5, perCity: 200, weeks: 4, matcher: BASELINES.random as never, platform: { checkin: { harassment: 1, deception: 1 } } });
-    const firstReport = new Map<string, number>();
     let viaCheckin = 0;
-    r.flows.forEach((f, i) => {
-      for (const h of f.harms) {
-        if (h.kind !== "harassment") continue;
-        const fr = firstReport.get(h.offender);
-        if (fr !== undefined && i > fr) throw new Error(`victim after report: ${h.offender}`);
-        if (h.reported && fr === undefined) firstReport.set(h.offender, i);
-        if (h.via === "checkin") viaCheckin++;
-      }
-    });
+    for (let seed = 5; seed <= 12 && viaCheckin === 0; seed++) {
+      const r = runSlopWorld({ seed, perCity: 200, weeks: 4, matcher: BASELINES.random as never, platform: { checkin: { harassment: 1, deception: 1 } } });
+      const firstReport = new Map<string, number>();
+      r.flows.forEach((f, i) => {
+        for (const h of f.harms) {
+          if (h.kind !== "harassment") continue;
+          const fr = firstReport.get(h.offender);
+          if (fr !== undefined && i > fr) throw new Error(`seed ${seed}: victim after report: ${h.offender}`);
+          if (h.reported && fr === undefined) firstReport.set(h.offender, i);
+          if (h.via === "checkin") viaCheckin++;
+        }
+      });
+      for (const id of firstReport.keys()) expect([seed, id, r.world.state.safetyHolds.some(x => x.memberId === id)]).toEqual([seed, id, true]);
+    }
     expect(viaCheckin).toBeGreaterThan(0);
-    for (const id of firstReport.keys()) expect(r.world.state.safetyHolds.some(x => x.memberId === id)).toBe(true);
   });
+  await b.run("world: common random numbers: the same proposals in reverse order meet the same member coins and outcomes", () => {
+    const reversed = (): SlopMatcher => {
+      const random = BASELINES.random();
+      return { name: "random-reversed", propose: ctx => [...(random.propose(ctx) as SlopProposal[])].reverse() };
+    };
+    const outcomes = (matcher: SlopMatcher) => runSlopWorld({ seed: 5, perCity: 200, weeks: 1, matcher }).flows
+      .map(f => `${f.first}|${f.partner}|${f.stage}|${f.good ?? "-"}|${f.secondDate ?? "-"}|${f.harms.length}`).sort();
+    const forward = outcomes(BASELINES.random());
+    expect(forward.filter(x => x.includes("|date|")).length).toBeGreaterThan(5);
+    expect(outcomes(reversed())).toEqual(forward);
+  }, false);
   await b.run("metrics: time-to-first-date median averages the two middle days for an even cohort (not the upper-middle)", () => {
     const world = createSlopWorld({ seed: 1, perCity: 20, weeks: 4 });
     const real = world.personas.filter(isSafe);
     expect(real.length).toBeGreaterThanOrEqual(4);
     const [r0, r1, r2, r3] = real;
     const date = (key: string, a: MemberId, b: MemberId, day: number): FlowRecord => ({
-      key, week: 1, first: a, partner: b, city: "nyc", activity: "coffee", options: [],
+      key, week: 1, first: a, partner: b, city: "nyc", activity: "coffee", options: [], expected: { date: 0, good: 0, second: 0 },
       stage: "date", firstYes: true, partnerYes: true, mutualYes: true, revealed: true, filterViolation: false,
       outcome: { ea: 0.5, eb: 0.5, quality: 0.5, good: false, wantsSecondA: false, wantsSecondB: false, bothWantSecond: false },
       good: false, secondDate: false, harms: [], declaredMinor: false, day,
@@ -197,7 +234,7 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
       { ...harasser!, hidden: { ...harasser!.hidden, adversary: "harasser" } },
     ] });
     const pair = (key: string, first: MemberId, partner: MemberId, revealed = true): FlowRecord => ({
-      key, week: 1, first, partner, city: "nyc", activity: "coffee", options: [],
+      key, week: 1, first, partner, city: "nyc", activity: "coffee", options: [], expected: { date: 0, good: 0, second: 0 },
       stage: revealed ? "backout" : "first_no", firstYes: revealed, mutualYes: revealed,
       revealed, filterViolation: false, harms: [], declaredMinor: false,
     });
@@ -262,6 +299,8 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
   const results = new Map<number, Promise<EngineResult>>();
   const result = (s: number) => { if (!results.has(s)) results.set(s, run(inputs.get(s)!, s)); return results.get(s)!; };
 
+  const stated = new Map(SEEDS.map(s => [s, statedOpenness(inputs.get(s)!).dating]));
+  const statedOpen = (s: number, a: MemberId, c: MemberId) => { const D = stated.get(s)!; return mutuallyOpen(D.get(a)!, D.get(c)!); };
   await b.run("conformance slop: stated filters respected both ways (orientation, age ranges, dealbreakers, mutual radius)", async () => {
     for (const s of SEEDS) {
       const input = inputs.get(s)!, P = slopProfiles(input);
@@ -269,7 +308,7 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
       expect(ps.length).toBeGreaterThan(5);
       for (const p of ps) {
         const [a, c] = p.participants.map(id => P.get(id)!) as [NonNullable<ReturnType<typeof P.get>>, NonNullable<ReturnType<typeof P.get>>];
-        expect(a.seeks).toContain(c.is!); expect(c.seeks).toContain(a.is!);
+        expect([a.id, c.id, statedOpen(s, a.id, c.id)]).toEqual([a.id, c.id, true]);
         const ra = ageRangeOf(a, slopPack.options)!, rc = ageRangeOf(c, slopPack.options)!;
         expect(c.age >= ra[0] && c.age <= ra[1] && a.age >= rc[0] && a.age <= rc[1]).toBe(true);
         expect(statedDealbreaker(a, c)).toBeUndefined(); expect(statedDealbreaker(c, a)).toBeUndefined();
@@ -287,7 +326,7 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
       ...(base.vectors ? { vectors: { ...base.vectors, segment: undefined } } : {}),
     };
     const P = slopProfiles(inputs.get(1)!);
-    const bad = (await run(inputs.get(1)!, 1, broken)).proposals.filter(p => { const [a, c] = p.participants.map(id => P.get(id)!); return !a!.seeks.includes(c!.is!) || !c!.seeks.includes(a!.is!); });
+    const bad = (await run(inputs.get(1)!, 1, broken)).proposals.filter(p => { const [a, c] = p.participants.map(id => P.get(id)!); return !statedOpen(1, a!.id, c!.id); });
     expect(bad.length).toBeGreaterThan(0);
   });
 

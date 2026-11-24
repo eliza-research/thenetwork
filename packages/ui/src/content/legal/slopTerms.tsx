@@ -10,7 +10,7 @@ export const slopTerms: LegalText = {
   sections: [
     {
       heading: "Who can join",
-      body: <p>You must be 13 or older to join. Only adults 18 and older are matched or introduced, and only adults can share photos. Members aged 13 to 17 are never matched on dates. Today, no member under 18 is introduced to anyone. If introductions ever open to members under 18, they will be friendship introductions only, with people within 2 years of their own age. Give your real first name and your real birth date or age, and keep your phone number current. One person, one membership.</p>,
+      body: <p>You must be 13 or older to join. Only adults 18 and older are matched or introduced, and only adults can share photos. Members aged 13 to 17 are never matched on dates. Friendship introductions for people under 18 happen on friends.help and ntwrk.party. Give your real first name and your real birth date or age, and keep your phone number current. One person, one membership.</p>,
     },
     {
       sms: {

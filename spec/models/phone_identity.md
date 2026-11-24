@@ -21,21 +21,27 @@ Imported from `quint/phone_identity.qnt` at `30d950e`. See [model index](README.
 // phone_identity: one phone number is one identity key on every path that reads a number.
 //
 // WHAT THIS MODELS
-//   The paths that turn a written phone number into a key, and the ban that keys on it:
-//   - web OTP start and verify (packages/platform/src/api.ts:464-499, normalizePhone) and the web join
-//     (api.ts:550-571, accounts.ts:355-422 joinPlan with the ban),
-//   - MCP OTP start and login (packages/mcp/src/hooks.ts:136-150, normalizePhone, accounts.banned),
-//   - staff ban by phone or person (packages/network/service/service.ts:2010-2042: the hashes of the
-//     person's stored phone identities),
-//   - the inbound turn (service.ts:2343 turn guard; service.ts:1194 memberOf, 1214 the hold check and
-//     1268 the ban check of a member; service.ts:1308-1330 and 1612-1631 text join of a non-member).
-//   Two normalizers make keys. P is phoneE164 (packages/core/src/phone-core.ts, through
-//   packages/platform/src/phone.ts normalizePhone): +1 only, no NFKC. Q is anyE164 (the same file,
-//   through packages/blooio/src/phone.ts toE164 and normalizeAddress): any country, after NFKC. The
-//   runtime address book (runtime.ts:427-444 memberOf) and platform.member_apps key on Q.
-//   P and Q are oracles here with their proved contracts (lsc check, phone-core.ts):
-//   phoneE164 accepts only US or Canadian numbers, and anyE164 gives the same key as phoneE164 on every
-//   input that phoneE164 accepts. The table FORMS is a small set of written forms with these contracts.
+//   The paths that turn a written phone number into a key, and the ban that keys on it. Compared with
+//   the code on branch vibestack-matching (2026-11-18); locations are by function name:
+//   - web OTP start and verify (packages/platform/src/api.ts, routes "POST /api/auth/otp/start" and
+//     "/verify": normalizePhone, then accounts.banned) and the web join (api.ts "POST /api/join",
+//     accounts.ts Accounts.join and joinLocked: the "checkEligibility" step reads accounts.banned).
+//     A Cloud sign-in site answers 409 to both OTP routes; its callback refuses a banned number
+//     (api.ts phoneAllowed in the Cloud callback, cloud_auth owns that path).
+//   - MCP OTP start and login (packages/mcp/src/hooks.ts startOtp and login: accounts.banned).
+//   - staff ban by phone or person (packages/network/service/service.ts NetworkService.ban: the keyed
+//     hashes of the person's phones, platform.bans rows, suppression, restricted memberships).
+//   - the inbound turn (service.ts: the signed turn endpoint refuses `from` that is not its own
+//     normalizePhone; inbound() reads accounts.banned and memberOf; checkLineBan; the text join
+//     NetworkService.join reads accounts.banned(e164, person) in its "checkJoinBan" step).
+//   Two normalizers make keys. P is normalizePhone (packages/platform/src/phone.ts): +1 US and Canadian
+//   numbers only, no NFKC. Q is normalizeAddress (packages/blooio/src/phone.ts, through toE164): any
+//   country, after NFKC. The runtime address book (runtime.ts NetworkRuntime.identities and memberOf)
+//   keys on Q. P and Q are oracles here. The proved phone-core.ts of the source branch does not exist on
+//   this branch; the two contracts below were checked by reading the two functions: P accepts only US or
+//   Canadian numbers, and Q gives the same key as P on every input that P accepts (a 10-digit number and
+//   an 11-digit number that starts with 1 both become +1 and the digits). The table FORMS is a small set
+//   of written forms with these contracts.
 //
 // BOUNDS
 //   Two humans with US numbers (A, B), one human with a UK number (F), one text that is no number (J).
@@ -47,12 +53,21 @@ Imported from `quint/phone_identity.qnt` at `30d950e`. See [model index](README.
 //   the model has one banned set and no clock.
 //
 // ABSTRACTIONS
-//   - A ban holds every member of the person (README "Reports, holds, bans"), so ban removes the key
-//     from the address book. In the code the restricted member stays in the address book
-//     (runtime.ts:430-431 skips only invited and removed) and the ban check (service.ts:1268) refuses
-//     the turn; the outcome is the same, because the model checks the ban first.
+//   - A ban holds every member of the person, so ban removes the key from the address book. In the code
+//     the restricted member stays in the address book (identities() skips only invited and removed) and
+//     inbound() refuses the turn at checkLineBan; the outcome is the same, because the model checks the
+//     ban first.
+//   - A banned number still gets the compliance answers: STOP is handled before the ban check, HELP gets
+//     the help text and "leave <app>" leaves that app (spec/lineRouting.md, "A banned number gets only
+//     HELP and app leave"). These answers serve no code, join or member turn, so the model leaves them
+//     out (refuse covers them).
 //   - Age, invites, consent and rate limits are outside the model (join_age, auth_edge, turn_consent).
-//   - The keyed hash (phoneKey) is the identity function: it is injective for these keys.
+//   - Sessions are outside the model. When a number gets a person (a join, an invitation or a number
+//     change, pg-store.ts createPerson and movePhone), its person-less sessions end: auth_edge
+//     (numberChange, invite) models that.
+//     A banned OTP start answers { ok: true } before OtpService.start, so no rate bucket counts it
+//     (auth_edge records that as a defect).
+//   - The keyed hash (phoneHash) is the identity function: it is injective for these keys.
 module phone_identity {
 
   // ---------------------------------------------------------------- the written forms (oracle table)
@@ -88,8 +103,8 @@ module phone_identity {
 
   action unchangedGhost = all { turnKeys' = turnKeys }
 
-  // api.ts:464-499 and the web join (api.ts:550-571, accounts.ts:365-372): normalizePhone, then the ban
-  // check, then the identity.
+  // api.ts OTP routes and "POST /api/join" (accounts.ts joinLocked, step checkEligibility): normalizePhone,
+  // then the ban check, then the identity (createPerson, admitMembership).
   action webJoin(w: str): bool = {
     val e = P(w)
     all {
@@ -105,8 +120,8 @@ module phone_identity {
     }
   }
 
-  // hooks.ts:136-142 (MCP OTP start) and api.ts:474 (web OTP start): a banned number gets { ok: true }
-  // and no code (otp.ts:189; the rate limits still count, auth_edge models them).
+  // hooks.ts startOtp (MCP) and api.ts "POST /api/auth/otp/start" (web): a banned number gets { ok: true }
+  // and no code. The route returns before OtpService.start, so no rate bucket counts it (auth_edge).
   action otpStart(w: str): bool = {
     val e = P(w)
     all {
@@ -117,17 +132,17 @@ module phone_identity {
     }
   }
 
-  // service.ts:2010-2042: a ban takes the person's stored phone hashes and holds every member.
+  // service.ts NetworkService.ban: a ban takes the person's stored phone hashes and holds every member.
   action ban(k: str): bool = all {
     identities.contains(k),
     banned' = banned.union(Set(k)), members' = members.exclude(Set(k)),
     identities' = identities, served' = served, refusedBan' = refusedBan, unchangedGhost,
   }
 
-  // One signed turn. service.ts:2343: `from` must be its own normalizePhone, else 400. Then memberOf
-  // reads the Q key (service.ts:1194) and the hold and ban checks read the P key (service.ts:1197, 1214,
-  // 1268). A non-member with a number goes to the text join (service.ts:1308-1330, join at 1612-1631),
-  // which checks the ban.
+  // One signed turn. The turn endpoint: `from` must be its own normalizePhone, else 400. Then inbound()
+  // reads the ban and the hold on the P key (accounts.banned, accounts.seen) and memberOf on the Q key
+  // (runtime.ts memberOf). A non-member with a number goes to the text join (NetworkService.join), which
+  // checks the ban first ("checkJoinBan").
   action inbound(w: str): bool = {
     val e = P(w)
     val m = Q(w)
@@ -162,23 +177,23 @@ module phone_identity {
   }
 
   // ---------------------------------------------------------------- invariants
-  // AGENTS.md founder decision 3 (2026-10-09): "a banned number is refused at join (web, text, MCP),
-  // OTP and inbound, on every app". Whatever the human writes, no code, join or member turn is served
-  // to the human whose number is banned. Code: api.ts:474 and 488, hooks.ts:141 and 149, service.ts:1268
-  // and 1631.
+  // Founder decision (spec/product/source/founder-decisions.md, 2026-10-09): "a banned number is refused
+  // at join (web, text, MCP), OTP and inbound, on every app". Whatever the human writes, no code, join or
+  // member turn is served to the human whose number is banned. Code: api.ts OTP start and verify,
+  // hooks.ts startOtp and login, service.ts inbound() checkLineBan and join() checkJoinBan.
   val bannedNeverServed = served.forall(s => not(s._3))
 
-  // platform plan 3.2 (packages/platform/src/phone.ts header): the platform stores only +1 numbers.
-  // phoneE164 is the only way into platform.phone_identities.
+  // packages/platform/src/phone.ts header: the platform stores only +1 numbers. normalizePhone is the
+  // only way into platform.phone_identities.
   val identitiesAreUsNumbers = identities.forall(k => k == "A" or k == "B")
 
-  // The ban key and the address book key are the same number (phone-core.ts header: anyE164 agrees with
-  // phoneE164; service.ts:1194-1197 reads both for one turn). A member turn checks the ban on the
-  // number it found the member by.
+  // The ban key and the address book key are the same number (normalizeAddress agrees with normalizePhone
+  // on every number that normalizePhone accepts; inbound() reads both for one turn). A member turn checks
+  // the ban on the number it found the member by.
   val turnKeysAgree = turnKeys.forall(t => t._1 == t._2)
 
   // An identity key belongs to one human: no written form of one human reaches the key of another.
-  // Proved for P and Q in phone-core.ts (digitsOf: the key is the digits of the input).
+  // For P and Q both keys are the digits of the input (phone.ts normalizePhone, blooio phone.ts toE164).
   val keysNameOwner = FORMS.forall(w => (P(w) == "" or P(w) == owner(w)) and (P(w) == "" or Q(w) == P(w)))
 
   def phonePage(w: str, signed: bool, sameAppMember: bool, membershipClear: bool, held: bool): str =

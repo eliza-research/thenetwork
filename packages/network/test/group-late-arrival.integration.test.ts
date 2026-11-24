@@ -120,7 +120,7 @@ test.skipIf(!pgAvailable).each([
   const key = "synthetic-late-arrival-turn-signing-key";
   const clock = new SimClock(START);
   const calls: SendRequest[] = [];
-  const adapter = new BlooioAdapter({ app: app.id, from: "+12125550280", clock, liveGate: () => true, log: () => {}, provider: {
+  const adapter = new BlooioAdapter({ app: app.id, from: "+12125550280", clock, log: () => {}, provider: {
     kind: "sim",
     send: async request => {
       calls.push(request);
@@ -128,7 +128,7 @@ test.skipIf(!pgAvailable).each([
     },
   } });
   const service = new NetworkService({ url, clock, log: () => {}, adapter: () => adapter, photoStorage: null,
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: key }, networks: [{ id: "friends:nyc", matchingEnabled: false }] });
+    env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: key }, networks: [{ id: "friends:nyc", matchingEnabled: false }] });
   try {
     await service.start();
     const phones = ["+12125550281", "+12125550282", "+12125550283"].slice(0, size);

@@ -280,7 +280,6 @@ export function ReviewActions({ o, ctl, onDone, planPreview }: { o: Opp; ctl?: R
  */
 export function ReviewQueue() {
   const s = useStore();
-  const game = !!s.env?.capabilities.canIntervene;
   const view = s.ui.reviewView;
   const pending = s.reviewPending();
   const decided = view === "decided" ? s.reviewDecided() : [];
@@ -344,12 +343,10 @@ export function ReviewQueue() {
     return () => window.removeEventListener("keydown", onKey, true);
   }, []);
 
-  const mode = s.reviewMode();
   const empty = <p className="py-2 text-sm text-muted-foreground">{s.nothing()}</p>;
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-3 text-sm">
-        {game && s.isAdmin() && <ReviewerSwitch mode={mode} title="Who approves network-composed opportunities before anyone is contacted" />}
         <span className="text-muted-foreground">approved {counts.approved} · rejected {counts.rejected} · expired {counts.expired}</span>
         {s.network?.matchingEnabled === false && <StatusMark tone="warn" label="matching off" title="An admin turned proactive matching off: approvals wait" showLabel />}
         {!s.canAct() && <span className="text-muted-foreground">read-only</span>}
@@ -383,21 +380,6 @@ export function ReviewQueue() {
         ) : empty
       )}
     </div>
-  );
-}
-
-/** Who approves network-composed opportunities in the simulated world: the simulated reviewer or the viewer. */
-export function ReviewerSwitch({ mode, title }: { mode: "human" | "auto" | undefined; title: string }) {
-  return (
-    <span className="flex items-center gap-2" title={title}>
-      <span className="text-sm text-muted-foreground">Reviewer</span>
-      <Segments
-        aria-label="Reviewer"
-        value={mode ?? ""}
-        onValueChange={v => store.control({ type: "review_mode", mode: v as "human" | "auto" })}
-        options={[{ value: "auto", label: "Sim" }, { value: "human", label: "You" }]}
-      />
-    </span>
   );
 }
 

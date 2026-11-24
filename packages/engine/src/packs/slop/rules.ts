@@ -1,55 +1,40 @@
-// slopPack hard filters (AppPack.eligibility). They run AFTER the core prefixes (members: unknown,
-// underage, safety_hold, paused; pairs: duplicate, underage, blocked) and only ever remove. The
-// mutual radius is the geo model's pairReason (geo.ts), checked last. ORDER IS THE FUNNEL CONTRACT:
-// the first failing rule names the reason in the run report.
-//
-// Stated preferences are filters only (PRD 40.5): mutual gender / orientation inclusion, age ranges
-// both ways, stated dealbreakers, radius or cities. There is no race or ethnicity rule (no field).
-// Safety: observed safety cues and the Network's own records hold a member for human review.
 import { DAY, type City, type MemberId } from "@thenetwork/core";
 import { slopPairConstraintsCurrent } from "../../../../core/src/generated/datingRadius.ts";
+import { mutuallyOpen } from "../../../../core/src/generated/mutualOpenness.ts";
 import type { MatchLane } from "../../../../core/src/generated/matchLane.ts";
 import type { CandidateRule, MemberRule, PairRule } from "../../pack.ts";
 import type { EngineInput } from "../../types.ts";
 import { pairKey, type World } from "../../world.ts";
 import { limitMiles, mutualMarkets } from "./geo.ts";
 import { SLOP_DEFAULT_OPTIONS, type SlopPackOptions } from "./options.ts";
-import { slopProfiles, type SlopProfile } from "./profile.ts";
+import { datingStatementOf, slopProfiles, type SlopProfile } from "./profile.ts";
 import { statedDealbreaker } from "./score.ts";
 
 export const SLOP_LANE = "romance" as const;
-/** The relationship lane of every slop.date match (spec/matchLane.md). */
 export const SLOP_MATCH_LANE: MatchLane = "Date";
 const prof = (w: World) => slopProfiles(w.input);
 
-/** A member's age range: stated; else the narrow fallback after a silent ask; else (asks off) the default guess; undefined = ask. */
 export function ageRangeOf(p: SlopProfile, o: SlopPackOptions): [number, number] | undefined {
   if (p.ageRange) return p.ageRange;
   if (!o.asks) return [Math.max(18, p.age - o.unknownDefaults.ageSpread), p.age + o.unknownDefaults.ageSpread];
   return o.silentFallback.enabled && p.silentAsks.includes("age_range") ? [Math.max(18, p.age - o.silentFallback.ageSpread), p.age + o.silentFallback.ageSpread] : undefined;
 }
 
-/** Hard-filter fields that are missing (ask instead of proposing; one message asks them all). */
 export function missingFields(p: SlopProfile, o: SlopPackOptions): ("orientation" | "age_range" | "distance" | "zip")[] {
   const out: ("orientation" | "age_range" | "distance" | "zip")[] = [];
   if (!p.is || !p.seeks.length) out.push("orientation");
   if (!o.asks) return out;
   if (!ageRangeOf(p, o)) out.push("age_range");
   if (limitMiles(p, o) === undefined) out.push("distance");
-  // A zip we cannot place: ask for a nearby zip or neighborhood rather than fail or guess. After a
-  // week without an answer the market's anchor cell stands in (profile.cellIn), never a lockout.
   if (p.zipUnknown && !p.silentAsks.includes("zip")) out.push("zip");
   return out;
 }
 
-/** The basics (goal, dealbreakers or at least the lifestyle answers) are not known yet. */
 export function needsBasics(p: SlopProfile): boolean {
   return !p.goal || (!p.dealbreakers.length && p.values.politics === undefined);
 }
 
-/** Why a member is held for review (safety cue or the Network's own records), or null. */
 export function reviewReason(p: SlopProfile, o: SlopPackOptions): string | null {
-  // Human review: a confirmed hold stays; a cleared one (a false positive) lifts the cue / check hold.
   if (p.review === "confirmed") return "review_confirmed";
   const cleared = p.review === "cleared";
   if (!cleared && p.verification.some(t => t.endsWith(":fail"))) return "verification_failed";
@@ -66,8 +51,8 @@ export function reviewReason(p: SlopProfile, o: SlopPackOptions): string | null 
   return null;
 }
 
-function seekingMatches(a: SlopProfile, b: SlopProfile): boolean {
-  return !!a.is && !!b.is && a.seeks.includes(b.is) && b.seeks.includes(a.is);
+export function seekingMatches(a: SlopProfile, b: SlopProfile): boolean {
+  return mutuallyOpen(datingStatementOf(a), datingStatementOf(b));
 }
 
 function ageRangeReason(a: SlopProfile, b: SlopProfile, o: SlopPackOptions): string | null {
@@ -76,7 +61,6 @@ function ageRangeReason(a: SlopProfile, b: SlopProfile, o: SlopPackOptions): str
   return b.age >= ra[0] && b.age <= ra[1] && a.age >= rb[0] && a.age <= rb[1] ? null : "age_range";
 }
 
-/** Recheck the pair in its reviewed market without repeating discovery, ranking or pacing. */
 export function slopHardPairCurrent(input: EngineInput, pair: readonly MemberId[], market: City, options: SlopPackOptions = SLOP_DEFAULT_OPTIONS): boolean {
   const [first, second] = pair;
   if (pair.length !== 2 || first === undefined || second === undefined || first === second) return false;
@@ -97,18 +81,12 @@ export function slopHardPairCurrent(input: EngineInput, pair: readonly MemberId[
 
 export function slopMemberRules(o: SlopPackOptions): MemberRule[] {
   return [
-    // The only lane slop.date offers is dating; members must have opted in (adults only: core).
     { id: "lane", check: (_w, _id, _mi, c) => (c.category !== SLOP_LANE ? "lane_not_offered" : null) },
     { id: "romance_opt_out", check: (w, id) => (prof(w).get(id)?.optedIn ? null : "romance_opt_out") },
-    // Safety cues and records: held for human review, never matched while held.
     { id: "review_hold", check: (w, id) => reviewReason(prof(w).get(id)!, o) },
-    // Unknown orientation / age range / distance: ask, do not guess (asks.ts emits the question).
     { id: "needs_answer", check: (w, id) => { const f = missingFields(prof(w).get(id)!, o)[0]; return f ? `needs_${f}` : null; } },
-    // Optional: the first intro waits for the open basics question (answered, or 7 days of silence).
     { id: "basics_pending", check: (w, id) => { const p = prof(w).get(id)!; return o.holdForBasics && o.compatAsks && needsBasics(p) && !p.silentAsks.includes("basics") ? "needs_basics" : null; } },
-    // "Your turn" limit: nothing new while a mutual yes or a booked date waits on this member.
     { id: "your_turn", check: (_w, _id, mi) => (mi.inOpenOpportunity ? "your_turn" : null) },
-    // Receptivity pacing (Rios, Saban & Zheng): no new probe right after a date the member liked.
     {
       id: "recently_matched", check: (w, id) => {
         const h = prof(w).get(id)!.history;
@@ -120,8 +98,6 @@ export function slopMemberRules(o: SlopPackOptions): MemberRule[] {
 
 export function slopPairRules(o: SlopPackOptions): PairRule[] {
   return [
-    // Never introduce the same two people twice once they were revealed to each other (booked, backed
-    // out, met). An anonymous probe that ended before the reveal may be retried after a cooldown.
     {
       id: "already_introduced", check: (w, a, b) => {
         if (w.edgeHas(a, b, "met")) return "already_introduced";
@@ -135,21 +111,18 @@ export function slopPairRules(o: SlopPackOptions): PairRule[] {
     },
     { id: "unknown_member", check: (_w, _a, _b, _lane, ma, mb) => (!ma || !mb ? "unknown_member" : null) },
     {
-      // Mutual gender / orientation inclusion: each is in the other's seeking set.
       id: "orientation_mismatch", check: (w, a, b) => {
         const P = prof(w), pa = P.get(a)!, pb = P.get(b)!;
         return seekingMatches(pa, pb) ? null : "orientation_mismatch";
       },
     },
     {
-      // Age ranges both ways (claimed age; minors never get here: core).
       id: "age_range", check: (w, a, b) => {
         const P = prof(w), pa = P.get(a)!, pb = P.get(b)!;
         return ageRangeReason(pa, pb, o);
       },
     },
     {
-      // Stated dealbreakers, both ways, on the other's known values (unknown values never count as a hit).
       id: "dealbreaker", check: (w, a, b) => {
         const P = prof(w), pa = P.get(a)!, pb = P.get(b)!;
         return statedDealbreaker(pa, pb) || statedDealbreaker(pb, pa) ? "dealbreaker" : null;
@@ -158,7 +131,6 @@ export function slopPairRules(o: SlopPackOptions): PairRule[] {
   ];
 }
 
-/** Configuration rules: dating is one-to-one in the dating lane, between two members. */
 export const SLOP_CANDIDATE_PRE_RULES: readonly CandidateRule[] = [
   { id: "one_to_one", check: (_w, c) => (c.participants.length !== 2 || c.category !== SLOP_LANE || c.via ? "not_one_to_one" : null) },
 ];

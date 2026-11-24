@@ -12,11 +12,16 @@ import {APPS, type AppInfo} from "../../platform/src/apps.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {TURN_PATH, TURN_RECEIPT_PATH, type TurnRequest, type TurnReceiptRequest} from "../../core/src/svc/contract.ts";
 import {BlooioAdapter, DryRunAdapter} from "../service/channel.ts";
-import {NetworkService} from "../service/service.ts";
+import type { SendRequest } from "../../blooio/src/types.ts";
+import {CONTEXT_UNAVAILABLE_REPLY, lookingForAsk, NetworkService} from "../service/service.ts";
+import {inboxKeepMs} from "../../core/src/generated/platformRetention.ts";
+import {turnTombstoneKeepMs} from "../../core/src/generated/signedInbox.ts";
 import { slopOnboarding } from "../service/packs.ts";
 import type { NetworkState } from "../src/network.ts";
 import {networkRoutePolicy, routeEnvelopeAllowed} from "../service/route-authority.ts";
 import { importPublicEvents } from "../service/import-public-events.ts";
+import { applyBaseProfileGrants } from "../service/base-profile-share.ts";
+import { brandOf, copyFor } from "../src/copy.ts";
 
 const db = `network_signed_turn_${randomUUID().replaceAll("-", "")}`;
 const admin = new SQL({url:`postgres://${process.env.USER ?? "postgres"}@127.0.0.1:${DEV_PG_PORT}/postgres`, max:1});
@@ -25,6 +30,7 @@ const secret = "synthetic-shared-agent-test-secret-20261009";
 const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
 let sql: SQL, service: NetworkService, server: HttpServer;
 let escaped = 0, code = "";
+const lineSends: SendRequest[] = [];
 const start = async (routePolicy?: Record<string, unknown>, collectedQueue = false) => {
   // Only this test's newly created database changes realm markers. The service's
   // normal staging/database mismatch guard stays intact.
@@ -32,11 +38,15 @@ const start = async (routePolicy?: Record<string, unknown>, collectedQueue = fal
   if (realm?.database !== db || !["dev","staging"].includes(realm.value)) throw new Error("Owned test realm required");
   await sql`update platform.settings set value=${routePolicy ? "staging" : "dev"} where key='environment'`;
   service = new NetworkService({url, clock, photoStorage:null, instance:"signed-turn-integration",
-    env:{PLATFORM_ENV:routePolicy ? "staging" : "dev", PLATFORM_HASH_KEY:"synthetic-route-test-hash-key", CLEF_RATINGS:"off", SERVICE_TURN_SECRET:secret, ...(routePolicy ? {NETWORK_ROUTE_AUTHORITY_POLICY:JSON.stringify(routePolicy)} : {})}, networks:[{id:"ntwrk:nyc",matchingEnabled:false},{id:"slop:nyc",matchingEnabled:false},{id:"friends:nyc",matchingEnabled:false}],
+    env:{PLATFORM_ENV:routePolicy ? "staging" : "dev", PLATFORM_HASH_KEY:"synthetic-route-test-hash-key", SERVICE_TURN_SECRET:secret, ...(routePolicy ? {NETWORK_ROUTE_AUTHORITY_POLICY:JSON.stringify(routePolicy)} : {})}, networks:[{id:"ntwrk:nyc",matchingEnabled:false},{id:"slop:nyc",matchingEnabled:false},{id:"friends:nyc",matchingEnabled:false}],
     network:{seed:1}, publicApi:{minStartMs:0,minVerifyMs:0,otp:{name:"fixture",send:async () => {code="314159";return {code};}}},
     adapter:(_net, rt) => {
       if (collectedQueue) return new BlooioAdapter({ app: rt.app.id, city: rt.city, from: "+12125550160", clock, env: {}, log: () => {},
-        provider: { kind: "sim", send: async () => { escaped++; throw new Error("The signed reply left its collector"); } } });
+        provider: { kind: "sim", send: async request => {
+          if (request.context?.kind === "reply") { escaped++; throw new Error("The signed reply left its collector"); }
+          lineSends.push(request);
+          return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent" };
+        } } });
       const a = new DryRunAdapter(() => {});
       a.direct = async () => { escaped++; return "dry_run"; };
       a.deliver = async rows => { escaped += rows.length; return rows.map(r => ({ id: r.id, status: "dry_run" })); };
@@ -142,7 +152,7 @@ test("signed answers to the enrollment question require a positive app choice", 
     { text: "I'm not interested at all", apps: [] },
     { text: "Friends, that's all", apps: ["friends"] },
     { text: "Not everything", apps: [] },
-    { text: "All apps except dating", apps: [] },
+    { text: "All apps except dating", apps: ["friends"] },
     { text: "All three, please", apps: ["friends", "slop"] }, // The fixture runs both child apps.
   ];
   const actual = [];
@@ -468,7 +478,9 @@ test("reconciles legacy intent controls for the current app and owner once and p
   const before = escaped;
   const result = await post(turn("legacy-intents-show", phone, "list my intents", "friends"));
   expect(result.status).toBe(200);
-  expect((await result.json()).replies[0]).toContain("Your standing intents");
+  const listed: string = (await result.json()).replies[0];
+  expect(listed.split("\n")[0]).toBe("What you're looking for in friends (1/1)");
+  expect(listed.split("\n").at(-1)).toBe("Reply PAUSE 1, RESUME 1 or CLOSE 1.");
   const rows = await snapshot();
   expect([...rows]).toEqual(raw.map(row => ({
     id: row.id, status: row.id === "legacy-pause" ? "paused" : row.id === "legacy-close" ? "closed" : row.status,
@@ -491,6 +503,7 @@ test("signed solo concierge offers current public listings without recruiting an
   await server.stop(true);
   await service.close();
   await start(undefined, true);
+  lineSends.length = 0;
   try {
     const adult = "+12125550157", teen = "+12125550158";
     for (const [phone, age] of [[adult, 20], [teen, 16]] as const) {
@@ -519,6 +532,13 @@ test("signed solo concierge offers current public listings without recruiting an
       listing("117", "Chelsea garden sketching", "Arts | All ages", "2026-10-10T14:00:00", "2026-10-10T15:00:00", "Chelsea Market", "40.7479,-74.0014"),
     ]))).toEqual({ published: true, events: 8 });
 
+    await service.runtimeFor("friends")!.deliver();
+    const welcomes = new Map(lineSends.map(sent => [sent.to, sent.text]));
+    expect(lineSends).toHaveLength(2);
+    expect(welcomes).toEqual(new Map([
+      [adult, "Hi Ari, I'm friends.help's planner (an AI). Now and then I'll suggest a person or plan that seems worth your time, and you can always ask me for something. Reply STOP anytime to opt out. To start: what would you like more of in your life right now?"],
+      [teen, "Hi Ari, I'm friends.help's planner (an AI). Since you're under 18, I won't introduce you to other members, but I can suggest public places and events. If you tell me your birthday (month, day and year), I can look for friends close to your age. Reply STOP anytime to opt out. What are you into?"],
+    ]));
     const before = escaped;
     const request = (id: string, phone: string) => turn(id, phone, "Anything fun this weekend?", "friends");
     const asked = request("adults-solo-events", adult);
@@ -570,6 +590,7 @@ test("signed solo concierge offers current public listings without recruiting an
     expect(compound.status).toBe(200);
     expect((await compound.json()).reason).not.toBe("solo_events");
     expect(escaped).toBe(before);
+    expect(lineSends).toHaveLength(2);
   } finally {
     await server.stop(true);
     await service.close();
@@ -693,7 +714,7 @@ test("canonical membership STOP is collected atomically and cannot drain to a pr
   expect(await service.accounts.optedIn("slop",phone)).toBe(false);
   const rows=await sql`select status,inbound_id from network.messages where app_id='slop' and inbound_id='msg:blooio:member-stop'`;
   expect(rows.length).toBe(1);expect(rows[0].status).toBe("collected");
-  expect((await sql`select id from platform.outbound where id=${body.replyIds[0]}`).length).toBe(0);
+  expect(await sql`select status,line from platform.outbound where id=${body.replyIds[0]}`).toEqual([{status:"collected",line:"dry-run"}]);
   const ack:TurnReceiptRequest={channel:input.channel,messageId:input.messageId,replyIds:body.replyIds,outcome:"unknown",providerMessageIds:[],historyRecorded:false};
   expect((await receipt({...ack,replyIds:["unrelated-output"]})).status).toBe(409);
   const unknown=await receipt(ack);expect(unknown.status).toBe(200);expect(await unknown.json()).toEqual({ok:true,replayed:false});
@@ -716,6 +737,158 @@ test("canonical membership STOP is collected atomically and cannot drain to a pr
   await server.stop(true);await service.close();await start();expect((await post(input)).status).toBe(409);expect(escaped).toBe(before);
 },60_000);
 
+const joinFriendsByText = async (phone: string, prefix: string) => {
+  expect((await post(turn(`${prefix}-start`, phone, "friends.help", "friends"))).status).toBe(200);
+  const join = turn(`${prefix}-profile`, phone, "Noa, 29", "friends");
+  const joined = await (await post(join)).json() as any;
+  expect(joined).toMatchObject({outcome: "handled", reason: "joined", replyKind: "reply"});
+  let n = 0;
+  for (const text of ["I enjoy hiking and cooking", "Saturday afternoons work for me", "Small groups are good"]) {
+    clock.advance(MINUTE); expect((await post(turn(`${prefix}-onboard-${++n}`, phone, text, "friends"))).status).toBe(200);
+  }
+  return {join, joined};
+};
+
+test("a signed replay answers with current consent and context, and dry-run collected replies join the thread history", async () => {
+  const phone = "+12125550174", before = escaped;
+  const {join, joined} = await joinFriendsByText(phone, "replay");
+  const history = await sql`select id,status,line from platform.outbound where id in ${sql(joined.replyIds as string[])}`;
+  expect(history.length).toBeGreaterThan(0);
+  expect(history.every(row => row.status === "collected" && row.line === "dry-run")).toBe(true);
+  const chat = turn("replay-open", phone, "Tell me something about the weather", "friends");
+  const open = await (await post(chat)).json() as any;
+  expect(open).toMatchObject({outcome: "open", app: "friends", context: {state: "open"}});
+  await service.runtimes.get("friends:nyc")!.scoped(tx => tx`update network.members set participation_state='quiet' where app_id='friends' and id=${open.memberId}`);
+  const changed = await post(chat);
+  expect(changed.status).toBe(200);
+  expect(await changed.json()).toEqual({...open, context: {...open.context, state: "busy"}});
+  const stop = turn("replay-stop", phone, "STOP", "friends");
+  const stopped = await (await post(stop)).json() as any;
+  expect(stopped).toMatchObject({outcome: "handled", replyKind: "compliance"});
+  const lateJoin = await post(join);
+  expect(lateJoin.status).toBe(409);
+  expect(await lateJoin.json()).toEqual({error: "turn_context_changed", retryable: false});
+  expect((await post(chat)).status).toBe(409);
+  expect(await (await post(stop)).json()).toEqual(stopped);
+  expect(escaped).toBe(before);
+}, 60_000);
+
+test("a member with more than fifty shareable facts gets the newest fifty in the open context", async () => {
+  const phone = "+12125550175";
+  const {joined} = await joinFriendsByText(phone, "facets");
+  const member = joined.memberId as string;
+  for (let i = 0; i < 55; i++) {
+    await service.runtimeFor("friends")!.scoped(tx => tx`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, status, valid_from)
+      values ('friends', ${`${member}:many-${i}`}, ${member}, 'interest', ${`Shared interest number ${i}`}, '{}', 'shareable', 'said', 'confirmed', ${new Date(clock.now() - (60 - i) * MINUTE)})`);
+  }
+  await service.runtimeFor("friends")!.scoped(tx => tx`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, status, valid_from)
+    values ('friends', ${`${member}:long`}, ${member}, 'interest', ${"x".repeat(301)}, '{}', 'shareable', 'said', 'confirmed', ${new Date(clock.now() - MINUTE)})`);
+  const open = await (await post(turn("facets-open", phone, "Tell me something about the weather", "friends"))).json() as any;
+  expect(open).toMatchObject({outcome: "open", app: "friends", memberId: member});
+  expect(open.context.facets).toHaveLength(50);
+  expect(open.context.facets).toContain("Shared interest number 54");
+  expect(open.context.facets).not.toContain("Shared interest number 0");
+  expect(open.context.facets.every((fact: string) => fact.length <= 300)).toBe(true);
+}, 60_000);
+
+test("a member whose context is withheld gets the fixed handled reply, never silence", async () => {
+  const phone = "+12125550177", before = escaped;
+  const {joined} = await joinFriendsByText(phone, "withheld");
+  const member = joined.memberId as string;
+  await service.runtimeFor("friends")!.scoped(tx => tx`update network.members set name='noa@example.com' where app_id='friends' and id=${member}`);
+  const answer = await post(turn("withheld-open", phone, "Tell me something about the weather", "friends"));
+  expect(answer.status).toBe(200);
+  const body = await answer.json() as any;
+  expect(body).toMatchObject({outcome: "handled", app: "friends", memberId: member, reason: "context_unavailable", replyKind: "reply",
+    replies: [CONTEXT_UNAVAILABLE_REPLY]});
+  expect(await sql`select status,line from platform.outbound where id=${body.replyIds[0]}`).toEqual([{status: "collected", line: "dry-run"}]);
+  expect(escaped).toBe(before);
+}, 60_000);
+
+test("a replayed open turn whose context became unavailable answers the fixed reply and keeps that answer", async () => {
+  const phone = "+12125550182", before = escaped;
+  const {joined} = await joinFriendsByText(phone, "replay-withheld");
+  const member = joined.memberId as string;
+  const chat = turn("replay-withheld-open", phone, "Tell me something about the weather", "friends");
+  const open = await (await post(chat)).json() as any;
+  expect(open).toMatchObject({outcome: "open", app: "friends", memberId: member});
+  await service.runtimeFor("friends")!.scoped(tx => tx`update network.members set name='noa@example.com' where app_id='friends' and id=${member}`);
+  const replayed = await post(chat);
+  expect(replayed.status).toBe(200);
+  const body = await replayed.json() as any;
+  expect(body).toEqual({outcome: "handled", replies: [CONTEXT_UNAVAILABLE_REPLY], replyIds: ["sys:msg:blooio:replay-withheld-open:context"], delivery: "collected",
+    replyKind: "reply", accountEligible: true, app: "friends", memberId: member, reason: "context_unavailable"});
+  expect(await sql`select status,line from platform.outbound where id=${body.replyIds[0]}`).toEqual([{status: "collected", line: "dry-run"}]);
+  expect(await (await post(chat)).json()).toEqual(body);
+  const accepted = await receipt({channel: "blooio", messageId: "replay-withheld-open", replyIds: body.replyIds, providerMessageIds: ["provider-replay-withheld"],
+    historyRecorded: true, outcome: "accepted"});
+  expect(accepted.status).toBe(200);
+  expect(escaped).toBe(before);
+}, 60_000);
+
+test("an admitted number whose membership no longer binds gets the fixed reply, not a silent handled turn", async () => {
+  const phone = "+12125550178", before = escaped;
+  const {joined} = await joinFriendsByText(phone, "unbound");
+  const member = joined.memberId as string;
+  await service.runtimeFor("friends")!.scoped(tx => tx`update network.members set name='noa@example.com' where app_id='friends' and id=${member}`);
+  const person = (await service.accounts.personFor(phone))!;
+  await sql`update platform.people set lowest_age=null, birth_date=null, birth_lower=null, birth_upper=null, birth_youngest=null, birth_first_exact=null where id=${person.id}`;
+  await sql`delete from platform.age_floor where phone_hash=${service.accounts.phoneHash(phone)}`;
+  expect(await service.accounts.lowestAge(phone, person)).toBeUndefined();
+  const answer = await post(turn("unbound-open", phone, "Tell me something about the weather", "friends"));
+  expect(answer.status).toBe(200);
+  const body = await answer.json() as any;
+  expect(body).toMatchObject({outcome: "handled", app: "friends", reason: "context_unavailable", replyKind: "reply", accountEligible: false,
+    replies: [CONTEXT_UNAVAILABLE_REPLY], replyIds: ["sys:msg:blooio:unbound-open:context"]});
+  expect(escaped).toBe(before);
+}, 60_000);
+
+test("UNSHARE takes a SHARE back, so a later grant read copies nothing", async () => {
+  const phone = "+12125550183", before = escaped;
+  const slopCopy = copyFor(brandOf(APPS.slop));
+  const {joined} = await joinFriendsByText(phone, "unshare");
+  const friendsMember = joined.memberId as string;
+  await service.runtimeFor("friends")!.scoped(tx => tx`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, status, valid_from)
+    values ('friends', ${`${friendsMember}:unshare-climbing`}, ${friendsMember}, 'interest', 'rock climbing', '{}', 'matchable', 'said', 'confirmed', ${new Date(clock.now() - DAY)})`);
+  clock.advance(MINUTE);
+  expect((await post(turn("unshare-slop-start", phone, "slop.date", "slop"))).status).toBe(200);
+  clock.advance(MINUTE);
+  const slopJoin = await (await post(turn("unshare-slop-profile", phone, "Kit, 29", "slop"))).json() as any;
+  expect(slopJoin).toMatchObject({outcome: "handled", app: "slop", reason: "joined"});
+  expect(slopJoin.replies).toContain(slopCopy.linkNotice);
+  const slopMember = slopJoin.memberId as string;
+  clock.advance(MINUTE);
+  const shared = await (await post(turn("unshare-share", phone, "SHARE", "slop"))).json() as any;
+  expect(shared).toMatchObject({outcome: "handled", app: "slop", memberId: slopMember, replies: [slopCopy.shareDone]});
+  const person = (await service.accounts.personFor(phone))!;
+  const slopRuntime = service.runtimeFor("slop")!;
+  const copies = () => slopRuntime.scoped(tx => tx`select value from network.facets where app_id='slop' and member_id=${slopMember} and source='share_grant'`);
+  expect(await copies()).toEqual([{value: "rock climbing"}]);
+  clock.advance(MINUTE);
+  const unshared = await (await post(turn("unshare-unshare", phone, "unshare", "slop"))).json() as any;
+  expect(unshared).toMatchObject({outcome: "handled", app: "slop", memberId: slopMember, reason: "handled", replies: [slopCopy.unshareDone]});
+  expect(await sql`select from_app, to_app, revoked_at is not null as revoked from platform.share_grants where person_id=${person.id}`)
+    .toEqual([{from_app: "friends", to_app: "slop", revoked: true}]);
+  expect(await copies()).toEqual([{value: "rock climbing"}]);
+  await slopRuntime.scoped(tx => tx`delete from network.facets where app_id='slop' and member_id=${slopMember} and source='share_grant'`);
+  const read = await applyBaseProfileGrants({people: service.people, banned: async () => false, runtimeFor: app => service.runtimeFor(app), now: clock.now()},
+    person.id, {app: "slop", memberId: slopMember, runtime: slopRuntime});
+  expect(read).toBe(0);
+  expect(await copies()).toEqual([]);
+  expect(await (await post(turn("unshare-unshare", phone, "unshare", "slop"))).json()).toEqual(unshared);
+  expect(escaped).toBe(before);
+}, 60_000);
+
+test("a no-keyword join answers with the welcome and the looking-for question in the same handled turn", async () => {
+  const phone = "+12125550184", before = escaped;
+  expect((await post(turn("network-join-start", phone, "hey there"))).status).toBe(200);
+  const joined = await (await post(turn("network-join-profile", phone, "Mo, 30"))).json() as any;
+  expect(joined).toMatchObject({outcome: "handled", app: "ntwrk", reason: "joined", replyKind: "reply"});
+  expect(joined.replies.length).toBeGreaterThan(1);
+  expect(joined.replies.at(-1)).toBe(lookingForAsk(30));
+  expect(escaped).toBe(before);
+}, 60_000);
+
 // spec/textEnrollment.md, "A current Network member's answer controls other-app enrollment"
 test("a bare Friends answer to the pending shared-line question enrolls the current member", async () => {
   const phone = "+12125550139";
@@ -730,7 +903,7 @@ test("a bare Friends answer to the pending shared-line question enrolls the curr
   const pending = () => service.people.getPending(service.accounts.phoneHash(phone), "looking_for");
   expect(await pending()).toMatchObject({ app: "ntwrk" });
   expect(await sql`select status, body like 'What are you looking for:%' as disclosed
-    from network.messages where id='ask:in:blooio:enrollment-route-profile'`).toEqual([{ status: "dry_run", disclosed: true }]);
+    from network.messages where id='ask:in:blooio:enrollment-route-profile'`).toEqual([{ status: "collected", disclosed: true }]);
   expect(await say("enrollment-route-explicit", "join friends")).toMatchObject({ app: "friends", reason: "join_asked" });
   expect(await pending()).toMatchObject({ app: "ntwrk" });
   const person = (await service.accounts.personFor(phone))!;
@@ -1031,7 +1204,7 @@ test("full canonical deletion scrubs signed context, replies and receipts withou
 
 test("the Cloud turn secret is never also a staff bearer token", () => {
   const make = (o: {tokens?: string; consoleToken?: string}) => new NetworkService({url, clock, photoStorage:null, instance:"turn-secret-separation",
-    env:{PLATFORM_ENV:"dev", CLEF_RATINGS:"off", SERVICE_TURN_SECRET:secret}, networks:[{id:"ntwrk:nyc",matchingEnabled:false}], log:()=>{}, ...o});
+    env:{PLATFORM_ENV:"dev", SERVICE_TURN_SECRET:secret}, networks:[{id:"ntwrk:nyc",matchingEnabled:false}], log:()=>{}, ...o});
   expect(() => make({tokens:`admin@*:${secret}`})).toThrow(/SERVICE_TURN_SECRET must differ/);
   expect(() => make({tokens:`reviewer@slop:other-staff-token-0001,admin@*:console-token-00000001`, consoleToken:secret})).toThrow(/SERVICE_TURN_SECRET must differ/);
   expect(() => make({tokens:"admin@*:console-token-00000001", consoleToken:"console-token-00000001"})).not.toThrow();
@@ -1440,6 +1613,32 @@ test("explicit saved-profile reads select the app without consuming onboarding o
       ["friends", "slop"].map((app) => service.accounts.store.getMembership(person.id, app as "friends" | "slop")),
     ),
   ).toEqual(membershipBeforeGuards);
+}, 60_000);
+
+test("retention keeps a stuck signed turn until staff resolve it, then removes its tombstone", async () => {
+  const id = "msg:blooio:fault-after-effects";
+  const [before] = await sql`select status,sender_hash from platform.inbound where id=${id}`;
+  expect(before.status).toBe("unresolved");expect(before.sender_hash).not.toBeNull();
+  clock.advance(inboxKeepMs + turnTombstoneKeepMs + DAY);await service.purge();
+  const [kept] = await sql`select status,sender_hash from platform.inbound where id=${id}`;
+  expect(kept?.status).toBe("unresolved");expect(kept?.sender_hash).not.toBeNull();
+  expect(await service.inbox.resolve(id)).toBe(true);
+  await service.purge();
+  expect(await sql`select id from platform.inbound where id=${id}`).toEqual([]);
+}, 60_000);
+
+test("account erasure clears the sender key of a signed turn that staff never resolved", async () => {
+  const phone = "+12125550185";
+  await joinFriendsByText(phone, "erase-stuck");
+  const person = (await service.accounts.personFor(phone))!;
+  const at = new Date(clock.now() - DAY);
+  await sql`insert into platform.inbound (id, received_at, arrived_at, status, request_hash, sender_hash)
+    values ('msg:blooio:erase-stuck', ${at}, ${at}, 'unresolved', 'fixture-erase-hash', ${service.accounts.phoneHash(phone)})`;
+  expect(await service.accounts.deleteAll({ e164: phone, personId: person.id })).toBe(true);
+  expect(await sql`select status, sender_hash, sender, event from platform.inbound where id='msg:blooio:erase-stuck'`)
+    .toEqual([{ status: "unresolved", sender_hash: null, sender: null, event: null }]);
+  await service.purge();
+  expect(await sql`select id from platform.inbound where id='msg:blooio:erase-stuck'`).toEqual([{ id: "msg:blooio:erase-stuck" }]);
 }, 60_000);
 
 // spec/memberAge.md, "Commit a stated age before projecting it across apps".

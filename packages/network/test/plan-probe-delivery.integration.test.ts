@@ -28,7 +28,7 @@ test.skipIf(!pgAvailable)("approved probes use current settings and a sampled de
     { name: "Charlie", e164: "+12125550393" },
   ];
   const calls: SendRequest[] = [];
-  const adapter = new BlooioAdapter({ app: app.id, from: "+12125550390", clock, liveGate: () => true, log: () => {}, provider: {
+  const adapter = new BlooioAdapter({ app: app.id, from: "+12125550390", clock, log: () => {}, provider: {
     kind: "sim", send: async request => {
       calls.push(request);
       return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent" };
@@ -36,7 +36,7 @@ test.skipIf(!pgAvailable)("approved probes use current settings and a sampled de
   } });
   const service = new NetworkService({
     url, clock, log: () => {}, photoStorage: null, adapter: (_network, runtime) => runtime.app.id === app.id ? adapter : new DryRunAdapter(() => {}),
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret }, networks: [{ id: networkId }, { id: "peon:nyc" }],
+    env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret }, networks: [{ id: networkId }, { id: "peon:nyc" }],
     devMatching: [networkId], network: { plans: false, growth: false, maxNewPerDay: 0 }, tokens: "reviewer@friends:plan-reviewer",
   });
   const observatory = new RealSource({ app: app.id, url });
@@ -80,12 +80,14 @@ test.skipIf(!pgAvailable)("approved probes use current settings and a sampled de
     expect(await probes()).toEqual([]);
     await adapter.queue.setLineSafety("review");
 
+    await service.reviewJudgeTick();
     const reviewUrl = "http://127.0.0.1/apps/friends/review";
     const headers = { authorization: "Bearer plan-reviewer", "content-type": "application/json" };
     const queue = await service.fetch(new Request(reviewUrl, { headers }));
     expect(queue.status).toBe(200);
-    const { items } = await queue.json() as { items: { oppId: string; revision: number }[] };
+    const { items } = await queue.json() as { items: { oppId: string; revision: number; exception?: { verdict: string; reason: string } }[] };
     expect(items).toHaveLength(1);
+    expect(items[0]!.exception).toMatchObject({ verdict: "cannot_run", reason: "no_provider" });
     const { oppId, revision } = items[0]!;
     expect(oppId).toBe(`${app.id}.nw-1-${sampledIndex}`);
     const approval = await service.fetch(new Request(`${reviewUrl}/${encodeURIComponent(oppId)}`, {

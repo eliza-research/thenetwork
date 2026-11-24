@@ -51,7 +51,7 @@ async function homeHelpWorld(database: string) {
     tokens: "safety@ntwrk:ntwrk-safety,reviewer@ntwrk:ntwrk-reviewer",
     networks: [{ id: "ntwrk:nyc", matchingEnabled: true }], devMatching: ["ntwrk:nyc"],
     network: { growth: false }, publicApi: { otp, minStartMs: 0, minVerifyMs: 0 },
-    adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: "+12125550100", clock, log: () => {}, liveGate: () => true,
+    adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: "+12125550100", clock, log: () => {},
       provider: { kind: "sim", async send(request) {
         sent.push(request);
         return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent", acceptedAt: clock.now() };

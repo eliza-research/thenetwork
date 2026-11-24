@@ -1,11 +1,8 @@
-// The service with several apps (platform plan 4.4, 6.1): text joins, keywords per app, the person
-// cap, per-app live flags, per-app staff roles, and the public API mounted on the service. Postgres in
-// a database of its own per test process (the packages/observatory/test/pg.ts pattern). Nothing is
-// sent: the adapters are dry-run (or Blooio with a fake provider), and OTP codes come from a fake.
 import { setTimeout as sleep } from "node:timers/promises";
 import { findExecutable } from "../../core/src/runtime/process.ts";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
@@ -16,9 +13,9 @@ import { TURN_PATH, TURN_RECEIPT_PATH, type TurnReceiptRequest, type TurnRequest
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { lastEvents, resolveConsent } from "../../platform/src/consent.ts";
 import type { OtpProvider } from "../../platform/src/otp.ts";
-import { BlooioAdapter, DryRunAdapter, liveSendAllowed, type Outbound } from "../service/channel.ts";
+import { BlooioAdapter, DryRunAdapter, type Outbound } from "../service/channel.ts";
 import { CloudChannelAdapter } from "../service/cloud-channel.ts";
-import { NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";
+import { NetworkService, WEBHOOK_PATH, type NetworkRuntime, type ServiceOptions } from "../service/service.ts";
 import { brandOf, copyFor, styleViolations } from "../src/copy.ts";
 import type { NetworkState } from "../src/network.ts";
 import { SLOP_ONBOARD_QUESTIONS } from "../../engine/src/packs/slop/index.ts";
@@ -100,12 +97,14 @@ describe("per-app copy", () => {
     expect(styleViolations('Reply "cancel" to drop it.')).toContain("asks_cancel");
     for (const app of APP_IDS) {
       const c = copyFor(brandOf(APPS[app]));
-      const texts = [c.welcome("Sam"), c.welcome("Sam", "Ana"), c.welcomeMinor("Sam"), c.welcomeAskAge("Sam"), c.growthAsk, c.growthPlain, c.noPromotion,
-        c.joinAsk(APPS[app].minJoinAge), c.joinNeedName, c.linkNotice, c.shareDone, c.leftApp, c.invitesNotOpen("Maya"), c.requestNoneYet("a climbing partner", false)];
+      const minorWelcomes = (["MinorBirthdayNotice", "MinorTeenFriendNotice", "MinorSlopNotice", "MinorPeonNotice"] as const).map(n => c.welcomeMinor("Sam", n));
+      const texts = [c.welcome("Sam"), c.welcome("Sam", "Ana"), c.welcomeMinor("Sam", "MinorSinglePlayerNotice"), c.welcomeAskAge("Sam"), c.growthAsk, c.growthPlain, c.noPromotion,
+        c.joinAsk(APPS[app].minJoinAge), c.joinNeedName, c.linkNotice, c.shareDone, c.unshareDone, c.leftApp, c.invitesNotOpen("Maya"), c.requestNoneYet("a climbing partner", false),
+        ...minorWelcomes, c.birthdayWhich("January 12, 2009", "December 1, 2009")];
       for (const t of texts) expect([app, t, styleViolations(t)]).toEqual([app, t, []]);
       // The keyword texts (HELP names the support address, which the contact-details rule would flag): never "reply cancel".
       for (const t of Object.values(APPS[app].brand)) expect(styleViolations(t)).not.toContain("asks_cancel");
-      for (const t of [c.welcome("Sam"), c.welcomeAskAge("Sam"), c.joinAsk(APPS[app].minJoinAge)]) expect(styleViolations(t, { firstContact: true })).toEqual([]);
+      for (const t of [c.welcome("Sam"), c.welcomeAskAge("Sam"), c.joinAsk(APPS[app].minJoinAge), c.welcomeMinor("Sam", "MinorSinglePlayerNotice"), ...minorWelcomes]) expect(styleViolations(t, { firstContact: true })).toEqual([]);
       // Another app's copy never names The Network's agent.
       if (app !== "ntwrk") for (const t of texts.slice(0, 7)) expect(t).not.toContain("the Network");
     }
@@ -197,7 +196,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(await count(sql`select count(*)::int as n from network.messages where member_id = ${tm.id}`)).toBe(0);
     expect((await sql`select state from platform.memberships where member_id = ${tm.id}`)[0].state).toBe("removed");
     expect((await sql`select p.lowest_age from platform.people p join platform.phone_identities ph on ph.person_id = p.id where ph.e164 = ${teen}`)[0].lowest_age).toBe(12);
-    expect(await text(s, clock, teen, "slop")).toBe("join_asked");
+    expect(await text(s, clock, teen, "slop")).toBe("under_age");
     expect(await text(s, clock, teen, "Lee 25")).toBe("under_age");
 
     // The shared line, no keyword, a stranger: they join The Network (founder decision 2). Nothing is stored before the age check.
@@ -235,38 +234,52 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(directs.length).toBe(answered + 1);
   }, T);
 
-  test("one person in two apps: the link notice names no app, SHARE stores a grant, STOP is per app, STOP ALL and the shared line stop every app, leave forgets one app", async () => {
+  test("one person in two apps: the link notice names no app, SHARE grants and reuses only shareable interests, STOP on one app's line stops every app and START restarts that app only, STOP ALL and the shared line stop every app, leave forgets one app", async () => {
     const clock = new SimClock(START);
     const { s, directs } = service(clock);
     const p = newPhone();
     expect(await text(s, clock, p, "Sam 29", { app: FR })).toBe("joined");
     // A known person on a new app (slop by keyword on the shared line): the age check again, then the link notice.
     expect(await text(s, clock, p, "slop")).toBe("join_asked");
-    expect(await text(s, clock, p, "Sam 29")).toBe("joined");
+    expect(await text(s, clock, p, "Kit 29")).toBe("joined");
     const fr = (await memberOf(FR, p))!, sl = (await memberOf("slop", p))!;
     const slopOut = await outbound(sl.id);
     expect(slopOut.map(x => x.type).sort()).toEqual(["info", "onboarding"]);
     expect(slopOut.find(x => x.type === "info").body).toBe(copyFor(brandOf(APPS.slop)).linkNotice);
     for (const x of slopOut) for (const word of [FR, APPS[FR].domain, APPS[FR].name]) expect(x.body.toLowerCase()).not.toContain(word.toLowerCase());
-    // SHARE answers the notice (the last app that wrote to them is slop): a grant, nothing copied.
+    const fact = (id: string, kind: string, value: string, scope: string, status: string, sensitive: string | null) =>
+      sql`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, status, sensitive, valid_from)
+        values (${FR}, ${`${fr.id}:${id}`}, ${fr.id}, ${kind}, ${value}, ${sql.array(["climbing"], "TEXT")}, ${scope}, 'said', ${status}, ${sensitive}, ${new Date(clock.now() - HOUR)})`;
+    await fact("i1", "interest", "rock climbing", "matchable", "confirmed", null);
+    await fact("i2", "interest", "private poker nights", "agent_private", "confirmed", null);
+    await fact("i3", "interest", "support group", "matchable", "confirmed", "health");
+    await fact("i4", "interest", "salsa", "matchable", "proposed", null);
+    await fact("i5", "interest", "a one-off picnic", "opportunity_specific", "confirmed", null);
+    await fact("f1", "fact", "works nights", "shareable", "confirmed", null);
     expect(await text(s, clock, p, "SHARE")).toBe("handled");
-    expect((await sql`select from_app, to_app, fields from platform.share_grants`)[0]).toEqual({ from_app: FR, to_app: "slop", fields: ["first_name", "city", "interests"] });
+    expect((await sql`select from_app, to_app, fields from platform.share_grants`)[0]).toEqual({ from_app: FR, to_app: "slop", fields: ["interests"] });
+    const copies = await sql`select id, kind, value, privacy_scope, source, status from network.facets where app_id = 'slop' and member_id = ${sl.id} and source = 'share_grant'` as { id: string; kind: string; value: string; privacy_scope: string; source: string; status: string }[];
+    expect(copies.map(({ id: _id, ...r }) => r))
+      .toEqual([{ kind: "interest", value: "rock climbing", privacy_scope: "matchable", source: "share_grant", status: "confirmed" }]);
+    for (const word of [FR, APPS[FR].domain, APPS[FR].name]) expect(String(copies[0]!.id).toLowerCase()).not.toContain(word.toLowerCase());
+    for (const app of APP_IDS) expect(String(copies[0]!.id)).not.toContain(createHash("sha256").update(`${app}\nrock climbing`).digest("hex").slice(0, 16));
+    expect((await sql`select name from network.members where app_id = 'slop' and id = ${sl.id}`)[0]).toEqual({ name: "Kit" });
 
-    // STOP on the friends app's own line with PLATFORM_STOP_SCOPE=app: that app only.
-    const { s: own } = service(clock, { env: { PLATFORM_ENV: "dev", PLATFORM_STOP_SCOPE: "app" } });
+    const { s: own } = service(clock);
     expect(await text(own, clock, p, "STOP", { app: FR })).toBe("handled");
-    expect((await outbound(fr.id)).at(-1)).toMatchObject({ system: true, body: APPS[FR].brand.stopApp });
+    expect((await outbound(fr.id)).at(-1)).toMatchObject({ system: true, body: APPS[FR].brand.stop });
     expect((await memberOf(FR, p))!.opted_out).toBe(true);
-    expect((await memberOf("slop", p))!.opted_out).toBe(false);
+    expect((await memberOf("slop", p))!.opted_out).toBe(true);
     expect(await consentOf(p, FR)).toBe("opted_out");
-    expect(await consentOf(p, "slop")).toBe("opted_in");
+    expect(await consentOf(p, "slop")).toBe("opted_out");
     const states = async () => (await sql`select m.app_id, m.state from platform.memberships m join platform.phone_identities ph on ph.person_id = m.person_id where ph.e164 = ${p} order by app_id`).map((r: any) => `${r.app_id}:${r.state}`);
-    expect(await states()).toEqual([`${FR}:paused`, "slop:active"].sort());
-    // START on that line: that app again.
+    expect(await states()).toEqual([`${FR}:paused`, "slop:paused"].sort());
     expect(await text(own, clock, p, "START", { app: FR })).toBe("handled");
     expect((await memberOf(FR, p))!.opted_out).toBe(false);
+    expect((await memberOf("slop", p))!.opted_out).toBe(true);
     expect(await consentOf(p, FR)).toBe("opted_in");
-    expect(await states()).toEqual([`${FR}:active`, "slop:active"].sort());
+    expect(await consentOf(p, "slop")).toBe("opted_out");
+    expect(await states()).toEqual([`${FR}:active`, "slop:paused"].sort());
     // STOP ALL on slop's line: every app.
     expect(await text(s, clock, p, "STOP ALL", { app: "slop" })).toBe("handled");
     expect((await memberOf(FR, p))!.opted_out).toBe(true);
@@ -320,21 +333,37 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(a.size + b.size).toBe(1);
   }, T);
 
-  test("per-app live flags; per-app staff roles; the matching switch refuses a network the registry keeps off", async () => {
-    const both = { BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" };
-    const flag = `${FR.toUpperCase()}_LIVE_APPROVED`;
-    expect(liveSendAllowed(both, "ntwrk")).toBe(true);
-    expect(liveSendAllowed(both, FR)).toBe(false);
-    expect(liveSendAllowed({ BLOOIO_ALLOW_SEND: "1", [flag]: "1" }, FR)).toBe(false);
-    expect(liveSendAllowed({ ...both, [flag]: "1" }, FR)).toBe(true);
-    // A Blooio adapter for the friends app with a fake provider: refused without its flag, sent with it.
-    for (const [env, sends] of [[both, 0], [{ ...both, [flag]: "1" }, 1]] as const) {
+  test("every app sends through a configured adapter with no approval flag; per-app staff roles; the matching switch refuses a network the registry keeps off", async () => {
+    {
       const clock = new SimClock(START);
       const sent: SendRequest[] = [];
       const provider = { kind: "blooio" as const, send: async (r: SendRequest) => { sent.push(r); return { providerMessageId: `p${sent.length}`, status: "queued" as const }; } };
-      const { s } = service(clock, { adapter: (net, rt) => new BlooioAdapter({ from: "+12125550100", net, provider, clock, memberOf: rt.memberOf, env, app: rt.app.id, log: () => {} }) });
-      await text(s, clock, newPhone(), "hi", { app: FR });
-      expect(sent.length).toBe(sends);
+      const { s } = service(clock, { adapter: (_net, rt) => new BlooioAdapter({ from: "+12125550100", provider, clock, env: {}, app: rt.app.id, log: () => {} }) });
+      const to = newPhone();
+      await text(s, clock, to, "hi", { app: FR });
+      expect(sent.length).toBe(1);
+
+      const rt = s.runtimeFor(FR)!;
+      expect(await rt.tick()).toBe(true);
+      let release!: () => void;
+      let entered!: () => void;
+      const inside = new Promise<void>(r => (entered = r));
+      const held = rt.store.withLock(() => new Promise<void>(r => { release = r; entered(); }));
+      await inside;
+      try {
+        expect((await sql`update network.network_state set state = state where id = ${rt.pg.id} returning id`).length).toBe(1);
+        expect(await rt.scoped(tx => rt.view.isCurrent(tx))).toBe(false);
+        expect(await rt.adapter.direct(to, "stale copy", "stale-copy-1", "reply")).toBe("pending");
+        expect(sent.length).toBe(1);
+        expect([...(await sql`select status from platform.outbound where id = 'stale-copy-1'`)]).toEqual([{ status: "pending" }]);
+      } finally {
+        release();
+        await held;
+      }
+      await rt.deliver();
+      expect(sent.length).toBe(2);
+      expect(sent[1]!.to).toBe(to);
+      expect((await sql`select status from platform.outbound where id = 'stale-copy-1'`)[0].status).toBe("accepted");
     }
 
     const clock = new SimClock(START);
@@ -382,9 +411,9 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     // Join answers still parse: "Kim 16", "I'm 31", "Sam, 29"; a sentence does not.
     const { parseJoinText } = await import("../service/service.ts");
     const words = ["slop", "date"];
-    expect(parseJoinText("Kim 16", words, true)).toEqual({ age: 16, name: "Kim" });
-    expect(parseJoinText("Sure, 25 works", words, true).age).toBeUndefined();
-    expect(parseJoinText("Sounds good, 7 works for me", words, true).age).toBeUndefined();
+    expect(parseJoinText("Kim 16", words, true, 20261122)).toEqual({ age: 16, name: "Kim" });
+    expect(parseJoinText("Sure, 25 works", words, true, 20261122).age).toBeUndefined();
+    expect(parseJoinText("Sounds good, 7 works for me", words, true, 20261122).age).toBeUndefined();
   }, T);
 
   test("a plain name, age and supported city joins without moving the person's home to the matching city", async () => {
@@ -418,7 +447,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     const kid = newPhone();
     expect(await text(s, clock, kid, "hi", { app: FR })).toBe("join_asked");
     expect(await text(s, clock, kid, "Kid, 12", { app: FR })).toBe("under_age");
-    expect(await text(s, clock, kid, "hi", { app: FR })).toBe("join_asked");
+    expect(await text(s, clock, kid, "hi", { app: FR })).toBe("under_age");
     expect(await text(s, clock, kid, "Kid, 19", { app: FR })).toBe("under_age");
     expect(await count(sql`select count(*)::int as n from platform.phone_identities where e164 = ${kid}`)).toBe(0);
     expect(await count(sql`select count(*)::int as n from platform.age_floor where lowest_age = 12`)).toBe(1);
@@ -426,26 +455,25 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect((await s.accounts.join(APPS[FR], { e164: kid, personId: null }, { firstName: "Kid", age: 30, consent: { sms: true, version: APPS[FR].consent.version } }))).toEqual({ ok: false, error: "under_age" });
   }, T);
 
-  test("STOP on one app's line leaves the other app's adapter sending; the consent ledger refuses sends after a restart", async () => {
+  test("STOP on one app's line stops every app; START on the other app's line lets that app's adapter send again; the consent ledger refuses the stopped app after a restart", async () => {
     const clock = new SimClock(START);
-    const flags = { BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1", [`${FR.toUpperCase()}_LIVE_APPROVED`]: "1", SLOP_LIVE_APPROVED: "1" };
     const sent: SendRequest[] = [];
     const provider = { kind: "blooio" as const, send: async (r: SendRequest) => { sent.push(r); return { providerMessageId: `p${sent.length}`, status: "queued" as const }; } };
-    const live = { adapter: (net: any, rt: any) => new BlooioAdapter({ from: "+12125550100", net, provider, clock, memberOf: rt.memberOf, env: flags, app: rt.app.id, log: () => {} }) };
-    const appScope = { env: { PLATFORM_ENV: "dev", PLATFORM_STOP_SCOPE: "app" } };
-    const { s } = service(clock, { ...live, ...appScope });
+    const live = { adapter: (_net: NetworkRuntime["net"], rt: NetworkRuntime) => new BlooioAdapter({ from: "+12125550100", provider, clock, env: {}, app: rt.app.id, log: () => {} }) };
+    const { s } = service(clock, live);
     clock.set(START + 14 * HOUR); // inside the send window (quiet hours hold proactive sends only)
     const p = newPhone();
     expect(await text(s, clock, p, "Sam 29", { app: FR })).toBe("joined");
     expect(await text(s, clock, p, "Sam 29", { app: "slop" })).toBe("joined");
     expect(await text(s, clock, p, "STOP", { app: "slop" })).toBe("handled");
-    // Before the fix the slop STOP marked every app's adapter: the friends reply was refused until a restart.
+    expect(await consentOf(p, FR)).toBe("opted_out");
+    expect(await text(s, clock, p, "START", { app: FR })).toBe("handled");
     const n = sent.length;
     expect(await text(s, clock, p, "More time outdoors.", { app: FR })).toBe("handled");
     expect(sent.length).toBeGreaterThan(n);
     expect(sent.at(-1)!.to).toBe(p);
     // A new process (fresh adapters, no memory of the STOP): the ledger still refuses slop sends.
-    const { s: s2 } = service(clock, { ...live, ...appScope });
+    const { s: s2 } = service(clock, live);
     const slop = s2.runtimeFor("slop")!, fr = s2.runtimeFor(FR)!;
     await slop.identities(); await fr.identities();
     const sl = (await memberOf("slop", p))!, frm = (await memberOf(FR, p))!;
@@ -693,7 +721,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     });
     if (!first.ok) throw new Error(`Fixture signup failed: ${first.error}`);
     const owner = { e164: oldNumber, personId: first.membership.personId };
-    expect(await second.accounts.startNumberChange(app, owner, newNumber, async () => ({ ok: true }))).toEqual({ ok: true });
+    expect(await second.accounts.startNumberChange(app, owner, newNumber, true, async () => ({ ok: true }))).toEqual({ ok: true });
     const rt = s.runtimeFor(FR)!;
     const run = rt.unitOfWork.bind(rt);
     let successor: string | undefined;
@@ -719,8 +747,8 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(successor).not.toBe(owner.personId);
     expect(await s.accounts.personFor(newNumber)).toMatchObject({ id: owner.personId, lowestAge: 15 });
     expect(await s.accounts.personFor(oldNumber)).toMatchObject({ id: successor, lowestAge: 30 });
-    expect(await s.people.ageFloor(s.accounts.phoneHash(oldNumber))).toBe(30);
-    expect(await s.people.ageFloor(s.accounts.phoneHash(newNumber))).toBe(15);
+    expect((await s.people.ageFloorRecord(s.accounts.phoneHash(oldNumber)))?.age).toBe(30);
+    expect((await s.people.ageFloorRecord(s.accounts.phoneHash(newNumber)))?.age).toBe(15);
   }, T);
 
   test.each([{ before: 25, after: 15 }, { before: 15, after: 12 }])("a signed age correction from $before to $after survives interrupted projection", async ({ before, after }) => {
@@ -888,7 +916,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     const { s } = service(clock, {
       env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret },
       networks: [{ id: "peon:nyc", matchingEnabled: false }, { id: "ntwrk:nyc", matchingEnabled: false }],
-      adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: LINE, clock, liveGate: () => true, log: () => {},
+      adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: LINE, clock, log: () => {},
         provider: { kind: "sim", async send(request) {
           sent.push(request);
           return { providerMessageId: `cofounder-fixture-${sent.length}`, status: "sent", acceptedAt: clock.now() };
@@ -1097,7 +1125,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
       env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret },
       networks: [{ id: "ntwrk:nyc" }, { id: "ntwrk:sf" }, { id: "friends:nyc" }],
       tokens: "admin@ntwrk:seed-admin,admin@friends:other-admin,reviewer@ntwrk:seed-reviewer",
-      adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: LINE, clock, liveGate: () => true, log: () => {},
+      adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: LINE, clock, log: () => {},
         provider: { kind: "sim", async send(request) {
           sent.push(request);
           return { providerMessageId: `seed-invite-fixture-${sent.length}`, status: "sent", acceptedAt: clock.now() };
@@ -1230,9 +1258,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     const hashKey = "synthetic-vouch-review-fixture-hash";
     const { s, otp } = service(clock, {
       env: { PLATFORM_ENV: "dev", PLATFORM_HASH_KEY: hashKey, SERVICE_TURN_SECRET: signedInvitationSecret },
-      adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: LINE, clock, liveGate: () => false, log: () => {}, provider: {
-        kind: "sim", send: async () => { throw new Error("This fixture must collect private replies without delivery"); },
-      } }),
+      adapter: () => new DryRunAdapter(() => {}),
     });
     await s.start();
     const inviterPhone = newPhone();
@@ -1416,10 +1442,9 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
   test("the signed turn sends one expected invitation and only the intended verified phone can use it", async () => {
     const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
     const sent: SendRequest[] = [];
-    let deliveryLive = true;
     const { s, otp } = service(clock, {
       env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret }, networks: [{ id: "ntwrk:nyc" }],
-      adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: LINE, clock, liveGate: () => deliveryLive, log: () => {},
+      adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: LINE, clock, log: () => {},
         provider: { kind: "sim", async send(request) {
           sent.push(request);
           return { providerMessageId: `expected-invite-fixture-${sent.length}`, status: "sent", acceptedAt: clock.now() };
@@ -1550,12 +1575,6 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     await rt.adapter.deliver([]);
     expect(await queued()).toHaveLength(2);
     expect(sent.some(request => request.to === stoppedPhone && request.text.includes("#invite="))).toBe(false);
-    deliveryLive = false;
-    expect((await send(third.stage)).status).toBe(409);
-    const disabled = await send({ ...third.input, messageId: "expected-invite-confirm-disabled" });
-    expect(disabled.status).toBe(200);
-    expect((await disabled.json()).replies.join("\n")).toContain("You can forward your invitation link yourself.");
-    deliveryLive = true;
     expect((await send(third.stage)).status).toBe(200);
     clock.advance(15 * MINUTE);
     expect((await send(third.stage)).status).toBe(409);
@@ -1568,7 +1587,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     const { s } = service(clock, {
       env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret }, networks: [{ id: "ntwrk:nyc" }],
       adapter: (_net, rt) => new CloudChannelAdapter({ app: rt.app.id, from: LINE, clock, origin: "http://127.0.0.1", secret: signedInvitationSecret,
-        env: { PLATFORM_ENV: "dev", BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" }, log: () => {},
+        env: { PLATFORM_ENV: "dev" }, log: () => {},
         fetch: async url => {
           cloudRequests.push(String(url));
           return Response.json({ ok: false, error: "rejected", retryable: false }, { status: 422 });
@@ -1576,7 +1595,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
       }),
     });
     await s.start();
-    expect(s.runtimeFor("ntwrk")?.adapter).toMatchObject({ name: "eliza_cloud", live: true });
+    expect(s.runtimeFor("ntwrk")?.adapter).toMatchObject({ name: "eliza_cloud", storedStatus: "queued" });
     const inviterPhone = newPhone(), newRecipient = newPhone();
     const invited = await s.accounts.invite(APPS.ntwrk, inviterPhone);
     if (!invited) throw new Error("Missing staff invitation for the fixture");
@@ -1624,10 +1643,9 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
   test("reviewed home help reaches only the exact roster and shares the address privately after unanimous consent", async () => {
     const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
     const sent: SendRequest[] = [];
-    let simulatedDelivery = false;
     const { s, otp } = service(clock, { env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret },
       networks: [{ id: "ntwrk:nyc" }], network: { matchingEnabled: true }, tokens: "safety@ntwrk:saf-tok,reviewer@ntwrk:rev-tok",
-      adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: LINE, clock, liveGate: () => simulatedDelivery, log: () => {},
+      adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: LINE, clock, log: () => {},
         provider: { kind: "sim", async send(request) {
           sent.push(request);
           return { providerMessageId: `fixture-${sent.length}`, status: "sent", acceptedAt: clock.now() };
@@ -1690,10 +1708,8 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     const cards = () => sent.filter(request => request.text.includes(`YES HOME HELP ${code} 2`));
     const answer = (person: { phone: string }, messageId: string, choice = "YES", revision = 2) =>
       send(turn(person.phone, messageId, `${choice} HOME HELP ${code} ${revision}`)).then(r => r.json());
-    await s.afterTick(rt);
     expect(cards()).toEqual([]);
     expect((await answer(owner, "owner-before-receipt")).replies.join("\n")).toContain("unavailable");
-    simulatedDelivery = true;
     await s.afterTick(rt);
     expect(cards().map(card => card.to)).toEqual([owner.phone]);
     await send(turn(owner.phone, "bare-home-help-yes", "yes"));
@@ -1796,16 +1812,18 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     await text(s, clock, p, "within 5 miles of 11211", { app: "slop" });
     expect((await last()).body).toBe("so: you're a woman looking for men and women 28-38 within 5 mi of 11211. right?");
     await text(s, clock, p, "yep", { app: "slop" });
+    expect((await last()).body).toBe(SLOP_ONBOARD_QUESTIONS.slop_trans_openness!.text);
+    await text(s, clock, p, "rather not say", { app: "slop" });
     expect((await last()).body).toBe(SLOP_ONBOARD_QUESTIONS.slop_basics!.text);
     const bodies = (await outbound(m.id)).map(x => x.body);
     expect(new Set(bodies).size).toBe(bodies.length);
     // The stored state: the pack's tags (the stated label is kept agent_private, never read back), the confirmed onboarding, and never the member's own words.
     const state = (await sql`select state from network.network_state where id = 'slop:nyc'`)[0].state;
-    const st = typeof state === "string" ? JSON.parse(state) : state;
-    const me = st.members.find((x: any) => x.id === m.id);
-    expect(me.appTags.map((t: any) => t.tag).sort()).toEqual(["romance:age:28-38", "romance:is:woman", "romance:seeks:man", "romance:seeks:woman", "slop:max_miles:5", "slop:orientation:bisexual", "slop:scope:radius:5", "slop:zip:11211"]);
-    expect(me.onboarding.confirmed).toBe(true);
-    for (const words of ["I'm bi", "women and men", "within 5 miles", "more fun"]) expect(JSON.stringify(me.onboarding)).not.toContain(words);
+    const st = (typeof state === "string" ? JSON.parse(state) : state) as NetworkState;
+    const me = st.members.find(x => x.id === m.id)!;
+    expect((me.appTags ?? []).map(t => t.tag).sort()).toEqual(["romance:age:28-38", "romance:is:woman", "romance:open_trans:declined", "romance:seeks:man", "romance:seeks:woman", "slop:max_miles:5", "slop:orientation:bisexual", "slop:scope:radius:5", "slop:zip:11211"]);
+    expect(me.onboarding).toMatchObject({ confirmed: true });
+    for (const words of ["I'm bi", "women and men", "within 5 miles", "more fun", "rather not say"]) expect(JSON.stringify(me.onboarding)).not.toContain(words);
   }, T);
 
   // spec/slopOnboarding.md, "Only a plain yes confirms the read-back"; spec/slopOnboarding.md, "A correction needs another confirmation"
@@ -1833,11 +1851,12 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     await text(s, clock, lee.phone, "no, i'm gay", { app: "slop" });
     expect(await seeksTags(lee.id)).toEqual(["romance:seeks:man"]);
     expect((await slopMember(lee.id)).onboarding.confirmed).toBe(false);
-    expect(await lee.last()).toBe(SLOP_ONBOARD_QUESTIONS.slop_basics!.text);
-    await text(s, clock, lee.phone, "no dealbreakers", { app: "slop" });
+    expect(await lee.last()).toBe(SLOP_ONBOARD_QUESTIONS.slop_trans_openness!.text);
+    await text(s, clock, lee.phone, "skip", { app: "slop" });
     expect(await lee.last()).toMatch(/^so: you're a man looking for men 28-38 within 5 mi of 11211\b/);
     await text(s, clock, lee.phone, "Perfect", { app: "slop" });
     expect((await slopMember(lee.id)).onboarding.confirmed).toBe(true);
+    expect(await lee.last()).toBe(SLOP_ONBOARD_QUESTIONS.slop_basics!.text);
 
     // A hedged answer does not confirm; a stated seeking set survives a new orientation label, which needs another confirmation.
     const ana = await start("Ana 30", "woman looking for men 28-38 within 5 mi of 11211");
@@ -1846,7 +1865,8 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     await text(s, clock, ana.phone, "Right, maybe", { app: "slop" });
     expect((await slopMember(ana.id)).onboarding.confirmed).toBe(false);
     expect(await ana.last()).not.toBe(readback);
-    await text(s, clock, ana.phone, "no dealbreakers", { app: "slop" });
+    expect(await ana.last()).toBe(SLOP_ONBOARD_QUESTIONS.slop_trans_openness!.text);
+    await text(s, clock, ana.phone, "skip", { app: "slop" });
     expect(await ana.last()).toBe(readback);
     await text(s, clock, ana.phone, "right, i'm bi", { app: "slop" });
     const me = await slopMember(ana.id);

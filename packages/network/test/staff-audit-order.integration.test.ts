@@ -1,0 +1,92 @@
+import { afterAll, beforeAll, expect, test } from "vitest";
+import { SimClock } from "@thenetwork/core";
+import { SQL } from "../../core/src/runtime/postgres.ts";
+import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
+import { PgAudit } from "../../observatory/src/staff.ts";
+import type { AuditEntry } from "../../observatory/src/types.ts";
+import { APPS } from "../../platform/src/apps.ts";
+import { CloudChannelAdapter } from "../service/cloud-channel.ts";
+import { NetworkService } from "../service/service.ts";
+
+const clock = new SimClock(Date.UTC(2026, 10, 17, 16));
+const token = "synthetic-staff-audit-order-token-20261117";
+const phone = "+12125550231";
+const reassigned = "+12125550232";
+const secret = "synthetic-staff-audit-order-turn-secret-2026";
+let url: string, sql: SQL, service: NetworkService, auditDown = false, line = "";
+
+const staff = (path: string, b: object) => service.fetch(new Request(`http://127.0.0.1${path}?app=friends`, {
+  method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(b),
+}));
+const parked = async () => (await sql`select status from platform.outbound where id='parked-1'`)[0]?.status;
+const turn = async () => (await sql`select status, sender_hash from platform.inbound where id='msg:blooio:stuck-1'`)[0];
+const hold = async (e164 = phone) => (await sql`select hold from platform.phone_identities where e164=${e164}`)[0]?.hold;
+const phases = async (action: string) => (await sql`select detail->>'phase' as phase, ok from network.staff_audit where action=${action} order by id`)
+  .map(r => `${r.phase}:${r.ok}`);
+
+beforeAll(async () => {
+  if (!pgAvailable) return;
+  url = await testDb();
+  sql = new SQL({ url, max: 2 });
+  const audit = new PgAudit(url);
+  service = new NetworkService({
+    url, clock, photoStorage: null, tokens: `admin@*:${token},safety@*:${token}`,
+    audit: { kind: audit.kind, list: q => audit.list(q), close: () => audit.close(), write: async (entry: AuditEntry) => {
+      if (auditDown) throw new Error("synthetic audit sink outage");
+      await audit.write(entry);
+    } },
+    env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret },
+    networks: [{ id: "friends:nyc", matchingEnabled: false }], network: { seed: 1 }, log: () => {},
+    adapter: (_net, rt) => new CloudChannelAdapter({ clock, app: rt.app.id, city: rt.city, from: "+12125550230", origin: "http://127.0.0.1:9", secret,
+      env: { PLATFORM_ENV: "dev" } }),
+  });
+  await service.start();
+  line = (service.runtimeFor("friends")!.adapter as CloudChannelAdapter).queue.line;
+  const now = new Date(clock.now());
+  await sql`insert into platform.outbound (id, app_id, line, kind, fingerprint, time_zone, status, next_attempt_at, created_at, updated_at, body, to_address, note)
+    values ('parked-1', 'friends', ${line}, 'reply', 'fixture', 'America/New_York', 'parked_leak_review', ${now}, ${now}, ${now}, 'Fixture text', '+12125550299', 'leak: canary')`;
+  await sql`insert into platform.inbound (id, received_at, arrived_at, status, request_hash, sender_hash)
+    values ('msg:blooio:stuck-1', ${now}, ${now}, 'processing', 'fixture-hash', 'fixture-sender')`;
+  const joined = await service.accounts.join(APPS.friends, { e164: phone, personId: null }, { firstName: "Ada", age: 33, consent: { sms: true, wording: APPS.friends.consent.text } });
+  expect(joined.ok).toBe(true);
+  await service.people.setPhoneHold(phone, "recycled_number", clock.now());
+  const old = await service.accounts.join(APPS.friends, { e164: reassigned, personId: null }, { firstName: "Bo", age: 41, consent: { sms: true, wording: APPS.friends.consent.text } });
+  expect(old.ok).toBe(true);
+  await service.people.setPhoneHold(reassigned, "recycled_number", clock.now());
+}, 60_000);
+
+afterAll(async () => {
+  await service?.close();
+  await sql?.close();
+  await dropTestDb();
+});
+
+test.skipIf(!pgAvailable)("with the audit sink down, no staff action runs; with it up, each action has a request row before it and a result row after it", async () => {
+  auditDown = true;
+  for (const r of [
+    await staff("/queue/leak-review/parked-1", { decision: "drop", reason: "a fixture canary, never send" }),
+    await staff("/inbound/resolve", { id: "msg:blooio:stuck-1" }),
+    await staff("/holds", { phone, decision: "same_owner" }),
+    await staff("/holds", { phone: reassigned, decision: "new_owner" }),
+  ]) expect(r.ok).toBe(false);
+  expect(await parked()).toBe("parked_leak_review");
+  expect(await turn()).toMatchObject({ status: "processing", sender_hash: "fixture-sender" });
+  expect(await hold()).toBe("recycled_number");
+  expect(await hold(reassigned)).toBe("recycled_number");
+
+  auditDown = false;
+  expect(await (await staff("/queue/leak-review/parked-1", { decision: "drop", reason: "a fixture canary, never send" })).json()).toEqual({ ok: true });
+  expect(await (await staff("/inbound/resolve", { id: "msg:blooio:stuck-1" })).json()).toEqual({ ok: true });
+  expect(await (await staff("/holds", { phone, decision: "same_owner" })).json()).toEqual({ ok: true });
+  expect(await (await staff("/holds", { phone: reassigned, decision: "new_owner" })).json()).toEqual({ ok: true });
+  expect(await parked()).toBe("dropped_leak_review");
+  expect(await turn()).toMatchObject({ status: "unresolved", sender_hash: null });
+  expect(await hold()).toBeNull();
+  expect(await hold(reassigned)).toBeUndefined();
+  expect(await phases("leak_drop")).toEqual(["requested:true", "result:true"]);
+  expect(await phases("resolve_inbound_turn")).toEqual(["requested:true", "result:true"]);
+  expect((await sql`select target_id from network.staff_audit where action='resolve_inbound_turn' order by id`).map(r => r.target_id)).toEqual(["msg:blooio:stuck-1", "msg:blooio:stuck-1"]);
+  expect((await sql`select detail->>'decision' as decision, detail->>'phase' as phase, ok from network.staff_audit where action='safety' and detail->>'safety'='phone_hold' order by id`)
+    .map(r => `${r.decision}:${r.phase}:${r.ok}`)).toEqual(["same_owner:requested:true", "same_owner:result:true", "new_owner:requested:true", "new_owner:result:true"]);
+  expect((await sql`select reason from network.staff_audit where action='leak_drop'`).map(r => r.reason)).toEqual(["a fixture canary, never send", "a fixture canary, never send"]);
+}, 60_000);

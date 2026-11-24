@@ -44,13 +44,12 @@ async function signedTurn(clock: SimClock, from: string, text: string) {
 }
 
 async function heldText(clock: SimClock) {
-  const flags = { BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1", FRIENDS_LIVE_APPROVED: "1" };
   const sent: SendRequest[] = [];
   const provider = { kind: "blooio" as const, send: async (r: SendRequest) => { sent.push(r); return { providerMessageId: `p${sent.length}`, status: "queued" as const }; } };
   const s = new NetworkService({ url: URL_, clock, instance: "stop-held", log: () => {}, env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: TURN_SECRET }, networks: NETS,
     tokens: "admin:adm-tok,reviewer:rev-tok", webhookSecret: SECRET, webhookSecrets: { friends: APP_SECRET, slop: APP_SECRET },
     network: { seed: 1 }, publicApi: { otp: new FakeOtp(), minStartMs: 0, minVerifyMs: 0 },
-    adapter: (_net, rt) => new BlooioAdapter({ from: "+12125550100", provider, clock, env: flags, app: rt.app.id, log: () => {} }) });
+    adapter: (_net, rt) => new BlooioAdapter({ from: "+12125550100", provider, clock, env: {}, app: rt.app.id, log: () => {} }) });
   open.push(s);
   await s.start();
   const p = newPhone();

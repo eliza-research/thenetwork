@@ -2,8 +2,8 @@
 // Item ids are bigserial numbers stored as text ids "inb_<n>" in the API.
 import { fileAt } from "../../core/src/runtime/files.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { digestItemSetCanBeRecorded } from "../../core/src/generated/notificationDispatch.ts";
-import type { DeliveryRecord, NotifyStore } from "./store.ts";
+import { digestItemSetCanBeRecorded, digestWithinWeeklyCap } from "../../core/src/generated/notificationDispatch.ts";
+import { WEEK_MS, type DeliveryRecord, type NotifyStore } from "./store.ts";
 import type { SurfaceSignal } from "./surface.ts";
 import type { TaskToken } from "./tokens.ts";
 import { isAssistant, type InboxItem, type InboxItemInput, type Surface } from "./types.ts";
@@ -62,15 +62,33 @@ export class PgNotifyStore implements NotifyStore {
   }
 
   async addItem(input: InboxItemInput, now: number) {
+    return this.insertItem(this.sql, input, now, false);
+  }
+
+  private async insertItem(db: SQL, input: InboxItemInput, now: number, lock: boolean) {
     const key = dedupeKey(input);
-    const inserted = await this.sql`
+    const inserted = await db`
       insert into notify.inbox_items (dedupe_key, person_id, app_id, event_type, subject_id, urgency, summary, created_at, expires_at)
       values (${key}, ${input.personId}, ${input.app}, ${input.eventType}, ${input.subjectId}, ${input.urgency}, ${input.summary}, ${new Date(now)}, ${ts(input.expiresAt)})
       on conflict (dedupe_key) do nothing
       returning *`;
     if (inserted.length) return { item: item(inserted[0]), created: true };
-    const [existing] = await this.sql`select * from notify.inbox_items where dedupe_key = ${key}`;
+    const [existing] = await db`select * from notify.inbox_items where dedupe_key = ${key} ${lock ? db`for update` : db``}`;
     return { item: item(existing), created: false };
+  }
+
+  async addDelivered(input: InboxItemInput, d: Parameters<NotifyStore["addDelivered"]>[1]) {
+    return this.sql.begin(async tx => {
+      const r = await this.insertItem(tx, input, d.sentAt, true);
+      if (r.item.notifiedAt !== undefined) return r;
+      const ins = await tx`
+        insert into notify.deliveries (delivery_id, person_id, item_ids, target, counts_toward_cap, sent_at)
+        values (${d.deliveryId}, ${input.personId}, ${tx.array(numIds([r.item.id]), "int8")}, ${d.target}, ${d.countsTowardCap}, ${new Date(d.sentAt)})
+        on conflict (delivery_id) do nothing returning delivery_id`;
+      if (ins.length) await tx`update notify.inbox_items set notified_at = ${new Date(d.sentAt)}, delivery_id = ${d.deliveryId}
+        where id = ${numIds([r.item.id])[0]} and notified_at is null`;
+      return r;
+    });
   }
 
   async getItems(ids: string[], lock = false) {
@@ -111,16 +129,20 @@ export class PgNotifyStore implements NotifyStore {
     return rows.map((r: Row) => toId(r.id));
   }
 
-  async recordDelivery(d: DeliveryRecord) {
+  async recordDelivery(d: DeliveryRecord, weeklyCap: number) {
     return this.sql.begin(async tx => {
       const ids = tx.array(numIds(d.itemIds), "int8");
       const sentAt = new Date(d.sentAt);
       if (d.deliveryId.startsWith("ntf_")) {
+        await tx`select pg_advisory_xact_lock(hashtextextended(${`notify-cap:${d.personId}`}, 0))`;
         const pending = await tx`
           select id from notify.inbox_items where person_id = ${d.personId} and id = any(${ids})
             and seen_at is null and notified_at is null and (expires_at is null or expires_at > ${sentAt})
           order by id for update`;
         if (!digestItemSetCanBeRecorded(d.itemIds.length, pending.length)) return false;
+        const [counted] = await tx`select count(*)::int as n from notify.deliveries
+          where person_id = ${d.personId} and counts_toward_cap and sent_at >= ${new Date(d.sentAt - WEEK_MS + 1)}`;
+        if (!digestWithinWeeklyCap(d.countsTowardCap, Number(counted?.n ?? 0), weeklyCap)) return false;
       }
       const ins = await tx`
         insert into notify.deliveries (delivery_id, person_id, item_ids, target, counts_toward_cap, sent_at, assistant_link)

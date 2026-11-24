@@ -119,6 +119,7 @@ describe.skipIf(!pgAvailable)("real mode fixes and per-app panels (Postgres)", (
           { id: "r3", kind: "made-up", reporterId: "s3", subjectId: "s1", at: Date.now(), status: "weird" },
           { id: "bad" },
         ] });
+        if (u.pathname === "/safety/hold") return Response.json({ ok: true, reach: "app" });
         if (u.pathname.startsWith("/safety/")) return Response.json({ ok: true });
         if (/^\/members\/[^/]+\/photos$/.test(u.pathname)) return Response.json({ ok: true, photos: [{ id: "ph1", url: "https://photos.example.org/ph1.jpg", expiresAt: Date.now() + 60_000 }, { id: "x", url: "javascript:alert(1)" }] });
         return Response.json({ error: "no route" }, { status: 404 });
@@ -194,7 +195,8 @@ describe.skipIf(!pgAvailable)("real mode fixes and per-app panels (Postgres)", (
     expect(sf.reports![0]!.overdue).toBe(true); // harassment: 1-hour target, reported 2 hours ago
     expect((await post(TOK.safety, "/api/safety?app=slop", { action: "ban", memberId: "s3", by: "account", note: "repeat harassment" })).status).toBe(400);
     expect((await post(TOK.safety, "/api/safety?app=slop", { action: "hold", memberId: "s3", note: "no" })).status).toBe(400);
-    expect((await post(TOK.safety, "/api/safety?app=slop", { action: "hold", memberId: "s3", note: "report r1, harassment after a date", reportId: "r1" })).status).toBe(200);
+    const held = await post(TOK.safety, "/api/safety?app=slop", { action: "hold", memberId: "s3", note: "report r1, harassment after a date", reportId: "r1" });
+    expect([held.status, await held.json()]).toEqual([200, { ok: true, reach: "app" }]);
     expect((await post(TOK.safety, "/api/safety?app=slop", { action: "ban", memberId: "s3", by: "phone", note: "report r1 confirmed", reportId: "r1" })).status).toBe(200);
     expect((await post(TOK.safety, "/api/safety?app=slop", { action: "ban", memberId: "s3", by: "person", note: "report r1 confirmed" })).status).toBe(200);
     expect((await post(TOK.safety, "/api/safety?app=slop", { action: "dismiss", reportId: "r3", note: "not about a date" })).status).toBe(200);

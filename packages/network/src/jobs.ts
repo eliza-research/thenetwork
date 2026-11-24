@@ -186,7 +186,7 @@ export const POSTING_COPY = {
   askPay: "What's the pay range for the role (for example $90k-$120k)? We only show jobs with a posted pay range.",
   askArea: "Which neighborhood is the job in?",
   askOpenings: `How many openings are there? Give a whole number from 1 to ${MAX_OPENINGS}.`,
-  saved: (title: string) => `Posted: ${title}. A person on our team reviews every match before anyone hears about it, and you see a short summary of each candidate who says yes. ${NEVER_ASKS}`,
+  saved: (title: string) => `Posted: ${title}. An automatic check approves every match before anyone hears about it, and you see a short summary of each candidate who says yes. ${NEVER_ASKS}`,
   updated: (title: string) => `Updated: ${title}.`,
   closed: (title: string) => `Closed: ${title}. No new candidates will be sent for it.`,
   readBack: (d: PostingDraft) => {

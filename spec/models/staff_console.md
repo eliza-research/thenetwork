@@ -12,6 +12,27 @@ Imported from `quint/staff_console.qnt` at `30d950e`. See [model index](README.m
 
 The production staff role projection and route admission use [Observatory staff permissions](../staffPermissions.md). Audit, revocation and socket timing remain in this standalone flow.
 
+Convention: the intended action is in `step`, so `safety` checks the intended design of every flow. Where the code differs, a `*Code` action (one `*By(code, ...)` body with the code branch) is outside `step`, and a run test shows the rule fail after it. This is the convention of [join_age](join_age.md) and [safety_trust](safety_trust.md).
+
+The console staff-step proxy (`packages/observatory/src/staffSteps.ts`, `staffStepRoutes`, mounted in `server.ts`) is the `staffStep` action. It admits a step only in real mode and with the role of `staffStepAdmitted`, and it needs a configured service and a named person (`X-Network-Staff-Id`). With no service it answers 503 `read_only` and writes no row. A refused role writes an audit row with ok false before the 403. It checks the mode header with `modeRefusal` before its awaits, so the command runs in the mode it was admitted in (`inv_commandRunsInSeenMode`). A write records its "requested" row before the forwarder sends it, and a failed audit write stops the step (`inv_consoleAuditFirst`). A forward that times out records the result row with ok false, code `service_timeout` and outcome "unknown", and answers 504: the console says that the step may have run (`inv_consoleSaysServiceDoes`). Any other forward error records ok false with `service_unavailable` and answers 503. Staff-step ids `.` and `..` are refused. `ResolveInboundTurn` (`POST /inbound/resolve`) and `ReadTurnWatch` (`GET /ops/turns`, counts only) are admin steps for all apps. `staffStepTimeoutTest`, the `staffStep*` refusal runs and `staffStepAuditDownTest` replay the proxy; `packages/observatory/test/staff-steps.integration.test.ts` and `held.test.ts` cover it.
+
+The held routes `/api/held` and `/api/held/:id/photo` ask `staffStepAdmitted` (`ReadHeldRelay`, `DecideHeldRelay`). The leak queue holds member-facing texts that the leak guard stopped. The relay queue holds only selected relay photos that the automatic image check flagged or could not check (owner decision D14 of 2026-11-22); no relayed text waits for staff (owner decision D18 of 2026-11-22). The review kind of a console action is a staff decision on the exception queue: since owner decisions D15 to D17 of 2026-11-22 the automated judge decides every item, there is no review mode control, and staff approve only items that the judge held, reject an open item or stop an approved one.
+
+The matching switch: the registry row of the network ([runtime unit](../runtimeUnit.md)) alone decides whether matching may run. The service refuses "on" and the tick does not run outside it, the real source sends every press to the service, and the overview says "locked" unless the service's `/health` says `matchingAllowed: true`; no service, or a failed `/health`, also reads as locked (`inv_consoleShowsGate`, `inv_tickRunImpliesRegistry`). Changed (owner decision D6 of 2026-11-22): the launch scope and its inputs `production` and `peonLive` are removed, because every app is approved for live sends.
+
+Open code defects (the `*Code` action follows the code, and the run test shows the rule fail):
+
+- SD-247 (`inv_revealShownTruly`, `unrevealWithCode`): `store.ts` `unreveal` removes the client reveal whatever the DELETE answer is, so after a 403, a 503 or a network error the server still serves the revealed data while the badge is gone.
+- SD-068 (`inv_actionTargetsSelectedPerson`, `switchAppCode`): `SafetyCases` in `admin.tsx` has no `key={s.app}`, and `useFetch` keeps the old answer until the new one comes. For that time the rows of the old app stay, and "Close case" sends the old row's case id to the new app.
+- SD-246 (`inv_confirmMatchesApp`, `switchAppCode`): `Config` in `admin.tsx` has no `key={s.app}`. An armed switch survives an app switch until the config read answers, and the confirm sends `on: !c.matchingEnabled` of the old app to the new app.
+- SD-466 (`pollSafetyCode`, `failedPollTest`): `useFetch` replaces the data with a failed answer, so the case and report rows unmount and a typed note goes.
+- SD-070 (`pressHoldCode`, `holdScopeTextTest`): `reportAction` always says "Person held on every app" (and "Minor signal cleared on every app"). The service answer carries `reach` (`app` or `all`, `staffSafetyActionReach` in [staffSafetyService](../staffSafetyService.md)), and `ServiceClient.act` and `/api/safety` pass it on, but the console page does not read it.
+- SD-470 (`clientAnswerCode`, `late401Test`): `Store.api` sets `authNeeded` on any 401, also the late 401 of a replaced token.
+
+SD-282 (`inv_declinedMeansDeclined`, `openConsoleDecisions`) is not in `safety`: it needs a privacy and data-retention decision, and no intended action is settled.
+
+Fixed in the code, one intended action each: SD-288 (`timeoutAfterCommitTest`), SD-083 (`loginCheckRetryServesTest`), SD-082 (`ageReadErrorTest`), SD-285 (`modeSwitchFailKeepsModeTest`), SD-286 (`controlStale`, `modeHeaderRaceTest`), SD-287 (`previewSkewTest`), SD-279 (`closedBookedPlanCancelledTest`), SD-281 (`forgetTest`), SD-084 (`revealFor`, `revealCurrent`), SD-071 (`SlopPanel`, `staffPhotoAllowed`), SD-135 (`auditedRun`), SD-505 (`deltaAction` of [observatory sync](../observatorySync.md)), SD-088 (`inv_tickRunImpliesRegistry`) and PER63.
+
 ```quint
 // quint-check: max-steps=14 max-samples=20000 verify-steps=6
 //
@@ -21,7 +42,7 @@ The production staff role projection and route admission use [Observatory staff 
 // docs/research/state-machines/gap-console-client.md (sections 2.1 to 2.9).
 //
 // Bounds: 2 staff (S1, S2), 2 apps (slop, peon), one member per app (x in slop, y in peon; one person P owns
-// both), one case id "sc1" in each app (each app's Network counts cases from 1, network.ts:1211).
+// both), one case id "sc1" in each app (each app's Network counts cases from 1, network.ts caseEvent).
 //
 // Staff grants at start (platform.staff_roles): S1 = safety@slop + reviewer@slop; S2 = admin@*.
 //
@@ -31,11 +52,13 @@ The production staff role projection and route admission use [Observatory staff 
 // service clock (skew). Time is an integer tick.
 //
 // The invariants come from the rules (AGENTS.md, the PRD, docs/admin-console.md, code comments), not from the
-// code. The actions follow the code after the wave 2 fixes (branch wave2/staff_console), and `safety` holds.
-// Two invariants stay out of `safety` because their defects are not fixed for a stated reason: SD-282 (skipped,
-// needs a privacy and data-retention decision) and SD-088 (refuted in the register: production keeps peon
-// local-only outside this model). See docs/research/quint-findings/staff_console.md. Line numbers in the
-// comments of the actions that the fixes did not change refer to commit ad67275.
+// code. The actions in `step` are the intended design, and `safety` holds for them. Where the code of
+// vibestack-matching differs (compared 2026-11-21), a `*Code` action outside `step` follows the code and a run
+// test shows the rule fail: SD-247, SD-068, SD-246, SD-466, SD-070, SD-470. SD-288, SD-083, SD-082, SD-285,
+// SD-286, SD-287, SD-281 and SD-279 were fixed on 2026-11-22, and their actions are now one action each. SD-282 (`openConsoleDecisions`) needs a privacy and data-retention decision;
+// real.ts still reads every removed row with a null name as an under-13 decline. SD-088 is closed: since the owner decision of
+// 2026-11-22 the registry row alone decides matching (spec/runtimeUnit.md), and inv_tickRunImpliesRegistry is in `safety`.
+// Code locations name functions and routes of vibestack-matching.
 module staff_console {
 
   // ------------------------------------------------------------------ types
@@ -47,48 +70,49 @@ module staff_console {
 
   type State = {
     now: int,
-    // staff-grants (staff.ts:205-229): the table and the console's copy, reloaded every 60 s.
+    // staff-grants (staff.ts PgStaffRoles): the table and the console's copy, reloaded every 60 s.
     grantsDb: Set[Grant],
     grantsCopy: Set[Grant],
-    // members in an open review item (real.ts:716 inOpenReview), set by the Network.
+    // members in an open review item (real.ts RealSource.inOpenReview), set by the Network.
     openReview: Set[str],
-    // pii-reveal (server.ts:295, 561-588) and the client's list (web/store.ts:540-558).
+    // pii-reveal (server.ts reveals and "/api/reveal") and the client's list (web/store.ts loadReveals, reveal and unreveal).
     reveals: Set[Reveal],
     clientReveals: Set[Reveal],
     auditedReveals: Set[(str, str)],
     lastRead: { valid: bool, st: str, revealed: bool, safetyNow: bool },
-    // ws-ticket and ws-socket (server.ts:471-476, 797-824, 338-347).
+    // ws-ticket and ws-socket (server.ts "/api/ws-ticket", fetch (/ws) and recheck).
     tickets: Set[Ticket],
     nextTicket: int,
     sockets: Set[Socket],
-    // staff-audit and staff-action-relay: one console action in flight (server.ts:611-617, 630-633, 679-683;
-    // sources/service.ts:92-104) and the service effects it causes (network service.ts).
+    // staff-audit and staff-action-relay: one console action in flight (server.ts "/api/control", "/api/safety" and "/api/held";
+    // sources/service.ts ServiceClient.act) and the service effects it causes (network service.ts).
     rel: { phase: str, kind: str, consoleRowFirst: bool, svc: str, consoleResult: str },
     svcEffects: Set[Effect],
     nextEffect: int,
-    // real-source (real.ts:196-236).
+    // real-source (real.ts RealSource.init).
     src: { phase: str, loginFit: bool, loginChecked: bool, served: bool, envError: bool },
-    // console-age-view (real.ts:71-97, 290-303, 451-480) for member x, and the slop photo panel (panels.tsx:576-608).
+    // console-age-view (real.ts AGE_EVENTS, ageView and RealSource.ageInfo) for member x, and the slop photo panel (panels.tsx SlopPanel).
     age: { netMinor: bool, viaEvent: bool, recordAge: str, consoleMinor: bool, netAtPoll: bool, photosShown: bool, photosBy: str },
-    // console-fetch-scope and case-row-actions (admin.tsx:11-21, 58-111, 182-230; web/store.ts:282).
+    // console-fetch-scope and case-row-actions (admin.tsx useFetch, SafetyCases and CaseItem; web/store.ts withApp).
     cs: { shownApp: str, dataApp: str, closeSent: bool, intended: str, actual: str, note: bool, noteLost: bool },
-    // report-row-actions, hold (admin.tsx:260; service.ts:1676-1688).
+    // report-row-actions, hold (admin.tsx ReportItem; service.ts NetworkService.hold).
     hs: { heldIn: Set[str], toastEvery: bool },
-    // console-mode and source cache (server.ts:189-251, 361-372).
+    // console-mode and source cache (server.ts source, setMode and guard).
     md: { realOnly: bool, mode: str, srcState: str -> str, pending: str, ranSaw: str, ranIn: str },
-    // network-matching-gate (apps.ts:21; real.ts:864; health.ts:334; service.ts:1809-1817).
+    // network-matching-gate (spec/runtimeUnit.md, the registry row; service.ts setMatching; runtime.ts tick rollout;
+    // health.ts appHealth; real.ts serviceMatchingAllowed).
     mg: { registry: str -> bool, stored: str -> bool, engineRan: str -> bool },
-    // matching-switch-confirm (admin.tsx:378-392).
+    // matching-switch-confirm (admin.tsx Config).
     cf: { armed: bool, armedApp: str, target: bool, dataApp: str, sent: bool, sentApp: str, sentArmedFor: str, sentDataOf: str },
-    // auth-prompt (web/store.ts:283-316).
+    // auth-prompt (web/store.ts api and setToken).
     cl: { epoch: int, inflight: Set[int], authNeeded: bool, valid: Set[int] },
-    // held photo preview (server.ts:640-655, 676-683; network service.ts:2306-2307).
+    // held photo preview (server.ts "/api/held/:id/photo" and "/api/held"; network service.ts, the held photo route).
     pv: { skew: int, tokenUntil: int, state: str, refusedAt: int, loadedBy: str, releasedBy: str },
-    // opp-projection, game mode (projector.ts:11-14, 100-110, 160-200, 245-256).
+    // opp-projection, game mode (projector.ts TERMINAL and Projector.apply).
     pj: { stage: str, proj: str, term: str },
-    // real-source store retention for member z (real.ts:334-341, 351-356; network runtime.ts:520-545).
+    // real-source store retention for member z (real.ts RealSource.load; network runtime.ts unit commit, the forget path).
     fg: { dbEdge: bool, consoleEdge: bool, edgeAtPoll: bool, left: bool, dbRemovedNoName: bool, consoleDeclined: bool },
-    // client-sync: snapshot and buffered deltas (web/store.ts:330-345, 380-392).
+    // client-sync: snapshot and buffered deltas (web/store.ts load and applyDelta).
     dv: { server: int, feed: int, version: int, loading: bool, buffered: Set[int] },
   }
 
@@ -98,31 +122,29 @@ module staff_console {
   pure val STAFF = Set("S1", "S2")
   pure val APPS = Set("slop", "peon")
   pure val MODES = Set("game", "real")
-  pure val KINDS = Set("review", "hold", "leak", "relayText")
+  pure val KINDS = Set("review", "hold", "leak", "relayPhoto")
   pure val MEMBER_OF: str -> str = Map("slop" -> "x", "peon" -> "y")
-  // Case "sc1" exists in each app and names a different member (network.ts:1211: `sc${++this.caseSeq}`, no app prefix).
+  // Case "sc1" exists in each app and names a different member (network.ts caseEvent: `sc${++this.caseSeq}`, no app prefix).
   pure val CASE_SC1: str -> str = Map("slop" -> "x", "peon" -> "y")
   pure val GRANTS0: Set[Grant] = Set(("S1", "safety", "slop"), ("S1", "reviewer", "slop"), ("S2", "admin", "*"))
-  // PACK_READY (apps.ts:21): the console refuses "matching on" for peon.
-  pure val CONSOLE_ALLOWS: str -> bool = Map("slop" -> true, "peon" -> false)
-  pure val REVEAL_TICKS = 3   // 15 minutes (server.ts:572 REVEAL_MAX_MINUTES)
+  pure val REVEAL_TICKS = 3   // 15 minutes (server.ts REVEAL_MAX_MINUTES)
   pure val TICKET_TICKS = 1   // 30 s (WS_TICKET_MS)
-  pure val PREVIEW_TICKS = 5  // 5 minutes (server.ts:647 and network service.ts:2306)
+  pure val PREVIEW_TICKS = 5  // 5 minutes (server.ts "/api/held/:id/photo" and network service.ts, the held photo route)
   pure val CLOSED_STATES = Set("CANCELLED", "SKIPPED", "DECLINED", "EXPIRED")
   pure val TERMINAL = Set("COMPLETED", "FEEDBACK_COLLECTED", "DECLINED", "EXPIRED", "CANCELLED", "SKIPPED", "ABANDONED", "QUORUM_FAILED")
 
-  // ------------------------------------------------------------------ helpers (staff.ts:181-200)
+  // ------------------------------------------------------------------ helpers (staff.ts rolesFor and appsFor)
   pure def rolesFor(g: Set[Grant], st: str, app: str): Set[str] =
     g.filter(x => x._1 == st and (x._3 == app or x._3 == "*")).map(x => x._2)
   pure def allowedR(g: Set[Grant], st: str, need: Set[str], app: str): bool =
     rolesFor(g, st, app).contains("admin") or need.exists(r => rolesFor(g, st, app).contains(r))
   pure def everywhere(g: Set[Grant], st: str, role: str): bool =
     g.exists(x => x._1 == st and x._2 == role and x._3 == "*")
-  // canSeeMember (server.ts:415-420): admin and safety see any member; a reviewer only members in an open review item.
+  // canSeeMember (server.ts canSeeMember): admin and safety see any member; a reviewer only members in an open review item.
   pure def canSee(g: Set[Grant], st: str, app: str, m: str, openReview: Set[str]): bool =
     allowedR(g, st, Set("safety"), app) or (rolesFor(g, st, app).contains("reviewer") and openReview.contains(m))
   pure def recordMinor(a: str): bool = a == "minor"
-  // ageView (real.ts:79-82) with the Network's latest entry, or none.
+  // ageView (real.ts ageView) with the Network's latest entry, or none.
   pure def ageViewMinor(recordAge: str, hasNet: bool, netMinor: bool): bool =
     if (hasNet) netMinor or recordMinor(recordAge) else (recordAge == "none" or recordMinor(recordAge))
 
@@ -178,9 +200,9 @@ module staff_console {
     s' = { ...s, grantsDb: s.grantsDb.exclude(Set(g)) },
   }
 
-  // PgStaffRoles.load (staff.ts:216-227): a good read replaces the copy; a failed read keeps the last good list.
+  // PgStaffRoles.load (staff.ts PgStaffRoles.load): a good read replaces the copy; a failed read keeps the last good list.
   // Sockets are not told: they read the copy again at the next recheck. The slop photo panel shows loaded photos
-  // only while its staff member holds safety (panels.tsx:586-587, SD-071 fix d8fa61c).
+  // only while its staff member holds safety (panels.tsx SlopPanel, SD-071 fix d8fa61c).
   action reloadRoles(ok: bool): bool = {
     val copy = if (ok) s.grantsDb else s.grantsCopy
     s' = { ...s,
@@ -195,7 +217,9 @@ module staff_console {
     s' = { ...s, openReview: if (open) s.openReview.union(Set(m)) else s.openReview.exclude(Set(m)) }
 
   // ------------------------------------------------------------------ pii-reveal
-  // POST /api/reveal (server.ts:561-578): guard (role for the app, safety), audit row first, then the grant.
+  // POST /api/reveal (server.ts "/api/reveal" POST): guard (role for the app, safety), audit row first, then the grant.
+  // The server grants only 5, 10 or 15 minutes (staffRevealMinutesAccepted) and refuses other lengths with an audit
+  // row and no grant; the model takes the longest length, the bound that revealBound checks.
   action revealPost(st: str, app: str, auditUp: bool): bool = all {
     rolesFor(s.grantsCopy, st, app).size() > 0,
     allowedR(s.grantsCopy, st, Set("safety"), app),
@@ -208,7 +232,7 @@ module staff_console {
     } else s,
   }
 
-  // GET /api/member/:id (server.ts:494-512): canSeeMember, then revealFor (server.ts:421-425), which looks at
+  // GET /api/member/:id (server.ts "/api/member/:id"): canSeeMember, then revealFor (server.ts revealFor), which looks at
   // the grant, its time and the safety role for the app now, and drops a grant whose role is gone (SD-084 fix
   // cd612bc); then the audit row, then the read with reveal = !!grant.
   action readMember(st: str, app: str, auditUp: bool): bool = all {
@@ -229,15 +253,19 @@ module staff_console {
     },
   }
 
-  // "End" (panels.tsx:542; web/store.ts:555-563): the server DELETE (server.ts DELETE /api/reveal) needs a role
+  // "End" (panels.tsx MemberReveal; web/store.ts reveal and unreveal): the server DELETE (server.ts DELETE /api/reveal) needs a role
   // for the app and safety, and a network error never reaches it. The server deletes the grant first, then
-  // writes the reveal_revoke row; with the audit sink down it answers 503 after the delete. The client drops
-  // its grant only on 200 or 404, that is when the server has no grant after the call (SD-247 fix e662d5f),
-  // so on a 503 the badge stays while the server holds no grant (safe side).
-  action unrevealWith(st: str, app: str, reached: bool, auditUp: bool): bool = {
+  // writes the reveal_revoke row; with the audit sink down it answers 503 after the delete.
+  // Intended (`unrevealWith`, in `step`): the client drops its grant only on 200 or 404, that is when the server
+  // has no grant after the call, so on a 503 the badge stays while the server holds no grant (safe side).
+  // Code (`unrevealWithCode`, not in `step`): store.ts unreveal ignores the DELETE answer and always drops the
+  // client grant, also after a 403, a 503 or a network error (SD-247 open on this branch).
+  action unrevealBy(code: bool, st: str, app: str, reached: bool, auditUp: bool): bool = {
     val m = MEMBER_OF.get(app)
-    val serverDeletes = reached and rolesFor(s.grantsCopy, st, app).size() > 0 and allowedR(s.grantsCopy, st, Set("safety"), app)
-    val clientDrops = serverDeletes and auditUp
+    val allowed = rolesFor(s.grantsCopy, st, app).size() > 0 and allowedR(s.grantsCopy, st, Set("safety"), app)
+    val serverDeletes = reached and allowed
+    val hadGrant = s.reveals.exists(r => r.st == st and r.app == app and r.m == m)
+    val clientDrops = code or (serverDeletes and (auditUp or not(hadGrant)))
     all {
       s.clientReveals.exists(r => r.st == st and r.app == app and r.m == m),
       s' = { ...s,
@@ -246,7 +274,10 @@ module staff_console {
       },
     }
   }
+  action unrevealWith(st: str, app: str, reached: bool, auditUp: bool): bool = unrevealBy(false, st, app, reached, auditUp)
+  action unrevealWithCode(st: str, app: str, reached: bool, auditUp: bool): bool = unrevealBy(true, st, app, reached, auditUp)
   action unreveal(st: str, app: str, reached: bool): bool = unrevealWith(st, app, reached, true)
+  action unrevealCode(st: str, app: str, reached: bool): bool = unrevealWithCode(st, app, reached, true)
 
   // ------------------------------------------------------------------ ws-ticket and ws-socket
   action issueTicket(st: str, app: str): bool = all {
@@ -255,7 +286,7 @@ module staff_console {
     s' = { ...s, tickets: s.tickets.union(Set({ id: s.nextTicket, st: st, app: app, until: s.now + TICKET_TICKS })), nextTicket: s.nextTicket + 1 },
   }
 
-  // GET /ws?ticket= (server.ts:297-306): the ticket is deleted first; then its time and app, then the role.
+  // GET /ws?ticket= (server.ts fetch, /ws): the ticket is deleted first; then its time and app, then the role.
   action openSocket(id: int): bool = all {
     s.tickets.exists(t => t.id == id),
     val t = s.tickets.filter(t => t.id == id).fold({ id: -1, st: "", app: "", until: 0 }, (a, b) => b)
@@ -266,7 +297,7 @@ module staff_console {
     },
   }
 
-  // recheck (server.ts:338-347), every 15 s: no role for the app closes the socket.
+  // recheck (server.ts recheck), every 15 s: no role for the app closes the socket.
   action recheck(st: str, app: str): bool = all {
     s.sockets.exists(k => k.st == st and k.app == app),
     val keep = rolesFor(s.grantsCopy, st, app).size() > 0
@@ -274,14 +305,30 @@ module staff_console {
   }
 
   // ------------------------------------------------------------------ staff-audit and staff-action-relay
-  // The console writes "requested" first (server.ts:612, 631, 680); no row, no action (503).
+  // The console writes "requested" first (server.ts "/api/control", "/api/safety" and "/api/held"); no row, no action (503).
   action consoleSend(kind: str, auditUp: bool): bool = all {
     s.rel.phase != "sent",
     s' = if (auditUp) { ...s, rel: { phase: "sent", kind: kind, consoleRowFirst: true, svc: "pending", consoleResult: "none" } } else s,
   }
 
-  // The service runs the request. review and hold go through staffAction/audited (service.ts:1519-1526,
-  // 1765-1773); the leak decision (service.ts:2330-2332) and a relay text or photo decision (service.ts:2436-2437)
+  // A console staff step (staffSteps.ts handler, staffStepRoutes): real mode only, the role check of
+  // spec/staffPermissions.md staffStepAdmitted (`need` is staffStepRoles of the step), a configured service (with
+  // none it answers 503 read_only and writes no row), then the "requested" row of a write before the forward. The
+  // forward names the signed-in person in X-Network-Staff-Id; a console step always carries a named person. The
+  // service refuses a shared token on a step that needs a person when the console token is set (staffStepActorAccepted
+  // and staffStepNeedsPerson); the review desk steps take a shared token recorded as itself. The answer and the
+  // timeout are consoleAnswer and consoleTimeout, as for the other console actions.
+  action staffStep(st: str, app: str, need: Set[str], named: bool, serviceUp: bool, auditUp: bool): bool = all {
+    s.rel.phase != "sent",
+    s.md.mode == "real",
+    allowedR(s.grantsCopy, st, need, app),
+    serviceUp,
+    named,
+    s' = if (auditUp) { ...s, rel: { phase: "sent", kind: "step", consoleRowFirst: true, svc: "pending", consoleResult: "none" } } else s,
+  }
+
+  // The service runs the request. review and hold go through staffAction/audited (service.ts staffAction,
+  // audited and auditedRun); the leak decision (service.ts /queue/leak-review) and a relay photo decision (service.ts, the relay photo decision; no relay text waits for staff since owner decision 2026-11-22, D18)
   // now also write their "requested" row first (SD-135 fix 88d4d88). A failed write throws before the action.
   // The service may still run after the console timed out (no idempotency key; observatory.md D14).
   action serviceApply(outcome: str, svcAuditUp: bool): bool = all {
@@ -295,38 +342,39 @@ module staff_console {
     },
   }
 
-  // The answer reaches the console in time (sources/service.ts:101-110).
+  // The answer reaches the console in time (sources/service.ts ServiceClient.act).
   action consoleAnswer: bool = all {
     s.rel.phase == "sent",
     s.rel.svc != "pending",
     s' = { ...s, rel: { ...s.rel, phase: "answered", consoleResult: if (s.rel.svc == "committed") "ok" else "fail" } },
   }
 
-  // AbortSignal.timeout(15 s) (sources/service.ts:83, 98-100): code service_timeout, "the action may have run",
-  // and the console reads the state again (real.ts afterAction) (SD-288 fix 084f060).
+  // AbortSignal.timeout(15 s) (sources/service.ts ServiceClient.call, act and isTimeout; staffSteps.ts handler): a
+  // timeout answers code service_timeout with status 504, "the action may have run"; the result audit row has
+  // outcome "unknown" (server.ts resultRow), and real.ts afterAction reads the state again. SD-288 fixed 2026-11-22.
   action consoleTimeout: bool = all {
     s.rel.phase == "sent",
     s' = { ...s, rel: { ...s.rel, phase: "answered", consoleResult: "unknown" } },
   }
 
   // ------------------------------------------------------------------ real-source login check
-  // checkLogin (real.ts:221-248, SD-083 fix bedc81f): nothing is read through the connection until the check
-  // answers. A check that throws leaves it unchecked with an env error; an unfit login is refused; a fit login
-  // becomes the connection that load() reads.
+  // The login check (real.ts checkLogin, loginProblem): an unfit login is refused and the connection is closed; a
+  // fit login becomes the connection that load() reads (RealSource.sql). Phase "unchecked" names a connection whose
+  // check threw (RealSource.unchecked): nothing is read through it, and each poll (real.ts refresh) checks it again
+  // first. SD-083 fixed 2026-11-22.
   pure def checkThenLoad(src: { phase: str, loginFit: bool, loginChecked: bool, served: bool, envError: bool },
                          checkThrows: bool, loadOk: bool): { phase: str, loginFit: bool, loginChecked: bool, served: bool, envError: bool } =
     if (checkThrows) { ...src, phase: "unchecked", envError: true }
     else if (not(src.loginFit)) { ...src, phase: "refused", loginChecked: true }
     else { ...src, phase: if (loadOk) "live" else "readError", loginChecked: true, served: src.served or loadOk, envError: not(loadOk) }
 
-  // RealSource.init (real.ts:199-215): the check, then a load only through a checked login, then the timers.
+  // RealSource.init: the check, then the load, then the timers.
   action sourceInit(checkThrows: bool, loadOk: bool): bool = all {
     s.src.phase == "new",
     s' = { ...s, src: checkThenLoad(s.src, checkThrows, loadOk) },
   }
 
-  // reload every 10 s (real.ts:254-260): an unchecked connection is checked again first; a good load clears the
-  // env error.
+  // reload every 10 s (real.ts reload and refresh). A good load clears the env error.
   action sourcePoll(checkThrows: bool, loadOk: bool): bool = all {
     s.src.phase == "unchecked" or s.src.phase == "live" or s.src.phase == "readError",
     s' = { ...s, src:
@@ -336,27 +384,28 @@ module staff_console {
   }
 
   // ------------------------------------------------------------------ console-age-view
-  // The Network marks x as a minor (another actor): by an age event in AGE_EVENTS (real.ts:71), or by
+  // The Network marks x as a minor (another actor): by an age event in AGE_EVENTS (real.ts AGE_EVENTS), or by
   // minor_reported / minor_record, which write the stored flag only.
   action netMinorSignal(viaEvent: bool): bool =
     s' = { ...s, age: { ...s.age, netMinor: true, viaEvent: s.age.viaEvent or viaEvent } }
 
-  // One poll (real.ts:290-303, 451-480; SD-082 fix 546743b): stateRow(strict) throws a read error of the app's
-  // view, and the events query has no catch, so a failed read fails the whole load and this.ages keeps the last
-  // good copy (real.ts:342-348). netAtPoll is what the Network held at the last poll that read it.
+  // One poll (real.ts load and ageInfo). The age events query and the state view read (strict stateRow: only a
+  // missing view, 42P01, falls back) have no catch, so a failed read of either fails the whole load and this.ages
+  // and the store members keep the last good copy. netAtPoll is what the Network held at the last poll that read
+  // the state row. SD-082 fixed 2026-11-22.
   action agePoll(rowOk: bool, eventsOk: bool): bool = {
     val consoleMinor = ageViewMinor(s.age.recordAge, true, s.age.netMinor)
-    if (rowOk and eventsOk) s' = { ...s, age: { ...s.age,
+    if (eventsOk and rowOk) s' = { ...s, age: { ...s.age,
       consoleMinor: consoleMinor,
       netAtPoll: s.age.netMinor or recordMinor(s.age.recordAge),
-      // The photo gate closes with the console's age view (panels.tsx:586-587, SD-071 fix d8fa61c).
+      // The photo gate closes with the console's age view (panels.tsx SlopPanel staffPhotoAllowed on each render).
       photosShown: s.age.photosShown and not(consoleMinor),
     } }
     else s' = s
   }
 
-  // POST /api/member/:id/photos (server.ts:518-540): safety, reason, photosAllowed on the console's view; the
-  // service checks its own age state again (network service.ts:1788-1810). photosAllowed now needs only a stated
+  // POST /api/member/:id/photos (server.ts "/api/member/:id/photos"): safety, reason, photosAllowed on the console's view; the
+  // service checks its own age state again (network service.ts NetworkService.staffPhotos). photosAllowed now needs only a stated
   // adult age and no failed age check (appProfile.ts photosAllowed, SD-283 fix 93a99b8); the model has no age
   // check facet, so the stated adult age decides, as before.
   action loadPhotos(st: str): bool = all {
@@ -366,50 +415,70 @@ module staff_console {
     s' = { ...s, age: { ...s.age, photosShown: true, photosBy: st } },
   }
 
-  // The staff member closes the disclosure (ui.tsx:97): the panel state goes.
+  // The staff member closes the disclosure (panels.tsx Disclosure): the panel state goes.
   action closePhotos: bool = s' = { ...s, age: { ...s.age, photosShown: false } }
 
   // ------------------------------------------------------------------ console-fetch-scope and case rows
-  // setApp (web/store.ts:507-520). SafetyCases and Config mount once per app (admin.tsx SafetyCases and Config
-  // with key={s.app}; SD-068 fix d8b34a1, SD-246 fix e6daa04): an app switch drops the rows, a typed note, the
-  // config data and an armed switch, and both panels read again for the new app.
-  action switchApp(app: str): bool = s' = { ...s,
-    cs: { ...s.cs, shownApp: app, dataApp: if (app == s.cs.shownApp) s.cs.dataApp else "none", note: if (app == s.cs.shownApp) s.cs.note else false },
-    cf: if (app == s.cs.shownApp) s.cf else { ...s.cf, armed: false, dataApp: "none" },
-  }
+  // setApp (web/store.ts setApp). Intended (`switchApp`, in `step`): an app switch drops the case rows, a typed
+  // note, the config data and an armed switch, and both panels read again for the new app (pollSafety and
+  // configPoll). Code (`switchAppCode`, not in `step`): SafetyCases and Config in admin.tsx mount once and
+  // useFetch keeps the last answer until the read for the new app answers, so the rows, a typed note, the config
+  // data and an armed switch stay (SD-068 and SD-246 open on this branch).
+  action switchAppBy(code: bool, app: str): bool =
+    if (code) s' = { ...s, cs: { ...s.cs, shownApp: app } }
+    else s' = { ...s,
+      cs: { ...s.cs, shownApp: app, dataApp: "none", note: false },
+      cf: { ...s.cf, armed: false, dataApp: "none" },
+    }
+  action switchApp(app: str): bool = switchAppBy(false, app)
+  action switchAppCode(app: str): bool = switchAppBy(true, app)
 
-  // A poll of GET /api/safety (admin.tsx useFetch, SD-466 fix 2bf14c3): an answer replaces the data; a network
-  // error or a 5xx for the same key keeps the last good data, so the rows and a typed note stay mounted. (A 401
-  // or 403 is an answer, not a failed read: the role is gone and the rows go.)
-  action pollSafety(ok: bool): bool =
-    s' = { ...s, cs: { ...s.cs,
+  // A poll of GET /api/safety every 10 s (admin.tsx useFetch). Intended (`pollSafety`, in `step`): a network
+  // error or a 5xx for the same key keeps the last good data, so the rows and a typed note stay mounted. Code
+  // (`pollSafetyCode`, not in `step`): every answer replaces the fetched value, and a failed read is an answer
+  // without data, so SafetyCases shows its status row, the CaseItem and ReportItem rows unmount and a typed note
+  // goes (SD-466 open on this branch).
+  action pollSafetyBy(code: bool, ok: bool): bool =
+    if (code) s' = { ...s, cs: { ...s.cs,
+      dataApp: if (ok) s.cs.shownApp else "none",
+      noteLost: s.cs.noteLost or (not(ok) and s.cs.note),
+      note: if (ok) s.cs.note else false,
+    } }
+    else s' = { ...s, cs: { ...s.cs,
       dataApp: if (ok) s.cs.shownApp else s.cs.dataApp,
       noteLost: s.cs.noteLost or (not(ok) and s.cs.note and s.cs.dataApp == "none"),
       note: if (ok or s.cs.dataApp != "none") s.cs.note else false,
     } }
+  action pollSafety(ok: bool): bool = pollSafetyBy(false, ok)
+  action pollSafetyCode(ok: bool): bool = pollSafetyBy(true, ok)
 
   action typeNote: bool = all { s.cs.dataApp != "none", s' = { ...s, cs: { ...s.cs, note: true } } }
 
-  // "Close case" (admin.tsx:186-189, 221): the row shows case sc1 of the data's app; withApp sends the app shown
-  // now (web/store.ts:282); the service closes sc1 of that app (network.ts:1254-1260).
+  // "Close case" (admin.tsx CaseItem): the row shows case sc1 of the data's app; withApp sends the app shown
+  // now (web/store.ts withApp); the service closes sc1 of that app (network.ts ConsentNetwork.closeCase).
   action pressClose(st: str): bool = all {
     s.cs.dataApp != "none",
     allowedR(s.grantsCopy, st, Set("safety"), s.cs.shownApp),
     s' = { ...s, cs: { ...s.cs, closeSent: true, intended: CASE_SC1.get(s.cs.dataApp), actual: CASE_SC1.get(s.cs.shownApp) } },
   }
 
-  // "Hold" on a report (admin.tsx ReportRow): the service holds every app only for safety@* or admin@*
-  // (service.ts:1676-1688); the client text says "every app" only for the same grants (store.canEverywhere,
-  // SD-070 fix 85083c4), else "this app".
-  action pressHold(st: str): bool = all {
+  // "Hold" on a report (admin.tsx ReportItem, reportAction HoldPersonStep): the service holds every app only for
+  // safety@* or admin@* (network service.ts NetworkService.hold, crossAppSafety). Intended (`pressHold`, in
+  // `step`): the toast says "every app" only for those grants, else "this app". Code (`pressHoldCode`, not in
+  // `step`): reportAction always says "Person held on every app", and the service answer does not carry the
+  // scope (SD-070 open on this branch).
+  action pressHoldBy(code: bool, st: str): bool = all {
     allowedR(s.grantsCopy, st, Set("safety"), s.cs.shownApp),
     val crossApp = everywhere(s.grantsCopy, st, "safety") or everywhere(s.grantsCopy, st, "admin")
-    s' = { ...s, hs: { heldIn: if (crossApp) APPS else s.hs.heldIn.union(Set(s.cs.shownApp)), toastEvery: crossApp } },
+    s' = { ...s, hs: { heldIn: if (crossApp) APPS else s.hs.heldIn.union(Set(s.cs.shownApp)), toastEvery: code or crossApp } },
   }
+  action pressHold(st: str): bool = pressHoldBy(false, st)
+  action pressHoldCode(st: str): bool = pressHoldBy(true, st)
 
   // ------------------------------------------------------------------ console-mode
-  // POST /api/mode then setMode (server.ts:249-262; SD-285 fix ab37c2a): the new mode's source starts first; a
-  // failed start is not kept in `starting` (server.ts:226-247), and the server stays in its mode.
+  // POST /api/mode then setMode (server.ts setMode and source): the new mode's source starts first, and `mode`
+  // changes only after it runs. A failed start is removed from `starting`, so the server stays in its mode and the
+  // next switch starts the source again. SD-285 fixed 2026-11-22.
   action modeSwitch(m: str, initOk: bool): bool = all {
     not(s.md.realOnly and m == "game"),
     val st = s.md.srcState.get(m)
@@ -417,8 +486,11 @@ module staff_console {
     else s' = { ...s, md: { ...s.md, mode: m, srcState: s.md.srcState.set(m, "ready") } },
   }
 
-  // guard (server.ts:374-386; SD-286 fix 4d794bc): the x-observatory-mode header is checked and `seen` keeps
-  // the mode of the checks; the handler awaits the body and the audit row, then runs on source(seen, app).
+  // guard (server.ts guard and admitRoute, spec/staffPermissions.md stepStaffRoute): the x-observatory-mode header
+  // must match the mode at admission. The handlers of /api/control, /api/safety, /api/held, /api/held/:id/photo and
+  // /api/member/:id/photos keep the mode they admitted (`seen`, with modeRevision). After their awaits they run on
+  // source(seen, app) when the mode did not change (`controlRun`), and otherwise write a mode_changed result row and
+  // run nothing (`controlStale`). SD-286 fixed 2026-11-22.
   action controlCheck(saw: str): bool = all {
     s.md.pending == "none",
     saw == s.md.mode,
@@ -427,65 +499,85 @@ module staff_console {
 
   action controlRun: bool = all {
     s.md.pending != "none",
+    s.md.pending == s.md.mode,
     s.md.srcState.get(s.md.pending) == "ready",
     s' = { ...s, md: { ...s.md, pending: "none", ranSaw: s.md.pending, ranIn: s.md.pending } },
   }
 
+  action controlStale: bool = all {
+    s.md.pending != "none",
+    s.md.pending != s.md.mode,
+    s' = { ...s, md: { ...s.md, pending: "none" } },
+  }
+
   // ------------------------------------------------------------------ network-matching-gate
-  // The service checks only its registry row on "on" (service.ts:1809-1817).
+  // spec/runtimeUnit.md, "Runtime follow-up depends on the adapter and whether the tick ran": the registry row alone
+  // (owner decision 2026-11-22). The service builds each runtime's matchingAllowed from it and reports it on /health.
+  pure def registryAllows(mg: { registry: str -> bool, stored: str -> bool, engineRan: str -> bool }, app: str): bool =
+    mg.registry.get(app)
+
+  // setMatching (service.ts): "on" outside the registry row is refused (and audited); "off" is always taken.
   pure def serviceSwitch(mg: { registry: str -> bool, stored: str -> bool, engineRan: str -> bool }, app: str, on: bool): { registry: str -> bool, stored: str -> bool, engineRan: str -> bool } =
-    if (on and not(mg.registry.get(app))) mg else { ...mg, stored: mg.stored.set(app, on) }
+    if (on and not(registryAllows(mg, app))) mg else { ...mg, stored: mg.stored.set(app, on) }
 
   // A direct call to the service staff API with a service admin token (another actor; observatory.md D35).
   action directServiceSwitch(app: str, on: bool): bool = s' = { ...s, mg: serviceSwitch(s.mg, app, on) }
 
-  // The service tick runs matching for a network whose matching is on.
+  // The service tick runs matching for a network whose matching is on and allowed by its registry row
+  // (runtime.ts tick: rollout = matchingAllowed and state.matchingEnabled; a load outside the registry row also stores off).
   action serviceTick(app: str): bool = all {
     s.mg.stored.get(app),
+    registryAllows(s.mg, app),
     s' = { ...s, mg: { ...s.mg, engineRan: s.mg.engineRan.set(app, true) } },
   }
 
-  // The overview's matching line (health.ts appHealth, SD-122 fix 83990e2): the stored switch first, then
-  // "locked" for an app whose pack the console does not list, else "off" (real mode, no stored state is off).
+  // The overview's matching line (health.ts appHealth): "locked" unless the service's last /health answer says the
+  // network is allowed by its registry row (real.ts serviceMatchingAllowed, env.matchingLocked), else the stored switch.
+  // A missing or failed answer reads as locked (peon-r29-2, fixed 2026-11-22); the model has the service always answer.
+  // The console keeps no list of its own in real mode (audit PER63).
   pure def overviewMatching(mg: { registry: str -> bool, stored: str -> bool, engineRan: str -> bool }, app: str): str =
-    if (mg.stored.get(app)) "on" else if (not(CONSOLE_ALLOWS.get(app))) "locked" else "off"
+    if (not(registryAllows(mg, app))) "locked" else if (mg.stored.get(app)) "on" else "off"
 
-  // Config "Turn on/off" (admin.tsx AppConfig, press): logic/review.ts flip decides. The first click arms and
-  // stores the target `!c.matchingEnabled` read from the panel's data. The second click sends that target to
-  // the app shown now, or sends nothing when the data already shows it (another admin made the change; slice
-  // report bug 11, quint/review_desk.qnt). The button shows only with data. The console refuses on for a
-  // locked app (real.ts matching_locked).
+  // Config "Turn on/off" (admin.tsx Config): the generated consoleWorkspace pressMatchingSwitch and
+  // confirmMatchingSwitch. The first click arms with the target `!c.matchingEnabled` read from the panel's data.
+  // The second click sends that target to the app shown now (store.control uses the current app). A change made
+  // by another admin ends the ask only through a reload of the config (configPoll). The button shows only with
+  // data. The real source sends every press to the service, which alone reads the registry row (setMatching).
   action pressSwitch(st: str): bool = all {
     allowedR(s.grantsCopy, st, Set(), s.cs.shownApp),
     s.cf.dataApp != "none",
     val current = s.mg.stored.get(s.cf.dataApp)
     if (not(s.cf.armed)) s' = { ...s, cf: { ...s.cf, armed: true, armedApp: s.cs.shownApp, target: not(current) } }
-    else if (s.cf.target == current) s' = { ...s, cf: { ...s.cf, armed: false } }
     else {
       val app = s.cs.shownApp
       val on = s.cf.target
-      val consoleRefuses = on and not(CONSOLE_ALLOWS.get(app))
       s' = { ...s,
-        mg: if (consoleRefuses) s.mg else serviceSwitch(s.mg, app, on),
+        mg: serviceSwitch(s.mg, app, on),
         cf: { ...s.cf, armed: false, sent: true, sentApp: app, sentArmedFor: s.cf.armedApp, sentDataOf: s.cf.dataApp },
       }
     },
   }
 
-  // The Config useFetch key (mode, matchingEnabled, review mode) changes, and the panel refetches for the app shown.
-  action configPoll: bool = s' = { ...s, cf: { ...s.cf, dataApp: s.cs.shownApp } }
+  // The Config useFetch key (mode, matchingEnabled) changes, and the panel refetches for the app shown.
+  // The answer is a new `c`, so the ask (edit.of === c) ends.
+  action configPoll: bool = s' = { ...s, cf: { ...s.cf, dataApp: s.cs.shownApp, armed: false } }
   // The 4 s timer disarms the switch.
   action disarm: bool = s' = { ...s, cf: { ...s.cf, armed: false } }
 
   // ------------------------------------------------------------------ auth-prompt
-  // api() (web/store.ts:283-296) keeps the token it sent; a 401 sets authNeeded only when that token is still
-  // the one in use (SD-470 fix 0f9fc3d).
+  // api() (web/store.ts Store.api). A 401 comes only for a token that does not work (not(valid)). Intended
+  // (`clientAnswer`, in `step`): api() keeps the token it sent, and a 401 sets authNeeded only when that token is
+  // still the one in use. Code (`clientAnswerCode`, not in `step`): any 401 sets authNeeded, also the late 401 of
+  // a request sent with a token that setToken has since replaced (SD-470 open on this branch).
   action clientSend: bool = all { s.cl.inflight.size() < 2, s' = { ...s, cl: { ...s.cl, inflight: s.cl.inflight.union(Set(s.cl.epoch)) } } }
-  action clientAnswer(e: int): bool = all {
+  action clientAnswerBy(code: bool, e: int): bool = all {
     s.cl.inflight.contains(e),
-    s' = { ...s, cl: { ...s.cl, inflight: s.cl.inflight.exclude(Set(e)), authNeeded: s.cl.authNeeded or (e == s.cl.epoch and not(s.cl.valid.contains(e))) } },
+    s' = { ...s, cl: { ...s.cl, inflight: s.cl.inflight.exclude(Set(e)),
+      authNeeded: s.cl.authNeeded or ((code or e == s.cl.epoch) and not(s.cl.valid.contains(e))) } },
   }
-  // setToken (web/store.ts:308-316): a new, good token; authNeeded is cleared.
+  action clientAnswer(e: int): bool = clientAnswerBy(false, e)
+  action clientAnswerCode(e: int): bool = clientAnswerBy(true, e)
+  // setToken (web/store.ts Store.setToken): a new, good token; authNeeded is cleared.
   action setToken: bool = all {
     s.cl.epoch < 2,
     s' = { ...s, cl: { ...s.cl, epoch: s.cl.epoch + 1, valid: s.cl.valid.union(Set(s.cl.epoch + 1)), authNeeded: false } },
@@ -494,9 +586,9 @@ module staff_console {
   action tokenExpires: bool = s' = { ...s, cl: { ...s.cl, valid: s.cl.valid.exclude(Set(s.cl.epoch)) } }
 
   // ------------------------------------------------------------------ held photo preview
-  // GET /api/held/:id/photo (server.ts:655-670; SD-287 fix 3e7d55f): the service makes until = serviceNow + 5 min
-  // (service.ts:2306); the console refuses only until <= now and keeps the preview at most 5 minutes on its own
-  // clock (min(until, now + 5 min)).
+  // GET /api/held/:id/photo (server.ts "/api/held/:id/photo"): the service makes until = serviceNow + 5 min (network
+  // service.ts, the held photo route). The console refuses only until <= now and keeps the preview at most 5
+  // minutes on its own clock (min(until, now + PHOTO_PREVIEW_MS)). SD-287 fixed 2026-11-22.
   action loadPreview(st: str): bool = all {
     allowedR(s.grantsCopy, st, Set("safety"), "slop"),
     val until = s.now + s.pv.skew + PREVIEW_TICKS
@@ -505,7 +597,7 @@ module staff_console {
     s' = { ...s, pv: { ...s.pv, tokenUntil: if (refused) until else kept, state: if (refused) "refusedExpired" else "ready", refusedAt: s.now, loadedBy: if (refused) "" else st } },
   }
 
-  // POST /api/held release (server.ts:676-683): the preview key holds the staff id; it must be fresh.
+  // POST /api/held release (server.ts "/api/held" POST): the preview key holds the staff id; it must be fresh.
   action releasePhoto(st: str): bool = all {
     allowedR(s.grantsCopy, st, Set("safety"), "slop"),
     s.pv.state == "ready",
@@ -521,8 +613,8 @@ module staff_console {
   // The ConsentNetwork's stage machine and the records it writes, in its own order.
   action netPropose: bool = all { s.pj.stage == "none", s' = { ...s, pj: setProj(s.pj, "review", "IN_REVIEW") } }
   action netBook: bool = all { s.pj.stage == "review", s' = { ...s, pj: setProj(s.pj, "scheduled", "SCHEDULED") } }
-  // A close in review is a reject (projector.ts:318, SKIPPED). A close of a booked plan logs opportunity_closed,
-  // which the projector now applies to SCHEDULED too: CANCELLED (projector.ts:252; SD-279 fix a26ec66).
+  // A close in review is a reject (projector.ts review_decision, SKIPPED). A close of a booked plan logs
+  // opportunity_closed, and Projector.apply applies it to SCHEDULED too: CANCELLED (SD-279, fixed 2026-11-22).
   action netClose: bool = all {
     s.pj.stage == "review" or s.pj.stage == "scheduled",
     s' = { ...s, pj: setProj(s.pj, "closed",
@@ -530,22 +622,23 @@ module staff_console {
       else if (TERMINAL.contains(s.pj.proj)) s.pj.proj else "CANCELLED") },
   }
   action netDone: bool = all { s.pj.stage == "scheduled", s' = { ...s, pj: setProj(s.pj, "done", "COMPLETED") } }
-  // The world still holds the meeting and writes an outcome (projector.ts:199); no API cancels it. The
-  // projector applies it only to an opportunity that is not terminal (SD-279 fix a26ec66), so after a close it
-  // changes nothing.
+  // The world still holds the booked meeting and writes an outcome record; no API cancels it. Projector.apply
+  // "outcome" changes a terminal opportunity not at all (a feed line only), so after a close it changes nothing
+  // (SD-279, fixed 2026-11-22). The world writes one outcome per booked meeting.
   action worldOutcome(held: bool): bool = all {
     s.pj.stage == "closed",
     s' = if (TERMINAL.contains(s.pj.proj)) s else { ...s, pj: setProj(s.pj, s.pj.stage, if (held) "COMPLETED" else "ABANDONED") },
   }
 
   // ------------------------------------------------------------------ store retention (forget)
-  // Leave or delete everything (network runtime.ts:520-545): the edges go, name = null, account 'removed'.
+  // Leave or delete everything (network runtime.ts unit commit, the forget path): the edges go, name = null, account 'removed'.
   action forgetMember: bool = all {
     not(s.fg.left),
     s' = { ...s, fg: { ...s.fg, dbEdge: false, left: true, dbRemovedNoName: true } },
   }
-  // load() sets exactly the database's edges (real.ts:381-384, store.ts setEdges; SD-281 fix 7e51cf3); removed +
-  // null name still reads as an under-13 decline (real.ts:334-336; SD-282 skipped).
+  // A poll (real.ts load, store.ts setEdges): load() sets exactly the database's edges, and a removed edge makes the
+  // next delta a reset. SD-281 fixed 2026-11-22. Removed + null name still reads as an under-13 decline (real.ts load,
+  // `declined`; SD-282, a privacy and data-retention decision).
   action forgetPoll: bool =
     s' = { ...s, fg: { ...s.fg, consoleEdge: s.fg.dbEdge, edgeAtPoll: s.fg.dbEdge, consoleDeclined: s.fg.dbRemovedNoName } }
 
@@ -556,7 +649,7 @@ module staff_console {
                      else { ...s.dv, server: s.dv.server + 1, feed: s.dv.feed + 1, version: s.dv.server + 1 } },
   }
   action dvStartLoad: bool = all { not(s.dv.loading), s' = { ...s, dv: { ...s.dv, loading: true, buffered: Set() } } }
-  // load() (web/store.ts:330-346): applyFull(state), then every buffered delta with d.version > state.version
+  // load() (web/store.ts load): applyFull(state), then every buffered delta with d.version > state.version
   // (SD-505 fix 5afecd3).
   action dvSnapshot: bool = all {
     s.dv.loading,
@@ -598,6 +691,11 @@ module staff_console {
     nondet kind = KINDS.oneOf()
     nondet up = Set(true, false).oneOf()
     consoleSend(kind, up),
+    nondet st = STAFF.oneOf()
+    nondet app = APPS.oneOf()
+    nondet need = Set(Set("safety"), Set("reviewer", "safety"), Set("admin")).oneOf()
+    nondet up = Set(true, false).oneOf()
+    staffStep(st, app, need, true, true, up),
     nondet outcome = Set("commit", "refuse", "crash").oneOf()
     nondet up = Set(true, false).oneOf()
     serviceApply(outcome, up),
@@ -632,6 +730,7 @@ module staff_console {
     nondet m = MODES.oneOf()
     controlCheck(m),
     controlRun,
+    controlStale,
     nondet app = APPS.oneOf()
     nondet on = Set(true, false).oneOf()
     directServiceSwitch(app, on),
@@ -666,160 +765,164 @@ module staff_console {
   // ------------------------------------------------------------------ invariants
   // revokedNoData. Admin-console 4.4 (docs/admin-console.md) ties a PII reveal to the safety role; observatory.md
   // R4. A read that returns revealed data goes to a person who holds safety (or admin) for that app now.
-  // Code: server.ts:421-425 (revealFor checks the role since cd612bc), 494-512. Register: SD-084 (fixed).
+  // Code: server.ts revealFor (it checks the role, revealCurrent) and "/api/member/:id". Register: SD-084 (fixed).
   val inv_revokedNoData = s.lastRead.valid and s.lastRead.revealed implies s.lastRead.safetyNow
 
-  // revealAudited. Admin-console 4.4 and server.ts:575 "audited before it is granted": each grant has a row.
+  // revealAudited. Admin-console 4.4 and server.ts "/api/reveal" "audited before it is granted": each grant has a row.
   val inv_revealAudited = s.reveals.forall(r => s.auditedReveals.contains((r.st, r.m)))
 
-  // revealBound. Admin-console 4.4: a reveal lasts at most 15 minutes (server.ts:572).
+  // revealBound. Admin-console 4.4: a reveal lasts at most 15 minutes (server.ts REVEAL_MAX_MINUTES).
   val inv_revealBound = s.reveals.forall(r => r.until <= s.now + REVEAL_TICKS)
 
   // revealShownTruly. gap-console-client.md RV3: the console says "revealed" exactly when the server still
-  // reveals; an "End" that did not end the reveal must not hide it. Code: web/store.ts:555-563. Register: SD-247
-  // (fixed).
+  // reveals; an "End" that did not end the reveal must not hide it. Code: web/store.ts reveal and unreveal.
+  // Register: SD-247, open on this branch: `unrevealWithCode` fails it (endRevealRefusedKeepsItTest,
+  // endRevealUnreachedTest).
   val inv_revealShownTruly = s.reveals.forall(r => r.until <= s.now or s.clientReveals.exists(c => c.st == r.st and c.app == r.app and c.m == r.m))
 
-  // socketAuthorized. observatory.md W1 and server.ts:334-337 comment: after a recheck, a socket stays open
+  // socketAuthorized. observatory.md W1 and server.ts recheck comment: after a recheck, a socket stays open
   // only while its person holds a role for its app.
   val inv_socketAuthorized = s.sockets.forall(k => k.fresh implies rolesFor(s.grantsCopy, k.st, k.app).size() > 0)
 
-  // auditFirst. AGENTS.md "every proactive proposal and every member request goes through human review" and the
-  // service rule "an audit row first (no row, no action)" (network service.ts:1518, 1762). Every staff effect
+  // auditFirst. spec/staffSafetyService.md "Keep the requested and result audits in order": an audit row first
+  // (no row, no action; network service.ts staffAction and auditedRun). Every staff effect
   // in the service has a "requested" row before it. Register: SD-135 (fixed).
   val inv_auditFirst = s.svcEffects.forall(e => e.rowBefore)
 
-  // consoleAuditFirst. server.ts:611 "Staff actions are audited before they run": no console action without
+  // consoleAuditFirst. server.ts "/api/control" "Staff actions are audited before they run": no console action without
   // its "requested" row (observatory.md A1).
   val inv_consoleAuditFirst = s.rel.phase != "idle" implies s.rel.consoleRowFirst
 
   // consoleSaysServiceDoes. observatory.md V3 and 2.8: the console's answer and its audit result row say what
   // the service did. "ok" only after a commit; "failed" only when the service did not act; a timeout reads as
-  // "unknown". Register: SD-288 (fixed).
+  // "unknown". Register: SD-288 (fixed 2026-11-22).
   val inv_consoleSaysServiceDoes =
     (s.rel.consoleResult == "ok" implies s.rel.svc == "committed") and
     (s.rel.consoleResult == "fail" implies s.rel.svc != "committed")
 
-  // servedOnlyCheckedLogin. real.ts:199 comment "The login is checked, not assumed" and observatory.md E1: data
-  // is served only through a login that passed loginProblem. Register: SD-083 (fixed).
+  // servedOnlyCheckedLogin. real.ts RealSource.init comment "The login is checked, not assumed" and observatory.md E1: data
+  // is served only through a login that passed loginProblem. Register: SD-083 (fixed 2026-11-22).
   val inv_servedOnlyCheckedLogin = s.src.served implies (s.src.loginChecked and s.src.loginFit)
 
   // ageFailClosed. AGENTS.md age policy and real.ts "A missing flag fails closed": a read error never makes the
   // console treat as an adult a member the Network held as under 18 at the last poll that read it (netAtPoll
   // changes only on a good read; the Network never clears the minor flag in this model). Register: SD-082
-  // (fixed).
+  // (fixed 2026-11-22).
   val inv_ageFailClosed = s.age.netAtPoll implies s.age.consoleMinor
 
   // photosOnlyAdults. Founder decision 9 and AGENTS.md "Adults only": slop photos are never on screen for a
-  // member the console treats as under 18. Code: panels.tsx:586-587, 606. Register: SD-071 (fixed).
+  // member the console treats as under 18. Code: panels.tsx SlopPanel (staffPhotoAllowed). Register: SD-071 (fixed).
   val inv_photosOnlyAdults = s.age.photosShown implies not(s.age.consoleMinor)
 
   // actionTargetsSelectedPerson. gap-console-client.md CR1 and FS1: a case action closes the case of the person
-  // shown on the row. Code: admin.tsx SafetyCases (key={s.app}); web/store.ts:282; network.ts:1211. Register:
-  // SD-068 (fixed).
+  // shown on the row. Code: admin.tsx SafetyCases and CaseItem; web/store.ts withApp; network.ts caseEvent
+  // (`sc${++this.caseSeq}`). Register: SD-068, open on this branch: `switchAppCode` fails it (crossAppCloseTest).
   val inv_actionTargetsSelectedPerson = s.cs.closeSent implies s.cs.intended == s.cs.actual
 
   // failedPollKeepsInput. gap-console-client.md FS2: a failed read does not destroy typed staff input.
-  // Code: admin.tsx useFetch. Register: SD-466 (fixed).
+  // Code: admin.tsx useFetch. Register: SD-466 (open on this branch, the code variant of the action fails it in failedPollTest).
   val inv_failedPollKeepsInput = not(s.cs.noteLost)
 
   // successTextMatchesScope. gap-console-client.md RR1: a success message states the scope the service applied.
-  // Code: admin.tsx ReportRow scope; service.ts:1679. Register: SD-070 (fixed).
+  // Code: admin.tsx reportAction; network service.ts NetworkService.hold. Register: SD-070 (open on this branch,
+  // the code variant of the action fails it in holdScopeTextTest).
   val inv_successTextMatchesScope = s.hs.toastEvery implies s.hs.heldIn == APPS
 
   // modeHasRunningSource. observatory.md C2: `mode` and a running source agree: the mode's source is started.
-  // Code: server.ts:226-247, 249-262. Register: SD-285 (fixed).
+  // Code: server.ts source and setMode. Register: SD-285 (fixed 2026-11-22).
   val inv_modeHasRunningSource = s.md.srcState.get(s.md.mode) == "ready"
 
-  // commandRunsInSeenMode. server.ts:368 comment and observatory.md C1: a change runs in the mode its sender saw.
-  // Code: server.ts guard `seen`, /api/control, /api/safety, /api/held. Register: SD-286 (fixed).
+  // commandRunsInSeenMode. server.ts modeChanged comment and observatory.md C1: a change runs in the mode its sender saw.
+  // Code: server.ts guard, /api/control, /api/safety, /api/held. Register: SD-286 (fixed 2026-11-22).
   val inv_commandRunsInSeenMode = s.md.ranSaw != "none" implies s.md.ranSaw == s.md.ranIn
 
   // everySwitchAudited is inv_consoleAuditFirst with kind config; the switch goes through staffAction
-  // (service.ts:1816), so a committed config effect is covered by inv_auditFirst.
+  // (service.ts setMatching), so a committed config effect is covered by inv_auditFirst.
 
-  // consoleShowsGate. AGENTS.md decision 4 (peon matching runs locally only) and observatory.md 2.13: the
-  // overview's matching line says what the service does: "on" exactly when the stored switch is on, the switch
-  // the service tick reads. Code: health.ts appHealth. Register: SD-122 (fixed).
-  val inv_consoleShowsGate = APPS.forall(a => (overviewMatching(s.mg, a) == "on") == s.mg.stored.get(a))
+  // consoleShowsGate. spec/runtimeUnit.md (the registry row) and observatory.md 2.13: the
+  // overview's matching line says what the service does: "on" exactly when the stored switch is on and the
+  // registry row allows matching, which is when the service tick runs matching. Code: health.ts appHealth with
+  // env.matchingLocked from the service's /health matchingAllowed. Register: SD-122 (fixed), PER63.
+  val inv_consoleShowsGate = APPS.forall(a => (overviewMatching(s.mg, a) == "on") == (s.mg.stored.get(a) and registryAllows(s.mg, a)))
 
-  // tickRunImpliesRegistry. service.ts:1809-1817: the service turns matching on only where its registry row
-  // allows it, and the tick runs only with the stored switch on.
+  // tickRunImpliesRegistry. service.ts setMatching and the runtime tick: matching runs only where the registry
+  // row allows it.
   val inv_tickRunImpliesRegistry = APPS.forall(a => s.mg.engineRan.get(a) implies s.mg.registry.get(a))
 
-  // NOT IN `safety`. tickRunImpliesAllowedAndStored. AGENTS.md decision 4: matching for peon (and friends) runs
-  // locally only; a production tick runs matching only for an app whose pack the console allows. Code: apps.ts:21
-  // (console only), service.ts:1809-1817 (registry row only). Register: SD-088, refuted in the register:
-  // production keeps peon local-only by deployment, outside this model. The model breaks it only when the peon
-  // registry row is true (an input); `peonGateTest` shows the trace.
-  val inv_tickRunImpliesAllowedAndStored = APPS.forall(a => s.mg.engineRan.get(a) implies (CONSOLE_ALLOWS.get(a) and s.mg.registry.get(a)))
-
   // confirmMatchesApp. gap-console-client.md 2.9: the two-step confirm is given for one app and sends that
-  // app's switch, computed from that app's data. Code: admin.tsx Config (key={s.app}). Register: SD-246 (fixed).
+  // app's switch, computed from that app's data. Code: admin.tsx Config. Register: SD-246, open on this branch:
+  // `switchAppCode` fails it (armedSwitchCarriesTest).
   val inv_confirmMatchesApp = s.cf.sent implies (s.cf.sentApp == s.cf.sentArmedFor and s.cf.sentApp == s.cf.sentDataOf)
 
   // promptOnlyForBadToken. gap-console-client.md 2.8: the sign-in prompt shows only when the current token
-  // fails. Code: web/store.ts:283-296. Register: SD-470 (fixed).
+  // fails. Code: web/store.ts Store.api. Register: SD-470 (open on this branch, the code variant of the action fails it in
+  // late401Test).
   val inv_promptOnlyForBadToken = s.cl.authNeeded implies not(s.cl.valid.contains(s.cl.epoch))
 
   // previewRefusalTrue. observatory.md 2.9 and H4: "This photo preview expired" only when it did. Code:
-  // server.ts:663-668; network service.ts:2306-2307. Register: SD-287 (fixed).
+  // server.ts "/api/held/:id/photo"; network service.ts held photo route. Register: SD-287 (fixed 2026-11-22).
   val inv_previewRefusalTrue = s.pv.state == "refusedExpired" implies s.pv.tokenUntil <= s.pv.refusedAt
 
   // releaseBySameStaff. observatory.md H1: a photo is released only by the staff member who loaded it.
   val inv_releaseBySameStaff = s.pv.state == "released" implies s.pv.releasedBy == s.pv.loadedBy
 
   // projectionRefines. docs/observatory.md 6 and observatory.md O3/O4: a closed Network opportunity never reads
-  // as open or done in the console. Code: projector.ts:199, 252. Register: SD-279 (fixed).
+  // as open or done in the console. Code: projector.ts Projector.apply "outcome" and opportunity_closed. Register:
+  // SD-279 (fixed 2026-11-22, closedBookedPlanCancelledTest).
   val inv_projectionRefines = s.pj.stage == "closed" implies CLOSED_STATES.contains(s.pj.proj)
 
-  // terminalAbsorbing. projector.ts:11-14 TERMINAL and observatory.md O1. Register: SD-499 (not reproduced).
+  // terminalAbsorbing. projector.ts TERMINAL and observatory.md O1. Register: SD-499 (not reproduced).
   val inv_terminalAbsorbing = s.pj.term != "none" implies s.pj.proj == s.pj.term
 
   // forgetClosure. PRD privacy (leave and delete everything) and observatory.md section 5 item 6: after a good
-  // poll, nothing the database dropped stays in console memory. Code: real.ts:381-384, store.ts setEdges.
-  // Register: SD-281 (fixed).
+  // poll, nothing the database dropped stays in console memory. Code: real.ts load (edges), store.ts setEdges.
+  // Register: SD-281 (fixed 2026-11-22).
   val inv_forgetClosure = s.fg.consoleEdge implies s.fg.edgeAtPoll
 
-  // NOT IN `safety`. declinedMeansDeclined. real.ts:333 comment "A member declined at join (under 13)": the
-  // console marks as an under-13 decline only a person who was declined at join. Code: real.ts:334-336;
-  // network runtime.ts:520-545. Register: SD-282, skipped: the forget path stores a member who left and an
+  // NOT IN `safety`. declinedMeansDeclined. real.ts RealSource.load comment "A member declined at join (under 13)": the
+  // console marks as an under-13 decline only a person who was declined at join. Code: real.ts RealSource.load (`declined`);
+  // network runtime.ts unit commit, the forget path. Register: SD-282, skipped: the forget path stores a member who left and an
   // under-13 decline the same way (id only, name null, 'removed'), so a fix must keep a new fact after a
   // forget, and that needs a privacy and data-retention decision (docs/network.md 6.3). `forgetTest` shows it.
   val inv_declinedMeansDeclined = s.fg.consoleDeclined implies not(s.fg.left)
 
   // feedExact. web/store.ts load comment: the snapshot and the deltas after it give each feed line once.
-  // Code: web/store.ts:338-339. Register: SD-505 (fixed).
+  // Code: web/store.ts load. Register: SD-505 (fixed).
   val inv_feedExact = not(s.dv.loading) implies s.dv.feed == s.dv.server
 
   val safety = and {
     inv_revokedNoData,
     inv_revealAudited,
     inv_revealBound,
-    inv_revealShownTruly,
     inv_socketAuthorized,
     inv_auditFirst,
     inv_consoleAuditFirst,
+    inv_photosOnlyAdults,
+    inv_consoleShowsGate,
+    inv_tickRunImpliesRegistry,
+    inv_releaseBySameStaff,
+    inv_terminalAbsorbing,
+    inv_feedExact,
+    inv_revealShownTruly,
+    inv_actionTargetsSelectedPerson,
+    inv_confirmMatchesApp,
     inv_consoleSaysServiceDoes,
     inv_servedOnlyCheckedLogin,
     inv_ageFailClosed,
-    inv_photosOnlyAdults,
-    inv_actionTargetsSelectedPerson,
     inv_failedPollKeepsInput,
     inv_successTextMatchesScope,
     inv_modeHasRunningSource,
     inv_commandRunsInSeenMode,
-    inv_consoleShowsGate,
-    inv_tickRunImpliesRegistry,
-    inv_confirmMatchesApp,
     inv_promptOnlyForBadToken,
     inv_previewRefusalTrue,
-    inv_releaseBySameStaff,
     inv_projectionRefines,
-    inv_terminalAbsorbing,
     inv_forgetClosure,
-    inv_feedExact,
   }
+
+  // Not in `safety`: SD-282 needs a privacy and data-retention decision. The forget path stores a member who left
+  // and an under-13 decline the same way, so the intended design is not settled and `forgetPoll` fails this rule
+  // (forgetTest).
+  val openConsoleDecisions = inv_declinedMeansDeclined
 
   // ------------------------------------------------------------------ witnesses (each must be reachable)
   val witness_reviewThroughConsole = not(s.svcEffects.exists(e => e.kind == "review") and s.rel.consoleResult == "ok")
@@ -833,13 +936,14 @@ module staff_console {
   val witness_commandRan = not(s.md.ranSaw != "none")
   val witness_matchingRan = not(s.mg.engineRan.get("slop"))
   val witness_projectionDone = not(s.pj.stage == "done" and s.pj.proj == "COMPLETED")
-  // The fixed paths are reachable: a timeout reads as "unknown", and a one-app hold says "this app".
-  val witness_outcomeUnknown = not(s.rel.consoleResult == "unknown")
-  val witness_holdThisApp = not(s.hs.heldIn.size() > 0 and not(s.hs.toastEvery))
+  // A timeout is reachable (intended: it reads as "unknown"), and so is a hold that the service applies on one app.
+  val witness_timedOut = not(s.rel.phase == "answered" and s.rel.svc == "pending")
+  val witness_stepThroughConsole = not(s.svcEffects.exists(e => e.kind == "step") and s.rel.consoleResult == "ok")
+  val witness_holdThisApp = not(s.hs.heldIn == Set("slop"))
 
   // ------------------------------------------------------------------ run tests (concrete traces)
-  // Each defect trace of the first model now ends in a state where its invariant holds (the fix). The traces
-  // are the same; the expectations follow the fixed code.
+  // The traces of the first model. Where a fix of the source branch is not on vibestack-matching (compared
+  // 2026-11-21), the trace ends in the defect state and the test says "OPEN".
   // Default start: login fit, real-only, no skew, peon registry row true (migration 0011), adult record age.
   action init0 = initWith(true, true, "real", 0, true, "adult")
 
@@ -854,21 +958,22 @@ module staff_console {
       .then(readMember("S1", "slop", true))
       .expect(s.lastRead.valid and not(s.lastRead.revealed) and s.reveals.size() == 0 and inv_revokedNoData)
 
-  // SD-247 (fixed, e662d5f): after the role loss, "End" gets 403; the client keeps the reveal on screen.
+  // SD-247 (OPEN again, 2026-11-18): after the role loss, "End" gets 403; the client drops the reveal while
+  // the server keeps the grant.
   run endRevealRefusedKeepsItTest =
     init0
       .then(revealPost("S1", "slop", true))
       .then(revokeGrant(("S1", "safety", "slop")))
       .then(reloadRoles(true))
-      .then(unreveal("S1", "slop", true))
-      .expect(s.reveals.size() == 1 and s.clientReveals.size() == 1 and inv_revealShownTruly)
+      .then(unrevealCode("S1", "slop", true))
+      .expect(s.reveals.size() == 1 and s.clientReveals.size() == 0 and not(inv_revealShownTruly))
 
-  // A network error on "End" also keeps the reveal on screen.
+  // OPEN: a network error on "End" also drops the reveal on screen while the server keeps it.
   run endRevealUnreachedTest =
     init0
       .then(revealPost("S1", "slop", true))
-      .then(unreveal("S1", "slop", false))
-      .expect(s.reveals.size() == 1 and s.clientReveals.size() == 1 and inv_revealShownTruly)
+      .then(unrevealCode("S1", "slop", false))
+      .expect(s.reveals.size() == 1 and s.clientReveals.size() == 0 and not(inv_revealShownTruly))
 
   // "End" that the server accepts drops the reveal on both sides.
   run endRevealTest =
@@ -877,20 +982,31 @@ module staff_console {
       .then(unreveal("S1", "slop", true))
       .expect(s.reveals.size() == 0 and s.clientReveals.size() == 0)
 
-  // "End" with the audit sink down: the server deleted the grant, then answered 503; the badge stays.
+  // "End" with the audit sink down: the server deleted the grant, then answered 503; the code drops it too.
   run endRevealAuditDownTest =
     init0
       .then(revealPost("S1", "slop", true))
-      .then(unrevealWith("S1", "slop", true, false))
-      .expect(s.reveals.size() == 0 and s.clientReveals.size() == 1 and inv_revealShownTruly)
+      .then(unrevealWithCode("S1", "slop", true, false))
+      .expect(s.reveals.size() == 0 and s.clientReveals.size() == 0 and inv_revealShownTruly)
 
-  // A reveal needs its audit row: with the audit sink down nothing is granted (server.ts:589-591).
+  // Intended "End" after the role loss (403) and after a network error: the badge stays while the server reveals.
+  run endRevealIntendedKeepsBadgeTest =
+    init0
+      .then(revealPost("S1", "slop", true))
+      .then(unreveal("S1", "slop", false))
+      .expect(s.reveals.size() == 1 and s.clientReveals.size() == 1 and inv_revealShownTruly)
+      .then(revokeGrant(("S1", "safety", "slop")))
+      .then(reloadRoles(true))
+      .then(unreveal("S1", "slop", true))
+      .expect(s.reveals.size() == 1 and s.clientReveals.size() == 1 and inv_revealShownTruly)
+
+  // A reveal needs its audit row: with the audit sink down nothing is granted (server.ts "/api/reveal").
   run revealNeedsAuditTest =
     init0
       .then(revealPost("S1", "slop", false))
       .expect(s.reveals.size() == 0)
 
-  // The socket recheck closes S1's slop socket after both grants go (observatory.md 2.4; staff.test.ts:387).
+  // The socket recheck closes S1's slop socket after both grants go (observatory.md 2.4; staff.test.ts "live sockets are authorized again").
   run socketClosedAfterRevokeTest =
     init0
       .then(issueTicket("S1", "slop"))
@@ -901,33 +1017,47 @@ module staff_console {
       .then(recheck("S1", "slop"))
       .expect(s.sockets.size() == 0 and inv_socketAuthorized)
 
-  // SD-083 (fixed, bedc81f): the pg_roles check throws; nothing is read. The next poll checks again and refuses
-  // the unfit login.
-  run loginCheckFailsClosedTest =
-    initWith(false, true, "real", 0, true, "adult")
-      .then(sourceInit(true, true))
-      .expect(s.src.phase == "unchecked" and not(s.src.served) and s.src.envError)
-      .then(sourcePoll(false, true))
-      .expect(s.src.phase == "refused" and not(s.src.served) and inv_servedOnlyCheckedLogin)
-
-  // A fit login whose first check throws serves data after the next check answers.
+  // SD-083 (fixed 2026-11-22): a fit login whose check throws serves nothing; the next poll checks it and serves.
   run loginCheckRetryServesTest =
     init0
       .then(sourceInit(true, true))
+      .expect(s.src.phase == "unchecked" and not(s.src.served) and inv_servedOnlyCheckedLogin)
       .then(sourcePoll(false, true))
-      .expect(s.src.phase == "live" and s.src.served and s.src.loginChecked)
+      .expect(s.src.phase == "live" and s.src.served and s.src.loginChecked and inv_servedOnlyCheckedLogin)
 
-  // An unfit login with a working check serves nothing (real.ts:226-233).
+  // An unfit login whose check throws serves nothing; the next poll checks it and refuses it.
+  run loginCheckIntendedTest =
+    initWith(false, true, "real", 0, true, "adult")
+      .then(sourceInit(true, true))
+      .expect(s.src.phase == "unchecked" and not(s.src.served) and inv_servedOnlyCheckedLogin)
+      .then(sourcePoll(false, true))
+      .expect(s.src.phase == "refused" and not(s.src.served) and inv_servedOnlyCheckedLogin)
+
+  // A fit login whose check answers is live.
+  run loginCheckedLiveTest =
+    init0
+      .then(sourceInit(false, true))
+      .expect(s.src.phase == "live" and s.src.served and s.src.loginChecked and inv_servedOnlyCheckedLogin)
+
+  // An unfit login with a working check serves nothing (real.ts RealSource.init).
   run unfitLoginRefusedTest =
     initWith(false, true, "real", 0, true, "adult")
       .then(sourceInit(false, true))
       .expect(s.src.phase == "refused" and not(s.src.served))
 
-  // SD-082 (fixed, 546743b): minor_reported sets the stored flag only; the state view read then fails. The
-  // console keeps the last good age view.
+  // SD-082 (fixed 2026-11-22): minor_reported sets the stored flag only; the state view read then fails. The load
+  // fails, and the console keeps x as a minor.
   run ageReadErrorTest =
     init0
       .then(netMinorSignal(false))
+      .then(agePoll(true, true))
+      .then(agePoll(false, true))
+      .expect(s.age.consoleMinor and inv_ageFailClosed)
+
+  // A minor flag that came by an age event survives a failed state view read (the events give it).
+  run ageEventSurvivesRowErrorTest =
+    init0
+      .then(netMinorSignal(true))
       .then(agePoll(true, true))
       .then(agePoll(false, true))
       .expect(s.age.consoleMinor and inv_ageFailClosed)
@@ -959,32 +1089,48 @@ module staff_console {
       .then(reloadRoles(true))
       .expect(not(s.age.photosShown))
 
-  // SD-068 (fixed, d8b34a1): S2 (admin@*) sees slop's sc1 (x) and switches to peon: the slop rows go, and Close
-  // is not possible until peon's cases load; then it closes peon's sc1 (y), the case on the row.
+  // SD-068 (OPEN again, 2026-11-18): S2 (admin@*) sees slop's sc1 (x) and switches to peon. Until peon's cases
+  // answer, the slop rows stay, and Close on the row closes peon's sc1 (y).
   run crossAppCloseTest =
     init0
+      .then(pollSafety(true))
+      .then(switchAppCode("peon"))
+      .expect(s.cs.dataApp == "slop")
+      .then(pressClose("S2"))
+      .expect(s.cs.intended == "x" and s.cs.actual == "y" and not(inv_actionTargetsSelectedPerson))
+
+  // After peon's cases answer, Close closes the case on the row.
+  run crossAppCloseAfterPollTest =
+    init0
       .then(switchApp("peon"))
-      .expect(s.cs.dataApp == "none")
       .then(pollSafety(true))
       .then(pressClose("S2"))
       .expect(s.cs.intended == "y" and s.cs.actual == "y" and inv_actionTargetsSelectedPerson)
 
-  // SD-070 (fixed, 85083c4): S1 (safety@slop only) holds P; the service holds slop only; the text says this app.
+  // SD-070 (OPEN, 2026-11-21): S1 (safety@slop only) holds P; the service holds slop only; the toast says
+  // "Person held on every app".
   run holdScopeTextTest =
+    init0
+      .then(pressHoldCode("S1"))
+      .expect(s.hs.heldIn == Set("slop") and s.hs.toastEvery and not(inv_successTextMatchesScope))
+
+  // Intended: the same hold says "this app".
+  run holdScopeTextIntendedTest =
     init0
       .then(pressHold("S1"))
       .expect(s.hs.heldIn == Set("slop") and not(s.hs.toastEvery) and inv_successTextMatchesScope)
 
-  // An admin@* hold covers every app (service.ts:1679), and the text says every app.
+  // An admin@* hold covers every app (service.ts NetworkService.hold), and the text says every app.
   run holdEveryAppTest =
     init0
       .then(pressHold("S2"))
       .expect(s.hs.heldIn == APPS and s.hs.toastEvery and inv_successTextMatchesScope)
 
-  // SD-135 (fixed, 88d4d88): a relay text decision with the service audit sink down does not run.
-  run relayTextNeedsServiceRowTest =
+  // SD-135 (fixed, 88d4d88): a relay photo decision with the service audit sink down does not run. Owner decision
+  // 2026-11-22, D18: relayed texts no longer wait for staff, so the relay decision kind is the photo decision only.
+  run relayPhotoNeedsServiceRowTest =
     init0
-      .then(consoleSend("relayText", true))
+      .then(consoleSend("relayPhoto", true))
       .then(serviceApply("commit", false))
       .expect(s.svcEffects.size() == 0 and s.rel.svc == "refused" and inv_auditFirst)
 
@@ -995,23 +1141,71 @@ module staff_console {
       .then(serviceApply("commit", false))
       .expect(s.svcEffects.size() == 0 and inv_auditFirst)
 
-  // A hold with the service audit sink down does not run (service.ts:1767-1769).
+  // A hold with the service audit sink down does not run (service.ts auditedRun).
   run holdNeedsServiceRowTest =
     init0
       .then(consoleSend("hold", true))
       .then(serviceApply("commit", false))
       .expect(s.svcEffects.size() == 0 and s.rel.svc == "refused")
 
-  // SD-288 (fixed, 084f060): the service commits, the answer comes after 15 s; the console says the outcome is
-  // unknown, not that the service did not act.
+  // SD-288 (fixed 2026-11-22): the service commits, the answer comes after 15 s; the console says "unknown".
   run timeoutAfterCommitTest =
     init0
       .then(consoleSend("hold", true))
       .then(serviceApply("commit", true))
       .then(consoleTimeout)
-      .expect(s.rel.consoleResult == "unknown" and s.rel.svc == "committed" and inv_consoleSaysServiceDoes)
+      .expect(s.rel.consoleResult == "unknown" and inv_consoleSaysServiceDoes)
 
-  // A review through the console (the witness path): requested row, commit, answer.
+  // A staff step: S1 (safety@slop) decides a home-help item in slop; the service commits after the timeout,
+  // so the console says "unknown". S1 has no role in peon, and no step runs in game mode or with no service.
+  run staffStepTimeoutTest =
+    init0
+      .then(staffStep("S1", "slop", Set("safety"), true, true, true))
+      .expect(s.rel.kind == "step" and inv_consoleAuditFirst)
+      .then(serviceApply("commit", true))
+      .then(consoleTimeout)
+      .expect(s.rel.consoleResult == "unknown" and inv_consoleSaysServiceDoes and inv_auditFirst)
+
+  // Each refusal is its own run: a `.fail()` step assigns no state, so it can only end a run.
+  // S1 has no role in peon.
+  run staffStepRefusedTest =
+    init0
+      .then(staffStep("S1", "peon", Set("safety"), true, true, true))
+      .fail()
+
+  // The step needs admin, and S1 holds only safety and reviewer in slop.
+  run staffStepRoleRefusedTest =
+    init0
+      .then(staffStep("S1", "slop", Set("admin"), true, true, true))
+      .fail()
+
+  // No configured service: 503 read_only, no row.
+  run staffStepNoServiceTest =
+    init0
+      .then(staffStep("S1", "slop", Set("safety"), true, false, true))
+      .fail()
+
+  // No named person (X-Network-Staff-Id): the step never reaches the service.
+  run staffStepUnnamedTest =
+    init0
+      .then(staffStep("S1", "slop", Set("safety"), false, true, true))
+      .fail()
+
+  // Game mode: staff steps act on real data only (404 real_only).
+  run staffStepGameModeTest =
+    initWith(true, false, "game", 0, true, "adult")
+      .then(staffStep("S1", "slop", Set("safety"), true, true, true))
+      .fail()
+
+  // The audit sink is down: no "requested" row, so nothing is sent.
+  run staffStepAuditDownTest =
+    init0
+      .then(staffStep("S1", "slop", Set("safety"), true, true, false))
+      .expect(s.rel.phase == "idle" and s.svcEffects.size() == 0 and inv_consoleAuditFirst)
+
+  // A review through the console (the witness path): requested row, commit, answer. Since owner decisions D15 to
+  // D17 (2026-11-22) the judge decides every item and the console has no review mode control; the kind "review" is
+  // a staff decision on an item in the exception queue (held by the judge) or a reject or stop of an open item.
   run reviewThroughConsoleTest =
     init0
       .then(consoleSend("review", true))
@@ -1019,77 +1213,100 @@ module staff_console {
       .then(consoleAnswer)
       .expect(s.rel.consoleResult == "ok" and inv_auditFirst and inv_consoleSaysServiceDoes)
 
-  // SD-285 (fixed, ab37c2a): a server started in real mode (not real-only) tries game; the game start fails; the
-  // mode stays real. A later switch whose start works goes to game.
+  // SD-285 (fixed 2026-11-22): a server started in real mode (not real-only) tries game; the game start fails, and
+  // the server stays in real mode; the next switch starts the game source again.
   run modeSwitchFailKeepsModeTest =
     initWith(true, false, "real", 0, true, "adult")
       .then(modeSwitch("game", false))
       .expect(s.md.mode == "real" and s.md.srcState.get("game") == "absent" and inv_modeHasRunningSource)
       .then(modeSwitch("game", true))
+      .expect(s.md.mode == "game" and s.md.srcState.get("game") == "ready" and inv_modeHasRunningSource)
+
+  // A switch whose start works goes to the new mode with its source running.
+  run modeSwitchTest =
+    initWith(true, false, "real", 0, true, "adult")
+      .then(modeSwitch("game", true))
       .expect(s.md.mode == "game" and inv_modeHasRunningSource)
 
-  // SD-286 (fixed, 4d794bc): a reviewer's command passes the checks in game mode; an admin switches to real; the
-  // command runs in game.
+  // Intended: a failed start leaves the server in real mode.
+  run modeSwitchFailIntendedTest =
+    initWith(true, false, "real", 0, true, "adult")
+      .then(modeSwitch("game", false))
+      .expect(s.md.mode == "real" and inv_modeHasRunningSource)
+
+  // SD-286 (fixed 2026-11-22): a reviewer's command passes the checks in game mode; an admin switches to real while
+  // the handler awaits its audit row; the command runs nowhere and answers mode_changed.
   run modeHeaderRaceTest =
     initWith(true, false, "game", 0, true, "adult")
       .then(controlCheck("game"))
       .then(modeSwitch("real", true))
-      .then(controlRun)
-      .expect(s.md.ranSaw == "game" and s.md.ranIn == "game" and inv_commandRunsInSeenMode)
+      .then(controlStale)
+      .expect(s.md.pending == "none" and s.md.ranSaw == "none" and inv_commandRunsInSeenMode)
 
-  // SD-122 (fixed, 83990e2): a direct service call turns peon on; the console overview says "on". SD-088 (not in
-  // `safety`): the service then runs peon matching, because its registry row allows it.
-  run peonGateTest =
+  // Owner decision 2026-11-22: peon follows its registry row in every environment: a direct service call turns it
+  // on, the tick runs it, and the overview says "on".
+  run peonRegistryRunsTest =
     init0
       .then(directServiceSwitch("peon", true))
       .then(serviceTick("peon"))
       .expect(s.mg.engineRan.get("peon") and overviewMatching(s.mg, "peon") == "on" and inv_consoleShowsGate
-              and inv_tickRunImpliesRegistry and not(inv_tickRunImpliesAllowedAndStored))
+              and inv_tickRunImpliesRegistry)
 
   // With the peon registry row false the service refuses peon on, and the overview says "locked".
   run peonRegistryOffTest =
     initWith(true, true, "real", 0, false, "adult")
       .then(directServiceSwitch("peon", true))
-      .expect(not(s.mg.stored.get("peon")) and overviewMatching(s.mg, "peon") == "locked" and inv_tickRunImpliesAllowedAndStored)
+      .expect(not(s.mg.stored.get("peon")) and overviewMatching(s.mg, "peon") == "locked" and inv_consoleShowsGate
+              and inv_tickRunImpliesRegistry)
 
-  // The console itself refuses peon on (real.ts:898).
+  // The console sends the press; the service refuses peon on when the registry row does not allow it
+  // (setMatching matching_not_allowed).
   run consoleRefusesPeonTest =
-    init0
+    initWith(true, true, "real", 0, false, "adult")
       .then(switchApp("peon"))
       .then(configPoll)
       .then(pressSwitch("S2"))
       .then(pressSwitch("S2"))
-      .expect(not(s.mg.stored.get("peon")))
+      .expect(not(s.mg.stored.get("peon")) and s.cf.sent and s.cf.sentApp == "peon")
 
-  // SD-246 (fixed, e6daa04): armed on slop, switch to peon: the switch is disarmed and the slop data goes. The
-  // next click after peon's data loads only arms peon.
+  // SD-246 (OPEN again, 2026-11-18): armed on slop, switch to peon before peon's config answers: the switch stays
+  // armed with slop's data, and the confirm sends slop's target to peon.
   run armedSwitchCarriesTest =
     init0
       .then(pressSwitch("S2"))
+      .then(switchAppCode("peon"))
+      .expect(s.cf.armed and s.cf.dataApp == "slop")
+      .then(pressSwitch("S2"))
+      .expect(s.cf.sent and s.cf.sentApp == "peon" and s.cf.sentArmedFor == "slop" and not(inv_confirmMatchesApp))
+
+  // When peon's config answers first, the ask ends and the next click only arms peon.
+  run armedSwitchReloadTest =
+    init0
+      .then(pressSwitch("S2"))
       .then(switchApp("peon"))
-      .expect(not(s.cf.armed) and s.cf.dataApp == "none")
       .then(configPoll)
+      .expect(not(s.cf.armed))
       .then(pressSwitch("S2"))
       .expect(s.cf.armed and s.cf.armedApp == "peon" and not(s.cf.sent) and inv_confirmMatchesApp)
 
-  // Bug 11 (flip): S2 arms "turn on" for slop, another admin turns slop on, the panel reads it again; the
-  // confirm click sends nothing.
+  // Bug 11 (flip): S2 arms "turn on" for slop, another admin turns slop on, and the push reloads the config:
+  // the ask ends and nothing is sent.
   run switchAlreadyFlippedTest =
     init0
       .then(pressSwitch("S2"))
       .then(directServiceSwitch("slop", true))
-      .then(pressSwitch("S2"))
+      .then(configPoll)
       .expect(not(s.cf.armed) and not(s.cf.sent) and s.mg.stored.get("slop"))
 
-  // SD-470 (fixed, 0f9fc3d): a request with token 0 is in flight, token 0 stops working, a new token is set; the
-  // late 401 does not open the prompt.
+  // SD-470 (OPEN, 2026-11-21): a request with token 0 is in flight, token 0 stops working, a new token is set; the
+  // late 401 opens the prompt although the new token works.
   run late401Test =
     init0
       .then(clientSend)
       .then(tokenExpires)
       .then(setToken)
-      .then(clientAnswer(0))
-      .expect(not(s.cl.authNeeded) and inv_promptOnlyForBadToken)
+      .then(clientAnswerCode(0))
+      .expect(s.cl.authNeeded and not(inv_promptOnlyForBadToken))
 
   // A 401 for the token in use opens the prompt.
   run current401Test =
@@ -1099,14 +1316,12 @@ module staff_console {
       .then(clientAnswer(0))
       .expect(s.cl.authNeeded and inv_promptOnlyForBadToken)
 
-  // SD-287 (fixed, 3e7d55f): the service clock leads by one tick; the preview loads, is kept 5 minutes on the
-  // console clock, and S1 releases it.
+  // SD-287 (fixed 2026-11-22): the service clock leads by one tick; the preview loads and is kept 5 minutes on the
+  // console clock.
   run previewSkewTest =
     initWith(true, true, "real", 1, true, "adult")
       .then(loadPreview("S1"))
-      .expect(s.pv.state == "ready" and s.pv.tokenUntil == s.now + PREVIEW_TICKS)
-      .then(releasePhoto("S1"))
-      .expect(s.pv.state == "released" and inv_releaseBySameStaff)
+      .expect(s.pv.state == "ready" and s.pv.tokenUntil == s.now + PREVIEW_TICKS and inv_previewRefusalTrue)
 
   // Without skew the preview loads and S1 releases it (held-photo-ui.test.tsx path).
   run previewReleaseTest =
@@ -1115,19 +1330,19 @@ module staff_console {
       .then(releasePhoto("S1"))
       .expect(s.pv.state == "released" and inv_releaseBySameStaff)
 
-  // SD-279 (fixed, a26ec66): a booked plan is closed by the Network; the projection reads CANCELLED, and the
-  // world's outcome does not change it.
+  // SD-279 (fixed 2026-11-22): a booked plan is closed by the Network; the projection reads CANCELLED, and the
+  // world's later outcome changes nothing.
   run closedBookedPlanCancelledTest =
     init0
       .then(netPropose)
       .then(netBook)
       .then(netClose)
-      .expect(s.pj.proj == "CANCELLED")
+      .expect(s.pj.proj == "CANCELLED" and inv_projectionRefines)
       .then(worldOutcome(true))
       .expect(s.pj.proj == "CANCELLED" and inv_projectionRefines and inv_terminalAbsorbing)
 
-  // SD-281 (fixed, 7e51cf3): z leaves; the next poll drops the edge. SD-282 (skipped, not in `safety`): z still
-  // shows as an under-13 decline.
+  // SD-281 (fixed 2026-11-22): z leaves; the next poll drops the deleted edge from console memory. SD-282 (skipped,
+  // not in `safety`): z still shows as an under-13 decline.
   run forgetTest =
     init0
       .then(forgetPoll)
@@ -1143,11 +1358,11 @@ module staff_console {
       .then(dvSnapshot)
       .expect(s.dv.feed == 1 and s.dv.server == 1 and inv_feedExact)
 
-  // SD-466 (fixed, 2bf14c3): a typed note, then one failed poll: the rows and the note stay.
+  // SD-466 (OPEN, 2026-11-21): a typed note, then one failed poll: the rows unmount and the note is lost.
   run failedPollTest =
     init0
       .then(typeNote)
-      .then(pollSafety(false))
-      .expect(s.cs.note and s.cs.dataApp == "slop" and inv_failedPollKeepsInput)
+      .then(pollSafetyCode(false))
+      .expect(not(s.cs.note) and s.cs.dataApp == "none" and not(inv_failedPollKeepsInput))
 }
 ```

@@ -5,6 +5,8 @@
 export type UnitPhase = "LoadingSnapshot" | "RestoringSnapshot" | "RunningAction" | "SavingState" | "StateSaved";
 /** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
 export interface RuntimeUnit { phase: UnitPhase }
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+export type EvidenceOwner = "SharedEvidence" | "MemberEvidence" | "EventEvidence";
 /** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) */
 export type StartupPlan = "RecoverDeliveryQueue" | "RepairProjection";
 
@@ -15,6 +17,8 @@ export type Event =
   | { type: "recordLoad"; snapshotFound: boolean }
   | { type: "recordRestore" };
 
+/** Story: Work from the latest saved network state / The engine runs on a snapshot outside the store lock (spec/runtimeUnit.md) */
+export const maxEngineAttempts: number = 2;
 /** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
 export const initial: RuntimeUnit = { phase: "LoadingSnapshot" };
 
@@ -105,6 +109,78 @@ export function canRecordRestore(unit: RuntimeUnit): boolean {
 export function recordRestore(unit: RuntimeUnit): RuntimeUnit {
   //@ ensures (inv(unit) && canRecordRestore(unit)) ==> stepSaveFollowsAction(unit, "recordRestore", \result)
   return { phase: "RunningAction" };
+}
+
+/** Story: Work from the latest saved network state / The engine runs on a snapshot outside the store lock (spec/runtimeUnit.md) */
+//@ pure
+export function tickMayStartBesideEngine(engineInFlight: boolean): boolean {
+  return !engineInFlight;
+}
+
+/** Story: Work from the latest saved network state / The engine runs on a snapshot outside the store lock (spec/runtimeUnit.md) */
+//@ pure
+export function engineAttemptAllowed(attempt: number): boolean {
+  return attempt >= 0 && attempt < maxEngineAttempts;
+}
+
+/** Story: Work from the latest saved network state / The engine runs on a snapshot outside the store lock (spec/runtimeUnit.md) */
+//@ pure
+export function lawComputingTickSkips(engineInFlight: boolean): boolean {
+  //@ ensures \result === true
+  return !engineInFlight || !tickMayStartBesideEngine(engineInFlight);
+}
+
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+//@ pure
+export function preparedRunUsable(sameKey: boolean, sameConfig: boolean, sameSharedEvidence: boolean): boolean {
+  return sameKey && sameConfig && sameSharedEvidence;
+}
+
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+//@ pure
+export function preparedItemCommits(runUsable: boolean, named: string[], changed: string[]): boolean {
+  return runUsable && !named.some((owner: string) => changed.includes(owner));
+}
+
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+//@ pure
+export function evidenceOwner(publicEvent: boolean, namesMember: boolean): EvidenceOwner {
+  return publicEvent ? "EventEvidence" : (namesMember ? "MemberEvidence" : "SharedEvidence");
+}
+
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+//@ pure
+export function lawChangedOwnerNeverCommits(runUsable: boolean, named: string[], changed: string[], owner: string): boolean {
+  //@ ensures \result === true
+  return !(named.includes(owner) && changed.includes(owner)) || !preparedItemCommits(runUsable, named, changed);
+}
+
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+//@ pure
+export function lawUnchangedItemOfUsableRunCommits(named: string[], changed: string[]): boolean {
+  //@ ensures \result === true
+  return !(!named.some((owner: string) => !(!changed.includes(owner)))) || preparedItemCommits(true, named, changed);
+}
+
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+//@ pure
+export function lawStaleRunNeverCommits(sameKey: boolean, sameConfig: boolean, sameSharedEvidence: boolean, named: string[], changed: string[]): boolean {
+  //@ ensures \result === true
+  return !(!preparedRunUsable(sameKey, sameConfig, sameSharedEvidence)) || !preparedItemCommits(preparedRunUsable(sameKey, sameConfig, sameSharedEvidence), named, changed);
+}
+
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+//@ pure
+export function lawMemberEntryIsNeverShared(publicEvent: boolean, namesMember: boolean): boolean {
+  //@ ensures \result === true
+  return !namesMember || evidenceOwner(publicEvent, namesMember) !== "SharedEvidence";
+}
+
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+//@ pure
+export function lawEventEntryIsItsOwnEvidence(publicEvent: boolean, namesMember: boolean): boolean {
+  //@ ensures \result === true
+  return !publicEvent || evidenceOwner(publicEvent, namesMember) === "EventEvidence";
 }
 
 /** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) */

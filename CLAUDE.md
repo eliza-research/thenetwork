@@ -95,17 +95,28 @@ Do not break these. `pnpm run sim` checks them in every simulated run.
 
 - Network code reads time only from `Clock` (`packages/core`). No `Date.now()`, no `new Date()` without an argument, no `Math.random()`. Randomness comes from the seeded RNG.
 - Network code never reads hidden persona truth (`Persona.hidden`, the oracle, `hidden_truth.jsonl`). Only `packages/sim` and the judges that run inside the simulator can read it.
-- Every proactive proposal, and every member-initiated request, must go through human review before any member is contacted (founder decision, below 1,000 members). **Status:** the ConsentNetwork (`packages/network`) enforces it: every opportunity, whatever its origin, waits in a review queue (default mode `human`; the member count never turns review off), and an item past its SLA expires unsent. Simulator runs use a simulated reviewer (`review: "auto"`); say so when you report a run. The simulator's `StubNetwork` has no review. The production service (`packages/network/service`) stores review state in Postgres and serves review decisions through its staff API (`/review`).
+- Every opportunity, whatever its origin, gets one recorded approval before any member is contacted: the review judge (`gpt-6-luna`, strict rubric when the roster has a minor) or, for an item the judge holds, a named staff member. A held item expires unsent at its deadline. Simulator runs use a deterministic stand-in judge; say so. (Owner decisions D15 to D17 of 2026-11-22, [automated review](spec/automatedReview.md): no staff reviewer reads an approved introduction. The judge holds an item it flags, is unsure about or cannot run on; staff approve only a held item, reject any open item and can stop an approved item before its reveal through the staff API, `/review`. The simulator's `StubNetwork` has no review.)
 - Every outbound message must go through the leak check. **Status:** the ConsentNetwork send path and the Blooio outbound queue run the leak guard (`packages/core/src/guard.ts`) on every message; the MCP server withholds any inbox update that fails its output gate (`packages/mcp/src/leaks.ts`). The simulator's `StubNetwork` (the push baseline) has no leak check.
-- Age policy (`packages/core/src/policy.ts`): under 13 cannot join and is declined kindly with nothing stored; members aged 13-17 can use the agent for themselves (chat, events, things to do) but are never matched or connected to other members. Use `canJoin`, `isMinor` and `canBeMatched`; do not hard-code ages.
-- Canary leaks, invariant violations, and minor contacts are always 0. A change that makes any of them non-zero is wrong, whatever else it improves. One known judge issue: the single allowed 14-day re-engagement message shows as a `two_unanswered` violation in runs longer than about 14 days ([docs/network.md](docs/network.md) section 11). Any other violation is real.
+- Age policy (`packages/core/src/policy.ts`; [memberAge](spec/memberAge.md), [friendIntroAge](spec/friendIntroAge.md), [matchLane](spec/matchLane.md); owner decision 2026-11-22):
+  - Under 13 cannot join. The agent declines kindly. A verified browser refusal keeps only the numeric age floor under the enrollment rule.
+  - Age comes from the stored birth date at the Clock day. The youngest reading wins.
+  - After verified browser enrollment, keep the exact birth date privately when it serves teen readiness. Keep the date in the platform age authority. Profiles, judge packets and staff responses get only the age facts their rules allow.
+  - A member aged 13-17 can use the agent for themselves (chat, events, things to do).
+  - A minor gets friendship introductions only, on friends.help and in the ntwrk Friend lane (`teenFriendAgeRule`). A minor never gets dates, work, slop.date or peon.biz matching, photos, a looks rating, or a number or photo relay.
+  - The other person is aged 13 to 18, with a birth date at most 2 calendar years from the minor's. Every person in the roster is teen ready: an exact birth date, no age conflict, no open minor signal or report, and no bar. Nobody aged 19 or more is introduced to, grouped with, shown to or relayed to a minor.
+  - A teen introduction is sent only after the review judge approves it with the strict rubric, or staff approve an item that the judge holds.
+  - A group plan, table or crew with a minor is on friends.help only (`teenGroupPlanApp`). An ntwrk Friend circle can also hold a minor.
+  - A group with a minor (a friends.help group or an ntwrk Friend circle) has 2 to 6 people (`teenRosterSizeAllowed`), and every pair with a minor passes the rule. A friends.help group with a minor meets at an all-ages public place for an all-ages activity.
+  - Teen introductions are on from the start. One staff member can stop them on every app that offers them (`teenStop`). Each `teenStop` step writes an audit row. While they are stopped, a minor is single-player.
+  - Use `canJoin`, `isMinor`, `canBeMatched` and the generated `groupAgeAllowed`. Do not hard-code ages.
+- Canary leaks, invariant violations, and minor contacts that break `teenFriendAgeRule` are always 0. While teen introductions are stopped, that is every minor contact. The teen gates are also always 0: `teen_adult_contact`, `teen_gap_contact`, `teen_lane_contact`, `teen_unready_contact`, `teen_switch_off_contact`, `teen_relay_contact`, `teen_group_contact`, `teen_place_contact` and `teen_stop_equals_pre_feature` (the stopped teen world equals the world with no teen-ready member, metrics and outbound log). A change that makes any of them non-zero is wrong, whatever else it improves. One known judge issue: the single allowed 14-day re-engagement message shows as a `two_unanswered` violation in runs longer than about 14 days ([docs/network.md](docs/network.md) section 11). Any other violation is real.
 
 ## LLMs
 
 - Use `defaultLLM()`, `judgeLLM()` or `recommenderLLM()` from `packages/core/src/llm.ts`. Every use is `gpt-6-luna` on Surplus Intelligence. OpenAI (same model IDs) is used when there is no `SURPLUS_API_KEY`, and as the fallback when Surplus returns 429 / 5xx / a timeout. Use `endpointsFor(provider)` to check whether a provider has a key. Do not add a new LLM client or provider.
 - Requests time out after 60 s by default (`LLM_TIMEOUT_MS`) and retry at most 4 times (`LLM_MAX_RETRIES`). One call, retries included, stops at `LLM_DEADLINE_MS` (default 3x the timeout; 0 disables). Pass `fallback: false` to a call or client to turn off the OpenAI fallback; every fallback is logged and reported to `onFallback`.
 - `pnpm run sim` never calls a model: it clears the provider keys before it starts. The one exception is `--llm`, which keeps them for the onboarding LLM arm (tracked gates only).
-- PR evidence needs real LLM calls. The real-LLM commands are in CONTRIBUTING.md section 7.2. The service's engine judge is off by default. For bounded real-model qualification with `NETWORK_ENGINE_JUDGE=1`, use the budget, request limit and dry-run command in [the service README](packages/network/service/README.md#matching-judge-in-staging). The sim adapter still does not supply an LLM to the engine.
+- PR evidence needs real LLM calls. The real-LLM commands are in CONTRIBUTING.md section 7.2. The review judge and the engine judge are always on in staging and production; each has a daily budget and request limit per app (`NETWORK_REVIEW_JUDGE_BUDGET_USD`, `NETWORK_REVIEW_JUDGE_MAX_REQUESTS`, `NETWORK_ENGINE_JUDGE_BUDGET_USD`, `NETWORK_ENGINE_JUDGE_MAX_REQUESTS`; [the service README](packages/network/service/README.md#review-judge-and-engine-judge)). Qualify the review judge on the live corpus with `pnpm run review-eval --live`. The sim adapter still does not supply an LLM to the engine.
 - Judge prompts write the explanation before the verdict.
 - Recommendations and judges use the same model (`gpt-6-luna`) with a different prompt or pass. Use a different judge model for audits only, and a cross-family audit needs founder approval (it sends data to another provider).
 
@@ -154,7 +165,6 @@ node --import tsx --env-file-if-exists=.env packages/sim/src/apps/friends/cli.ts
 
 # Observatory (prints http://127.0.0.1:4747/#token=...)
 pnpm run observatory
-pnpm run observatory --review human
 pnpm run observatory:db       # local Postgres on :54339 with a 14-day simulated run
 
 # The four apps on one backend (docs/runbook-platform.md): dry-run sends only
@@ -166,7 +176,7 @@ pnpm run sites:dev            # the four sites only, /api/* proxied to :8790
 ## Environment
 
 - Copy `.env.example` to `.env`. Never commit `.env` or anything in `runs/`. CONTRIBUTING.md section 5 lists every variable that testing needs, taken from the code.
-- Never set `BLOOIO_ALLOW_SEND`, `NTWRK_LIVE_APPROVED`, `<APP>_LIVE_APPROVED` or `NETWORK_CHANNEL` locally. Without them every send is dry-run.
+- Never set `NETWORK_CHANNEL` locally. It alone makes sends real, for every app; without it every send is dry-run.
 - The local dev Postgres for the Observatory is on port **54339**. Do not touch port 54329; another tool uses it.
 - `packages/observatory/db/seed.ts` refuses non-local hosts. Do not pass `--allow-remote` unless a human asks.
 - Cloudflare work for ntwrk.party goes through `scripts/wrangler.sh` only. It refuses `deploy` (except `--dry-run`) and other commands that change Cloudflare resources unless `NTWRK_ALLOW_DEPLOY=1` is set. Do not set it without the founder's approval.

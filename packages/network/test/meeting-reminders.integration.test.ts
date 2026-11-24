@@ -37,7 +37,7 @@ test.each([false, true])("the day-before reminder and day-of check-in retain the
   const w = new Mini(["a", "b"].map((id, i) => ({
     id, name: i ? "Ben Ito" : "Ana Diaz", age: 30, area: "Greenpoint",
     interests: ["climbing", "hiking"], skills: ["belaying"], quietHours: [0, 0],
-  })), { review: "auto", plans: false, growth: false });
+  })), { plans: false, growth: false });
   await w.onboard("a", "b");
   const id = w.propose(["a", "b"]);
   await w.answerProbes(["a", "b"]);

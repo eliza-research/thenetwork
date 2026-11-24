@@ -8,7 +8,7 @@ A member needs to confirm their phone and use their own session. The service nee
 
 Check banned numbers, session ownership, OTP and Cloud authentication, and signed proxy requests. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [OTP spec](../otpLimits.md) generates the current request and verification transitions. The [web session spec](../webSession.md) generates session lifetime, rotation, and fresh sign-in decisions. This imported model uses seconds and scales the global send limit for reachability. The current runtime uses ordered OTP bucket reads and schedules the old token's grace expiry before writing its replacement. The imported model's transaction and concurrency assumptions describe the original branch.
+The [OTP spec](../otpLimits.md) generates the current request and verification transitions. The [web session spec](../webSession.md) generates session lifetime, rotation, and fresh sign-in decisions. This imported model uses seconds and scales the global send limit for reachability. The current runtime reads the four OTP buckets in order and counts a start in all four or in none in one store transaction that locks only those four buckets (PeopleStore.hitAll), and schedules the old token's grace expiry before writing its replacement.
 
 Imported from `quint/auth_edge.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -22,13 +22,50 @@ Imported from `quint/auth_edge.qnt` at `30d950e`. See [model index](README.md) f
 // edge-trust (M-062), svc-auth (M-063), auth-mode-config (M-129), public-api-gates (M-130),
 // proxy-secret-rotation (M-131).
 //
-// The model follows the code of branch wave2/auth_edge (ad67275 with the fixes for SD-013, SD-054,
-// SD-181, SD-380 and SD-491; docs/research/quint-findings/auth_edge.md):
+// The model was written for branch wave2/auth_edge (ad67275 with the fixes for SD-013, SD-054, SD-181,
+// SD-380 and SD-491). The fixes landed on branch vibestack-matching on 2026-11-21. The comparison with
+// this branch found (locations are by function name):
+//  - SD-380 (defect AE-1, closed 2026-11-21): OtpService.start (otp.ts) calls store.hitAll, which in one
+//    transaction locks the four buckets, reads them, and counts the request in all four only when
+//    otpSendDecision of spec/otpLimits.md permits it (startBuckets, otpRefusedNotCounted).
+//  - SD-013 (defect AE-2, closed 2026-11-21): the web route and the MCP startOtp hook pass the ban read
+//    to OtpService.start, which counts a banned number in the buckets like any number and then withholds
+//    the send (withholdSend in spec/otpLimits.md): otpStartLimits with bannedAtBegin.
+//  - Every start, on the site API and through the MCP startOtp hook, uses the standard address bucket:
+//    the owner removed the phone-code-only option on 2026-11-22 (spec/otpLimits.md).
+//  - SD-054 (defect AE-3) is fixed on 2026-11-21: PgPeopleStore.attachPerson, called by admitMembership
+//    (the text join, the web join and enrollment) and by the referred join, gives the person only to the
+//    joining session (who.session, the token hash) and revokes every other person-less session of the
+//    number (spec/webSession.md, "A session without a person never outlives its number getting a
+//    person"). The same rule holds on every other path that gives a number a person: createPerson
+//    (invitation, text join, connector join) and movePhone (number change) call attachPerson in their own
+//    transaction, and a sign-in that finishes after the person arrived is stored with that person
+//    (putSession). That is numberChange and invite here. A text or connector
+//    join has no joining session. That is bindSessions here. A repeated web join (ReturnExisting) binds
+//    nothing in the code; the model's repeated-join branch binds, which differs only for a person-less
+//    session of a number that already has a member, and after the fix every such session ended at the
+//    admission (the held-number case is refused before the join).
+//  - SD-491 (defect AE-4) is fixed on 2026-11-21: an under-13 web join (accounts.ts joinLocked,
+//    BelowJoinAge, declineEndsUnboundAccess) records the age, then PgPeopleStore.endUnboundAccess revokes
+//    every person-less session of the number and deletes its pending texts. The code revokes the row and
+//    api.ts sends no cookie reset; the model drops the row and the cookie, which is the same for every
+//    later request (a revoked row never authenticates).
+//  - SD-181 (defect AE-5, closed 2026-11-21): parseNetworkDelegation calls cloudIdentityTimesValid of
+//    spec/cloudSignIn.md, so production allows 30 s of issue time ahead of the local clock, like the
+//    staging-local callback (parseCloudIdentity). cloud_auth and this model have the same rule.
+//  - PLATFORM_PROXY_SECRET_PREVIOUS does not exist on this branch: normalizeEdge verifies with one
+//    secret. The model now has one backend secret (closed drift).
+//  - Session rotation (defect AE-6, fixed on 2026-11-21) is one transaction: PgPeopleStore.rotateSession
+//    takes the erasure lock of the number's person (or of the number), reads the old row again, and then
+//    writes the old token's revocation and the next row (rotateCommit). A row that another request
+//    rotated in the grace time stays usable and gets no second replacement.
+// Files:
 //   packages/platform/src/api.ts          routes, gates, Cloud callback and validation
 //   packages/platform/src/otp.ts          OtpService.start / verify and the rate buckets
 //   packages/platform/src/sessions.ts     SessionService.create / authenticate / revoke / fresh
 //   packages/platform/src/accounts.ts     join, leave, deleteAll, exportApp, createPerson (who = {e164, personId, session})
-//   packages/platform/src/pg-store.ts     hitAll, sessions, deleteAll, bindSessions, forgetPersonlessSessions, purge
+//   packages/platform/src/pg-store.ts     hit, sessions, revokeSession, rotateSession, attachPerson (bindSessions),
+//     admitMembership, endUnboundAccess, deleteAll, purge
 //   packages/platform/src/cloud-delegation.ts and packages/core/src/svc/network-delegation.ts
 //   packages/platform/src/proxy.ts, deploy/router.ts, deploy/backend/backend.ts (normalizeEdge)
 //   packages/core/src/svc/svc-auth.ts and the signed endpoints that use it
@@ -38,20 +75,20 @@ Imported from `quint/auth_edge.qnt` at `30d950e`. See [model index](README.md) f
 //  - HMAC, the OTP code, Turnstile and the Cloud proof are oracles. A human knows a code only when the
 //    provider sent it to the phone that human holds. Nobody can forge a signature without the secret.
 //  - Each SQL transaction is one action. One code request is four actions: the route's ban check,
-//    the four rate buckets in one transaction (store.hitAll, pg-store.ts:268-295), the provider send and
-//    putChallenge.
-//  - The verify limits (otp.ts:206-208: 10 code checks a number and 30 an IP an hour) are not modelled:
+//    the four rate buckets (one hitAll transaction: read all four, then count all four or none), the provider send and putChallenge.
+//  - The verify limits (OtpService.verify: 10 code checks a number and 30 an IP an hour) are not modelled:
 //    they only refuse more checks, and no invariant here needs a refused check.
 //    The OTP verify route and the Cloud callback are one action each: their internal awaits do not
 //    change any value that the invariants below read (noted at each action).
 //  - One app (slop, joins at 13; matching at 18 is outside this model), two phones, two humans. A carrier can give a number to another human
-//    (number recycling); the 12-month hold (accounts.ts:182-190) cannot be reached in these bounds.
+//    (number recycling); the 12-month hold (accounts.seen) cannot be reached in these bounds.
 //    Assumption: a number ages 45 days before a carrier gives it to another human, so a 10-minute OTP
 //    code of the earlier holder is never live then (web sessions, 30 to 90 days, can be).
 //  - Assumption (upstream): the Worker to backend hop and the gateway to backend hop are TLS, so an
 //    attacker cannot capture or change a signed request. The attacker can send any request directly.
 //  - Assumption (svc endpoints): each signed endpoint records its id and its effect in one transaction
-//    (the durable inbox is modelled in quint/turn_consent.qnt).
+//    (the durable inbox is modelled in turn_consent).
+//  - Each app has its own auth mode (api.ts cloudFor). The model has one app, so one mode per run.
 module auth_edge {
 
   // ------------------------------------------------------------------ constants (code values)
@@ -59,7 +96,7 @@ module auth_edge {
   pure val MINUTE = 60
   pure val HOUR = 3600
   pure val DAY = 86400
-  // otp.ts:130-133 OTP_LIMITS. GLOBAL_PER_HOUR is 500 in the code; the model bound is 2 so that the
+  // otp.ts OTP_LIMITS. GLOBAL_PER_HOUR is 500 in the code; the model bound is 2 so that the
   // global refusal is reachable in a short trace. The rule it checks does not depend on the value.
   pure val OTP_TTL = 600
   pure val OTP_MAX_ATTEMPTS = 5
@@ -68,20 +105,21 @@ module auth_edge {
   pure val PER_IP_HOUR = 10
   pure val MIN_GAP = 30
   pure val GLOBAL_PER_HOUR = 2
-  // sessions.ts:13-20
+  // sessions.ts
   pure val SESSION_TTL = 30 * DAY
   pure val SESSION_ROTATE = DAY
   pure val SESSION_MAX = 90 * DAY
   pure val SESSION_GRACE = 60
   pure val STEP_UP = 600
-  // api.ts:101 CLOUD_CLOCK_SKEW_MS (30 s); network-delegation.ts:41 a proof lives at most one hour.
+  // api.ts CLOUD_CLOCK_SKEW_MS (30 s); network-delegation.ts a proof lives at most one hour.
   pure val CLOUD_SKEW = 30
   pure val CLOUD_PROOF_LIFE = HOUR
-  // proxy.ts:23 PROXY_MAX_SKEW_S and svc-auth.ts:17 SVC_MAX_SKEW_S
+  // proxy.ts PROXY_MAX_SKEW_S and svc-auth.ts SVC_MAX_SKEW_S
   pure val PROXY_SKEW = 60
   pure val SVC_SKEW = 60
-  // packages/platform/src/apps.ts:76: slop minJoinAge 13 (founder 2026-10-09: open to 13+; minors are
-  // never matched, which is not in this model); policy.ts: under 13 cannot join at all.
+  // packages/platform/src/apps.ts: slop minJoinAge 13 (founder 2026-10-09: open to 13+; slop.date never
+  // matches a minor, and a teen friendship item under teenFriendAgeRule exists only on friends.help and ntwrk;
+  // neither is in this model); policy.ts: under 13 cannot join at all.
   pure val APP_MIN_AGE = 13
   pure val JOIN_FLOOR = 13
 
@@ -117,15 +155,15 @@ module auth_edge {
     alive: Set[int],             // people with deleted_at null
     member: Set[int],            // a live slop membership
     nextPerson: int,
-    banned: Set[str],            // platform.bans by phone hash (service.ts:2010-2042)
+    banned: Set[str],            // platform.bans by phone hash (service.ts)
     suppressed: Set[str],        // platform.suppression (delete everything, ban)
     floor: str -> int,           // platform.age_floor (NONE when absent)
     cloudRevoked: Set[int],      // Eliza Cloud: delegations (by session chain) that Cloud now denies
   }
   type Otp = { buckets: (str, str) -> Bucket, inflight: int -> StartReq, nextRid: int, challenge: str -> Challenge }
   type Sess = { rows: int -> Session, jar: str -> int, nextSid: int, pendingRot: Set[Rot] }
-  // backendPrevious: PLATFORM_PROXY_SECRET_PREVIOUS (backend.ts:94), NONE when unset.
-  type Edge = { backendSecret: int, backendPrevious: int, siteSecret: int }
+  // One PLATFORM_PROXY_SECRET on the backend and one in the site routers (deploy/backend/backend.ts).
+  type Edge = { backendSecret: int, siteSecret: int }
   type Svc = { inflight: Set[SvcReq], seen: Set[str], effects: str -> int }
   type Ghost = {
     codeToBanned: bool,          // a code went for a request that began after the number was banned
@@ -152,7 +190,7 @@ module auth_edge {
   // ------------------------------------------------------------------ state
 
   var now: int
-  var mode: str                  // auth-mode-config: "otp" or "cloud" (api.ts:152-198), fixed at boot
+  var mode: str                  // auth-mode-config: "otp" or "cloud" (api.ts), fixed at boot
   var world: World
   var otp: Otp
   var sess: Sess
@@ -162,12 +200,12 @@ module auth_edge {
 
   // ------------------------------------------------------------------ helpers
 
-  // accounts.ts:148-153 personFor: the live person of the phone (no hold in these bounds).
+  // accounts.ts personFor: the live person of the phone (no hold in these bounds).
   def personFor(w: World, p: str): int =
     val id = w.phoneOf.get(p)
     if (id != NONE and w.alive.contains(id)) id else NONE
 
-  // pg-store.ts:265-295 hit and hitAll: one advisory-locked transaction.
+  // pg-store.ts hit: one advisory-locked transaction for one bucket; hitAll locks the four buckets in one transaction.
   pure def bucketOf(b: (str, str) -> Bucket, key: (str, str)): Bucket =
     if (b.keys().contains(key)) b.get(key) else { start: NONE, n: 0, last: NONE }
   pure def hitOk(b: (str, str) -> Bucket, key: (str, str), window: int, at: int, limit: int, gap: int): bool =
@@ -180,7 +218,8 @@ module auth_edge {
     val n = if (cur.start == start) cur.n else 0
     b.put(key, { start: start, n: n + 1, last: at })
 
-  // sessions.ts:47-53 authenticate (the checks before rotation; decisions.ts:42 sessionLive).
+  // SessionService.authenticate (the checks before rotation; spec/webSession.md readRow, "Only a live token on the
+  // requested app can authenticate").
   def liveSession(s: Sess, sid: int, at: int): bool =
     sid != NONE and s.rows.keys().contains(sid) and
     (s.rows.get(sid).revoked == NONE or s.rows.get(sid).revoked > at) and
@@ -196,7 +235,7 @@ module auth_edge {
   def usableSession(w: World, s: Sess, sid: int, at: int): bool =
     liveSession(s, sid, at) and not(bannedRow(w, s.rows.get(sid)))
 
-  // sessions.ts:63-65 revoke: revoked_at = least(coalesce(revoked_at, at), at) (pg-store.ts:252-254).
+  // sessions.ts revoke: revoked_at = least(coalesce(revoked_at, at), at) (pg-store.ts).
   pure def revokeRow(rows: int -> Session, sid: int, at: int): int -> Session =
     if (sid != NONE and rows.keys().contains(sid))
       rows.set(sid, { ...rows.get(sid), revoked: if (rows.get(sid).revoked == NONE) at else imin(rows.get(sid).revoked, at) })
@@ -205,8 +244,7 @@ module auth_edge {
   pure def dropRows(rows: int -> Session, keep: int => bool): int -> Session =
     rows.keys().filter(k => keep(k)).mapBy(k => rows.get(k))
 
-  // accounts.ts:306-311 createPerson and pg-store.ts:255-259 bindSessions (SD-054 fix): the number has a
-  // person now. Of its sessions with no person, `keepSid` gets the person and every other one is revoked
+  // pg-store.ts attachPerson (SD-054, AE-3 fixed): the number has a person now. Of its sessions with no person, `keepSid` gets the person and every other one is revoked
   // at `at` (it may belong to an earlier holder of the number). NONE keeps no session (a text join).
   pure def bindSessions(rows: int -> Session, p: str, pid: int, keepSid: int, at: int): int -> Session =
     rows.keys().mapBy(k =>
@@ -235,7 +273,7 @@ module auth_edge {
     },
     otp' = { buckets: Map(), inflight: Map(), nextRid: 1, challenge: Map() },
     sess' = { rows: Map(), jar: Map("alice" -> NONE, "bob" -> NONE), nextSid: 1, pendingRot: Set() },
-    edge' = { backendSecret: 1, backendPrevious: NONE, siteSecret: 1 },
+    edge' = { backendSecret: 1, siteSecret: 1 },
     svc' = { inflight: Set(), seen: Set(), effects: Map() },
     ghost' = {
       codeToBanned: false, lateBanCode: false, sessionToBanned: false, bannedSessionUsed: false, otpLogins: 0, cloudLogins: 0, burned: false,
@@ -260,11 +298,10 @@ module auth_edge {
 
   // ------------------------------------------------------------------ otp-challenge (OtpService.start)
 
-  // api.ts:464-480 POST /api/auth/otp/start. Cloud mode answers 409 (api.ts:465). Turnstile is an
-  // oracle that passes. api.ts:474 (SD-013 fix): the route reads the ban first and passes send =
-  // not banned to OtpService.start: a banned number counts in the rate buckets like any number, gets
-  // { ok: true } and no code (otp.ts:189). `bannedAtBegin` is that ban read (not send); bannedNoCode
-  // reads it.
+  // api.ts POST /api/auth/otp/start. A Cloud sign-in app answers 409. Turnstile is an oracle that
+  // passes. The intended SD-013 rule: the route reads the ban first, a banned number counts in the rate
+  // buckets like any number, gets { ok: true } and no code (AE-2). `bannedAtBegin` is the ban read;
+  // bannedNoCode reads it.
   action otpStartBegin(h: str, p: str): bool = all {
     mode == "otp",
     otp.inflight.keys().size() < 2,
@@ -280,9 +317,9 @@ module auth_edge {
     else if (st == 2) { key: ("day", p), window: DAY, limit: PER_PHONE_DAY, gap: 0 }
     else { key: ("global", ""), window: HOUR, limit: GLOBAL_PER_HOUR, gap: 0 }
 
-  // otp.ts:175-188 with store.hitAll (pg-store.ts:268-295, SD-380 fix): one transaction checks the four
-  // buckets in order and counts the hit in all of them, or in none when one refuses. `burned` is true
-  // when a refused request still changed a bucket (otp.ts:4-5 says it must not).
+  // The SD-380 rule (otp.ts OtpService.start through store.hitAll, AE-1): one unit checks the
+  // four buckets in order and counts the hit in all of them, or in none when one refuses. `burned` is
+  // true when a refused request still changed a bucket (spec/otpLimits.md says it must not).
   pure def startBuckets(b: (str, str) -> Bucket, h: str, p: str, at: int): { ok: bool, burned: bool, buckets: (str, str) -> Bucket } =
     val stages = [0, 1, 2, 3]
     val ok = stages.foldl(true, (acc, st) => {
@@ -303,7 +340,7 @@ module auth_edge {
       otp.inflight.keys().contains(rid),
       r.stage == 0,
       if (res.ok and r.bannedAtBegin) all {
-        // otp.ts:189: send false (a banned number): the buckets count, { ok: true }, no code.
+        // otp.ts: send false (a banned number): the buckets count, { ok: true }, no code.
         otp' = { ...otp, buckets: res.buckets, inflight: otp.inflight.keys().exclude(Set(rid)).mapBy(k => otp.inflight.get(k)) },
         ghost' = ghost,
       } else if (res.ok) all {
@@ -318,7 +355,7 @@ module auth_edge {
     }
   }
 
-  // otp.ts:191 provider.send. The SMS goes to whoever holds the number now. A provider error is
+  // otp.ts provider.send. The SMS goes to whoever holds the number now. A provider error is
   // logged and the answer stays { ok: true } with no challenge. A ban that commits while the request
   // is in flight (after the route's ban check) does not stop the send: verify refuses that code.
   action otpStartSend(rid: int, delivered: bool): bool = {
@@ -338,7 +375,7 @@ module auth_edge {
     }
   }
 
-  // otp.ts:192 putChallenge: the newest challenge is the one verify reads (latestChallenge).
+  // otp.ts putChallenge: the newest challenge is the one verify reads (latestChallenge).
   action otpStartPut(rid: int): bool = {
     val r = otp.inflight.get(rid)
     all {
@@ -378,9 +415,9 @@ module auth_edge {
 
   // ------------------------------------------------------------------ otp-challenge (verify) + web-session (create)
 
-  // api.ts:482-499 POST /api/auth/otp/verify with otp.ts:203-219. One action: claimAttempt and
+  // api.ts POST /api/auth/otp/verify with otp.ts. One action: claimAttempt and
   // consumeChallenge are the only writes before the session, and nothing in between changes a value that
-  // an invariant reads. The right code is known only to the human the SMS went to. api.ts:488 (SD-013
+  // an invariant reads. The right code is known only to the human the SMS went to. api.ts (SD-013
   // fix): after otp.verify has used the code, a banned number gets 400 and no session.
   action otpVerify(h: str, p: str): bool = {
     val c = otp.challenge.get(p)
@@ -388,7 +425,7 @@ module auth_edge {
     all {
       mode == "otp",
       otp.challenge.keys().contains(p),
-      // claimAttempt (pg-store.ts:234-238)
+      // claimAttempt (pg-store.ts)
       c.live, c.expires > now, c.attempts < OTP_MAX_ATTEMPTS,
       if (right and world.banned.contains(p)) all {
         otp' = { ...otp, challenge: otp.challenge.set(p, { ...c, attempts: c.attempts + 1, live: false }) },
@@ -428,7 +465,7 @@ module auth_edge {
     }
   }
 
-  // sessions.ts:50-53: the read. A session older than a day and not yet rotated will rotate. A banned
+  // sessions.ts: the read. A session older than a day and not yet rotated will rotate. A banned
   // row is refused before the rotation (bannedRow).
   action rotateRead(h: str, req: int): bool = {
     val sid = sess.jar.get(h)
@@ -443,10 +480,11 @@ module auth_edge {
     }
   }
 
-  // sessions.ts authenticate -> pg-store.ts rotateSession: one statement ends the old token with a 60 s
-  // grace and stores the next one with the person the old row has at that moment. It does nothing when the
-  // old row is no longer live (a join's bindSessions ended it after rotateRead: the SD-054 race). Two
-  // requests in the grace time both rotate it (SD-180, refuted as harmless).
+  // sessions.ts SessionService.authenticate and pg-store.ts rotateSession: under the erasure lock, read
+  // the old row again; a row that "delete everything" removed refuses (the action is not enabled, AE-6
+  // fixed). An unrevoked row gets the revocation (the old token ends after the 60 s grace) and the next
+  // row in the same transaction. A row that another request rotated in the grace time stays usable with
+  // no second replacement (spec/webSession.md recordRevocation, rotatedMeanwhile).
   action rotateCommit(r: Rot): bool = {
     val old = sess.rows.get(r.sid)
     val sid = sess.nextSid
@@ -456,16 +494,21 @@ module auth_edge {
       sess.pendingRot.contains(r),
       sess.rows.keys().contains(r.sid),
       old.revoked == NONE or old.revoked > now,
-      sess' = { ...sess,
-                rows: rows1.put(sid, { ...old, created: now, expires: expires, revoked: NONE }),
-                jar: sess.jar.set(r.human, sid), nextSid: sid + 1,
-                pendingRot: sess.pendingRot.exclude(Set(r)) },
-      ghost' = { ...ghost, rotations: ghost.rotations + 1 },
+      if (old.revoked == NONE) all {
+        sess' = { ...sess,
+                  rows: rows1.put(sid, { ...old, created: now, expires: expires, revoked: NONE }),
+                  jar: sess.jar.set(r.human, sid), nextSid: sid + 1,
+                  pendingRot: sess.pendingRot.exclude(Set(r)) },
+        ghost' = { ...ghost, rotations: ghost.rotations + 1 },
+      } else all {
+        sess' = { ...sess, pendingRot: sess.pendingRot.exclude(Set(r)) },
+        ghost' = ghost,
+      },
       now' = now, mode' = mode, world' = world, otp' = otp, edge' = edge, svc' = svc,
     }
   }
 
-  // pg-store.ts:331-343 purge: expired and revoked rows go.
+  // pg-store.ts purge: expired and revoked rows go.
   action purge = all {
     sess' = { ...sess, rows: dropRows(sess.rows, k => sess.rows.get(k).expires >= now and
                                          (sess.rows.get(k).revoked == NONE or sess.rows.get(k).revoked >= now)) },
@@ -474,19 +517,19 @@ module auth_edge {
 
   // ------------------------------------------------------------------ cloud-handoff (callback)
 
-  // api.ts:413-455 GET /api/auth/cloud/callback in production (productionDelegation set). Cloud signs a
+  // api.ts GET /api/auth/cloud/callback in production (productionDelegation set). Cloud signs a
   // phone proof for the number the human holds now, with its own clock: issuedAt = now + skew.
-  // cloud-delegation.ts:25 parseNetworkDelegation(…, o.now(), o.skewMs) refuses issuedAt*1000 > now +
-  // CLOUD_CLOCK_SKEW_MS (network-delegation.ts:41, SD-181 fix), the same allowance as api.ts:438.
+  // cloud-delegation.ts parseNetworkDelegation(…, o.now()) refuses issuedAt more than 30 s ahead of now
+  // (cloudIdentityTimesValid of spec/cloudSignIn.md, SD-181 and AE-5), the same allowance as api.ts.
   action cloudLogin(h: str, p: str, skew: int): bool = {
     val issuedAt = now + skew
     val proofExpires = issuedAt + CLOUD_PROOF_LIFE
-    val parsedOk = issuedAt <= now + CLOUD_SKEW and proofExpires > now  // network-delegation.ts:41
-    val callbackOk = parsedOk and issuedAt <= now + CLOUD_SKEW           // api.ts:438
-    val refused = world.banned.contains(p) or world.suppressed.contains(p) // api.ts:439 (no hold here)
+    val parsedOk = issuedAt <= now + CLOUD_SKEW and proofExpires > now  // network-delegation.ts
+    val callbackOk = parsedOk and issuedAt <= now + CLOUD_SKEW           // api.ts
+    val refused = world.banned.contains(p) or world.suppressed.contains(p) // api.ts (no hold here)
     val person = personFor(world, p)
     val sid = sess.nextSid
-    val started = imin(issuedAt, now)                                  // api.ts:444
+    val started = imin(issuedAt, now)                                  // api.ts
     all {
       mode == "cloud",
       world.holder.get(p) == h,
@@ -512,54 +555,54 @@ module auth_edge {
 
   // ------------------------------------------------------------------ account actions through a session
 
-  // api.ts:314-322 auth(), then one of the withSession routes. In Cloud mode the session's proof is
-  // validated first (cloudSessionStatus, api.ts:268-284): "invalid" revokes, "unavailable" answers 503
-  // (api.ts:319, 706). In production every request asks Cloud (no cache, api.ts:275). The Cloud answer
+  // api.ts auth(), then one of the withSession routes. In Cloud mode the session's proof is
+  // validated first (cloudSessionStatus, api.ts): "invalid" revokes, "unavailable" answers 503
+  // (api.ts). In production every request asks Cloud (no cache, api.ts). The Cloud answer
   // is an oracle; a human that Cloud has revoked always gets "invalid".
-  // who = { e164: session.phone, personId: session.person, session: token hash } (api.ts:393). The
-  // Accounts calls use personFor(who.e164) and do not compare who.personId (accounts.ts:355-516). This is
-  // safe after the SD-054 fix: when a number gets a person, every person-less session of the number other
-  // than the joining one ends (createPerson and bindSessions, accounts.ts:306-311, 384, 390, 405).
+  // who = { e164: session.phone, personId: session.person, session: token hash } (api.ts). The
+  // Accounts calls use personFor(who.e164) and do not compare who.personId (accounts.ts). This is
+  // safe under the SD-054 rule: when a number gets a person, every person-less session of the number other
+  // than the joining one ends (bindSessions; pg-store.ts attachPerson, AE-3 fixed).
   action account(h: str, op: str, age: int, cloudSays: str): bool = {
     val sid = sess.jar.get(h)
     val s = sess.rows.get(sid)
-    // cloud-delegation.ts:29-40 validate: Cloud denies (403) a revoked delegation; otherwise the answer is
+    // cloud-delegation.ts validate: Cloud denies a revoked delegation; otherwise the answer is
     // valid or unavailable (oracle).
     val status = if (not(s.cloud)) "valid" else if (world.cloudRevoked.contains(s.chain)) "invalid" else cloudSays
     val target = personFor(world, s.phone)
     // SD-054 rule: a login chain that began before the person existed acts for it only when its own web
     // join created the person. A login after the person exists gets that person by the recycled-number
-    // policy (accounts.ts:176-190, 12 months), which is not in the scope of this rule.
+    // policy (accounts.ts months), which is not in the scope of this rule.
     val foreign = target != NONE and s.chain < world.bornAt.get(target) and s.chain != world.bornBy.get(target)
     val act = { human: h, person: target, op: op }
     val unvalidated = s.cloud and (world.cloudRevoked.contains(s.chain) or status != "valid")
     all {
-      // sessions.ts authenticate refuses a banned row (401) before the Cloud validation and the route.
+      // sessions.ts authenticate refuses a banned row before the Cloud validation and the route.
       usableSession(world, sess, sid, now),
       if (status == "invalid") all {
-        // api.ts:320: the session is revoked; 401.
+        // api.ts: the session is revoked; 401.
         sess' = { ...sess, rows: revokeRow(sess.rows, sid, now) },
         world' = world, ghost' = ghost,
       } else if (status == "unavailable") all {
-        // api.ts:319 and 706: 503, nothing happens.
+        // api.ts: 503, nothing happens.
         sess' = sess, world' = world, ghost' = ghost,
       } else if (op == "export") all {
-        // api.ts:584-587, accounts.ts:500-516: the data of personFor(who.e164). A banned (or held)
+        // api.ts, accounts.ts: the data of personFor(who.e164). A banned (or held)
         // number gets 403 and nothing (a second check: usableSession already refuses a banned row).
         sess' = sess, world' = world,
         ghost' = if (world.banned.contains(s.phone)) ghost
                  else { ...ghost, actedUnvalidated: ghost.actedUnvalidated or unvalidated,
                         foreignActs: if (foreign) ghost.foreignActs.union(Set(act)) else ghost.foreignActs },
       } else if (op == "leave") all {
-        // api.ts:636-639 (POST /api/me/delete, scope "app"), accounts.ts:472-482: the forget path of
+        // api.ts (POST /api/me/delete, scope "app"), accounts.ts: the forget path of
         // personFor(who.e164).
         sess' = sess,
         world' = { ...world, member: world.member.exclude(Set(target)) },
         ghost' = { ...ghost, actedUnvalidated: ghost.actedUnvalidated or unvalidated,
                    foreignActs: if (foreign and world.member.contains(target)) ghost.foreignActs.union(Set(act)) else ghost.foreignActs },
       } else if (op == "deleteAll") all {
-        // api.ts:640-645: step-up (sessions.fresh), then accounts.deleteAll (accounts.ts:484-497,
-        // pg-store.ts:355-390): sessions of the phone or the person go, the number's OTP challenges go,
+        // api.ts: step-up (sessions.fresh), then accounts.deleteAll (accounts.ts,
+        // pg-store.ts): sessions of the phone or the person go, the number's OTP challenges go,
         // the number is suppressed.
         now - s.started <= STEP_UP,
         sess' = { ...sess, rows: dropRows(sess.rows, k => sess.rows.get(k).phone != s.phone and
@@ -571,8 +614,8 @@ module auth_edge {
                    suppressed: world.suppressed.union(Set(s.phone)) },
         ghost' = { ...ghost, actedUnvalidated: ghost.actedUnvalidated or unvalidated, foreignActs: if (foreign) ghost.foreignActs.union(Set(act)) else ghost.foreignActs },
       } else {
-        // op == "join": api.ts:550-571, accounts.ts:355-422 with joinPlan (decisions.ts:134-146; one lock
-        // per phone: one action). The order of joinPlan: a ban refuses; then the age decides, for a
+        // op == "join": api.ts, Accounts.joinLocked (one lock
+        // per phone: one action). The order of joinLocked: a ban refuses; then the age decides, for a
         // member too (a member under the app age is "under_age"); then a member is "existing".
         val banned = world.banned.contains(s.phone)
         val oldFloor = world.floor.get(s.phone)
@@ -583,33 +626,30 @@ module auth_edge {
         if (banned) all {
           sess' = sess, world' = world, ghost' = ghost,
         } else if (newFloor < APP_MIN_AGE) all {
-          // accounts.ts:373-380: under_age. The age floor is written; under 13, declineUnderAge
-          // (accounts.ts:442-455) forgets every membership of the person. SD-491 fix: a number with no
-          // person keeps no session (forgetPersonlessSessions, pg-store.ts:261-263), and api.ts:559-563
-          // clears the cookies of a session with no person. A number with a person keeps its sessions:
-          // its data is already stored, so the "nothing stored" rule is about a number with no person
-          // (under13At).
+          // accounts.ts: under_age. The age floor is written; under 13, the age hook forgets every
+          // membership of the person, and endUnboundAccess (pg-store.ts, AE-4 fixed) ends every
+          // person-less session of the number, also when the number has a person. Its person-bound
+          // sessions stay: its data is already stored, so the "nothing stored" rule is about a number with
+          // no person (under13At).
           sess' = { ...sess,
-                    rows: if (target != NONE) sess.rows
-                          else dropRows(sess.rows, k => not(sess.rows.get(k).phone == s.phone and sess.rows.get(k).person == NONE)),
+                    rows: dropRows(sess.rows, k => not(sess.rows.get(k).phone == s.phone and sess.rows.get(k).person == NONE)),
                     jar: if (s.person == NONE) sess.jar.set(h, NONE) else sess.jar },
           world' = { ...world, floor: world.floor.set(s.phone, newFloor),
                      member: if (newFloor < JOIN_FLOOR) world.member.exclude(Set(target)) else world.member },
-          // The ghost `lowered` is not recorded here. Open drift (2026-11-09): a rotation that read a
-          // person-less session before bindSessions creates its next row after it (sessions.ts:53-56,
-          // no re-read of the person), so a session from before the person can still act for it.
+          // The ghost `lowered` is not recorded here. A rotation that read a person-less session before
+          // this step finds its row gone at rotateCommit and issues nothing (AE-6 fixed).
           ghost' = { ...ghost, under13At: if (age < JOIN_FLOOR and target == NONE) ghost.under13At.put(s.phone, sess.nextSid) else ghost.under13At },
         } else if (isMember) all {
-          // accounts.ts:381-387 "existing": a repeated join is still an age statement on
-          // personFor(who.e164), and bindSessions gives this session the person (the others with no
-          // person end).
+          // accounts.ts "existing": a repeated join is still an age statement on
+          // personFor(who.e164). The model binds this session (see the header: the code binds nothing here,
+          // and no person-less session of a member's number is left after the admission).
           sess' = { ...sess, rows: bindSessions(sess.rows, s.phone, target, sid, now) },
           world' = { ...world, floor: world.floor.set(s.phone, newFloor) },
           ghost' = { ...ghost, ageLoweredByOther: ghost.ageLoweredByOther or lowered },
         } else {
-          // accounts.ts:388-422: a person (when none), the membership, unsuppress, bindSessions: of the
-          // person-less sessions of the number, only this request's session gets the person; the others
-          // end now (SD-054 fix).
+          // accounts.ts: a person (when none), then admitMembership: the membership, unsuppress and
+          // attachPerson (bindSessions): of the person-less sessions of the number, only this request's
+          // session gets the person; the others end now (SD-054 rule, AE-3 fixed).
           val pid = if (target != NONE) target else world.nextPerson
           all {
             sess' = { ...sess, rows: bindSessions(sess.rows, s.phone, pid, sid, now) },
@@ -626,7 +666,7 @@ module auth_edge {
           }
         }
       },
-      // pg-store.ts:373: delete everything removes the number's OTP challenges.
+      // pg-store.ts: delete everything removes the number's OTP challenges.
       otp' = if (status == "valid" and op == "deleteAll")
                { ...otp, challenge: otp.challenge.keys().exclude(Set(s.phone)).mapBy(k => otp.challenge.get(k)) }
              else otp,
@@ -638,9 +678,9 @@ module auth_edge {
 
   // The text channel (accounts text join, founder 2026-10-09 item 3): only the holder of a number can
   // text from it; a banned number is refused. An adult joins; the person is created when absent and
-  // the join is a new opt-in (suppression lifted). service.ts:1677 creates the person with
-  // accounts.createPerson and no session to keep, so every person-less web session of the number ends
-  // (SD-054 fix).
+  // the join is a new opt-in (suppression lifted). service.ts creates the person with
+  // accounts.createPerson and admitMembership with no joining session, so every person-less web session
+  // of the number ends (attachPerson, AE-3 fixed).
   action textJoin(p: str): bool = {
     val h = world.holder.get(p)
     val target = personFor(world, p)
@@ -660,6 +700,41 @@ module auth_edge {
     }
   }
 
+  // accounts.ts confirmNumberChange, then pg-store.ts movePhone (one transaction): the person of `p`
+  // moves to `q`, which has no person and is not banned. The person proved `q` with a code, so the holder
+  // of `q` is the holder of `p`. The old number's sessions are deleted. In the same transaction
+  // attachPerson with no joining session ends every person-less session of `q`, because an earlier
+  // holder of `q` may hold one (spec/webSession.md, "A session without a person never outlives its
+  // number getting a person").
+  action numberChange(p: str, q: str): bool = {
+    val pid = personFor(world, p)
+    all {
+      p != q, pid != NONE, personFor(world, q) == NONE,
+      world.holder.get(q) == world.holder.get(p),
+      not(world.banned.contains(p)), not(world.banned.contains(q)),
+      world' = { ...world, phoneOf: world.phoneOf.set(p, NONE).set(q, pid),
+                 bornAt: world.bornAt.set(pid, sess.nextSid) },
+      sess' = { ...sess, rows: bindSessions(dropRows(sess.rows, k => sess.rows.get(k).phone != p), q, pid, NONE, now) },
+      now' = now, mode' = mode, otp' = otp, edge' = edge, svc' = svc, ghost' = ghost,
+    }
+  }
+
+  // accounts.ts invite (staff or a member): a number with no person that is not banned, held or
+  // suppressed gets a person (createPerson, method "staff") and an invited membership, which is not a
+  // live member. createPerson ends every person-less session of the number in its transaction.
+  action invite(p: str): bool = {
+    val pid = world.nextPerson
+    all {
+      personFor(world, p) == NONE,
+      not(world.banned.contains(p)), not(world.suppressed.contains(p)),
+      world' = { ...world, phoneOf: world.phoneOf.set(p, pid),
+                 bornAt: world.bornAt.put(pid, sess.nextSid), bornBy: world.bornBy.put(pid, NONE),
+                 alive: world.alive.union(Set(pid)), nextPerson: pid + 1 },
+      sess' = { ...sess, rows: bindSessions(sess.rows, p, pid, NONE, now) },
+      now' = now, mode' = mode, otp' = otp, edge' = edge, svc' = svc, ghost' = ghost,
+    }
+  }
+
   // A carrier gives a number that has no person to another human (number recycling). A number with a
   // person stays with that person in these bounds (its next login after 12 months would hold it).
   // Assumption (carrier aging): a disconnected number ages at least 45 days before reassignment
@@ -674,7 +749,7 @@ module auth_edge {
     }
   }
 
-  // service.ts:2010-2042 ban by phone: needs a person; writes the ban and suppresses the number.
+  // service.ts ban by phone: needs a person; writes the ban and suppresses the number.
   // The ban writes no session row: each later use of a session of the number or its person reads the
   // ban and is refused (usableSession, bannedSessionRefused).
   action banNumber(p: str): bool = {
@@ -687,7 +762,7 @@ module auth_edge {
   }
 
   // Eliza Cloud revokes one Network delegation (sign-out, account change). A rotation keeps the same
-  // proof (api.ts:323-333), so the revocation covers the whole chain. The backend learns it only
+  // proof (api.ts), so the revocation covers the whole chain. The backend learns it only
   // through validate.
   action cloudSignOut(chain: int): bool = all {
     sess.rows.keys().exists(k => sess.rows.get(k).cloud and sess.rows.get(k).chain == chain),
@@ -698,15 +773,14 @@ module auth_edge {
 
   // ------------------------------------------------------------------ proxy-signature, edge-trust, proxy-secret-rotation
 
-  // deploy/router.ts:87-110 signs with the site's PLATFORM_PROXY_SECRET; deploy/backend/backend.ts:253-279
+  // deploy/router.ts signs with the site's PLATFORM_PROXY_SECRET; deploy/backend/backend.ts
   // normalizeEdge verifies with the backend's secret, then with PLATFORM_PROXY_SECRET_PREVIOUS when it is
-  // set (backend.ts:257-259), and the 60 s window (proxy.ts:75-84); deployed, an unverified /api or /mcp
-  // request answers 421 (backend.ts:388, 399). The attacker sends directly with forged headers: a
+  // set (backend.ts), and the 60 s window (proxy.ts); deployed, an unverified /api or /mcp
+  // request answers 421 (backend.ts). The attacker sends directly with forged headers: a
   // signature without the secret never verifies (HMAC oracle).
   action edgeRequest(kind: str, routerSkew: int): bool = {
     val sigSecret = if (kind == "router") edge.siteSecret else 0     // 0: the attacker has no secret
-    val verified = (sigSecret == edge.backendSecret or (edge.backendPrevious != NONE and sigSecret == edge.backendPrevious))
-                   and iabs(routerSkew) <= PROXY_SKEW
+    val verified = sigSecret == edge.backendSecret and iabs(routerSkew) <= PROXY_SKEW
     all {
       ghost' = { ...ghost,
                  servedUnsigned: ghost.servedUnsigned or (verified and kind != "router"),
@@ -715,30 +789,21 @@ module auth_edge {
     }
   }
 
-  // One deploy sets a new PLATFORM_PROXY_SECRET on one side. On the backend, `keepPrevious` sets
-  // PLATFORM_PROXY_SECRET_PREVIOUS to the old value (docs/deploy.md 3.4, backend.ts:94); without it the
-  // backend takes one secret only.
-  action rotateProxySecret(side: str, keepPrevious: bool): bool = {
+  // One deploy sets a new PLATFORM_PROXY_SECRET on one side. The backend takes one secret only, so
+  // the honest router requests answer 421 until the other side has the same value.
+  action rotateProxySecret(side: str): bool = {
     val nextSecret = if (edge.backendSecret > edge.siteSecret) edge.backendSecret + 1 else edge.siteSecret + 1
     all {
       edge.backendSecret < 3, edge.siteSecret < 3,
-      edge' = if (side == "backend") { ...edge, backendSecret: if (edge.siteSecret > edge.backendSecret) edge.siteSecret else nextSecret,
-                                               backendPrevious: if (keepPrevious) edge.backendSecret else NONE }
+      edge' = if (side == "backend") { ...edge, backendSecret: if (edge.siteSecret > edge.backendSecret) edge.siteSecret else nextSecret }
               else { ...edge, siteSecret: if (edge.backendSecret > edge.siteSecret) edge.backendSecret else nextSecret },
       now' = now, mode' = mode, world' = world, otp' = otp, sess' = sess, svc' = svc, ghost' = ghost,
     }
   }
 
-  // The last step of a rotation: PLATFORM_PROXY_SECRET_PREVIOUS is removed from the backend.
-  action dropPreviousProxySecret = all {
-    edge.backendPrevious != NONE,
-    edge' = { ...edge, backendPrevious: NONE },
-    now' = now, mode' = mode, world' = world, otp' = otp, sess' = sess, svc' = svc, ghost' = ghost,
-  }
-
   // ------------------------------------------------------------------ svc-auth
 
-  // svc-auth.ts:58-79 svcSign by the gateway with its own clock (now + skew). The gateway retries and
+  // svc-auth.ts svcSign by the gateway with its own clock (now + skew). The gateway retries and
   // the network may deliver late or twice.
   action svcSend(id: str, skew: int): bool = {
     all {
@@ -749,7 +814,7 @@ module auth_edge {
   }
 
   // An attacker appends a query string to a captured signed request (the signature covers the
-  // pathname only, svc-auth.ts:57). Under the TLS assumption only a replaying sender can do this.
+  // pathname only, svc-auth.ts). Under the TLS assumption only a replaying sender can do this.
   action svcTamper(r: SvcReq): bool = {
     all {
       svc.inflight.contains(r),
@@ -759,8 +824,8 @@ module auth_edge {
     }
   }
 
-  // svc-auth.ts:86-115 svcVerify (|now - ts| <= 60) and the endpoint: a query string is refused
-  // (service.ts:2267, 2424, relay-endpoint.ts:141, …), a seen id answers the stored response, a new id has
+  // svc-auth.ts svcVerify (|now - ts| <= 60) and the endpoint: a query string is refused
+  // (service.ts, relay-endpoint.ts, …), a seen id answers the stored response, a new id has
   // its effect once. The request may stay in flight (duplicate delivery).
   action svcDeliver(r: SvcReq, keep: bool): bool = {
     val fresh = iabs(now - r.ts) <= SVC_SKEW
@@ -801,7 +866,7 @@ module auth_edge {
       // Actors that do not touch the login state: time, purge, the edge and the signed service hop.
       any {
         tick(d), purge,
-        edgeRequest(kind, edgeSkew), rotateProxySecret(side, flag), dropPreviousProxySecret,
+        edgeRequest(kind, edgeSkew), rotateProxySecret(side),
         svcSend(id, svcSkew),
         all { svc.inflight.size() > 0, nondet r = svc.inflight.oneOf() any { svcTamper(r), svcDeliver(r, flag) } },
       },
@@ -820,7 +885,8 @@ module auth_edge {
       cloudLogin(h, p, cloudSkew),
       account(h, op, age, cloudSays),
       all { sess.rows.keys().size() > 0, nondet k = sess.rows.keys().oneOf() cloudSignOut(sess.rows.get(k).chain) },
-      any { textJoin(p), carrierReassign(p, h), banNumber(p) },
+      any { textJoin(p), carrierReassign(p, h), banNumber(p), invite(p) },
+      all { nondet q = PHONES.oneOf() numberChange(p, q) },
     }
   }
 
@@ -828,13 +894,13 @@ module auth_edge {
 
   // AGENTS.md founder decisions 2026-10-09 item 3: "a banned number is refused at join (web, text, MCP),
   // OTP and inbound, on every app". No code goes out for a code request that began after the ban
-  // committed (api.ts:474, otp.ts:189). A ban that commits while a request is in flight is concurrent with it; that
+  // committed (api.ts, otp.ts). A ban that commits while a request is in flight is concurrent with it; that
   // code can go out (witness_lateBanCode), and verify refuses it (bannedNoSession).
   // Was violated at ad67275 (SD-013); holds after 6225b02.
   val bannedNoCode = not(ghost.codeToBanned)
 
   // The same rule: no login (OTP or Cloud) creates a session for a banned number.
-  // Was violated at ad67275 in OTP mode (SD-013); holds after 6225b02 (api.ts:488).
+  // Was violated at ad67275 in OTP mode (SD-013); holds after 6225b02 (api.ts).
   val bannedNoSession = not(ghost.sessionToBanned)
 
   // The same rule for a session from before the ban (upstream PR #485): no session authenticates while
@@ -842,11 +908,11 @@ module auth_edge {
   // requested app can authenticate".
   val bannedSessionRefused = not(ghost.bannedSessionUsed)
 
-  // accounts.ts:8 and 499 ("This app's own data") and PRD export/delete of one's own data: a session
+  // accounts.ts ("This app's own data") and PRD export/delete of one's own data: a session
   // from before a person existed (it may belong to an earlier holder of the number) never acts for that
   // person, except the session whose web join created it. A login made after the person exists gets the
-  // person of the number by the recycled-number policy (accounts.ts:176-190), which this model scopes out.
-  // Was violated at ad67275 (SD-054); holds after 6ddfc8f.
+  // person of the number by the recycled-number policy (accounts.ts), which this model scopes out.
+  // Was violated at ad67275 (SD-054) and again on this branch until the AE-3 fix of 2026-11-21.
   val staleSessionNoAct = ghost.foreignActs == Set()
 
   // AGENTS.md age policy: "Lowest stated age wins"; a person's age is lowered only by a statement of
@@ -856,7 +922,7 @@ module auth_edge {
   val ageOnlyByOwner = not(ghost.ageLoweredByOther)
 
   // AGENTS.md code invariants, age policy: "under 13 cannot join and is declined kindly with nothing
-  // stored"; accounts.ts:7 "An under-age join stores nothing for that app (only the age floor)".
+  // stored"; accounts.ts "An under-age join stores nothing for that app (only the age floor)".
   // After an under-13 refusal for a number with no person, no session row from before the refusal still
   // holds the plain number. Was violated at ad67275 (SD-491); holds after b56267f.
   // Session ids are in creation order, so "from before the refusal" is an id below the recorded one (a
@@ -865,38 +931,38 @@ module auth_edge {
     val r = sess.rows.get(k)
     not(ghost.under13At.keys().contains(r.phone) and k < ghost.under13At.get(r.phone)))
 
-  // otp.ts:4-5: "A refused request is not counted, so it never extends a limit."
+  // otp.ts: "A refused request is not counted, so it never extends a limit."
   // Was violated at ad67275 (SD-380); holds after d68fdd2.
   val otpRefusedNotCounted = not(ghost.burned)
 
-  // api.ts:100-101 and 438: a Cloud proof whose issuedAt is at most 30 s ahead of our clock is accepted.
+  // api.ts: a Cloud proof whose issuedAt is at most 30 s ahead of our clock is accepted.
   // Was violated at ad67275 (SD-181, one case of SD-308); holds after c7515cc.
   val cloudSkewTolerated = ghost.cloudSkewRejects.forall(k => k > CLOUD_SKEW)
 
-  // sessions.ts:6 and 14-15: a rotation chain never outlives 90 days from the login; a Cloud session
-  // never outlives its Cloud proof (api.ts:444, sessions.ts:56).
+  // sessions.ts: a rotation chain never outlives 90 days from the login; a Cloud session
+  // never outlives its Cloud proof (api.ts, sessions.ts).
   val chainBounded = sess.rows.keys().forall(k =>
     val r = sess.rows.get(k)
     r.expires <= r.started + SESSION_MAX and (not(r.cloud) or r.expires <= r.started + CLOUD_PROOF_LIFE + CLOUD_SKEW))
 
-  // api.ts:264-265 and 297 (cloud-session-validation): a denial is never cached and an unavailable Cloud
+  // api.ts (cloud-session-validation): a denial is never cached and an unavailable Cloud
   // gives no access. In this model the account action runs only on "valid".
   val unavailableNoAccess = not(ghost.actedUnvalidated)
 
-  // proxy.ts:1-14 and backend.ts:246-252: only a request that a site router signed may name a site and an IP.
+  // proxy.ts and backend.ts: only a request that a site router signed may name a site and an IP.
   val edgeHeaderSigned = not(ghost.servedUnsigned)
 
-  // svc-auth.ts:10-11: replays inside the window are harmless because each endpoint is idempotent by id.
+  // svc-auth.ts: replays inside the window are harmless because each endpoint is idempotent by id.
   val effectAtMostOnce = svc.effects.keys().forall(k => svc.effects.get(k) <= 1)
 
-  // svc-auth.ts:10: requests older or newer than 60 s are rejected.
+  // svc-auth.ts: requests older or newer than 60 s are rejected.
   val staleSvcRefused = not(ghost.staleSvcEffect)
 
-  // svc-auth.ts:57 signs the pathname only, so a query string is not signed and must not be read.
+  // svc-auth.ts signs the pathname only, so a query string is not signed and must not be read.
   val queryNotSigned = not(ghost.querySvcEffect)
 
-  // auth-mode-config (api.ts:152-198): the mode is fixed at boot. In Cloud mode the OTP routes answer 409
-  // (api.ts:465, 483); in OTP mode the Cloud routes answer 404 (api.ts:405, 414). One mode, one login path.
+  // auth-mode-config (api.ts): the mode is fixed at boot. In Cloud mode the OTP routes answer 409
+  // (api.ts); in OTP mode the Cloud routes answer 404 (api.ts). One mode, one login path.
   val oneAuthMode = (mode == "otp" implies ghost.cloudLogins == 0) and (mode == "cloud" implies ghost.otpLogins == 0)
 
   val safety = and {
@@ -922,15 +988,10 @@ module auth_edge {
   val witness_otpLogin = ghost.otpLogins == 0
   val witness_cloudLogin = ghost.cloudLogins == 0
   val witness_rotation = ghost.rotations == 0
-  // SD-180 (refuted as harmless in the register): two live heads in one rotation chain.
-  val witness_rotationFork = not(sess.rows.keys().exists(a => sess.rows.keys().exists(b =>
-    a < b and sess.rows.get(a).chain == sess.rows.get(b).chain and
-    sess.rows.get(a).revoked == NONE and sess.rows.get(b).revoked == NONE and
-    sess.rows.get(a).expires > now and sess.rows.get(b).expires > now)))
   // A signed turn with a clock offset under 60 s is accepted.
   val witness_signedTurnSkew = not(ghost.skewedSvcOk)
-  // SD-166 (runtime_ops): a one-side proxy secret rotation without PLATFORM_PROXY_SECRET_PREVIOUS (or a
-  // site first) answers 421 to honest router requests.
+  // SD-166 (runtime_ops): a one-side proxy secret rotation answers 421 to honest router requests (this
+  // branch has no PLATFORM_PROXY_SECRET_PREVIOUS).
   val witness_secretRotationOutage = not(ghost.edgeOutage)
   // SD-107: in Cloud mode a number that deleted everything cannot sign in on the web.
   val witness_cloudSuppressedRefused = not(ghost.cloudRefusedDeleted)
@@ -964,7 +1025,7 @@ module auth_edge {
 
   // SD-013 (fixed, 6225b02; auth-edge.integration.test.ts "SD-013 ..."): a code sent before the ban is
   // used up by verify and gives no session; a new start for the banned number counts in the rate
-  // buckets and sends no code (api.ts:474, otp.ts:189).
+  // buckets and sends no code (api.ts, otp.ts).
   run sd013BannedOtpTest =
     initWith("otp")
       .then(textJoin("X"))
@@ -1004,15 +1065,15 @@ module auth_edge {
               and not(witness_banAfterSignIn) and safety)
       .then(sessionAuth("alice").fail())
 
-  // Cloud mode refuses a banned number at the callback (api.ts:437): no session.
+  // Cloud mode refuses a banned number at the callback (api.ts): no session.
   run cloudBannedRefusedTest =
     initWith("cloud")
       .then(textJoin("X")).then(banNumber("X"))
       .then(cloudLogin("alice", "X", 0))
       .expect(ghost.cloudLogins == 0 and bannedNoSession)
 
-  // SD-054 (fixed, 6ddfc8f; "SD-054 a session from before a text join ..."): bob logs in on Y before Y
-  // has a person; the carrier gives Y to alice; alice joins by text. The text join ends bob's session,
+  // SD-054 (AE-3 fixed on 2026-11-21): bob logs in on Y
+  // before Y has a person; the carrier gives Y to alice; alice joins by text. The text join ends bob's session,
   // so it can neither export alice's data nor make an age statement for her.
   run sd054StaleSessionTest =
     initWith("otp")
@@ -1022,7 +1083,7 @@ module auth_edge {
       .then(textJoin("Y"))
       .expect(sess.rows.get(1).revoked == now and not(liveSession(sess, sess.jar.get("bob"), now)) and safety)
 
-  // SD-054 (fixed, 6ddfc8f; "SD-054 a web join binds only the joining session ..."): bob and then alice
+  // SD-054 (AE-3 fixed on 2026-11-21): bob and then alice
   // log in on Y (the carrier gave Y to alice in between); alice's web join gives the person to her own
   // session only and ends bob's.
   run sd054WebJoinTest =
@@ -1038,6 +1099,29 @@ module auth_edge {
               and sess.rows.get(1).person == NONE and sess.rows.get(1).revoked == now
               and not(liveSession(sess, sess.jar.get("bob"), now)) and safety)
 
+  // Review of AE-3 (2026-11-21): bob logs in on Y before Y has a person; the carrier gives Y to alice,
+  // who has a person on X and changes her number to Y. The move ends bob's session, so it cannot act for
+  // alice.
+  run numberChangeEndsStaleSessionTest =
+    initWith("otp")
+      .then(otpStartBegin("bob", "Y")).then(otpStartAll(1))
+      .then(otpVerify("bob", "Y"))
+      .then(textJoin("X"))
+      .then(carrierReassign("Y", "alice"))
+      .then(numberChange("X", "Y"))
+      .expect(world.phoneOf.get("Y") == 1 and sess.rows.get(1).revoked == now
+              and not(liveSession(sess, sess.jar.get("bob"), now)) and safety)
+
+  // Review of AE-3 (2026-11-21): bob logs in on Y before Y has a person; staff invite Y. The invitation
+  // ends bob's session.
+  run inviteEndsStaleSessionTest =
+    initWith("otp")
+      .then(otpStartBegin("bob", "Y")).then(otpStartAll(1))
+      .then(otpVerify("bob", "Y"))
+      .then(invite("Y"))
+      .expect(world.phoneOf.get("Y") == 1 and sess.rows.get(1).revoked == now
+              and not(liveSession(sess, sess.jar.get("bob"), now)) and safety)
+
   // SD-491 (fixed, b56267f; "SD-491 an under-13 web join keeps no session with the number"): two logins
   // on X, then an under-13 web join. Only the age floor stays; no session row and no cookie.
   run sd491Under13Test =
@@ -1051,7 +1135,7 @@ module auth_edge {
       .expect(world.floor.get("X") == 10 and world.alive == Set() and sess.rows == Map()
               and sess.jar.get("alice") == NONE and ghost.under13At.keys() == Set("X") and safety)
 
-  // A member's repeated web join under 13 is "under_age" (joinPlan checks the age before "existing"):
+  // A member's repeated web join under 13 is "under_age" (joinLocked checks the age before "existing"):
   // the floor drops and declineUnderAge forgets the membership; the session keeps its person.
   // Once the number is banned, the session refuses an export at authentication.
   run repeatJoinUnderAgeTest =
@@ -1116,7 +1200,7 @@ module auth_edge {
       .then(account("alice", "export", 25, "valid"))
       .expect(not(liveSession(sess, 1, now)) and safety)
 
-  // SD-107: in Cloud mode a number that deleted everything cannot sign in on the web (api.ts:437);
+  // SD-107: in Cloud mode a number that deleted everything cannot sign in on the web (api.ts);
   // a text join lifts the suppression and the Cloud sign-in works again.
   run sd107CloudSuppressedTest =
     initWith("cloud")
@@ -1128,7 +1212,8 @@ module auth_edge {
       .then(cloudLogin("alice", "X", 0))
       .expect(ghost.cloudLogins == 2 and safety)
 
-  // Rotation after a day; two parallel requests with the same old cookie both rotate (SD-180).
+  // Rotation after a day; of two parallel requests with the same old cookie only the first rotates, and the
+  // second keeps the old token in its grace time (AE-6 fix; SD-180 no longer forks the chain).
   run rotationForkTest =
     initWith("otp")
       .then(otpStartBegin("alice", "X")).then(otpStartAll(1))
@@ -1137,7 +1222,7 @@ module auth_edge {
       .then(rotateRead("alice", 1)).then(rotateRead("alice", 2))
       .then(rotateCommit({ human: "alice", sid: 1, req: 1 }))
       .then(rotateCommit({ human: "alice", sid: 1, req: 2 }))
-      .expect(ghost.rotations == 2 and not(witness_rotationFork) and sess.rows.get(1).revoked == DAY + SESSION_GRACE and safety)
+      .expect(ghost.rotations == 1 and sess.rows.keys() == Set(1, 2) and sess.jar.get("alice") == 2 and sess.rows.get(1).revoked == DAY + SESSION_GRACE and safety)
 
   // svc-auth: a turn signed 30 s ahead is accepted once; a duplicate delivery has no second effect;
   // a 90 s old request and a request with a query string have none.
@@ -1153,25 +1238,21 @@ module auth_edge {
       .then(svcDeliver({ id: "m2", ts: -90, query: true }, false))
       .expect(not(svc.effects.keys().contains("m2")) and safety)
 
-  // edge-trust: a forged direct request is never served. The runbook rotation (docs/deploy.md 3.4: the
-  // backend first with PLATFORM_PROXY_SECRET_PREVIOUS, then the sites, then the previous value goes) has
-  // no outage; a backend-only rotation without the previous value turns honest router requests into 421
-  // until the site deploy (SD-166, runtime_ops).
+  // edge-trust: a forged direct request is never served. With one backend secret, a rotation of one
+  // side turns honest router requests into 421 until the other side has the same value (SD-166,
+  // runtime_ops); after both sides rotate, router requests verify again.
   run edgeTest =
     initWith("otp")
       .then(edgeRequest("direct", 0))
       .then(edgeRequest("router", 5))
       .expect(not(ghost.edgeOutage) and safety)
-      .then(rotateProxySecret("backend", true))
-      .then(edgeRequest("router", 0))
-      .expect(not(ghost.edgeOutage) and edge.backendPrevious == 1 and safety)
-      .then(rotateProxySecret("site", false))
-      .then(dropPreviousProxySecret)
-      .then(edgeRequest("router", 0))
-      .expect(not(ghost.edgeOutage) and edge.siteSecret == edge.backendSecret and safety)
-      .then(rotateProxySecret("backend", false))
+      .then(rotateProxySecret("backend"))
       .then(edgeRequest("router", 0))
       .expect(ghost.edgeOutage and safety)
+      .then(rotateProxySecret("site"))
+      .expect(edge.siteSecret == edge.backendSecret and safety)
+      .then(edgeRequest("direct", 0))
+      .expect(not(ghost.servedUnsigned) and safety)
 
   // The macro-step gives the same buckets and challenge as the single actions, and a refused second
   // start 1 s later counts in no bucket.
