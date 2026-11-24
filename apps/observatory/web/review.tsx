@@ -11,7 +11,7 @@ import {
 import type { ScoreComponents } from "@thenetwork/core";
 import type { ReviewReason, StaffPlanPreview } from "../src/types.ts";
 import { VENUES } from "@thenetwork/network/geo";
-import { OPEN, originLabel, originOf, REVIEW_REASONS, stateGroupOf, store, useStore, type DecideOpts, type Opp, type StateGroup } from "./store.ts";
+import { INACTIVE_PARTICIPANT_STATUS, OPEN, originLabel, originOf, REVIEW_REASONS, stateGroupOf, store, useStore, type DecideOpts, type Opp, type StateGroup } from "./store.ts";
 import { stateLabel } from "./panels.tsx";
 import { COMPONENT_SIGN, dur, humanize, stamp } from "./ui.tsx";
 
@@ -479,7 +479,7 @@ function QueueCard({ o, selected, onSelect, ctl, scoreOpen, setScoreOpen, onDone
 
 /** In another open opportunity: the Network does not double-book. */
 export function isBusyElsewhere(o: Opp, id: string) {
-  for (const x of store.opps.values()) if (x.id !== o.id && x.source !== "shadow" && OPEN.has(x.state) && x.participants.includes(id)) return true;
+  for (const x of store.opps.values()) if (x.id !== o.id && x.source !== "shadow" && OPEN.has(x.state) && x.participants.includes(id) && !INACTIVE_PARTICIPANT_STATUS.has(x.status[id])) return true;
   return false;
 }
 
