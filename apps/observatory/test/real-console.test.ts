@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { SQL } from "../../../packages/core/src/runtime/postgres.ts";
 import { DAY } from "@thenetwork/core";
-import { birthDateLower } from "../../core/src/generated/memberAge.ts";
+import { birthDateLower } from "../../../packages/core/src/generated/memberAge.ts";
 import { rowsFromGame, writeRows } from "../db/writer.ts";
 import { GameSource } from "../src/sources/game.ts";
 import { HIDDEN_MESSAGE, RealSource } from "../src/sources/real.ts";
