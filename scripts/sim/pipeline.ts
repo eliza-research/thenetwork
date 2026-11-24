@@ -132,6 +132,16 @@ async function script(w: World) {
 
   debug("4");
   // ---- 4. A request, a person reviews it through the staff API, the probe, the yes, the booked plan.
+  for (const phone of [P.ana, P.ben, P.cy, P.ivy, P.jo]) {
+    const memberId = await memberOf(w, "friends", phone);
+    if (!memberId) throw new Error(`No Friends member for ${phone}`);
+    for (const check of ["age", "liveness"] as const) {
+      const verification = await H.staff(w.svc, H.SAFETY, "POST", `/apps/friends/members/${memberId}/verify`, {
+        check, result: "pass", note: "pipeline fixture verification",
+      });
+      expect(await verification.json()).toEqual({ ok: true });
+    }
+  }
   w.notes.matching = (await H.staff(w.svc, H.ADMIN, "POST", "/apps/friends/matching", { on: true })).status;
   await say(w, P.ana, "Anyone around who'd want to find a regular climbing partner? I'm near Greenpoint.");
   await w.svc.reviewJudgeTick();
