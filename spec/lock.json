@@ -73,14 +73,14 @@
         "6451d8e8cc77"
       ],
       "Story: Each site keeps its own brand / An app site never names The Network or another app": [
-        "c97c4081ba81",
-        "fed5d28a6662",
+        "90703ba0701c",
+        "7908a78a1869",
         "8f579f74bb62"
       ],
       "Story: Each site keeps its own brand / ntwrk.party names no app on its landing page, its not-found page or its own skill": [
         "b5d3dd90f082",
         "1fa36082df42",
-        "c3e785368b8a"
+        "faab84b5500b"
       ],
       "## Story: One component set for every brand": [
         "fd4f7f2fe5aa"
@@ -93,25 +93,25 @@
     },
     "spec/agentEntry.md": {
       "@document": [
-        "4517b077ee9e"
+        "50666bd2cc3d"
       ],
       "## Story: Get from an app site or a text into my own agent": [
         "173cc1dbf843"
       ],
       "Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app": [
-        "ea25ff4a9b24",
-        "66a9a6c1fba7",
+        "11dcac09ae25",
+        "4aea76340730",
         "8f579f74bb62"
       ],
       "Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill": [
         "223967d9b79a",
         "27414594d54a",
-        "718480f4c870"
+        "0a3eeb0ed12e"
       ],
       "Story: Get from an app site or a text into my own agent / An update reference shows only the person's own update on their own connection": [
         "ef41808f6992",
         "5b707f881a80",
-        "edc19fff222a"
+        "dc4d7fa619b2"
       ],
       "Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one": [
         "a30e640e3738",
@@ -120,7 +120,7 @@
       "Story: Get from an app site or a text into my own agent / Every entry can reach its result": [
         "fb35954fbadd",
         "0f0e913b5eed",
-        "edc19fff222a"
+        "dc4d7fa619b2"
       ]
     },
     "spec/agentPhoneHandoff.md": {
@@ -153,7 +153,7 @@
         "d982022c0243"
       ],
       "Story: Join through my agent and confirm my own phone / The selected app determines the available transport": [
-        "667aea7806db",
+        "de95df6db94b",
         "dd9260bc555f",
         "8f579f74bb62"
       ],
@@ -1061,64 +1061,64 @@
       "## Story: Use my app's connector from my agent": [
         "0104578008dd"
       ],
-      "Story: Use my app's connector from my agent / Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date": [
-        "a5fe38f5a408",
-        "7dd9f8fdd9fa"
+      "Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date": [
+        "36f9b69a452e",
+        "76cbc963bcfe"
       ],
       "Story: Use my app's connector from my agent / The ntwrk.party host serves every app at its own path, and a grant covers only its own app": [
-        "a1624f44500a",
-        "e875d7a5d26b",
-        "72ee35d6317e"
+        "a0c2f8565bdd",
+        "44faa4f8f2b4",
+        "c88828e272d9"
       ],
       "Story: Use my app's connector from my agent / Public tools need no sign-in, and member tools need the person's own grant": [
         "8bf0286f97a4",
         "ba5a7b66c6c0",
-        "72ee35d6317e"
+        "c88828e272d9"
       ],
       "Story: Use my app's connector from my agent / The member status decides which member tool can act": [
         "d89bf23efec0",
         "d8c3643b2f5a",
-        "72ee35d6317e"
+        "c88828e272d9"
       ],
       "Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser": [
         "42708f146d1d",
         "776321674f55",
-        "0c34c8d4acbf"
+        "db62bae7f0ef"
       ],
       "Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection": [
         "b0801439f632",
         "e5b0ea72ff69",
-        "08fd54cf431d"
+        "4773abde1c60"
       ],
       "Story: Use my app's connector from my agent / Check status shows only the person's own status in this one app": [
         "346f6e3e4be6",
         "8b6958cb81ad",
-        "08fd54cf431d"
+        "4773abde1c60"
       ],
       "Story: Use my app's connector from my agent / Read saved profile fields only for this app's active member": [
         "b1425c6d69a5",
         "52c67877037d",
-        "08fd54cf431d"
+        "4773abde1c60"
       ],
       "Story: Use my app's connector from my agent / The agent sends an approved profile once, only for a live member, within the daily limit": [
         "71b37b69b9cc",
         "f1799557bec3",
-        "08fd54cf431d"
+        "4773abde1c60"
       ],
       "Story: Use my app's connector from my agent / A Join draft holds only an approved first name and home city, once per grant": [
-        "93381f2a5096",
+        "3d28049db0ff",
         "bcd4a9015444",
-        "345580f7671a"
+        "a619d7aa921c"
       ],
       "Story: Use my app's connector from my agent / Reading updates shows the person's own new updates and marks them seen": [
         "42f7341cd93f",
         "7328a8618cb3",
-        "08fd54cf431d"
+        "4773abde1c60"
       ],
       "Story: Use my app's connector from my agent / A connection can reach every tool result": [
         "8747849d6943",
         "9499a2b38dad",
-        "08fd54cf431d"
+        "4773abde1c60"
       ]
     },
     "spec/consoleMemberView.md": {
@@ -2320,8 +2320,8 @@
         "57659fb5fe8d"
       ],
       "Story: Open my agent from its tile / The agent row never shows an agent that the app's connector refuses": [
-        "11caa566902d",
-        "80eb118762bf",
+        "7baa48c74310",
+        "25f99f26f357",
         "a77ce84cbd60"
       ],
       "Story: Open my agent from its tile / A desktop-only tile is hidden on a phone, and a copy-only tile needs the page script": [
@@ -4636,7 +4636,7 @@
       "Story: Let my agent read the signup skill from the site / Each site serves its own skill at /SKILL.md and lists it in its catalog": [
         "aa5c006b8136",
         "45c39e0f31e8",
-        "6b45c3b43465"
+        "3faadffc6b94"
       ],
       "Story: Let my agent read the signup skill from the site / Skill files are plain text that any origin can read": [
         "29e2e979a695",
