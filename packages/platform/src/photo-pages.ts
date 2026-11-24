@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
-import { photoPageLinkTtlMs, photoPickFor } from "../../core/src/generated/photoRelayItem.ts";
+import { photoPageLinkTtlMs, photoPagePurposeHeader, photoPagePurposeMatches, photoPageReportConfirmed, photoPickFor } from "../../core/src/generated/photoRelayItem.ts";
 import type { AppId } from "./apps.ts";
 import { readCapped } from "./body.ts";
 import { maskOf, numbersOf, PHOTO_RELAY_TIME_ZONE, PHOTO_SEND_NOTICE, photoDay, type PhotoPageLink, type PhotoRelayService } from "./photo-relay.ts";
@@ -9,14 +9,14 @@ import type { PhotoService } from "./photos.ts";
 export const PHOTO_PAGE_API = "/api/photos/page/";
 export const PHOTO_PAGE_COOKIE = "__Host-photo-page";
 const PHOTO_VIEW_COOKIE_MAX_AGE_S = 400 * 24 * 60 * 60;
-const COOKIE_VALUE = /^[A-Za-z0-9_-]{43}$/;
+const OPAQUE_REFERENCE = /^[A-Za-z0-9_-]{43}$/;
 const BODY_CAP = 4096;
 
 type CheckAnswerState = "offered" | "changed" | "lapsed" | "refused" | "proposed" | "cancelled";
 interface PhotoPageActions {
   consent(personId: string, app: AppId, draftId: string, revision: number): Promise<{ state: "offered" | "changed" | "lapsed" | "refused"; text?: string }>;
-  takeBack(personId: string, app: AppId, numbers: number[], firstName: string): Promise<{ state: "taken_back" | "nothing_open" }>;
-  report(recipientPersonId: string, app: AppId, offerId: string): Promise<{ state: "reported" } | undefined>;
+  takeBack(personId: string, app: AppId, shareRef: string): Promise<{ state: "taken_back" | "nothing_open" }>;
+  report(recipientPersonId: string, app: AppId, offerId: string): Promise<{ filed: boolean } | undefined>;
 }
 interface PhotoPagesOptions {
   sql: SQL;
@@ -41,7 +41,7 @@ const numberList = (v: unknown, min: number, max: number, cap: number): number[]
 function cookieOf(req: Request): string | null {
   for (const part of (req.headers.get("cookie") ?? "").split(";")) {
     const [k, ...v] = part.trim().split("=");
-    if (k === PHOTO_PAGE_COOKIE) { const value = v.join("="); return COOKIE_VALUE.test(value) ? value : null; }
+    if (k === PHOTO_PAGE_COOKIE) { const value = v.join("="); return OPAQUE_REFERENCE.test(value) ? value : null; }
   }
   return null;
 }
@@ -59,8 +59,10 @@ export class PhotoPages {
     let b: Record<string, unknown>;
     try { b = JSON.parse(new TextDecoder().decode(raw)); if (!b || typeof b !== "object" || Array.isArray(b)) throw new TypeError("object"); } catch { return fail(400, "invalid"); }
     if (typeof b.token !== "string") return fail(400, "invalid");
+    const purpose = req.headers.get(photoPagePurposeHeader);
+    if (purpose === null) return fail(404, "link_unavailable");
     const link = await this.o.relay.pageLink(b.token);
-    if (!link || link.app !== app) return fail(404, "link_unavailable");
+    if (!link || link.app !== app || !photoPagePurposeMatches(purpose, link.purpose)) return fail(404, "link_unavailable");
     const cookie = cookieOf(req);
     const deviceHash = cookie ? this.o.relay.deviceId(cookie) : null;
     if (link.deviceHash !== null && link.deviceHash !== deviceHash) return fail(403, "other_device");
@@ -128,13 +130,17 @@ export class PhotoPages {
   }
 
   private async image(link: PhotoPageLink, deviceHash: string, n: number): Promise<Response> {
-    if (await this.live(link, deviceHash) !== "live") return fail(410, "link_expired");
+    const check = link.purpose === "check";
+    const draft = check ? (await this.draftRevisionLive(link)).draft : undefined;
+    const live = check ? draft !== undefined && this.o.relay.linkLive(link, deviceHash, true) : await this.live(link, deviceHash) === "live";
+    if (!live) return fail(410, "link_expired");
     let value: { bytes: Uint8Array; contentType: string } | undefined;
     if (link.purpose === "view") {
       const offer = await this.o.relay.offer(link.offerId!);
       value = offer && offer.phase === "ready" ? await this.o.relay.viewBytes(offer, n) : undefined;
-    } else value = await this.o.relay.ownBytes(link.personId, link.app, n);
+    } else value = await this.o.relay.ownBytes(link.personId, link.app, n, draft?.photoSetSha);
     if (!value) return fail(404, "not_found");
+    if (check && !(await this.draftRevisionLive(link)).same) return fail(410, "link_expired");
     return new Response(new Uint8Array(value.bytes), { status: 200, headers: {
       "content-type": value.contentType, ...HEADERS, "cache-control": "private, no-store", "content-security-policy": "default-src 'none'", "content-disposition": "inline",
     } });
@@ -168,15 +174,15 @@ export class PhotoPages {
       return privateJson(200, { ok: true, state: "proposed" satisfies CheckAnswerState, proposed, revision: saved.revision });
     }
     if (link.purpose === "mine") {
-      if (!exactKeys(b, ["token", "answer", "numbers", "firstName"]) || b.answer !== "take_back" || typeof b.firstName !== "string" || b.firstName.length < 1 || b.firstName.length > 30) return fail(400, "invalid");
-      const numbers = numberList(b.numbers, 1, 6, 6);
-      if (!numbers) return fail(400, "invalid");
+      if (!exactKeys(b, ["token", "answer", "shareRef"]) || b.answer !== "take_back" || typeof b.shareRef !== "string" || !OPAQUE_REFERENCE.test(b.shareRef)) return fail(400, "invalid");
       if (await this.live(link, deviceHash) !== "live") return fail(410, "link_expired");
-      const r = await this.o.actions.takeBack(link.personId, link.app, numbers, b.firstName);
+      const r = await this.o.actions.takeBack(link.personId, link.app, b.shareRef);
       return privateJson(200, { ok: true, state: r.state });
     }
     if (!exactKeys(b, ["token", "answer"]) || b.answer !== "report") return fail(400, "invalid");
     const r = await this.o.actions.report(link.personId, link.app, link.offerId!);
-    return r ? privateJson(200, { ok: true, state: r.state }) : fail(410, "link_expired");
+    return photoPageReportConfirmed(r !== undefined, r?.filed === true)
+      ? privateJson(200, { ok: true, state: "reported" })
+      : fail(410, "link_expired");
   }
 }

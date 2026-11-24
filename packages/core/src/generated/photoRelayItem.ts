@@ -41,6 +41,8 @@ export const photoOfferUnopenedMax: number = 2;
 export const photoOffersDaily: number = 6;
 /** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
 export const offerAnswerMs: number = 86400000;
+/** Story: Send my photo to my match / A photo link only serves its own page (spec/photoRelayItem.md) */
+export const photoPagePurposeHeader: string = "x-photo-page-purpose";
 /** Story: Send my photo to my match / A page opens only from its own fresh link, and a view only for the receiver's bound browser until the photo is taken back (spec/photoRelayItem.md) */
 export const photoPageLinkTtlMs: number = 900000;
 /** Story: Send my photo to my match / A reference names only the sender's own photos and never guesses between two (spec/photoRelayItem.md) */
@@ -234,6 +236,12 @@ export function lawOneOpenOfferPerPair(partiesOk: boolean, unopenedEnds: number,
 
 /** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
 //@ pure
+export function photoPageReportConfirmed(closed: boolean, filed: boolean): boolean {
+  return closed && filed;
+}
+
+/** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
+//@ pure
 export function offerOpen(o: PhotoOffer): boolean {
   return o.phase === "Asking" || o.phase === "Reviewing" || o.phase === "Ready";
 }
@@ -352,6 +360,13 @@ export function reportOffer(o: PhotoOffer, byReceiver: boolean): PhotoOffer {
   //@ ensures (inv(o) && canReportOffer(o, byReceiver)) ==> stepNoClockEndsAReadyOffer(o, "reportOffer", \result)
   //@ ensures (inv(o) && canReportOffer(o, byReceiver)) ==> stepEndsAreFinal(o, \result)
   return { ...o, phase: "Reported" };
+}
+
+/** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
+//@ pure
+export function lawPhotoPageReportNeedsFiling(closed: boolean, filed: boolean): boolean {
+  //@ ensures \result === true
+  return photoPageReportConfirmed(closed, filed) === (closed && filed);
 }
 
 /** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
@@ -528,6 +543,32 @@ export function lawTakenBackIsNotTakenBackAgain(wasReady: boolean, noticeLater: 
   return photoTakeBackFor("Revoked", wasReady, true, noticeLater) === "TakeBackNothing";
 }
 
+/** Story: Send my photo to my match / A photo link only serves its own page (spec/photoRelayItem.md) */
+//@ pure
+export function photoPagePurposeMatches(requestedPurpose: string, storedPurpose: string): boolean {
+  return requestedPurpose === storedPurpose && (storedPurpose === "check" || storedPurpose === "mine" || storedPurpose === "view");
+}
+
+/** Story: Send my photo to my match / A photo link only serves its own page (spec/photoRelayItem.md) */
+//@ pure
+export function lawWrongPhotoPagePurposeIsRefused(requestedPurpose: string, storedPurpose: string): boolean {
+  //@ ensures \result === true
+  return !(requestedPurpose !== storedPurpose || (storedPurpose !== "check" && storedPurpose !== "mine" && storedPurpose !== "view")) || !photoPagePurposeMatches(requestedPurpose, storedPurpose);
+}
+
+/** Story: Send my photo to my match / The check page serves only photos from its proposal (spec/photoRelayItem.md) */
+//@ pure
+export function photoCheckSetMatches(proposalSetHash: string, currentSetHash: string): boolean {
+  return proposalSetHash === currentSetHash;
+}
+
+/** Story: Send my photo to my match / The check page serves only photos from its proposal (spec/photoRelayItem.md) */
+//@ pure
+export function lawChangedPhotoSetCannotSupplyCheckImage(proposalSetHash: string, currentSetHash: string): boolean {
+  //@ ensures \result === true
+  return !(proposalSetHash !== currentSetHash) || !photoCheckSetMatches(proposalSetHash, currentSetHash);
+}
+
 /** Story: Send my photo to my match / A page opens only from its own fresh link, and a view only for the receiver's bound browser until the photo is taken back (spec/photoRelayItem.md) */
 //@ pure
 export function photoPageLinkLive(issuedAt: number, at: number, deviceBound: boolean, sameDevice: boolean, sameRevision: boolean): boolean {
@@ -633,6 +674,19 @@ export function lawOnlyOwnItemsAreWithdrawn(sameMatch: boolean, open: boolean): 
 export function lawOnlyThisMatchIsWithdrawn(ownItem: boolean, open: boolean): boolean {
   //@ ensures \result === true
   return !photoItemWithdrawable(ownItem, false, open);
+}
+
+/** Story: Send my photo to my match / The photo page takes back exactly one listed share (spec/photoRelayItem.md) */
+//@ pure
+export function photoMineShareMatches(requestedShare: string, listedShare: string, ownsPhoto: boolean, currentMatch: boolean): boolean {
+  return requestedShare === listedShare && ownsPhoto && currentMatch;
+}
+
+/** Story: Send my photo to my match / The photo page takes back exactly one listed share (spec/photoRelayItem.md) */
+//@ pure
+export function lawUnlistedPhotoShareCannotBeTakenBack(requestedShare: string, listedShare: string, ownsPhoto: boolean, currentMatch: boolean): boolean {
+  //@ ensures \result === true
+  return !(requestedShare !== listedShare || !ownsPhoto || !currentMatch) || !photoMineShareMatches(requestedShare, listedShare, ownsPhoto, currentMatch);
 }
 
 /** Do the rules allow this event in this state? */

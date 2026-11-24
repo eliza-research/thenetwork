@@ -27,7 +27,7 @@ After the receiver's yes, each item starts in the automatic check (`screen`; the
 //   settle, PHOTO LINK and tick. PhotoRelayService (packages/platform/src/photo-relay.ts): saveDraft, prepareOffer,
 //   answer, screen (photoScreenVerdictFor, photoScreenOutcomeFor, screenSelection), review, expire, withdraw, settle,
 //   renewViewLinks. PhotoPages (packages/platform/src/photo-pages.ts): the view page open and its image calls
-//   (photoViewAllowed), and report.
+//   (photoViewAllowed), and the confirmation after a filed report (photoPageReportConfirmed).
 //   The pure defs below have the names and the decisions of spec/photoRelayItem.md and spec/photoRelayReview.md.
 //   The phases are strings here. One draft and one offer slot stand for the newest draft of the sender and the
 //   newest offer of the pair.
@@ -370,6 +370,27 @@ module photo_relay_item {
     }
   }
 
+  pure def photoPagePurposeMatches(requestedPurpose: str, storedPurpose: str): bool =
+    requestedPurpose == storedPurpose and (storedPurpose == "check" or storedPurpose == "mine" or storedPurpose == "view")
+
+  // The HTTP boundary refuses a wrong purpose before any page step. This replay-only step does not change state.
+  action rejectWrongPage(requestedPurpose: str, storedPurpose: str): bool = all {
+    not(photoPagePurposeMatches(requestedPurpose, storedPurpose)), w' = w, now' = now, g' = g,
+  }
+
+  pure def photoCheckSetMatches(proposal: Set[int], current: Set[int]): bool = proposal == current
+
+  pure def lawChangedPhotoSetCannotSupplyCheckImage(proposal: Set[int], current: Set[int]): bool =
+    proposal != current implies not(photoCheckSetMatches(proposal, current))
+
+  // This replay-only action models the image read. The bound browser and exact current revision are inputs here.
+  // A set of photo IDs stands for the hash of the ordered rows and their byte digests.
+  action readCheckImage(p: int, boundBrowser: bool, currentRevision: bool): bool = all {
+    boundBrowser, currentRevision, w.draft.live, now < w.draft.shownAt + DRAFT_TTL,
+    w.draft.snapshot.contains(p), photoCheckSetMatches(w.draft.snapshot, w.photos),
+    w' = w, now' = now, g' = g,
+  }
+
   // The view page open on a browser that the link is not yet bound to (photoViewAllowed): binds the link to it.
   // The offer stays ready; no window opens.
   action openView: bool = {
@@ -454,15 +475,29 @@ module photo_relay_item {
     }
   }
 
-  // Report on the view page (canReportOffer): reported, and the existing report rule closes the pair.
-  action report: bool = {
+  pure def photoPageReportConfirmed(closed: bool, filed: bool): bool = closed and filed
+  pure def lawPhotoPageReportNeedsFiling(closed: bool, filed: bool): bool =
+    photoPageReportConfirmed(closed, filed) iff (closed and filed)
+
+  // Closing the offer always revokes its photos. Only a filed safety report closes the pair.
+  action reportResult(filed: bool): bool = {
     val o = w.offer
     val o2 = { ...o, phase: "reported", tell: keptTell(o, "reported") }
     all {
       o.exists, o.phase == "ready",
-      w' = { ...w, offer: o2, pair: false, items: PHOTOS.mapBy(p => if (o.photos.contains(p) and OPEN_ITEMS.contains(w.items.get(p))) "revoked" else w.items.get(p)) },
-      now' = now, g' = { ...offerGhost(g, o, o2, false, true), reports: g.reports + 1 },
+      w' = { ...w, offer: o2, pair: w.pair and not(filed), items: PHOTOS.mapBy(p => if (o.photos.contains(p) and OPEN_ITEMS.contains(w.items.get(p))) "revoked" else w.items.get(p)) },
+      now' = now, g' = { ...offerGhost(g, o, o2, false, true), reports: g.reports + (if (filed) 1 else 0) },
     }
+  }
+
+  action report: bool = reportResult(true)
+
+  // The Mine page has a single listed share reference. Cross-offer reference identity is tested in Postgres.
+  pure def photoMineShareMatches(requestedShare: str, listedShare: str, ownsPhoto: bool, currentMatch: bool): bool =
+    requestedShare == listedShare and ownsPhoto and currentMatch
+
+  action takeBackListedShare(p: int, requestedShare: str, listedShare: str): bool = all {
+    photoMineShareMatches(requestedShare, listedShare, w.photos.contains(p), w.pair), revoke(Set(p)),
   }
 
   // The tick sends a due sender notice once (type "info", key photo-notice:<offerId>).
@@ -501,7 +536,7 @@ module photo_relay_item {
   action anyStep(ps: Set[int], p: int, b: bool, d: int, v: str): bool = any {
     propose(ps), correct(ps), consentYes, askReceiver, receiverYes, receiverNo, noMorePhotos, lapseAnswer,
     screen(p, v), review(p, b), expirePending(p), settle, openView, viewImage(p, b), renewLink, revoke(ps),
-    endOnParties, report, sendNotice, refuseAmbiguousName(false, true, b),
+    endOnParties, report, reportResult(false), sendNotice, refuseAmbiguousName(false, true, b),
     any { tick(d), otherPrompt(b), pairEnds(b), pairResumes, photoDeleted(p), noticeChange, newDay, photosOk },
   }
 
@@ -576,6 +611,8 @@ module photo_relay_item {
       open, image, still an image 32 units (four days) later, report. */
   run happyPathTest =
     init.then(propose(Set(1))).then(consentYes).then(askReceiver).then(receiverYes).then(screen(1, "clean")).then(settle)
+      .then(rejectWrongPage("mine", "view"))
+      .expect(not(w.offer.bound) and w.offer.phase == "ready" and g.views == 0 and g.reports == 0)
       .then(openView).then(viewImage(1, true))
       .expect(g.views == 1 and w.offer.phase == "ready" and safety)
       .then(tick(16)).then(tick(16)).then(viewImage(1, true))
@@ -591,6 +628,13 @@ module photo_relay_item {
   run ambiguousNameLeavesDraftAndOffersInPlaceTest =
     init.then(propose(Set(1))).then(refuseAmbiguousName(false, true, true))
       .expect(w.draft.live and w.draft.proposed == Set(1) and not(w.draft.newest) and not(w.offer.exists) and safety)
+
+  run photosChangedCheckImageTest =
+    init.then(propose(Set(1))).then(readCheckImage(1, true, true)).then(photoDeleted(1))
+      .expect(lawChangedPhotoSetCannotSupplyCheckImage(w.draft.snapshot, w.photos))
+      .then(readCheckImage(1, true, true)).fail()
+
+  run staleRevisionCheckImageTest = init.then(propose(Set(1))).then(readCheckImage(1, true, false)).fail()
 
   run photosChangedYesTest = init.then(propose(Set(1))).then(photoDeleted(2)).then(consentYes).fail()
 
@@ -609,6 +653,14 @@ module photo_relay_item {
       .then(openView).then(report)
       .expect(w.offer.tell == "none" and safety)
       .then(sendNotice).fail()
+
+  run closedViewConfirmsOnlyFiledReportTest =
+    init.then(propose(Set(1))).then(consentYes).then(askReceiver).then(receiverYes).then(screen(1, "clean")).then(settle)
+      .then(openView)
+      .expect(Set(true, false).forall(closed => Set(true, false).forall(filed => lawPhotoPageReportNeedsFiling(closed, filed))))
+      .then(reportResult(false))
+      .expect(w.offer.phase == "reported" and w.pair and g.reports == 0 and not(photoPageReportConfirmed(true, false)) and safety)
+      .then(viewImage(1, true)).fail()
 
   run noMorePhotosTest =
     init.then(noMorePhotos).then(propose(Set(1))).then(consentYes)
@@ -676,11 +728,15 @@ module photo_relay_item {
 
   run partialTakeBackTest =
     init.then(propose(Set(1, 2))).then(consentYes).then(askReceiver).then(receiverYes).then(screen(1, "clean")).then(screen(2, "clean"))
-      .then(settle).then(openView).then(revoke(Set(2)))
+      .then(settle).then(openView).then(takeBackListedShare(2, "share-two", "share-two"))
       .expect(w.offer.phase == "ready" and w.items.get(2) == "revoked" and w.offer.takenBack == Set(2) and safety)
       .then(viewImage(1, true))
       .expect(g.views == 1 and safety)
       .then(viewImage(2, true)).fail()
+
+  run wrongShareDoesNotWithdrawTest =
+    init.then(propose(Set(1, 2))).then(consentYes).then(askReceiver)
+      .then(takeBackListedShare(2, "other-share", "share-two")).fail()
 
   run stopThenStartTest =
     init.then(propose(Set(1))).then(consentYes).then(askReceiver).then(receiverYes).then(screen(1, "clean")).then(settle)

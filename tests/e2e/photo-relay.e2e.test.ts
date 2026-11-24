@@ -31,7 +31,8 @@ describe.skipIf(!pgAvailable)("photo relay (sender names a photo, receiver says 
     const out = (await res.json()) as { outcome: string; replies?: string[] };
     return { ...out, reply: (out.replies ?? []).join(" ") };
   };
-  const page = (path: "open" | "image" | "answer", json: unknown, browser: Browser) => st.site("slop", `/api/photos/page/${path}`, { browser, json });
+  const page = (purpose: "check" | "view", path: "open" | "image" | "answer", json: unknown, browser: Browser) =>
+    st.site("slop", `/api/photos/page/${path}`, { browser, json, headers: { "x-photo-page-purpose": purpose } });
   const member = async (phone: string) => {
     const [row] = await sql`select p.person_id, m.member_id from platform.phone_identities p join platform.memberships m on m.person_id = p.person_id and m.app_id = 'slop' where p.e164 = ${phone}`;
     return { personId: row!.person_id as string, memberId: row!.member_id as string };
@@ -58,7 +59,7 @@ describe.skipIf(!pgAvailable)("photo relay (sender names a photo, receiver says 
     const checkToken = /\/photos\/check#([A-Za-z0-9_-]{43})/.exec(proposed.reply)?.[1];
     expect(checkToken).toBeDefined();
     const senderPhone = new Browser();
-    const check = await page("open", { token: checkToken }, senderPhone);
+    const check = await page("check", "open", { token: checkToken }, senderPhone);
     expect(check.status, await check.clone().text()).toBe(200);
     expect(check.headers.get("cache-control")).toContain("no-store");
     expect(check.headers.get("referrer-policy")).toBe("no-referrer");
@@ -66,11 +67,11 @@ describe.skipIf(!pgAvailable)("photo relay (sender names a photo, receiver says 
     expect(checked).toMatchObject({ purpose: "check", toFirstName: "Maya", proposed: [1] });
     expect(checked.photos.map(p => p.n)).toEqual([1]);
     expect(JSON.stringify(checked)).not.toMatch(/ph_|http|sha256/);
-    const own = await page("image", { token: checkToken, n: 1 }, senderPhone);
+    const own = await page("check", "image", { token: checkToken, n: 1 }, senderPhone);
     expect([own.status, own.headers.get("content-type")]).toEqual([200, "image/png"]);
     expect(own.headers.get("cache-control")).toBe("private, no-store");
     expect((await own.arrayBuffer()).byteLength).toBeGreaterThan(0);
-    expect((await page("open", { token: checkToken }, new Browser())).status).toBe(403);
+    expect((await page("check", "open", { token: checkToken }, new Browser())).status).toBe(403);
 
     expect((await turn(ari, "YES")).reply).toBe("Okay. I'll ask Maya if they want it. An automatic check screens it first. I'll tell you if it doesn't go.");
     const [offer] = await sql`select id, phase from platform.photo_offers where sender_person_id = ${sender.personId}::uuid`;
@@ -102,28 +103,28 @@ describe.skipIf(!pgAvailable)("photo relay (sender names a photo, receiver says 
     expect(viewToken).toBeDefined();
 
     const receiverPhone = new Browser();
-    const view = await page("open", { token: viewToken }, receiverPhone);
+    const view = await page("view", "open", { token: viewToken }, receiverPhone);
     expect(view.status, await view.clone().text()).toBe(200);
     expect(await view.json()).toMatchObject({ purpose: "view", fromFirstName: "Ari", count: 1 });
-    const seen = await page("image", { token: viewToken, n: 1 }, receiverPhone);
+    const seen = await page("view", "image", { token: viewToken, n: 1 }, receiverPhone);
     expect([seen.status, seen.headers.get("content-type"), seen.headers.get("content-security-policy")]).toEqual([200, "image/png", "default-src 'none'"]);
     expect((await sql`select phase from platform.photo_offers where id = ${offer!.id}`)[0]!.phase).toBe("ready");
-    const otherPhone = await page("open", { token: viewToken }, new Browser());
+    const otherPhone = await page("view", "open", { token: viewToken }, new Browser());
     expect([otherPhone.status, ((await otherPhone.json()) as { error: string }).error]).toEqual([403, "other_device"]);
     st.clock.advance(2 * DAY);
     await st.svc.tick();
-    const later = await page("open", { token: viewToken }, receiverPhone);
+    const later = await page("view", "open", { token: viewToken }, receiverPhone);
     expect(later.status, await later.clone().text()).toBe(200);
     expect(await later.json()).toMatchObject({ purpose: "view", count: 1 });
-    expect((await page("image", { token: viewToken, n: 1 }, receiverPhone)).status).toBe(200);
+    expect((await page("view", "image", { token: viewToken, n: 1 }, receiverPhone)).status).toBe(200);
 
     const heardOf = async () => { const m = (await st.svc.runtimeFor("slop")!.readState(n => n.exportState())).members.find(x => x.id === receiver.memberId)!; return { lastInbound: m.lastInbound, msgsIn: m.msgsIn, replies: m.replies, unsolStreak: m.unsolStreak, outbound: m.outbound }; };
     const heardBefore = await heardOf();
-    const reported = await page("answer", { token: viewToken, answer: "report" }, receiverPhone);
+    const reported = await page("view", "answer", { token: viewToken, answer: "report" }, receiverPhone);
     expect(reported.status).toBe(200);
     expect(await reported.json()).toEqual({ ok: true, state: "reported" });
     expect((await sql`select phase from platform.photo_offers where id = ${offer!.id}`)[0]!.phase).toBe("reported");
-    expect((await page("image", { token: viewToken, n: 1 }, receiverPhone)).status).toBe(410);
+    expect((await page("view", "image", { token: viewToken, n: 1 }, receiverPhone)).status).toBe(410);
     const rt = st.svc.runtimeFor("slop")!;
     expect((await rt.readState(n => n.relayLiveMatches(sender.memberId as never))).map(l => l.match.id)).not.toContain(threadId);
     const state = await rt.readState(n => n.exportState());

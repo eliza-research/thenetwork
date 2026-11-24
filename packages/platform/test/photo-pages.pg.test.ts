@@ -12,7 +12,7 @@ import { LocalDiskPhotoStorage, PgPhotoStore, PHOTO_CONSENT, PhotoService } from
 import { PgPeopleStore } from "../src/pg-store.ts";
 import { dropDb, migratedDb, pgAvailable } from "./pg.ts";
 
-interface PagePhoto { n: number; shared?: boolean; label?: string | null; addedOn?: string; access?: unknown }
+interface PagePhoto { n: number; shared?: boolean; label?: string | null; addedOn?: string; access?: { firstName: string; state: string; shareRef: string }[] }
 interface PageAnswer { notice?: string; photos?: PagePhoto[]; [key: string]: unknown }
 const T = 120_000;
 const HOUR = 60 * 60_000;
@@ -54,22 +54,31 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
       authorize: async ({ threadId, senderPersonId }) => allowed && threadId === "thread_pages" && senderPersonId === sender ? binding : undefined,
       threads: async () => [{ id: "thread_pages", label: "Robin" }],
     });
-    const consents: [string, number][] = [], takeBacks: [number[], string][] = [];
+    const consents: [string, number][] = [], takeBacks: string[] = [];
     const pages = new PhotoPages({
       sql, relay, photos,
       actions: {
         consent: async (_p, _a, draftId, revision) => { consents.push([draftId, revision]); return { state: "offered" }; },
-        takeBack: async (_p, _a, numbers, firstName) => { takeBacks.push([numbers, firstName]); return { state: "taken_back" }; },
-        report: async (recipientPersonId, _a, offerId) => (await sql.begin(tx => relay.report(tx, offerId, recipientPersonId))) ? { state: "reported" } : undefined,
+        takeBack: async (_p, _a, shareRef) => { takeBacks.push(shareRef); return { state: "taken_back" }; },
+        report: async (recipientPersonId, _a, offerId) => (await sql.begin(tx => relay.report(tx, offerId, recipientPersonId))) ? { filed: false } : undefined,
       },
     });
     const draft = (proposed: number[]) => sql.begin(tx => relay.saveDraft(tx, {
       personId: sender, app: "slop", purpose: "send", threadId: "thread_pages", recipientMemberId: "member_recipient",
       shownIds: ids, proposedIds: proposed.map(n => ids[n - 1]!), wantsSet: proposed.length > 1, listed: false, prompt: { via: "send" },
     }));
-    const call = async (action: string, body: Record<string, unknown>, cookie?: string, app: AppId = "slop") => {
+    const linkPurposes = new Map<string, string>();
+    const token = (link: string) => {
+      const url = new URL(link);
+      const value = url.hash.slice(1);
+      linkPurposes.set(value, url.pathname.split("/").at(-1)!);
+      return value;
+    };
+    const call = async (action: string, body: Record<string, unknown>, cookie?: string, app: AppId = "slop", purpose?: string | null) => {
+      const requestedPurpose = purpose === undefined ? linkPurposes.get(String(body.token)) ?? "check" : purpose;
       const res = (await pages.route(new Request(`https://${APPS[app].domain}/api/photos/page/${action}`, {
-        method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie: `${PHOTO_PAGE_COOKIE}=${cookie}` } : {}) }, body: JSON.stringify(body),
+        method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie: `${PHOTO_PAGE_COOKIE}=${cookie}` } : {}),
+          ...(requestedPurpose === null ? {} : { "x-photo-page-purpose": requestedPurpose }) }, body: JSON.stringify(body),
       }), `/api/photos/page/${action}`, app))!;
       const setCookie = res.headers.get("set-cookie");
       const type = res.headers.get("content-type") ?? "";
@@ -77,7 +86,6 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
         body: type.startsWith("application/json") ? await res.json() as PageAnswer : undefined,
         bytes: type.startsWith("application/json") ? undefined : new Uint8Array(await res.arrayBuffer()) };
     };
-    const token = (link: string) => link.split("#")[1]!;
     const ask = async (proposed: number[]) => {
       const d = await draft(proposed);
       return sql.begin(async tx => (await relay.prepareOffer(sender, "slop", d.draftId, d.revision, now))!.commit(tx));
@@ -91,7 +99,7 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
       expect(settled?.phase).toBe("ready");
       return { offerId: offer.offerId!, link: settled!.viewLink! };
     };
-    const access = async () => (await relay.holdings(sender, "slop")).map(h => h.access);
+    const access = async () => (await relay.holdings(sender, "slop")).map(h => h.access.map(({ firstName, state }) => ({ firstName, state })));
     const sharedWith = async () => (await relay.slots(sender, "slop")).map(s => s.sharedWith);
     const noticesOf = async (offerId: string) => (await relay.notices("slop")).filter(n => n.offerId === offerId).map(n => n.notice);
     const withdraw = (photoIds: string[] | null) => sql.begin(tx => relay.withdraw(tx, "slop", sender, "thread_pages", photoIds));
@@ -105,6 +113,31 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
       screenAs: (decide: (image: PhotoScreenImage) => PhotoScreenResult) => { verdict = decide; }, cut: () => { allowed = false; }, tick: (ms: number) => { now += ms; },
     };
   }
+
+  // spec/photoRelayItem.md, "A photo link only serves its own page"
+  test("a wrong-purpose request leaves the photo link and proposal untouched", async () => {
+    const w = await world();
+    const draft = await w.draft([1]);
+    const token = w.token(draft.link!);
+    const before = await w.relay.draftOf(w.sender, "slop");
+    const unavailable = { status: 404, body: { ok: false, error: "link_unavailable" }, setCookie: null, bytes: undefined };
+
+    expect((await w.relay.pageLink(token))?.deviceHash).toBeNull();
+    expect(await w.call("open", { token }, undefined, "slop", "mine")).toMatchObject(unavailable);
+    expect(await w.call("open", { token }, undefined, "slop", null)).toMatchObject(unavailable);
+    expect(await w.call("open", { token }, undefined, "slop", "check, mine")).toMatchObject(unavailable);
+    expect(await w.call("open", { token }, undefined, "ntwrk", "check")).toMatchObject(unavailable);
+    expect((await w.relay.pageLink(token))?.deviceHash).toBeNull();
+    expect(await w.relay.draftOf(w.sender, "slop")).toEqual(before);
+
+    const right = await w.call("open", { token }, undefined, "slop", "check");
+    expect(right).toMatchObject({ status: 200, body: { purpose: "check", revision: draft.revision }, cookie: expect.any(String) });
+    const phone = right.cookie!;
+    expect(await w.call("image", { token, n: 1 }, phone, "slop", "view")).toMatchObject(unavailable);
+    expect(await w.call("answer", { token, revision: draft.revision, answer: "pick", numbers: [2] }, phone, "slop", "mine")).toMatchObject(unavailable);
+    expect(await w.relay.draftOf(w.sender, "slop")).toEqual(before);
+    expect(await w.call("image", { token, n: 1 }, phone, "slop", "check")).toMatchObject({ status: 200, type: "image/jpeg" });
+  });
 
   test("a check link binds to the first phone; a second phone gets other_device; an old revision answers changed and never consents", async () => {
     const w = await world();
@@ -191,7 +224,7 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
     const r = await world();
     const reported = await r.ready([3]);
     const rp = (await r.call("open", { token: r.token(reported.link) })).cookie!;
-    expect(await r.call("answer", { token: r.token(reported.link), answer: "report" }, rp)).toMatchObject({ status: 200, body: { state: "reported" } });
+    expect(await r.call("answer", { token: r.token(reported.link), answer: "report" }, rp)).toMatchObject({ status: 410, body: { error: "link_expired" } });
     expect(await r.relay.offer(reported.offerId)).toMatchObject({ phase: "reported" });
     expect(await r.call("image", { token: r.token(reported.link), n: 1 }, rp)).toMatchObject({ status: 410, body: { error: "link_expired" } });
     expect(await r.call("open", { token: r.token(reported.link) }, rp)).toMatchObject({ status: 410, body: { error: "link_expired" } });
@@ -329,13 +362,15 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
     expect(link).toMatch(/^https:\/\/slop\.date\/photos\/mine#[A-Za-z0-9_-]{43}$/);
     const mine = await w.call("open", { token: w.token(link!) });
     expect(mine).toMatchObject({ status: 200, body: { purpose: "mine" } });
-    expect(mine.body!.photos!.map(p => [p.n, p.label, p.addedOn, p.access])).toEqual([
+    expect(mine.body!.photos!.map(p => [p.n, p.label, p.addedOn, p.access?.map(({ firstName, state }) => ({ firstName, state }))])).toEqual([
       [1, "beach", "2026-11-22", [{ firstName: "Your match", state: "ready" }]], [2, "beach day", "2026-11-22", []], [3, null, "2026-11-22", []],
     ]);
-    expect(JSON.stringify(mine.body)).not.toMatch(SECRET);
-    expect(await w.call("answer", { token: w.token(link!), answer: "take_back", numbers: [1], firstName: "Robin" }, mine.cookie)).toMatchObject({ status: 200, body: { state: "taken_back" } });
-    expect(w.takeBacks).toEqual([[[1], "Robin"]]);
-    expect(await w.call("answer", { token: w.token(link!), answer: "take_back", numbers: [7], firstName: "Robin" }, mine.cookie)).toMatchObject({ status: 400 });
+    const shareRef = mine.body!.photos![0]!.access![0]!.shareRef;
+    expect(shareRef).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(JSON.stringify(mine.body).replaceAll(shareRef, "")).not.toMatch(SECRET);
+    expect(await w.call("answer", { token: w.token(link!), answer: "take_back", shareRef }, mine.cookie)).toMatchObject({ status: 200, body: { state: "taken_back" } });
+    expect(w.takeBacks).toEqual([shareRef]);
+    expect(await w.call("answer", { token: w.token(link!), answer: "take_back", numbers: [1], firstName: "Robin" }, mine.cookie)).toMatchObject({ status: 400 });
   }, T);
 
   test("a decline shows as asked until its notice is due; a silent decline shows as asked; a take-back of a hidden decline reads like a take-back of an ask and both list as taken back", async () => {
@@ -347,7 +382,7 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
     expect(await w.access()).toEqual([askedLine, [], []]);
     expect(await w.sharedWith()).toEqual([["member_recipient"], [], []]);
     const mine = await w.call("open", { token: w.token((await w.relay.mineLink(w.sender, "slop"))!) });
-    expect(mine.body!.photos!.map(p => p.access)).toEqual([askedLine, [], []]);
+    expect(mine.body!.photos!.map(p => p.access?.map(({ firstName, state }) => ({ firstName, state })))).toEqual([askedLine, [], []]);
     expect(await w.noticesOf(asked.offerId!)).toEqual([]);
     const again = await w.draft([2]);
     const check = await w.call("open", { token: w.token(again.link!) });
@@ -401,7 +436,7 @@ describe.skipIf(!pgAvailable)("photo pages: one step each, from a link, for the 
     const r = await world();
     const reported = await r.ready([1]);
     const phone = (await r.call("open", { token: r.token(reported.link) })).cookie!;
-    expect(await r.call("answer", { token: r.token(reported.link), answer: "report" }, phone)).toMatchObject({ status: 200, body: { state: "reported" } });
+    expect(await r.call("answer", { token: r.token(reported.link), answer: "report" }, phone)).toMatchObject({ status: 410, body: { error: "link_expired" } });
     expect(await r.noticesOf(reported.offerId)).toEqual([]);
 
     for (const x of [v, e, r]) {

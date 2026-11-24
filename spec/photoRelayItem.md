@@ -213,7 +213,7 @@ pure def lawPhotosOffAfterTwoUnopened(openToPair: int, lastUnopenedEndAt: int, a
 
 An offer starts asking. The service asks the receiver once and gives them 24 hours to answer. A yes before that time starts the automatic check of each photo; a no declines; no answer lapses. The offer is ready as soon as the check or a person on the safety team approved at least one photo, so a clean photo is released at once while a flagged photo of the same offer still waits for staff. When every photo is decided and none is approved, the offer is rejected if staff rejected one, else timed out. A ready offer stays ready, with no time limit, until the sender takes back all its photos (revoked), the receiver reports it (reported), or the access ends for another reason (ended): a block, a report, a ban, STOP, leaving the app, erasure, the match or the thread ending, or an age reading under 18. A photo that the sender takes back, and a photo whose row changed or was deleted, stop showing at once, while the other photos of the offer stay; when no photo of the offer is left, nothing shows. An ended offer never changes again. The transaction that records a block, a ban, STOP, leaving, a hold or a restriction, erasure or an age reading under 18 also records an end fact on every open offer of that person, in both directions, and an offer with an end fact is not current, so a condition that is lifted later (START after STOP, a hold that is released) never opens the offer again; the tick then ends it. `itemsCurrent` says that the offer has no end fact, its parties are current, and at least one approved photo of the offer is still current: not taken back, its photo row the same, and its notice the one in force. Changed (owner decision 2026-11-22, D14): a ready offer lapsed when nobody opened it in 48 hours and closed 24 hours after the first open, the end reasons were read only when the page opened or the tick came, and one deleted photo hid the whole offer -> no clock ends a ready offer, an end fact is written in the same transaction as its cause, and each photo stops on its own, because the view stays open until the sender takes it back.
 
-A report from the view page gets one text confirmation: that the photo is closed and, when a safety report was filed, that the safety team will look at it. The confirmation answers the receiver's own action on the page, so it goes at once and is not proactive outreach: it takes no slot of a budget or a cap and is never deferred as an interruption. The page action is not a message in the receiver's thread, so it leaves the outreach pause, the unanswered entries, the thread counters and the response windows in place, as the [outreach policy](outreachPolicy.md) requires. The send still applies the recipient checks, the opt-out of the member and the leak guard. Changed (review of the photo relay, 2026-11-23): the report marked the receiver as heard so that the confirmation could pass the outreach controller -> the confirmation answers the page action and the receiver is not marked as heard, because only a current message from the member's thread clears the outreach pause.
+The view page confirms a report only when the photo closed and the service filed a safety report. If the photo closed without a safety report, the page shows the closed step with the help address. A report from the view page gets one text confirmation: that the photo is closed and, when a safety report was filed, that the safety team will look at it. The confirmation answers the receiver's own action on the page, so it goes at once and is not proactive outreach: it takes no slot of a budget or a cap and is never deferred as an interruption. The page action is not a message in the receiver's thread, so it leaves the outreach pause, the unanswered entries, the thread counters and the response windows in place, as the [outreach policy](outreachPolicy.md) requires. The send still applies the recipient checks, the opt-out of the member and the leak guard. Changed (review of the photo relay, 2026-11-23): the report marked the receiver as heard so that the confirmation could pass the outreach controller -> the confirmation answers the page action and the receiver is not marked as heard, because only a current message from the member's thread clears the outreach pause.
 
 ```quint
 type OfferPhase = Asking | Reviewing | Ready | Declined | Lapsed | Rejected | CheckTimedOut | Revoked | Ended | Reported
@@ -260,6 +260,11 @@ pure def endOffer(o: PhotoOffer): PhotoOffer = { ...o, phase: Ended }
 
 pure def canReportOffer(o: PhotoOffer, byReceiver: bool): bool = byReceiver and o.phase == Ready
 pure def reportOffer(o: PhotoOffer, byReceiver: bool): PhotoOffer = { ...o, phase: Reported }
+
+pure def photoPageReportConfirmed(closed: bool, filed: bool): bool = closed and filed
+
+pure def lawPhotoPageReportNeedsFiling(closed: bool, filed: bool): bool =
+  photoPageReportConfirmed(closed, filed) iff (closed and filed)
 
 pure def stepEndsAreFinal(before: PhotoOffer, after: PhotoOffer): bool = not(offerOpen(before)) implies after == before
 
@@ -370,6 +375,35 @@ pure def lawTakenBackIsNotTakenBackAgain(wasReady: bool, noticeLater: bool): boo
   photoTakeBackFor(Revoked, wasReady, true, noticeLater) == TakeBackNothing
 ```
 
+### A photo link only serves its own page
+
+Every open, image and answer request names the page's own purpose in the `X-Photo-Page-Purpose` header. The purpose must agree with the stored link and be `check`, `mine` or `view`. A missing or different purpose gets the same answer as an unknown link. The request binds no browser, reads no page metadata or bytes, and starts no action.
+
+```quint
+pure val photoPagePurposeHeader: str = "x-photo-page-purpose"
+pure val requestedPurposeValues = Set("", "check", "mine", "view", "other")
+pure val storedPurposeValues = Set("check", "mine", "view", "other")
+
+pure def photoPagePurposeMatches(requestedPurpose: str, storedPurpose: str): bool =
+  requestedPurpose == storedPurpose and (storedPurpose == "check" or storedPurpose == "mine" or storedPurpose == "view")
+
+pure def lawWrongPhotoPagePurposeIsRefused(requestedPurpose: str, storedPurpose: str): bool =
+  (requestedPurpose != storedPurpose or (storedPurpose != "check" and storedPurpose != "mine" and storedPurpose != "view"))
+    implies not(photoPagePurposeMatches(requestedPurpose, storedPurpose))
+```
+
+### The check page serves only photos from its proposal
+
+The check page reads the photo number from the same ordered set that the proposal showed. Before it reads the numbered photo, the service compares the current set hash with the hash in the draft. A changed set cannot make a number show another photo. The service checks the proposal revision again after it reads the bytes.
+
+```quint
+pure def photoCheckSetMatches(proposalSetHash: str, currentSetHash: str): bool =
+  proposalSetHash == currentSetHash
+
+pure def lawChangedPhotoSetCannotSupplyCheckImage(proposalSetHash: str, currentSetHash: str): bool =
+  proposalSetHash != currentSetHash implies not(photoCheckSetMatches(proposalSetHash, currentSetHash))
+```
+
 ### A page opens only from its own fresh link, and a view only for the receiver's bound browser until the photo is taken back
 
 The check page and the photos page open from a link that the agent sent in the conversation. The link lives fifteen minutes, and a check page link is only for the proposal revision that it was made for. The first open binds the link to that browser, and every later call needs the same browser. The view link goes only to the receiver's own phone line. Its first open binds it to that browser, and from then on it opens only there, for a ready offer whose photos are current, with no time limit. The browser keeps the binding when it restarts: the binding cookie lives 400 days, and each open of the view renews it. The receiver can ask for a new view link by text (PHOTO LINK): the new link replaces the old one, which then opens nothing, so the receiver can move to another phone and a forwarded old link stays useless. Only the receiver of a ready offer with current photos gets a new link. No page opens for photos that are no longer current. The photos travel only through these one-purpose pages, never as a public link or an MMS. Changed (owner decision 2026-11-22, D14): the view opened a ready offer only within 48 hours and the bound phone only for 24 hours, with a session cookie -> a bound browser opens it with no time limit and a renewable link, because the view stays open until the sender takes it back.
@@ -456,4 +490,20 @@ pure def lawOnlyOwnItemsAreWithdrawn(sameMatch: bool, open: bool): bool =
 
 pure def lawOnlyThisMatchIsWithdrawn(ownItem: bool, open: bool): bool =
   not(photoItemWithdrawable(ownItem, false, open))
+```
+
+### The photo page takes back exactly one listed share
+
+The photo page sends the opaque reference from the selected share. The service uses the existing sender, app, offer and photo to make that reference. The first name and photo number are display values. A request affects only its exact reference when the photo is still owned and the match is available to the sender. An absent or stale reference takes back nothing. The withdrawal still uses the existing offer lock and rules.
+
+```quint
+pure val requestedShareValues = Set("first", "second", "unknown")
+pure val listedShareValues = Set("first", "second")
+
+pure def photoMineShareMatches(requestedShare: str, listedShare: str, ownsPhoto: bool, currentMatch: bool): bool =
+  requestedShare == listedShare and ownsPhoto and currentMatch
+
+pure def lawUnlistedPhotoShareCannotBeTakenBack(requestedShare: str, listedShare: str, ownsPhoto: bool, currentMatch: bool): bool =
+  (requestedShare != listedShare or not(ownsPhoto) or not(currentMatch))
+    implies not(photoMineShareMatches(requestedShare, listedShare, ownsPhoto, currentMatch))
 ```

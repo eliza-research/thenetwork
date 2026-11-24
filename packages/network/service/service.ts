@@ -591,9 +591,9 @@ export class NetworkService implements RuntimeHost {
           const memberId = await this.photoMember(personId, app);
           return memberId ? this.photoRelayFlow.consent(personId, app, draftId, revision, memberId) : { state: "refused", text: PHOTO_RELAY_TEXT.unavailable };
         },
-        takeBack: async (personId, app, numbers, firstName) => {
+        takeBack: async (personId, app, shareRef) => {
           const memberId = await this.photoMember(personId, app);
-          return memberId ? this.photoRelayFlow.takeBack(personId, app, memberId, numbers, firstName) : { state: "nothing_open" };
+          return memberId ? this.photoRelayFlow.takeBack(personId, app, memberId, shareRef) : { state: "nothing_open" };
         },
         report: (recipientPersonId, app, offerId) => this.photoRelayFlow.report(recipientPersonId, app, offerId),
       },

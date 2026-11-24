@@ -498,7 +498,7 @@ test.skipIf(!pgAvailable)("a ready photo does not hold the next offer to the sam
   const pages=new PhotoPages({relay:service.photoRelay,photos:service.photos,sql,actions:{
     consent:async()=>({state:"refused"}),takeBack:async()=>({state:"nothing_open"}),report:async()=>undefined}});
   const open=async(cookie?:string)=>(await pages.route(new Request("https://slop.date/api/photos/page/open",{method:"POST",
-    headers:{"content-type":"application/json",...(cookie?{cookie:`${PHOTO_PAGE_COOKIE}=${cookie}`}:{})},body:JSON.stringify({token})}),"/api/photos/page/open","slop"))!;
+    headers:{"content-type":"application/json","x-photo-page-purpose":"view",...(cookie?{cookie:`${PHOTO_PAGE_COOKIE}=${cookie}`}:{})},body:JSON.stringify({token})}),"/api/photos/page/open","slop"))!;
   const opened=await open();
   expect(opened.status).toBe(200);
   expect(opened.headers.get("set-cookie")).toMatch(/; Max-Age=34560000$/);

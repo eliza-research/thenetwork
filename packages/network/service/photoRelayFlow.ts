@@ -273,7 +273,7 @@ export class PhotoRelayFlow {
     const lines = held.map(h => this.holdingLine(h, at, zone)).join("; ");
     return {
       text: held.length ? PHOTO_RELAY_TEXT.holdingsForAgent(held.length, lines, this.d.domain(app)) : PHOTO_RELAY_TEXT.addFirst,
-      photos: held.map(h => ({ number: h.n, name: h.label, addedOn: h.addedOn, sharedWith: h.access.map(a => ({ ...a })) })),
+      photos: held.map(h => ({ number: h.n, name: h.label, addedOn: h.addedOn, sharedWith: h.access.map(({ firstName, state }) => ({ firstName, state })) })),
     };
   }
 
@@ -293,21 +293,16 @@ export class PhotoRelayFlow {
     return { state: given.offered ? "offered" : "refused", text: given.text };
   }
 
-  async takeBack(personId: string, app: AppId, memberId: string, numbers: number[], firstName: string): Promise<{ state: "taken_back" | "nothing_open" }> {
+  async takeBack(personId: string, app: AppId, memberId: string, shareRef: string): Promise<{ state: "taken_back" | "nothing_open" }> {
     const rt = await this.d.runtimeOfMember(app, memberId);
     if (!rt) return { state: "nothing_open" };
-    const ids = (await this.d.relay.slots(personId, app)).filter(s => numbers.includes(s.n)).map(s => s.id);
-    const threads = (await this.threads(rt, memberId)).filter(t => t.firstName.toLowerCase() === firstNameOf(firstName).toLowerCase());
-    if (!ids.length || !threads.length) return { state: "nothing_open" };
-    const taken = await this.d.sql.begin(async tx => {
-      let n = 0;
-      for (const t of threads) { const r = await this.d.relay.withdraw(tx, app, personId, t.threadId, ids); n += r.revoked; }
-      return n;
-    });
+    const threads = new Set((await this.threads(rt, memberId)).map(thread => thread.threadId));
+    if (threads.size === 0) return { state: "nothing_open" };
+    const taken = await this.d.sql.begin(tx => this.d.relay.withdrawShare(tx, app, personId, threads, shareRef));
     return { state: taken ? "taken_back" : "nothing_open" };
   }
 
-  async report(recipientPersonId: string, app: AppId, offerId: string, textAfter = true): Promise<{ state: "reported"; filed: boolean } | undefined> {
+  async report(recipientPersonId: string, app: AppId, offerId: string, textAfter = true): Promise<{ filed: boolean } | undefined> {
     const offer = await this.d.relay.offer(offerId);
     if (!offer || offer.app !== app) return undefined;
     const close = async (tx: SQL) => { if (!(await this.d.relay.report(tx, offerId, recipientPersonId))) throw new PhotoOfferNotReportable(); };
@@ -328,7 +323,7 @@ export class PhotoRelayFlow {
       throw e;
     }
     if (!filed) this.d.log(`[alert] photo relay ${app}: the report of ${offer.id} closed the photo, but no safety report was filed`);
-    return { state: "reported", filed };
+    return { filed };
   }
 
   async settle(app: AppId, offerId: string): Promise<void> {

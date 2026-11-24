@@ -3,8 +3,8 @@ import { DAY } from "../../core/src/clock.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import {
   answerNo, answerYes, askReceiver, canAnswerNo, canAnswerYes, canEndOffer, canLapseAnswer, canReportOffer, canRevokeOffer, canSettleReview,
-  endOffer, initial as offerInitial, lapseAnswer, offerOpen, photoDraftTtlMs, photoItemWithdrawable, photoListedAs, photoOfferAdmissionFor,
-  photoPageLinkLive, photoPageLinkTtlMs, photoSenderViewFor, photoTakeBackFor, photoViewAllowed, photoViewLinkRenewable, reportOffer,
+  endOffer, initial as offerInitial, lapseAnswer, offerOpen, photoCheckSetMatches, photoDraftTtlMs, photoItemWithdrawable, photoListedAs, photoOfferAdmissionFor,
+  photoMineShareMatches, photoPageLinkLive, photoPageLinkTtlMs, photoSenderViewFor, photoTakeBackFor, photoViewAllowed, photoViewLinkRenewable, reportOffer,
   revokeOffer, senderNoticeDueAt, senderNoticeFor, settleReview, unsentNoticeKept,
   type OfferAdmission, type OfferNotice, type OfferPhase, type PhotoOffer, type PhotoSenderView,
 } from "../../core/src/generated/photoRelayItem.ts";
@@ -177,7 +177,7 @@ const ACCESS: Record<Exclude<PhotoSenderView, "SeesNothing">, PhotoAccessState> 
 
 export interface PhotoSlot { n: number; id: string; addedAt: number; batch: string; label: string | null; sharedWith: string[]; heldBy: string[] }
 export type PhotoAccessState = "asked" | "checking" | "ready" | "taken_back";
-export interface PhotoHolding { n: number; label: string | null; addedAt: number; addedOn: string; access: { firstName: string; state: PhotoAccessState }[] }
+export interface PhotoHolding { n: number; label: string | null; addedAt: number; addedOn: string; access: { firstName: string; state: PhotoAccessState; shareRef: string }[] }
 export interface PhotoDraft {
   id: string; personId: string; app: AppId; purpose: "send" | "delete"; threadId: string | null; recipientMemberId: string | null;
   shownIds: string[]; proposedIds: string[]; wantsSet: boolean; listed: boolean; photoSetSha: string; policyVersion: string;
@@ -366,13 +366,21 @@ export class PhotoRelayService {
     return out;
   }
 
+  private shareRef(offer: PhotoOfferRow, photoId: string): string {
+    return createHmac("sha256", this.o.hashKey)
+      .update(JSON.stringify(["photo-mine-share", offer.app, offer.senderPersonId, offer.id, photoId]))
+      .digest("base64url");
+  }
+
   async holdings(personId: string, app: AppId, timeZone: string = PHOTO_RELAY_TIME_ZONE): Promise<PhotoHolding[]> {
     const rows = await this.o.photos.rows(personId, app);
     const shared = await this.sharedPhotos(await this.senderOffers(personId, app));
     const names = await this.names(app, shared.map(s => s.offer.recipientMemberId));
     return rows.map((r, i) => ({
       n: i + 1, label: r.label, addedAt: r.createdAt, addedOn: photoDay(r.createdAt, timeZone),
-      access: shared.filter(s => s.photoId === r.id).map(s => ({ firstName: names.get(s.offer.recipientMemberId)!, state: s.state })),
+      access: shared.filter(s => s.photoId === r.id).map(s => ({
+        firstName: names.get(s.offer.recipientMemberId)!, state: s.state, shareRef: this.shareRef(s.offer, s.photoId),
+      })),
     }));
   }
 
@@ -467,7 +475,7 @@ export class PhotoRelayService {
       const again = await this.parties(app, threadId, personId, recipientPersonId, tx);
       const current = await this.o.photos.rows(personId, app, tx);
       const chosen = draft.proposedIds.map(id => current.find(r => r.id === id));
-      const ok = !!again && again.recipientMemberId === draft.recipientMemberId && chosen.every(r => !!r) && photoSetSha(current) === draft.photoSetSha;
+      const ok = !!again && again.recipientMemberId === draft.recipientMemberId && chosen.every(r => !!r) && photoCheckSetMatches(draft.photoSetSha, photoSetSha(current));
       const decided = await this.admission(tx, { app, senderPersonId: personId, recipientPersonId, partiesOk: ok, count, at });
       if (decided.admission !== "OfferAsk" && decided.admission !== "OfferSilentDecline") return { admission: decided.admission, replayed: false, firstAsk: decided.firstAsk };
       const asked = askReceiver(offerInitial, at);
@@ -638,10 +646,20 @@ export class PhotoRelayService {
     return rows.map(r => ({ offerId: r.id, senderMemberId: r.senderMemberId, firstName: names.get(r.senderMemberId)!, count: r.photoIds.length, createdAt: r.createdAt, answerBy: r.answerBy }));
   }
 
-  async withdraw(tx: SQL, app: AppId, personId: string, threadId: string, photoIds: readonly string[] | null): Promise<{ revoked: number; viewing: boolean }> {
+  async withdrawShare(tx: SQL, app: AppId, personId: string, currentThreads: ReadonlySet<string>, shareRef: string): Promise<boolean> {
+    const owned = new Set((await this.o.photos.rows(personId, app, tx)).map(photo => photo.id));
+    for (const offer of await this.senderOffers(personId, app, tx)) {
+      const currentMatch = currentThreads.has(offer.threadId);
+      const photoId = offer.photoIds.find(id => photoMineShareMatches(shareRef, this.shareRef(offer, id), owned.has(id), currentMatch));
+      if (photoId) return (await this.withdraw(tx, app, personId, offer.threadId, [photoId], offer.id)).revoked === 1;
+    }
+    return false;
+  }
+
+  async withdraw(tx: SQL, app: AppId, personId: string, threadId: string, photoIds: readonly string[] | null, offerId?: string): Promise<{ revoked: number; viewing: boolean }> {
     const at = this.now();
     const offers = (await tx`select * from platform.photo_offers where app_id = ${app} and sender_person_id = ${personId}::uuid and thread_id = ${threadId}
-      order by id for update`).map(offerRow);
+      ${offerId === undefined ? tx`` : tx`and id = ${offerId}`} order by id for update`).map(offerRow);
     let revoked = 0, viewing = false;
     for (const o of offers) {
       const m = machine(o);
@@ -790,8 +808,10 @@ export class PhotoRelayService {
     return this.o.photos.relayBytes(item.senderPersonId, item.app, item.photoId, item);
   }
 
-  async ownBytes(personId: string, app: AppId, n: number) {
-    const row = (await this.o.photos.rows(personId, app))[n - 1];
+  async ownBytes(personId: string, app: AppId, n: number, expectedSetSha?: string) {
+    const rows = await this.o.photos.rows(personId, app);
+    if (expectedSetSha !== undefined && !photoCheckSetMatches(expectedSetSha, photoSetSha(rows))) return;
+    const row = rows[n - 1];
     if (!row) return;
     return this.o.photos.relayBytes(personId, app, row.id, row);
   }
