@@ -13,7 +13,7 @@ import { NEIGHBORHOOD, type Borough } from "@thenetwork/network/geo";
 import type { ConsoleApp } from "../src/apps.ts";
 import type {
   AppHealth, AppProfile360, AuditEntry, BiasReportView, HeldQueue, HeldText, ClockInfo, ConfigInfo, ControlCommand, ControlResult, EngineRunSummary, EnvInfo, GameState, LabRequest, LabRun, MemberDetail, MemberTimeline,
-  JudgeStats, MemberTruth, Mode, NetworkInfo, ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsOpportunity, ObsRequest, ObsState, ObsStats, OpportunityDetail,
+  JudgeStats, MemberTruth, Mode, NetworkInfo, ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsOpportunity, ObsRequest, ObsState, ObsStats, OpportunityDetail, ParticipantStatus,
   MemberPhoto, PersonAppPanel, PersonSummary, RevealGrant, ReviewDecision, ReviewReason, RunDiff, SafetyAction, SafetyInfo, SearchHit, StaffPlanPreview, StaffRole, StaffUser,
 } from "../src/types.ts";
 
@@ -89,6 +89,7 @@ const GROUP_OF = new Map<string, StateGroup>(STATE_GROUPS.flatMap(([g, , sts]) =
 export const stateGroupOf = (state: string): StateGroup => GROUP_OF.get(state) ?? "open";
 /** Open (not yet resolved) states. A member in one is busy: the Network does not double-book them. */
 export const OPEN = new Set(["PROPOSED", "IN_REVIEW", "INVITING", "PARTIALLY_ACCEPTED", "MUTUALLY_ACCEPTED", "QUORUM_MET", "SCHEDULED"]);
+export const INACTIVE_PARTICIPANT_STATUS: ReadonlySet<ParticipantStatus> = new Set(["unavailable", "declined", "cancelled_with_notice"]);
 import { DAY, HOUR } from "../../../packages/core/src/clock.ts";
 export { DAY, HOUR };
 export const DEFAULT_FILTERS: Filters = { range: "7d", borough: "all", members: "all", origin: "all", stateGroup: "all" };
