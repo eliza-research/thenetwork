@@ -528,6 +528,8 @@ export function isDirectSharedLineStop(text: string): boolean {
 }
 
 const ME = "(?:me|us|this number|my number)";
+const ACCOUNT_REMOVAL_LEAD = "(?:(?:please|pls|plz|just|stop|ok|okay|yes|yeah|so|and|also|then|now|actually) )*(?:i (?:want|need) you to (?:please |just )?|i(?:'d| would) like (?:you )?to |i (?:want|need) to )?";
+const ACCOUNT_REMOVAL_TAIL = "(?: (?:please|pls|plz|now|right now|asap|today|immediately|thanks|thank you|thx|ty|too|already|for good|permanently|completely))*$";
 const OPT_OUT_EN: RegExp[] = [
   new RegExp(`\\b(?:stop|quit|cease) (?:texting|messaging|contacting|sending|bothering|spamming|writing to|emailing|calling) ${ME}\\b`),
   new RegExp(`\\bstop (?:sending (?:me |us |these |the |your |all )?|the |these |your |all |all the |all these |all of these )${MSGS}\\b`),
@@ -536,6 +538,8 @@ const OPT_OUT_EN: RegExp[] = [
   /\bopt (?:me )?out\b/,
   new RegExp(`\\b(?:remove|take) ${ME} (?:off|from) (?:your|this|the|all|every|ur) (?:list|lists|texts?|messages|contacts)\\b`),
   /\b(?:remove|delete|lose) my (?:number|phone number|info|contact)\b/,
+  new RegExp(`^${ACCOUNT_REMOVAL_LEAD}(?:delete|remove|erase|close|deactivate|wipe) (?:all (?:of )?)?my (?:whole |entire )?(?:account|profile|data)${ACCOUNT_REMOVAL_TAIL}`),
+  /^(?:please |pls )?i (?:just )?want out(?: (?:please|pls|now|already))*$/,
   new RegExp(`\\b(?:don't|do not|dont|pls don't|please don't|never) (?:text|message|contact|msg|sms|write to|email) ${ME}\\b`),
   /\bleave me alone\b/,
   /\bwrong number\b/,
