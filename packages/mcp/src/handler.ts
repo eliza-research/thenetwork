@@ -1462,7 +1462,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
             if (profileLimitReached(sentToday)) return out(429, rpcError(id, -31029, "Too many profiles today"), { "retry-after": "3600" });
           }
         }
-        const outcome = await callTool(tool, params.arguments, { apps, surface, host, hooks: o.platform, grant: auth?.grant ?? null, scopes: auth?.token.scopes ?? [], store, now: now(), log, assistant: auth ? assistantOf(auth.client) : undefined });
+        const outcome = await callTool(tool, params.arguments, { apps, surface, host, hooks: o.platform, grant: auth?.grant ?? null, scopes: auth?.token.scopes ?? [], store, now: now(), log, assistant: auth ? assistantOf(auth.client) : undefined }, now);
         if (outcome.kind === "profile_refusal" || ((need === "profile:read" || need === "photos:use") && outcome.kind === "ok" && auth)) {
           const live = await bearer(c, resource);
           if (live === "unavailable") return out(503, rpcError(id, -32603, "Your connection cannot be checked right now. Please try again shortly."), { "retry-after": "5" });

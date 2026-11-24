@@ -173,7 +173,7 @@ export type ProfileSubmissionGrant = Pick<Grant, "id" | "app" | "phoneKey" | "pe
 export type AssistantGrantCandidate = { grant: Grant; client: OAuthClient };
 
 export interface OAuthStore {
-  putSignupDraft(d: SignupDraft, at: number): Promise<boolean>;
+  putSignupDraft(d: SignupDraft, now: () => number): Promise<boolean>;
   /** Recoverable read for the verified phone/app until deliberate discard or expiry. */
   claimSignupDraft(phoneKey: string, app: McpAppId, personId: string | null, now: () => number): Promise<SignupDraftFields | undefined>;
   useSignupPrefill(ask: SignupPrefillAsk, now: () => number): Promise<SignupDraftFields | undefined>;
@@ -258,7 +258,8 @@ export class MemoryOAuthStore implements OAuthStore {
   readonly rows: AuditRow[] = [];
   readonly windows = new Map<string, { start: number; count: number; windowMs: number }>();
 
-  async putSignupDraft(d: SignupDraft, at: number) {
+  async putSignupDraft(d: SignupDraft, now: () => number) {
+    const at = now();
     const g = this.grants.get(d.grantId);
     if (!g || !signupDraftGrantAllowed(g.app === d.app && g.phoneKey === d.phoneKey, g.expiresAt > at, g.revokedAt === null, g.scopes.includes("profile:write"))
       || signupDraftExpired(d.expiresAt, at) || !signupDraftCanPrepare(this.preparedSignupDraftGrants.has(g.id))) return false;

@@ -330,3 +330,22 @@ test('a saved lower age stays effective when optional draft cleanup fails (spec/
   expect(await recovery.json()).toMatchObject({ draft: null });
   expect(store.signupDrafts.size).toBe(0);
 });
+
+test.skipIf(!pgAvailable)("an expired signup draft leaves the grant's one write available", async () => {
+  const store = new PgOAuthStore(await testDb());
+  try {
+    const e = setup({ store });
+    await connect(e, "friends.help", PHONE_A, { scope: "membership:read profile:write" });
+    const phoneKey = e.accounts.phoneHash(PHONE_A);
+    const [grant] = await store.grantsFor(phoneKey, "friends", e.clock.t);
+    const draft = {
+      grantId: grant.id, app: "friends" as const, phoneKey, fields: { firstName: "Ari", homeCity: "sf" as const },
+      expiresAt: e.clock.t,
+    };
+    const now = () => e.clock.t;
+    expect(await store.putSignupDraft(draft, now)).toBe(false);
+    expect(await store.sql`select signup_draft_prepared from oauth.grants where id=${grant.id}`).toEqual([{ signup_draft_prepared: false }]);
+    expect(await store.putSignupDraft({ ...draft, expiresAt: e.clock.t + 1_000 }, now)).toBe(true);
+    expect(await store.putSignupDraft({ ...draft, expiresAt: e.clock.t + 1_000 }, now)).toBe(false);
+  } finally { await store.close(); await dropTestDb(); }
+});

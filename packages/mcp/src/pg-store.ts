@@ -101,10 +101,11 @@ export class PgOAuthStore implements OAuthStore {
     return rows.length === 1;
   }
 
-  async putSignupDraft(d: SignupDraft, at: number) {
+  async putSignupDraft(d: SignupDraft, now: () => number) {
     return this.sql.begin(async tx => {
       const [g] = await tx<{ app_id: string; phone_key: string; expires_at: Date; revoked_at: Date | null; scopes: unknown; signup_draft_prepared: boolean }[]>`
         select app_id, phone_key, expires_at, revoked_at, scopes, signup_draft_prepared from oauth.grants where id=${d.grantId} for update`;
+      const at = now();
       if (!g || !signupDraftGrantAllowed(g.app_id === d.app && g.phone_key === d.phoneKey, ms(g.expires_at)! > at, g.revoked_at === null, arr(g.scopes).includes("profile:write"))
         || signupDraftExpired(d.expiresAt, at) || !signupDraftCanPrepare(g.signup_draft_prepared)) return false;
       const rows = await tx`insert into oauth.signup_drafts (grant_id, app_id, phone_key, fields, expires_at)
