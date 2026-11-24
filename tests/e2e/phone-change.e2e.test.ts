@@ -96,7 +96,7 @@ describe.skipIf(!pgAvailable)("spec/phoneChange.md, a member whose number change
   }, T);
 });
 
-describe.skipIf(!pgAvailable)("spec/phoneChange.md, a member whose number changed keeps one person, on a Cloud sign-in site", () => {
+describe.skipIf(!pgAvailable)("spec/phoneChange.md, phone changes on a Cloud sign-in site", () => {
   let url: string, store: PgPeopleStore, server: HttpServer;
   let now = Date.UTC(2026, 10, 18, 15);
   let cloudPhone = "", challenge = "", exchanges = 0;
@@ -138,38 +138,33 @@ describe.skipIf(!pgAvailable)("spec/phoneChange.md, a member whose number change
   };
   const cloudSignIn = async (b: Browser, phone: string) => {
     cloudPhone = phone;
-    const start = await call(b, "POST", "/api/auth/cloud/start", { returnPath: "/phone" });
+    const start = await call(b, "POST", "/api/auth/cloud/start", { returnPath: "/join" });
     expect(start).toMatchObject({ status: 200, body: { url: expect.any(String) } });
     const authorize = new URL((start.body as { url: string }).url);
     challenge = authorize.searchParams.get("challenge")!;
     const back = await call(b, "GET", `/api/auth/cloud/callback?code=enso_${(++exchanges).toString(16).padStart(64, "0")}&state=${authorize.searchParams.get("state")}`);
-    expect({ status: back.status, location: back.location }).toEqual({ status: 303, location: "/phone" });
+    expect({ status: back.status, location: back.location }).toEqual({ status: 303, location: "/join" });
   };
 
-  test("\"The request uses the existing account\" and \"After a move the browser signs in on the new number in its own sign-in mode\": a fresh Cloud proof of the old number starts the change, the platform code moves the person, and only the new number reaches them", async () => {
+  test("Cloud sign-in keeps the existing phone and cannot start or confirm a change", async () => {
     const [A, B] = ["+12125550231", "+12125550232"];
     const b = new Browser();
+    expect((await call(b, "POST", "/api/auth/cloud/start", { returnPath: "/phone" })).status).toBe(400);
     await cloudSignIn(b, A);
     expect((await call(b, "POST", "/api/join", { firstName: "Ana", age: 31, consent: { sms: true, version: APPS.slop.consent.version } })).status).toBe(200);
     const personId = (await store.findPhone(A))!.personId;
-
+    const closed = { status: 409, body: { error: "cloud_auth_required" } };
+    expect(await call(b, "POST", "/api/me/phone/start", { phone: B })).toMatchObject(closed);
     now += 11 * MIN;
-    expect(await call(b, "POST", "/api/me/phone/start", { phone: B })).toMatchObject({ status: 403, body: { error: "reauth", message: REAUTH_TEXT } });
-    expect(codes.has(B)).toBe(false);
     await cloudSignIn(b, A);
-    const old = new Browser();
-    for (const [k, v] of b.jar) old.jar.set(k, v);
-    expect(await call(b, "POST", "/api/me/phone/start", { phone: B })).toMatchObject({ status: 200, body: { ok: true } });
-    expect(await call(b, "POST", "/api/me/phone/confirm", { code: codes.get(B) })).toMatchObject({ status: 200, body: { ok: true } });
-
-    expect(b.jar.size).toBe(0);
-    expect((await call(old, "GET", "/api/me")).status).toBe(401);
-    expect(await store.findPhone(A)).toBeUndefined();
-    const recycled = new Browser();
-    await cloudSignIn(recycled, A);
-    expect((await call(recycled, "GET", "/api/me")).body).toMatchObject({ membership: null, canJoin: true });
-    await cloudSignIn(b, B);
+    expect(await call(b, "POST", "/api/me/phone/start", { phone: B })).toMatchObject(closed);
+    expect(await call(b, "POST", "/api/me/phone/confirm", { code: "123456" })).toMatchObject(closed);
+    expect(codes.size).toBe(0);
+    expect((await store.findPhone(A))?.personId).toBe(personId);
+    expect(await store.findPhone(B)).toBeUndefined();
     expect((await call(b, "GET", "/api/me")).body).toMatchObject({ membership: { state: "active", firstName: "Ana" } });
-    expect((await store.findPhone(B))!.personId).toBe(personId);
+    const other = new Browser();
+    await cloudSignIn(other, B);
+    expect((await call(other, "GET", "/api/me")).body).toMatchObject({ membership: null, canJoin: true });
   }, T);
 });
