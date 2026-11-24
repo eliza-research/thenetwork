@@ -90,11 +90,11 @@ export function consentPage(app: McpApp, rid: string, clientName: string | null,
   return respond(app, "Allow access", view, { formTargets: [redirectOrigin], status: o.unavailable ? 503 : 200 });
 }
 
-export type SignupPageOptions = Pick<AuthSignupViewProps, "consent" | "requiresInvitation" | "signupView" | "error">;
+export type SignupPageOptions = Pick<AuthSignupViewProps, "consent" | "requiresInvitation" | "signupView" | "error" | "birthdateError">;
 
 /** The verified browser's transient form for confirming the app's signup. */
 export function signupPage(app: McpApp, rid: string, options: SignupPageOptions) {
-  return respond(app, "Confirm your signup", h(AuthSignupView, { app: appKeyOf(app), rid, ...options }), { status: options.error ? 400 : 200 });
+  return respond(app, "Confirm your signup", h(AuthSignupView, { app: appKeyOf(app), rid, ...options }), { status: options.error || options.birthdateError ? 400 : 200 });
 }
 
 const messageReplies = {

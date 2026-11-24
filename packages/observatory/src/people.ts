@@ -49,7 +49,8 @@ export class PeopleView {
   async summary(personId: string): Promise<PersonSummary | undefined> {
     if (!UUID.test(personId)) return undefined;
     const [people, memberships, made, received, states] = await Promise.all([
-      this.sql`select id, lowest_age, created_at, deleted_at from platform.people where id = ${personId}`,
+      this.sql`select p.id, a.age as lowest_age, p.created_at, p.deleted_at from platform.people p
+        join platform.observatory_person_ages a on a.person_id = p.id where p.id = ${personId}`,
       this.sql`select app_id, member_id, state, review, joined_at, left_at from platform.memberships where person_id = ${personId} order by app_id`,
       this.sql`select to_person, origin_app, at from platform.person_blocks where from_person = ${personId} order by at`,
       this.sql`select from_person, origin_app, at from platform.person_blocks where to_person = ${personId} order by at`,

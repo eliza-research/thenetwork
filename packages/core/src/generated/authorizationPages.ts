@@ -17,6 +17,8 @@ export interface AuthPage { view: AuthView; fieldError: FieldError; securityChec
 export type ClientLabel = "ProvidedName" | "UnnamedAssistant" | "NoClientShown";
 /** Story: Decide what my assistant can do / The consent page names the client as its claim and lists every scope (spec/authorizationPages.md) */
 export interface ConsentParts { client: ClientLabel; claimNote: boolean; returnHost: boolean; scopeList: boolean; unavailableNotice: boolean }
+/** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
+export interface CalendarDate { year: number; month: number; day: number }
 /** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
 export type Scope = "AppsRead" | "MembershipRead" | "ProfileWrite" | "ProfileRead";
 /** Story: Understand a page that stops the connection / Every page shows the brand mark and the legal links (spec/authorizationPages.md) */
@@ -371,6 +373,130 @@ export function lawSignupNoticeRequiresSave(view: AuthView): boolean {
   return !showsSignupConfirmation(view, false);
 }
 
+/** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
+//@ pure
+export function isLeapYear(year: number): boolean {
+  return remainder_authorizationPages(year, 4) === 0 && (remainder_authorizationPages(year, 100) !== 0 || remainder_authorizationPages(year, 400) === 0);
+}
+
+/** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
+//@ pure
+export function dateBefore(first: CalendarDate, second: CalendarDate): boolean {
+  return first.year < second.year || (first.year === second.year && (first.month < second.month || (first.month === second.month && first.day < second.day)));
+}
+
+/** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
+//@ pure
+export function birthdayNotYetThisYear(birth: CalendarDate, today: CalendarDate): boolean {
+  return today.month < birth.month || (today.month === birth.month && today.day < birth.day);
+}
+
+/** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
+//@ pure
+export function signupClockDay(ms: number): number {
+  return ms >= 43200000 ? quotient_authorizationPages(exact_authorizationPages(ms - 43200000), 86400000) : 0;
+}
+
+/** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
+//@ pure
+export function daysInMonth(year: number, month: number): number {
+  return month === 2 ? (isLeapYear(year) ? 29 : 28) : (month === 4 || month === 6 || month === 9 || month === 11 ? 30 : 31);
+}
+
+/** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
+//@ pure
+export function ageOnDate(birth: CalendarDate, today: CalendarDate): number {
+  return exact_authorizationPages(exact_authorizationPages(today.year - birth.year) - (birthdayNotYetThisYear(birth, today) ? 1 : 0));
+}
+
+/** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
+//@ pure
+export function signupAdultDate(birth: CalendarDate): CalendarDate {
+  const local_2 = exact_authorizationPages(birth.year + 18);
+  return birth.month === 2 && birth.day === 29 && !isLeapYear(local_2) ? ({ year: local_2, month: 3, day: 1 } as CalendarDate) : ({ year: local_2, month: birth.month, day: birth.day } as CalendarDate);
+}
+
+/** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
+//@ pure
+export function calendarDateExists(date: CalendarDate): boolean {
+  return date.year >= 1 && date.year <= 9999 && date.month >= 1 && date.month <= 12 && date.day >= 1 && date.day <= daysInMonth(date.year, date.month);
+}
+
+/** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
+//@ pure
+export function lawBirthdayNotYetGivesOneYearLess(birth: CalendarDate, today: CalendarDate): boolean {
+  //@ ensures \result === true
+  return !birthdayNotYetThisYear(birth, today) || ageOnDate(birth, today) === exact_authorizationPages(exact_authorizationPages(today.year - birth.year) - 1);
+}
+
+/** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
+//@ pure
+export function lawBirthdayReachedGivesFullYears(birth: CalendarDate, today: CalendarDate): boolean {
+  //@ ensures \result === true
+  return !(!birthdayNotYetThisYear(birth, today)) || ageOnDate(birth, today) === exact_authorizationPages(today.year - birth.year);
+}
+
+/** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
+//@ pure
+export function lawLeapDayBirthdayCountsFromMarchFirst(year: number): boolean {
+  //@ ensures \result === true
+  return ageOnDate(({ year: year, month: 2, day: 29 } as CalendarDate), ({ year: exact_authorizationPages(year + 1), month: 2, day: 28 } as CalendarDate)) === 0 && ageOnDate(({ year: year, month: 2, day: 29 } as CalendarDate), ({ year: exact_authorizationPages(year + 1), month: 3, day: 1 } as CalendarDate)) === 1;
+}
+
+/** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
+//@ pure
+export function birthdateAccepted(birth: CalendarDate, today: CalendarDate): boolean {
+  return calendarDateExists(birth) && calendarDateExists(today) && !dateBefore(today, birth) && ageOnDate(birth, today) <= 120;
+}
+
+/** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
+//@ pure
+export function lawAdultSignupDateCountsEighteen(birth: CalendarDate): boolean {
+  //@ ensures \result === true
+  return !calendarDateExists(birth) || ageOnDate(birth, signupAdultDate(birth)) === 18;
+}
+
+/** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
+//@ pure
+export function lawLeapDayOnlyInLeapYears(year: number): boolean {
+  //@ ensures \result === true
+  return !(year >= 1 && year <= 9999) || calendarDateExists(({ year: year, month: 2, day: 29 } as CalendarDate)) === isLeapYear(year);
+}
+
+/** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
+//@ pure
+export function lawFutureBirthdateRefused(birth: CalendarDate, today: CalendarDate): boolean {
+  //@ ensures \result === true
+  return !dateBefore(today, birth) || !birthdateAccepted(birth, today);
+}
+
+/** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
+//@ pure
+export function lawImpossibleBirthdateRefused(birth: CalendarDate, today: CalendarDate): boolean {
+  //@ ensures \result === true
+  return !(!calendarDateExists(birth)) || !birthdateAccepted(birth, today);
+}
+
+/** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
+//@ pure
+export function lawAcceptedAgeIsBetweenZeroAnd120(birth: CalendarDate, today: CalendarDate): boolean {
+  //@ ensures \result === true
+  return !birthdateAccepted(birth, today) || (ageOnDate(birth, today) >= 0 && ageOnDate(birth, today) <= 120);
+}
+
+/** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
+//@ pure
+export function calendarDateOfDay(epochDay: number): CalendarDate {
+  const local_3 = exact_authorizationPages((epochDay >= 0 ? epochDay : 0) + 719468);
+  const local_4 = quotient_authorizationPages(local_3, 146097);
+  const local_5 = exact_authorizationPages(local_3 - exact_authorizationPages(local_4 * 146097));
+  const local_6 = quotient_authorizationPages(exact_authorizationPages(exact_authorizationPages(exact_authorizationPages(local_5 - quotient_authorizationPages(local_5, 1460)) + quotient_authorizationPages(local_5, 36524)) - quotient_authorizationPages(local_5, 146096)), 365);
+  const local_7 = exact_authorizationPages(local_5 - exact_authorizationPages(exact_authorizationPages(exact_authorizationPages(365 * local_6) + quotient_authorizationPages(local_6, 4)) - quotient_authorizationPages(local_6, 100)));
+  const local_8 = quotient_authorizationPages(exact_authorizationPages(exact_authorizationPages(5 * local_7) + 2), 153);
+  const local_9 = local_8 < 10 ? exact_authorizationPages(local_8 + 3) : exact_authorizationPages(local_8 - 9);
+  return { year: exact_authorizationPages(exact_authorizationPages(local_6 + exact_authorizationPages(local_4 * 400)) + (local_9 <= 2 ? 1 : 0)), month: local_9, day: exact_authorizationPages(exact_authorizationPages(local_7 - quotient_authorizationPages(exact_authorizationPages(exact_authorizationPages(153 * local_8) + 2), 5)) + 1) };
+}
+
 /** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
 //@ pure
 export function scopeName(scope: Scope): string {
@@ -705,10 +831,31 @@ export function initialHolds(): AuthPage {
   return initial;
 }
 
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_authorizationPages(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
+}
+
 /** Equality by structure, as Quint and the proof compare records, lists, maps and variants (none holds a set). */
 export function equal_authorizationPages(a: unknown, b: unknown): boolean {
   if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return a === b;
   const keys = Object.keys(a);
   return Array.isArray(a) === Array.isArray(b) && keys.length === Object.keys(b).length
     && keys.every((k) => Object.hasOwn(b, k) && equal_authorizationPages((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
+}
+
+/** Whole-number division as Quint does it: towards zero. */
+//@ pure
+export function quotient_authorizationPages(a: number, b: number): number {
+  //@ requires b !== 0
+  if (b === 0) throw new RangeError(`${a} cannot be divided by zero`);
+  return (a < 0 === b < 0 ? 1 : -1) * Math.floor(Math.abs(a) / Math.abs(b)) + 0;
+}
+
+/** The remainder of that division; it has the sign of the dividend. */
+//@ pure
+export function remainder_authorizationPages(a: number, b: number): number {
+  //@ requires b !== 0
+  return a - b * quotient_authorizationPages(a, b);
 }
