@@ -48,7 +48,10 @@ function App() {
       if (e.key === "/") { e.preventDefault(); document.getElementById("obs-search")?.focus(); }
       else if (e.key === "?") store.toggleHelp();
       else if (e.key === "g") store.showStage(store.ui.view === "map" ? "graph" : "map");
-      else if (e.key === " " && canStep) { e.preventDefault(); store.control({ type: store.clock?.playing ? "pause" : "play" }); }
+      else if (e.key === " " && canStep) {
+        if ((e.target as Element | null)?.closest?.("button, [role=button]")) return;
+        e.preventDefault(); store.control({ type: store.clock?.playing ? "pause" : "play" });
+      }
       else if (e.key === "n" && canStep) store.control({ type: "step", ms: HOUR });
       else if (e.key === "d" && canStep) store.control({ type: "step", ms: DAY });
     };
