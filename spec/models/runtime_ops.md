@@ -66,7 +66,7 @@ Imported from `quint/runtime_ops.qnt` at `30d950e`. See [model index](README.md)
 // M-141 backend-tick-loop deploy/backend/backend.ts (tickSet "backend"), serve.ts startTicks ("serve")
 // M-142 backend-process-lifecycle deploy/backend/backend.ts, server.ts
 // M-143 backend-boot deploy/backend/server.ts, backend.ts
-// M-144 migration-runner packages/observatory/db/migrate.ts
+// M-144 migration-runner packages/db/migrate.ts
 //   M-149 wrangler-deploy-guard  scripts/wrangler.sh decide() and its run step
 //   M-150 alert-dispatcher       deploy/backend/ops.ts collectNetwork, evaluate, AlertDispatcher.dispatch, createOps().tick
 // M-151 bias-report-cadence packages/network/service/service.ts

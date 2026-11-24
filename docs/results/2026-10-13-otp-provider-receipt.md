@@ -44,7 +44,7 @@ a chat ID still verifies normally. Existing cases cover provider binding,
 Twilio verification, expiry, attempt limits, one-use codes and uncertain sends.
 
 ```sh
-pnpm exec vitest run --testTimeout 120000 packages/platform/test/blooio-otp.integration.test.ts packages/platform/test/db.test.ts packages/observatory/test/migrations.test.ts
+pnpm exec vitest run --testTimeout 120000 packages/platform/test/blooio-otp.integration.test.ts packages/platform/test/db.test.ts apps/observatory/test/migrations.test.ts
 node node_modules/typescript/bin/tsc --noEmit -p .
 ```
 

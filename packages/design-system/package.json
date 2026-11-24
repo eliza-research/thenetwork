@@ -16,5 +16,8 @@
   "scripts": {
     "build": "node build.ts build",
     "check": "node build.ts check"
+  },
+  "dependencies": {
+    "tailwindcss": "catalog:"
   }
 }

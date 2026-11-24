@@ -7,7 +7,7 @@ slop.date is dating, the first app on The Network's shared matching engine. This
 - Code: `packages/sim/src/apps/slop/*.ts`, tests in `packages/sim/src/apps/test/slop.test.ts` (12 tests, offline, keys empty).
 - Hand-written: this report and the model. Generated: every number in the tables (commands below).
 - LLM use: none for any number here. The optional prose pass (`prose.ts`, `defaultLLM()`, gpt-6-luna) was run once as a smoke test on 6 personas: 6 calls, $0.000084, cached in `runs/worlds/slop-prose-cache/` (a rerun had 6 cache hits and $0). Bios do not enter the oracle or the harness.
-- Not touched: `packages/engine`, `packages/sim`, `packages/network`, `packages/observatory`. The world imports read-only types from `packages/core` and `packages/engine/src/types.ts`, and reuses `Rng`, `hash32`, the interest taxonomy and the richness tiers from `packages/sim`.
+- Not touched: `packages/engine`, `packages/sim`, `packages/network`, `apps/observatory`. The world imports read-only types from `packages/core` and `packages/engine/src/types.ts`, and reuses `Rng`, `hash32`, the interest taxonomy and the richness tiers from `packages/sim`.
 
 ## Result in brief
 

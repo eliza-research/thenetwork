@@ -6,7 +6,7 @@ import { earliestDayKeyOf } from "../../core/src/birth-date.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
-import { migrate } from "../../observatory/db/migrate.ts";
+import { migrate } from "../../db/migrate.ts";
 import { APPS, keywordApp, lookingForReading, type AppId } from "../../platform/src/apps.ts";
 import { detectKeyword } from "../../platform/src/consent.ts";
 import { DryRunAdapter } from "../service/channel.ts";

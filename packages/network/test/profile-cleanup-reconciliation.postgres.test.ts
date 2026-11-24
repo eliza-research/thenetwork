@@ -12,7 +12,7 @@ import {
 } from "vitest";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { applySchema } from "../../observatory/db/dev-pg.ts";
+import { applySchema } from "../../db/dev-pg.ts";
 import {
 	ProfileSuggestions,
 	type SuggestionOwner,

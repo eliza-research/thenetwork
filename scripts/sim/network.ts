@@ -22,8 +22,8 @@ import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, evaluateExpectations
 import { friendFactory, nycPersonas, runArm, runScenario, SCENARIOS, type ArmResult } from "../../packages/network/harness/index.ts";
 import { allowedAt, ConsentNetwork, holdEveryItem, NY, OUTREACH, reviewTicket, SIM_REVIEW_JUDGE, simulatedReviewJudge, VENUES, type NetworkOptions } from "../../packages/network/src/index.ts";
 import { simulatedStaffAction } from "../../packages/core/src/generated/automatedReview.ts";
-import { Projector } from "../../packages/observatory/src/projector.ts";
-import { Store } from "../../packages/observatory/src/store.ts";
+import { Projector } from "../../apps/observatory/src/projector.ts";
+import { Store } from "../../apps/observatory/src/store.ts";
 import { styleViolations } from "../../packages/network/src/copy.ts";
 import { Mini, START } from "../../packages/network/test/mini.ts";
 import { DATA_DIR } from "../synthetic/common.ts";

@@ -268,7 +268,7 @@ Only `"yes"` is consent. Negations ("absolutely not", "ok no", "yeah no", "I'm n
 
 ## Items for the network/platform session
 
-These need changes in files this session does not own (packages/network, packages/platform, packages/observatory, sites, CI, Cloud).
+These need changes in files this session does not own (packages/network, packages/platform, apps/observatory, sites, CI, Cloud).
 
 ### Consent and replies
 1. **network-consent-2.** `packages/network/src/network.ts:21` imports `parseYesNo` from `@thenetwork/sim`. Import the shared parser from core instead: `import { parseReply, classifyYesNo, parseOptOut } from "@thenetwork/core"` (file `packages/core/src/replies.ts`). Treat only `answer === "yes"` as consent. `"unsure"` (hedges, conditions such as "sure, but only with a woman", conflicts) means ask again. `counter: true` means another time, not a yes. A yes can carry `constraints` of kind `"time"` ("yes but not Thursday"). Today network.ts:179 treats the sim's `"counter"` as yes (`yn !== "no"`); fix that too.

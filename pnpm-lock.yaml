@@ -178,6 +178,67 @@ importers:
         specifier: 2.9.1
         version: 2.9.1
 
+  apps/observatory:
+    dependencies:
+      '@tailwindcss/postcss':
+        specifier: ^4.3.5
+        version: 4.3.5
+      '@thenetwork/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@thenetwork/design-system':
+        specifier: workspace:*
+        version: link:../../packages/design-system
+      '@thenetwork/engine':
+        specifier: workspace:*
+        version: link:../../packages/engine
+      '@thenetwork/network':
+        specifier: workspace:*
+        version: link:../../packages/network
+      '@thenetwork/sim':
+        specifier: workspace:*
+        version: link:../../packages/sim
+      '@thenetwork/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
+      d3-force:
+        specifier: ^3.0.0
+        version: 3.0.1
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
+      leaflet:
+        specifier: ^1.9.4
+        version: 1.9.4
+      postcss:
+        specifier: 8.5.33
+        version: 8.5.33
+      react:
+        specifier: 'catalog:'
+        version: 19.3.1
+      react-dom:
+        specifier: 'catalog:'
+        version: 19.3.1(react@19.3.1)
+      tailwindcss:
+        specifier: 'catalog:'
+        version: 4.3.5
+    devDependencies:
+      '@types/d3-force':
+        specifier: ^3.0.10
+        version: 3.0.10
+      '@types/leaflet':
+        specifier: ^1.9.22
+        version: 1.9.22
+      '@types/react':
+        specifier: 'catalog:'
+        version: 19.3.0
+      '@types/react-dom':
+        specifier: 'catalog:'
+        version: 19.3.0(@types/react@19.3.0)
+      happy-dom:
+        specifier: 20.14.0
+        version: 20.14.0
+
   apps/site:
     dependencies:
       '@thenetwork/design-system':
@@ -247,7 +308,11 @@ importers:
         specifier: 8.23.0
         version: 8.23.0
 
-  packages/design-system: {}
+  packages/design-system:
+    dependencies:
+      tailwindcss:
+        specifier: 'catalog:'
+        version: 4.3.5
 
   packages/engine:
     dependencies:
@@ -299,67 +364,6 @@ importers:
         version: link:../sim
 
   packages/notify: {}
-
-  packages/observatory:
-    dependencies:
-      '@tailwindcss/postcss':
-        specifier: ^4.3.5
-        version: 4.3.5
-      '@thenetwork/core':
-        specifier: workspace:*
-        version: link:../core
-      '@thenetwork/design-system':
-        specifier: workspace:*
-        version: link:../design-system
-      '@thenetwork/engine':
-        specifier: workspace:*
-        version: link:../engine
-      '@thenetwork/network':
-        specifier: workspace:*
-        version: link:../network
-      '@thenetwork/sim':
-        specifier: workspace:*
-        version: link:../sim
-      '@thenetwork/ui':
-        specifier: workspace:*
-        version: link:../ui
-      d3-force:
-        specifier: ^3.0.0
-        version: 3.0.1
-      esbuild:
-        specifier: 0.28.2
-        version: 0.28.2
-      leaflet:
-        specifier: ^1.9.4
-        version: 1.9.4
-      postcss:
-        specifier: 8.5.33
-        version: 8.5.33
-      react:
-        specifier: 'catalog:'
-        version: 19.3.1
-      react-dom:
-        specifier: 'catalog:'
-        version: 19.3.1(react@19.3.1)
-      tailwindcss:
-        specifier: 'catalog:'
-        version: 4.3.5
-    devDependencies:
-      '@types/d3-force':
-        specifier: ^3.0.10
-        version: 3.0.10
-      '@types/leaflet':
-        specifier: ^1.9.22
-        version: 1.9.22
-      '@types/react':
-        specifier: 'catalog:'
-        version: 19.3.0
-      '@types/react-dom':
-        specifier: 'catalog:'
-        version: 19.3.0(@types/react@19.3.0)
-      happy-dom:
-        specifier: 20.14.0
-        version: 20.14.0
 
   packages/platform:
     dependencies:
@@ -3265,13 +3269,16 @@ packages:
 
   vibelang-runtime@0.0.13:
     resolution: {integrity: sha512-E7Yn+k8ElL9ZYGj5aT1e1h60Zb3W3nZZPlgJgJC+Ce7IQkxH2uTRLotApVuOQpD2U+p9AbrMzXWjQPi5zMKb3g==}
-    engines: {node: ^22.22.3 || >=24.11.1}
+    engines: {bun: '>=1.4', node: ^22.22.3 || >=24.11.1}
     peerDependencies:
       '@effect/platform-browser': 4.1.1
+      '@effect/platform-bun': 4.1.1
       '@effect/platform-node': 4.1.1
       effect: 4.1.1
     peerDependenciesMeta:
       '@effect/platform-browser':
+        optional: true
+      '@effect/platform-bun':
         optional: true
       '@effect/platform-node':
         optional: true

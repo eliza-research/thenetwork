@@ -93,7 +93,7 @@ jobs:
           echo "$bin" >> "$GITHUB_PATH"
           "$bin/pg_isready" -h localhost -p 54339
           node --import tsx scripts/require-pg.ts
-          node --import tsx packages/observatory/db/dev-pg.ts up
+          node --import tsx packages/db/dev-pg.ts up
       - &formal-keys
         name: Identify formal action archives
         id: formal-keys

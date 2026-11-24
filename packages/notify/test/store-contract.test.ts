@@ -2,8 +2,8 @@
 // uses its own database on the local dev cluster (:54339) and is skipped without Postgres.
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
-import { pgAvailable } from "../../observatory/test/pg.ts";
+import { DEV_PG_PORT, devPgUp } from "../../db/dev-pg.ts";
+import { pgAvailable } from "../../../apps/observatory/test/pg.ts";
 import { MemoryNotifyStore, type NotifyStore } from "../src/index.ts";
 import { PgNotifyStore } from "../src/pg-store.ts";
 

@@ -4,7 +4,7 @@ import { SQL } from "../../core/src/runtime/postgres.ts";
 import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { SIM_REVIEW_JUDGE, simulatedServiceJudge } from "../../engine/src/reviewJudge.ts";
-import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
+import { dropTestDb, pgAvailable, testDb } from "../../../apps/observatory/test/pg.ts";
 import { BlooioAdapter, DryRunAdapter, type Delivery, type Outbound } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
 import type { NetworkState } from "../src/network.ts";

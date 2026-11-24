@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { SimClock } from "@thenetwork/core";
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
-import { PgAudit } from "../../observatory/src/staff.ts";
-import type { AuditEntry } from "../../observatory/src/types.ts";
+import { dropTestDb, pgAvailable, testDb } from "../../../apps/observatory/test/pg.ts";
+import { PgAudit } from "../../../apps/observatory/src/staff.ts";
+import type { AuditEntry } from "../../../apps/observatory/src/types.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { CloudChannelAdapter } from "../service/cloud-channel.ts";
 import { NetworkService } from "../service/service.ts";

@@ -12,7 +12,7 @@ Imported from `quint/console_privacy.qnt` at `30d950e`. See [model index](README
 
 Production chooses its view class with [Observatory staff permissions](../staffPermissions.md). This standalone model covers the field-level effects.
 
-`countsMember` in `packages/observatory/src/shape.ts` drops `declined`, `weekly`, `calendar` and `community` with the age fields, and `memberFieldLevel` puts them in the full class, so a counts-class caller reads no age fact (`countsGetNoAgeFacts` in `safety`, `declinedLeaksTest`). `packages/observatory/test/staff.test.ts` ("an analyst's members carry no age band") is the boundary case.
+`countsMember` in `apps/observatory/src/shape.ts` drops `declined`, `weekly`, `calendar` and `community` with the age fields, and `memberFieldLevel` puts them in the full class, so a counts-class caller reads no age fact (`countsGetNoAgeFacts` in `safety`, `declinedLeaksTest`). `apps/observatory/test/staff.test.ts` ("an analyst's members carry no age band") is the boundary case.
 
 ```quint
 // -*- mode: Bluespec; -*-
@@ -21,14 +21,14 @@ Production chooses its view class with [Observatory staff permissions](../staffP
 // console_privacy: what the Observatory gives each staff caller about members and persons.
 //
 // WHAT THIS MODELS
-//   - The view class of one caller for one app (viewClass in packages/observatory/src/shape.ts, which
+//   - The view class of one caller for one app (viewClass in apps/observatory/src/shape.ts, which
 //     calls the generated fullStaffView of spec/staffPermissions.md). The roles change at any time. The
 //     server shapes each delta for the class that the socket has when it sends (server.ts sets w.cls
 //     again on each check). The roles are the ones rolesFor gives after scopedGrants: an engineer grant
 //     is already dropped in real mode, so the model takes the four role flags as given.
 //   - The member and opportunity fields that one delta carries for that class (countsMember, countsOpp),
 //     the hidden truth (shapeState) and the oracle verdict (stripOracle).
-//   - The cross-app person view (packages/observatory/src/people.ts PeopleView.summary, web/apps.tsx): the
+//   - The cross-app person view (apps/observatory/src/people.ts PeopleView.summary, web/apps.tsx): the
 //     membership rows of one person change, the summary is built from them, and a staff member opens
 //     one app's panel with a typed reason.
 //   Compared with the code on vibestack-matching (2026-11-17). The old LemmaScript core privacy-core.ts

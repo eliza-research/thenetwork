@@ -5,7 +5,7 @@ import { afterAll, beforeAll, expect, test } from "vitest";
 import { SimClock } from "@thenetwork/core";
 import { spawnProcess } from "../../core/src/runtime/process.ts";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
-import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
+import { dropTestDb, pgAvailable, testDb } from "../../../apps/observatory/test/pg.ts";
 import { backendWebhookServed } from "../../core/src/generated/bootPolicy.ts";
 import { DryRunAdapter } from "../service/channel.ts";
 import { serveService, startTicks } from "../service/serve.ts";

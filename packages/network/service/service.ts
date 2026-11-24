@@ -143,7 +143,7 @@ import type { PhotoHoldingsView } from "../../mcp/src/hooks.ts";
 import { textPhotoLineAllowed } from "../../core/src/generated/photoPolicy.ts";
 import { biasAlerts, biasReport, type BiasMember, type StoredBiasReport } from "./bias.ts";
 import { weeklyBiasDue } from "../../core/src/generated/weeklyBias.ts";
-import { DEFAULT_SLA_HOURS } from "../../observatory/src/apps.ts";
+import { DEFAULT_SLA_HOURS } from "../../../apps/observatory/src/apps.ts";
 import { waitExceedsSla } from "../../core/src/generated/operationsTiming.ts";
 import { applyBaseProfileGrants } from "./base-profile-share.ts";
 import { unshareRevokesGrant } from "../../core/src/generated/baseProfileShare.ts";
@@ -171,11 +171,11 @@ import type { RelayClassifierHook } from "../../engine/src/relay.ts";
 import { qualifiedJudge, readJudgeQualifications, type JudgeQualification } from "./review-qualified.ts";
 import type { ChannelEvent } from "../../blooio/src/types.ts";
 // The Observatory's staff auth (per-app role grants) and audit sink, so the console and the service agree.
-import { allowed, authenticate, globalRolesFor, hasEverywhere, PgAudit, rolesFor, type AuditSink } from "../../observatory/src/staff.ts";
+import { allowed, authenticate, globalRolesFor, hasEverywhere, PgAudit, rolesFor, type AuditSink } from "../../../apps/observatory/src/staff.ts";
 import { serviceTokenGrants } from "./line-staff-boot.ts";
-import { serviceStaffStep } from "../../observatory/src/staffSteps.ts";
+import { serviceStaffStep } from "../../../apps/observatory/src/staffSteps.ts";
 import { staffStepActorAccepted, staffStepAdmitted, staffStepRoles, type StepActor } from "../../core/src/generated/staffPermissions.ts";
-import type { AuditEntry, RoleGrant, StaffRole, StaffUser } from "../../observatory/src/types.ts";
+import type { AuditEntry, RoleGrant, StaffRole, StaffUser } from "../../../apps/observatory/src/types.ts";
 
 /** The homes a conversation can have; each belongs to exactly one network of an app (runtimeForHome). */
 const CONVERSATION_CITIES: readonly City[] = ["nyc", "sf", "la"];

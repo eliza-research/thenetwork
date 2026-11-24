@@ -4,9 +4,9 @@ import { existsSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { findExecutable } from "../../core/src/runtime/process.ts";
-import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
-import { staffUser } from "../../observatory/src/staff.ts";
-import type { StaffUser } from "../../observatory/src/types.ts";
+import { applySchema, DEV_PG_PORT, devPgUp } from "../../db/dev-pg.ts";
+import { staffUser } from "../../../apps/observatory/src/staff.ts";
+import type { StaffUser } from "../../../apps/observatory/src/types.ts";
 import { handleBoundedHomeHelpStaff, writeBoundedHomeHelpStaffAudit, type BoundedHomeHelpStaffDeps } from "../service/bounded-home-help-staff.ts";
 import { BoundedHomeHelp } from "../src/bounded-help.ts";
 
