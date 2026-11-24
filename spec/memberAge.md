@@ -340,7 +340,7 @@ pure val adultBirthKeyValues = Set(19000101, 19900101, 20071122, 20100101, 20130
 
 ### A private signup date can end a birthday-only minor restriction
 
-A successful signup from a verified browser can keep the initial minor age and the date when that member turns 18. The person can also keep an exact private birth reading from this signup when the age on the Clock date is 13 through 18. This reading makes an otherwise eligible person ready for the teen friendship age check. It follows the same younger and conflicting age rules as a birth date from text. A browser request keeps this reading only after enrollment succeeds and the app and phone still identify the member. A refusal records no exact date. A person aged 19 or more gives only the numeric age on this path. Raw dates and ranges are available only to the trusted runtime, never in a member profile, a model packet or staff output. This date stays with the verified person, separate from app profiles, staff data, and age statements heard elsewhere. Before that date, the signup observation supplies its initial age. When the Clock reaches that date, it supplies 18. A lower independent age still applies on every app. An older cached signup age can stop restricting the member only when the new effective age is an adult age and no other youth statement, signal, report or conflict keeps it restricted. An unresolved age stays restricted. If the person later gives a second accepted date, use the later date and the lower initial minor age. Deleting the account removes the date. The existing safety rule for a retained numeric age remains in force.
+A successful signup from a verified browser can keep the initial minor age and the date when that member turns 18. The person can also keep an exact private birth reading from this signup when the age on the Clock date is 13 through 18. This reading makes an otherwise eligible person ready for the teen friendship age check. It follows the same younger and conflicting age rules as a birth date from text. A browser request keeps this reading only after enrollment succeeds and the app and phone still identify the member. A refusal records no exact date. A person aged 19 or more gives only the numeric age on this path. Raw dates and ranges are available only to the trusted runtime, never in a member profile, a model packet or staff output. This date stays with the verified person, separate from app profiles, staff data, and age statements heard elsewhere. If the exact birth reading gives the stored 18th-birthday date, calculate the age on each birthday from the birth reading and any lower independent readings. Otherwise, before the stored date, the signup observation limits the age to its initial age. When the Clock reaches that date, it supplies 18 if the record has no exact date. A lower independent age still applies on every app. An older cached signup age can stop restricting the member only when the new effective age is an adult age and no other youth statement, signal, report or conflict keeps it restricted. An unresolved age stays restricted. If the person later gives a second accepted date, use the later eligibility date and the lower initial minor age. Deleting the account removes the date. The existing safety rule for a retained numeric age remains in force.
 
 ```quint
 pure def verifiedBrowserBirthMayBeKept(enrollmentVerified: bool, age: int): bool =
@@ -352,6 +352,15 @@ pure def lawBrowserBirthNeedsEligibleVerifiedEnrollment(enrollmentVerified: bool
 
 pure def signupAgeAt(initialMinorAge: int, eligibleAt: int, now: int): int =
   if (now >= eligibleAt) adultAge else initialMinorAge
+
+pure def signupAgeCapNeeded(hasBirth: bool, matchingBirth: bool, beforeEligibility: bool): bool =
+  not(hasBirth) or (beforeEligibility and not(matchingBirth))
+
+pure def lawMatchingSignupBirthKeepsBirthdays(beforeEligibility: bool): bool =
+  not(signupAgeCapNeeded(true, true, beforeEligibility))
+
+pure def lawOtherBirthCannotAdvanceSignupMinor(ageHasBirth: bool): bool =
+  signupAgeCapNeeded(ageHasBirth, false, true)
 
 pure def lawSignupAgeDoesNotAdvanceEarly(initialMinorAge: int, eligibleAt: int, now: int): bool =
   now < eligibleAt implies signupAgeAt(initialMinorAge, eligibleAt, now) == initialMinorAge

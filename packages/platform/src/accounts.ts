@@ -26,9 +26,8 @@ import {
 import { declineEndsUnboundAccess, joinAgeFieldsValid, joinConsentEvidenceAllowed, joinFailureForgetsMembership, profileJoinAge, signupAccountViewMatches, step as stepEnrollment, typedJoinEntry, type Enrollment } from "../../core/src/generated/siteEnrollment.ts";
 import { browserSignupMemberAllowed } from "../../core/src/generated/oauthBrowserAuthorization.ts";
 import { adultAge, verifiedBrowserBirthMayBeKept } from "../../core/src/generated/memberAge.ts";
-import { signupAdultDate } from "../../core/src/generated/authorizationPages.ts";
 import { validAge } from "../../core/src/policy.ts";
-import { type AgeReading, type AgeRecord, ageRecordOf, canJoinApp, effectiveAgeAt, joinAgeCheck, joinBirthDateUsable, lowestAge, readingAge, type TeenBarReason } from "./age.ts";
+import { type AgeReading, type AgeRecord, ageRecordOf, canJoinApp, effectiveAgeAt, joinAgeCheck, joinBirthDateUsable, lowestAge, readingAge, signupEligibilityAt, type TeenBarReason } from "./age.ts";
 import type { AppId, AppInfo } from "./apps.ts";
 import { type ConsentEvent, resolveConsent } from "./consent.ts";
 import { InvitationUnavailable, type ReferralJoin } from "./invite-links.ts";
@@ -106,8 +105,7 @@ const joinReading = (input: JoinInput): AgeReading =>
 
 function privateSignupBirth(birthKey: number, age: number): SignupBirth {
   if (age >= adultAge) return { birthKey };
-  const date = signupAdultDate({ year: Math.trunc(birthKey / 10000), month: Math.trunc(birthKey / 100) % 100, day: birthKey % 100 });
-  return { birthKey, eligibility: { initialMinorAge: age, eligibleAt: Date.UTC(date.year, date.month - 1, date.day, 12) } };
+  return { birthKey, eligibility: { initialMinorAge: age, eligibleAt: signupEligibilityAt(birthKey) } };
 }
 
 const squash = (s: string) => s.replace(/\s+/g, " ").trim();

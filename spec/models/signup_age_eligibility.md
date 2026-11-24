@@ -6,7 +6,7 @@ The browser confirms ownership before signup. The platform keeps the adult eligi
 
 ### Safety rules and reachability
 
-The model covers one verified person and their shared floor. `enroll` is the private write in the same database transaction as enrollment. The date is represented as a future tick. `recordIndependent` is the phone or person age floor. `erase` removes the private row and preserves the minimum numeric age, as account deletion does before release of a recycled number. The matching runtime can use the exact reading for teen friendship checks. Staff output returns the numeric age and aggregate safety values. The exact reading is represented as a flag here. The signed learning routes also use the effective age, with their existing independent adult evidence requirement. Accepting a minor signup applies the existing cross-app photo and rating erasure. The date calculation and cached minor check use the generated rules in [member age](../memberAge.md) and [connector authorization pages](../authorizationPages.md).
+The model covers one verified person and their shared floor. `enroll` is the private write in the same database transaction as enrollment. The dates when the person turns 18 are represented as ticks. A retained birth reading that gives the same adult date as the private eligibility row supplies whole-year birthdays, represented by one-year ticks near age 18. The eligibility row still limits a different exact reading until its adult date. Records written before exact signup use the initial age until the stored date. `recordIndependent` is the phone or person age floor. `erase` removes the private row and preserves the minimum numeric age, as account deletion does before release of a recycled number. The matching runtime can use the exact reading for teen friendship checks. Staff output returns the numeric age and aggregate safety values. The signed learning routes also use the effective age, with their existing independent adult evidence requirement. Accepting a minor signup applies the existing cross-app photo and rating erasure. The date calculation and cached minor check use the generated rules in [member age](../memberAge.md) and [connector authorization pages](../authorizationPages.md).
 
 An additional app checks the effective age for admission. Its durable member age comes from independent evidence. The separate age projection keeps a browser-only minor restriction while the member is under 18 and can release it on time in both apps. A signed test covers browser signup followed by enrollment in another app.
 
@@ -15,27 +15,45 @@ Acceptance means the transaction committed the current verified membership and N
 ```quint
 // quint-check: max-steps=14 max-samples=4000 verify-steps=8
 // quint-witness: witness_birthdayAdvances birthdayAdvancesTest
+// quint-witness: witness_teenBirthdayAdvances teenBirthdayAdvancesTest
 // quint-witness: witness_independentAgeRemains independentAgeRemainsTest
 // quint-witness: witness_additionalAppAgeAdvances additionalAppAgeAdvancesTest
 module signup_age_eligibility {
-  type State = { now: int, eligibleAt: int, signupAge: int, phoneFloor: int, appRecordedAge: int, otherYouth: bool, privateBirth: bool }
+  type State = { now: int, eligibleAt: int, signupAge: int, phoneFloor: int, appRecordedAge: int, otherYouth: bool,
+    privateBirth: bool, birthAdultAt: int, birthObservedAge: int }
   var s: State
 
   pure def lower(first: int, second: int): int =
     if (first < 0) second else if (second < 0 or first <= second) first else second
 
-  pure def age(a: State): int = lower(a.phoneFloor,
-    if (a.eligibleAt < 0) -1 else if (a.now >= a.eligibleAt) 18 else a.signupAge)
+  pure def birthAge(a: State): int =
+    if (not(a.privateBirth)) -1
+    else if (a.now >= a.birthAdultAt) 18
+    else if (18 - (a.birthAdultAt - a.now) > a.birthObservedAge) 18 - (a.birthAdultAt - a.now)
+    else a.birthObservedAge
+
+  pure def signupLimit(a: State): int =
+    if (a.eligibleAt < 0) -1
+    else if (not(a.privateBirth)) (if (a.now >= a.eligibleAt) 18 else a.signupAge)
+    else if (a.now < a.eligibleAt and a.birthAdultAt != a.eligibleAt) a.signupAge
+    else -1
+
+  pure def age(a: State): int = lower(lower(a.phoneFloor, birthAge(a)), signupLimit(a))
 
   pure def matchingAge(a: State): int = lower(age(a), a.appRecordedAge)
   pure def matchingAllowed(a: State): bool = matchingAge(a) >= 18 and not(a.otherYouth)
 
-  action init = s' = { now: 0, eligibleAt: -1, signupAge: -1, phoneFloor: -1, appRecordedAge: -1, otherYouth: false, privateBirth: false }
+  action init = s' = { now: 0, eligibleAt: -1, signupAge: -1, phoneFloor: -1, appRecordedAge: -1, otherYouth: false,
+    privateBirth: false, birthAdultAt: -1, birthObservedAge: -1 }
+
+  pure def keepBirth(a: State, date: int, observedAge: int): State =
+    if (date > a.birthAdultAt) a.with("privateBirth", true).with("birthAdultAt", date).with("birthObservedAge", observedAge)
+    else a
 
   action enroll(verified: bool, accepted: bool, initialAge: int, date: int): bool =
     s' = if (verified and accepted and initialAge >= 13 and initialAge < 18 and date > s.now)
-      s.with("eligibleAt", if (date > s.eligibleAt) date else s.eligibleAt).with("signupAge", lower(s.signupAge, initialAge)).with("privateBirth", true)
-    else if (verified and accepted and initialAge == 18) s.with("privateBirth", true)
+      keepBirth(s, date, initialAge).with("eligibleAt", if (date > s.eligibleAt) date else s.eligibleAt).with("signupAge", lower(s.signupAge, initialAge))
+    else if (verified and accepted and initialAge == 18) keepBirth(s, date, initialAge)
     else s
 
   action recordIndependent(observation: int): bool = s' = s.with("phoneFloor", lower(s.phoneFloor, observation))
@@ -45,7 +63,8 @@ module signup_age_eligibility {
   }
   action markOtherYouth: bool = s' = s.with("otherYouth", true)
   action advance: bool = all { s.now < 4, s' = s.with("now", s.now + 1) }
-  action erase: bool = s' = s.with("phoneFloor", age(s)).with("eligibleAt", -1).with("signupAge", -1).with("appRecordedAge", -1).with("privateBirth", false)
+  action erase: bool = s' = s.with("phoneFloor", age(s)).with("eligibleAt", -1).with("signupAge", -1).with("appRecordedAge", -1)
+    .with("privateBirth", false).with("birthAdultAt", -1).with("birthObservedAge", -1)
 
   action step = any {
     enroll(true, true, 17, 2), enroll(true, true, 16, 3), enroll(true, true, 12, 2),
@@ -60,14 +79,19 @@ module signup_age_eligibility {
     s.otherYouth implies not(matchingAllowed(s)),
     (s.eligibleAt < 0) == (s.signupAge < 0),
     s.eligibleAt >= 0 implies s.privateBirth,
+    s.privateBirth == (s.birthAdultAt >= 0 and s.birthObservedAge >= 13),
     matchingAge(s) == age(s),
   }
   val witness_birthdayAdvances = not(s.eligibleAt == 2 and s.now == 2 and matchingAllowed(s))
+  val witness_teenBirthdayAdvances = not(s.eligibleAt == 3 and s.now == 2 and age(s) == 17 and not(matchingAllowed(s)))
   val witness_independentAgeRemains = not(s.eligibleAt == 2 and s.now == 2 and age(s) == 16)
   val witness_additionalAppAgeAdvances = not(s.appRecordedAge == 25 and s.eligibleAt == 2 and s.now == 2 and matchingAllowed(s))
 
   run birthdayAdvancesTest = init.then(enroll(true, true, 17, 2)).then(advance).expect(not(matchingAllowed(s)))
     .then(advance).expect(not(witness_birthdayAdvances)).then(erase).expect(s.eligibleAt < 0)
+
+  run teenBirthdayAdvancesTest = init.then(enroll(true, true, 16, 3)).expect(age(s) == 16)
+    .then(advance).then(advance).expect(not(witness_teenBirthdayAdvances))
 
   run independentAgeRemainsTest = init.then(recordIndependent(16)).then(enroll(true, true, 17, 2)).then(advance)
     .then(advance).expect(not(witness_independentAgeRemains))
