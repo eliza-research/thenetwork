@@ -183,3 +183,9 @@
 {"text":"Saturday works. If Ana can't make Sunday, Sunday works.","answer":"yes","keys":["b"]}
 {"text":"Saturday works. If Ana can't make Sunday, that's fine.","answer":"yes","keys":["b"]}
 {"text":"Sunday works, unless Ana can't make it","answer":"unclear","keys":[]}
+{"text":"The later option works","answer":"yes","keys":["c"]}
+{"text":"The later time works","answer":"yes","keys":["c"]}
+{"text":"The later slot works","answer":"yes","keys":["c"]}
+{"text":"The first and later option work","answer":"yes","keys":["a","c"]}
+{"text":"The later one works","answer":"yes","keys":["c"]}
+{"text":"Later works","answer":"unclear","keys":[]}
