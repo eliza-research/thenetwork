@@ -389,3 +389,21 @@
 {"text":"Saturday is best, Sunday as well","label":"yes","keys":["b","c"]}
 {"text":"weekdays are best, Saturday also","label":"yes","keys":["a","b"]}
 {"text":"weekend mornings work, Sunday too","label":"yes","keys":["b","c"]}
+{"text":"Saturday doesn't work, Sunday either","label":"unclear"}
+{"text":"Sunday doesn't work, Saturday either","label":"unclear"}
+{"text":"Thursday doesn't work, Saturday either","label":"unclear"}
+{"text":"Saturday doesn't work, Thursday either","label":"unclear"}
+{"text":"Saturdays don't work, Sunday either","label":"unclear"}
+{"text":"Sundays don't work, Saturday either","label":"unclear"}
+{"text":"Saturday doesn't work, either Sunday","label":"unclear"}
+{"text":"Sunday either, Saturday doesn't work","label":"unclear"}
+{"text":"Saturday isn't good, Sunday either","label":"unclear"}
+{"text":"Saturday is not good, Sunday either","label":"unclear"}
+{"text":"Saturday doesn't work for me, Sunday either","label":"unclear"}
+{"text":"I can't do Saturday, Sunday either","label":"unclear"}
+{"text":"weekdays don't work, Saturday either","label":"unclear"}
+{"text":"weekends don't work, Thursday either","label":"unclear"}
+{"text":"weekend mornings don't work, Sunday either","label":"unclear"}
+{"text":"Saturday mornings don't work, Sunday either","label":"unclear"}
+{"text":"Saturday doesn't work, Sunday too either","label":"unclear"}
+{"text":"Saturday doesn't work, Sunday, either","label":"unclear"}
