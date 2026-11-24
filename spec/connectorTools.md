@@ -1,8 +1,8 @@
 # Connector tools as the agent sees them
 
-Each app site has its own MCP connector. A connection covers that one app (the host). The MCP server owns the tool list, the argument checks, the scope checks, the daily profile limit and the answers. The OAuth pages own sign-in and consent ([connector browser authorization](oauthBrowserAuthorization.md)). The platform owns the membership status, the profile intake and the single update inbox. This spec models which tools the agent can see and call, what each call does for each member status, and what the agent can observe after the call. The tokens, the grant storage and the minor rules of the inbox are in the OAuth and inbox models.
+Each app has its own MCP connector. The ntwrk.party host serves the connector of every app, each app at its own path, and each app site also serves the connector of its own app. A connection covers one app (the host app). The MCP server owns the tool list, the argument checks, the scope checks, the daily profile limit and the answers. The OAuth pages own sign-in and consent ([connector browser authorization](oauthBrowserAuthorization.md)). The platform owns the membership status, the profile intake and the single update inbox. This spec models which tools the agent can see and call, what each call does for each member status, and what the agent can observe after the call. The tokens, the grant storage and the minor rules of the inbox are in the OAuth and inbox models.
 
-The MCP server (`packages/mcp/src/tools.ts` and `packages/mcp/src/handler.ts`) calls these decisions: `toolListed` for the tool list, `scopeFor` for the scope of each tool and its security scheme, `grantCovers` for the sign-in answer, the `canCall…` guards before each member tool call (a public tool needs no grant, and an anonymous or connected connection can call it), `profileLimitReached` for the daily limit, `appOffered` and `hostServes` for the apps and hosts of a surface, and `toolAllowedFor` and `nextStepFor` for the member status. The shell owns these parts of the model, and does not keep them as state:
+The MCP server (`packages/mcp/src/tools.ts` and `packages/mcp/src/handler.ts`) calls these decisions: `toolListed` for the tool list, `scopeFor` for the scope of each tool and its security scheme, `grantCovers` for the sign-in answer, the `canCall…` guards before each member tool call (a public tool needs no grant, and an anonymous or connected connection can call it), `profileLimitReached` for the daily limit, `appOffered` and `hostServes` for the apps and hosts of a surface, `appListed` for the apps that one connection names, `hostBindsApp` and `siteOffersOpenAi` for the app paths of each host, `grantServesApp` for the app of a token, and `toolAllowedFor` and `nextStepFor` for the member status. The shell owns these parts of the model, and does not keep them as state:
 
 - The connection. The shell finds the host from the request host and the surface from the path (`connect`). The OAuth pages make the grant (`authorize`, [connector browser authorization](oauthBrowserAuthorization.md)). For each request, the shell makes one connection from the access token: connected with a token, anonymous without one, and with the profile write scope only when the token holds it.
 - The approved profile. The agent reads the profile back and gets the person's approval before it calls `submit_profile` (`approveProfile`). The server cannot see this approval. The shell keeps a grant-bound keyed receipt for each exact profile ([profile submission](mcpProfileSubmission.md)) so retries do not repeat intake.
@@ -44,6 +44,38 @@ pure def lawFullSurfaceOffersEveryApp(app: AppId): bool = appOffered(FullSurface
 
 pure def lawDraftOnlyOnFriendsAndNtwrk(host: AppId, surface: Surface): bool =
   toolListed(host, surface, PrepareSignupTool) implies (host == Friends or host == Ntwrk)
+```
+
+### The ntwrk.party host serves every app at its own path, and a grant covers only its own app
+
+All app connectors are on one server. Each skill names the ntwrk.party endpoint of its app: `https://ntwrk.party/mcp` for The Network, and `https://ntwrk.party/mcp/<app>` for slop, peon and friends. ChatGPT and Codex use the endpoint with `/openai` added for The Network, peon and friends. Slop has no public OpenAI endpoint on any host, and the OpenAI surface never lists its public tools or facts. The private Slop pilot remains on its dedicated full endpoint and requires prior approval and adult eligibility. The ntwrk.party host serves each app at its own full path. Each other site host serves only its own app, at `/mcp`. The endpoint path is the OAuth resource. The client sends this resource when authorization starts. The authorization request, the consent page, the grant and each token are for the app of that path. A grant covers only its own app: a token for one app is refused at the endpoint of another app, a public tool included. The rules of each app stay with the app: the join mode (The Network is invite-only on the web), bans, ages, the text consent and the profile limit.
+
+```quint
+pure val hubHost: AppId = Ntwrk
+
+pure def hostBindsApp(host: AppId, app: AppId): bool = host == app or host == hubHost
+
+pure def appListed(surface: Surface, host: AppId, app: AppId): bool =
+  hostServes(surface, host) and appOffered(surface, app)
+
+pure def siteOffersOpenAi(site: AppId, app: AppId): bool =
+  hostBindsApp(site, app) and appOffered(OpenAiSurface, app)
+
+pure def grantServesApp(grantApp: AppId, requestApp: AppId): bool = grantApp == requestApp
+
+pure def lawHubServesEveryApp(app: AppId): bool = hostBindsApp(hubHost, app)
+
+pure def lawAppSiteServesOnlyItsApp(host: AppId, app: AppId): bool =
+  host != hubHost implies (hostBindsApp(host, app) iff host == app)
+
+pure def lawHubOffersOnlySupportedOpenAiApps(app: AppId): bool =
+  siteOffersOpenAi(hubHost, app) iff app != Slop
+
+pure def lawNoSiteOffersSlopOnTheOpenAiSurface(site: AppId): bool =
+  not(siteOffersOpenAi(site, Slop)) and not(appListed(OpenAiSurface, site, Slop))
+
+pure def lawGrantNeverCrossesApps(grantApp: AppId, requestApp: AppId): bool =
+  grantApp != requestApp implies not(grantServesApp(grantApp, requestApp))
 ```
 
 ### Public tools need no sign-in, and member tools need the person's own grant
@@ -121,7 +153,7 @@ pure def lawReadToolsServeEveryStatus(status: MemberStatus): bool =
 
 ### A connection binds to one host on one surface, and the person connects it in the browser
 
-The agent first reaches one host on one surface. The host is fixed before any tool can save a draft. A host that the surface does not serve is not available, and the agent can call nothing on it. Only an authorized connection holds the profile write scope. The person authorizes the connection on the app's page, with or without the profile write scope. A public tool works before authorization and with a live grant, and it answers that an app is not available when the surface does not offer it. A member tool without a grant, or without the scope that it needs, answers that the person must sign in on the app's page and allow access. After a grant ends, every call with the old token answers the same, a public tool included, until the person connects again.
+The agent first reaches one host on one surface. The host is fixed before any tool can save a draft. A host that the surface does not serve is not available, and the agent can call nothing on it. Only an authorized connection holds the profile write scope. The person authorizes the connection on the app's page, with or without the profile write scope. A public tool works before authorization and with a live grant, and it answers that an app is not available when the connection does not list it or when the agent names an app that is not in the app registry. A member tool without a grant, or without the scope that it needs, answers that the person must sign in on the app's page and allow access. After a grant ends, every call with the old token answers the same, a public tool included, until the person connects again.
 
 ```quint
 type ConnectionPhase = Unbound | Unavailable | Anonymous | Connected | Revoked
@@ -168,8 +200,14 @@ pure def authorize(c: Connection, withWrite: bool, withProfileRead: bool): Conne
 pure def canCallPublicTool(c: Connection, tool: ToolName): bool =
   (c.phase == Anonymous or c.phase == Connected) and scopeFor(tool) == NoScope
 
-pure def callPublicTool(c: Connection, tool: ToolName, app: AppId): Connection =
-  { ...c, lastResult: if (appOffered(c.surface, app)) PublicFacts else AppNotAvailable }
+pure def callPublicTool(c: Connection, tool: ToolName, app: AppId, appRegistered: bool): Connection =
+  { ...c, lastResult: if (appRegistered and appListed(c.surface, c.host, app)) PublicFacts else AppNotAvailable }
+
+pure def lawUnregisteredAppIsNotAvailable(c: Connection, tool: ToolName, app: AppId): bool =
+  callPublicTool(c, tool, app, false).lastResult == AppNotAvailable
+
+pure def lawOpenAiPluginServerNeverNamesSlop(c: Connection, tool: ToolName): bool =
+  (c.surface == OpenAiSurface and c.host != Slop) implies callPublicTool(c, tool, Slop, true).lastResult == AppNotAvailable
 
 pure def canCallWithoutAccess(c: Connection, tool: ToolName): bool =
   bound(c) and toolListed(c.host, c.surface, tool) and
@@ -180,7 +218,7 @@ pure def canCallWithoutAccess(c: Connection, tool: ToolName): bool =
 pure def callWithoutAccess(c: Connection, tool: ToolName): Connection =
   { ...c, lastResult: SignInNeeded }
 
-pure def alwaysOpenAiHidesSlop(c: Connection): bool =
+pure def alwaysBoundHostIsServed(c: Connection): bool =
   bound(c) implies hostServes(c.surface, c.host)
 
 pure def alwaysWriteNeedsConnection(c: Connection): bool =
@@ -299,7 +337,7 @@ pure def stepNothingSentAtTheLimit(before: Connection, via: str, after: Connecti
 
 ### A Join draft holds only an approved first name and home city, once per grant
 
-On friends.help and ntwrk.party, `prepare_signup` saves only the first name and the optional home city that the person approved. It never creates a person, a membership or text consent. It needs a join age that the app allows and a person who is not joined or invited. A grant saves at most one draft. The call counts toward the daily limit. Both sites have retired their browser Join page. The reply uses the same live app signup link as `start_signup`, selected by [site enrollment](siteEnrollment.md), and asks the person to continue in their agent. The saved draft does not prefill that flow.
+On friends.help and ntwrk.party, `prepare_signup` saves only the first name and the optional home city that the person approved. It never creates a person, a membership or text consent. It needs a join age that the app allows and a person who is not joined or invited. A grant saves at most one draft. The call counts toward the daily limit. Both sites have retired their browser Join page. The reply uses the same live app signup link as `start_signup`, selected by [site enrollment](siteEnrollment.md), and asks the person to continue in their agent. The reply keeps the draft fields in storage. A person who connects for the first time types their name and city. A verified browser authorization form can use a draft from an existing grant when it passes the [one-use signup form checks](authorizationPages.md#the-signup-form-shows-the-draft-that-the-person-approved-in-the-agent).
 
 ```quint
 pure def canCallPrepareSignup(c: Connection): bool =

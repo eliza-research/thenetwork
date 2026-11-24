@@ -13,14 +13,13 @@ import {
 } from "../../core/src/generated/connectorTools.ts";
 import { publicSignupUsesBrowser } from "../../core/src/generated/siteEnrollment.ts";
 import { profileSubmissionAccepted } from "../../core/src/generated/mcpProfileSubmission.ts";
-import { appsOn, connectorApp, connectorSurface, type McpApp, type McpAppId, type Surface } from "./apps.ts";
+import { appsOn, connectorApp, connectorSurface, DATING_AGE_RULE, type McpApp, type McpAppId, type Surface, WORK_AGE_RULE } from "./apps.ts";
 import type { AssistantKind, PlatformHooks, PublicStatus, SavedProfileFields } from "./hooks.ts";
 import type { Grant, Scope, OAuthStore, SignupDraftFields } from "./store.ts";
 import { outputLeaks } from "./leaks.ts";
 
 export const TOOL_NAMES = ["app_info", "start_signup", "check_status", "read_profile", "submit_profile", "get_updates", "prepare_signup"] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
-/** The generated name of each tool (spec/connectorTools.md, "Each surface lists only the apps it may offer"). */
 export const connectorTool: Record<ToolName, ConnectorTool> = {
   app_info: "AppInfoTool", start_signup: "StartSignupTool", check_status: "CheckStatusTool",
   read_profile: "ReadProfileTool", submit_profile: "SubmitProfileTool", get_updates: "GetUpdatesTool", prepare_signup: "PrepareSignupTool",
@@ -73,7 +72,7 @@ export const INSTRUCTIONS =
 const annotations = (title: string) => ({ title, readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
 
 export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host: McpApp) {
-  const ids = appsOn(apps, surface).map(a => a.id);
+  const ids = appsOn(apps, surface, host.id).map(a => a.id);
   const appProp = (description: string) => ({ type: "string", enum: ids, description });
   // The security scheme of each tool, from its generated scope (spec/connectorTools.md, "Public tools need no sign-in").
   const schemes = (tool: ToolName) => {
@@ -117,7 +116,7 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
     },
     {
       name: "prepare_signup", title: "Save my signup draft",
-      description: "After verified phone sign-in and OAuth approval, save only the first name and optional home city the person explicitly approved for this app. The person continues signup in their agent and approves their details and text consent there. Never creates a person, membership or text consent. One draft per grant; no age, phone, code, gender or dating preferences.",
+      description: "After verified phone sign-in and OAuth approval, save only the first name and optional home city the person explicitly approved for this app. The person continues signup in their agent and approves their details and text consent there. Never creates a person, membership or text consent. One draft per grant; no age, phone, code, gender or match preferences.",
       inputSchema: { type: "object", properties: { app: { type: "string", enum: [host.id] }, firstName: { type: "string", minLength: 1, maxLength: 50 }, homeCity: { type: "string", enum: ["nyc", "sf"] } }, required: ["firstName"], additionalProperties: false },
       outputSchema: object({ prepared: { type: "boolean", const: true }, app: ownApp, url: text, next_step: text }),
       annotations: { title: "Save my signup draft", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
@@ -147,7 +146,7 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
     {
       name: "submit_profile",
       title: `Send my profile to ${host.name}`,
-      description: `After the person joined ${host.name} and allowed access, sends ${host.name} what they told you about themselves in this conversation (what they are looking for, interests, when and where they are free), in their own words, as if they had texted it. Read it back to them and send it only after they agree. Never include a phone number, a code, an email address or anything about another person.`,
+      description: `After the person joined ${host.name} and allowed access, sends ${host.name} what they told you about themselves in this conversation (what they are looking for, interests, when and where they are free), in their own words, as if they had texted it. Read it back to them and send it only after they agree. Never include a phone number, a code, an email address, a birthday, an age or anything about another person.`,
       inputSchema: {
         type: "object",
         properties: {
@@ -247,7 +246,7 @@ export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host
   if (a.app === undefined) return name === "start_signup" ? { ok: false, message: "Say which app: " + enumIds.join(", ") + "." } : { ok: true };
   if (typeof a.app !== "string") return { ok: false, message: "app must be a string." };
   if (name === "check_status" || name === "read_profile") {
-    if (a.app !== host.id) return { ok: false, message: `This connection covers ${host.name} only. To check another app, connect to that app's own site.` };
+    if (a.app !== host.id) return { ok: false, message: `This connection covers ${host.name} only. To check another app, connect that app's own endpoint.` };
   } else if (!enumIds.includes(a.app)) return { ok: false, message: NOT_AVAILABLE };
   return { ok: true, app: a.app };
 }
@@ -261,7 +260,7 @@ function invitationGuidance(a: McpApp): string {
     `Already a member? Confirm your phone during connector authorization, then return to your agent.`;
 }
 
-function publicInfo(a: McpApp, surface: Surface) {
+function publicInfo(a: McpApp, dating: boolean) {
   return {
     id: a.id, name: a.name, site: a.links.site, what: a.what,
     powered_by: "All of these apps are powered by The Network (https://ntwrk.party).",
@@ -272,10 +271,10 @@ function publicInfo(a: McpApp, surface: Surface) {
       how: a.joinMode === "invite" ? invitationGuidance(a) : a.keyword
         ? `The person texts "${a.keyword}" as their first message to The Network's line. ` + (publicSignupUsesBrowser(a.id)
           ? `They can also open ${publicSignupUrl(a)} and verify their own phone there.` : skillSignup(a))
-        : `The person texts The Network's line with no keyword. The agent asks what they are looking for (${surface === "openai" ? "friends or work" : "friends, dating or work"}) and adds the right apps. ${skillSignup(a)}`,
+        : `The person texts The Network's line with no keyword. The agent asks what they are looking for (${dating ? "friends, dating or work" : "friends or work"}) and adds the right apps. For a person aged 13 to 17, the agent never adds ${dating ? "dating or work" : "work"}, and today nobody under 18 is introduced to anyone. ${skillSignup(a)}`,
     },
     ages: { join: a.ages.join, matching: a.ages.match },
-    adults_only: a.adultsOnly,
+    adults_only: dating ? a.adultsOnly : a.adultsOnly.map(rule => rule === DATING_AGE_RULE ? WORK_AGE_RULE : rule),
     stop: `Texting STOP on the shared line stops every app. To stop this app only, text "leave ${a.domain}".`,
     consent_rules: [
       "Nobody is introduced unless both people say yes.",
@@ -350,13 +349,15 @@ function savedProfileResult(fields: SavedProfileFields | undefined, forbidden: s
 }
 
 export async function callTool(name: ToolName, args: unknown, c: CallContext): Promise<ToolOutcome> {
-  const enumIds = appsOn(c.apps, c.surface).map(a => a.id);
+  const listed = appsOn(c.apps, c.surface, c.host.id);
+  const enumIds = listed.map(a => a.id);
+  const dating = enumIds.includes("slop");
   const chk = checkArgs(name, args, enumIds, c.host);
   if (!chk.ok) return { kind: "error", message: chk.message };
   switch (name) {
     case "app_info": {
-      if (chk.app) return { kind: "ok", data: publicInfo(c.apps[chk.app as McpAppId], c.surface) };
-      return { kind: "ok", data: { apps: appsOn(c.apps, c.surface).map(a => publicInfo(a, c.surface)) } };
+      if (chk.app) return { kind: "ok", data: publicInfo(c.apps[chk.app as McpAppId], dating) };
+      return { kind: "ok", data: { apps: listed.map(a => publicInfo(a, dating)) } };
     }
     case "start_signup": {
       const a = c.apps[chk.app as McpAppId];

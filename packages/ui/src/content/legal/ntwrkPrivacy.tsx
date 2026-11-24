@@ -14,6 +14,7 @@ export const ntwrkPrivacy: LegalText = {
         <>
           <ul>
             <li><strong>Your phone number</strong> and the channel you use (iMessage or SMS), to verify you and to text you.</li>
+            <li><strong>Your age</strong>. You type your birth date on the signup page, or you tell us your age. We count your age from the birth date and keep the age, not the birth date. We use it only to apply the age rules: who can join, and that members under 18 are never matched on dates or for work. Other members never see it.</li>
             <li><strong>What you tell The Network</strong> in conversation: your interests, what you're looking for, your availability, your city and neighbourhood, and your preferences about how often to hear from us.</li>
             <li><strong>What you choose to share from elsewhere</strong>, such as profile text you paste, a summary from your AI assistant, or calendar free/busy times if you connect a calendar. We read free/busy only, never event details.</li>
             <li><strong>Vouch notes</strong> written by the member who invited you. They are not used for matching until you accept, and are deleted if you decline or after 30 days.</li>
@@ -63,7 +64,7 @@ export const ntwrkPrivacy: LegalText = {
     },
     {
       heading: "Members under 18",
-      body: <p>The Network is not for children under 13. Members aged 13 to 17 can use The Network only for their own help and recommendations. They are never introduced to, grouped with, or connected to other people.</p>,
+      body: <p>The Network is not for children under 13. Members aged 13 to 17 can use The Network for their own help and recommendations: answers, public events and plans for themselves. They are never matched on dates or for work. Today, no member under 18 is introduced to anyone. If introductions ever open to members under 18, they will be friendship introductions only, with people within 2 years of their own age. We ask for your birth date or your age at signup to apply these rules.</p>,
     },
     {
       heading: "Security",

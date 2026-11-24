@@ -50,5 +50,11 @@ function plan(base: string): { reason: string; models?: string[] } {
 }
 
 const { reason, models } = plan(process.argv[2] ?? "");
+const selected = models ?? modelNames();
+const dedicated = new Set(["candidate_pool", "oauth_mcp", "opportunity"]);
+const shards = selected.filter((model) => dedicated.has(model)).map((model) => ({ name: model, models: model }));
+const remaining = selected.filter((model) => !dedicated.has(model));
+if (remaining.length > 0) shards.push({ name: "other", models: remaining.join(" ") });
+
 console.error(`Quint CI: ${reason}${models ? "" : ". Run every model."}`);
-console.log(`run=${models?.length !== 0}\nmodels=${models?.join(" ") ?? ""}`);
+console.log(`run=${selected.length > 0}\nshards=${JSON.stringify(shards)}`);

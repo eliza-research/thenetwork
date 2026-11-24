@@ -7,7 +7,7 @@ metadata:
   app: slop
   site: https://slop.date
   operator: Eliza Research Corporation
-  version: "1.3.0"
+  version: "1.5.0"
 ---
 
 # slop.date
@@ -18,37 +18,57 @@ only for an explanation, explain without starting signup.
 ## Talk like a person
 
 Keep replies short, usually one to three sentences. No tool names, HTTP details,
-JSON, headings, setup instructions or status tables unless the person asks for them.
+JSON, headings, setup instructions or status tables unless the person asks for them
+or a step below needs them.
 Start from confirmed facts you already know; ask only for missing information.
 Never invent age, profile facts, consent, verification, saved data or introductions.
 A draft is not saved until the site confirms it. A saved profile is not a match.
 
 slop.date is dating by text message, with no feed, swiping or profile browsing.
-Anyone 13 or older may join; matching and introductions are for adults 18 and older only.
+Anyone 13 or older may join. Dating matches and introductions are for adults 18 and older only.
+slop.date never matches anyone under 18 on dates. People aged 13–17 get their own help:
+answers, public events and plans for themselves. Today nobody under 18 is introduced to
+anyone. If introductions ever open to people under 18, they are friendship introductions
+only, with people within 2 years of their own age.
 Introductions require both people to agree. Joining now saves a profile for later;
 it does not mean introductions have started.
 
 ## Join with your agent and browser
 
-1. Check that this client can run the native OAuth flow for this app's connector. <!-- agentSignup: chooseTransport -->
-   Its endpoint is `https://slop.date/mcp` on the supported full connector surface. The public OpenAI connector does not offer this app.
-   If the required connector cannot be used, say “Signup isn't supported in this
-   agent yet.” Stop before asking for a profile. Reading this file does not give
-   you tools or access. Use the client's supported authorization flow.
+1. Check that this app's connector tools (`check_status` and `submit_profile`) are <!-- agentSignup: checkConnectorSetup resumeAfterConnector chooseTransport -->
+   available in this conversation. If they are not, check whether this client supports
+   this app's full connector. ChatGPT and Codex have no public connector for slop.date.
+   If they do not already have tools through approved access, say “Signup isn't
+   supported in this agent yet.” Stop before asking for a profile.
+   For a client that supports the full connector, say “Connect slop.date” and give
+   this app's own connector endpoint, `https://ntwrk.party/mcp/slop`. This path is for slop.date only.
+   Ask the person to add it as a connector in this
+   client's connector or integration settings, then come back to this conversation.
+   Give this setup step one time only. When the tools are available, continue with
+   step 2. Reading this file does not give you tools or access.
+   Only if this client cannot add a remote connector at all, or the person cannot
+   add it, say “Signup isn't supported in this agent yet.” Stop before asking for a
+   profile. Use the client's supported authorization flow.
 2. Read the public app facts at `https://slop.date/api/app` without credentials. <!-- agentSignup: readAppFacts -->
    Confirm `id` is `slop`. Use this app's `joinMode`, `minJoinAge`, `minMatchAge`,
    and exact current `consent.text` and `consent.version`. Stop if you cannot confirm
    these facts.
-3. Ask for their stated age first and use the lowest age they state. Explain and <!-- agentSignup: draftProfile -->
-   stop below 13. Tell people aged 13–17 that introductions and matching are for
-   adults 18 and older. Draft their confirmed first name, age and home region.
+3. Ask for their birthday first, not only their age. Use it in this conversation only, <!-- agentSignup: draftProfile -->
+   to explain what they get. Use the lowest age that any statement gives. Never send a
+   birthday or an age through a tool; the person types their birthday on the app's
+   signup page. Explain and stop below 13. Tell people aged 13–17 plainly that
+   slop.date will not match them on dates. Tell them what they get today: their own
+   help, with answers, public events and plans for themselves. Today nobody under 18 is
+   introduced to anyone. If introductions ever open to them, they are friendship
+   introductions only, with people within 2 years of their own age. Never promise them an
+   introduction. Draft their confirmed first name and home region.
    Confirm the Bay Area (`sf`) or New York City (`nyc`) and keep their neighborhood
    separate. Ask if the region is ambiguous. Do not guess it from a neighborhood
    or ZIP code or pick an incorrect region.
    For adults, draft the profile with interests, availability, the relationship they
    want and preferences they explicitly choose to share. Adult age ranges and travel
-   distance are optional. For ages 13–17, use a basic personal profile and avoid
-   collecting dating preferences or photos.
+   distance are optional. For ages 13–17, draft only a basic personal profile.
+   Collect no dating preferences and no photos.
 4. Show the exact draft and the app's current text consent wording. Explain <!-- agentSignup: decideApproval -->
    recurring texts, variable frequency, possible message and data rates, STOP
    and HELP. Link the [text terms](https://slop.date/terms#sms),
@@ -60,8 +80,9 @@ it does not mean introductions have started.
    start a phone check, or ask for a phone number, verification code, token or
    browser cookie. The person handles all credentials in their own browser.
 6. The app's browser confirms their own phone, or uses its current verified <!-- agentSignup: observeBrowser -->
-   session. For an eligible new membership, choose **Finish signup** there and
-   review the same name, age, home region and current text consent. Joining is
+   session. For an eligible new membership, choose **Finish signup** there,
+   check or enter the same first name and home region, type their own birthday and
+   tick the current text consent. Joining is
    open. A forwarded invitation is optional.
    If they want to use a forwarded invitation, they keep the original link
    private and enter the invitation in the app's browser if asked. Do not copy
@@ -80,7 +101,7 @@ it does not mean introductions have started.
    approved draft to be submitted. Never submit across apps.
 8. Call `submit_profile` once on this exact connection with the approved <!-- agentSignup: submitProfile -->
    profile as `about` (10–1200 characters). Do not include credentials, invitation
-   secrets or details from another app. If there is a refusal, a timeout or
+   secrets, a birthday, an age or details from another app. If there is a refusal, a timeout or
    an uncertain result, say the profile could not be confirmed. Do not resend it.
 9. With `submitted: true` for this app and this call, confirm that the same <!-- agentSignup: confirmProfile -->
    connector still returns this app and an `onboarding` or `active` status.
@@ -92,18 +113,19 @@ it does not mean introductions have started.
 
 Only the person who controls the number may sign in or approve their profile.
 Do not sign up someone else, contact other members, request their information,
-send invitations, or change another app. The lowest stated age applies; members
-13–17 must never be matched or introduced to anyone. slop.date does not run criminal background checks. Members aged 13–17
+send invitations, or change another app. The lowest stated age applies. Members
+13–17 are never matched on dates, and today they are not introduced to anyone. slop.date does not run criminal background checks. Members aged 13–17
 receive no dating matches or photo requests. Do not upload or rate photos during signup.
 
 Text STOP stops every text from the shared line; "leave slop.date" leaves this
-app only. Export/deletion support is help@ntwrk.party. Do not invoke destructive
+app only. Export/deletion support is help@ntwrk.party. To see or remove the access of an agent, the person opens https://ntwrk.party/oauth/consents in the browser where they connected. Do not invoke destructive
 account controls during signup. The text keyword is `slop` or `slop.date`
 on +18087881821; sending a text is the person's separate choice, never an automatic
 fallback or an extra signup step.
 
 Dating preferences and orientation stay in this app. Never copy them to another
 app, look up another member, rate anyone, or promise a date. Introductions have
-not started yet; joining saves the profile for future introductions.
+not started yet; joining saves the profile for future introductions. For a person aged
+13–17, do not say that the profile is for future introductions.
 
 Email: help@ntwrk.party

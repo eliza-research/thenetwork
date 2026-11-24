@@ -14,12 +14,12 @@ import { createHash } from "node:crypto";
 import { verifyProxyHeaders } from "../../packages/platform/src/proxy.ts";
 import { APPS, keywordApp } from "../../packages/platform/src/apps.ts";
 import { TEXT_LINE } from "../skills.config.ts";
-import { SITES, SKILLS_DIR, TURNSTILE_ORIGIN, buildSite, walk, skillDescription, skillVersion, type Site } from "../sites.ts";
+import { SITES, SKILLS_DIR, TURNSTILE_ORIGIN, buildSite, fill, walk, skillDescription, skillVersion, type Site } from "../sites.ts";
 import { serveHttp } from "../../packages/core/src/runtime/http.ts";
 import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { serveSite } from "../../scripts/sites-dev.ts";
 import { toE164 } from "../../packages/ui/src/api/join.ts";
-import { brandFor } from "../../packages/core/src/generated/brandIdentity.ts";
+import { brandFor, hubTextsOnAppSurface } from "../../packages/core/src/generated/brandIdentity.ts";
 import { type JoinPage, initial as joinStart, step as joinStep } from "../../packages/core/src/generated/browserJoin.ts";
 import { preparedPeonTextHeader } from "../../packages/core/src/generated/textEnrollment.ts";
 import {
@@ -34,6 +34,7 @@ import {
   initial as landingStart,
   joinKeyword,
   joinMessagePrefix,
+  landingAgentOffered,
   landingHeadingsAllowed,
   landingWordsAllowed,
   messagesOpensHere,
@@ -41,6 +42,8 @@ import {
   tileKindFor,
 } from "../../packages/core/src/generated/landingEntry.ts";
 import { renderJoin, renderLanding } from "../../apps/site/test/render.tsx";
+import { OPENAI_MCP_URL, PLUGINS, build as buildPlugins } from "../../plugins/build.ts";
+import { defaultApps as connectorApps } from "../../packages/mcp/src/apps.ts";
 
 const REPO = join(import.meta.dirname, "../..");
 
@@ -72,6 +75,10 @@ const AGENTS: { id: AgentId; name: string; href?: string; toast: string; desktop
   { id: "OpenClaw", name: "OpenClaw", href: "openclaw://agent?message={q}", toast: "Copied. If OpenClaw did not open, send it the prompt." },
   { id: "Hermes", name: "Hermes", href: "hermes://skill/install?identifier={skill}", toast: "Copied. If Hermes did not open, send it the prompt." },
 ];
+
+const connectorAccepts = (s: Site, agent: AgentId) => agent !== "ChatGpt" || connectorApps()[s.app].openai;
+
+const hubPath = (app: string) => (app === "ntwrk" ? "/mcp" : `/mcp/${app}`);
 
 /** The first text that joins this app on the shared line (packages/platform/src/apps.ts keywordApp). */
 const keywordFor = (s: Site) => (s.app === "ntwrk" ? "network" : s.app);
@@ -185,7 +192,7 @@ describe.each(SITES)("$domain", (s) => {
     for (const f of ["SKILL.md", `.well-known/agent-skills/${s.skill}/SKILL.md`]) {
       const skill = read(s, f).toLowerCase();
       for (const d of OTHER_APP_DOMAINS(s)) expect(skill.includes(d), `${f} mentions ${d}`).toBe(false);
-      if (s.app !== "ntwrk") expect(skill.replaceAll("help@ntwrk.party", ""), f).not.toMatch(/the network|ntwrk\.party/);
+      if (s.app !== "ntwrk") expect(hubTextsOnAppSurface(s.key, "SkillSurface").reduce((t, allowed) => t.replaceAll(allowed, ""), skill), f).not.toMatch(/the network|ntwrk\.party/);
       // Direct API instructions name region codes; discovery copy remains location-neutral.
       if (["friends", "slop", "ntwrk"].includes(s.app)) expect(skillDescription(read(s, f)).toLowerCase(), f).not.toMatch(/new york|nyc|san francisco/);
       else expect(skill, f).not.toMatch(/new york|nyc|san francisco/);
@@ -212,9 +219,23 @@ describe.each(SITES)("$domain", (s) => {
       expect(skill).not.toContain("\r");
       expect(skill).toContain(`confirm its app is ${s.app}`);
       expect(skill).toMatch(/never submit across apps/i);
+      expect(skill).toContain(`“Connect ${s.app === "ntwrk" ? "The Network" : s.domain}” and give`);
+      expect(skill).toContain("then come back to this conversation");
+      expect(skill).not.toContain("RESPONSE_STYLE");
+      if (s.app === "slop") {
+        expect(skill).not.toContain(`https://ntwrk.party${hubPath(s.app)}/openai`);
+        expect(skill.replace(/\s+/g, " ")).toContain("ChatGPT and Codex have no public connector for slop.date.");
+      } else {
+        expect(skill).toContain(`https://ntwrk.party${hubPath(s.app)}/openai`);
+      }
+      expect(skill).toContain("the person opens https://ntwrk.party/oauth/consents in the browser where they connected");
+      if (s.app !== "ntwrk") expect(skill).not.toContain(`https://${s.domain}/mcp`);
+      expect(skill).not.toContain("cannot add this app's connector");
       if (["friends", "slop", "ntwrk"].includes(s.app)) {
-        expect(skill).toContain(`https://${s.domain}/mcp`);
         expect(skill).toContain("native connector authorization");
+        expect(skill).toContain(`this app's own connector endpoint, \`https://ntwrk.party${hubPath(s.app)}\``);
+        if (s.app !== "slop") expect(skill).toContain(`(in ChatGPT, \`https://ntwrk.party${hubPath(s.app)}/openai\`)`);
+        expect(skill.replace(/\s+/g, " ")).toContain("Only if this client cannot add a remote connector at all, or the person cannot add it, say “Signup isn't supported in this agent yet.”");
         expect(skill).toContain("the one link");
         expect(skill).toContain("**Finish signup**");
         expect(skill).toContain("**Allow**");
@@ -222,9 +243,13 @@ describe.each(SITES)("$domain", (s) => {
         expect(skill).toContain("`submitted: true` for this app and this call");
         expect(skill).not.toMatch(/\/api\/auth\/otp\/|\/api\/me\/export|session\.cookies/);
         expect(skill).not.toContain(`https://${s.domain}/join`);
-        if (s.app === "slop") expect(skill).not.toContain(`https://${s.domain}/mcp/openai`);
       } else if (s.app === "peon") {
-        expect(skill).toContain(`In ChatGPT, add https://${s.domain}/mcp/openai instead`);
+        expect(skill).toContain(`In ChatGPT, add https://ntwrk.party${hubPath(s.app)}/openai instead`);
+        expect(skill).toContain(`this app's own connector endpoint, https://ntwrk.party${hubPath(s.app)}`);
+        expect(skill).not.toContain("connects automatically");
+        expect(skill).toContain("**Allow**");
+        expect(skill).not.toMatch(/Never signs anyone up|Never sign anyone up|they do it, not you/);
+        expect(skillDescription(skill)).toContain("helps a person sign themselves up");
         expect(skill).toContain(`\`sms:${TEXT_LINE}?&body=\``);
         expect(skill).toContain(`\`${encodeURIComponent(preparedPeonTextHeader + "\n")}\``);
         expect(skill.replace(/\s+/g, " ")).toContain(APPS.peon.consent.text);
@@ -310,8 +335,13 @@ test("staging builds keep the served entry, skills and signed router on configur
     const home = readFileSync(join(directory, "index.html"), "utf8");
     const prompt = `Read ${origins.slop}/SKILL.md and follow it.`;
     expect(home).toContain(`>${prompt}</code>`);
-    expect(home).toContain(`https://chatgpt.com/?q=${encodeURIComponent(prompt)}`);
-    for (const origin of ["https://chatgpt.com/", "https://claude.ai/new", "https://grok.com/", "https://gemini.google.com/app", "https://www.perplexity.ai/search"]) {
+    expect(home).toContain(`https://claude.ai/new?q=${encodeURIComponent(prompt)}`);
+    expect(home).not.toContain('href="https://chatgpt.com/');
+    const hubHome = readFileSync(join(hubDirectory, "index.html"), "utf8");
+    const hubSkill = readFileSync(join(hubDirectory, "SKILL.md"), "utf8");
+    const hubPrompt = `Read ${origins.ntwrk}/SKILL.md?version=${encodeURIComponent(skillVersion(hubSkill))} and follow it.`;
+    expect(hubHome).toContain(`https://chatgpt.com/?q=${encodeURIComponent(hubPrompt)}`);
+    for (const origin of ["https://claude.ai/new", "https://grok.com/", "https://gemini.google.com/app", "https://www.perplexity.ai/search"]) {
       const href = [...home.matchAll(/href="([^"]+)"/g)].map(m => m[1]!).find(href => href.startsWith(`${origin}?q=`));
       expect(href, origin).toBeDefined();
       expect(new URL(href!).searchParams.get("q"), origin).toBe(prompt);
@@ -329,7 +359,9 @@ test("staging builds keep the served entry, skills and signed router on configur
     const base = `http://127.0.0.1:${server.port}`;
     const skill = await (await fetch(`${base}/SKILL.md`)).text();
     expect(skill).toContain(`${origins.slop}/`);
-    expect(skill).toContain(`${origins.slop}/mcp`);
+    expect(skill).toContain(`${origins.ntwrk}/mcp/slop`);
+    expect(skill).not.toContain(`${origins.slop}/mcp`);
+    expect(skill).not.toContain(`${origins.ntwrk}/mcp/slop/openai`);
     expect(skill).toContain("native connector authorization");
     expect(skill).not.toContain("/api/auth/otp/");
     for (const path of ["privacy", "terms"]) expect(skill).toContain(`${origins.slop}/${path}`);
@@ -337,7 +369,7 @@ test("staging builds keep the served entry, skills and signed router on configur
     expect(skill).not.toContain("https://slop.date");
     const index = await (await fetch(`${base}/.well-known/agent-skills/index.json`)).json() as { skills: { url: string; digest: string }[] };
     expect(await (await fetch(base + index.skills[0]!.url)).text()).toBe(skill);
-    expect(readFileSync(join(hubDirectory, "SKILL.md"), "utf8")).toContain(`${origins.ntwrk}/`);
+    expect(hubSkill).toContain(`${origins.ntwrk}/`);
     for (const path of ["/api/app", "/mcp", "/oauth/authorize", "/.well-known/oauth-protected-resource/mcp"]) {
       expect((await (await fetch(base + path)).json()).id).toBe("slop");
     }
@@ -352,6 +384,24 @@ test("staging builds keep the served entry, skills and signed router on configur
       expect((await buildSite(slop, join(tmp, "staging-backend-loop"), { ...env, BACKEND_ORIGIN: origin })).ok).toBe(false);
     }
   } finally { await server?.stop(true); await backend.stop(true); }
+});
+
+test("a local or test MCP_URL moves the ntwrk.party connector endpoints and the agent access page that the skills name", () => {
+  const env = { MCP_URL: "https://{domain}.dev.example.test/mcp", BACKEND_ORIGIN: "https://api.dev.example.test" };
+  for (const site of SITES) {
+    const source = readFileSync(join(SKILLS_DIR, site.skill, "SKILL.md"), "utf8");
+    const path = site.app === "ntwrk" ? "/mcp" : `/mcp/${site.app}`;
+    const production = fill(source, { ...env, MCP_URL: undefined, BACKEND_ORIGIN: undefined }, site.domain);
+    expect(production, site.domain).toContain(`https://ntwrk.party${path}`);
+    expect(production.includes(`https://ntwrk.party${path}/openai`), site.domain).toBe(site.app !== "slop");
+    const local = fill(source, env, site.domain);
+    expect(local, site.domain).not.toContain("https://ntwrk.party/mcp");
+    expect(local, site.domain).toContain(`https://ntwrk.party.dev.example.test${path}`);
+    expect(local.includes(`https://ntwrk.party.dev.example.test${path}/openai`), site.domain).toBe(site.app !== "slop");
+    expect(production, site.domain).toContain("https://ntwrk.party/oauth/consents");
+    expect(local, site.domain).not.toContain("https://ntwrk.party/oauth");
+    expect(local, site.domain).toContain("https://ntwrk.party.dev.example.test/oauth/consents");
+  }
 });
 
 test("the generated landing spec keeps the pinned agents, links, names and messages", () => {
@@ -386,6 +436,12 @@ test("landing pages keep agent onboarding and the Messages entry", () => {
     for (const a of AGENTS) {
       const label = `${a.href ? "Open in" : "Copy the prompt for"} ${a.name}`;
       const still = tileIn(row, label), live = tileIn(agentRow(desktop), label), small = tileIn(agentRow(phone), label);
+      expect(landingAgentOffered(s.key, a.id), `${s.domain} ${a.id}`).toBe(connectorAccepts(s, a.id));
+      if (!connectorAccepts(s, a.id)) {
+        expect([still, live, small], `${s.domain} ${a.id}`).toEqual(["", "", ""]);
+        expect(home, `${s.domain} ${a.id}`).not.toContain(a.href?.split("{")[0] ?? label);
+        continue;
+      }
       if (a.href) {
         const href = `href="${a.href.replace("{q}", q).replace("{skill}", encodeURIComponent(skillUrl))}"`;
         expect(still, `${s.domain} ${a.id}`).toMatch(/^<a\b/);
@@ -481,6 +537,25 @@ test("slop.date keeps its safety information off the landing page, and photos ar
   expect(text(read(slop, "privacy.html"))).toContain("never shown to you, to other members or to anyone else");
 });
 
+test("members aged 13 to 17 are told they are never matched on dates, and nothing promises them an introduction (founder 2026-11-22)", () => {
+  for (const s of SITES) {
+    for (const f of ["SKILL.md", `.well-known/agent-skills/${s.skill}/SKILL.md`]) {
+      const t = read(s, f).replace(/\s+/g, " ");
+      expect(t, f).toMatch(/Ask for their birthday/);
+      expect(t, f).toMatch(/Never send a birthday or an age through a tool/);
+      expect(t, f).toMatch(/never matche[sd] (them )?on dates/i);
+      expect(t, f).toMatch(/friendship introductions (only, )?with people within 2 years of their own age/);
+      expect(t, f).toContain("Never promise them an introduction.");
+      expect(t, f).not.toMatch(/introductions and matching are for adults 18 and older\./);
+    }
+    const privacy = text(read(s, "privacy.html"));
+    expect(privacy).toContain("birth date");
+    expect(privacy).toContain("Today, no member under 18 is introduced to anyone.");
+  }
+  expect(read(SITES.find((s) => s.app === "slop")!, "SKILL.md").replace(/\s+/g, " ")).toContain("slop.date will not match them on dates");
+  expect(read(SITES.find((s) => s.app === "ntwrk")!, "SKILL.md").replace(/\s+/g, " ")).toContain("For ages 13–17, draft only friends interests and their own help; never offer dates or work, and never say that these interests lead to an introduction today.");
+});
+
 test("peon.biz says a person reviews every introduction; no compliance gate blocks joining", () => {
   const peon = SITES.find((s) => s.app === "peon")!;
   for (const f of ["SKILL.md"]) {
@@ -532,6 +607,43 @@ test("a skill cannot hand off signup before explicit draft approval", async () =
   const built = await buildSite(slop, join(tmp, "reordered-build"), process.env, skills);
   expect(built.ok).toBe(false);
   expect(built.logs.join("\n")).toContain('the agentSignup model does not allow "offerHandoff" in phase AwaitingApproval (NativeConnectorHandoff)');
+});
+
+test("a skill cannot stop an agent without the connector before it gives the connector setup step", async () => {
+  const skills = join(tmp, "no-setup-skills");
+  cpSync(SKILLS_DIR, skills, { recursive: true });
+  for (const [app, transport] of [["slop", "NoTransport"], ["peon", "MessagesHandoff"]] as const) {
+    const s = SITES.find(x => x.app === app)!;
+    const file = join(skills, s.skill, "SKILL.md");
+    const source = readFileSync(file, "utf8");
+    expect(source).toContain("<!-- agentSignup: checkConnectorSetup resumeAfterConnector chooseTransport -->");
+    writeFileSync(file, source.replace("checkConnectorSetup resumeAfterConnector chooseTransport", "chooseTransport"));
+    const built = await buildSite(s, join(tmp, `no-setup-build-${app}`), process.env, skills);
+    expect(built.ok).toBe(false);
+    expect(built.logs.join("\n")).toContain(`the agentSignup model does not allow "chooseTransport" in phase CheckingCapability (${transport})`);
+  }
+});
+
+test("each plugin skill and its MCP dependency use its own app's ntwrk.party endpoint, and the snapshots are current", () => {
+  const files = buildPlugins();
+  const appOf = (skill: string) => SITES.find(s => s.skill === skill)!.app;
+  const otherEndpoint = (app: string) => app === "ntwrk" ? /https:\/\/ntwrk\.party\/mcp(?:\/openai)?(?![\w/])/ : new RegExp(`https://ntwrk\\.party/mcp/${app}(?![\\w])`);
+  for (const skill of PLUGINS.openai.skills) {
+    const url = `https://ntwrk.party${hubPath(appOf(skill))}/openai`;
+    const yaml = files.get(join("openai", "skills", skill, "agents", "openai.yaml"))!;
+    expect(yaml, skill).toContain(`url: ${url}\n`);
+    const text = files.get(join("openai", "skills", skill, "SKILL.md"))!;
+    for (const other of SITES.filter(s => s.skill !== skill)) {
+      expect(text, `${skill} names ${other.domain}`).not.toMatch(otherEndpoint(other.app));
+      if (other.app !== "ntwrk") expect(text, `${skill} names ${other.domain}`).not.toContain(`https://${other.domain}/mcp`);
+    }
+    expect(text, skill).toContain(url);
+  }
+  for (const skill of PLUGINS.claude.skills) expect(files.get(join("claude", "skills", skill, "SKILL.md")), skill).toContain(`https://ntwrk.party${hubPath(appOf(skill))}`);
+  const manifest = JSON.parse(files.get(join("openai", "mcp.json"))!) as { mcpServers: Record<string, { url: string }> };
+  expect(Object.values(manifest.mcpServers).map(x => x.url)).toEqual([OPENAI_MCP_URL]);
+  expect(OPENAI_MCP_URL).toBe("https://ntwrk.party/mcp/openai");
+  for (const [rel, text] of files) expect(readFileSync(join(REPO, "plugins", rel), "utf8"), `plugins/${rel} is stale: run plugins/build.ts`).toBe(text);
 });
 
 test("a skill cannot reintroduce the direct phone API", async () => {

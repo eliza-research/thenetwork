@@ -20,6 +20,8 @@ export type SharedPart = "PartMark" | "PartHeadline" | "PartPrompt" | "PartAgent
 
 /** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */
 export const supportEmail: string = "help@ntwrk.party";
+/** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */
+export const agentAccessPage: string = "https://ntwrk.party/oauth/consents";
 /** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md) */
 export const joinModes: JoinMode[] = ["InviteOnly", "OpenJoin"];
 /** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md) */
@@ -82,8 +84,33 @@ export function lawAccentInkDiffersFromAccent(accent: Accent): boolean {
 
 /** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */
 //@ pure
+export function connectorEndpoint(app: AppKey): string {
+  return app === "Ntwrk" ? "https://ntwrk.party/mcp" : (app === "Slop" ? "https://ntwrk.party/mcp/slop" : (app === "Peon" ? "https://ntwrk.party/mcp/peon" : "https://ntwrk.party/mcp/friends"));
+}
+
+/** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */
+//@ pure
+export function openaiConnectorEndpoint(app: AppKey): string {
+  return app === "Ntwrk" ? "https://ntwrk.party/mcp/openai" : (app === "Slop" ? "" : (app === "Peon" ? "https://ntwrk.party/mcp/peon/openai" : "https://ntwrk.party/mcp/friends/openai"));
+}
+
+/** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */
+//@ pure
 export function mayName(site: AppKey, named: AppKey, surface: Surface): boolean {
   return site === named || (site === "Ntwrk" && (surface === "LegalSurface" || surface === "CatalogSurface"));
+}
+
+/** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */
+//@ pure
+export function hubTextsOnAppSurface(site: AppKey, surface: Surface): string[] {
+  return surface !== "SkillSurface" ? ([supportEmail] as string[]) : (openaiConnectorEndpoint(site) === "" ? ([supportEmail, agentAccessPage, connectorEndpoint(site)] as string[]) : ([supportEmail, agentAccessPage, openaiConnectorEndpoint(site), connectorEndpoint(site)] as string[]));
+}
+
+/** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */
+//@ pure
+export function lawAppEndpointsAreDistinct(a: AppKey, b: AppKey): boolean {
+  //@ ensures \result === true
+  return !(a !== b) || (connectorEndpoint(a) !== connectorEndpoint(b) && openaiConnectorEndpoint(a) !== openaiConnectorEndpoint(b) && connectorEndpoint(a) !== openaiConnectorEndpoint(b));
 }
 
 /** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */
@@ -98,6 +125,13 @@ export function lawAppSiteNeverNamesTheNetwork(site: AppKey, surface: Surface): 
 export function lawAppSiteNamesNoOtherApp(site: AppKey, named: AppKey, surface: Surface): boolean {
   //@ ensures \result === true
   return !(site !== "Ntwrk" && named !== site) || !mayName(site, named, surface);
+}
+
+/** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */
+//@ pure
+export function lawOnlyTheSkillNamesTheEndpoint(site: AppKey, surface: Surface): boolean {
+  //@ ensures \result === true
+  return !(surface !== "SkillSurface") || equal_brandIdentity(hubTextsOnAppSurface(site, surface), ([supportEmail] as string[]));
 }
 
 /** Story: Each site keeps its own brand / ntwrk.party names no app on its landing page, its not-found page or its own skill (spec/brandIdentity.md) */
