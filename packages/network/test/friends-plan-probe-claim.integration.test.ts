@@ -33,10 +33,15 @@ test.skipIf(!pgAvailable).each([
       env: { PLATFORM_ENV: "dev" }, network: { plans: false, growth: false } });
     try {
       await service.start();
+      const rt = service.runtimes.get(appRuntime)!;
+      const staff = { id: "fixture-staff", roles: ["safety" as const], grants: [{ role: "safety" as const, app: app.id }], via: "sso" as const };
       const members: Spec[] = [];
       for (const { name, e164 } of people) {
         const joined = await service.accounts.join(app, { e164, personId: null }, { firstName: name, age: 30, consent: { sms: true, wording: app.consent.text } });
         if (!joined.ok) throw new Error("Fixture join was refused");
+        for (const check of ["age", "liveness"] as const) {
+          expect(await service.verify(staff, rt, joined.membership.memberId, check, "pass", "fixture verification")).toEqual({ ok: true });
+        }
         members.push({ id: joined.membership.memberId, name, age: 30 });
         await adapter.engaged(e164);
       }
@@ -44,6 +49,7 @@ test.skipIf(!pgAvailable).each([
       const now = clock.now();
       const fixture = new Mini(members, { app: app.id, inlineJudge: holdEveryItem.inline, plans: false, growth: false });
       fixture.clock.set(now);
+      fixture.verify(first, second);
       await fixture.onboard(first, second);
       const slots = [4, 5, 6].map(days => ({ start: now + days * DAY, end: now + days * DAY + 2 * HOUR }));
       const plan: plans.Plan = {
@@ -68,7 +74,6 @@ test.skipIf(!pgAvailable).each([
       opp.contacted = [first, second];
       saved.members.find(m => m.id === second)!.awaiting = { kind: "probe", oppId, probeReceiptId: deliveryId, at: now };
       const body = `Would you like to go climbing? ${offered.map(option => `${option.key.toUpperCase()}: ${option.label}`).join(". ")}`;
-      const rt = service.runtimes.get(appRuntime)!;
       await adapter.queue.setLineSafety("review");
       await rt.unitOfWork(net => {
         net.importState({ ...net.exportState(), members: saved.members, opps: saved.opps });
