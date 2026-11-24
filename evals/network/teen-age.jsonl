@@ -369,3 +369,23 @@
 {"text":"`i have homework` lol","teen":false}
 {"text":"She said \"For a meme: ‘I’m underage.’\"","teen":false}
 {"text":"Translate this: “I’m underage.”","teen":false}
+{"text":"he just turned 13","other":13}
+{"text":"she just turned 17","other":17}
+{"text":"the guy just turned 16","other":16}
+{"text":"my match just turned 15","other":15}
+{"text":"he turned 16 yesterday","other":16}
+{"text":"she turned 16 in june","other":16}
+{"text":"he turned 13 last week","other":13}
+{"text":"she turns 14 tomorrow","other":14}
+{"text":"he will turn 13 next month","other":13}
+{"text":"she just turned seventeen","other":17}
+{"text":"she just turned eighteen","other":null}
+{"text":"he just turned 18","other":null}
+{"text":"he just turned 30","other":null}
+{"text":"she is in 8th grade","other":17}
+{"text":"he's in eighth grade","other":17}
+{"text":"she's a 7th grader","other":17}
+{"text":"my date is in 8th grade","other":17}
+{"text":"she's in the 8th grade","other":17}
+{"text":"he is in 12th grade","other":17}
+{"text":"my son is in 8th grade","other":null}

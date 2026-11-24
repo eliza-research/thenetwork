@@ -23,14 +23,16 @@ const IMPLIED_FIRST_PERSON = /^\s*(?:sorry|sadly|unfortunately)?\s*$/i;
 
 const NON_COUNTERPART_SUBJECT = /^(?:i|we|it|you|that|this|there|which|what|who|son|daughter|kid|kids|child|baby|brother|sister|nephew|niece|cousin|dog|cat|puppy|car|lease|apartment|building|startup|company|record|streak|bike|laptop|phone|team|group|band|club|class|cohort|batch|dinner|coffee|parking|uber|lyft|bill|weather|food|drinks?|meal|lunch|breakfast|table|ticket|cab|taxi|venue|place|restaurant|bar|cafe|hotel|service|film|movie|show|drive|ride|walk|flight|trip|check|order|cost|price|entry|cocktail|beer|wine|tip|admission)$/i;
 const SUBJECT_AGE_WORDS = "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen".split(" ");
-const YOUTH_MARKER = "a minor|under\\s*age|under 18|not (?:18|an adult) yet|in (?:high|middle) school|a (?:high school|hs|middle school) (?:student|freshman|sophomore|junior|senior)|a (?:freshman|sophomore|junior|senior) in (?:high school|hs)|a kid|a child|a teen(?:ager)?";
+const GRADE_WORDS = "first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth";
+const YOUTH_MARKER = "a minor|under\\s*age|under 18|not (?:18|an adult) yet|in (?:high|middle) school|a (?:high school|hs|middle school) (?:student|freshman|sophomore|junior|senior)|a (?:freshman|sophomore|junior|senior) in (?:high school|hs)|a kid|a child|a teen(?:ager)?"
+  + `|in (?:the )?(?:\\d{1,2}(?:st|nd|rd|th)|${GRADE_WORDS}) grade|a (?:\\d{1,2}(?:st|nd|rd|th)|${GRADE_WORDS}) grader`;
 const AGE_REPORT = new RegExp(
   "\\b(?<subject>my (?:date|match)|(?:the|this) (?:guy|girl|person(?: i met)?|dude|man|woman)|[a-z][a-z'-]+?)"
-  + "(?:'s|'re| is| was| are| were| turned out to be| turns out to be)[ \\t]+"
+  + "(?:'s|'re| is| was| are| were| turned out to be| turns out to be| just turned| turned| turns| will turn|'s turning|'s just turned)[ \\t]+"
   + "(?:(?:only|just|actually|literally|barely|like|still)[ \\t]+){0,2}"
   + "(?:(?:an?[ \\t]+)?(?<age>\\d{1,2}(?!\\d)|(?:" + SUBJECT_AGE_WORDS.join("|") + ")\\b)"
   + "(?:[ \\t-]*(?:years?[ \\t-]+old|yrs?[ \\t-]+old|y/?o)\\b)?"
-  + "(?=[ \\t]*(?:$|\\.(?!\\d)|[,!?;)\n]|(?:and|but|from|here|tbh|apparently)\\b))"
+  + "(?=[ \\t]*(?:$|\\.(?!\\d)|[,!?;)\n]|(?:and|but|from|here|tbh|apparently)\\b|(?:last|next|this) (?:week|month|year)\\b|yesterday\\b|tomorrow\\b|today\\b|recently\\b|in (?:january|february|march|april|may|june|july|august|september|october|november|december)\\b))"
   + "|(?<youth>" + YOUTH_MARKER + ")\\b(?![ \\t]+(?:teacher|counselor|coach|principal|nurse|staff|at heart|of a)\\b))",
   "gi",
 );
