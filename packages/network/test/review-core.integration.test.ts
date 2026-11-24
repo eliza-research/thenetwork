@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { DAY, HOUR, MINUTE, type MemberId } from "@thenetwork/core";
+import { canBeMatched, DAY, HOUR, MINUTE, type MemberId } from "@thenetwork/core";
 import { holdEveryItem, SIM_REVIEW_JUDGE, type InlineReviewJudge, type ReviewJudgment, type ReviewPacket } from "../../engine/src/reviewJudge.ts";
 import { Mini, type Spec } from "./mini.ts";
 
@@ -41,6 +41,7 @@ const UMA = climber("member-uma-17", "Uma Park", 17);
 async function world(specs: Spec[], judge: InlineReviewJudge, app: "friends" | "ntwrk" = "friends") {
   const w = new Mini(specs, { app, inlineJudge: judge, growth: false });
   for (const s of specs) {
+    if (app === "friends" && canBeMatched(s.age)) w.verify(s.id);
     const born = TEEN_BORN[s.id];
     if (born !== undefined) Object.assign(w.members.find(m => m.id === s.id)!, { birthKey: born, birthExact: true, ageConflict: false, teenBarred: false });
   }
