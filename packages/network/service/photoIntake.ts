@@ -21,6 +21,7 @@ import type { AppId } from "../../platform/src/apps.ts";
 import { readCapped } from "../../platform/src/body.ts";
 import { photoMaxPerMessage } from "../../core/src/generated/photoPolicy.ts";
 import { PHOTO_CONSENT, PHOTO_MAX_BYTES, type PhotoRefusal, type PhotoService } from "../../platform/src/photos.ts";
+import type { PhotoUploadLinks } from "../../platform/src/photo-upload-link.ts";
 import type { PeopleStore } from "../../platform/src/store.ts";
 import { DAY } from "@thenetwork/core";
 
@@ -34,6 +35,9 @@ const LIVE = new Set(["active", "paused", "onboarding"]);
 /** Draft copy (needs the founder's approval and the CONTRIBUTING 3.5 videos). */
 export const PHOTO_TEXT = {
   ask: `Before I keep any photos: ${PHOTO_CONSENT.text} Reply YES PHOTOS to agree, then send the photo again. Reply NO PHOTOS and I keep none.`,
+  linkAsk: `Before I keep any photos: ${PHOTO_CONSENT.text} Reply YES PHOTOS to agree and I will text you a private link to add them. Reply NO PHOTOS and I keep none.`,
+  link: (url: string) => `Here is your private link to add up to 4 photos, 4 MB each and 8 MB in all. It works once, for 15 minutes: ${url}`,
+  linkLimit: "You asked for several photo links today. Ask again tomorrow.",
   agreed: "Thanks. Send your photos any time. To request a copy or deletion, email help@ntwrk.party.",
   declined: "OK. I will not keep your photos.",
   stored: (n: number) => (n === 1 ? "Got it. I saved your photo privately." : `Got it. I saved ${n} photos privately.`),
@@ -57,6 +61,7 @@ export interface PhotoIntakeDeps {
   people: PeopleStore;
   accounts: Accounts;
   photos: PhotoService;
+  links?: Pick<PhotoUploadLinks, "issue" | "refusal" | "recordConsent">;
   /** The keyed phone hash (pending texts and rate limits). */
   phoneKey: (e164: string) => string;
   now: () => number;
@@ -120,16 +125,43 @@ export class PhotoIntake {
     await this.d.people.deletePending(key, "photo_consent", PHOTO_APP);
     const who = await this.member(e164);
     if (a === "yes") {
-      const refused = who ? await this.d.photos.mayTake(who.person.id, PHOTO_APP) : "not_member";
+      const links = this.d.links;
+      const refused = !who ? "not_member" : links ? (await links.refusal(who.person.id, PHOTO_APP))?.reason : await this.d.photos.mayTake(who.person.id, PHOTO_APP);
       if (who && !refused) {
-        await this.d.people.putMembership({ ...who.m, profile: { ...who.m.profile, photoConsent: PHOTO_CONSENT.version, photoConsentAt: this.d.now(), photoConsentSource: "text" } });
-        await this.d.reply(e164, PHOTO_TEXT.agreed, `sys:${ref}`);
-      } else if (refused === "adults_only" || refused === "not_verified") {
+        if (links) {
+          if (!await links.recordConsent(who.person.id, PHOTO_APP)) return true;
+          const link = await links.issue(who.person.id, PHOTO_APP, "text");
+          await this.d.reply(e164, link.ok ? PHOTO_TEXT.link(link.url) : PHOTO_TEXT.agreed, `sys:${ref}`);
+        } else {
+          await this.d.people.putMembership({ ...who.m, profile: { ...who.m.profile, photoConsent: PHOTO_CONSENT.version, photoConsentAt: this.d.now(), photoConsentSource: "text" } });
+          await this.d.reply(e164, PHOTO_TEXT.agreed, `sys:${ref}`);
+        }
+      } else if (refused === "adults_only" || refused === "not_verified" || refused === "held") {
         // Not swallowed in silence: the same plain answer a photo gets (once a day).
         await this.once(e164, "photo_not_adult", PHOTO_TEXT.notAdult, ref);
       }
     } else {
       await this.d.reply(e164, PHOTO_TEXT.declined, `sys:${ref}`);
+    }
+    return true;
+  }
+
+  async addRequest(e164: string, text: string, ref: string, app: AppId): Promise<boolean> {
+    const links = this.d.links;
+    if (!links || app !== PHOTO_APP || !/^\s*(?:add|upload)\s+(?:my\s+|a\s+|some\s+)?(?:photos?|pics?|pictures?)[\s.!]*$/i.test(text)) return false;
+    const who = await this.member(e164);
+    if (!who) return false;
+    const refused = (await links.refusal(who.person.id, PHOTO_APP))?.reason;
+    if (refused) {
+      if (refused !== "banned") await this.once(e164, "photo_not_adult", PHOTO_TEXT.notAdult, ref);
+      return true;
+    }
+    if (who.m.profile.photoConsent !== PHOTO_CONSENT.version) {
+      await this.d.people.putPending({ phoneHash: this.d.phoneKey(e164), kind: "photo_consent", app: PHOTO_APP, name: null, age: null, at: this.d.now() });
+      await this.d.reply(e164, PHOTO_TEXT.linkAsk, `sys:${ref}`);
+    } else {
+      const link = await links.issue(who.person.id, PHOTO_APP, "text");
+      await this.d.reply(e164, link.ok ? PHOTO_TEXT.link(link.url) : link.reason === "daily_limit" ? PHOTO_TEXT.linkLimit : PHOTO_TEXT.notAdult, `sys:${ref}`);
     }
     return true;
   }

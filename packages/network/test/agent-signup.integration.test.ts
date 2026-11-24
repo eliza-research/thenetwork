@@ -266,6 +266,125 @@ function browserOn(w: SignupWorld, site: string) {
   };
 }
 
+// spec/photoUploadLink.md, "A link is issued only to an adult live member of a photo app who is not banned or held"
+test.skipIf(!pgAvailable)("a private photo upload link is app-bound, single use and rechecks eligibility at publication", async () => {
+  const objects = new Map<string, Uint8Array>();
+  let pausePut = false;
+  let enteredPut!: (key: string) => void;
+  let releasePut!: () => void;
+  const entered = new Promise<string>(resolve => { enteredPut = resolve; });
+  const released = new Promise<void>(resolve => { releasePut = resolve; });
+  const storage: PhotoStorage = {
+    kind: "local",
+    async put(key, bytes) {
+      if (pausePut) { enteredPut(key); await released; }
+      objects.set(key, bytes);
+    },
+    async get(key) { return objects.get(key); },
+    async delete(key) { objects.delete(key); },
+  };
+  await withSignupWorld(["slop:nyc"], async w => {
+    const number = "+12125550198";
+    const site = "https://slop.date";
+    const post = (path: string, body: unknown, cookie?: string) => w.env.fetch(new Request(site + path, {
+      method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) },
+    }));
+    expect((await post("/api/auth/otp/start", { phone: number })).status).toBe(200);
+    const verified = await post("/api/auth/otp/verify", { phone: number, code: w.harness.provider.last(number) });
+    expect(verified.status).toBe(200);
+    expect((await post("/api/join", { firstName: "Jo", age: 29, homeCity: "nyc", consent: { sms: true, version: APPS.slop.consent.version } },
+      verified.headers.getSetCookie()[0]?.split(";")[0])).status).toBe(200);
+    const person = (await w.service.accounts.personFor(number))!;
+    const path = "/api/photos/upload";
+    const status = (token: string, origin = site) => w.env.fetch(new Request(origin + path, { headers: { "x-photo-upload-link": token } }));
+    const upload = (token: string, consent?: string, origin = site) => {
+      const form = new FormData();
+      form.append("photo", new Blob([Uint8Array.from([255,216,255,218,0,2,1,255,217])], { type: "image/jpeg" }), "private.jpg");
+      return w.env.fetch(new Request(origin + path, {
+        method: "POST", body: form,
+        headers: { origin, "x-photo-upload-link": token, ...(consent ? { "x-photo-consent": consent } : {}) },
+      }));
+    };
+    const issue = async () => {
+      const link = await w.service.photoLinks.issue(person.id, "slop", "agent");
+      if (!link.ok) throw new Error(`Photo link refused: ${link.reason}`);
+      return { token: new URL(link.url).hash.slice(1), expiresAt: link.expiresAt };
+    };
+    const turn = async (messageId: string, text: string) => {
+      const body = JSON.stringify({ messageId, channel: "blooio", from: number, to: null, text,
+        transport: "imessage", receivedAt: w.clock.now(), app: "slop" } satisfies TurnRequest);
+      const proof = await svcSign(signupTurnSecret, { method: "POST", path: TURN_PATH, id: messageId, body,
+        nowS: Math.floor(w.clock.now() / 1000) });
+      const response = await w.service.fetch(new Request("http://127.0.0.1" + TURN_PATH, {
+        method: "POST", body, headers: { "content-type": "application/json", ...proof },
+      }));
+      expect(response.status).toBe(200);
+      return await response.json() as { outcome: string; replies?: string[] };
+    };
+
+    const unconsented = await issue();
+    const opened = await status(unconsented.token);
+    expect(opened.status).toBe(200);
+    expect(opened.headers.get("cache-control")).toBe("no-store");
+    expect(await opened.json()).toEqual({ ok: true, consentRequired: true, consent: PHOTO_CONSENT });
+    expect((await status(unconsented.token, "https://friends.help")).status).toBe(410);
+    expect(await (await upload(unconsented.token)).json()).toEqual({ ok: false, error: "consent_required" });
+    expect((await status(unconsented.token)).status).toBe(200);
+    expect(await (await upload(unconsented.token, undefined, "https://friends.help")).json()).toEqual({ ok: false, error: "link_unavailable" });
+    expect((await status(unconsented.token)).status).toBe(410);
+
+    const ask = await turn("photo-upload-ask", "ADD PHOTOS");
+    expect(ask.outcome).toBe("handled");
+    expect(ask.replies?.join(" ")).toContain("YES PHOTOS");
+    const consent = await turn("photo-upload-consent", "YES PHOTOS");
+    const token = /\/photos\/add#([A-Za-z0-9_-]{43})/.exec(consent.replies?.join(" ") ?? "")?.[1];
+    if (!token) throw new Error("No private photo link in the signed turn reply");
+    expect(await (await status(token)).json()).toMatchObject({ ok: true, consentRequired: false });
+    const responses = await Promise.all([upload(token), upload(token)]);
+    expect(responses.map(r => r.status).sort()).toEqual([200, 410]);
+    const saved = responses.find(r => r.status === 200)!;
+    expect(await saved.json()).toEqual({ ok: true, stored: 1, refused: [] });
+    expect(objects.size).toBe(1);
+    expect((await w.env.fetch(new Request(site + "/api/photos", { headers: { "x-photo-upload-link": token } }))).status).toBe(401);
+    const [rights] = await w.connector.store.sql`select has_table_privilege('network_observatory_slop', 'platform.photo_upload_links', 'select') as can_read_links`;
+    expect(rights?.can_read_links).toBe(false);
+
+    const expired = await issue();
+    w.clock.set(expired.expiresAt);
+    expect((await upload(expired.token)).status).toBe(410);
+    const held = await issue();
+    await w.service.people.setPhoneHold(number, "recycled_number", w.clock.now());
+    expect((await status(held.token)).status).toBe(410);
+    expect((await upload(held.token)).status).toBe(410);
+    await w.service.people.setPhoneHold(number, null, w.clock.now());
+
+    const staffHeld = await issue();
+    await w.connector.store.sql`insert into platform.staff_safety_holds (person_id, app_id, decision_id, held_at)
+      values (${person.id}, 'slop', '00000000-0000-4000-8000-000000000014', ${new Date(w.clock.now())})`;
+    expect((await upload(staffHeld.token)).status).toBe(410);
+    await w.connector.store.sql`delete from platform.staff_safety_holds where person_id = ${person.id} and app_id = 'slop'`;
+
+    const inFlight = await issue();
+    expect(await w.service.photoLinks.issue(person.id, "slop", "agent")).toEqual({ ok: false, reason: "daily_limit" });
+    pausePut = true;
+    const late = upload(inFlight.token);
+    try {
+      const key = await Promise.race([entered, late.then(res => { throw new Error(`Upload ended before storage wait: ${res.status}`); })]);
+      await w.service.accounts.recordAge(number, person, 17);
+      releasePut();
+      expect(await (await late).json()).toEqual({ ok: false, stored: 0, refused: ["adults_only"] });
+      expect(objects.has(key)).toBe(false);
+      w.clock.advance(24 * HOUR);
+      expect(await w.service.photoLinks.issue(person.id, "slop", "agent")).toEqual({ ok: false, reason: "adults_only" });
+      expect(await w.service.accounts.deleteAll({ e164: number, personId: person.id })).toBe(true);
+      expect(await w.connector.store.sql`select id from platform.photo_upload_links where person_id = ${person.id}`).toEqual([]);
+    } finally {
+      releasePut();
+      await late.catch(() => undefined);
+    }
+  }, { photoStorage: storage });
+}, 60_000);
+
 type Browser = ReturnType<typeof browserOn>;
 
 async function openConnection(w: SignupWorld, site: string, browser: Browser, state: string) {

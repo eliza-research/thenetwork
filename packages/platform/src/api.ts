@@ -37,6 +37,7 @@ import type { PeopleStore } from "./store.ts";
 import type { TurnstileVerifier } from "./turnstile.ts";
 import type { PhotoService } from "./photos.ts";
 import type { PhotoRelayService } from "./photo-relay.ts";
+import { PHOTO_UPLOAD_PATH, type PhotoUploadLinks } from "./photo-upload-link.ts";
 
 type CloudStatus = "valid" | "invalid" | "unavailable";
 const cloudResponse: Record<CloudStatus, CloudResponse> = { valid: "CloudAccepted", invalid: "CloudDenied", unavailable: "CloudUnavailable" };
@@ -91,6 +92,7 @@ export interface PublicApiOptions extends AccountHooks {
   photos?: PhotoService;
   /** Voluntary item sharing. Absent until an approved item-review policy is configured. */
   photoRelay?: PhotoRelayService;
+  photoLinks?: PhotoUploadLinks;
   /** Private home-help address for the current approved revision. Use the verified app session only. */
   homeHelpVenue?: (app: AppInfo, who: Who, input: HomeHelpVenueRequest) => Promise<{ address?: string } | undefined>;
   calendarInvite?: (app: AppInfo, code: string) => Promise<Response>;
@@ -410,6 +412,14 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       return o.calendarInvite(app, url.searchParams.get("code") ?? "");
     }
     const photoPath = url.pathname.replace(/\/+$/, "");
+    if (o.photoLinks && photoPath === PHOTO_UPLOAD_PATH) {
+      if (!post) return o.photoLinks.status(req, appId);
+      if (req.headers.get("sec-fetch-site") === "cross-site") return json(403, { ok: false, error: "origin" });
+      const origin = req.headers.get("origin");
+      try { if (origin && appForHost(new URL(origin).host, hostMap) !== appId) return json(403, { ok: false, error: "origin" }); }
+      catch { return json(403, { ok: false, error: "origin" }); }
+      return o.photoLinks.redeem(req, appId);
+    }
     if (o.photoRelay && photoPath.startsWith("/api/relay-photos/")) {
       if (post) {
         if (!(req.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) return json(415, { ok: false, error: "json_required" });
