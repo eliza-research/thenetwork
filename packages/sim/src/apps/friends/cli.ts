@@ -30,7 +30,7 @@ async function main() {
   const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
   const se = (xs: number[]) => { const m = mean(xs); return Math.sqrt(xs.reduce((a, b) => a + (b - m) ** 2, 0) / Math.max(1, xs.length - 1) / xs.length); };
   const fmt = (xs: number[], pct = false, d = 2) => (pct ? `${(mean(xs) * 100).toFixed(1)}% ± ${(se(xs) * 100).toFixed(1)}` : `${mean(xs).toFixed(d)} ± ${se(xs).toFixed(d)}`);
-  const rows: [string, (m: FriendsMetrics) => number, boolean, number?][] = [
+  const rows: [string, (m: FriendsMetrics) => number, boolean, number?, ((m: FriendsMetrics) => number)?][] = [
     ["Proposals / seed", m => m.proposals, false, 0],
     ["Probes / seed", m => m.probes, false, 0],
     ["Probe yes rate", m => m.probeYesRate, true],
@@ -41,9 +41,9 @@ async function main() {
     ["Mean group size", m => m.meanGroupSize, false, 2],
     ["Good meetups (least misery >= 0.45)", m => m.goodRate, true],
     ["Mean enjoyment (real attendees)", m => m.meanEnjoy, false, 3],
-    ["**Repeat-meetup rate (>= 2 again within 30 d)**", m => m.repeatRate, true],
-    ["Repeat, same group (>= 3 again)", m => m.repeatGroupRate, true],
-    ["Repeat, counting crew handoffs", m => m.repeatRateWithHandoff, true],
+    ["**Repeat-meetup rate (>= 2 again within 30 d)**", m => m.repeatRate, true, undefined, m => m.repeatBase],
+    ["Repeat, same group (>= 3 again)", m => m.repeatGroupRate, true, undefined, m => m.repeatBase],
+    ["Repeat, counting crew handoffs", m => m.repeatRateWithHandoff, true, undefined, m => m.repeatBase],
     ["Crews formed / seed", m => m.crewsFormed, false, 1],
     ["Crews handed off / seed", m => m.crewsHandedOff, false, 1],
     ["Hours with members, per real member", m => m.hoursPerMember, false, 1],
@@ -74,7 +74,9 @@ async function main() {
   ];
   console.log(`| Metric (mean ± SE, seeds ${seeds.join(",")}; ${n} personas; ${weeks} weeks${planCap !== 1 ? `; plan allowance ${planCap}/wk` : ""}) | ${only.join(" | ")} |`);
   console.log(`|---|${only.map(() => "---:").join("|")}|`);
-  for (const [label, f, pct, d] of rows) console.log(`| ${label} | ${only.map(k => fmt(all[k]!.map(f), pct, d)).join(" | ")} |`);
+  // A repeat row with an empty base has nothing to measure (no meetup can have a 30-day
+  // follow-up window yet): show n/a, the gates' convention, not a 0.0% that reads as measured.
+  for (const [label, f, pct, d, base] of rows) console.log(`| ${label} | ${only.map(k => base && mean(all[k]!.map(base)) === 0 ? "n/a" : fmt(all[k]!.map(f), pct, d)).join(" | ")} |`);
   console.log("\nV14 by borough (n averaged):");
   for (const k of only) console.log(`  ${k}: ` + Object.keys(all[k]![0]!.v14ByBorough).map(b => `${b} (n≈${Math.round(mean(all[k]!.map(m => m.v14ByBorough[b]!.n)))}) ${(mean(all[k]!.map(m => m.v14ByBorough[b]!.v14).filter(Number.isFinite)) * 100).toFixed(1)}%`).join("; "));
   console.log("\nAdversary contacts by kind:");

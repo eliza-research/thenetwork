@@ -25,6 +25,8 @@ export interface FriendsMetrics {
    * (graduation is a success, not a drop). Tracked, not a gate.
    */
   repeatRateWithHandoff: number;
+  /** Meetups held by day D-30: the base of the three repeat rates. 0 when no meetup can have a 30-day follow-up window yet, so the rates above are 0/0, not a measured 0%. */
+  repeatBase: number;
   crewsFormed: number; crewSessions: number; crewsHandedOff: number;
   /** Mean over real members of total hours with other members, and of the hours with their top person. */
   hoursPerMember: number; topPairHours: number;
@@ -185,7 +187,7 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
     quorumRate: div(probedProposals.filter(f => f.going.length > 0).length, probedProposals.length), capDrops: proposals.reduce((s, f) => s + f.capDrops, 0),
     meetups: held.length, meetupsByKind: byKind, attendance: div(attended, booked), meanGroupSize: div(held.reduce((s, m) => s + m.attendees.length, 0), held.length),
     goodRate: div(held.filter(m => m.good).length, held.length), meanEnjoy: div(realE.reduce((s, x) => s + x, 0), realE.length),
-    repeatRate: div(rep, base), repeatGroupRate: div(repG, base), repeatRateWithHandoff: div(repH, base),
+    repeatRate: div(rep, base), repeatGroupRate: div(repG, base), repeatRateWithHandoff: div(repH, base), repeatBase: base,
     crewsFormed: world.state.crews.length, crewSessions: meetups.filter(m => m.crewId && m.kind !== "crew_self").length, crewsHandedOff: world.state.crews.filter(c => c.handedOff).length,
     hoursPerMember: div(real.reduce((s, p) => s + (perMember.get(p.id) ?? 0), 0), real.length), topPairHours: div(real.reduce((s, p) => s + (top.get(p.id) ?? 0), 0), real.length),
     casualFriendPairs: casualPairs, friendPairs, friendshipTrackShare: div(real.filter(p => track.has(p.id)).length, real.length), hallPaceShare: div(real.filter(p => pace.has(p.id)).length, real.length), casualFriendShare: div(real.filter(p => casual.has(p.id)).length, real.length),
