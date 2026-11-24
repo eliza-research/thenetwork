@@ -165,16 +165,20 @@ export class PhotoPages {
         await this.o.sql.begin(tx => this.o.relay.dropDraft(tx, link.personId, link.app));
         return privateJson(200, { ok: true, state: "cancelled" satisfies CheckAnswerState });
       }
-      const slots = await this.o.relay.slots(link.personId, link.app);
-      const numbers = numberList(b.numbers, 1, 3, slots.length);
-      if (!numbers) return fail(400, "invalid");
-      const shared = slots.filter(s => s.heldBy.includes(draft.recipientMemberId!)).map(s => s.n);
-      const pick = photoPickFor(true, false, false, false, 1, slots.length, true, numbers.length > 1, maskOf(numbers), 0, 0, maskOf(shared));
-      if (pick.pick !== "ProposePhotos") return privateJson(200, { ok: true, state: "refused" satisfies CheckAnswerState });
-      const proposed = numbersOf(pick.chosen, slots.length);
-      const saved = await this.o.sql.begin(tx => this.o.relay.pickOnPage(tx, link, proposed.map(n => slots[n - 1]!.id)));
-      if (!saved) return privateJson(200, { ok: true, state: "changed" satisfies CheckAnswerState });
-      return privateJson(200, { ok: true, state: "proposed" satisfies CheckAnswerState, proposed, revision: saved.revision });
+      return this.o.sql.begin(async tx => {
+        const slots = await this.o.relay.lockCheckSlots(tx, link.personId, link.app, draft.photoSetSha);
+        if (!this.o.relay.linkLive(link, deviceHash, true)) return privateJson(200, { ok: true, state: "lapsed" satisfies CheckAnswerState });
+        if (!slots) return privateJson(200, { ok: true, state: "changed" satisfies CheckAnswerState });
+        const numbers = numberList(b.numbers, 1, 3, slots.length);
+        if (!numbers) return fail(400, "invalid");
+        const shared = slots.filter(s => s.heldBy.includes(draft.recipientMemberId!)).map(s => s.n);
+        const pick = photoPickFor(true, false, false, false, 1, slots.length, true, numbers.length > 1, maskOf(numbers), 0, 0, maskOf(shared));
+        if (pick.pick !== "ProposePhotos") return privateJson(200, { ok: true, state: "refused" satisfies CheckAnswerState });
+        const proposed = numbersOf(pick.chosen, slots.length);
+        const saved = await this.o.relay.pickOnPage(tx, link, proposed.map(n => slots[n - 1]!.id));
+        if (!saved) return privateJson(200, { ok: true, state: "changed" satisfies CheckAnswerState });
+        return privateJson(200, { ok: true, state: "proposed" satisfies CheckAnswerState, proposed, revision: saved.revision });
+      });
     }
     if (link.purpose === "mine") {
       if (!exactKeys(b, ["token", "answer", "shareRef"]) || b.answer !== "take_back" || typeof b.shareRef !== "string" || !OPAQUE_REFERENCE.test(b.shareRef)) return fail(400, "invalid");

@@ -220,7 +220,7 @@ describe.skipIf(!pgAvailable)("photo check page (the /photos/check shell and mac
     expect(await offersOf(sender.personId)).toEqual([]);
   }, T);
 
-  test("a photo removed after checkout opens cannot be replaced by the photo in the next slot", async () => {
+  test("a removed Checkout photo cannot be replaced in the image, the draft or the offer", async () => {
     const { ari, sender, senderBrowser } = await pair(2);
     const [first, second] = await photoIdsOf(sender.personId);
     const token = checkToken((await turn(ari, "send Maya my first photo")).reply)!;
@@ -234,7 +234,11 @@ describe.skipIf(!pgAvailable)("photo check page (the /photos/check shell and mac
     expect(await photoIdsOf(sender.personId)).toEqual([second]);
 
     const image = await loadCheckPhoto(token, 1);
+    const pick = await answerPhotoCheck(token, proposal!.revision, { answer: "pick", numbers: [1] }, [1, 2]);
     const send = await answerPhotoCheck(token, proposal!.revision, { answer: "send" }, [1, 2]);
+    expect(pick.answer.kind).toBe("CheckChanged");
+    const [draft] = await sql`select revision, proposed_ids from platform.photo_relay_drafts where sender_person_id = ${sender.personId}`;
+    expect(draft).toMatchObject({ revision: proposal!.revision, proposed_ids: [first] });
     expect(send.answer.kind).toBe("CheckChanged");
     expect(await offersOf(sender.personId)).toEqual([]);
     expect(image).toBeUndefined();
