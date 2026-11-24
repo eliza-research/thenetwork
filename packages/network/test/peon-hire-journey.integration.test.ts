@@ -236,7 +236,8 @@ test.skipIf(!pgAvailable)("a Peon member whose age the platform does not know is
   const unknown = (await join(unknownPhone, "My name is Cah. I am 32 years old.")).id!;
   expect(await saveSearch(unknownPhone, role)).toEqual(["I saved your Peon job search. I'll ask you before any introduction."]);
   await db`update network.members set age = null where id = ${unknown}`;
-  await db`update platform.people set lowest_age = null where id = (select person_id from network.members where id = ${unknown})`;
+  await db`update platform.people set lowest_age = null, birth_date = null, birth_lower = null, birth_upper = null,
+    birth_youngest = null, birth_first_exact = null where id = (select person_id from network.members where id = ${unknown})`;
   await db`delete from platform.age_floor where phone_hash = (select p.phone_hash from network.members m join platform.people p on p.id = m.person_id where m.id = ${unknown})`;
   expect(await db`select age from platform.matching_ages where app_id = 'peon' and member_id = ${unknown}`).toEqual([{ age: null }]);
   await runtime().unitOfWork(net => {
