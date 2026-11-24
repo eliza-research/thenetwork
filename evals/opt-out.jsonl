@@ -186,3 +186,12 @@
 {"text": "don't call me late", "label": "not_stop", "lang": "en"}
 {"text": "don't call me at night", "label": "not_stop", "lang": "en"}
 {"text": "call me maybe", "label": "not_stop", "lang": "en"}
+{"text": "no more calls today, text instead", "label": "not_stop", "lang": "en"}
+{"text": "no more calls after 9", "label": "not_stop", "lang": "en"}
+{"text": "enough calls for today", "label": "not_stop", "lang": "en"}
+{"text": "no more calls from sam", "label": "not_stop", "lang": "en"}
+{"text": "she said no more calls", "label": "not_stop", "lang": "en"}
+{"text": "can you stop robocalls?", "label": "not_stop", "lang": "en"}
+{"text": "stop calls from unknown numbers", "label": "not_stop", "lang": "en"}
+{"text": "no more phone calls, texts are fine", "label": "not_stop", "lang": "en"}
+{"text": "she said don't call me", "label": "not_stop", "lang": "en"}
