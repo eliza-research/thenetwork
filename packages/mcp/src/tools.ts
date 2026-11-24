@@ -561,7 +561,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       const status = g.personId === null ? "not_joined" : await c.hooks.status(g.personId, g.app, g.phoneKey);
       const member = stepDraftPreparation(owned, { type: "observeMembership", status });
       if (member.phase !== "WriteDraft") return { kind: "error", message: "This person already has a membership here. Use check_status for the next step." };
-      const saved = await store.putSignupDraft({ grantId: g.id, app: g.app, phoneKey: g.phoneKey, fields: chk.draft!, expiresAt: signupDraftDeadline(c.now + signupDraftLifetimeMs, g.expiresAt), consumedAt: null }, c.now);
+      const saved = await store.putSignupDraft({ grantId: g.id, app: g.app, phoneKey: g.phoneKey, fields: chk.draft!, expiresAt: signupDraftDeadline(c.now + signupDraftLifetimeMs, g.expiresAt) }, c.now);
       const written = stepDraftPreparation(member, { type: "observeWrite", saved });
       if (written.phase !== "RecheckAge") return { kind: "error", message: "This connection already saved a draft or is no longer valid. Follow this app's signup instructions in your agent." };
       const finished = stepDraftPreparation(written, { type: "observeAgeAfterWrite", allowed: await c.hooks.signupAgeAllowed(g.phoneKey, g.app, c.now) });
