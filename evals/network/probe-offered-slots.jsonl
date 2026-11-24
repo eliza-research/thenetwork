@@ -183,3 +183,12 @@
 {"text":"Saturday works. If Ana can't make Sunday, Sunday works.","answer":"yes","keys":["b"]}
 {"text":"Saturday works. If Ana can't make Sunday, that's fine.","answer":"yes","keys":["b"]}
 {"text":"Sunday works, unless Ana can't make it","answer":"unclear","keys":[]}
+{"text":"Saturday or Sunday, whichever is easier","answer":"yes","keys":["b","c"]}
+{"text":"either Saturday or Sunday, whichever is easier","answer":"yes","keys":["b","c"]}
+{"text":"Saturday or Sunday, whichever","answer":"yes","keys":["b","c"]}
+{"text":"Saturday or Sunday, whichever one","answer":"yes","keys":["b","c"]}
+{"text":"whichever works","answer":"yes","keys":["a","b","c"]}
+{"text":"Saturday or Sunday, any of them works","answer":"yes","keys":["b","c"]}
+{"text":"whichever of Saturday or Sunday works","answer":"yes","keys":["b","c"]}
+{"text":"Saturday or Sunday, all three","answer":"yes","keys":["a","b","c"]}
+{"text":"Saturday or Sunday, all of them","answer":"yes","keys":["a","b","c"]}
