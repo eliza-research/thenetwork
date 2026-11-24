@@ -100,7 +100,8 @@ test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current adm
       url, clock, log: () => {}, photoStorage: null, adapter: () => adapter,
       env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret }, reviewJudge: holdEveryItem.judge,
       networks: [{ id: networkId }], devMatching: [networkId],
-      network: { plans: false, growth: false, maxNewPerDay: 0, plansConfig: { probeWindowHours: 6 } }, tokens: "reviewer@friends:group-reviewer",
+      network: { plans: false, growth: false, maxNewPerDay: 0, plansConfig: { probeWindowHours: 6 } },
+      tokens: "reviewer@friends:group-reviewer,safety@friends:group-safety",
     }) };
   };
   let { adapter, service } = makeService();
@@ -116,6 +117,13 @@ test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current adm
   const approve = (review: ReviewItem, revision = review.revision) => service.fetch(new Request(`${reviewUrl}/${encodeURIComponent(review.oppId)}`, {
     method: "POST", headers: staff, body: JSON.stringify({ decision: "approve", revision }),
   }));
+  const verify = async (memberId: string, check: "age" | "liveness", result: "pass" | "fail") => {
+    const response = await service.fetch(new Request(`http://127.0.0.1/apps/friends/members/${encodeURIComponent(memberId)}/verify`, {
+      method: "POST", headers: { authorization: "Bearer group-safety", "content-type": "application/json" },
+      body: JSON.stringify({ check, result, note: "Friends group fixture" }),
+    }));
+    expect(await response.json()).toEqual({ ok: true });
+  };
   const post = async (path: string, id: string, value: TurnRequest | TurnReceiptRequest) => {
     const body = JSON.stringify(value);
     const auth = await svcSign(secret, { method: "POST", path, id, body, nowS: Math.floor(clock.now() / 1000) });
@@ -156,9 +164,8 @@ test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current adm
       if (!joined.ok) throw new Error(`Fixture join refused for ${person.name}`);
       members.push({ id: joined.membership.memberId, name: person.name, age: 30 });
       await adapter.engaged(person.e164);
-      await sql`insert into network.facets (app_id,id,member_id,kind,value,tags,privacy_scope,provenance,confidence)
-        values (${app.id},${`${joined.membership.memberId}:verify`},${joined.membership.memberId},'fact','Verified',
-          ${[person.name === "Drew" ? "verify:liveness:fail" : "verify:liveness:pass", "verify:age:pass"]},'agent_private','said',1)`;
+      await verify(joined.membership.memberId, "age", "pass");
+      await verify(joined.membership.memberId, "liveness", "pass");
     }
     const ids = members.map(member => member.id);
     const [ari, blair, charlie, drew, elliot] = ids;
@@ -193,6 +200,7 @@ test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current adm
     expect(await delivered(original.oppId, "plan_probe")).toEqual([]);
     if (scene === "changed queued availability" || scene === "expired generic invite") await adapter.queue.setLineSafety("review");
     expect((await approve(original)).status).toBe(200);
+    if (!fourSeats) await verify(drew, "liveness", "fail");
     if (scene === "expired generic invite") {
       // The queued messages still have delivery time left, but the reviewed probe deadline has arrived.
       const waiting = await messages(original.oppId, "plan_probe");
