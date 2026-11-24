@@ -1,4 +1,5 @@
 // spec/photosViewPage.md, "Photo view page"
+import { photoPagePurposeHeader } from "../../../core/src/generated/photoRelayItem.ts";
 import type { ViewImageAnswer, ViewOpenAnswer, ViewOpenKind, ViewReportAnswer } from "../../../core/src/generated/photosViewPage.ts";
 import { photoTokenWellFormed } from "./photoUpload.ts";
 import { type StepAnswer, stepCall } from "./stepPages.ts";
@@ -6,6 +7,7 @@ import { type StepAnswer, stepCall } from "./stepPages.ts";
 const viewOpenPath = "/api/photos/page/open";
 const viewImagePath = "/api/photos/page/image";
 const viewAnswerPath = "/api/photos/page/answer";
+const pageHeaders = { [photoPagePurposeHeader]: "view" };
 
 const imageTypes: readonly string[] = ["image/jpeg", "image/png", "image/webp"];
 
@@ -55,7 +57,7 @@ const countOf = (answer: StepAnswer): number => {
  * @model spec/photosViewPage.md
  */
 export async function openPhotoView(token: string): Promise<PhotoViewOpened> {
-  const answer = await stepCall(viewOpenPath, { method: "POST", json: { token } });
+  const answer = await stepCall(viewOpenPath, { method: "POST", json: { token }, headers: pageHeaders });
   const kind = openKindOf(answer);
   if (kind !== "OpenShown" || !answer.reached) return { answer: { kind, count: 0 }, fromFirstName: "" };
   return { answer: { kind, count: countOf(answer) }, fromFirstName: firstNameOf(answer.data.fromFirstName) };
@@ -92,7 +94,7 @@ export async function loadPhotoView(token: string, n: number): Promise<PhotoView
       credentials: "same-origin",
       cache: "no-store",
       referrerPolicy: "no-referrer",
-      headers: { "content-type": "application/json", accept: imageTypes.join(", ") },
+      headers: { ...pageHeaders, "content-type": "application/json", accept: imageTypes.join(", ") },
       body: JSON.stringify({ token, n }),
     });
   } catch {
@@ -127,5 +129,5 @@ const reportOf = (answer: StepAnswer): ViewReportAnswer => {
  * @model spec/photosViewPage.md
  */
 export async function reportPhotoView(token: string): Promise<ViewReportAnswer> {
-  return reportOf(await stepCall(viewAnswerPath, { method: "POST", json: { token, answer: "report" } }));
+  return reportOf(await stepCall(viewAnswerPath, { method: "POST", json: { token, answer: "report" }, headers: pageHeaders }));
 }

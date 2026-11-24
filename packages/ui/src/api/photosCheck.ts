@@ -1,4 +1,5 @@
 // spec/photosCheckPage.md, "The open answer shows the proposal, the photos to choose from, or why the link does not work"
+import { photoPagePurposeHeader } from "../../../core/src/generated/photoRelayItem.ts";
 import type { CheckAnswer, CheckAnswerKind, CheckOpenAnswer, CheckOpenAnswerKind } from "../../../core/src/generated/photosCheckPage.ts";
 import { type StepAnswer, stepCall } from "./stepPages.ts";
 
@@ -31,6 +32,7 @@ export interface CheckReply {
 }
 
 const pagePath = "/api/photos/page/";
+const pageHeaders = { [photoPagePurposeHeader]: "check" };
 const slotsMax = 6;
 const textMax = 1600;
 const nameMax = 30;
@@ -91,7 +93,7 @@ const openKindOf = (answer: StepAnswer): CheckOpenAnswerKind => {
  * @model spec/photosCheckPage.md
  */
 export async function openPhotoCheck(token: string): Promise<{ opened: CheckOpenAnswer; proposal: CheckProposal | undefined }> {
-  const answer = await stepCall(`${pagePath}open`, { method: "POST", json: { token } });
+  const answer = await stepCall(`${pagePath}open`, { method: "POST", json: { token }, headers: pageHeaders });
   const kind = openKindOf(answer);
   if (kind !== "CheckOpenShown" || !answer.reached) return { opened: { kind, photoCount: 0, proposedCount: 0 }, proposal: undefined };
   const proposal = proposalOf(answer.data);
@@ -132,7 +134,7 @@ const textOf = (answer: StepAnswer): string => {
  */
 export async function answerPhotoCheck(token: string, revision: number, request: CheckRequest, known: readonly number[]): Promise<CheckReply> {
   const json = request.answer === "pick" ? { token, revision, answer: "pick", numbers: [...request.numbers] } : { token, revision, answer: "send" };
-  const answer = await stepCall(`${pagePath}answer`, { method: "POST", json });
+  const answer = await stepCall(`${pagePath}answer`, { method: "POST", json, headers: pageHeaders });
   const kind = answerKindOf(answer);
   if (kind !== "CheckProposed" || !answer.reached) return { answer: { kind, proposedCount: 0 }, text: kind === "CheckOffered" || kind === "CheckRefused" ? textOf(answer) : "", proposed: [], revision: undefined };
   const proposed = checkNumbersIn(answer.data.proposed, known);
@@ -150,7 +152,7 @@ export async function loadCheckPhoto(token: string, n: number): Promise<Blob | u
     const response = await fetch(`${pagePath}image`, {
       method: "POST",
       credentials: "same-origin",
-      headers: { "content-type": "application/json", accept: "image/*" },
+      headers: { ...pageHeaders, "content-type": "application/json", accept: "image/*" },
       body: JSON.stringify({ token, n }),
     });
     if (response.status !== 200 || !(response.headers.get("content-type") ?? "").startsWith("image/")) return undefined;

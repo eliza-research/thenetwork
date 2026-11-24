@@ -24,8 +24,8 @@ export interface HoldingImage {
   url?: string;
 }
 
-/** The key of one share: the photo number and the place of the share in its list, as `n:index`. */
-export type ShareKey = `${number}:${number}`;
+/** The opaque key of one share returned by the server. */
+export type ShareKey = string;
 
 /** The my photos page state and the actions that change it. The names match the `PhotosMinePageView` props. */
 export interface PhotosMineController {
@@ -44,16 +44,8 @@ type PhotosMineData = Omit<PhotosMineController, `on${string}`>;
 
 const start: PhotosMineData = { page: initial, photos: [], marks: {}, images: {} };
 
-/**
- * The key of share `index` of photo `n`.
- * @model spec/photosMinePage.md
- */
-export function shareKey(n: number, index: number): ShareKey {
-  return `${n}:${index}`;
-}
-
 const marksOf = (photos: readonly HoldingPhoto[]): Record<ShareKey, GrantMark> =>
-  Object.fromEntries(photos.flatMap((photo) => photo.shares.map((share, index) => [shareKey(photo.n, index), grantMarkOnOpen(share.access)])));
+  Object.fromEntries(photos.flatMap((photo) => photo.shares.map((share) => [share.shareRef, grantMarkOnOpen(share.access)])));
 
 const loadingImages = (photos: readonly HoldingPhoto[]): Record<number, HoldingImage> =>
   Object.fromEntries(photos.map((photo) => [photo.n, { tile: "TileLoading" }]));
@@ -124,12 +116,9 @@ export function usePhotosMinePage(): PhotosMineController {
         const before = current.current;
         const mark = before.marks[key];
         if (mark === undefined || !grantOffersTakeBack(before.page, mark)) return;
-        const [n, index] = key.split(":").map(Number);
-        const share = before.photos.find((photo) => photo.n === n)?.shares[index ?? -1];
-        if (n === undefined || !share) return;
         const next = send({ type: "takeBack" }, { marks: { ...before.marks, [key]: "GrantTakingBack" } });
         if (!next || !canAnswerTakeBack(next)) return;
-        const kind = await takeBackShare(token.current, n, share.firstName);
+        const kind = await takeBackShare(token.current, key);
         const after = send({ type: "answerTakeBack", takeBackAnswer: kind }, { marks: { ...current.current.marks, [key]: grantMarkAfter(kind) } });
         forgetIfClosed(after);
         const reopened = send({ type: "reopenAfterTakeBack" });

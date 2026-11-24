@@ -8,9 +8,9 @@ Photos are for adults (18+) only ([photo policy](photoPolicy.md)). The server ch
 
 The limits 6 and 3 are `photoSlotsMax` and `photoSetMax` of the backend photo relay spec. This branch has the older photo relay spec, so this spec keeps its own copies (`checkSlotsMax`, `checkSetMax`).
 
-Assumptions that the backend owner has not confirmed (backend branch `vibestack-matching`, unpushed and not run):
+The owner approved binding the link to the first browser that opens it. The following HTTP contract is pending verification on the combined revision:
 
-- A1. The calls are `POST /api/photos/page/open`, `/image` and `/answer` with a JSON body, as in the contract and in `packages/platform/src/photo-pages.ts`. `open` sets the `__Host-photo-page` cookie that binds the link to this browser, and the later calls need it.
+- A1. The calls are `POST /api/photos/page/open`, `/image` and `/answer` with a JSON body and `X-Photo-Page-Purpose: check`. `open` sets the `__Host-photo-page` cookie that binds the link to this browser, and the later calls need it.
 - A2. `open` answers `{ purpose: "check", toFirstName, notice, revision, photos: [{ n, label, addedOn, shared }], proposed, until }`. `addedOn` is the day the photo was added, as `YYYY-MM-DD` in the member's time zone (`photoDay` in the unpushed `photo-relay.ts`). The page shows it as `Sat 21 Nov`, as the conversation does. `shared` is true when the receiver already has the photo. `notice` already names the receiver.
 - A3. `answer` with `pick` answers `{ state: "proposed", proposed, revision }`, and the page sends the next "Send" with that revision. When the answer has no good revision, the page keeps the revision it has; the server then answers `changed` if it does not agree.
 - A4. After a send, a cancel by text or a refusal of photos for the member, the server deletes the draft and its links, so the same link answers `404 link_unavailable`. The server cannot tell the page which one of these closed the link. The page shows one closed step for all of them. A distinct code becomes one more `CheckOpenAnswerKind` and one more screen.

@@ -79,16 +79,16 @@ describe.skipIf(!pgAvailable)("my photos page (the /photos/mine shell and machin
     const senderPhone = newPhone();
     expect((await webJoin(st, "slop", senderPhone, { age: 29, firstName: senderName })).res.status).toBe(200);
     const sender = await member(senderPhone);
-    const receivers: { phone: string; memberId: string; personId: string }[] = [];
+    const receivers: { phone: string; memberId: string; personId: string; threadId: string }[] = [];
     for (const name of receiverNames) {
       const phone = newPhone();
       expect((await webJoin(st, "slop", phone, { age: 31, firstName: name })).res.status).toBe(200);
-      receivers.push({ phone, ...(await member(phone)) });
+      receivers.push({ phone, ...(await member(phone)), threadId: `e2e-mine-${++pairSeq}` });
     }
     await st.svc.runtimeFor("slop")!.unitOfWork(n => {
       const s = n.exportState(), now = st.clock.now();
       for (const r of receivers) {
-        const id = `e2e-mine-${++pairSeq}`, ids = [sender.memberId, r.memberId];
+        const id = r.threadId, ids = [sender.memberId, r.memberId];
         s.opps.push({ id, origin: "engine", kind: "intro", category: "romance", objective: "drinks", detail: "drinks", participants: ids, alternates: [], primed: [], status: ids.map(m => [m, "yes"]), explanations: {}, stage: "scheduled", deadline: now + 30 * DAY, createdAt: now, score: .8, generator: "fixture", components: { fit: 0, mutualBenefit: 0, warmPath: 0, novelty: 0, timingFit: 0, activationCost: 0, interruptionCost: 0, load: 0, repetition: 0, socialRisk: 0, confidence: 0 }, exploration: false, review: { queuedAt: now, deadline: now + 30 * DAY, decision: "approve", reviewer: "fixture" }, sameDay: false, contacted: ids, reminded: [], feedbackFrom: [], tags: [], replacements: 0 } as NetworkState["opps"][number]);
       }
       n.importState(s);
@@ -144,7 +144,7 @@ describe.skipIf(!pgAvailable)("my photos page (the /photos/mine shell and machin
       const result = await openHoldings(this.token);
       if (!this.send({ type: "answerOpen", opened: result.answer })) return;
       this.photos = result.photos;
-      this.marks = Object.fromEntries(result.photos.flatMap(p => p.shares.map((s, i) => [`${p.n}:${i}`, grantMarkOnOpen(s.access)])));
+      this.marks = Object.fromEntries(result.photos.flatMap(p => p.shares.map(s => [s.shareRef, grantMarkOnOpen(s.access)])));
       for (const photo of this.photos) {
         if (!this.page.linkHeld) return;
         this.requests++;
@@ -157,14 +157,15 @@ describe.skipIf(!pgAvailable)("my photos page (the /photos/mine shell and machin
       const photo = this.photos.find(p => p.n === n)!;
       const index = photo.shares.findIndex(s => s.firstName === firstName);
       expect(index).toBeGreaterThanOrEqual(0);
-      return { key: `${n}:${index}`, share: photo.shares[index]! };
+      const share = photo.shares[index]!;
+      return { key: share.shareRef, share };
     }
     async takeBack(firstName: string, n: number) {
-      const { key, share } = this.share(firstName, n);
+      const { key } = this.share(firstName, n);
       if (!grantOffersTakeBack(this.page, this.marks[key]!) || !this.send({ type: "takeBack" }) || !canAnswerTakeBack(this.page)) return;
       this.marks[key] = "GrantTakingBack";
       this.requests++;
-      const kind = await takeBackShare(this.token, n, share.firstName);
+      const kind = await takeBackShare(this.token, key);
       if (this.send({ type: "answerTakeBack", takeBackAnswer: kind })) this.marks[key] = grantMarkAfter(kind);
       if (this.send({ type: "reopenAfterTakeBack" }) && canAnswerOpen(this.page)) await this.read();
       return kind;
@@ -185,12 +186,12 @@ describe.skipIf(!pgAvailable)("my photos page (the /photos/mine shell and machin
     const p = new MinePage(token!);
     await p.open();
     expect([p.page.screen, p.page.photos, p.page.grants, p.page.linkHeld]).toEqual(["HoldingsList", 2, 2, true]);
-    const byName = (shares: HoldingPhoto["shares"]) => [...shares].sort((a, b) => a.firstName.localeCompare(b.firstName));
+    const byName = (shares: HoldingPhoto["shares"]) => shares.map(({ firstName, access }) => ({ firstName, access })).sort((a, b) => a.firstName.localeCompare(b.firstName));
     expect(p.photos.map(ph => [ph.n, ph.label, /^\d{4}-\d{2}-\d{2}$/.test(ph.addedOn), byName(ph.shares)])).toEqual([
       [1, null, true, [{ firstName: "Jordan", access: "GrantAsked" }, { firstName: "Maya", access: "GrantReady" }]],
       [2, null, true, []],
     ]);
-    expect(JSON.stringify(p.photos)).not.toMatch(/ph_|pof_|http|sha256|score/);
+    expect(JSON.stringify(p.photos.map(ph => ({ ...ph, shares: byName(ph.shares) })))).not.toMatch(/ph_|pof_|http|sha256|score/);
     expect(p.tiles).toEqual({ 1: "TileShown", 2: "TileShown" });
     expect(p.urls.length).toBe(2);
     expect(p.urls.every(u => u.startsWith("blob:"))).toBe(true);
@@ -210,7 +211,30 @@ describe.skipIf(!pgAvailable)("my photos page (the /photos/mine shell and machin
     for (const u of p.urls) URL.revokeObjectURL(u);
   }, T);
 
-  test("a share whose offer already ended answers nothing open, and the page offers it no more", async () => {
+  // spec/photoRelayItem.md, "A take-back revokes the member's open photo items for the match"
+  test("Take back affects one exact share when two matches have the same first name", async () => {
+    const { senderPhone, sender, receivers } = await pair("Drew", "Maya", "Tess");
+    await offer(senderPhone, "send Maya my first photo");
+    await offer(senderPhone, "send Tess my first photo");
+    await sql`update network.members set name = 'Maya' where app_id = 'slop' and id = ${receivers[1]!.memberId}`;
+    const token = mineToken(await turn(senderPhone, "MY PHOTOS"))!;
+    pageOnSite("slop", new Browser());
+    const p = new MinePage(token);
+    await p.open();
+    expect(p.photos[0]!.shares.map(share => share.firstName)).toEqual(["Maya", "Maya"]);
+    const [first, second] = p.photos[0]!.shares;
+    expect(first!.shareRef).not.toBe(second!.shareRef);
+    expect(await takeBackShare(token, "A".repeat(43))).toBe("TakeBackNothingOpen");
+    expect(await p.takeBack("Maya", 1)).toBe("TakeBackDone");
+    expect(await takeBackShare(token, first!.shareRef)).toBe("TakeBackNothingOpen");
+    const phases = await Promise.all(receivers.map(receiver => offerPhase(sender.personId, receiver.memberId)));
+    expect(phases).toEqual(["revoked", "asking"]);
+    expect(p.photos[0]!.shares.map(share => [share.shareRef, share.access])).toEqual([
+      [first!.shareRef, "GrantWasTakenBack"], [second!.shareRef, "GrantAsked"],
+    ]);
+  }, T);
+
+  test("taking a declined photo back while the notice waits keeps the decline private", async () => {
     const { senderPhone, sender, receivers: [sam] } = await pair("Bea", "Sam");
     await offer(senderPhone, "send Sam my first photo");
     const token = mineToken(await turn(senderPhone, "MY PHOTOS"))!;
@@ -220,6 +244,27 @@ describe.skipIf(!pgAvailable)("my photos page (the /photos/mine shell and machin
     expect(p.share("Sam", 1).share.access).toBe("GrantAsked");
     expect(await turn(sam!.phone, "no")).toContain("isn't told why");
     expect(await offerPhase(sender.personId, sam!.memberId)).toBe("declined");
+    expect(await p.takeBack("Sam", 1)).toBe("TakeBackDone");
+    expect(p.share("Sam", 1).share.access).toBe("GrantWasTakenBack");
+    const [offerRow] = await sql`select phase, sender_notice, ended_by_sender from platform.photo_offers
+      where sender_person_id = ${sender.personId}::uuid and recipient_member_id = ${sam!.memberId}`;
+    expect(offerRow).toMatchObject({ phase: "declined", sender_notice: null, ended_by_sender: true });
+  }, T);
+
+  test("a declined offer past its notice window answers nothing open, and the page offers it no more", async () => {
+    const { senderPhone, sender, receivers: [sam] } = await pair("Noa", "Sam");
+    await offer(senderPhone, "send Sam my first photo");
+    expect(await turn(sam!.phone, "no")).toContain("isn't told why");
+    const [declined] = await sql`select notice_at from platform.photo_offers
+      where sender_person_id = ${sender.personId}::uuid and recipient_member_id = ${sam!.memberId} and phase = 'declined'`;
+    const noticeAt = new Date(declined!.notice_at).getTime();
+    st.clock.set(noticeAt - 120_000);
+    const token = mineToken(await turn(senderPhone, "MY PHOTOS"))!;
+    pageOnSite("slop", new Browser());
+    const p = new MinePage(token);
+    await p.open();
+    expect(p.share("Sam", 1).share.access).toBe("GrantAsked");
+    st.clock.set(noticeAt);
     expect(await p.takeBack("Sam", 1)).toBe("TakeBackNothingOpen");
     expect([p.page.grants, p.page.takenBack, p.marks[p.share("Sam", 1).key]]).toEqual([0, 0, "GrantClosed"]);
   }, T);

@@ -78,7 +78,8 @@ describe.skipIf(!pgAvailable)("photo check page (the /photos/check shell and mac
   let pairSeq = 0;
   const pair = async (photoCount: number) => {
     const ari = newPhone(), maya = newPhone();
-    expect((await webJoin(st, "slop", ari, { age: 29, firstName: "Ari" })).res.status).toBe(200);
+    const joined = await webJoin(st, "slop", ari, { age: 29, firstName: "Ari" });
+    expect(joined.res.status).toBe(200);
     expect((await webJoin(st, "slop", maya, { age: 30, firstName: "Maya" })).res.status).toBe(200);
     const sender = await member(ari), receiver = await member(maya);
     const threadId = `e2e-photo-check-${++pairSeq}`;
@@ -92,7 +93,7 @@ describe.skipIf(!pgAvailable)("photo check page (the /photos/check shell and mac
       expect((await st.svc.photos.upload(sender.personId, "slop", png(`check-${pairSeq}-${i}`), PHOTO_CONSENT.version)).ok).toBe(true);
       st.clock.advance(MINUTE);
     }
-    return { ari, maya, sender, receiver };
+    return { ari, maya, sender, receiver, senderBrowser: joined.b };
   };
 
   class CheckPage {
@@ -217,6 +218,26 @@ describe.skipIf(!pgAvailable)("photo check page (the /photos/check shell and mac
     expect(p.page.seen).toBe(false);
     expect(await p.tapSend()).toBe(false);
     expect(await offersOf(sender.personId)).toEqual([]);
+  }, T);
+
+  test("a photo removed after checkout opens cannot be replaced by the photo in the next slot", async () => {
+    const { ari, sender, senderBrowser } = await pair(2);
+    const [first, second] = await photoIdsOf(sender.personId);
+    const token = checkToken((await turn(ari, "send Maya my first photo")).reply)!;
+    phoneOn("slop");
+    const { proposal } = await openPhotoCheck(token);
+    expect(proposal?.proposed).toEqual([1]);
+    expect((await loadCheckPhoto(token, 1))?.size).toBeGreaterThan(0);
+
+    const removed = await st.site("slop", "/api/photos/delete", { browser: senderBrowser, json: { id: first } });
+    expect(removed.status).toBe(200);
+    expect(await photoIdsOf(sender.personId)).toEqual([second]);
+
+    const image = await loadCheckPhoto(token, 1);
+    const send = await answerPhotoCheck(token, proposal!.revision, { answer: "send" }, [1, 2]);
+    expect(send.answer.kind).toBe("CheckChanged");
+    expect(await offersOf(sender.personId)).toEqual([]);
+    expect(image).toBeUndefined();
   }, T);
 
   test("Not this one: a pick asks for a new proposal, sends nothing, and only the next Send offers the picked photo", async () => {

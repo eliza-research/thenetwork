@@ -7,13 +7,15 @@ import type { PhotosMinePageViewProps } from "./PhotosMinePageView.tsx";
 
 const pixel = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='96' height='96'><rect width='96' height='96' fill='%23c8b8a8'/></svg>";
 
+const mayaRef = "A".repeat(43), jordanRef = "B".repeat(43), samRef = "C".repeat(43);
+
 const photos: HoldingPhoto[] = [
-  { n: 1, label: "beach", addedOn: "2026-11-02", shares: [{ firstName: "Maya", access: "GrantReady" }, { firstName: "Jordan", access: "GrantAsked" }] },
-  { n: 2, label: null, addedOn: "2026-11-14", shares: [{ firstName: "Sam", access: "GrantChecking" }] },
+  { n: 1, label: "beach", addedOn: "2026-11-02", shares: [{ firstName: "Maya", shareRef: mayaRef, access: "GrantReady" }, { firstName: "Jordan", shareRef: jordanRef, access: "GrantAsked" }] },
+  { n: 2, label: null, addedOn: "2026-11-14", shares: [{ firstName: "Sam", shareRef: samRef, access: "GrantChecking" }] },
   { n: 3, label: "dog", addedOn: "2026-11-18", shares: [] },
 ];
 const images = { 1: { tile: "TileShown" as const, url: pixel }, 2: { tile: "TileShown" as const, url: pixel }, 3: { tile: "TileShown" as const, url: pixel } };
-const open = { "1:0": "GrantOpen", "1:1": "GrantOpen", "2:0": "GrantOpen" } as const;
+const open = { [mayaRef]: "GrantOpen", [jordanRef]: "GrantOpen", [samRef]: "GrantOpen" } as const;
 
 const page = (fields: Partial<PhotoHoldingsPage>): PhotoHoldingsPage => ({ ...initial, ...fields });
 const list = (fields: Partial<PhotoHoldingsPage> = {}): PhotoHoldingsPage => page({ screen: "HoldingsList", linkHeld: true, photos: 3, grants: 3, ...fields });
@@ -41,22 +43,22 @@ export const meta: ComponentMeta<PhotosMinePageViewProps> = {
     },
     "Shared state": {
       page: list({ photos: 1, grants: 1 }),
-      photos: [{ n: 1, label: "hiking", addedOn: "2026-11-22", shares: [{ firstName: "Maya", access: "GrantShared" }] }],
-      marks: { "1:0": "GrantOpen" },
+      photos: [{ n: 1, label: "hiking", addedOn: "2026-11-22", shares: [{ firstName: "Maya", shareRef: mayaRef, access: "GrantShared" }] }],
+      marks: { [mayaRef]: "GrantOpen" },
       images: { 1: { tile: "TileShown", url: pixel } },
     },
     "Taken back on the server": {
       page: list({ photos: 1, grants: 1 }),
-      photos: [{ n: 1, label: "beach", addedOn: "2026-11-02", shares: [{ firstName: "Maya", access: "GrantWasTakenBack" }, { firstName: "Jordan", access: "GrantReady" }] }],
-      marks: { "1:0": "GrantTakenBack", "1:1": "GrantOpen" },
+      photos: [{ n: 1, label: "beach", addedOn: "2026-11-02", shares: [{ firstName: "Maya", shareRef: mayaRef, access: "GrantWasTakenBack" }, { firstName: "Jordan", shareRef: jordanRef, access: "GrantReady" }] }],
+      marks: { [mayaRef]: "GrantTakenBack", [jordanRef]: "GrantOpen" },
       images: { 1: { tile: "TileShown", url: pixel } },
     },
-    "Taking back": { page: list({ pending: "HoldingsTakingBack" }), marks: { ...open, "1:0": "GrantTakingBack" } },
-    "Taken back": { page: list({ grants: 2, takenBack: 1 }), marks: { ...open, "1:0": "GrantTakenBack" } },
-    "Nothing open": { page: list({ grants: 2 }), marks: { ...open, "2:0": "GrantClosed" } },
+    "Taking back": { page: list({ pending: "HoldingsTakingBack" }), marks: { ...open, [mayaRef]: "GrantTakingBack" } },
+    "Taken back": { page: list({ grants: 2, takenBack: 1 }), marks: { ...open, [mayaRef]: "GrantTakenBack" } },
+    "Nothing open": { page: list({ grants: 2 }), marks: { ...open, [samRef]: "GrantClosed" } },
     "All taken back": {
       page: list({ grants: 0, takenBack: 3 }),
-      marks: { "1:0": "GrantTakenBack", "1:1": "GrantTakenBack", "2:0": "GrantTakenBack" },
+      marks: { [mayaRef]: "GrantTakenBack", [jordanRef]: "GrantTakenBack", [samRef]: "GrantTakenBack" },
     },
   },
   play: {
@@ -87,7 +89,7 @@ export const meta: ComponentMeta<PhotosMinePageViewProps> = {
       const buttons = takeBackButtons(context);
       await expect(buttons.length).toBe(3);
       await userEvent.click(buttons[1]);
-      await expect(context.args.onTakeBack).toHaveBeenCalledWith("1:1");
+      await expect(context.args.onTakeBack).toHaveBeenCalledWith(jordanRef);
     },
     "Images loading": async (context: Context) => {
       await expect(view(context).getByRole("status", { name: "Photo 1 is loading" })).toBeTruthy();
@@ -106,7 +108,7 @@ export const meta: ComponentMeta<PhotosMinePageViewProps> = {
       const buttons = takeBackButtons(context);
       await expect(buttons.length).toBe(1);
       await userEvent.click(buttons[0]);
-      await expect(context.args.onTakeBack).toHaveBeenCalledWith("1:1");
+      await expect(context.args.onTakeBack).toHaveBeenCalledWith(jordanRef);
     },
     "Taking back": async (context: Context) => {
       clearAllMocks();

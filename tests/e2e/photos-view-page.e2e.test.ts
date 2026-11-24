@@ -107,7 +107,7 @@ describe.skipIf(!pgAvailable)("photo view page (the /photos/view shell and machi
     const [ready] = await sql`select body from network.messages where app_id = 'slop' and member_id = ${receiver.memberId} and id = ${`photo-ready:${offerId}`}`;
     const token = /\/photos\/view#([A-Za-z0-9_-]{43})/.exec(String(ready?.body))?.[1];
     expect(token).toBeDefined();
-    return { ari, maya, receiverMemberId: receiver.memberId, offerId, token: token! };
+    return { ari, maya, senderMemberId: sender.memberId, receiverMemberId: receiver.memberId, offerId, token: token! };
   };
 
   class ViewPage {
@@ -172,7 +172,7 @@ describe.skipIf(!pgAvailable)("photo view page (the /photos/view shell and machi
   }, T);
 
   test("a report goes only after the confirm, the server closes the offer, and the link then shows the no-longer-available step", async () => {
-    const { offerId, token } = await readyOffer("report");
+    const { offerId, token, receiverMemberId, senderMemberId } = await readyOffer("report");
     const mayaPhone = new Browser();
     phoneOn(mayaPhone);
     const p = new ViewPage(token);
@@ -184,6 +184,10 @@ describe.skipIf(!pgAvailable)("photo view page (the /photos/view shell and machi
     expect([p.page.screen, p.page.linkHeld, p.urls.length]).toEqual(["ViewReported", false, 0]);
     expect(sent.slice(before).map(r => [r.url, JSON.parse(r.body).answer])).toEqual([["/api/photos/page/answer", "report"]]);
     expect(await phaseOf(offerId)).toBe("reported");
+    const reports = await st.svc.runtimeFor("slop")!.readState(net => net.safetyReports());
+    expect(reports.filter(report => report.reporterId === receiverMemberId)).toEqual([
+      expect.objectContaining({ subjectId: senderMemberId, kind: "harassment", status: "open" }),
+    ]);
 
     const later = new ViewPage(token);
     await later.tap();
@@ -265,6 +269,25 @@ describe.skipIf(!pgAvailable)("photo view page (the /photos/view shell and machi
     expect((await turn(ari, "take back photo 1")).outcome).toBe("handled");
     expect(await phaseOf(offerId)).toBe("revoked");
     await p.report();
+    expect([p.page.screen, p.page.reportLost, p.page.linkHeld, p.urls.length]).toEqual(["ViewGone", true, false, 0]);
+  }, T);
+
+  // spec/photosViewPage.md, "A report needs a confirm, goes once, and only the server's answer says it is done"
+  test("closing a photo without a filed safety report cannot confirm the report", async () => {
+    const { offerId, token, receiverMemberId } = await readyOffer("unfiled-report");
+    phoneOn(new Browser());
+    const p = new ViewPage(token);
+    await p.tap();
+    expect(p.askToReport()).toBe(true);
+
+    await sql`update network.members set account_status = 'removed' where app_id = 'slop' and id = ${receiverMemberId}`;
+    expect(await st.svc.runtimeOfMember("slop", receiverMemberId)).toBeUndefined();
+    expect(await phaseOf(offerId)).toBe("ready");
+    await p.report();
+
+    const reports = await st.svc.runtimeFor("slop")!.readState(net => net.safetyReports());
+    expect(reports.some(report => report.reporterId === receiverMemberId)).toBe(false);
+    expect(await phaseOf(offerId)).toBe("reported");
     expect([p.page.screen, p.page.reportLost, p.page.linkHeld, p.urls.length]).toEqual(["ViewGone", true, false, 0]);
   }, T);
 

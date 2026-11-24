@@ -10,7 +10,7 @@ import {
 } from "../../../core/src/generated/photosMinePage.ts";
 import { apiMessages } from "../api/client.ts";
 import { type HoldingPhoto, type HoldingShare, holdingDayShown } from "../api/photosMine.ts";
-import { type HoldingImage, type PhotosMineController, type ShareKey, shareKey } from "../hooks/usePhotosMinePage.ts";
+import type { HoldingImage, PhotosMineController } from "../hooks/usePhotosMinePage.ts";
 import { Alert } from "./Alert.tsx";
 import { Button } from "./Button.tsx";
 import { Link } from "./Link.tsx";
@@ -113,8 +113,8 @@ export function PhotosMinePageView({ page, photos, marks, images, onTakeBack, on
                       <p className="text-sm text-muted-foreground">Nobody has it.</p>
                     ) : (
                       <ul aria-label={`Who has photo ${photo.n}`} className="flex flex-col gap-2 text-sm">
-                        {photo.shares.map((share, index) => {
-                          const key: ShareKey = shareKey(photo.n, index);
+                        {photo.shares.map((share) => {
+                          const key = share.shareRef;
                           const mark = marks[key] ?? "GrantOpen";
                           return (
                             <ShareLine

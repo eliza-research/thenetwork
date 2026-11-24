@@ -1,4 +1,5 @@
 // spec/photosMinePage.md, "The open answer decides between the list, the empty list, a closed link and a retry"
+import { photoPagePurposeHeader } from "../../../core/src/generated/photoRelayItem.ts";
 import {
   type GrantAccess,
   type GrantWire,
@@ -16,6 +17,7 @@ import { type StepAnswer, stepCall } from "./stepPages.ts";
 export interface HoldingShare {
   firstName: string;
   access: GrantAccess;
+  shareRef: string;
 }
 
 /** One photo of the member as the list shows it: its number, its name or null, the day it was added (`YYYY-MM-DD`) and its shares. */
@@ -27,6 +29,7 @@ export interface HoldingPhoto {
 }
 
 const pagePath = "/api/photos/page/";
+const pageHeaders = { [photoPagePurposeHeader]: "mine" };
 const photoMax = 6;
 
 const wireStates: Readonly<Record<string, GrantWire>> = {
@@ -48,11 +51,11 @@ export function holdingsTokenWellFormed(token: string): boolean {
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> => typeof value === "object" && value !== null && !Array.isArray(value);
 
 const shareOf = (value: unknown): HoldingShare | undefined => {
-  if (!isRecord(value) || typeof value.firstName !== "string") return undefined;
+  if (!isRecord(value) || typeof value.firstName !== "string" || typeof value.shareRef !== "string" || !photoTokenWellFormed(value.shareRef)) return undefined;
   const firstName = value.firstName.trim();
   if (firstName.length < 1 || firstName.length > 30) return undefined;
   const wire = typeof value.state === "string" ? (wireStates[value.state] ?? "WireUnknown") : "WireUnknown";
-  return { firstName, access: grantAccessOf(wire) };
+  return { firstName, access: grantAccessOf(wire), shareRef: value.shareRef };
 };
 
 const photoOf = (value: unknown): HoldingPhoto | undefined => {
@@ -72,6 +75,8 @@ const listOf = (data: Readonly<Record<string, unknown>>): HoldingPhoto[] | undef
   const photos = data.photos.map(photoOf);
   if (photos.some((photo) => photo === undefined)) return undefined;
   const list = photos as HoldingPhoto[];
+  const refs = list.flatMap(photo => photo.shares.map(share => share.shareRef));
+  if (new Set(refs).size !== refs.length) return undefined;
   return new Set(list.map((photo) => photo.n)).size === list.length ? list : undefined;
 };
 
@@ -93,7 +98,7 @@ const openKinds = { timed_out: "OpenTimedOut", unavailable: "OpenUnavailable", o
  * @model spec/photosMinePage.md
  */
 export async function openHoldings(token: string): Promise<{ answer: OpenAnswer; photos: HoldingPhoto[] }> {
-  const result = await stepCall(`${pagePath}open`, { method: "POST", json: { token } });
+  const result = await stepCall(`${pagePath}open`, { method: "POST", json: { token }, headers: pageHeaders });
   const none = (kind: OpenKind) => ({ answer: { kind, photos: 0, grants: 0 }, photos: [] });
   const closed = closedKind(result);
   if (closed) return none(openKinds[closed]);
@@ -127,7 +132,7 @@ export async function holdingImage(token: string, n: number): Promise<{ kind: Im
     response = await fetch(`${pagePath}image`, {
       method: "POST",
       credentials: "same-origin",
-      headers: { "content-type": "application/json", accept: "image/*" },
+      headers: { ...pageHeaders, "content-type": "application/json", accept: "image/*" },
       body: JSON.stringify({ token, n }),
     });
   } catch {
@@ -148,11 +153,11 @@ export async function holdingImage(token: string, n: number): Promise<{ kind: Im
 const takeBackKinds = { timed_out: "TakeBackTimedOut", unavailable: "TakeBackUnavailable", other_phone: "TakeBackOtherPhone", unreachable: "TakeBackUnreachable" } as const;
 
 /**
- * Takes back photo `n` from the match with this first name. The server answers `taken_back` or `nothing_open`.
+ * Takes back the share referenced by the selected action. The server answers `taken_back` or `nothing_open`.
  * @model spec/photosMinePage.md
  */
-export async function takeBackShare(token: string, n: number, firstName: string): Promise<TakeBackKind> {
-  const result = await stepCall(`${pagePath}answer`, { method: "POST", json: { token, answer: "take_back", numbers: [n], firstName } });
+export async function takeBackShare(token: string, shareRef: string): Promise<TakeBackKind> {
+  const result = await stepCall(`${pagePath}answer`, { method: "POST", json: { token, answer: "take_back", shareRef }, headers: pageHeaders });
   const closed = closedKind(result);
   if (closed) return takeBackKinds[closed];
   if (!result.reached || result.status !== 200) return "TakeBackFailed";
