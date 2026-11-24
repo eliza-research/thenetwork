@@ -631,9 +631,9 @@ export function extractProfile(body: string): Profile {
       nextPartOffset = partOffset + part.length;
       const neg = NEG_WANT.exec(part);
       const negAt = neg ? neg.index : Infinity;
-      // "anything but X" / "everything except X": the part after the split names what is excluded,
-      // not a new positive clause. The availability reader treats the same phrase as an exclusion.
-      const excluded = /(?:anything|everything|anyone|anybody|all)\s+(?:but|except)\s*$/i.test(x.slice(0, partOffset));
+      const excluded = /\b(?:anything|everything|anyone|anybody)\s+(?:but|except)\s*$/i.test(x.slice(0, partOffset))
+        && !/(?:\b(?:not|never)\b|n't\b)/i.test(x.slice(0, partOffset))
+        && !/^\s*(?:i|i'm|im|i'd|i'll|i've|we|you|my|it|that|this)\b/i.test(part);
       const effNegAt = excluded ? 0 : negAt;
       const wantCtx = WANT_CTX.test(part);
       if (neg && /\b(looking for|find|meet|anyone|anybody|someone|somebody|want|need|set me up|introduce|match|suggest)\w*\b/.test(part.slice(negAt))) negatedAsk = true;
