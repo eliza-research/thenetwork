@@ -1176,7 +1176,15 @@ function readDirectProbeOrdinals(text: string, memberChoiceAt?: (at: number) => 
     if (quoteStillOpen(text.slice(0, item.index)) || memberChoiceAt?.(item.index + 1) === false) continue;
     const items = item.groups!.items!;
     if (item.groups!.affirmative) {
-      choices.push([...items.matchAll(new RegExp(ORDINAL_WORD, "g"))].map(word => ORDINAL_POSITION[word[0]]!));
+      // An ordinal inside a condition ("The second works if Ana can make
+      // it") is not a confirmed pick yet (spec/probeReply.md: "A condition
+      // attached to the answer still keeps the offer open"). Use the items
+      // group's start — not the match start, which can sit on a separator
+      // (", ", "but ") and would misread the clause.
+      const [start] = item.indices!.groups!.items!;
+      if (!inConditionalClause(text, start)) {
+        choices.push([...items.matchAll(new RegExp(ORDINAL_WORD, "g"))].map(word => ORDINAL_POSITION[word[0]]!));
+      }
     } else {
       const [start] = item.indices!.groups!.items!;
       for (const word of items.matchAll(new RegExp(ORDINAL_ITEM, "g"))) {
@@ -1339,6 +1347,10 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const pickedClauses = new Set<string>(), refusedClauses = new Set<string>();
   const qualifiedTimeRefusals = new Map<number, number>();
   let conditionalTimeRefusal = false;
+  // An ordinal (or explicit key) picked only inside a condition — set by mark() below.
+  // Without this flag the pick is skipped, pos stays empty, and the bare-yes fallthrough
+  // at the end books every offered time, which is worse than the bug itself.
+  let conditionalNonDayPick = false;
   const memberChoiceAt = (at: number) => {
     if (!clarifiedTimes) return true;
     const prefix = t.slice(0, at);
@@ -1362,6 +1374,10 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const onlyPick = (i: number, len: number) => /^[\s\W]*(?:the\s+)?$/.test(t.slice(0, i)) && /^[\s\W]*(?:one|option|works?|please|pls|lol)?[\s\W]*$/.test(t.slice(i + len));
   const mark = (keys: string[], i: number, len: number, calendar = false, group = false) => {
     if (!memberChoiceAt(i)) return;
+    // Day mentions never reach here in a condition (the mentions loop sends them to
+    // `unresolved` first, l.1497); ordinals and explicit keys do. A conditional pick
+    // is not a pick: skip it and remember it happened.
+    if (inConditionalClause(t, i)) { conditionalNonDayPick = true; return; }
     const cl = clauseAt(t, i, len);
     if (probeTimeIsRefused(t, i, i + len)) {
       rememberQualifiedTimeRefusal(i, i + len);
@@ -1619,7 +1635,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     }
     return open.length ? explicitYes(open) : { ...unclear, why: "slot" };
   }
-  if (unresolved.length || pos.size && !strong.size && c.answer !== "yes") return { ...unclear, why: "slot" };
+  if (unresolved.length || conditionalNonDayPick || pos.size && !strong.size && c.answer !== "yes") return { ...unclear, why: "slot" };
   if (namedExclusion && open.length
     && (explicitAlternative || !explicitTimesOnly && (!past || EXPLICIT_ALTERNATIVE_RANGE.test(t)))) {
     return explicitYes(open);
