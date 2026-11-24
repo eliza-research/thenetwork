@@ -183,3 +183,9 @@
 {"text":"Saturday works. If Ana can't make Sunday, Sunday works.","answer":"yes","keys":["b"]}
 {"text":"Saturday works. If Ana can't make Sunday, that's fine.","answer":"yes","keys":["b"]}
 {"text":"Sunday works, unless Ana can't make it","answer":"unclear","keys":[]}
+{"text":"Saturday works when Ana is free","answer":"unclear","keys":[]}
+{"text":"When Ana is free, Saturday works","answer":"unclear","keys":[]}
+{"text":"Saturday works when Ana can make it","answer":"unclear","keys":[]}
+{"text":"Saturday works whenever Ana is free","answer":"unclear","keys":[]}
+{"text":"Saturday works. Sunday works when Ana is free","answer":"yes","keys":["b"]}
+{"text":"Saturday works when I'm free","answer":"unclear","keys":[]}
