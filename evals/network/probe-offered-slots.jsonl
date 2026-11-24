@@ -183,3 +183,11 @@
 {"text":"Saturday works. If Ana can't make Sunday, Sunday works.","answer":"yes","keys":["b"]}
 {"text":"Saturday works. If Ana can't make Sunday, that's fine.","answer":"yes","keys":["b"]}
 {"text":"Sunday works, unless Ana can't make it","answer":"unclear","keys":[]}
+{"text":"Saturday works, Thursday doesn't work","answer":"yes","keys":["b"]}
+{"text":"Saturday works, Thursday won't work","answer":"yes","keys":["b"]}
+{"text":"Saturday works. Thursday doesn't work","answer":"yes","keys":["b"]}
+{"text":"Saturday works, Thursday doesn't work, Sunday doesn't work","answer":"yes","keys":["b"]}
+{"text":"Saturday works, Thursday doesn't work, Sunday works","answer":"yes","keys":["b","c"]}
+{"text":"Saturday works, Thursday doesn't work for me","answer":"yes","keys":["b"]}
+{"text":"No, Saturday works, Thursday doesn't work","answer":"unclear","keys":[]}
+{"text":"Saturday works, Thursday doesn't work, I don't want to meet","answer":"unclear","keys":[]}

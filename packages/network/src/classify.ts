@@ -1338,6 +1338,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const individual = new Set<string>(), grouped = new Set<string>();
   const pickedClauses = new Set<string>(), refusedClauses = new Set<string>();
   const qualifiedTimeRefusals = new Map<number, number>();
+  const refusedTails = new Map<number, number>();
   let conditionalTimeRefusal = false;
   const memberChoiceAt = (at: number) => {
     if (!clarifiedTimes) return true;
@@ -1480,6 +1481,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
       contradictedExclusion ||= exclusion && (NEG_AFTER.test(t.slice(m.end)) || REFUSES_OFFERED_TIME.test(t.slice(m.end)));
       refusedGroup ||= !!m.group;
       rememberQualifiedTimeRefusal(m.at, m.end);
+      const refusalTail = REFUSES_OFFERED_TIME.exec(t.slice(m.end));
+      if (refusalTail) refusedTails.set(m.end, m.end + refusalTail[0].length);
       // An either-refusal records no clause: its clause is shared with the other
       // days in the list ("sat and sun either"), and recording it would make the
       // weak branch read the unrefused day's pick as refused too.
@@ -1515,6 +1518,20 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
       remaining = `${remaining.slice(0, at)} ${remaining.slice(end)}`;
     }
     c = consentScan(remaining);
+  }
+  if ((c.why === "mixed" || c.why === "refusal") && strong.size > 0 && refusedTails.size > 0) {
+    const firstStrongAt = Math.min(
+      ...mentions.filter(m => matchingOffered(m).some(key => strong.has(key))).map(m => m.at),
+      ...ordinals.filter(o => o.choiceEnd !== undefined && strong.has(options.at(o.index)?.key ?? "")).map(o => o.at),
+    );
+    if (Number.isFinite(firstStrongAt)) {
+      let remaining = t;
+      for (const [at, end] of [...refusedTails].filter(([at]) => at >= firstStrongAt).sort(([first], [second]) => second - first)) {
+        remaining = `${remaining.slice(0, at)} ${remaining.slice(end)}`;
+      }
+      const rescanned = consentScan(remaining);
+      if (rescanned.answer === "yes") c = rescanned;
+    }
   }
   // A reply that is only time words ("sat 11am", "thursday or sunday") picks them all firmly.
   let residue = t;
