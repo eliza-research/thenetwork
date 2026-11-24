@@ -33,19 +33,24 @@ test.skipIf(!pgAvailable)("two replicas: a queued text follows the stored Networ
   try {
     await a.service.start();
     await b.service.start();
+    const rtA = a.service.runtimes.get("friends:nyc")!, rtB = b.service.runtimes.get("friends:nyc")!;
+    const staff = { id: "fixture-staff", roles: ["safety" as const], grants: [{ role: "safety" as const, app: app.id }], via: "sso" as const };
     const members: Spec[] = [];
     for (const [index, e164] of phones.entries()) {
       const name = index === 0 ? "Ari" : "Blair";
       const joined = await a.service.accounts.join(app, { e164, personId: null }, { firstName: name, age: 30, consent: { sms: true, wording: app.consent.text } });
       if (!joined.ok) throw new Error(`Fixture join refused for ${name}`);
+      for (const check of ["age", "liveness"] as const) {
+        expect(await a.service.verify(staff, rtA, joined.membership.memberId, check, "pass", "fixture verification")).toEqual({ ok: true });
+      }
       members.push({ id: joined.membership.memberId, name, age: 30, area: "Greenpoint", interests: ["hiking", "climbing"], skills: ["belaying"] });
     }
     const [first, second] = members.map(m => m.id);
     const w = new Mini(members, { app: app.id, inlineJudge: holdEveryItem.inline, plans: false, growth: false });
+    w.verify(first!, second!);
     await w.onboard(first!, second!);
     const oppId = w.propose([first!, second!], { category: "hobby" });
     expect(await w.runUntil(() => w.net.reviewQueue().some(o => o.oppId === oppId), 2 * DAY)).toBe(true);
-    const rtA = a.service.runtimes.get("friends:nyc")!, rtB = b.service.runtimes.get("friends:nyc")!;
     const update = (id: string, i: number) => ({ id, memberId: members[i]!.id, to: phones[i], kind: "transactional" as const,
       body: "Your activity update is ready.", type: "reminder", oppId, proactive: false, system: false, ts: clock.now() });
 
