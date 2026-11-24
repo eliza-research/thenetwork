@@ -142,7 +142,7 @@ pure def recordVerification(change: PhoneChange, otpVerified: bool): PhoneChange
 
 ### The verified request can move only when both numbers allow it
 
-Under the new number's lock, recheck the old and new numbers for a ban and check that the new number has no identity. The transaction locks the person, current phone and pending request. It checks the same target, the request's lifetime and both ban decisions again after verification. A missing, superseded or expired request cannot move and returns the no-pending-change outcome. A ban or missing or held current identity returns review. A number claimed before the move returns the in-use outcome. Only a completed store move permits success.
+Under the new number's lock, recheck the old and new numbers for a ban and check that the new number has no identity. The transaction locks the person, current phone and pending request. It checks the same target, the request's lifetime and both ban decisions again after verification. A missing, superseded or expired request cannot move and returns the no-pending-change outcome. A ban or missing or held current identity returns review. A number claimed before the move returns the in-use outcome. A successful move deletes signup drafts bound to the old number in the same transaction. A live native grant with the same owner and its tokens can still move. Only a completed store move permits success.
 
 ```quint
 pure def canCheckMovePolicy(change: PhoneChange): bool = change.phase == AwaitingMovePolicy and change.codeVerified

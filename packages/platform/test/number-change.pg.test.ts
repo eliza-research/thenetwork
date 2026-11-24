@@ -289,7 +289,7 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
   }, T);
 
   // spec/phoneChange.md, "The verified request can move only when both numbers allow it"
-  test("only a live native grant bound to the moving person carries its tokens to the new number", async () => {
+  test("a verified number move deletes old drafts and only a live native grant carries its tokens", async () => {
     const t = setup();
     const [oldNumber, newNumber] = ["+12125550261", "+12125550262"];
     const browser = t.browser();
@@ -317,6 +317,17 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
       await sql`insert into oauth.tokens (hash,kind,grant_id,client_id,app_id,resource,scopes,created_at,expires_at,revoked_at)
         values (${`${row.id}-token`},'access',${row.id},${client},'friends',${resource},${["profile:write"]},${at},${expires},${row.revoked})`;
     }
+    expect(await oauth.putSignupDraft({
+      grantId: local, app: "friends", phoneKey: oldKey, fields: { firstName: "Ana" }, expiresAt: expires.getTime(),
+    }, t.now)).toBe(true);
+    await sql`insert into oauth.signup_drafts (grant_id,app_id,phone_key,fields,expires_at)
+      values (${retired},'friends',${oldKey},${{ firstName: "Ana" }}::jsonb,${expires})`;
+    expect(await oauth.claimSignupDraft(oldKey, "friends", personId, t.now)).toEqual({ firstName: "Ana" });
+    expect((await browser.call("POST", "/api/me/phone/start", { phone: oldNumber })).body).toEqual({ ok: false, error: "same_number" });
+    expect(await oauth.claimSignupDraft(oldKey, "friends", personId, t.now)).toEqual({ firstName: "Ana" });
+    expect(await sql`select grant_id from oauth.signup_drafts where phone_key=${oldKey} order by grant_id`).toEqual(
+      [local, retired].sort().map(grant_id => ({ grant_id })),
+    );
     expect((await browser.call("POST", "/api/me/phone/start", { phone: newNumber })).status).toBe(200);
     expect(await browser.call("POST", "/api/me/phone/confirm", { code: t.codes.get(newNumber) })).toMatchObject({ status: 200, body: { ok: true } });
 
@@ -326,7 +337,11 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
     expect(await oauth.getGrant(cloud)).toMatchObject({ phoneKey: oldKey, personId, cloudAuthority: authority, revokedAt: t.now() });
     expect(await oauth.getGrant(unbound)).toMatchObject({ phoneKey: oldKey, personId: null, revokedAt: t.now() });
     expect(await oauth.getGrant(retired)).toMatchObject({ phoneKey: oldKey, personId, revokedAt: at.getTime() });
+    expect(await oauth.claimSignupDraft(newKey, "friends", personId, t.now)).toBeUndefined();
+    expect(await oauth.claimSignupDraft(oldKey, "friends", personId, t.now)).toBeUndefined();
+    expect(await sql`select grant_id from oauth.signup_drafts where grant_id in ${sql([local, retired])}`).toEqual([]);
     expect(await oauth.getToken(`${local}-token`)).toMatchObject({ revokedAt: null });
+    expect(await sql`select signup_draft_prepared from oauth.grants where id=${local}`).toEqual([{ signup_draft_prepared: true }]);
     for (const id of [cloud, unbound]) expect(await oauth.getToken(`${id}-token`)).toMatchObject({ revokedAt: t.now() });
     const ended = [cloud, unbound].sort();
     expect((await sql`select grant_id from oauth.audit where kind='consent_revoked' order by grant_id`).map(row => row.grant_id)).toEqual(ended);

@@ -1092,8 +1092,8 @@ module oauth_mcp {
 
   /**
    * packages/platform/src/pg-store.ts movePhoneGrants: a current grant with the same person and
-   * native authority moves with its draft. A current Cloud or unowned grant is revoked and audited.
-   * Draft expiry is checked before the production move and has no separate clock in the model.
+   * native authority moves. A current Cloud or unowned grant is revoked and audited.
+   * The transaction deletes all signup drafts bound to the previous number, including drafts on expired grants.
    */
   action movePhone(p: str, src: str, dst: str): bool = all {
     src != dst, pf.owner.get(src) == p, p != NONE, pf.owner.get(dst) == NONE,
@@ -1107,9 +1107,7 @@ module oauth_mcp {
         grants: ended.grants.keys().mapBy(g => { val x = ended.grants.get(g); if (movable.contains(g)) { ...x, phone: dst } else x }),
         drafts: ended.drafts.keys().mapBy(g => {
           val d = ended.drafts.get(g)
-          if (retiring.contains(g)) { ...d, exists: false, phone: "", scrubbed: true }
-          else if (movable.contains(g) and d.exists and not(d.scrubbed) and d.phone == src) { ...d, phone: dst }
-          else d
+          if (d.phone == src) { ...d, exists: false, phone: "", scrubbed: true } else d
         }) },
       // Ghost: a forget recorded for an earlier owner of dst does not cover the person who moves in.
       // pg-store movePhone copies the teen-pool bar of src to dst; readiness reads the bar of the current number.
@@ -1390,9 +1388,11 @@ module oauth_mcp {
   /** SD-395. README section 2: "At most 5 accepted profiles per grant a day": only accepted ones count. */
   val quotaCountsAccepted = gh.last.kind == "quotaRefused" implies oa.quota.get(gh.last.grant).accepted >= PROFILE_CAP
 
-  /** A completed move releases its source number and leaves no live grant on it. */
+  /** A completed move releases its source number and leaves no live grant or stored draft on it. */
   val numberChangeWorks = gh.last.kind == "movePhone" implies (
-    pf.owner.get(gh.last.status) == NONE and REQS.forall(g => not(liveG(oa, g) and oa.grants.get(g).phone == gh.last.status)))
+    pf.owner.get(gh.last.status) == NONE and REQS.forall(g =>
+      not(liveG(oa, g) and oa.grants.get(g).phone == gh.last.status)
+        and not(oa.drafts.get(g).exists and oa.drafts.get(g).phone == gh.last.status)))
 
   /** SD-384. P:61-79: a draft is claimed by its grant's phone key; a live draft keys the same phone as its grant. */
   val draftFollowsGrant = REQS.forall(g =>
@@ -1781,12 +1781,16 @@ module oauth_mcp {
     init.then(connect(1, "cF", false)).then(expireGrant(1))
       .expect(ib.active.contains("p1") and not(activeExactlyGrants) and safety)
 
-  /** SD-384 fix (e2e "a signup draft follows its grant to the new number"). */
   run draftMoveTest =
     init.then(leave("p1", "friends", false)).then(connect(2, "cF", false)).then(prepareSignup(1, "friends", "friends"))
       .expect(oa.drafts.get(2).exists)
       .then(movePhone("p1", "n1", "n2"))
-      .expect(oa.grants.get(2).phone == "n2" and oa.drafts.get(2).phone == "n2" and draftFollowsGrant and safety)
+      .expect(oa.grants.get(2).phone == "n2" and not(oa.drafts.get(2).exists) and safety)
+
+  run draftSameNumberMoveRefusedTest =
+    init.then(leave("p1", "friends", false)).then(connect(2, "cF", false)).then(prepareSignup(1, "friends", "friends"))
+      .expect(oa.drafts.get(2).exists)
+      .then(movePhone("p1", "n1", "n1")).fail()
 
   /**
    * Q-oauth_mcp-1 fix (consent-forget.pg.test.ts "a grant approved while the person leaves the app does
