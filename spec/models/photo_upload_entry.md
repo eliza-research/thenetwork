@@ -44,7 +44,7 @@ module photo_upload_entry {
   action tick = s' = { ...s, now: s.now + 1 }
   action lowerAge = s' = { ...s, adult: false }
   action identityHold = s' = { ...s, identityCurrent: false }
-  action leave = s' = { ...s, liveMembership: false, consent: false }
+  action leave = s' = { ...s, liveMembership: false, consent: false, phase: if (s.phase == "open") "refused" else s.phase }
   action safetyHold = s' = { ...s, held: true }
 
   action step = any {
@@ -66,5 +66,6 @@ module photo_upload_entry {
   run wrongAppClosesTest = init.then(issue).then(redeem(false, true, false)).expect(s.phase == "refused" and s.stores == 0)
   run expiredCannotUploadTest = init.then(issue).then(tick).then(tick)
     .then(redeem(true, true, true)).expect(not(usable(s, true)) and s.stores == 0)
+  run leaveClosesOpenLinkTest = init.then(issue).then(leave).expect(s.phase == "refused" and not(usable(s, true)))
 }
 ```

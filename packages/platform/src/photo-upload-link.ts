@@ -112,7 +112,9 @@ export class PhotoUploadLinks {
   async redeem(req: Request, app: AppId): Promise<Response> {
     const token = req.headers.get(PHOTO_UPLOAD_LINK_HEADER) ?? "";
     if (!TOKEN.test(token)) return privateJson(404, { ok: false, error: "link_unavailable" });
-    const [open] = await this.o.sql`select 1 from platform.photo_upload_links where id = ${this.id(token)} and used_at is null and expires_at > ${new Date(this.o.now())}`;
+    const id = this.id(token);
+    const [open] = await this.o.sql<{ person_id: string }[]>`select person_id from platform.photo_upload_links
+      where id = ${id} and used_at is null and expires_at > ${new Date(this.o.now())}`;
     if (!open) return privateJson(410, { ok: false, error: "link_unavailable" });
     const type = req.headers.get("content-type") ?? "";
     if (!type.toLowerCase().startsWith("multipart/form-data")) return privateJson(415, { ok: false, error: "multipart_required" });
@@ -130,10 +132,13 @@ export class PhotoUploadLinks {
       return photos.length >= 1 && photos.length <= RATER_MAX_PHOTOS ? privateJson(413, { ok: false, error: "too_large" }) : privateJson(400, { ok: false, error: "photo_count" });
     const consentGiven = req.headers.get("x-photo-consent") === PHOTO_CONSENT.version;
     const outcome = await this.o.sql.begin(async tx => {
-      const [row] = await tx`select person_id, app_id, issued_at, expires_at, used_at from platform.photo_upload_links where id = ${this.id(token)} for update`;
+      // Account erasure and link issuance lock the person before changing its links.
+      const personId = open.person_id;
+      const [person] = await tx`select id from platform.people where id = ${personId}::uuid and deleted_at is null for update`;
+      if (!person) return { refused: "link_unavailable" as const };
+      const [row] = await tx`select app_id, issued_at, expires_at, used_at from platform.photo_upload_links
+        where id = ${id} and person_id = ${personId}::uuid for update`;
       if (!row) return { refused: "link_unavailable" as const };
-      const personId = row.person_id as string;
-      await tx`select id from platform.people where id = ${personId}::uuid for update`;
       const { holder, consented } = await this.holder(tx, personId, row.app_id as AppId);
       const at = this.o.now();
       const before = linkOf(row);
@@ -142,7 +147,7 @@ export class PhotoUploadLinks {
       if (uploadLinkUsable(before, holder, sameApp, at) && !consented && !consentGiven) return { refused: "consent_required" as const };
       const after = stepLink(before, { type: "redeemUploadLink", holder, sameApp, at });
       const spent = after.phase === "UploadLinkSpent" && (consented || await writePhotoConsent(tx, personId, app, at, "link"));
-      await tx`update platform.photo_upload_links set used_at = ${new Date(at)}, outcome = ${spent ? "uploaded" : "refused"} where id = ${this.id(token)}`;
+      await tx`update platform.photo_upload_links set used_at = ${new Date(at)}, outcome = ${spent ? "uploaded" : "refused"} where id = ${id}`;
       if (!spent) return { refused: "link_unavailable" as const };
       return { personId };
     });

@@ -498,6 +498,8 @@ export class PgPeopleStore implements PeopleStore {
       const removed = await tx`update platform.memberships set state = 'removed', review = null, first_name = null, profile = '{}'::jsonb, left_at = ${ts(at)}
         where person_id = ${personId} and app_id = ${app} ${expectedMemberId === undefined ? tx`` : tx`and member_id = ${expectedMemberId}`} returning member_id`;
       if (expectedMemberId !== undefined && removed.length === 0) return;
+      await tx`update platform.photo_upload_links set used_at = ${ts(at)}, outcome = 'refused'
+        where person_id = ${personId} and app_id = ${app} and used_at is null`;
       await tx`update platform.share_grants set revoked_at = ${ts(at)} where person_id = ${personId} and (from_app = ${app} or to_app = ${app}) and revoked_at is null`;
       await tx`select set_config('app.app_id', ${app}, true)`;
       await tx`select notify.forget_data(${personId}, ${app})`;
@@ -543,6 +545,7 @@ export class PgPeopleStore implements PeopleStore {
       }
       if (personId) {
         await tx`delete from platform.memberships where person_id = ${personId}`;
+        await tx`delete from platform.photo_upload_links where person_id = ${personId}::uuid`;
         await tx`delete from platform.signup_eligibility where person_id = ${personId}::uuid`;
         await tx`delete from platform.staff_safety_holds where person_id = ${personId}::uuid`;
         await tx`delete from platform.report_safety_carryovers where person_id = ${personId}::uuid`;

@@ -47,7 +47,7 @@ pure def sometimesLinkRefused(link: PhotoUploadLink): bool = link.phase == Uploa
 
 ### A link uploads once, before it expires, on its own app, for a holder who is still eligible
 
-Every accepted upload closes the link. The use uploads only when the request reaches the link's own app before the expiry and the holder passes the same checks again at use. A wrong-app request or a holder refusal closes the link with nothing stored. The shell rejects an empty or oversized batch before it uses the link. A request in the right app from a currently eligible holder without the current photo consent can retry. A consent sent with the batch is recorded on the membership before storage. The photo service checks the holder and consent again under the person lock when it publishes each photo.
+Every accepted upload closes the link. The use uploads only when the request reaches the link's own app before the expiry and the holder passes the same checks again at use. A wrong-app request or a holder refusal closes the link with nothing stored. The shell rejects an empty or oversized batch before it uses the link. A request in the right app from a currently eligible holder without the current photo consent can retry. A consent sent with the batch is recorded on the membership before storage. The photo service checks the holder and consent again under the person lock when it publishes each photo. Leaving closes open links for that app and keeps them in the daily count. Account erasure removes all links.
 
 ```quint
 pure def uploadLinkUsable(link: PhotoUploadLink, holder: UploadLinkHolder, sameApp: bool, at: int): bool =

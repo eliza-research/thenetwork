@@ -384,6 +384,8 @@ test.skipIf(!pgAvailable)("a private photo upload link is app-bound, single use 
       expect(objects.has(key)).toBe(false);
       w.clock.advance(24 * HOUR);
       expect(await w.service.photoLinks.issue(person.id, "slop", "agent")).toEqual({ ok: false, reason: "adults_only" });
+      expect(await w.service.accounts.deleteAll({ e164: number, personId: person.id })).toBe(true);
+      expect(await w.connector.store.sql`select id from platform.photo_upload_links where person_id = ${person.id}`).toEqual([]);
     } finally {
       releasePut();
       await late.catch(() => undefined);
