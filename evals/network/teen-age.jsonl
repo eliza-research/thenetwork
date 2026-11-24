@@ -376,8 +376,8 @@
 {"text":"he turned 16 yesterday","other":16}
 {"text":"she turned 16 in june","other":16}
 {"text":"he turned 13 last week","other":13}
-{"text":"she turns 14 tomorrow","other":14}
-{"text":"he will turn 13 next month","other":13}
+{"text":"she turns 14 tomorrow","other":13}
+{"text":"he will turn 13 next month","other":12}
 {"text":"she just turned seventeen","other":17}
 {"text":"she just turned eighteen","other":null}
 {"text":"he just turned 18","other":null}
@@ -389,3 +389,5 @@
 {"text":"she's in the 8th grade","other":17}
 {"text":"he is in 12th grade","other":17}
 {"text":"my son is in 8th grade","other":null}
+{"text":"he's turning 15 next month","other":14}
+{"text":"she turned 16 today","other":16}

@@ -21,14 +21,14 @@ const ABSENCE_PHRASE = new RegExp(`${ABSENCE.source}|${MISSED_MEETING.source}`, 
 const FIRST_PERSON_ABSENCE = /\b(?:i|we)(?:\s+(?:[a-z]+ly|just|still|even|also|both))*(?:\s+(?:was|were)(?:\s+(?:a|the))?)?\s+$/i;
 const IMPLIED_FIRST_PERSON = /^\s*(?:sorry|sadly|unfortunately)?\s*$/i;
 
-const NON_COUNTERPART_SUBJECT = /^(?:i|we|it|you|that|this|there|which|what|who|son|daughter|kid|kids|child|baby|brother|sister|nephew|niece|cousin|dog|cat|puppy|car|lease|apartment|building|startup|company|record|streak|bike|laptop|phone|team|group|band|club|class|cohort|batch|dinner|coffee|parking|uber|lyft|bill|weather|food|drinks?|meal|lunch|breakfast|table|ticket|cab|taxi|venue|place|restaurant|bar|cafe|hotel|service|film|movie|show|drive|ride|walk|flight|trip|check|order|cost|price|entry|cocktail|beer|wine|tip|admission)$/i;
+const NON_COUNTERPART_SUBJECT = /^(?:i|we|just|recently|finally|already|also|actually|only|it|you|that|this|there|which|what|who|son|daughter|kid|kids|child|baby|brother|sister|nephew|niece|cousin|dog|cat|puppy|car|lease|apartment|building|startup|company|record|streak|bike|laptop|phone|team|group|band|club|class|cohort|batch|dinner|coffee|parking|uber|lyft|bill|weather|food|drinks?|meal|lunch|breakfast|table|ticket|cab|taxi|venue|place|restaurant|bar|cafe|hotel|service|film|movie|show|drive|ride|walk|flight|trip|check|order|cost|price|entry|cocktail|beer|wine|tip|admission)$/i;
 const SUBJECT_AGE_WORDS = "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen".split(" ");
 const GRADE_WORDS = "first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth";
 const YOUTH_MARKER = "a minor|under\\s*age|under 18|not (?:18|an adult) yet|in (?:high|middle) school|a (?:high school|hs|middle school) (?:student|freshman|sophomore|junior|senior)|a (?:freshman|sophomore|junior|senior) in (?:high school|hs)|a kid|a child|a teen(?:ager)?"
   + `|in (?:the )?(?:\\d{1,2}(?:st|nd|rd|th)|${GRADE_WORDS}) grade|a (?:\\d{1,2}(?:st|nd|rd|th)|${GRADE_WORDS}) grader`;
 const AGE_REPORT = new RegExp(
   "\\b(?<subject>my (?:date|match)|(?:the|this) (?:guy|girl|person(?: i met)?|dude|man|woman)|[a-z][a-z'-]+?)"
-  + "(?:'s|'re| is| was| are| were| turned out to be| turns out to be| just turned| turned| turns| will turn|'s turning|'s just turned)[ \\t]+"
+  + "(?:'s|'re| is| was| are| were| turned out to be| turns out to be|(?: (?:just|recently|finally|already|also|actually|only))? (?:turned|turns|will turn)|'s turning|'s just turned)[ \\t]+"
   + "(?:(?:only|just|actually|literally|barely|like|still)[ \\t]+){0,2}"
   + "(?:(?:an?[ \\t]+)?(?<age>\\d{1,2}(?!\\d)|(?:" + SUBJECT_AGE_WORDS.join("|") + ")\\b)"
   + "(?:[ \\t-]*(?:years?[ \\t-]+old|yrs?[ \\t-]+old|y/?o)\\b)?"
@@ -45,7 +45,16 @@ export function otherAgeStated(body: string): number | undefined {
   let lowest: number | undefined;
   for (const match of t.matchAll(AGE_REPORT)) {
     const { subject, age, youth } = match.groups!;
-    const value = youth ? ADULT_AGE - 1 : age && /^\d/.test(age) ? Number(age) : SUBJECT_AGE_WORDS.indexOf(age?.toLowerCase() ?? "");
+    let value = youth ? ADULT_AGE - 1 : age && /^\d/.test(age) ? Number(age) : SUBJECT_AGE_WORDS.indexOf(age?.toLowerCase() ?? "");
+    if (!youth && age) {
+      const after = t.slice(match.index + match[0].length);
+      if (/\bturned\b/.test(match[0]) && /^\s*last year\b/i.test(after)) {
+        value += 1;
+      } else if (/(?:\bturns\b(?!\s+out\b)|\bwill turn\b|'s turning\b)/.test(match[0])
+        && /^\s*(?:tomorrow\b|next (?:week|month|year)\b|in (?:january|february|march|april|may|june|july|august|september|october|november|december)\b)/i.test(after)) {
+        value -= 1;
+      }
+    }
     const eligibleSubject = !!subject && !NON_COUNTERPART_SUBJECT.test(subject);
     const prefix = reportClauseBefore(t, match.index);
     const affirmative = !quoteStillOpen(t.slice(0, match.index)) && !ACTIVE_DENIAL.test(prefix)
