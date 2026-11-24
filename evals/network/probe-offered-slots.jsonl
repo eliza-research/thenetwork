@@ -183,8 +183,8 @@
 {"text":"Saturday works. If Ana can't make Sunday, Sunday works.","answer":"yes","keys":["b"]}
 {"text":"Saturday works. If Ana can't make Sunday, that's fine.","answer":"yes","keys":["b"]}
 {"text":"Sunday works, unless Ana can't make it","answer":"unclear","keys":[]}
-
 {"text":"The second works if Ana can make it","answer":"unclear","keys":[]}
 {"text":"If Ana can't make Sunday, the second works","answer":"unclear","keys":[]}
 {"text":"If Sunday works for Ana, the third works","answer":"unclear","keys":[]}
 {"text":"The first works. If Ana can't make it, the second works","answer":"yes","keys":["a"]}
+
