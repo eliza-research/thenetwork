@@ -181,7 +181,7 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
     withSignupAgePolicy(key, id, fn) {
       return p.store.withPhoneAgeGuard(key, async () => {
         const owner = await p.accounts.byPhoneHash(key);
-        const age = owner ? await p.accounts.lowestAge(owner.e164, owner.person) : await p.store.ageFloor(key);
+        const age = owner ? await p.accounts.lowestAge(owner.e164, owner.person) : (await p.store.ageFloorRecord(key))?.age;
         const app = p.app(id);
         if (age !== undefined) await cleanAge(key, age);
         return fn(!!app && (age === undefined || canJoinApp(age, app)));

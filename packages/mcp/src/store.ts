@@ -6,7 +6,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { removalFormMayRevoke } from "../../core/src/generated/connectedAssistants.ts";
 import { decideProfileClaim, type ProfileClaim } from "../../core/src/generated/mcpProfileSubmission.ts";
-import { signupDraftExpired, signupDraftGrantAllowed, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
+import { signupDraftExpired, signupDraftGrantAllowed, signupDraftRowReadable, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import { requestIsLive } from "../../core/src/generated/oauthGrantIssuance.ts";
 import { defaultScopes, scopeName, scopeOfferedOn, scopes as connectorScopes, signupPrefillAllowed, useSignupPrefill as markSignupPrefillUsed } from "../../core/src/generated/authorizationPages.ts";
 import { codeExchangeMayCommit, type CodeExchangeResult, refreshStoredAuthorityCurrent, type RefreshRotationResult } from "../../core/src/generated/oauthTokenLifecycle.ts";

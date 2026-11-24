@@ -63,7 +63,7 @@ export const peonPrivacy: LegalText = {
     },
     {
       heading: "Age",
-      body: <p>You must be 13 or older to join. Members aged 13 to 17 can use the agent for their own questions only. peon.biz never matches them for work. Friendship introductions for people under 18 happen on friends.help and ntwrk.party. We ask for your birth date or your age at signup to apply these rules. Only adults 18 and older are matched. If you tell us different ages, we use the lowest one. We do not knowingly collect data from children under 13; if we learn of any, we delete it.</p>,
+      body: <p>You must be 13 or older to join. Members aged 13 to 17 can use the agent for their own questions only. peon.biz never matches them for work. People under 18 receive no introductions through this app. We ask for your birth date or your age at signup to apply these rules. Only adults 18 and older are matched. If you tell us different ages, we use the lowest one. We do not knowingly collect data from children under 13; if we learn of any, we delete it.</p>,
     },
     {
       heading: "Security and changes",

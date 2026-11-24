@@ -54,7 +54,7 @@ describe.skipIf(!pgAvailable)("Cloud phone handoff (PostgreSQL)", () => {
       const identity = await produce.validate(body.target, body.proof);
       return Response.json(identity ? { ok: true, identity } : { ok: false }, { status: identity ? 200 : 403 });
     };
-    const api = createPublicApi({ store, proxySecret, now: () => now, hashKey: secret, sessionSecret: secret,
+    const api = createPublicApi({ store, proxySecret, now: () => now, hashKey: secret, sessionSecret: "separate-local-cloud-session-fixture",
       env: { PLATFORM_ENV: "production", NETWORK_CLOUD_AUTH_ENABLED: "true", NETWORK_CLOUD_AUTH_MODE: "production-v1",
         NETWORK_CLOUD_AUTH_LOGIN_ORIGIN: "https://cloud.eliza.app", NETWORK_CLOUD_AUTH_API_ORIGIN: "https://api.eliza.app", SERVICE_TURN_SECRET: secret },
       cloudAuthFetch: transport, cloudValidationTtlMs: 0, turnstile: { verify: async () => false },
