@@ -257,17 +257,20 @@ const PNG_KEEP = new Set(["IHDR", "PLTE", "IDAT", "IEND", "tRNS", "gAMA", "sRGB"
 function stripPng(b: Uint8Array): Uint8Array {
   const out: Uint8Array[] = [b.subarray(0, 8)];
   let i = 8, end = false, first = true;
+  let hasImageData = false;
   while (i + 12 <= b.length) {
     const len = ((b[i]! << 24) >>> 0) + (b[i + 1]! << 16) + (b[i + 2]! << 8) + b[i + 3]!;
     const type = ascii(b, i + 4, 4);
     if (i + 12 + len > b.length) throw new BadImage("png: bad chunk");
     if (first && type !== "IHDR") throw new BadImage("png: IHDR must come first");
     first = false;
+    if (type === "IDAT" && len > 0) hasImageData = true;
     if (PNG_KEEP.has(type)) out.push(b.subarray(i, i + 12 + len));
     i += 12 + len;
     if (type === "IEND") { end = true; break; }
   }
   if (!end) throw new BadImage("png: no IEND");
+  if (!hasImageData) throw new BadImage("png: no image data");
   return concat(out);
 }
 

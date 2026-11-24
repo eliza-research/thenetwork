@@ -1,4 +1,5 @@
 // spec/photoUploadPage.md, "The server answer decides between saved, refused, closed and a retry"
+import { crc32, deflateSync } from "node:zlib";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { svcSign } from "../../packages/core/src/svc/svc-auth.ts";
@@ -40,10 +41,24 @@ describe.skipIf(!pgAvailable)("photo upload page (the /photos/add shell and mach
   };
   const pageOnSite = (app: AppId) => pageOn(st.sites[app].origin);
 
-  const chunk = (type: string, data: Uint8Array) => { const o = new Uint8Array(12 + data.length); new DataView(o.buffer).setUint32(0, data.length); o.set(new TextEncoder().encode(type), 4); o.set(data, 8); return o; };
+  const chunk = (type: string, data: Uint8Array) => {
+    const bytes = new Uint8Array(12 + data.length);
+    const view = new DataView(bytes.buffer);
+    view.setUint32(0, data.length);
+    bytes.set(new TextEncoder().encode(type), 4);
+    bytes.set(data, 8);
+    view.setUint32(8 + data.length, crc32(bytes.subarray(4, 8 + data.length)));
+    return bytes;
+  };
+  const pngSignature = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const onePixelPng = (name: string, chunks: readonly Uint8Array[]) => {
+    const header = Uint8Array.of(0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0);
+    const parts = [pngSignature, chunk("IHDR", header), ...chunks.map(data => chunk("IDAT", data)), chunk("IEND", new Uint8Array())];
+    return new File(parts, name, { type: "image/png" });
+  };
   const png = (tag: string, bytes = 0) => {
     const pixels = new Uint8Array(Math.max(0, bytes - 57) + `PIXELS-${tag}`.length); pixels.set(new TextEncoder().encode(`PIXELS-${tag}`));
-    const parts = [Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", new Uint8Array(13)), chunk("IDAT", pixels), chunk("IEND", new Uint8Array(0))];
+    const parts = [pngSignature, chunk("IHDR", new Uint8Array(13)), chunk("IDAT", pixels), chunk("IEND", new Uint8Array(0))];
     const o = new Uint8Array(parts.reduce((n, p) => n + p.length, 0)); let k = 0; for (const p of parts) { o.set(p, k); k += p.length; } return o;
   };
   const photo = (tag: string, bytes = 0) => new File([png(tag, bytes)], `${tag}.png`, { type: "image/png" });
@@ -194,10 +209,17 @@ describe.skipIf(!pgAvailable)("photo upload page (the /photos/add shell and mach
     const partly = await adultWithTextedLink();
     pageOnSite("slop");
     const p = await PhotoPage.open(partly.token);
-    p.choose([photo("good"), notAnImage("bad")]);
+    const scan = deflateSync(Uint8Array.of(0, 0, 255, 0, 255));
+    const empty = new Uint8Array();
+    p.choose([
+      onePixelPng("split.png", [empty, scan.subarray(0, 1), scan.subarray(1)]),
+      onePixelPng("missing.png", []),
+      onePixelPng("empty.png", [empty, empty]),
+      notAnImage("bad"),
+    ]);
     await p.upload();
-    expect([p.page.screen, p.page.savedCount, p.page.someRefused, p.refused.length]).toEqual(["PhotoDone", 1, true, 1]);
-    expect(["bad_type", "bad_image"]).toContain(p.refused[0]);
+    expect([p.page.screen, p.page.savedCount, p.page.someRefused]).toEqual(["PhotoDone", 1, true]);
+    expect(p.refused).toEqual(["bad_image", "bad_type"]);
     expect(await photoCount(partly.phone)).toBe(1);
 
     const none = await adultWithTextedLink();
