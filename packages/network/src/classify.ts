@@ -859,7 +859,8 @@ const DAY_WORDS: [RegExp, string][] = DAY_NAMES.map(([label, abbreviation]) => [
   new RegExp(String.raw`\b${label.toLowerCase()}s?\b|(?<!')\b(?:${abbreviation})\b${DAY_ABBR_CONTEXT}`, "g"), label,
 ]);
 const DAY_TOKEN = DAY_NAMES.map(([label, abbreviation]) => `${label.toLowerCase()}s?|${abbreviation}`).join("|");
-const OFFERED_TIME_REJECTION = /\b(neither|none of (those|them|these|the times)|none (of those )?work|no(ne)? of those (times )?work|those (times )?(don'?t|do not|won'?t) work|(?:both|all) (?:days|times) (?:(?:don'?t|do not|won'?t|will not) work|(?:are|is) (?:out|bad|no good|unavailable))|can'?t do (those|either|any of)|not those times)\b/;
+const OFFERED_TIME_REJECTION = /\b(neither|none of (those|them|these|the times)|none (of those )?work|no(ne)? of those (times )?work|those (times )?(don'?t|do not|won'?t) work|can'?t do (those|either|any of)|not those times)\b/;
+const BARE_GROUP_REJECTION = /\b(?:both|all) (?:days|times) (?:(?:don'?t|do not|won'?t|will not) work|(?:are|is) (?:out|bad|no good|unavailable))\b/;
 const OTHER_TIMES = /\bother times?\b/;
 const NO_OTHER_TIMES = /\b(?:no|not) other times?\b/g;
 /** "Any of them", "whichever", "any time": every option. */
@@ -1311,11 +1312,12 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     return { answer: "unclear", keys: [], why: "conditional" };
   }
   const rejectedTimes = OFFERED_TIME_REJECTION.test(t);
+  const bareGroupRejection = BARE_GROUP_REJECTION.test(t);
   // spec/probeReply.md, "An untimed probe needs an answer to the opportunity"
   const untimedOrdinals = options.length ? undefined : readDirectProbeOrdinals(t);
   const namedTimeWithoutOffer = !options.length && (timeMentions(t).length > 0 || !!untimedOrdinals?.choices.length
     || !!untimedOrdinals?.refusals.length || VAGUE_ORDINAL_TIME.test(t));
-  if (untimedProbeTimeRejectionNeedsClarification(options.length > 0, rejectedTimes || namedTimeWithoutOffer, c.why === "affirm" || c.why === "none")) {
+  if (untimedProbeTimeRejectionNeedsClarification(options.length > 0, rejectedTimes || bareGroupRejection || namedTimeWithoutOffer, c.why === "affirm" || c.why === "none")) {
     return { answer: "unclear", keys: [], why: "slot" };
   }
   if (!options.length && unboundProbeTimeNeedsClarification(unbound, false) && c.answer !== "no" && c.why !== "conditional" && c.why !== "hedged") {
@@ -1603,7 +1605,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   if (contradictedExclusion || namedExclusion && (open.length === 0 || [...namedExcluded].some(key => strong.has(key)))) {
     return { ...unclear, why: "slot" };
   }
-  if (rejectedTimes || !namedExclusion && OTHER_TIMES.test(t)) return { answer: "yes", keys: [], why: c.why };
+  if (rejectedTimes || bareGroupRejection || !namedExclusion && OTHER_TIMES.test(t)) return { answer: "yes", keys: [], why: c.why };
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
   const allAt = strongAll ?? weakAt;
   if (allAt && !probeTimeIsRefused(t, allAt.index, allAt.index + allAt[0].length)
