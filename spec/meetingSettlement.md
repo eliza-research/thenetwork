@@ -364,6 +364,22 @@ pure def countAttendance(evidence: AttendanceEvidence): AttendanceFinding =
     reliabilityNoShow: mark != Attended and not(evidence.hasFeedback) and corroboratedMissing }
 ```
 
+### A settled Friends plan teaches the actual booked time
+
+When attendance settles for a booked Friends plan, record the final booked start as private availability evidence once for each participant classified as attended. The same exact booking receipt required for attendance applies. Keep accepted slots as separate evidence. Keep the latest 40 availability observations. The new evidence can inform plans that still go through review, current availability checks, and fresh consent.
+
+```quint
+type AttendanceAvailability = { recorded: bool, at: int }
+pure val availabilityHistoryLimit: int = 40
+
+pure def friendsPlanAttendanceAvailability(friendsPlan: bool, mark: AttendanceMark, bookedAt: int): AttendanceAvailability =
+  { recorded: friendsPlan and mark == Attended, at: bookedAt }
+
+pure def lawLearnedAttendanceUsesBookedStart(friendsPlan: bool, mark: AttendanceMark, bookedAt: int): bool =
+  val observation = friendsPlanAttendanceAvailability(friendsPlan, mark, bookedAt)
+  observation.recorded iff (friendsPlan and mark == Attended and observation.at == bookedAt)
+```
+
 ### A host's check-in uses the host's response
 
 A host who was booked and says they came can verify attendance. If the host reports missing people, count only other booked participants who say they came and whom the host did not name as missing. Otherwise use the host's attendance list if given. If the host gave no names, count other booked participants who did not say they missed the meeting. A member request counts as fulfilled only when the requester and at least one other participant attended.
