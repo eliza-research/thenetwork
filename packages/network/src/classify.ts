@@ -971,6 +971,40 @@ function probeChoiceAuthored(prefix: string): boolean {
   return !quoteStillOpen(prefix) && !describesAnotherPerson(prefix.split(/[.!?\n]/).at(-1)!);
 }
 
+/** A clause that opens a condition: "if ...", "unless ...", "provided ...", "assuming ...", "as long as ...". */
+const CONDITIONAL_OPEN = /^(?:if|unless|provided(?:\s+that)?|assuming(?:\s+that)?|as\s+long\s+as|so\s+long\s+as|on\s+(?:the\s+)?condition(?:\s+that)?|only\s+if|only\s+when)\b/;
+const CONDITIONAL_CUE = /\b(?:if|unless|provided(?:\s+that)?|assuming(?:\s+that)?|as\s+long\s+as|so\s+long\s+as|on\s+(?:the\s+)?condition(?:\s+that)?|only\s+if|only\s+when|but\s+only\s+(?:if|when))\b/;
+
+/** A day named only inside a condition is not a confirmed pick yet. */
+function inConditionalClause(text: string, at: number): boolean {
+  let start = 0;
+  for (const mark of [".", "!", "?", "\n"]) start = Math.max(start, text.lastIndexOf(mark, at - 1) + 1);
+  let end = text.length;
+  for (const mark of [".", "!", "?", "\n"]) { const i = text.indexOf(mark, at); if (i >= 0) end = Math.min(end, i); }
+  const clauses = text.slice(start, end).split(/[,;]/);
+  const offset = at - start;
+  let pos = 0;
+  let clauseIndex = -1;
+  let clauseStart = 0;
+  let leadingConditional = false;
+  for (let i = 0; i < clauses.length; i++) {
+    const clause = clauses[i]!;
+    const trimmed = clause.replace(/^\s+/, "");
+    if (i === 0 && CONDITIONAL_OPEN.test(trimmed)) leadingConditional = true;
+    if (offset >= pos && offset < pos + clause.length) { clauseIndex = i; clauseStart = pos; }
+    pos += clause.length + 1;
+  }
+  if (clauseIndex < 0) return false;
+  const clause = clauses[clauseIndex]!;
+  const trimmed = clause.replace(/^\s+/, "");
+  if (CONDITIONAL_OPEN.test(trimmed)) return true;
+  if (leadingConditional && clauseIndex > 0) return true;
+  if (CONDITIONAL_CUE.test(clause.slice(offset - clauseStart))) return true;
+  const next = clauses[clauseIndex + 1];
+  if (next !== undefined && CONDITIONAL_OPEN.test(next.replace(/^\s+/, ""))) return true;
+  return false;
+}
+
 const RECURRING_PROBE_TIME = new RegExp(
   String.raw`\b(?:${DAY_NAMES.map(([day]) => `${day.toLowerCase()}s`).join("|")}|weekends|weekdays|weeknights|mornings|afternoons|evenings|nights)\b`,
 );
@@ -1395,6 +1429,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   }
   const ordinalMissing = ordinalKeys.some(key => key === undefined);
   let namedExclusion = false, refusedGroup = false, explicitAlternative = false;
+  const conditionalUnresolved = new Set<TimeMention>();
   let contradictedExclusion = false;
   const namedExcluded = new Set<string>();
   const partExclusion = DAYPART_EXCLUSION.exec(t);
@@ -1454,6 +1489,9 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
         if (!mentions.some(m => clauseAt(t, m.at, m.end - m.at) === eitherClause)) refusedClauses.add(eitherClause);
       }
       if (exclusion) for (const key of matching) namedExcluded.add(key);
+    } else if (inConditionalClause(t, m.at)) {
+      unresolved.push(m);
+      conditionalUnresolved.add(m);
     } else if (unbound && !m.day || !matching.length || !m.group && matching.length > 1 && (explicitTimesOnly || !m.part)
       || m.part && !m.day && !m.group && c.answer !== "yes" && !onlyPick(m.at, m.end - m.at)
         && !/^\s+(?:(?:work|works|will work)\b|(?:is|are) (?:good|fine|ok(?:ay)?|perfect)\b|for me\b)/.test(t.slice(m.end))) {
@@ -1497,7 +1535,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const explicitYes = (keys: string[]): ProbeReply => ({ answer: "yes", keys, why: c.why,
     ...(explicitTimesOnly ? { explicitTimeSelection: true as const } : {}) });
   // Refusal first. A pick after a refusal ("no, Saturday works") is mixed: ask again.
-  if (c.why === "refusal") return all.some(k => strong.has(k)) ? { ...unclear, why: "mixed" } : { answer: "no", keys: [], why: c.why };
+  if (c.why === "refusal") return all.some(k => strong.has(k)) || conditionalUnresolved.size ? { ...unclear, why: "mixed" } : { answer: "no", keys: [], why: c.why };
   if (c.why === "mixed" || c.why === "conditional" || c.why === "hedged") return unclear;
   if (explicitTimesOnly) {
     if (EXPLICIT_NO_OFFERED_TIMES.test(t)) return { answer: "no", keys: [], why: "refusal" };
