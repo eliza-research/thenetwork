@@ -88,7 +88,7 @@ export function lawSlopIntroductionNeedsBothReceipts(firstCollected: number, fir
 /** Story: Find a date within both travel limits / Only encounter-backed blocks inform a member review (spec/datingRadius.md) */
 //@ pure
 export function slopRecordedBlockContext(encounterResult: string): boolean {
-  return ["completed", "no_show"].includes(encounterResult);
+  return (["completed", "no_show"] as string[]).includes(encounterResult);
 }
 
 /** Story: Find a date within both travel limits / Only encounter-backed blocks inform a member review (spec/datingRadius.md) */

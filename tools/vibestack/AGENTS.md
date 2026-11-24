@@ -87,7 +87,7 @@ Every project built here uses this, and nothing beside it:
 | For | Use | Never |
 |---|---|---|
 | Runtime | Node 26 | an older Node |
-| Packages | pnpm workspaces, pinned by `packageManager`; Turborepo runs and caches tasks across them ([SPEC.md](SPEC.md#one-spec-tree)) | npm, yarn; a second task runner |
+| Packages | pnpm workspaces, pinned by `packageManager`; Turborepo runs and caches tasks across them ([SPEC.md](SPEC.md#one-spec-tree)) | npm, yarn, bun; a second task runner |
 | Rules and state | the spec, and the code `gen/` derives from it | a second model of the same state |
 | Shell: effects, services, I/O, async | [VibeLang](.agents/skills/shell/SKILL.md) (`.vibe`) on Effect 4 | plain TypeScript for effectful code; Redux, Zustand or another state library |
 | User interface | React, in `.tsx`, built with Vite | Vue, Svelte, Angular, hand-built DOM |
@@ -155,11 +155,23 @@ Check each point before you write, and again after.
   feature flags, environment variables or settings for a change.
 - **Reuse.** Search for existing code and types first. Extend and share; no
   duplicates or one-offs.
+- **Barrel exports.** Expose a workspace package's code only through its root
+  barrel (`"."` in `exports`), plus explicit non-code static assets (`.css`,
+  `.json`, etc.); no subpath code routes or wildcards. Import workspace packages
+  by package name or declared static asset path. `pnpm lint:js` enforces both
+  (`barrel/exports` and `barrel/no-subpath-imports`) without inline disables.
 - **Compact.** Reread for needless branches, `try` blocks, wrappers and
   indirection. Shorter, if it reads as well.
 - **No code comments.** Use clear names and structure to make the code readable.
   Use comment syntax only for required tool directives that need it, such as
-  `//@` contracts and Vitest environment directives.
+  `//@` contracts, spec citations and Vitest environment directives, and a doc
+  comment only where a generator reads it: on a `@repo/ui` component and its
+  props. This holds for the project's own code, tests, scripts and proof files;
+  `vibestack/` and vendored checkouts are upstream's. In `apps/` and
+  `packages/`, `pnpm lint:js` enforces it, with no effect hooks, timers or
+  `console`. An `eslint-disable` there names its rules, never `code/*`,
+  `barrel/*` or `no-console`, and says why; any other inline config fails the
+  lint.
 - **Scripts and tests.** Extend existing ones before adding; no new scripts.
   Delete code that becomes unused. Tests follow "Tests" below.
 - **Speed.** Keep checks and CI fast: a small change reruns only what it

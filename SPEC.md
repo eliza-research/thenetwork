@@ -1,7 +1,7 @@
 # Spec reference
 
 This is the Vibestack spec-language reference at revision
-[`e4e2ab38`](https://github.com/lalalune/vibestack/blob/e4e2ab38f761897657c918f073e19114874b37ff/SPEC.md).
+[`b7f1827b`](https://github.com/lalalune/vibestack/blob/b7f1827be748d4a97aee094d9961371d553012a7/SPEC.md).
 Use [The Network command map](README.md#commands) when this reference uses
 standalone Vibestack commands. The Network keeps its product requirements in
 [`spec/product/`](spec/product/README.md) and the action-based Quint flow
@@ -11,10 +11,7 @@ TypeScript published under `packages/core/src/generated/`.
 
 The rest of this reference describes the standalone Vibestack layout.
 Paths starting with `vibestack/` refer to the pinned upstream checkout
-under [`tools/vibestack/`](tools/vibestack/). The Network applies a local
-Node 26 overlay to the vendored stack guidance, the package manager detector's
-lockfile list and the optional runtime metadata in the pnpm lockfiles.
-The dependency versions and integrity hashes follow upstream. The order example is
+under [`tools/vibestack/`](tools/vibestack/). The order example is
 `vibestack/examples/order/spec/index.md` and the tracker example is
 `vibestack/examples/dashboard/spec/tracker.md`. Read [AGENTS.md](AGENTS.md)
 and the [sync skill](.agents/skills/sync/SKILL.md) before changing a rule.
@@ -125,6 +122,7 @@ from its name and signature:
 | `pure val idValues = Set(1, 2, 3)` | what the simulator tries for a parameter named `id`. It must be a set whose elements match the parameter type; any supported Quint is allowed in it | nothing: it never reaches TypeScript |
 | `pure val weight_pay = 5` | how often the simulator tries `pay`: a whole number from 1 to 100, times as often as an event of weight 1 (the default). For deep interleavings, such as a message lost, repeated and reordered | nothing |
 | `pure val eval_witness_sometimesPaid = (("authorize", 8), ("pay", 8), "finish")` | an example path from `initial` to the named `sometimes` rule | nothing |
+| `pure val eval_refuse_canElapse = { elapsed: -1 }` | concrete arguments for a transition guard to refuse in `initial` | nothing |
 | `pure val fair_pay = "weak"` or `"strong"` | an assumption for `leadsTo` rules: a fair run does not put `pay` off for ever while its guard keeps allowing it (`"weak"`), or while it allows it again and again (`"strong"`) | nothing |
 | `pure val within_leadsToPaid = 3` | a bound for a `leadsTo` rule: every run meets it within 3 events, from 1 to 100 | a search of simulated traces for a run that does not ("Liveness", below) |
 | any other `pure val` or `pure def` | a constant or helper | the same constant or function |
@@ -141,10 +139,20 @@ write that step alone. In a model with senders, add the sender last for a
 transition that does not take `by`.
 
 Quint typechecks the arguments and runs the original transitions and their
-guards. It checks the state and step rules along the path. The usual search
-runs if the example stops before reaching the goal. An example that breaks a
-rule fails the check. The safety and probe samples stay the same, and a
+guards, checking state and step rules until the path reaches the goal or
+breaks a rule. A broken rule fails the check. The usual search runs if the
+example stops short of the goal. The safety and probe samples stay the same, and a
 trace that reaches the goal or breaks a rule goes through the usual replay.
+An ordinary simulation can reuse its results when only an unused guide changes.
+The check preserves the input files for replay when one of these ordinary runs fails.
+
+An `eval_refuse_<guard>` record has one field for each of the guard's
+sampled arguments. In a model without opaque functions, if other traces
+have not shown a refusal, Quint tries the given arguments in the initial
+state. A valid refusal replaces the remaining randomized refusal search
+and goes through TypeScript replay. If the example does not show a refusal,
+the usual search runs. The ordinary safety and probe samples and the
+application conformance inputs are unchanged by the focused trace.
 
 A transition parameter named `by` identifies its sender. All such parameters
 use the same type. It is supplied separately as `enabled(current, event, by)`
@@ -242,6 +250,12 @@ it does for the root's own `src/` and `test/`:
   `// spec/app/index.md, "A rule"`.
 
 An owner has no `check`, `gen` or `accept` script: the root's are its own.
+
+For an independent owner build, `pnpm gen --owner <name>` reads every spec
+in `spec/<name>/` and follows its imports and links to check references.
+It compiles the owner's Quint and the Quint it imports, and writes the same
+`gen/` artifact that whole-tree generation writes for that owner. Root
+`pnpm check` still checks the whole tree and owns acceptance.
 
 ### Opaque functions
 
@@ -525,7 +539,7 @@ change when read again, which must do what the clean event does. `options`
 are `view` (what of the state `observe` shows), `keys` (the entities walks
 interleave), `walks` (at most this many; `0` for a slow driver) and `steps`.
 The walks use the fixed normal or nightly profile
-([budgets](https://github.com/lalalune/vibestack/blob/e4e2ab38f761897657c918f073e19114874b37ff/CONTRIBUTING.md#seeds-and-budgets)).
+([budgets](https://github.com/lalalune/vibestack/blob/b7f1827be748d4a97aee094d9961371d553012a7/CONTRIBUTING.md#seeds-and-budgets)).
 
 - **A disagreement is saved.** A journey or walk that disagrees is shrunk
   and written to `test/counterexamples/<name>/<hash>.json`, which every
@@ -556,7 +570,7 @@ under `src/`.
   arm64 and on Apple silicon; elsewhere the stage prints a `-` line and CI
   explores the page.
 - **For a fixed time, from no seed.** The fixed profile's seconds, Chrome's
-  start included ([budgets](https://github.com/lalalune/vibestack/blob/e4e2ab38f761897657c918f073e19114874b37ff/CONTRIBUTING.md#seeds-and-budgets)). The
+  start included ([budgets](https://github.com/lalalune/vibestack/blob/b7f1827be748d4a97aee094d9961371d553012a7/CONTRIBUTING.md#seeds-and-budgets)). The
   actions are random, so two runs explore differently.
 - **`test/bombadil.ts` says what must hold.** It is an ES module Bombadil
   bundles itself. Re-export `@antithesishq/bombadil/browser/defaults` (no
