@@ -164,3 +164,11 @@
 {"text":"Sat and Sun are good.","labels":["Thursday 7pm","Friday 7pm","Saturday 11am"],"answer":"unclear","keys":[]}
 {"text":"Sat and Sun please.","labels":["Saturday 10am","Saturday 11am","Sunday 2pm"],"answer":"unclear","keys":[]}
 {"text":"Sat or Sun are fine.","labels":["Saturday 10am","Saturday 11am","Sunday 2pm"],"answer":"unclear","keys":[]}
+{"text":"either sat doesn't work","answer":"unclear","keys":[]}
+{"text":"either sun doesn't work","answer":"unclear","keys":[]}
+{"text":"either thu doesn't work","answer":"unclear","keys":[]}
+{"text":"both sat doesn't work","answer":"unclear","keys":[]}
+{"text":"either sat isn't good","answer":"unclear","keys":[]}
+{"text":"either sat is bad","answer":"unclear","keys":[]}
+{"text":"either sat does not work","answer":"unclear","keys":[]}
+{"text":"either sat don't work","answer":"unclear","keys":[]}
