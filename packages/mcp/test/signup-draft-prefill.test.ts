@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vitest";
 import { canBeMatched } from "../../core/src/policy.ts";
-import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
+import { dropTestDb, pgAvailable, testDb } from "../../../apps/observatory/test/pg.ts";
 import { createPublicApi } from "../../platform/src/api.ts";
 import { PgOAuthStore } from "../src/pg-store.ts";
 import { MemoryOAuthStore } from "../src/store.ts";

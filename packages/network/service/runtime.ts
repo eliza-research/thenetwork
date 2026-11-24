@@ -87,11 +87,11 @@ import type { HeldMemberInvitation, ReferralJoin } from "../../platform/src/invi
 import { inviteReviewContactToken, type InviteRelationship, type MemberInviteEvidence, type MemberInviteRequest } from "../src/invitation.ts";
 import { outputLeaks } from "../../mcp/src/leaks.ts";
 // The Observatory's event shape and run summaries, so the console reads what this writes.
-import { eventOf, membersOf, type EventRow } from "../../observatory/src/events.ts";
+import { eventOf, membersOf, type EventRow } from "../../../apps/observatory/src/events.ts";
 
 import { GATEWAY_WAITING, NOT_SENT, WAITING, type QueueRow, type RecipientCheck, type RecipientWindowKey } from "../../blooio/src/outbound-queue.ts";
 import { StateView } from "./state-view.ts";
-import { summarizeRun } from "../../observatory/src/engineCapture.ts";
+import { summarizeRun } from "../../../apps/observatory/src/engineCapture.ts";
 import type { JobPosting } from "../src/jobs.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
 import { savePosting } from "./postings.ts";

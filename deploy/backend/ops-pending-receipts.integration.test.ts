@@ -6,7 +6,7 @@ import { ChannelSendError, type SendReceipt, type SendRequest } from "../../pack
 import { APPS } from "../../packages/platform/src/apps.ts";
 import { BlooioAdapter } from "../../packages/network/service/channel.ts";
 import { NetworkService } from "../../packages/network/service/service.ts";
-import { dropTestDb, pgAvailable, testDb } from "../../packages/observatory/test/pg.ts";
+import { dropTestDb, pgAvailable, testDb } from "../../apps/observatory/test/pg.ts";
 import { createBackend, jsonLogger, loadConfig } from "./backend.ts";
 import { createOps, PgAlertStore, runtimeProbe, type Notice, type OpsMetrics } from "./ops.ts";
 

@@ -7,7 +7,7 @@ import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import type { SendRequest } from "../../blooio/src/types.ts";
-import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
+import { applySchema, DEV_PG_PORT, devPgUp } from "../../db/dev-pg.ts";
 import { APP_IDS, APPS, type AppId } from "../../platform/src/apps.ts";
 import { TURN_PATH, TURN_RECEIPT_PATH, type TurnReceiptRequest, type TurnRequest } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";

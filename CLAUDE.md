@@ -85,9 +85,9 @@ accepted merges and pays after maintainer review. There is no escrow.
   Eligible Slop.cash submissions incur a Points debit under the published policy.
 - Write in ASD-STE100 Simplified Technical English (CONTRIBUTING.md section 13).
 
-**Security suite** (`pnpm run security`, also part of `pnpm run test:integration`; the same list is in docs/tests-policy.md): `packages/platform/test/db.test.ts`, `packages/platform/test/api-security.test.ts`, `packages/platform/test/proxy.test.ts`, `packages/platform/test/cloud-auth.pg.test.ts`, `packages/platform/test/notify-retention.pg.test.ts`, `packages/mcp/test/oauth.test.ts`, `packages/mcp/test/pg.test.ts`, `deploy/backend/backend.test.ts`, `deploy/router.test.ts`, `packages/network/test/shared-agent.integration.test.ts`, `packages/observatory/test/staff.test.ts`.
+**Security suite** (`pnpm run security`, also part of `pnpm run test:integration`; the same list is in docs/tests-policy.md): `packages/platform/test/db.test.ts`, `packages/platform/test/api-security.test.ts`, `packages/platform/test/proxy.test.ts`, `packages/platform/test/cloud-auth.pg.test.ts`, `packages/platform/test/notify-retention.pg.test.ts`, `packages/mcp/test/oauth.test.ts`, `packages/mcp/test/pg.test.ts`, `deploy/backend/backend.test.ts`, `deploy/router.test.ts`, `packages/network/test/shared-agent.integration.test.ts`, `apps/observatory/test/staff.test.ts`.
 
-**Postgres in the simulations.** The safety, ops, pipeline, pipeline-slop and audit blocks use the dev Postgres (:54339) when it is there and record a tracked "skipped" gate when it is not. CI's sim job has a Postgres service and `REQUIRE_PG=1`, and it fails on any such skip. The migration runner (`packages/observatory/db/migrate.ts`) refuses two numbered migrations with the same NNNN prefix: take the next free number.
+**Postgres in the simulations.** The safety, ops, pipeline, pipeline-slop and audit blocks use the dev Postgres (:54339) when it is there and record a tracked "skipped" gate when it is not. CI's sim job has a Postgres service and `REQUIRE_PG=1`, and it fails on any such skip. The migration runner (`packages/db/migrate.ts`) refuses two numbered migrations with the same NNNN prefix: take the next free number.
 
 ## Code invariants
 
@@ -178,7 +178,7 @@ pnpm run sites:dev            # the four sites only, /api/* proxied to :8790
 - Copy `.env.example` to `.env`. Never commit `.env` or anything in `runs/`. CONTRIBUTING.md section 5 lists every variable that testing needs, taken from the code.
 - Never set `NETWORK_CHANNEL` locally. It alone makes sends real, for every app; without it every send is dry-run.
 - The local dev Postgres for the Observatory is on port **54339**. Do not touch port 54329; another tool uses it.
-- `packages/observatory/db/seed.ts` refuses non-local hosts. Do not pass `--allow-remote` unless a human asks.
+- `apps/observatory/db/seed.ts` refuses non-local hosts. Do not pass `--allow-remote` unless a human asks.
 - Cloudflare work for ntwrk.party goes through `scripts/wrangler.sh` only. It refuses `deploy` (except `--dry-run`) and other commands that change Cloudflare resources unless `NTWRK_ALLOW_DEPLOY=1` is set. Do not set it without the founder's approval.
 
 ## Results

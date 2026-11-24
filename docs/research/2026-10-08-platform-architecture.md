@@ -11,7 +11,7 @@ Status: research and plan, 2026-10-08. Nothing in this document is built or depl
 Code read:
 
 - `packages/network` (ConsentNetwork, `PgStore`, `service/`): the worktree the `thenetwork-console` worktree (branch `obs/network-console`, read-only).
-- `packages/observatory` (`db/schema.sql`, `db/dev-pg.ts`, `db/seed.ts`, `db/writer.ts`, `src/staff.ts`, `src/types.ts`).
+- `apps/observatory` (`db/schema.sql`, `db/dev-pg.ts`, `db/seed.ts`, `db/writer.ts`, `src/staff.ts`, `src/types.ts`).
 - `packages/plugin-network`.
 - `packages/core/src/policy.ts` and `types.ts`.
 - `packages/sim` (README, generator, taxonomy).
@@ -60,13 +60,13 @@ Other terms:
 
 | Part | What it does now | What blocks four apps |
 |---|---|---|
-| `network` Postgres schema (`packages/observatory/db/schema.sql`) | Members, channel identities, facets, intents, presence, edges, opportunities, participations, review items, messages, feedback, events, matching runs, requests, staff audit; read-only and audit roles | No `app_id` column anywhere. `members.home_city` allows only `sf` and `nyc`. Phones are in `channel_identities`, keyed by member, so one phone cannot have two members (primary key `(channel, address)`). |
+| `network` Postgres schema (`packages/db/schema.sql`) | Members, channel identities, facets, intents, presence, edges, opportunities, participations, review items, messages, feedback, events, matching runs, requests, staff audit; read-only and audit roles | No `app_id` column anywhere. `members.home_city` allows only `sf` and `nyc`. Phones are in `channel_identities`, keyed by member, so one phone cannot have two members (primary key `(channel, address)`). |
 | `network-state.sql` and `PgStore` | One JSON state document per network id, normalized console rows, an advisory lock per id | Works per id. The console rows (`opportunities`, `requests`) have no app column. `city: "nyc"` is hard-coded in `consoleRows`. |
 | `packages/network/service` | One `ConsentNetwork` per process. A tick every minute; the Blooio webhook; the staff API with role tokens and `network.staff_audit` | One network per process (`id` option). `loadSnapshot` reads every member. An unknown sender is dropped. STOP sets `members.opted_out`, which is one flag for everything. 11 hard-coded `"nyc"` strings. |
 | `packages/network/src/copy.ts`, `packages/sim/src/channel.ts` | All member-facing text, STOP and HELP confirmations | Brand text ("the Network's agent", "unsubscribed from The Network") |
 | `packages/core/src/policy.ts` | One age policy: under 13 declined, 13-17 single-player, 18+ full | It has no app argument. Dating and hiring need 18+ to join. |
 | `packages/core/src/types.ts` | `City = "sf" \| "nyc"`, `Category` includes `romance` and `professional`, 12 edge types, 9 opportunity kinds | One ontology. Hiring needs roles and companies. Dating needs reciprocal preferences. |
-| Observatory (`packages/observatory`) | Game mode, real mode (read-only), staff roles `admin/reviewer/safety/analyst`, Cloudflare Access JWT, PII reveal, audit, simulation lab | No app dimension in any route, role or view |
+| Observatory (`apps/observatory`) | Game mode, real mode (read-only), staff roles `admin/reviewer/safety/analyst`, Cloudflare Access JWT, PII reveal, audit, simulation lab | No app dimension in any route, role or view |
 | `packages/plugin-network` | Eliza plugin with no state of its own: member context, `SET_STATE`, signals. The host injects the store and the authority (`memberId`) | No app in `NetworkTurnAuthority`. One character in Eliza Cloud (eliza-integration 3a). |
 | `packages/blooio` | Signed webhook, keyword ledger (E.164), `FileConsentStore`, outbound queue with pre-send checks, one line (`BLOOIO_FROM`) | One line. The consent ledger is keyed by address only, so a STOP on one app would stop all apps. |
 | `prototypes/connector-mcp` | OAuth discovery, surface profiles (`teen_safe_directory`, `general_assistant`, `enterprise_professional`) with category lists | Not in MVP. Its surface-profile idea is the right shape for app packs. |
@@ -380,7 +380,7 @@ Eliza Cloud has one hard-coded character and plugin list (eliza-integration 0). 
 
 ## 5. Admin panel
 
-Build on the Observatory (`packages/observatory`) and the service staff API. Do not start a second console.
+Build on the Observatory (`apps/observatory`) and the service staff API. Do not start a second console.
 
 | Feature | Change |
 |---|---|
@@ -549,7 +549,7 @@ Owners are packages. "Founder" marks a decision or a credential only the founder
 
 | Work | Owner |
 |---|---|
-| Migration runner and ledger | `packages/observatory/db` (schema owner), ops |
+| Migration runner and ledger | `apps/observatory/db` (schema owner), ops |
 | `platform` schema; `app_id` and composite keys in `network`; migrate ntwrk | schema |
 | `AppId`, `canJoin(age, app)`, `canBeMatched(age, app)`, cities table | `packages/core` |
 | Service with many networks, app-filtered snapshot, `<app>:<city>` ids, no hard-coded `"nyc"` | `packages/network` |
@@ -574,7 +574,7 @@ Milestone: in staging, a test phone joins two apps. STOP on one app leaves the o
 |---|---|
 | buddies app pack: copy, character, onboarding, sim generator and scenarios | `packages/engine`, `packages/sim`, `packages/network` |
 | `sites/buddies.nyc`, shared site parts, legal pages, a static demo replay | `sites/` |
-| App switcher, per-app roles, per-app review queue | `packages/observatory`, `packages/network/service` |
+| App switcher, per-app roles, per-app review queue | `apps/observatory`, `packages/network/service` |
 
 Milestone: 30 simulated days at the launch gates. Shadow mode on staff seeds. Founder approves the launch.
 
@@ -583,7 +583,7 @@ Milestone: 30 simulated days at the launch gates. Shadow mode on staff seeds. Fo
 | Work | Owner |
 |---|---|
 | slop pack: two-way preference filters, date flow, check-ins, safety classifier signals, dating notices | `packages/engine`, `packages/network`, `packages/core` |
-| Sensitive-class encryption, cross-app person view, `cross_app_safety` role | schema, `packages/observatory` |
+| Sensitive-class encryption, cross-app person view, `cross_app_safety` role | schema, `apps/observatory` |
 | 10DLC answer from counsel and the aggregator; ID-verification decision | Founder |
 
 Milestone: launch gates plus dating notices published, plus a rehearsed safety on-call.

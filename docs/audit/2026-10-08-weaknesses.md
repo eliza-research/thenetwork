@@ -86,14 +86,14 @@ The six P0 findings share one cause. The consent and understanding layer of `pac
 | platform-3 | platform | packages/platform/src/api.ts:172 | A new owner of a recycled number logs in and reads, exports and deletes the old owner's data. | confirmed | Check recycling at login. Hold export and delete for review. |
 | platform-4 | platform | packages/platform/src/env.ts:5 | Without NODE_ENV=production, the dev OTP console, Turnstile bypass and public dev hash key run. | confirmed | Dev shortcuts need an explicit PLATFORM_ENV=dev or test. |
 | platform-5 (also sites-infra-M1) | platform, network/service | packages/network/service/service.ts:350 | The production API is mounted without Turnstile, so OTP sends are open to SMS pumping. No site renders the widget. | confirmed | Require a verifier in production. Ship the widget and token on the sites. |
-| platform-7 (also observatory-4, platform-M6) | observatory/db | packages/observatory/db/schema.sql:234 | network_state_console runs as owner. The ntwrk-only console role reads every app's state, minors and safety cases. | confirmed | Use security_invoker views or revoke. Add a catalog golden test. |
-| platform-8 | observatory/db | packages/observatory/db/schema.sql:37 | channel_identities is global. One phone can belong to one app's member, and the service reads every app's phones. | confirmed | Add app_id to the key and an RLS policy. |
+| platform-7 (also observatory-4, platform-M6) | observatory/db | packages/db/schema.sql:234 | network_state_console runs as owner. The ntwrk-only console role reads every app's state, minors and safety cases. | confirmed | Use security_invoker views or revoke. Add a catalog golden test. |
+| platform-8 | observatory/db | packages/db/schema.sql:37 | channel_identities is global. One phone can belong to one app's member, and the service reads every app's phones. | confirmed | Add app_id to the key and an RLS policy. |
 | platform-9 (also sites-infra-7) | platform, sites | packages/platform/src/consent.ts:33 | STOP defaults to one app and the sites say "STOP ALL". PRD 40.3 says STOP stops every app on the shared line. | confirmed | Default to global STOP. Add "leave <app>". Fix copy on all four sites. |
 | platform-10 | platform | packages/platform/src/accounts.ts:121 | Parallel joins run onJoin several times and orphan network members that delete never reaches. | confirmed | Join in one transaction with an advisory lock per (person, app). |
 | platform-M1 (also network-service-5, network-service-6) | platform, network/service | packages/network/service/service.ts:301 | Inbound STOP writes only network.members, web STOP writes only the platform ledger, and the send path reads neither consistently. | confirmed | One consent ledger read on every send. Record STOP before running the unit. |
 | plugin-prototypes-12 (also platform-29, network-consent-M3) | messaging-blooio, platform, network | packages/blooio/src/ledger.ts:31 | Only exact keywords opt out. "please stop texting me" and Spanish opt-outs are never honored. No per-app leave. | confirmed | Add a reasonable-means classifier with a confirm step. |
-| observatory-1 | observatory | packages/observatory/web/map.ts:113 | Stored XSS: member name and area go into Leaflet tooltips as HTML. | confirmed | Build tooltip content as DOM nodes. Add a CSP. |
-| observatory-6 (also observatory-M1) | observatory | packages/observatory/src/server.ts:388 | WebSockets are authorized once. After a mode switch an engineer socket receives real minors' data. Expired or revoked grants keep streaming. | confirmed | Store identity on the socket. Re-check on mode switch, expiry and grant reload. Shape deltas per role. |
+| observatory-1 | observatory | apps/observatory/web/map.ts:113 | Stored XSS: member name and area go into Leaflet tooltips as HTML. | confirmed | Build tooltip content as DOM nodes. Add a CSP. |
+| observatory-6 (also observatory-M1) | observatory | apps/observatory/src/server.ts:388 | WebSockets are authorized once. After a mode switch an engineer socket receives real minors' data. Expired or revoked grants keep streaming. | confirmed | Store identity on the socket. Re-check on mode switch, expiry and grant reload. Shape deltas per role. |
 | plugin-prototypes-1 | plugin-network | packages/plugin-network/src/actions/set-state.ts:118 | Planner SET_STATE runs no authz and stays registered in the Cloud default mode. Past dates are stored. | confirmed | Remove it in structured mode or run authorizeSetState in its handler. |
 | plugin-prototypes-21 | connector-mcp | prototypes/connector-mcp/src/server.ts:186 | The leak guard blocks on other members' private facts. Members can probe them, and one member can break another's connector. | confirmed | Scope the forbidden list to counterparts. Redact echoed input instead of failing. |
 | plugin-prototypes-22 | connector-mcp | prototypes/connector-mcp/src/fake-network.ts:406 | "I'm 15" from an adult account is not recorded. "I'm 12" declines one request but does not suspend or escalate. | confirmed | Lower the effective age on any statement. Suspend and escalate under 13. |
@@ -196,15 +196,15 @@ The six P0 findings share one cause. The consent and understanding layer of `pac
 | platform-11 (also sites-infra-M2) | platform | packages/platform/src/api.ts:50 | Client IP comes from spoofable headers, so the per-IP OTP limit is bypassable. | confirmed | Configure the trusted proxy. Never key on an empty header. |
 | platform-12 | platform | packages/platform/src/otp.ts:105 | OTP limits are per app and count refused hits, so a victim gets 12 SMS an hour and can be locked out. | confirmed | Cross-app per-phone limit and daily cap. Refused hits do not extend locks. |
 | platform-13 | platform | packages/platform/src/api.ts:53 | One malformed cookie on the domain makes every API call return 500. | confirmed | Guard decodeURIComponent. |
-| platform-14 | observatory/db | packages/observatory/db/migrations/0003_platform.sql:262 | platform_service can write staff_roles, settings and apps. | confirmed | Least-privilege grants. |
+| platform-14 | observatory/db | packages/db/migrations/0003_platform.sql:262 | platform_service can write staff_roles, settings and apps. | confirmed | Least-privilege grants. |
 | platform-15 | platform | packages/platform/src/store.ts:190 | Delete-everything erases the STOP records. | confirmed | Keep hashed opt-out proof and check suppression on send. |
 | platform-19 (also sites-infra-8) | platform, sites | packages/platform/src/apps.ts:7 | App ids, domains and ages drift from PRD 40 (18+ join vs 13+, buddies vs friends). platform.apps rows are never read. | confirmed | Golden registry from PRD 40. Read policy from the DB. Founder and counsel decide the age. |
 | platform-20 | platform | packages/platform/src/sessions.ts:30 | Sessions have no absolute lifetime and rotation logs out parallel requests. Delete-all has no step-up. | confirmed | Absolute lifetime, grace window, fresh OTP for delete. |
 | platform-28 (also sites-infra-M4, sites-infra-25 header part) | platform | packages/platform/src/apps.ts:88 | The production host map accepts localhost hosts and origins. No body size cap. | confirmed | Per-environment host map. 16 KB body cap. |
-| observatory-3 | observatory/db | packages/observatory/db/migrations/0005_console_apps.sql:42 | The cross-app console role can read every app's message bodies, bios and minors' ages. | confirmed | Column grants or a counts-only view. |
-| observatory-7 | observatory | packages/observatory/src/scrub.ts:20 | The PII scrub misses spelled phones, bare handles, SSNs and cards. It has no tests. | confirmed | Golden and property tests. Shared normalization with core. |
-| observatory-10 | observatory, network/service | packages/observatory/src/sources/service.ts:46 | The reviewer of record is the service token, not the person. secondsSpent has no upper bound. | confirmed | Honor the staff header from the console token. Clamp time. |
-| observatory-18 | observatory | packages/observatory/src/sources/real.ts:243 | /api/state sends every member's age, minor flag and trust to every role, including analysts. | confirmed | Shape state per role. |
+| observatory-3 | observatory/db | packages/db/migrations/0005_console_apps.sql:42 | The cross-app console role can read every app's message bodies, bios and minors' ages. | confirmed | Column grants or a counts-only view. |
+| observatory-7 | observatory | apps/observatory/src/scrub.ts:20 | The PII scrub misses spelled phones, bare handles, SSNs and cards. It has no tests. | confirmed | Golden and property tests. Shared normalization with core. |
+| observatory-10 | observatory, network/service | apps/observatory/src/sources/service.ts:46 | The reviewer of record is the service token, not the person. secondsSpent has no upper bound. | confirmed | Honor the staff header from the console token. Clamp time. |
+| observatory-18 | observatory | apps/observatory/src/sources/real.ts:243 | /api/state sends every member's age, minor flag and trust to every role, including analysts. | confirmed | Shape state per role. |
 | plugin-prototypes-2 | plugin-network | packages/plugin-network/src/routing/authz.ts:46 | The evidence check does not bind the proposed state. "hi" authorizes "paused". | confirmed | Require a state cue in the evidence. Refuse negations. |
 | plugin-prototypes-3 | plugin-network | packages/plugin-network/src/routing/dates.ts:25 | Dates resolve in UTC, so US evening messages resolve a month late. | confirmed | Use the member's IANA zone. |
 | plugin-prototypes-4 (also plugin-prototypes-M3) | plugin-network, cloud | packages/plugin-network/src/actions/set-state.ts:45 | Idempotency keys are not member-scoped and can be client-chosen. Cloud replays another member's event. | confirmed | Scope keys by member and app. Conflict on a different payload. |
@@ -319,7 +319,7 @@ The six P0 findings share one cause. The consent and understanding layer of `pac
 | network-consent-29 | network | packages/network/src/network.ts:2244 | Late plan joiners are not announced to the group. | plausible | Announce. |
 | network-service-10 | network/service | packages/network/src/store.ts:163 | Each unit rewrites all history. 576 ms at 10k opportunities. | confirmed | Write changed rows. Archive. |
 | network-service-14 | network/service | packages/network/service/service.ts:226 | Under-13 forget leaves the name in others' rows and run summaries. | confirmed | Scrub. |
-| network-service-15 | network/service, observatory | packages/observatory/src/staff.ts:91 | Staff tokens accepted in ?token=, shared identities, no length minimum. | confirmed | Header only. 32-char minimum. |
+| network-service-15 | network/service, observatory | apps/observatory/src/staff.ts:91 | Staff tokens accepted in ?token=, shared identities, no length minimum. | confirmed | Header only. 32-char minimum. |
 | network-service-16 | network/service | packages/network/service/service.ts:409 | Malformed staff input answers 503. | confirmed | Validate. 400. |
 | network-service-17 | network/service | packages/network/service/service.ts:435 | Webhook buffers the whole body before checking size. | plausible | maxRequestBodySize. |
 | network-service-18 | network/service | packages/sim/src/channel.ts:113 | "cancel" is STOP with no plan-aware copy. | confirmed | Explain in the confirmation. |
@@ -329,10 +329,10 @@ The six P0 findings share one cause. The consent and understanding layer of `pac
 | network-service-M4 | network/service | packages/network/service/service.ts | Join writes platform rows outside the unit transaction. | confirmed | One transaction or idempotent retry. |
 | network-service-M5 | network/service | packages/network/service/channel.ts | Queue records grow without bound. | confirmed | Evict. |
 | platform-17 | platform | packages/platform/src/accounts.ts:205 | Share grants cannot be revoked, are not logged and have no effect. | confirmed | Revoke route and audit. |
-| platform-18 | platform | packages/observatory/db/migrations/0003_platform.sql:222 | OTP challenges, sessions and rate rows are never purged. | confirmed | Retention job. |
-| platform-21 | observatory/db | packages/observatory/db/migrations/0003_platform.sql:242 | Synthetic-phone guard depends on a settings row defaulting to dev. | confirmed | Check env and DB agree at boot. |
-| platform-22 | observatory/db | packages/observatory/db/schema.sql:256 | requests and feedback have no composite FK to their member. | confirmed | Add composite FKs. |
-| platform-23 | platform | packages/observatory/db/migrations/0004_network_apps.sql:10 | Session SET leaks across pooled connections and writers default to ntwrk. | plausible | Local set_config. No default in production. |
+| platform-18 | platform | packages/db/migrations/0003_platform.sql:222 | OTP challenges, sessions and rate rows are never purged. | confirmed | Retention job. |
+| platform-21 | observatory/db | packages/db/migrations/0003_platform.sql:242 | Synthetic-phone guard depends on a settings row defaulting to dev. | confirmed | Check env and DB agree at boot. |
+| platform-22 | observatory/db | packages/db/schema.sql:256 | requests and feedback have no composite FK to their member. | confirmed | Add composite FKs. |
+| platform-23 | platform | packages/db/migrations/0004_network_apps.sql:10 | Session SET leaks across pooled connections and writers default to ntwrk. | plausible | Local set_config. No default in production. |
 | platform-24 | platform | packages/platform/src/accounts.ts:119 | last_seen_at updates only on join. | confirmed | Update on login and inbound. |
 | platform-25 | platform | packages/platform/src/accounts.ts:95 | Staff invites mark phones verified. Under-13 invitees keep phone and age. | confirmed | Unverified until proven. Remove on decline. |
 | platform-26 | platform | packages/platform/src/store.ts:158 | Parallel starts send two SMS. Fixed windows allow bursts. | confirmed | Sliding window, atomic. |
@@ -341,23 +341,23 @@ The six P0 findings share one cause. The consent and understanding layer of `pac
 | platform-M2 | platform | packages/platform/src/store.ts | Age is a number with no date, so a minor never ages in. | confirmed | Store stated_at. |
 | platform-M4 | platform | packages/platform/test/db.test.ts | The migration test fails after 0005. | confirmed | Derive the list from the directory. |
 | platform-M5 | platform | packages/platform/src/otp.ts | Twilio Verify state is per number, not per app. | confirmed | Bind challenges to the verification SID. |
-| observatory-5 | observatory | packages/observatory/src/store.ts:150 | Hidden oracle truth reaches every role in game mode. | confirmed | Strip until resolved or lens on. |
-| observatory-8 | observatory | packages/observatory/src/staff.ts:131 | Static tokens work alongside SSO and in query strings. | confirmed | Refuse in SSO mode. |
-| observatory-9 | observatory | packages/observatory/src/sources/real.ts:127 | Isolation and read-only are assumed from configuration. | plausible | Check the login at init. |
-| observatory-11 | observatory | packages/observatory/src/sources/real.ts:209 | One state row per app hides other cities. | confirmed | Merge per city. |
-| observatory-12 | observatory | packages/observatory/src/staff.ts:154 | Access certs fetch has no timeout or stale grace. | confirmed | Timeout and grace. |
-| observatory-13 | observatory | packages/observatory/src/server.ts:319 | Prototype keys reach role checks. Raw errors are returned. | confirmed | Object.hasOwn. Generic 500. |
-| observatory-14 | observatory | packages/observatory/src/lab.ts:105 | Lab queue is unbounded and children inherit secrets. | confirmed | Cap and env allowlist. |
-| observatory-15 | observatory | packages/observatory/src/server.ts:283 | Audit rows from any staff, verbatim client fields, one bad line breaks /api/audit. | confirmed | Allowlist. Tolerate corruption. |
-| observatory-16 | observatory | packages/observatory/src/server.ts:311 | Reveal grants are not keyed by mode and cannot be revoked. | confirmed | Key by mode. Revoke route. |
-| observatory-17 | observatory | packages/observatory/src/sources/real.ts:81 | Global PII reveal trusts localhost, including tunnels. | confirmed | Require a dev marker in the DB. |
-| observatory-19 | observatory | packages/observatory/src/sources/real.ts:74 | minorAt fails open for unknown ages. | confirmed | Agree with ageView. |
-| observatory-20 | observatory | packages/observatory/src/server.ts:240 | No security headers on the console. | confirmed | Add them. |
-| observatory-21 | observatory | packages/observatory/src/server.ts:132 | Mode is global. Commands go to the global source. | confirmed | Mode per request. |
-| observatory-22 | observatory | packages/observatory/src/sources/real.ts:776 | shadow_run has no single-flight guard. | plausible | Single-flight. |
-| observatory-23 | observatory | packages/observatory/src/sources/real.ts:244 | A null name crashes the real-mode load. | confirmed | "Unnamed member". |
-| observatory-M2 | observatory | packages/observatory/web/store.ts | The token stays in history and Referer. | plausible | Header bootstrap. Referrer policy. |
-| observatory-M3 | observatory | packages/observatory/src/server.ts | /api/reveal 404 leaks membership without an audit row. | plausible | Audit ok:false. |
+| observatory-5 | observatory | apps/observatory/src/store.ts:150 | Hidden oracle truth reaches every role in game mode. | confirmed | Strip until resolved or lens on. |
+| observatory-8 | observatory | apps/observatory/src/staff.ts:131 | Static tokens work alongside SSO and in query strings. | confirmed | Refuse in SSO mode. |
+| observatory-9 | observatory | apps/observatory/src/sources/real.ts:127 | Isolation and read-only are assumed from configuration. | plausible | Check the login at init. |
+| observatory-11 | observatory | apps/observatory/src/sources/real.ts:209 | One state row per app hides other cities. | confirmed | Merge per city. |
+| observatory-12 | observatory | apps/observatory/src/staff.ts:154 | Access certs fetch has no timeout or stale grace. | confirmed | Timeout and grace. |
+| observatory-13 | observatory | apps/observatory/src/server.ts:319 | Prototype keys reach role checks. Raw errors are returned. | confirmed | Object.hasOwn. Generic 500. |
+| observatory-14 | observatory | apps/observatory/src/lab.ts:105 | Lab queue is unbounded and children inherit secrets. | confirmed | Cap and env allowlist. |
+| observatory-15 | observatory | apps/observatory/src/server.ts:283 | Audit rows from any staff, verbatim client fields, one bad line breaks /api/audit. | confirmed | Allowlist. Tolerate corruption. |
+| observatory-16 | observatory | apps/observatory/src/server.ts:311 | Reveal grants are not keyed by mode and cannot be revoked. | confirmed | Key by mode. Revoke route. |
+| observatory-17 | observatory | apps/observatory/src/sources/real.ts:81 | Global PII reveal trusts localhost, including tunnels. | confirmed | Require a dev marker in the DB. |
+| observatory-19 | observatory | apps/observatory/src/sources/real.ts:74 | minorAt fails open for unknown ages. | confirmed | Agree with ageView. |
+| observatory-20 | observatory | apps/observatory/src/server.ts:240 | No security headers on the console. | confirmed | Add them. |
+| observatory-21 | observatory | apps/observatory/src/server.ts:132 | Mode is global. Commands go to the global source. | confirmed | Mode per request. |
+| observatory-22 | observatory | apps/observatory/src/sources/real.ts:776 | shadow_run has no single-flight guard. | plausible | Single-flight. |
+| observatory-23 | observatory | apps/observatory/src/sources/real.ts:244 | A null name crashes the real-mode load. | confirmed | "Unnamed member". |
+| observatory-M2 | observatory | apps/observatory/web/store.ts | The token stays in history and Referer. | plausible | Header bootstrap. Referrer policy. |
+| observatory-M3 | observatory | apps/observatory/src/server.ts | /api/reveal 404 leaks membership without an audit row. | plausible | Audit ok:false. |
 | plugin-prototypes-8 | plugin-network | packages/plugin-network/src/evaluators/network-signals.ts:15 | Signals record false travel, safety and opt-out. | confirmed | Quote and negation handling. |
 | plugin-prototypes-9 | plugin-network | packages/plugin-network/src/routing/state-intent.ts:12 | Design-A trigger misses common pause phrasing. | confirmed | Larger labelled corpus. |
 | plugin-prototypes-11 | plugin-network | packages/plugin-network/src/routing/structured-field.ts:158 | Frozen "Today is", stateFrom not rendered. | plausible | Per-call now. Render windows. |
@@ -413,7 +413,7 @@ Sybil vouching pays and is never flagged. The ledger has no persistence and is n
 
 A minor can retry with a higher age. Delete-everything launders age and escapes blocks. A recycled number reads the old owner's data. Dev shortcuts run unless NODE_ENV is exactly production. There is no Turnstile in production. STOP is per app, against PRD 40.3. Two consent systems disagree. A console view leaks every app's state to the ntwrk role.
 
-### packages/observatory
+### apps/observatory
 
 Member names reach Leaflet tooltips as HTML. Sockets keep streaming real minors' data after a mode switch. The cross-app role can read all message bodies. Analysts receive per-member ages.
 

@@ -11,7 +11,7 @@ import { computeMetrics, PolicyPersonaAgent, World, type InboundMessage, type Ne
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { existsSync } from "node:fs";
 import { DATA_DIR } from "../../../scripts/synthetic/common.ts";
-import { DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
+import { DEV_PG_PORT, devPgUp } from "../../db/dev-pg.ts";
 import { friendFactory, nycPersonas } from "../harness/index.ts";
 import { ConsentNetwork, consoleRows, MemoryStore, NETWORK_STATE_VERSION, PgStore, runStored, runTick, type NetworkOptions, type NetworkState, type NetworkStore } from "../src/index.ts";
 import { Mini, type Spec } from "./mini.ts";
@@ -368,7 +368,7 @@ describe("runTick and the tick lock", () => {
 });
 
 // ------------------------------------------------------------------ Postgres (local dev cluster)
-// A database of its own per test process (the packages/observatory/test/pg.ts pattern). Skipped when Postgres is absent.
+// A database of its own per test process (the apps/observatory/test/pg.ts pattern). Skipped when Postgres is absent.
 const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
 const DB = `network_store_test_${process.pid}`;
 const ADMIN_URL = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/postgres`;
@@ -388,7 +388,7 @@ describe.skipIf(!pgAvailable)("PgStore", () => {
     await admin(`create database ${DB}`);
     // The observatory schema first, then the Network's migration (twice: it is idempotent).
     const setup = new SQL({ url: TEST_URL, max: 1 });
-    await setup.unsafe(await fileAt(new URL("../../observatory/db/schema.sql", import.meta.url)).text());
+    await setup.unsafe(await fileAt(new URL("../../db/schema.sql", import.meta.url)).text());
     await setup.close();
     const a = new PgStore(TEST_URL), b = new PgStore(TEST_URL);
     stores.push(a, b);

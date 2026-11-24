@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { HOUR } from "@thenetwork/core";
 import { PgStore, runStored, runTick } from "../src/index.ts";
-import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
+import { dropTestDb, pgAvailable, testDb } from "../../../apps/observatory/test/pg.ts";
 import { Mini, type Spec } from "./mini.ts";
 import { heldJudge, within } from "./tick-held-judge.ts";
 import { simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";

@@ -2,7 +2,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { beforeAll,afterAll,test,expect } from "vitest";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { randomUUID } from "node:crypto";
-import { devPgUp,DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
+import { devPgUp,DEV_PG_PORT } from "../../db/dev-pg.ts";
 import { PgOAuthStore } from "../src/pg-store.ts";
 import { setup,addMember,connect,call,tokenRequest,PHONE_A } from "./harness.ts";
 import { platformHooks } from "../src/hooks.ts";

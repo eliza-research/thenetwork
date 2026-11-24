@@ -78,20 +78,20 @@
   "console_privacy": {
     "files": {
       "quint/console_privacy.qnt": "b5f63bcc2d9e56c6",
-      "packages/observatory/src/people.ts": "3357df140d59c9fd",
-      "packages/observatory/src/shape.ts": "6e3748f57cb529d2",
-      "packages/observatory/web/apps.tsx": "7fa6db3a6d15efb9"
+      "apps/observatory/src/people.ts": "3357df140d59c9fd",
+      "apps/observatory/src/shape.ts": "6e3748f57cb529d2",
+      "apps/observatory/web/apps.tsx": "7fa6db3a6d15efb9"
     }
   },
   "console_views": {
     "files": {
       "quint/console_views.qnt": "9517b2f05263246e",
-      "packages/observatory/web/apps.tsx": "7fa6db3a6d15efb9",
-      "packages/observatory/web/drawer.tsx": "6d2aba987e7e0e19",
-      "packages/observatory/web/logic/views.ts": "17eb8c2b9156873b",
-      "packages/observatory/web/main.tsx": "c333a21c1052f0aa",
-      "packages/observatory/web/panels.tsx": "4a42542e37017cbd",
-      "packages/observatory/web/ui.tsx": "2228f5ff7326d9cc"
+      "apps/observatory/web/apps.tsx": "7fa6db3a6d15efb9",
+      "apps/observatory/web/drawer.tsx": "6d2aba987e7e0e19",
+      "apps/observatory/web/logic/views.ts": "17eb8c2b9156873b",
+      "apps/observatory/web/main.tsx": "c333a21c1052f0aa",
+      "apps/observatory/web/panels.tsx": "4a42542e37017cbd",
+      "apps/observatory/web/ui.tsx": "2228f5ff7326d9cc"
     }
   },
   "engine_rules": {
@@ -108,7 +108,7 @@
       "packages/network/service/photoIntake.ts": "6c5b0d9ed944eb87",
       "packages/network/service/runtime.ts": "16511c01a49960c6",
       "packages/network/service/service.ts": "e7d3a7d1ebc2675b",
-      "packages/observatory/db/migrations/0044_identity_sagas.sql": "4eb75923467a199c",
+      "packages/db/migrations/0044_identity_sagas.sql": "4eb75923467a199c",
       "packages/platform/src/accounts.ts": "7956f87aef9a58e8",
       "packages/platform/src/decisions.ts": "e9672454adfd5bb9",
       "packages/platform/src/pg-store.ts": "f9a75cb1f5a92737"
@@ -128,7 +128,7 @@
       "packages/network/service/runtime.ts": "16511c01a49960c6",
       "packages/network/service/service.ts": "e7d3a7d1ebc2675b",
       "packages/network/src/network.ts": "9cf96a90a923b9ae",
-      "packages/observatory/db/migrations/0043_join_age.sql": "aba276b04cbf6f53",
+      "packages/db/migrations/0043_join_age.sql": "aba276b04cbf6f53",
       "packages/platform/src/accounts.ts": "7956f87aef9a58e8",
       "packages/platform/src/age.ts": "607d13a34fff3b57",
       "packages/platform/src/apps.ts": "4c73fa1345636819",
@@ -207,7 +207,7 @@
       "packages/notify/src/pg-store.ts": "a8df19112536f70f",
       "packages/notify/src/scheduler.ts": "328c750c0c21d2b6",
       "packages/notify/src/surface.ts": "f3ec85c4eaf20cb7",
-      "packages/observatory/db/migrations/0057_notify_capital_state_machines.sql": "5867ec5c188e1682"
+      "packages/db/migrations/0057_notify_capital_state_machines.sql": "5867ec5c188e1682"
     }
   },
   "oauth_mcp": {
@@ -236,13 +236,13 @@
     "files": {
       "quint/observatory_sync.qnt": "4033cc391ba281a8",
       "packages/network/src/store.ts": "3dcfdfbcab02d8c4",
-      "packages/observatory/src/server.ts": "c9b4fe22953ae5ce",
-      "packages/observatory/web/admin.tsx": "36ce0223a61c98fd",
-      "packages/observatory/web/drawer.tsx": "6d2aba987e7e0e19",
-      "packages/observatory/web/logic/filters.ts": "13d86eec0dd81f3d",
-      "packages/observatory/web/logic/sync.ts": "c718b7ac3f658ece",
-      "packages/observatory/web/map.ts": "6e6a0a6efef4f0b8",
-      "packages/observatory/web/store.ts": "db4b10f1bbb587f5"
+      "apps/observatory/src/server.ts": "c9b4fe22953ae5ce",
+      "apps/observatory/web/admin.tsx": "36ce0223a61c98fd",
+      "apps/observatory/web/drawer.tsx": "6d2aba987e7e0e19",
+      "apps/observatory/web/logic/filters.ts": "13d86eec0dd81f3d",
+      "apps/observatory/web/logic/sync.ts": "c718b7ac3f658ece",
+      "apps/observatory/web/map.ts": "6e6a0a6efef4f0b8",
+      "apps/observatory/web/store.ts": "db4b10f1bbb587f5"
     }
   },
   "opportunity": {
@@ -285,7 +285,7 @@
       "packages/network/service/service.ts": "e7d3a7d1ebc2675b",
       "packages/network/src/network.ts": "9cf96a90a923b9ae",
       "packages/network/src/store.ts": "3dcfdfbcab02d8c4",
-      "packages/observatory/db/migrations/0045_outbound_queue_network.sql": "e4c725d923540fd2"
+      "packages/db/migrations/0045_outbound_queue_network.sql": "e4c725d923540fd2"
     },
     "drift": [
       "quint/outbound_queue.qnt:44 KINDS vs packages/blooio/src/gate.ts:10: the code has a fourth kind, 'safety' (a hold notice with no quiet hours, no unanswered streak and no line caps, which may go to a held member). The model leaves it out. This is known drift and is still open.",
@@ -367,7 +367,7 @@
       "packages/network/service/profile-suggestion-withdrawal-endpoint.ts": "60d06f9fe8631911",
       "packages/network/service/profile-suggestions.ts": "829d1df073239c1b",
       "packages/network/service/service.ts": "e7d3a7d1ebc2675b",
-      "packages/observatory/db/migrations/0052_profile_learning.sql": "dbd62a3a5faccd4a",
+      "packages/db/migrations/0052_profile_learning.sql": "dbd62a3a5faccd4a",
       "packages/platform/src/accounts.ts": "7956f87aef9a58e8",
       "packages/platform/src/pg-store.ts": "f9a75cb1f5a92737"
     }
@@ -402,9 +402,9 @@
     "files": {
       "quint/review_desk.qnt": "2b7b110329073c17",
       "packages/network/src/network.ts": "9cf96a90a923b9ae",
-      "packages/observatory/web/admin.tsx": "36ce0223a61c98fd",
-      "packages/observatory/web/logic/review.ts": "5cc3221d50ef81ef",
-      "packages/observatory/web/review.tsx": "fbc42fc24f47c908"
+      "apps/observatory/web/admin.tsx": "36ce0223a61c98fd",
+      "apps/observatory/web/logic/review.ts": "5cc3221d50ef81ef",
+      "apps/observatory/web/review.tsx": "fbc42fc24f47c908"
     },
     "drift": [
       "approveMatchesSeenPeople (gap G6) is still a known code defect, and the model documents it. The server side is wrong, not the model: web/store.ts:861 sends {type: review, oppId, decision} with no item version, and network.ts decide (about line 2006) has no version check. So ..."
@@ -428,9 +428,9 @@
       "packages/network/service/service.ts": "e7d3a7d1ebc2675b",
       "packages/network/src/network.ts": "9cf96a90a923b9ae",
       "packages/network/src/store.ts": "3dcfdfbcab02d8c4",
-      "packages/observatory/db/migrate.ts": "8b222599550b6af9",
-      "packages/observatory/db/migrations/0054_runtime_ops.sql": "4092697d73768282",
-      "packages/observatory/src/console-gate.ts": "bc857d1c836884bd",
+      "packages/db/migrate.ts": "8b222599550b6af9",
+      "packages/db/migrations/0054_runtime_ops.sql": "4092697d73768282",
+      "apps/observatory/src/console-gate.ts": "bc857d1c836884bd",
       "scripts/wrangler.sh": "eea084bd40fbd32d"
     },
     "drift": [
@@ -452,7 +452,7 @@
       "packages/network/src/relay.ts": "b9525251911e0297",
       "packages/network/src/reports.ts": "62cf89df63963898",
       "packages/network/src/trust.ts": "f691c770c5da334e",
-      "packages/observatory/db/migrations/0049_safety_trust.sql": "37eeb595f7213c08"
+      "packages/db/migrations/0049_safety_trust.sql": "37eeb595f7213c08"
     },
     "drift": [
       "safety_trust.qnt:617-638 disclose takes the done date in the window with the largest meetingAt (newest = fold imax meetingAt). The code at network.ts:2862 (lateCheckInReport) takes the done 1:1 date that was created last ([...this.opps.values()].reverse().find; snapshot.ts:100 loads opps ordered by created_at, id). Suppose a date was proposed earlier but meets later than a date proposed after it. The code then files against the other person of the later-created date, and the model files against the other person of the later meeting.",
@@ -464,20 +464,20 @@
     "files": {
       "quint/staff_console.qnt": "007846f604586382",
       "packages/network/service/runtime.ts": "16511c01a49960c6",
-      "packages/observatory/db/numbers.ts": "e0a3a8a059bcff2a",
-      "packages/observatory/src/appProfile.ts": "b6739ab7535ccbac",
-      "packages/observatory/src/apps.ts": "6f205ecfcb5365d8",
-      "packages/observatory/src/console-gate.ts": "bc857d1c836884bd",
-      "packages/observatory/src/health.ts": "a9426532356519cb",
-      "packages/observatory/src/projector.ts": "675494860532ecb0",
-      "packages/observatory/src/server.ts": "c9b4fe22953ae5ce",
-      "packages/observatory/src/sources/real.ts": "199e84a4dd65f577",
-      "packages/observatory/src/sources/service.ts": "77a2b0e616c4bd10",
-      "packages/observatory/src/staff-roles.ts": "4de33a314387b284",
-      "packages/observatory/src/staff.ts": "757465ee8d6fde53",
-      "packages/observatory/web/admin.tsx": "36ce0223a61c98fd",
-      "packages/observatory/web/panels.tsx": "4a42542e37017cbd",
-      "packages/observatory/web/store.ts": "db4b10f1bbb587f5"
+      "packages/db/numbers.ts": "e0a3a8a059bcff2a",
+      "apps/observatory/src/appProfile.ts": "b6739ab7535ccbac",
+      "apps/observatory/src/apps.ts": "6f205ecfcb5365d8",
+      "apps/observatory/src/console-gate.ts": "bc857d1c836884bd",
+      "apps/observatory/src/health.ts": "a9426532356519cb",
+      "apps/observatory/src/projector.ts": "675494860532ecb0",
+      "apps/observatory/src/server.ts": "c9b4fe22953ae5ce",
+      "apps/observatory/src/sources/real.ts": "199e84a4dd65f577",
+      "apps/observatory/src/sources/service.ts": "77a2b0e616c4bd10",
+      "apps/observatory/src/staff-roles.ts": "4de33a314387b284",
+      "apps/observatory/src/staff.ts": "757465ee8d6fde53",
+      "apps/observatory/web/admin.tsx": "36ce0223a61c98fd",
+      "apps/observatory/web/panels.tsx": "4a42542e37017cbd",
+      "apps/observatory/web/store.ts": "db4b10f1bbb587f5"
     }
   },
   "turn_consent": {
@@ -493,7 +493,7 @@
       "packages/network/service/service.ts": "e7d3a7d1ebc2675b",
       "packages/network/service/snapshot.ts": "a6112e478843e703",
       "packages/network/src/network.ts": "9cf96a90a923b9ae",
-      "packages/observatory/db/migrations/0042_turn_consent.sql": "bae6e3ac9a342075",
+      "packages/db/migrations/0042_turn_consent.sql": "bae6e3ac9a342075",
       "packages/platform/src/accounts.ts": "7956f87aef9a58e8",
       "packages/platform/src/consent.ts": "cd050f88a7b4777c",
       "packages/platform/src/pg-store.ts": "f9a75cb1f5a92737"

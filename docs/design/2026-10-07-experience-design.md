@@ -833,7 +833,7 @@ Today the simulator snapshot is built from the persona's known profile, not from
 
 ## 8. Build plan
 
-Package owners follow the audit's tags: [engine] = `packages/engine`, `packages/core`; [sim] = `packages/sim` (persona, oracle, snapshot); [other] = `packages/network`, `packages/observatory`, sim agent/world (another session); [msg] = `packages/blooio`; [evals] = `packages/evals`; [judge] = `packages/sim/src/judge`.
+Package owners follow the audit's tags: [engine] = `packages/engine`, `packages/core`; [sim] = `packages/sim` (persona, oracle, snapshot); [other] = `packages/network`, `apps/observatory`, sim agent/world (another session); [msg] = `packages/blooio`; [evals] = `packages/evals`; [judge] = `packages/sim/src/judge`.
 
 ### Phase 1: attention budget, menu message, hold queue
 

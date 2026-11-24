@@ -26,10 +26,10 @@ The current results must reproduce byte-identically under `networkPack` for ever
 - **`main` @ `93feb51`.** It has none of capital, plans or judgeContext. It does have `packages/plugin-network`, which this branch does not.
 - **Uncommitted WIP in both worktrees.** The working tree and the `obs/network-console` worktree (the `thenetwork-console` worktree, HEAD = `main`) both carry large uncommitted changes:
   - `packages/network`: adds `service/`, `db/`, `harness/`, `store.ts`, `outreach.ts`;
-  - `packages/observatory`;
+  - `apps/observatory`;
   - `packages/sim`: `world.ts`, `agent/policy.ts`, `channel.ts`, `stubNetwork.ts`.
 
-  `packages/network` and `packages/observatory` were read from `main` via `git show`, with the console WIP noted where it matters.
+  `packages/network` and `apps/observatory` were read from `main` via `git show`, with the console WIP noted where it matters.
 - **Consequence for baselines.** Any "byte-identical" baseline must be pinned to a commit **and** a clean tree. The sim WIP alone can move every simulated number (see section 3, seam R1).
 
 Legend for section 1: **G** = generic; **N** = specific to The Network; **M** = mixed (generic mechanism with Network policy or data baked in).

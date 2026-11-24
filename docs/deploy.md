@@ -22,8 +22,8 @@ This is how The Network goes online. Read it with [runbook-platform.md](runbook-
 |---|---|---|---|
 | Sites (4 Pages projects) | Cloudflare Pages, one project per site, advanced-mode `_worker.js` | `sites/<domain>/wrangler.toml`, `deploy/router.ts`, `sites/sites.ts` | Yes, on `<project>.pages.dev` and each site's domain |
 | Shared backend | Railway service `backend` | `deploy/backend/` (`server.ts` wraps `packages/network/service`) | Port `PORT` on `api.ntwrk.party`. The staff port is private. |
-| Postgres | Railway Postgres | migrations in `packages/observatory/db/` | No (private network only) |
-| Observatory console | Railway service `observatory` | `packages/observatory`, `deploy/backend/observatory.railway.toml` | Only through Cloudflare Access |
+| Postgres | Railway Postgres | migrations in `packages/db/` | No (private network only) |
+| Observatory console | Cloudflare container Worker `network-observatory-<env>` | `apps/observatory`, `apps/observatory/deploy/` | Only through Cloudflare Access |
 | Backup job | Railway cron service `backup` (daily) | `deploy/backup/` | No. It writes to a private R2 bucket. |
 
 The backend process has two listeners:
@@ -87,7 +87,7 @@ How a site request reaches the backend:
 **What `server.ts` does at boot:**
 
 1. It checks the environment. A deployed environment without its secrets does not start; the log names what is missing.
-2. It applies pending migrations in one transaction under the advisory lock (`packages/observatory/db/migrate.ts`). `MIGRATE_ON_BOOT=0` skips this step.
+2. It applies pending migrations in one transaction under the advisory lock (`packages/db/migrate.ts`). `MIGRATE_ON_BOOT=0` skips this step.
 3. It starts every network in `platform.networks`.
 4. It opens both listeners and ticks each network once a minute.
 
@@ -196,12 +196,12 @@ Every Pages project calls `https://api.ntwrk.party` like any other client. Only 
 
 ### 2.6 Observatory console (staff, behind Cloudflare Access)
 
-The console is the same image with another start command (`deploy/backend/observatory.railway.toml`). It runs in real mode only (`OBSERVATORY_REAL_ONLY=1`): no game mode, no lab, and no simulator code. The image removes `packages/sim`, `judge`, `evals`, `worlds` and `plugin-network`, and the console imports game mode only on demand (`pnpm run sim` block `ops` checks both). Staff sign in through Cloudflare Access only. The console reads each app through that app's own read login. It changes nothing in the database: review, safety actions and the matching switch go to the backend's staff API over the private network.
+The console is the app in `apps/observatory`. It runs from the backend image as a Cloudflare container Worker (`apps/observatory/deploy/`): the Worker's container class sets the entrypoint `node --import tsx apps/observatory/src/server.ts --mode real`. It runs in real mode only (`OBSERVATORY_REAL_ONLY=1`): no game mode, no lab, and no simulator code. The image removes `packages/sim`, `judge`, `evals`, `worlds` and `plugin-network`, and the console imports game mode only on demand (`pnpm run sim` block `ops` checks both). Staff sign in through Cloudflare Access only. The console reads each app through that app's own read login. It changes nothing in the database: review, safety actions and the matching switch go to the backend's staff API (`NETWORK_SERVICE_URL`). The backend's Worker does not route the staff port, so without `NETWORK_SERVICE_URL` the console is read-only.
 
-**Caution:** under `PLATFORM_ENV=production` or `staging`, the console refuses to start without Access (`OBSERVATORY_TRUST_CF_ACCESS=1` with the team and the audience). Without Access it would make an admin token and write it into the Railway log. The guard fails closed: a console that holds real data (`OBSERVATORY_REAL_ONLY=1`, or any database URL whose host is not this machine) refuses to start when `PLATFORM_ENV` is not set or is not `dev`, `staging` or `production`. Staff tokens are allowed only with `PLATFORM_ENV=dev` and local databases; a remote database needs Access under `dev` too.
+**Caution:** under `PLATFORM_ENV=production` or `staging`, the console refuses to start without Access (`OBSERVATORY_TRUST_CF_ACCESS=1` with the team and the audience). The Worker checks the same before it starts the container (`apps/observatory/deploy/settings.ts`): it refuses `OBSERVATORY_TOKEN`, `OBSERVATORY_TOKENS` and `OBSERVATORY_REVEAL_PII`, a missing Access team or audience, a missing allowed origin, a `PLATFORM_ENV` that does not match the deployment, and Railway-private database addresses. The Worker also refuses every request without a `Cf-Access-Jwt-Assertion` header before the container starts; the console then verifies the assertion itself. Staff tokens are allowed only with `PLATFORM_ENV=dev` and local databases.
 
-1. **New → GitHub Repo →** the same repository. Name the service `observatory`.
-2. Set Config-as-code to `/deploy/backend/observatory.railway.toml`. It starts `node --import tsx --env-file-if-exists=.env packages/observatory/src/server.ts --mode real` and checks `/healthz` (no auth, no data).
+1. The Worker is `apps/observatory/deploy/wrangler.toml` (`network-observatory-staging`, `network-observatory-production`). `workers_dev` is off: the custom domain is the only route. The checked-in configuration is inactive (503) until a deploy sets `OBSERVATORY_ENABLED=true`.
+2. Check the build first (nothing is uploaded): `scripts/wrangler.sh deploy --dry-run --config apps/observatory/deploy/wrangler.toml --env production`.
 3. Create the read logins once, as the owner (Railway's database console), after the first migration. Use a new random password (24+ characters) for each:
 
    ```sql
@@ -220,39 +220,37 @@ The console is the same image with another start command (`deploy/backend/observ
      end loop; end $$;
    ```
 
-4. Variables (`<host>` is `${{Postgres.PGHOST}}:${{Postgres.PGPORT}}/${{Postgres.PGDATABASE}}`):
+4. Settings: one JSON object of strings in the Worker secret `OBSERVATORY_RUNTIME_CONFIG` (`<host>` is the externally reachable database host, port and name). The Worker sets `OBSERVATORY_REAL_ONLY=1`, `NODE_ENV=production`, `OBSERVATORY_HOST=0.0.0.0` and `PORT=4747` itself:
 
    | Variable | Secret? | Value |
    |---|---|---|
-   | `OBSERVATORY_REAL_ONLY` | no | `1` |
-   | `PLATFORM_ENV` | no | `production` |
-   | `NODE_ENV` | no | `production` (the page is bundled once, minified) |
-   | `OBSERVATORY_HOST` | no | `::` (Railway's network may be IPv6 only) |
-   | `PORT` | no | `4747` |
+   | `PLATFORM_ENV` | no | `production` (the same as the Worker environment) |
    | `OBSERVATORY_ALLOWED_ORIGINS` | no | `https://console.ntwrk.party` (the console refuses any other Host or Origin) |
    | `OBSERVATORY_DATABASE_URL_NTWRK`, `_SLOP`, `_PEON`, `_FRIENDS` | **yes** | `postgres://console_<app>:<p>@<host>`, one per app |
    | `NETWORK_DATABASE_URL` | **yes** | `postgres://console_shared:<p6>@<host>` (staff roles from `platform.staff_roles`; the fallback read login) |
    | `OBSERVATORY_PLATFORM_DATABASE_URL` | **yes** | `postgres://console_cross:<p5>@<host>` |
    | `OBSERVATORY_AUDIT_DATABASE_URL` | **yes** | `postgres://console_audit:<p7>@<host>` |
-   | `NETWORK_SERVICE_URL` | no | `http://backend.railway.internal:4848` |
+   | `NETWORK_SERVICE_URL` | no | Optional: the backend's staff API. Leave it out for a read-only console. |
    | `NETWORK_SERVICE_TOKEN` | **yes** | The backend's `NETWORK_SERVICE_CONSOLE_TOKEN` value |
    | `OBSERVATORY_TRUST_CF_ACCESS` | no | `1` |
    | `OBSERVATORY_CF_ACCESS_TEAM`, `OBSERVATORY_CF_ACCESS_AUD` | no | The Zero Trust team name and the Access application's AUD tag |
    | `OBSERVATORY_ROLES` | no | Optional: `email:role@app,...`. Admins can also add rows to `platform.staff_roles`. |
    | `COST_BUDGET_DAILY_USD`, `COST_BUDGET_DAILY_USD_<APP>` | no | The same values as on the backend (section 7.3): the cost panel shows them |
 
-   Never set `OBSERVATORY_TOKEN`, `OBSERVATORY_TOKENS` or `OBSERVATORY_REVEAL_PII` here.
+   Never set `OBSERVATORY_TOKEN`, `OBSERVATORY_TOKENS` or `OBSERVATORY_REVEAL_PII` here (the Worker refuses them).
+   Store it with `scripts/wrangler.sh secret put OBSERVATORY_RUNTIME_CONFIG --config apps/observatory/deploy/wrangler.toml --env production`.
 
 5. Custom domain and Access:
-   - Add `console.ntwrk.party` with target port 4747, and a proxied CNAME in Cloudflare.
-   - In Cloudflare Zero Trust, create an **Access → Applications → Self-hosted** app for `console.ntwrk.party`. The policy allows the staff emails only. Session duration: 12 hours or less. Copy its AUD tag into `OBSERVATORY_CF_ACCESS_AUD`.
+   - First, in Cloudflare Zero Trust, create an **Access → Applications → Self-hosted** app for `console.ntwrk.party`. The policy allows the staff emails only. Session duration: 12 hours or less. Copy its AUD tag into `OBSERVATORY_CF_ACCESS_AUD`. Do this before the first active deploy, so that the hostname is never open.
+   - Deploy (founder approval, `NTWRK_ALLOW_DEPLOY=1`): `scripts/wrangler.sh deploy --config apps/observatory/deploy/wrangler.toml --env production --domain console.ntwrk.party --var BUILD_ID:<full-source-commit> --var OBSERVATORY_ENABLED:true`. Every later active deploy needs the same options.
    - The console verifies the Access JWT (`Cf-Access-Jwt-Assertion`) on every request: signature against the team's keys, audience, issuer and expiry (`src/staff.ts`). A request that did not come through Access has no valid JWT and gets 401.
    - The policy must require a second factor (the identity provider's MFA, or a hardware or software key), so that the JWT `amr` claim names `mfa` or at least two distinct methods. One method alone (for example `otp` from the Access one-time PIN) is not a second factor. The console answers `/api/me` without it, and refuses every other route and the socket with 403 `second_factor_required`.
-   - Do not generate a Railway domain for this service.
+   - Do not turn on `workers_dev` or preview URLs for this Worker.
+   - To roll back, deploy again without `OBSERVATORY_ENABLED:true` (503 for every request).
 6. **Verify:**
    - `curl -s -o /dev/null -w '%{http_code}' https://console.ntwrk.party/api/me` from a shell without an Access session gives 302 or 403 (Access stops it).
    - Sign in through Access in a browser. The header shows `real only` and your roles. Each app's Overview loads, and the label says `PRODUCTION DATA · read-only · PII scrubbed`.
-   - The start line in the deploy log (`The Network Observatory →`) has no `#token=`.
+   - The start line in the container log (`The Network Observatory →`) has no `#token=`.
    - **Metrics** shows the **Bias monitor (weekly)** panel (aggregates from the backend) and the **Cost (estimated)** panel (section 7.3) for analysts and admins.
 
 ### 2.7 Roll back

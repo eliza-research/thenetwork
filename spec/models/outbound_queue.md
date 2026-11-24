@@ -35,7 +35,7 @@ Imported from `quint/outbound_queue.qnt` at `30d950e`. See [model index](README.
 //
 // Code abbreviations: oq = packages/blooio/src/outbound-queue.ts, ch = packages/network/service/channel.ts,
 // cc = packages/network/service/cloud-channel.ts, rt = packages/network/service/runtime.ts,
-// svc = packages/network/service/service.ts, 0007/0012 = packages/observatory/db/migrations.
+// svc = packages/network/service/service.ts, 0007/0012 = packages/db/migrations.
 //
 // Abstractions (each one is a choice of the model, not a fact of the code):
 //  - One recipient (one person, one address on the line). A row is to a member of that person's app, or it

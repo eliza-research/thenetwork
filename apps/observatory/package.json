@@ -1,0 +1,36 @@
+{
+  "name": "@thenetwork/observatory",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "corepack pnpm@10.24.0 --filter @thenetwork/design-system run build && node --import tsx --env-file-if-exists=.env src/server.ts",
+    "dev": "corepack pnpm@10.24.0 --filter @thenetwork/design-system run build && node --watch --import tsx --env-file-if-exists=.env src/server.ts"
+  },
+  "dependencies": {
+    "@tailwindcss/postcss": "^4.3.5",
+    "@thenetwork/core": "workspace:*",
+    "@thenetwork/design-system": "workspace:*",
+    "@thenetwork/engine": "workspace:*",
+    "@thenetwork/network": "workspace:*",
+    "@thenetwork/sim": "workspace:*",
+    "@thenetwork/ui": "workspace:*",
+    "d3-force": "^3.0.0",
+    "esbuild": "0.28.2",
+    "leaflet": "^1.9.4",
+    "postcss": "8.5.33",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "tailwindcss": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/containers": "0.3.7",
+    "@cloudflare/workers-types": "4.20260429.1",
+    "@types/d3-force": "^3.0.10",
+    "@types/leaflet": "^1.9.22",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "happy-dom": "20.14.0"
+  }
+}

@@ -1,0 +1,55 @@
+# The staff console as a Cloudflare container Worker (docs/deploy.md 2.6). Same image as the backend;
+# the container class sets the console's entrypoint. Inactive until OBSERVATORY_ENABLED=true at deploy.
+# workers.dev is off: the console is reached only through its custom domain, which a Cloudflare Access
+# application protects. Add the route at deploy time: --route "console.ntwrk.party/*" (custom domain).
+name = "network-observatory"
+main = "worker.ts"
+compatibility_date = "2026-09-28"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
+
+[observability]
+enabled = true
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ObservatoryConsole"]
+
+[env.staging]
+name = "network-observatory-staging"
+workers_dev = false
+
+[env.staging.vars]
+PLATFORM_ENV = "staging"
+OBSERVATORY_ENABLED = "false"
+
+[[env.staging.containers]]
+class_name = "ObservatoryConsole"
+image = "../../../deploy/backend/Dockerfile"
+image_build_context = "../../.."
+max_instances = 1
+instance_type = "standard-1"
+
+[[env.staging.durable_objects.bindings]]
+name = "CONSOLE"
+class_name = "ObservatoryConsole"
+
+[env.production]
+name = "network-observatory-production"
+workers_dev = false
+
+[env.production.vars]
+PLATFORM_ENV = "production"
+OBSERVATORY_ENABLED = "false"
+
+[[env.production.containers]]
+class_name = "ObservatoryConsole"
+image = "../../../deploy/backend/Dockerfile"
+image_build_context = "../../.."
+max_instances = 1
+instance_type = "standard-1"
+
+[[env.production.durable_objects.bindings]]
+name = "CONSOLE"
+class_name = "ObservatoryConsole"

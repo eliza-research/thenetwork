@@ -20,7 +20,7 @@ The convention of [staff_console](staff_console.md) applies: the intended action
 
 Known drift:
 
-- REVIEW-KEYREPEAT (web): `onKey` in `ReviewQueue` (`packages/observatory/web/review.tsx`) does not ignore key-repeat events, so a held `a` approves the next card when the answer moves the selection. The intended `keyPress` in `step` ignores a repeat event, and `repeatNeverDecides` is in `safety`. `keyPressCode` follows the code: `heldKeyDecidesTest` shows the rule fail, and `heldKeyIgnoredTest` shows the intended handler.
+- REVIEW-KEYREPEAT (web): `onKey` in `ReviewQueue` (`apps/observatory/web/review.tsx`) does not ignore key-repeat events, so a held `a` approves the next card when the answer moves the selection. The intended `keyPress` in `step` ignores a repeat event, and `repeatNeverDecides` is in `safety`. `keyPressCode` follows the code: `heldKeyDecidesTest` shows the rule fail, and `heldKeyIgnoredTest` shows the intended handler.
 - REVIEW-TEENPAGE (web): `approveBlock` in `review.tsx` blocks every known minor, so the page never sends an approve for a held teen item; staff approve it through the server route (`otherReviewerOf`). The page must show the `teen` review details and let staff approve.
 
 Outside the model: the server refusals `note_required` (the page asks for the note first, `requireReviewNote`) and `gathering_repeat_fixed_pair` (a monthly gathering repeat, which this queue does not hold), and the launch scope of the matching switch.
@@ -33,7 +33,7 @@ Outside the model: the server refusals `note_required` (the page asks for the no
 // with the server decisions as an environment.
 //
 // WHAT THIS MODELS (compared with vibestack-matching on 2026-11-18)
-//   - The review queue (ReviewQueue, useReviewCtl, act and ReviewActions in packages/observatory/web/review.tsx).
+//   - The review queue (ReviewQueue, useReviewCtl, act and ReviewActions in apps/observatory/web/review.tsx).
 //     Items arrive, close, expire and come back after a re-roll. The selected card is derived on each render
 //     by selectedReviewCard (focus, then the held selection, then the head of the list sorted by deadline).
 //     The draft controller is the generated controller of spec/staffReview.md
@@ -54,7 +54,7 @@ Outside the model: the server refusals `note_required` (the page asks for the no
 //     (judgeApprove, judgeHold, judgeOverdue, judgeStale: ConsentNetwork.recordJudgment and the tick's
 //     holdUnjudged); staff decide only held items (not_held_for_staff) and may reject any open item; staff
 //     stop an approved item before its reveal (stopApproved). The page queue shows the held items only.
-//   - The matching switch (Config in packages/observatory/web/admin.tsx, the workspace controller of
+//   - The matching switch (Config in apps/observatory/web/admin.tsx, the workspace controller of
 //     spec/consoleWorkspace.md) for two admins. The first press asks; the confirm press sends
 //     `on: !c.matchingEnabled` from the same fetched config. A reload of the config drops the asked state
 //     (edit.of !== c), and so does the 4 s timer.

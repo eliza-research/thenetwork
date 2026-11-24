@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { MINUTE, SimClock } from "@thenetwork/core";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
-import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
+import { dropTestDb, pgAvailable, testDb } from "../../../apps/observatory/test/pg.ts";
 import { APPS, type AppId } from "../../platform/src/apps.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
 import { DryRunAdapter } from "../service/channel.ts";

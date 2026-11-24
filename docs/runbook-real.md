@@ -18,18 +18,18 @@ Five migrations define them. `pnpm run db:migrate` applies them in this order:
 
 | Migration | File | What it holds |
 |---|---|---|
-| 0001 (baseline, repeatable) | `packages/observatory/db/schema.sql` | The `network` schema (below) |
+| 0001 (baseline, repeatable) | `packages/db/schema.sql` | The `network` schema (below) |
 | 0002 (baseline, repeatable) | `packages/network/db/network-state.sql` | What `PgStore` needs (below) |
-| 0003 | `packages/observatory/db/migrations/0003_platform.sql` | The `platform` schema: settings, apps (the four rows), cities, networks (`<app>:<city>`, `matching_enabled`), people, phone identities (the only place a phone lives for platform members), memberships, consent events, share grants, person blocks, staff roles, audit (append-only), app lines, OTP challenges, sessions (hashed tokens), rate limits, suppression. The role `platform_service`. A trigger that refuses 555-01xx numbers in production. |
-| 0004 | `packages/observatory/db/migrations/0004_network_apps.sql` | `app_id` on 13 network tables (backfilled to `ntwrk`), composite `(app_id, id)` keys, `members.person_id`, `home_city` as a foreign key to `platform.cities`, the state row `nyc` renamed to `ntwrk:nyc`, row-level security (forced) with the roles `network_observatory_<app>` and `network_service` |
-| 0005 | `packages/observatory/db/migrations/0005_console_apps.sql` | `staff_audit.app_id`, one console view of the Network state per app (`network.network_state_console_<app>`), the role `network_observatory_cross_app` |
-| 0006 | `packages/observatory/db/migrations/0006_platform_safety.sql` | `platform.age_floor` (the lowest age per keyed phone hash), `phone_identities.hold` (a number that may have a new owner), the SECURITY DEFINER functions `platform.person_cap_counts` and `platform.member_apps` (the two reads that span apps; the function owner must bypass row-level security, so run the migrations as a superuser or a BYPASSRLS role), and a backfill that gives The Network's members from before the platform a person, a phone and an ntwrk membership |
+| 0003 | `packages/db/migrations/0003_platform.sql` | The `platform` schema: settings, apps (the four rows), cities, networks (`<app>:<city>`, `matching_enabled`), people, phone identities (the only place a phone lives for platform members), memberships, consent events, share grants, person blocks, staff roles, audit (append-only), app lines, OTP challenges, sessions (hashed tokens), rate limits, suppression. The role `platform_service`. A trigger that refuses 555-01xx numbers in production. |
+| 0004 | `packages/db/migrations/0004_network_apps.sql` | `app_id` on 13 network tables (backfilled to `ntwrk`), composite `(app_id, id)` keys, `members.person_id`, `home_city` as a foreign key to `platform.cities`, the state row `nyc` renamed to `ntwrk:nyc`, row-level security (forced) with the roles `network_observatory_<app>` and `network_service` |
+| 0005 | `packages/db/migrations/0005_console_apps.sql` | `staff_audit.app_id`, one console view of the Network state per app (`network.network_state_console_<app>`), the role `network_observatory_cross_app` |
+| 0006 | `packages/db/migrations/0006_platform_safety.sql` | `platform.age_floor` (the lowest age per keyed phone hash), `phone_identities.hold` (a number that may have a new owner), the SECURITY DEFINER functions `platform.person_cap_counts` and `platform.member_apps` (the two reads that span apps; the function owner must bypass row-level security, so run the migrations as a superuser or a BYPASSRLS role), and a backfill that gives The Network's members from before the platform a person, a phone and an ntwrk membership |
 
 The two baseline files:
 
 | File | What it holds |
 |---|---|
-| `packages/observatory/db/schema.sql` | The proposed canonical schema from PRD 32: members, channel identities, facets, intents, presence, edges, opportunities, participations, review items, messages, feedback, events, matching runs, requests, the Network state, the staff audit table, and the roles. Field names follow `packages/core/src/types.ts`. |
+| `packages/db/schema.sql` | The proposed canonical schema from PRD 32: members, channel identities, facets, intents, presence, edges, opportunities, participations, review items, messages, feedback, events, matching runs, requests, the Network state, the staff audit table, and the roles. Field names follow `packages/core/src/types.ts`. |
 | `packages/network/db/network-state.sql` | What the Network's `PgStore` needs: `network.network_state`, `network.opportunities`, `network.participations`, `network.review_items` (with the new columns) and `network.requests`. It works before or after `schema.sql`. |
 
 - Phones and emails live only in `network.channel_identities`.
@@ -46,14 +46,14 @@ pnpm run db:migrate                                                   # the loca
 pnpm run db:migrate -- --url postgres://$USER@localhost:54339/<db>    # another local database
 ```
 
-The runner (`packages/observatory/db/migrate.ts`) keeps a ledger in `public.__migrations` with a checksum per migration. It runs every pending migration in one transaction, under the advisory lock `hashtext('thenetwork-migrate')`. A numbered migration runs once. A baseline (0001, 0002) runs again only when its text changes; both only create what is missing. The runner refuses a host that is not local.
+The runner (`packages/db/migrate.ts`) keeps a ledger in `public.__migrations` with a checksum per migration. It runs every pending migration in one transaction, under the advisory lock `hashtext('thenetwork-migrate')`. A numbered migration runs once. A baseline (0001, 0002) runs again only when its text changes; both only create what is missing. The runner refuses a host that is not local.
 
 Checked on 2026-10-08 on a scratch database: the first run printed `applied 0001_network_schema` to `applied 0005_console_apps`; the second run printed `"applied":[]`. `platform.networks` held `buddies:nyc`, `ntwrk:nyc`, `peon:nyc` and `slop:nyc`, with `matching_enabled` false for slop and peon. `platform.apps` held ntwrk `invite`, 13; the others `open`, 18. (History: since migration 0007 the ids are `friends` and every join age is 13; migration 0011 lets an admin turn slop and peon matching on.)
 
 The old way still works for the two baselines (code and tests that apply them directly):
 
 ```bash
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f packages/observatory/db/schema.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f packages/db/schema.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f packages/network/db/network-state.sql
 ```
 
@@ -65,11 +65,11 @@ Checked on 2026-10-07 on a scratch local database: `network-state.sql` first, th
 
 **Caution:** `create table if not exists` does not change a table that exists. A new column, a changed check constraint or a dropped column in `schema.sql` does not reach an existing database.
 
-Write every change as a new numbered file in `packages/observatory/db/migrations/` (`0006_<name>.sql`). Never change a numbered file after it ran anywhere: the runner records its checksum. Make each step safe to run again (`if not exists`, `do $$ ... $$` guards).
+Write every change as a new numbered file in `packages/db/migrations/` (`0006_<name>.sql`). Never change a numbered file after it ran anywhere: the runner records its checksum. Make each step safe to run again (`if not exists`, `do $$ ... $$` guards).
 
 | Environment | How to change the schema |
 |---|---|
-| Local dev | Add the migration. Run `pnpm run db:migrate`. To start again, `node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts reset`, then seed again (section 3). |
+| Local dev | Add the migration. Run `pnpm run db:migrate`. To start again, `node --import tsx --env-file-if-exists=.env packages/db/dev-pg.ts reset`, then seed again (section 3). |
 | Tests | Each Postgres test creates its own database and runs the migrations (or the baseline files) on it, then drops it. Update `packages/platform/test/db.test.ts`, which lists the expected migrations (it fails today: it stops at 0004). |
 | Staging, production | **[FOUNDER]** Run `migrate.ts` as a superuser or a `BYPASSRLS` role (forced row-level security applies to the table owner). The runner refuses non-local hosts today; a deploy needs a reviewed way to run it against Railway. |
 
@@ -111,17 +111,17 @@ To give the Observatory a login **[CREDENTIALS]**:
 create role observatory_reader login password '<from the secret store>' in role network_observatory;
 ```
 
-Checked on a scratch local database: that login can read `network.members`, gets "permission denied" on `network.channel_identities`, and gets "permission denied" on any insert. The test `packages/observatory/test/real-console.test.ts` checks, as `network_observatory`, that `network.network_state` is refused and that the view holds only the paths above (no full name, no message text).
+Checked on a scratch local database: that login can read `network.members`, gets "permission denied" on `network.channel_identities`, and gets "permission denied" on any insert. The test `apps/observatory/test/real-console.test.ts` checks, as `network_observatory`, that `network.network_state` is refused and that the view holds only the paths above (no full name, no message text).
 
 ## 3. Local development Postgres
 
 The local cluster runs on port **54339**. Do not use port 54329; another tool uses it.
 
 ```bash
-node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts up      # first time: initdb; then start and run the migrations on the `network` database
-node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts url     # prints postgres://$USER@localhost:54339/network
-node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts reset   # drop and recreate the network and platform schemas
-node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts down    # stop
+node --import tsx --env-file-if-exists=.env packages/db/dev-pg.ts up      # first time: initdb; then start and run the migrations on the `network` database
+node --import tsx --env-file-if-exists=.env packages/db/dev-pg.ts url     # prints postgres://$USER@localhost:54339/network
+node --import tsx --env-file-if-exists=.env packages/db/dev-pg.ts reset   # drop and recreate the network and platform schemas
+node --import tsx --env-file-if-exists=.env packages/db/dev-pg.ts down    # stop
 ```
 
 - Data lives in `runs/pg` (`OBSERVATORY_PG_DIR` changes it; `OBSERVATORY_PG_PORT` changes the port).
@@ -131,8 +131,8 @@ node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts do
 Load data:
 
 ```bash
-node --import tsx --env-file-if-exists=.env packages/observatory/db/seed.ts --from-dataset                 # the 500 synthetic members (public files only)
-node --import tsx --env-file-if-exists=.env packages/observatory/db/seed.ts --from-sim --days 14 --seed 1  # a whole simulated run: messages, opportunities, review items, outcomes
+node --import tsx --env-file-if-exists=.env apps/observatory/db/seed.ts --from-dataset                 # the 500 synthetic members (public files only)
+node --import tsx --env-file-if-exists=.env apps/observatory/db/seed.ts --from-sim --days 14 --seed 1  # a whole simulated run: messages, opportunities, review items, outcomes
 pnpm run observatory:db                                                  # dev-pg up + seed --from-sim --days 14
 ```
 
@@ -267,9 +267,9 @@ Procedure:
 3. The service answers with its own reason, which the console passes through (for example `company_and_note_required`, `plan_unavailable`, `invitation_review_unavailable`, `reason_required`). The service writes `network.staff_audit` with your id.
 4. If the console is down, wait or fix the console. A shared-token call is refused for these steps on a service with a console token. A service without `NETWORK_SERVICE_CONSOLE_TOKEN`, in any environment, takes the step from a shared token and records the token as the actor.
 
-Checked by `packages/observatory/test/staff-steps.integration.test.ts`.
+Checked by `apps/observatory/test/staff-steps.integration.test.ts`.
 
-Checked on 2026-10-07 (`packages/observatory/test/real-service.test.ts`): a two-day simulated run written to a test database; the real service on it; a reject from real mode reached the service with the staff id and was read back from `network.review_items`; a second decision on the same item came back `not_in_review`; a case closed and the matching switch went off through the service; with the service stopped, the strip showed `service_down` and actions answered `service_unavailable`.
+Checked on 2026-10-07 (`apps/observatory/test/real-service.test.ts`): a two-day simulated run written to a test database; the real service on it; a reject from real mode reached the service with the staff id and was read back from `network.review_items`; a second decision on the same item came back `not_in_review`; a case closed and the matching switch went off through the service; with the service stopped, the strip showed `service_down` and actions answered `service_unavailable`.
 
 ## 5. Shadow engine runs
 
@@ -332,7 +332,7 @@ An item that nobody decides expires at its SLA (12 hours, or 1 hour for a same-d
 ### 6.4 What is missing before review can work on real members
 
 1. Built: the production matcher process and the Network admin API (6.5).
-2. Built: the Observatory calls the admin API (4.4). The service records the signed-in person in `X-Network-Staff-Id` as the reviewer of record when the request carries `NETWORK_SERVICE_CONSOLE_TOKEN`. The console steps in `serviceStaffStep` that need a person refuse a shared token (403 `named_reviewer_required`), for example `POST /safety/hold`, `/safety/ban`, `/safety/dismiss`, `/safety/lift`, `/safety/close` and `/safety/clear-minor` (`DecideSafetyCase`). Checked by `packages/observatory/test/staff-steps.integration.test.ts`.
+2. Built: the Observatory calls the admin API (4.4). The service records the signed-in person in `X-Network-Staff-Id` as the reviewer of record when the request carries `NETWORK_SERVICE_CONSOLE_TOKEN`. The console steps in `serviceStaffStep` that need a person refuse a shared token (403 `named_reviewer_required`), for example `POST /safety/hold`, `/safety/ban`, `/safety/dismiss`, `/safety/lift`, `/safety/close` and `/safety/clear-minor` (`DecideSafetyCase`). Checked by `apps/observatory/test/staff-steps.integration.test.ts`.
 3. Built: JWT verification for Cloudflare Access (4.1). Missing: a fresh sign-in before a PII reveal.
 4. Decided: the Eliza gateway owns STOP, START and HELP on the Blooio line and routes the first message by keyword (PRD 40.3). This service answers them only inside the gateway's signed `/internal/turn` (6.5).
 

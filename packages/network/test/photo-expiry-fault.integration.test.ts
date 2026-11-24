@@ -3,7 +3,7 @@ import { SQL } from "../../core/src/runtime/postgres.ts";
 import { HOUR, SimClock } from "@thenetwork/core";
 import { DryRunAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
-import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
+import { dropTestDb, pgAvailable, testDb } from "../../../apps/observatory/test/pg.ts";
 import { START } from "./mini.ts";
 
 describe.skipIf(!pgAvailable)("photo relay photo pass: a store fault waits for the next tick and the after-tick work goes on (spec/photoRelayReview.md, NetworkService, Postgres)", () => {

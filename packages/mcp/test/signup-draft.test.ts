@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
-import { pgAvailable } from "../../observatory/test/pg.ts";
+import { DEV_PG_PORT, devPgUp } from "../../db/dev-pg.ts";
+import { pgAvailable } from "../../../apps/observatory/test/pg.ts";
 import { effectiveAgeAt } from "../../platform/src/age.ts";
 import { PgOAuthStore } from "../src/pg-store.ts";
 import { addMember, call, connect, PHONE_A, PHONE_B, setup } from "./harness.ts";

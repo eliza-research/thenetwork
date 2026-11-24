@@ -5,8 +5,8 @@ import {
 } from "../../core/src/generated/staffSafetyService.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { PgNotifyStore } from "../../notify/src/pg-store.ts";
-import { allowed } from "../../observatory/src/staff.ts";
-import type { StaffRole, StaffUser } from "../../observatory/src/types.ts";
+import { allowed } from "../../../apps/observatory/src/staff.ts";
+import type { StaffRole, StaffUser } from "../../../apps/observatory/src/types.ts";
 import type { AppId, AppInfo } from "../../platform/src/apps.ts";
 import { readCapped } from "../../platform/src/body.ts";
 import { ledgerOptedOut } from "./consent-ledger-read.ts";

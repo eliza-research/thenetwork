@@ -10,6 +10,6 @@ both integration tests pass. The new test starts owned loopback
 clusters with USER unset and with a synthetic override. It queries
 the actual current user from the returned URL.
 
-Run `pnpm exec vitest run packages/observatory/test/dev-pg-env.integration.test.ts`.
+Run `pnpm exec vitest run apps/observatory/test/dev-pg-env.integration.test.ts`.
 No seeded workload, provider, agent client, or data beyond the
 test databases was used.

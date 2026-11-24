@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
-import { MIGRATIONS_DIR } from "../../observatory/db/migrate.ts";
+import { MIGRATIONS_DIR } from "../../db/migrate.ts";
 import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { SIGNALS_PATH, TURN_PATH, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";

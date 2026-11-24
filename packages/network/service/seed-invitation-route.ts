@@ -1,7 +1,7 @@
 import { seedInvitationBatchSizeAllowed, seedInvitationCitySupported, seedInvitationVouchSizeAllowed } from "../../core/src/generated/seedInvitation.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
-import { rolesFor } from "../../observatory/src/staff.ts";
-import type { StaffUser } from "../../observatory/src/types.ts";
+import { rolesFor } from "../../../apps/observatory/src/staff.ts";
+import type { StaffUser } from "../../../apps/observatory/src/types.ts";
 import type { AppId } from "../../platform/src/apps.ts";
 import { normalizePhone } from "../../platform/src/phone.ts";
 

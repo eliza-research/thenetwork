@@ -20,7 +20,7 @@ deletion publishes a reset so the browser reads the new complete graph.
 
 The convention of [staff_console](staff_console.md) applies: the intended `grant`, `unreveal`, `otherAnswer`, `revealAnswer` and `shellKeys` are in `step`, and `unrevealRun`, `badgeFollowsGrant`, `revealReadPending`, `tabNonInterference` and `safetyIgnoresOrigin` are in `safety`. The intended page adds one to a reveal generation on each POST or DELETE answer, reads the list again after it, drops a GET answer of an older reveal generation, keeps the list on a failed GET answer, ends the badge only on 200 or 404, and applies no Origin filter on the Safety tab; `witness_badgeKeptOnFailure` and `witness_oldReadDropped` show the intended paths. The `*Code` actions (`grantCode`, `unrevealCode`, `otherAnswerCode`, `revealAnswerCode`, one `*By(code, ...)` body each) and `shellKeysCode` follow the code and are outside `step`; the `*CodeTest` runs show each rule fail after them.
 
-Open defects in `packages/observatory/web` (the model keeps the rule):
+Open defects in `apps/observatory/web` (the model keeps the rule):
 
 - SYNC-REVEAL: the PII reveal badge does not follow the server grant. `store.ts` `unreveal` removes the badge whatever the DELETE answer is (a 403, a 500 or a network error leaves the grant on the server). `loadReveals` sets `reveals = r.data ?? []`, so a failed GET removes the badge, and a GET that the server read before a POST answer replaces the list after it (it checks only the load generation).
 - SYNC-ORIGIN: the Safety tab filters its events with `store.ts` `matchFeed`, which applies the Origin filter. The filter bar dims Origin on that tab (`filterApplies` in [console navigation](../consoleNavigation.md)), so a dimmed filter hides safety events that have no opportunity of that origin.
@@ -32,7 +32,7 @@ Open defects in `packages/observatory/web` (the model keeps the rule):
 // observatory_sync: the Observatory console state sync, on the browser side.
 //
 // WHAT THIS MODELS
-//   The browser state of one console tab (packages/observatory/web/store.ts, map.ts, drawer.tsx):
+//   The browser state of one console tab (apps/observatory/web/store.ts, map.ts, drawer.tsx):
 //   - The app switch (setApp and the `app` setter in store.ts). The data of the old app leaves.
 //   - Full loads (load, beginLoad in store.ts). Each load has a generation. The server reads the
 //     state at some time after the start, and the answer comes late, out of order, or fails.
