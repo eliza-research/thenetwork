@@ -218,6 +218,12 @@ export function signupDraftRowReadable(bindingMatches: boolean, unconsumed: bool
 
 /** Story: Drop the draft when I can no longer use it / A draft is written and read only under its current binding (spec/mcpSignupDraft.md) */
 //@ pure
+export function signupDraftCanPrepare(alreadyPrepared: boolean): boolean {
+  return !alreadyPrepared;
+}
+
+/** Story: Drop the draft when I can no longer use it / A draft is written and read only under its current binding (spec/mcpSignupDraft.md) */
+//@ pure
 export function signupDraftUnique(matches: number): boolean {
   return matches === 1;
 }
@@ -226,6 +232,13 @@ export function signupDraftUnique(matches: number): boolean {
 //@ pure
 export function signupDraftExpired(expiresAt: number, asOf: number): boolean {
   return expiresAt <= asOf;
+}
+
+/** Story: Drop the draft when I can no longer use it / A draft is written and read only under its current binding (spec/mcpSignupDraft.md) */
+//@ pure
+export function lawOneDraftPerGrant(alreadyPrepared: boolean): boolean {
+  //@ ensures \result === true
+  return !alreadyPrepared || !signupDraftCanPrepare(alreadyPrepared);
 }
 
 /** Story: Drop the draft when I can no longer use it / The signup result settles the draft (spec/mcpSignupDraft.md) */

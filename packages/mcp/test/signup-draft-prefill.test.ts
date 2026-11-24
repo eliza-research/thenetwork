@@ -52,21 +52,30 @@ const shows = (html: string, firstName: string, city: string) =>
 const blank = (html: string) => !/name="firstName"[^>]*value="/.test(html) && !/<option value="(nyc|sf)" selected/.test(html);
 const neverPrefilledAgeOrConsent = (html: string) => !/name="age"/.test(html) && !/name="birthdate"[^>]*value="/.test(html) && !/name="smsConsent"[^>]*checked/.test(html);
 
-async function draftFor(e: Env, domain: string, phone: string, fields: Record<string, unknown> = { firstName: "Ari", homeCity: "sf" }) {
+async function prepareDraft(e: Env, domain: string, phone: string, fields: Record<string, unknown> = { firstName: "Ari", homeCity: "sf" }) {
   const c = await connect(e, domain, phone, { scope: "membership:read profile:write" });
-  const saved = await call(e, `https://${domain}/mcp`, "prepare_signup", fields, { token: c.token.access_token });
+  const token = c.token.access_token as string;
+  const saved = await call(e, `https://${domain}/mcp`, "prepare_signup", fields, { token });
   expect(saved.body!.result.structuredContent).toMatchObject({ prepared: true });
-  return c.client.client_id as string;
+  return { clientId: c.client.client_id as string, token };
+}
+
+async function draftFor(e: Env, domain: string, phone: string, fields?: Record<string, unknown>) {
+  return (await prepareDraft(e, domain, phone, fields)).clientId;
 }
 
 test("the same client's next authorization shows the approved draft once; the person edits it, types the birthday and ticks consent", async () => {
-  const e = setup(), clientId = await draftFor(e, "friends.help", PHONE_A);
+  const e = setup();
+  const { clientId, token } = await prepareDraft(e, "friends.help", PHONE_A);
   const first = await openSignup(e, "friends.help", clientId, PHONE_A);
   expect(shows(first.form, "Ari", "sf")).toBe(true);
   expect(neverPrefilledAgeOrConsent(first.form)).toBe(true);
   expect(first.form).toContain("Finish signup");
   expect(first.form).not.toContain(PHONE_A);
   expect((e.store as MemoryOAuthStore).signupDrafts.size).toBe(0);
+  const retried = await call(e, "https://friends.help/mcp", "prepare_signup", { firstName: "Rae", homeCity: "nyc" }, { token });
+  expect(retried.body!.result.isError).toBe(true);
+  expect(retried.text).toContain("This connection already saved a draft");
   await first.post("/oauth/authorize/signup", { decision: "skip", signupView: field(first.form, "signupView") });
   expect(blank(await (await first.post("/oauth/authorize/signup", { decision: "open" })).text())).toBe(true);
   expect(blank((await openSignup(e, "friends.help", clientId, PHONE_A)).form)).toBe(true);
@@ -202,7 +211,8 @@ test("the birthday is refused when it is missing, malformed, impossible, in the 
 test.skipIf(!pgAvailable)("on Postgres the draft shows on one form only, also when two forms of the same client open at once", async () => {
   const store = new PgOAuthStore(await testDb());
   try {
-    const e = setup({ store }), clientId = await draftFor(e, "friends.help", PHONE_A);
+    const e = setup({ store });
+    const { clientId, token } = await prepareDraft(e, "friends.help", PHONE_A);
     const key = e.accounts.phoneHash(PHONE_A);
     const other = (await register(e, "friends.help")).body.client_id as string;
     expect(await store.useSignupPrefill({ clientId: other, app: "friends", phoneKey: key, personId: null, ageAllowed: true }, e.clock.t)).toBeUndefined();
@@ -212,6 +222,9 @@ test.skipIf(!pgAvailable)("on Postgres the draft shows on one form only, also wh
     const ask = { clientId, app: "friends" as const, phoneKey: key, personId: null, ageAllowed: true };
     const pair = await Promise.all([store.useSignupPrefill(ask, e.clock.t), restarted.useSignupPrefill(ask, e.clock.t)]);
     expect(pair.filter(Boolean)).toEqual([{ firstName: "Ari", homeCity: "sf" }]);
+    const retried = await call(e, "https://friends.help/mcp", "prepare_signup", { firstName: "Rae", homeCity: "nyc" }, { token });
+    expect(retried.body!.result.isError).toBe(true);
+    expect(retried.text).toContain("This connection already saved a draft");
     expect(await store.sql`select 1 from oauth.signup_drafts where phone_key=${key}`).toEqual([]);
     expect(blank((await openSignup(e, "friends.help", clientId, PHONE_A)).form)).toBe(true);
     const again = await draftFor(e, "friends.help", PHONE_A, { firstName: "Rae", homeCity: "nyc" });
@@ -224,16 +237,29 @@ test.skipIf(!pgAvailable)("the repeatable OAuth schema removes consumed drafts a
   const store = new PgOAuthStore(await testDb());
   try {
     const e = setup({ store });
-    await draftFor(e, "friends.help", PHONE_A);
-    await draftFor(e, "friends.help", PHONE_B);
+    const clearedPhone = "+12125550188";
+    const live = await prepareDraft(e, "friends.help", PHONE_A);
+    const consumed = await prepareDraft(e, "friends.help", PHONE_B);
+    const cleared = await prepareDraft(e, "friends.help", clearedPhone);
     const liveKey = e.accounts.phoneHash(PHONE_A);
     const consumedKey = e.accounts.phoneHash(PHONE_B);
+    const clearedKey = e.accounts.phoneHash(clearedPhone);
+    await store.sql`alter table oauth.grants drop column signup_draft_prepared`;
     await store.sql`alter table oauth.signup_drafts add column consumed_at timestamptz`;
-    await store.sql`update oauth.signup_drafts set consumed_at=${new Date(e.clock.t)} where phone_key=${consumedKey}`;
+    await store.sql`update oauth.signup_drafts set fields='{}'::jsonb, consumed_at=${new Date(e.clock.t)} where phone_key=${consumedKey}`;
+    await store.sql`update oauth.signup_drafts set fields='{}'::jsonb where phone_key=${clearedKey}`;
     await store.migrate();
     expect(await store.sql`select phone_key from oauth.signup_drafts`).toEqual([{ phone_key: liveKey }]);
-    await store.sql`update oauth.signup_drafts set fields='{}'::jsonb where phone_key=${liveKey}`;
-    await store.migrate();
+    expect(await store.sql`select count(*)::int as count from oauth.grants where signup_draft_prepared`).toEqual([{ count: 3 }]);
+    expect(shows((await openSignup(e, "friends.help", live.clientId, PHONE_A)).form, "Ari", "sf")).toBe(true);
+    expect(blank((await openSignup(e, "friends.help", consumed.clientId, PHONE_B)).form)).toBe(true);
+    expect(blank((await openSignup(e, "friends.help", cleared.clientId, clearedPhone)).form)).toBe(true);
+    for (const { token } of [live, consumed, cleared]) {
+      const retry = await call(e, "https://friends.help/mcp", "prepare_signup", { firstName: "Rae", homeCity: "nyc" }, { token });
+      expect(retry.text).toContain("This connection already saved a draft");
+    }
     expect(await store.sql`select 1 from oauth.signup_drafts`).toEqual([]);
+    expect(await store.forgetPhone(liveKey, PHONE_A, "friends")).toBe(1);
+    expect(await store.sql`select count(*)::int as count from oauth.grants where signup_draft_prepared`).toEqual([{ count: 2 }]);
   } finally { await store.close(); await dropTestDb(); }
 });

@@ -161,7 +161,7 @@ module oauth_mcp {
   type Code = { st: str, expired: bool }
   type Tok = { g: int, kind: str, origin: str, rotated: bool, revoked: bool, expired: bool }
   type Client = { exists: bool, old: bool }
-  type Draft = { exists: bool, phone: str, scrubbed: bool, used: bool }
+  type Draft = { exists: bool, phone: str, scrubbed: bool, used: bool, writes: int }
   type Quota = { count: int, accepted: int }
   // teenOk: a teen item that the rule allowed when it was made and that no sweep has ended (teenItemCurrent).
   type Item = { live: bool, person: str, app: str, kind: str, seen: bool, oppOpen: bool, leaky: bool, teenOk: bool }
@@ -292,7 +292,7 @@ module oauth_mcp {
       toks: Map(),
       nextTok: 1,
       clients: CLIENTS.mapBy(c => { exists: true, old: false }),
-      drafts: REQS.mapBy(g => { exists: false, phone: "", scrubbed: false, used: false }),
+      drafts: REQS.mapBy(g => { exists: false, phone: "", scrubbed: false, used: false, writes: 0 }),
       quota: REQS.mapBy(g => { count: 0, accepted: 0 }),
     },
     pf' = {
@@ -694,7 +694,7 @@ module oauth_mcp {
    * (withSignupAgePolicy, K:126-135: canJoinApp, 13 on every app, so only an under-13 person is
    * refused; a 13-17 person may prepare a Join form), then grantStillTheirs (invalid_grant revokes the
    * grant, H:895-899), the status, then (SD-395 fix) the quota, then one draft row per grant, with the
-   * grant's phone key.
+   * grant's phone key. A grant records the first write even after the draft has been deleted.
    */
   action prepareSignup(t: int, h: str, a: str): bool = all {
     bearerOk(t, h, a),
@@ -704,14 +704,15 @@ module oauth_mcp {
     val count = if (q.count <= PROFILE_CAP) q.count + 1 else q.count
     val now = personForKey(pf, gr.phone)
     val st = statusOf(pf, now, gr.app)
+    val writes = oa.drafts.get(g).writes
     all {
       gr.app == "friends", not(pf.under13.contains(now)),
       if (not(stillTheirs(gr.person, now))) toolInvalidGrant(g, "prepare")
       else all {
         count <= PROFILE_CAP, st == "not_joined" or st == "invited",
         oa' = { ...oa, quota: oa.quota.set(g, { ...q, count: count }),
-                drafts: if (oa.drafts.get(g).exists) oa.drafts else oa.drafts.set(g, { exists: true, phone: gr.phone, scrubbed: false, used: false }) },
-        gh' = { ...gh, last: { ...eff("prepare", now, g, not(oa.drafts.get(g).exists)), app: gr.app } },
+                drafts: if (writes == 0) oa.drafts.set(g, { exists: true, phone: gr.phone, scrubbed: false, used: false, writes: writes + 1 }) else oa.drafts },
+        gh' = { ...gh, last: { ...eff("prepare", now, g, writes == 0), app: gr.app } },
         pf' = pf, ib' = ib, pc' = pc,
       },
     }
@@ -778,8 +779,9 @@ module oauth_mcp {
   /**
    * signupPrefillFor and the store's useSignupPrefill: the signup form of request `r` (a person who
    * has not joined the request's app) shows the one live draft of the same client, app, phone key and person, under
-   * the age policy (withSignupAgePolicy: an under-13 person gets no prefill). The draft is used once: its fields are
-   * scrubbed and consumed_at is set in the same transaction. No draft, two drafts or a refusal give an empty form.
+   * the age policy (withSignupAgePolicy: an under-13 person gets no prefill). The store deletes the draft
+   * in the same transaction that reads its fields. The grant keeps its one-write flag. No draft, two drafts
+   * or a refusal give an empty form.
    */
   action openSignup(r: int): bool = all {
     val q = oa.reqs.get(r)
@@ -797,7 +799,7 @@ module oauth_mcp {
         nondet g = usable.oneOf()
         val gr = oa.grants.get(g)
         all {
-          oa' = { ...oa, drafts: oa.drafts.setBy(g, d => { ...d, used: true, scrubbed: true }) },
+          oa' = { ...oa, drafts: oa.drafts.setBy(g, d => { ...d, exists: false, phone: "", used: true, scrubbed: true }) },
           gh' = { ...gh,
             prefills: gh.prefills.union(Set({ req: r, grant: g, sameClient: gr.client == q.client, sameApp: gr.app == q.app,
               samePhone: oa.drafts.get(g).phone == q.phone, samePerson: gr.person == q.person })),
@@ -1416,6 +1418,9 @@ module oauth_mcp {
     gh.last.status == clientHost(gr.client) and gh.last.app == gr.app
   }
 
+  /** mcpSignupDraft.md lawOneDraftPerGrant: deletion does not permit another write on the same grant. */
+  val lawOneDraftPerGrant = REQS.forall(g => oa.drafts.get(g).writes <= 1)
+
   /** authorizationPages.md lawPrefillAtMostOnce: a draft fills at most one signup form. */
   val prefillAtMostOnce = REQS.forall(g => gh.prefills.filter(x => x.grant == g).size() <= 1)
 
@@ -1430,7 +1435,7 @@ module oauth_mcp {
     activeKeptWhileLive, grantDiesWithPerson, heldIsHeld, teenFriendAgeRule, teenSwitchOffNoMinor, withheldStaysUnseen, noStaleUpdate,
     everyRevocationAudited, oneOutcome, grantHasCodeAndAudit, requestRetention, clientKeptOnceGranted,
     quotaCountsAccepted, draftFollowsGrant, numberChangeWorks,
-    requestOnItsHost, grantOnItsHost, servedInGrantApp, consentOnItsHost, prefillAtMostOnce, prefillBound, noPrefillUnder13,
+    requestOnItsHost, grantOnItsHost, servedInGrantApp, consentOnItsHost, lawOneDraftPerGrant, prefillAtMostOnce, prefillBound, noPrefillUnder13,
     lookingForOnlyActive, agentResumeOnlyAdult, lookingForListNeedsProfileRead,
     photoToolsOnlySlopWithScope, photoToolsOnlyActiveAdult,
   }
@@ -1836,7 +1841,8 @@ module oauth_mcp {
 
   /**
    * signup-draft-prefill.test.ts: the agent saves a draft through prepare_signup; a new request of the same client,
-   * app and phone shows it once; a second open of the form and a request of another client show an empty form.
+   * app and phone shows it once. The grant cannot save another draft. A second open of the form and a
+   * request of another client show an empty form.
    */
   run prefillOnceTest =
     init.then(leave("p1", "friends", false)).then(connect(2, "cF", false)).then(prepareSignup(1, "friends", "friends"))
@@ -1844,7 +1850,9 @@ module oauth_mcp {
       .then(startAuth(1, "cN", "friends")).then(enterPhone(1, "n1")).then(enterCode(1)).then(openSignup(1))
       .expect(gh.last.kind == "prefill" and not(gh.last.ok) and not(oa.drafts.get(2).used))
       .then(startAuth(3, "cF", "friends")).then(enterPhone(3, "n1")).then(enterCode(3)).then(openSignup(3))
-      .expect(gh.last.kind == "prefill" and gh.last.ok and oa.drafts.get(2).used and gh.prefills.size() == 1 and safety)
+      .expect(gh.last.kind == "prefill" and gh.last.ok and oa.drafts.get(2).used and not(oa.drafts.get(2).exists) and gh.prefills.size() == 1 and safety)
+      .then(prepareSignup(1, "friends", "friends"))
+      .expect(gh.last.kind == "prepare" and not(gh.last.ok) and not(oa.drafts.get(2).exists) and lawOneDraftPerGrant)
       .then(openSignup(3))
       .expect(gh.last.kind == "prefill" and not(gh.last.ok) and gh.prefills.size() == 1 and prefillAtMostOnce and safety)
   /** signupClientAllowed: a peon request, also on the hub, has no signup form (browserSignupAppAllowed). */
