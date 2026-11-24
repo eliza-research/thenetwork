@@ -22,6 +22,9 @@ test.each(["pointercancel", "lostpointercapture"])("a canceled graph drag stops 
   input(canvas, "pointermove", 1, 25, 40);
   expect(graph.view).toEqual({ x: 15, y: 20, k: 1 });
 
+  input(canvas, "pointermove", 2, 100, 100);
+  expect(graph.view).toEqual({ x: 15, y: 20, k: 1 });
+
   input(canvas, canceledBy, 2);
   input(canvas, "pointermove", 1, 30, 50);
   expect(graph.view).toEqual({ x: 20, y: 30, k: 1 });
