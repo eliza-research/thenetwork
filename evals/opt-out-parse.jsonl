@@ -58,3 +58,14 @@
 {"text": "Please cease messaging", "match": "likely"}
 {"text": "Don't quit texting", "match": "none"}
 {"text": "ST\u00ADOP", "match": "exact"}
+{"text": "Don't lose my number", "match": "none"}
+{"text": "She said to opt out", "match": "none"}
+{"text": "How do I lose my number from this list?", "match": "none"}
+{"text": "She said \"stop, delete my number\"", "match": "none"}
+{"text": "She said, \"delete my number\"", "match": "none"}
+{"text": "I asked to unsubscribe twice, unsubscribe me", "match": "likely"}
+{"text": "I already asked to unsubscribe. Stop texting me", "match": "likely"}
+{"text": "How do I delete my account? Never mind, just delete my number", "match": "likely"}
+{"text": "I can't delete my account so remove my number", "match": "likely"}
+{"text": "I don't want to delete my account, just remove my number", "match": "likely"}
+{"text": "I said delete my number", "match": "likely"}
