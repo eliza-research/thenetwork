@@ -18,7 +18,7 @@ The executable [rescheduling rules](../meetingReschedule.md) cover independent c
 
 The [probe reply rules](../probeReply.md) distinguish a direct withdrawal from a qualified use of the same words. A direct withdrawal declines the offer. A quoted or negated use and an unbound time keep its current probe open. The first member's accepted slots can narrow and renumber the next member's offer. A valid ordinal or day group acts only on that member's current offer. The reviewed Slop test checks the selected start. This standalone model abstracts the precise slots to all, none, or unresolved.
 
-A complete direct list can name offered days with consecutive or joined abbreviations. A day with several offered times needs a precise choice. A day without an offered time keeps the list open unless the member used “or” to give an offered alternative. A word in ordinary prose does not add a day. The signed booking test checks the exact selected times before and after a clarification.
+A complete direct list can name offered days with consecutive or joined abbreviations. A refusal after a single abbreviated day refuses that day, so a leading “either” cannot turn it into a yes for every offered time. A day with several offered times needs a precise choice. A day without an offered time keeps the list open unless the member used “or” to give an offered alternative. A word in ordinary prose does not add a day. The signed booking test checks the exact selected times before and after a clarification.
 
 The same declined action covers a standalone “afraid not,” “not a chance,” or
 “no chance.” A qualified use of those words stays in the unresolved action.
@@ -146,6 +146,7 @@ module opportunity {
     revealSent: Set[str], wasTold: Set[str], silent: Set[str], expiredSilent: Set[str],
     released: Set[str], cancelHeard: Set[str], droppedBy: Set[str], noShowCount: str -> int,
     noShowCounted: Set[str], noticeRefused: Set[str],
+    learnedAttendanceAt: str -> int,
     everTerminal: bool,
     // The queue state of the probe and of the reveal to each member: "" (none), pending, held, delivered, refused.
     probeQ: str -> str, revealQ: str -> str, probeAcceptedAt: str -> int
@@ -188,7 +189,7 @@ module opportunity {
     accepted: strMap(""), withdrawn: Set(), saidNo: Set(), cancelAsked: Set(),
     revealSent: Set(), wasTold: Set(), silent: Set(), expiredSilent: Set(),
     released: Set(), cancelHeard: Set(), droppedBy: Set(), noShowCount: zeroMap(0),
-    noShowCounted: Set(), noticeRefused: Set(),
+    noShowCounted: Set(), noticeRefused: Set(), learnedAttendanceAt: zeroMap(-1),
     everTerminal: false, probeQ: strMap(""), revealQ: strMap(""), probeAcceptedAt: zeroMap(-1)
   }
 
@@ -675,8 +676,13 @@ module opportunity {
     // N:2823-2826: a reported no-show who did not answer counts once here, and is marked counted (SD-328).
     val counted = going.select(p => not(present(p)) and not(said(p)) and reported(p))
     val nsc = counted.foldl(x.noShowCount, (acc, p) => acc.set(p, acc.get(p) + 1))
+    // Project the Friends plan's contribution per opportunity. A delivered reveal represents the
+    // exact current booking receipt here. The production member history also retains RSVP evidence.
+    val learned = if (o == "o1") going.select(p => present(p) and x.revealQ.get(p) == "delivered") else List()
+    val learnedAt = learned.foldl(x.learnedAttendanceAt, (acc, p) => acc.set(p, x.meetingAt))
     val s1 = putO(s, o, { ...x, finalized: true, noShowCount: nsc,
-                          noShowCounted: counted.foldl(x.noShowCounted, (acc, p) => acc.union(Set(p))) })
+                          noShowCounted: counted.foldl(x.noShowCounted, (acc, p) => acc.union(Set(p))),
+                          learnedAttendanceAt: learnedAt })
     if (x.requester != "" and present(x.requester) and going.select(p => p != x.requester and present(p)).length() > 0
         and s1.req.outcome != "fulfilled") { ...s1, req: { ...s1.req, outcome: "fulfilled" } }
     else s1
@@ -1122,6 +1128,13 @@ module opportunity {
   // it counted, and a late self no-show answer does not count them again.
   val noShowOnce = OPPS.forall(o => MEMBERS.forall(m => op(s, o).noShowCount.get(m) <= 1))
 
+  // spec/meetingSettlement.md, "A settled Friends plan teaches the actual booked time".
+  val learnedAttendanceUsesBookedStart = OPPS.forall(o => {
+    val x = op(s, o)
+    MEMBERS.forall(p => x.learnedAttendanceAt.get(p) >= 0 implies
+      (o == "o1" and x.finalized and x.revealQ.get(p) == "delivered" and x.learnedAttendanceAt.get(p) == x.meetingAt))
+  })
+
   // N:2405-2408: everyone said yes, so the plan is booked and each member is told once. SD-146 was not
   // reproduced: with the clock constraint deferredInTime (the meeting time is in the member's send window),
   // a deferred reveal always reaches the member before the meeting.
@@ -1161,7 +1174,8 @@ module opportunity {
   val safety = idle implies and {
     reviewGate, decidedBeforeDeadline, namesAfterAllYes, counterIsNotYes, slotOwnerAlive, noLostAnswer,
     minorNever, stopWins, terminalStable, requestNotStuck, cancelReachesTold, partialAcceptReleased,
-    noShowOnce, bookedMembersTold, bookedSlotAlive, pauseNeedsUnansweredInvitations, slopIntroductionNeedsTwoReceipts, slotClarificationStaysOnProbe,
+    noShowOnce, learnedAttendanceUsesBookedStart, bookedMembersTold, bookedSlotAlive, pauseNeedsUnansweredInvitations,
+    slopIntroductionNeedsTwoReceipts, slotClarificationStaysOnProbe,
   }
 
   // ---------------------------------------------------------------- known open (not in safety)
@@ -1364,6 +1378,15 @@ module opportunity {
       .then(answer("a", "yes", ALL_OPEN)).then(settled)
       .then(probeSend("o1", "b", ALL_OPEN)).then(settled)
       .then(answer("b", "yes", { ...ALL_OPEN, lead: lead })).then(settled)
+
+  run attendedAvailabilityNeedsBookingTest =
+    bookO1(30).then(queueDecide("reveal", "o1", "a", "delivered")).then(settled)
+      .then(queueDecide("reveal", "o1", "b", "held")).then(settled)
+      .then(tick(31, ALL_OPEN)).then(settled).then(tick(6, ALL_OPEN)).then(settled)
+      .then(answer("a", "fb_good", ALL_OPEN)).then(settled)
+      .then(tick(96, ALL_OPEN)).then(settled)
+      .expect(op(s, "o1").finalized and op(s, "o1").learnedAttendanceAt.get("a") == op(s, "o1").meetingAt
+        and op(s, "o1").learnedAttendanceAt.get("b") == -1 and learnedAttendanceUsesBookedStart)
 
   // SD-139. When b cancels the booked request, the request waits again and a's booked slot ends.
   run requestStuckTest =

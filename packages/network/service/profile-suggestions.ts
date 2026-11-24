@@ -83,8 +83,10 @@ export class ProfileSuggestions {
       throw new Error("Suggestion authority expired during transaction");
   }
 
-  private async owned(tx: SQL, owner: SuggestionOwner) {
-    await tx`select set_config('app.app_id', ${owner.app}, true)`;
+  private async owned(tx: SQL, owner: SuggestionOwner, now?: number) {
+    const ageAt = this.fence?.now() ?? now;
+    await tx`select set_config('app.app_id', ${owner.app}, true),
+      set_config('app.age_as_of', ${ageAt !== undefined && Number.isSafeInteger(ageAt) ? new Date(ageAt).toISOString() : ''}, true)`;
     // Use the same person-first order as canonical leave/delete operations.
     await tx`select id from platform.people where id=${owner.personId} for update`;
     const member = await this.member(tx, owner);
@@ -98,13 +100,14 @@ export class ProfileSuggestions {
    * the person or member lock, so a caller reads this again after each Cloud call and before it writes.
    */
   private async member(tx: SQL, owner: SuggestionOwner) {
-    const rows = await tx`select n.id,(n.account_status='active' and not n.opted_out and n.age>=18 and p.lowest_age>=18
+    const rows = await tx`select n.id,(n.account_status='active' and not n.opted_out and n.age>=18 and p.lowest_age>=18 and ages.age>=18
       and m.state in ('active','onboarding') and m.review is null
       and not exists(select 1 from platform.bans b where b.person_id=p.id or b.phone_hash=p.phone_hash)
       and not exists(select 1 from platform.suppression s where s.phone_hash=p.phone_hash)
       and not exists(select 1 from platform.phone_identities ph where ph.person_id=p.id and ph.hold is not null)) as eligible
       from network.members n join platform.people p on p.id=n.person_id
       join platform.memberships m on m.person_id=p.id and m.app_id=n.app_id
+      join platform.matching_ages ages on ages.app_id=n.app_id and ages.member_id=n.id
       where n.app_id=${owner.app} and p.id=${owner.personId} and p.deleted_at is null
         and m.state<>'removed' for update of n, m`;
     // STOP is canonical in the consent ledger even when the member projection is late.
@@ -122,8 +125,8 @@ export class ProfileSuggestions {
     return rows[0] as { id: string; eligible: boolean } | undefined;
   }
 
-  private async batch(tx: SQL, owner: SuggestionOwner, id: string) {
-    const member = await this.owned(tx, owner);
+  private async batch(tx: SQL, owner: SuggestionOwner, id: string, now?: number) {
+    const member = await this.owned(tx, owner, now);
     if (!member) return undefined;
     const rows = await tx`select * from platform.profile_suggestion_batches where id=${id} and app_id=${owner.app}
       and person_id=${owner.personId} and member_id=${member.id} and user_id=${owner.userId}
@@ -193,7 +196,7 @@ export class ProfileSuggestions {
     if (claim && (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(claim.batchId)
       || !/^msg:(blooio|twilio):[^\r\n\u0000]{1,512}$/u.test(claim.turnId) || !/^[0-9a-f]{64}$/u.test(claim.requestSha256))) return null;
     return this.sql.begin(async tx => {
-      const member = await this.owned(tx, owner);
+      const member = await this.owned(tx, owner, now);
       let collection = stepSource(initialSource, { type: "startSourceCollection", eligible: !!member?.eligible, claimed: !!claim });
       if (!member || collection.phase === "SourceDenied") return null;
       // Verify stored explicit scope before consulting any source authorization.
@@ -276,7 +279,7 @@ export class ProfileSuggestions {
   async getPendingBatch(owner: SuggestionOwner, id: string, now: number): Promise<SuggestionReviewBatch | null> {
     if (!Number.isFinite(now)) return null;
     return this.sql.begin(async tx => {
-      const b = await this.batch(tx, owner, id);
+      const b = await this.batch(tx, owner, id, now);
       const value = b ? await this.view(tx, b, this.fence?.now() ?? now) : null;
       this.checkAuthority(value ? b : undefined);
       return value;
@@ -287,7 +290,7 @@ export class ProfileSuggestions {
     claim?: SuggestionReviewClaim): Promise<SuggestionDecisionResult> {
     if (!Number.isFinite(now)) return { kind: "denied" };
     return this.sql.begin(async tx => {
-      const b = await this.batch(tx, owner, input.batchId);
+      const b = await this.batch(tx, owner, input.batchId, now);
       const key = `profile-decide:${input.batchId}`;
       if (claim) {
         const turn = b && await this.reviewTurn(tx, owner, b.member_id, claim);

@@ -32,6 +32,7 @@ import { setTimeout as waitForMs } from "node:timers/promises";
 //  - Delete: the member deletes one photo (the rating is dropped, then made again from what is left);
 //    leaving the app or deleting everything deletes them all; a person whose lowest age drops under 18
 //    loses them all (deleteFor), and their rating with them.
+import { personAgeAt } from "./age.ts";
 import { fileAt } from "../../core/src/runtime/files.ts";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -382,6 +383,8 @@ export function photoStorageFromEnv(env: Record<string, string | undefined> = pr
 }
 
 // ------------------------------------------------------------------------------------ rows
+type PhotoAdmission = (tx?: SQL) => Promise<PhotoRefusal | undefined>;
+
 /**
  * A row with deleted_at set is not a photo: no read sees it. It marks bytes that are being written (a new
  * upload) or removed (a delete), and the sweep ends it when its step did not finish (a crash).
@@ -390,12 +393,12 @@ export interface PhotoStore {
   /** Insert the row hidden (deleted_at = createdAt), before the bytes are written. */
   put(r: PhotoRow): Promise<void>;
   /**
-   * Show a hidden row under the person's row lock, after `check` and the count limit in the same
+   * Show a hidden row under the person's row lock, after `admit` and the count limit in the same
    * transaction: two parallel uploads cannot both pass the limit, and a change to the person (an age
    * under 18, a leave, a failed age check) commits either before the check or before deleteFor hides the
    * rows. "not_found": the sweep ended the row first.
    */
-  show(r: PhotoRow, max: number, check: (tx?: SQL) => Promise<PhotoRefusal | undefined>): Promise<PhotoRefusal | undefined>;
+  show(r: PhotoRow, max: number, admit: PhotoAdmission): Promise<PhotoRefusal | undefined>;
   get(id: string): Promise<PhotoRow | undefined>;
   list(personId: string, app?: AppId): Promise<PhotoRow[]>;
   /** Hide one photo of the person on this app; undefined when there is none. */
@@ -412,12 +415,12 @@ export class MemoryPhotoStore implements PhotoStore {
   private live(personId: string, app?: AppId) { return [...this.rows.values()].filter(r => r.deletedAt === null && r.personId === personId && (!app || r.app === app)); }
   private static out({ deletedAt: _, ...r }: PhotoRow & { deletedAt: number | null }): PhotoRow { return r; }
   async put(r: PhotoRow) { this.rows.set(r.id, { ...r, deletedAt: r.createdAt }); }
-  async show(r: PhotoRow, max: number, check: () => Promise<PhotoRefusal | undefined>) {
-    const no = await check();
+  async show(r: PhotoRow, max: number, admit: PhotoAdmission): Promise<PhotoRefusal | undefined> {
+    const no = await admit();
     if (no) return no;
     const row = this.rows.get(r.id);
     if (!row || row.deletedAt === null) return "not_found" as const;
-    if (this.live(r.personId).length >= max) return "too_many" as const;
+    if (photoSlotsFull(this.live(r.personId).length) || this.live(r.personId).length >= max) return "too_many" as const;
     row.deletedAt = null;
     return undefined;
   }
@@ -444,13 +447,17 @@ export class PgPhotoStore implements PhotoStore {
     await this.sql`insert into platform.photos (id, person_id, app_id, storage_key, content_type, bytes, sha256, consent_version, created_at, deleted_at)
       values (${r.id}, ${r.personId}, ${r.app}, ${r.storageKey}, ${r.contentType}, ${r.bytes}, ${r.sha256}, ${r.consentVersion}, ${new Date(r.createdAt)}, ${new Date(r.createdAt)})`;
   }
-  async show(r: PhotoRow, max: number, check: (tx?: SQL) => Promise<PhotoRefusal | undefined>) {
+  async show(r: PhotoRow, max: number, admit: PhotoAdmission): Promise<PhotoRefusal | undefined> {
     return this.sql.begin(async tx => {
-      await tx`select id from platform.people where id = ${r.personId}::uuid for update`;
-      const no = await check(tx);
+      // Verified signup holds this same row lock through its eligibility write and photo cleanup.
+      const [person] = await tx`select id from platform.people where id=${r.personId}::uuid and deleted_at is null for update`;
+      if (!person) return "adults_only";
+      await tx`select set_config('app.app_id', ${r.app}, true),
+        set_config('app.age_as_of', ${new Date(r.createdAt).toISOString()}, true)`;
+      const no = await admit(tx);
       if (no) return no;
-      const [c] = await tx`select count(*)::int as n from platform.photos where person_id = ${r.personId}::uuid and deleted_at is null`;
-      if (c.n >= max) return "too_many" as const;
+      const [c] = await tx<{ n: number }[]>`select count(*)::int as n from platform.photos where person_id = ${r.personId}::uuid and deleted_at is null`;
+      if (photoSlotsFull(c.n) || c.n >= max) return "too_many" as const;
       const shown = await tx`update platform.photos set deleted_at = null where id = ${r.id} and deleted_at is not null returning id`;
       return shown.length ? undefined : "not_found" as const;
     });
@@ -525,8 +532,9 @@ export class PhotoService {
 
   /** An adult on this app: lowest age 18+ (an unknown age fails) and the app's own check (slop: no failed staff age check). */
   async adult(personId: string, app: AppId, tx?: SQL): Promise<PhotoRefusal | undefined> {
-    const p = await (tx ? new PgPeopleStore(tx) : this.o.people).getPerson(personId);
-    if (!p || p.deletedAt !== null || !canBeMatched(p.lowestAge)) return "adults_only";
+    const store = tx ? new PgPeopleStore(tx) : this.o.people;
+    const p = await store.getPerson(personId);
+    if (!p || p.deletedAt !== null || !canBeMatched(await personAgeAt(store, p, this.now()))) return "adults_only";
     if (!(await (this.o.eligible?.(personId, app, tx) ?? Promise.resolve(false)))) return "not_verified";
     return undefined;
   }
@@ -617,7 +625,8 @@ export class PhotoService {
     const who = await this.ratingRefusal(personId, app);
     let attempt = stepRating(ratingInitial, { type: "screenSubject", eligible: who === undefined });
     if (!canSupplyPhotos(attempt)) return { rated: false, refused: who };
-    const age = (await this.o.people.getPerson(personId))?.lowestAge;
+    const person = await this.o.people.getPerson(personId);
+    const age = person && await personAgeAt(this.o.people, person, this.now());
     if (age == null || !canBeMatched(age)) return { rated: false, refused: "adults_only" };
     const subject: RatingSubject = { age, ageVerified: true };
     const rows = ratingRows(await this.o.meta.list(personId, app));

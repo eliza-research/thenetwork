@@ -242,7 +242,7 @@ pure def lawOnlyConsentPagesNameAClient(view: AuthView, clientNamed: bool): bool
 
 ### A verified person can choose a separate signup step during connector authorization
 
-The ordinary consent page offers "Finish signup" only when the server confirms signup is available for this request. The choice opens a transient same-site form. The person enters their first name, age and home city, supplies an invitation when they have one or the app requires it, and accepts the app's current text-message consent. The form includes that consent version and the browser's signup proof. It does not ask for a phone number or code. A person can return to connector consent without submitting signup fields. A successful signup returns to the separate connector consent page with a signup confirmation. Only the ordinary "Allow" action grants assistant access.
+The ordinary consent page offers "Finish signup" only when the server confirms signup is available for this request. The choice opens a transient same-site form. The person enters their first name, birthday and home city, supplies an invitation when they have one or the app requires it, and accepts the app's current text-message consent. The form includes that consent version and the browser's signup proof. It does not ask for a phone number or code. A person can return to connector consent without submitting signup fields. A successful signup returns to the separate connector consent page with a signup confirmation. Only the ordinary "Allow" action grants assistant access.
 
 ```quint
 pure def offersSignupConfirmation(view: AuthView, signupAvailable: bool): bool =
@@ -256,6 +256,111 @@ pure def lawConsentRetryHasNoSignup(signupAvailable: bool): bool =
 
 pure def lawSignupNoticeRequiresSave(view: AuthView): bool =
   not(showsSignupConfirmation(view, false))
+```
+
+### The signup form takes the birthday and counts the age on the Clock date
+
+The signup form asks for the birthday (the label is "Birthday"), not for the age. The person types it in the browser as a date (`yyyy-mm-dd`). The form never shows a birthday before the person types it, and it never shows the sent birthday again after the server refuses the form. A hint below the field tells the person that a member under 18 is never matched for dates or for work and that today nobody under 18 is introduced to anyone. It also tells the person that friendship is the only kind of introduction that can open to people under 18, only with people within 2 years of their own age. The hint does not promise an introduction.
+
+The handler takes the year, the month and the day from the sent text, and it takes the date of today from the platform Clock. The date of today is the calendar date in the latest time zone (UTC-12), so the form never counts a person older than the calendar where the person is. The birthday is refused with an error on the birthday field when the date is missing, when the text is not `yyyy-mm-dd`, when the date does not exist (such as February 30, or February 29 in a year that is not a leap year), when the date is after today, or when the age on today's date is more than 120. The age on a date is the number of full years since the birthday: before the birthday of this year, it is one year less than the difference of the years. A person born on February 29 becomes one year older on March 1 in a year that is not a leap year. The handler gives that age to the join step. When the effective age is below 13, the join step refuses enrollment and retains the numeric age under the existing [site enrollment rule](siteEnrollment.md#the-effective-age-controls-the-result-of-a-new-or-repeated-join). The refusal stores no membership, submitted profile details, birthday or private eligibility date. For a member who is 13 through 17, the handler gives the join step the initial age and the private date they will turn 18 at the start of the UTC-12 day. The join step never stores the typed birthday. A February 29 birthday reaches adult eligibility on March 1 when the eighteenth year is not a leap year.
+
+```quint
+type CalendarDate = { year: int, month: int, day: int }
+
+pure def isLeapYear(year: int): bool =
+  year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+
+pure def daysInMonth(year: int, month: int): int =
+  if (month == 2) (if (isLeapYear(year)) 29 else 28)
+  else if (month == 4 or month == 6 or month == 9 or month == 11) 30
+  else 31
+
+pure def calendarDateExists(date: CalendarDate): bool =
+  date.year >= 1 and date.year <= 9999 and date.month >= 1 and date.month <= 12 and date.day >= 1 and date.day <= daysInMonth(date.year, date.month)
+
+pure def dateBefore(first: CalendarDate, second: CalendarDate): bool =
+  first.year < second.year or (first.year == second.year and (first.month < second.month or (first.month == second.month and first.day < second.day)))
+
+pure def birthdayNotYetThisYear(birth: CalendarDate, today: CalendarDate): bool =
+  today.month < birth.month or (today.month == birth.month and today.day < birth.day)
+
+pure def ageOnDate(birth: CalendarDate, today: CalendarDate): int =
+  today.year - birth.year - (if (birthdayNotYetThisYear(birth, today)) 1 else 0)
+
+pure def birthdateAccepted(birth: CalendarDate, today: CalendarDate): bool =
+  calendarDateExists(birth) and calendarDateExists(today) and not(dateBefore(today, birth)) and ageOnDate(birth, today) <= 120
+
+pure def signupClockDay(ms: int): int =
+  if (ms >= 43200000) (ms - 43200000) / 86400000 else 0
+
+pure def calendarDateOfDay(epochDay: int): CalendarDate =
+  val z = (if (epochDay >= 0) epochDay else 0) + 719468
+  val era = z / 146097
+  val doe = z - era * 146097
+  val yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+  val doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+  val mp = (5 * doy + 2) / 153
+  val month = if (mp < 10) mp + 3 else mp - 9
+  { year: yoe + era * 400 + (if (month <= 2) 1 else 0), month: month, day: doy - (153 * mp + 2) / 5 + 1 }
+
+pure def signupAdultDate(birth: CalendarDate): CalendarDate =
+  val year = birth.year + 18
+  if (birth.month == 2 and birth.day == 29 and not(isLeapYear(year)))
+    { year: year, month: 3, day: 1 }
+  else { year: year, month: birth.month, day: birth.day }
+
+pure def lawAdultSignupDateCountsEighteen(birth: CalendarDate): bool =
+  calendarDateExists(birth) implies ageOnDate(birth, signupAdultDate(birth)) == 18
+
+pure def lawBirthdayNotYetGivesOneYearLess(birth: CalendarDate, today: CalendarDate): bool =
+  birthdayNotYetThisYear(birth, today) implies ageOnDate(birth, today) == today.year - birth.year - 1
+
+pure def lawBirthdayReachedGivesFullYears(birth: CalendarDate, today: CalendarDate): bool =
+  not(birthdayNotYetThisYear(birth, today)) implies ageOnDate(birth, today) == today.year - birth.year
+
+pure def lawFutureBirthdateRefused(birth: CalendarDate, today: CalendarDate): bool =
+  dateBefore(today, birth) implies not(birthdateAccepted(birth, today))
+
+pure def lawImpossibleBirthdateRefused(birth: CalendarDate, today: CalendarDate): bool =
+  not(calendarDateExists(birth)) implies not(birthdateAccepted(birth, today))
+
+pure def lawAcceptedAgeIsBetweenZeroAnd120(birth: CalendarDate, today: CalendarDate): bool =
+  birthdateAccepted(birth, today) implies (ageOnDate(birth, today) >= 0 and ageOnDate(birth, today) <= 120)
+
+pure def lawLeapDayOnlyInLeapYears(year: int): bool =
+  (year >= 1 and year <= 9999) implies (calendarDateExists({ year: year, month: 2, day: 29 }) iff isLeapYear(year))
+
+pure def lawLeapDayBirthdayCountsFromMarchFirst(year: int): bool =
+  ageOnDate({ year: year, month: 2, day: 29 }, { year: year + 1, month: 2, day: 28 }) == 0 and
+  ageOnDate({ year: year, month: 2, day: 29 }, { year: year + 1, month: 3, day: 1 }) == 1
+
+pure val birthValues = Set(
+  { year: 2010, month: 6, day: 15 },
+  { year: 2012, month: 2, day: 29 },
+  { year: 2013, month: 2, day: 29 },
+  { year: 2013, month: 11, day: 23 },
+  { year: 2026, month: 12, day: 1 },
+  { year: 1900, month: 1, day: 1 },
+  { year: 2000, month: 4, day: 31 },
+  { year: 2000, month: 13, day: 1 })
+
+pure val todayValues = Set(
+  { year: 2026, month: 11, day: 22 },
+  { year: 2026, month: 2, day: 28 },
+  { year: 2025, month: 3, day: 1 },
+  { year: 2024, month: 2, day: 29 })
+
+pure val yearValues = Set(1900, 2000, 2023, 2024, 2100)
+
+pure val epochDayValues = Set(0, 59, 11016, 20414)
+
+pure val msValues = Set(0, 43199999, 43200000, 1763812800000)
+
+pure val dateValues = birthValues
+
+pure val firstValues = birthValues
+
+pure val secondValues = todayValues
 ```
 
 ### Each scope shows as one short sentence, never as its scope name

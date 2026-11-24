@@ -4,6 +4,7 @@
 import { canBeMatched, validAge } from "../../core/src/policy.ts";
 import { lowerAge } from "../../core/src/generated/memberAge.ts";
 import type { AppInfo } from "./apps.ts";
+import type { PeopleStore, Person } from "./store.ts";
 
 /** The lowest valid age of the ones given (undefined if none is valid). Unknown never raises an age. */
 export function lowestAge(...ages: unknown[]): number | undefined {
@@ -15,6 +16,11 @@ export function lowestAge(...ages: unknown[]): number | undefined {
     lowest = lowest === undefined || Object.is(age, -0) ? age : lowerAge(lowest, age);
   }
   return lowest;
+}
+
+/** Resolve only the effective age. The private eligibility date stays inside the store. */
+export async function personAgeAt(store: Pick<PeopleStore, "signupAgeAt">, person: Person, now: number): Promise<number | undefined> {
+  return lowestAge(person.lowestAge, await store.signupAgeAt(person.id, now));
 }
 
 /** True if a person of this age may join the app. Missing or invalid ages fail closed. */

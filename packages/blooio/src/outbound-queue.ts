@@ -555,7 +555,8 @@ export class OutboundQueue {
     }
     if (agent && !notice) {
       const member = row.memberId ? await this.sql.begin(async tx => {
-        await tx`select set_config('app.app_id',${row.app},true)`;
+        await tx`select set_config('app.app_id',${row.app},true),
+          set_config('app.age_as_of',${new Date(now).toISOString()},true)`;
         return this.memberDeliverySettings(tx, row);
       }) : undefined;
       const timing = this.quietTiming(row, member, now);
@@ -639,7 +640,8 @@ export class OutboundQueue {
     // Admit only the current canonical member and immutable payload, after the async gates.
     // Erasure and admission share the person/member row fences. No remote I/O holds these locks.
     const admission = await this.sql.begin(async tx => {
-      await tx`select set_config('app.app_id',${this.app},true)`;
+      await tx`select set_config('app.app_id',${this.app},true),
+        set_config('app.age_as_of',${new Date(this.now).toISOString()},true)`;
       if (await this.o.checks.lockAdmission?.(row, tx) === false) return "stale_view";
       let member: MemberDeliverySettings | undefined;
       if (row.memberId) {

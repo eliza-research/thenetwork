@@ -858,6 +858,7 @@ const DAY_NAMES = [
   ["Thursday", "thu|thur|thurs"], ["Friday", "fri"], ["Saturday", "sat"],
 ] as const;
 const DAY_ABBR_CONTEXT = String.raw`(?=\.?(?:\s*(?:\d|@|at\b|or\b|and\b|too\b|&|\/|works?\b|`
+  + String.raw`doesn'?t\b|does not\b|don'?t\b|do not\b|won'?t\b|will not\b|can'?t\b|cannot\b|wouldn'?t\b|would not\b|isn'?t\b|is not\b|aren'?t\b|are not\b|is bad\b|`
   + String.raw`is (?:good|fine|great|best|better)\b|morning|afternoon|evening|night|eve\b)|\s*[,;!?.]|\s*$))`;
 const DAY_WORDS: [RegExp, string][] = DAY_NAMES.map(([label, abbreviation]) => [
   new RegExp(String.raw`\b${label.toLowerCase()}s?\b|(?<!')\b(?:${abbreviation})\b${DAY_ABBR_CONTEXT}`, "g"), label,
@@ -1450,9 +1451,15 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   for (const [re] of DAY_WORDS) residue = residue.replace(re, " ");
   residue = residue.replace(PROBE_DAY_GROUP, " ");
   residue = residue.replace(/\b\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b|\b(?:the|one|option|or|and|either|works?|please|pls|lol|at|on|in the|morning|evening|afternoon|night|[abc])\b|[\W_]+/g, " ").trim();
-  const addsChoice = /\b(?:also|too|as\s+well)\b/.test(residue)
-    && !residue.replace(/\b(?:also|too|as\s+well|first|second|third|last)\b/g, "").trim();
-  if ((unbound ? addsChoice : !residue) && !/\?/.test(t)) for (const k of pos) strong.add(k);
+  // A ", Day too" joins the named day when the reply also says yes in words ("Saturday is best,
+  // Sunday too" books both): the affirmation must not hide the "too" the way "works" already does
+  // not. A bare list ("Saturday, Sunday too") and "work" alone ("Saturday work, Sunday too") stay
+  // unclear: no affirmation was said, so nothing firms the extra day up. (The residue above has
+  // already lost apostrophes, so "i'm" arrives as "i m"; part words need their plurals too.)
+  const affirmedResidue = residue.replace(/\b(?:best|better|good|fine|great|perfect|free|open|okay|is|are|i m|i am|i can|we re|we are|we can|im|for me|work best|work for (?:me|us)|does work|mornings?|afternoons?|evenings?|nights?)\b/g, " ").trim();
+  const addsChoice = /\b(?:also|too|as\s+well)\b/.test(affirmedResidue)
+    && !affirmedResidue.replace(/\b(?:also|too|as\s+well|first|second|third|last)\b/g, "").trim();
+  if (((unbound ? addsChoice : !residue) || (addsChoice && affirmedResidue !== residue)) && !/\?/.test(t)) for (const k of pos) strong.add(k);
   const isPicked = (key: string) => !namedExcluded.has(key) && pos.has(key)
     && (!neg.has(key) || !explicitTimesOnly && (!grouped.has(key) || individual.has(key)));
   const picked = all.filter(isPicked);

@@ -369,3 +369,23 @@
 {"text":"each day but Saturday works","label":"yes","keys":["a","c"]}
 {"text":"whatever but Saturday works","label":"yes","keys":["a","c"]}
 {"text":"any other time but Saturday works","label":"yes","keys":["a","c"]}
+{"text":"Saturday is best, Sunday too","label":"yes","keys":["b","c"]}
+{"text":"Saturdays are best, Sunday too","label":"yes","keys":["b","c"]}
+{"text":"Thursdays are best, Saturday too","label":"yes","keys":["a","b"]}
+{"text":"Thursday is best, Saturday too","label":"yes","keys":["a","b"]}
+{"text":"Saturdays work for me, Sunday too","label":"yes","keys":["b","c"]}
+{"text":"weekdays are best, Saturday too","label":"yes","keys":["a","b"]}
+{"text":"weekdays work for me, Saturday too","label":"yes","keys":["a","b"]}
+{"text":"weekends are best, Thursday too","label":"yes","keys":["a","b","c"]}
+{"text":"weekend mornings are best, Sunday too","label":"yes","keys":["b","c"]}
+{"text":"weekend mornings work for me, Sunday too","label":"yes","keys":["b","c"]}
+{"text":"Saturday mornings are best, Sunday too","label":"yes","keys":["b","c"]}
+{"text":"weekday mornings are best, Saturday too","label":"yes","keys":["b"]}
+{"text":"weekday mornings work for me, Saturday too","label":"yes","keys":["b"]}
+{"text":"we are free on weekdays, Saturday too","label":"yes","keys":["a","b"]}
+{"text":"we're free on weekdays, Saturday too","label":"yes","keys":["a","b"]}
+{"text":"im free weekdays, Saturday too","label":"yes","keys":["a","b"]}
+{"text":"Saturday is best, Sunday also","label":"yes","keys":["b","c"]}
+{"text":"Saturday is best, Sunday as well","label":"yes","keys":["b","c"]}
+{"text":"weekdays are best, Saturday also","label":"yes","keys":["a","b"]}
+{"text":"weekend mornings work, Sunday too","label":"yes","keys":["b","c"]}

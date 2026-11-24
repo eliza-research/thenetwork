@@ -1009,6 +1009,14 @@ test("membership context refuses bans, holds and minors and caps proof at parent
     await sql`update platform.people set lowest_age=17 where id=${owner.personId}`;
     expect((await t.http.context(t.input)).status).toBe(403);
     await sql`update platform.people set lowest_age=30 where id=${owner.personId}`;
+    const people = new PgPeopleStore(sql);
+    const membership = await people.getMembership(owner.personId, owner.app);
+    if (!membership) throw new Error("Expected the verified profile fixture membership");
+    expect(await people.saveSignupAge(membership, "+12125550100", "fixture-phone-hash", { initialMinorAge: 17, eligibleAt: now + 1 })).toBe(true);
+    expect((await t.http.context(t.input)).status).toBe(403);
+    expect(await store.propose(owner, input(), now)).toBeNull();
+    expect(await store.propose(owner, input(), now + 1)).toMatchObject({ status: "pending" });
+    await sql`delete from platform.signup_eligibility where person_id=${owner.personId}`;
     await sql`update platform.inbound set arrived_at=${new Date(now - 299_000)} where id='msg:blooio:consent-identity'`;
     expect((await t.http.context(t.input)).body.expiresAt).toBe(now+1000);
     await sql`update platform.inbound set arrived_at=${new Date(now)} where id='msg:blooio:consent-identity'`;

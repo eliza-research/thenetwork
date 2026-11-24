@@ -246,9 +246,13 @@
         "f5c1fe3a636f"
       ],
       "Story: Decide what my assistant can do / A verified person can choose a separate signup step during connector authorization": [
-        "7e6425e5d863",
+        "94a7953e6a58",
         "6305315b4fb7",
         "f5c1fe3a636f"
+      ],
+      "Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date": [
+        "e1e008fbdaf2",
+        "eb1f67c7cd2d"
       ],
       "Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name": [
         "59e494fbf1fc",
@@ -1589,6 +1593,11 @@
       "Story: Take part in adult matching / An older age cannot raise the effective age": [
         "2b2c9f15150b",
         "9714416e6acb"
+      ],
+      "Story: Take part in adult matching / A private signup date can end a birthday-only minor restriction": [
+        "393c2283fcdc",
+        "f056f980d0c2",
+        "6267e4795d27"
       ]
     },
     "spec/contributionHistory.md": {
@@ -2525,6 +2534,11 @@
       "Story: Ask for feedback and close attendance once / Classify each attendee from the available reports": [
         "74622798e98d",
         "b7ff8dd704bc"
+      ],
+      "Story: Ask for feedback and close attendance once / A settled Friends plan teaches the actual booked time": [
+        "bb5620df5580",
+        "0963dce3d3fa",
+        "7c61c23c3a21"
       ],
       "Story: Ask for feedback and close attendance once / A host's check-in uses the host's response": [
         "d7937a28aff4",

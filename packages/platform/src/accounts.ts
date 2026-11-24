@@ -35,7 +35,7 @@ import { InvitationUnavailable, type ReferralJoin } from "./invite-links.ts";
 import type { SeedInvitationReferral } from "./seed-invitations.ts";
 import { keyedHash } from "./phone.ts";
 import { signupAccountView } from "./sessions.ts";
-import type { AppLeaveInput, Membership, PeopleStore, Person, PhoneIdentity, PhoneMethod, RecordedMemberAge } from "./store.ts";
+import type { AppLeaveInput, Membership, PeopleStore, Person, PhoneIdentity, PhoneMethod, RecordedMemberAge, SignupAge } from "./store.ts";
 
 export const RECYCLED_AFTER_MS = 365 * 24 * 3_600_000;
 /** A started number change must be confirmed with the code from the new number within this time. */
@@ -152,7 +152,7 @@ export function joinProfileText(input: Pick<JoinInput, "about" | "neighborhood" 
 
 export type EnrollmentReferral = ReferralJoin | SeedInvitationReferral;
 
-export interface JoinHookContext { app: AppInfo; person: Person; membership: Membership; e164: string; age: number; input: JoinInput; referral?: EnrollmentReferral }
+export interface JoinHookContext { app: AppInfo; person: Person; membership: Membership; e164: string; age: number; recordedAge: number | null; input: JoinInput; signupAge?: SignupAge; referral?: EnrollmentReferral; session?: string | null }
 export interface MemberHookContext { app: AppInfo; personId: string; memberId: string; e164: string }
 type MemberForgetReason = "leave" | "account_erasure" | "phone_reassignment";
 
@@ -161,6 +161,8 @@ export interface AccountHooks {
   findInvitation?(app: AppId, token: string, at: number, verifiedPhone: string): Promise<EnrollmentReferral | undefined>;
   /** Commit the referred membership, opt-in, session attachment, Network member and invitation together. */
   commitReferredJoin?(ctx: JoinHookContext & { referral: EnrollmentReferral }): Promise<void>;
+  /** Commit a browser minor's membership, Network member and private eligibility together. */
+  commitBrowserSignup?(ctx: JoinHookContext & { signupAge: SignupAge }, consent: ConsentEvent): Promise<void>;
   /** Create the network member (the service mounts this). A throw undoes the join. */
   onJoin?(ctx: JoinHookContext): Promise<void> | void;
   /** STOP from the web. memberId is this app's member, when there is one (a global stop runs without one). */
@@ -354,17 +356,25 @@ export class Accounts {
     return { ok: true, e164: newE164, personId: person.id };
   }
 
-  /** The age a join states: the typed age, or a lower one that the profile text states about the person. */
-  private statedJoinAge(input: JoinInput): number {
+  /** The age stated in the approved profile is independent of any browser date. */
+  private profileJoinAge(input: JoinInput): number | undefined {
     const text = joinProfileText(input);
-    const ages = text ? (this.hooks.profileAges?.(text) ?? []).filter(validAge) : [];
-    // spec/siteEnrollment.md, "The approved profile reaches onboarding and its stated age counts"
-    return ages.reduce((age, stated) => profileJoinAge(age, stated, true), input.age);
+    return text ? lowestAge(...(this.hooks.profileAges?.(text) ?? [])) : undefined;
   }
 
-  /** The lowest age known for this phone: the person's (any app) and the phone's age floor. */
+  /** The lowest usable age known for this phone and its verified person. */
   async lowestAge(e164: string, person?: Person): Promise<number | undefined> {
-    return lowestAge(person?.lowestAge ?? undefined, await this.store.ageFloor(this.phoneHash(e164)));
+    return (await this.knownAges(e164, person)).effective;
+  }
+
+  /** A private signup age can restrict eligibility without becoming a durable age observation. */
+  async knownAges(e164: string, person?: Person) {
+    const [signupAge, floor] = await Promise.all([
+      person && this.store.signupAgeAt(person.id, this.now()),
+      this.store.ageFloor(this.phoneHash(e164)),
+    ]);
+    const independent = lowestAge(person?.lowestAge, floor);
+    return { effective: lowestAge(independent, signupAge), independent };
   }
 
   /** Record a stated age: the phone's age floor and the person (if any) keep the lowest. Every app's member follows a lower age. */
@@ -450,15 +460,15 @@ export class Accounts {
     return m;
   }
 
-  async join(app: AppInfo, who: Who, input: JoinInput, enrollment: Enrollment = typedJoinEntry, inviteToken?: string, signupView?: string): Promise<{ ok: true; membership: Membership; created: boolean } | { ok: false; error: JoinError }> {
+  async join(app: AppInfo, who: Who, input: JoinInput, enrollment: Enrollment = typedJoinEntry, inviteToken?: string, signupView?: string, signupAge?: SignupAge): Promise<{ ok: true; membership: Membership; created: boolean } | { ok: false; error: JoinError }> {
     if (enrollment.phase !== "AwaitingConsent") return { ok: false, error: "invalid" };
     const consent = stepEnrollment(enrollment, { type: "confirmConsent", consentMatches: consentMatches(app, input.consent) });
     if (consent.phase !== "AwaitingEligibility") return { ok: false, error: "consent_wording" };
     // One join per phone at a time: parallel requests see the first one's person and membership.
-    return this.store.withLock(`join:${who.e164}`, () => this.joinLocked(app, who, input, consent, inviteToken, signupView));
+    return this.store.withLock(`join:${who.e164}`, () => this.joinLocked(app, who, input, consent, inviteToken, signupView, signupAge));
   }
 
-  private async joinLocked(app: AppInfo, who: Who, input: JoinInput, consent: Enrollment, inviteToken?: string, signupView?: string): Promise<{ ok: true; membership: Membership; created: boolean } | { ok: false; error: JoinError }> {
+  private async joinLocked(app: AppInfo, who: Who, input: JoinInput, consent: Enrollment, inviteToken?: string, signupView?: string, signupAge?: SignupAge): Promise<{ ok: true; membership: Membership; created: boolean } | { ok: false; error: JoinError }> {
     const at = this.now();
     const held = (await this.seen(who.e164)) === "held";
     let person = held ? undefined : await this.personFor(who.e164);
@@ -481,10 +491,13 @@ export class Accounts {
       },
     });
     if (membershipCheck.phase === "NeedsInvite") return { ok: false, error: "invite_only" };
-    const statedAge = this.statedJoinAge(input);
+    const profileAge = this.profileJoinAge(input);
+    const statedAge = profileJoinAge(input.age, profileAge ?? input.age, profileAge !== undefined);
+    const recordedAge = signupAge ? profileAge : statedAge;
     // A repeated join propagates a lower age and keeps the membership and consent.
-    if (membershipCheck.rejoin) await this.recordAge(who.e164, person, statedAge);
-    const age = joinAgeCheck(statedAge, await this.lowestAge(who.e164, person), app);
+    if (membershipCheck.rejoin && recordedAge !== undefined) await this.recordAge(who.e164, person, recordedAge);
+    const known = await this.knownAges(who.e164, person);
+    const age = joinAgeCheck(statedAge, known.effective, app);
     const ageCheck = stepEnrollment(membershipCheck, { type: "checkJoinAge", ageEligible: age.ok });
     if (ageCheck.phase === "BelowJoinAge") {
       // Nothing is stored for this app: only the age, on the phone's age floor (and the person, if any).
@@ -500,8 +513,8 @@ export class Accounts {
     }
     if (ageCheck.phase === "InvalidInvitation") return { ok: false, error: "invalid_invitation" };
     if (ageCheck.phase !== "AwaitingPersistence") return { ok: false, error: "invalid" };
-    if (!person) person = await this.createPerson(who.e164, "otp_sms", age.effective ?? statedAge, who.session ?? null);
-    await this.recordAge(who.e164, person, statedAge);
+    if (!person) person = await this.createPerson(who.e164, "otp_sms", signupAge ? recordedAge ?? null : age.effective ?? statedAge, who.session ?? null);
+    if (recordedAge !== undefined) await this.recordAge(who.e164, person, recordedAge);
     const membership: Membership = {
       // An invited membership keeps its member id (the invite may already name it).
       app: app.id, personId: person.id, memberId: membershipCheck.invited && existing ? existing.memberId : `${app.id}_${randomUUID()}`,
@@ -511,37 +524,44 @@ export class Accounts {
       joinedAt: at, leftAt: null,
     };
     const referredJoin = ageCheck.referred && referral;
-    const suppressed = !referredJoin && await this.store.isSuppressed(this.phoneHash(who.e164));
-    if (!referredJoin) {
-      const consent = { e164: who.e164, app: app.id, state: "opted_in" as const, source: "web_form", wording: app.consent.text, wordingVersion: app.consent.version, at };
-      if (!await this.store.admitMembership(membership, consent, this.phoneHash(who.e164), who.session ?? null)) return { ok: false, error: "review" };
-    } else {
+    const commitBrowserSignup = signupAge && this.hooks.commitBrowserSignup;
+    const phoneHash = this.phoneHash(who.e164);
+    const suppressed = !referredJoin && !commitBrowserSignup && await this.store.isSuppressed(phoneHash);
+    const optIn: ConsentEvent = { e164: who.e164, app: app.id, state: "opted_in", source: "web_form", wording: app.consent.text, wordingVersion: app.consent.version, at };
+    if (!referredJoin && !commitBrowserSignup) {
+      if (!await this.store.admitMembership(membership, optIn, phoneHash, who.session ?? null)) return { ok: false, error: "review" };
+    } else if (referredJoin) {
       await this.store.bindSessions(who.e164, person.id, who.session ?? null, at);
     }
     let hook: { ok: true } | { ok: false; error: unknown };
     try {
-      // The network member gets the person's lowest age, not the one typed now (a minor anywhere is a minor here).
-      const ctx = { app, person, membership, e164: who.e164, age: age.effective ?? statedAge, input };
+      const ctx = {
+        app, person, membership, e164: who.e164, age: age.effective ?? statedAge,
+        recordedAge: signupAge ? null : lowestAge(recordedAge, known.independent) ?? null, input, signupAge, session: who.session ?? null,
+      };
       if (referredJoin) await this.hooks.commitReferredJoin!({ ...ctx, referral: referredJoin });
-      else await this.hooks.onJoin?.(ctx);
+      else if (signupAge && commitBrowserSignup) await commitBrowserSignup({ ...ctx, signupAge }, optIn);
+      else {
+        await this.hooks.onJoin?.(ctx);
+        if (signupAge && !await this.store.saveSignupAge(membership, who.e164, phoneHash, signupAge)) throw new JoinReviewRequired();
+      }
       hook = { ok: true };
     } catch (e) {
       hook = { ok: false, error: e };
     }
     const result = stepEnrollment(ageCheck, { type: "finishJoin", hookSucceeded: hook.ok });
     if (result.phase === "JoinHookFailed" && !hook.ok) {
-      if (hook.error instanceof JoinReviewRequired) return { ok: false, error: "review" };
-      if (referredJoin) {
-        if (hook.error instanceof InvitationUnavailable) return { ok: false, error: "invalid_invitation" };
-      } else {
+      if (!referredJoin && !commitBrowserSignup && (signupAge || !(hook.error instanceof JoinReviewRequired))) {
         try {
           await this.hooks.onForget?.({ app, personId: person.id, memberId: membership.memberId, e164: who.e164 }, "leave");
         } finally {
           await this.store.forgetMembership(person.id, app.id, at, membership.memberId);
           await this.store.addConsent({ e164: who.e164, app: app.id, state: "opted_out", source: "join_failed", at });
-          if (suppressed) await this.store.suppress(this.phoneHash(who.e164), "deleted", at);
+          if (suppressed) await this.store.suppress(phoneHash, "deleted", at);
         }
       }
+      if (hook.error instanceof JoinReviewRequired) return { ok: false, error: "review" };
+      if (referredJoin && hook.error instanceof InvitationUnavailable) return { ok: false, error: "invalid_invitation" };
       throw hook.error;
     }
     if (result.phase !== "Created") return { ok: false, error: "invalid" };

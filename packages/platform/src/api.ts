@@ -225,7 +225,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   const log = o.log ?? (s => console.log(s));
   const accounts = new Accounts(o.store, {
     hashKey, now, env, apps: id => apps[id],
-    hooks: { findInvitation: o.findInvitation, commitReferredJoin: o.commitReferredJoin, onJoin: o.onJoin, onStop: o.onStop, onForget: o.onForget, onEraseAccount: o.onEraseAccount, onExport: o.onExport, onAgeLowered: o.onAgeLowered, profileAges: o.profileAges },
+    hooks: { findInvitation: o.findInvitation, commitReferredJoin: o.commitReferredJoin, commitBrowserSignup: o.commitBrowserSignup,
+      onJoin: o.onJoin, onStop: o.onStop, onForget: o.onForget, onEraseAccount: o.onEraseAccount, onExport: o.onExport, onAgeLowered: o.onAgeLowered, profileAges: o.profileAges },
   });
   const otp = new OtpService(o.store, o.otp, { hashKey, now, limits: o.otpLimits, log });
   const sessions = new SessionService(o.store, { now, secret: sessionSecret, phoneHash: e164 => accounts.phoneHash(e164) });

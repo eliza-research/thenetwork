@@ -126,12 +126,12 @@ import {
 } from "../../platform/src/invite-links.ts";
 import { SeedInvitations } from "../../platform/src/seed-invitations.ts";
 import { joinAgeCheck, lowestAge } from "../../platform/src/age.ts";
-import { detectKeyword as platformKeyword, keywordEvent, leaveTarget, resolveConsent, stopScope, type StopScope } from "../../platform/src/consent.ts";
+import { detectKeyword as platformKeyword, keywordEvent, leaveTarget, resolveConsent, stopScope, type ConsentEvent, type StopScope } from "../../platform/src/consent.ts";
 import { devShortcutsAllowed, isProduction, MIN_SECRET_LENGTH, platformEnv, type Env } from "../../platform/src/env.ts";
 import { keyedHash, maskPhone, normalizePhone, safeEqual } from "../../platform/src/phone.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
 import { confirmedUnderage, textUseAllowedAtAge } from "../../core/src/generated/memberAge.ts";
-import type { Membership, PeopleStore, PendingText, Person } from "../../platform/src/store.ts";
+import type { Membership, PeopleStore, PendingText, Person, SignupAge } from "../../platform/src/store.ts";
 import { createPublicApi, type HomeHelpVenueRequest, type MemberParticipation, type PublicApi, type PublicApiOptions } from "../../platform/src/api.ts";
 import { otpProviderFromEnv } from "../../platform/src/otp.ts";
 import { turnstileFromEnv } from "../../platform/src/turnstile.ts";
@@ -884,9 +884,10 @@ export class NetworkService implements RuntimeHost {
     const [last] = await rt.scoped(tx => tx`select max(at) as at from network.bias_reports where app_id = ${rt.app.id} and network_id = ${rt.id}`);
     if (!reportDue(last?.at)) return undefined;
     // The members of this network only (the homes it owns, as the snapshot reads them): its opps are this network's (SD-447).
-    const rows = await rt.scoped(tx => tx`select m.id, m.age, m.joined_at, coalesce(array_agg(t) filter (where t like 'appearance:%'), '{}') as tags
-      from network.members m left join network.facets f on f.app_id = m.app_id and f.member_id = m.id and f.status <> 'rejected' and ${automatedFacetPredicate(tx, true)} left join lateral unnest(f.tags) t on true
-      where m.app_id = ${rt.app.id} and m.home_city = any(${tx.array([...rt.cities], "TEXT")}) and m.account_status in ('active', 'paused', 'restricted') group by m.id, m.age, m.joined_at order by m.id`) as any[];
+    const rows = await rt.scoped(tx => tx`select m.id, a.age, m.joined_at, coalesce(array_agg(t) filter (where t like 'appearance:%'), '{}') as tags
+      from network.members m join platform.matching_ages a on a.app_id=m.app_id and a.member_id=m.id
+      left join network.facets f on f.app_id = m.app_id and f.member_id = m.id and f.status <> 'rejected' and ${automatedFacetPredicate(tx, true)} left join lateral unnest(f.tags) t on true
+      where m.app_id = ${rt.app.id} and m.home_city = any(${tx.array([...rt.cities], "TEXT")}) and m.account_status in ('active', 'paused', 'restricted') group by m.id, a.age, m.joined_at order by m.id`) as any[];
     const members: BiasMember[] = rows.map(r => ({ id: r.id, age: r.age, joinedAt: r.joined_at ? new Date(r.joined_at).getTime() : null, tags: r.tags ?? [] }));
     const opportunities = await rt.readState(n => [...n.opps.values()]);
     const r = biasReport(rt.id, rt.app.id, members, opportunities, now);
@@ -1244,7 +1245,7 @@ export class NetworkService implements RuntimeHost {
    * first name, age) and what the person gave at join (neighborhood, interests). The phone stays in
    * platform.phone_identities. Written with app.app_id set (migration 0004).
    */
-  async createMember(rt: NetworkRuntime, m: Membership, info: { age: number; firstName: string; homeCity?: string; neighborhood?: string; interests?: string[]; zip?: string }, invitation?: { tx: SQL; referral?: ReferralJoin; verifiedRecipientHash?: string }) {
+  async createMember(rt: NetworkRuntime, m: Membership, info: { age: number; recordedAge: number | null; firstName: string; homeCity?: string; neighborhood?: string; interests?: string[]; zip?: string }, invitation?: { tx: SQL; referral?: ReferralJoin; verifiedRecipientHash?: string }) {
     const at = this.clock.now();
     const now = new Date(at);
     const homeCity = info.homeCity ?? homeCityOf(m.profile.homeCity) ?? rt.city;
@@ -1255,7 +1256,7 @@ export class NetworkService implements RuntimeHost {
       if (!await new PgPeopleStore(tx).enrollmentOwnerAllowed(tx, m.personId)) return false;
       if (referral && !await this.invitationOwner(tx, rt.app, referral.inviterMemberId)) throw new InvitationUnavailable();
       await tx`insert into network.members (app_id, id, person_id, name, home_city, home_area, account_status, age, prefs, joined_at, invited_by)
-        values (${rt.app.id}, ${m.memberId}, ${m.personId}, ${info.firstName}, ${homeCity}, ${info.neighborhood ?? null}, 'active', ${info.age}, ${prefs}::jsonb, ${now}, ${referral?.inviterMemberId ?? null})
+        values (${rt.app.id}, ${m.memberId}, ${m.personId}, ${info.firstName}, ${homeCity}, ${info.neighborhood ?? null}, 'active', ${info.recordedAge}, ${prefs}::jsonb, ${now}, ${referral?.inviterMemberId ?? null})
         on conflict (id) do update set person_id = excluded.person_id, name = excluded.name, home_city = excluded.home_city, home_area = excluded.home_area,
           account_status = 'active', age = excluded.age, joined_at = excluded.joined_at, opted_out = false,
           invited_by = coalesce(excluded.invited_by, network.members.invited_by)`;
@@ -1291,6 +1292,7 @@ export class NetworkService implements RuntimeHost {
       findInvitation: (app, token, at, verifiedPhone) => this.referralFor(app, token, at, verifiedPhone),
       onJoin: (ctx: JoinHookContext) => this.joined(ctx),
       commitReferredJoin: ctx => this.commitReferredJoin(ctx),
+      commitBrowserSignup: (ctx, consent) => this.commitBrowserSignup(ctx, consent),
       onStop: ctx => this.stopped(ctx.app, ctx.personId, ctx.scope),
       onForget: async (ctx, reason) => {
         // The app's photos go first (leave, delete everything, a new owner of the number). A banned
@@ -1317,6 +1319,11 @@ export class NetworkService implements RuntimeHost {
     };
   }
 
+  private async removeMinorMedia(personId: string) {
+    await this.photos.deleteFor(personId);
+    await this.dropRatings(personId);
+  }
+
   /**
    * The person's lowest age went down (an age stated on any app, in chat or on a web form): every app's
    * member follows, so a minor anywhere is single-player everywhere (founder decision 1).
@@ -1325,7 +1332,7 @@ export class NetworkService implements RuntimeHost {
     if (confirmedUnderage(age)) return this.finishUnderageCleanup(personId);
     // Photos and any rating of looks are for adults only: a person who is now under 18 on any app loses
     // every photo and every rating, on every app (also ratings whose photo is already gone).
-    if (age < 18) { await this.photos.deleteFor(personId); await this.dropRatings(personId); }
+    if (age < ADULT_AGE) await this.removeMinorMedia(personId);
     for (const m of await this.people.memberships(personId)) {
       const rt = this.runtimeFor(m.app);
       if (!rt || m.state === "removed") continue;
@@ -1352,7 +1359,27 @@ export class NetworkService implements RuntimeHost {
     const rt = this.runtimeForHome(ctx.app.id, ctx.input.homeCity ?? this.runtimeFor(ctx.app.id)?.city ?? "");
     if (!rt) throw new Error(`no network runs for ${ctx.app.id}`);
     if (ctx.membership.state !== "active") return; // waitlist or a recycled number: staff first
-    if (!await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age })) throw new JoinReviewRequired();
+    if (!await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age, recordedAge: ctx.recordedAge })) throw new JoinReviewRequired();
+    await this.welcomeBrowserJoin(rt, ctx);
+  }
+
+  private async commitBrowserSignup(ctx: JoinHookContext & { signupAge: SignupAge }, consent: ConsentEvent) {
+    const rt = this.runtimeForHome(ctx.app.id, ctx.input.homeCity ?? this.runtimeFor(ctx.app.id)?.city ?? "");
+    if (!rt || ctx.membership.state !== "active") throw new JoinReviewRequired();
+    await rt.scoped(async tx => {
+      const store = new PgPeopleStore(tx);
+      const phoneHash = this.accounts.phoneHash(ctx.e164);
+      if (!await store.admitMembership(ctx.membership, consent, phoneHash, ctx.session ?? null, tx)) throw new JoinReviewRequired();
+      if (!await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age, recordedAge: ctx.recordedAge }, { tx })) throw new JoinReviewRequired();
+      if (!await store.saveSignupAge(ctx.membership, ctx.e164, phoneHash, ctx.signupAge, tx)) throw new JoinReviewRequired();
+      // The birth-derived date and app rows roll back if the existing minor-media cleanup fails.
+      await this.removeMinorMedia(ctx.person.id);
+    });
+    // Enrollment is durable. The ordinary inbound path can still welcome a new member if projection fails.
+    await this.welcomeBrowserJoin(rt, ctx).catch(() => this.log(`[join] browser welcome waits for inbound (${rt.id})`));
+  }
+
+  private async welcomeBrowserJoin(rt: NetworkRuntime, ctx: JoinHookContext) {
     await rt.unitOfWork(n => { n.welcomeJoined(ctx.membership.memberId); });
     await this.learnJoinProfile(rt, ctx.person.id, ctx.e164, ctx.membership);
   }
@@ -1395,9 +1422,13 @@ export class NetworkService implements RuntimeHost {
       await accounts.store.putMembership(ctx.membership);
       await accounts.store.addConsent({ e164: ctx.e164, app: ctx.app.id, state: "opted_in", source: "web_form", wording: ctx.app.consent.text, wordingVersion: ctx.app.consent.version, at });
       await accounts.store.attachPerson(ctx.e164, ctx.person.id);
-      if (!await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age }, { tx, referral: memberReferral, verifiedRecipientHash })) throw new JoinReviewRequired();
+      if (!await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age, recordedAge: ctx.recordedAge }, { tx, referral: memberReferral, verifiedRecipientHash })) throw new JoinReviewRequired();
       if ("kind" in referral) {
         await this.seedInvitations.consume(tx, {app: ctx.app.id, referral, e164: ctx.e164, memberId: ctx.membership.memberId});
+      }
+      if (ctx.signupAge) {
+        if (!await new PgPeopleStore(tx).saveSignupAge(ctx.membership, ctx.e164, accounts.phoneHash(ctx.e164), ctx.signupAge, tx)) throw new JoinReviewRequired();
+        await this.removeMinorMedia(ctx.person.id);
       }
     });
     // The token is consumed and attribution is durable. A failed welcome can retry independently,
@@ -2734,7 +2765,8 @@ export class NetworkService implements RuntimeHost {
       return "join_asked";
     }
     if (answer.phase !== "AwaitingJoinAge" || age === undefined) return "join_asked";
-    const check = joinAgeCheck(age, await this.accounts.lowestAge(e164, person), app);
+    const known = await this.accounts.knownAges(e164, person);
+    const check = joinAgeCheck(age, known.effective, app);
     const ageCheck = stepTextJoin(answer, { type: "checkTextJoinAge", ageAllowed: check.ok });
     if (ageCheck.phase === "RefuseAge") {
       // Nothing is stored for this app: only the age, on the phone's age floor (and the person, if any),
@@ -2776,7 +2808,8 @@ export class NetworkService implements RuntimeHost {
     const stored = stepTextJoin(ageCheck, { type: "recordTextMembership", membershipActive: membership.state === "active" });
     if (stored.phase !== "AwaitingWelcome") return "joined";
     rt = this.runtimeForHome(app.id, homeCity ?? rt.city) ?? rt;
-    if (!await this.createMember(rt, membership, { age: Math.min(age, check.effective ?? age), firstName: name, homeCity })) return "held";
+    if (!await this.createMember(rt, membership, { age: Math.min(age, check.effective ?? age),
+      recordedAge: Math.min(age, known.independent ?? age), firstName: name, homeCity })) return "held";
     // An older join answer than the last STOP: the member reads as after that STOP (paused, opted out), and nothing is said.
     if (!optedIn) { await this.stopped(app, who.id, "app", undefined, e164); return "joined"; }
     // Their answer is their first message: the Network welcomes them as a reply to it.
@@ -2809,7 +2842,7 @@ export class NetworkService implements RuntimeHost {
     const turn = this.inboundTurn(), own = turn && { app: turn.app, memberId: turn.memberId };
     const banned = !!person && !!ntwrk && await this.accounts.banned(e164, person);
     if (networkEnrollmentAllowed(!!person, !!ntwrk, banned) && person && ntwrk) {
-      const lowest = await this.accounts.lowestAge(e164, person);
+      const { effective: lowest, independent } = await this.accounts.knownAges(e164, person);
       const asked = lookingForAsk(lowest);
       // A member under 18 (or of unknown age) is never enrolled in slop.date from this question; they may
       // still join it on its own site (founder decision 1), where matching and photos stay 18+.
@@ -2826,7 +2859,8 @@ export class NetworkService implements RuntimeHost {
         };
         const admitted = await this.people.admitMembership(m, { e164, app: id, state: "opted_in", source: "looking_for",
           wording: asked, ref: `${rowId}:${id}`, at: this.consentAt(ev) }, key);
-        if (!admitted || (m.state === "active" && !await this.createMember(art, m, { age: lowest, firstName: ntwrk.firstName ?? "there", homeCity }))) continue;
+        if (!admitted || (m.state === "active" && !await this.createMember(art, m, { age: lowest, recordedAge: independent ?? null,
+          firstName: ntwrk.firstName ?? "there", homeCity }))) continue;
         joined.push(app);
       }
     }
@@ -2960,10 +2994,13 @@ export class NetworkService implements RuntimeHost {
     const m = await people.getMembership(personId, app);
     const rt = this.runtimeFor(app);
     if (!m || !rt || !["active", "paused", "onboarding"].includes(m.state)) return false;
-    const read = (tx: SQL) => tx`select m.age, f.tags, f.valid_from from network.members m left join network.facets f on f.app_id = m.app_id and f.member_id = m.id and f.status <> 'rejected' and ${automatedFacetPredicate(tx, true)}
+    const read = (tx: SQL) => tx`select a.age, (m.age is not null or exists (select 1 from platform.signup_eligibility s where s.person_id=m.person_id)) as age_source,
+        f.tags, f.valid_from from network.members m
+      join platform.matching_ages a on a.app_id = m.app_id and a.member_id = m.id
+      left join network.facets f on f.app_id = m.app_id and f.member_id = m.id and f.status <> 'rejected' and ${automatedFacetPredicate(tx, true)}
       and exists (select 1 from unnest(f.tags) t where t like 'verify:age:%') where m.app_id = ${app} and m.id = ${m.memberId} order by f.valid_from desc nulls last, f.id desc`;
     const rows = (transaction ? await read(transaction) : await rt.scoped(read)) as any[];
-    if (!rows.length || !(rows[0].age >= 18)) return false;
+    if (!rows.length || !rows[0].age_source || !(rows[0].age >= ADULT_AGE)) return false;
     // Founder decision 9 (AGENTS.md): no ID check; the stated age (18+ on the person and the member) is
     // enough. A staff-recorded failed age check still refuses.
     const last = rows.find(r => r.tags)?.tags as string[] | undefined;
