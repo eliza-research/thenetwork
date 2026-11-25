@@ -41,28 +41,29 @@ export async function vouchPeriodGate(b: Block): Promise<void> {
 }
 
 export async function fraudReversalEligibilityGate(b: Block): Promise<void> {
-    await b.run("ledger: fraud reverses the credits of an ineligible member too", () => {
-          const T0 = Date.UTC(2026, 0, 1);
-          const at = (d: number, n = 0) => T0 + d * DAY + n;
-          const L = new CapitalLedger();
-          L.record({ id: "join-a", t: at(0), type: "member_joined", member: "a", age: 30 });
-          L.record({ id: "join-b", t: at(0), type: "member_joined", member: "b", age: 30 });
-          L.record({ id: "accept-p1", t: at(1), type: "plan_accepted", member: "a", planId: "p1", kind: "plan", startsAt: at(2) });
-          L.record({ id: "confirm-p1", t: at(1, 1), type: "plan_confirmed", member: "a", planId: "p1" });
-          L.record({ id: "attend-p1", t: at(2), type: "plan_attended", member: "a", planId: "p1", counterparts: ["b"], verifiedBy: ["checkin"], origin: "engine", publicVenue: false });
-          const attendance = L.all().find(e => e.member === "a" && e.category === "attendance");
-          expect(attendance?.amount).toBe(2);
-          expect(L.balance("a")).toBe(2);
-          L.record({ id: "age-a-minor", t: at(3), type: "age_updated", member: "a", age: 16 });
-          L.record({ id: "fraud-ab", t: at(4), type: "fraud_confirmed", members: ["a", "b"] });
-          expect(L.isReversed(attendance!.id)).toBe(true);
-          expect(L.all().filter(e => e.member === "a" && e.category === "clawback").length).toBe(1);
-          expect(L.all().filter(e => e.member === "a" && e.category === "fraud").length).toBe(0);
-          expect(L.balance("a")).toBe(0);
-          expect(L.balance("b")).toBe(-10);
-          L.record({ id: "age-a-adult", t: at(5), type: "age_updated", member: "a", age: 30 });
-          expect(L.balance("a")).toBe(0);
-    });
+  await b.run("ledger: fraud reverses the credits of an ineligible member too", () => {
+        const T0 = Date.UTC(2026, 0, 1);
+        const at = (d: number, n = 0) => T0 + d * DAY + n;
+        const L = new CapitalLedger();
+        L.record({ id: "join-a", t: at(0), type: "member_joined", member: "a", age: 30 });
+        L.record({ id: "join-b", t: at(0), type: "member_joined", member: "b", age: 30 });
+        L.record({ id: "accept-p1", t: at(1), type: "plan_accepted", member: "a", planId: "p1", kind: "plan", startsAt: at(2) });
+        L.record({ id: "confirm-p1", t: at(1, 1), type: "plan_confirmed", member: "a", planId: "p1" });
+        L.record({ id: "attend-p1", t: at(2), type: "plan_attended", member: "a", planId: "p1", counterparts: ["b"], verifiedBy: ["checkin"], origin: "engine", publicVenue: false });
+    L.record({ id: "feedback-p1", t: at(2), type: "feedback_given", member: "a", planId: "p1" });
+        const attendance = L.all().find(e => e.member === "a" && e.category === "attendance");
+        expect(attendance?.amount).toBe(2);
+        expect(L.balance("a")).toBe(2.5);
+        L.record({ id: "age-a-minor", t: at(3), type: "age_updated", member: "a", age: 16 });
+        L.record({ id: "fraud-ab", t: at(4), type: "fraud_confirmed", members: ["a", "b"] });
+        expect(L.isReversed(attendance!.id)).toBe(true);
+        expect(L.all().filter(e => e.member === "a" && e.category === "clawback").length).toBe(2);
+        expect(L.all().filter(e => e.member === "a" && e.category === "fraud").length).toBe(0);
+        expect(L.balance("a")).toBe(0);
+        expect(L.balance("b")).toBe(-10);
+        L.record({ id: "age-a-adult", t: at(5), type: "age_updated", member: "a", age: 30 });
+        expect(L.balance("a")).toBe(0);
+  });
 }
 
 export async function capitalBlock(b: Block, o: { quick: boolean }): Promise<void> {
