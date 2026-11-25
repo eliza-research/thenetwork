@@ -26,7 +26,7 @@ import { Store } from "../../apps/observatory/src/store.ts";
 import { styleViolations } from "../../packages/network/src/copy.ts";
 import { Mini, START } from "../../packages/network/test/mini.ts";
 import { DATA_DIR } from "../synthetic/common.ts";
-import { vouchPeriodGate }, vouchStakeEligibilityGate from "./capital.ts";
+import { vouchPeriodGate, vouchStakeEligibilityGate } from "./capital.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
 
