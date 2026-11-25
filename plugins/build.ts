@@ -27,10 +27,7 @@ export function endpointUrl(plugin: Plugin, app: AppKey): string {
 
 export const OPENAI_MCP_URL = endpointUrl("OpenAiPlugin", openAiManifestApp);
 
-const openAiEndpointUrl = (app: AppKey) => {
-  const path = appOpenAiEndpointPath(app);
-  return path ? `https://${brandFor(endpointHost).domain}${path}` : "";
-};
+const openAiEndpointUrl = (app: AppKey) => `https://${brandFor(endpointHost).domain}${appOpenAiEndpointPath(app)}`;
 
 for (const app of appKeys) {
   if (endpointUrl("ClaudePlugin", app) !== connectorEndpoint(app) || openAiEndpointUrl(app) !== openaiConnectorEndpoint(app)) {
@@ -124,10 +121,7 @@ export function build(): Map<string, string> {
       if (text.includes("{{")) throw new Error(`${plugin}/${skill}: an unfilled {{placeholder}} is left`);
       if (plugin === "openai" && OPENAI_EXCLUDED.test(text)) throw new Error(`openai/${skill}: slop.date or a dating word ("${text.match(OPENAI_EXCLUDED)![0]}") is still in the copy; extend withoutSlop()`);
       const app = p.app(skill);
-      const urls = [p.mcpUrl(skill)];
-      const openAiUrl = openAiEndpointUrl(app);
-      if (plugin === "claude" && openAiUrl) urls.push(openAiUrl);
-      for (const url of urls) {
+      for (const url of plugin === "claude" ? [p.mcpUrl(skill), openAiEndpointUrl(app)] : [p.mcpUrl(skill)]) {
         if (!new RegExp(`${url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w/])`).test(text)) throw new Error(`${plugin}/${skill}: the skill does not name its connector endpoint ${url} (spec/agentEntry.md)`);
       }
       files.set(join(plugin, "skills", skill, "SKILL.md"), text);

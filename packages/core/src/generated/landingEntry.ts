@@ -259,7 +259,7 @@ export function agentConnectorSurface(agent: AgentId): AgentSurface {
 /** Story: Open my agent from its tile / The agent row never shows an agent that the app's connector refuses (spec/landingEntry.md) */
 //@ pure
 export function surfaceServesApp(surface: AgentSurface, app: brandIdentity_AppKey): boolean {
-  return surface === "FullConnectorSurface" || app !== "Slop";
+  return (surface === "FullConnectorSurface" || surface === "OpenAiConnectorSurface") && (app === "Ntwrk" || app === "Slop" || app === "Peon" || app === "Friends");
 }
 
 /** Story: Open my agent from its tile / The agent row never shows an agent that the app's connector refuses (spec/landingEntry.md) */
@@ -277,9 +277,9 @@ export function lawRefusedAgentIsNeverOffered(app: brandIdentity_AppKey, agent: 
 
 /** Story: Open my agent from its tile / The agent row never shows an agent that the app's connector refuses (spec/landingEntry.md) */
 //@ pure
-export function lawOnlySupportedPagesOfferChatGpt(app: brandIdentity_AppKey): boolean {
+export function lawEveryPageOffersChatGpt(app: brandIdentity_AppKey): boolean {
   //@ ensures \result === true
-  return landingAgentOffered(app, "ChatGpt") === (app !== "Slop");
+  return landingAgentOffered(app, "ChatGpt");
 }
 
 /** Story: Open my agent from its tile / The agent row never shows an agent that the app's connector refuses (spec/landingEntry.md) */

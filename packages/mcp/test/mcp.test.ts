@@ -123,7 +123,7 @@ describe("Streamable HTTP, 2026-07-28", () => {
   });
 });
 
-describe("the public OpenAI surface", () => {
+describe("surface=openai serves every app endpoint", () => {
   test("the OpenAI surface respects an app's registry opt-out on both connector paths", async () => {
     // spec/connectorTools.md, "A connection binds to one host on one surface"
     const apps = defaultApps();
@@ -135,7 +135,7 @@ describe("the public OpenAI surface", () => {
     expect((await rpc(setup({ apps }), `${host}/mcp`, "tools/list")).res.status).toBe(200);
   });
 
-  test("the OpenAI surface excludes slop from every public listing and does not serve a slop endpoint", async () => {
+  test("the OpenAI plugin server names no slop or dating; only the slop endpoint of the OpenAI surface offers slop; slop.date's own site keeps no OpenAI endpoint", async () => {
     const env = setup();
     const l = await rpc(env, OPENAI, "tools/list");
     expect(l.body!.result.tools.find((t: any) => t.name === "app_info").inputSchema.properties.app.enum).toEqual(["ntwrk", "peon", "friends"]);
@@ -156,11 +156,17 @@ describe("the public OpenAI surface", () => {
       expect(other.res.status).toBe(200);
       expect(other.text).not.toMatch(/slop|dating/i);
     }
-    for (const host of ["ntwrk.party", "slop.date"]) {
-      const path = host === "ntwrk.party" ? "/mcp/slop/openai" : "/mcp/openai";
-      expect((await rpc(env, `${origin(host)}${path}`, "tools/list")).res.status).toBe(404);
-      expect((await env.fetch(new Request(`${origin(host)}/.well-known/oauth-protected-resource${path}`))).status).toBe(404);
+    const SLOP_OPENAI = `${origin("ntwrk.party")}/mcp/slop/openai`;
+    const slop = await rpc(env, SLOP_OPENAI, "tools/list");
+    expect(slop.res.status).toBe(200);
+    expect(slop.body!.result.tools.find((t: any) => t.name === "app_info").inputSchema.properties.app.enum).toEqual(["ntwrk", "slop", "peon", "friends"]);
+    for (const [name, args] of [["app_info", { app: "slop" }], ["start_signup", { app: "slop" }]] as const) {
+      const r = await call(env, SLOP_OPENAI, name, args);
+      expect(r.body!.result.isError).toBe(false);
+      expect(r.body!.result.structuredContent).toMatchObject(name === "app_info" ? { id: "slop" } : { app: "slop" });
     }
+    expect((await call(env, SLOP_OPENAI, "app_info", { app: "slop" })).body!.result.structuredContent.adults_only.join(" ")).toContain("Photos");
+    expect((await rpc(env, `${origin("slop.date")}/mcp/openai`, "tools/list")).res.status).toBe(404);
     expect((await call(env, NTWRK, "app_info", { app: "slop" })).body!.result.structuredContent.adults_only.join(" ")).toContain("Photos");
   });
 

@@ -11,8 +11,8 @@ Each site's Pages router forwards `/mcp`, `/oauth/*` and `/.well-known/oauth-*` 
 | Path (on each site, for example `https://slop.date`) | What it does |
 |---|---|
 | `POST /mcp` | The MCP endpoint (Streamable HTTP). A client registered on this site is bound to this site's app. |
-| `POST /mcp/openai` | The MCP server on the public OpenAI surface (ChatGPT, Codex). It excludes slop.date on all hosts. |
-| `POST /mcp/<app>[/openai]` | ntwrk.party only: the full endpoint of another app (`slop`, `peon` or `friends`). The `/openai` form is available for peon and friends. Other sites answer 404. |
+| `POST /mcp/openai` | The same server on the OpenAI surface (ChatGPT, Codex). On the OpenAI surface, only `https://ntwrk.party/mcp/slop/openai` lists slop.date; the endpoint of each other app names neither slop.date nor dating. slop.date answers 404 here. |
+| `POST /mcp/<app>[/openai]` | ntwrk.party only: the endpoint of another app (`slop`, `peon` or `friends`). Other sites answer 404. |
 | `GET /.well-known/oauth-protected-resource/mcp[/<app>][/openai]` | RFC 9728 metadata of each endpoint. |
 | `GET /.well-known/oauth-authorization-server` | RFC 8414 metadata. The issuer is the site origin. |
 | `POST /oauth/register` | RFC 7591 dynamic client registration. |
@@ -49,7 +49,7 @@ Draft reads/writes and canonical phone-age recording share an independent keyed-
 - **A grant made before the number had a person** never follows a person made later (who may be a new owner of the number): it answers `invalid_grant`, and the person connects again.
 - **One app per client.** A token is valid only at the resource it was issued for (RFC 8707). A token is for the app of its path: a peon token is refused at slop.date, at `https://ntwrk.party/mcp/slop` and at `/mcp/openai`.
 - **New owner.** If the phone now belongs to another person than when access was granted, the grant is revoked.
-- **OpenAI surface.** Public ChatGPT and Codex connections use the OpenAI endpoints of The Network, peon and friends. The surface excludes Slop endpoints and app facts. The separately approved private adult Slop pilot uses `https://slop.date/mcp`.
+- **OpenAI surface.** `/mcp/openai` serves every client whose redirect URI is on chatgpt.com or openai.com. Only the slop.date endpoint of this surface, `https://ntwrk.party/mcp/slop/openai`, lists slop.date. The endpoint of each other app, `/mcp/openai` (the one server of the OpenAI plugin) included, names neither slop.date nor dating. slop.date's own site has no OpenAI surface, so such a client cannot register there; it uses `https://ntwrk.party/mcp/slop/openai`.
 - **Abuse.** Rate limits per IP for registration, authorize, token and MCP calls, and per grant for authenticated tools. The platform OTP limits apply to the sign-in. The "text me a code" answer is the same for every number and takes at least 700 ms.
 - **Audit.** `oauth.audit` keeps one row for each registration, consent, denial, code, token, refresh, revocation and replay. It never holds a token, a code, a secret or a phone number.
 

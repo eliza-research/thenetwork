@@ -13,9 +13,11 @@ The MCP server (`packages/mcp/src/tools.ts` and `packages/mcp/src/handler.ts`) c
 
 > As a person who connected my agent to an app, I want the agent to see only the tools that fit my app and my status, so that it can check my status, send my approved profile once and read my own updates without seeing my phone number or code.
 
-### Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date
+### Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date
 
-There are two surfaces. The full surface, at `https://<site>/mcp`, offers every app. The OpenAI surface, at `https://<site>/mcp/openai`, serves ChatGPT and Codex clients. It hides slop.date: it never lists slop.date as an app choice, and the slop.date site has no OpenAI surface. The OpenAI plugin uses the ntwrk.party endpoint ([agent entry](agentEntry.md)). Every host that a surface serves lists the public tools and the member tools. Only the friends.help and ntwrk.party hosts list the Join draft tool.
+There are two surfaces. The full surface, at the app endpoint (`/mcp` or `/mcp/<app>`), offers every app. The OpenAI surface, at the same endpoint with `/openai` added (for example `/mcp/openai` or `/mcp/slop/openai`), serves ChatGPT and Codex clients. It serves the endpoint of every app, slop.date included, so that a person can sign up for each app in ChatGPT. The ntwrk.party host serves the OpenAI surface of each app. The slop.date site keeps no OpenAI surface of its own (see the next rule).
+
+The OpenAI plugin is for people aged 13 to 17 too, and its one MCP server is the OpenAI endpoint of The Network ([agent entry](agentEntry.md)). So on the OpenAI surface, a connection to the endpoint of another app never lists slop.date as an app choice: the app list, the app argument of each tool, the public facts and their text do not name slop.date or dating. A public tool that names slop.date there answers that the app is not available. Only a connection to the slop.date endpoint of the OpenAI surface, `/mcp/slop/openai`, lists slop.date. The person adds that endpoint as a connector from the slop.date skill. Every host that a surface serves lists the public tools and the member tools. Only the friends.help and ntwrk.party hosts list the Join draft tool.
 
 The app registry can disable an otherwise available OpenAI host. Check this setting on every request bound to the OpenAI surface, including when that surface is served at `/mcp`. A connection to a disabled OpenAI host is not available. The full surface applies the ordinary host rule. The shell refuses a request to a host that is not available before it lists or calls a tool, so the tool list of an available host uses the ordinary host rule.
 
@@ -24,7 +26,8 @@ type AppId = Ntwrk | Slop | Peon | Friends
 type Surface = FullSurface | OpenAiSurface
 type ToolName = AppInfoTool | StartSignupTool | PrepareSignupTool | CheckStatusTool | ReadProfileTool | SubmitProfileTool | GetUpdatesTool
 
-pure def appOffered(surface: Surface, app: AppId): bool = surface == FullSurface or app != Slop
+pure def appOffered(surface: Surface, app: AppId): bool =
+  (surface == FullSurface or surface == OpenAiSurface) and (app == Ntwrk or app == Slop or app == Peon or app == Friends)
 
 pure def hostServes(surface: Surface, host: AppId): bool = appOffered(surface, host)
 
@@ -37,8 +40,16 @@ pure def lawConfiguredOptOutBlocksOpenAiHost(host: AppId): bool =
 pure def toolListed(host: AppId, surface: Surface, tool: ToolName): bool =
   hostServes(surface, host) and (tool != PrepareSignupTool or host == Friends or host == Ntwrk)
 
-pure def lawOpenAiNeverOffersSlop(tool: ToolName): bool =
-  not(appOffered(OpenAiSurface, Slop)) and not(toolListed(Slop, OpenAiSurface, tool))
+pure def lawOpenAiOffersEveryApp(app: AppId): bool =
+  appOffered(OpenAiSurface, app) and hostServes(OpenAiSurface, app) and toolListed(app, OpenAiSurface, AppInfoTool)
+
+pure def appListed(surface: Surface, host: AppId, app: AppId): bool =
+  appOffered(surface, app) and (surface == FullSurface or app != Slop or host == Slop)
+
+pure def lawOpenAiListsSlopOnlyAtItsOwnEndpoint(host: AppId): bool =
+  appListed(OpenAiSurface, host, Slop) iff host == Slop
+
+pure def lawFullSurfaceListsEveryApp(host: AppId, app: AppId): bool = appListed(FullSurface, host, app)
 
 pure def lawFullSurfaceOffersEveryApp(app: AppId): bool = appOffered(FullSurface, app)
 
@@ -48,18 +59,15 @@ pure def lawDraftOnlyOnFriendsAndNtwrk(host: AppId, surface: Surface): bool =
 
 ### The ntwrk.party host serves every app at its own path, and a grant covers only its own app
 
-All app connectors are on one server. Each skill names the ntwrk.party endpoint of its app: `https://ntwrk.party/mcp` for The Network, and `https://ntwrk.party/mcp/<app>` for slop, peon and friends. ChatGPT and Codex use the endpoint with `/openai` added for The Network, peon and friends. Slop has no public OpenAI endpoint on any host, and the OpenAI surface never lists its public tools or facts. The private Slop pilot remains on its dedicated full endpoint and requires prior approval and adult eligibility. The ntwrk.party host serves each app at its own full path. Each other site host serves only its own app, at `/mcp`. The endpoint path is the OAuth resource. The client sends this resource when authorization starts. The authorization request, the consent page, the grant and each token are for the app of that path. A grant covers only its own app: a token for one app is refused at the endpoint of another app, a public tool included. The rules of each app stay with the app: the join mode (The Network is invite-only on the web), bans, ages, the text consent and the profile limit.
+All app connectors are on one server. The skill of each app tells the agent to connect the ntwrk.party endpoint of that app: `https://ntwrk.party/mcp` for The Network, and `https://ntwrk.party/mcp/<app>` for slop, peon and friends. For ChatGPT, the agent adds `/openai` to that path. The ntwrk.party host serves each app at its own path. Each other site host serves only its own app, at `/mcp`. The path of the endpoint is the OAuth resource. The client sends this resource when authorization starts, so the authorization request, the consent page, the grant and each token are for the app of that path. The ntwrk.party host serves the OpenAI surface of every app. The slop.date site keeps its earlier rule: its own endpoint has no OpenAI surface, so ChatGPT reaches slop.date only at the ntwrk.party endpoint. The default-off, allowlisted ChatGPT Slop pilot stays on the full slop.date endpoint, for adults only, as `packages/mcp/README.md` describes. The consent page names that app. A grant covers only its own app: a token for one app is refused at the endpoint of another app, a public tool included. The rules of each app stay with the app: the join mode (The Network is invite-only on the web), bans, ages, the text consent and the profile limit.
 
 ```quint
 pure val hubHost: AppId = Ntwrk
 
 pure def hostBindsApp(host: AppId, app: AppId): bool = host == app or host == hubHost
 
-pure def appListed(surface: Surface, host: AppId, app: AppId): bool =
-  hostServes(surface, host) and appOffered(surface, app)
-
 pure def siteOffersOpenAi(site: AppId, app: AppId): bool =
-  hostBindsApp(site, app) and appOffered(OpenAiSurface, app)
+  hostBindsApp(site, app) and (site == hubHost or app != Slop)
 
 pure def grantServesApp(grantApp: AppId, requestApp: AppId): bool = grantApp == requestApp
 
@@ -68,11 +76,9 @@ pure def lawHubServesEveryApp(app: AppId): bool = hostBindsApp(hubHost, app)
 pure def lawAppSiteServesOnlyItsApp(host: AppId, app: AppId): bool =
   host != hubHost implies (hostBindsApp(host, app) iff host == app)
 
-pure def lawHubOffersOnlySupportedOpenAiApps(app: AppId): bool =
-  siteOffersOpenAi(hubHost, app) iff app != Slop
+pure def lawHubOffersOpenAiForEveryApp(app: AppId): bool = siteOffersOpenAi(hubHost, app)
 
-pure def lawNoSiteOffersSlopOnTheOpenAiSurface(site: AppId): bool =
-  not(siteOffersOpenAi(site, Slop)) and not(appListed(OpenAiSurface, site, Slop))
+pure def lawSlopSiteKeepsNoOpenAiSurface(app: AppId): bool = not(siteOffersOpenAi(Slop, app))
 
 pure def lawGrantNeverCrossesApps(grantApp: AppId, requestApp: AppId): bool =
   grantApp != requestApp implies not(grantServesApp(grantApp, requestApp))

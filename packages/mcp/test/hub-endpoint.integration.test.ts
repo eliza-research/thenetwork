@@ -101,7 +101,7 @@ describe("one ntwrk.party connector endpoint for every app", () => {
       }
       expect((await call(env, endpoint(other, true), "check_status", {}, { token: slop.access_token })).res.status, other).toBe(401);
     }
-    expect((await call(env, endpoint("slop", true), "check_status", {}, { token: slop.access_token })).res.status).toBe(404);
+    expect((await call(env, endpoint("slop", true), "check_status", {}, { token: slop.access_token })).res.status).toBe(401);
     expect((await call(env, `${origin("slop.date")}/mcp`, "check_status", {}, { token: slop.access_token })).res.status).toBe(401);
     const peonArg = await call(env, endpoint("slop"), "check_status", { app: "peon" }, { token: slop.access_token });
     expect(peonArg.body!.result.isError).toBe(true);
@@ -132,23 +132,23 @@ describe("one ntwrk.party connector endpoint for every app", () => {
 });
 
 describe("ChatGPT on the ntwrk.party endpoint", () => {
-  test("ChatGPT can authorize friends on the ntwrk.party endpoint and a new person is offered signup", async () => {
+  test("ChatGPT can authorize slop at https://ntwrk.party/mcp/slop/openai, and a new person is offered signup", async () => {
     const env = setup();
-    const flow = await consentFor(env, "friends", PHONE_B, { redirect: CHATGPT, openai: true });
+    const flow = await consentFor(env, "slop", PHONE_B, { redirect: CHATGPT, openai: true });
     expect(flow.consentStatus).toBe(200);
-    expect(flow.consent).toContain(`· friends.help</title>`);
+    expect(flow.consent).toContain(`· slop.date</title>`);
     expect(flow.consent).toContain('action="/oauth/authorize/signup"');
     const opened = await flow.post("/oauth/authorize/signup", { decision: "open" });
     expect(opened.status).toBe(200);
     const token = await approve(env, flow);
-    const status = await call(env, endpoint("friends", true), "check_status", {}, { token: token.access_token });
+    const status = await call(env, endpoint("slop", true), "check_status", {}, { token: token.access_token });
     expect(status.res.status).toBe(200);
-    expect(status.body!.result.structuredContent).toMatchObject({ app: "friends", status: "not_joined" });
-    expect((await call(env, endpoint("friends"), "check_status", {}, { token: token.access_token })).res.status).toBe(401);
+    expect(status.body!.result.structuredContent).toMatchObject({ app: "slop", status: "not_joined" });
+    expect((await call(env, endpoint("slop"), "check_status", {}, { token: token.access_token })).res.status).toBe(401);
     expect((await register(env, "slop.date", { redirect_uris: [CHATGPT] })).res.status).toBe(400);
   });
 
-  test("unavailable Slop resources do not issue an authorization request on either host", async () => {
+  test("the slop.date site has no OpenAI surface and the hub full Slop endpoint refuses a ChatGPT client, which must use /mcp/slop/openai: neither issues an authorization request", async () => {
     const env = setup();
     const begin = async (host: string, resource: string, redirect: string) => {
       const reg = await register(env, host, { redirect_uris: [redirect] });
@@ -158,8 +158,7 @@ describe("ChatGPT on the ntwrk.party endpoint", () => {
       const response = await env.fetch(new Request(`${origin(host)}/oauth/authorize?${query}`));
       return [response.status, !!pendingAuthorizationCookie(response)];
     };
-    expect(await begin(HUB, endpoint("slop", true), CHATGPT)).toEqual([400, false]);
-    expect(await begin(HUB, endpoint("slop"), CHATGPT)).toEqual([403, false]);
+    expect(await begin(HUB, endpoint("slop"), CHATGPT)).toEqual([400, false]);
     expect(await begin("slop.date", "https://slop.date/mcp/openai", RETURN)).toEqual([400, false]);
     expect(env.provider.sent).toHaveLength(0);
   });
@@ -172,7 +171,7 @@ describe("ChatGPT on the ntwrk.party endpoint", () => {
     }
     const hub = await register(env, HUB, { redirect_uris: [CHATGPT] });
     const hubFlow = await browserFlow(env, HUB, hub.body.client_id, PHONE_A, { redirectUri: CHATGPT, resource: endpoint("slop") });
-    expect(hubFlow.start.status).toBe(403);
+    expect(hubFlow.start.status).toBe(400);
     const opts = { redirectUri: CHATGPT, resource: "https://slop.date/mcp" };
     const adult = await connect(env, "slop.date", PHONE_A, { ...opts, register: { redirect_uris: [CHATGPT] } });
     expect(adult.tokenRes.status).toBe(200);
@@ -399,8 +398,7 @@ describe("hub findings: each browser path of ntwrk.party acts for the app of its
       const fallback = await connect(env, HUB, PHONE_A, { register: { redirect_uris: [redirect] }, redirectUri: redirect });
       expect(fallback.tokenRes.status).toBe(200);
       expect((await call(env, endpoint("ntwrk", openai), "check_status", {}, { token: fallback.token.access_token })).res.status).toBe(200);
-      const supported: McpAppId[] = openai ? ["peon", "friends"] : ["slop", "peon", "friends"];
-      for (const app of supported) {
+      for (const app of ["slop", "peon", "friends"] as const) {
         const r = await call(env, endpoint(app, openai), "check_status", {}, { token: fallback.token.access_token });
         expect(r.res.status, `${app} ${openai}`).toBe(401);
         const challenge = r.res.headers.get("www-authenticate") ?? "";
@@ -408,14 +406,13 @@ describe("hub findings: each browser path of ntwrk.party acts for the app of its
         expect(challenge, app).toContain(`resource_metadata="https://ntwrk.party/.well-known/oauth-protected-resource${path}"`);
         expect(challenge, app).toContain('error="invalid_token"');
       }
-      const reconnectApp = openai ? "friends" : "slop";
-      const metadataUrl = /resource_metadata="([^"]+)"/.exec((await call(env, endpoint(reconnectApp, openai), "check_status", {}, { token: fallback.token.access_token })).res.headers.get("www-authenticate")!)![1]!;
+      const metadataUrl = /resource_metadata="([^"]+)"/.exec((await call(env, endpoint("slop", openai), "check_status", {}, { token: fallback.token.access_token })).res.headers.get("www-authenticate")!)![1]!;
       const prm = await (await env.fetch(new Request(metadataUrl))).json() as { resource: string };
-      expect(prm.resource).toBe(endpoint(reconnectApp, openai));
+      expect(prm.resource).toBe(endpoint("slop", openai));
       const again = await connect(env, HUB, PHONE_A, { register: { redirect_uris: [redirect] }, redirectUri: redirect, resource: prm.resource });
-      const status = await call(env, endpoint(reconnectApp, openai), "check_status", {}, { token: again.token.access_token });
+      const status = await call(env, endpoint("slop", openai), "check_status", {}, { token: again.token.access_token });
       expect(status.res.status).toBe(200);
-      expect(status.body!.result.structuredContent).toMatchObject({ app: reconnectApp });
+      expect(status.body!.result.structuredContent).toMatchObject({ app: "slop" });
     }
   });
 
