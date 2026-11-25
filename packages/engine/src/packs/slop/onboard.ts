@@ -11,7 +11,7 @@ import {
 import type { Gender } from "./profile.ts";
 import { SLOP_ASK_QUESTIONS } from "./copy.ts";
 import {
-  extractSlopProfile, finalize, HARD_FIELDS, hasField, MAX_ASKS_PER_QUESTION, type Dealbreaker, type DateActivity, type ExtractOptions, type OnboardField, type SlopOnboarding,
+  coarsePlace, extractSlopProfile, finalize, HARD_FIELDS, hasField, MAX_ASKS_PER_QUESTION, normText, type Dealbreaker, type DateActivity, type ExtractOptions, type OnboardField, type SlopOnboarding,
 } from "./extract.ts";
 export { MAX_ASKS_PER_QUESTION, readbackReason as SLOP_READBACK };
 
@@ -94,16 +94,19 @@ export function applyCorrection(p: SlopOnboarding, text: string, o: ExtractOptio
   const next = extractSlopProfile([{ text, asked: o.asked }], p, o);
   const changed = JSON.stringify(view(next)) !== JSON.stringify(view(p));
   const reply = parseReply(text);
-  // spec/slopOnboarding.md, "Only a plain yes confirms the read-back"
   const affirmed = readbackAffirmed(reply.answer === "yes", reply.answer === "no",
-    reply.constraints.length > 0 || READBACK_QUALIFIER.test(text), BARE_AFFIRMATION.test(text));
-  // spec/slopOnboarding.md, "A correction needs another confirmation"
+    reply.constraints.length > 0 || readbackQualified(text), BARE_AFFIRMATION.test(text));
   return finalize({ ...next, confirmed: confirmationAfterAnswer(changed, affirmed, next.minor || next.declined) });
 }
-/** An affirmation word the reply parser does not know, with nothing after it. */
 const BARE_AFFIRMATION = /^\s*(?:right|correct|exactly|that['’]?s (?:it|right)|you got it|perfect|yup|yep|ya|ye|100|👍)[.!\s]*$/i;
-/** A question, a hedge or a condition anywhere in the answer. */
-const READBACK_QUALIFIER = /\?|\b(?:maybe|idk|unsure|let me check|if|unless|wait)\b/i;
+const BENIGN_READBACK_NEGATION = /\b(?:why (?:the (?:hell|heck) )?not|not a problem|no (?:problem|probs?|worries|doubt|question))\b/g;
+const READBACK_QUALIFIER = /\?|\b(?:but|except|though|tho|although|however|actually|instead|other than|apart from|besides|minus|change|make it|more like|meant|almost|mostly|nearly|close|pretty much|more or less|maybe|mayb|perhaps|possibly|probably|prob|might|idk|dunno|unsure|uncertain|kinda|kind of|sort of|i guess|guess so|i think(?:\s+so)?|think so|i suppose|suppose so|let me (?:check|see|think)|if|unless|wait|hold on|both|a mix|my age)\b/;
+function readbackQualified(raw: string): boolean {
+  const t = normText(raw);
+  if (READBACK_QUALIFIER.test(t) || coarsePlace(t)) return true;
+  const stripped = t.replace(BENIGN_READBACK_NEGATION, " ").replace(/\b100%(?=\s|$|[.!?,])/g, " ").replace(/^\s*100(?=\s*[.!]*$)/, " ");
+  return /\b(?:not|no|neither|nor|without)\b|\d/.test(stripped);
+}
 const view = (p: SlopOnboarding) => ({
   g: p.gender?.value, o: p.orientation?.value, id: p.identity?.value, s: p.seeks?.value, a: p.ageRange?.value, d: p.distance?.value,
   l: p.location?.value, goal: p.goal?.value, db: p.dealbreakers.map(d => d.value).sort(), ndb: !!p.noDealbreakers,

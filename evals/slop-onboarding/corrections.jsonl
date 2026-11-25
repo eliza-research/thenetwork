@@ -56,3 +56,13 @@
 {"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"Perfect, if 11211 includes Greenpoint","expect":{"seeks":["man"]},"confirmed":false}
 {"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"Right","expect":{"seeks":["man"]},"confirmed":true}
 {"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"Perfect","expect":{"seeks":["man"]},"confirmed":true}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"yes, but brooklyn","expect":{"location":"11211"},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"yes, but both","expect":{"seeks":["man"]},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"yes, except close by","expect":{"distance":{"mode":"radius","miles":5}},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"yes, except not 11211","expect":{"location":"11211"},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"yes, not 5 miles","expect":{"distance":{"mode":"radius","miles":5}},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"yes, within .5 miles","expect":{"distance":{"mode":"radius","miles":5}},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"yep, almost","expect":{"seeks":["man"]},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"i guess","expect":{"seeks":["man"]},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"yes, no problem!","expect":{"seeks":["man"]},"confirmed":true}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"yes 100%","expect":{"seeks":["man"]},"confirmed":true}
