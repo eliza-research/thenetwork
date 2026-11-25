@@ -28,6 +28,7 @@ import {
 } from "@thenetwork/ui";
 import type { EngineRunSummary, ObsFeedItem } from "../src/types.ts";
 import { BiasMonitor, Config, Growth, Lab, Requests, RunDiffView, SafetyCases, Scorecard } from "./admin.tsx";
+import { handleFeedRowKey } from "./feed-row-key.ts";
 import { gamePanelsOf, Levels } from "./network.tsx";
 import { CostPanel } from "./ops.tsx";
 import { stateLabel } from "./panels.tsx";
@@ -130,7 +131,10 @@ function FeedLine({ x, onOpen }: { x: ObsFeedItem; onOpen?: () => void }) {
   );
   const row = "flex items-baseline gap-3 rounded-sm px-2 py-1 text-sm";
   return onOpen ? (
-    <div role="button" tabIndex={0} className={cn(focusRing, row, "cursor-pointer hover:bg-accent")} onClick={onOpen} onKeyDown={e => { if (e.key === "Enter") onOpen(); }}>{body}</div>
+    <div role="button" tabIndex={0} className={cn(focusRing, row, "cursor-pointer hover:bg-accent")} onClick={onOpen}
+      onKeyDown={event => handleFeedRowKey(event, onOpen)}
+      onKeyUp={event => handleFeedRowKey(event, onOpen)}
+    >{body}</div>
   ) : <div className={row}>{body}</div>;
 }
 
