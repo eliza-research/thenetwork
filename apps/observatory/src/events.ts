@@ -263,7 +263,7 @@ export function describe(row: EventRow, name: (id: string) => string = id => id)
  */
 export function onTimeline(row: EventRow, memberId: MemberId, theirOpps: ReadonlySet<string>): boolean {
   const subject = subjectOf(row);
-  if (subject) return subject === memberId || (row.type === "member_blocked" && row.object_id === memberId);
+  if (subject) return subject === memberId || (row.type === "member_blocked" && row.object_id === memberId) || (row.type === "report_received" && row.payload?.target === memberId);
   if (membersOf(row).includes(memberId)) return true;
   return row.object_type === "opportunity" && !!row.object_id && theirOpps.has(row.object_id);
 }
