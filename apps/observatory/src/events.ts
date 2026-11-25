@@ -31,7 +31,7 @@ export const NETWORK_EVENT_KINDS: ReadonlySet<string> = new Set([
   // The send path and the booked plan (attention v1.2, network.md 4 and 6.4): what waited and why, what
   // the engine proposed and the gates stopped, the times offered and picked, cancellations, and the
   // availability opt-ins. Codes, keys and tags only, never the member's words.
-  "send_deferred", "gate_reason", "time_answer", "booked_cancelled", "availability_stated", "availability_offer",
+  "send_deferred", "gate_reason", "time_answer", "booked_cancelled", "plan_confirmed", "availability_stated", "availability_offer",
   "calendar_consent", "weekly_checkin_consent", "checkin_sent",
   // An opportunity closed because the members' picked times had nothing in common left, and a member
   // record that now says under 18 (a staff age correction).
@@ -205,6 +205,7 @@ export function describe(row: EventRow, name: (id: string) => string = id => id)
       text = `Engine proposal${who ? ` for ${who}` : ""} not started: ${human(p.reason)}`; keep("reason", "proposalKey"); break;
     }
     case "booked_cancelled": text = `${name(p.memberId)} called off the booked plan${p.told ? " (told us)" : " (no reply to us)"}; the others hear it is off, not why`; severity = "warn"; keep("told"); break;
+    case "plan_confirmed": text = `${name(p.memberId)} confirmed the booked plan${p.how === "silence" ? " (silence: the 48-hour opt-out passed)" : ""}`; severity = "good"; keep("how"); break;
     case "availability_offer": text = "Offered calendar free/busy (CALENDAR) and the weekly check-in (WEEKLY), once, in the first booked plan"; break;
     case "calendar_consent": text = p.on === false ? "Calendar free/busy turned off" : "Calendar free/busy: consent recorded (no calendar source yet)"; keep("on"); break;
     case "weekly_checkin_consent": text = p.on === false ? "Weekly check-in turned off" : "Weekly check-in on (Sundays, in their send window)"; keep("on"); break;
