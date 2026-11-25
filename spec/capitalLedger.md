@@ -115,6 +115,11 @@ pure def vouchStakeMayDefer(seriousAbuse: bool, vouched: bool, stakeTaken: bool,
 pure def vouchStakeMayTake(pending: bool, stakeTaken: bool, voucherEligible: bool): bool =
   pending and not(stakeTaken) and voucherEligible
 
-pure def lawVouchStakeTakenAtMostOnce(pending: bool, stakeTaken: bool): bool =
-  pending implies not(stakeTaken)
+pure def lawVouchStakeTakenAtMostOnce(seriousAbuse: bool, vouched: bool, withinWindow: bool, pending: bool, voucherEligible: bool): bool =
+  not(vouchStakeMayDefer(seriousAbuse, vouched, true, withinWindow, voucherEligible))
+    and not(vouchStakeMayTake(pending, true, voucherEligible))
+
+pure def lawVouchStakeNotDeferredAndTaken(seriousAbuse: bool, vouched: bool, stakeTaken: bool, withinWindow: bool, pending: bool, voucherEligible: bool): bool =
+  not(vouchStakeMayDefer(seriousAbuse, vouched, stakeTaken, withinWindow, voucherEligible)
+    and vouchStakeMayTake(pending, stakeTaken, voucherEligible))
 ```

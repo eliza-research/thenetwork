@@ -16,7 +16,7 @@ import {
   capitalAttendanceEvidence, capitalEntryUsesPeriodCap, capitalFraudReverses, capitalHelpWasUseful,
   capitalPeriodRoom, initial as capitalEventInitial, isCapitalFraudCandidate, mayEarnCapital,
   mayReverseCapitalEntry, needCapitalSourceOpen, organizingCapitalQuorum, organizingCapitalSourceOpen,
-  step as stepCapitalEvent,
+  step as stepCapitalEvent, vouchStakeMayDefer, vouchStakeMayTake,
 } from "../../core/src/generated/capitalLedger.ts";
 import { isMinor } from "../../core/src/policy.ts";
 import { resolveCapital, type CapitalConfig, type CapitalConfigInput } from "./config.ts";
@@ -165,7 +165,9 @@ export class CapitalLedger {
         if (m) m.eligible = !isMinor(ev.age);
         if (m && m.eligible) {
           for (const [inviteeId, invitee] of this.members) {
-            if (invitee.vouchedBy === ev.member && invitee.stakePending) this.takeStake(inviteeId, invitee, ev, out);
+            if (invitee.vouchedBy === ev.member && vouchStakeMayTake(invitee.stakePending, invitee.stakeTaken, this.isEligible(ev.member))) {
+              this.takeStake(inviteeId, invitee, ev, out);
+            }
           }
         }
         break;
@@ -208,15 +210,16 @@ export class CapitalLedger {
         const m = this.members.get(ev.member);
         if (!m) break;
         m.removed = true;
-        if (ev.reason !== "serious_abuse" || !m.vouchedBy || m.stakeTaken) break;
         // The window runs to the confirmed abuse, so a slow removal process does not save the stake.
-        if (Math.min(m.abuseAt ?? ev.t, ev.t) - m.joinedAt > c.vouch.stakeWindowDays * DAY) break;
+        const withinWindow = Math.min(m.abuseAt ?? ev.t, ev.t) - m.joinedAt <= c.vouch.stakeWindowDays * DAY;
         const v = m.vouchedBy;
-        if (!this.isEligible(v)) {
+        const eligible = v !== undefined && this.isEligible(v);
+        if (vouchStakeMayDefer(ev.reason === "serious_abuse", v !== undefined, m.stakeTaken, withinWindow, eligible)) {
           m.stakePending = true;
           break;
         }
-        this.takeStake(ev.member, m, ev, out);
+        if (ev.reason !== "serious_abuse" || !v || !withinWindow) break;
+        if (vouchStakeMayTake(true, m.stakeTaken, eligible)) this.takeStake(ev.member, m, ev, out);
         break;
       }
       case "abuse_confirmed": {
@@ -378,15 +381,16 @@ export class CapitalLedger {
     if (ev.t - m.joinedAt > this.cfg.vouch.valueWindowDays * DAY) return;
     const e = this.credit(m.vouchedBy, "vouch", this.cfg.credit.vouch, ev, [invitee], m.valueProviders, "vouch: invitee active and got value", out);
     if (e) m.vouchCreditId = e.id;
-    }
-    private takeStake(inviteeId: MemberId, invitee: MemberRec, ev: CapitalEvent, out: LedgerEntry[]): void {
-      const voucher = invitee.vouchedBy;
-      if (!voucher || invitee.stakeTaken || !this.isEligible(voucher)) return;
-      invitee.stakeTaken = true;
-      invitee.stakePending = false;
-      if (invitee.vouchCreditId) this.reverse(voucher, invitee.vouchCreditId, ev, "vouch credit reversed: invitee removed", out);
-      this.penalize(voucher, "vouch_stake", this.cfg.penalty.vouchStake, ev, [inviteeId], "vouch stake: invitee removed for serious abuse", out);
-    }
+  }
+
+  private takeStake(inviteeId: MemberId, invitee: MemberRec, ev: CapitalEvent, out: LedgerEntry[]): void {
+    const voucher = invitee.vouchedBy;
+    if (!voucher || !vouchStakeMayTake(true, invitee.stakeTaken, this.isEligible(voucher))) return;
+    invitee.stakeTaken = true;
+    invitee.stakePending = false;
+    if (invitee.vouchCreditId) this.reverse(voucher, invitee.vouchCreditId, ev, "vouch credit reversed: invitee removed", out);
+    this.penalize(voucher, "vouch_stake", this.cfg.penalty.vouchStake, ev, [inviteeId], "vouch stake: invitee removed for serious abuse", out);
+  }
 
   private noShow(member: MemberId, ev: CapitalEvent, outcome: string, out: LedgerEntry[]) {
     if (!this.isEligible(member)) return;
