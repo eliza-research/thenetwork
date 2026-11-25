@@ -1,24 +1,17 @@
 import { expect, test } from "vitest";
-import { DAY } from "@thenetwork/core";
 import { Mini } from "../../../packages/network/test/mini.ts";
+import { describe as describeEvent } from "../src/events.ts";
 import { Projector } from "../src/projector.ts";
 import { emptyCounters, Store } from "../src/store.ts";
 
-test("a group member who leaves with no substitute stays in the observatory roster", async () => {
-  // spec/probeDispatch.md, "A replacement keeps the requester or hiring manager and all eligible
-  // group members": "If no alternate is accepted, a group can continue after removing the
-  // unavailable member when at least three members remain available to participate."
-  // spec/observatoryRoster.md, "A replacement uses the Network's recorded roster" and
-  // "Reviewed offers contribute to a member's proposal activity after approval": the departed
-  // member is no longer a participant in the recorded roster, so the roster and the proposal
-  // count must stop showing them.
+test("a group member who leaves with no substitute leaves the observatory roster and count", async () => {
   const planned = ["ana", "ben", "cy", "dee"];
   const remaining = ["ana", "ben", "cy"];
   const world = new Mini(planned.map(id => ({
     id, name: id, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"],
   })), { review: "human", growth: false });
   await world.onboard(...planned);
-  const id = world.propose(planned);
+  const id = world.propose(planned, { explanations: { ana: "climbing nearby", ben: "climbing nearby", cy: "climbing nearby", dee: "climbing nearby" } });
   expect(await world.runUntil(() => world.net.reviewQueue().some(item => item.oppId === id))).toBe(true);
   expect(world.net.decide(id, "approve", { reviewer: "staff" })).toEqual({ ok: true });
   await world.answerProbes(planned, member => (member === "dee" ? "no" : "yes"));
@@ -31,6 +24,7 @@ test("a group member who leaves with no substitute stays in the observatory rost
   expect(departure.detail.out).toBe("dee");
   expect(departure.detail.in).toBeUndefined();
   expect((departure.detail.proposal as { participants: string[] }).participants).toEqual(remaining);
+  expect((departure.detail.proposal as { explanations: Record<string, string> }).explanations).not.toHaveProperty("dee");
   expect(world.logs.filter(record => record.detail.oppId === id).map(record => record.kind))
     .not.toContain("opportunity_closed");
 
@@ -48,5 +42,8 @@ test("a group member who leaves with no substitute stays in the observatory rost
   const shown = store.opps.get(id)!;
   expect(shown.participants).toEqual(remaining);
   expect(store.member("dee")!.counters.proposals).toBe(0);
+  expect(remaining.map(member => store.member(member)!.counters.proposals)).toEqual([1, 1, 1]);
+  expect(Object.keys(shown.status)).not.toContain("undefined");
+  expect(describeEvent({ at: departure.t, actor_type: "agent", actor_id: "network", type: "probe_replaced", object_type: null, object_id: null, payload: departure.detail }).text).not.toContain("undefined");
   expect([...store.opps.values()].filter(o => o.participants.includes("dee"))).toEqual([]);
 });
