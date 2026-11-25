@@ -183,3 +183,16 @@
 {"text":"Saturday works. If Ana can't make Sunday, Sunday works.","answer":"yes","keys":["b"]}
 {"text":"Saturday works. If Ana can't make Sunday, that's fine.","answer":"yes","keys":["b"]}
 {"text":"Sunday works, unless Ana can't make it","answer":"unclear","keys":[]}
+{"text":"the weekend ones work","answer":"yes","keys":["b","c"]}
+{"text":"the weekday ones work","answer":"yes","keys":["a"]}
+{"text":"the weeknight ones work","answer":"yes","keys":["a"]}
+{"text":"the weekend days work","answer":"yes","keys":["b","c"]}
+{"text":"the weekend slots work","answer":"yes","keys":["b","c"]}
+{"text":"the evening ones work","answer":"yes","keys":["a"]}
+{"text":"the morning ones work","answer":"yes","keys":["b"]}
+{"text":"Saturday ones work","answer":"yes","keys":["b"]}
+{"text":"Thursday works, the weekend ones don't","answer":"yes","keys":["a"]}
+{"text":"Thursday works, the weekend days don't","answer":"yes","keys":["a"]}
+{"text":"the weekend ones don't work","answer":"unclear","keys":[]}
+{"text":"the weekend ones are good","answer":"yes","keys":["b","c"]}
+{"text":"the weekend one works","answer":"yes","keys":["b","c"]}

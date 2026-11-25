@@ -1058,6 +1058,12 @@ function timeMentions(text: string, recoverTrailingPair = false): TimeMention[] 
       t.nightsOnly = d.nightsOnly;
     }
   }
+  // A plural count noun right after a time ("the weekend ones", "Saturday
+  // times") belongs to the mention: the pick and refusal words follow it.
+  for (const m of [...days, ...times]) {
+    const tail = /^\s+(?:ones|days|times|slots|options)\b/.exec(text.slice(m.end));
+    if (tail) m.end += tail[0].length;
+  }
   return [...days, ...times.filter(t => t.day || t.group || t.minute === undefined || !INCIDENTAL_CLOCK.test(text.slice(0, t.at)))];
 }
 
@@ -1521,7 +1527,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   for (const list of dayLists) residue = residue.slice(0, list.at) + " ".repeat(list.end - list.at) + residue.slice(list.end);
   for (const [re] of DAY_WORDS) residue = residue.replace(re, " ");
   residue = residue.replace(PROBE_DAY_GROUP, " ");
-  residue = residue.replace(/\b\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b|\b(?:the|one|option|or|and|either|works?|please|pls|lol|at|on|in the|morning|evening|afternoon|night|[abc])\b|[\W_]+/g, " ").trim();
+  residue = residue.replace(/\b\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b|\b(?:the|one|ones|option|options|days|times|slots|or|and|either|works?|please|pls|lol|at|on|in the|morning|evening|afternoon|night|[abc])\b|[\W_]+/g, " ").trim();
   // A ", Day too" joins the named day when the reply also says yes in words ("Saturday is best,
   // Sunday too" books both): the affirmation must not hide the "too" the way "works" already does
   // not. A bare list ("Saturday, Sunday too") and "work" alone ("Saturday work, Sunday too") stay
