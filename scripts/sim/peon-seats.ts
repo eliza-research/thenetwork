@@ -558,6 +558,67 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
     expect(draftWorld.saved.length).toBe(0);
   });
 
+  await b.run("intake: a qualified or incomplete read-back reply asks again instead of publishing", async () => {
+    const draftWorld = new SeatWorld();
+    draftWorld.add("manager", "Sam Patel", 34, { verified: "Acme" });
+    for (const answer of ["hi", "Work", "Weekends mostly", "One-on-one"]) await draftWorld.say("manager", answer);
+    for (const qualified of ["Yes, but the pay is wrong", "Yes, not hybrid", "Yes, no SQL needed", "Yep, almost"]) {
+      await draftWorld.say("manager", POST);
+      const before = draftWorld.sent.length;
+      await draftWorld.say("manager", qualified);
+      expect(draftWorld.sent.length).toBe(before + 1);
+      expect(draftWorld.last("manager")).toBe(POSTING_COPY.askChange);
+      expect(draftWorld.saved.length).toBe(0);
+    }
+    await draftWorld.say("manager", POST);
+    expect(draftWorld.saved.length).toBe(0);
+    await draftWorld.say("manager", "Yes, make it $130k");
+    expect(draftWorld.last("manager")).toBe(POSTING_COPY.askPay);
+    expect(draftWorld.saved.length).toBe(0);
+    await draftWorld.say("manager", "$120k-$140k");
+    expect(draftWorld.last("manager")).toMatch(/\$120k-\$140k a year, hybrid in Brooklyn.*Reply yes/);
+    await draftWorld.say("manager", "Yes, in Jersey City");
+    expect(draftWorld.last("manager")).toBe(POSTING_COPY.askArea);
+    expect(draftWorld.saved.length).toBe(0);
+    await draftWorld.say("manager", "Astoria");
+    expect(draftWorld.last("manager")).toMatch(/\$120k-\$140k a year, hybrid in Astoria.*Reply yes/);
+    await draftWorld.say("manager", "Yes, in a heartbeat");
+    expect(draftWorld.saved.length).toBe(1);
+    expect(draftWorld.saved[0]).toMatchObject({ title: "data analyst", payMin: 120, payMax: 140, mode: "hybrid", area: "astoria", status: "active" });
+
+    await draftWorld.say("manager", "We're hiring a barista, 1 opening, $45k-$55k, remote");
+    expect(draftWorld.last("manager")).toMatch(/Barista, 1 opening, \$45k-\$55k a year, remote\..*Reply yes/);
+    await draftWorld.say("manager", "Yes, maybe");
+    expect(draftWorld.last("manager")).toBe(POSTING_COPY.askChange);
+    expect(draftWorld.saved.length).toBe(1);
+    await draftWorld.say("manager", "Yes, not remote");
+    expect(draftWorld.last("manager")).toBe(POSTING_COPY.askArea);
+    expect(draftWorld.saved.length).toBe(1);
+    await draftWorld.say("manager", "Queens");
+    expect(draftWorld.last("manager")).toMatch(/onsite in Queens.*Reply yes/);
+    await draftWorld.say("manager", "Yes, onsite, not remote, no changes");
+    expect(draftWorld.saved.length).toBe(2);
+
+    await draftWorld.say("manager", "Update my barista post: 2 openings");
+    expect(draftWorld.last("manager")).toMatch(/Barista, 2 openings, \$45k-\$55k a year, onsite in Queens.*Reply yes/);
+    await draftWorld.say("manager", "Yes, $60k-$45k");
+    expect(draftWorld.last("manager")).toBe(POSTING_COPY.askPay);
+    await draftWorld.say("manager", "$50k-$60k");
+    expect(draftWorld.last("manager")).toMatch(/Barista, 2 openings, \$50k-\$60k a year, onsite in Queens.*Reply yes/);
+    await draftWorld.say("manager", "yes");
+    expect(draftWorld.saved.at(-1)).toMatchObject({ title: "barista", openings: 2, payMin: 50, payMax: 60 });
+
+    await draftWorld.say("manager", "Close my data analyst post");
+    expect(draftWorld.last("manager")).toBe(POSTING_COPY.readBackClose("data analyst"));
+    await draftWorld.say("manager", "Yes, but the barista post");
+    expect(draftWorld.last("manager")).toBe(POSTING_COPY.readBackClose("barista"));
+    expect(draftWorld.intents.find(i => i.objective === "Hire: data analyst")?.status).toBe("active");
+    await draftWorld.say("manager", "yes");
+    expect(draftWorld.last("manager")).toBe(POSTING_COPY.closed("barista"));
+    expect(draftWorld.intents.find(i => i.objective === "Hire: data analyst")?.status).toBe("active");
+    expect(draftWorld.intents.find(i => i.objective === "Hire: barista")?.status).toBe("closed");
+  });
+
   await b.run("intake: read back first, saved only on the manager's yes", async () => {
     const m = w.mark();
     await w.say("hm1", POST);

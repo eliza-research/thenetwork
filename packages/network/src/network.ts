@@ -161,7 +161,7 @@ import type { NetworkStore } from "./store.ts";
 import { HOLD, Trust, type TrustLevel, type TrustState } from "./trust.ts";
 import { appTagFacet, type AppHooks, type AppTag, type HookOpp } from "./apphooks.ts";
 import { confirmPosting, postingDraftCurrent } from "../../core/src/generated/postingPolicy.ts";
-import { isPostingCommand, isSeatId, postingDetailsChanged, postingFromDraft, postingFromFacts, postingProblem, postingRevision, postingsOf, POSTING_COPY, readPostingText, seatIdOf, seatOwnerOf, SEAT_COPY, type JobPosting, type PostingDraft } from "./jobs.ts";
+import { isPostingCommand, isSeatId, postingDetailsChanged, postingFromDraft, postingFromFacts, postingProblem, postingReplyQualified, postingRevision, postingsOf, POSTING_COPY, readPostingText, seatIdOf, seatOwnerOf, SEAT_COPY, type JobPosting, type PostingDraft } from "./jobs.ts";
 import { hireSeatCurrent, readHireEvidence, type HireSeat } from "./peon-hire-dispatch.ts";
 import { checkInReport, directFeedbackAbsence, groupFeedbackAbsence, emergencyCheckInReportKind, reportKindOf, statesImmediateDanger, URGENT_REPORTS, type ReportKind, type SafetyReport } from "./reports.ts";
 
@@ -7863,8 +7863,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     const clear = () => { m.posting = undefined; if (m.awaiting?.kind === "posting") m.awaiting = this.owedAnswer(m); };
     if (waiting && !isPostingCommand(body)) {
       const yn = this.yesNoOf(body);
-      const ready = !!waiting.ready, affirmative = yn === "yes";
-      const edited = !waiting.close && postingDetailsChanged(body, waiting);
+      const open = postingsOf(this.snapshotCached(), m.id).filter(p => p.active);
+      const ready = !!waiting.ready, affirmative = yn === "yes" && !postingReplyQualified(body, waiting, open);
+      const edited = postingDetailsChanged(body, waiting, open);
       const prev = waiting.id ? this.storedPosting(m.id, waiting.id) : undefined;
       // spec/postingPolicy.md, "A stale yes never reopens or overwrites a posting that staff changed or closed"
       const current = postingDraftCurrent(waiting.revision !== undefined, prev !== undefined, prev?.status === "active",

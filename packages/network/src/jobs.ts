@@ -71,7 +71,17 @@ const SENIORITY: [RegExp, number][] = [[/\b(intern|entry[- ]level|junior|jr)\b/i
 const BOROUGHS = ["manhattan", "brooklyn", "queens", "bronx", "staten island"];
 const MODE = "remote|hybrid|on-?site|in[- ]office|in person";
 const REFUSED_MODE = new RegExp(`\\b(?:(?:not|no)(?:\\s+longer)?\\s+(?:fully\\s+)?|non[- ])(?:${MODE})\\b(?:\\s+(?:or|nor)\\s+(?:${MODE})\\b)*`, "gi");
+const REFUSED_REMOTE = /\b(?:(?:not|no)(?:\s+longer)?\s+(?:fully\s+)?|non[- ])remote\b/i;
+const REFUSED_ONSITE = /\b(?:(?:not|no)(?:\s+longer)?\s+(?:fully\s+)?|non[- ])(?:on-?site|in[- ]office|in person)\b/i;
+const NO_SPONSORSHIP = /\bno (?:visa )?sponsorship(?:\s+available)?\b|\b(?:can(?:'|no)?t|cannot|won'?t|don'?t) sponsor\b/gi;
 const PAY_RANGE = /(?<![\w.,])(\$?\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s*k?)\s*(?:-|–|—|to)\s*(\$?\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s*k?)(?!\w|[.,]\d)/gi;
+const STATED_PAY = /(?<![\w.,])(?!401\s*k\b)(?:\$\s*\d[\d,.]*\s*k?|\d+(?:\.\d+)?\s*k)\b/i;
+const BARE_PLACE_CLAUSE = /\b(?:in|near)\s+([a-z][a-z '.-]{1,32}?)(?=\s*(?:[,.;!?]|$)|\s+(?:but|where|paying|must|nice|with|for|and)\b|\$)/i;
+const IDIOM_IN = /\b(?:(?:i'?m|im|we'?re|we are|you'?re)\s+in|count\s+(?:me|us)\s+in)\b/gi;
+const NON_PLACE_WORD = /^(?:a|an|the|my|our|your|his|her|their|its|this|that|these|those|any|some|no|every|each|all|both|one|two|three|four|five|six|seven|eight|nine|ten|once|first|last|best|worst|least|most|present|future|term|short|brief|summary|general|total|full|part|advance|addition|case|fact|truth|order|time|weeks?|months?|days?|years?|hours?|minutes?|seconds?|january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec|spring|summer|fall|autumn|winter|person|office|house|work|home|lunch|dinner|meetings?|transit|sales|finance|marketing|engineering|operations|ops|tech|retail|hospitality|healthcare|production|english|spanish|mind|theory|practice|principle|detail|particular|return|touch|sync|line|step|good|great|fine|lol|lmao|haha|plz|please|thanks|thx|ty)\b/i;
+const BENIGN_POSTING_CONFIRM = /\b(?:why (?:the (?:hell|heck) )?not|not a problem|no (?:problem|probs?|worries|doubt|questions?|changes?(?:\s+needed)?|edits?|notes?|issues?|complaints?|adjustments?)|nothing to (?:change|fix|edit|add)|(?:don'?t|do not) change (?:anything|a thing)|without (?:a )?(?:doubt|hesitation|question)|can(?:'t|not) wait)\b/gi;
+const QUALIFIED_YES_LEAD = /^\s*(?:yes|yeah|yep|yup|ya|sure|ok(?:ay)?|right|correct|sounds good|post it|go ahead)\b/i;
+const POSTING_REPLY_QUALIFIER = /\?|\b(?:but|except|though|tho|although|however|actually|instead|other than|apart from|besides|minus|change|make it|more like|meant|drop|remove|without|almost|mostly|nearly|maybe|mayb|perhaps|possibly|probably|prob|might|idk|dunno|unsure|uncertain|kinda|kind of|sort of|i guess|guess so|i think(?:\s+so)?|think so|i suppose|suppose so|let me (?:check|see|think)|if|unless|wait|hold on)\b/i;
 
 /** The first stated yearly pay range, in thousands of dollars. A bare "2-3" is not pay: one end needs "$" or "k". */
 function payRange(text: string): [number, number] | undefined {
@@ -132,6 +142,7 @@ export function parsePosting(body: string): PostingDraft {
   if (/\bremote\b/i.test(modeText)) d.mode = "remote";
   else if (/\bhybrid\b/i.test(modeText)) d.mode = "hybrid";
   else if (/\b(on-?site|in[- ]office|in person)\b/i.test(modeText)) d.mode = "onsite";
+  else if (REFUSED_REMOTE.test(t) && !REFUSED_ONSITE.test(t)) d.mode = "onsite";
   const lower = ` ${t.toLowerCase().replace(/[^a-z0-9' -]+/g, " ")} `;
   const site = POSTING_SITE.exec(modeText);
   if (site) {
@@ -151,6 +162,10 @@ export function parsePosting(body: string): PostingDraft {
   let roleText = t;
   for (const section of [must, nice]) if (section) {
     roleText = roleText.slice(0, section.index) + " ".repeat(section[0].length) + roleText.slice(section.index + section[0].length);
+  }
+  if (!pay && STATED_PAY.test(roleText)) {
+    d.payMin = undefined;
+    d.payMax = undefined;
   }
   for (const [re, n] of SENIORITY) if (re.test(roleText)) { d.seniority = n; break; }
   const lvl = /\blevel\s*([1-5])\b/i.exec(roleText);
@@ -186,6 +201,8 @@ export const POSTING_COPY = {
   askPay: "What's the pay range for the role (for example $90k-$120k)? We only show jobs with a posted pay range.",
   askArea: "Which neighborhood is the job in?",
   askOpenings: `How many openings are there? Give a whole number from 1 to ${MAX_OPENINGS}.`,
+  askChange: "What should I change? Reply yes to post it as shown, or send the updated details.",
+  askCloseChange: (title: string) => `Still open: ${title}. Reply yes to close it, or tell me which post to close.`,
   saved: (title: string) => `Posted: ${title}. A person on our team reviews every match before anyone hears about it, and you see a short summary of each candidate who says yes. ${NEVER_ASKS}`,
   updated: (title: string) => `Updated: ${title}.`,
   closed: (title: string) => `Closed: ${title}. No new candidates will be sent for it.`,
@@ -263,9 +280,46 @@ function looksLikeTitle(text: string): boolean {
   return words.length > 0 && words.length <= 6 && !text.includes("?") && !NOT_A_TITLE.test(text);
 }
 
-/** True when a reply also states a field that differs from the draft (a correction needs a new read-back). */
-export function postingDetailsChanged(body: string, draft: PostingDraft): boolean {
-  return Object.entries(parsePosting(body)).some(([field, value]) =>
+function bareReplyPlace(body: string): string | undefined {
+  const modeText = commandText(body).replace(/\s+/g, " ").trim().replace(REFUSED_MODE, " ").replace(IDIOM_IN, " ");
+  const hit = BARE_PLACE_CLAUSE.exec(modeText);
+  const raw = hit?.[1]?.trim();
+  if (!raw || NON_PLACE_WORD.test(raw)) return undefined;
+  const known = exactPostingArea(raw);
+  return known ? slug(known) : "";
+}
+
+function refusesDraftMode(text: string, draft: PostingDraft): boolean {
+  const mode = draft.mode ?? "onsite";
+  for (const hit of text.matchAll(REFUSED_MODE)) {
+    const phrase = hit[0];
+    if (mode === "remote" && /\bremote\b/i.test(phrase)) return true;
+    if (mode === "hybrid" && /\bhybrid\b/i.test(phrase)) return true;
+    if (mode === "onsite" && /\b(?:on-?site|in[- ]office|in person)\b/i.test(phrase)) return true;
+  }
+  return false;
+}
+
+export function postingReplyQualified(body: string, draft: PostingDraft, open: readonly PostingRef[] = []): boolean {
+  const t = commandText(body).replace(/\s+/g, " ").trim();
+  if (!draft.close && refusesDraftMode(t, draft)) return true;
+  if (draft.close && namedPostings(t, open).some(p => p.id !== draft.id)) return true;
+  let stripped = t.replace(BENIGN_POSTING_CONFIRM, " ");
+  if (!draft.close) {
+    stripped = stripped.replace(REFUSED_MODE, " ");
+    if (draft.sponsors === false) stripped = stripped.replace(NO_SPONSORSHIP, " ");
+  }
+  return POSTING_REPLY_QUALIFIER.test(stripped) || /\b(?:not|no|neither|nor)\b/i.test(stripped);
+}
+
+export function postingDetailsChanged(body: string, draft: PostingDraft, open: readonly PostingRef[] = []): boolean {
+  if (draft.close) return namedPostings(commandText(body), open).some(p => p.id !== draft.id);
+  const parsed = parsePosting(body);
+  if (parsed.area === undefined) {
+    const place = bareReplyPlace(body);
+    if (place !== undefined) parsed.area = place;
+  }
+  return Object.entries(parsed).some(([field, value]) =>
     JSON.stringify(value) !== JSON.stringify(draft[field as keyof PostingDraft]));
 }
 
@@ -297,6 +351,12 @@ export function readPostingText(body: string, ctx: {
     const closeReason = filled ? "filled" : pending?.closeReason ?? "closed";
     const draft: PostingDraft = { close: true, closeReason, ...(pending?.asks !== undefined ? { asks: pending.asks } : {}) };
     const stored = pick ? ctx.storedPosting(pick.id) : undefined;
+    if (!close && !filled && pending?.ready && (!pick || pick.id === pending.id || !stored)) {
+      if (pending.title && (parseReply(t).answer === "yes" || QUALIFIED_YES_LEAD.test(t)) && postingReplyQualified(t, pending, open)) {
+        return { draft: { ...pending, asks: (pending.asks ?? 0) + 1 }, text: POSTING_COPY.askCloseChange(pending.title), ready: true };
+      }
+      return undefined;
+    }
     if (!pick || !stored) return { draft, text: POSTING_COPY.whichToClose(open.map(p => p.title)), ready: false };
     return { draft: { ...draft, id: pick.id, title: pick.title, revision: postingRevision(stored) }, text: POSTING_COPY.readBackClose(pick.title), ready: true };
   }
@@ -326,17 +386,27 @@ export function readPostingText(body: string, ctx: {
   } else if (pending?.asked === "openings" && OPENING_COUNT_ANSWER.test(t.trim())) {
     read.openings = readOpeningCount(t.trim());
   }
+  if ((update || (pending && !pending.close && !newPost && !pending.chooseUpdate)) && read.area === undefined) {
+    const place = bareReplyPlace(update ? t.slice(update[0].length) : t);
+    if (place !== undefined) read.area = place;
+  }
   if (pending?.asked === "area" && !read.mode && Object.keys(read).every(field => field === "area")) {
     const area = exactPostingArea(t.replace(/^(?:in|at|near)\s+/i, "").replace(/[.!]+$/, ""));
     if (area) read.area = slug(area);
     else if (read.area !== undefined || parseReply(t).answer === "yes" || looksLikeTitle(t)) read.area = "";
   }
-  if (!newPost && !update && !pending?.chooseUpdate && !Object.keys(read).length) return undefined;
+  if (!newPost && !update && !pending?.chooseUpdate && !Object.keys(read).length) {
+    if (pending?.ready && (parseReply(t).answer === "yes" || QUALIFIED_YES_LEAD.test(t)) && postingReplyQualified(t, pending)) {
+      return { draft: { ...pending, asks: (pending.asks ?? 0) + 1 }, text: POSTING_COPY.askChange, ready: true };
+    }
+    return undefined;
+  }
   const { asked: _asked, ...merged }: PostingDraft = { ...base, ...read };
   const [need] = missing(merged);
   const questions = { title: POSTING_COPY.askTitle, pay: POSTING_COPY.askPay, openings: POSTING_COPY.askOpenings, area: POSTING_COPY.askArea };
   if (need) return { draft: { ...merged, asked: need }, text: questions[need], ready: false };
-  return { draft: merged, text: POSTING_COPY.readBack(merged), ready: true };
+  const unchanged = pending?.ready && !newPost && !update && !pending.chooseUpdate && !postingDetailsChanged(t, pending);
+  return { draft: unchanged ? { ...merged, asks: (merged.asks ?? 0) + 1 } : merged, text: POSTING_COPY.readBack(merged), ready: true };
 }
 
 /** The posting a confirmed draft saves (an update keeps what the draft does not change). A closed post is final: undefined. */
