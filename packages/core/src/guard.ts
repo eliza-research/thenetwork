@@ -228,6 +228,34 @@ export function contactVariants(s: string): string[] {
   return [...out];
 }
 
+export function findContactKinds(
+  text: string,
+  o: { kinds?: ReadonlySet<string>; allow?: readonly string[]; phoneExemptions?: boolean } = {},
+): string[] {
+  const found = new Set<string>();
+  const allow = o.allow ?? [];
+  const exempt = o.phoneExemptions ?? true;
+  for (const p of contactVariants(text)) {
+    let c = p;
+    for (const a of allow) c = c.split(a).join(" ");
+    for (const { name, re } of CONTACT_PATTERNS) {
+      if ((o.kinds && !o.kinds.has(name)) || found.has(name)) continue;
+      if (re.global) {
+        re.lastIndex = 0;
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(c))) {
+          if (!exempt || isPhone(c, m)) {
+            found.add(name);
+            break;
+          }
+        }
+        re.lastIndex = 0;
+      } else if (re.test(c)) found.add(name);
+    }
+  }
+  return [...found];
+}
+
 const YEAR = /^(?:19|20)\d\d$/;
 /** Ten digits of a North American number, with or without the country code. */
 const NANP = /^1?[2-9]\d\d[2-9]\d{6}$/;
@@ -617,19 +645,7 @@ export class LeakGuard {
     if (this.contacts) {
       const approved = o.contactAllow;
       const contactText = approved?.length ? text.replace(/\S+/gu, token => approved.includes(token) ? " " : token) : text;
-      for (const p of contactVariants(contactText)) {
-        let c = p;
-        for (const a of this.allow) c = c.split(a).join(" ");
-        for (const { name, re } of CONTACT_PATTERNS) {
-          if (reasons.has(`contact:${name}`)) continue;
-          if (re.global) {
-            re.lastIndex = 0;
-            let m: RegExpExecArray | null;
-            while ((m = re.exec(c))) { if (isPhone(c, m)) { reasons.add(`contact:${name}`); break; } }
-            re.lastIndex = 0;
-          } else if (re.test(c)) reasons.add(`contact:${name}`);
-        }
-      }
+      for (const name of findContactKinds(contactText, { allow: this.allow })) reasons.add(`contact:${name}`);
     }
     return [...reasons];
   }

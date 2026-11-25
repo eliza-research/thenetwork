@@ -236,8 +236,30 @@ export async function evalsBlock(b: Block): Promise<void> {
     `${unmasked.length} contact rows unmasked`);
 
   await b.run("MCP output gate: update summaries with a phone, email, internal id or timestamp are withheld; plain ones pass", () => {
-    for (const t of ["call me at (415) 555-0102", "maya [at] example [dot] test", "your match is mem_8f2k1", "meeting at 2026-10-08T19:30", "sam@example.com"]) expect(outputLeaks(t).length).toBeGreaterThan(0);
-    for (const t of ["Someone nearby wants to play tennis this weekend. Reply in the text thread.", "Your plan is booked: Saturday 11 AM at McCarren Park (Williamsburg).", "Nothing new right now."]) expect(outputLeaks(t)).toEqual([]);
+    for (const t of [
+      "call me at (415) 555-0102",
+      "call me at 555-0102",
+      "call two one two five five five zero one zero two",
+      "call ٢١٢-٥٥٥-٠١٠٢",
+      "text 212·555·0102",
+      "Maya's cell #4155550102",
+      "Maya id: 4155550102",
+      "Maya: case +14155550102",
+      "maya [at] example [dot] test",
+      "sam[@]example[.]com",
+      "sam<at>example<dot>com",
+      "sam at gmail",
+      "sam . lee @ example . com",
+      "your match is mem_8f2k1",
+      "meeting at 2026-10-08T19:30",
+      "sam@example.com",
+    ]) expect(outputLeaks(t).length).toBeGreaterThan(0);
+    for (const t of [
+      "Someone nearby wants to play tennis this weekend. Reply in the text thread.",
+      "Your plan is booked: Saturday 11 AM at McCarren Park (Williamsburg).",
+      "Open https://peon.biz to review your profile.",
+      "Nothing new right now.",
+    ]) expect(outputLeaks(t)).toEqual([]);
     expect(outputLeaks("she is going through a divorce", { facts: ["is going through a divorce"] }).length).toBeGreaterThan(0);
   });
 }
