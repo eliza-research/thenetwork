@@ -24,13 +24,13 @@ async function main() {
       const t = performance.now();
       const m = friendsMetrics(runFriendsWorld({ seed, n, weeks, planCap, matcher: ARMS[name]! }));
       all[name]!.push(m);
-      console.error(`${name} seed ${seed}: meetups ${m.meetups}, repeat ${(m.repeatRate * 100).toFixed(0)}%, V14 ${(m.v14 * 100).toFixed(0)}%, track ${(m.friendshipTrackShare * 100).toFixed(1)}%, travel ${m.travel.medianGroupMax.toFixed(0)}m, boroughMin ${m.boroughRatioMin.toFixed(2)}, adv ${m.safety.adversaryContacts}/${m.safety.knownAdversaryContacts}, minor ${m.safety.declaredMinorContacts}/${m.safety.hiddenMinorContacts} (${((performance.now() - t) / 1000).toFixed(1)}s)`);
+      console.error(`${name} seed ${seed}: meetups ${m.meetups}, repeat ${(m.repeatRate * 100).toFixed(0)}%, V14 ${Number.isFinite(m.v14) ? (m.v14 * 100).toFixed(0) + "%" : "n/a"}, track ${(m.friendshipTrackShare * 100).toFixed(1)}%, travel ${m.travel.medianGroupMax.toFixed(0)}m, boroughMin ${m.boroughRatioMin.toFixed(2)}, adv ${m.safety.adversaryContacts}/${m.safety.knownAdversaryContacts}, minor ${m.safety.declaredMinorContacts}/${m.safety.hiddenMinorContacts} (${((performance.now() - t) / 1000).toFixed(1)}s)`);
     }
   }
   const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
   const se = (xs: number[]) => { const m = mean(xs); return Math.sqrt(xs.reduce((a, b) => a + (b - m) ** 2, 0) / Math.max(1, xs.length - 1) / xs.length); };
   const fmt = (xs: number[], pct = false, d = 2) => (pct ? `${(mean(xs) * 100).toFixed(1)}% ± ${(se(xs) * 100).toFixed(1)}` : `${mean(xs).toFixed(d)} ± ${se(xs).toFixed(d)}`);
-  const rows: [string, (m: FriendsMetrics) => number, boolean, number?][] = [
+  const rows: [string, (m: FriendsMetrics) => number, boolean, number?, ((m: FriendsMetrics) => number)?][] = [
     ["Proposals / seed", m => m.proposals, false, 0],
     ["Probes / seed", m => m.probes, false, 0],
     ["Probe yes rate", m => m.probeYesRate, true],
@@ -55,8 +55,8 @@ async function main() {
     ["Pairs past 90 h / seed", m => m.friendPairs, false, 1],
     ["Members with a meetup", m => m.timeToFirstMeetup.shareWithMeetup, true],
     ["Median days to first meetup", m => m.timeToFirstMeetup.medianDays ?? NaN, false, 1],
-    ["**V14**", m => m.v14, true],
-    ["V14, Network-arranged only", m => m.v14Arranged, true],
+    ["**V14**", m => m.v14, true, 1, m => Number.isFinite(m.v14) ? 1 : 0],
+    ["V14, Network-arranged only", m => m.v14Arranged, true, 1, m => Number.isFinite(m.v14Arranged) ? 1 : 0],
     ["**Borough fairness: min V14 ratio (boroughs with >= 10 real members)**", m => m.boroughRatioMin, false, 2],
     ["Borough fairness, boroughs with >= 30 real members", m => m.boroughRatioMin30, false, 2],
     ["**Median group max travel (min)**", m => m.travel.medianGroupMax, false, 1],
@@ -74,9 +74,12 @@ async function main() {
   ];
   console.log(`| Metric (mean ± SE, seeds ${seeds.join(",")}; ${n} personas; ${weeks} weeks${planCap !== 1 ? `; plan allowance ${planCap}/wk` : ""}) | ${only.join(" | ")} |`);
   console.log(`|---|${only.map(() => "---:").join("|")}|`);
-  for (const [label, f, pct, d] of rows) console.log(`| ${label} | ${only.map(k => fmt(all[k]!.map(f), pct, d)).join(" | ")} |`);
+  // A V14 row with no finite value in any seed has nothing measured: a run shorter than
+  // 14 days (or with no real members) has no eligible V14 day. Show n/a, the gates'
+  // convention, not a NaN% that reads as measured; the metric underneath stays NaN.
+  for (const [label, f, pct, d, base] of rows) console.log(`| ${label} | ${only.map(k => base && mean(all[k]!.map(base)) === 0 ? "n/a" : fmt(all[k]!.map(f), pct, d)).join(" | ")} |`);
   console.log("\nV14 by borough (n averaged):");
-  for (const k of only) console.log(`  ${k}: ` + Object.keys(all[k]![0]!.v14ByBorough).map(b => `${b} (n≈${Math.round(mean(all[k]!.map(m => m.v14ByBorough[b]!.n)))}) ${(mean(all[k]!.map(m => m.v14ByBorough[b]!.v14).filter(Number.isFinite)) * 100).toFixed(1)}%`).join("; "));
+  for (const k of only) console.log(`  ${k}: ` + Object.keys(all[k]![0]!.v14ByBorough).map(b => { const finite = all[k]!.map(m => m.v14ByBorough[b]!.v14).filter(Number.isFinite); return `${b} (n≈${Math.round(mean(all[k]!.map(m => m.v14ByBorough[b]!.n)))}) ${finite.length ? `${(mean(finite) * 100).toFixed(1)}%` : "n/a"}`; }).join("; "));
   console.log("\nAdversary contacts by kind:");
   for (const k of only) console.log(`  ${k}: ` + ["romance_seeker", "mlm", "bot", "harasser"].map(a => `${a} ${mean(all[k]!.map(m => m.safety.adversaryContactsByKind[a] ?? 0)).toFixed(1)}`).join("; "));
   if (all.pack && all.random) {
