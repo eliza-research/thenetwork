@@ -884,12 +884,8 @@ const NAMED_EXCLUSION_PHRASES = "other than|apart from|aside from|excluding|barr
 const NAMED_TIME_EXCLUSION = `except|${NAMED_EXCLUSION_PHRASES}`;
 const BOTH_TIME_BOUNDARY = new RegExp(String.raw`[.,;!?\n]|\b(?:but|${NAMED_TIME_EXCLUSION})\b`);
 const PROBE_DAY_LIST_WORD = String.raw`\b(?:${DAY_TOKEN})\b`;
-const DIRECT_PROBE_DAY_LIST = new RegExp(
-  String.raw`(?:^|[.,;!?\n])\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?|please)\s*,?\s+)?(?:(?:i|we)\s+can\s+(?:do|make)\s+)?`
-    + String.raw`(?<days>${PROBE_DAY_LIST_WORD}(?:\s+(?:(?:and|or)\s+)?${PROBE_DAY_LIST_WORD})+)`
-    + String.raw`(?=(?:\s+(?:both|either)\b)?(?:\s+(?:${OFFERED_PAIR_AFFIRMATIVE}))?\s*(?:$|${BOTH_TIME_BOUNDARY.source}))`,
-  "dgu",
-);
+const PROBE_DAY_LIST_LEAD = String.raw`(?:(?:either|both)\s+)?`;
+const PROBE_DAY_LIST_DAYS = String.raw`${PROBE_DAY_LIST_WORD}(?:\s+(?:(?:and|or)\s+)?${PROBE_DAY_LIST_WORD})+`;
 const PROBE_DAY_LIST_TOKEN = new RegExp(PROBE_DAY_LIST_WORD, "gu");
 const ALTERNATIVE_PROBE_DAY_LIST = new RegExp(String.raw`^${PROBE_DAY_LIST_WORD}(?:\s+or\s+${PROBE_DAY_LIST_WORD})+$`);
 const TRAILING_BOTH_DAY_PAIR = new RegExp(
@@ -1081,6 +1077,12 @@ const OFFERED_TIME_REFUSAL =
   String.raw`(?:doesn'?t|does not|don'?t|do not|won'?t|will not|can'?t|cannot|wouldn'?t|would not)\b(?:\s+(?:really\s+)?(?:work(?: out)?|(?:fit|suit)(?: ${SCHEDULING_CONSTRAINT})?|make it|(?:look|seem)\s+(?:${OFFERED_TIME_REJECTION_STATE})))?|` +
   String.raw`(?:isn'?t|aren'?t|is not|are not)\s+(?:really\s+)?(?:${OFFERED_TIME_REJECTION_STATE}|going to work)\b)` + OFFERED_TIME_REFUSAL_END;
 const REFUSES_OFFERED_TIME = new RegExp(`^${OFFERED_TIME_REFUSAL}`);
+const DIRECT_PROBE_DAY_LIST = new RegExp(
+  String.raw`(?:^|[.,;!?\n])\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?|please)\s*,?\s+)?${PROBE_DAY_LIST_LEAD}(?:(?:i|we)\s+can\s+(?:do|make)\s+)?${PROBE_DAY_LIST_LEAD}`
+    + String.raw`(?<days>${PROBE_DAY_LIST_DAYS})`
+    + String.raw`(?=(?:(?:\s+(?:both|either)\b)?(?:\s+(?:${OFFERED_PAIR_AFFIRMATIVE}))?\s*(?:$|${BOTH_TIME_BOUNDARY.source})|(?<=(?:either|both)\s+${PROBE_DAY_LIST_DAYS})(?:\s+(?:both|either)\b)?${OFFERED_TIME_REFUSAL}))`,
+  "dgu",
+);
 const QUALIFIED_TIME_REFUSAL = new RegExp(String.raw`^\s*(?:(?:both|all)\s+)?${OFFERED_TIME_REFUSAL_QUALIFIER}`);
 const DIRECT_SHORT_DAY_REFUSAL = new RegExp(
   String.raw`(?:^|[.,;!?\n])\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)\s+)?(?<day>${SHORT_DAY_TOKEN})\b(?=\s+${OFFERED_TIME_REFUSAL_QUALIFIER})(?=${OFFERED_TIME_REFUSAL})`,

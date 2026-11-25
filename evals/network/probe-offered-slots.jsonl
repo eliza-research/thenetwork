@@ -247,3 +247,20 @@
 {"text":"the first and second are good","answer":"yes","keys":["a","b"]}
 {"text":"the 2nd 3rd are good","answer":"yes","keys":["b","c"]}
 {"text":"the 2nd and 3rd are fine","answer":"yes","keys":["b","c"]}
+{"text":"either sat sun","answer":"yes","keys":["b","c"]}
+{"text":"either sat sun thu","answer":"yes","keys":["a","b","c"]}
+{"text":"either thu sat sun","answer":"yes","keys":["a","b","c"]}
+{"text":"either sat sun doesn't work","answer":"unclear","keys":[]}
+{"text":"both sat sun","answer":"yes","keys":["b","c"]}
+{"text":"both sat sun works","answer":"yes","keys":["b","c"]}
+{"text":"I can do either sat sun","answer":"yes","keys":["b","c"]}
+{"text":"either sat sun both","answer":"yes","keys":["b","c"]}
+{"text":"either sat sun but not sunday","answer":"yes","keys":["b"]}
+{"text":"either sat sun at 11am","answer":"unclear","keys":[]}
+{"text":"either mon tue","answer":"unclear","keys":[]}
+{"text":"either sat sun","labels":["Saturday 10am","Saturday 11am","Sunday 2pm"],"answer":"unclear","keys":[]}
+{"text":"either sat sun","labels":["Thursday 7pm","Friday 7pm","Saturday 11am"],"answer":"unclear","keys":[]}
+{"text":"yeah, either sat sun","answer":"yes","keys":["b","c"]}
+{"text":"sat sun busy, thu works","answer":"yes","keys":["a"]}
+{"text":"sat sun don't work, thu works","answer":"yes","keys":["a"]}
+{"text":"sat sun are out, thu works","answer":"yes","keys":["a"]}
