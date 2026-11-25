@@ -169,7 +169,7 @@ pure def lawOnlyCopyOnlyTilesHaveNoLink(agent: AgentId): bool =
 
 ### The agent row never shows an agent that the app's connector refuses
 
-The agent signs the person up through the connector of the app ([connector tools](./connectorTools.md)). A tile for an agent that the connector refuses goes to a dead end, so the row does not show that tile. When the connector surface of the agent does not serve the host of the app, the row does not show the agent. `surfaceServesApp` copies the rule of `appOffered` in the connector tools model, because the two models have app types with the same values and the generator cannot import both. The site test compares `landingAgentOffered` with the app registry of the connector server for each app and agent, so a difference between the two rules fails the test. ChatGPT uses the OpenAI surface of the connector. Each other agent uses the full surface. The OpenAI surface excludes slop.date, so the slop.date page hides the ChatGPT tile and the other three pages show it. The repository has no record that the connector refuses Claude, Grok, Muse, Gemini, Perplexity, Cursor, OpenClaw or Hermes, so the row shows these agents on each page. The row keeps the fixed order of the agents that it shows.
+The agent signs the person up through the connector of the app ([connector tools](./connectorTools.md)). A tile for an agent that the connector refuses goes to a dead end, so the row does not show that tile. When the connector surface of the agent does not serve the host of the app, the row does not show the agent. `surfaceServesApp` copies the rule of `appOffered` in the connector tools model, because the two models have app types with the same values and the generator cannot import both. The site test compares `landingAgentOffered` with the app registry of the connector server for each app and agent, so a difference between the two rules fails the test. ChatGPT uses the OpenAI surface of the connector. Each other agent uses the full surface. The OpenAI surface serves the endpoint of every app, slop.date included, so each of the four pages shows the ChatGPT tile. The repository has no record that the connector refuses Claude, Grok, Muse, Gemini, Perplexity, Cursor, OpenClaw or Hermes, so the row shows these agents on each page. The row keeps the fixed order of the agents that it shows.
 
 ```quint
 type AgentSurface = FullConnectorSurface | OpenAiConnectorSurface
@@ -178,7 +178,8 @@ pure def agentConnectorSurface(agent: AgentId): AgentSurface =
   if (agent == ChatGpt) OpenAiConnectorSurface else FullConnectorSurface
 
 pure def surfaceServesApp(surface: AgentSurface, app: AppKey): bool =
-  surface == FullConnectorSurface or app != Slop
+  (surface == FullConnectorSurface or surface == OpenAiConnectorSurface) and
+  (app == Ntwrk or app == Slop or app == Peon or app == Friends)
 
 pure def landingAgentOffered(app: AppKey, agent: AgentId): bool =
   surfaceServesApp(agentConnectorSurface(agent), app)
@@ -186,8 +187,7 @@ pure def landingAgentOffered(app: AppKey, agent: AgentId): bool =
 pure def lawRefusedAgentIsNeverOffered(app: AppKey, agent: AgentId): bool =
   not(surfaceServesApp(agentConnectorSurface(agent), app)) implies not(landingAgentOffered(app, agent))
 
-pure def lawOnlySupportedPagesOfferChatGpt(app: AppKey): bool =
-  landingAgentOffered(app, ChatGpt) iff app != Slop
+pure def lawEveryPageOffersChatGpt(app: AppKey): bool = landingAgentOffered(app, ChatGpt)
 
 pure def lawOnlyChatGptCanBeRefused(app: AppKey, agent: AgentId): bool =
   agent != ChatGpt implies landingAgentOffered(app, agent)

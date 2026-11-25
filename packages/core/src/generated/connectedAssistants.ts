@@ -49,9 +49,36 @@ export function browserOwnsLiveGrant(sameApp: boolean, samePhone: boolean, sameP
 
 /** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
 //@ pure
+export function consentsPageReadsSession(siteIsHub: boolean, sessionForSiteApp: boolean): boolean {
+  return siteIsHub || sessionForSiteApp;
+}
+
+/** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
+//@ pure
 export function lawAnEarlierPhoneOwnerHasNoGrant(sameApp: boolean, samePhone: boolean, active: boolean, asOf: number, grantExpiresAt: number): boolean {
   //@ ensures \result === true
   return !browserOwnsLiveGrant(sameApp, samePhone, false, active, asOf, grantExpiresAt);
+}
+
+/** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
+//@ pure
+export function lawAppSiteReadsOnlyItsOwnSession(sessionForSiteApp: boolean): boolean {
+  //@ ensures \result === true
+  return consentsPageReadsSession(false, sessionForSiteApp) === sessionForSiteApp;
+}
+
+/** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
+//@ pure
+export function lawHubReadsTheSessionOfEveryApp(sessionForSiteApp: boolean): boolean {
+  //@ ensures \result === true
+  return consentsPageReadsSession(true, sessionForSiteApp);
+}
+
+/** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
+//@ pure
+export function lawASessionShowsOnlyItsOwnApp(samePhone: boolean, samePerson: boolean, active: boolean, asOf: number, grantExpiresAt: number): boolean {
+  //@ ensures \result === true
+  return !browserOwnsLiveGrant(false, samePhone, samePerson, active, asOf, grantExpiresAt);
 }
 
 /** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
@@ -105,8 +132,21 @@ export function load(page: ConsentsPage, loaded: LoadReply, grants: number): Con
 
 /** Story: See which assistants can use my account / A grant card names the assistant as its claim and shows its date and scopes (spec/connectedAssistants.md) */
 //@ pure
+export function grantCardNamesItsApp(siteIsHub: boolean): boolean {
+  return siteIsHub;
+}
+
+/** Story: See which assistants can use my account / A grant card names the assistant as its claim and shows its date and scopes (spec/connectedAssistants.md) */
+//@ pure
 export function grantCard(named: boolean): GrantCard {
   return { assistant: named ? "NamedByItself" : "UnnamedAssistant", claimNote: true, allowedDate: true, scopeList: true, removeButton: true };
+}
+
+/** Story: See which assistants can use my account / A grant card names the assistant as its claim and shows its date and scopes (spec/connectedAssistants.md) */
+//@ pure
+export function lawOnlyTheHubCardNamesTheApp(siteIsHub: boolean): boolean {
+  //@ ensures \result === true
+  return grantCardNamesItsApp(siteIsHub) === siteIsHub;
 }
 
 /** Story: See which assistants can use my account / A grant card names the assistant as its claim and shows its date and scopes (spec/connectedAssistants.md) */
@@ -293,18 +333,6 @@ export function confirmRemoval(page: ConsentsPage, removal: RemoveReply, grants:
 
 /** Story: Remove an assistant's access / Each page and each outcome can occur (spec/connectedAssistants.md) */
 //@ pure
-export function sometimesAccessRemoved(page: ConsentsPage): boolean {
-  return page.view === "ListView" && page.notice;
-}
-
-/** Story: Remove an assistant's access / Each page and each outcome can occur (spec/connectedAssistants.md) */
-//@ pure
-export function sometimesLastAccessRemoved(page: ConsentsPage): boolean {
-  return page.view === "EmptyView" && page.notice;
-}
-
-/** Story: Remove an assistant's access / Each page and each outcome can occur (spec/connectedAssistants.md) */
-//@ pure
 export function sometimesSignInFirst(page: ConsentsPage): boolean {
   return page.view === "SignInFirstView";
 }
@@ -337,6 +365,18 @@ export function sometimesListed(page: ConsentsPage): boolean {
 //@ pure
 export function sometimesConfirming(page: ConsentsPage): boolean {
   return page.view === "ConfirmingRemoval";
+}
+
+/** Story: Remove an assistant's access / Each page and each outcome can occur (spec/connectedAssistants.md) */
+//@ pure
+export function sometimesAccessRemoved(page: ConsentsPage): boolean {
+  return page.view === "ListView" && page.notice;
+}
+
+/** Story: Remove an assistant's access / Each page and each outcome can occur (spec/connectedAssistants.md) */
+//@ pure
+export function sometimesLastAccessRemoved(page: ConsentsPage): boolean {
+  return page.view === "EmptyView" && page.notice;
 }
 
 /** Do the rules allow this event in this state? */

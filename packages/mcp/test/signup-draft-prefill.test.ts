@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { canBeMatched } from "../../core/src/policy.ts";
 import { dropTestDb, pgAvailable, testDb } from "../../../apps/observatory/test/pg.ts";
 import { PgOAuthStore } from "../src/pg-store.ts";
@@ -32,7 +32,7 @@ async function authorize(e: Env, domain: string, clientId: string, phone: string
     method: "POST", body: new URLSearchParams({ rid, ...form }).toString(),
     headers: { "content-type": "application/x-www-form-urlencoded", origin: `https://${domain}`, cookie: cookie() },
   })));
-  return { consent, post };
+  return { consent, post, rid };
 }
 
 async function openSignup(e: Env, domain: string, clientId: string, phone: string) {
@@ -51,6 +51,79 @@ const shows = (html: string, firstName: string, city: string) =>
   new RegExp(`name="firstName"[^>]*value="${firstName}"`).test(html) && html.includes(`<option value="${city}" selected="">`);
 const blank = (html: string) => !/name="firstName"[^>]*value="/.test(html) && !/<option value="(nyc|sf)" selected/.test(html);
 const neverPrefilledAgeOrConsent = (html: string) => !/name="age"/.test(html) && !/name="birthdate"[^>]*value="/.test(html) && !/name="smsConsent"[^>]*checked/.test(html);
+
+test("a signup form from another request expires before reading the phone session", async ({ onTestFinished }) => {
+  const e = setup();
+  const registration = await register(e, "friends.help");
+  const client = registration.body.client_id;
+  if (typeof client !== "string") throw new Error("no registered client");
+  const other = await openSignup(e, "friends.help", client, PHONE_A);
+  const current = await openSignup(e, "friends.help", client, PHONE_A);
+  const sessionReads = vi.spyOn(e.sessions, "authenticate");
+  onTestFinished(() => { sessionReads.mockRestore(); });
+
+  for (const decision of ["join", "skip"]) {
+    const response = await current.post("/oauth/authorize/signup", { decision, signupView: field(other.form, "signupView") });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("This page has expired");
+  }
+  expect(sessionReads.mock.calls.length).toBe(0);
+
+  const back = await current.post("/oauth/authorize/signup", { decision: "skip", signupView: field(current.form, "signupView") });
+  expect(back.status).toBe(200);
+  expect(await back.text()).toContain('action="/oauth/authorize/consent"');
+  expect(sessionReads.mock.calls.length).toBe(1);
+  expect(await e.accounts.personFor(PHONE_A)).toBeUndefined();
+  expect((await e.store.auditRows()).filter(row => row.kind === "consent_granted")).toEqual([]);
+});
+
+test.skipIf(!pgAvailable)("signup outages show a message without exposing fields or issuing an authorization code", async ({ onTestFinished }) => {
+  const store = new PgOAuthStore(await testDb());
+  onTestFinished(async () => { await store.close(); await dropTestDb(); });
+  const e = setup({ store });
+  const registration = await register(e, "friends.help");
+  const client = registration.body.client_id;
+  if (typeof client !== "string") throw new Error("no registered client");
+  const { post, rid } = await authorize(e, "friends.help", client, PHONE_A);
+  const session = vi.spyOn(e.sessions, "authenticate");
+  const enrollment = vi.spyOn(e.accounts, "join");
+  onTestFinished(() => { session.mockRestore(); enrollment.mockRestore(); });
+  const signup = (fields: Record<string, string>) => post("/oauth/authorize/signup", fields);
+  const expectMessage = async (response: Response, title: string) => {
+    expect(response.status).toBe(503);
+    expect(response.headers.get("location")).toBeNull();
+    const html = await response.text();
+    expect(html).toContain(title);
+    expect(html).not.toMatch(/<form|>Try again<|name="(?:phone|code|birthdate)"/);
+    expect(await store.grantsFor(e.accounts.phoneHash(PHONE_A), "friends", e.clock.t)).toEqual([]);
+  };
+
+  session.mockRejectedValueOnce(new Error("test session outage"));
+  const unavailable = await signup({ decision: "open" });
+  expect(unavailable.headers.get("retry-after")).toBe("5");
+  await expectMessage(unavailable, "Please try again");
+  expect((await store.getAuthRequest(rid))?.step).toBe("consent");
+
+  const opened = await signup({ decision: "open" });
+  expect(opened.status).toBe(200);
+  const form = await opened.text();
+  const proof = field(form, "signupView");
+  expect(proof).not.toBe("");
+  session.mockRejectedValueOnce(new Error("test session outage"));
+  await expectMessage(await signup({ decision: "skip", signupView: proof }), "Please try again");
+  expect((await store.getAuthRequest(rid))?.step).toBe("consent");
+
+  enrollment.mockRejectedValueOnce(new Error("test enrollment outage"));
+  await expectMessage(await signup({
+    decision: "join", signupView: proof, consentVersion: field(form, "consentVersion"),
+    firstName: "Ari", birthdate: "1997-01-15", homeCity: "sf", smsConsent: "yes",
+  }), "Connect again");
+  expect((await store.getAuthRequest(rid))?.step).toBe("enrolling");
+  const stale = await post("/oauth/authorize/consent", { decision: "approve" });
+  expect(stale.status).toBe(400);
+  expect(stale.headers.get("location")).toBeNull();
+  expect((await store.auditRows()).filter(row => row.kind === "code_issued")).toEqual([]);
+});
 
 async function draftFor(e: Env, domain: string, phone: string, fields: Record<string, unknown> = { firstName: "Ari", homeCity: "sf" }) {
   const c = await connect(e, domain, phone, { scope: "membership:read profile:write" });
@@ -206,15 +279,46 @@ test.skipIf(!pgAvailable)("on Postgres the draft shows on one form only, also wh
     const e = setup({ store }), clientId = await draftFor(e, "friends.help", PHONE_A);
     const key = e.accounts.phoneHash(PHONE_A);
     const other = (await register(e, "friends.help")).body.client_id as string;
-    expect(await store.useSignupPrefill({ clientId: other, app: "friends", phoneKey: key, personId: null, ageAllowed: true }, e.clock.t)).toBeUndefined();
-    expect(await store.useSignupPrefill({ clientId, app: "friends", phoneKey: key, personId: null, ageAllowed: false }, e.clock.t)).toBeUndefined();
+    expect(await store.useSignupPrefill({ clientId: other, app: "friends", phoneKey: key, personId: null, ageAllowed: true }, () => e.clock.t)).toBeUndefined();
+    expect(await store.useSignupPrefill({ clientId, app: "friends", phoneKey: key, personId: null, ageAllowed: false }, () => e.clock.t)).toBeUndefined();
     const restarted = new PgOAuthStore(store.sql);
     const ask = { clientId, app: "friends" as const, phoneKey: key, personId: null, ageAllowed: true };
-    const pair = await Promise.all([store.useSignupPrefill(ask, e.clock.t), restarted.useSignupPrefill(ask, e.clock.t)]);
+    const pair = await Promise.all([store.useSignupPrefill(ask, () => e.clock.t), restarted.useSignupPrefill(ask, () => e.clock.t)]);
     expect(pair.filter(Boolean)).toEqual([{ firstName: "Ari", homeCity: "sf" }]);
     expect((await store.sql`select grant_id from oauth.signup_drafts where phone_key=${key}`)).toEqual([]);
     expect(blank((await openSignup(e, "friends.help", clientId, PHONE_A)).form)).toBe(true);
     const again = await draftFor(e, "friends.help", PHONE_A, { firstName: "Rae", homeCity: "nyc" });
     expect(shows((await openSignup(e, "friends.help", again, PHONE_A)).form, "Rae", "nyc")).toBe(true);
+  } finally { await store.close(); await dropTestDb(); }
+});
+
+test.skipIf(!pgAvailable).each(["grant", "draft"] as const)("a %s at its expiry is unavailable to both signup forms", async expiring => {
+  const store = new PgOAuthStore(await testDb());
+  try {
+    const e = setup({ store });
+    const clientId = await draftFor(e, "friends.help", PHONE_A);
+    const phoneKey = e.accounts.phoneHash(PHONE_A);
+    const [grant] = await store.grantsFor(phoneKey, "friends", e.clock.t);
+    const owner = await e.sessions.create("friends", PHONE_A, null);
+    const authorization = await authorize(e, "friends.help", clientId, PHONE_A);
+    const deadline = e.clock.t + 1_000;
+    if (expiring === "grant") await store.sql`update oauth.grants set expires_at=${new Date(deadline)} where id=${grant.id}`;
+    else await store.sql`update oauth.signup_drafts set expires_at=${new Date(deadline)} where grant_id=${grant.id}`;
+
+    const recover = () => e.fetch(new Request("https://friends.help/oauth/signup-draft", {
+      method: "POST",
+      headers: { origin: "https://friends.help", cookie: `sid_friends=${owner.token}`, "content-type": "application/json" },
+      body: "{}",
+    }));
+    expect(await (await recover()).json()).toMatchObject({ draft: { firstName: "Ari", homeCity: "sf" } });
+    e.clock.t = deadline;
+    const recovery = await recover();
+    expect(recovery.status).toBe(200);
+    expect(await recovery.json()).toMatchObject({ draft: null });
+
+    const prefill = await authorization.post("/oauth/authorize/signup", { decision: "open" });
+    expect(prefill.status).toBe(200);
+    expect(blank(await prefill.text())).toBe(true);
+    expect(await store.sql`select consumed_at as consumed from oauth.signup_drafts where grant_id=${grant.id}`).toEqual([{ consumed: null }]);
   } finally { await store.close(); await dropTestDb(); }
 });

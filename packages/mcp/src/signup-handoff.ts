@@ -1,9 +1,21 @@
-import { canRecordSignupGrant, initial, recordSignupGrant, step, type PhoneHandoff, type SignupConfirmation } from "../../core/src/generated/agentPhoneHandoff.ts";
+import { canCheckSiteStatus, checkSiteStatus, initial, step, type PhoneHandoff } from "../../core/src/generated/agentPhoneHandoff.ts";
 
-export const offerHandoff = (approved: boolean): PhoneHandoff => step(initial, { type: "offerSignupHandoff", approved });
+export interface SignupConfirmation {
+  sameApp: boolean;
+  ownerVerified: boolean;
+  eligibleEnrollment: boolean;
+  requestLive: boolean;
+}
+
+export const offerHandoff = (approved: boolean): PhoneHandoff => {
+  const decided = step(initial, { type: "decideApproval", decision: approved ? "ApproveExact" : "DeclineSignup" });
+  return approved ? step(decided, { type: "offerHandoff", linkAvailable: true }) : decided;
+};
 
 export const confirmHandoff = (offered: PhoneHandoff, confirmation: SignupConfirmation): PhoneHandoff =>
-  step(offered, { type: "confirmSignupPhone", confirmation });
+  confirmation.sameApp && confirmation.ownerVerified && confirmation.eligibleEnrollment && confirmation.requestLive
+    ? step(offered, { type: "observeBrowser" })
+    : offered;
 
 export const grantHandoff = (stored: PhoneHandoff, appMatches: boolean, ownerMatches: boolean, writeScopeLive: boolean): PhoneHandoff | undefined =>
-  canRecordSignupGrant(stored) ? recordSignupGrant(stored, appMatches, ownerMatches, writeScopeLive) : undefined;
+  canCheckSiteStatus(stored) ? checkSiteStatus(stored, appMatches && ownerMatches && writeScopeLive) : undefined;

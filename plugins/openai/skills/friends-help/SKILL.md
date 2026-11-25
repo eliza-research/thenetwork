@@ -28,7 +28,7 @@ friends.help helps people make friends through small group plans at public place
 Anyone 13 or older may join. Matching is for adults 18 or older, except friendship
 introductions between people aged 13 to 18 born at most 2 years apart, after an
 automatic check approves each one. People aged 13–17 also get their own help: answers,
-public events and plans for themselves. They are never matched on dates or for work. Groups usually
+public events and plans for themselves. They are never matched for work. Groups usually
 have 3–6 people. Other members see only the first name and neighbourhood, not the
 phone number.
 
@@ -56,7 +56,7 @@ phone number.
    introduces people under 18 only for friendship, to people aged 13 to 18 born at most
    2 years apart, after an automatic check approves each one. They also get their own
    help, with answers, public events and plans for themselves. They are never matched
-   on dates or for work. Never promise them an introduction.
+   for work. Never promise them an introduction.
    Draft their confirmed first name and home region.
    Confirm the Bay Area (`sf`) or New York City (`nyc`) and keep their neighborhood
    separate. Ask if the region is ambiguous. Do not guess it from a neighborhood
@@ -119,7 +119,7 @@ phone number.
 Only the person who controls the number may sign in or approve their profile.
 Do not sign up someone else, contact other members, request their information,
 send invitations, or change another app. The lowest stated age applies. Members
-13–17 are never matched on dates or for work, and are introduced only for friendship as above. No background checks are run.
+13–17 are never matched for work, and are introduced only for friendship as above. No background checks are run.
 
 Text STOP stops every text from the shared line; "leave friends.help" leaves this
 app only. Export/deletion support is help@ntwrk.party. To see or remove the access of an agent, the person opens https://ntwrk.party/oauth/consents in the browser where they connected. Do not invoke destructive

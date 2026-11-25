@@ -1,7 +1,10 @@
+import { clearAllMocks, expect, userEvent, within } from "storybook/test";
 import type { ComponentMeta } from "../../lib/meta.ts";
 import { Select, SelectItem } from "../Select.tsx";
 import { FilterBarFocus, type FilterBarProps } from "./FilterBar.tsx";
 import { Segments } from "./Segments.tsx";
+
+type Context = { args: FilterBarProps; canvasElement: HTMLElement };
 
 const select = (label: string) => (
   <Select className="w-32" aria-label={label} defaultValue="all">
@@ -22,5 +25,17 @@ export const meta: ComponentMeta<FilterBarProps> = {
       { filterKey: "StateKey", label: "State", control: select("State") },
     ],
   },
-  examples: { "Drawer collapsed": { drawerOpen: false } },
+  examples: { "Drawer collapsed": { drawerOpen: false }, "Without reset": { onReset: undefined } },
+  play: {
+    Default: async ({ args, canvasElement }: Context) => {
+      clearAllMocks();
+      const canvas = within(canvasElement);
+      await expect(canvas.getByRole("group", { name: "Borough" })).toBeTruthy();
+      await userEvent.click(canvas.getByRole("button", { name: "Reset" }));
+      await expect(args.onReset).toHaveBeenCalledTimes(1);
+    },
+    "Without reset": async ({ canvasElement }: Context) => {
+      await expect(within(canvasElement).queryByRole("button", { name: "Reset" })).toBeNull();
+    },
+  },
 };

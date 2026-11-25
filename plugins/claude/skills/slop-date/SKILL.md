@@ -34,12 +34,9 @@ it does not mean introductions have started.
 ## Join with your agent and browser
 
 1. Check that this app's connector tools (`check_status` and `submit_profile`) are <!-- agentSignup: checkConnectorSetup resumeAfterConnector chooseTransport -->
-   available in this conversation. If they are not, check whether this client supports
-   this app's full connector. ChatGPT and Codex have no public connector for slop.date.
-   If they do not already have tools through approved access, say “Signup isn't
-   supported in this agent yet.” Stop before asking for a profile.
-   For a client that supports the full connector, say “Connect slop.date” and give
-   this app's own connector endpoint, `https://ntwrk.party/mcp/slop`. This path is for slop.date only.
+   available in this conversation. If they are not, say “Connect slop.date” and give
+   this app's own connector endpoint, `https://ntwrk.party/mcp/slop`
+   (in ChatGPT, `https://ntwrk.party/mcp/slop/openai`). This path is for slop.date only.
    Ask the person to add it as a connector in this
    client's connector or integration settings, then come back to this conversation.
    Give this setup step one time only. When the tools are available, continue with

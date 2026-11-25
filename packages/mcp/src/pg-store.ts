@@ -9,7 +9,7 @@ import { decideProfileClaim, type ProfileClaim } from "../../core/src/generated/
 import { signupDraftGrantAllowed, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import { parseState as parseHandoff } from "../../core/src/generated/agentPhoneHandoff.ts";
 import type { McpAppId } from "./apps.ts";
-import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, checkCodeExchange, checkRefreshRotation, samePendingAuthPage, type AssistantGrantCandidate, type AuditRow, type AuthCode, type AuthRequest, type AuthRequestPage, type CodeExchange, type ConsentGrantWrites, type Grant, BrowserGrantRemoval, type OAuthClient, type OAuthStore, type ProfileSubmissionGrant, type RefreshRotation, type SignupDraft, type Token } from "./store.ts";
+import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, checkCodeExchange, checkRefreshRotation, samePendingAuthPage, type AssistantGrantCandidate, type AuditRow, type AuthCode, type AuthRequest, type AuthRequestPage, type CodeExchange, type ConsentGrantWrites, type Grant, BrowserGrantRemoval, type OAuthClient, type OAuthStore, type ProfileSubmissionGrant, type RefreshRotation, type SignupDraft, type SignupDraftFields, type SignupPrefillAsk, type Token } from "./store.ts";
 
 export const OAUTH_SQL = join(import.meta.dirname, "..", "db", "oauth.sql");
 
@@ -112,12 +112,11 @@ export class PgOAuthStore implements OAuthStore {
       return signupDraftUnique(rows.length);
     });
   }
-
   async deleteSignupDrafts(phoneKey: string, app: McpAppId) {
     await this.sql`delete from oauth.signup_drafts where phone_key=${phoneKey} and app_id=${app}`;
   }
 
-  async useSignupPrefill(ask: import("./store.ts").SignupPrefillAsk, at: number) {
+  async useSignupPrefill(ask: SignupPrefillAsk, now: () => number) {
     try { return await this.sql.begin(async tx => {
       const grants = (await tx`select g.* from oauth.grants g
         join oauth.signup_drafts d on d.grant_id=g.id
@@ -126,6 +125,7 @@ export class PgOAuthStore implements OAuthStore {
       const drafts = await tx`select d.grant_id,d.app_id,d.phone_key,d.fields,d.expires_at from oauth.signup_drafts d
         join oauth.grants g on g.id=d.grant_id
         where d.phone_key=${ask.phoneKey} and d.app_id=${ask.app} and g.client_id=${ask.clientId} for update of d`;
+      const at = now();
       const request = { client: ask.clientId, app: ask.app, phone: ask.phoneKey, asOf: at, ageAllowed: ask.ageAllowed };
       const usable = drafts.filter(d => {
         const g = grants.find(x => x.id === d.grant_id);
@@ -136,7 +136,7 @@ export class PgOAuthStore implements OAuthStore {
       const d = usable[0]!, g = grants.find(x => x.id === d.grant_id)!;
       if (!markSignupPrefillUsed({ client: g.clientId, app: d.app_id, phone: d.phone_key, used: false, expiresAt: ms(d.expires_at)! }, request).used) return undefined;
       const used = await tx`delete from oauth.signup_drafts where grant_id=${d.grant_id} returning grant_id`;
-      return signupDraftUnique(used.length) ? d.fields as import("./store.ts").SignupDraftFields : undefined;
+      return signupDraftUnique(used.length) ? d.fields as SignupDraftFields : undefined;
     }); } catch { throw new Error("Signup draft storage unavailable"); }
   }
 

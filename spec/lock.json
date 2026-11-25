@@ -59,6 +59,11 @@
         "80286903ba84",
         "8f579f74bb62"
       ],
+      "Story: Know which app I am joining / Each app has one design-system brand": [
+        "5b64b846e368",
+        "08cb07c783b1",
+        "8f579f74bb62"
+      ],
       "Story: Know which app I am joining / Only The Network asks for an invitation": [
         "bbaa9cc96f09",
         "d94a94772689",
@@ -73,14 +78,14 @@
         "6451d8e8cc77"
       ],
       "Story: Each site keeps its own brand / An app site never names The Network or another app": [
-        "90703ba0701c",
-        "7908a78a1869",
+        "c97c4081ba81",
+        "fed5d28a6662",
         "8f579f74bb62"
       ],
       "Story: Each site keeps its own brand / ntwrk.party names no app on its landing page, its not-found page or its own skill": [
         "b5d3dd90f082",
         "1fa36082df42",
-        "faab84b5500b"
+        "c3e785368b8a"
       ],
       "## Story: One component set for every brand": [
         "fd4f7f2fe5aa"
@@ -89,29 +94,38 @@
         "534b0f0c2961",
         "1141127515ef",
         "0cc7abbc0946"
+      ],
+      "Story: One component set for every brand / The focus ring, the hover fill, the state colors and the inverse surface obey fixed color rules": [
+        "2dfe23feb70e",
+        "f1fa7ff45a98"
+      ],
+      "Story: One component set for every brand / The logo and the favicon take only tokens, and the favicon has one variant for each color scheme": [
+        "fadaae26539a",
+        "38a3e76b5304",
+        "8f579f74bb62"
       ]
     },
     "spec/agentEntry.md": {
       "@document": [
-        "50666bd2cc3d"
+        "4517b077ee9e"
       ],
       "## Story: Get from an app site or a text into my own agent": [
         "173cc1dbf843"
       ],
       "Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app": [
-        "11dcac09ae25",
-        "4aea76340730",
+        "ea25ff4a9b24",
+        "66a9a6c1fba7",
         "8f579f74bb62"
       ],
       "Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill": [
         "223967d9b79a",
         "27414594d54a",
-        "0a3eeb0ed12e"
+        "718480f4c870"
       ],
       "Story: Get from an app site or a text into my own agent / An update reference shows only the person's own update on their own connection": [
         "ef41808f6992",
         "5b707f881a80",
-        "dc4d7fa619b2"
+        "edc19fff222a"
       ],
       "Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one": [
         "a30e640e3738",
@@ -120,82 +134,92 @@
       "Story: Get from an app site or a text into my own agent / Every entry can reach its result": [
         "fb35954fbadd",
         "0f0e913b5eed",
-        "dc4d7fa619b2"
+        "edc19fff222a"
       ]
     },
     "spec/agentPhoneHandoff.md": {
       "@document": [
-        "3f61f58664e9"
+        "438f6f8ce13c"
       ],
       "## Story: Confirm my own phone during signup": [
         "4bf343b8a17b"
       ],
       "Story: Confirm my own phone during signup / Offer one app-bound confirmation after the person approves the draft": [
-        "e372532688bc",
-        "c1d330906f14"
+        "f0597d9fa74b",
+        "ab917b1a34bf"
       ],
       "Story: Confirm my own phone during signup / Only the browser and the authorized connector complete the handoff": [
-        "ebdcd6b611bf",
-        "0cdb22cb7b42",
-        "a41fcd4fb695"
+        "fd786a9d9f07",
+        "7a66c33d7244",
+        "c35d560b9e0d"
       ],
       "Story: Confirm my own phone during signup / Submit the approved profile once and read back the result": [
-        "725908d4bf7a",
-        "4645022a4146",
-        "a41fcd4fb695"
+        "563bf8b3a8ff",
+        "ff8ca0e23f69",
+        "c35d560b9e0d"
       ]
     },
     "spec/agentSignup.md": {
       "@document": [
-        "3951afe9a09e"
+        "43a8611acb91"
       ],
       "## Story: Join through my agent and confirm my own phone": [
         "d982022c0243"
       ],
       "Story: Join through my agent and confirm my own phone / The selected app determines the available transport": [
-        "de95df6db94b",
-        "dd9260bc555f",
+        "0e8dd9eb0fe0",
+        "46f03b9ebf7b",
         "8f579f74bb62"
       ],
       "Story: Join through my agent and confirm my own phone / A client without a transport stops": [
         "902ca4efac12",
         "9c97fcf4b5fd",
-        "c8dd178a1983"
+        "6e393ad60847"
       ],
       "Story: Join through my agent and confirm my own phone / The person approves the exact draft and current text consent": [
-        "8aab4e8fb6e4",
-        "702c931a8f0f",
-        "c8dd178a1983"
+        "c14798e2e249",
+        "0463e9364e86",
+        "b5967cfd0c23"
       ],
       "Story: Join through my agent and confirm my own phone / Nothing is approved before the person decides": [
         "1fb68e8ca124",
         "5d38ed5ae296",
-        "c8dd178a1983"
+        "6e393ad60847"
       ],
       "Story: Join through my agent and confirm my own phone / The app's browser confirms the owner, enrolls if eligible and asks separately for connector access": [
-        "3e4de8c8f93b",
-        "b635e5375970",
-        "c8dd178a1983"
+        "dc16b76a0ffe",
+        "27bec3bd3199",
+        "6e393ad60847"
+      ],
+      "Story: Join through my agent and confirm my own phone / The Peon connector path also confirms the phone in the browser": [
+        "d11af2c04d13",
+        "11f5a875e219",
+        "6e393ad60847"
       ],
       "Story: Join through my agent and confirm my own phone / A native browser result follows the one handoff": [
         "e00c2f53ba5a",
         "ce07bad1ea26",
-        "c8dd178a1983"
+        "6e393ad60847"
       ],
       "Story: Join through my agent and confirm my own phone / The connector submits once and reports saved only after the exact durable result": [
-        "7088c8e6b437",
-        "9204ac3e74f5",
-        "c8dd178a1983"
+        "56dd2be0fe7d",
+        "205b08ed2b18",
+        "6e393ad60847"
       ],
       "Story: Join through my agent and confirm my own phone / No profile is sent before the status check allows it": [
         "b183fdef7f22",
         "8eeeba4f81d9",
-        "c8dd178a1983"
+        "6e393ad60847"
+      ],
+      "Story: Join through my agent and confirm my own phone / Each native signup is a run of the signup handoff": [
+        "7529800ea29c",
+        "ad5b861c454e",
+        "b5967cfd0c23"
       ],
       "Story: Join through my agent and confirm my own phone / Each skill ends with a truthful report": [
         "e3b0c44298fc",
-        "48a5327aa809",
-        "98fc4ad67825"
+        "973fb58255a0",
+        "41d8deb5780e"
       ]
     },
     "spec/authorizationPages.md": {
@@ -206,18 +230,23 @@
         "1a074d765e91"
       ],
       "Story: See one clear page at each step of connecting my assistant / The server reply selects the page view": [
-        "d91c5f61d061",
-        "eba3f63e0499"
+        "6900347f2a1a",
+        "1a8cc32db107"
       ],
       "Story: See one clear page at each step of connecting my assistant / Opening the connection link shows sign-in, consent, Cloud sign-in or a message": [
         "6de0283872eb",
         "d1d4f06b51cc",
-        "f5c1fe3a636f"
+        "7a82a517ea12"
       ],
       "Story: See one clear page at each step of connecting my assistant / The return from Cloud sign-in and the retry link resume the same request": [
-        "51aabb87417b",
+        "0a4a9942fbed",
         "767ae3fb2b94",
-        "4a13f1ccce21"
+        "3d0e8f277f49"
+      ],
+      "Story: See one clear page at each step of connecting my assistant / A posted form names the page that sent it": [
+        "fd08e157396e",
+        "1cc39cd4a598",
+        "7a82a517ea12"
       ],
       "## Story: Prove my phone on this page": [
         "f291e0821d2d"
@@ -225,17 +254,17 @@
       "Story: Prove my phone on this page / The phone page shows a security check only when the site has one": [
         "ac39119d15db",
         "f982f2c2c3b6",
-        "f5c1fe3a636f"
+        "7a82a517ea12"
       ],
       "Story: Prove my phone on this page / The phone page sends a code or tells why it did not": [
-        "2f03fd966777",
-        "eff7adc91557",
-        "f5c1fe3a636f"
+        "670321e12267",
+        "c98a5d4161ea",
+        "7a82a517ea12"
       ],
       "Story: Prove my phone on this page / The code page appears only after this request sent a code": [
         "1ed8ec23090e",
         "ef9035450ec2",
-        "f5c1fe3a636f"
+        "7a82a517ea12"
       ],
       "## Story: Decide what my assistant can do": [
         "9c8d4efe6b1a"
@@ -243,21 +272,26 @@
       "Story: Decide what my assistant can do / The consent page names the client as its claim and lists every scope": [
         "f0421c6a68d5",
         "3ab7691781b2",
-        "f5c1fe3a636f"
+        "7a82a517ea12"
       ],
       "Story: Decide what my assistant can do / A verified person can choose a separate signup step during connector authorization": [
         "94a7953e6a58",
         "6305315b4fb7",
-        "f5c1fe3a636f"
+        "7a82a517ea12"
+      ],
+      "Story: Decide what my assistant can do / The signup page is a step of the same request": [
+        "eb58c459436e",
+        "05e268426727",
+        "7a82a517ea12"
       ],
       "Story: Decide what my assistant can do / A new person sees Finish signup as the main action on the consent page": [
         "bbd95641423c",
         "45fd1394ad5a",
-        "1f9d40769049"
+        "4853c9737541"
       ],
       "Story: Decide what my assistant can do / The signup form shows the draft that the person approved in the agent": [
-        "3ea10436d9a5",
-        "1c6f8a3e281b"
+        "d9766d6181d0",
+        "56b0a63fa84d"
       ],
       "Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date": [
         "e1e008fbdaf2",
@@ -269,31 +303,31 @@
       ],
       "Story: Decide what my assistant can do / Only Allow on a consent page returns a code to the assistant": [
         "589b549013ef",
-        "fe5194b29b31",
-        "f5c1fe3a636f"
+        "646b79acaf0a",
+        "7a82a517ea12"
       ],
       "Story: Decide what my assistant can do / Cancel or Don't allow returns to the assistant with a refusal": [
         "c6d5f02b1fda",
         "dd65369f20c7",
-        "f5c1fe3a636f"
+        "7a82a517ea12"
       ],
       "## Story: Understand a page that stops the connection": [
         "1d2cfa70120e"
       ],
       "Story: Understand a page that stops the connection / A message page shows no credential field and at most a retry link": [
-        "b3b6fb7e0bda",
+        "04b594a895a4",
         "03b07d3c2929",
-        "f5c1fe3a636f"
+        "7a82a517ea12"
       ],
       "Story: Understand a page that stops the connection / Every page shows the brand mark and the legal links": [
         "9031aecc0232",
         "f6fd873174d0",
-        "f5c1fe3a636f"
+        "7a82a517ea12"
       ],
       "Story: Understand a page that stops the connection / Each page and each outcome can occur": [
         "e150b64e8739",
         "a5c3ae15137e",
-        "f5c1fe3a636f"
+        "7a82a517ea12"
       ]
     },
     "spec/backendHealth.md": {
@@ -452,6 +486,10 @@
         "82e31f12ed99",
         "61240e1748af",
         "b71de35d3abe"
+      ],
+      "Story: Confirm my own phone / The phone step shows its parts from the sign-in mode": [
+        "3980df7c2b4b",
+        "c3e147f606a9"
       ],
       "Story: Confirm my own phone / The page sends a number only when it is valid and the security check passed": [
         "480142ba0de2",
@@ -1017,108 +1055,113 @@
     },
     "spec/connectedAssistants.md": {
       "@document": [
-        "2e97b125791c"
+        "857a6e2df15d"
       ],
       "## Story: See which assistants can use my account": [
-        "5c64bf46efc4"
+        "3feb9e5deda0"
       ],
       "Story: See which assistants can use my account / The page lists live grants only for a signed-in session": [
-        "bfbf8419d14d",
-        "2a5dd53b6311"
+        "d9c45f240128",
+        "5dfb3d7a26da"
       ],
       "Story: See which assistants can use my account / A grant card names the assistant as its claim and shows its date and scopes": [
-        "d59900eb2c1d",
-        "b6559d602b3b"
+        "ee51891c3975",
+        "ca11f7c0a913"
       ],
       "Story: See which assistants can use my account / A page without a session offers no sign-in control": [
         "2d3c824ec331",
         "e194b30bce25",
-        "1ab9dd487bd4"
+        "44a2df33f852"
       ],
       "## Story: Remove an assistant's access": [
-        "3c0cf0171dc7"
+        "d81296e4f568"
       ],
       "Story: Remove an assistant's access / Removal needs a confirmation": [
         "6cd16a7d1b96",
         "a3094281eca5",
-        "80ca98b005b4"
+        "2af22db2e4fc"
       ],
       "Story: Remove an assistant's access / A confirmed removal shows its result": [
-        "f74d89ef7f17",
+        "bb037704b53f",
         "5a5f93ac05a1",
-        "80ca98b005b4"
+        "2af22db2e4fc"
       ],
       "Story: Remove an assistant's access / Each page and each outcome can occur": [
         "4878137f257c",
         "6ee6fe8a8402",
-        "80ca98b005b4"
+        "2af22db2e4fc"
       ]
     },
     "spec/connectorTools.md": {
       "@document": [
-        "07e4a7fe0e6d"
+        "8d07dccada5e"
       ],
       "## Story: Use my app's connector from my agent": [
         "0104578008dd"
       ],
-      "Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date": [
-        "36f9b69a452e",
-        "76cbc963bcfe"
+      "Story: Use my app's connector from my agent / Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date": [
+        "a5fe38f5a408",
+        "7dd9f8fdd9fa"
       ],
       "Story: Use my app's connector from my agent / The ntwrk.party host serves every app at its own path, and a grant covers only its own app": [
-        "a0c2f8565bdd",
-        "44faa4f8f2b4",
-        "c88828e272d9"
+        "55d599fd98ef",
+        "e875d7a5d26b",
+        "72ee35d6317e"
+      ],
+      "Story: Use my app's connector from my agent / The member tools name the site where the person signs in": [
+        "734846e1213a",
+        "20a34eb2d232",
+        "f8fa1c603a89"
       ],
       "Story: Use my app's connector from my agent / Public tools need no sign-in, and member tools need the person's own grant": [
-        "8bf0286f97a4",
+        "971d0a938b8b",
         "ba5a7b66c6c0",
-        "c88828e272d9"
+        "72ee35d6317e"
       ],
       "Story: Use my app's connector from my agent / The member status decides which member tool can act": [
         "d89bf23efec0",
         "d8c3643b2f5a",
-        "c88828e272d9"
+        "72ee35d6317e"
       ],
       "Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser": [
-        "42708f146d1d",
+        "cc6b447ee869",
         "776321674f55",
-        "db62bae7f0ef"
+        "0c34c8d4acbf"
       ],
       "Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection": [
         "b0801439f632",
         "e5b0ea72ff69",
-        "4773abde1c60"
+        "08fd54cf431d"
       ],
       "Story: Use my app's connector from my agent / Check status shows only the person's own status in this one app": [
         "346f6e3e4be6",
         "8b6958cb81ad",
-        "4773abde1c60"
+        "08fd54cf431d"
       ],
       "Story: Use my app's connector from my agent / Read saved profile fields only for this app's active member": [
         "b1425c6d69a5",
         "52c67877037d",
-        "4773abde1c60"
+        "08fd54cf431d"
       ],
       "Story: Use my app's connector from my agent / The agent sends an approved profile once, only for a live member, within the daily limit": [
         "71b37b69b9cc",
         "f1799557bec3",
-        "4773abde1c60"
+        "08fd54cf431d"
       ],
       "Story: Use my app's connector from my agent / A Join draft holds only an approved first name and home city, once per grant": [
         "3d28049db0ff",
         "bcd4a9015444",
-        "a619d7aa921c"
+        "345580f7671a"
       ],
       "Story: Use my app's connector from my agent / Reading updates shows the person's own new updates and marks them seen": [
         "42f7341cd93f",
         "7328a8618cb3",
-        "4773abde1c60"
+        "08fd54cf431d"
       ],
       "Story: Use my app's connector from my agent / A connection can reach every tool result": [
         "8747849d6943",
         "9499a2b38dad",
-        "4773abde1c60"
+        "08fd54cf431d"
       ]
     },
     "spec/consoleMemberView.md": {
@@ -1328,13 +1371,13 @@
         "9c6efdf2851c"
       ],
       "Story: Work only in the panels my role and mode allow / Each panel shows a loading, refused, unavailable, failed, empty or full view": [
-        "36049965be59",
-        "f853aaac6389"
+        "affe5b663ebb",
+        "3a41fd8b8e0b"
       ],
       "Story: Work only in the panels my role and mode allow / Each panel opens only for the roles that can read it": [
-        "e11e6e2df75c",
-        "17f553106633",
-        "6893d50dc9f5"
+        "5d3cbfbba7d5",
+        "db9148916d7a",
+        "891d2b8278ea"
       ],
       "## Story: Decide a held text with a reason": [
         "1ae2e3cd5c9f"
@@ -1425,7 +1468,7 @@
     },
     "spec/consolePanels.md": {
       "@document": [
-        "0bef481c4f31"
+        "44c3f0be1862"
       ],
       "## Story: Use the analysis panels only where my mode and role allow": [
         "108a83a6ec16"
@@ -1484,7 +1527,7 @@
       "Story: Read the health numbers of an app / The metrics tab shows truth numbers only in the simulated world, and bias and cost only on real data": [
         "e1517c86a258",
         "e7ba77f23600",
-        "70172be69332"
+        "bb2326f1ec8f"
       ],
       "Story: Read the health numbers of an app / The bias monitor alerts below 0.8 times the outcome of everyone": [
         "7b57bb4e4f80",
@@ -1493,7 +1536,11 @@
       "Story: Read the health numbers of an app / A cost budget turns amber at 80 percent and red at 100 percent": [
         "56e944d8427c",
         "2534a941e575",
-        "c58d95178fc4"
+        "6aa16cddc644"
+      ],
+      "Story: Read the health numbers of an app / A deadline countdown turns amber under an hour and red under ten minutes": [
+        "05e9825605a5",
+        "6045246d9abc"
       ],
       "Story: Read the health numbers of an app / The proactive rate and the inviter share show their targets": [
         "8e7b9abe889a",
@@ -2320,8 +2367,8 @@
         "57659fb5fe8d"
       ],
       "Story: Open my agent from its tile / The agent row never shows an agent that the app's connector refuses": [
-        "7baa48c74310",
-        "25f99f26f357",
+        "11caa566902d",
+        "80eb118762bf",
         "a77ce84cbd60"
       ],
       "Story: Open my agent from its tile / A desktop-only tile is hidden on a phone, and a copy-only tile needs the page script": [
@@ -2692,7 +2739,7 @@
       ],
       "Story: Author and review a public city gathering / Only a current New York Network administrator can author or decide a gathering": [
         "8983e4a5b09b",
-        "e7175f2d8154"
+        "7a0241938fd6"
       ],
       "Story: Author and review a public city gathering / A draft needs a future local month and an eligible public venue with bounded capacity": [
         "ea6fc1c2ad53",
@@ -2705,7 +2752,12 @@
       "Story: Author and review a public city gathering / The real staff console authors and reviews the exact gathering": [
         "9e60a1dcdfa1",
         "6fbb529eb8e7",
-        "a2e8518c6c4b"
+        "814bd497fad4"
+      ],
+      "Story: Author and review a public city gathering / The gathering panel offers the draft form and one confirmation at a time": [
+        "cc9d2fcffcd8",
+        "ddeda7848556",
+        "c7efe190a147"
       ]
     },
     "spec/monthlyGatheringDelivery.md": {
@@ -2998,8 +3050,8 @@
         "240ebec60726"
       ],
       "Story: Approve access in the browser after proving my phone / The stored page determines what a form can do": [
-        "146e5943ca90",
-        "1a72d0b1ac5a",
+        "625fe8d36b29",
+        "e680fe483e0e",
         "240ebec60726"
       ],
       "Story: Approve access in the browser after proving my phone / Only a successful challenge advances phone verification": [
@@ -3010,7 +3062,7 @@
       "Story: Approve access in the browser after proving my phone / Optional signup stays inside the verified authorization request": [
         "e5453e4bd78a",
         "a2a78801222d",
-        "d9cf6375856f"
+        "17666d1eb4aa"
       ],
       "Story: Approve access in the browser after proving my phone / Explicit approval rechecks the owner and the app's required Cloud authority": [
         "80cc4292adf3",
@@ -4636,7 +4688,7 @@
       "Story: Let my agent read the signup skill from the site / Each site serves its own skill at /SKILL.md and lists it in its catalog": [
         "aa5c006b8136",
         "45c39e0f31e8",
-        "3faadffc6b94"
+        "6b45c3b43465"
       ],
       "Story: Let my agent read the signup skill from the site / Skill files are plain text that any origin can read": [
         "29e2e979a695",

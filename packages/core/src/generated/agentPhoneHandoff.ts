@@ -2,29 +2,56 @@
 //@ backend dafny
 
 /** Story: Confirm my own phone during signup / Offer one app-bound confirmation after the person approves the draft (spec/agentPhoneHandoff.md) */
+export type Approval = "ApproveExact" | "AskChanges" | "DeclineSignup";
+/** Story: Confirm my own phone during signup / Offer one app-bound confirmation after the person approves the draft (spec/agentPhoneHandoff.md) */
 export type HandoffPhase = "DraftingHandoff" | "AwaitingPhoneConfirmation" | "AwaitingSignupGrant" | "ReadyForSignupProfile" | "AwaitingSignupReadBack" | "SignupProfileSaved" | "SignupProfileUnconfirmed" | "HandoffRefused";
 /** Story: Confirm my own phone during signup / Offer one app-bound confirmation after the person approves the draft (spec/agentPhoneHandoff.md) */
 export interface PhoneHandoff { phase: HandoffPhase; approvedDraft: boolean; verifiedEnrollment: boolean; matchingGrant: boolean }
-/** Story: Confirm my own phone during signup / Only the browser and the authorized connector complete the handoff (spec/agentPhoneHandoff.md) */
-export interface SignupConfirmation { sameApp: boolean; ownerVerified: boolean; eligibleEnrollment: boolean; requestLive: boolean }
 
 /** One variant per transition in the spec. */
 export type Event =
-  | { type: "offerSignupHandoff"; approved: boolean }
-  | { type: "confirmSignupPhone"; confirmation: SignupConfirmation }
-  | { type: "recordSignupGrant"; appMatches: boolean; ownerMatches: boolean; writeScopeLive: boolean }
-  | { type: "submitHandoffProfile"; authorityLive: boolean; exactProfile: boolean }
-  | { type: "readHandoffProfile"; exactSavedProfile: boolean };
+  | { type: "decideApproval"; decision: Approval }
+  | { type: "offerHandoff"; linkAvailable: boolean }
+  | { type: "observeBrowser" }
+  | { type: "checkSiteStatus"; siteApp: boolean }
+  | { type: "submitProfile"; accepted: boolean }
+  | { type: "confirmProfile"; stillLive: boolean };
 
-/** Story: Confirm my own phone during signup / Only the browser and the authorized connector complete the handoff (spec/agentPhoneHandoff.md) */
-export const validSignupConfirmation: SignupConfirmation = { sameApp: true, ownerVerified: true, eligibleEnrollment: true, requestLive: true };
 /** Story: Confirm my own phone during signup / Offer one app-bound confirmation after the person approves the draft (spec/agentPhoneHandoff.md) */
 export const initial: PhoneHandoff = { phase: "DraftingHandoff", approvedDraft: false, verifiedEnrollment: false, matchingGrant: false };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: PhoneHandoff): boolean {
-  return alwaysHandoffNeedsPriorApproval(current) && alwaysSignupWriteNeedsVerifiedAuthority(current);
+  return alwaysHandoffNeedsPriorApproval(current) && alwaysSignupWriteNeedsVerifiedAuthority(current) && alwaysGrantFollowsVerifiedEnrollment(current);
+}
+
+/** Story: Confirm my own phone during signup / Offer one app-bound confirmation after the person approves the draft (spec/agentPhoneHandoff.md) */
+//@ pure
+export function decideApproval(handoff: PhoneHandoff, decision: Approval): PhoneHandoff {
+  //@ ensures (inv(handoff) && canDecideApproval(handoff)) ==> alwaysHandoffNeedsPriorApproval(\result)
+  //@ ensures (inv(handoff) && canDecideApproval(handoff)) ==> alwaysSignupWriteNeedsVerifiedAuthority(\result)
+  //@ ensures (inv(handoff) && canDecideApproval(handoff)) ==> alwaysGrantFollowsVerifiedEnrollment(\result)
+  //@ ensures (inv(handoff) && canDecideApproval(handoff)) ==> stepOfferFollowsApproval(handoff, "decideApproval", \result)
+  //@ ensures (inv(handoff) && canDecideApproval(handoff)) ==> stepHandoffSaveRequiresReadBack(handoff, "decideApproval", \result)
+  return { ...handoff, approvedDraft: decision === "ApproveExact" };
+}
+
+/** Story: Confirm my own phone during signup / Offer one app-bound confirmation after the person approves the draft (spec/agentPhoneHandoff.md) */
+//@ pure
+export function canOfferHandoff(handoff: PhoneHandoff): boolean {
+  return handoff.phase === "DraftingHandoff" && handoff.approvedDraft;
+}
+
+/** Story: Confirm my own phone during signup / Offer one app-bound confirmation after the person approves the draft (spec/agentPhoneHandoff.md) */
+//@ pure
+export function offerHandoff(handoff: PhoneHandoff, linkAvailable: boolean): PhoneHandoff {
+  //@ ensures (inv(handoff) && canOfferHandoff(handoff)) ==> alwaysHandoffNeedsPriorApproval(\result)
+  //@ ensures (inv(handoff) && canOfferHandoff(handoff)) ==> alwaysSignupWriteNeedsVerifiedAuthority(\result)
+  //@ ensures (inv(handoff) && canOfferHandoff(handoff)) ==> alwaysGrantFollowsVerifiedEnrollment(\result)
+  //@ ensures (inv(handoff) && canOfferHandoff(handoff)) ==> stepOfferFollowsApproval(handoff, "offerHandoff", \result)
+  //@ ensures (inv(handoff) && canOfferHandoff(handoff)) ==> stepHandoffSaveRequiresReadBack(handoff, "offerHandoff", \result)
+  return { ...handoff, phase: linkAvailable ? "AwaitingPhoneConfirmation" : "HandoffRefused" };
 }
 
 /** Story: Confirm my own phone during signup / Offer one app-bound confirmation after the person approves the draft (spec/agentPhoneHandoff.md) */
@@ -35,49 +62,48 @@ export function alwaysHandoffNeedsPriorApproval(handoff: PhoneHandoff): boolean 
 
 /** Story: Confirm my own phone during signup / Offer one app-bound confirmation after the person approves the draft (spec/agentPhoneHandoff.md) */
 //@ pure
-export function canOfferSignupHandoff(handoff: PhoneHandoff): boolean {
-  return handoff.phase === "DraftingHandoff";
+export function stepOfferFollowsApproval(before: PhoneHandoff, via: string, after: PhoneHandoff): boolean {
+  return !(after.phase === "AwaitingPhoneConfirmation" && before.phase !== "AwaitingPhoneConfirmation") || (via === "offerHandoff" && before.approvedDraft);
 }
 
 /** Story: Confirm my own phone during signup / Offer one app-bound confirmation after the person approves the draft (spec/agentPhoneHandoff.md) */
 //@ pure
-export function offerSignupHandoff(handoff: PhoneHandoff, approved: boolean): PhoneHandoff {
-  //@ ensures (inv(handoff) && canOfferSignupHandoff(handoff)) ==> alwaysHandoffNeedsPriorApproval(\result)
-  //@ ensures (inv(handoff) && canOfferSignupHandoff(handoff)) ==> alwaysSignupWriteNeedsVerifiedAuthority(\result)
-  //@ ensures (inv(handoff) && canOfferSignupHandoff(handoff)) ==> stepHandoffSaveRequiresReadBack(handoff, "offerSignupHandoff", \result)
-  return { ...handoff, approvedDraft: approved, phase: approved ? "AwaitingPhoneConfirmation" : "HandoffRefused" };
+export function canDecideApproval(handoff: PhoneHandoff): boolean {
+  return handoff.phase === "DraftingHandoff" && !handoff.approvedDraft;
 }
 
 /** Story: Confirm my own phone during signup / Only the browser and the authorized connector complete the handoff (spec/agentPhoneHandoff.md) */
 //@ pure
-export function canConfirmSignupPhone(handoff: PhoneHandoff): boolean {
+export function canObserveBrowser(handoff: PhoneHandoff): boolean {
   return handoff.phase === "AwaitingPhoneConfirmation" && handoff.approvedDraft;
 }
 
 /** Story: Confirm my own phone during signup / Only the browser and the authorized connector complete the handoff (spec/agentPhoneHandoff.md) */
 //@ pure
-export function confirmSignupPhone(handoff: PhoneHandoff, confirmation: SignupConfirmation): PhoneHandoff {
-  //@ ensures (inv(handoff) && canConfirmSignupPhone(handoff)) ==> alwaysHandoffNeedsPriorApproval(\result)
-  //@ ensures (inv(handoff) && canConfirmSignupPhone(handoff)) ==> alwaysSignupWriteNeedsVerifiedAuthority(\result)
-  //@ ensures (inv(handoff) && canConfirmSignupPhone(handoff)) ==> stepHandoffSaveRequiresReadBack(handoff, "confirmSignupPhone", \result)
-  const local_0 = confirmation.sameApp && confirmation.ownerVerified && confirmation.eligibleEnrollment && confirmation.requestLive;
-  return { ...handoff, verifiedEnrollment: local_0, phase: local_0 ? "AwaitingSignupGrant" : "HandoffRefused" };
+export function observeBrowser(handoff: PhoneHandoff): PhoneHandoff {
+  //@ ensures (inv(handoff) && canObserveBrowser(handoff)) ==> alwaysHandoffNeedsPriorApproval(\result)
+  //@ ensures (inv(handoff) && canObserveBrowser(handoff)) ==> alwaysSignupWriteNeedsVerifiedAuthority(\result)
+  //@ ensures (inv(handoff) && canObserveBrowser(handoff)) ==> alwaysGrantFollowsVerifiedEnrollment(\result)
+  //@ ensures (inv(handoff) && canObserveBrowser(handoff)) ==> stepOfferFollowsApproval(handoff, "observeBrowser", \result)
+  //@ ensures (inv(handoff) && canObserveBrowser(handoff)) ==> stepHandoffSaveRequiresReadBack(handoff, "observeBrowser", \result)
+  return { ...handoff, verifiedEnrollment: true, phase: "AwaitingSignupGrant" };
 }
 
 /** Story: Confirm my own phone during signup / Only the browser and the authorized connector complete the handoff (spec/agentPhoneHandoff.md) */
 //@ pure
-export function canRecordSignupGrant(handoff: PhoneHandoff): boolean {
+export function canCheckSiteStatus(handoff: PhoneHandoff): boolean {
   return handoff.phase === "AwaitingSignupGrant" && handoff.verifiedEnrollment;
 }
 
 /** Story: Confirm my own phone during signup / Only the browser and the authorized connector complete the handoff (spec/agentPhoneHandoff.md) */
 //@ pure
-export function recordSignupGrant(handoff: PhoneHandoff, appMatches: boolean, ownerMatches: boolean, writeScopeLive: boolean): PhoneHandoff {
-  //@ ensures (inv(handoff) && canRecordSignupGrant(handoff)) ==> alwaysHandoffNeedsPriorApproval(\result)
-  //@ ensures (inv(handoff) && canRecordSignupGrant(handoff)) ==> alwaysSignupWriteNeedsVerifiedAuthority(\result)
-  //@ ensures (inv(handoff) && canRecordSignupGrant(handoff)) ==> stepHandoffSaveRequiresReadBack(handoff, "recordSignupGrant", \result)
-  const local_1 = appMatches && ownerMatches && writeScopeLive;
-  return { ...handoff, matchingGrant: local_1, phase: local_1 ? "ReadyForSignupProfile" : "HandoffRefused" };
+export function checkSiteStatus(handoff: PhoneHandoff, siteApp: boolean): PhoneHandoff {
+  //@ ensures (inv(handoff) && canCheckSiteStatus(handoff)) ==> alwaysHandoffNeedsPriorApproval(\result)
+  //@ ensures (inv(handoff) && canCheckSiteStatus(handoff)) ==> alwaysSignupWriteNeedsVerifiedAuthority(\result)
+  //@ ensures (inv(handoff) && canCheckSiteStatus(handoff)) ==> alwaysGrantFollowsVerifiedEnrollment(\result)
+  //@ ensures (inv(handoff) && canCheckSiteStatus(handoff)) ==> stepOfferFollowsApproval(handoff, "checkSiteStatus", \result)
+  //@ ensures (inv(handoff) && canCheckSiteStatus(handoff)) ==> stepHandoffSaveRequiresReadBack(handoff, "checkSiteStatus", \result)
+  return { ...handoff, matchingGrant: siteApp, phase: siteApp ? "ReadyForSignupProfile" : "HandoffRefused" };
 }
 
 /** Story: Confirm my own phone during signup / Only the browser and the authorized connector complete the handoff (spec/agentPhoneHandoff.md) */
@@ -86,40 +112,50 @@ export function alwaysSignupWriteNeedsVerifiedAuthority(handoff: PhoneHandoff): 
   return !(handoff.phase === "ReadyForSignupProfile" || handoff.phase === "AwaitingSignupReadBack" || handoff.phase === "SignupProfileSaved" || handoff.phase === "SignupProfileUnconfirmed") || (handoff.verifiedEnrollment && handoff.matchingGrant);
 }
 
+/** Story: Confirm my own phone during signup / Only the browser and the authorized connector complete the handoff (spec/agentPhoneHandoff.md) */
+//@ pure
+export function alwaysGrantFollowsVerifiedEnrollment(handoff: PhoneHandoff): boolean {
+  return !handoff.matchingGrant || (handoff.verifiedEnrollment && handoff.approvedDraft);
+}
+
 /** Story: Confirm my own phone during signup / Submit the approved profile once and read back the result (spec/agentPhoneHandoff.md) */
 //@ pure
-export function canSubmitHandoffProfile(handoff: PhoneHandoff): boolean {
+export function canSubmitProfile(handoff: PhoneHandoff): boolean {
   return handoff.phase === "ReadyForSignupProfile" && handoff.matchingGrant;
 }
 
 /** Story: Confirm my own phone during signup / Submit the approved profile once and read back the result (spec/agentPhoneHandoff.md) */
 //@ pure
-export function submitHandoffProfile(handoff: PhoneHandoff, authorityLive: boolean, exactProfile: boolean): PhoneHandoff {
-  //@ ensures (inv(handoff) && canSubmitHandoffProfile(handoff)) ==> alwaysHandoffNeedsPriorApproval(\result)
-  //@ ensures (inv(handoff) && canSubmitHandoffProfile(handoff)) ==> alwaysSignupWriteNeedsVerifiedAuthority(\result)
-  //@ ensures (inv(handoff) && canSubmitHandoffProfile(handoff)) ==> stepHandoffSaveRequiresReadBack(handoff, "submitHandoffProfile", \result)
-  return { ...handoff, phase: authorityLive && exactProfile ? "AwaitingSignupReadBack" : "HandoffRefused" };
+export function submitProfile(handoff: PhoneHandoff, accepted: boolean): PhoneHandoff {
+  //@ ensures (inv(handoff) && canSubmitProfile(handoff)) ==> alwaysHandoffNeedsPriorApproval(\result)
+  //@ ensures (inv(handoff) && canSubmitProfile(handoff)) ==> alwaysSignupWriteNeedsVerifiedAuthority(\result)
+  //@ ensures (inv(handoff) && canSubmitProfile(handoff)) ==> alwaysGrantFollowsVerifiedEnrollment(\result)
+  //@ ensures (inv(handoff) && canSubmitProfile(handoff)) ==> stepOfferFollowsApproval(handoff, "submitProfile", \result)
+  //@ ensures (inv(handoff) && canSubmitProfile(handoff)) ==> stepHandoffSaveRequiresReadBack(handoff, "submitProfile", \result)
+  return { ...handoff, phase: accepted ? "AwaitingSignupReadBack" : "HandoffRefused" };
 }
 
 /** Story: Confirm my own phone during signup / Submit the approved profile once and read back the result (spec/agentPhoneHandoff.md) */
 //@ pure
-export function canReadHandoffProfile(handoff: PhoneHandoff): boolean {
+export function canConfirmProfile(handoff: PhoneHandoff): boolean {
   return handoff.phase === "AwaitingSignupReadBack";
 }
 
 /** Story: Confirm my own phone during signup / Submit the approved profile once and read back the result (spec/agentPhoneHandoff.md) */
 //@ pure
-export function readHandoffProfile(handoff: PhoneHandoff, exactSavedProfile: boolean): PhoneHandoff {
-  //@ ensures (inv(handoff) && canReadHandoffProfile(handoff)) ==> alwaysHandoffNeedsPriorApproval(\result)
-  //@ ensures (inv(handoff) && canReadHandoffProfile(handoff)) ==> alwaysSignupWriteNeedsVerifiedAuthority(\result)
-  //@ ensures (inv(handoff) && canReadHandoffProfile(handoff)) ==> stepHandoffSaveRequiresReadBack(handoff, "readHandoffProfile", \result)
-  return { ...handoff, phase: exactSavedProfile ? "SignupProfileSaved" : "SignupProfileUnconfirmed" };
+export function confirmProfile(handoff: PhoneHandoff, stillLive: boolean): PhoneHandoff {
+  //@ ensures (inv(handoff) && canConfirmProfile(handoff)) ==> alwaysHandoffNeedsPriorApproval(\result)
+  //@ ensures (inv(handoff) && canConfirmProfile(handoff)) ==> alwaysSignupWriteNeedsVerifiedAuthority(\result)
+  //@ ensures (inv(handoff) && canConfirmProfile(handoff)) ==> alwaysGrantFollowsVerifiedEnrollment(\result)
+  //@ ensures (inv(handoff) && canConfirmProfile(handoff)) ==> stepOfferFollowsApproval(handoff, "confirmProfile", \result)
+  //@ ensures (inv(handoff) && canConfirmProfile(handoff)) ==> stepHandoffSaveRequiresReadBack(handoff, "confirmProfile", \result)
+  return { ...handoff, phase: stillLive ? "SignupProfileSaved" : "SignupProfileUnconfirmed" };
 }
 
 /** Story: Confirm my own phone during signup / Submit the approved profile once and read back the result (spec/agentPhoneHandoff.md) */
 //@ pure
 export function stepHandoffSaveRequiresReadBack(before: PhoneHandoff, via: string, after: PhoneHandoff): boolean {
-  return !(after.phase === "SignupProfileSaved") || (before.phase === "AwaitingSignupReadBack" && via === "readHandoffProfile");
+  return !(after.phase === "SignupProfileSaved") || (before.phase === "AwaitingSignupReadBack" && via === "confirmProfile");
 }
 
 /** Story: Confirm my own phone during signup / Submit the approved profile once and read back the result (spec/agentPhoneHandoff.md) */
@@ -134,14 +170,21 @@ export function sometimesSignupProfileUnconfirmed(handoff: PhoneHandoff): boolea
   return handoff.phase === "SignupProfileUnconfirmed";
 }
 
+/** Story: Confirm my own phone during signup / Submit the approved profile once and read back the result (spec/agentPhoneHandoff.md) */
+//@ pure
+export function sometimesHandoffRefused(handoff: PhoneHandoff): boolean {
+  return handoff.phase === "HandoffRefused";
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: PhoneHandoff, event: Event): boolean {
-  if (event.type === "offerSignupHandoff") return canOfferSignupHandoff(current);
-  if (event.type === "confirmSignupPhone") return canConfirmSignupPhone(current);
-  if (event.type === "recordSignupGrant") return canRecordSignupGrant(current);
-  if (event.type === "submitHandoffProfile") return canSubmitHandoffProfile(current);
-  if (event.type === "readHandoffProfile") return canReadHandoffProfile(current);
+  if (event.type === "decideApproval") return canDecideApproval(current);
+  if (event.type === "offerHandoff") return canOfferHandoff(current);
+  if (event.type === "observeBrowser") return canObserveBrowser(current);
+  if (event.type === "checkSiteStatus") return canCheckSiteStatus(current);
+  if (event.type === "submitProfile") return canSubmitProfile(current);
+  if (event.type === "confirmProfile") return canConfirmProfile(current);
   return false;
 }
 
@@ -150,11 +193,12 @@ export function enabled(current: PhoneHandoff, event: Event): boolean {
 export function step(current: PhoneHandoff, event: Event): PhoneHandoff {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "offerSignupHandoff") return canOfferSignupHandoff(current) ? offerSignupHandoff(current, event.approved) : current;
-  if (event.type === "confirmSignupPhone") return canConfirmSignupPhone(current) ? confirmSignupPhone(current, event.confirmation) : current;
-  if (event.type === "recordSignupGrant") return canRecordSignupGrant(current) ? recordSignupGrant(current, event.appMatches, event.ownerMatches, event.writeScopeLive) : current;
-  if (event.type === "submitHandoffProfile") return canSubmitHandoffProfile(current) ? submitHandoffProfile(current, event.authorityLive, event.exactProfile) : current;
-  if (event.type === "readHandoffProfile") return canReadHandoffProfile(current) ? readHandoffProfile(current, event.exactSavedProfile) : current;
+  if (event.type === "decideApproval") return canDecideApproval(current) ? decideApproval(current, event.decision) : current;
+  if (event.type === "offerHandoff") return canOfferHandoff(current) ? offerHandoff(current, event.linkAvailable) : current;
+  if (event.type === "observeBrowser") return canObserveBrowser(current) ? observeBrowser(current) : current;
+  if (event.type === "checkSiteStatus") return canCheckSiteStatus(current) ? checkSiteStatus(current, event.siteApp) : current;
+  if (event.type === "submitProfile") return canSubmitProfile(current) ? submitProfile(current, event.accepted) : current;
+  if (event.type === "confirmProfile") return canConfirmProfile(current) ? confirmProfile(current, event.stillLive) : current;
   return current;
 }
 
@@ -171,13 +215,13 @@ export function parseEvent(x: unknown): Event | undefined {
   } catch {
     return undefined;
   }
-  const is_SignupConfirmation = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.sameApp === "boolean" && typeof v.ownerVerified === "boolean" && typeof v.eligibleEnrollment === "boolean" && typeof v.requestLive === "boolean";
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "offerSignupHandoff" && typeof raw.approved === "boolean") return { type: "offerSignupHandoff", approved: raw.approved };
-  if (raw.type === "confirmSignupPhone" && is_SignupConfirmation(raw.confirmation)) return { type: "confirmSignupPhone", confirmation: ({ sameApp: raw.confirmation.sameApp, ownerVerified: raw.confirmation.ownerVerified, eligibleEnrollment: raw.confirmation.eligibleEnrollment, requestLive: raw.confirmation.requestLive }) };
-  if (raw.type === "recordSignupGrant" && typeof raw.appMatches === "boolean" && typeof raw.ownerMatches === "boolean" && typeof raw.writeScopeLive === "boolean") return { type: "recordSignupGrant", appMatches: raw.appMatches, ownerMatches: raw.ownerMatches, writeScopeLive: raw.writeScopeLive };
-  if (raw.type === "submitHandoffProfile" && typeof raw.authorityLive === "boolean" && typeof raw.exactProfile === "boolean") return { type: "submitHandoffProfile", authorityLive: raw.authorityLive, exactProfile: raw.exactProfile };
-  if (raw.type === "readHandoffProfile" && typeof raw.exactSavedProfile === "boolean") return { type: "readHandoffProfile", exactSavedProfile: raw.exactSavedProfile };
+  if (raw.type === "decideApproval" && (raw.decision === "ApproveExact" || raw.decision === "AskChanges" || raw.decision === "DeclineSignup")) return { type: "decideApproval", decision: raw.decision };
+  if (raw.type === "offerHandoff" && typeof raw.linkAvailable === "boolean") return { type: "offerHandoff", linkAvailable: raw.linkAvailable };
+  if (raw.type === "observeBrowser") return { type: "observeBrowser" };
+  if (raw.type === "checkSiteStatus" && typeof raw.siteApp === "boolean") return { type: "checkSiteStatus", siteApp: raw.siteApp };
+  if (raw.type === "submitProfile" && typeof raw.accepted === "boolean") return { type: "submitProfile", accepted: raw.accepted };
+  if (raw.type === "confirmProfile" && typeof raw.stillLive === "boolean") return { type: "confirmProfile", stillLive: raw.stillLive };
   return undefined;
 }
 

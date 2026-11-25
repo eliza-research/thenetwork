@@ -17,6 +17,7 @@ export type AuthMessage =
       | "CheckNumberView"
       | "ConnectAgainView"
       | "PleaseRetryView"
+      | "SignupUnavailableView"
       | "SignInUnavailableView"
       | "NotAllowedView"
     >
@@ -33,6 +34,7 @@ const copy: Record<AuthMessage, { title: string; line: string }> = {
   CheckNumberView: { title: "We need to check this number", line: "We need to check this number before it can be used here. Please try again later, or email us for help." },
   ConnectAgainView: { title: "Connect again", line: "Return to your agent or text conversation and connect again." },
   PleaseRetryView: { title: "Please try again", line: retryLine },
+  SignupUnavailableView: { title: "Please try again", line: retryLine },
   SignInUnavailableView: { title: "Sign-in unavailable", line: "Go back to the assistant and try again later." },
   NotAllowedView: { title: "Not allowed", line: "This form must be sent from this site." },
   SignInFirstView: { title: "Sign in first", line: "Connect this app in your agent and confirm your phone during authorization, then open this page again." },

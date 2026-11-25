@@ -175,7 +175,7 @@ export type AssistantGrantCandidate = { grant: Grant; client: OAuthClient };
 export interface OAuthStore {
   putSignupDraft(d: SignupDraft, at: number): Promise<boolean>;
   deleteSignupDrafts(phoneKey: string, app: McpAppId): Promise<void>;
-  useSignupPrefill(ask: SignupPrefillAsk, at: number): Promise<SignupDraftFields | undefined>;
+  useSignupPrefill(ask: SignupPrefillAsk, now: () => number): Promise<SignupDraftFields | undefined>;
   /** Atomically admit the first intake for the fingerprint under this live grant. */
   claimProfileSubmission(grant: ProfileSubmissionGrant, fingerprint: string, at: number): Promise<ProfileClaim>;
   /** Store observed acceptance, or release a claim only after intake explicitly refused it. */
@@ -266,7 +266,8 @@ export class MemoryOAuthStore implements OAuthStore {
   async deleteSignupDrafts(phoneKey: string, app: McpAppId) {
     for (const [id, d] of this.signupDrafts) if (d.phoneKey === phoneKey && d.app === app) this.signupDrafts.delete(id);
   }
-  async useSignupPrefill(ask: SignupPrefillAsk, at: number) {
+  async useSignupPrefill(ask: SignupPrefillAsk, now: () => number) {
+    const at = now();
     const request = { client: ask.clientId, app: ask.app, phone: ask.phoneKey, asOf: at, ageAllowed: ask.ageAllowed };
     const drafts = [...this.signupDrafts.values()].filter(d => {
       const g = this.grants.get(d.grantId);

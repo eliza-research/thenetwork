@@ -1,11 +1,11 @@
 // GENERATED from spec/connectorTools.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date (spec/connectorTools.md) */
+/** Story: Use my app's connector from my agent / Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date (spec/connectorTools.md) */
 export type Surface = "FullSurface" | "OpenAiSurface";
-/** Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date (spec/connectorTools.md) */
+/** Story: Use my app's connector from my agent / Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date (spec/connectorTools.md) */
 export type ToolName = "AppInfoTool" | "StartSignupTool" | "PrepareSignupTool" | "CheckStatusTool" | "ReadProfileTool" | "SubmitProfileTool" | "GetUpdatesTool" | "ListLookingForTool" | "PauseLookingForTool" | "ResumeLookingForTool" | "MyPhotosTool" | "PhotoRequestTool";
-/** Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date (spec/connectorTools.md) */
+/** Story: Use my app's connector from my agent / Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date (spec/connectorTools.md) */
 export type AppId = "Ntwrk" | "Slop" | "Peon" | "Friends";
 /** Story: Use my app's connector from my agent / Public tools need no sign-in, and member tools need the person's own grant (spec/connectorTools.md) */
 export type Scope = "NoScope" | "MembershipRead" | "ProfileWrite" | "ProfileRead" | "PhotosUse";
@@ -34,8 +34,8 @@ export type RegisterBucket = "AssistantRegisterBucket" | "AddressRegisterBucket"
 export type Event =
   | { type: "authorize"; withWrite: boolean; withProfileRead: boolean; withPhotos: boolean }
   | { type: "callWithoutAccess"; tool: ToolName }
-  | { type: "connect"; host: AppId; surface: Surface; openAiEnabled: boolean }
   | { type: "callPublicTool"; tool: ToolName; app: AppId; appRegistered: boolean }
+  | { type: "connect"; host: AppId; surface: Surface; openAiEnabled: boolean }
   | { type: "callAfterOwnerChange" }
   | { type: "callCheckStatus" }
   | { type: "changeMemberStatus"; newStatus: MemberStatus }
@@ -76,69 +76,89 @@ export function inv(current: Connection): boolean {
   return alwaysWriteNeedsConnection(current) && alwaysUnboundHasNoDraft(current) && alwaysPhotosNeedConnection(current) && alwaysBoundHostIsServed(current) && alwaysMemberResultsNeedConnection(current) && alwaysSentProfileWasApproved(current) && alwaysDailyProfileCap(current) && alwaysDraftOnlyOnFriendsOrNtwrk(current) && alwaysShownCountIsSmall(current);
 }
 
-/** Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date (spec/connectorTools.md) */
+/** Story: Use my app's connector from my agent / Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date (spec/connectorTools.md) */
 //@ pure
 export function appOffered(surface: Surface, app: AppId): boolean {
-  return surface === "FullSurface" || app !== "Slop";
+  return (surface === "FullSurface" || surface === "OpenAiSurface") && (app === "Ntwrk" || app === "Slop" || app === "Peon" || app === "Friends");
 }
 
-/** Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date (spec/connectorTools.md) */
+/** Story: Use my app's connector from my agent / Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date (spec/connectorTools.md) */
 //@ pure
 export function photoTool(tool: ToolName): boolean {
   return tool === "MyPhotosTool" || tool === "PhotoRequestTool";
 }
 
-/** Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date (spec/connectorTools.md) */
+/** Story: Use my app's connector from my agent / Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date (spec/connectorTools.md) */
 //@ pure
 export function hostServes(surface: Surface, host: AppId): boolean {
   return appOffered(surface, host);
 }
 
-/** Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date (spec/connectorTools.md) */
+/** Story: Use my app's connector from my agent / Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date (spec/connectorTools.md) */
+//@ pure
+export function appListed(surface: Surface, host: AppId, app: AppId): boolean {
+  return appOffered(surface, app) && (surface === "FullSurface" || app !== "Slop" || host === "Slop");
+}
+
+/** Story: Use my app's connector from my agent / Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date (spec/connectorTools.md) */
 //@ pure
 export function lawFullSurfaceOffersEveryApp(app: AppId): boolean {
   //@ ensures \result === true
   return appOffered("FullSurface", app);
 }
 
-/** Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date (spec/connectorTools.md) */
+/** Story: Use my app's connector from my agent / Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date (spec/connectorTools.md) */
 //@ pure
 export function configuredHostServes(surface: Surface, host: AppId, openAiEnabled: boolean): boolean {
   return hostServes(surface, host) && (surface !== "OpenAiSurface" || openAiEnabled);
 }
 
-/** Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date (spec/connectorTools.md) */
+/** Story: Use my app's connector from my agent / Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date (spec/connectorTools.md) */
 //@ pure
 export function toolListed(host: AppId, surface: Surface, tool: ToolName): boolean {
-  return hostServes(surface, host) && (tool !== "PrepareSignupTool" || host === "Friends" || host === "Ntwrk") && (!photoTool(tool) || host === "Slop");
+  return hostServes(surface, host) && (tool !== "PrepareSignupTool" || host === "Friends" || host === "Ntwrk") && (!photoTool(tool) || (host === "Slop" && surface === "FullSurface"));
 }
 
-/** Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date (spec/connectorTools.md) */
+/** Story: Use my app's connector from my agent / Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date (spec/connectorTools.md) */
+//@ pure
+export function lawOpenAiListsSlopOnlyAtItsOwnEndpoint(host: AppId): boolean {
+  //@ ensures \result === true
+  return appListed("OpenAiSurface", host, "Slop") === (host === "Slop");
+}
+
+/** Story: Use my app's connector from my agent / Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date (spec/connectorTools.md) */
+//@ pure
+export function lawFullSurfaceListsEveryApp(host: AppId, app: AppId): boolean {
+  //@ ensures \result === true
+  return appListed("FullSurface", host, app);
+}
+
+/** Story: Use my app's connector from my agent / Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date (spec/connectorTools.md) */
 //@ pure
 export function lawConfiguredOptOutBlocksOpenAiHost(host: AppId): boolean {
   //@ ensures \result === true
   return !configuredHostServes("OpenAiSurface", host, false);
 }
 
-/** Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date (spec/connectorTools.md) */
+/** Story: Use my app's connector from my agent / Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date (spec/connectorTools.md) */
 //@ pure
 export function lawPhotoToolsOnlyOnSlop(host: AppId, surface: Surface, tool: ToolName): boolean {
   //@ ensures \result === true
   return !(photoTool(tool) && toolListed(host, surface, tool)) || (host === "Slop" && surface === "FullSurface");
 }
 
-/** Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date (spec/connectorTools.md) */
+/** Story: Use my app's connector from my agent / Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date (spec/connectorTools.md) */
 //@ pure
 export function lawDraftOnlyOnFriendsAndNtwrk(host: AppId, surface: Surface): boolean {
   //@ ensures \result === true
   return !toolListed(host, surface, "PrepareSignupTool") || (host === "Friends" || host === "Ntwrk");
 }
 
-/** Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date (spec/connectorTools.md) */
+/** Story: Use my app's connector from my agent / Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date (spec/connectorTools.md) */
 //@ pure
-export function lawOpenAiNeverOffersSlop(tool: ToolName): boolean {
+export function lawOpenAiOffersEveryApp(app: AppId): boolean {
   //@ ensures \result === true
-  return !appOffered("OpenAiSurface", "Slop") && !toolListed("Slop", "OpenAiSurface", tool);
+  return appOffered("OpenAiSurface", app) && hostServes("OpenAiSurface", app) && toolListed(app, "OpenAiSurface", "AppInfoTool");
 }
 
 /** Story: Use my app's connector from my agent / The ntwrk.party host serves every app at its own path, and a grant covers only its own app (spec/connectorTools.md) */
@@ -162,14 +182,8 @@ export function hostBindsApp(host: AppId, app: AppId): boolean {
 
 /** Story: Use my app's connector from my agent / The ntwrk.party host serves every app at its own path, and a grant covers only its own app (spec/connectorTools.md) */
 //@ pure
-export function appListed(surface: Surface, host: AppId, app: AppId): boolean {
-  return hostServes(surface, host) && appOffered(surface, app);
-}
-
-/** Story: Use my app's connector from my agent / The ntwrk.party host serves every app at its own path, and a grant covers only its own app (spec/connectorTools.md) */
-//@ pure
 export function siteOffersOpenAi(site: AppId, app: AppId): boolean {
-  return hostBindsApp(site, app) && appOffered("OpenAiSurface", app);
+  return hostBindsApp(site, app) && (site === hubHost || app !== "Slop");
 }
 
 /** Story: Use my app's connector from my agent / The ntwrk.party host serves every app at its own path, and a grant covers only its own app (spec/connectorTools.md) */
@@ -188,16 +202,43 @@ export function lawAppSiteServesOnlyItsApp(host: AppId, app: AppId): boolean {
 
 /** Story: Use my app's connector from my agent / The ntwrk.party host serves every app at its own path, and a grant covers only its own app (spec/connectorTools.md) */
 //@ pure
-export function lawHubOffersOnlySupportedOpenAiApps(app: AppId): boolean {
+export function lawHubOffersOpenAiForEveryApp(app: AppId): boolean {
   //@ ensures \result === true
-  return siteOffersOpenAi(hubHost, app) === (app !== "Slop");
+  return siteOffersOpenAi(hubHost, app);
 }
 
 /** Story: Use my app's connector from my agent / The ntwrk.party host serves every app at its own path, and a grant covers only its own app (spec/connectorTools.md) */
 //@ pure
-export function lawNoSiteOffersSlopOnTheOpenAiSurface(site: AppId): boolean {
+export function lawSlopSiteKeepsNoOpenAiSurface(app: AppId): boolean {
   //@ ensures \result === true
-  return !siteOffersOpenAi(site, "Slop") && !appListed("OpenAiSurface", site, "Slop");
+  return !siteOffersOpenAi("Slop", app);
+}
+
+/** Story: Use my app's connector from my agent / The member tools name the site where the person signs in (spec/connectorTools.md) */
+//@ pure
+export function signInSite(site: AppId, app: AppId): AppId {
+  return site === hubHost ? hubHost : app;
+}
+
+/** Story: Use my app's connector from my agent / The member tools name the site where the person signs in (spec/connectorTools.md) */
+//@ pure
+export function lawHubPathsSignInOnTheHub(app: AppId): boolean {
+  //@ ensures \result === true
+  return signInSite(hubHost, app) === hubHost;
+}
+
+/** Story: Use my app's connector from my agent / The member tools name the site where the person signs in (spec/connectorTools.md) */
+//@ pure
+export function lawAppSiteSignsInOnItself(app: AppId): boolean {
+  //@ ensures \result === true
+  return signInSite(app, app) === app;
+}
+
+/** Story: Use my app's connector from my agent / The member tools name the site where the person signs in (spec/connectorTools.md) */
+//@ pure
+export function lawSignInSiteServesTheApp(site: AppId, app: AppId): boolean {
+  //@ ensures \result === true
+  return !hostBindsApp(site, app) || (signInSite(site, app) === site && hostBindsApp(signInSite(site, app), app));
 }
 
 /** Story: Use my app's connector from my agent / Public tools need no sign-in, and member tools need the person's own grant (spec/connectorTools.md) */
@@ -280,6 +321,20 @@ export function toolAllowedFor(tool: ToolName, status: MemberStatus): boolean {
 
 /** Story: Use my app's connector from my agent / The member status decides which member tool can act (spec/connectorTools.md) */
 //@ pure
+export function lawPhotoToolsOnlyForActiveMembers(status: MemberStatus): boolean {
+  //@ ensures \result === true
+  return !(toolAllowedFor("MyPhotosTool", status) || toolAllowedFor("PhotoRequestTool", status)) || status === "Active";
+}
+
+/** Story: Use my app's connector from my agent / The member status decides which member tool can act (spec/connectorTools.md) */
+//@ pure
+export function lawReadToolsServeEveryStatus(status: MemberStatus): boolean {
+  //@ ensures \result === true
+  return toolAllowedFor("AppInfoTool", status) && toolAllowedFor("StartSignupTool", status) && toolAllowedFor("CheckStatusTool", status) && toolAllowedFor("GetUpdatesTool", status);
+}
+
+/** Story: Use my app's connector from my agent / The member status decides which member tool can act (spec/connectorTools.md) */
+//@ pure
 export function lawSubmitOnlyForLiveMembers(status: MemberStatus): boolean {
   //@ ensures \result === true
   return toolAllowedFor("SubmitProfileTool", status) === (status === "Active" || status === "Onboarding");
@@ -297,20 +352,6 @@ export function lawDraftOnlyBeforeJoining(status: MemberStatus): boolean {
 export function lawLookingForOnlyForActiveMembers(status: MemberStatus): boolean {
   //@ ensures \result === true
   return !(toolAllowedFor("ListLookingForTool", status) || toolAllowedFor("PauseLookingForTool", status) || toolAllowedFor("ResumeLookingForTool", status)) || status === "Active";
-}
-
-/** Story: Use my app's connector from my agent / The member status decides which member tool can act (spec/connectorTools.md) */
-//@ pure
-export function lawPhotoToolsOnlyForActiveMembers(status: MemberStatus): boolean {
-  //@ ensures \result === true
-  return !(toolAllowedFor("MyPhotosTool", status) || toolAllowedFor("PhotoRequestTool", status)) || status === "Active";
-}
-
-/** Story: Use my app's connector from my agent / The member status decides which member tool can act (spec/connectorTools.md) */
-//@ pure
-export function lawReadToolsServeEveryStatus(status: MemberStatus): boolean {
-  //@ ensures \result === true
-  return toolAllowedFor("AppInfoTool", status) && toolAllowedFor("StartSignupTool", status) && toolAllowedFor("CheckStatusTool", status) && toolAllowedFor("GetUpdatesTool", status);
 }
 
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
@@ -401,6 +442,28 @@ export function canCallPublicTool(c: Connection, tool: ToolName): boolean {
 
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
 //@ pure
+export function callPublicTool(c: Connection, tool: ToolName, app: AppId, appRegistered: boolean): Connection {
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysWriteNeedsConnection(\result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysUnboundHasNoDraft(\result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysPhotosNeedConnection(\result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysBoundHostIsServed(\result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysMemberResultsNeedConnection(\result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysSentProfileWasApproved(\result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysDailyProfileCap(\result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysShownCountIsSmall(\result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepSavedProfileNeedsReadAuthority(c, "callPublicTool", \result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepLookingForChangeNeedsWriteAndActive(c, "callPublicTool", \result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepLookingForListNeedsRead(c, "callPublicTool", \result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepPhotoToolNeedsPhotosScopeAndActive(c, "callPublicTool", \result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepNothingSentAtTheLimit(c, "callPublicTool", \result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepSubmitOnlyForLiveMember(c, "callPublicTool", \result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepReadingNeverAddsUnseen(c, "callPublicTool", \result)
+  return { ...c, lastResult: appRegistered && appListed(c.surface, c.host, app) ? "PublicFacts" : "AppNotAvailable" };
+}
+
+/** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
+//@ pure
 export function alwaysBoundHostIsServed(c: Connection): boolean {
   return !bound(c) || hostServes(c.surface, c.host);
 }
@@ -429,24 +492,16 @@ export function connect(c: Connection, host: AppId, surface: Surface, openAiEnab
 
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
 //@ pure
-export function callPublicTool(c: Connection, tool: ToolName, app: AppId, appRegistered: boolean): Connection {
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysWriteNeedsConnection(\result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysUnboundHasNoDraft(\result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysPhotosNeedConnection(\result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysBoundHostIsServed(\result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysMemberResultsNeedConnection(\result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysSentProfileWasApproved(\result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysDailyProfileCap(\result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysShownCountIsSmall(\result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepSavedProfileNeedsReadAuthority(c, "callPublicTool", \result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepLookingForChangeNeedsWriteAndActive(c, "callPublicTool", \result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepLookingForListNeedsRead(c, "callPublicTool", \result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepPhotoToolNeedsPhotosScopeAndActive(c, "callPublicTool", \result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepNothingSentAtTheLimit(c, "callPublicTool", \result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepSubmitOnlyForLiveMember(c, "callPublicTool", \result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepReadingNeverAddsUnseen(c, "callPublicTool", \result)
-  return { ...c, lastResult: appRegistered && appListed(c.surface, c.host, app) ? "PublicFacts" : "AppNotAvailable" };
+export function lawUnregisteredAppIsNotAvailable(c: Connection, tool: ToolName, app: AppId): boolean {
+  //@ ensures \result === true
+  return callPublicTool(c, tool, app, false).lastResult === "AppNotAvailable";
+}
+
+/** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
+//@ pure
+export function lawOpenAiPluginServerNeverNamesSlop(c: Connection, tool: ToolName): boolean {
+  //@ ensures \result === true
+  return !(c.surface === "OpenAiSurface" && c.host !== "Slop") || callPublicTool(c, tool, "Slop", true).lastResult === "AppNotAvailable";
 }
 
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
@@ -460,20 +515,6 @@ export function canCallWithoutAccess(c: Connection, tool: ToolName): boolean {
 export function lawDisabledOpenAiHostIsUnavailable(c: Connection, host: AppId): boolean {
   //@ ensures \result === true
   return connect(c, host, "OpenAiSurface", false).phase === "Unavailable";
-}
-
-/** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
-//@ pure
-export function lawUnregisteredAppIsNotAvailable(c: Connection, tool: ToolName, app: AppId): boolean {
-  //@ ensures \result === true
-  return callPublicTool(c, tool, app, false).lastResult === "AppNotAvailable";
-}
-
-/** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
-//@ pure
-export function lawOpenAiPluginServerNeverNamesSlop(c: Connection, tool: ToolName): boolean {
-  //@ ensures \result === true
-  return !(c.surface === "OpenAiSurface" && c.host !== "Slop") || callPublicTool(c, tool, "Slop", true).lastResult === "AppNotAvailable";
 }
 
 /** Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection (spec/connectorTools.md) */
@@ -1163,8 +1204,8 @@ export function sometimesRevoked(c: Connection): boolean {
 export function enabled(current: Connection, event: Event): boolean {
   if (event.type === "authorize") return canAuthorize(current);
   if (event.type === "callWithoutAccess") return canCallWithoutAccess(current, event.tool);
-  if (event.type === "connect") return canConnect(current);
   if (event.type === "callPublicTool") return canCallPublicTool(current, event.tool);
+  if (event.type === "connect") return canConnect(current);
   if (event.type === "callAfterOwnerChange") return canCallAfterOwnerChange(current);
   if (event.type === "callCheckStatus") return canCallCheckStatus(current);
   if (event.type === "changeMemberStatus") return canChangeMemberStatus(current, event.newStatus);
@@ -1187,8 +1228,8 @@ export function step(current: Connection, event: Event): Connection {
   //@ ensures inv(\result)
   if (event.type === "authorize") return canAuthorize(current) ? authorize(current, event.withWrite, event.withProfileRead, event.withPhotos) : current;
   if (event.type === "callWithoutAccess") return canCallWithoutAccess(current, event.tool) ? callWithoutAccess(current, event.tool) : current;
-  if (event.type === "connect") return canConnect(current) ? connect(current, event.host, event.surface, event.openAiEnabled) : current;
   if (event.type === "callPublicTool") return canCallPublicTool(current, event.tool) ? callPublicTool(current, event.tool, event.app, event.appRegistered) : current;
+  if (event.type === "connect") return canConnect(current) ? connect(current, event.host, event.surface, event.openAiEnabled) : current;
   if (event.type === "callAfterOwnerChange") return canCallAfterOwnerChange(current) ? callAfterOwnerChange(current) : current;
   if (event.type === "callCheckStatus") return canCallCheckStatus(current) ? callCheckStatus(current) : current;
   if (event.type === "changeMemberStatus") return canChangeMemberStatus(current, event.newStatus) ? changeMemberStatus(current, event.newStatus) : current;
@@ -1220,8 +1261,8 @@ export function parseEvent(x: unknown): Event | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "authorize" && typeof raw.withWrite === "boolean" && typeof raw.withProfileRead === "boolean" && typeof raw.withPhotos === "boolean") return { type: "authorize", withWrite: raw.withWrite, withProfileRead: raw.withProfileRead, withPhotos: raw.withPhotos };
   if (raw.type === "callWithoutAccess" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "PrepareSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "ReadProfileTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool" || raw.tool === "ListLookingForTool" || raw.tool === "PauseLookingForTool" || raw.tool === "ResumeLookingForTool" || raw.tool === "MyPhotosTool" || raw.tool === "PhotoRequestTool")) return { type: "callWithoutAccess", tool: raw.tool };
-  if (raw.type === "connect" && (raw.host === "Ntwrk" || raw.host === "Slop" || raw.host === "Peon" || raw.host === "Friends") && (raw.surface === "FullSurface" || raw.surface === "OpenAiSurface") && typeof raw.openAiEnabled === "boolean") return { type: "connect", host: raw.host, surface: raw.surface, openAiEnabled: raw.openAiEnabled };
   if (raw.type === "callPublicTool" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "PrepareSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "ReadProfileTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool" || raw.tool === "ListLookingForTool" || raw.tool === "PauseLookingForTool" || raw.tool === "ResumeLookingForTool" || raw.tool === "MyPhotosTool" || raw.tool === "PhotoRequestTool") && (raw.app === "Ntwrk" || raw.app === "Slop" || raw.app === "Peon" || raw.app === "Friends") && typeof raw.appRegistered === "boolean") return { type: "callPublicTool", tool: raw.tool, app: raw.app, appRegistered: raw.appRegistered };
+  if (raw.type === "connect" && (raw.host === "Ntwrk" || raw.host === "Slop" || raw.host === "Peon" || raw.host === "Friends") && (raw.surface === "FullSurface" || raw.surface === "OpenAiSurface") && typeof raw.openAiEnabled === "boolean") return { type: "connect", host: raw.host, surface: raw.surface, openAiEnabled: raw.openAiEnabled };
   if (raw.type === "callAfterOwnerChange") return { type: "callAfterOwnerChange" };
   if (raw.type === "callCheckStatus") return { type: "callCheckStatus" };
   if (raw.type === "changeMemberStatus" && (raw.newStatus === "NotJoined" || raw.newStatus === "Invited" || raw.newStatus === "Onboarding" || raw.newStatus === "Active" || raw.newStatus === "Stopped" || raw.newStatus === "OnHold")) return { type: "changeMemberStatus", newStatus: raw.newStatus };

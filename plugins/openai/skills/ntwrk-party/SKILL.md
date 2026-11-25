@@ -28,7 +28,7 @@ The Network helps people find the connections they ask for: friends or work.
 Anyone 13 or older may join. Matching is for adults 18 or older, except friendship
 introductions between people aged 13 to 18 born at most 2 years apart, after an
 automatic check approves each one. People aged 13–17 also get their own help: answers,
-public events and plans for themselves. They are never matched on dates or for work.
+public events and plans for themselves. They are never matched for work.
 It asks before any introduction. A saved general profile does not enroll the person
 in another app or start matching.
 
@@ -56,14 +56,14 @@ in another app or start matching.
    introduces people under 18 only for friendship, to people aged 13 to 18 born at most
    2 years apart, after an automatic check approves each one. They also get their own
    help, with answers, public events and plans for themselves. They are never matched
-   on dates or for work. Never promise them an introduction.
+   for work. Never promise them an introduction.
    Draft their confirmed first name and home region.
    Confirm the Bay Area (`sf`) or New York City (`nyc`) and keep their neighborhood
    separate. Ask if the region is ambiguous. Do not guess it from a neighborhood
    or ZIP code or pick an incorrect region.
    Draft a general profile with interests, availability and the kinds of connections
    they want: friends or work. For ages 13–17, draft only friends interests and their
-   own help; never offer dates or work, and never promise that these interests lead to
+   own help; never offer work, and never promise that these interests lead to
    an introduction. Keep separate app details out. These interests do not
    enroll the person in another app.
 4. Show the exact draft and the app's current text consent wording. Explain <!-- agentSignup: decideApproval -->
@@ -123,7 +123,7 @@ in another app or start matching.
 Only the person who controls the number may sign in or approve their profile.
 Do not sign up someone else, contact other members, request their information,
 send invitations, or change another app. The lowest stated age applies. Members
-13–17 are never matched on dates or for work, and are introduced only for friendship as above. No background checks are run.
+13–17 are never matched for work, and are introduced only for friendship as above. No background checks are run.
 
 Text STOP stops every text from the shared line; "leave ntwrk.party" leaves this
 app only. Export/deletion support is help@ntwrk.party. To see or remove the access of an agent, the person opens https://ntwrk.party/oauth/consents in the browser where they connected. Do not invoke destructive

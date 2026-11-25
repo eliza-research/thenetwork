@@ -1,14 +1,14 @@
 # Connected assistants page
 
-This spec owns the view layer of the "Connected assistants" page at `/oauth/consents` on each app's site. The page lists the assistants that can use the person's account in this app and lets the person remove access. The handler owns the session check, the origin check, the grant lookup, the revocation and its audit. The [connector token spec](oauthTokenLifecycle.md) owns what a removed grant means for tokens. The page is not an account portal: no public site links to it, and it offers no sign-in form or sign-in link. A person gets a site session only through the phone confirmation or the Cloud sign-in of signup or of connector authorization.
+This spec owns the view layer of the "Connected assistants" page at `/oauth/consents` on each site. On an app site, the page lists the assistants that can use the person's account in that app. On ntwrk.party, which serves the connector of every app, one page lists the assistants of every app whose own session is in this browser on ntwrk.party. On each page the person can remove access. The handler owns the session check, the origin check, the grant lookup, the revocation and its audit. The [connector token spec](oauthTokenLifecycle.md) owns what a removed grant means for tokens. The page is not an account portal: no public site links to it, and it offers no sign-in form or sign-in link. A person gets a site session only through the phone confirmation or the Cloud sign-in of signup or of connector authorization.
 
 ## Story: See which assistants can use my account
 
-> As a person who connected an assistant to this app, I want to see each assistant that can use my account in this app, so that I know who has access.
+> As a person who connected an assistant to an app, I want to see each assistant that can use my account in that app, so that I know who has access.
 
 ### The page lists live grants only for a signed-in session
 
-The page first checks the site session. Without a session it shows "Sign in first". When the session check is not available, it shows "Please try again". With a session it lists each live grant of the current verified person and phone in this app. A grant with no person belongs only to a verified phone that still has no person. Check Cloud authority for the person's Cloud grants before showing them. A denied grant is absent. When a current grant's check is temporarily unavailable, offer a retry of the list. Recheck the local grant and owner after checking authority. With no live grant the page shows the empty state.
+The page first checks the site sessions. A site session is for one app. An app site reads only the session of its own app. ntwrk.party reads the session of each app that it serves, and each app has its own session cookie there. Without a session of a served app, the page shows "Sign in first". When a session check is not available, it shows "Please try again". With sessions, it lists each live grant of the current verified person and phone of each session, in the app of that session. A session never shows the grants of another app. A grant with no person belongs only to a verified phone that still has no person. Check Cloud authority for the person's Cloud grants before showing them. A denied grant is absent. When a current grant's check is temporarily unavailable, offer a retry of the list. Recheck the local grant and owner after checking authority. With no live grant the page shows the empty state.
 
 ```quint
 type ConsentsView = Loading | SignInFirstView | RetryLaterView | NotAllowedView | ListView | EmptyView | ConfirmingRemoval
@@ -25,6 +25,16 @@ pure def browserOwnsLiveGrant(sameApp: bool, samePhone: bool, samePerson: bool, 
 
 pure def lawAnEarlierPhoneOwnerHasNoGrant(sameApp: bool, samePhone: bool, active: bool, asOf: int, grantExpiresAt: int): bool =
   not(browserOwnsLiveGrant(sameApp, samePhone, false, active, asOf, grantExpiresAt))
+
+pure def consentsPageReadsSession(siteIsHub: bool, sessionForSiteApp: bool): bool = siteIsHub or sessionForSiteApp
+
+pure def lawAppSiteReadsOnlyItsOwnSession(sessionForSiteApp: bool): bool =
+  consentsPageReadsSession(false, sessionForSiteApp) iff sessionForSiteApp
+
+pure def lawHubReadsTheSessionOfEveryApp(sessionForSiteApp: bool): bool = consentsPageReadsSession(true, sessionForSiteApp)
+
+pure def lawASessionShowsOnlyItsOwnApp(samePhone: bool, samePerson: bool, active: bool, asOf: int, grantExpiresAt: int): bool =
+  not(browserOwnsLiveGrant(false, samePhone, samePerson, active, asOf, grantExpiresAt))
 
 type BrowserGrantVisibility = ShowBrowserGrant | HideBrowserGrant | RetryBrowserGrantList
 
@@ -54,7 +64,7 @@ pure def alwaysListMatchesGrants(page: ConsentsPage): bool =
 
 ### A grant card names the assistant as its claim and shows its date and scopes
 
-Each card shows the assistant's name, or an unnamed label when it gave none, and says that the name is the assistant's own claim. It shows the date of the approval, the approved scopes and a "Remove access" button.
+Each card shows the assistant's name, or an unnamed label when it gave none, and says that the name is the assistant's own claim. It shows the date of the approval, the approved scopes and a "Remove access" button. On ntwrk.party, the card also names the app of the grant after the assistant's name, because the page can list grants of more than one app. An app site does not name the app.
 
 ```quint
 type AssistantLabel = NamedByItself | UnnamedAssistant
@@ -66,6 +76,10 @@ pure def grantCard(named: bool): GrantCard =
 pure def lawGrantCardShowsClaimDateAndScopes(named: bool): bool =
   val card = grantCard(named)
   card.claimNote and card.allowedDate and card.scopeList and card.removeButton
+
+pure def grantCardNamesItsApp(siteIsHub: bool): bool = siteIsHub
+
+pure def lawOnlyTheHubCardNamesTheApp(siteIsHub: bool): bool = grantCardNamesItsApp(siteIsHub) iff siteIsHub
 ```
 
 ### A page without a session offers no sign-in control
@@ -99,7 +113,7 @@ pure def reloadPage(page: ConsentsPage): ConsentsPage = { ...page, view: Loading
 
 ## Story: Remove an assistant's access
 
-> As a person who connected an assistant to this app, I want to remove its access and see that it is gone, so that it cannot act for me any more.
+> As a person who connected an assistant to an app, I want to remove its access and see that it is gone, so that it cannot act for me any more.
 
 ### Removal needs a confirmation
 
@@ -122,7 +136,7 @@ pure def stepOnlyConfirmedRemovalChangesGrants(before: ConsentsPage, via: str, a
 
 ### A confirmed removal shows its result
 
-The confirmation page binds the chosen grant to the current browser session. The confirmation ends five minutes after issuance or at the grant's expiry, whichever comes first. A POST authenticates the current session and checks the grant owner and this exact confirmation again. If the session rotated while the form was open, its new token can submit a confirmation made for the immediate predecessor recorded on that session. The previous token cannot authenticate once its grace period ends. An independent sign-in, an expired confirmation or a confirmation for another grant leaves the grant as it is. When the access ends, the page lists the grants that stay and shows "Access removed.". An unavailable check of the remaining grants still shows the completed removal notice and offers a link to retry the list. When the grant was already gone or is not the person's, the page lists the grants with no notice. Without a session it shows "Sign in first". When the session check is not available, it shows "Please try again". A form from another site gets "Not allowed". Only a confirmed removal shows the notice.
+The confirmation page binds the chosen grant to the current browser session of the grant's app. The confirmation ends five minutes after issuance or at the grant's expiry, whichever comes first. A POST authenticates the current session and checks the grant owner and this exact confirmation again. If the session rotated while the form was open, its new token can submit a confirmation made for the immediate predecessor recorded on that session. The previous token cannot authenticate once its grace period ends. An independent sign-in, an expired confirmation or a confirmation for another grant leaves the grant as it is. When the access ends, the page lists the grants that stay and shows "Access removed.". An unavailable check of the remaining grants still shows the completed removal notice and offers a link to retry the list. When the grant was already gone or is not the person's, the page lists the grants with no notice. Without a session it shows "Sign in first". When the session check is not available, it shows "Please try again". A form from another site gets "Not allowed". Only a confirmed removal shows the notice.
 
 ```quint
 pure val removeConfirmationMs = 300000
