@@ -361,6 +361,21 @@ describe("runTick and the tick lock", () => {
     expect(rows.requests.map(r => r.member_id)).toContain("r");
     expect(JSON.stringify(rows.requests)).not.toContain("Anyone around");
     expect(new Set(rows.opportunities.map(r => r.state))).toContain("COMPLETED");
+    const state = w.net.exportState();
+    const base = state.opps.find(o => o.participants.length >= 2);
+    expect(base).toBeDefined();
+    const pair = base!.participants.slice(0, 2);
+    const cancelled = (id: string, told: string[]) => ({
+      ...base!, id, stage: "closed" as const, closedFrom: "scheduled", participants: pair, alternates: [],
+      status: pair.map((p): [typeof p, "yes"] => [p, "yes"]), bookedTold: told,
+    });
+    const cancelledRows = consoleRows({ ...state, opps: [cancelled("cancelled-told", pair), cancelled("cancelled-untold", []), cancelled("cancelled-one-told", [pair[0]!])] });
+    expect(cancelledRows.opportunities.map(o => o.state)).toEqual(["CANCELLED", "CANCELLED", "CANCELLED"]);
+    expect(cancelledRows.participations.filter(p => p.opportunity_id === "cancelled-told").map(p => p.status)).toEqual(["accepted", "accepted"]);
+    expect(cancelledRows.participations.filter(p => p.opportunity_id === "cancelled-untold").map(p => p.status)).toEqual(["accepted", "accepted"]);
+    expect(cancelledRows.participations.filter(p => p.opportunity_id === "cancelled-told").map(p => p.booked_told)).toEqual([true, true]);
+    expect(cancelledRows.participations.filter(p => p.opportunity_id === "cancelled-untold").map(p => p.booked_told)).toEqual([false, false]);
+    expect(cancelledRows.participations.filter(p => p.opportunity_id === "cancelled-one-told").map(p => p.booked_told)).toEqual([true, false]);
   }, T);
 });
 

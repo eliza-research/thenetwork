@@ -109,6 +109,12 @@ export function rowsFromGame(g: GameSource): NetworkRows {
   for (const i of snap.intents) if (kept(i.memberId)) r.intents.push(intentRow(i));
   for (const p of snap.presence) if (kept(p.memberId)) r.presence.push(presenceRow(p));
   for (const e of s.edges.values()) if (kept(e.from, e.to)) r.edges.push({ from_id: e.from, to_id: e.to, type: e.type, strength: e.strength, explicit: e.origin === "graph", created_at: date(e.createdAt) });
+  const told = new Set<string>();
+  for (const m of w.channel.all()) {
+    if (m.direction !== "outbound" || m.system || m.status !== "delivered") continue;
+    const oppId = ((m.meta?.proposalId ?? (m.meta?.probe as { key?: string } | undefined)?.key) as string) ?? null;
+    if (oppId && (m.meta?.bookingUpdate || m.meta?.booked)) told.add(`${oppId}|${m.memberId}`);
+  }
   for (const o of s.opps.values()) {
     if (o.source === "shadow") continue;
     r.opportunities.push({
@@ -117,8 +123,8 @@ export function rowsFromGame(g: GameSource): NetworkRows {
       window_start: null, window_end: null, meeting_at: date(o.meetingAt), reason: o.reason ?? null, run_id: o.runId ?? null,
       created_at: date(o.createdAt), updated_at: date(o.updatedAt),
     });
-    for (const id of o.participants) if (kept(id)) r.participations.push({ opportunity_id: o.id, member_id: id, role: "participant", status: o.status[id] ?? "pending", enjoyment: o.enjoyment[id] ?? null, invited_at: null, responded_at: null });
-    for (const id of o.alternates) if (!o.participants.includes(id) && kept(id)) r.participations.push({ opportunity_id: o.id, member_id: id, role: "alternate", status: "alternate", enjoyment: null, invited_at: null, responded_at: null });
+    for (const id of o.participants) if (kept(id)) r.participations.push({ opportunity_id: o.id, member_id: id, role: "participant", status: o.status[id] ?? "pending", booked_told: told.has(`${o.id}|${id}`), enjoyment: o.enjoyment[id] ?? null, invited_at: null, responded_at: null });
+    for (const id of o.alternates) if (!o.participants.includes(id) && kept(id)) r.participations.push({ opportunity_id: o.id, member_id: id, role: "alternate", status: "alternate", booked_told: false, enjoyment: null, invited_at: null, responded_at: null });
     const rv = o.review;
     if (rv) r.review_items.push({
       opportunity_id: o.id, queued_at: date(rv.queuedAt), deadline: date(rv.deadline), decision: rv.decision ?? null, reason: rv.reason ?? null,
