@@ -237,3 +237,13 @@
 {"text":"Saturday works, actually Saturday doesn't work","answer":"unclear","keys":[]}
 {"text":"Saturday works, Saturday doesn't work","answer":"unclear","keys":[]}
 {"text":"Saturday works, wait Saturday doesn't work, Sunday","answer":"unclear","keys":[]}
+{"text":"the 2nd 3rd either work","answer":"yes","keys":["b","c"]}
+{"text":"the 1st 2nd 3rd either work","answer":"yes","keys":["a","b","c"]}
+{"text":"the 2nd 3rd work","answer":"yes","keys":["b","c"]}
+{"text":"the first second either work","answer":"yes","keys":["a","b"]}
+{"text":"the 2nd 3rd don't work, Thursday works","answer":"yes","keys":["a"]}
+{"text":"the 2nd 3rd don't work, Sunday works","answer":"yes","keys":["c"]}
+{"text":"the 2nd and 3rd are good","answer":"yes","keys":["b","c"]}
+{"text":"the first and second are good","answer":"yes","keys":["a","b"]}
+{"text":"the 2nd 3rd are good","answer":"yes","keys":["b","c"]}
+{"text":"the 2nd and 3rd are fine","answer":"yes","keys":["b","c"]}
