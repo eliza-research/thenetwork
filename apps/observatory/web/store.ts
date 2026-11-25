@@ -854,7 +854,7 @@ class ObsStore {
   busy(): Set<string> {
     return this.cached("busy", "", () => {
       const s = new Set<string>();
-      for (const o of this.opps.values()) if (OPEN.has(o.state) && o.source !== "shadow") for (const id of o.participants) s.add(id);
+      for (const o of this.opps.values()) if (OPEN.has(o.state) && o.source !== "shadow") for (const id of o.participants) if (!INACTIVE_PARTICIPANT_STATUS.has(o.status[id]) && !o.booked?.cancelled[id]) s.add(id);
       return s;
     });
   }

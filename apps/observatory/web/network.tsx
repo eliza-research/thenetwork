@@ -1,7 +1,7 @@
 // spec/consolePanels.md, "The game tab shows the score of the simulated world"
 // spec/consolePanels.md, "Only an admin resets the world, chooses a level or chooses the reviewer"
 // spec/consolePanels.md, "A player checks the level that plays"
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Alert, Button, InspectorSection } from "@thenetwork/ui";
 import {
   canCheckLevel, canReceiveGame, canResetWorld, checkLevel, gameControlsShown, initial as initialPanels, levelCheckShown, receiveGame, resetWorld,
@@ -27,17 +27,22 @@ export function Levels() {
   const [levels, setLevels] = useState<Level[]>([]);
   const [result, setResult] = useState<{ pass: boolean; checks: { name: string; pass: boolean; detail: string }[] } | null>(null);
   useEffect(() => { store.getJSON<Level[]>("/api/levels").then(setLevels).catch(() => {}); }, []);
+  const checkGeneration = useRef(0);
   const current = s.network?.scenario;
   const panels = gamePanelsOf(s, result !== null && !!current);
   const reset = (scenario: string | null) => {
     if (!canResetWorld(panels, scenario !== null)) return;
-    if (!resetWorld(panels, scenario !== null).game.levelChecked) setResult(null);
+    if (!resetWorld(panels, scenario !== null).game.levelChecked) {
+      checkGeneration.current++;
+      setResult(null);
+    }
     store.control({ type: "reset", scenario, network: "consent" });
   };
   const check = async () => {
     if (!canCheckLevel(panels)) return;
+    const generation = ++checkGeneration.current;
     const r = await store.control({ type: "check_scenario" });
-    if (r.ok && checkLevel(panels).game.levelChecked) setResult(r.data as typeof result);
+    if (generation === checkGeneration.current && r.ok && checkLevel(panels).game.levelChecked) setResult(r.data as typeof result);
   };
   const choice = "h-auto flex-col items-start gap-1 whitespace-normal p-2 text-left";
   return (

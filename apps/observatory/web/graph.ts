@@ -97,7 +97,7 @@ export class GraphView {
   private view = { x: 0, y: 0, k: 0.55 };
   private w = 0; private h = 0; private dpr = 1;
   private hover: string | null = null;
-  private drag: { sx: number; sy: number; vx: number; vy: number; moved: boolean } | null = null;
+  private drag: { pointerId: number; sx: number; sy: number; vx: number; vy: number; moved: boolean } | null = null;
   private pulses: Pulse[] = [];
   private raf = 0;
   private lastBorough = "all";
@@ -202,11 +202,13 @@ export class GraphView {
   private bind() {
     const c = this.canvas;
     c.addEventListener("pointerdown", e => {
+      if (this.drag) return;
       c.setPointerCapture(e.pointerId);
-      this.drag = { sx: e.offsetX, sy: e.offsetY, vx: this.view.x, vy: this.view.y, moved: false };
+      this.drag = { pointerId: e.pointerId, sx: e.offsetX, sy: e.offsetY, vx: this.view.x, vy: this.view.y, moved: false };
     });
     c.addEventListener("pointermove", e => {
       if (this.drag) {
+        if (e.pointerId !== this.drag.pointerId) return;
         const dx = e.offsetX - this.drag.sx, dy = e.offsetY - this.drag.sy;
         if (Math.abs(dx) + Math.abs(dy) > 3) this.drag.moved = true;
         if (this.drag.moved) { this.view.x = this.drag.vx + dx; this.view.y = this.drag.vy + dy; }
@@ -217,13 +219,20 @@ export class GraphView {
       this.onHover?.(id, e.offsetX, e.offsetY);
     });
     c.addEventListener("pointerup", e => {
-      const d = this.drag; this.drag = null;
-      if (d?.moved) return;
+      const d = this.drag;
+      if (!d || d.pointerId !== e.pointerId) return;
+      this.drag = null;
+      if (d.moved) return;
       const id = this.pick(e.offsetX, e.offsetY);
       if (!id) return;
       if (e.shiftKey || e.metaKey) pickMember(id);
       else store.focus({ kind: "member", id });
     });
+    const stopDrag = (e: PointerEvent) => {
+      if (this.drag?.pointerId === e.pointerId) this.drag = null;
+    };
+    c.addEventListener("pointercancel", stopDrag);
+    c.addEventListener("lostpointercapture", stopDrag);
     c.addEventListener("pointerleave", () => { this.hover = null; this.onHover?.(null, 0, 0); });
     c.addEventListener("wheel", e => {
       e.preventDefault();

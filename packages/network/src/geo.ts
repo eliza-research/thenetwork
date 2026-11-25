@@ -2,7 +2,7 @@
 // real public venues (approximate WGS84 coordinates), a transit-time estimate, and meeting-spot
 // selection. Venues are public places (parks, libraries, plazas, markets): the MVP suggests where
 // to meet but never books, and never uses anyone's home (PRD 32.12, 17.5).
-import type { Category } from "@thenetwork/core";
+import type { Category, City } from "@thenetwork/core";
 import { km, type Borough, type LatLng } from "@thenetwork/core/src/geo.ts";
 export { km, type Borough, type LatLng };
 
@@ -40,6 +40,47 @@ export const NEIGHBORHOODS: Neighborhood[] = [
   N("St. George", "Staten Island", 40.6437, -74.0736),
 ];
 export const NEIGHBORHOOD = new Map(NEIGHBORHOODS.map(n => [n.name, n]));
+
+export interface CityNeighborhood extends LatLng { name: string }
+const S = (name: string, lat: number, lng: number): CityNeighborhood => ({ name, lat, lng });
+export const SF_NEIGHBORHOODS: CityNeighborhood[] = [
+  S("Bayview", 37.7289, -122.3828), S("Bernal Heights", 37.7485, -122.4153),
+  S("Castro", 37.7583, -122.4351), S("Chinatown", 37.792, -122.4086),
+  S("Cole Valley", 37.7656, -122.45), S("Cow Hollow", 37.7982, -122.437),
+  S("Dogpatch", 37.7621, -122.3971), S("Duboce Triangle", 37.7683, -122.4316),
+  S("Embarcadero", 37.7994, -122.3984), S("Excelsior", 37.7204, -122.4429),
+  S("Financial District", 37.7914, -122.4021), S("Glen Park", 37.7459, -122.4415),
+  S("Haight-Ashbury", 37.77, -122.4447), S("Hayes Valley", 37.7795, -122.4193),
+  S("Inner Richmond", 37.7812, -122.4614), S("Inner Sunset", 37.759, -122.4848),
+  S("Japantown", 37.7853, -122.4299), S("Lake Merced", 37.7222, -122.4841),
+  S("Lower Haight", 37.7713, -122.4377), S("Marina", 37.8003, -122.4383),
+  S("Mission", 37.7485, -122.4153), S("Mission Bay", 37.7699, -122.387),
+  S("Mission Dolores", 37.762, -122.427), S("NoPa", 37.7757, -122.436),
+  S("Nob Hill", 37.7929, -122.4212), S("Noe Valley", 37.7583, -122.4351),
+  S("North Beach", 37.8002, -122.4097), S("Outer Richmond", 37.7768, -122.4947),
+  S("Outer Sunset", 37.7454, -122.4861), S("Pacific Heights", 37.7925, -122.435),
+  S("Portola", 37.7247, -122.4027), S("Potrero Hill", 37.7621, -122.3971),
+  S("Presidio", 37.7973, -122.4645), S("Rincon Hill", 37.7896, -122.3931),
+  S("Russian Hill", 37.8007, -122.4232), S("SoMa", 37.7726, -122.411),
+  S("Tenderloin", 37.7795, -122.4193), S("Visitacion Valley", 37.721, -122.4136),
+  S("West Portal", 37.736, -122.4572), S("Western Addition", 37.7856, -122.437),
+  S("San Antonio, Oakland", 37.7919, -122.2453), S("West Oakland", 37.8072, -122.3015),
+  S("Temescal, Oakland", 37.8344, -122.2644), S("Grand Lake, Oakland", 37.8124, -122.2405),
+  S("Piedmont Ave", 37.8293, -122.2035), S("Downtown Oakland", 37.8102, -122.2697),
+  S("Rockridge, Oakland", 37.8448, -122.2386), S("Alameda", 37.7738, -122.2781),
+  S("94505", 37.8713, -121.597), S("West Berkeley", 37.8658, -122.2863),
+  S("South Berkeley", 37.8639, -122.2756), S("Berkeley", 37.8664, -122.2573),
+  S("Claremont", 37.8652, -122.2382), S("North Berkeley", 37.8792, -122.2668),
+  S("San Mateo", 37.5769, -122.3169), S("Redwood City", 37.4933, -122.1956),
+  S("Palo Alto", 37.4442, -122.15), S("Mountain View", 37.38, -122.085),
+];
+export const SF_NEIGHBORHOOD = new Map(SF_NEIGHBORHOODS.map(n => [n.name, n]));
+
+/** City centers, used only when a member's area is unknown in its own city (right city, never another city's default). */
+export const CITY_CENTER: Record<Exclude<City, "nyc">, LatLng> = {
+  sf: { lat: 37.7749, lng: -122.4194 },
+  la: { lat: 34.0522, lng: -118.2437 },
+};
 
 const V = (id: string, name: string, neighborhood: string, kind: Venue["kind"], lat: number, lng: number, tags: string[], bookingUrl?: string): Venue =>
   ({ id, name, neighborhood, borough: NEIGHBORHOOD.get(neighborhood)?.borough ?? "Manhattan", kind, lat, lng, tags, ...(bookingUrl ? { bookingUrl } : {}) });
@@ -147,9 +188,22 @@ export function nearbyVenues(area: string | undefined, tags: string[] = [], n = 
     .sort((a, b) => a.s - b.s).slice(0, n).map(x => x.v);
 }
 
+function sfNeighborhood(area: string): CityNeighborhood | undefined {
+  const exact = SF_NEIGHBORHOOD.get(area);
+  if (exact) return exact;
+  for (const part of area.split(" / ")) {
+    const hit = SF_NEIGHBORHOOD.get(part.trim());
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
 /** Deterministic jitter so members in one neighborhood don't sit on one point (map display). */
-export function memberPoint(memberId: string, area: string | undefined): LatLng {
-  const c = neighborhood(area);
+export function memberPoint(memberId: string, area: string | undefined, city?: City): LatLng {
+  let c: LatLng;
+  if (city === "sf") c = (area && sfNeighborhood(area)) || CITY_CENTER.sf;
+  else if (city === "la") c = CITY_CENTER.la;
+  else c = neighborhood(area);
   let h = 2166136261;
   for (let i = 0; i < memberId.length; i++) { h ^= memberId.charCodeAt(i); h = Math.imul(h, 16777619); }
   const a = ((h >>> 0) % 3600) / 3600 * Math.PI * 2, r = 0.0025 + (((h >>> 12) % 1000) / 1000) * 0.006;

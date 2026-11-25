@@ -66,6 +66,9 @@ export const COMPONENT_SIGN: Record<keyof ScoreComponents, 1 | -1> = {
   fit: 1, mutualBenefit: 1, warmPath: 1, novelty: 1, timingFit: 1, confidence: 1,
   activationCost: -1, interruptionCost: -1, load: -1, repetition: -1, socialRisk: -1,
 };
+export function hasScoreParts(c: ScoreComponents): boolean {
+  return Object.values(c).some(v => v !== 0);
+}
 /** The score parts as `MeterBars` rows (show them with `ranked={false} max={1}`): a cost part is amber. */
 export function componentRows(c: ScoreComponents): MeterRow[] {
   return (Object.keys(COMPONENT_SIGN) as (keyof ScoreComponents)[]).map(k => ({

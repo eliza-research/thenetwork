@@ -11,9 +11,9 @@ import {
 import type { ScoreComponents } from "@thenetwork/core";
 import type { ReviewReason, StaffPlanPreview } from "../src/types.ts";
 import { VENUES } from "@thenetwork/network/geo";
-import { OPEN, originLabel, originOf, REVIEW_REASONS, stateGroupOf, store, useStore, type DecideOpts, type Opp, type StateGroup } from "./store.ts";
+import { INACTIVE_PARTICIPANT_STATUS, OPEN, originLabel, originOf, REVIEW_REASONS, stateGroupOf, store, useStore, type DecideOpts, type Opp, type StateGroup } from "./store.ts";
 import { stateLabel } from "./panels.tsx";
-import { COMPONENT_SIGN, dur, humanize, stamp } from "./ui.tsx";
+import { COMPONENT_SIGN, dur, hasScoreParts, humanize, stamp } from "./ui.tsx";
 
 /** "you" for the signed-in reviewer, "sim" for the simulated one, else the staff id without the token prefix. */
 export const reviewerName = (r?: string) =>
@@ -49,9 +49,10 @@ export function OppStateMark({ state }: { state: string }) {
   return <StatusMark tone={groupTone[stateGroupOf(state)]} label={stateLabel(state)} />;
 }
 
-/** The score parts of a proposal: a bar each, red for a cost. */
+/** The score parts of a proposal: a bar each, red for a cost. When the source carries no breakdown at all, say so instead of leaving the score unexplained. */
 export function ScoreParts({ c }: { c?: ScoreComponents }) {
   if (!c) return null;
+  if (!hasScoreParts(c)) return <p className="text-sm text-muted-foreground">no component breakdown for this source</p>;
   const rows: MeterRow[] = (Object.keys(COMPONENT_SIGN) as (keyof ScoreComponents)[]).map(k => ({
     key: k, label: humanize(k.replace(/([A-Z])/g, "_$1")), value: c[k], title: `${k}: ${c[k]}`, tone: COMPONENT_SIGN[k] < 0 ? "destructive" : "primary",
   }));
@@ -479,7 +480,7 @@ function QueueCard({ o, selected, onSelect, ctl, scoreOpen, setScoreOpen, onDone
 
 /** In another open opportunity: the Network does not double-book. */
 export function isBusyElsewhere(o: Opp, id: string) {
-  for (const x of store.opps.values()) if (x.id !== o.id && x.source !== "shadow" && OPEN.has(x.state) && x.participants.includes(id)) return true;
+  for (const x of store.opps.values()) if (x.id !== o.id && x.source !== "shadow" && OPEN.has(x.state) && x.participants.includes(id) && !INACTIVE_PARTICIPANT_STATUS.has(x.status[id]) && !x.booked?.cancelled[id]) return true;
   return false;
 }
 
