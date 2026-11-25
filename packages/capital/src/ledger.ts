@@ -29,7 +29,7 @@ interface MemberRec {
   activated: boolean; valueInWindow: boolean; safetyFlagged: boolean;
   /** Providers who confirmed the invitee's first creditable value (vouch provenance). */
   valueProviders: MemberId[];
-  vouchCreditId?: string; stakeTaken: boolean;
+  vouchCreditId?: string; stakeTaken: boolean; stakeEntryId?: string;
   /** Removed for any reason: earns nothing more. */
   removed: boolean;
   /** First confirmed abuse: the vouch stake window is measured to this time, not to the removal. */
@@ -210,7 +210,17 @@ export class CapitalLedger {
         const v = m.vouchedBy;
         if (!this.isEligible(v)) break;
         if (m.vouchCreditId) this.reverse(v, m.vouchCreditId, ev, "vouch credit reversed: invitee removed", out);
-        this.penalize(v, "vouch_stake", c.penalty.vouchStake, ev, [ev.member], "vouch stake: invitee removed for serious abuse", out);
+        const stake = this.penalize(v, "vouch_stake", c.penalty.vouchStake, ev, [ev.member], "vouch stake: invitee removed for serious abuse", out);
+        m.stakeEntryId = stake.id;
+        break;
+      }
+      case "removal_overturned": {
+        const m = this.members.get(ev.member);
+        if (!m || !m.vouchedBy || !m.stakeEntryId) break;
+        const stake = this.byId.get(m.stakeEntryId);
+        if (!stake || stake.category !== "vouch_stake" || stake.member !== m.vouchedBy) break;
+        if (ev.t - stake.t >= c.vouch.periodDays * DAY) break;
+        this.reverse(m.vouchedBy, m.stakeEntryId, ev, "vouch stake reversed: removal overturned on review", out);
         break;
       }
       case "abuse_confirmed": {
