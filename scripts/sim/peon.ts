@@ -35,6 +35,7 @@ export async function peonBlock(b: Block, o: { quick: boolean }): Promise<void> 
   const all: Record<"pack" | "keyword" | "oracle", PeonMetrics[]> = { pack: [], keyword: [], oracle: [] };
   const exits = { candidates: 0, reviews: 0, interviews: 0, offers: 0, hires: 0 };
   const budget = { reads: 0, interviews: 0, hours: 0, expected: 0, mismatchedRuns: 0 };
+  const expiry = { employerTimeouts: 0, candidateTimeouts: 0, cancellations: 0, reported: 0, mismatchedRuns: 0 };
   for (const arm of ["pack", "keyword", "oracle"] as const) for (const seed of spec.seeds) {
     const inactiveFrom = new Map<string, number>();
     const run = await runPeonWorld({ seed, perCity: 400, jobsPerCity: 80, weeks: spec.weeks, realism: REALISM_V2,
@@ -60,13 +61,24 @@ export async function peonBlock(b: Block, o: { quick: boolean }): Promise<void> 
     budget.hours += run.recruiterHours;
     budget.expected += expected;
     if (Math.abs(run.recruiterHours - expected) > 1e-7) budget.mismatchedRuns++;
-    all[arm].push(peonMetrics(run));
+    const records = run.world.state.interactions;
+    const employerTimeouts = records.filter(rec => rec.outcome === "expired" && rec.noResponse?.includes(rec.participants[1]!)).length;
+    const metrics = peonMetrics(run);
+    expiry.employerTimeouts += employerTimeouts;
+    expiry.candidateTimeouts += records.filter(rec => rec.outcome === "expired" && rec.noResponse?.includes(rec.participants[0]!)).length;
+    expiry.cancellations += records.filter(rec => rec.outcome === "cancelled" && rec.acceptedBy?.includes(rec.participants[0]!)).length;
+    expiry.reported += metrics.congestion.expiredApplications;
+    if (metrics.congestion.expiredApplications !== employerTimeouts) expiry.mismatchedRuns++;
+    all[arm].push(metrics);
   }
   b.gate("world: candidates who exit get no later reviews, interviews, offers or hires",
     exits.candidates > 0 && exits.reviews + exits.interviews + exits.offers + exits.hires === 0 && all.pack.every(m => m.hires > 0), JSON.stringify(exits));
   b.gate("world: recruiter hours count each application review and interview reservation once",
     budget.reads > 0 && budget.interviews > 0 && budget.mismatchedRuns === 0,
     JSON.stringify({ ...budget, hours: +budget.hours.toFixed(6), expected: +budget.expected.toFixed(6) }));
+  b.gate("report: expired applications count only employer timeouts",
+    expiry.employerTimeouts > 0 && expiry.candidateTimeouts > 0 && expiry.cancellations > 0 && expiry.mismatchedRuns === 0,
+    JSON.stringify(expiry));
   b.track("fingerprint: pack, keyword and oracle arms", true, digest(all));
   for (const g of officialGates(all.pack, all.keyword, all.oracle)) b.gate(`gate ${g.gate}`, g.pass, g.value, SAFETY.has(g.id) || !o.quick);
   for (const g of trackedGates(all.pack)) b.track(`gate ${g.gate}`, g.pass, g.value);

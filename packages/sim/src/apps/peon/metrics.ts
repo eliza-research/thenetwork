@@ -70,6 +70,7 @@ export function peonMetrics(r: PeonRunResult, o: { requestsApplied?: number } = 
   const dropped: Record<string, number> = {};
   for (const f of flows) if (f.dropped) dropped[f.dropped] = (dropped[f.dropped] ?? 0) + 1;
   const replied = delivered.filter(f => f.replied), applied = delivered.filter(f => f.yes);
+  const expiredUnreviewed = applied.filter(f => f.expired && f.rec?.outcome === "expired").length;
   const reviewed = delivered.filter(f => f.reviewed), empYes = reviewed.filter(f => f.employerYes);
   const interviews = delivered.filter(f => f.interviewed), offers = delivered.filter(f => f.offered), accepts = delivered.filter(f => f.accepted);
   const real = pop.candidates.filter(c => !c.truth.isMinor && !c.truth.fake && c.joinWeek < world.weeks);
@@ -109,12 +110,12 @@ export function peonMetrics(r: PeonRunResult, o: { requestsApplied?: number } = 
     medianTimeToFill: median(hires.map(h => h.timeToFill)), meanTimeToFill: div(hires.reduce((s, h) => s + h.timeToFill, 0), hires.length),
     retention90: div(hires.filter(h => h.retained).length, hires.length), qualityOfHire: div(hires.reduce((s, h) => s + h.qoh, 0), hires.length),
     recruiterHoursPerHire: div(r.recruiterHours, hires.length), closedDeadline: r.closed.deadline, closedExternal: r.closed.external,
-    ghostedApplications: applied.filter(f => f.expired && f.rec?.outcome === "expired").length,
+    ghostedApplications: expiredUnreviewed,
     lostToClosedRole: applied.filter(f => f.roleClosed).length,
     congestion: {
       giniApplicationsPerJob: gini(apps), zeroIntroCandidateShare: div([...introsPerCand.values()].filter(x => x === 0).length, introsPerCand.size),
       top10JobShareOfApplications: div([...apps].sort((a, b) => b - a).slice(0, topN).reduce((a, b) => a + b, 0), totalApps),
-      giniIntrosPerCandidate: gini([...introsPerCand.values()]), expiredApplications: applied.filter(f => f.expired).length,
+      giniIntrosPerCandidate: gini([...introsPerCand.values()]), expiredApplications: expiredUnreviewed,
     },
     underApplied: {
       jobs: ua.length, hires: uaHires.length, jobsFilled: new Set(uaHires.map(h => h.job)).size,
