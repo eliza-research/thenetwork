@@ -376,18 +376,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
   function openAiUnavailable(c: Pick<Ctx, "app" | "host">, client: OAuthClient): boolean {
     const openAi = assistantOf(client) === "chatgpt" || (client.kind === "cimd" && isOpenAiHost(new URL(client.id).hostname));
-    return openAi && !openAiOn(c) && !slopChatGptClient(c, client) && (client.kind !== "dcr" || !privateOpenAiApps.has(c.app.id));
-  }
-
-  function chatGptRedirects(uris: readonly string[]): boolean {
-    return uris.length > 0 && uris.every(uri => {
-      const u = new URL(uri);
-      return u.protocol === "https:" && !u.username && !u.password && ["chatgpt.com", "chat.openai.com"].includes(u.host);
-    });
-  }
-
-  function slopChatGptClient(c: Pick<Ctx, "app">, client: OAuthClient): boolean {
-    return c.app.id === "slop" && client.app === "slop" && client.kind === "dcr" && chatGptRedirects(client.redirectUris);
+    return openAi && !openAiOn(c) && (client.kind !== "dcr" || !privateOpenAiApps.has(c.app.id));
   }
 
   function grantAllowsUpdates(grant: Grant, client: OAuthClient): boolean {
@@ -466,8 +455,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!Array.isArray(responses) || !responses.every(r => r === "code")) return bad("response_types may be code only.");
     if (b.scope !== undefined && (typeof b.scope !== "string" || !parseScopes(b.scope, scopesOn(c.app.id)))) return bad(`Supported scopes: ${scopesOn(c.app.id).join(", ")}.`);
     const name = typeof b.client_name === "string" ? b.client_name.replace(/[\u0000-\u001f]/g, "").slice(0, 100) : null;
-    const slopChatGpt = c.app.id === "slop" && c.host.id === "slop" && chatGptRedirects(uris as string[]);
-    const surface: Surface = !slopChatGpt && !privateOpenAiApps.has(c.app.id) && (uris as string[]).some(r => isOpenAiHost(new URL(r).hostname)) ? "openai" : "full";
+    const surface: Surface = !privateOpenAiApps.has(c.app.id) && (uris as string[]).some(r => isOpenAiHost(new URL(r).hostname)) ? "openai" : "full";
     if (surface === "openai" && !openAiOn(c)) return bad("This app is not available for this client.");
     const secret = method === "none" ? null : randomToken("ntws_");
     const client: OAuthClient = { id: `mcp_${randomId()}`, secretHash: secret ? sha256hex(secret) : null, name, redirectUris: uris as string[], authMethod: method, app: c.host.id, surface, kind: "dcr", createdAt: now() };
@@ -538,7 +526,6 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const rawResource = q.get("resource");
     const resource = rawResource ? canonicalResource(rawResource, c) : resourceFor(c, client.surface);
     if (!resource) return fail("invalid_target", "resource must be this site's MCP endpoint");
-    if (slopChatGptClient(c, client) && resource !== resourceFor(c, "full")) return fail("invalid_target", "this connection must use the /mcp endpoint");
     if (client.surface === "openai" && resource !== resourceFor(c, "openai")) return fail("invalid_target", "this client must use the /openai endpoint of the app");
     // login_hint, phone or any other person data in the URL is never read: the person types it on our page.
     // A second tab in this browser shares the first tab's token: the cookie holds one value, so a new one would end the first tab.
@@ -562,7 +549,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
   function signupClientAllowed(c: Ctx, r: AuthRequest, client: OAuthClient): boolean {
     const surfaceOffered = openAiOn(c) || (client.surface === "full" && r.resource === resourceFor(c, "full")
-      && assistantOf(client) !== "chatgpt" && !slopChatGptClient(c, client));
+      && assistantOf(client) !== "chatgpt");
     return browserSignupAppAllowed(c.app.id, surfaceOffered, tokenCovers("check_status", r.scopes), tokenCovers("submit_profile", r.scopes))
       && !!o.platform.session && !!o.platform.signupEnrollment && !!o.platform.joinSignup;
   }
@@ -678,7 +665,6 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   function validBrowserEntry(c: Ctx, r: AuthRequest, client: OAuthClient): boolean {
     return client.app === c.host.id && client.redirectUris.includes(r.redirectUri) && !!canonicalResource(r.resource, c)
       && (client.surface !== "openai" || r.resource === resourceFor(c, "openai"))
-      && (!slopChatGptClient(c, client) || r.resource === resourceFor(c, "full"))
       && validChallenge(r.codeChallenge) && !openAiUnavailable(c, client);
   }
 

@@ -126,27 +126,47 @@ function teenSwitchOnAt(rows: readonly TeenSwitchRow[], t: number): boolean {
   return on;
 }
 
-function teenSideAt(e: TeenEvidence, id: string, t: number, atT: boolean): AgeSide {
+function teenReadyAt(e: TeenEvidence, id: string, t: number, atT: boolean): { ready: boolean; adultClear: boolean } {
   const m = e.members.get(id);
-  if (!m || m.birthKey === undefined) return { adult: false, ready: false, birthKey: 0 };
+  if (!m) return { ready: false, adultClear: false };
   const h = teenFlagsAt(e.history.get(id) ?? [], atT ? t : Infinity);
   const conflict = h.conflict || h.unknown || (!atT && m.ageConflict === true);
   const signal = h.signal || (!atT && m.minorSignal === true);
   const reported = h.reported || (!atT && m.minorReported === true);
   const older = h.older || (!atT && m.olderReported === true);
   const ready = teenReady(m.birthExact === true, conflict, signal, reported, older, m.teenBarred === true);
-  const adult = canBeMatched(ageOnDay(m.birthKey, earliestDayKeyOf(t))) && !conflict && !signal && !reported;
+  const adultClear = !conflict && !signal && !reported;
+  return { ready, adultClear };
+}
+
+function teenSideAt(e: TeenEvidence, id: string, t: number, atT: boolean): AgeSide {
+  const m = e.members.get(id);
+  if (!m || m.birthKey === undefined) return { adult: false, ready: false, birthKey: 0 };
+  const { ready, adultClear } = teenReadyAt(e, id, t, atT);
+  const adult = canBeMatched(ageOnDay(m.birthKey, earliestDayKeyOf(t))) && adultClear;
   return { adult, ready, birthKey: m.birthKey };
 }
 
-function teenRuleHeldAt(e: TeenEvidence, ids: readonly string[], category: string | undefined, t: number, until = t): boolean {
+async function teenRuleHeldAt(e: TeenEvidence, sql: SQL, oppId: string, ids: readonly string[], category: string | undefined, t: number, until = t): Promise<boolean> {
   if (!e.readable || !teenRosterSizeAllowed(true, ids.length) || category === undefined) return false;
   if (!teenSwitchOnAt(e.switches, t)) return false;
   const lane = teenFriendCategory(e.app, category);
+  if (!lane) return false;
   const minDay = earliestDayKeyOf(t), maxDay = latestDayKeyOf(Math.max(t, until));
-  const side = (id: string, atT: boolean): AgeSide => teenSideAt(e, id, t, atT);
-  return groupAgeAllowed(true, lane, minDay, maxDay, ids.map(id => side(id, true)))
-    && groupAgeAllowed(true, lane, minDay, maxDay, ids.map(id => side(id, false)));
+  if (ids.every(id => e.members.get(id)?.birthKey !== undefined)) {
+    const side = (id: string, atT: boolean): AgeSide => teenSideAt(e, id, t, atT);
+    return groupAgeAllowed(true, lane, minDay, maxDay, ids.map(id => side(id, true)))
+      && groupAgeAllowed(true, lane, minDay, maxDay, ids.map(id => side(id, false)));
+  }
+  for (const atT of [true, false]) {
+    const readyIds = ids.filter(id => teenReadyAt(e, id, t, atT).ready);
+    const adultClearIds = ids.filter(id => teenReadyAt(e, id, t, atT).adultClear);
+    const [row] = await sql<{ ok: boolean }[]>`select platform.console_teen_roster_allowed(
+      ${e.app}, ${oppId}, ${sql.array(ids, "TEXT")}, ${minDay}, ${maxDay},
+      ${sql.array(readyIds, "TEXT")}, ${sql.array(adultClearIds, "TEXT")}) as ok`;
+    if (row?.ok !== true) return false;
+  }
+  return true;
 }
 
 const TEEN_NOTICE_TYPES = new Set(["info", "cancellation"]);
@@ -155,7 +175,7 @@ function teenScopeNoticeAt(e: TeenEvidence, memberId: string, body: string, t: n
   if (!e.readable || !teenFriendApp(e.app) || !teenSwitchOnAt(e.switches, t) || !body.includes(copy.minorTeenFriends)) return false;
   const rest = body.split(copy.minorTeenFriends).join(" ");
   if (offersConnection(rest) || namesAny(rest, others)) return false;
-  return teenSideAt(e, memberId, t, true).ready && teenSideAt(e, memberId, t, false).ready;
+  return teenReadyAt(e, memberId, t, true).ready && teenReadyAt(e, memberId, t, false).ready;
 }
 
 function namesAny(body: string, others: readonly string[]): boolean {
@@ -624,7 +644,7 @@ export class RealSource implements DataSource {
       if (!teenItem(c.o)) { n++; continue; }
       const roster = [...new Set([...c.o.participants, ...c.o.alternates, c.memberId])];
       const until = teenMeetingEndOf(c.o.meetingAt !== undefined ? { meetingAt: c.o.meetingAt } : {}, c.t);
-      if (teenRuleHeldAt(evidence, roster, c.o.category, c.t, until)) { held.add(c.o.id); continue; }
+      if (await teenRuleHeldAt(evidence, sql, c.o.id, roster, c.o.category, c.t, until)) { held.add(c.o.id); continue; }
       const others = roster.filter(id => id !== c.memberId).flatMap(id => this.firstNames.get(id) ?? []);
       if (held.has(c.o.id) && teenNoticeNamesNobody(c.body, c.type, others)) continue;
       n++;
@@ -1121,7 +1141,7 @@ export class RealSource implements DataSource {
   async snapshot(): Promise<WorldSnapshot> {
     if (!this.sql) throw new Error("not connected");
     this.tickClock();
-    return loadSnapshot(this.isolation === "rls_role" ? appSnapshotSql(this.sql, this.app) : this.sql, this.store.clock.now, { app: this.app });
+    return loadSnapshot(this.isolation === "rls_role" ? appSnapshotSql(this.sql, this.app) : this.sql, this.store.clock.now, { app: this.app, console: this.isolation === "rls_role" });
   }
 
   private async shadowRun(city?: City): Promise<ControlResult> {

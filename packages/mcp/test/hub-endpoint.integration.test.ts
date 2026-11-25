@@ -163,18 +163,19 @@ describe("ChatGPT on the ntwrk.party endpoint", () => {
     expect(env.provider.sent).toHaveLength(0);
   });
 
-  test("the slop.date ChatGPT connector is open to every member at the dedicated full endpoint, with no allowlist, and the hub never serves slop to ChatGPT (owner decision 2026-11-22)", async () => {
+  test("the ntwrk.party Slop ChatGPT connector is open to every member at /mcp/slop/openai, with no allowlist, and slop.date refuses ChatGPT (owner decision 2026-11-23)", async () => {
     const env = setup({ env: { PLATFORM_ENV: "staging" } });
     for (const [id, phone] of [["first-member", PHONE_A], ["second-member", PHONE_B]] as const) {
       await env.people.createPerson({ id, e164: phone, method: "otp_sms", at: env.clock.t, lowestAge: 30, phoneHash: env.accounts.phoneHash(phone) });
       await env.people.putMembership({ app: "slop", personId: id, memberId: `slop_${id}`, state: "active", review: null, firstName: "Rae", profile: {}, joinedAt: env.clock.t, leftAt: null });
     }
+    expect((await register(env, "slop.date", { redirect_uris: [CHATGPT] })).res.status).toBe(400);
     const hub = await register(env, HUB, { redirect_uris: [CHATGPT] });
     const hubFlow = await browserFlow(env, HUB, hub.body.client_id, PHONE_A, { redirectUri: CHATGPT, resource: endpoint("slop") });
     expect(hubFlow.start.status).toBe(400);
-    const opts = { redirectUri: CHATGPT, resource: "https://slop.date/mcp" };
+    const opts = { redirectUri: CHATGPT, resource: endpoint("slop", true) };
     for (const phone of [PHONE_A, PHONE_B]) {
-      const member = await connect(env, "slop.date", phone, { ...opts, register: { redirect_uris: [CHATGPT] } });
+      const member = await connect(env, HUB, phone, { ...opts, register: { redirect_uris: [CHATGPT] } });
       expect(member.tokenRes.status).toBe(200);
       const status = await call(env, opts.resource, "check_status", {}, { token: member.token.access_token });
       expect(status.body!.result.structuredContent).toMatchObject({ app: "slop", status: "active" });
@@ -182,13 +183,21 @@ describe("ChatGPT on the ntwrk.party endpoint", () => {
     }
   });
 
-  test("a 17-year-old slop.date member connects to the open ChatGPT connector, check_status answers, and my_photos lists nothing without asking the platform", async () => {
+  test("a 17-year-old slop.date member connects to the ChatGPT and full connectors, check_status answers, and my_photos lists nothing without asking the platform", async () => {
     const calls: string[] = [];
     const env = setup({ env: { PLATFORM_ENV: "staging" }, photoHoldings: async personId => { calls.push(personId); return { text: "", photos: [] }; } });
     await env.people.createPerson({ id: "teen-member", e164: PHONE_B, method: "otp_sms", at: env.clock.t, lowestAge: 17, phoneHash: env.accounts.phoneHash(PHONE_B) });
     await env.people.putMembership({ app: "slop", personId: "teen-member", memberId: "slop_teen-member", state: "active", review: null, firstName: "Rae", profile: {}, joinedAt: env.clock.t, leftAt: null });
-    const opts = { redirectUri: CHATGPT, resource: "https://slop.date/mcp", scope: "apps:read membership:read profile:write photos:use" };
-    const teen = await connect(env, "slop.date", PHONE_B, { ...opts, register: { redirect_uris: [CHATGPT] } });
+    const chatGpt = await connect(env, HUB, PHONE_B, {
+      redirectUri: CHATGPT, resource: endpoint("slop", true), scope: "apps:read membership:read profile:write",
+      register: { redirect_uris: [CHATGPT] },
+    });
+    expect(chatGpt.tokenRes.status).toBe(200);
+    const chatGptStatus = await call(env, endpoint("slop", true), "check_status", {}, { token: chatGpt.token.access_token });
+    expect(chatGptStatus.body!.result.structuredContent).toMatchObject({ app: "slop", status: "active" });
+    env.clock.t += 61 * 60_000;
+    const opts = { redirectUri: RETURN, resource: "https://slop.date/mcp", scope: "apps:read membership:read profile:write photos:use" };
+    const teen = await connect(env, "slop.date", PHONE_B, { ...opts, register: { redirect_uris: [RETURN] } });
     expect(teen.tokenRes.status).toBe(200);
     const status = await call(env, opts.resource, "check_status", {}, { token: teen.token.access_token });
     expect(status.body!.result.structuredContent).toMatchObject({ app: "slop", status: "active" });

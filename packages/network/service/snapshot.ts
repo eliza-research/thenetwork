@@ -48,8 +48,9 @@ export function effectiveParticipation(row: {participation_state: ParticipationS
 }
 
 interface BirthRow {
-  ab_birth_date: unknown; ab_birth_lower: unknown; ab_birth_upper: unknown; ab_birth_youngest: unknown;
-  ab_floor_birth_lower: unknown; ab_floor_birth_upper: unknown; ab_floor_birth_youngest: unknown;
+  ab_birth_date?: unknown; ab_birth_lower?: unknown; ab_birth_upper?: unknown; ab_birth_youngest?: unknown;
+  ab_floor_birth_lower?: unknown; ab_floor_birth_upper?: unknown; ab_floor_birth_youngest?: unknown;
+  ab_birth_exact?: unknown; ab_age_conflict?: unknown;
   ab_teen_pool_barred?: unknown; ab_teen_pool_held?: unknown; ab_signup_minor_cap?: number | null;
 }
 
@@ -58,6 +59,9 @@ export interface AgeRow extends BirthRow { matching_age: unknown; age_missing?: 
 export const birthColumns = (sql: SQL) => sql`a.birth_date as ab_birth_date, a.birth_lower as ab_birth_lower, a.birth_upper as ab_birth_upper,
   a.birth_youngest as ab_birth_youngest, a.floor_birth_lower as ab_floor_birth_lower, a.floor_birth_upper as ab_floor_birth_upper,
   a.floor_birth_youngest as ab_floor_birth_youngest, a.signup_minor_cap as ab_signup_minor_cap`;
+
+const consoleAgeColumns = (sql: SQL) => sql`a.birth_exact as ab_birth_exact, a.age_conflict as ab_age_conflict,
+  a.signup_minor_cap as ab_signup_minor_cap`;
 
 const readingOf = (lower: unknown, upper: unknown, youngest: unknown): BirthReadings | undefined =>
   upper === null || upper === undefined ? undefined : { lower: Number(lower), upper: Number(upper), youngest: Number(youngest) };
@@ -80,7 +84,13 @@ export function effectiveAgeOf(r: AgeRow, now: number): number | undefined {
 
 export function birthFieldsOf(r: BirthRow, now: number): Pick<Member, "birthKey" | "birthExact" | "ageConflict" | "teenBarred" | "teenHeld"> & { age?: number } {
   const readings = readingsOf(r);
-  if (!readings) return {};
+  if (!readings) {
+    if (r.ab_birth_exact === undefined && r.ab_age_conflict === undefined) return {};
+    return {
+      birthExact: r.ab_birth_exact === true, ageConflict: r.ab_age_conflict === true,
+      teenBarred: r.ab_teen_pool_barred === true, teenHeld: r.ab_teen_pool_held === true,
+    };
+  }
   const key = effectiveBirthKey(readings);
   const birthDate = r.ab_birth_date === null || r.ab_birth_date === undefined ? undefined : Number(r.ab_birth_date);
   return {
@@ -143,6 +153,8 @@ export interface SnapshotScope { app: string; city?: string; homeCities?: readon
   purpose?: "profile_review";
   /** Network runtime only. Adds a boolean for a cleared signup restriction. */
   includeMaturedSignup?: boolean;
+  /** Console roles read app-scoped views that omit raw birth_date and birth-range columns. */
+  console?: boolean;
 }
 
 /**
@@ -164,7 +176,7 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
   const app = scope.app;
   const [members, facets, intents, presence, edges, recent, parts, personBlocks, events, teenAvoid] = await Promise.all([
     sql<SnapshotMemberRow[]>`select m.*, a.age as matching_age, a.banned as canonical_banned, (a.staff_held or a.report_held) as safety_held, a.minor_signal_at as person_minor_signal_at,
-      ${birthColumns(sql)}, a.teen_pool_barred as ab_teen_pool_barred, a.teen_pool_held as ab_teen_pool_held,
+      ${scope.console ? consoleAgeColumns(sql) : birthColumns(sql)}, a.teen_pool_barred as ab_teen_pool_barred, a.teen_pool_held as ab_teen_pool_held,
       ${scope.includeMaturedSignup ? sql`exists (select 1 from platform.signup_eligibility s where s.person_id=m.person_id and s.eligible_at <= ${new Date(now)})` : sql`false`} as matured_signup
       from network.members m
       left join platform.matching_ages a on a.app_id = m.app_id and a.member_id = m.id

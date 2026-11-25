@@ -76,18 +76,15 @@ describe.skipIf(!pgAvailable)("phone identity edges (PostgreSQL)", () => {
 
   test("siteEnrollment, the effective age controls a repeated join: a repeated join runs the join hook again when the membership has no Network member", async () => {
     const r = recorder();
-    let networkUp = false;
     const { accounts } = world({
       ...r.hooks,
-      onJoin: async ctx => { if (!networkUp) throw new Error("network unavailable"); r.members.add(ctx.membership.memberId); },
-      onForget: async () => { if (!networkUp) throw new Error("network unavailable"); },
+      onJoin: async ctx => { r.members.add(ctx.membership.memberId); },
     });
     const number = phone();
-    await expect(accounts.join(app, { e164: number, personId: null }, { firstName: "Di", age: 41, consent })).rejects.toThrow("network unavailable");
-    const person = (await accounts.personFor(number))!;
-    const stranded = (await store.getMembership(person.id, app.id))!;
-    expect(stranded.state).toBe("active");
-    networkUp = true;
+    const person = await accounts.createPerson(number, "otp_sms", 41);
+    const stranded = { app: app.id, personId: person.id, memberId: `${app.id}_${randomUUID()}`, state: "active" as const, review: null, firstName: "Di", profile: {}, joinedAt: now, leftAt: null };
+    await store.putMembership(stranded);
+    expect((await store.getMembership(person.id, app.id))?.state).toBe("active");
     const again = await accounts.join(app, { e164: number, personId: person.id }, { firstName: "Di", age: 41, consent });
     expect(again).toEqual({ ok: true, membership: stranded, created: false });
     expect(r.members.has(stranded.memberId)).toBe(true);

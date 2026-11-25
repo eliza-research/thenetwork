@@ -33,7 +33,7 @@ An introduction happens only when both the candidate and the team say yes.
 Anyone 13 or older may join. Matching and introductions are for adults 18 and older only.
 People aged 13–17 get their own help: answers, public events and plans for themselves.
 They are never matched for work. Friendship introductions for people under 18
-happen on friends.help and ntwrk.party, only with people aged 13 to 18 born at most 2 years apart,
+happen on friends.help and ntwrk.party. Those are only with people aged 13 to 18 born at most 2 years apart,
 after an automatic check approves each one.
 peon.biz never asks a candidate for money, a Social Security number or bank details. If anyone
 does in its name, it is a scam: tell the person to report it to help@ntwrk.party.

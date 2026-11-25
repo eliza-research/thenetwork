@@ -286,12 +286,18 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
       expect(await columns("teen_pair_avoid")).toEqual(["phone_hash_a", "phone_hash_b", "at"]);
       const internalAgeFacts = ["birth_date", "birth_lower", "birth_upper", "birth_youngest", "floor_birth_lower", "floor_birth_upper",
         "floor_birth_youngest", "teen_pool_barred", "teen_pool_held", "signup_minor_cap", "signup_age_observed"];
+      const consoleAgeFacts = ["teen_pool_barred", "teen_pool_held", "signup_minor_cap", "signup_age_observed", "birth_exact", "age_conflict"];
+      const privateBirthCols = ["birth_date", "birth_lower", "birth_upper", "birth_youngest", "floor_birth_lower", "floor_birth_upper", "floor_birth_youngest"];
       const apps = (await sql`select id from platform.apps order by id`).map((r: any) => r.id as string);
-      for (const view of ["matching_ages", ...apps.map(app => `matching_ages_${app}`)]) {
+      const serviceCols = await columns("matching_ages");
+      expect(serviceCols.slice(0, 8)).toEqual(["app_id", "member_id", "age", "banned", "staff_held", "report_held", "minor_signal_at", "birth_date"]);
+      expect(serviceCols.slice(-internalAgeFacts.length)).toEqual(internalAgeFacts);
+      expect(serviceCols.includes("teen_confirmed_birth")).toBe(false);
+      for (const view of apps.map(app => `matching_ages_${app}`)) {
         const cols = await columns(view);
-        expect([view, cols.slice(0, 8)]).toEqual([view, ["app_id", "member_id", "age", "banned", "staff_held", "report_held", "minor_signal_at", "birth_date"]]);
-        expect([view, cols.slice(-internalAgeFacts.length)]).toEqual([view, internalAgeFacts]);
-        expect([view, cols.includes("teen_confirmed_birth")]).toEqual([view, false]);
+        expect([view, cols.slice(0, 7)]).toEqual([view, ["app_id", "member_id", "age", "banned", "staff_held", "report_held", "minor_signal_at"]]);
+        expect([view, cols.slice(-consoleAgeFacts.length)]).toEqual([view, consoleAgeFacts]);
+        for (const col of [...privateBirthCols, "teen_confirmed_birth"]) expect([view, col, cols.includes(col)]).toEqual([view, col, false]);
       }
       const can = async (role: string, table: string, privilege: string) =>
         (await sql`select has_table_privilege(${role}, ${`platform.${table}`}, ${privilege}) as ok`)[0].ok as boolean;

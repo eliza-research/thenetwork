@@ -1769,7 +1769,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (c.kind === "feedback_like") return;
     }
     // Not while another question waits for its answer (a probe, a booked plan, a crew): those words are about that.
-    if (!isRequest && c.kind !== "invite_friend" && (!aw || aw.kind === "checkin" || aw.kind === "growth")
+    if (!isRequest && !checkInQuestion && c.kind !== "invite_friend" && (!aw || aw.kind === "checkin" || aw.kind === "growth")
       && this.lateCheckInReport(m, body, msg.signedReceivedAt ?? msg.ts)) return;
     if (aw?.kind === "interview" && aw.ask) return this.onAskAnswer(m, aw.ask, c, body);
     // The tick ends the wait for an answer after 3 days: a later message that answers the last question is still its answer (SD-427).

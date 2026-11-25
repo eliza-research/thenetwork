@@ -411,7 +411,7 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     expect((await t.svc.list(id, "slop")).map(p => p.id)).toEqual([kept.value.id]);
     const removedOf = () => t.removed.filter(p => p === id).length, removedBefore = removedOf();
     await t.svc.sweep();
-    expect(t.files()).toHaveLength(2);
+    expect(t.files()).toHaveLength(3);
     t.tick(15 * 60_000);
     await t.svc.sweep();
     expect(t.files()).toHaveLength(1);

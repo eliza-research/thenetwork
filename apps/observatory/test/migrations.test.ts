@@ -79,12 +79,18 @@ describe.skipIf(!pgAvailable)("console roles (migration 0010)", () => {
         values ('ntwrk', 'ntwrk:nyc', 'age-view-report-fixture', ${P.a})`;
     });
     expect(await as("network_observatory_slop", tx => tx`select * from platform.matching_ages_slop order by member_id`)).toEqual({ v: [
-      { app_id: "slop", member_id: "s1", age: 15, banned: false, staff_held: true, report_held: false, minor_signal_at: null, birth_date: null, birth_lower: null, birth_upper: null, birth_youngest: null, floor_birth_lower: null, floor_birth_upper: null, floor_birth_youngest: null, teen_pool_barred: false, teen_pool_held: false, signup_minor_cap: null, signup_age_observed: false },
-      { app_id: "slop", member_id: "s3", age: 41, banned: true, staff_held: false, report_held: false, minor_signal_at: null, birth_date: null, birth_lower: null, birth_upper: null, birth_youngest: null, floor_birth_lower: null, floor_birth_upper: null, floor_birth_youngest: null, teen_pool_barred: false, teen_pool_held: false, signup_minor_cap: null, signup_age_observed: false },
+      { app_id: "slop", member_id: "s1", age: 15, banned: false, staff_held: true, report_held: false, minor_signal_at: null, teen_pool_barred: false, teen_pool_held: false, signup_minor_cap: null, signup_age_observed: false, birth_exact: false, age_conflict: false },
+      { app_id: "slop", member_id: "s3", age: 41, banned: true, staff_held: false, report_held: false, minor_signal_at: null, teen_pool_barred: false, teen_pool_held: false, signup_minor_cap: null, signup_age_observed: false, birth_exact: false, age_conflict: false },
     ] });
     expect(await as("network_observatory", tx => tx`select * from platform.matching_ages_ntwrk where member_id = 'n1'`)).toEqual({ v: [
-      { app_id: "ntwrk", member_id: "n1", age: 15, banned: false, staff_held: false, report_held: true, minor_signal_at: null, birth_date: null, birth_lower: null, birth_upper: null, birth_youngest: null, floor_birth_lower: null, floor_birth_upper: null, floor_birth_youngest: null, teen_pool_barred: false, teen_pool_held: false, signup_minor_cap: null, signup_age_observed: false },
+      { app_id: "ntwrk", member_id: "n1", age: 15, banned: false, staff_held: false, report_held: true, minor_signal_at: null, teen_pool_barred: false, teen_pool_held: false, signup_minor_cap: null, signup_age_observed: false, birth_exact: false, age_conflict: false },
     ] });
+    for (const col of ["birth_date", "birth_lower", "birth_upper", "birth_youngest", "floor_birth_lower", "floor_birth_upper", "floor_birth_youngest"]) {
+      expect(await as("network_observatory_slop", tx => tx.unsafe(`select ${col} from platform.matching_ages_slop`))).toMatchObject({ e: expect.stringContaining(col) });
+      expect(await as("network_observatory", tx => tx.unsafe(`select ${col} from platform.matching_ages_ntwrk`))).toMatchObject({ e: expect.stringContaining(col) });
+    }
+    expect(await as("network_observatory_slop", tx => tx`select platform.console_teen_roster_allowed('slop', 'o1', array['s1','s3'], 20261125, 20261125, array[]::text[], array[]::text[])`)).toEqual(denied);
+    expect(await as("network_observatory_cross_app", tx => tx`select platform.console_teen_roster_allowed('friends', 'o1', array['f1','f2'], 20261125, 20261125, array[]::text[], array[]::text[])`)).toEqual(denied);
     for (const role of ["network_observatory", "network_observatory_ntwrk", "network_observatory_cross_app"]) {
       expect(await as(role, tx => tx`select * from platform.matching_ages_slop`)).toEqual(denied);
     }

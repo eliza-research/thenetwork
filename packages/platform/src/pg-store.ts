@@ -191,7 +191,8 @@ export class PgPeopleStore implements PeopleStore {
     return r ? ageFloorOf(r) : undefined;
   }
   async recordAgeReading(personId: string | null, phoneHash: string, stated: AgeReading, at: number) {
-    return effectiveAgeAt(await this.sql.begin(tx => writeAgeReading(tx, personId, phoneHash, stated, at)), at);
+    const run = (tx: SQL) => writeAgeReading(tx, personId, phoneHash, stated, at);
+    return effectiveAgeAt(await (typeof this.sql.begin === "function" ? this.sql.begin(run) : run(this.sql)), at);
   }
   async saveSignupAge(member: Membership, e164: string, phoneHash: string, age: SignupAge, at: number, transaction?: SQL): Promise<boolean> {
     const save = async (tx: SQL) => {

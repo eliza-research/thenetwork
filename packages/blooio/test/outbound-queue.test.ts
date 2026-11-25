@@ -879,7 +879,7 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
   test("safety outbound kind bypasses quiet hours, streak and line caps while consent, line safety, recipient cap and leak guard hold", async () => {
     const quietLocal = new SimClock(Date.UTC(2026, 9, 9, 7)); // 03:00 in NY (quiet)
     const { calls, provider } = recorder();
-    const memberId = "safety-member-1", to = "+12125558100";
+    const memberId = "safety-member-1", to = "+12125558200";
     await a`insert into network.members (id,app_id,account_status,home_city,prefs) values (${memberId},'friends','paused','nyc',${{ quietHours: [0, 8] }}::jsonb)`;
     await a`insert into platform.line_conversations (line,address,unanswered) values (${LINE},${to},5)`;
 
@@ -917,8 +917,8 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
       }),
     });
     await qGuards.enqueue(a, [
-      { id: "safety-optout", memberId, to: "+12125558101", kind: "safety", text: "Notice.", timeZone: NY },
-      { id: "safety-leak", memberId, to: "+12125558102", kind: "safety", text: "About secret orchid garden party.", timeZone: NY },
+      { id: "safety-optout", memberId, to: "+12125558201", kind: "safety", text: "Notice.", timeZone: NY },
+      { id: "safety-leak", memberId, to: "+12125558202", kind: "safety", text: "About secret orchid garden party.", timeZone: NY },
       { id: "safety-rcap", memberId, to, kind: "safety", text: "Hits hourly cap.", timeZone: NY },
     ]);
     await qGuards.drain();
