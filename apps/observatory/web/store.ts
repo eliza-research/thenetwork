@@ -902,7 +902,10 @@ class ObsStore {
   /** Global filters on an opportunity. `skip` turns off the filters that do not apply to a panel. */
   matchOpp(o: ObsOpportunity, skip: Partial<Record<FilterKey, boolean>> = {}) {
     const f = this.ui.filters;
-    if (!skip.range && f.range !== "all" && !OPEN.has(o.state) && !this.inRange(o.updatedAt)) return false;
+    if (!skip.range && f.range !== "all" && !OPEN.has(o.state)) {
+      const heldAt = stateGroupOf(o.state) === "met" ? (o.meetingAt ?? o.updatedAt) : o.updatedAt;
+      if (!this.inRange(heldAt)) return false;
+    }
     if (!skip.origin && f.origin !== "all" && originOf(o) !== f.origin) return false;
     if (!skip.stateGroup && f.stateGroup !== "all" && stateGroupOf(o.state) !== f.stateGroup) return false;
     if ((!skip.borough && f.borough !== "all") || (!skip.members && f.members !== "all")) {
