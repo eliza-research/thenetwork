@@ -1,9 +1,3 @@
-// Game mode: a booked group plan's late joiner must show in the opportunity detail.
-// spec/planDecision.md, "After booking, acceptances can add a member up to and including the
-// late-join cutoff." The Network records the late joiner on the meeting (planJoin), but the
-// booking already recorded the proposal with only the seated roster, so the projector's detail
-// roster drops the joiner: the title counts the seated members, People has no row for them,
-// while the meeting (and its History line) names them.
 import { expect, test } from "vitest";
 import { DAY, HOUR } from "@thenetwork/core";
 import type { plans } from "@thenetwork/engine";
@@ -54,11 +48,19 @@ test("a booked plan's late joiner shows in the opportunity detail roster", async
     }
     consumedProposals = world.proposals.length;
   };
+  const meetingIds = new Map<string, string>();
+  const meetingRoster = new Map<string, string[]>();
   const refreshMeetings = () => {
     for (const m of world.meetings.slice(consumedMeetings)) {
+      const key = `${m.proposalId}@${m.at}`;
+      let meetingId = meetingIds.get(key);
+      if (!meetingId) { meetingId = `mt${meetingIds.size + 1}`; meetingIds.set(key, meetingId); }
+      const roster = meetingRoster.get(key) ?? [];
+      for (const id of m.participants) if (!roster.includes(id)) roster.push(id);
+      meetingRoster.set(key, roster);
       projector.apply({
-        t: world.clock.now(), type: "meeting_scheduled", meetingId: `mt${consumedMeetings + 1}`,
-        proposalId: m.proposalId, participants: m.participants, at: m.at, city: "nyc",
+        t: world.clock.now(), type: "meeting_scheduled", meetingId,
+        proposalId: m.proposalId, participants: [...roster], at: m.at, city: "nyc",
       });
       consumedMeetings++;
     }
@@ -71,10 +73,8 @@ test("a booked plan's late joiner shows in the opportunity detail roster", async
   refreshLogs();
   refreshProposals();
   refreshMeetings();
-  // The booking recorded the seated roster: the detail counts three members and d is out.
   expect(detail().state).toBe("SCHEDULED");
   expect(detail().participants).toEqual(["a", "b", "c"]);
-  // d was counted at approval (they were invited); the counter still credits them.
   expect(store.member("d")!.counters.proposals).toBe(1);
 
   await world.say("d", "yes");
@@ -85,10 +85,8 @@ test("a booked plan's late joiner shows in the opportunity detail roster", async
   expect(world.net.exportState().opps.find(o => o.id === oppId)?.stage).toBe("scheduled");
   refreshLogs();
   refreshMeetings();
-  // The late joiner is confirmed for the meeting: the projector knows it (status) ...
   expect(detail().status.d).toBe("confirmed");
-  // ... so the detail roster must name them too: title count and People rows agree with the meeting.
   expect(detail().participants).toEqual(["a", "b", "c", "d"]);
-  // No double count: d was already credited at approval; the late join adds the row, not a second credit.
   expect(store.member("d")!.counters.proposals).toBe(1);
+  expect(store.counts.meetingsScheduled).toBe(1);
 });

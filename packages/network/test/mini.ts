@@ -26,7 +26,6 @@ export class Mini {
   readonly sent: { t: number; to: MemberId; body: string; meta: SimMeta; reply?: boolean }[] = [];
   readonly logs: { t: number; kind: string; detail: Record<string, unknown> }[] = [];
   readonly meetings: MeetingReport[] = [];
-  /** Proposal records the Network recorded (ctx.recordProposal), in emission order. */
   readonly proposals: { t: number; source: string; proposal: Proposal }[] = [];
   readonly members: Member[] = [];
   readonly facets: Facet[] = [];
