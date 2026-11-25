@@ -242,3 +242,15 @@
 {"text": "como borro mi cuenta?", "label": "not_stop", "lang": "es"}
 {"text": "borra mi cuenta de instagram", "label": "not_stop", "lang": "es"}
 {"text": "ella dijo borra mi cuenta", "label": "not_stop", "lang": "es"}
+{"text": "delete everything about me", "label": "stop", "lang": "en"}
+{"text": "erase everything about me", "label": "stop", "lang": "en"}
+{"text": "remove everything about me", "label": "stop", "lang": "en"}
+{"text": "wipe everything about me", "label": "stop", "lang": "en"}
+{"text": "please delete everything about me", "label": "stop", "lang": "en"}
+{"text": "delete everything you have on me", "label": "stop", "lang": "en"}
+{"text": "delete everything about me on instagram", "label": "not_stop", "lang": "en"}
+{"text": "she said delete everything about me", "label": "not_stop", "lang": "en"}
+{"text": "how do I delete everything about me?", "label": "not_stop", "lang": "en"}
+{"text": "don't delete everything about me", "label": "not_stop", "lang": "en"}
+{"text": "delete everything in the chat", "label": "not_stop", "lang": "en"}
+{"text": "delete everything", "label": "not_stop", "lang": "en"}
