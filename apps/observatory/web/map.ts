@@ -65,7 +65,7 @@ export class MapView {
   flyTo(lat: number, lng: number) { this.map.flyTo([lat, lng], Math.max(this.map.getZoom(), 15), { duration: 0.6 }); }
 
   private point(m: ObsMember): L.LatLngExpression {
-    const p = memberPoint(m.id, m.area);
+    const p = memberPoint(m.id, m.area, m.city);
     return [p.lat, p.lng];
   }
 
