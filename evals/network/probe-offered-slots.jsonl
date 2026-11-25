@@ -191,3 +191,12 @@
 {"text":"option 2 works","answer":"yes","keys":["b"]}
 {"text":"at 2 works","answer":"unclear","keys":[]}
 {"text":"that 2 works","answer":"yes","keys":["b"]}
+{"text":"both days don't work","answer":"yes","keys":[]}
+{"text":"both days are out","answer":"yes","keys":[]}
+{"text":"both days are bad","answer":"yes","keys":[]}
+{"text":"both times don't work","answer":"yes","keys":[]}
+{"text":"both days work","answer":"yes","keys":["a","b","c"]}
+{"text":"both days are good","answer":"yes","keys":["a","b","c"]}
+{"text":"both days don't work, Sunday does","answer":"yes","keys":["c"]}
+{"text":"all days don't work","answer":"yes","keys":[]}
+{"text":"both days are no good","answer":"yes","keys":[]}
