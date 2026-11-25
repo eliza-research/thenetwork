@@ -200,3 +200,17 @@
 {"text":"both days don't work, Sunday does","answer":"yes","keys":["c"]}
 {"text":"all days don't work","answer":"yes","keys":[]}
 {"text":"both days are no good","answer":"yes","keys":[]}
+{"text":"anything except Sunday works","answer":"yes","keys":["a","b"]}
+{"text":"everything except Thursday works","answer":"yes","keys":["b","c"]}
+{"text":"any day except Sunday works","answer":"yes","keys":["a","b"]}
+{"text":"all except Sunday works","answer":"yes","keys":["a","b"]}
+{"text":"any time except Saturday works","answer":"yes","keys":["a","c"]}
+{"text":"anything but Sunday works","answer":"yes","keys":["a","b"]}
+{"text":"anything except Sunday doesn't work","answer":"unclear","keys":[]}
+{"text":"no, anything except Sunday works","answer":"unclear","keys":[]}
+{"text":"anything except Sunday works lol jk none of them","answer":"unclear","keys":[]}
+{"text":"anything except Sunday, nothing works","answer":"unclear","keys":[]}
+{"text":"anything except Sunday, neither works","answer":"unclear","keys":[]}
+{"text":"anything except Sunday, none works","answer":"unclear","keys":[]}
+{"text":"anything except Sunday, if Ana says Saturday works","answer":"unclear","keys":[]}
+{"text":"anything except Sunday, Ana said Thursday works","answer":"unclear","keys":[]}
