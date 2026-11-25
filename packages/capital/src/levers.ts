@@ -78,7 +78,7 @@ export function vouchCapacity(entries: readonly LedgerEntry[], at: number, cfg: 
   const inPeriod = (e: LedgerEntry) => vouchInPeriod(e.t, at, v.periodDays * DAY);
   const reversed = new Set(entries.filter(e => e.provenance.reverses && e.t <= at).map(e => e.provenance.reverses!));
   const good = entries.filter(e => e.category === "vouch" && inPeriod(e) && !reversed.has(e.id)).length;
-  const lost = entries.filter(e => e.category === "vouch_stake" && inPeriod(e)).length;
+  const lost = entries.filter(e => e.category === "vouch_stake" && inPeriod(e) && !reversed.has(e.id)).length;
   return vouchCapacityFromCounts(good, lost, v.base, v.perGood, v.perLost, v.maxBonus, v.max);
 }
 
