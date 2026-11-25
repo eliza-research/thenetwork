@@ -64,14 +64,14 @@ const median = (xs: number[]) => { if (!xs.length) return null; const v = [...xs
 
 /** V14 (experience design 3.3): mean over days t in [14, D] of the share of eligible members with a value event in (t-14, t]. */
 export function v14Of(ids: MemberId[], valueDays: Map<MemberId, number[]>, days: number): number {
-  if (!ids.length) return 0;
+  if (!ids.length) return NaN;
   let sum = 0, n = 0;
   for (let t = 14; t <= days; t++) {
     let w = 0;
     for (const id of ids) if ((valueDays.get(id) ?? []).some(d => d <= t && d > t - 14)) w++;
     sum += w / ids.length; n++;
   }
-  return n ? sum / n : 0;
+  return n ? sum / n : NaN;
 }
 
 export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
