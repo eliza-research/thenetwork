@@ -158,3 +158,9 @@
 {"text": "Was it my body type that got us matched?", "class": "rating", "want": "stop"}
 {"text": "Did they rank me above or below you?", "class": "rating", "want": "stop"}
 {"text": "How cute did you get rated?", "class": "rating", "want": "stop"}
+{"text": "I need fifty bucks for rent", "class": "scam", "want": "stop"}
+{"text": "I am short a hundred dollars this week", "class": "scam", "want": "stop"}
+{"text": "Need twenty bucks for lunch", "class": "scam", "want": "stop"}
+{"text": "I need a couple hundred dollars", "class": "scam", "want": "stop"}
+{"text": "I owe a hundred bucks for the repair", "class": "scam", "want": "stop"}
+{"text": "We are short thirty dollars for groceries", "class": "scam", "want": "stop"}
