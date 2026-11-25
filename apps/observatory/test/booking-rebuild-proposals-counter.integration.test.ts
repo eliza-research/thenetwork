@@ -1,15 +1,3 @@
-// Game mode: a member dropped by a booking-time proposal rebuild must lose the
-// proposal credit, so the member panel's "N proposals" counter agrees with its
-// Open items list.
-// spec/observatoryRoster.md, "Reviewed offers contribute to a member's proposal
-// activity after approval": "Count a participant's opportunity once after
-// approval." The booking records the proposal with only the seated roster, so the
-// projector rebuilds the opportunity without the members left out -- but the
-// counter keeps crediting them, while the member panel list (panels.tsx: the
-// member's opportunities are the ones whose participants include them) drops the
-// opportunity. Same "count moves with the roster" principle as a probe
-// replacement (projector.ts probe_replaced case): the count follows the recorded
-// roster, it does not linger on a member the record no longer names.
 import { expect, test } from "vitest";
 import { DAY, HOUR } from "@thenetwork/core";
 import type { plans } from "@thenetwork/engine";
@@ -70,18 +58,14 @@ test("a member left out at booking loses the proposal credit on the member panel
     }
   };
   const detail = () => store.opps.get(oppId)!;
-  // The member panel's opportunity list: the opportunities whose participants include the member.
   const memberOpps = (id: string) => [...store.opps.values()].filter(o => o.participants.includes(id));
 
   refreshLogs();
   refreshProposals();
-  // d was invited and the opportunity was approved: d is a participant and is credited.
   expect(detail().participants).toEqual(["a", "b", "c", "d"]);
   expect(memberOpps("d")).toHaveLength(1);
   expect(store.member("d")!.counters.proposals).toBe(1);
 
-  // a/b/c say yes: quorum met, the plan books. d never replied, so the booking
-  // records the proposal with only the seated roster.
   for (const id of ["a", "b", "c"]) await world.say(id, "yes");
   expect(world.meetings).toMatchObject([{ proposalId: oppId, participants: ["a", "b", "c"], at: startsAt }]);
   expect(world.net.exportState().opps.find(o => o.id === oppId)?.stage).toBe("scheduled");
@@ -90,14 +74,9 @@ test("a member left out at booking loses the proposal credit on the member panel
   refreshLogs();
   refreshProposals();
   refreshMeetings();
-  // The booking rebuild drops d from the opportunity: the detail and the member
-  // panel list agree on that -- d has no row for this opportunity anywhere.
   expect(detail().state).toBe("SCHEDULED");
   expect(detail().participants).toEqual(["a", "b", "c"]);
   expect(memberOpps("d")).toHaveLength(0);
-  // ... so the counter must follow the roster: d keeps no credit for an
-  // opportunity the recorded roster no longer names.
   expect(store.member("d")!.counters.proposals).toBe(0);
-  // The seated members keep exactly their one credit each.
   expect(["a", "b", "c"].map(id => store.member(id)!.counters.proposals)).toEqual([1, 1, 1]);
 });
