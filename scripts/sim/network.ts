@@ -462,7 +462,6 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
   await probeDeclineReceiptGate(b);
   await b.run("judge: a time counter requires agreement before a name can be revealed", () => {
     const person = (id: MemberId, name: string): RunRecord => ({ t: 0, type: "persona", persona: {
-      id, name, archetype: "regular", homeCity: "nyc", joinDay: 0, trueAge: 30, claimedAge: 30, quietHours: [23, 7], romanceOptIn: false,
       
     } });
     const run = (decision: "accept" | "counter" | "decline", intent: string = decision) => computeMetrics([
