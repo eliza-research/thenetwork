@@ -91,6 +91,10 @@ pure def lawCapitalCannotReverseAgain(sameOwner: bool): bool =
   not(mayReverseCapitalEntry(sameOwner, true))
 ```
 
+### A removal overturned on review returns the voucher's lost stake
+
+A removal is overturned when a review finds the removal was wrong, for example mistaken identity or an upheld appeal. When a removal for serious abuse is overturned, the ledger returns the voucher's lost stake. The overturn is a new event, `removal_overturned`, for the removed member. The ledger writes one reversal entry (`clawback`) for that member's `vouch_stake` entry, on the voucher's ledger, and only for that stake. Other stakes of the same voucher stay lost. If no stake was taken for that member, the overturn writes nothing: the removal was not for serious abuse, the stake window had passed, or the voucher was ineligible at removal. The reversal follows the same rules as any other reversal: it names the entry it reverses, it is written once for that entry, and it is written only while the stake is still in the vouch rolling period. A stake that is already one period old no longer counts, so there is nothing to return. The overturn does not change the removed member: the member stays removed and earns nothing more. This rule reuses the existing `mayReverseCapitalEntry` and `capitalEntryUsesPeriodCap` decisions, so it adds no new Quint definition and no generated module changes.  
+
 ### A reversal restores room only for a credit in the same rolling period
 
 A credit uses the configured rolling period's allowance. A clawback in the period restores room only when the original credit is also in that period. Other penalties do not restore room. An entry at the period boundary is outside it. The ledger subtracts spent credit from the cap using the existing decimal arithmetic, then applies the zero floor. A credit reduced to zero still records its provenance.
