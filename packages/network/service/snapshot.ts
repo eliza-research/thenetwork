@@ -119,8 +119,8 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
     sql`select p.opportunity_id, p.member_id, o.created_at from network.participations p
       join network.opportunities o on o.id = p.opportunity_id and o.app_id = ${app}
       where p.app_id = ${app} and p.role = 'participant'
-        and p.status in ('accepted', 'confirmed', 'attended', 'no_show', 'cancelled_with_notice')
-        and o.state in ('SCHEDULED', 'COMPLETED', 'CANCELLED')
+        and ((o.state in ('SCHEDULED', 'COMPLETED') and p.status in ('accepted', 'confirmed', 'attended', 'no_show'))
+          or (o.state = 'CANCELLED' and p.status = 'confirmed'))
       order by o.created_at, o.id, p.member_id`,
   ]);
   // Runtime conversation ownership takes precedence; it never creates or changes physical presence.

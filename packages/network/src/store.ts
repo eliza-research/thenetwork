@@ -107,7 +107,8 @@ function partStatus(o: NetworkState["opps"][number], s: string | undefined, id: 
       const mark = o.stage === "done" && o.finalized ? o.settledAttendance?.[id] : undefined;
       if (mark === "Attended") return "attended";
       if (mark === "Absent") return "no_show";
-      return o.stage === "scheduled" ? (o.bookedTold?.includes(id) ? "confirmed" : "pending") : "accepted";
+      if (o.stage === "scheduled" || o.closedFrom === "scheduled") return o.bookedTold?.includes(id) ? "confirmed" : o.stage === "scheduled" ? "pending" : "accepted";
+      return "accepted";
     }
     case "no": return "declined";
     default: return "pending"; // queued, or not contacted yet
