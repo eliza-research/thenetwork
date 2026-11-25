@@ -214,3 +214,13 @@
 {"text": "my wife said, unsubscribe. unsubscribe me", "label": "stop", "lang": "en"}
 {"text": "He told me, delete it. Delete my number", "label": "stop", "lang": "en"}
 {"text": "I asked to unsubscribe. Unsubscribe from slop", "label": "not_stop", "lang": "en"}
+{"text": "I want out of this", "label": "stop", "lang": "en"}
+{"text": "i want out of this list", "label": "stop", "lang": "en"}
+{"text": "I want out of the list", "label": "stop", "lang": "en"}
+{"text": "I want out of your list", "label": "stop", "lang": "en"}
+{"text": "please I want out of this", "label": "stop", "lang": "en"}
+{"text": "I just want out of this list", "label": "stop", "lang": "en"}
+{"text": "I want out of this meeting", "label": "not_stop", "lang": "en"}
+{"text": "I want out of this group chat", "label": "not_stop", "lang": "en"}
+{"text": "I want out of this contract", "label": "not_stop", "lang": "en"}
+{"text": "i want out of the group chat", "label": "not_stop", "lang": "en"}
