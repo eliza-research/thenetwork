@@ -214,3 +214,15 @@
 {"text":"anything except Sunday, none works","answer":"unclear","keys":[]}
 {"text":"anything except Sunday, if Ana says Saturday works","answer":"unclear","keys":[]}
 {"text":"anything except Sunday, Ana said Thursday works","answer":"unclear","keys":[]}
+{"text":"Thursday doesn't work, Saturday works","answer":"yes","keys":["b"]}
+{"text":"Thursday won't work, Saturday works","answer":"yes","keys":["b"]}
+{"text":"Thursday doesn't work. Saturday works.","answer":"yes","keys":["b"]}
+{"text":"Thursday doesn't work","answer":"unclear","keys":[]}
+{"text":"If Thursday doesn't work, Saturday works","answer":"unclear","keys":[]}
+{"text":"No, Thursday doesn't work","answer":"no","keys":[]}
+{"text":"yes, Thursday doesn't work","answer":"unclear","keys":[]}
+{"text":"Thursday doesn't work, nothing else works","answer":"unclear","keys":[]}
+{"text":"Thursday doesn't work, nothing works","answer":"unclear","keys":[]}
+{"text":"Thursday doesn't work, no other day works","answer":"unclear","keys":[]}
+{"text":"yes, Thursday doesn't work.","answer":"unclear","keys":[]}
+{"text":"yes, Thursday doesn't work!","answer":"unclear","keys":[]}

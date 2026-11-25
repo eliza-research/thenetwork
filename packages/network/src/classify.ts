@@ -1358,9 +1358,12 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const rememberQualifiedTimeRefusal = (at: number, end: number) => {
     if (!probeChoiceAuthored(t.slice(0, at))) return;
     const tail = t.slice(end);
-    if (!QUALIFIED_TIME_REFUSAL.test(tail)) return;
     const refusal = REFUSES_OFFERED_TIME.exec(tail)?.[0];
     if (!refusal) return;
+    const rest = tail.slice(refusal.length);
+    if (!QUALIFIED_TIME_REFUSAL.test(tail)
+      && (!/[a-z0-9]/i.test(rest)
+        || /\b(?:nothing|none|no\s+other\s+(?:day|option|slot|one)s?)\b/.test(rest))) return;
     const clause = clauseAt(t, at, end - at);
     if (/\bif\b/.test(clause) || COND_RX.test(clause)) conditionalTimeRefusal = true;
     else if (c.why === "refusal" || c.why === "mixed") qualifiedTimeRefusals.set(end, end + refusal.length);
