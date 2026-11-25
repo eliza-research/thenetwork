@@ -1145,9 +1145,9 @@ function joinedProbeRefusals(text: string, mentions: readonly ProbeSpan[], membe
 
 const probeOrdinal = (w: string) => new RegExp(`\\bthe (?:${w})\\b|\\b(?:${w}) (?:one|option|time|slot)\\b|^\\W*(?:${w})\\W*$`, "g");
 const PROBE_ORDINALS: [RegExp, number][] = [
-  [probeOrdinal("first|1st|earlier|earliest"), 0], [/(?<![\d:])\b1\b(?!\s*(am|pm|:|\d|of|more|person|hour|min))/g, 0],
-  [probeOrdinal("second|2nd|middle"), 1], [/(?<![\d:])\b2\b(?!\s*(am|pm|:|\d|of|more|people|person|hours?|mins?))/g, 1],
-  [probeOrdinal("third|3rd"), 2], [/(?<![\d:])\b3\b(?!\s*(am|pm|:|\d|of|more|people|hours?|mins?))/g, 2], [/\b(last|later|latest) one\b/g, -1],
+  [probeOrdinal("first|1st|earlier|earliest"), 0], [/(?<![\d:]|\bat\s)\b1\b(?!\s*(am|pm|:|\d|of|more|person|hour|min))/g, 0],
+  [probeOrdinal("second|2nd|middle"), 1], [/(?<![\d:]|\bat\s)\b2\b(?!\s*(am|pm|:|\d|of|more|people|person|hours?|mins?))/g, 1],
+  [probeOrdinal("third|3rd"), 2], [/(?<![\d:]|\bat\s)\b3\b(?!\s*(am|pm|:|\d|of|more|people|hours?|mins?))/g, 2], [/\b(last|later|latest) one\b/g, -1],
 ];
 
 const ORDINAL_POSITION: Readonly<Record<string, number>> = {
@@ -1546,6 +1546,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     if (EXPLICIT_NO_OFFERED_TIMES.test(t)) return { answer: "no", keys: [], why: "refusal" };
     if (t.includes("?") || unresolved.length || [...pos].some(key => !all.includes(key)) || UNBOUND_OFFER_DATE.test(t) || UNBOUND_OFFER_CLOCK.test(t)) return { ...unclear, why: "slot" };
   }
+  const bareClocks = [...t.matchAll(new RegExp(UNBOUND_OFFER_CLOCK.source, "g"))].map(m => { const [h, mm] = m[0].replace(/^at\s+/, "").split(":"); return (Number(h) % 12) * 60 + Number(mm ?? 0); });
+  if (bareClocks.length && (!picked.length || picked.some(k => { const o = offered.find(s => s.key === k); return o?.minute === undefined || !bareClocks.includes(o.minute % 720); }))) return { ...unclear, why: "slot" };
   if (ordinalMissing) return { ...unclear, why: "slot" };
   if (unbound) {
     const current = picked.filter(key => strong.has(key));
