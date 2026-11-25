@@ -589,7 +589,7 @@ const OPT_OUT_EN: RegExp[] = [
   /\bopt (?:me )?out\b/,
   new RegExp(`\\b(?:remove|take) ${ME} (?:off|from) (?:your|this|the|all|every|ur) (?:list|lists|texts?|messages|contacts)\\b`),
   /\b(?:remove|delete|lose) my (?:number|phone number|info|contact)\b/,
-  new RegExp(`^${ACCOUNT_REMOVAL_LEAD}(?:delete|remove|erase|close|deactivate|wipe) (?:all (?:of )?)?my (?:whole |entire )?(?:account|profile|data)${ACCOUNT_REMOVAL_TAIL}`),
+  new RegExp(`^${ACCOUNT_REMOVAL_LEAD}(?:cancel|delete|remove|erase|close|deactivate|wipe) (?:all (?:of )?)?my (?:whole |entire )?(?:account|profile|data)${ACCOUNT_REMOVAL_TAIL}`),
   /^(?:please |pls )?i (?:just )?want out(?: (?:please|pls|now|already))*$/,
   new RegExp(`\\b(?:don't|do not|dont|pls don't|please don't|never) (?:text|message|contact|msg|sms|write to|email) ${ME}\\b`),
   /\bleave me alone\b/,
