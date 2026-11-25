@@ -1,6 +1,3 @@
-// The 1-week Friends table must not report a NaN% V14: a run shorter than 14 days
-// has no eligible V14 day, so V14 is not measured (n/a, not NaN% and not 0%).
-// The 8-week control keeps the measured V14.
 import { spawnSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

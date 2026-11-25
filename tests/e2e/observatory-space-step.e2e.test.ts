@@ -38,9 +38,15 @@ browserTest("Space on the focused +1h button steps one hour and leaves play alon
       return { now: s.clock.now, playing: s.clock.playing };
     }, { timeout: 10_000 }).toEqual({ now: before.clock.now + 2 * HOUR, playing: false });
     expect(await page.locator('button[aria-label="Play"]').count()).toBe(1);
+    const speed = page.locator('button[aria-label="Speed"]');
+    await speed.focus();
+    await page.keyboard.press(" ");
+    await expect.poll(async () => (await state()).clock.playing, { timeout: 10_000 }).toBe(false);
+    await page.keyboard.press("Escape");
     await page.locator("body").click();
     await page.keyboard.press(" ");
     await expect.poll(async () => (await state()).clock.playing, { timeout: 10_000 }).toBe(true);
+    await page.locator('button[aria-label="Pause"]').waitFor({ timeout: 10_000 });
     await page.keyboard.press(" ");
     await expect.poll(async () => (await state()).clock.playing, { timeout: 10_000 }).toBe(false);
   } finally {

@@ -1,39 +1,3 @@
-// R19-TA: the opportunity detail's Score headline must not be contradicted
-// by the score parts under it (DOM level).
-//
-// Journey: pipeline card click -> OpportunityPanel -> the Score disclosure
-// ("Score {o.score.toFixed(2)}" + <ScoreParts c={o.components} />);
-// the review queue shows the same pair on each card (web/review.tsx).
-// Spec basis: docs/observatory.md ("ObsOpportunity: the proposal (kind,
-// generator, category, city, objective, score, 11 score components,
-// explanations)") — one proposal carries a score AND its 11 components as
-// a pair — and the engine's own invariant
-// (packages/engine/src/scoring.ts scoreCandidate/netValue): a proposal's
-// score IS the weighted net of its components.
-//
-// Two non-engine producers break it: StubNetwork.makeProposal
-// (packages/sim/src/stubNetwork.ts) pairs a random score
-// (score: this.rng.next()) with ZERO components, and planToProposal
-// (packages/engine/src/plans.ts) pairs the plan's own score
-// (PlanScore: least-misery utility + familiarity) with ZERO components
-// (newOpp defaults components to ZERO when the caller passes none,
-// packages/network/src/network.ts). The projector copies both fields
-// verbatim, so the detail shows e.g. "Score 0.73" above eleven 0.00 bars.
-// The signed sum of the shown parts is 0.00 under any weights — netValue
-// of all-zero components is exactly 0 — so the headline and its breakdown
-// contradict each other on the same screen. The plan score is real (its
-// own formula) and the stub score is the random baseline's by design, so
-// neither producer is changed.
-//
-// Fixture: the plan-like opportunity carries the pair the real producers
-// emit (a nonzero score with all-zero components); the engine-like
-// opportunity carries a real breakdown (fit 1, confidence 1, the rest 0;
-// netValue 0.40); the tiny-part opportunity carries one part at 0.0001,
-// which must still show its bars.
-// Correct: the plan detail shows "Score 0.73" and no part bars; the engine
-// detail shows "Score 0.40" and its bars; the tiny detail shows its bars.
-// The plan review card shows "no component breakdown for this source"
-// instead of a silent omission.
 import { serveHttp } from "../../../packages/core/src/runtime/http.ts";
 import { DAY } from "@thenetwork/core";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -208,15 +172,12 @@ test("review card shows a note for a plan opportunity instead of silent bars, an
     await t.wait(() => t.text().includes("Maya + Jon") && t.text().includes("Maya + Leo"), "both review cards");
     const scoreBtn = (score: string) => [...t.box.querySelectorAll("button")].find((b) => (b.textContent ?? "").includes(`Score ${score}`));
     const cardBtn = (title: string) => [...t.box.querySelectorAll("button")].find((b) => (b.textContent ?? "").includes(title));
-    // Only the selected card shows its body. The plan card is selected first (soonest deadline):
-    // its Score disclosure shows the note, not zero bars.
     expect(scoreBtn("0.73"), "plan card Score disclosure").toBeTruthy();
     await act(async () => { scoreBtn("0.73")!.click(); });
     await t.wait(() => t.text().includes("no component breakdown for this source"), "plan card note");
     expect(t.text()).toContain("Score 0.73");
     expect(t.text()).toContain("no component breakdown for this source");
     expect(t.text()).not.toContain("mutual benefit");
-    // Open the engine card next: its Score disclosure shows the bars, and the note is gone with the plan card.
     expect(cardBtn("Maya + Leo"), "engine card").toBeTruthy();
     await act(async () => { cardBtn("Maya + Leo")!.click(); });
     await t.wait(() => t.text().includes("Score 0.40"), "engine card Score disclosure");

@@ -1,16 +1,3 @@
-// R21-TA: the opportunity detail's People section must not mark a member
-// "busy" for an opportunity they already left (DOM level; the states are
-// pinned by opp-detail-people-busy.test.ts).
-//
-// Journey: pipeline card click -> OpportunityPanel -> the People section
-// (MemberLink + status + the "busy" mark from isBusyElsewhere).
-// Fixture: oppA is Maya + Jon (Maya pending there); oppB is the group
-// Maya + Leo + Nina, still open, where Maya declined. The real Projector
-// produces exactly that shape for a group decline (decision intent decline
-// leaves a group open; only a pair closes), proven by the source-level test.
-// Correct: Maya's row in oppA shows her name and her pending status, with
-// no "busy" mark. The mark would claim she is tied up in oppB, which she
-// already turned down.
 import { serveHttp } from "../../../packages/core/src/runtime/http.ts";
 import { DAY } from "@thenetwork/core";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -123,8 +110,6 @@ test("detail People shows Maya without a busy mark when she declined the other o
 });
 
 test("detail People shows Maya without a busy mark when she dropped out of its booked meeting with no notice", async () => {
-  // The projector records a silent booked drop only in booked.cancelled;
-  // the status stays "confirmed" (projector.ts booked_cancelled).
   const oppB = opp("oppB", ["m1", "m3", "m4"], "SCHEDULED", { m1: "confirmed", m3: "confirmed", m4: "confirmed" },
     { at: NOW, optOutHours: 24, told: {}, cancelled: { m1: { at: NOW, told: false } } });
   const t = await setup(oppB);

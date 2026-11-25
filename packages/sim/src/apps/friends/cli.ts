@@ -74,10 +74,7 @@ async function main() {
   ];
   console.log(`| Metric (mean ± SE, seeds ${seeds.join(",")}; ${n} personas; ${weeks} weeks${planCap !== 1 ? `; plan allowance ${planCap}/wk` : ""}) | ${only.join(" | ")} |`);
   console.log(`|---|${only.map(() => "---:").join("|")}|`);
-  // A V14 row with no finite value in any seed has nothing measured: a run shorter than
-  // 14 days (or with no real members) has no eligible V14 day. Show n/a, the gates'
-  // convention, not a NaN% that reads as measured; the metric underneath stays NaN.
-  for (const [label, f, pct, d, base] of rows) console.log(`| ${label} | ${only.map(k => base && mean(all[k]!.map(base)) === 0 ? "n/a" : fmt(all[k]!.map(f), pct, d)).join(" | ")} |`);
+  for (const [label, f, pct, d, base] of rows) console.log(`| ${label} | ${only.map(k => { const measured = base ? all[k]!.filter(m => base(m) > 0) : all[k]!; return !measured.length ? "n/a" : fmt(measured.map(f), pct, d); }).join(" | ")} |`);
   console.log("\nV14 by borough (n averaged):");
   for (const k of only) console.log(`  ${k}: ` + Object.keys(all[k]![0]!.v14ByBorough).map(b => { const finite = all[k]!.map(m => m.v14ByBorough[b]!.v14).filter(Number.isFinite); return `${b} (n≈${Math.round(mean(all[k]!.map(m => m.v14ByBorough[b]!.n)))}) ${finite.length ? `${(mean(finite) * 100).toFixed(1)}%` : "n/a"}`; }).join("; "));
   console.log("\nAdversary contacts by kind:");

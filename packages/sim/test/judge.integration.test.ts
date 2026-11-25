@@ -33,6 +33,7 @@ describe("simulator judge and scenario regressions", () => {
     expect(run("Meet me at 123 bedford ave tomorrow. Reply STOP to pause.")).toBe(1);
     expect(run("Meet me at 40 W 25th St tomorrow. Reply STOP to pause.")).toBe(1);
     expect(run("Meet me at 123 Bedford Ave tomorrow. Reply STOP to pause.")).toBe(1);
+    expect(run("Meet me at 123 Bedford Way tomorrow. Reply STOP to pause.")).toBe(1);
     expect(run("See you at 7 PM at St. Mary's Park. Reply STOP to pause.")).toBe(0);
   });
 
