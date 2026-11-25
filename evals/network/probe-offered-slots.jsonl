@@ -226,3 +226,14 @@
 {"text":"Thursday doesn't work, no other day works","answer":"unclear","keys":[]}
 {"text":"yes, Thursday doesn't work.","answer":"unclear","keys":[]}
 {"text":"yes, Thursday doesn't work!","answer":"unclear","keys":[]}
+{"text":"Saturday works, Thursday doesn't work","answer":"yes","keys":["b"]}
+{"text":"Saturday works, Thursday won't work","answer":"yes","keys":["b"]}
+{"text":"Saturday works. Thursday doesn't work","answer":"yes","keys":["b"]}
+{"text":"Saturday works, Thursday doesn't work, Sunday doesn't work","answer":"yes","keys":["b"]}
+{"text":"Saturday works, Thursday doesn't work, Sunday works","answer":"yes","keys":["b","c"]}
+{"text":"Saturday works, Thursday doesn't work for me","answer":"yes","keys":["b"]}
+{"text":"No, Saturday works, Thursday doesn't work","answer":"unclear","keys":[]}
+{"text":"Saturday works, Thursday doesn't work, I don't want to meet","answer":"unclear","keys":[]}
+{"text":"Saturday works, actually Saturday doesn't work","answer":"unclear","keys":[]}
+{"text":"Saturday works, Saturday doesn't work","answer":"unclear","keys":[]}
+{"text":"Saturday works, wait Saturday doesn't work, Sunday","answer":"unclear","keys":[]}
