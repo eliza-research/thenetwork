@@ -46,7 +46,9 @@ export function validateCapitalEvent(ev: unknown): string | undefined {
     case "safety_flag":
       return need(str(e.member), "member") ?? need(bool(e.serious), "serious");
     case "member_removed":
-      return need(str(e.member), "member") ?? need(REMOVAL.has(e.reason as string), "reason");
+            return need(str(e.member), "member") ?? need(REMOVAL.has(e.reason as string), "reason");
+    case "removal_overturned":
+        return need(str(e.member), "member");
     case "abuse_confirmed":
       return need(str(e.member), "member") ?? need(ABUSE.has(e.kind as string), "kind");
     case "plan_accepted":
