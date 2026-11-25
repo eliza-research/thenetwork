@@ -31,10 +31,10 @@ const ZERO: ScoreComponents = {
   fit: 0, mutualBenefit: 0, warmPath: 0, novelty: 0, timingFit: 0,
   activationCost: 0, interruptionCost: 0, load: 0, repetition: 0, socialRisk: 0, confidence: 0,
 };
-const opp = (id: string, participants: string[], state: ObsOpportunity["state"], status: ObsOpportunity["status"]): ObsOpportunity => ({
+const opp = (id: string, participants: string[], state: ObsOpportunity["state"], status: ObsOpportunity["status"], booked?: ObsOpportunity["booked"]): ObsOpportunity => ({
   id, kind: participants.length > 2 ? "group" : "intro", source: "network", generator: "engine", city: "nyc",
   objective: "coffee", score: 0.4, components: ZERO, explanations: {}, exploration: false,
-  participants, alternates: [], state, status, enjoyment: {},
+  participants, alternates: [], state, status, enjoyment: {}, booked,
   createdAt: NOW - 3 * DAY, updatedAt: NOW - DAY,
 });
 const detail = (o: ObsOpportunity): OpportunityDetail => ({
@@ -42,9 +42,9 @@ const detail = (o: ObsOpportunity): OpportunityDetail => ({
   messages: [], events: [],
 });
 
-async function setup() {
+async function setup(oppBOverride?: ObsOpportunity) {
   const oppA = opp("oppA", ["m1", "m2"], "INVITING", { m1: "pending", m2: "pending" });
-  const oppB = opp("oppB", ["m1", "m3", "m4"], "INVITING", { m1: "declined", m3: "pending", m4: "pending" });
+  const oppB = oppBOverride ?? opp("oppB", ["m1", "m3", "m4"], "INVITING", { m1: "declined", m3: "pending", m4: "pending" });
   const details: Record<string, OpportunityDetail> = { oppA: detail(oppA) };
   const api = await serveHttp({
     hostname: "127.0.0.1", port: 0,
@@ -111,6 +111,23 @@ async function setup() {
 
 test("detail People shows Maya without a busy mark when she declined the other open opportunity", async () => {
   const t = await setup();
+  try {
+    await t.wait(() => !!t.card("Maya + Jon") && !!t.card("Maya, Leo"), "both pipeline cards");
+    await t.clickCard("Maya + Jon");
+    await t.wait(() => t.heading() === "Maya + Jon", "oppA detail");
+    expect(t.text()).toContain("Maya Rao");
+    expect(t.text()).not.toContain("busy");
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("detail People shows Maya without a busy mark when she dropped out of its booked meeting with no notice", async () => {
+  // The projector records a silent booked drop only in booked.cancelled;
+  // the status stays "confirmed" (projector.ts booked_cancelled).
+  const oppB = opp("oppB", ["m1", "m3", "m4"], "SCHEDULED", { m1: "confirmed", m3: "confirmed", m4: "confirmed" },
+    { at: NOW, optOutHours: 24, told: {}, cancelled: { m1: { at: NOW, told: false } } });
+  const t = await setup(oppB);
   try {
     await t.wait(() => !!t.card("Maya + Jon") && !!t.card("Maya, Leo"), "both pipeline cards");
     await t.clickCard("Maya + Jon");

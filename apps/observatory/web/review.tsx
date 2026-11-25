@@ -479,7 +479,7 @@ function QueueCard({ o, selected, onSelect, ctl, scoreOpen, setScoreOpen, onDone
 
 /** In another open opportunity: the Network does not double-book. */
 export function isBusyElsewhere(o: Opp, id: string) {
-  for (const x of store.opps.values()) if (x.id !== o.id && x.source !== "shadow" && OPEN.has(x.state) && x.participants.includes(id) && !INACTIVE_PARTICIPANT_STATUS.has(x.status[id])) return true;
+  for (const x of store.opps.values()) if (x.id !== o.id && x.source !== "shadow" && OPEN.has(x.state) && x.participants.includes(id) && !INACTIVE_PARTICIPANT_STATUS.has(x.status[id]) && !x.booked?.cancelled[id]) return true;
   return false;
 }
 

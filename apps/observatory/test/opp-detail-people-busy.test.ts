@@ -11,11 +11,13 @@
 // member already left that opportunity.
 //
 // Correct: a member who declined a group opportunity, said no to its probe,
-// or called off its booked plan is not busy because of it. A member who
-// accepted, never answered (dropped at booking: the Network still counts
-// them, their status there is queued/probing, not "dropped"), or is still
-// pending stays busy. A member whose only other opportunity closed is not
-// busy either.
+// called off its booked plan, or dropped out of its booked meeting with no
+// notice message (the projector records that drop only in
+// booked.cancelled, the status stays "confirmed") is not busy because of
+// it. A member who accepted, never answered (dropped at booking: the Network
+// still counts them, their status there is queued/probing, not "dropped"),
+// or is still pending stays busy. A member whose only other opportunity
+// closed is not busy either.
 // Reachability: every state below is produced by the real Projector from
 // real records (proposal / decision / probe_answer / meeting_scheduled /
 // booked-notice message), not hand-built.
@@ -81,7 +83,10 @@ function world(ids: string[]) {
     type: "message", bookingNoticeMeetingId: `meeting-${oppId}`,
     msg: { id: `notice-${oppId}-${memberId}`, direction: "inbound", ts: time, memberId, body: "I can't make it", status: "delivered" },
   });
-  return { src, propose, inviteAll, reply, probeNo, book, giveNotice, opp: (id: string) => src.opps.get(id)! };
+  const silentDrop = (oppId: string, memberId: string, told: boolean) => apply({
+    type: "network_log", kind: "booked_cancelled", detail: { oppId, memberId, told },
+  });
+  return { src, propose, inviteAll, reply, probeNo, book, giveNotice, silentDrop, opp: (id: string) => src.opps.get(id)! };
 }
 
 function seed(...opps: ReturnType<ReturnType<typeof world>["opp"]>[]) {
@@ -130,6 +135,38 @@ test("called off a booked plan: cancelled with notice, not busy elsewhere", () =
   w.giveNotice("oppB", "m1");
   const b = w.opp("oppB");
   expect(b.status.m1).toBe("cancelled_with_notice");
+  expect(b.state).toBe("SCHEDULED");
+  seed(a, b);
+  expect(isBusyElsewhere(a, "m1")).toBe(false);
+});
+
+test("dropped from a booked meeting with no notice message: not busy elsewhere", () => {
+  const a = subjectOppA("oppA", "m1", "m9");
+  const w = world(["m1", "m2", "m3"]);
+  w.propose("oppB", ["m1", "m2", "m3"]);
+  w.inviteAll("oppB", ["m1", "m2", "m3"]);
+  w.reply("oppB", "m1", "accept"); w.reply("oppB", "m2", "accept"); w.reply("oppB", "m3", "accept");
+  w.book("oppB", ["m1", "m2", "m3"]);
+  w.silentDrop("oppB", "m1", false);
+  const b = w.opp("oppB");
+  expect(b.status.m1).toBe("confirmed");
+  expect(b.booked?.cancelled["m1"]).toBeTruthy();
+  expect(b.state).toBe("SCHEDULED");
+  seed(a, b);
+  expect(isBusyElsewhere(a, "m1")).toBe(false);
+});
+
+test("dropped from a booked meeting after telling the Network (no notice message): not busy elsewhere", () => {
+  const a = subjectOppA("oppA", "m1", "m9");
+  const w = world(["m1", "m2", "m3"]);
+  w.propose("oppB", ["m1", "m2", "m3"]);
+  w.inviteAll("oppB", ["m1", "m2", "m3"]);
+  w.reply("oppB", "m1", "accept"); w.reply("oppB", "m2", "accept"); w.reply("oppB", "m3", "accept");
+  w.book("oppB", ["m1", "m2", "m3"]);
+  w.silentDrop("oppB", "m1", true);
+  const b = w.opp("oppB");
+  expect(b.status.m1).toBe("confirmed");
+  expect(b.booked?.cancelled["m1"]).toBeTruthy();
   expect(b.state).toBe("SCHEDULED");
   seed(a, b);
   expect(isBusyElsewhere(a, "m1")).toBe(false);
@@ -214,9 +251,21 @@ test("store.busy() applies the same rule to every member at once", () => {
   closed.propose("b7", ["d7", "x14"]);
   closed.inviteAll("b7", ["d7", "x14"]);
   closed.reply("b7", "d7", "decline");
+  const silent = world(["d8", "x15", "x16"]);
+  silent.propose("b8", ["d8", "x15", "x16"]);
+  silent.inviteAll("b8", ["d8", "x15", "x16"]);
+  silent.reply("b8", "d8", "accept"); silent.reply("b8", "x15", "accept"); silent.reply("b8", "x16", "accept");
+  silent.book("b8", ["d8", "x15", "x16"]);
+  silent.silentDrop("b8", "d8", false);
+  const silentTold = world(["d9", "x17", "x18"]);
+  silentTold.propose("b9", ["d9", "x17", "x18"]);
+  silentTold.inviteAll("b9", ["d9", "x17", "x18"]);
+  silentTold.reply("b9", "d9", "accept"); silentTold.reply("b9", "x17", "accept"); silentTold.reply("b9", "x18", "accept");
+  silentTold.book("b9", ["d9", "x17", "x18"]);
+  silentTold.silentDrop("b9", "d9", true);
   seed(
     declined.opp("b1"), unavail.opp("b2"), cancelled.opp("b3"), accepted.opp("b4"),
-    dropped.opp("b5"), pending.opp("b6"), closed.opp("b7"),
+    dropped.opp("b5"), pending.opp("b6"), closed.opp("b7"), silent.opp("b8"), silentTold.opp("b9"),
   );
   expect(declined.opp("b1").status.d1).toBe("declined");
   expect(unavail.opp("b2").status.d2).toBe("unavailable");
@@ -225,6 +274,10 @@ test("store.busy() applies the same rule to every member at once", () => {
   expect(dropped.opp("b5").status.d5).toBe("dropped");
   expect(pending.opp("b6").status.d6).toBe("pending");
   expect(closed.opp("b7").state).toBe("DECLINED");
+  expect(silent.opp("b8").status.d8).toBe("confirmed");
+  expect(silent.opp("b8").booked?.cancelled["d8"]).toBeTruthy();
+  expect(silentTold.opp("b9").status.d9).toBe("confirmed");
+  expect(silentTold.opp("b9").booked?.cancelled["d9"]).toBeTruthy();
   const busy = store.busy();
   expect(busy.has("d1")).toBe(false);
   expect(busy.has("d2")).toBe(false);
@@ -233,4 +286,6 @@ test("store.busy() applies the same rule to every member at once", () => {
   expect(busy.has("d5")).toBe(true);
   expect(busy.has("d6")).toBe(true);
   expect(busy.has("d7")).toBe(false);
+  expect(busy.has("d8")).toBe(false);
+  expect(busy.has("d9")).toBe(false);
 });
