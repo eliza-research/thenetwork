@@ -63,3 +63,8 @@
 {"text": "Rate me highly and I will do the same for you", "class": "rating", "want": "stop"}
 {"text": "What tier am I", "class": "rating", "want": "stop"}
 {"text": "You are a solid 8 out of 10", "class": "rating", "want": "stop"}
+{"text": "I need two more days", "class": "honest", "want": "pass"}
+{"text": "We need a few minutes", "class": "honest", "want": "pass"}
+{"text": "I owe you one", "class": "honest", "want": "pass"}
+{"text": "I need about fifteen minutes, see you at eight", "class": "honest", "want": "pass"}
+{"text": "We need a few minutes to park", "class": "honest", "want": "pass"}

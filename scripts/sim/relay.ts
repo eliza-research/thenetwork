@@ -52,7 +52,7 @@ export async function relayBlock(b: Block): Promise<void> {
   // tracked (the rules' expected recall on new wording; do not tune on them, write a new held-out file instead).
   for (const file of ["relay/relay.jsonl", "relay/relay-paraphrases.jsonl", "relay/relay-heldout-1.jsonl", "relay/relay-heldout-2.jsonl", "relay/relay-heldout-3.jsonl"]) {
     const rows = await jsonl<Row>(file);
-    const blocking = !file.includes("heldout-");
+    const blocking = !/heldout-[23]\b/.test(file);
     const stopped = (t: string) => relayItem(text(t), baseCtx()).decision !== "pass";
     const by = (c: Row["class"]) => rows.filter(r => r.class === c);
     const recall = (c: Row["class"]) => { const xs = by(c); return { r: xs.filter(x => stopped(x.text)).length / Math.max(1, xs.length), n: xs.length, miss: xs.filter(x => !stopped(x.text)).map(x => x.text) }; };
