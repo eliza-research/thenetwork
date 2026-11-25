@@ -417,7 +417,7 @@ export class CapitalLedger {
       }
       // Per period cap on positive NC, net of clawbacks of credits inside the period. A clawback of
       // an older credit does not make room (capital-2): that credit never used this period's cap.
-      const reversesCurrentCredit = e.category === "clawback" && ev.t - (this.byId.get(e.provenance.reverses!)?.t ?? -Infinity) < period;
+      const reversesCurrentCredit = e.category === "clawback" && this.byId.get(e.provenance.reverses!)?.sign === 1 && ev.t - (this.byId.get(e.provenance.reverses!)?.t ?? -Infinity) < period;
       if (capitalEntryUsesPeriodCap(age, period, e.sign === 1, reversesCurrentCredit)) inPeriod += e.amount;
     }
     // Per counterpart pair. A plan the members chose decays on its most repeated counterpart (the
