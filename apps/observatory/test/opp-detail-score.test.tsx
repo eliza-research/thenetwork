@@ -1,0 +1,232 @@
+// R19-TA: the opportunity detail's Score headline must not be contradicted
+// by the score parts under it (DOM level).
+//
+// Journey: pipeline card click -> OpportunityPanel -> the Score disclosure
+// ("Score {o.score.toFixed(2)}" + <ScoreParts c={o.components} />);
+// the review queue shows the same pair on each card (web/review.tsx).
+// Spec basis: docs/observatory.md ("ObsOpportunity: the proposal (kind,
+// generator, category, city, objective, score, 11 score components,
+// explanations)") — one proposal carries a score AND its 11 components as
+// a pair — and the engine's own invariant
+// (packages/engine/src/scoring.ts scoreCandidate/netValue): a proposal's
+// score IS the weighted net of its components.
+//
+// Two non-engine producers break it: StubNetwork.makeProposal
+// (packages/sim/src/stubNetwork.ts) pairs a random score
+// (score: this.rng.next()) with ZERO components, and planToProposal
+// (packages/engine/src/plans.ts) pairs the plan's own score
+// (PlanScore: least-misery utility + familiarity) with ZERO components
+// (newOpp defaults components to ZERO when the caller passes none,
+// packages/network/src/network.ts). The projector copies both fields
+// verbatim, so the detail shows e.g. "Score 0.73" above eleven 0.00 bars.
+// The signed sum of the shown parts is 0.00 under any weights — netValue
+// of all-zero components is exactly 0 — so the headline and its breakdown
+// contradict each other on the same screen. The plan score is real (its
+// own formula) and the stub score is the random baseline's by design, so
+// neither producer is changed.
+//
+// Fixture: the plan-like opportunity carries the pair the real producers
+// emit (a nonzero score with all-zero components); the engine-like
+// opportunity carries a real breakdown (fit 1, confidence 1, the rest 0;
+// netValue 0.40); the tiny-part opportunity carries one part at 0.0001,
+// which must still show its bars.
+// Correct: the plan detail shows "Score 0.73" and no part bars; the engine
+// detail shows "Score 0.40" and its bars; the tiny detail shows its bars.
+// The plan review card shows "no component breakdown for this source"
+// instead of a silent omission.
+import { serveHttp } from "../../../packages/core/src/runtime/http.ts";
+import { DAY } from "@thenetwork/core";
+import { setTimeout as sleep } from "node:timers/promises";
+import { expect, test } from "vitest";
+import { Window } from "happy-dom";
+import { act, createElement } from "react";
+import type { ObsMember, ObsOpportunity, OpportunityDetail } from "../src/types.ts";
+import type { ScoreComponents } from "@thenetwork/core";
+import { installDom } from "./dom.ts";
+
+const NOW = Date.UTC(2026, 10, 20, 12, 0, 0);
+const counters = () => ({ msgsIn: 0, msgsOut: 0, proactive: 0, proposals: 0, accepted: 0, meetings: 0, enjoymentSum: 0, enjoymentN: 0 });
+const member = (id: string, name: string): ObsMember => ({
+  id, name, city: "nyc", area: "East Village", state: "normal", joined: true, joinedAt: NOW - 30 * DAY,
+  minor: false, age: 30, counters: counters(),
+});
+const ZERO: ScoreComponents = {
+  fit: 0, mutualBenefit: 0, warmPath: 0, novelty: 0, timingFit: 0,
+  activationCost: 0, interruptionCost: 0, load: 0, repetition: 0, socialRisk: 0, confidence: 0,
+};
+const opp = (id: string, participants: string[], objective: string, score: number, components: ScoreComponents): ObsOpportunity => ({
+  id, kind: "intro", source: "network", generator: "plan", city: "nyc",
+  objective, score, components, explanations: {}, exploration: false,
+  participants, alternates: [], state: "INVITING", status: {}, enjoyment: {},
+  createdAt: NOW - 3 * DAY, updatedAt: NOW - DAY,
+});
+const detail = (o: ObsOpportunity): OpportunityDetail => ({
+  opportunity: o, members: [member("m1", "Maya Rao"), member("m2", "Jon Park"), member("m3", "Leo Diaz")],
+  messages: [], events: [],
+});
+
+async function setup() {
+  const planOpp = opp("oppPlan", ["m1", "m2"], "bouldering with Jon", 0.73, ZERO);
+  const engineOpp = opp("oppEngine", ["m1", "m3"], "coffee with Leo", 0.4, { ...ZERO, fit: 1, confidence: 1 });
+  const tinyOpp = opp("oppTiny", ["m2", "m3"], "hike with Leo", 0, { ...ZERO, fit: 0.0001 });
+  const details: Record<string, OpportunityDetail> = { oppPlan: detail(planOpp), oppEngine: detail(engineOpp), oppTiny: detail(tinyOpp) };
+  const api = await serveHttp({
+    hostname: "127.0.0.1", port: 0,
+    fetch: async (req) => {
+      const u = new URL(req.url);
+      const m = /^\/api\/opportunity\/([^/]+)$/.exec(u.pathname);
+      if (m && details[m[1]]) return Response.json(details[m[1]]);
+      return Response.json({ error: "unexpected" }, { status: 404 });
+    },
+  });
+  const window = new Window({ url: api.url.href });
+  const restoreDom = installDom(window, {
+    window, document: window.document, navigator: window.navigator,
+    location: window.location, history: window.history,
+    localStorage: window.localStorage, sessionStorage: window.sessionStorage,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  });
+  window.localStorage.setItem("obs.disclosure.score", "1");
+  const nativeFetch = globalThis.fetch;
+  globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: RequestInit) =>
+    nativeFetch(typeof input === "string" ? new URL(input, api.url) : input, init)) as typeof fetch;
+  const drawerBox = window.document.createElement("div");
+  const inspectorBox = window.document.createElement("div");
+  window.document.body.append(drawerBox, inspectorBox);
+  const { createRoot } = await import("react-dom/client");
+  const drawerRoot = createRoot(drawerBox as unknown as HTMLElement);
+  const inspectorRoot = createRoot(inspectorBox as unknown as HTMLElement);
+  const wait = async (check: () => boolean, label: string) => {
+    for (let i = 0; i < 400; i++) { if (check()) return; await act(async () => { await sleep(5); }); }
+    throw Error(`timed out waiting for: ${label}\nDRAWER: ${drawerBox.textContent ?? ""}\nINSPECTOR: ${inspectorBox.textContent ?? ""}`);
+  };
+  const { store } = await import("../web/store.ts");
+  const { Drawer } = await import("../web/drawer.tsx");
+  const { Inspector } = await import("../web/panels.tsx");
+  store.mode = "game";
+  store.app = "ntwrk";
+  store.me = { id: "staff", roles: ["admin"], grants: [{ role: "admin", app: "*" }], via: "token" } as typeof store.me;
+  (store as unknown as { clock: unknown }).clock = { now: NOW, start: 0, day: 1, playing: false, speed: 0, waitingForPlayer: false };
+  store.members.clear(); store.opps.clear(); store.feed = [];
+  for (const m of [member("m1", "Maya Rao"), member("m2", "Jon Park"), member("m3", "Leo Diaz")]) store.members.set(m.id, m);
+  store.opps.set(planOpp.id, planOpp); store.opps.set(engineOpp.id, engineOpp); store.opps.set(tinyOpp.id, tinyOpp);
+  await act(async () => {
+    store.setUI({ drawer: "pipeline", drawerOpen: true });
+    drawerRoot.render(createElement(Drawer));
+    inspectorRoot.render(createElement(Inspector));
+  });
+  const heading = () => inspectorBox.querySelector("h2")?.textContent?.trim() ?? "";
+  const text = () => inspectorBox.textContent ?? "";
+  const card = (title: string) =>
+    [...drawerBox.querySelectorAll("button")].find((b) => (b.textContent ?? "").includes(title));
+  const clickCard = async (title: string) => {
+    const c = card(title);
+    expect(c, `pipeline card ${title}`).toBeTruthy();
+    await act(async () => { c!.click(); });
+  };
+  const cleanup = async () => {
+    await act(async () => { drawerRoot.unmount(); inspectorRoot.unmount(); });
+    globalThis.fetch = nativeFetch;
+    await api.stop(true);
+    await window.happyDOM.close();
+    restoreDom();
+  };
+  return { store, wait, heading, text, card, clickCard, cleanup };
+}
+
+test("detail Score shows the headline without zero bars for a plan opportunity, and bars for an engine one", async () => {
+  const t = await setup();
+  try {
+    await t.wait(() => !!t.card("Maya + Jon") && !!t.card("Maya + Leo") && !!t.card("Jon + Leo"), "all three pipeline cards");
+    await t.clickCard("Maya + Jon");
+    await t.wait(() => t.heading() === "Maya + Jon" && t.text().includes("Score 0.73"), "plan detail + Score headline");
+    expect(t.text()).toContain("Score 0.73");
+    expect(t.text()).not.toContain("mutual benefit");
+    expect(t.text()).not.toContain("warm path");
+    expect(t.text()).not.toContain("0.00");
+    await t.clickCard("Maya + Leo");
+    await t.wait(() => t.heading() === "Maya + Leo" && t.text().includes("Score 0.40"), "engine detail + Score headline");
+    expect(t.text()).toContain("Score 0.40");
+    expect(t.text()).toContain("mutual benefit");
+    expect(t.text()).toContain("1.00");
+    await t.clickCard("Jon + Leo");
+    await t.wait(() => t.heading() === "Jon + Leo" && t.text().includes("Score 0.00"), "tiny detail + Score headline");
+    expect(t.text()).toContain("Score 0.00");
+    expect(t.text()).toContain("mutual benefit");
+  } finally {
+    await t.cleanup();
+  }
+});
+
+const reviewOpp = (id: string, participants: string[], objective: string, score: number, components: ScoreComponents, deadline: number): ObsOpportunity => ({
+  ...opp(id, participants, objective, score, components),
+  state: "IN_REVIEW",
+  review: { queuedAt: NOW - 3_600_000, deadline },
+});
+
+async function setupReview() {
+  const planOpp = reviewOpp("oppPlan", ["m1", "m2"], "bouldering with Jon", 0.73, ZERO, NOW + 3_600_000);
+  const engineOpp = reviewOpp("oppEngine", ["m1", "m3"], "coffee with Leo", 0.4, { ...ZERO, fit: 1, confidence: 1 }, NOW + 7_200_000);
+  const window = new Window({ url: "http://127.0.0.1" });
+  const restoreDom = installDom(window, {
+    window, document: window.document, navigator: window.navigator,
+    location: window.location, history: window.history,
+    localStorage: window.localStorage, sessionStorage: window.sessionStorage,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  });
+  const { createRoot } = await import("react-dom/client");
+  const queueBox = window.document.createElement("div");
+  window.document.body.append(queueBox);
+  const queueRoot = createRoot(queueBox as unknown as HTMLElement);
+  const wait = async (check: () => boolean, label: string) => {
+    for (let i = 0; i < 400; i++) { if (check()) return; await act(async () => { await sleep(5); }); }
+    throw Error(`timed out waiting for: ${label}\nQUEUE: ${queueBox.textContent ?? ""}`);
+  };
+  const { store } = await import("../web/store.ts");
+  const { ReviewQueue } = await import("../web/review.tsx");
+  store.mode = "game";
+  store.app = "ntwrk";
+  store.me = { id: "staff", roles: ["admin"], grants: [{ role: "admin", app: "*" }], via: "token" } as typeof store.me;
+  (store as unknown as { clock: unknown }).clock = { now: NOW, start: 0, day: 1, playing: false, speed: 0, waitingForPlayer: false };
+  store.members.clear(); store.opps.clear(); store.feed = [];
+  for (const m of [member("m1", "Maya Rao"), member("m2", "Jon Park"), member("m3", "Leo Diaz")]) store.members.set(m.id, m);
+  store.opps.set(planOpp.id, planOpp); store.opps.set(engineOpp.id, engineOpp);
+  store.setUI({ focus: null, reviewView: "pending" });
+  await act(async () => { queueRoot.render(createElement(ReviewQueue)); });
+  const text = () => queueBox.textContent ?? "";
+  const cleanup = async () => {
+    await act(async () => { queueRoot.unmount(); });
+    await window.happyDOM.close();
+    restoreDom();
+  };
+  return { wait, text, box: queueBox, cleanup };
+}
+
+test("review card shows a note for a plan opportunity instead of silent bars, and bars for an engine one", async () => {
+  const t = await setupReview();
+  try {
+    await t.wait(() => t.text().includes("Maya + Jon") && t.text().includes("Maya + Leo"), "both review cards");
+    const scoreBtn = (score: string) => [...t.box.querySelectorAll("button")].find((b) => (b.textContent ?? "").includes(`Score ${score}`));
+    const cardBtn = (title: string) => [...t.box.querySelectorAll("button")].find((b) => (b.textContent ?? "").includes(title));
+    // Only the selected card shows its body. The plan card is selected first (soonest deadline):
+    // its Score disclosure shows the note, not zero bars.
+    expect(scoreBtn("0.73"), "plan card Score disclosure").toBeTruthy();
+    await act(async () => { scoreBtn("0.73")!.click(); });
+    await t.wait(() => t.text().includes("no component breakdown for this source"), "plan card note");
+    expect(t.text()).toContain("Score 0.73");
+    expect(t.text()).toContain("no component breakdown for this source");
+    expect(t.text()).not.toContain("mutual benefit");
+    // Open the engine card next: its Score disclosure shows the bars, and the note is gone with the plan card.
+    expect(cardBtn("Maya + Leo"), "engine card").toBeTruthy();
+    await act(async () => { cardBtn("Maya + Leo")!.click(); });
+    await t.wait(() => t.text().includes("Score 0.40"), "engine card Score disclosure");
+    expect(scoreBtn("0.40"), "engine card Score disclosure").toBeTruthy();
+    await act(async () => { scoreBtn("0.40")!.click(); });
+    await t.wait(() => t.text().includes("mutual benefit"), "engine card bars");
+    expect(t.text()).toContain("Score 0.40");
+    expect(t.text()).toContain("mutual benefit");
+    expect(t.text()).not.toContain("no component breakdown for this source");
+  } finally {
+    await t.cleanup();
+  }
+});

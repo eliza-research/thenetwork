@@ -23,7 +23,7 @@ import {
 import type { AppProfile360, BookedPlan, DeliveryReason, HealthAlert, MemberDetail, MemberPhoto, PeonProfile360, SlopProfile360, MemberTimeline, ObsFeedItem, ObsMember, ObsMessage, OpportunityDetail, SystemEvent, TimeChoice } from "../src/types.ts";
 import { historyBetween, isBusyElsewhere, ReviewActions, reviewLine, VenueLink, wantsOf } from "./review.tsx";
 import { isMemberActive, OPEN, originLabel, originOf, store, useStore, type DrawerTab, type Fetched, type Focus, type Opp } from "./store.ts";
-import { ago, COMPONENT_SIGN, consoleNav, dur, humanize, jumpTo, num, pct, pickMember, sentence, shortDate, stamp } from "./ui.tsx";
+import { ago, COMPONENT_SIGN, consoleNav, dur, hasScoreParts, humanize, jumpTo, num, pct, pickMember, sentence, shortDate, stamp } from "./ui.tsx";
 
 const TONE: Record<string, StatusTone> = { bad: "destructive", warn: "warn", good: "ok", info: "primary", gold: "primary", neutral: "neutral" };
 const tone = (word: string | undefined): StatusTone => TONE[word ?? "neutral"] ?? "neutral";
@@ -889,6 +889,7 @@ function Truth({ d }: { d: MemberDetail }) {
 
 /** The score parts of a proposal: gains as green bars, costs as red bars, each from 0 to 1. */
 function ScoreParts({ c }: { c: ScoreComponents }) {
+  if (!hasScoreParts(c)) return null;
   const rows = (Object.keys(COMPONENT_SIGN) as (keyof ScoreComponents)[]).map(k => ({
     key: k, label: humanize(k.replace(/([A-Z])/g, "_$1")), value: c[k], tone: COMPONENT_SIGN[k] < 0 ? "destructive" as const : "ok" as const, title: `${k}: ${c[k]}`,
   }));
