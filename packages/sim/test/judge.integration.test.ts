@@ -27,6 +27,15 @@ describe("simulator judge and scenario regressions", () => {
     expect(spread.invariants.byRule.person_cap ?? 0).toBe(0);
   });
 
+  test("contact_address: a lowercase street address counts, and a time is not an address", () => {
+    const run = (body: string) =>
+      computeMetrics([...base(), out(T0, "a", {}, body)], {}).style.byRule.contact_address ?? 0;
+    expect(run("Meet me at 123 bedford ave tomorrow. Reply STOP to pause.")).toBe(1);
+    expect(run("Meet me at 40 W 25th St tomorrow. Reply STOP to pause.")).toBe(1);
+    expect(run("Meet me at 123 Bedford Ave tomorrow. Reply STOP to pause.")).toBe(1);
+    expect(run("See you at 7 PM at St. Mary's Park. Reply STOP to pause.")).toBe(0);
+  });
+
   test("minor_reported and age_resolved: minor signals stay permanent; age_unknown clears on adult age_resolved", () => {
     const log = (t: number, kind: string, detail: Record<string, unknown>): RunRecord => ({ t, type: "network_log", kind, detail });
     const contact = (id: string, ts: number): RunRecord => ({ t: ts, type: "proposal", source: "network", proposal: { id: "p1", participants: [id, "b"], type: "intro" } as never, oracle: {} as never });

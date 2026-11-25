@@ -20,7 +20,7 @@ const PHONE = /(?:\+?1[\s.-]?)?\(?\b\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b|\+\d{1,3}
 const EMAIL = /\b[\w.+-]+@[\w-]+\.[\w.-]+\b|\b[\w.+-]+ (?:at|\[at\]|\(at\)) [\w-]+ (?:dot|\[dot\]|\(dot\)) [a-z]{2,}\b/i;
 /** A social handle ("@maya.climbs", "IG: maya.climbs"). */
 const HANDLE = /(?:^|[\s(])@[A-Za-z0-9_][A-Za-z0-9_.]{2,29}\b|\b(?:ig|insta|instagram|twitter|x|tiktok|snap(?:chat)?|telegram|whatsapp|signal)\s*[:=]\s*@?[A-Za-z0-9_.]{3,30}\b/i;
-const ADDRESS = /\b\d{1,5}\s+(?:[A-Z][a-z]+\s){1,3}(?:St|Street|Ave|Avenue|Blvd|Boulevard|Rd|Road|Ln|Lane|Dr|Drive|Way|Pl|Place|Ct|Court|Ter|Terrace)\b/;
+const ADDRESS = /\b\d{1,5}(?!\s*(?:am|pm|a\.m|p\.m|:\d))(?:\s+(?!(?:at|in|on|near|by|to|from)\b)[a-z0-9.]+){1,3}\s+(?:st|street|ave|avenue|rd|road|blvd|boulevard|ln|lane|dr|drive|ct|court|pl|place|ter|terrace|pkwy|parkway)\b/i;
 const APT = /\b(?:apt|apartment|unit|suite)\s*#?\s*\d+[a-z]?\b/i;
 const OPT_OUT = /\b(reply stop|text stop|stop (anytime|any time|at any time)|opt[- ]out|unsubscribe|easy no|no pressure|no worries if not|feel free to (say no|pass|ignore)|totally fine to (say no|pass)|fine to say no|just say no|ignore this)\b/i;
 
