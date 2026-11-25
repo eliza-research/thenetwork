@@ -16,7 +16,7 @@
 //                 (must-have checkmarks, never a score, never a name), the intro after both yeses, and
 //                 the check-in. Every text still goes through the Network's leak guard.
 import { parseReply } from "@thenetwork/core";
-import type { Category, Facet, Intent, MemberId, WorldSnapshot } from "@thenetwork/core";
+import type { Category, City, Facet, Intent, MemberId, WorldSnapshot } from "@thenetwork/core";
 import { maxOpenings, missingPostingFields, openingCountNeedsCorrection, openingsInRange, payRangeAllowed, postingNeedsArea } from "../../core/src/generated/postingPolicy.ts";
 import { isSeatId, postingIdOf, seatIdOf, seatOwnerOf } from "@thenetwork/engine";
 import type { EngineInput } from "@thenetwork/engine";
@@ -30,6 +30,11 @@ export interface JobPosting {
   family: string; seniority?: number;
   openings: number; payMin: number; payMax: number;
   mode: PeonMode; area?: string;
+  /**
+   * Market the job is hired in. The engine reads `peon:market:*` to decide which members
+   * may see the job. Defaults to nyc for existing postings; the staff API can set sf or la.
+   */
+  market?: City;
   must: { skill: string; level: number }[]; nice: string[];
   sponsors?: boolean;
   status: "active" | "closed";
@@ -222,7 +227,7 @@ export interface IntakeStep { draft?: PostingDraft; text: string; ready: boolean
  */
 export function postingRevision(p: JobPosting): string {
   return JSON.stringify([
-    p.id, p.title, p.family, p.seniority, p.openings, p.payMin, p.payMax, p.mode, p.area, p.sponsors,
+    p.id, p.title, p.family, p.seniority, p.openings, p.payMin, p.payMax, p.mode, p.area, p.market, p.sponsors,
     p.status, p.closedReason, p.createdAt, p.updatedAt,
     p.must.map(m => `${m.skill}:${m.level}`).sort(),
     [...p.nice].sort(),
@@ -364,6 +369,7 @@ export function postingProblem(p: JobPosting): string | undefined {
   if (!Number.isInteger(p.openings) || !openingsInRange(p.openings)) return "invalid_openings";
   if (!Number.isFinite(p.payMin) || !Number.isFinite(p.payMax) || !payRangeAllowed(p.payMin, p.payMax)) return "pay_range_required";
   if (!["onsite", "hybrid", "remote"].includes(p.mode)) return "invalid_mode";
+  if (p.market !== undefined && !["nyc", "sf", "la"].includes(p.market)) return "invalid_market";
   if (p.must.length > 12 || p.nice.length > 12 || p.must.some(m => !m.skill || !Number.isInteger(m.level) || m.level < 0 || m.level > 5)) return "invalid_skills";
   return undefined;
 }
@@ -389,7 +395,7 @@ export function postingFacts(p: JobPosting): { intent: Intent; facets: Facet[] }
     ], "agent_private"),
     f("role", "fact", `${p.title} role`, [`${T.family}${p.family}`, ...(p.seniority ? [`${T.seniority}${p.seniority}`] : [])]),
     f("pay", "fact", `Pay $${p.payMin}k-$${p.payMax}k`, [`${T.pay}${p.payMin}-${p.payMax}`]),
-    f("mode", "fact", where(p.mode, p.area), [`${T.mode}${p.mode}`, `${T.market}nyc`, ...(p.area ? [`${T.area}${p.area}`] : [])]),
+    f("mode", "fact", where(p.mode, p.area), [`${T.mode}${p.mode}`, `${T.market}${p.market ?? "nyc"}`, ...(p.area ? [`${T.area}${p.area}`] : [])]),
     ...[...mustLevels].map(([skill, level]) => f(`must-${skill}`, "skill", `Must have ${human(skill)}`, [`${T.must}${skill}:${level}`])),
     ...[...new Set(p.nice)].map(n => f(`nice-${n}`, "skill", `Nice to have ${human(n)}`, [`${T.nice}${n}`])),
     f("open", "fact", "Openings", [`${T.openings}${p.openings}`, `${T.urgency}2`, `${T.sponsors}${p.sponsors ? "yes" : "no"}`], "matchable"),
@@ -411,6 +417,7 @@ export function postingFromFacts(intent: Intent, facets: readonly Facet[]): JobP
     id: intent.id, managerId: intent.memberId, title: intent.objective.replace(/^Hire:\s*/i, ""), family: one(T.family) ?? slug(intent.objective),
     ...(seniority ? { seniority: Number(seniority) } : {}),
     openings: Number.isFinite(openings) ? openings : 1, payMin, payMax, mode: (one(T.mode) ?? "onsite") as PeonMode, ...(one(T.area) ? { area: one(T.area)! } : {}),
+    ...(one(T.market) ? { market: one(T.market) as City } : {}),
     must: tags.filter(t => t.startsWith(T.must)).map(t => { const [s, l] = t.slice(T.must.length).split(":"); return { skill: s!, level: Number(l ?? 2) }; }),
     nice: tags.filter(t => t.startsWith(T.nice)).map(t => t.slice(T.nice.length)),
     ...(one(T.sponsors) ? { sponsors: one(T.sponsors) === "yes" } : {}),

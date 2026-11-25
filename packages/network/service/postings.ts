@@ -159,6 +159,7 @@ export function jobPostingRoutes(deps: PostingRouteDeps): (req: Request, path: s
         ...(Number.isInteger(b.seniority) ? { seniority: b.seniority } : prev?.seniority ? { seniority: prev.seniority } : {}),
         openings: b.openings ?? prev?.openings ?? 1, payMin: b.payMin ?? prev?.payMin, payMax: b.payMax ?? prev?.payMax,
         mode: b.mode ?? prev?.mode ?? "onsite", ...(str(b.area, 40) ?? prev?.area ? { area: (str(b.area, 40) ?? prev!.area)!.toLowerCase().replace(/[^a-z0-9]+/g, "_") } : {}),
+        ...(b.market === "nyc" || b.market === "sf" || b.market === "la" ? { market: b.market } : prev?.market ? { market: prev.market } : {}),
         must: b.must === undefined && prev ? prev.must : must, nice: b.nice === undefined && prev ? prev.nice : nice.map(x => x.skill),
         ...(typeof b.sponsors === "boolean" ? { sponsors: b.sponsors } : prev?.sponsors !== undefined ? { sponsors: prev.sponsors } : {}),
         status: "active", createdAt: prev?.createdAt ?? now, updatedAt: now,
