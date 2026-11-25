@@ -373,6 +373,8 @@ describe("runTick and the tick lock", () => {
     expect(cancelledRows.opportunities.map(o => o.state)).toEqual(["CANCELLED", "CANCELLED"]);
     expect(cancelledRows.participations.filter(p => p.opportunity_id === "cancelled-told").map(p => p.status)).toEqual(["accepted", "accepted"]);
     expect(cancelledRows.participations.filter(p => p.opportunity_id === "cancelled-untold").map(p => p.status)).toEqual(["accepted", "accepted"]);
+    expect(cancelledRows.participations.filter(p => p.opportunity_id === "cancelled-told").map(p => p.booked_told)).toEqual([true, true]);
+    expect(cancelledRows.participations.filter(p => p.opportunity_id === "cancelled-untold").map(p => p.booked_told)).toEqual([false, false]);
   }, T);
 });
 

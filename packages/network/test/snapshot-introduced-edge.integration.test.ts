@@ -48,7 +48,12 @@ describe.skipIf(!pgAvailable)("snapshot introduced edge (Postgres)", () => {
       (${app}, 's42:z', 'Zoe Z', 'nyc', 30, 'active', null, ${new Date(START)})`;
     await sql`insert into network.members (app_id, id, name, home_city, age, account_status, invited_by, joined_at) values
       (${app}, 's42:c1', 'Cleo One', 'nyc', 30, 'active', null, ${new Date(START)}),
-      (${app}, 's42:c2', 'Cleo Two', 'nyc', 30, 'active', null, ${new Date(START)})`;
+      (${app}, 's42:c2', 'Cleo Two', 'nyc', 30, 'active', null, ${new Date(START)}),
+      (${app}, 's42:aa', 'Ana A', 'nyc', 30, 'active', null, ${new Date(START)}),
+      (${app}, 's42:ab', 'Ana B', 'nyc', 30, 'active', null, ${new Date(START)}),
+      (${app}, 's42:ac', 'Ana C', 'nyc', 30, 'active', null, ${new Date(START)}),
+      (${app}, 's42:ad', 'Ana D', 'nyc', 30, 'active', null, ${new Date(START)}),
+      (${app}, 's42:ae', 'Ana E', 'nyc', 30, 'active', null, ${new Date(START)})`;
     await sql`insert into network.members (app_id, id, name, home_city, age, account_status, invited_by, joined_at) values
       ('friends', 's42:fa', 'Fay A', 'nyc', 30, 'active', null, ${new Date(START)}),
       ('friends', 's42:fb', 'Fay B', 'nyc', 30, 'active', null, ${new Date(START)})`;
@@ -66,7 +71,10 @@ describe.skipIf(!pgAvailable)("snapshot introduced edge (Postgres)", () => {
       (${app}, 's42:removed', 'intro', 'SCHEDULED', 'nyc', 'coffee', ${BOOKED}),
       (${app}, 's42:completed', 'intro', 'COMPLETED', 'nyc', 'coffee', ${BOOKED}),
       (${app}, 's42:completed-untold', 'intro', 'COMPLETED', 'nyc', 'coffee', ${BOOKED}),
-      (${app}, 's42:group', 'group', 'SCHEDULED', 'nyc', 'coffee', ${BOOKED})`;
+      (${app}, 's42:group', 'group', 'SCHEDULED', 'nyc', 'coffee', ${BOOKED}),
+      (${app}, 's42:cancelled-one-told', 'intro', 'CANCELLED', 'nyc', 'coffee', ${BOOKED}),
+      (${app}, 's42:told-elsewhere-booked', 'intro', 'SCHEDULED', 'nyc', 'coffee', ${BOOKED}),
+      (${app}, 's42:told-elsewhere-cancelled', 'intro', 'CANCELLED', 'nyc', 'coffee', ${BOOKED})`;
     await sql`insert into network.opportunities (app_id, id, kind, state, city, objective, created_at) values
       ('friends', 's42:friends-booked', 'intro', 'SCHEDULED', 'nyc', 'coffee', ${BOOKED})`;
     await sql`insert into network.participations (app_id, opportunity_id, member_id, role, status) values
@@ -105,33 +113,36 @@ describe.skipIf(!pgAvailable)("snapshot introduced edge (Postgres)", () => {
     await sql`insert into network.edges (app_id, from_id, to_id, type, strength, explicit, created_at) values
       (${app}, 's42:a', 's42:c', 'knows', 0.8, true, ${new Date(START)}),
       (${app}, 's42:e', 's42:f', 'introduced', 0.5, true, ${new Date(START)})`;
-    const told = (id: string, bookedTold: string[]) => ({ id, bookedTold });
-    const saved = { opps: [
-      told("s42:booked", ["s42:a", "s42:b"]),
-      told("s42:booked-again", ["s42:a", "s42:b"]),
-      told("s42:onesided", ["s42:a", "s42:d"]),
-      told("s42:stored", ["s42:e", "s42:f"]),
-      told("s42:cancelled-told", ["s42:g", "s42:h"]),
-      told("s42:cancelled-untold", []),
-      told("s42:skipped", ["s42:k", "s42:l"]),
-      told("s42:dropped", ["s42:m", "s42:n"]),
-      told("s42:pending", ["s42:o", "s42:p"]),
-      told("s42:alternate", ["s42:q", "s42:r"]),
-      told("s42:removed", ["s42:t", "s42:u"]),
-      told("s42:completed", ["s42:v", "s42:w"]),
-      told("s42:completed-untold", []),
-      told("s42:group", ["s42:x", "s42:y", "s42:z"]),
-    ] };
-    await sql`insert into network.network_state (id, version, state, saved_at) values
-      ('ntwrk:nyc', 1, ${saved}::jsonb, ${new Date(START)})`;
+    await sql`update network.participations set booked_told = true where (opportunity_id, member_id) in (
+      ('s42:booked', 's42:a'), ('s42:booked', 's42:b'),
+      ('s42:booked-again', 's42:a'), ('s42:booked-again', 's42:b'),
+      ('s42:onesided', 's42:a'), ('s42:onesided', 's42:d'),
+      ('s42:stored', 's42:e'), ('s42:stored', 's42:f'),
+      ('s42:cancelled-told', 's42:g'), ('s42:cancelled-told', 's42:h'),
+      ('s42:skipped', 's42:k'), ('s42:skipped', 's42:l'),
+      ('s42:dropped', 's42:m'), ('s42:dropped', 's42:n'),
+      ('s42:pending', 's42:o'), ('s42:pending', 's42:p'),
+      ('s42:alternate', 's42:q'), ('s42:alternate', 's42:r'),
+      ('s42:removed', 's42:t'), ('s42:removed', 's42:u'),
+      ('s42:completed', 's42:v'), ('s42:completed', 's42:w'),
+      ('s42:group', 's42:x'), ('s42:group', 's42:y'), ('s42:group', 's42:z'),
+      ('s42:friends-booked', 's42:fa'), ('s42:friends-booked', 's42:fb'))`;
+    await sql`insert into network.participations (app_id, opportunity_id, member_id, role, status, booked_told) values
+      (${app}, 's42:cancelled-one-told', 's42:aa', 'participant', 'accepted', true),
+      (${app}, 's42:cancelled-one-told', 's42:ab', 'participant', 'accepted', false),
+      (${app}, 's42:told-elsewhere-booked', 's42:ac', 'participant', 'confirmed', true),
+      (${app}, 's42:told-elsewhere-booked', 's42:ad', 'participant', 'confirmed', true),
+      (${app}, 's42:told-elsewhere-cancelled', 's42:ac', 'participant', 'accepted', false),
+      (${app}, 's42:told-elsewhere-cancelled', 's42:ae', 'participant', 'accepted', true)`;
   }, 120_000);
   afterAll(async () => { await sql?.close(); await admin.unsafe(`drop database if exists ${db} with (force)`); await admin.close(); });
 
-  test("booked-plan ties only: state, status, role, keep, dedup, stored row, and bookedTold members", async () => {
+  test("booked-plan ties only: state, status, role, keep, dedup, stored row, and booked_told members", async () => {
     const snap = await loadSnapshot(sql, BOOKED.getTime(), { app: "ntwrk" });
     const keys = snap.edges.map(e => `${e.type}:${e.from}->${e.to}`).sort();
     expect(keys).toEqual([
       "introduced:s42:a->s42:b",
+      "introduced:s42:ac->s42:ad",
       "introduced:s42:e->s42:f",
       "introduced:s42:g->s42:h",
       "introduced:s42:v->s42:w",

@@ -131,9 +131,14 @@ create table if not exists network.participations (
   enjoyment      real,
   invited_at     timestamptz,
   responded_at   timestamptz,
+  booked_told    boolean not null default false,
   primary key (opportunity_id, member_id)
 );
 create index if not exists participations_member on network.participations (member_id);
+-- The console projection of the saved state's bookedTold: the booked plan reached this member.
+-- The snapshot builder reads it here, where the console's read roles already have access, instead
+-- of reading network.network_state, which those roles must never read.
+alter table network.participations add column if not exists booked_told boolean not null default false;
 
 -- 32.8 Human review: every opportunity the Network composes waits here before any member is
 -- contacted. decision is null while it waits; 'expired' = missed the SLA and was never sent.

@@ -119,8 +119,8 @@ export function consoleRows(state: NetworkState, savedAt = state.savedAt, city =
   const opportunities: Row[] = [], participations: Row[] = [], review_items: Row[] = [];
   for (const o of state.opps) {
     const status = new Map(o.status);
-    for (const id of o.participants) participations.push({ opportunity_id: o.id, member_id: id, role: "participant", status: partStatus(o, status.get(id), id), enjoyment: null, invited_at: null, responded_at: null });
-    for (const id of o.alternates) if (!o.participants.includes(id)) participations.push({ opportunity_id: o.id, member_id: id, role: "alternate", status: "alternate", enjoyment: null, invited_at: null, responded_at: null });
+    for (const id of o.participants) participations.push({ opportunity_id: o.id, member_id: id, role: "participant", status: partStatus(o, status.get(id), id), booked_told: o.bookedTold?.includes(id) ?? false, enjoyment: null, invited_at: null, responded_at: null });
+    for (const id of o.alternates) if (!o.participants.includes(id)) participations.push({ opportunity_id: o.id, member_id: id, role: "alternate", status: "alternate", booked_told: false, enjoyment: null, invited_at: null, responded_at: null });
     opportunities.push({
       id: o.id, kind: o.kind, state: oppState(o), source: SOURCE[o.origin] ?? "network", generator: o.generator, category: o.category, city,
       objective: o.objective, score: o.score, components: o.components, explanations: o.explanations, exploration: o.exploration,

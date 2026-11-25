@@ -121,9 +121,7 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
       where p.app_id = ${app} and p.role = 'participant'
         and o.state in ('SCHEDULED', 'COMPLETED', 'CANCELLED')
         and p.status in ('accepted', 'confirmed', 'attended', 'no_show')
-        and exists (select 1 from network.network_state saved
-          join lateral jsonb_array_elements(saved.state->'opps') item on item->>'id' = o.id
-          where saved.app_id = ${app} and item->'bookedTold' ? p.member_id)
+        and p.booked_told
       order by o.created_at, o.id, p.member_id`,
   ]);
   // Runtime conversation ownership takes precedence; it never creates or changes physical presence.

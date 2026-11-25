@@ -47,9 +47,12 @@ create table if not exists network.participations (
   enjoyment      real,
   invited_at     timestamptz,
   responded_at   timestamptz,
+  booked_told    boolean not null default false,
   primary key (opportunity_id, member_id)
 );
 create index if not exists participations_member on network.participations (member_id);
+-- The console projection of the saved state's bookedTold: the booked plan reached this member.
+alter table network.participations add column if not exists booked_told boolean not null default false;
 
 -- Same definition as packages/db/schema.sql, plus the columns below.
 create table if not exists network.review_items (
