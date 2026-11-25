@@ -55,10 +55,6 @@ export async function feedbackAfterFraudGate(b: Block): Promise<void> {
   await b.run("capital: feedback on a reversed attendance earns nothing", () => {
     const T0 = Date.UTC(2026, 0, 1);
     const at = (d: number, n = 0) => T0 + d * DAY + n;
-    // Feedback after the fraud reversal: the attendance is gone, so
-    // giving feedback on it afterwards must not earn anything. On the
-    // base code the feedback credit is still written, leaving a +0.5 NC
-    // credit on a fraudulent attendance.
     const L = new CapitalLedger();
     for (const [i, who] of ["a", "b"].entries())
       L.record({ id: `join-${who}`, t: at(0, i), type: "member_joined", member: who, age: 30 });
@@ -74,8 +70,6 @@ export async function feedbackAfterFraudGate(b: Block): Promise<void> {
     L.record({ id: "feedback-a-p1", t: at(4), type: "feedback_given", member: "a", planId: "p1" });
     expect(L.all().filter(e => e.category === "feedback" && e.member === "a")).toEqual([]);
     expect(L.balance("a")).toBe(-10);
-    // Control: feedback given before the fraud is reversed with the
-    // attendance (basis), so the member ends at the same -10 balance.
     const M = new CapitalLedger();
     for (const [i, who] of ["d", "e"].entries())
       M.record({ id: `join-${who}`, t: at(0, i), type: "member_joined", member: who, age: 30 });
