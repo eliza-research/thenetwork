@@ -458,7 +458,7 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
   await scenarioContactEvidenceGates(b);
   await inviteRootGate(b);
   await vouchPeriodGate(b);
-    await fraudReversalEligibilityGate(b);
+  await fraudReversalEligibilityGate(b);
   await probeDeclineReceiptGate(b);
   await b.run("judge: a time counter requires agreement before a name can be revealed", () => {
     const person = (id: MemberId, name: string): RunRecord => ({ t: 0, type: "persona", persona: {
