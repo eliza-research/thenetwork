@@ -12,9 +12,9 @@
 // spec/consolePanels.md, "Only an admin resets the world, chooses a level or chooses the reviewer"
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  canChooseFeedSegment, canPickRun, canReceiveDiff, canReceiveRuns, canResetWorld, canToggleCompare, chooseFeedSegment, columnShown, compareShown, feedEmptyNote,
+  canChooseFeedSegment, canPickRun, canReceiveDiff, canResetWorld, canToggleCompare, chooseFeedSegment, columnShown, compareShown, feedEmptyNote,
   feedSegmentNow, feedSegmentOffered, feedShows, gameView, initial as initialPanels, ladderView, maxProactiveHundredths, maxRunPicks, metricsSectionShown, pickRun, proactiveWarns, receiveDiff,
-  receiveRuns, reviewerSwitchShown, runsView, toggleCompare, type ConsolePanels, type EventGroup, type FeedNote, type FeedSegment,
+  reviewerSwitchShown, runsView, toggleCompare, type ConsolePanels, type EventGroup, type FeedNote, type FeedSegment,
   type PipelineColumn, type RunCompare, type StateFilter,
 } from "../../../packages/core/src/generated/consolePanels.ts";
 import { panelStaffOf } from "./ops.tsx";
@@ -30,6 +30,7 @@ import type { EngineRunSummary, ObsFeedItem } from "../src/types.ts";
 import { BiasMonitor, Config, Growth, Lab, Requests, RunDiffView, SafetyCases, Scorecard } from "./admin.tsx";
 import { handleFeedRowKey } from "./feed-row-key.ts";
 import { gamePanelsOf, Levels } from "./network.tsx";
+import { reconcileRunCompare, type RunCompareSelection } from "./run-compare.ts";
 import { CostPanel } from "./ops.tsx";
 import { stateLabel } from "./panels.tsx";
 import { MemberName, ReviewerSwitch, ReviewQueue, ScoreParts } from "./review.tsx";
@@ -281,16 +282,13 @@ function Engine() {
   const f = s.ui.focus;
   const runs = s.runs.filter(r => s.inRange(r.at) && s.focusRun(r)).reverse();
   const [sel, setSel] = useState<string>();
-  const [compare, setCompare] = useState<{ model: RunCompare; ids: string[] }>({ model: initialPanels.runs, ids: [] });
+  const [selection, setCompare] = useState<RunCompareSelection>({ model: initialPanels.runs, ids: [] });
   const panelsWith = (model: RunCompare): ConsolePanels => ({ ...initialPanels, runs: model });
+  const compare = reconcileRunCompare(selection, runs);
   useEffect(() => {
-    setCompare(c => {
-      if (!canReceiveRuns(panelsWith(c.model), runs.length)) return c;
-      const model = receiveRuns(panelsWith(c.model), runs.length).runs;
-      return { model, ids: model.picked === 0 ? [] : c.ids };
-    });
-  }, [runs.length]);
-  const model: RunCompare = { ...compare.model, runTotal: runs.length };
+    if (compare !== selection) setCompare(current => current === selection ? compare : current);
+  }, [compare, selection]);
+  const model = compare.model;
   const panels = panelsWith(model);
   const view = runsView(model);
   const focusRunId = f?.kind === "opportunity" ? s.opps.get(f.id)?.runId : undefined;
@@ -303,7 +301,7 @@ function Engine() {
     setCompare({ model: pickRun(panels, already).runs, ids: already ? compare.ids.filter(x => x !== id) : [...compare.ids, id].slice(-maxRunPicks) });
   };
   const answer = (loaded: boolean) => setCompare(c => (canReceiveDiff(panelsWith(c.model)) ? { ...c, model: receiveDiff(panelsWith(c.model), loaded).runs } : c));
-  const pair = compare.ids.length === maxRunPicks ? compare.ids.map(id => s.runs.find(r => r.id === id)!).filter(Boolean).sort((a, b) => a.at - b.at) : [];
+  const pair = compare.ids.length === maxRunPicks ? compare.ids.map(id => runs.find(r => r.id === id)!).filter(Boolean).sort((a, b) => a.at - b.at) : [];
   const runText = (r: EngineRunSummary) => <>{stamp(r.at)} <span className="text-muted-foreground">· {r.proposals} proposals{r.shadow ? " · shadow" : ""}</span></>;
   return (
     <div className="flex gap-4">
