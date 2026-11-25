@@ -378,8 +378,7 @@ export class CapitalLedger {
     if (ev.t - m.joinedAt > this.cfg.vouch.valueWindowDays * DAY) return;
     const e = this.credit(m.vouchedBy, "vouch", this.cfg.credit.vouch, ev, [invitee], m.valueProviders, "vouch: invitee active and got value", out);
     if (e) m.vouchCreditId = e.id;
-  
-  }
+    }
     private takeStake(inviteeId: MemberId, invitee: MemberRec, ev: CapitalEvent, out: LedgerEntry[]): void {
       const voucher = invitee.vouchedBy;
       if (!voucher || invitee.stakeTaken || !this.isEligible(voucher)) return;
