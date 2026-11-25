@@ -585,6 +585,8 @@ const OPT_OUT_EN: RegExp[] = [
   new RegExp(`\\b(?:stop|quit|cease) (?:texting|messaging|contacting|sending|bothering|spamming|writing to|emailing|calling) ${ME}\\b`),
   new RegExp(`\\bstop (?:sending (?:me |us |these |the |your |all )?|the |these |your |all |all the |all these |all of these )${MSGS}\\b`),
   new RegExp(`\\b(?:stop|quit|cease|no more|enough) ${MSGS}\\b`),
+  /^(?:please |pls )?(?:stop|no more|enough) (?:calls|phone calls|robocalls)(?: (?:please|pls|thanks|thank you))*$/,
+  /^(?:please |pls )?(?:don't|do not|dont|never) (?:ever )?call (?:me|us)(?: (?:again|anymore|any more|ever again))?(?: (?:please|pls|thanks|thank you))*$/,
   /\bunsubscribe\b/,
   /\bopt (?:me )?out\b/,
   new RegExp(`\\b(?:remove|take) ${ME} (?:off|from) (?:your|this|the|all|every|ur) (?:list|lists|texts?|messages|contacts)\\b`),
