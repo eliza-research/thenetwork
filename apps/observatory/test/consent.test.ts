@@ -221,6 +221,9 @@ describe("consent-first game mode (NYC)", () => {
   test.skipIf(!pgAvailable)("consent game → Postgres → real parity", async () => {
     const url = await testDb();
     const { state: gs, rows } = await defaultGameFixture();
+    const toldKeys = new Set(rows.messages.filter(m => m.simulated_booking_start != null).map(m => `${m.opportunity_id}|${m.member_id}`));
+    expect(toldKeys.size).toBeGreaterThan(0);
+    expect(rows.participations.map(p => p.booked_told)).toEqual(rows.participations.map(p => p.role === "participant" && toldKeys.has(`${p.opportunity_id}|${p.member_id}`)));
     const sql = new SQL(url);
     await writeRows(sql, rows, { truncate: true });
     await sql.close();

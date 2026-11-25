@@ -365,16 +365,17 @@ describe("runTick and the tick lock", () => {
     const base = state.opps.find(o => o.participants.length >= 2);
     expect(base).toBeDefined();
     const pair = base!.participants.slice(0, 2);
-    const cancelled = (id: string, told: boolean) => ({
+    const cancelled = (id: string, told: string[]) => ({
       ...base!, id, stage: "closed" as const, closedFrom: "scheduled", participants: pair, alternates: [],
-      status: pair.map((p): [typeof p, "yes"] => [p, "yes"]), bookedTold: told ? pair : [],
+      status: pair.map((p): [typeof p, "yes"] => [p, "yes"]), bookedTold: told,
     });
-    const cancelledRows = consoleRows({ ...state, opps: [cancelled("cancelled-told", true), cancelled("cancelled-untold", false)] });
-    expect(cancelledRows.opportunities.map(o => o.state)).toEqual(["CANCELLED", "CANCELLED"]);
+    const cancelledRows = consoleRows({ ...state, opps: [cancelled("cancelled-told", pair), cancelled("cancelled-untold", []), cancelled("cancelled-one-told", [pair[0]!])] });
+    expect(cancelledRows.opportunities.map(o => o.state)).toEqual(["CANCELLED", "CANCELLED", "CANCELLED"]);
     expect(cancelledRows.participations.filter(p => p.opportunity_id === "cancelled-told").map(p => p.status)).toEqual(["accepted", "accepted"]);
     expect(cancelledRows.participations.filter(p => p.opportunity_id === "cancelled-untold").map(p => p.status)).toEqual(["accepted", "accepted"]);
     expect(cancelledRows.participations.filter(p => p.opportunity_id === "cancelled-told").map(p => p.booked_told)).toEqual([true, true]);
     expect(cancelledRows.participations.filter(p => p.opportunity_id === "cancelled-untold").map(p => p.booked_told)).toEqual([false, false]);
+    expect(cancelledRows.participations.filter(p => p.opportunity_id === "cancelled-one-told").map(p => p.booked_told)).toEqual([true, false]);
   }, T);
 });
 
