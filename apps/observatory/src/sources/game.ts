@@ -108,6 +108,7 @@ export class GameSource implements DataSource {
   private proposalSeq = 0;
   private pendingReset = false;
   private opts: Required<Omit<GameOptions, "dataDir" | "scenario">> & { dataDir: string; scenario: string | null };
+  private freeDays: number;
   readonly app: AppId;
   /** Sim hour of the last judge run (the scorer runs at most once per sim hour). */
   private judgeHour = -1;
@@ -141,6 +142,7 @@ export class GameSource implements DataSource {
       network: opts.network ?? "consent", city: opts.city ?? "nyc", scenario: opts.scenario ?? null, review: opts.review ?? "auto",
       timeAware: opts.timeAware ?? false,
     };
+    this.freeDays = opts.days ?? 60;
   }
 
   // ------------------------------------------------------------------ lifecycle
@@ -708,10 +710,12 @@ export class GameSource implements DataSource {
         }
         case "reset": {
           await this.dispose();
+          const scenario = cmd.scenario === undefined ? this.opts.scenario : cmd.scenario;
+          const level = scenario ? SCENARIOS.find(x => x.id === scenario) : undefined;
           Object.assign(this.opts, {
             seed: cmd.seed ?? this.opts.seed, engine: cmd.engine ?? this.opts.engine,
-            personas: cmd.personas ?? this.opts.personas, days: cmd.days ?? this.opts.days,
-            network: cmd.network ?? this.opts.network, scenario: cmd.scenario === undefined ? this.opts.scenario : cmd.scenario,
+            personas: cmd.personas ?? this.opts.personas, days: cmd.days ?? (scenario ? level?.days ?? this.opts.days : this.freeDays),
+            network: cmd.network ?? this.opts.network, scenario,
           });
           this.sparksUsed.clear(); this.lensUsed = false; this.peeks = 0; this.extraPoints = {};
           this.missions = []; this.strikeIds.clear(); this.proposalSeq = 0;
