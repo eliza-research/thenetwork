@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
-import { MIGRATIONS_DIR } from "../../observatory/db/migrate.ts";
+import { MIGRATIONS_DIR } from "../../db/migrate.ts";
 import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { SIGNALS_PATH, TURN_PATH, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
@@ -157,7 +157,7 @@ describe.skipIf(!pgAvailable)("agent signals through the signed service path (Po
     expect(await sql`select id from network.events where app_id = 'friends' and type = 'member_state_requested' and object_id = ${memberId}`).toHaveLength(1);
   }, 120_000);
 
-  test("an opt-out that an older version stored as waiting is applied once by the 0080 migration and is never listed as waiting", async () => {
+  test("an opt-out that an older version stored as waiting is applied once by the 0081 migration and is never listed as waiting", async () => {
     const { memberId } = await joinFriends("Cy", 33);
     const signalled = new Date(clock.now() + HOUR);
     const storedWaitingOptOutId = `service-signal:stored-waiting-opt-out-${memberId}:0`;
@@ -165,7 +165,7 @@ describe.skipIf(!pgAvailable)("agent signals through the signed service path (Po
       values ('friends', ${storedWaitingOptOutId}, ${memberId}, 'fact', ${CANARY}, ${sql.array(["signal:opt_out"], "TEXT")}, 'agent_private', 'inferred', 'chat', 'proposed', ${signalled})`;
     expect(await listedSignals("rev-tok")).toEqual({ ok: true, signals: [] });
     expect((await staff("saf-tok", "POST", `/signals/${encodeURIComponent(storedWaitingOptOutId)}`, { decision: "reviewed", reason: "Checked the old opt-out" })).status).toBe(404);
-    const migration = readFileSync(join(MIGRATIONS_DIR, "0080_agent_opt_out_signals_applied.sql"), "utf8");
+    const migration = readFileSync(join(MIGRATIONS_DIR, "0081_agent_opt_out_signals_applied.sql"), "utf8");
     const agentPauses = async () => (await sql<{ actor_type: string; payload: { state: string; source: string } }[]>`select actor_type, payload from network.events
       where app_id = 'friends' and type = 'member_state_requested' and object_id = ${memberId} order by id`).map(e => [e.actor_type, e.payload.state, e.payload.source]);
     const status = async () => (await sql<{ status: string }[]>`select status from network.facets where app_id = 'friends' and id = ${storedWaitingOptOutId}`).map(r => r.status);

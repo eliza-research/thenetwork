@@ -226,7 +226,7 @@ export function failedCallbackReturnsToPage(page: CallbackPage): boolean {
 //@ pure
 export function lawFailureCodeIsOneOfThree(failureStatus: number): boolean {
   //@ ensures \result === true
-  return ["sign_in_expired", "sign_in_refused", "sign_in_unavailable"].includes(callbackFailureCode(failureStatus));
+  return (["sign_in_expired", "sign_in_refused", "sign_in_unavailable"] as string[]).includes(callbackFailureCode(failureStatus));
 }
 
 /** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) */

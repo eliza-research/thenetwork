@@ -15,12 +15,12 @@ import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { earliestDayKeyOf } from "../../core/src/birth-date.ts";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import type { SendRequest } from "../../blooio/src/types.ts";
-import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
+import { applySchema, DEV_PG_PORT, devPgUp } from "../../db/dev-pg.ts";
 import { APPS, type AppId } from "../../platform/src/apps.ts";
 import type { OtpProvider } from "../../platform/src/otp.ts";
 import { LocalDiskPhotoStorage, PHOTO_CONSENT, type PhotoRater } from "../../platform/src/photos.ts";
 import { BlooioAdapter, DryRunAdapter } from "../service/channel.ts";
-import { ServiceClient } from "../../observatory/src/sources/service.ts";
+import { ServiceClient } from "../../../apps/observatory/src/sources/service.ts";
 import { NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";
 import { PHOTO_TEXT } from "../service/photoIntake.ts";
 import { Mini, START } from "./mini.ts";
@@ -1016,9 +1016,10 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     // Founder decision 9: no ID check, a stated adult age is enough.
     expect((await upload()).status).toBe(200);
     expect(readdirSync(dir)).toHaveLength(1);
-    // A failed age check recorded by staff (safety only) refuses further photos.
+    // A failed age check recorded by staff (safety only) deletes the photos and refuses further photos.
     expect((await staff(s, "rev-tok", "POST", `/apps/slop/members/${a}/verify`, { check: "age", result: "fail", note: "staff review" })).status).toBe(403);
     expect(await (await staff(s, "saf-tok", "POST", `/apps/slop/members/${a}/verify`, { check: "age", result: "fail", note: "staff review" })).json()).toEqual({ ok: true });
+    expect(readdirSync(dir)).toHaveLength(0);
     expect(await (await upload()).json()).toEqual({ ok: false, error: "not_verified" });
     expect(readdirSync(dir)).toHaveLength(0);
     expect((await sql`select count(*)::int as n from platform.photos`)[0].n).toBe(0);

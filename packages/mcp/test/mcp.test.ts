@@ -1,5 +1,3 @@
-// MCP over Streamable HTTP: 2026-07-28 (per-request _meta and headers) and the legacy initialize
-// handshake, the OpenAI surface that hides slop, and tool inputs that never take a phone or a code.
 import { describe, expect, test } from "vitest";
 import { defaultApps } from "../src/apps.ts";
 import type { MinorNotice } from "../../core/src/generated/textEnrollment.ts";
@@ -183,7 +181,7 @@ describe("Streamable HTTP, 2026-07-28", () => {
   });
 });
 
-describe("surface=openai hides slop", () => {
+describe("the public OpenAI surface", () => {
   test("the OpenAI surface respects an app's registry opt-out on both connector paths", async () => {
     // spec/connectorTools.md, "A connection binds to one host on one surface"
     const apps = defaultApps();
@@ -195,12 +193,12 @@ describe("surface=openai hides slop", () => {
     expect((await rpc(setup({ apps }), `${host}/mcp`, "tools/list")).res.status).toBe(200);
   });
 
-  test("no slop in tools/list, app_info or start_signup; slop.date has no OpenAI endpoint", async () => {
+  test("the OpenAI surface excludes slop from every public listing and does not serve a slop endpoint", async () => {
     const env = setup();
     const l = await rpc(env, OPENAI, "tools/list");
-    const tools = l.body!.result.tools;
-    expect(tools.find((t: any) => t.name === "app_info").inputSchema.properties.app.enum).toEqual(["ntwrk", "peon", "friends"]);
-    expect(l.text).not.toMatch(/slop/i);
+    expect(l.body!.result.tools.find((t: any) => t.name === "app_info").inputSchema.properties.app.enum).toEqual(["ntwrk", "peon", "friends"]);
+    expect(l.text).not.toMatch(/slop|dating/i);
+    expect((await rpc(env, OPENAI, "server/discover")).text).not.toMatch(/slop|dating/i);
     const all = await call(env, OPENAI, "app_info");
     expect(all.body!.result.structuredContent.apps.map((a: any) => a.id)).toEqual(["ntwrk", "peon", "friends"]);
     expect(all.text).not.toMatch(/slop|dating/i);
@@ -208,12 +206,19 @@ describe("surface=openai hides slop", () => {
       const r = await call(env, OPENAI, name, args);
       expect(r.body!.result.isError).toBe(true);
       expect(r.text).not.toMatch(/slop\.date|dating|matchmaker/i);
-      // The same answer as for an app that does not exist: nothing tells that slop exists.
       const none = await call(env, OPENAI, name, { app: "zzzz" });
       expect(r.body!.result.content).toEqual(none.body!.result.content);
     }
-    expect((await rpc(env, `${origin("slop.date")}/mcp/openai`, "tools/list")).res.status).toBe(404);
-    // The full surface still lists it.
+    for (const app of ["peon", "friends"]) {
+      const other = await rpc(env, `${origin("ntwrk.party")}/mcp/${app}/openai`, "tools/list");
+      expect(other.res.status).toBe(200);
+      expect(other.text).not.toMatch(/slop|dating/i);
+    }
+    for (const host of ["ntwrk.party", "slop.date"]) {
+      const path = host === "ntwrk.party" ? "/mcp/slop/openai" : "/mcp/openai";
+      expect((await rpc(env, `${origin(host)}${path}`, "tools/list")).res.status).toBe(404);
+      expect((await env.fetch(new Request(`${origin(host)}/.well-known/oauth-protected-resource${path}`))).status).toBe(404);
+    }
     expect((await call(env, NTWRK, "app_info", { app: "slop" })).body!.result.structuredContent.adults_only.join(" ")).toContain("Photos");
   });
 
@@ -225,6 +230,18 @@ describe("surface=openai hides slop", () => {
     expect([await rule("ntwrk"), await rule("friends"), await rule("slop"), await rule("peon")]).toEqual([teen, teen, adult, adult]);
   });
 
+  test("a public tool answers that an app is not available when the agent names an app that is not in the registry", async () => {
+    const env = setup();
+    for (const endpoint of [NTWRK, OPENAI]) {
+      for (const name of ["app_info", "start_signup"] as const) {
+        const r = await call(env, endpoint, name, { app: "buddies" });
+        expect(r.res.status).toBe(200);
+        expect(r.body!.result.isError).toBe(true);
+        expect(r.body!.result.content[0].text).toBe("That app is not available here.");
+      }
+    }
+  });
+
   test("an OpenAI client is put on the OpenAI surface even at /mcp, except the slop.date ChatGPT connector, which registers on the full surface for everyone", async () => {
     const env = setup();
     const chatgpt = { redirect_uris: ["https://chatgpt.com/connector_platform_oauth_redirect"] };
@@ -234,6 +251,7 @@ describe("surface=openai hides slop", () => {
     // Its token is for /mcp/openai only.
     expect((await rpc(env, NTWRK, "tools/list", {}, { token: c.token.access_token })).res.status).toBe(401);
     const l = await rpc(env, OPENAI, "tools/list", {}, { token: c.token.access_token });
+    expect(l.res.status).toBe(200);
     expect(l.text).not.toMatch(/slop/i);
   });
 

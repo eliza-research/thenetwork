@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
-import { applySchema, DEV_PG_URL } from "../../packages/observatory/db/dev-pg.ts";
+import { applySchema, DEV_PG_URL } from "../../packages/db/dev-pg.ts";
 import { deferred } from "./deferred.ts";
 
 function databaseUrl(database: string): string {

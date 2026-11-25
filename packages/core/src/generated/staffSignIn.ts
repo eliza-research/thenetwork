@@ -384,6 +384,26 @@ export function lawLocalSimulationNeedsNothing(platformEnv: PlatformEnv, accessO
   return !startRefused(false, false, platformEnv, accessOn);
 }
 
+/** Story: Start a console that holds real data only behind single sign-on / A deployed console with real data needs a durable audit log (spec/staffSignIn.md) */
+//@ pure
+export function startNeedsDurableAudit(realOnlyServer: boolean, remoteDatabase: boolean, platformEnv: PlatformEnv, auditDurable: boolean): boolean {
+  return (realOnlyServer || remoteDatabase) && (platformEnv === "EnvStaging" || platformEnv === "EnvProduction") && !auditDurable;
+}
+
+/** Story: Start a console that holds real data only behind single sign-on / A deployed console with real data needs a durable audit log (spec/staffSignIn.md) */
+//@ pure
+export function lawDeployedRealDataKeepsAuditDurable(realOnlyServer: boolean, remoteDatabase: boolean, platformEnv: PlatformEnv): boolean {
+  //@ ensures \result === true
+  return !((realOnlyServer || remoteDatabase) && (platformEnv === "EnvStaging" || platformEnv === "EnvProduction")) || startNeedsDurableAudit(realOnlyServer, remoteDatabase, platformEnv, false);
+}
+
+/** Story: Start a console that holds real data only behind single sign-on / A deployed console with real data needs a durable audit log (spec/staffSignIn.md) */
+//@ pure
+export function lawLocalSimulationNeedsNoAuditDatabase(platformEnv: PlatformEnv, auditDurable: boolean): boolean {
+  //@ ensures \result === true
+  return !startNeedsDurableAudit(false, false, platformEnv, auditDurable);
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: StaffSignIn, event: Event): boolean {

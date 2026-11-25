@@ -86,6 +86,9 @@ The owner's words:
 3. "Yes, teen friend intros".
 4. "We should only introduce teens to people over 13 and within 2 years of their age, unless they are 18. So a 15 year old can hang with a 17 year old, a 16 with 18, but thats max."
 5. "We want to ask them their birthday generally, so we dont just have their age but we're trakcing when they turn a new year etc".
+6. "we arent going to do dating matchmaking but we can do teen friendship matchmaking".
+
+The agent asks for a birthday in conversation only to explain what the person gets; the person types the birthday on the signup page, and no tool receives a birthday or an age.
 
 **What the first build did.** The answers A1 to A5 above replace the bullets on the switch, the confirm step, the safety-role approval, the friends.help-only scope and the adult-only plans, tables and crews. The pure rule is `teenFriendAgeRule` in [friend introductions with a minor](../../friendIntroAge.md). Birth dates and age readings are in [member age](../../memberAge.md).
 

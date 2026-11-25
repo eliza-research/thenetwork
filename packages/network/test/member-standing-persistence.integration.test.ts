@@ -6,7 +6,7 @@ import { DAY, HOUR, SimClock } from "@thenetwork/core";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
-import { applySchema, devPgUp, DEV_PG_URL } from "../../observatory/db/dev-pg.ts";
+import { applySchema, devPgUp, DEV_PG_URL } from "../../db/dev-pg.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { DryRunAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";

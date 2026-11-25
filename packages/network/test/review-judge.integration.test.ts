@@ -6,8 +6,8 @@ import {
   holdEveryItem, modelReviewJudge, REVIEW_JUDGE_PROMPT_VERSION, SIM_REVIEW_JUDGE,
   type JudgeReasonCode, type ReviewJudge, type ReviewJudgeReply, type ReviewPacket,
 } from "../../engine/src/reviewJudge.ts";
-import { devPgUp } from "../../observatory/db/dev-pg.ts";
-import { pgAvailable } from "../../observatory/test/pg.ts";
+import { devPgUp } from "../../db/dev-pg.ts";
+import { pgAvailable } from "../../../apps/observatory/test/pg.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { bootConfigProblems, MODEL_PROVIDER_MISSING } from "../../platform/src/env.ts";
 import { dayOf } from "../service/cost.ts";

@@ -115,7 +115,7 @@ const membership = (r: Row): Membership => ({
 });
 const consent = (r: Row): ConsentEvent => ({
   e164: r.e164, app: r.app_id ?? null, line: r.line ?? null, state: r.state, source: r.source, wording: r.wording ?? null,
-  wordingVersion: r.wording_version ?? null, ref: r.ref ?? null, at: ms(r.at)!,
+  wordingVersion: r.wording_version ?? null, namedApp: r.named_app ?? null, ref: r.ref ?? null, at: ms(r.at)!,
 });
 const pendingRow = (r: Row): PendingText => ({ phoneHash: r.phone_hash, kind: r.kind, app: r.app_id, name: r.name ?? null, age: r.age ?? null, ...(r.birth_date === null || r.birth_date === undefined ? {} : { birthDate: Number(r.birth_date) }), ...(r.home_city ? { homeCity: r.home_city } : {}), at: ms(r.at)! });
 const challenge = (r: Row): OtpChallenge => ({
@@ -179,7 +179,9 @@ export class PgPeopleStore implements PeopleStore {
     await this.sql`update platform.phone_identities set last_seen_at = ${ts(at)} where e164 = ${e164}`;
   }
   async setPhoneHold(e164: string, hold: PhoneHold | null, at: number) {
-    await this.sql`update platform.phone_identities set hold = ${hold}, hold_at = ${hold ? ts(at) : null} where e164 = ${e164}`;
+    // Lifting a hold also marks the number seen, in the same statement: a text read in between never finds it unheld and stale.
+    if (hold === null) await this.sql`update platform.phone_identities set hold = null, hold_at = null, last_seen_at = ${ts(at)} where e164 = ${e164}`;
+    else await this.sql`update platform.phone_identities set hold = ${hold}, hold_at = ${ts(at)} where e164 = ${e164}`;
   }
   async heldPhones() {
     return (await this.sql`select * from platform.phone_identities where hold is not null order by hold_at`).map(phone);
@@ -330,23 +332,41 @@ export class PgPeopleStore implements PeopleStore {
     return staffBanEnrollmentAllowed(!!owner, owner?.verified === true, banned) && !confirmedUnderage(age ?? -1);
   }
 
-  async admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string, joiningSession: string | null, transaction?: SQL): Promise<boolean> {
+  async admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string, joiningSession: string | null = null, transaction?: SQL): Promise<boolean> {
     const admit = async (tx: SQL) => {
       if (!await this.enrollmentOwnerAllowed(tx, m.personId, consent.e164, phoneHash, consent.at)) return false;
       await tx`delete from platform.suppression where phone_hash=${phoneHash}`;
       await this.putMembership(m, tx);
-      await this.addConsent(consent, tx);
+      await this.insertConsent(consent, tx);
       await attachPersonIn(tx, consent.e164, m.personId, joiningSession, consent.at);
       return true;
     };
     return transaction ? admit(transaction) : this.sql.begin(admit);
   }
 
-  async addConsent(e: ConsentEvent, db = this.sql) {
-    const r = await db`insert into platform.consent_events (e164, app_id, line, state, source, wording, wording_version, ref, at)
-      values (${e.e164}, ${e.app}, ${e.line ?? null}, ${e.state}, ${e.source}, ${e.wording ?? null}, ${e.wordingVersion ?? null}, ${e.ref ?? null}, ${ts(e.at)})
+  private async insertConsent(e: ConsentEvent, db: SQL = this.sql) {
+    const r = await db`insert into platform.consent_events (e164, app_id, line, state, source, wording, wording_version, ref, named_app, at)
+      values (${e.e164}, ${e.app}, ${e.line ?? null}, ${e.state}, ${e.source}, ${e.wording ?? null}, ${e.wordingVersion ?? null}, ${e.ref ?? null}, ${e.namedApp ?? null}, ${ts(e.at)})
       on conflict (e164, ref) where ref is not null do nothing returning id`;
     return r.length > 0;
+  }
+
+  async addConsent(e: ConsentEvent, personId?: string) {
+    if (!personId) return this.insertConsent(e, this.sql);
+    return this.sql.begin(async tx => {
+      // A number change of this number that runs now finishes first (movePhone locks the phone row). One that
+      // starts later waits for this lock, then copies this event to the new number.
+      const [ph] = await tx`select person_id from platform.phone_identities where e164 = ${e.e164} for share`;
+      const inserted = await this.insertConsent(e, tx);
+      // The number moved before this write: the event follows the person to the number they have now.
+      if (ph?.person_id !== personId) {
+        await tx`insert into platform.consent_events (e164, app_id, line, state, source, wording, wording_version, ref, named_app, at)
+          select ph.e164, ${e.app}, ${e.line ?? null}, ${e.state}, ${e.source}, ${e.wording ?? null}, ${e.wordingVersion ?? null}, ${e.ref ?? null}, ${e.namedApp ?? null}, ${ts(e.at)}
+          from platform.phone_identities ph where ph.person_id = ${personId}::uuid and ph.e164 <> ${e.e164}
+          on conflict (e164, ref) where ref is not null do nothing`;
+      }
+      return inserted;
+    });
   }
 
   /** The age and the owner that authorize START must still hold when its consent event commits. */
@@ -386,7 +406,7 @@ export class PgPeopleStore implements PeopleStore {
       const [row] = personId ? await tx`select * from platform.memberships where person_id=${personId}::uuid and app_id=${app}` : [];
       const current = row && membership(row);
       if (!appLeaveMemberCurrent(expectedMemberId ?? "", current?.memberId ?? "", current?.joinedAt ?? 0, at)) return { ok: false };
-      await this.addConsent({ app, e164, at, line, ref, state: "opted_out", source: "leave" }, tx);
+      await this.insertConsent({ app, e164, at, line, ref, state: "opted_out", source: "leave" }, tx);
       return { ok: true, membership: current };
     });
   }
@@ -540,6 +560,9 @@ export class PgPeopleStore implements PeopleStore {
       await tx`delete from platform.pending_texts where phone_hash = ${phoneHash}`;
     });
   }
+  async forgetPersonlessSessions(e164: string) {
+    await this.sql`delete from platform.sessions where e164 = ${e164} and person_id is null`;
+  }
 
   async hit(bucket: string, windowMs: number, at: number, rule: HitRule = {}): Promise<HitResult> {
     const start = new Date(at - (at % windowMs));
@@ -677,10 +700,15 @@ export class PgPeopleStore implements PeopleStore {
         await tx`delete from platform.teen_pool_holds where phone_hash = ${hash}`;
         await tx`delete from platform.teen_pair_avoid where phone_hash_a = ${hash} or phone_hash_b = ${hash}`;
       }
+      const [seen] = releaseHeldPhone && target ? await tx`select last_seen_at from platform.phone_identities where e164 = ${target}` : [];
+      const keepAfter = (seen?.last_seen_at as Date | null | undefined) ?? null;
       await tx`delete from platform.sessions where e164 = ${target} or (${personId}::uuid is not null and person_id = ${personId}::uuid)`;
       if (target) {
         await tx`delete from platform.otp_challenges where e164 = ${target}`;
-        await tx`delete from platform.consent_events where e164 = ${target}`;
+        await tx`delete from platform.consent_events where e164 = ${target} and (${keepAfter}::timestamptz is null or at <= ${keepAfter})`;
+        // The line's conversation counters hold the number in plain form (retention keeps unanswered rows).
+        // A new owner's counters are theirs: their own text resets them.
+        if (!releaseHeldPhone) await tx`delete from platform.line_conversations where address = ${target}`;
       }
       if (personId) {
         await tx`delete from platform.memberships where person_id = ${personId}`;
@@ -734,8 +762,8 @@ export class PgPeopleStore implements PeopleStore {
       await tx`delete from platform.phone_identities where e164 = ${m.oldE164}`;
       await attachPersonIn(tx, m.newE164, m.personId, null, at);
       // The ledger is never updated in place: its rows are copied to the new number, then the old number's rows go.
-      await tx`insert into platform.consent_events (e164, app_id, line, state, source, wording, wording_version, ref, at)
-        select ${m.newE164}, app_id, line, state, source, wording, wording_version, ref, at from platform.consent_events where e164 = ${m.oldE164} order by at, id
+      await tx`insert into platform.consent_events (e164, app_id, line, state, source, wording, wording_version, ref, named_app, at)
+        select ${m.newE164}, app_id, line, state, source, wording, wording_version, ref, named_app, at from platform.consent_events where e164 = ${m.oldE164} order by at, id
         on conflict (e164, ref) where ref is not null do nothing`;
       await tx`delete from platform.consent_events where e164 = ${m.oldE164}`;
       await tx`update platform.people set phone_hash = ${m.newHash} where id = ${m.personId}::uuid`;
@@ -766,8 +794,9 @@ export class PgPeopleStore implements PeopleStore {
       await tx`update platform.outbound set status = 'suppressed_ineligible', note = 'number changed', to_address = null, ended_at = ${ts(at)}, updated_at = ${ts(at)},
           lease_owner = null, lease_until = null
         where to_address = ${m.oldE164} and status = any(${OUTBOUND_WAITING}::text[])`;
-      await tx`insert into platform.eliza_notices (phone_hash, sent_at) select ${m.newHash}, sent_at from platform.eliza_notices where phone_hash = ${m.oldHash} on conflict do nothing`;
-      await tx`delete from platform.eliza_notices where phone_hash = ${m.oldHash}`;
+      const oldNoticeHash = m.oldNoticeHash ?? m.oldHash, newNoticeHash = m.newNoticeHash ?? m.newHash;
+      await tx`insert into platform.eliza_notices (phone_hash, sent_at) select ${newNoticeHash}, sent_at from platform.eliza_notices where phone_hash = ${oldNoticeHash} on conflict do nothing`;
+      await tx`delete from platform.eliza_notices where phone_hash = ${oldNoticeHash}`;
       await this.movePhoneGrants(tx, m, new Date(at));
       await tx`delete from platform.suppression where phone_hash = ${m.newHash}`;
       await tx`update platform.phone_changes set confirmed_at = ${ts(at)}, new_e164 = null, old_hash = ${m.oldHash}, new_hash = ${m.newHash}

@@ -20,7 +20,7 @@ import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { Facet, Intent, MemberId } from "@thenetwork/core";
 import { peonCompanyKey } from "../../engine/src/packs/peon/schema.ts";
 import { postingFacts, postingFromFacts, postingProblem, type JobPosting } from "../src/jobs.ts";
-import type { AuditEntry, StaffRole, StaffUser } from "../../observatory/src/types.ts";
+import type { AuditEntry, StaffRole, StaffUser } from "../../../apps/observatory/src/types.ts";
 import type { NetworkRuntime } from "./runtime.ts";
 
 const ID = /^[A-Za-z0-9_.:-]{1,200}$/;

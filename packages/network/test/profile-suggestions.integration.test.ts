@@ -5,7 +5,7 @@ import { COLLECTION_COMMAND_VECTORS } from "./fixtures/learning-collection-comma
 import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
+import { applySchema, devPgUp, DEV_PG_PORT } from "../../db/dev-pg.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
 import { ProfileSuggestions, type SuggestionOwner, type SourceSuggestion, type SuggestionAuthorization } from "../service/profile-suggestions.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
@@ -477,6 +477,31 @@ test("real HTTP review joins the signed stored turn, private preview, exact huma
     expect((await http.post("delete", "delete", b.id, { text: `delete ${b.id}` })).body.kind).toBe("deleted");
     await storedTurn("delete-again", `delete ${b.id}`);
     expect((await http.post("delete", "delete-again", b.id, { text: `delete ${b.id}` })).status).toBe(403);
+  } finally { await http.stop(); }
+});
+
+// SD-458: a gateway retry of the same signed decide or delete, after the first reply was lost.
+test("an exact retry of an applied edit, accept or delete returns the stored result and applies nothing again", async () => {
+  const b = (await store.propose(owner, input([candidate(), { ...candidate(), value: "I enjoy hiking", tags: ["hiking"] }]), now))!;
+  const http = await reviewHttp(boundIdentity);
+  try {
+    const edit = `edit ${b.id}.${b.revision} 1: I enjoy outdoor climbing`;
+    await storedTurn("retry-edit", edit);
+    const edited = await http.post("decide", "retry-edit", b.id, { text: edit });
+    expect(edited.body).toMatchObject({ kind: "preview", batch: { revision: b.revision + 1 } });
+    expect(await http.post("decide", "retry-edit", b.id, { text: edit })).toEqual(edited);
+    const accept = `accept ${b.id}.${b.revision + 1} 2 private`;
+    await storedTurn("retry-accept", accept);
+    const saved = await http.post("decide", "retry-accept", b.id, { text: accept });
+    expect(saved.body).toMatchObject({ kind: "saved", accepted: [b.suggestions[1]!.id], reviewText: "1 saved; 0 rejected." });
+    expect(await http.post("decide", "retry-accept", b.id, { text: accept })).toEqual(saved);
+    expect(await facets()).toHaveLength(1);
+    expect((await sql`select revision from platform.profile_suggestion_batches where id=${b.id}`)[0].revision).toBe(b.revision + 2);
+    await storedTurn("retry-delete", `delete ${b.id}`);
+    const deleted = await http.post("delete", "retry-delete", b.id, { text: `delete ${b.id}` });
+    expect(deleted.body.kind).toBe("deleted");
+    expect(await http.post("delete", "retry-delete", b.id, { text: `delete ${b.id}` })).toEqual(deleted);
+    expect(await facets()).toHaveLength(0);
   } finally { await http.stop(); }
 });
 

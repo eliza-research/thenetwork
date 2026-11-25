@@ -172,3 +172,14 @@
 {"text":"either sat is bad","answer":"unclear","keys":[]}
 {"text":"either sat does not work","answer":"unclear","keys":[]}
 {"text":"either sat don't work","answer":"unclear","keys":[]}
+{"text":"If Ana can't make Sunday, Saturday works.","answer":"unclear","keys":[]}
+{"text":"If Ana can't do Sunday, Saturday works.","answer":"unclear","keys":[]}
+{"text":"If Ana is busy Sunday, Saturday works.","answer":"unclear","keys":[]}
+{"text":"Saturday works if Ana can't make Sunday.","answer":"unclear","keys":[]}
+{"text":"If Ana can't make Sunday, Saturday works for me.","answer":"unclear","keys":[]}
+{"text":"If Sunday works for Ana, book it","answer":"unclear","keys":[]}
+{"text":"If Sunday works for Ana, yes","answer":"unclear","keys":[]}
+{"text":"If Sunday works for Ana, sure","answer":"unclear","keys":[]}
+{"text":"Saturday works. If Ana can't make Sunday, Sunday works.","answer":"yes","keys":["b"]}
+{"text":"Saturday works. If Ana can't make Sunday, that's fine.","answer":"yes","keys":["b"]}
+{"text":"Sunday works, unless Ana can't make it","answer":"unclear","keys":[]}

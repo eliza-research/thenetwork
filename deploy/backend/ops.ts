@@ -11,8 +11,10 @@ import { judgeModelOf } from "../../packages/core/src/llm.ts";
 import { qualifiedJudge, readJudgeQualifications } from "../../packages/network/service/review-qualified.ts";
 import { WAITING_STATUSES } from "../../packages/network/service/channel.ts";
 import { budgetLines, costBudgetsFromEnv, dayOf, type BudgetLine, type CostApp, type CostBudgets, type CostLedger } from "../../packages/network/service/cost.ts";
+import { BIAS_EVERY_MS } from "../../packages/network/service/bias.ts";
 import type { AppId } from "../../packages/platform/src/apps.ts";
 import type { TurnWatchMetrics } from "../../packages/network/service/turn-watch.ts";
+import { PHOTO_APPS } from "../../packages/platform/src/photos.ts";
 
 const MIN = 60_000, HOUR = 60 * MIN, DAY = 24 * HOUR;
 export const utcDayStart = (ms: number) => Math.floor(ms / DAY) * DAY;
@@ -87,6 +89,7 @@ export interface NetworkMetrics {
   smsByDay: { today: number; yesterday: number };
   safetySignalsWaiting?: number;
   biasAlerts24h?: number;
+  biasReportAgoMs?: number | null;
   precision7d?: { decided: number; clean: number };
   judge24h?: JudgeCounts;
   judge7d?: JudgeCounts;
@@ -132,7 +135,7 @@ export interface NetworkProbe {
   id: string;
   app: string;
   health(): Promise<{ lastTick: { stored: number | null; savedAt: number | null }; backlog: NetworkMetrics["backlog"] }>;
-  since(t: number, dayStart: number): Promise<{ statuses: Record<string, number>; events: { type: string; action: string | null; n: number }[]; reports: { kind: string }[]; sms: { today: number; yesterday: number; last24h?: number }; safetySignals?: number; biasAlerts?: number; precision7d?: { decided: number; clean: number }; judge?: { day: JudgeCounts; week: JudgeCounts } }>;
+  since(t: number, dayStart: number): Promise<{ statuses: Record<string, number>; events: { type: string; action: string | null; n: number }[]; reports: { kind: string }[]; sms: { today: number; yesterday: number; last24h?: number }; safetySignals?: number; biasAlerts?: number; biasLastAt?: number | null; precision7d?: { decided: number; clean: number }; judge?: { day: JudgeCounts; week: JudgeCounts } }>;
 }
 
 export const PRECISION_MIN_DECIDED = 20;
@@ -180,6 +183,7 @@ export async function collectNetwork(p: NetworkProbe, now: number): Promise<Netw
       smsByDay: { today: s.sms.today, yesterday: s.sms.yesterday },
       safetySignalsWaiting: s.safetySignals ?? 0,
       biasAlerts24h: s.biasAlerts ?? 0,
+      ...(s.biasLastAt !== undefined ? { biasReportAgoMs: s.biasLastAt === null ? null : Math.max(0, now - s.biasLastAt) } : {}),
       ...(s.precision7d ? { precision7d: s.precision7d } : {}),
       ...(s.judge ? { judge24h: s.judge.day, judge7d: s.judge.week } : {}),
     };
@@ -223,7 +227,9 @@ export function runtimeProbe(rt: {
       // Counts only: a signal's evidence and a report's groups never leave the database here.
       const [sig] = (await tx`select count(*)::int as n from network.facets where app_id = ${rt.app.id} and status = 'proposed'
         and tags && ${tx.array(["signal:safety_concern"], "TEXT")}`) as { n: number }[];
-      const [bias] = (await tx`select coalesce(sum(alerts), 0)::int as n from network.bias_reports where app_id = ${rt.app.id} and network_id = ${rt.id} and at > ${at}`) as { n: number }[];
+      const [bias] = (await tx`select coalesce(sum(alerts) filter (where at > ${at}), 0)::int as n, max(at) as last
+        from network.bias_reports where app_id = ${rt.app.id} and network_id = ${rt.id}`) as { n: number; last: Date | null }[];
+      const biasLastAt = PHOTO_APPS.includes(rt.app.id as AppId) ? (bias?.last ? new Date(bias.last).getTime() : null) : undefined;
       const [prec] = (await tx`select count(*)::int as decided,
           count(*) filter (where r.decision = 'approve' and coalesce(jsonb_array_length(case when jsonb_typeof(r.edits) = 'array' then r.edits end), 0) = 0)::int as clean
         from network.review_items r join network.opportunities o on o.app_id = r.app_id and o.id = r.opportunity_id
@@ -241,7 +247,7 @@ export function runtimeProbe(rt: {
       const counts = (rows: typeof judged): JudgeCounts => ({ approved: rows.reduce((x, r) => x + r.approved, 0), held: rows.reduce((x, r) => x + r.held, 0),
         cannotRun: rows.reduce((x, r) => x + r.cannot_run, 0), minorApproved: rows.reduce((x, r) => x + r.minor_approved, 0) });
       return { statuses, events, reports, sms: { today: sms?.today ?? 0, yesterday: sms?.yesterday ?? 0, last24h: sms?.last24h ?? 0 }, safetySignals: sig?.n ?? 0, biasAlerts: bias?.n ?? 0,
-        precision7d: { decided: prec?.decided ?? 0, clean: prec?.clean ?? 0 }, judge: { day: counts(judged.filter(r => r.day)), week: counts(judged) } };
+        ...(biasLastAt !== undefined ? { biasLastAt } : {}), precision7d: { decided: prec?.decided ?? 0, clean: prec?.clean ?? 0 }, judge: { day: counts(judged.filter(r => r.day)), week: counts(judged) } };
     }),
   };
 }
@@ -294,6 +300,10 @@ export function evaluate(m: Pick<OpsMetrics, "networks" | "cost"> & { uptimeMs?:
     if (f.reports > 0) out.push({ key: `safety_report:${id}`, level: f.urgentReports > 0 ? "bad" : "warn", count: f.reports, bump: true, text: `${id}: ${f.reports} report(s) in 24 h (${f.urgentReports} urgent)` });
     if (n.safetySignalsWaiting) out.push({ key: `safety_signal:${id}`, level: "bad", count: n.safetySignalsWaiting, bump: true, text: `${id}: ${n.safetySignalsWaiting} agent safety signal(s) wait for staff review (console: Safety, or GET /signals)` });
     if (n.biasAlerts24h) out.push({ key: `bias_report:${id}`, level: "warn", count: n.biasAlerts24h, bump: true, text: `${id}: the weekly bias monitor found ${n.biasAlerts24h} group outcome(s) under 0.8x (console: Metrics, bias monitor)` });
+    const biasLate = BIAS_EVERY_MS + DAY;
+    if (n.biasReportAgoMs !== undefined && (n.biasReportAgoMs === null ? (m.uptimeMs ?? Infinity) > biasLate : n.biasReportAgoMs > biasLate)) {
+      out.push({ key: `bias_late:${id}`, level: "warn", count: n.biasReportAgoMs === null ? 0 : Math.floor(n.biasReportAgoMs / DAY), text: n.biasReportAgoMs === null ? `${id}: the weekly bias monitor has stored no report yet` : `${id}: the newest weekly bias monitor report is ${Math.floor(n.biasReportAgoMs / DAY)} days old (expected every 7 days; look for "[tick] after-tick work failed" in the log)` });
+    }
     const p = n.precision7d;
     if (p && p.decided >= PRECISION_MIN_DECIDED && p.clean / p.decided < PRECISION_TARGET) {
       const pct = Math.round((100 * p.clean) / p.decided);

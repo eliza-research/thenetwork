@@ -19,8 +19,8 @@ export type Event =
   | { type: "recordUploadDiscard" }
   | { type: "finishRerate" }
   | { type: "beginRemoval"; owned: boolean; rerate: boolean }
-  | { type: "recordRemovedBytes" }
   | { type: "recordRatingClear" }
+  | { type: "recordRemovedBytes" }
   | { type: "recordRemovedRow" };
 
 /** Story: Add and remove photos for private matching / The retention tick finishes unfinished photo changes (spec/photoRetention.md) */
@@ -45,8 +45,8 @@ export function canBeginUpload(c: PhotoChange): boolean {
 export function beginUpload(c: PhotoChange, appAllowed: boolean, consentCurrent: boolean): PhotoChange {
   //@ ensures (inv(c) && canBeginUpload(c)) ==> stepBytesRequireReservedRow(c, "beginUpload", \result)
   //@ ensures (inv(c) && canBeginUpload(c)) ==> stepRowWriteRequiresBytes(c, "beginUpload", \result)
-  //@ ensures (inv(c) && canBeginUpload(c)) ==> stepRatingClearRequiresBytesRemoval(c, "beginUpload", \result)
-  //@ ensures (inv(c) && canBeginUpload(c)) ==> stepRowRemovalRequiresRatingClear(c, "beginUpload", \result)
+  //@ ensures (inv(c) && canBeginUpload(c)) ==> stepBytesRemovalRequiresRatingClear(c, "beginUpload", \result)
+  //@ ensures (inv(c) && canBeginUpload(c)) ==> stepRowRemovalRequiresBytesRemoval(c, "beginUpload", \result)
   return { ...c, phase: !appAllowed ? "UnsupportedApp" : (!consentCurrent ? "ConsentMissing" : "CheckingUploader") };
 }
 
@@ -61,8 +61,8 @@ export function canCheckUploader(c: PhotoChange): boolean {
 export function checkUploader(c: PhotoChange, eligible: boolean): PhotoChange {
   //@ ensures (inv(c) && canCheckUploader(c)) ==> stepBytesRequireReservedRow(c, "checkUploader", \result)
   //@ ensures (inv(c) && canCheckUploader(c)) ==> stepRowWriteRequiresBytes(c, "checkUploader", \result)
-  //@ ensures (inv(c) && canCheckUploader(c)) ==> stepRatingClearRequiresBytesRemoval(c, "checkUploader", \result)
-  //@ ensures (inv(c) && canCheckUploader(c)) ==> stepRowRemovalRequiresRatingClear(c, "checkUploader", \result)
+  //@ ensures (inv(c) && canCheckUploader(c)) ==> stepBytesRemovalRequiresRatingClear(c, "checkUploader", \result)
+  //@ ensures (inv(c) && canCheckUploader(c)) ==> stepRowRemovalRequiresBytesRemoval(c, "checkUploader", \result)
   return { ...c, phase: eligible ? "ScreeningFile" : "ChangeRefused" };
 }
 
@@ -77,8 +77,8 @@ export function canScreenFile(c: PhotoChange): boolean {
 export function screenFile(c: PhotoChange, tooLarge: boolean, typeKnown: boolean): PhotoChange {
   //@ ensures (inv(c) && canScreenFile(c)) ==> stepBytesRequireReservedRow(c, "screenFile", \result)
   //@ ensures (inv(c) && canScreenFile(c)) ==> stepRowWriteRequiresBytes(c, "screenFile", \result)
-  //@ ensures (inv(c) && canScreenFile(c)) ==> stepRatingClearRequiresBytesRemoval(c, "screenFile", \result)
-  //@ ensures (inv(c) && canScreenFile(c)) ==> stepRowRemovalRequiresRatingClear(c, "screenFile", \result)
+  //@ ensures (inv(c) && canScreenFile(c)) ==> stepBytesRemovalRequiresRatingClear(c, "screenFile", \result)
+  //@ ensures (inv(c) && canScreenFile(c)) ==> stepRowRemovalRequiresBytesRemoval(c, "screenFile", \result)
   return { ...c, phase: tooLarge ? "SizeExceeded" : (typeKnown ? "CheckingSlots" : "ChangeRefused") };
 }
 
@@ -93,8 +93,8 @@ export function canCheckSlots(c: PhotoChange): boolean {
 export function checkSlots(c: PhotoChange, available: boolean): PhotoChange {
   //@ ensures (inv(c) && canCheckSlots(c)) ==> stepBytesRequireReservedRow(c, "checkSlots", \result)
   //@ ensures (inv(c) && canCheckSlots(c)) ==> stepRowWriteRequiresBytes(c, "checkSlots", \result)
-  //@ ensures (inv(c) && canCheckSlots(c)) ==> stepRatingClearRequiresBytesRemoval(c, "checkSlots", \result)
-  //@ ensures (inv(c) && canCheckSlots(c)) ==> stepRowRemovalRequiresRatingClear(c, "checkSlots", \result)
+  //@ ensures (inv(c) && canCheckSlots(c)) ==> stepBytesRemovalRequiresRatingClear(c, "checkSlots", \result)
+  //@ ensures (inv(c) && canCheckSlots(c)) ==> stepRowRemovalRequiresBytesRemoval(c, "checkSlots", \result)
   return { ...c, phase: available ? "CleaningImage" : "ChangeRefused" };
 }
 
@@ -109,8 +109,8 @@ export function canCleanImage(c: PhotoChange): boolean {
 export function cleanImage(c: PhotoChange, cleaned: boolean): PhotoChange {
   //@ ensures (inv(c) && canCleanImage(c)) ==> stepBytesRequireReservedRow(c, "cleanImage", \result)
   //@ ensures (inv(c) && canCleanImage(c)) ==> stepRowWriteRequiresBytes(c, "cleanImage", \result)
-  //@ ensures (inv(c) && canCleanImage(c)) ==> stepRatingClearRequiresBytesRemoval(c, "cleanImage", \result)
-  //@ ensures (inv(c) && canCleanImage(c)) ==> stepRowRemovalRequiresRatingClear(c, "cleanImage", \result)
+  //@ ensures (inv(c) && canCleanImage(c)) ==> stepBytesRemovalRequiresRatingClear(c, "cleanImage", \result)
+  //@ ensures (inv(c) && canCleanImage(c)) ==> stepRowRemovalRequiresBytesRemoval(c, "cleanImage", \result)
   return { ...c, phase: cleaned ? "ReservingRow" : "ChangeRefused" };
 }
 
@@ -125,8 +125,8 @@ export function canReserveRow(c: PhotoChange): boolean {
 export function reserveRow(c: PhotoChange, admitted: boolean): PhotoChange {
   //@ ensures (inv(c) && canReserveRow(c)) ==> stepBytesRequireReservedRow(c, "reserveRow", \result)
   //@ ensures (inv(c) && canReserveRow(c)) ==> stepRowWriteRequiresBytes(c, "reserveRow", \result)
-  //@ ensures (inv(c) && canReserveRow(c)) ==> stepRatingClearRequiresBytesRemoval(c, "reserveRow", \result)
-  //@ ensures (inv(c) && canReserveRow(c)) ==> stepRowRemovalRequiresRatingClear(c, "reserveRow", \result)
+  //@ ensures (inv(c) && canReserveRow(c)) ==> stepBytesRemovalRequiresRatingClear(c, "reserveRow", \result)
+  //@ ensures (inv(c) && canReserveRow(c)) ==> stepRowRemovalRequiresBytesRemoval(c, "reserveRow", \result)
   return { ...c, phase: admitted ? "WritingBytes" : "ChangeRefused" };
 }
 
@@ -141,8 +141,8 @@ export function canRecordUploadBytes(c: PhotoChange): boolean {
 export function recordUploadBytes(c: PhotoChange): PhotoChange {
   //@ ensures (inv(c) && canRecordUploadBytes(c)) ==> stepBytesRequireReservedRow(c, "recordUploadBytes", \result)
   //@ ensures (inv(c) && canRecordUploadBytes(c)) ==> stepRowWriteRequiresBytes(c, "recordUploadBytes", \result)
-  //@ ensures (inv(c) && canRecordUploadBytes(c)) ==> stepRatingClearRequiresBytesRemoval(c, "recordUploadBytes", \result)
-  //@ ensures (inv(c) && canRecordUploadBytes(c)) ==> stepRowRemovalRequiresRatingClear(c, "recordUploadBytes", \result)
+  //@ ensures (inv(c) && canRecordUploadBytes(c)) ==> stepBytesRemovalRequiresRatingClear(c, "recordUploadBytes", \result)
+  //@ ensures (inv(c) && canRecordUploadBytes(c)) ==> stepRowRemovalRequiresBytesRemoval(c, "recordUploadBytes", \result)
   return { ...c, phase: "WritingRow" };
 }
 
@@ -157,8 +157,8 @@ export function canRecordUploadRow(c: PhotoChange): boolean {
 export function recordUploadRow(c: PhotoChange, confirmed: boolean): PhotoChange {
   //@ ensures (inv(c) && canRecordUploadRow(c)) ==> stepBytesRequireReservedRow(c, "recordUploadRow", \result)
   //@ ensures (inv(c) && canRecordUploadRow(c)) ==> stepRowWriteRequiresBytes(c, "recordUploadRow", \result)
-  //@ ensures (inv(c) && canRecordUploadRow(c)) ==> stepRatingClearRequiresBytesRemoval(c, "recordUploadRow", \result)
-  //@ ensures (inv(c) && canRecordUploadRow(c)) ==> stepRowRemovalRequiresRatingClear(c, "recordUploadRow", \result)
+  //@ ensures (inv(c) && canRecordUploadRow(c)) ==> stepBytesRemovalRequiresRatingClear(c, "recordUploadRow", \result)
+  //@ ensures (inv(c) && canRecordUploadRow(c)) ==> stepRowRemovalRequiresBytesRemoval(c, "recordUploadRow", \result)
   return { ...c, phase: confirmed ? "Rerating" : "DiscardingUpload" };
 }
 
@@ -173,8 +173,8 @@ export function canRecordUploadDiscard(c: PhotoChange): boolean {
 export function recordUploadDiscard(c: PhotoChange): PhotoChange {
   //@ ensures (inv(c) && canRecordUploadDiscard(c)) ==> stepBytesRequireReservedRow(c, "recordUploadDiscard", \result)
   //@ ensures (inv(c) && canRecordUploadDiscard(c)) ==> stepRowWriteRequiresBytes(c, "recordUploadDiscard", \result)
-  //@ ensures (inv(c) && canRecordUploadDiscard(c)) ==> stepRatingClearRequiresBytesRemoval(c, "recordUploadDiscard", \result)
-  //@ ensures (inv(c) && canRecordUploadDiscard(c)) ==> stepRowRemovalRequiresRatingClear(c, "recordUploadDiscard", \result)
+  //@ ensures (inv(c) && canRecordUploadDiscard(c)) ==> stepBytesRemovalRequiresRatingClear(c, "recordUploadDiscard", \result)
+  //@ ensures (inv(c) && canRecordUploadDiscard(c)) ==> stepRowRemovalRequiresBytesRemoval(c, "recordUploadDiscard", \result)
   return { ...c, phase: "ChangeRefused" };
 }
 
@@ -189,8 +189,8 @@ export function canFinishRerate(c: PhotoChange): boolean {
 export function finishRerate(c: PhotoChange): PhotoChange {
   //@ ensures (inv(c) && canFinishRerate(c)) ==> stepBytesRequireReservedRow(c, "finishRerate", \result)
   //@ ensures (inv(c) && canFinishRerate(c)) ==> stepRowWriteRequiresBytes(c, "finishRerate", \result)
-  //@ ensures (inv(c) && canFinishRerate(c)) ==> stepRatingClearRequiresBytesRemoval(c, "finishRerate", \result)
-  //@ ensures (inv(c) && canFinishRerate(c)) ==> stepRowRemovalRequiresRatingClear(c, "finishRerate", \result)
+  //@ ensures (inv(c) && canFinishRerate(c)) ==> stepBytesRemovalRequiresRatingClear(c, "finishRerate", \result)
+  //@ ensures (inv(c) && canFinishRerate(c)) ==> stepRowRemovalRequiresBytesRemoval(c, "finishRerate", \result)
   return { ...c, phase: "ChangeFinished" };
 }
 
@@ -212,95 +212,95 @@ export function sometimesDiscardsUpload(c: PhotoChange): boolean {
   return c.phase === "DiscardingUpload";
 }
 
-/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md) */
+/** Story: Add and remove photos for private matching / Drop the old rating before erasing bytes and metadata (spec/photoRetention.md) */
 //@ pure
 export function canBeginRemoval(c: PhotoChange): boolean {
   return c.phase === "ChoosingChange";
 }
 
-/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md) */
+/** Story: Add and remove photos for private matching / Drop the old rating before erasing bytes and metadata (spec/photoRetention.md) */
 //@ pure
 export function beginRemoval(c: PhotoChange, owned: boolean, rerate: boolean): PhotoChange {
   //@ ensures (inv(c) && canBeginRemoval(c)) ==> stepBytesRequireReservedRow(c, "beginRemoval", \result)
   //@ ensures (inv(c) && canBeginRemoval(c)) ==> stepRowWriteRequiresBytes(c, "beginRemoval", \result)
-  //@ ensures (inv(c) && canBeginRemoval(c)) ==> stepRatingClearRequiresBytesRemoval(c, "beginRemoval", \result)
-  //@ ensures (inv(c) && canBeginRemoval(c)) ==> stepRowRemovalRequiresRatingClear(c, "beginRemoval", \result)
-  return { phase: owned ? "RemovingBytes" : "ChangeRefused", rerateAfterRemoval: rerate };
+  //@ ensures (inv(c) && canBeginRemoval(c)) ==> stepBytesRemovalRequiresRatingClear(c, "beginRemoval", \result)
+  //@ ensures (inv(c) && canBeginRemoval(c)) ==> stepRowRemovalRequiresBytesRemoval(c, "beginRemoval", \result)
+  return { phase: owned ? "ClearingRating" : "ChangeRefused", rerateAfterRemoval: rerate };
 }
 
-/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md) */
-//@ pure
-export function canRecordRemovedBytes(c: PhotoChange): boolean {
-  return c.phase === "RemovingBytes";
-}
-
-/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md) */
-//@ pure
-export function recordRemovedBytes(c: PhotoChange): PhotoChange {
-  //@ ensures (inv(c) && canRecordRemovedBytes(c)) ==> stepBytesRequireReservedRow(c, "recordRemovedBytes", \result)
-  //@ ensures (inv(c) && canRecordRemovedBytes(c)) ==> stepRowWriteRequiresBytes(c, "recordRemovedBytes", \result)
-  //@ ensures (inv(c) && canRecordRemovedBytes(c)) ==> stepRatingClearRequiresBytesRemoval(c, "recordRemovedBytes", \result)
-  //@ ensures (inv(c) && canRecordRemovedBytes(c)) ==> stepRowRemovalRequiresRatingClear(c, "recordRemovedBytes", \result)
-  return { ...c, phase: "ClearingRating" };
-}
-
-/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md) */
+/** Story: Add and remove photos for private matching / Drop the old rating before erasing bytes and metadata (spec/photoRetention.md) */
 //@ pure
 export function canRecordRatingClear(c: PhotoChange): boolean {
   return c.phase === "ClearingRating";
 }
 
-/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md) */
+/** Story: Add and remove photos for private matching / Drop the old rating before erasing bytes and metadata (spec/photoRetention.md) */
 //@ pure
 export function recordRatingClear(c: PhotoChange): PhotoChange {
   //@ ensures (inv(c) && canRecordRatingClear(c)) ==> stepBytesRequireReservedRow(c, "recordRatingClear", \result)
   //@ ensures (inv(c) && canRecordRatingClear(c)) ==> stepRowWriteRequiresBytes(c, "recordRatingClear", \result)
-  //@ ensures (inv(c) && canRecordRatingClear(c)) ==> stepRatingClearRequiresBytesRemoval(c, "recordRatingClear", \result)
-  //@ ensures (inv(c) && canRecordRatingClear(c)) ==> stepRowRemovalRequiresRatingClear(c, "recordRatingClear", \result)
+  //@ ensures (inv(c) && canRecordRatingClear(c)) ==> stepBytesRemovalRequiresRatingClear(c, "recordRatingClear", \result)
+  //@ ensures (inv(c) && canRecordRatingClear(c)) ==> stepRowRemovalRequiresBytesRemoval(c, "recordRatingClear", \result)
+  return { ...c, phase: "RemovingBytes" };
+}
+
+/** Story: Add and remove photos for private matching / Drop the old rating before erasing bytes and metadata (spec/photoRetention.md) */
+//@ pure
+export function canRecordRemovedBytes(c: PhotoChange): boolean {
+  return c.phase === "RemovingBytes";
+}
+
+/** Story: Add and remove photos for private matching / Drop the old rating before erasing bytes and metadata (spec/photoRetention.md) */
+//@ pure
+export function recordRemovedBytes(c: PhotoChange): PhotoChange {
+  //@ ensures (inv(c) && canRecordRemovedBytes(c)) ==> stepBytesRequireReservedRow(c, "recordRemovedBytes", \result)
+  //@ ensures (inv(c) && canRecordRemovedBytes(c)) ==> stepRowWriteRequiresBytes(c, "recordRemovedBytes", \result)
+  //@ ensures (inv(c) && canRecordRemovedBytes(c)) ==> stepBytesRemovalRequiresRatingClear(c, "recordRemovedBytes", \result)
+  //@ ensures (inv(c) && canRecordRemovedBytes(c)) ==> stepRowRemovalRequiresBytesRemoval(c, "recordRemovedBytes", \result)
   return { ...c, phase: "RemovingRow" };
 }
 
-/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md) */
+/** Story: Add and remove photos for private matching / Drop the old rating before erasing bytes and metadata (spec/photoRetention.md) */
 //@ pure
 export function canRecordRemovedRow(c: PhotoChange): boolean {
   return c.phase === "RemovingRow";
 }
 
-/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md) */
+/** Story: Add and remove photos for private matching / Drop the old rating before erasing bytes and metadata (spec/photoRetention.md) */
 //@ pure
 export function recordRemovedRow(c: PhotoChange): PhotoChange {
   //@ ensures (inv(c) && canRecordRemovedRow(c)) ==> stepBytesRequireReservedRow(c, "recordRemovedRow", \result)
   //@ ensures (inv(c) && canRecordRemovedRow(c)) ==> stepRowWriteRequiresBytes(c, "recordRemovedRow", \result)
-  //@ ensures (inv(c) && canRecordRemovedRow(c)) ==> stepRatingClearRequiresBytesRemoval(c, "recordRemovedRow", \result)
-  //@ ensures (inv(c) && canRecordRemovedRow(c)) ==> stepRowRemovalRequiresRatingClear(c, "recordRemovedRow", \result)
+  //@ ensures (inv(c) && canRecordRemovedRow(c)) ==> stepBytesRemovalRequiresRatingClear(c, "recordRemovedRow", \result)
+  //@ ensures (inv(c) && canRecordRemovedRow(c)) ==> stepRowRemovalRequiresBytesRemoval(c, "recordRemovedRow", \result)
   return { ...c, phase: c.rerateAfterRemoval ? "Rerating" : "ChangeFinished" };
 }
 
-/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md) */
+/** Story: Add and remove photos for private matching / Drop the old rating before erasing bytes and metadata (spec/photoRetention.md) */
 //@ pure
-export function stepRatingClearRequiresBytesRemoval(before: PhotoChange, via: string, after: PhotoChange): boolean {
-  return !(after.phase === "ClearingRating") || (before.phase === "RemovingBytes" && via === "recordRemovedBytes");
+export function stepBytesRemovalRequiresRatingClear(before: PhotoChange, via: string, after: PhotoChange): boolean {
+  return !(after.phase === "RemovingBytes") || (before.phase === "ClearingRating" && via === "recordRatingClear");
 }
 
-/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md) */
+/** Story: Add and remove photos for private matching / Drop the old rating before erasing bytes and metadata (spec/photoRetention.md) */
 //@ pure
-export function stepRowRemovalRequiresRatingClear(before: PhotoChange, via: string, after: PhotoChange): boolean {
-  return !(after.phase === "RemovingRow") || (before.phase === "ClearingRating" && via === "recordRatingClear");
+export function stepRowRemovalRequiresBytesRemoval(before: PhotoChange, via: string, after: PhotoChange): boolean {
+  return !(after.phase === "RemovingRow") || (before.phase === "RemovingBytes" && via === "recordRemovedBytes");
 }
 
-/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md) */
+/** Story: Add and remove photos for private matching / Drop the old rating before erasing bytes and metadata (spec/photoRetention.md) */
 //@ pure
 export function sometimesCompletesChange(c: PhotoChange): boolean {
   return c.phase === "ChangeFinished";
 }
 
-/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md) */
+/** Story: Add and remove photos for private matching / Drop the old rating before erasing bytes and metadata (spec/photoRetention.md) */
 //@ pure
 export function sometimesWritesPhoto(c: PhotoChange): boolean {
   return c.phase === "WritingRow";
 }
 
-/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md) */
+/** Story: Add and remove photos for private matching / Drop the old rating before erasing bytes and metadata (spec/photoRetention.md) */
 //@ pure
 export function sometimesRemovesPhoto(c: PhotoChange): boolean {
   return c.phase === "RemovingRow";
@@ -373,8 +373,8 @@ export function enabled(current: PhotoChange, event: Event): boolean {
   if (event.type === "recordUploadDiscard") return canRecordUploadDiscard(current);
   if (event.type === "finishRerate") return canFinishRerate(current);
   if (event.type === "beginRemoval") return canBeginRemoval(current);
-  if (event.type === "recordRemovedBytes") return canRecordRemovedBytes(current);
   if (event.type === "recordRatingClear") return canRecordRatingClear(current);
+  if (event.type === "recordRemovedBytes") return canRecordRemovedBytes(current);
   if (event.type === "recordRemovedRow") return canRecordRemovedRow(current);
   return false;
 }
@@ -395,8 +395,8 @@ export function step(current: PhotoChange, event: Event): PhotoChange {
   if (event.type === "recordUploadDiscard") return canRecordUploadDiscard(current) ? recordUploadDiscard(current) : current;
   if (event.type === "finishRerate") return canFinishRerate(current) ? finishRerate(current) : current;
   if (event.type === "beginRemoval") return canBeginRemoval(current) ? beginRemoval(current, event.owned, event.rerate) : current;
-  if (event.type === "recordRemovedBytes") return canRecordRemovedBytes(current) ? recordRemovedBytes(current) : current;
   if (event.type === "recordRatingClear") return canRecordRatingClear(current) ? recordRatingClear(current) : current;
+  if (event.type === "recordRemovedBytes") return canRecordRemovedBytes(current) ? recordRemovedBytes(current) : current;
   if (event.type === "recordRemovedRow") return canRecordRemovedRow(current) ? recordRemovedRow(current) : current;
   return current;
 }
@@ -426,8 +426,8 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "recordUploadDiscard") return { type: "recordUploadDiscard" };
   if (raw.type === "finishRerate") return { type: "finishRerate" };
   if (raw.type === "beginRemoval" && typeof raw.owned === "boolean" && typeof raw.rerate === "boolean") return { type: "beginRemoval", owned: raw.owned, rerate: raw.rerate };
-  if (raw.type === "recordRemovedBytes") return { type: "recordRemovedBytes" };
   if (raw.type === "recordRatingClear") return { type: "recordRatingClear" };
+  if (raw.type === "recordRemovedBytes") return { type: "recordRemovedBytes" };
   if (raw.type === "recordRemovedRow") return { type: "recordRemovedRow" };
   return undefined;
 }

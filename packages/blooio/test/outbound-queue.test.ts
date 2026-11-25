@@ -9,8 +9,8 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { randomUUID } from "node:crypto";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { SimClock } from "../../core/src/clock.ts";
-import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
-import { pgAvailable } from "../../observatory/test/pg.ts";
+import { applySchema, devPgUp, DEV_PG_PORT } from "../../db/dev-pg.ts";
+import { pgAvailable } from "../../../apps/observatory/test/pg.ts";
 import { BlooioAdapter } from "../src/adapters/blooio-adapter.ts";
 import { BlooioClient } from "../src/blooio/client.ts";
 import { parseBlooioWebhook } from "../src/blooio/webhook.ts";
@@ -574,7 +574,7 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     const now = new SimClock(Date.UTC(2026, 9, 14, 16));
     const { calls, provider } = recorder();
     const alerts: string[] = [];
-    const q = queue(a, provider, { clock: now, onAlert: (id, alert) => { alerts.push(`${id}:${alert}`); } });
+    const q = queue(a, provider, { clock: now, collectedUnknownTtlMs: 6 * 60 * 60_000, onAlert: (id, alert) => { alerts.push(`${id}:${alert}`); } });
     const to = "+12125558100";
     const answeredTo = "+12125558101";
     const reply = (id: string) => ({ id, memberId: "sd100-member", to, kind: "reply" as const, text: "Here is the plan for Saturday." });
@@ -594,7 +594,7 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
       ["sd100-collected", "failed_unknown", true, "Here is the plan for Saturday."],
       ["sd100-unknown", "failed_unknown", true, "Here is the plan for Saturday."],
     ]);
-    expect(alerts).toEqual(expect.arrayContaining(["sd100-collected:gateway_receipt_expired", "sd100-unknown:gateway_receipt_expired"]));
+    expect(alerts).toEqual(expect.arrayContaining(["sd100-collected:collected_receipt_expired", "sd100-unknown:collected_receipt_expired"]));
     await a.begin(tx => q.collectedReceipt(tx, ["sd100-unknown"], "unknown", now.now()));
     expect(await q.statusOf("sd100-unknown")).toBe("failed_unknown");
     await a.begin(tx => q.collectedReceipt(tx, ["sd100-collected"], "accepted", now.now()));
@@ -611,5 +611,319 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
       where line = ${q.line} and address = ${answeredTo}`;
     expect([answeredConversation?.unanswered, answeredConversation?.last_outbound_at?.getTime()]).toEqual([0, collectedAt]);
     expect(calls).toEqual([]);
+  });
+
+  test("stale hook fail-closed retries with backoff until maxAttempts, then parks or recovers", async () => {
+    const local = new SimClock(clock.now());
+    const { calls, provider } = recorder();
+    let throwStale = true, capTakes = 0;
+    const alerts: string[] = [];
+    const q = queue(a, provider, {
+      clock: local,
+      maxAttempts: 2,
+      baseBackoffMs: 1_000,
+      onAlert: (id, r) => alerts.push(`${id}:${r}`),
+      checks: checks({
+        stale: () => { if (throwStale) throw new Error("stale db down"); return false; },
+        capTake: async () => { capTakes++; return true; },
+      }),
+    });
+    await a`insert into network.members (id,app_id,account_status,home_city) values ('m-stale','friends','active','nyc') on conflict (app_id,id) do nothing`;
+    await q.enqueue(a, [{ id: "stale-fail-1", memberId: "m-stale", to: "+12125558010", kind: "proactive", text: "Hello?", timeZone: NY }]);
+    await q.drain();
+    expect(await q.statusOf("stale-fail-1")).toBe("retry_scheduled");
+    expect(calls.length).toBe(0);
+    expect(capTakes).toBe(0);
+
+    local.advance(2_000);
+    await q.drain();
+    expect(await q.statusOf("stale-fail-1")).toBe("parked_error");
+    expect(calls.length).toBe(0);
+    expect(capTakes).toBe(0);
+    expect(alerts.filter(x => x === "stale-fail-1:dispatch_error").length).toBe(2);
+
+    await q.enqueue(a, [{ id: "stale-recover-1", memberId: "m-stale", to: "+12125558011", kind: "proactive", text: "Recovered!", timeZone: NY }]);
+    await q.drain();
+    expect(await q.statusOf("stale-recover-1")).toBe("retry_scheduled");
+    local.advance(2_000);
+    throwStale = false;
+    await q.drain();
+    expect(await q.statusOf("stale-recover-1")).toBe("sent");
+    expect(capTakes).toBe(1);
+  });
+
+  test("failed_unknown preserves person_cap while expired releases it", async () => {
+    const local = new SimClock(clock.now());
+    const released: string[] = [];
+    let failMode: "unknown" | "retryable" = "unknown";
+    const alerts: string[] = [];
+    const provider: ChannelAdapter = {
+      kind: "sim",
+      async send() { throw new ChannelSendError("ambiguous or temp", failMode); },
+    };
+    const q = queue(a, provider, {
+      clock: local,
+      unknownTtlMs: 10_000,
+      ttlProactiveMs: 5_000,
+      baseBackoffMs: 10_000,
+      onAlert: (id, r) => alerts.push(`${id}:${r}`),
+      checks: checks({
+        capTake: async () => true,
+        capRelease: async row => { released.push(row.id); },
+      }),
+    });
+
+    await a`insert into network.members (id,app_id,account_status,home_city) values ('m-cap','friends','active','nyc') on conflict (app_id,id) do nothing`;
+    await q.enqueue(a, [{ id: "unknown-keep-cap", memberId: "m-cap", to: "+12125558020", kind: "proactive", text: "Uncertain?", timeZone: NY }]);
+    await q.drain();
+    expect(await q.statusOf("unknown-keep-cap")).toBe("unknown_acceptance");
+
+    failMode = "retryable";
+    await q.enqueue(a, [{ id: "expired-rel-cap", memberId: "m-cap", to: "+12125558021", kind: "proactive", text: "Expiring?", timeZone: NY }]);
+    await q.drain();
+    expect(await q.statusOf("expired-rel-cap")).toBe("retry_scheduled");
+
+    local.advance(11_000);
+    await q.drain();
+    expect(await q.statusOf("unknown-keep-cap")).toBe("failed_unknown");
+    expect(await q.statusOf("expired-rel-cap")).toBe("expired");
+    expect(alerts).toContain("unknown-keep-cap:unknown_acceptance_expired");
+    expect(released).toEqual(["expired-rel-cap"]);
+  });
+
+  test("external dropped_forgotten during in-flight send or stale failure is never overwritten", async () => {
+    const provider: ChannelAdapter = {
+      kind: "sim",
+      async send(req) {
+        const id = req.idempotencyKey.replace(/^tn:/, "");
+        await a`update platform.outbound set status = 'dropped_forgotten', to_address = null, body = null, ended_at = now() where id = ${id}`;
+        throw new ChannelSendError("after erase", id === "forget-unknown" ? "unknown" : "retryable");
+      },
+    };
+    const q = queue(a, provider);
+    await q.enqueue(a, [
+      { id: "forget-unknown", to: "+12125558025", kind: "transactional", text: "Forget one", timeZone: NY },
+      { id: "forget-retryable", to: "+12125558026", kind: "transactional", text: "Forget two", timeZone: NY },
+    ]);
+    await q.drain();
+    const rows = await a`select id, status, to_address, body from platform.outbound where id in ('forget-unknown', 'forget-retryable') order by id`;
+    for (const r of rows as any[]) expect([r.status, r.to_address, r.body]).toEqual(["dropped_forgotten", null, null]);
+
+    const qStale = queue(a, recorder().provider, {
+      checks: checks({
+        stale: async row => {
+          if (row.id !== "forget-stale") return false;
+          await a`update platform.outbound set status = 'dropped_forgotten', to_address = null, body = null, ended_at = now() where id = ${row.id}`;
+          throw new Error("gone during stale");
+        },
+      }),
+    });
+    await qStale.enqueue(a, [{ id: "forget-stale", to: "+12125558027", kind: "transactional", text: "Forget three", timeZone: NY }]);
+    await qStale.drain();
+    const [staleRow] = await a`select status, attempts, to_address, body from platform.outbound where id = 'forget-stale'`;
+    expect([staleRow.status, staleRow.attempts, staleRow.to_address, staleRow.body]).toEqual(["dropped_forgotten", 0, null, null]);
+  });
+
+  test("failed acceptance receipt leaves sent_at null and preserves perRecipientPerHour quota", async () => {
+    let returnFailed = true;
+    const calls: SendRequest[] = [];
+    const provider: ChannelAdapter = {
+      kind: "sim",
+      async send(req) {
+        calls.push(req);
+        return { providerMessageId: `sim:${req.idempotencyKey}`, chatId: req.to, status: returnFailed ? "failed" : "sent", transport: "sim" };
+      },
+    };
+    const q = queue(a, provider, { perRecipientPerHour: 1 });
+    await q.enqueue(a, [{ id: "accept-fail-1", to: "+12125558030", kind: "transactional", text: "First try", timeZone: NY }]);
+    await q.drain();
+    const [first] = await a`select status, sent_at, to_address from platform.outbound where id = 'accept-fail-1'`;
+    expect([first.status, first.sent_at, first.to_address]).toEqual(["failed", null, null]);
+
+    returnFailed = false;
+    await q.enqueue(a, [{ id: "accept-fail-2", to: "+12125558030", kind: "transactional", text: "Second try", timeZone: NY }]);
+    await q.drain();
+    expect(await q.statusOf("accept-fail-2")).toBe("sent");
+    expect(calls.length).toBe(2);
+  });
+
+  test("non-member direct message rechecks optedOut inside admission", async () => {
+    let opted = false;
+    const { calls, provider } = recorder();
+    const q = queue(a, provider, {
+      checks: checks({
+        leaks: () => { opted = true; return {}; },
+        optedOut: () => opted,
+      }),
+    });
+    await q.enqueue(a, [{ id: "nonmem-optout", to: "+12125558040", kind: "transactional", text: "Direct hello", timeZone: NY }]);
+    await q.drain();
+    expect(await q.statusOf("nonmem-optout")).toBe("refused_opted_out");
+    expect(calls.length).toBe(0);
+  });
+
+  test("inbound during provider await_recipient leaves row pending instead of held", async () => {
+    let first = true;
+    let qRef!: OutboundQueue;
+    const calls: SendRequest[] = [];
+    const provider: ChannelAdapter = {
+      kind: "sim",
+      async send(req) {
+        calls.push(req);
+        if (first) {
+          first = false;
+          await qRef.inbound(req.to);
+          throw new ChannelSendError("conversation limit", "await_recipient");
+        }
+        return { providerMessageId: `sim:${req.idempotencyKey}`, chatId: req.to, status: "sent", transport: "sim" };
+      },
+    };
+    const q = queue(a, provider);
+    qRef = q;
+    await q.enqueue(a, [{ id: "await-inbound-race", to: "+12125558050", kind: "proactive", text: "Checking in", timeZone: NY }]);
+    await q.drain();
+    expect(await q.statusOf("await-inbound-race")).toBe("pending");
+    await q.drain();
+    expect(await q.statusOf("await-inbound-race")).toBe("sent");
+    expect(calls.length).toBe(2);
+  });
+
+  test("accepted collectedReceipt increments unanswered count toward maxUnanswered", async () => {
+    const { calls, provider } = recorder();
+    const q = queue(a, provider, { maxUnanswered: 2 });
+    const to = "+12125558060";
+    await a.begin(tx => q.recordCollected(tx, [
+      { id: "col-streak-1", memberId: "m-cs", to, kind: "reply", text: "First reply" },
+      { id: "col-streak-2", memberId: "m-cs", to, kind: "reply", text: "Second reply" },
+    ]));
+    await a.begin(tx => q.collectedReceipt(tx, ["col-streak-1", "col-streak-2"], "accepted", clock.now()));
+    const [conv] = await a`select unanswered from platform.line_conversations where line = ${LINE} and address = ${to}`;
+    expect(Number(conv.unanswered)).toBe(2);
+
+    await q.enqueue(a, [{ id: "col-streak-held", memberId: "m-cs", to, kind: "proactive", text: "Third outbound", timeZone: NY }]);
+    await q.drain();
+    expect(await q.statusOf("col-streak-held")).toBe("held_awaiting_reply");
+    expect(calls.length).toBe(0);
+  });
+
+  test("collected and send_unknown rows expire to failed_unknown after unknownTtlMs", async () => {
+    const local = new SimClock(clock.now());
+    const alerts: string[] = [];
+    const q = queue(a, recorder().provider, { clock: local, unknownTtlMs: 10_000, onAlert: (id, r) => alerts.push(`${id}:${r}`) });
+    await a.begin(tx => q.recordCollected(tx, [
+      { id: "col-ttl-1", memberId: "m-ct", to: "+12125558065", kind: "reply", text: "Pending collected" },
+      { id: "col-ttl-2", memberId: "m-ct", to: "+12125558066", kind: "reply", text: "Unknown collected" },
+    ]));
+    await a.begin(tx => q.collectedReceipt(tx, ["col-ttl-2"], "unknown", local.now()));
+    expect(await q.statusOf("col-ttl-2")).toBe("send_unknown");
+
+    local.advance(11_000);
+    await q.drain();
+    expect(await q.statusOf("col-ttl-1")).toBe("failed_unknown");
+    expect(await q.statusOf("col-ttl-2")).toBe("failed_unknown");
+    expect(alerts).toContain("col-ttl-1:collected_receipt_expired");
+    expect(alerts).toContain("col-ttl-2:collected_receipt_expired");
+  });
+
+  test("enqueue with leakReasons parks immediately and emits leak_blocked without draining", async () => {
+    const alerts: string[] = [];
+    const { calls, provider } = recorder();
+    const q = queue(a, provider, { onAlert: (id, r) => alerts.push(`${id}:${r}`) });
+    await q.enqueue(a, [{
+      id: "preparked-leak", to: "+12125558070", kind: "transactional", text: "Clean surface text", timeZone: NY,
+      leakReasons: ["canary:x", "private:y"],
+    }]);
+    const [row] = await a`select status, note, ended_at from platform.outbound where id = 'preparked-leak'`;
+    expect([row.status, row.note]).toEqual(["parked_leak_review", "leak: canary:x,private:y"]);
+    expect(row.ended_at).not.toBeNull();
+    expect(alerts).toEqual(["preparked-leak:leak_blocked"]);
+    await q.drain();
+    expect(calls.length).toBe(0);
+  });
+
+  test("lockAdmission returning false defers without changing row until lockAdmission succeeds", async () => {
+    let allow = false;
+    const { calls, provider } = recorder();
+    const q = queue(a, provider, { checks: checks({ lockAdmission: async () => allow }) });
+    await q.enqueue(a, [{ id: "stale-view-1", to: "+12125558080", kind: "transactional", text: "Wait for fresh view", timeZone: NY }]);
+    expect(await q.drain()).toEqual([]);
+    expect(await q.statusOf("stale-view-1")).toBe("pending");
+    expect(calls.length).toBe(0);
+
+    allow = true;
+    await q.drain();
+    expect(await q.statusOf("stale-view-1")).toBe("sent");
+    expect(calls.length).toBe(1);
+  });
+
+  test("multi-city network_id isolation and legacy null-network backfill", async () => {
+    const { calls, provider } = recorder();
+    const nyc = queue(a, provider, { app: "friends", network: "friends:nyc" });
+    const sf = queue(a, provider, { app: "friends", network: "friends:sf" });
+    await nyc.enqueue(a, [
+      { id: "net-nyc-1", to: "+12125558090", kind: "transactional", text: "NYC notice", timeZone: NY },
+      { id: "net-legacy-null", to: "+12125558091", kind: "transactional", text: "Legacy notice", timeZone: NY },
+    ]);
+    await sf.enqueue(a, [{ id: "net-sf-1", to: "+12125558092", kind: "transactional", text: "SF notice", timeZone: NY }]);
+    await a`update platform.outbound set network_id = null where id = 'net-legacy-null'`;
+
+    await sf.drain();
+    expect(calls.map(c => c.idempotencyKey)).toEqual(["tn:net-sf-1"]);
+    const [backfilled] = await a`select status, network_id from platform.outbound where id = 'net-legacy-null'`;
+    expect([backfilled.status, backfilled.network_id]).toEqual(["pending", "friends:nyc"]);
+
+    await nyc.drain();
+    expect(calls.map(c => c.idempotencyKey).sort()).toEqual(["tn:net-legacy-null", "tn:net-nyc-1", "tn:net-sf-1"]);
+  });
+
+  test("safety outbound kind bypasses quiet hours, streak and line caps while consent, line safety, recipient cap and leak guard hold", async () => {
+    const quietLocal = new SimClock(Date.UTC(2026, 9, 9, 7)); // 03:00 in NY (quiet)
+    const { calls, provider } = recorder();
+    const memberId = "safety-member-1", to = "+12125558100";
+    await a`insert into network.members (id,app_id,account_status,home_city,prefs) values (${memberId},'friends','paused','nyc',${{ quietHours: [0, 8] }}::jsonb)`;
+    await a`insert into platform.line_conversations (line,address,unanswered) values (${LINE},${to},5)`;
+
+    const qBypass = queue(a, provider, {
+      clock: quietLocal,
+      maxUnanswered: 1,
+      perLinePerDay: 0,
+      newChatsPerLinePerDay: 0,
+      perRecipientPerHour: 2,
+    });
+    await qBypass.enqueue(a, [
+      { id: "safety-pass-1", memberId, to, kind: "safety", text: "Account notice from safety.", timeZone: "Not/A_Zone" },
+    ]);
+    await qBypass.drain();
+    expect(await qBypass.statusOf("safety-pass-1")).toBe("sent");
+    expect(calls.map(c => c.idempotencyKey)).toEqual(["tn:safety-pass-1"]);
+
+    // Line safety pauses "safety" notices; clearing restores line.
+    await qBypass.enqueue(a, [{ id: "safety-pause-check", memberId, to, kind: "safety", text: "Second notice.", timeZone: NY }]);
+    await qBypass.setLineSafety("reply_only", "safety.state_changed");
+    try {
+      await qBypass.drain();
+      expect(await qBypass.statusOf("safety-pause-check")).toBe("retry_scheduled");
+    } finally {
+      await qBypass.setLineSafety(undefined);
+    }
+
+    // Opt-out and leak guard still stop "safety" notices.
+    const qGuards = queue(a, provider, {
+      clock: quietLocal,
+      perRecipientPerHour: 1,
+      checks: checks({
+        optedOut: row => row.id === "safety-optout",
+        leaks: () => ({ forbidden: ["secret orchid garden party"] }),
+      }),
+    });
+    await qGuards.enqueue(a, [
+      { id: "safety-optout", memberId, to: "+12125558101", kind: "safety", text: "Notice.", timeZone: NY },
+      { id: "safety-leak", memberId, to: "+12125558102", kind: "safety", text: "About secret orchid garden party.", timeZone: NY },
+      { id: "safety-rcap", memberId, to, kind: "safety", text: "Hits hourly cap.", timeZone: NY },
+    ]);
+    await qGuards.drain();
+    expect(await qGuards.statusOf("safety-optout")).toBe("refused_opted_out");
+    expect(await qGuards.statusOf("safety-leak")).toBe("parked_leak_review");
+    expect(await qGuards.statusOf("safety-rcap")).toBe("retry_scheduled");
   });
 });

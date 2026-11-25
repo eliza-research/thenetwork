@@ -8,8 +8,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
-import { DEV_PG_PORT } from "../../packages/observatory/db/dev-pg.ts";
-import { dropTestDb, pgAvailable, testDb } from "../../packages/observatory/test/pg.ts";
+import { DEV_PG_PORT } from "../../packages/db/dev-pg.ts";
+import { dropTestDb, pgAvailable, testDb } from "../../apps/observatory/test/pg.ts";
 import { backup, upload } from "./backup.ts";
 import { backupKey, backupKeyFromEnv, decryptFile, encryptFile, type Manifest } from "./lib.ts";
 import { download, restore } from "./restore.ts";
@@ -141,7 +141,7 @@ describe("backup and restore drill", () => {
     const prefix = "postgres/production/20261009T071500Z";
     try {
       const r = await backup({ url: src, outDir: join(dir, "bk") });
-      expect(r.manifest.source).toEqual({ host: "localhost", port: String(DEV_PG_PORT) });
+      expect(r.manifest.source).toEqual({ host: "localhost", port: String(DEV_PG_PORT), systemId: expect.stringMatching(/^\d+$/) });
       const keys = await upload(r.dir, r.manifest, prefix, b.env, backupKey(KEY));
       expect(keys.map(k => k.slice(prefix.length + 1))).toEqual(["db.dump.enc", ...(r.manifest.files.roles ? ["roles.sql.enc"] : []), "manifest.json"]);
       // What the bucket holds: no plain dump, no member name, no probe object left behind.

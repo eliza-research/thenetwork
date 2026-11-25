@@ -93,7 +93,7 @@ export interface SendRequest {
   mediaUrls?: string[];
   /** Same key => provider will not send twice (Blooio honours Idempotency-Key on sends). */
   idempotencyKey: string;
-  context?: {id: string; app: string; memberId: string | null; kind: "reply" | "compliance" | "proactive" | "transactional"; createdAt: number};
+  context?: {id: string; app: string; memberId: string | null; kind: "reply" | "compliance" | "proactive" | "safety" | "transactional"; createdAt: number};
 }
 
 export interface SendReceipt {

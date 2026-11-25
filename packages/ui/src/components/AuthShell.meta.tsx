@@ -4,6 +4,7 @@ import type { AuthShellProps } from "./AuthShell.tsx";
 
 export const meta: ComponentMeta<AuthShellProps> = {
   args: { app: "Slop", title: "Enter your code", children: <p>Sent to ••• 0100.</p> },
+  examples: { "Rendered by ntwrk.party": { siteOrigin: "https://slop.date" } },
   play: {
     Default: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
       const page = within(canvasElement);
@@ -11,6 +12,12 @@ export const meta: ComponentMeta<AuthShellProps> = {
       await expect(page.getByRole("link", { name: "slop.date" }).getAttribute("href")).toBe("/");
       await expect(page.getByRole("link", { name: "Privacy" }).getAttribute("href")).toBe("/privacy");
       await expect(page.getByRole("link", { name: "Terms" }).getAttribute("href")).toBe("/terms");
+    },
+    "Rendered by ntwrk.party": async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+      const page = within(canvasElement);
+      await expect(page.getByRole("link", { name: "slop.date" }).getAttribute("href")).toBe("https://slop.date/");
+      await expect(page.getByRole("link", { name: "Privacy" }).getAttribute("href")).toBe("https://slop.date/privacy");
+      await expect(page.getByRole("link", { name: "Terms" }).getAttribute("href")).toBe("https://slop.date/terms");
     },
   },
 };

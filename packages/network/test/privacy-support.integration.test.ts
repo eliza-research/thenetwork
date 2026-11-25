@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
-import { dropTestDb, pgAvailable, TEST_PG_URL, testDb } from "../../observatory/test/pg.ts";
+import { dropTestDb, pgAvailable, TEST_PG_URL, testDb } from "../../../apps/observatory/test/pg.ts";
 import { PgOAuthStore } from "../../mcp/src/pg-store.ts";
 import type { AppId } from "../../platform/src/apps.ts";
 import type { OtpProvider } from "../../platform/src/otp.ts";

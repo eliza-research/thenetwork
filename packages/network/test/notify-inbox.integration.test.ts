@@ -145,3 +145,30 @@ test.skipIf(!pgAvailable)("the inbox repairs accepted messages once and shows on
     await dropDb(url);
   }
 }, 120_000);
+
+// spec/notificationAcknowledgement.md: a minor reads no slop update; the age advances on the verified birthday.
+test.skipIf(!pgAvailable)("a 17-year-old reads no slop update, and the same member reads it after the birthday that makes them 18", async () => {
+  const url = await migratedDb("network_notify_birthday");
+  const clock = new SimClock(Date.UTC(2026, 10, 20, 17));
+  const phone = "+12125550391";
+  const service = new NetworkService({
+    url, clock, photoStorage: null, log: () => {}, env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off" },
+    networks: [{ id: "slop:nyc", matchingEnabled: false }],
+  });
+  try {
+    await service.start();
+    const app = APPS.slop;
+    const joined = await service.accounts.join(app, { e164: phone, personId: null }, {
+      firstName: "Ari", birthDate: 20081123, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+    });
+    if (!joined.ok) throw new Error(`The fixture person did not join: ${joined.error}`);
+    const { personId } = joined.membership;
+    await service.notify!.add({ personId, app: "slop", eventType: "info", subjectId: "standalone", urgency: "normal", summary: "A standalone update." }, clock.now());
+    expect(await service.updatesFor(personId, "slop", "claude", undefined, () => true)).toEqual([]);
+    clock.set(Date.UTC(2026, 10, 24, 17));
+    expect((await service.updatesFor(personId, "slop", "claude", undefined, () => true)).map(u => u.summary)).toEqual(["A standalone update."]);
+  } finally {
+    await service.close();
+    await dropDb(url);
+  }
+}, 120_000);

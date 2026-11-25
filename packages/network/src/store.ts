@@ -238,6 +238,7 @@ export class PgStore implements NetworkStore {
   private readonly owned: boolean;
   readonly app: string;
   readonly city: string;
+  seen?: string;
   constructor(db: string | SQL, readonly id = "ntwrk:nyc") {
     ({ app: this.app, city: this.city } = splitNetworkId(id));
     this.owned = typeof db === "string";
@@ -254,8 +255,9 @@ export class PgStore implements NetworkStore {
   async load(): Promise<NetworkState | undefined> {
     return this.sql.begin(async tx => {
       await tx`select set_config('app.app_id', ${this.app}, true)`;
-      const rows = await tx`select state from network.network_state where id = ${this.id}`;
+      const rows = await tx`select state, xmin::text as v from network.network_state where id = ${this.id}`;
       const s = rows[0]?.state;
+      this.seen = rows[0]?.v;
       return loadRelayRows(tx, s === undefined ? undefined : ((typeof s === "string" ? JSON.parse(s) : s) as NetworkState), this.app, this.id);
     }) as Promise<NetworkState | undefined>;
   }
@@ -267,7 +269,7 @@ export class PgStore implements NetworkStore {
    */
   async save(state: NetworkState, also?: (tx: SQL) => Promise<void>): Promise<void> {
     const rows = consoleRows(state, state.savedAt, this.city);
-    await this.sql.begin(async tx => {
+    await this.inTx(async tx => {
       await tx`select set_config('app.app_id', ${this.app}, true),
         set_config('app.age_as_of', ${new Date(state.savedAt).toISOString()}, true)`;
       // What the last save held, so rows the state dropped are deleted (and only rows this store wrote).
@@ -292,11 +294,15 @@ export class PgStore implements NetworkStore {
         for (let i = 0; i < ids.length; i += 500) for (const r of await tx`select id from network.members where id in ${tx(ids.slice(i, i + 500))}`) known.add(r.id);
         parts = parts.filter(p => known.has(p.member_id as string));
       }
-      await tx`insert into network.network_state (id, version, state, saved_at) values (${this.id}, ${state.version}, ${state}::jsonb, now())
-        on conflict (id) do update set version = excluded.version, state = excluded.state, saved_at = excluded.saved_at`;
+      const [saved] = await tx`insert into network.network_state (id, version, state, saved_at) values (${this.id}, ${state.version}, ${state}::jsonb, now())
+        on conflict (id) do update set version = excluded.version, state = excluded.state, saved_at = excluded.saved_at returning xmin::text as v`;
+      this.seen = saved.v;
       for (let i = 0; i < rows.opportunities.length; i += 500) await tx`insert into network.opportunities ${tx(rows.opportunities.slice(i, i + 500))}
         on conflict (id) do update set state = excluded.state, objective = excluded.objective, explanations = excluded.explanations, meeting_at = excluded.meeting_at,
-          reason = excluded.reason, updated_at = excluded.updated_at`;
+          reason = excluded.reason,
+          -- The time the row last changed, not the time of the last save (every save writes every row).
+          updated_at = case when (network.opportunities.state, network.opportunities.objective, network.opportunities.explanations, network.opportunities.meeting_at, network.opportunities.reason)
+            is distinct from (excluded.state, excluded.objective, excluded.explanations, excluded.meeting_at, excluded.reason) then excluded.updated_at else network.opportunities.updated_at end`;
       for (let i = 0; i < parts.length; i += 500) await tx`insert into network.participations ${tx(parts.slice(i, i + 500))}`;
       for (let i = 0; i < rows.review_items.length; i += 500) await tx`insert into network.review_items ${tx(rows.review_items.slice(i, i + 500))}
         on conflict (opportunity_id) do update set deadline = excluded.deadline, decision = excluded.decision, reason = excluded.reason, note = excluded.note,
@@ -312,6 +318,21 @@ export class PgStore implements NetworkStore {
   }
 
   private readonly queue = new Queue();
+  private lockConn?: Awaited<ReturnType<SQL["reserve"]>>;
+
+  private async inTx<T>(fn: (tx: SQL) => Promise<T>): Promise<T> {
+    const conn = this.lockConn;
+    if (!conn) return this.sql.begin(fn) as Promise<T>;
+    await conn.unsafe("begin");
+    try {
+      const out = await fn(conn);
+      await conn.unsafe("commit");
+      return out;
+    } catch (err) {
+      await conn.unsafe("rollback").catch(() => {});
+      throw err;
+    }
+  }
 
   withTickLock<T>(fn: () => Promise<T>): Promise<T | undefined> {
     return tickMayTryLock(this.queue.busy) ? this.queue.run(() => this.locked(false, fn)) : Promise.resolve(undefined);
@@ -323,7 +344,8 @@ export class PgStore implements NetworkStore {
 
   /**
    * A session-level advisory lock on one reserved connection, released in finally. One caller per
-   * process at a time (the queue), so waiters never use up the pool that load() and save() need.
+   * process at a time (the queue), so waiters never use up the pool that load() needs. save() runs on
+   * the lock's connection (the fence: a save after the lock was lost fails).
    */
   private async locked<T>(wait: boolean, fn: () => Promise<T>): Promise<T | undefined> {
     const key = `network-tick-${this.id}`;
@@ -334,7 +356,8 @@ export class PgStore implements NetworkStore {
         const [row] = await conn`select pg_try_advisory_lock(hashtext(${key})) as ok`;
         if (!tickMayEnter(!!row?.ok)) return undefined;
       }
-      try { return await fn(); } finally { await conn`select pg_advisory_unlock(hashtext(${key}))`; }
+      this.lockConn = conn;
+      try { return await fn(); } finally { this.lockConn = undefined; await conn`select pg_advisory_unlock(hashtext(${key}))`.catch(() => {}); }
     } finally {
       conn.release();
     }

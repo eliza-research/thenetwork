@@ -472,13 +472,11 @@ export class ProfileSuggestions {
   async applyRevokedConnection(owner: SuggestionOwner, request: ProfileReviewDisconnectRequest,
     proof: ProfileReviewDisconnectProof, fence: () => boolean): Promise<CleanupCounts | null> {
     const denied = new Error("Revoked connection authority changed");
-    const valid = () => {
-      const now = this.fence?.now() ?? Date.now();
-      return !!this.authorizeOwner && fence() && !!parseProfileReviewDisconnectRequest(request)
-        && !!parseProfileReviewDisconnectProof(proof, request, proof.requestSha256, now)
+    const valid = () => !!this.fence && !!this.authorizeOwner && fence()
+        && !!parseProfileReviewDisconnectRequest(request)
+        && !!parseProfileReviewDisconnectProof(proof, request, proof.requestSha256, this.fence.now())
         && owner.personId === proof.personId && owner.app === proof.app && owner.userId === proof.userId
         && owner.organizationId === proof.organizationId && owner.chatId === proof.chatId;
-    };
     if (!valid()) return null;
     try {
       return await this.sql.begin(async tx => {
@@ -550,8 +548,8 @@ export class ProfileSuggestions {
   async applyOwnerWithdrawal(owner: SuggestionOwner, request: ProfileReviewWithdrawalRequest,
     proof: ProfileReviewWithdrawalProof, fence: () => boolean): Promise<CleanupCounts | null> {
     const denied = new Error("Owner withdrawal authority changed");
-    const valid = () => !!this.authorizeOwner && fence()
-      && !!parseProfileReviewWithdrawalProof(proof, request, proof.requestSha256, this.fence?.now() ?? Date.now())
+    const valid = () => !!this.fence && !!this.authorizeOwner && fence()
+      && !!parseProfileReviewWithdrawalProof(proof, request, proof.requestSha256, this.fence.now())
       && owner.personId === proof.personId && owner.app === proof.app && owner.userId === proof.userId
       && owner.organizationId === proof.organizationId && owner.chatId === proof.chatId;
     if (!valid()) return null;

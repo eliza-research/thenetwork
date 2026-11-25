@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1.20@sha256:26147acbda4f14c5add9946e2fd2ed543fc402884fd75146bd342a7f6271dc1d
 # The shared backend (docs/deploy.md). Build from the repository root:
 #   docker build -f deploy/backend/Dockerfile -t network-backend .
-# One image serves both Railway services: the backend (default command) and the optional
-# observatory console (deploy/backend/observatory.railway.toml overrides the start command, real mode only).
+# One image serves both services: the backend (default command) and the optional
+# staff console (apps/observatory/deploy/worker.ts sets its entrypoint, real mode only).
 
 # Node 26.13.0 matches .nvmrc. Pin the official image to its multi-architecture index.
 ARG NODE_IMAGE=node:26.13.0-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a3815684d41c33f198bcb09fb998f7dcbf68
@@ -13,13 +13,14 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN npm install --global corepack@0.35.0 \
     && corepack pnpm fetch --prod --ignore-scripts
 # Link the workspace on manifest changes. Source-only edits can reuse these links.
-COPY --parents packages/*/package.json ./
+COPY --parents packages/*/package.json apps/observatory/package.json ./
 RUN corepack pnpm install --offline --frozen-lockfile --prod --ignore-scripts
 
 FROM dependencies AS build
 # Only what the processes run: the workspaces and the deploy entry (Dockerfile.dockerignore keeps the rest out).
 COPY tsconfig.json ./
 COPY packages ./packages
+COPY apps/observatory ./apps/observatory
 COPY deploy ./deploy
 COPY tools/vibestack/vibestack/design ./tools/vibestack/vibestack/design
 # The fitted relay Clef weights (RELAY_CLEF_WEIGHTS_PATH=evals/relay/clef-relay-weights.json); the corpora stay out.

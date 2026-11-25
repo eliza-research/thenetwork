@@ -5,8 +5,8 @@ import { SQL } from "../../core/src/runtime/postgres.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
-import { MIGRATIONS_DIR } from "../../observatory/db/migrate.ts";
+import { applySchema, devPgUp, DEV_PG_PORT } from "../../db/dev-pg.ts";
+import { MIGRATIONS_DIR } from "../../db/migrate.ts";
 import { SimClock } from "@thenetwork/core";
 import { svcSign, svcVerify } from "../../core/src/svc/svc-auth.ts";
 import { PROFILE_REVIEW_DISCONNECT_PATH, PROFILE_REVIEW_DISCONNECT_PROOF_PATH,
@@ -137,11 +137,11 @@ test("a source authorization at the same Cloud time as the revocation is covered
   } finally { await f.close(); }
 });
 
-test("a suggestion row saved before the source-time migration with the Network batch time is covered by a later revocation after migration 0079", async () => {
+test("a suggestion row saved before the source-time migration with the Network batch time is covered by a later revocation after migration 0080", async () => {
   const legacy = await seed(false, true, now - 500);
   expect(await sql`select 1 from platform.profile_suggestions s join platform.profile_suggestion_batches b on b.id=s.batch_id
     where s.batch_id=${legacy.id} and s.source_authorized_at=b.created_at`).toHaveLength(1);
-  await sql.unsafe(readFileSync(join(MIGRATIONS_DIR, "0079_profile_suggestion_legacy_source_time.sql"), "utf8"));
+  await sql.unsafe(readFileSync(join(MIGRATIONS_DIR, "0080_profile_suggestion_legacy_source_time.sql"), "utf8"));
   const f = await fixture();
   try {
     expect((await f.post()).body).toEqual({ kind: "connection_cleanup", operation: "disconnect", counts: { pending: 0, retainedAccepted: 0, linkedFacts: 0 } });
@@ -150,11 +150,11 @@ test("a suggestion row saved before the source-time migration with the Network b
   } finally { await f.close(); }
 });
 
-test("migration 0079 keeps the Cloud time of a row saved after the source-time migration, even when it equals the batch time", async () => {
+test("migration 0080 keeps the Cloud time of a row saved after the source-time migration, even when it equals the batch time", async () => {
   const legacy = await seed(false, true, now - 500);
-  await sql`update public.__migrations set applied_at=${new Date(now - 300)} where id='0076_profile_suggestion_source_time'`;
+  await sql`update public.__migrations set applied_at=${new Date(now - 300)} where id='0077_profile_suggestion_source_time'`;
   const current = await seed(false, true, now - 100);
-  await sql.unsafe(readFileSync(join(MIGRATIONS_DIR, "0079_profile_suggestion_legacy_source_time.sql"), "utf8"));
+  await sql.unsafe(readFileSync(join(MIGRATIONS_DIR, "0080_profile_suggestion_legacy_source_time.sql"), "utf8"));
   expect(new Date((await sql`select source_authorized_at from platform.profile_suggestions where batch_id=${legacy.id}`)[0].source_authorized_at).getTime()).toBe(0);
   expect(new Date((await sql`select source_authorized_at from platform.profile_suggestions where batch_id=${current.id}`)[0].source_authorized_at).getTime()).toBe(now - 100);
 });

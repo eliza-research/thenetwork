@@ -114,7 +114,7 @@ The relay desk of the ConsentNetwork (`packages/network/src/relay.ts`) makes eve
 - The relay thread keeps "<name> shared their number.", never the number. The Clef prompt masks personal data.
 - The leak guard of the queue lets exactly that number through for that row. It also lets a relayed text carry facts of its own sender.
 - Relay rows carry their network (`network_id`, migration 0031). The endpoint runs on the network that holds the member.
-- The log (`network.relay_records`, migration 0026) keeps ids, the decision and reason codes. It never keeps a body or a contact value. A blocked item keeps no text. Migration 0086 closed the held items that were stored before.
+- The log (`network.relay_records`, migration 0026) keeps ids, the decision and reason codes. It never keeps a body or a contact value. A blocked item keeps no text. Migration 0087 closed the held items that were stored before.
 - Minors are never relayed, and scores are never shown.
 
 The desk also writes to the safety record:
@@ -144,7 +144,7 @@ Photos never go through the relay desk. The photo flow (`photoRelayFlow.ts`, [sp
 - When the send rules of the receiver refuse the ask (STOP, a block, an age in doubt), the offer is written without an ask and lapses as a decline does. The sender learns nothing about the receiver. An ask in quiet hours waits and counts as sent.
 - Image check: after the yes of the receiver, `packages/platform/src/photo-screen.ts` (Workers AI `@cf/cloudflare/clef-flash`, base64 images, cost rows with `detail.purpose = "photo_screen"`; generated `photoScreenVerdictFor` and `photoScreenOutcomeFor`) checks each photo at once and at each tick. A clean photo is released at once. A flagged photo, a photo that the model cannot take, and a photo not checked after five tries (after 1, 5, 15 and 60 minutes) wait for a `safety` reviewer (`POST /staff/relay/:itemId/release`) until the item deadline, 12 hours after the yes. Nothing is released unchecked.
 - Link: the receiver gets a `/photos/view` link (`photo-ready:<offer>`) when the first photo is released. The link binds to the first browser that opens it and has no time limit. The view cookie lives 400 days, and each open renews it. PHOTO LINK by text gives a new link and stops the old one.
-- End: the link stops when the sender takes the photo back, the receiver reports it, or the pair ends. A deleted photo goes out of the view. STOP, leave, a block, a ban, a hold, a restriction, erasure (triggers of migration 0088) and an age under 18 (`PhotoRelayService.endFor`) write an end fact on every open offer of that person in the same transaction. A later START or a released hold does not open it again.
+- End: the link stops when the sender takes the photo back, the receiver reports it, or the pair ends. A deleted photo goes out of the view. STOP, leave, a block, a ban, a hold, a restriction, erasure (triggers of migration 0089) and an age under 18 (`PhotoRelayService.endFor`) write an end fact on every open offer of that person in the same transaction. A later START or a released hold does not open it again.
 - A ready offer does not hold the pair: the sender can offer the same match another photo.
 - Sender notices (`senderNoticeFor`, sent by the tick as `photo-notice:<offer>`): "on its way", "didn't take it", "not approved" or "not checked in time". A decline shows no earlier than a lapse.
 - Take back: "take back photo 2" or "unsend it" cancels an open offer and stops the view. When the words name photos and no match, those photos are taken back from every open offer of the sender. When the words name neither and two or more matches have an offer, the service asks which match and takes nothing back.
@@ -177,7 +177,7 @@ The worker runs under its own backend tick key, `review_judge` (`Service.reviewJ
 
 - One run starts at most 4 calls per runtime, in parallel, each with a 120 s deadline.
 - `Service.close()` stops the calls in flight. A stopped call writes nothing, and its lease (180 s) expires.
-- Each packet has one row in `network.review_judgments` (migration 0089). The key is the app, the network, the opportunity, the revision and the packet hash. Each decided row names the judge that wrote it, and a row from another judge is not applied.
+- Each packet has one row in `network.review_judgments` (migration 0090). The key is the app, the network, the opportunity, the revision and the packet hash. Each decided row names the judge that wrote it, and a row from another judge is not applied.
 - Replicas claim a row at most twice (`judgeClaimDecision`). Each decided row has one staff audit row (`review_judgment`, no explanation).
 - The network tick holds an item that waited 30 minutes for a judgment as `judge_overdue`.
 - Rows are kept 90 days, and longer while a roster member has an open safety case. The erasure of a member deletes them.
@@ -582,7 +582,7 @@ order by saved.id;
 
 Residual risk that the owner accepted: the only age evidence is a typed birth date. An adult who types a teen birth date and keeps it consistent can reach minors after a model approval only (owner decision D16 of 2026-11-22: no staff reviewer reads an approved teen introduction). A second phone number starts clean. The bars, reports, minor signals, age conflicts, tag-only probes, daytime public places and the tick sweep reduce this risk; they do not remove it. Reports to the owner: upstream Eliza must know that a teen on friends.help or ntwrk.party can have friendship items and a RELAY path (until then Eliza can tell such a teen that it makes no introductions); the legal review (COPPA actual knowledge, the New York Child Data Protection Act consent for 13 to 17, assistant app rules); and the simulation's truth-based poser counts (`h_teen`) with 95% confidence intervals.
 
-Deploy note. The network reads ages from the reading columns of `platform.matching_ages` (migrations 0081 and 0082). A row that has an integer `lowest_age` but no reading columns is not read when the other row of the person has readings. After 0081 runs, no writer from before this change may run: if one ran (a rolling deploy), run the 0081 back-fill again before teen introductions serve live members.
+Deploy note. The network reads ages from the reading columns of `platform.matching_ages` (migrations 0082 and 0083). A row that has an integer `lowest_age` but no reading columns is not read when the other row of the person has readings. After 0082 runs, no writer from before this change may run: if one ran (a rolling deploy), run the 0082 back-fill again before teen introductions serve live members.
 
 ## Limits
 

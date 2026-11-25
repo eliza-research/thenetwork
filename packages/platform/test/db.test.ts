@@ -4,7 +4,7 @@
 import { fileAt } from "../../core/src/runtime/files.ts";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { migrate, migrations, withDevMigrationLock } from "../../observatory/db/migrate.ts";
+import { migrate, migrations, withDevMigrationLock } from "../../db/migrate.ts";
 import { dropDb, emptyDb, migratedDb, pgAvailable } from "./pg.ts";
 
 const T = 120_000;
@@ -42,7 +42,7 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
     const url = await emptyDb("upgrade"); urls.push(url);
     const sql = new SQL({ url, max: 1 });
     try {
-      await sql.unsafe(await fileAt(new URL("../../observatory/db/schema.sql", import.meta.url)).text());
+      await sql.unsafe(await fileAt(new URL("../../db/schema.sql", import.meta.url)).text());
       await sql.unsafe(await fileAt(new URL("../../network/db/network-state.sql", import.meta.url)).text());
       await sql`insert into network.members (id, name, home_city, age, joined_at) values ('a', 'A', 'nyc', 34, now()), ('b', 'B', 'nyc', null, now())`;
       // A legacy member texts from a phone; another from an Apple ID (not a phone: left as it is).

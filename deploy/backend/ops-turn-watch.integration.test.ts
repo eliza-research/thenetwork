@@ -7,7 +7,7 @@ import { svcSign } from "../../packages/core/src/svc/svc-auth.ts";
 import { TURN_PATH, TURN_RECEIPT_PATH, type TurnReceiptRequest, type TurnRequest } from "../../packages/core/src/svc/contract.ts";
 import { DryRunAdapter } from "../../packages/network/service/channel.ts";
 import { NetworkService } from "../../packages/network/service/service.ts";
-import { dropTestDb, testDb } from "../../packages/observatory/test/pg.ts";
+import { dropTestDb, testDb } from "../../apps/observatory/test/pg.ts";
 import { turnWatchMetrics } from "../../packages/network/service/turn-watch.ts";
 import { APPS } from "../../packages/platform/src/apps.ts";
 import { createOps, opsConfigFromEnv, PgAlertStore, type Notice } from "./ops.ts";

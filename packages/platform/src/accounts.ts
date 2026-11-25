@@ -26,7 +26,7 @@ import {
 import { declineEndsUnboundAccess, joinAgeFieldsValid, joinConsentEvidenceAllowed, joinFailureForgetsMembership, profileJoinAge, signupAccountViewMatches, step as stepEnrollment, typedJoinEntry, type Enrollment } from "../../core/src/generated/siteEnrollment.ts";
 import { browserSignupMemberAllowed } from "../../core/src/generated/oauthBrowserAuthorization.ts";
 import { adultAge, verifiedBrowserBirthMayBeKept } from "../../core/src/generated/memberAge.ts";
-import { validAge } from "../../core/src/policy.ts";
+import { canJoin, validAge } from "../../core/src/policy.ts";
 import { type AgeReading, type AgeRecord, ageRecordOf, canJoinApp, effectiveAgeAt, joinAgeCheck, joinBirthDateUsable, lowestAge, readingAge, signupEligibilityAt, type TeenBarReason } from "./age.ts";
 import type { AppId, AppInfo } from "./apps.ts";
 import { type ConsentEvent, resolveConsent } from "./consent.ts";
@@ -168,7 +168,7 @@ export function joinProfileText(input: Pick<JoinInput, "about" | "neighborhood" 
 
 export type EnrollmentReferral = ReferralJoin | SeedInvitationReferral;
 
-export interface JoinHookContext { app: AppInfo; person: Person; membership: Membership; e164: string; age: number; recordedAge: number | null; input: JoinInput; signupBirth?: SignupBirth; referral?: EnrollmentReferral; session?: string }
+export interface JoinHookContext { app: AppInfo; person: Person; membership: Membership; e164: string; age: number; recordedAge: number | null; input: JoinInput; signupBirth?: SignupBirth; referral?: EnrollmentReferral; session?: string | null }
 export interface MemberHookContext { app: AppInfo; personId: string; memberId: string; e164: string }
 type MemberForgetReason = "leave" | "account_erasure" | "phone_reassignment" | "join_failed";
 
@@ -198,6 +198,7 @@ export interface AccountHooks {
   profileAges?(text: string): number[];
 }
 
+/** `session`: the token hash of the web session that acts (a web join binds only that session to the person). */
 export interface Who { e164: string; personId: string | null; session?: string }
 
 /** The public shape of a membership: this app only. */
@@ -214,6 +215,8 @@ export class Accounts {
   private now() { return (this.opts.now ?? Date.now)(); }
   private get hooks() { return this.opts.hooks ?? {}; }
   phoneHash(e164: string) { return keyedHash(this.opts.hashKey, `phone:${e164}`); }
+  /** The key of the number's one-time Eliza notice row (platform.eliza_notices). */
+  noticeHash(e164: string) { return keyedHash(this.opts.hashKey, `eliza_notice:${e164}`); }
 
   /** Private connector receipt key. Keep the approved profile text out of OAuth storage. */
   profileSubmissionFingerprint(app: AppId, grantId: string, profile: string): string {
@@ -279,7 +282,6 @@ export class Accounts {
     if (!ph || ph.hold === null) return false;
     if (decision === "same_owner") {
       await this.store.setPhoneHold(e164, null, at);
-      await this.store.touchPhone(e164, at);
       return true;
     }
     for (const m of await this.store.memberships(ph.personId)) {
@@ -356,7 +358,8 @@ export class Accounts {
       const policy = blocked ? "MoveBlocked" : await this.store.findPhone(newE164) ? "NumberTaken" : "MoveAllowed";
       const allowed = stepPhoneChange(verified, { type: "checkMovePolicy", policy });
       if (allowed.phase !== "AwaitingMove") return numberChangeRefused(allowed.failure);
-      const moved = await this.store.movePhone({ personId: person.id, changeId: change.id, oldE164: who.e164, newE164, oldHash: this.phoneHash(who.e164), newHash: this.phoneHash(newE164), now: () => this.now() });
+      const moved = await this.store.movePhone({ personId: person.id, changeId: change.id, oldE164: who.e164, newE164, oldHash: this.phoneHash(who.e164), newHash: this.phoneHash(newE164),
+        oldNoticeHash: this.noticeHash(who.e164), newNoticeHash: this.noticeHash(newE164), now: () => this.now() });
       const moveResult = {
         ok: "MoveApplied", number_in_use: "MoveNumberTaken", no_phone: "MoveMissingPhone", banned: "MoveBanned",
         stale_request: "MoveRequestStale",
@@ -441,7 +444,12 @@ export class Accounts {
     await this.ageRecorded(recorded.phoneHash);
   }
 
-  /** A new person for a verified phone (or the tombstone of this phone's earlier person, revived). */
+  /**
+   * A new person for a verified phone (or the tombstone of this phone's earlier person, revived). Web
+   * sessions of the number with no person end, except `joiningSession` (the web join's own): one of them may
+   * belong to an earlier holder of the number, and it must never act for this person. The store binds
+   * them in the same transaction as the person.
+   */
   createPerson(e164: string, method: PhoneMethod, lowestAge: number | null, joiningSession: string | null = null) {
     return this.store.createPerson({ id: randomUUID(), e164, method, at: this.now(), lowestAge, phoneHash: this.phoneHash(e164), joiningSession });
   }
@@ -534,10 +542,15 @@ export class Accounts {
     const ageCheck = stepEnrollment(membershipCheck, { type: "checkJoinAge", ageEligible: age.ok, memberMissing });
     if (ageCheck.phase === "BelowJoinAge") {
       // Nothing is stored for this app: only the age, on the phone's age floor (and the person, if any).
-      if (age.effective !== undefined && declineEndsUnboundAccess(age.effective)) await this.store.endUnboundAccess(who.e164, this.phoneHash(who.e164), at);
+      if (age.effective !== undefined && declineEndsUnboundAccess(age.effective)) {
+        await this.store.endUnboundAccess(who.e164, this.phoneHash(who.e164), at);
+        await this.declineUnderAge(who.e164, person);
+      }
+      if (!person) await this.store.forgetPersonlessSessions(who.e164);
       return { ok: false, error: "under_age" };
     }
     if (ageCheck.phase === "ReturnExisting" && existing) {
+      if (who.session && who.personId === null && person) await this.store.attachPerson(who.e164, person.id, who.session, at);
       if (signupBirth && person && existing.review === null && browserSignupMemberAllowed(existing.state)) {
         const ctx = { app, person, membership: existing, e164: who.e164, age: age.effective ?? statedAge,
           recordedAge: lowestAge(recordedAge, known.independent) ?? null, input, signupBirth };
@@ -574,6 +587,7 @@ export class Accounts {
     const referredJoin = ageCheck.referred && referral;
     const commitBrowserSignup = signupBirth && this.hooks.commitBrowserSignup;
     const phoneHash = this.phoneHash(who.e164);
+    const suppressed = !referredJoin && !commitBrowserSignup && await this.store.isSuppressed(phoneHash);
     const optIn: ConsentEvent = { e164: who.e164, app: app.id, state: "opted_in", source: "web_form", wording: app.consent.text, wordingVersion: app.consent.version, at };
     if (!referredJoin && !commitBrowserSignup) {
       if (!await this.store.admitMembership(membership, optIn, phoneHash, who.session ?? null)) return { ok: false, error: "review" };
@@ -587,7 +601,7 @@ export class Accounts {
       if (signupBirth && !await this.store.saveSignupBirth(membership, who.e164, phoneHash, signupBirth, at)) throw new JoinReviewRequired();
     });
     const result = stepEnrollment(ageCheck, { type: "finishJoin", hookSucceeded: hook.ok });
-    if (result.phase === "JoinHookFailed" && !hook.ok) return this.undoFailedJoin(app, who.e164, person.id, membership.memberId, at, hook.error, !!referredJoin || !!commitBrowserSignup);
+    if (result.phase === "JoinHookFailed" && !hook.ok) return this.undoFailedJoin(app, who.e164, person.id, membership.memberId, at, hook.error, !!referredJoin || !!commitBrowserSignup, suppressed);
     if (result.phase !== "Created") return { ok: false, error: "invalid" };
     return { ok: true, membership, created: true };
   }
@@ -601,11 +615,16 @@ export class Accounts {
     }
   }
 
-  private async undoFailedJoin(app: AppInfo, e164: string, personId: string, memberId: string, at: number, error: unknown, referred: boolean): Promise<{ ok: false; error: JoinError }> {
+  /** `suppressed`: the number was suppressed before admitMembership lifted it; a failed join puts it back. */
+  private async undoFailedJoin(app: AppInfo, e164: string, personId: string, memberId: string, at: number, error: unknown, referred: boolean, suppressed = false): Promise<{ ok: false; error: JoinError }> {
     if (joinFailureForgetsMembership(referred)) {
-      await this.hooks.onForget?.({ app, personId, memberId, e164 }, "join_failed");
-      await this.store.forgetMembership(personId, app.id, at, memberId);
-      await this.store.addConsent({ e164, app: app.id, state: "opted_out", source: "join_failed", at });
+      try {
+        await this.hooks.onForget?.({ app, personId, memberId, e164 }, "join_failed");
+      } finally {
+        await this.store.forgetMembership(personId, app.id, at, memberId);
+        await this.store.addConsent({ e164, app: app.id, state: "opted_out", source: "join_failed", at });
+        if (suppressed) await this.store.suppress(this.phoneHash(e164), "deleted", at);
+      }
     }
     if (error instanceof JoinReviewRequired) return { ok: false, error: "review" };
     if (referred && error instanceof InvitationUnavailable) return { ok: false, error: "invalid_invitation" };
@@ -613,15 +632,37 @@ export class Accounts {
   }
 
   async stop(app: AppInfo, who: Who, source = "web_form"): Promise<void> {
-    await this.store.addConsent({ e164: who.e164, app: null, state: "opted_out", source, at: this.now() });
+    // The person is read first: a number change that commits before the write below does not lose the STOP.
     const person = await this.personFor(who.e164);
+    await this.store.addConsent({ e164: who.e164, app: null, state: "opted_out", source, at: this.now() }, person?.id);
+    // The ledger above is what the send path reads. The hooks pause the person's members: every app's,
+    // even when the person has no membership on the app they stopped from.
     const m = person && (await this.store.getMembership(person.id, app.id));
     const live = m && m.state !== "removed" ? m : undefined;
     if (person) await this.hooks.onStop?.({ app, personId: person.id, memberId: live?.memberId, e164: who.e164 });
   }
 
-  /** Record any consent event (keywords on a line, staff). */
-  async recordConsent(e: ConsentEvent) { await this.store.addConsent(e); }
+  /**
+   * Under 13 cannot use any app (core canJoin): when the phone's lowest age is under 13, a text join the
+   * phone started (its pending row) is deleted, and every non-removed membership of the person goes
+   * through the forget path with an opt-out in the ledger.
+   */
+  async declineUnderAge(e164: string, person: Person | undefined): Promise<void> {
+    const lowest = await this.lowestAge(e164, person);
+    if (lowest === undefined || canJoin(lowest)) return;
+    await this.store.deletePending(this.phoneHash(e164), "join");
+    if (!person) return;
+    const at = this.now();
+    for (const m of await this.store.memberships(person.id)) {
+      if (m.state === "removed") continue;
+      await this.hooks.onForget?.({ app: this.opts.apps(m.app), personId: person.id, memberId: m.memberId, e164 }, "account_erasure");
+      await this.store.forgetMembership(person.id, m.app, at, m.memberId);
+      await this.store.addConsent({ e164, app: m.app, state: "opted_out", source: "join_declined", at });
+    }
+  }
+
+  /** Record any consent event (keywords on a line, staff). `personId`: see PeopleStore.addConsent. */
+  async recordConsent(e: ConsentEvent, personId?: string) { await this.store.addConsent(e, personId); }
 
   /**
    * True if the number may get messages from this app now. A number that deleted everything has no

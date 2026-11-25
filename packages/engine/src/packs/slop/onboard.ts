@@ -93,7 +93,7 @@ export const SLOP_ONBOARD_QUESTIONS: Record<string, { field: OnboardField; text:
   slop_gender: { field: "gender", text: "And how do you describe yourself: a woman, a man, nonbinary, or something else?" },
   slop_age_range: { field: "ageRange", text: SLOP_ASK_QUESTIONS.slop_age_range! },
   slop_distance: { field: "distance", text: SLOP_ASK_QUESTIONS.slop_distance! },
-  slop_location: { field: "location", text: "What's your zip code or neighborhood? It's only used to work out rough distances." },
+  slop_location: { field: "location", text: SLOP_ASK_QUESTIONS.slop_location! },
   slop_zip: { field: "location", text: SLOP_ASK_QUESTIONS.slop_zip! },
   slop_trans_openness: { field: "transOpenness", text: "Some members share that they are trans. Are you open to dating trans people? Yes, no, or skip: if you skip, I read it as no." },
   slop_shown_to: { field: "shownTo", text: "Do you also want to be shown to people who are looking for women, for men, both, or neither?" },

@@ -17,6 +17,12 @@ export interface AuthPage { view: AuthView; fieldError: FieldError; securityChec
 export type ClientLabel = "ProvidedName" | "UnnamedAssistant" | "NoClientShown";
 /** Story: Decide what my assistant can do / The consent page names the client as its claim and lists every scope (spec/authorizationPages.md) */
 export interface ConsentParts { client: ClientLabel; claimNote: boolean; returnHost: boolean; scopeList: boolean; unavailableNotice: boolean }
+/** Story: Decide what my assistant can do / A new person sees Finish signup as the main action on the consent page (spec/authorizationPages.md) */
+export type ConsentPrimary = "PrimaryFinishSignup" | "PrimaryAllow" | "PrimaryTryAgain" | "NoConsentPrimary";
+/** Story: Decide what my assistant can do / The signup form shows the draft that the person approved in the agent (spec/authorizationPages.md) */
+export interface SignupDraftBinding { client: string; app: string; phone: string; used: boolean; expiresAt: number }
+/** Story: Decide what my assistant can do / The signup form shows the draft that the person approved in the agent (spec/authorizationPages.md) */
+export interface SignupPrefillRequest { client: string; app: string; phone: string; asOf: number; ageAllowed: boolean }
 /** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
 export interface CalendarDate { year: number; month: number; day: number }
 /** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
@@ -371,6 +377,93 @@ export function lawConsentRetryHasNoSignup(signupAvailable: boolean): boolean {
 export function lawSignupNoticeRequiresSave(view: AuthView): boolean {
   //@ ensures \result === true
   return !showsSignupConfirmation(view, false);
+}
+
+/** Story: Decide what my assistant can do / A new person sees Finish signup as the main action on the consent page (spec/authorizationPages.md) */
+//@ pure
+export function consentPrimaryAction(view: AuthView, signupAvailable: boolean): ConsentPrimary {
+  return offersSignupConfirmation(view, signupAvailable) ? "PrimaryFinishSignup" : (view === "ConsentView" ? "PrimaryAllow" : (view === "ConsentRetryView" ? "PrimaryTryAgain" : "NoConsentPrimary"));
+}
+
+/** Story: Decide what my assistant can do / A new person sees Finish signup as the main action on the consent page (spec/authorizationPages.md) */
+//@ pure
+export function lawNewPersonSeesFinishSignupFirst(view: AuthView, signupAvailable: boolean): boolean {
+  //@ ensures \result === true
+  return !offersSignupConfirmation(view, signupAvailable) || consentPrimaryAction(view, signupAvailable) === "PrimaryFinishSignup";
+}
+
+/** Story: Decide what my assistant can do / A new person sees Finish signup as the main action on the consent page (spec/authorizationPages.md) */
+//@ pure
+export function lawMemberConsentKeepsAllowFirst(view: AuthView): boolean {
+  //@ ensures \result === true
+  return !(view === "ConsentView") || consentPrimaryAction(view, false) === "PrimaryAllow";
+}
+
+/** Story: Decide what my assistant can do / A new person sees Finish signup as the main action on the consent page (spec/authorizationPages.md) */
+//@ pure
+export function lawRetryConsentKeepsTryAgainFirst(signupAvailable: boolean): boolean {
+  //@ ensures \result === true
+  return consentPrimaryAction("ConsentRetryView", signupAvailable) === "PrimaryTryAgain";
+}
+
+/** Story: Decide what my assistant can do / A new person sees Finish signup as the main action on the consent page (spec/authorizationPages.md) */
+//@ pure
+export function lawOnlyConsentPagesHaveAPrimaryAction(view: AuthView, signupAvailable: boolean): boolean {
+  //@ ensures \result === true
+  return !(!isConsentView(view)) || consentPrimaryAction(view, signupAvailable) === "NoConsentPrimary";
+}
+
+/** Story: Decide what my assistant can do / The signup form shows the draft that the person approved in the agent (spec/authorizationPages.md) */
+//@ pure
+export function signupConsentStartsTicked(prefilled: boolean): boolean {
+  return false;
+}
+
+/** Story: Decide what my assistant can do / The signup form shows the draft that the person approved in the agent (spec/authorizationPages.md) */
+//@ pure
+export function signupPrefillAllowed(d: SignupDraftBinding, r: SignupPrefillRequest): boolean {
+  return !d.used && d.client === r.client && d.app === r.app && d.phone === r.phone && r.asOf < d.expiresAt && r.ageAllowed;
+}
+
+/** Story: Decide what my assistant can do / The signup form shows the draft that the person approved in the agent (spec/authorizationPages.md) */
+//@ pure
+export function lawConsentNeverPreTicked(prefilled: boolean): boolean {
+  //@ ensures \result === true
+  return !signupConsentStartsTicked(prefilled);
+}
+
+/** Story: Decide what my assistant can do / The signup form shows the draft that the person approved in the agent (spec/authorizationPages.md) */
+//@ pure
+export function useSignupPrefill(d: SignupDraftBinding, r: SignupPrefillRequest): SignupDraftBinding {
+  return signupPrefillAllowed(d, r) ? ({ ...d, used: true } as SignupDraftBinding) : d;
+}
+
+/** Story: Decide what my assistant can do / The signup form shows the draft that the person approved in the agent (spec/authorizationPages.md) */
+//@ pure
+export function lawPrefillOnlyForItsClientAppAndPhone(d: SignupDraftBinding, r: SignupPrefillRequest): boolean {
+  //@ ensures \result === true
+  return !signupPrefillAllowed(d, r) || (d.client === r.client && d.app === r.app && d.phone === r.phone);
+}
+
+/** Story: Decide what my assistant can do / The signup form shows the draft that the person approved in the agent (spec/authorizationPages.md) */
+//@ pure
+export function lawExpiredPrefillIsEmpty(d: SignupDraftBinding, r: SignupPrefillRequest): boolean {
+  //@ ensures \result === true
+  return !(r.asOf >= d.expiresAt) || !signupPrefillAllowed(d, r);
+}
+
+/** Story: Decide what my assistant can do / The signup form shows the draft that the person approved in the agent (spec/authorizationPages.md) */
+//@ pure
+export function lawAgeGuardRefusesPrefill(d: SignupDraftBinding, r: SignupPrefillRequest): boolean {
+  //@ ensures \result === true
+  return !(!r.ageAllowed) || !signupPrefillAllowed(d, r);
+}
+
+/** Story: Decide what my assistant can do / The signup form shows the draft that the person approved in the agent (spec/authorizationPages.md) */
+//@ pure
+export function lawPrefillAtMostOnce(d: SignupDraftBinding, r: SignupPrefillRequest, later: SignupPrefillRequest): boolean {
+  //@ ensures \result === true
+  return !signupPrefillAllowed(d, r) || !signupPrefillAllowed(useSignupPrefill(d, r), later);
 }
 
 /** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */

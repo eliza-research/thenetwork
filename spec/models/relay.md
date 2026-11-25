@@ -32,7 +32,7 @@ The model agrees with `RelayDesk` (`packages/network/src/relay.ts`), the relay h
 
 Known drift (the model keeps the rule; another area owns the code):
 
-- The review column. `relayAdmission` gives `relayRecordMayDispatch` the value `rec.review === "rejected"` from the `review` column of `network.relay_records` (migration 0086). No record gets a review now, so `queueSend` takes it as false. The read and the column must go with a migration that settles the old rows.
+- The review column. `relayAdmission` gives `relayRecordMayDispatch` the value `rec.review === "rejected"` from the `review` column of `network.relay_records` (migration 0087). No record gets a review now, so `queueSend` takes it as false. The read and the column must go with a migration that settles the old rows.
 
 ```quint
 // quint-check: max-steps=25 max-samples=10000 verify-steps=3

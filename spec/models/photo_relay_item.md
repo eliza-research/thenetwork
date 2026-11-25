@@ -47,7 +47,7 @@ After the receiver's yes, each item starts in the automatic check (`screen`; the
 //   (each action is atomic), HTTP, the photo bytes, the Workers AI call and the parse of its answers (an oracle: the
 //   verdict parameter of screen; a deleted photo gives no bytes, so only "down"), the page token hash and the browser
 //   cookie (an oracle: the sameDevice parameter), the claim of a check attempt before the Workers AI call (the
-//   screen step is atomic), the end-fact triggers of migration 0088 (part of pairEnds), the reviewer authority (a staff safety role; a refused reviewer
+//   screen step is atomic), the end-fact triggers of migration 0089 (part of pairEnds), the reviewer authority (a staff safety role; a refused reviewer
 //   changes nothing), the texts and the leak guard. settle in the code also expires the due items first; here
 //   expirePending is its own step. A new offer may replace the slot only after the sender notice of the earlier
 //   offer was sent (the code keeps the earlier row, and an earlier ready offer stays viewable there; the slot is an
@@ -517,7 +517,7 @@ module photo_relay_item {
   action newDay: bool = all { w.photosToday > 0, w' = { ...w, photosToday: 0 }, now' = now, g' = g }
 
   // STOP, leave, a block, a ban, a hold or erasure; minor: an age reading under 18 (the lowest age wins). The same
-  // transaction records the end fact on an open offer (migration 0088 triggers; PhotoRelayService.endFor for an age).
+  // transaction records the end fact on an open offer (migration 0089 triggers; PhotoRelayService.endFor for an age).
   // A closed thread is here too: it fails the parties for good, and the code records no end fact for it but refuses
   // the view on every open.
   action pairEnds(minor: bool): bool = all {

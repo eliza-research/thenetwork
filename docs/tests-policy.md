@@ -11,7 +11,7 @@ The validation layer is now:
 | E2E | `pnpm run test:e2e` | `tests/e2e`: the platform, notify, connector signup, Cloud sign-in join, invitations, phone change, agent profile, auth feedback and photo upload links, driven from the outside through the running service. |
 | Conformance | `pnpm run spec:conformance <module>` | A driver in `test/drivers/<module>.ts` runs the application's own entry point against the spec module's journeys, counterexamples and random walks ([SPEC.md](../SPEC.md#conformance)). |
 
-The integration and e2e suites need the dev Postgres (`node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts up`, port 54339; `OBSERVATORY_PG_PORT` and `OBSERVATORY_PG_DIR` select another cluster). Each test process uses databases of its own (`network_test_<pid>`, `platform_test_<pid>_*`, `mcp_test_<pid>`) and drops them afterwards. Sends are dry-run and OTP providers are fakes. CI runs both suites in the `integration` job with a Postgres service and `REQUIRE_PG=1`, so no Postgres suite can skip silently.
+The integration and e2e suites need the dev Postgres (`node --import tsx --env-file-if-exists=.env packages/db/dev-pg.ts up`, port 54339; `OBSERVATORY_PG_PORT` and `OBSERVATORY_PG_DIR` select another cluster). Each test process uses databases of its own (`network_test_<pid>`, `platform_test_<pid>_*`, `mcp_test_<pid>`) and drops them afterwards. Sends are dry-run and OTP providers are fakes. CI runs both suites in the `integration` job with a Postgres service and `REQUIRE_PG=1`, so no Postgres suite can skip silently.
 
 The other CI checks: `ci.yml` runs every simulation block (`offline-core` and the `matching` matrix, with Postgres and `REQUIRE_PG=1`). `ci.yml` also typechecks the root and `sites` TypeScript projects (`tsc --noEmit -p .` and `tsc --noEmit -p sites/tsconfig.json`). `vibespec.yml` runs `pnpm run spec:check-generated`, `pnpm run spec:explore` and its `full-check` job (`pnpm run check`: the spec check, the Dafny proofs and every conformance journey under `test/drivers`, with Postgres) on every pull request and on demand. Each night it runs the full check alone, with `--nightly`. A push to main runs them only for changes to specs, generated code and the sites. `quint-models.yml` runs `pnpm run quint:check` on every whole-flow model in `spec/models` (two shards, the bounds of each model, seed `0x5eed`) for changes to the models, the script or the pinned Quint (pull requests and main), on demand and weekly; a violated invariant or an unreached witness fails it.
 
@@ -45,16 +45,16 @@ The other CI checks: `ci.yml` runs every simulation block (`offline-core` and th
 | `packages/network/test/store.test.ts` | State persistence: restart from stored state in the NYC world, `PgStore`, the tick lock |
 | `packages/notify/test/store-contract.test.ts` | The notify store contract on memory and Postgres |
 | `packages/notify/test/wiring.test.ts` | The Notifier on the real blooio outbound queue |
-| `packages/observatory/test/apps.test.ts` | The console for four apps on a running server and Postgres (RLS read login) |
-| `packages/observatory/test/consent.test.ts` | Game mode with Postgres parity |
-| `packages/observatory/test/migrations.test.ts` | The console roles on a real database |
-| `packages/observatory/test/real.test.ts` | Real mode against Postgres |
-| `packages/observatory/test/real-console.test.ts` | Admin-console data read back from Postgres |
-| `packages/observatory/test/real-fixes.test.ts` | Real mode read paths on Postgres, with a running server |
-| `packages/observatory/test/real-service.test.ts` | Real mode acting through the network service's staff API |
-| `packages/observatory/test/server.test.ts` | HTTP and WebSocket API in both modes |
-| `packages/observatory/test/staff.test.ts` | Staff access on the server, Postgres audit |
-| `packages/observatory/test/staff-apps.test.ts` | Per-role, per-app access on a running server |
+| `apps/observatory/test/apps.test.ts` | The console for four apps on a running server and Postgres (RLS read login) |
+| `apps/observatory/test/consent.test.ts` | Game mode with Postgres parity |
+| `apps/observatory/test/migrations.test.ts` | The console roles on a real database |
+| `apps/observatory/test/real.test.ts` | Real mode against Postgres |
+| `apps/observatory/test/real-console.test.ts` | Admin-console data read back from Postgres |
+| `apps/observatory/test/real-fixes.test.ts` | Real mode read paths on Postgres, with a running server |
+| `apps/observatory/test/real-service.test.ts` | Real mode acting through the network service's staff API |
+| `apps/observatory/test/server.test.ts` | HTTP and WebSocket API in both modes |
+| `apps/observatory/test/staff.test.ts` | Staff access on the server, Postgres audit |
+| `apps/observatory/test/staff-apps.test.ts` | Per-role, per-app access on a running server |
 | `packages/platform/test/api.test.ts` | The public API end to end, on memory and Postgres |
 | `packages/platform/test/photos.test.ts` | Private photos through the public API |
 | `packages/platform/test/proxy.test.ts` | Router signing, a local HTTP server and the public API |
@@ -86,9 +86,9 @@ The security suite is part of the integration suite. `pnpm run security` runs it
 | `deploy/backend/backend.test.ts` | The backend's "two logins" row-level security check |
 | `deploy/router.test.ts` | The site router strips client-sent proxy headers and signs its own |
 | `packages/network/test/shared-agent.integration.test.ts` | Signed `/internal/turn` calls: replay, isolation between people, STOP, deletion |
-| `packages/observatory/test/staff.test.ts` | Staff roles, Cloudflare Access, the per-member PII reveal and the audit log |
+| `apps/observatory/test/staff.test.ts` | Staff roles, Cloudflare Access, the per-member PII reveal and the audit log |
 
-Helpers: `packages/platform/test/pg.ts`, `packages/mcp/test/harness.ts`, `packages/observatory/test/pg.ts`.
+Helpers: `packages/platform/test/pg.ts`, `packages/mcp/test/harness.ts`, `apps/observatory/test/pg.ts`.
 
 The slop.date path gate is `packages/network/test/slop-date-path.integration.test.ts`: join by text, onboarding, review approval, a yes from both people, the booked date, the check-in, a report that reaches the safety queue, and the pair kept apart.
 
@@ -109,7 +109,7 @@ The original 2026-10-08 integration run against a private Postgres 16 cluster re
 ### Not restored: simulation-shaped (in-process world runs, covered by `pnpm run sim`)
 
 - `packages/network/test/network.test.ts` (ConsentNetwork arms and scenarios on the NYC world: the sim's `network` block), `packages/network/test/packs.test.ts` (the slop, peon and friends packs behind the ConsentNetwork: the `slop`, `peon`, `friends` blocks), `packages/network/test/flows.test.ts` and `staff.test.ts` (flows on the hand-built mini world with fakes).
-- `packages/observatory/test/console.test.ts`, `game.test.ts`, `projector.test.ts`, `world-stepping.test.ts` (game mode in process).
+- `apps/observatory/test/console.test.ts`, `game.test.ts`, `projector.test.ts`, `world-stepping.test.ts` (game mode in process).
 - `packages/engine/test/*-conformance.test.ts`, `conformance.ts`, `attention-sim.test.ts`, `plans-sim.test.ts`, `slop-golden.test.ts` and the goldens (ported to `scripts/sim/conformance.ts` and the sim blocks).
 - `packages/sim/test/*`, `packages/worlds/test/*` (the world, scheduler, oracle and app worlds: the sim blocks).
 
@@ -121,7 +121,7 @@ The original 2026-10-08 integration run against a private Postgres 16 cluster re
 - `packages/evals/test/*`, `packages/judge/test/*` (both packages were removed or merged)
 - `packages/network/test/{classify.golden,extract,units}.test.ts`, `slopworld.ts`
 - `packages/notify/test/notify.test.ts`
-- `packages/observatory/test/{scoring,scrub,web-escape,web-sinks}.test.ts`
+- `apps/observatory/test/{scoring,scrub,web-escape,web-sinks}.test.ts`
 - `packages/platform/test/{apps,body,consent,env,otp,phone,safety,sessions,turnstile}.test.ts` (in-memory, `createPublicApi` with fakes; the Postgres and HTTP paths are in `api.test.ts`, `db.test.ts` and `api-security.test.ts`), `fixtures/opt-out.jsonl` (now in `evals/`)
 - The former plugin package's tests (mock runtime). The plugin moved upstream as `@elizaos/plugin-network` (elizaOS/eliza `plugins/plugin-network`), and its tests live there. This repo keeps only the contract mirror in `packages/core/src/svc/`.
 - `packages/mcp/test/plugins.test.ts` (the plugin snapshots equal a fresh build: `node --import tsx --env-file-if-exists=.env plugins/build.ts --check` in CI does this)

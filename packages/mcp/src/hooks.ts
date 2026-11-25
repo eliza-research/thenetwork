@@ -100,8 +100,8 @@ export interface PlatformHooks {
   profileSubmissionFingerprint?(app: McpAppId, grantId: string, text: string): string;
   updates?(personId: string, app: McpAppId, assistant: AssistantKind, token: string | undefined, passesLeakGate: (summary: string) => boolean): Promise<PublicUpdate[]>;
   assistantLinked?(personId: string, assistant: AssistantKind, active: boolean): Promise<void>;
-  session?(app: McpAppId, req: Request): Promise<SignedIn | "unavailable" | undefined>;
-  createSession?(app: McpAppId, who: SignedIn): Promise<string | undefined>;
+  session?(app: McpAppId, req: Request, host?: McpAppId): Promise<SignedIn | "unavailable" | undefined>;
+  createSession?(app: McpAppId, who: SignedIn, host?: McpAppId): Promise<string | undefined>;
   signupEnrollment?(app: McpAppId, who: SignedIn): Promise<BrowserSignup | undefined>;
   joinSignup?(app: McpAppId, who: SignedIn, input: JoinInput, invitation?: string): Promise<BrowserSignupResult>;
 }
@@ -115,7 +115,7 @@ export function publicStatus(state: MembershipState | undefined, review: string 
 }
 
 export interface PlatformParts {
-  authenticatedSiteSession?(app: AppInfo["id"], req: Request): Promise<Awaited<ReturnType<SessionService["authenticate"]>> | "unavailable">;
+  authenticatedSiteSession?(app: AppInfo["id"], req: Request, browserCookieName?: string): Promise<Awaited<ReturnType<SessionService["authenticate"]>> | "unavailable">;
   cloudAuthorityRequired?: PlatformHooks["cloudAuthorityRequired"];
   beginCloudOAuth?: PlatformHooks["beginCloudOAuth"];
   cloudGrantAuthority?: PlatformHooks["cloudGrantAuthority"];
@@ -136,6 +136,8 @@ export interface PlatformParts {
   photoRequest?: (personId: string, app: McpAppId, e164: string, words: string) => Promise<PhotoRequestResult>;
   updates?: PlatformHooks["updates"];
   assistantLinked?: PlatformHooks["assistantLinked"];
+  /** True when the app's Network holds this member (a staff or trust hold until a review). The membership row does not show it. */
+  memberHeld?: (app: AppInfo["id"], memberId: string) => Promise<boolean>;
 }
 
 function cookieValue(header: string | null, name: string): string | undefined {
@@ -147,13 +149,16 @@ function cookieValue(header: string | null, name: string): string | undefined {
 }
 
 export function platformHooks(p: PlatformParts): PlatformHooks {
-  const cookieName = p.cookieName ?? (() => "__Host-sid");
   const ownerE164 = async (personId: string, key: string): Promise<string | undefined> => {
     const who = await p.accounts.byPhoneHash(key);
     return who && who.person.id === personId ? who.e164 : undefined;
   };
-  const siteCookie = (id: McpAppId, token: string) =>
-    `${cookieName(id)}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${p.sessionMaxAge ?? 30 * 24 * 3600}${p.secureCookie === false ? "" : "; Secure"}`;
+  const secure = p.secureCookie !== false;
+  const cookieName = (id: McpAppId, host?: McpAppId) => host === "ntwrk" && id !== host && !p.cloudAuthorityRequired?.(id)
+    ? `${secure ? "__Host-" : ""}mcp_sid_${id}`
+    : p.cookieName?.(id) ?? "__Host-sid";
+  const siteCookie = (name: string, token: string) =>
+    `${name}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${p.sessionMaxAge ?? 30 * 24 * 3600}${secure ? "; Secure" : ""}`;
   return {
     cloudAuthorityRequired: p.cloudAuthorityRequired,
     beginCloudOAuth: p.beginCloudOAuth,
@@ -245,8 +250,9 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       const e164 = await ownerE164(personId, key);
       if (!e164) return "on_hold";
       const m = await p.store.getMembership(personId, app.id);
+      const held = m && m.state !== "removed" && m.state !== "invited" ? await p.memberHeld?.(app.id, m.memberId) : false;
       const optedOut = resolveConsent(await p.store.lastConsent(e164, app.id)) === "opted_out";
-      return publicStatus(m?.state, m?.review, optedOut);
+      return publicStatus(m?.state, m?.review ?? (held ? "hold" : null), optedOut);
     },
     async minorMember(personId, key) {
       const who = await p.accounts.byPhoneHash(key);
@@ -258,7 +264,7 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       const e164 = await ownerE164(personId, key);
       if (!app || !e164) return;
       const own = await p.accounts.activeMembership(app, { e164, personId });
-      if (!own) return;
+      if (!own || await p.memberHeld?.(app.id, own.membership.memberId)) return;
       const { firstName, profile } = own.membership;
       return { firstName, about: profile.about, interests: profile.interests, neighborhood: profile.neighborhood, homeCity: profile.homeCity };
     },
@@ -273,12 +279,13 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       const app = p.app(id);
       if (!app || app.joinMode === "waitlist") return { ok: false, error: "invalid" };
       const view = signupAccountView(id, p.accounts.phoneHash(who.e164), who.personId);
-      return p.accounts.join(app, { e164: who.e164, personId: who.personId, session: who.browserBinding }, input, undefined, invitation, view);
+      return p.accounts.join(app, { e164: who.e164, personId: who.personId, ...(who.browserBinding ? { session: who.browserBinding } : {}) }, input, undefined, invitation, view);
     },
-    session: p.sessions && (async (id, req) => {
+    session: p.sessions && (async (id, req, host) => {
       const app = p.app(id);
-      const token = cookieValue(req.headers.get("cookie"), cookieName(id));
-      const a = app && token ? await (p.authenticatedSiteSession ? p.authenticatedSiteSession(app.id,req) : p.sessions!.authenticate(app.id, token)) : undefined;
+      const name = cookieName(id, host);
+      const token = cookieValue(req.headers.get("cookie"), name);
+      const a = app && token ? await (p.authenticatedSiteSession ? p.authenticatedSiteSession(app.id, req, name) : p.sessions!.authenticate(app.id, token)) : undefined;
       if(a==="unavailable")return "unavailable";
       if (!a || (await p.accounts.held(a.session.e164))) return undefined;
       const personId = (await p.accounts.personFor(a.session.e164))?.id ?? null;
@@ -286,15 +293,15 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       return {
         e164: a.session.e164, personId, browserBinding: a.session.tokenHash,
         ...(a.session.rotatedFrom ? { rotatedFromBrowserBinding: a.session.rotatedFrom } : {}),
-        ...(a.rotated ? { setCookie: siteCookie(id, a.token) } : {}),
+        ...(a.rotated ? { setCookie: siteCookie(name, a.token) } : {}),
       };
     }),
-    createSession: p.sessions && (async (id, who) => {
+    createSession: p.sessions && (async (id, who, host) => {
       if(p.cloudAuthorityRequired?.(id))return undefined;
       const app = p.app(id);
       if (!app) return undefined;
       const { token } = await p.sessions!.create(app.id, who.e164, who.personId);
-      return siteCookie(id, token);
+      return siteCookie(cookieName(id, host), token);
     }),
   };
 }

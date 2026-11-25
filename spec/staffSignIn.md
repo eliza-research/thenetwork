@@ -1,6 +1,6 @@
 # Staff sign-in to the console
 
-Staff get into the console (`packages/observatory/web`) with a staff token or with single sign-on through Cloudflare Access. This spec owns the browser's sign-in phases: the token in the address, the identity check, the token form, the single sign-on link, the refusals, the second factor and the end of a session. It also owns the server's start rule for the sign-in method. The server shell owns the token comparison, the Access assertion check, the Host and Origin check and the audit log. The [permissions spec](staffPermissions.md) owns which routes a role can use. The [navigation spec](consoleNavigation.md) owns the page that a signed-in viewer sees.
+Staff get into the console (`apps/observatory/web`) with a staff token or with single sign-on through Cloudflare Access. This spec owns the browser's sign-in phases: the token in the address, the identity check, the token form, the single sign-on link, the refusals, the second factor and the end of a session. It also owns the server's start rule for the sign-in method. The server shell owns the token comparison, the Access assertion check, the Host and Origin check and the audit log. The [permissions spec](staffPermissions.md) owns which routes a role can use. The [navigation spec](consoleNavigation.md) owns the page that a signed-in viewer sees.
 
 ## Story: Sign in as myself
 
@@ -236,4 +236,19 @@ pure def lawStartedRealDataTakesNoTokenOffThisMachine(realOnlyServer: bool, plat
 
 pure def lawLocalSimulationNeedsNothing(platformEnv: PlatformEnv, accessOn: bool): bool =
   not(startRefused(false, false, platformEnv, accessOn))
+```
+
+### A deployed console with real data needs a durable audit log
+
+A console that reads real data in staging or production keeps its audit log in Postgres. A file audit log is lost on a redeploy, so the server refuses to start with it. Development and a local simulation need no audit database. Added (upstream SD-290): the shell refused a deployed console without the Postgres audit sink -> this rule decides.
+
+```quint
+pure def startNeedsDurableAudit(realOnlyServer: bool, remoteDatabase: bool, platformEnv: PlatformEnv, auditDurable: bool): bool =
+  (realOnlyServer or remoteDatabase) and (platformEnv == EnvStaging or platformEnv == EnvProduction) and not(auditDurable)
+
+pure def lawDeployedRealDataKeepsAuditDurable(realOnlyServer: bool, remoteDatabase: bool, platformEnv: PlatformEnv): bool =
+  ((realOnlyServer or remoteDatabase) and (platformEnv == EnvStaging or platformEnv == EnvProduction)) implies startNeedsDurableAudit(realOnlyServer, remoteDatabase, platformEnv, false)
+
+pure def lawLocalSimulationNeedsNoAuditDatabase(platformEnv: PlatformEnv, auditDurable: bool): bool =
+  not(startNeedsDurableAudit(false, false, platformEnv, auditDurable))
 ```

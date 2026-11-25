@@ -20,13 +20,14 @@ export function ageRangeOf(p: SlopProfile, o: SlopPackOptions): [number, number]
   return o.silentFallback.enabled && p.silentAsks.includes("age_range") ? [Math.max(18, p.age - o.silentFallback.ageSpread), p.age + o.silentFallback.ageSpread] : undefined;
 }
 
-export function missingFields(p: SlopProfile, o: SlopPackOptions): ("orientation" | "age_range" | "distance" | "zip")[] {
-  const out: ("orientation" | "age_range" | "distance" | "zip")[] = [];
+export function missingFields(p: SlopProfile, o: SlopPackOptions): ("orientation" | "age_range" | "distance" | "zip" | "location")[] {
+  const out: ("orientation" | "age_range" | "distance" | "zip" | "location")[] = [];
   if (!p.is || !p.seeks.length) out.push("orientation");
   if (!o.asks) return out;
   if (!ageRangeOf(p, o)) out.push("age_range");
   if (limitMiles(p, o) === undefined) out.push("distance");
   if (p.zipUnknown && !p.silentAsks.includes("zip")) out.push("zip");
+  else if (!p.cell && !p.zipUnknown && !p.silentAsks.includes("location")) out.push("location");
   return out;
 }
 

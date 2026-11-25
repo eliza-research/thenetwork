@@ -115,4 +115,4 @@ Caveats:
 - `packages/engine/src/attention.ts` (parallel flows, `warmMention`, `buildProbe` mutual), `packages/engine/src/config.ts` (`consent`, `attention-v1.2.0`).
 - Deleted since: `packages/engine/experiments/attentionNetwork.ts`, `packages/engine/experiments/attention.ts`, `packages/engine/test/attention.test.ts`, `packages/engine/test/attention-sim.test.ts`. Validated by `pnpm run sim`.
 - `docs/design/2026-10-07-experience-design.md` (1.8: booked-plan reveal, parallel probes, warm mentions).
-- Not touched: `packages/network`, `packages/observatory`, `packages/sim`.
+- Not touched: `packages/network`, `apps/observatory`, `packages/sim`.

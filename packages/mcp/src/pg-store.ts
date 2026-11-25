@@ -4,6 +4,7 @@ import { fileAt } from "../../core/src/runtime/files.ts";
 import { join } from "node:path";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { removalFormMayRevoke } from "../../core/src/generated/connectedAssistants.ts";
+import { signupPrefillAllowed, useSignupPrefill as markSignupPrefillUsed } from "../../core/src/generated/authorizationPages.ts";
 import { decideProfileClaim, type ProfileClaim } from "../../core/src/generated/mcpProfileSubmission.ts";
 import { signupDraftGrantAllowed, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import { parseState as parseHandoff } from "../../core/src/generated/agentPhoneHandoff.ts";
@@ -116,6 +117,29 @@ export class PgOAuthStore implements OAuthStore {
     await this.sql`delete from oauth.signup_drafts where phone_key=${phoneKey} and app_id=${app}`;
   }
 
+  async useSignupPrefill(ask: import("./store.ts").SignupPrefillAsk, at: number) {
+    try { return await this.sql.begin(async tx => {
+      const grants = (await tx`select g.* from oauth.grants g
+        join oauth.signup_drafts d on d.grant_id=g.id
+        where d.phone_key=${ask.phoneKey} and d.app_id=${ask.app} and g.client_id=${ask.clientId}
+        order by g.id for update of g`).map(grant);
+      const drafts = await tx`select d.grant_id,d.app_id,d.phone_key,d.fields,d.expires_at from oauth.signup_drafts d
+        join oauth.grants g on g.id=d.grant_id
+        where d.phone_key=${ask.phoneKey} and d.app_id=${ask.app} and g.client_id=${ask.clientId} for update of d`;
+      const request = { client: ask.clientId, app: ask.app, phone: ask.phoneKey, asOf: at, ageAllowed: ask.ageAllowed };
+      const usable = drafts.filter(d => {
+        const g = grants.find(x => x.id === d.grant_id);
+        return !!g && signupDraftGrantAllowed(g.personId === ask.personId && g.app === d.app_id && g.phoneKey === d.phone_key, g.expiresAt > at, g.revokedAt === null, g.scopes.includes("profile:write"))
+          && signupPrefillAllowed({ client: g.clientId, app: d.app_id, phone: d.phone_key, used: false, expiresAt: ms(d.expires_at)! }, request);
+      });
+      if (!signupDraftUnique(usable.length)) return undefined;
+      const d = usable[0]!, g = grants.find(x => x.id === d.grant_id)!;
+      if (!markSignupPrefillUsed({ client: g.clientId, app: d.app_id, phone: d.phone_key, used: false, expiresAt: ms(d.expires_at)! }, request).used) return undefined;
+      const used = await tx`delete from oauth.signup_drafts where grant_id=${d.grant_id} returning grant_id`;
+      return signupDraftUnique(used.length) ? d.fields as import("./store.ts").SignupDraftFields : undefined;
+    }); } catch { throw new Error("Signup draft storage unavailable"); }
+  }
+
   async putClient(c: OAuthClient) {
     await this.sql`insert into oauth.clients (id, secret_hash, name, redirect_uris, auth_method, app_id, surface, kind, created_at)
       values (${c.id}, ${c.secretHash}, ${c.name}, ${this.sql.array(c.redirectUris, "TEXT")}, ${c.authMethod}, ${c.app}, ${c.surface}, ${c.kind}, ${ts(c.createdAt)})
@@ -161,7 +185,7 @@ export class PgOAuthStore implements OAuthStore {
       return true;
     });
   }
-  async deleteAuthRequest(id: string) { await this.sql`delete from oauth.auth_requests where id = ${id}`; }
+  async deleteAuthRequest(id: string) { return (await this.sql`delete from oauth.auth_requests where id = ${id} returning id`).length > 0; }
 
   async putGrant(g: Grant) { await insertGrant(this.sql, g); }
   async getGrant(id: string) {
@@ -306,7 +330,8 @@ export class PgOAuthStore implements OAuthStore {
     await this.sql`delete from oauth.rate_limits where window_start + make_interval(secs => window_ms / 1000.0) <= ${t}`;
     // Codes and tokens of a deleted grant go with it (on delete cascade).
     await this.sql`delete from oauth.grants where least(coalesce(revoked_at, expires_at), expires_at) <= ${ts(at - GRANT_KEEP_MS)}`;
-    await this.sql`delete from oauth.clients c where c.created_at <= ${ts(at - CLIENT_UNUSED_MS)} and not exists (select 1 from oauth.grants g where g.client_id = c.id)`;
+    await this.sql`delete from oauth.clients c where c.created_at <= ${ts(at - CLIENT_UNUSED_MS)} and not exists (select 1 from oauth.grants g where g.client_id = c.id)
+      and not exists (select 1 from oauth.audit a where a.client_id = c.id and a.kind = 'consent_granted')`;
   }
 
   async forgetPhone(phoneKey: string, e164: string, app?: McpAppId) {

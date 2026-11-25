@@ -34,8 +34,8 @@ export type RegisterBucket = "AssistantRegisterBucket" | "AddressRegisterBucket"
 export type Event =
   | { type: "authorize"; withWrite: boolean; withProfileRead: boolean; withPhotos: boolean }
   | { type: "callWithoutAccess"; tool: ToolName }
-  | { type: "callPublicTool"; tool: ToolName; app: AppId }
   | { type: "connect"; host: AppId; surface: Surface; openAiEnabled: boolean }
+  | { type: "callPublicTool"; tool: ToolName; app: AppId; appRegistered: boolean }
   | { type: "callAfterOwnerChange" }
   | { type: "callCheckStatus" }
   | { type: "changeMemberStatus"; newStatus: MemberStatus }
@@ -67,11 +67,13 @@ export const connectorRegisterPerAddressHour: number = 20;
 export const connectorAssistantRegisterPerAddressHour: number = 1000;
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
 export const initial: Connection = { phase: "Unbound", host: "Ntwrk", surface: "FullSurface", hasWrite: false, hasProfileRead: false, hasPhotos: false, status: "NotJoined", profileApproved: false, profileSent: false, sentToday: 0, draftPrepared: false, tokenUnseen: false, otherUnseen: false, lastShown: 0, lastResult: "NoResult" };
+/** Story: Use my app's connector from my agent / The ntwrk.party host serves every app at its own path, and a grant covers only its own app (spec/connectorTools.md) */
+export const hubHost: AppId = "Ntwrk";
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: Connection): boolean {
-  return alwaysWriteNeedsConnection(current) && alwaysUnboundHasNoDraft(current) && alwaysPhotosNeedConnection(current) && alwaysOpenAiHidesSlop(current) && alwaysMemberResultsNeedConnection(current) && alwaysSentProfileWasApproved(current) && alwaysDailyProfileCap(current) && alwaysDraftOnlyOnFriendsOrNtwrk(current) && alwaysShownCountIsSmall(current);
+  return alwaysWriteNeedsConnection(current) && alwaysUnboundHasNoDraft(current) && alwaysPhotosNeedConnection(current) && alwaysBoundHostIsServed(current) && alwaysMemberResultsNeedConnection(current) && alwaysSentProfileWasApproved(current) && alwaysDailyProfileCap(current) && alwaysDraftOnlyOnFriendsOrNtwrk(current) && alwaysShownCountIsSmall(current);
 }
 
 /** Story: Use my app's connector from my agent / Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date (spec/connectorTools.md) */
@@ -137,6 +139,65 @@ export function lawDraftOnlyOnFriendsAndNtwrk(host: AppId, surface: Surface): bo
 export function lawOpenAiNeverOffersSlop(tool: ToolName): boolean {
   //@ ensures \result === true
   return !appOffered("OpenAiSurface", "Slop") && !toolListed("Slop", "OpenAiSurface", tool);
+}
+
+/** Story: Use my app's connector from my agent / The ntwrk.party host serves every app at its own path, and a grant covers only its own app (spec/connectorTools.md) */
+//@ pure
+export function grantServesApp(grantApp: AppId, requestApp: AppId): boolean {
+  return grantApp === requestApp;
+}
+
+/** Story: Use my app's connector from my agent / The ntwrk.party host serves every app at its own path, and a grant covers only its own app (spec/connectorTools.md) */
+//@ pure
+export function lawGrantNeverCrossesApps(grantApp: AppId, requestApp: AppId): boolean {
+  //@ ensures \result === true
+  return !(grantApp !== requestApp) || !grantServesApp(grantApp, requestApp);
+}
+
+/** Story: Use my app's connector from my agent / The ntwrk.party host serves every app at its own path, and a grant covers only its own app (spec/connectorTools.md) */
+//@ pure
+export function hostBindsApp(host: AppId, app: AppId): boolean {
+  return host === app || host === hubHost;
+}
+
+/** Story: Use my app's connector from my agent / The ntwrk.party host serves every app at its own path, and a grant covers only its own app (spec/connectorTools.md) */
+//@ pure
+export function appListed(surface: Surface, host: AppId, app: AppId): boolean {
+  return hostServes(surface, host) && appOffered(surface, app);
+}
+
+/** Story: Use my app's connector from my agent / The ntwrk.party host serves every app at its own path, and a grant covers only its own app (spec/connectorTools.md) */
+//@ pure
+export function siteOffersOpenAi(site: AppId, app: AppId): boolean {
+  return hostBindsApp(site, app) && appOffered("OpenAiSurface", app);
+}
+
+/** Story: Use my app's connector from my agent / The ntwrk.party host serves every app at its own path, and a grant covers only its own app (spec/connectorTools.md) */
+//@ pure
+export function lawHubServesEveryApp(app: AppId): boolean {
+  //@ ensures \result === true
+  return hostBindsApp(hubHost, app);
+}
+
+/** Story: Use my app's connector from my agent / The ntwrk.party host serves every app at its own path, and a grant covers only its own app (spec/connectorTools.md) */
+//@ pure
+export function lawAppSiteServesOnlyItsApp(host: AppId, app: AppId): boolean {
+  //@ ensures \result === true
+  return !(host !== hubHost) || hostBindsApp(host, app) === (host === app);
+}
+
+/** Story: Use my app's connector from my agent / The ntwrk.party host serves every app at its own path, and a grant covers only its own app (spec/connectorTools.md) */
+//@ pure
+export function lawHubOffersOnlySupportedOpenAiApps(app: AppId): boolean {
+  //@ ensures \result === true
+  return siteOffersOpenAi(hubHost, app) === (app !== "Slop");
+}
+
+/** Story: Use my app's connector from my agent / The ntwrk.party host serves every app at its own path, and a grant covers only its own app (spec/connectorTools.md) */
+//@ pure
+export function lawNoSiteOffersSlopOnTheOpenAiSurface(site: AppId): boolean {
+  //@ ensures \result === true
+  return !siteOffersOpenAi(site, "Slop") && !appListed("OpenAiSurface", site, "Slop");
 }
 
 /** Story: Use my app's connector from my agent / Public tools need no sign-in, and member tools need the person's own grant (spec/connectorTools.md) */
@@ -254,6 +315,12 @@ export function lawReadToolsServeEveryStatus(status: MemberStatus): boolean {
 
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
 //@ pure
+export function bound(c: Connection): boolean {
+  return c.phase === "Anonymous" || c.phase === "Connected" || c.phase === "Revoked";
+}
+
+/** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
+//@ pure
 export function canConnect(c: Connection): boolean {
   return c.phase === "Unbound";
 }
@@ -270,7 +337,7 @@ export function authorize(c: Connection, withWrite: boolean, withProfileRead: bo
   //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysWriteNeedsConnection(\result)
   //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysPhotosNeedConnection(\result)
-  //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysOpenAiHidesSlop(\result)
+  //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysBoundHostIsServed(\result)
   //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canAuthorize(c)) ==> alwaysDailyProfileCap(\result)
@@ -292,7 +359,7 @@ export function callWithoutAccess(c: Connection, tool: ToolName): Connection {
   //@ ensures (inv(c) && canCallWithoutAccess(c, tool)) ==> alwaysWriteNeedsConnection(\result)
   //@ ensures (inv(c) && canCallWithoutAccess(c, tool)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canCallWithoutAccess(c, tool)) ==> alwaysPhotosNeedConnection(\result)
-  //@ ensures (inv(c) && canCallWithoutAccess(c, tool)) ==> alwaysOpenAiHidesSlop(\result)
+  //@ ensures (inv(c) && canCallWithoutAccess(c, tool)) ==> alwaysBoundHostIsServed(\result)
   //@ ensures (inv(c) && canCallWithoutAccess(c, tool)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canCallWithoutAccess(c, tool)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canCallWithoutAccess(c, tool)) ==> alwaysDailyProfileCap(\result)
@@ -328,41 +395,13 @@ export function alwaysPhotosNeedConnection(c: Connection): boolean {
 
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
 //@ pure
-export function bound(c: Connection): boolean {
-  return c.phase === "Anonymous" || c.phase === "Connected" || c.phase === "Revoked";
-}
-
-/** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
-//@ pure
-export function callPublicTool(c: Connection, tool: ToolName, app: AppId): Connection {
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysWriteNeedsConnection(\result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysUnboundHasNoDraft(\result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysPhotosNeedConnection(\result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysOpenAiHidesSlop(\result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysMemberResultsNeedConnection(\result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysSentProfileWasApproved(\result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysDailyProfileCap(\result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysShownCountIsSmall(\result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepSavedProfileNeedsReadAuthority(c, "callPublicTool", \result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepLookingForChangeNeedsWriteAndActive(c, "callPublicTool", \result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepLookingForListNeedsRead(c, "callPublicTool", \result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepPhotoToolNeedsPhotosScopeAndActive(c, "callPublicTool", \result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepNothingSentAtTheLimit(c, "callPublicTool", \result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepSubmitOnlyForLiveMember(c, "callPublicTool", \result)
-  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepReadingNeverAddsUnseen(c, "callPublicTool", \result)
-  return { ...c, lastResult: appOffered(c.surface, app) ? "PublicFacts" : "AppNotAvailable" };
-}
-
-/** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
-//@ pure
 export function canCallPublicTool(c: Connection, tool: ToolName): boolean {
   return (c.phase === "Anonymous" || c.phase === "Connected") && scopeFor(tool) === "NoScope";
 }
 
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
 //@ pure
-export function alwaysOpenAiHidesSlop(c: Connection): boolean {
+export function alwaysBoundHostIsServed(c: Connection): boolean {
   return !bound(c) || hostServes(c.surface, c.host);
 }
 
@@ -372,7 +411,7 @@ export function connect(c: Connection, host: AppId, surface: Surface, openAiEnab
   //@ ensures (inv(c) && canConnect(c)) ==> alwaysWriteNeedsConnection(\result)
   //@ ensures (inv(c) && canConnect(c)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canConnect(c)) ==> alwaysPhotosNeedConnection(\result)
-  //@ ensures (inv(c) && canConnect(c)) ==> alwaysOpenAiHidesSlop(\result)
+  //@ ensures (inv(c) && canConnect(c)) ==> alwaysBoundHostIsServed(\result)
   //@ ensures (inv(c) && canConnect(c)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canConnect(c)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canConnect(c)) ==> alwaysDailyProfileCap(\result)
@@ -390,6 +429,28 @@ export function connect(c: Connection, host: AppId, surface: Surface, openAiEnab
 
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
 //@ pure
+export function callPublicTool(c: Connection, tool: ToolName, app: AppId, appRegistered: boolean): Connection {
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysWriteNeedsConnection(\result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysUnboundHasNoDraft(\result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysPhotosNeedConnection(\result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysBoundHostIsServed(\result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysMemberResultsNeedConnection(\result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysSentProfileWasApproved(\result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysDailyProfileCap(\result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> alwaysShownCountIsSmall(\result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepSavedProfileNeedsReadAuthority(c, "callPublicTool", \result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepLookingForChangeNeedsWriteAndActive(c, "callPublicTool", \result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepLookingForListNeedsRead(c, "callPublicTool", \result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepPhotoToolNeedsPhotosScopeAndActive(c, "callPublicTool", \result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepNothingSentAtTheLimit(c, "callPublicTool", \result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepSubmitOnlyForLiveMember(c, "callPublicTool", \result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepReadingNeverAddsUnseen(c, "callPublicTool", \result)
+  return { ...c, lastResult: appRegistered && appListed(c.surface, c.host, app) ? "PublicFacts" : "AppNotAvailable" };
+}
+
+/** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
+//@ pure
 export function canCallWithoutAccess(c: Connection, tool: ToolName): boolean {
   return bound(c) && toolListed(c.host, c.surface, tool) && ((c.phase === "Anonymous" && scopeFor(tool) !== "NoScope") || c.phase === "Revoked" || (c.phase === "Connected" && !grantCovers(tool, true, c.hasWrite, c.hasProfileRead, c.hasPhotos)));
 }
@@ -399,6 +460,20 @@ export function canCallWithoutAccess(c: Connection, tool: ToolName): boolean {
 export function lawDisabledOpenAiHostIsUnavailable(c: Connection, host: AppId): boolean {
   //@ ensures \result === true
   return connect(c, host, "OpenAiSurface", false).phase === "Unavailable";
+}
+
+/** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
+//@ pure
+export function lawUnregisteredAppIsNotAvailable(c: Connection, tool: ToolName, app: AppId): boolean {
+  //@ ensures \result === true
+  return callPublicTool(c, tool, app, false).lastResult === "AppNotAvailable";
+}
+
+/** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
+//@ pure
+export function lawOpenAiPluginServerNeverNamesSlop(c: Connection, tool: ToolName): boolean {
+  //@ ensures \result === true
+  return !(c.surface === "OpenAiSurface" && c.host !== "Slop") || callPublicTool(c, tool, "Slop", true).lastResult === "AppNotAvailable";
 }
 
 /** Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection (spec/connectorTools.md) */
@@ -419,7 +494,7 @@ export function callAfterOwnerChange(c: Connection): Connection {
   //@ ensures (inv(c) && canCallAfterOwnerChange(c)) ==> alwaysWriteNeedsConnection(\result)
   //@ ensures (inv(c) && canCallAfterOwnerChange(c)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canCallAfterOwnerChange(c)) ==> alwaysPhotosNeedConnection(\result)
-  //@ ensures (inv(c) && canCallAfterOwnerChange(c)) ==> alwaysOpenAiHidesSlop(\result)
+  //@ ensures (inv(c) && canCallAfterOwnerChange(c)) ==> alwaysBoundHostIsServed(\result)
   //@ ensures (inv(c) && canCallAfterOwnerChange(c)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canCallAfterOwnerChange(c)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canCallAfterOwnerChange(c)) ==> alwaysDailyProfileCap(\result)
@@ -466,7 +541,7 @@ export function callCheckStatus(c: Connection): Connection {
   //@ ensures (inv(c) && canCallCheckStatus(c)) ==> alwaysWriteNeedsConnection(\result)
   //@ ensures (inv(c) && canCallCheckStatus(c)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canCallCheckStatus(c)) ==> alwaysPhotosNeedConnection(\result)
-  //@ ensures (inv(c) && canCallCheckStatus(c)) ==> alwaysOpenAiHidesSlop(\result)
+  //@ ensures (inv(c) && canCallCheckStatus(c)) ==> alwaysBoundHostIsServed(\result)
   //@ ensures (inv(c) && canCallCheckStatus(c)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canCallCheckStatus(c)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canCallCheckStatus(c)) ==> alwaysDailyProfileCap(\result)
@@ -488,7 +563,7 @@ export function changeMemberStatus(c: Connection, newStatus: MemberStatus): Conn
   //@ ensures (inv(c) && canChangeMemberStatus(c, newStatus)) ==> alwaysWriteNeedsConnection(\result)
   //@ ensures (inv(c) && canChangeMemberStatus(c, newStatus)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canChangeMemberStatus(c, newStatus)) ==> alwaysPhotosNeedConnection(\result)
-  //@ ensures (inv(c) && canChangeMemberStatus(c, newStatus)) ==> alwaysOpenAiHidesSlop(\result)
+  //@ ensures (inv(c) && canChangeMemberStatus(c, newStatus)) ==> alwaysBoundHostIsServed(\result)
   //@ ensures (inv(c) && canChangeMemberStatus(c, newStatus)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canChangeMemberStatus(c, newStatus)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canChangeMemberStatus(c, newStatus)) ==> alwaysDailyProfileCap(\result)
@@ -534,7 +609,7 @@ export function callReadProfile(c: Connection, currentMembership: boolean, safeF
   //@ ensures (inv(c) && canCallReadProfile(c)) ==> alwaysWriteNeedsConnection(\result)
   //@ ensures (inv(c) && canCallReadProfile(c)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canCallReadProfile(c)) ==> alwaysPhotosNeedConnection(\result)
-  //@ ensures (inv(c) && canCallReadProfile(c)) ==> alwaysOpenAiHidesSlop(\result)
+  //@ ensures (inv(c) && canCallReadProfile(c)) ==> alwaysBoundHostIsServed(\result)
   //@ ensures (inv(c) && canCallReadProfile(c)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canCallReadProfile(c)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canCallReadProfile(c)) ==> alwaysDailyProfileCap(\result)
@@ -604,7 +679,7 @@ export function callLookingForTool(c: Connection, tool: ToolName, currentMembers
   //@ ensures (inv(c) && canCallLookingForTool(c, tool)) ==> alwaysWriteNeedsConnection(\result)
   //@ ensures (inv(c) && canCallLookingForTool(c, tool)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canCallLookingForTool(c, tool)) ==> alwaysPhotosNeedConnection(\result)
-  //@ ensures (inv(c) && canCallLookingForTool(c, tool)) ==> alwaysOpenAiHidesSlop(\result)
+  //@ ensures (inv(c) && canCallLookingForTool(c, tool)) ==> alwaysBoundHostIsServed(\result)
   //@ ensures (inv(c) && canCallLookingForTool(c, tool)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canCallLookingForTool(c, tool)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canCallLookingForTool(c, tool)) ==> alwaysDailyProfileCap(\result)
@@ -663,7 +738,7 @@ export function callPhotoTool(c: Connection, tool: ToolName, currentMembership: 
   //@ ensures (inv(c) && canCallPhotoTool(c, tool)) ==> alwaysWriteNeedsConnection(\result)
   //@ ensures (inv(c) && canCallPhotoTool(c, tool)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canCallPhotoTool(c, tool)) ==> alwaysPhotosNeedConnection(\result)
-  //@ ensures (inv(c) && canCallPhotoTool(c, tool)) ==> alwaysOpenAiHidesSlop(\result)
+  //@ ensures (inv(c) && canCallPhotoTool(c, tool)) ==> alwaysBoundHostIsServed(\result)
   //@ ensures (inv(c) && canCallPhotoTool(c, tool)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canCallPhotoTool(c, tool)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canCallPhotoTool(c, tool)) ==> alwaysDailyProfileCap(\result)
@@ -703,7 +778,7 @@ export function approveProfile(c: Connection): Connection {
   //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysWriteNeedsConnection(\result)
   //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysPhotosNeedConnection(\result)
-  //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysOpenAiHidesSlop(\result)
+  //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysBoundHostIsServed(\result)
   //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canApproveProfile(c)) ==> alwaysDailyProfileCap(\result)
@@ -737,7 +812,7 @@ export function startNewDay(c: Connection): Connection {
   //@ ensures (inv(c) && canStartNewDay(c)) ==> alwaysWriteNeedsConnection(\result)
   //@ ensures (inv(c) && canStartNewDay(c)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canStartNewDay(c)) ==> alwaysPhotosNeedConnection(\result)
-  //@ ensures (inv(c) && canStartNewDay(c)) ==> alwaysOpenAiHidesSlop(\result)
+  //@ ensures (inv(c) && canStartNewDay(c)) ==> alwaysBoundHostIsServed(\result)
   //@ ensures (inv(c) && canStartNewDay(c)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canStartNewDay(c)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canStartNewDay(c)) ==> alwaysDailyProfileCap(\result)
@@ -777,7 +852,7 @@ export function callSubmitProfile(c: Connection, accepted: boolean): Connection 
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> alwaysWriteNeedsConnection(\result)
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> alwaysPhotosNeedConnection(\result)
-  //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> alwaysOpenAiHidesSlop(\result)
+  //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> alwaysBoundHostIsServed(\result)
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> alwaysDailyProfileCap(\result)
@@ -817,7 +892,7 @@ export function callPrepareSignup(c: Connection, joinAgeAllowed: boolean): Conne
   //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> alwaysWriteNeedsConnection(\result)
   //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> alwaysPhotosNeedConnection(\result)
-  //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> alwaysOpenAiHidesSlop(\result)
+  //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> alwaysBoundHostIsServed(\result)
   //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> alwaysDailyProfileCap(\result)
@@ -851,7 +926,7 @@ export function receiveUpdate(c: Connection, forReference: boolean): Connection 
   //@ ensures (inv(c) && canReceiveUpdate(c)) ==> alwaysWriteNeedsConnection(\result)
   //@ ensures (inv(c) && canReceiveUpdate(c)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canReceiveUpdate(c)) ==> alwaysPhotosNeedConnection(\result)
-  //@ ensures (inv(c) && canReceiveUpdate(c)) ==> alwaysOpenAiHidesSlop(\result)
+  //@ ensures (inv(c) && canReceiveUpdate(c)) ==> alwaysBoundHostIsServed(\result)
   //@ ensures (inv(c) && canReceiveUpdate(c)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canReceiveUpdate(c)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canReceiveUpdate(c)) ==> alwaysDailyProfileCap(\result)
@@ -885,7 +960,7 @@ export function callGetUpdates(c: Connection, tokenGiven: boolean, tokenOwn: boo
   //@ ensures (inv(c) && canCallGetUpdates(c)) ==> alwaysWriteNeedsConnection(\result)
   //@ ensures (inv(c) && canCallGetUpdates(c)) ==> alwaysUnboundHasNoDraft(\result)
   //@ ensures (inv(c) && canCallGetUpdates(c)) ==> alwaysPhotosNeedConnection(\result)
-  //@ ensures (inv(c) && canCallGetUpdates(c)) ==> alwaysOpenAiHidesSlop(\result)
+  //@ ensures (inv(c) && canCallGetUpdates(c)) ==> alwaysBoundHostIsServed(\result)
   //@ ensures (inv(c) && canCallGetUpdates(c)) ==> alwaysMemberResultsNeedConnection(\result)
   //@ ensures (inv(c) && canCallGetUpdates(c)) ==> alwaysSentProfileWasApproved(\result)
   //@ ensures (inv(c) && canCallGetUpdates(c)) ==> alwaysDailyProfileCap(\result)
@@ -1088,8 +1163,8 @@ export function sometimesRevoked(c: Connection): boolean {
 export function enabled(current: Connection, event: Event): boolean {
   if (event.type === "authorize") return canAuthorize(current);
   if (event.type === "callWithoutAccess") return canCallWithoutAccess(current, event.tool);
-  if (event.type === "callPublicTool") return canCallPublicTool(current, event.tool);
   if (event.type === "connect") return canConnect(current);
+  if (event.type === "callPublicTool") return canCallPublicTool(current, event.tool);
   if (event.type === "callAfterOwnerChange") return canCallAfterOwnerChange(current);
   if (event.type === "callCheckStatus") return canCallCheckStatus(current);
   if (event.type === "changeMemberStatus") return canChangeMemberStatus(current, event.newStatus);
@@ -1112,8 +1187,8 @@ export function step(current: Connection, event: Event): Connection {
   //@ ensures inv(\result)
   if (event.type === "authorize") return canAuthorize(current) ? authorize(current, event.withWrite, event.withProfileRead, event.withPhotos) : current;
   if (event.type === "callWithoutAccess") return canCallWithoutAccess(current, event.tool) ? callWithoutAccess(current, event.tool) : current;
-  if (event.type === "callPublicTool") return canCallPublicTool(current, event.tool) ? callPublicTool(current, event.tool, event.app) : current;
   if (event.type === "connect") return canConnect(current) ? connect(current, event.host, event.surface, event.openAiEnabled) : current;
+  if (event.type === "callPublicTool") return canCallPublicTool(current, event.tool) ? callPublicTool(current, event.tool, event.app, event.appRegistered) : current;
   if (event.type === "callAfterOwnerChange") return canCallAfterOwnerChange(current) ? callAfterOwnerChange(current) : current;
   if (event.type === "callCheckStatus") return canCallCheckStatus(current) ? callCheckStatus(current) : current;
   if (event.type === "changeMemberStatus") return canChangeMemberStatus(current, event.newStatus) ? changeMemberStatus(current, event.newStatus) : current;
@@ -1145,8 +1220,8 @@ export function parseEvent(x: unknown): Event | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "authorize" && typeof raw.withWrite === "boolean" && typeof raw.withProfileRead === "boolean" && typeof raw.withPhotos === "boolean") return { type: "authorize", withWrite: raw.withWrite, withProfileRead: raw.withProfileRead, withPhotos: raw.withPhotos };
   if (raw.type === "callWithoutAccess" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "PrepareSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "ReadProfileTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool" || raw.tool === "ListLookingForTool" || raw.tool === "PauseLookingForTool" || raw.tool === "ResumeLookingForTool" || raw.tool === "MyPhotosTool" || raw.tool === "PhotoRequestTool")) return { type: "callWithoutAccess", tool: raw.tool };
-  if (raw.type === "callPublicTool" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "PrepareSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "ReadProfileTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool" || raw.tool === "ListLookingForTool" || raw.tool === "PauseLookingForTool" || raw.tool === "ResumeLookingForTool" || raw.tool === "MyPhotosTool" || raw.tool === "PhotoRequestTool") && (raw.app === "Ntwrk" || raw.app === "Slop" || raw.app === "Peon" || raw.app === "Friends")) return { type: "callPublicTool", tool: raw.tool, app: raw.app };
   if (raw.type === "connect" && (raw.host === "Ntwrk" || raw.host === "Slop" || raw.host === "Peon" || raw.host === "Friends") && (raw.surface === "FullSurface" || raw.surface === "OpenAiSurface") && typeof raw.openAiEnabled === "boolean") return { type: "connect", host: raw.host, surface: raw.surface, openAiEnabled: raw.openAiEnabled };
+  if (raw.type === "callPublicTool" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "PrepareSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "ReadProfileTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool" || raw.tool === "ListLookingForTool" || raw.tool === "PauseLookingForTool" || raw.tool === "ResumeLookingForTool" || raw.tool === "MyPhotosTool" || raw.tool === "PhotoRequestTool") && (raw.app === "Ntwrk" || raw.app === "Slop" || raw.app === "Peon" || raw.app === "Friends") && typeof raw.appRegistered === "boolean") return { type: "callPublicTool", tool: raw.tool, app: raw.app, appRegistered: raw.appRegistered };
   if (raw.type === "callAfterOwnerChange") return { type: "callAfterOwnerChange" };
   if (raw.type === "callCheckStatus") return { type: "callCheckStatus" };
   if (raw.type === "changeMemberStatus" && (raw.newStatus === "NotJoined" || raw.newStatus === "Invited" || raw.newStatus === "Onboarding" || raw.newStatus === "Active" || raw.newStatus === "Stopped" || raw.newStatus === "OnHold")) return { type: "changeMemberStatus", newStatus: raw.newStatus };

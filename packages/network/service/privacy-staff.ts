@@ -6,8 +6,8 @@ import {
 import { replayItemDone, replayStartAllowed, type ReplayOutcome } from "../../core/src/generated/databaseRestore.ts";
 import { APP_IDS, isAppId, type AppId } from "../../platform/src/apps.ts";
 import { maskPhone, normalizePhone } from "../../platform/src/phone.ts";
-import { globalRolesFor } from "../../observatory/src/staff.ts";
-import type { AuditEntry, StaffUser } from "../../observatory/src/types.ts";
+import { globalRolesFor } from "../../../apps/observatory/src/staff.ts";
+import type { AuditEntry, StaffUser } from "../../../apps/observatory/src/types.ts";
 import type { NetworkService } from "./service.ts";
 
 const REQUESTS = "/privacy/requests";

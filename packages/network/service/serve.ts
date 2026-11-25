@@ -1,3 +1,4 @@
+import type { MemberId } from "@thenetwork/core";
 import { serveHttp } from "../../core/src/runtime/http.ts";
 // The service's two HTTP servers, its tick loop, and the MCP server mounted on it. Shared by main.ts,
 // the shared backend (deploy/backend/server.ts) and scripts/platform-dev.ts (local dev).
@@ -89,7 +90,7 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
     apps,
     platform: platformHooks({
       store: svc.people, otp: api.otp, accounts: api.accounts, sessions: api.sessions,
-      authenticatedSiteSession: (app,req)=>api.authenticatedSiteSession(app,req),
+      authenticatedSiteSession: (app, req, cookieName) => api.authenticatedSiteSession(app, req, cookieName),
       cloudAuthorityRequired: app=>isAppId(app) && api.cloudAuthorityRequired(app),
       beginCloudOAuth: (app,rid)=>isAppId(app)?api.beginCloudOAuth(app,rid):Promise.resolve(undefined),
       cloudGrantAuthority: (app,req,resource)=>isAppId(app)?api.cloudGrantAuthority(app,req,resource):Promise.resolve(undefined),
@@ -105,6 +106,10 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
       photoHoldings: (personId, app, e164) => (isAppId(app) ? svc.photoHoldings(personId, app, e164) : Promise.resolve(undefined)),
       photoRequest: (personId, app, e164, words) => (isAppId(app) ? svc.photoRequest(personId, app, e164, words)
         : Promise.resolve({ status: "unavailable" as const, text: PHOTO_RELAY_TEXT.unavailable })),
+      memberHeld: async (app, memberId) => {
+        const rt = await svc.runtimeOfMember(app, memberId);
+        return rt ? rt.readState(n => n.trust.level(memberId as MemberId) === "hold") : false;
+      },
       // get_updates and the inbox's surface signals (packages/notify; entry-flows doc 5).
       ...(svc.notify ? {
         updates: (personId, app, assistant, token, passesLeakGate) => (isAppId(app) ? svc.updatesFor(personId, app, assistant, token, passesLeakGate) : Promise.resolve([])),
@@ -121,6 +126,7 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
       ? mcp.assistantUpdateSurfacesForClaim(await store.assistantGrantsForClaim(tx, personId, phoneKey, app, now()))
       : []);
   }
+  svc.onTick(() => mcp.sweep());
   svc.onForget(async ctx => {
     // Leaving an app (or deleting everything) also deletes the grants: no row keeps the phone next to the app.
     if (isMcpAppId(ctx.app.id)) await mcp.forgetPerson(ctx.personId, ctx.app.id);

@@ -128,7 +128,7 @@ test.skipIf(!pgAvailable).each([
         await expect(send(confirm)).resolves.toMatchObject({ status: 409 });
         await sql`update platform.outbound set next_attempt_at=${new Date(clock.now())} where id=${notice!.id}`;
         await adapter.lineSafety(undefined);
-        await rt.deliver();
+        await rt.unitOfWork(() => {});
         expect(await adapter.queue.statusOf(notice!.id)).toBe("suppressed_ineligible");
         expect(delivered.filter(call => call.text.includes(museumLink))).toEqual([]);
       }

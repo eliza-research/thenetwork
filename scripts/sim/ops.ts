@@ -296,7 +296,7 @@ export async function opsBlock(b: Block): Promise<void> {
     process.env.PLATFORM_ENV = "production";
     delete process.env.OBSERVATORY_TRUST_CF_ACCESS;
     try {
-      const { createServer } = await import("../../packages/observatory/src/server.ts");
+      const { createServer } = await import("../../apps/observatory/src/server.ts");
       let err = "";
       await createServer({ realOnly: true, port: 0, real: { url: undefined }, audit: { dir: "/nonexistent" } }).then(s => s.stop(), e => { err = String((e as Error).message); });
       expect(err).toMatch(/refusing to start.*Cloudflare Access/);
@@ -305,11 +305,36 @@ export async function opsBlock(b: Block): Promise<void> {
     }
   });
 
+  await b.run("console deploy: the container Worker starts the console only behind Cloudflare Access, real-only, without staff tokens", async () => {
+    const { consoleSettings } = await import("../../apps/observatory/deploy/settings.ts");
+    const { deployGuard } = await import("../../apps/observatory/src/server.ts");
+    const db = "postgres://console_shared:x@db.example.com:5432/network";
+    const good = {
+      PLATFORM_ENV: "production", NETWORK_DATABASE_URL: db, OBSERVATORY_AUDIT_DATABASE_URL: db, OBSERVATORY_ALLOWED_ORIGINS: "https://console.ntwrk.party",
+      OBSERVATORY_TRUST_CF_ACCESS: "1", OBSERVATORY_CF_ACCESS_TEAM: "team", OBSERVATORY_CF_ACCESS_AUD: "aud",
+    };
+    const deploy = (config: Record<string, unknown>, platformEnv = "production") =>
+      consoleSettings({ OBSERVATORY_RUNTIME_CONFIG: JSON.stringify(config), PLATFORM_ENV: platformEnv, BUILD_ID: "a".repeat(40) });
+    const env = deploy({ ...good, OBSERVATORY_REAL_ONLY: "0", NODE_ENV: "development" });
+    expect([env.OBSERVATORY_REAL_ONLY, env.NODE_ENV, env.PORT]).toEqual(["1", "production", "4747"]);
+    // The settings the Worker accepts are settings the console's own start guard accepts.
+    expect(deployGuard({ realOnly: true, trustCfAccess: env.OBSERVATORY_TRUST_CF_ACCESS === "1", platformEnv: env.PLATFORM_ENV, databaseUrls: [env.NETWORK_DATABASE_URL], audit: "postgres" })).toBeUndefined();
+    const refused = (config: Record<string, unknown>, platformEnv?: string) => { try { deploy(config, platformEnv); return ""; } catch (e) { return (e as Error).message; } };
+    expect(refused({ ...good, OBSERVATORY_TOKEN: "t".repeat(40) })).toMatch(/OBSERVATORY_TOKEN is refused/);
+    expect(refused({ ...good, OBSERVATORY_TOKENS: `admin@*:${"t".repeat(40)}` })).toMatch(/OBSERVATORY_TOKENS is refused/);
+    expect(refused({ ...good, OBSERVATORY_TRUST_CF_ACCESS: "0" })).toMatch(/needs OBSERVATORY_TRUST_CF_ACCESS=1/);
+    expect(refused({ ...good, OBSERVATORY_CF_ACCESS_AUD: "" })).toMatch(/needs OBSERVATORY_TRUST_CF_ACCESS=1/);
+    expect(refused(good, "staging")).toMatch(/environment does not match/);
+    expect(refused({ ...good, NETWORK_DATABASE_URL: "postgres://u:p@postgres.railway.internal:5432/n" })).toMatch(/externally reachable/);
+    expect(refused({ ...good, OBSERVATORY_ALLOWED_ORIGINS: "" })).toMatch(/OBSERVATORY_ALLOWED_ORIGINS/);
+    expect(refused({ ...good, OBSERVATORY_AUDIT_DATABASE_URL: "" })).toMatch(/OBSERVATORY_AUDIT_DATABASE_URL is required/);
+  });
+
   await b.run("image: the backend and the real-only console import nothing from the simulator; the Dockerfile prunes exactly those packages", async () => {
     const FORBIDDEN = ["packages/sim/", "packages/judge/", "packages/evals/", "packages/worlds/", "packages/plugin-network/", "scripts/", "evals/"];
     const backend = await importGraph(`${REPO}/deploy/backend/server.ts`, true);
     // The console: its static graph (game mode and the scenario list are dynamic imports, never taken in real-only mode) and the web bundle.
-    const consoleGraph = new Set([...(await importGraph(`${REPO}/packages/observatory/src/server.ts`, false)), ...(await importGraph(`${REPO}/packages/observatory/web/main.tsx`, true))]);
+    const consoleGraph = new Set([...(await importGraph(`${REPO}/apps/observatory/src/server.ts`, false)), ...(await importGraph(`${REPO}/apps/observatory/web/main.tsx`, true))]);
     const bad = [...backend, ...consoleGraph].filter(f => FORBIDDEN.some(p => f.startsWith(p)));
     expect(bad).toEqual([]);
     expect(backend.size).toBeGreaterThan(50);
@@ -333,7 +358,7 @@ export async function opsBlock(b: Block): Promise<void> {
   await a.unsafe(`create database ${src}`);
   const srcUrl = admin.replace(/\/postgres$/, `/${src}`);
   try {
-    const { migrate } = await import("../../packages/observatory/db/migrate.ts");
+    const { migrate } = await import("../../packages/db/migrate.ts");
     await migrate(srcUrl, { lockTimeout: "60s" });
     // spec/models/runtime_ops.md, tickLateMaskedTest
     await b.run("matcher heartbeat on Postgres: a staff save cannot mask a stalled or missing tick", async () => {

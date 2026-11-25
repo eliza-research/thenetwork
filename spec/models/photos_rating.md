@@ -62,7 +62,7 @@ Imported from `quint/photos_rating.qnt` at `30d950e`. Compared again with the co
 //         until then); the sweep erases that photo (photoHoldAllowed).
 //   PR-D2 the count was read without a lock. Now uploadReserve counts the reserved and stored rows under the lock.
 //   PR-D3 the bytes came before the row and nothing swept. Now the row is reserved before the bytes, a removal
-//         hides the row, then deletes the bytes, the rating and the row, and the sweep finishes either.
+//         hides the row, then drops the rating, deletes the bytes and the row, and the sweep finishes either.
 //   PR-D4 a failed staff age check kept the photos. Now verify erases them (verifyList) before dropRatings.
 //   PR-D5 a crash after noteAge kept a minor's photos and rating. Now the sweep erases photos and drops a
 //         rating that photoHoldAllowed and ratingHoldAllowed no longer allow.
@@ -135,7 +135,7 @@ module photos_rating {
     objects: Set[int],      // object storage keys (the upload id stands for the random key)
     rows: Set[int],         // platform.photos rows that are stored and not hidden (stored_at set, deleted_at null)
     reserved: Set[int],     // rows reserved by an upload (stored_at null, deleted_at null)
-    hidden: Set[int],       // stored rows that a removal hid (deleted_at set) until bytes, rating and row are gone
+    hidden: Set[int],       // stored rows that a removal hid (deleted_at set) until rating, bytes and row are gone
     abandoned: Set[int],    // reserved rows that a removal hid: the upload or the sweep erases them
     uplHeader: int -> str,  // the consent version the upload request carried (upload consentVersion)
     // clef-rating
@@ -151,7 +151,7 @@ module photos_rating {
     // erasePhoto runs per caller: deleteFor hides the rows first (erTodo), then each row: bytes, dropRatings, row
     erTodo: str -> Set[int],
     erCur: str -> int,
-    erPc: str -> str,       // idle | bytesGone | ratingGone
+    erPc: str -> str,       // idle | ratingGone | bytesGone
     rmPhase: str,           // idle | erasing                         (remove; then rate again)
     ageSaga: str,           // idle | committed | erasing | dropped   (recordAge noteAge, ageLowered)
     verifySaga: str,        // idle | committed | erasing             (verify fail; deleteFor, then dropRatings for the app)
@@ -301,21 +301,21 @@ module photos_rating {
     st' = { ...st, upl: st.upl.set(u, "idle"), objects: st.objects.exclude(Set(u)), reserved: st.reserved.exclude(Set(u)), abandoned: st.abandoned.exclude(Set(u)), last: "uploadDiscard" },
   }
 
-  // ---------------------------------------------------------------- erasePhoto (hidden row: bytes, dropRatings, row)
-  /** storage.delete for the next hidden row (recordRemovedBytes). */
-  action eraseBytes(e: str, p: int): bool = all {
+  // ---------------------------------------------------------------- erasePhoto (hidden row: dropRatings, bytes, row)
+  /** onRemoved: dropRatings for the app, for the next hidden row (recordRatingClear). */
+  action eraseDrop(e: str, p: int): bool = all {
     st.erPc.get(e) == "idle", st.erTodo.get(e).contains(p),
-    st' = { ...st, objects: st.objects.exclude(Set(p)), erTodo: st.erTodo.set(e, st.erTodo.get(e).exclude(Set(p))),
-            erCur: st.erCur.set(e, p), erPc: st.erPc.set(e, "bytesGone"), last: "eraseBytes" },
+    st' = { ...noRating(st), erTodo: st.erTodo.set(e, st.erTodo.get(e).exclude(Set(p))),
+            erCur: st.erCur.set(e, p), erPc: st.erPc.set(e, "ratingGone"), last: "eraseDrop" },
   }
-  /** onRemoved: dropRatings for the app (recordRatingClear). */
-  action eraseDrop(e: str): bool = all {
-    st.erPc.get(e) == "bytesGone",
-    st' = { ...noRating(st), erPc: st.erPc.set(e, "ratingGone"), last: "eraseDrop" },
+  /** storage.delete of the hidden row (recordRemovedBytes). */
+  action eraseBytes(e: str): bool = all {
+    st.erPc.get(e) == "ratingGone",
+    st' = { ...st, objects: st.objects.exclude(Set(st.erCur.get(e))), erPc: st.erPc.set(e, "bytesGone"), last: "eraseBytes" },
   }
   /** meta.delete of the hidden row (recordRemovedRow). */
   action eraseRow(e: str): bool = all {
-    st.erPc.get(e) == "ratingGone",
+    st.erPc.get(e) == "bytesGone",
     st' = { ...st, hidden: st.hidden.exclude(Set(st.erCur.get(e))), erPc: st.erPc.set(e, "idle"), erCur: st.erCur.set(e, 0), last: "eraseRow" },
   }
 
@@ -617,7 +617,7 @@ module photos_rating {
   /**
    * One pass: the due unfinished rows (a reserved or hidden row whose request has ended) lose their bytes and
    * their row, a hidden stored row also its rating, and a new rate() is asked; then the holders that
-   * photoHoldAllowed refuses are erased by deleteFor (hide, bytes, rating, row), and a rating that
+   * photoHoldAllowed refuses are erased by deleteFor (hide, rating, bytes, row), and a rating that
    * ratingHoldAllowed refuses is dropped.
    */
   def sweepResult(s: State): State = {
@@ -667,7 +667,7 @@ module photos_rating {
     else if (focus and ERASERS.exists(x => erasing(st, x))) {
       nondet ef = ERASERS.filter(x => erasing(st, x)).oneOf()
       nondet pf = UPLOADS.oneOf()
-      any { eraseBytes(ef, pf), eraseDrop(ef), eraseRow(ef) }
+      any { eraseDrop(ef, pf), eraseBytes(ef), eraseRow(ef) }
     }
     else if (focus and (st.ratePc != "idle" or st.rateDue))
       any { rateStart, rateRead, rateReturn(score), rateCheck2, rateWrite, rateCheck3, rateDrop }
@@ -676,7 +676,7 @@ module photos_rating {
     else if (focus and st.rating) any { probe(ADULT_AGE), probe(MINOR_AGE), exportMember, matchRead }
     else any {
       any { uploadStart(u, h), uploadCount(u), uploadReserve(u), uploadBytes(u), uploadRow(u), uploadDiscard(u) },
-      any { removeStart(u), removeDone, eraseBytes(e, u), eraseDrop(e), eraseRow(e), sweep },
+      any { removeStart(u), removeDone, eraseDrop(e, u), eraseBytes(e), eraseRow(e), sweep },
       any { rateStart, rateRead, rateReturn(score), rateCheck2, rateWrite, rateCheck3, rateDrop },
       any { ageList, ageDropRatings, ageMembers, verifyList, verifyDrop, banDrop, banRestrict,
             leaveList, leaveNetForget, leaveForgetMembership, delList, delNetForget, delStore },
@@ -803,7 +803,7 @@ module photos_rating {
     init
       .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadReserve(1)).then(uploadBytes(1)).then(uploadRow(1))
       .then(rateStart).then(rateRead).then(rateReturn(true)).then(rateCheck2).then(rateWrite)
-      .then(ageCommit).then(ageList).then(eraseBytes("age", 1)).then(eraseDrop("age")).then(eraseRow("age"))
+      .then(ageCommit).then(ageList).then(eraseDrop("age", 1)).then(eraseBytes("age")).then(eraseRow("age"))
       .then(ageDropRatings).then(ageMembers)
       .then(rateCheck3).then(rateDrop)
       .expect(not(st.rating) and st.rows == Set() and settled(st) and photoOnlyForAdult and safety)
@@ -813,7 +813,7 @@ module photos_rating {
     init
       .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadReserve(1)).then(uploadBytes(1)).then(uploadRow(1))
       .then(rateStart).then(rateRead).then(rateReturn(true)).then(rateCheck2)
-      .then(ageCommit).then(ageList).then(eraseBytes("age", 1)).then(eraseDrop("age")).then(eraseRow("age"))
+      .then(ageCommit).then(ageList).then(eraseDrop("age", 1)).then(eraseBytes("age")).then(eraseRow("age"))
       .then(ageDropRatings).then(ageMembers)
       .then(rateWrite)
       .expect(not(st.rating) and st.age < 18 and settled(st) and noRatingForMinor and safety)
@@ -827,12 +827,12 @@ module photos_rating {
       .then(rateReturn(true)).then(rateCheck2)
       .expect(not(st.rating) and st.rows == Set(1, 2) and st.rateDue and st.last == "rateDiscarded")
 
-  /** The member deletes a photo: bytes, row, rating; then rate() runs again from what is left. */
+  /** The member deletes a photo: rating, bytes, row; then rate() runs again from what is left. */
   run memberRemoveTest =
     init
       .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadReserve(1)).then(uploadBytes(1)).then(uploadRow(1))
       .then(rateStart).then(rateRead).then(rateReturn(true)).then(rateCheck2).then(rateWrite).then(rateCheck3)
-      .then(removeStart(1)).then(eraseBytes("rm", 1)).then(eraseDrop("rm")).then(eraseRow("rm")).then(removeDone)
+      .then(removeStart(1)).then(eraseDrop("rm", 1)).then(eraseBytes("rm")).then(eraseRow("rm")).then(removeDone)
       .then(rateStart).then(rateRead)
       .expect(st.rows == Set() and st.objects == Set() and not(st.rating) and settled(st) and bytesMatchRow and safety)
 
@@ -840,7 +840,7 @@ module photos_rating {
   run leaveClearsTest =
     init
       .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadReserve(1)).then(uploadBytes(1)).then(uploadRow(1))
-      .then(leaveConsent("text")).then(leaveList).then(eraseBytes("leave", 1)).then(eraseDrop("leave")).then(eraseRow("leave"))
+      .then(leaveConsent("text")).then(leaveList).then(eraseDrop("leave", 1)).then(eraseBytes("leave")).then(eraseRow("leave"))
       .then(leaveNetForget).then(leaveForgetMembership).then(rateStart)
       .expect(st.membership == "removed" and st.rows == Set() and st.objects == Set() and settled(st)
               and noPhotoAfterForget and noPhotoForForgottenMember and safety)
@@ -889,22 +889,22 @@ module photos_rating {
       .then(sweep)
       .expect(st.objects == Set() and st.abandoned == Set() and settled(st) and bytesMatchRow and noPhotoAfterForget and safety)
 
-  /** PR-D3 fixed: a crash after the bytes and before dropRatings leaves a hidden row; the sweep drops the rating. */
+  /** PR-D3 fixed: the rating goes first; a crash after dropRatings and before the bytes leaves a hidden row with no rating; the sweep removes the bytes and the row. */
   run d3StaleRatingSweptTest =
     init
       .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadReserve(1)).then(uploadBytes(1)).then(uploadRow(1))
       .then(rateStart).then(rateRead).then(rateReturn(true)).then(rateCheck2).then(rateWrite).then(rateCheck3)
-      .then(removeStart(1)).then(eraseBytes("rm", 1)).then(crash)
-      .expect(st.rating and st.hidden == Set(1) and st.rows == Set() and not(settled(st)) and safety)
+      .then(removeStart(1)).then(eraseDrop("rm", 1)).then(crash)
+      .expect(not(st.rating) and st.hidden == Set(1) and st.objects == Set(1) and st.rows == Set() and not(settled(st)) and safety)
       .then(sweep)
-      .expect(not(st.rating) and st.hidden == Set() and settled(st) and ratingOnlyForEligible and safety)
+      .expect(not(st.rating) and st.hidden == Set() and st.objects == Set() and settled(st) and bytesMatchRow and ratingOnlyForEligible and safety)
 
   /** PR-D4 fixed: a failed staff age check erases the photos, then drops the rating. */
   run d4FailedAgeCheckErasesPhotosTest =
     init
       .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadReserve(1)).then(uploadBytes(1)).then(uploadRow(1))
       .then(rateStart).then(rateRead).then(rateReturn(true)).then(rateCheck2).then(rateWrite).then(rateCheck3)
-      .then(verifyFail).then(verifyList).then(eraseBytes("verify", 1)).then(eraseDrop("verify")).then(eraseRow("verify")).then(verifyDrop)
+      .then(verifyFail).then(verifyList).then(eraseDrop("verify", 1)).then(eraseBytes("verify")).then(eraseRow("verify")).then(verifyDrop)
       .expect(st.rows == Set() and st.objects == Set() and not(st.rating) and st.ageFail and settled(st)
               and photoNotKeptAfterFailedAgeCheck and safety)
 
@@ -998,7 +998,7 @@ module photos_rating {
     init
       .then(uploadStart(1, CONSENT)).then(uploadCount(1)).then(uploadReserve(1)).then(uploadBytes(1)).then(uploadRow(1))
       .then(rateStart).then(rateRead).then(rateReturn(true)).then(rateCheck2).then(rateWrite).then(rateCheck3)
-      .then(deletePhotosCmd).then(eraseBytes("cmd", 1)).then(eraseDrop("cmd")).then(eraseRow("cmd")).then(deletePhotosDone)
+      .then(deletePhotosCmd).then(eraseDrop("cmd", 1)).then(eraseBytes("cmd")).then(eraseRow("cmd")).then(deletePhotosDone)
       .expect(st.rows == Set() and st.objects == Set() and not(st.rating) and st.cmdTargets == Set(1) and settled(st)
               and deletePhotosErasesAll and safety)
 

@@ -2,7 +2,7 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { MINUTE, SimClock } from "../../packages/core/src/index.ts";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
-import { dropTestDb, testDb } from "../../packages/observatory/test/pg.ts";
+import { dropTestDb, testDb } from "../../apps/observatory/test/pg.ts";
 import { catalogMetrics, createOps, opsConfigFromEnv, PgAlertStore, type Notice } from "./ops.ts";
 
 const HOUR = 60 * MINUTE;

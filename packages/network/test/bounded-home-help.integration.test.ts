@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { findExecutable } from "../../core/src/runtime/process.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
+import { applySchema, DEV_PG_PORT, devPgUp } from "../../db/dev-pg.ts";
 import { BoundedHomeHelp, type HomeHelpDraft } from "../src/bounded-help.ts";
 
 const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");

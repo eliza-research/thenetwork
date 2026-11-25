@@ -3,13 +3,13 @@ import {afterAll,beforeAll,expect,test} from "vitest";
 import {randomUUID} from "node:crypto";
 import {SQL} from "../../core/src/runtime/postgres.ts";
 import {SimClock,MINUTE,DAY,HOUR} from "@thenetwork/core";
-import {applySchema} from "../../observatory/db/dev-pg.ts";
+import {applySchema} from "../../db/dev-pg.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {TURN_PATH,RELAY_PATH,type RelaySendRequest,type TurnRequest} from "../../core/src/svc/contract.ts";
 import {DryRunAdapter} from "../service/channel.ts";
 import {NetworkService} from "../service/service.ts";
 import {simulatedRelayClassifier} from "../../engine/src/relay.ts";
-import {ServiceClient} from "../../observatory/src/sources/service.ts";
+import {ServiceClient} from "../../../apps/observatory/src/sources/service.ts";
 import type {NetworkState} from "../src/network.ts";
 
 const db=`network_relay_${randomUUID().replaceAll("-","")}`;

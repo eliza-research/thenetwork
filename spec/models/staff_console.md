@@ -14,11 +14,11 @@ The production staff role projection and route admission use [Observatory staff 
 
 Convention: the intended action is in `step`, so `safety` checks the intended design of every flow. Where the code differs, a `*Code` action (one `*By(code, ...)` body with the code branch) is outside `step`, and a run test shows the rule fail after it. This is the convention of [join_age](join_age.md) and [safety_trust](safety_trust.md).
 
-The console staff-step proxy (`packages/observatory/src/staffSteps.ts`, `staffStepRoutes`, mounted in `server.ts`) is the `staffStep` action. It admits a step only in real mode and with the role of `staffStepAdmitted`, and it needs a configured service and a named person (`X-Network-Staff-Id`). With no service it answers 503 `read_only` and writes no row. A refused role writes an audit row with ok false before the 403. It checks the mode header with `modeRefusal` before its awaits, so the command runs in the mode it was admitted in (`inv_commandRunsInSeenMode`). A write records its "requested" row before the forwarder sends it, and a failed audit write stops the step (`inv_consoleAuditFirst`). A forward that times out records the result row with ok false, code `service_timeout` and outcome "unknown", and answers 504: the console says that the step may have run (`inv_consoleSaysServiceDoes`). Any other forward error records ok false with `service_unavailable` and answers 503. Staff-step ids `.` and `..` are refused. `ResolveInboundTurn` (`POST /inbound/resolve`) and `ReadTurnWatch` (`GET /ops/turns`, counts only) are admin steps for all apps. `staffStepTimeoutTest`, the `staffStep*` refusal runs and `staffStepAuditDownTest` replay the proxy; `packages/observatory/test/staff-steps.integration.test.ts` and `held.test.ts` cover it.
+The console staff-step proxy (`apps/observatory/src/staffSteps.ts`, `staffStepRoutes`, mounted in `server.ts`) is the `staffStep` action. It admits a step only in real mode and with the role of `staffStepAdmitted`, and it needs a configured service and a named person (`X-Network-Staff-Id`). With no service it answers 503 `read_only` and writes no row. A refused role writes an audit row with ok false before the 403. It checks the mode header with `modeRefusal` before its awaits, so the command runs in the mode it was admitted in (`inv_commandRunsInSeenMode`). A write records its "requested" row before the forwarder sends it, and a failed audit write stops the step (`inv_consoleAuditFirst`). A forward that times out records the result row with ok false, code `service_timeout` and outcome "unknown", and answers 504: the console says that the step may have run (`inv_consoleSaysServiceDoes`). Any other forward error records ok false with `service_unavailable` and answers 503. Staff-step ids `.` and `..` are refused. `ResolveInboundTurn` (`POST /inbound/resolve`) and `ReadTurnWatch` (`GET /ops/turns`, counts only) are admin steps for all apps. `staffStepTimeoutTest`, the `staffStep*` refusal runs and `staffStepAuditDownTest` replay the proxy; `apps/observatory/test/staff-steps.integration.test.ts` and `held.test.ts` cover it.
 
 The held routes `/api/held` and `/api/held/:id/photo` ask `staffStepAdmitted` (`ReadHeldRelay`, `DecideHeldRelay`). The leak queue holds member-facing texts that the leak guard stopped. The relay queue holds only selected relay photos that the automatic image check flagged or could not check (owner decision D14 of 2026-11-22); no relayed text waits for staff (owner decision D18 of 2026-11-22). The review kind of a console action is a staff decision on the exception queue: since owner decisions D15 to D17 of 2026-11-22 the automated judge decides every item, there is no review mode control, and staff approve only items that the judge held, reject an open item or stop an approved one.
 
-The matching switch: the registry row of the network ([runtime unit](../runtimeUnit.md)) alone decides whether matching may run. The service refuses "on" and the tick does not run outside it, the real source sends every press to the service, and the overview says "locked" unless the service's `/health` says `matchingAllowed: true`; no service, or a failed `/health`, also reads as locked (`inv_consoleShowsGate`, `inv_tickRunImpliesRegistry`). Changed (owner decision D6 of 2026-11-22): the launch scope and its inputs `production` and `peonLive` are removed, because every app is approved for live sends.
+The matching switch: the registry row of the network ([runtime unit](../runtimeUnit.md)) alone decides whether matching may run. The service refuses "on" and the tick does not run outside it, the real source sends every press to the service, and the overview says "locked" when the service's `/health` says `matchingAllowed: false`; with no service, or a failed `/health`, the stored switch decides, and no stored state reads as off (`inv_consoleShowsGate`, `inv_tickRunImpliesRegistry`; upstream SD-122, which replaces peon-r29-2). Changed (owner decision D6 of 2026-11-22): the launch scope and its inputs `production` and `peonLive` are removed, because every app is approved for live sends.
 
 Open code defects (the `*Code` action follows the code, and the run test shows the rule fail):
 
@@ -36,7 +36,7 @@ Fixed in the code, one intended action each: SD-288 (`timeoutAfterCommitTest`), 
 ```quint
 // quint-check: max-steps=14 max-samples=20000 verify-steps=6
 //
-// The staff console (packages/observatory) and its path to the Network service, as small machines in one
+// The staff console (apps/observatory) and its path to the Network service, as small machines in one
 // state record. Plan: docs/research/2026-11-07-state-machines.md section 6.15. Machine notes:
 // docs/research/state-machines/observatory.md (sections 2.1 to 2.13) and
 // docs/research/state-machines/gap-console-client.md (sections 2.1 to 2.9).
@@ -531,9 +531,9 @@ module staff_console {
     s' = { ...s, mg: { ...s.mg, engineRan: s.mg.engineRan.set(app, true) } },
   }
 
-  // The overview's matching line (health.ts appHealth): "locked" unless the service's last /health answer says the
-  // network is allowed by its registry row (real.ts serviceMatchingAllowed, env.matchingLocked), else the stored switch.
-  // A missing or failed answer reads as locked (peon-r29-2, fixed 2026-11-22); the model has the service always answer.
+  // The overview's matching line (health.ts appHealth): "locked" when the service's last /health answer says the
+  // network is not allowed by its registry row (real.ts serviceMatchingAllowed, env.matchingLocked), else the stored switch.
+  // A missing or failed answer leaves the stored switch to decide (SD-122); the model has the service always answer.
   // The console keeps no list of its own in real mode (audit PER63).
   pure def overviewMatching(mg: { registry: str -> bool, stored: str -> bool, engineRan: str -> bool }, app: str): str =
     if (not(registryAllows(mg, app))) "locked" else if (mg.stored.get(app)) "on" else "off"

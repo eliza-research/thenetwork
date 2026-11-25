@@ -2,11 +2,12 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { SimClock } from "@thenetwork/core";
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
+import { dropTestDb, pgAvailable, testDb } from "../../../apps/observatory/test/pg.ts";
 import { DryRunAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
 
 const clock = new SimClock(Date.UTC(2026, 10, 12, 17));
+const ADMIN_TOKEN = "a".repeat(40);
 let url: string, db: SQL;
 
 beforeAll(async () => {
@@ -23,11 +24,11 @@ afterAll(async () => {
 async function withService(env: Record<string, string>, run: (call: (app: string, method: string, path: string, body?: object) => Promise<{ status: number; body: any }>) => Promise<void>) {
   await db`update platform.settings set value=${env.PLATFORM_ENV!} where key='environment'`;
   const service = await NetworkService.fromDatabase({ url, clock, instance: `peon-scope-${randomUUID()}`, log: () => {}, photoStorage: null, notify: false,
-    tokens: "admin@*:adm-tok", env: { PLATFORM_HASH_KEY: "peon-scope-synthetic-hash-key-0123456789", ...env }, adapter: () => new DryRunAdapter(() => {}) });
+    tokens: `admin@*:${ADMIN_TOKEN}`, env: { PLATFORM_HASH_KEY: "peon-scope-synthetic-hash-key-0123456789", ...env }, adapter: () => new DryRunAdapter(() => {}) });
   await service.start();
   try {
     await run(async (app, method, path, body) => {
-      const res = await service.fetch(new Request(`http://127.0.0.1/apps/${app}${path}`, { method, headers: { authorization: "Bearer adm-tok",
+      const res = await service.fetch(new Request(`http://127.0.0.1/apps/${app}${path}`, { method, headers: { authorization: `Bearer ${ADMIN_TOKEN}`,
         ...(body ? { "content-type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) }));
       return { status: res.status, body: await res.json() };
     });

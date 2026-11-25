@@ -47,9 +47,10 @@ Imported from `quint/auth_edge.qnt` at `30d950e`. See [model index](README.md) f
 //    admission (the held-number case is refused before the join).
 //  - SD-491 (defect AE-4) is fixed on 2026-11-21: an under-13 web join (accounts.ts joinLocked,
 //    BelowJoinAge, declineEndsUnboundAccess) records the age, then PgPeopleStore.endUnboundAccess revokes
-//    every person-less session of the number and deletes its pending texts. The code revokes the row and
-//    api.ts sends no cookie reset; the model drops the row and the cookie, which is the same for every
-//    later request (a revoked row never authenticates).
+//    every person-less session of the number and deletes its pending texts. Since the 2026-11-24 merge
+//    with develop, every web age refusal of a number with no person also deletes its person-less session
+//    rows (forgetPersonlessSessions), and api.ts clears the cookies when the session had no person; the
+//    model drops the row and the cookie, which is the same for every later request.
 //  - SD-181 (defect AE-5, closed 2026-11-21): parseNetworkDelegation calls cloudIdentityTimesValid of
 //    spec/cloudSignIn.md, so production allows 30 s of issue time ahead of the local clock, like the
 //    staging-local callback (parseCloudIdentity). cloud_auth and this model have the same rule.

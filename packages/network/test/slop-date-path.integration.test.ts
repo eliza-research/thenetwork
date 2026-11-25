@@ -15,7 +15,7 @@ import { TURN_PATH, type TurnRequest, type TurnResponse } from "../../core/src/s
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import { OutboundQueue, recipientWindowHasher } from "../../blooio/src/outbound-queue.ts";
-import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
+import { applySchema, DEV_PG_PORT, devPgUp } from "../../db/dev-pg.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { BlooioAdapter, DryRunAdapter } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";

@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
-import { dropTestDb, pgAvailable, testDb } from "../../observatory/test/pg.ts";
+import { dropTestDb, pgAvailable, testDb } from "../../../apps/observatory/test/pg.ts";
 import { APPS, type AppId } from "../../platform/src/apps.ts";
 import { DryRunAdapter } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
@@ -152,7 +152,7 @@ describe.skipIf(!pgAvailable)("text join and age through the inbound path (Postg
     expect(await sql`select id from network.members where app_id = 'friends' and id = ${first}`).toHaveLength(1);
   }, T);
 
-  test("SHA66 spec/lineRouting.md, \"Every app leave gets one honest reply\": a leave from someone who is not in that app gets one reply that says so and changes nothing", async () => {
+  test("SHA66 spec/lineRouting.md, \"Every app leave gets one honest reply\": a leave from someone who is not in that app gets one reply that says so, records an opt-out of that app only", async () => {
     await fresh();
     const clock = new SimClock(START);
     const { s, directs } = service(clock);
@@ -161,7 +161,7 @@ describe.skipIf(!pgAvailable)("text join and age through the inbound path (Postg
     const toStranger = directs.filter(d => d.to === stranger);
     expect(toStranger).toHaveLength(1);
     expect(toStranger[0]!.body).toBe(copyFor(brandOf(APPS.slop)).notInApp);
-    expect(await sql`select 1 from platform.consent_events where e164 = ${stranger}`).toHaveLength(0);
+    expect(await sql`select app_id, state, source from platform.consent_events where e164 = ${stranger}`).toEqual([{ app_id: "slop", state: "opted_out", source: "leave" }]);
     const member = newPhone();
     expect(await text(s, clock, member, "Lee 25", { app: "friends" })).toBe("joined");
     const before = directs.length;
@@ -169,6 +169,14 @@ describe.skipIf(!pgAvailable)("text join and age through the inbound path (Postg
     expect(directs.slice(before).map(d => d.body)).toEqual([copyFor(brandOf(APPS.slop)).notInApp]);
     expect(copyFor(brandOf(APPS.slop)).notInApp).not.toMatch(/friends/i);
     expect(await membershipId("friends", member)).toBeTruthy();
+    expect((await sql`select state from platform.consent_events where e164 = ${member} and app_id = 'slop' order by at desc, id desc limit 1`)[0]?.state).toBe("opted_out");
+    expect((await sql`select state from platform.consent_events where e164 = ${member} and app_id = 'friends' order by at desc, id desc limit 1`)[0]?.state).toBe("opted_in");
+    await sql`insert into platform.memberships (app_id, person_id, member_id, state)
+      select 'peon', ph.person_id, ${`peon_invited_${phoneSeq}`}, 'invited' from platform.phone_identities ph where ph.e164 = ${member}`;
+    const beforeInvited = directs.length;
+    expect(await text(s, clock, member, "leave peon")).toBe("handled");
+    expect(directs.slice(beforeInvited).map(d => d.body)).toEqual([copyFor(brandOf(APPS.peon)).notInApp]);
+    expect((await sql`select state from platform.consent_events where e164 = ${member} and app_id = 'peon' order by at desc, id desc limit 1`)[0]?.state).toBe("opted_out");
     expect(await text(s, clock, member, "leave friends.help")).toBe("left");
   }, T);
 });

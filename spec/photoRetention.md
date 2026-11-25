@@ -70,30 +70,30 @@ pure def stepRowWriteRequiresBytes(before: PhotoChange, via: str, after: PhotoCh
 pure def sometimesDiscardsUpload(c: PhotoChange): bool = c.phase == DiscardingUpload
 ```
 
-### Erase bytes and metadata before dropping the old rating
+### Drop the old rating before erasing bytes and metadata
 
-An individual removal requires a photo belonging to the member and requested app. A privacy erasure processes the photos of the member and, when supplied, the requested app; the text command DELETE PHOTOS is a privacy erasure of the person's photos on every app, whatever app the shared line routes the message to, and it is not taken from a banned person, whose photos stay for the safety team. The shell first hides each selected row in one transaction that holds the person row lock, so that no listing, rating or relay reads it again and a reserved upload of the same person cannot confirm. For each row this request hid, the shell deletes its stored bytes, runs the rating-removal hook, and then deletes the row. The hidden row is the durable record of the removal until the last step. An individual removal requests a new rating from the remaining photos. Bulk erasure completes each removal without requesting another rating. A reserved row that an erasure hides stays for its upload, which erases its own bytes and row. Changed (audits PR-D1 and PR-D3): the bytes went first with no hidden row, the row was deleted before the rating, and DELETE PHOTOS worked only on a Slop route -> a hidden row records the removal until its last step and the command works on every route, because a crash left a rating of a deleted photo or unnamed bytes, a concurrent upload could write after the erasure, and a member of two apps could not use the command.
+An individual removal requires a photo belonging to the member and requested app. A privacy erasure processes the photos of the member and, when supplied, the requested app; the text command DELETE PHOTOS is a privacy erasure of the person's photos on every app, whatever app the shared line routes the message to, and it is not taken from a banned person, whose photos stay for the safety team. The shell first hides each selected row in one transaction that holds the person row lock, so that no listing, rating or relay reads it again and a reserved upload of the same person cannot confirm. For each row this request hid, the shell runs the rating-removal hook, deletes its stored bytes, and then deletes the row, so that a failed byte deletion never leaves a rating of a deleted photo. The hidden row is the durable record of the removal until the last step. An individual removal requests a new rating from the remaining photos. Bulk erasure completes each removal without requesting another rating. A reserved row that an erasure hides stays for its upload, which erases its own bytes and row. Changed (audits PR-D1 and PR-D3): the bytes went first with no hidden row, the row was deleted before the rating, and DELETE PHOTOS worked only on a Slop route -> a hidden row records the removal until its last step, the rating goes first, and the command works on every route, because a crash or a failed byte deletion left a rating of a deleted photo or unnamed bytes, a concurrent upload could write after the erasure, and a member of two apps could not use the command.
 
 ```quint
 pure def canBeginRemoval(c: PhotoChange): bool = c.phase == ChoosingChange
 pure def beginRemoval(c: PhotoChange, owned: bool, rerate: bool): PhotoChange =
-  { phase: if (owned) RemovingBytes else ChangeRefused, rerateAfterRemoval: rerate }
-
-pure def canRecordRemovedBytes(c: PhotoChange): bool = c.phase == RemovingBytes
-pure def recordRemovedBytes(c: PhotoChange): PhotoChange = { ...c, phase: ClearingRating }
+  { phase: if (owned) ClearingRating else ChangeRefused, rerateAfterRemoval: rerate }
 
 pure def canRecordRatingClear(c: PhotoChange): bool = c.phase == ClearingRating
-pure def recordRatingClear(c: PhotoChange): PhotoChange = { ...c, phase: RemovingRow }
+pure def recordRatingClear(c: PhotoChange): PhotoChange = { ...c, phase: RemovingBytes }
+
+pure def canRecordRemovedBytes(c: PhotoChange): bool = c.phase == RemovingBytes
+pure def recordRemovedBytes(c: PhotoChange): PhotoChange = { ...c, phase: RemovingRow }
 
 pure def canRecordRemovedRow(c: PhotoChange): bool = c.phase == RemovingRow
 pure def recordRemovedRow(c: PhotoChange): PhotoChange =
   { ...c, phase: if (c.rerateAfterRemoval) Rerating else ChangeFinished }
 
-pure def stepRatingClearRequiresBytesRemoval(before: PhotoChange, via: str, after: PhotoChange): bool =
-  after.phase == ClearingRating implies (before.phase == RemovingBytes and via == "recordRemovedBytes")
+pure def stepBytesRemovalRequiresRatingClear(before: PhotoChange, via: str, after: PhotoChange): bool =
+  after.phase == RemovingBytes implies (before.phase == ClearingRating and via == "recordRatingClear")
 
-pure def stepRowRemovalRequiresRatingClear(before: PhotoChange, via: str, after: PhotoChange): bool =
-  after.phase == RemovingRow implies (before.phase == ClearingRating and via == "recordRatingClear")
+pure def stepRowRemovalRequiresBytesRemoval(before: PhotoChange, via: str, after: PhotoChange): bool =
+  after.phase == RemovingRow implies (before.phase == RemovingBytes and via == "recordRemovedBytes")
 
 pure def sometimesCompletesChange(c: PhotoChange): bool = c.phase == ChangeFinished
 pure def sometimesWritesPhoto(c: PhotoChange): bool = c.phase == WritingRow
@@ -102,7 +102,7 @@ pure def sometimesRemovesPhoto(c: PhotoChange): bool = c.phase == RemovingRow
 
 ### The retention tick finishes unfinished photo changes
 
-Every retention tick, the shell finishes each photo change that a crash or an error left behind. A hidden row is due once fifteen minutes have passed since it was hidden, and a reserved row once fifteen minutes have passed since it was reserved; the wait lets the request in flight finish its own change first. For a due row the shell deletes the stored bytes, runs the rating-removal hook when the row was a stored photo, deletes the row, and requests a new rating of what is left. Every step repeats safely. A row or a holder whose step fails is logged with its error and left for the next tick, and the sweep goes on with the others. Changed (audit PR-D3): nothing swept -> each tick finishes the left changes row by row, because a crash kept bytes that no row named, a row without bytes, or a rating of a deleted photo.
+Every retention tick, the shell finishes each photo change that a crash or an error left behind. A hidden row is due once fifteen minutes have passed since it was hidden, and a reserved row once fifteen minutes have passed since it was reserved; the wait lets the request in flight finish its own change first. For a due row the shell runs the rating-removal hook when the row was a stored photo, deletes the stored bytes, deletes the row, and requests a new rating of what is left. Every step repeats safely. A row or a holder whose step fails is logged with its error and left for the next tick, and the sweep goes on with the others. Changed (audit PR-D3): nothing swept -> each tick finishes the left changes row by row, because a crash kept bytes that no row named, a row without bytes, or a rating of a deleted photo.
 
 ```quint
 pure val photoChangeStaleMs: int = 900000

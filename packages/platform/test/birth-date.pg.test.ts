@@ -99,7 +99,7 @@ describe.skipIf(!pgAvailable)("birth dates and age readings (PostgreSQL)", () =>
     const a = accounts(), e164 = phone(), id = randomUUID();
     await store.sql`insert into platform.people (id, lowest_age, created_at, phone_hash) values (${id}::uuid, 15, ${new Date(dayOf(20260101))}, ${a.phoneHash(e164)})`;
     await store.sql`insert into platform.phone_identities (e164, person_id, verified_at, method) values (${e164}, ${id}::uuid, ${new Date(dayOf(20260101))}, 'otp_sms')`;
-    const migration = await fileAt(new URL("../../observatory/db/migrations/0081_person_birth_readings.sql", import.meta.url)).text();
+    const migration = await fileAt(new URL("../../db/migrations/0082_person_birth_readings.sql", import.meta.url)).text();
     await store.sql.unsafe(migration.match(/update platform\.people[\s\S]*?;/)![0]);
     const [legacy] = await store.sql`select birth_lower, birth_upper, birth_youngest, birth_first_exact from platform.people where id = ${id}::uuid`;
     expect(legacy!.birth_lower).toBe(20100101);

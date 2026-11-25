@@ -3,7 +3,6 @@ import { NETWORK_LOGIN_PATH, networkTarget, parseNetworkDelegation, type Network
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { readCapped } from "./body.ts";
 
-/** Exact production recipient only; existing staging/local transport remains separate. */
 export function productionCloudDelegation(o: { secret: string; now: () => number; realm?: NetworkLoginRealm; fetch?: typeof fetch }) {
   if (o.secret.length < 32) throw new Error("Cloud delegation requires the existing service authority");
   async function post(app: NetworkLoginApp, action: "exchange" | "validate", fields: Record<string, unknown>) {

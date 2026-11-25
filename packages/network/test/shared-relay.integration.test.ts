@@ -8,15 +8,15 @@ import {randomUUID} from "node:crypto";
 import {readFile} from "node:fs/promises";
 import {SQL} from "../../core/src/runtime/postgres.ts";
 import {DAY,HOUR,MINUTE,SimClock} from "@thenetwork/core";
-import {applySchema} from "../../observatory/db/dev-pg.ts";
+import {applySchema} from "../../db/dev-pg.ts";
 import {TURN_PATH,RELAY_PATH,DELIVER_PATH,type RelaySendRequest,type TurnRequest} from "../../core/src/svc/contract.ts";
 import {svcSign,svcVerify} from "../../core/src/svc/svc-auth.ts";
 import {CloudChannelAdapter,DELIVER_RECEIPT_PATH} from "../service/cloud-channel.ts";
 import {NetworkService} from "../service/service.ts";
 import {loadSnapshot} from "../service/snapshot.ts";
 import {importPublicEvents} from "../service/import-public-events.ts";
-import {PgAudit} from "../../observatory/src/staff.ts";
-import type {AuditEntry} from "../../observatory/src/types.ts";
+import {PgAudit} from "../../../apps/observatory/src/staff.ts";
+import type {AuditEntry} from "../../../apps/observatory/src/types.ts";
 import {meetingFeedbackKey,relayDispatchCheck,type NetworkState} from "../src/network.ts";
 import type {QueueOptions} from "../../blooio/src/outbound-queue.ts";
 const db=`network_relay_${randomUUID().replaceAll("-","")}`,url=`postgres://${process.env.USER??"postgres"}@127.0.0.1:54339/${db}`;
@@ -384,7 +384,7 @@ test("relay holds stored before the change are closed: their records say block, 
   const legacyHeld=[{itemId:item,matchId:"relay-pair",app:"friends",kind:"text",from:fromId,to:toId,at:clock.now(),reasons:["scam:money"],text:"legacy held words",status:"held"}];
   const legacyLog=[item,rate].map(itemId=>({itemId,opportunityId:"relay-pair",app:"friends",kind:"text",from:fromId,to:toId,at:clock.now(),decision:"hold",reasons:[itemId===item?"scam:money":"rate:burst"],photoCount:0,contactShared:false,ageSignal:false,policy:"relay-1.0.0"}));
   await sql`update network.network_state set state=jsonb_set(jsonb_set(state,'{relay,held}',${sql.json(legacyHeld)}::jsonb),'{relay,log}',coalesce(state->'relay'->'log','[]'::jsonb)||${sql.json(legacyLog)}::jsonb) where id='friends:nyc'`;
-  const migration=await readFile(new URL("../../observatory/db/migrations/0086_relay_holds_closed.sql",import.meta.url),"utf8");
+  const migration=await readFile(new URL("../../db/migrations/0087_relay_holds_closed.sql",import.meta.url),"utf8");
   for(let i=0;i<2;i++)await sql.unsafe(migration);
   expect((await sql`select item_id,decision,reasons,review,reviewed_by from network.relay_records where app_id='friends' and item_id in (${item},${rate}) order by item_id`).map((r:any)=>[r.item_id,r.decision,r.reasons,r.review,r.reviewed_by]))
     .toEqual([[item,"block",["review:closed","scam:money"],"expired","system:relay_automated"],[rate,"block",["rate:burst","review:closed"],null,null]]);

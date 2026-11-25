@@ -33,10 +33,14 @@ Imported from `quint/join_age.qnt` at `30d950e`. See [model index](README.md) fo
 // pg-store.ts admitMembership, putMembership, beginUnderageCleanup) found:
 //  - Closed drift: the invite-only exit of a web join (joinLocked, NeedsInvite) now returns before the
 //    age is read, as webCheck says.
-//  - Closed drift: Accounts.declineUnderAge is gone. Accounts.recordAge calls the onAgeLowered hook;
-//    NetworkService.ageLowered runs finishUnderageCleanup for an age under 13 (beginUnderageCleanup
-//    deletes the pending rows and writes the join_declined opt-outs in one transaction, then each
-//    membership is forgotten). That is declineUnderAge for a phone with a person.
+//  - Accounts.recordAge calls the onAgeLowered hook; NetworkService.ageLowered runs
+//    finishUnderageCleanup for an age under 13 (beginUnderageCleanup deletes the pending rows and writes
+//    the join_declined opt-outs in one transaction, then each membership is forgotten). That is
+//    declineUnderAge for a phone with a person. Since the 2026-11-24 merge with develop, the under-13 web
+//    decline (joinLocked, BelowJoinAge) also calls Accounts.declineUnderAge again (develop's SD-014 step:
+//    it deletes the pending join and forgets the memberships; for a person it repeats what onAgeLowered
+//    did), and every web age refusal of a number with no person deletes that number's person-less
+//    sessions (forgetPersonlessSessions, SD-491). The model's declineUnderAge covers both.
 //  - JA-1 (SD-010) fixed on 2026-11-21: NetworkService.join records every stated age (recordAge, the
 //    generated recordStatedAge step of spec/textEnrollment.md) before the age check, the name question and
 //    the pending row, so "15" then, a day later, "Sam 25" joins at 15 (sd010PendingAgeExpiresTest).

@@ -570,7 +570,8 @@ function lineQueue(rt: NetworkRuntime, o: LineQueueOptions): OutboundQueue {
           ? rt.net.recipientPolicy(row.memberId, "reengage", { proactive: true })
           : { ok: false, reason: "reengagement_changed" };
       }
-      if (venueBookingNoticeBase(row.id) && !rt.net.approvedBookingLink(row.oppId, row.memberId as MemberId | undefined, row.text, row.id)) {
+      if (venueBookingNoticeBase(row.id)
+        && !rt.net.approvedBookingLink(row.oppId, (row.memberId as MemberId | undefined) ?? rt.memberOf(row.to), row.text, row.id)) {
         return { ok: false, reason: "booking_changed" };
       }
       return !row.memberId && !rt.memberOf(row.to) ? { ok: true }
@@ -590,7 +591,7 @@ function lineQueue(rt: NetworkRuntime, o: LineQueueOptions): OutboundQueue {
         : bookingLink ? { ...base, contactAllow: [bookingLink] } : base;
     },
     lockAdmission: async (row, tx) => {
-      await tx`select id from network.network_state where id=${rt.pg.id} for share`;
+      if (!(await rt.stateCurrent(tx))) return false;
       if (row.app === "slop" && row.oppId) await rt.lockSlopPairAdmission(tx, row);
       if (row.oppId) await lockPublicEventContact(tx, row, rt.pg.id);
       if (row.id.startsWith(monthlyGatheringInvitePrefix)) await lockGatheringAdmission(tx, rt.app.id, rt.pg.id, row);
@@ -598,6 +599,7 @@ function lineQueue(rt: NetworkRuntime, o: LineQueueOptions): OutboundQueue {
       if (row.oppId?.startsWith(gatheringRepeatOppPrefix)) await rt.lockGatheringRepeatClaim(tx, row.oppId);
       if (row.id.startsWith("home-help-consent:")) await rt.lockHomeHelpConsentAdmission(tx, row.id, row.memberId);
       if (row.oppId && row.memberId) await lockPeerOpportunityContact(tx, row.app, rt.pg.id, row.memberId, row.id);
+      return true;
     },
     admit: async (row, tx) => {
       if (row.id.startsWith("ntf_")) {

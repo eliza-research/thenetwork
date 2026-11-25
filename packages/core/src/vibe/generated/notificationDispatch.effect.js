@@ -11,6 +11,7 @@ import * as runtime from "vibelang-runtime/internal";
 import { initial, inv, inboxItemAllowedForRecipient, rereadCountsPossible, inboxItemStillPending, inboxItemExpired, inboxItemDigestible, canRereadItems, rereadItems, lawExpiredItemLeavesTheDigest, lawMissingRecipientCancels, digestItemSetCanBeRecorded, digestWithinWeeklyCap, lawRecordedCountingDigestStaysUnderCap, canRecordDigest, recordDigest, canEnqueueDigest, enqueueDigest, stepQueueRequiresRecordedDigest, sometimesQueuesDigest, sometimesCancelsDigest, canReadQueuedDigest, readQueuedDigest, canRevalidateQueuedItems, revalidateQueuedItems, sometimesKeepsQueuedDigest, sometimesSuppressesQueuedDigest, queuedDigestClaimAllowed, lawUnreadableQueuedLinkCannotSend, lawForeignQueuedDigestCannotSend, enabled, step, parseEvent, parseState, snapshot_notificationDispatch } from "./notificationDispatch.effect.vibe.pure.js";
 export { initial, inv, inboxItemAllowedForRecipient, rereadCountsPossible, inboxItemStillPending, inboxItemExpired, inboxItemDigestible, canRereadItems, rereadItems, lawExpiredItemLeavesTheDigest, lawMissingRecipientCancels, digestItemSetCanBeRecorded, digestWithinWeeklyCap, lawRecordedCountingDigestStaysUnderCap, canRecordDigest, recordDigest, canEnqueueDigest, enqueueDigest, stepQueueRequiresRecordedDigest, sometimesQueuesDigest, sometimesCancelsDigest, canReadQueuedDigest, readQueuedDigest, canRevalidateQueuedItems, revalidateQueuedItems, sometimesKeepsQueuedDigest, sometimesSuppressesQueuedDigest, queuedDigestClaimAllowed, lawUnreadableQueuedLinkCannotSend, lawForeignQueuedDigestCannotSend, enabled, step, parseEvent, parseState };
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
+import { PreventSchedulerYield } from "effect/References";
 /** The rules do not allow this event in this state. */
 export class Rejected extends TaggedError("Rejected") {
     static {
@@ -67,7 +68,7 @@ export class Machine extends runtime.$service("thenetwork/spec/notificationDispa
 export function machineOver(load, keep) {
     return Effect_1.gen(function* machineOver() {
         const shown = yield* SubscriptionRef.make(snapshot_notificationDispatch(yield* load()));
-        function send(event) {
+        function send(event, isCurrent) {
             return Effect_1.gen(function* send() {
                 const input = snapshot_notificationDispatch({ event });
                 let completion_1 = runtime.$normal;
@@ -75,8 +76,14 @@ export function machineOver(load, keep) {
                     {
                         completion_1 = { kind: "return", value: yield* SubscriptionRef.modifyEffect(shown, () => {
                                 return Effect_1.gen(function* () {
-                                    const next = yield* apply(snapshot_notificationDispatch(yield* orDie(load())), input.event);
-                                    yield* keep(snapshot_notificationDispatch(next));
+                                    const current = snapshot_notificationDispatch(yield* orDie(load()));
+                                    const next = yield* apply(current, input.event);
+                                    const save = Effect_1.gen(function* save() {
+                                        if (isCurrent && !isCurrent(snapshot_notificationDispatch(current)))
+                                            return yield* Effect_1.fail(new Rejected({ ...input, state: current }));
+                                        yield* keep(snapshot_notificationDispatch(next));
+                                    });
+                                    yield* (isCurrent ? Effect.provideService(save, PreventSchedulerYield, true) : save);
                                     return [snapshot_notificationDispatch(next), next];
                                 });
                             }) };

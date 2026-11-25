@@ -1,6 +1,6 @@
 // GENERATED from spec/landingEntry.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type JoinMode as brandIdentity_JoinMode, type AccentTokens as brandIdentity_AccentTokens, type Accent as brandIdentity_Accent, type Surface as brandIdentity_Surface, type AppKey as brandIdentity_AppKey, type SharedPart as brandIdentity_SharedPart, type LogoMark as brandIdentity_LogoMark, type Brand as brandIdentity_Brand, supportEmail as brandIdentity_supportEmail, joinModes as brandIdentity_joinModes, accents as brandIdentity_accents, logoMarks as brandIdentity_logoMarks, ntwrkBrand as brandIdentity_ntwrkBrand, slopBrand as brandIdentity_slopBrand, peonBrand as brandIdentity_peonBrand, friendsBrand as brandIdentity_friendsBrand, accentTokens as brandIdentity_accentTokens, mayName as brandIdentity_mayName, siteUsesPart as brandIdentity_siteUsesPart, appKeys as brandIdentity_appKeys, brandFor as brandIdentity_brandFor, lawAppSiteNeverNamesTheNetwork as brandIdentity_lawAppSiteNeverNamesTheNetwork, lawAppSiteNamesNoOtherApp as brandIdentity_lawAppSiteNamesNoOtherApp, lawHubLandingNamesNoApp as brandIdentity_lawHubLandingNamesNoApp, lawSitesShareParts as brandIdentity_lawSitesShareParts, lawBrandNamesItsApp as brandIdentity_lawBrandNamesItsApp, lawOnlyTheNetworkIsInviteOnly as brandIdentity_lawOnlyTheNetworkIsInviteOnly, lawAccentInkDiffersFromAccent as brandIdentity_lawAccentInkDiffersFromAccent, partTokens as brandIdentity_partTokens, lawBrandsAreDistinct as brandIdentity_lawBrandsAreDistinct, lawPartsTakeTheBrandTokens as brandIdentity_lawPartsTakeTheBrandTokens } from "./brandIdentity.ts";
+import { type JoinMode as brandIdentity_JoinMode, type AccentTokens as brandIdentity_AccentTokens, type Accent as brandIdentity_Accent, type Surface as brandIdentity_Surface, type AppKey as brandIdentity_AppKey, type LogoMark as brandIdentity_LogoMark, type SharedPart as brandIdentity_SharedPart, type Brand as brandIdentity_Brand, supportEmail as brandIdentity_supportEmail, agentAccessPage as brandIdentity_agentAccessPage, joinModes as brandIdentity_joinModes, accents as brandIdentity_accents, logoMarks as brandIdentity_logoMarks, ntwrkBrand as brandIdentity_ntwrkBrand, slopBrand as brandIdentity_slopBrand, peonBrand as brandIdentity_peonBrand, friendsBrand as brandIdentity_friendsBrand, accentTokens as brandIdentity_accentTokens, connectorEndpoint as brandIdentity_connectorEndpoint, openaiConnectorEndpoint as brandIdentity_openaiConnectorEndpoint, mayName as brandIdentity_mayName, siteUsesPart as brandIdentity_siteUsesPart, appKeys as brandIdentity_appKeys, brandFor as brandIdentity_brandFor, hubTextsOnAppSurface as brandIdentity_hubTextsOnAppSurface, lawAppEndpointsAreDistinct as brandIdentity_lawAppEndpointsAreDistinct, lawAppSiteNeverNamesTheNetwork as brandIdentity_lawAppSiteNeverNamesTheNetwork, lawAppSiteNamesNoOtherApp as brandIdentity_lawAppSiteNamesNoOtherApp, lawHubLandingNamesNoApp as brandIdentity_lawHubLandingNamesNoApp, lawSitesShareParts as brandIdentity_lawSitesShareParts, lawBrandNamesItsApp as brandIdentity_lawBrandNamesItsApp, lawOnlyTheNetworkIsInviteOnly as brandIdentity_lawOnlyTheNetworkIsInviteOnly, lawAccentInkDiffersFromAccent as brandIdentity_lawAccentInkDiffersFromAccent, lawOnlyTheSkillNamesTheEndpoint as brandIdentity_lawOnlyTheSkillNamesTheEndpoint, partTokens as brandIdentity_partTokens, lawBrandsAreDistinct as brandIdentity_lawBrandsAreDistinct, lawPartsTakeTheBrandTokens as brandIdentity_lawPartsTakeTheBrandTokens } from "./brandIdentity.ts";
 
 /** Story: Take the signup prompt to my agent / The Copy button shows only when the page script runs (spec/landingEntry.md) */
 export type CopyState = "CopyHidden" | "CopyReady" | "CopyCopied" | "CopySelected";
@@ -16,6 +16,8 @@ export type DeviceKind = "NotDetected" | "Phone" | "MacDesktop" | "OtherDesktop"
 export interface Landing { mounted: boolean; device: DeviceKind; copy: CopyState; status: StatusLine; messages: MessagesState; messageCopied: boolean; agentFollowed: boolean; lastAgent: AgentId; statusAgent: AgentId }
 /** Story: Open my agent from its tile / The agent row lists nine agents in a fixed order, each with a kind, a name, a logo and a link (spec/landingEntry.md) */
 export type TileKind = "OpensWithPrompt" | "OpensForPaste" | "OpensInstalledApp" | "CopyOnly";
+/** Story: Open my agent from its tile / The agent row never shows an agent that the app's connector refuses (spec/landingEntry.md) */
+export type AgentSurface = "FullConnectorSurface" | "OpenAiConnectorSurface";
 /** Story: See only what I need to start / The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links (spec/landingEntry.md) */
 export type LandingItem = "BrandMarkItem" | "HeadlineItem" | "PromptItem" | "CopyButtonItem" | "AgentRowItem" | "MessagesItem" | "StatusItem" | "PrivacyLinkItem" | "TermsLinkItem" | "SignInItem" | "SettingsItem" | "DashboardItem" | "SafetyNoticeItem" | "ComplianceItem" | "ExplainerItem";
 
@@ -51,14 +53,14 @@ export const openTileLabelLead: string = "Open in ";
 export const copyTileLabelLead: string = "Copy the prompt for ";
 /** Story: Take the signup prompt to my agent / The prompt tells the agent to read the site's skill and follow it (spec/landingEntry.md) */
 export const promptVersionQuery: string = "?version=";
-/** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
-export const copyByHandText: string = "Copy the prompt, then paste it into your agent.";
 /** Story: Take the signup prompt to my agent / The prompt tells the agent to read the site's skill and follow it (spec/landingEntry.md) */
 export const promptTail: string = " and follow it.";
+/** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
+export const copyByHandText: string = "Copy the prompt, then paste it into your agent.";
 /** Story: See only what I need to start / The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links (spec/landingEntry.md) */
 export const landingItems: LandingItem[] = ["BrandMarkItem", "HeadlineItem", "PromptItem", "CopyButtonItem", "AgentRowItem", "MessagesItem", "StatusItem", "PrivacyLinkItem", "TermsLinkItem"];
 /** Story: See only what I need to start / The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links (spec/landingEntry.md) */
-export const neverOnLanding: LandingItem[] = ["SignInItem", "SettingsItem", "DashboardItem", "SafetyNoticeItem", "ComplianceItem", "ExplainerItem"];
+export const neverOnLanding: LandingItem[] = (["SignInItem", "SettingsItem", "DashboardItem", "SafetyNoticeItem", "ComplianceItem", "ExplainerItem"] as LandingItem[]);
 /** Story: Take the signup prompt to my agent / The Copy button shows only when the page script runs (spec/landingEntry.md) */
 export const initial: Landing = { mounted: false, device: "NotDetected", copy: "CopyHidden", status: "StatusEmpty", messages: "MessagesIdle", messageCopied: false, agentFollowed: false, lastAgent: "ChatGpt", statusAgent: "ChatGpt" };
 /** Story: Open my agent from its tile / The agent row lists nine agents in a fixed order, each with a kind, a name, a logo and a link (spec/landingEntry.md) */
@@ -248,6 +250,45 @@ export function lawOnlyCopyOnlyTilesHaveNoLink(agent: AgentId): boolean {
   return (tileKindFor(agent) === "CopyOnly") === (agentLinkTemplate(agent) === "");
 }
 
+/** Story: Open my agent from its tile / The agent row never shows an agent that the app's connector refuses (spec/landingEntry.md) */
+//@ pure
+export function agentConnectorSurface(agent: AgentId): AgentSurface {
+  return agent === "ChatGpt" ? "OpenAiConnectorSurface" : "FullConnectorSurface";
+}
+
+/** Story: Open my agent from its tile / The agent row never shows an agent that the app's connector refuses (spec/landingEntry.md) */
+//@ pure
+export function surfaceServesApp(surface: AgentSurface, app: brandIdentity_AppKey): boolean {
+  return surface === "FullConnectorSurface" || app !== "Slop";
+}
+
+/** Story: Open my agent from its tile / The agent row never shows an agent that the app's connector refuses (spec/landingEntry.md) */
+//@ pure
+export function landingAgentOffered(app: brandIdentity_AppKey, agent: AgentId): boolean {
+  return surfaceServesApp(agentConnectorSurface(agent), app);
+}
+
+/** Story: Open my agent from its tile / The agent row never shows an agent that the app's connector refuses (spec/landingEntry.md) */
+//@ pure
+export function lawRefusedAgentIsNeverOffered(app: brandIdentity_AppKey, agent: AgentId): boolean {
+  //@ ensures \result === true
+  return !(!surfaceServesApp(agentConnectorSurface(agent), app)) || !landingAgentOffered(app, agent);
+}
+
+/** Story: Open my agent from its tile / The agent row never shows an agent that the app's connector refuses (spec/landingEntry.md) */
+//@ pure
+export function lawOnlySupportedPagesOfferChatGpt(app: brandIdentity_AppKey): boolean {
+  //@ ensures \result === true
+  return landingAgentOffered(app, "ChatGpt") === (app !== "Slop");
+}
+
+/** Story: Open my agent from its tile / The agent row never shows an agent that the app's connector refuses (spec/landingEntry.md) */
+//@ pure
+export function lawOnlyChatGptCanBeRefused(app: brandIdentity_AppKey, agent: AgentId): boolean {
+  //@ ensures \result === true
+  return !(agent !== "ChatGpt") || landingAgentOffered(app, agent);
+}
+
 /** Story: Open my agent from its tile / A desktop-only tile is hidden on a phone, and a copy-only tile needs the page script (spec/landingEntry.md) */
 //@ pure
 export function desktopOnlyAgent(agent: AgentId): boolean {
@@ -265,6 +306,12 @@ export function tileShown(agent: AgentId, mounted: boolean, device: DeviceKind):
 export function lawCopyOnlyTileNeedsScript(agent: AgentId, device: DeviceKind): boolean {
   //@ ensures \result === true
   return !(tileKindFor(agent) === "CopyOnly") || !tileShown(agent, false, device);
+}
+
+/** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
+//@ pure
+export function sometimesAgentOpening(s: Landing): boolean {
+  return s.agentFollowed && s.status === "AgentOpening";
 }
 
 /** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
@@ -295,12 +342,6 @@ export function sometimesAgentWithoutScript(s: Landing): boolean {
 //@ pure
 export function agentToastText(agent: AgentId): string {
   return agent === "ChatGpt" ? "Opening ChatGPT. The prompt is copied too." : (agent === "Claude" ? "Opening Claude. The prompt is copied too." : (agent === "Grok" ? "Opening Grok. The prompt is copied too." : (agent === "Muse" ? "Copied. Paste it into Muse." : (agent === "Gemini" ? "Copied. Paste it into Gemini." : (agent === "Perplexity" ? "Opening Perplexity. The prompt is copied too." : (agent === "Cursor" ? "Opening Cursor. The prompt is copied too." : (agent === "OpenClaw" ? "Copied. If OpenClaw did not open, send it the prompt." : "Copied. If Hermes did not open, send it the prompt.")))))));
-}
-
-/** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
-//@ pure
-export function sometimesAgentOpening(s: Landing): boolean {
-  return s.agentFollowed && s.status === "AgentOpening";
 }
 
 /** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */

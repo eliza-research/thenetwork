@@ -60,7 +60,7 @@ Imported from `quint/notify_capital.qnt` at `30d950e`. See [model index](README.
 //  - SD-151: Notifier.recordSent calls PgNotifyStore.addDelivered, which inserts the item, the net:<id> delivery
 //    and notified_at in one transaction [noRepeatOfNetworkText]
 //    (packages/network/test/notify-recorded-text.integration.test.ts).
-//  - SD-153: migration 0074 adds network.capital_events.seq; runtime.ts start() replays `order by seq`.
+//  - SD-153: migration 0073 adds network.capital_events.seq (identity), 0075 adds it where it is missing; runtime.ts start() replays `order by seq`.
 //  - SD-156: capitalWiring.onLedger answers whether the ledger took the event, and writeUnit stores only the
 //    events it took, in emit order (packages/network/test/capital-ledger.integration.test.ts).
 //  - SD-150 (cap part, found by this model): PgNotifyStore.recordDelivery checks the weekly cap again

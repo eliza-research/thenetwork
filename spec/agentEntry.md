@@ -2,21 +2,25 @@
 
 A person reaches the agent experience in four ways: the prompt on an app's landing page, a plugin in their agent, the agent skill catalog of a site, or a link in an update text. The landing page, its prompt and its agent tiles are in [landing entry](landingEntry.md). The skill files and the skill catalog of each site are in [site pages](sitePages.md). The brand data, with the skill name of each app, is in [brand identity](brandIdentity.md). The plugin build owns the plugin skill copies and their MCP endpoints. The notification service owns the update reference and the link in the text. The agent owns what it does with the skill ([agent signup](agentSignup.md)) and with the connector ([connector tools](connectorTools.md)). This spec models how each entry resolves to one app skill or to the updates tool. Public sites have no sign-in link, settings page or member dashboard.
 
-The person's agent follows the text of the site prompt and of the app's SKILL.md. No code of this repository runs inside that agent. The plugin build calls `pluginListsSkill`, `pluginEndpoint` and `skillFor` when it writes the plugin skill copies. The site build checks the signup step markers of each SKILL.md against the [agent signup](agentSignup.md) model. No runtime code enforces the entry routes of this model, or the agent signup model on the agent side. The connector server enforces its own rules on each tool call ([connector tools](connectorTools.md)).
+The person's agent follows the text of the site prompt and of the app's SKILL.md. No code of this repository runs inside that agent. The plugin build calls `pluginListsSkill`, `pluginEndpoint`, `endpointPath`, `appOpenAiEndpointPath`, `endpointHost`, `openAiManifestApp` and `skillFor` when it writes the plugin skill copies, the MCP dependency of each OpenAI plugin skill, the OpenAI plugin manifest and the server list of the Claude plugin. The skill sources name their endpoints in plain text. The plugin build makes the endpoint URLs of each skill from these functions and fails when a skill copy does not name them: a Claude plugin skill names the full endpoint and any public OpenAI endpoint of its app, and an OpenAI plugin skill names the OpenAI endpoint of its app. The plugin build also fails when these URLs are not the same as `connectorEndpoint` and `openaiConnectorEndpoint` in [brand identity](brandIdentity.md). The connector server calls `appEndpointPath` and `appOpenAiEndpointPath` for the path of each app. The site build checks the signup step markers of each SKILL.md against the [agent signup](agentSignup.md) model. No runtime code enforces the entry routes of this model, or the agent signup model on the agent side. The connector server enforces its own rules on each tool call ([connector tools](connectorTools.md)).
 
 ## Story: Get from an app site or a text into my own agent
 
 > As a person who found an app, I want one prompt or one link to open my own agent with the right app's skill, so that the agent can sign me up or show my update without a website account.
 
-### The Claude plugin lists four skills and the OpenAI plugin lists three, never slop.date
+### The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app
 
-The Claude plugin lists the skills of all four apps and connects each app to its own site endpoint, `https://<domain>/mcp`. The OpenAI plugin, for ChatGPT and Codex, lists the ntwrk.party, peon.biz and friends.help skills only. It connects to one endpoint, `https://ntwrk.party/mcp/openai`, and it has no endpoint for slop.date.
+All full app connectors are on ntwrk.party ([connector tools](connectorTools.md)). Each skill names the ntwrk.party endpoint of its app and which app to act for. The endpoint of The Network is `https://ntwrk.party/mcp`. The endpoint of each other app is `https://ntwrk.party/mcp/<app>`, for example `https://ntwrk.party/mcp/slop`. ChatGPT and Codex use the OpenAI surface of the same endpoint with `/openai` added for The Network, peon and friends. The connector server binds each connection to the app of that path.
+
+The Claude plugin lists the skills of all four apps, and each skill uses the full endpoint of its app. The OpenAI plugin lists the ntwrk.party, peon.biz and friends.help skills, because the OpenAI plugin directory accepts only plugins that suit people aged 13 to 17. In the OpenAI plugin, each skill names the OpenAI endpoint of its app and its MCP dependency points to it. OpenAI lets a plugin manifest list only one MCP server. The manifest uses the endpoint of The Network, `https://ntwrk.party/mcp/openai`. Slop has no public OpenAI endpoint and its skill cannot lead a person to one.
 
 ```quint
 import brandIdentity.* from "./brandIdentity"
 
 type Plugin = ClaudePlugin | OpenAiPlugin
 type McpEndpoint = NoEndpoint | SiteEndpoint | OpenAiEndpoint
+
+pure val endpointHost: AppKey = Ntwrk
 
 pure def pluginListsSkill(plugin: Plugin, app: AppKey): bool = plugin == ClaudePlugin or app != Slop
 
@@ -25,8 +29,41 @@ pure def pluginEndpoint(plugin: Plugin, app: AppKey): McpEndpoint =
   else if (app == Slop) NoEndpoint
   else OpenAiEndpoint
 
+pure def appEndpointPath(app: AppKey): str =
+  if (app == Ntwrk) "/mcp"
+  else if (app == Slop) "/mcp/slop"
+  else if (app == Peon) "/mcp/peon"
+  else "/mcp/friends"
+
+pure def appOpenAiEndpointPath(app: AppKey): str =
+  if (app == Ntwrk) "/mcp/openai"
+  else if (app == Slop) ""
+  else if (app == Peon) "/mcp/peon/openai"
+  else "/mcp/friends/openai"
+
+pure def endpointPath(endpoint: McpEndpoint, app: AppKey): str =
+  if (endpoint == SiteEndpoint) appEndpointPath(app)
+  else if (endpoint == OpenAiEndpoint) appOpenAiEndpointPath(app)
+  else ""
+
+pure val openAiManifestApp: AppKey = Ntwrk
+
+pure def lawEveryListedSkillHasAnEndpoint(plugin: Plugin, app: AppKey): bool =
+  pluginListsSkill(plugin, app) iff endpointPath(pluginEndpoint(plugin, app), app) != ""
+
+pure def lawEveryAppHasItsOwnPath(app: AppKey, other: AppKey): bool =
+  app != other implies
+    (appEndpointPath(app) != appEndpointPath(other) and appOpenAiEndpointPath(app) != appOpenAiEndpointPath(other))
+
+pure def lawOpenAiManifestServerIsAListedApp(app: AppKey): bool =
+  (app == openAiManifestApp) implies
+    (pluginListsSkill(OpenAiPlugin, app) and pluginEndpoint(OpenAiPlugin, app) == OpenAiEndpoint)
+
 pure def lawClaudePluginListsEverySkill(app: AppKey): bool =
   pluginListsSkill(ClaudePlugin, app) and pluginEndpoint(ClaudePlugin, app) == SiteEndpoint
+
+pure def lawOnlySlopHasNoPublicOpenAiEndpoint(app: AppKey): bool =
+  (appOpenAiEndpointPath(app) == "") iff app == Slop
 
 pure def lawOpenAiPluginOmitsSlop(app: AppKey): bool =
   (pluginListsSkill(OpenAiPlugin, app) iff app != Slop) and

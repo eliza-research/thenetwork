@@ -184,19 +184,19 @@ export function lawRefusedBannedSessionDeletesDraft(banned: boolean): boolean {
   return !banned || signupDraftRefusedRoute(banned) === "DiscardDraft";
 }
 
-/** Story: Drop the draft when I can no longer use it / A draft is written only under the grant that saves it, and nothing reads it (spec/mcpSignupDraft.md) */
+/** Story: Drop the draft when I can no longer use it / A draft is written only under the grant that saves it, and only the signup prefill reads it (spec/mcpSignupDraft.md) */
 //@ pure
 export function signupDraftGrantAllowed(bindingMatches: boolean, grantCurrent: boolean, unrevoked: boolean, writeScope: boolean): boolean {
   return bindingMatches && grantCurrent && unrevoked && writeScope;
 }
 
-/** Story: Drop the draft when I can no longer use it / A draft is written only under the grant that saves it, and nothing reads it (spec/mcpSignupDraft.md) */
+/** Story: Drop the draft when I can no longer use it / A draft is written only under the grant that saves it, and only the signup prefill reads it (spec/mcpSignupDraft.md) */
 //@ pure
 export function signupDraftUnique(matches: number): boolean {
   return matches === 1;
 }
 
-/** Story: Drop the draft when I can no longer use it / A draft is written only under the grant that saves it, and nothing reads it (spec/mcpSignupDraft.md) */
+/** Story: Drop the draft when I can no longer use it / A draft is written only under the grant that saves it, and only the signup prefill reads it (spec/mcpSignupDraft.md) */
 //@ pure
 export function signupDraftExpired(expiresAt: number, asOf: number): boolean {
   return expiresAt <= asOf;

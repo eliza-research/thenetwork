@@ -1,6 +1,6 @@
 # The Network Observatory: simulator, visualizer and game
 
-Status: v1 built and verified 2026-10-06 (results: `docs/results/2026-10-06-observatory.md`, in git history at 16cde70). Updated 2026-10-07: NYC map, the consent-first Network, the review queue, hidden member text in real mode, and a new UI. Updated again the same day: staff roles, Cloudflare Access sign-in, the audit log, review edit and re-roll, the member timeline, safety cases, requests, health alerts, the scorecard, the simulation lab, run compare, search and a real-only server (section 9). Updated a third time the same day: real-mode staff actions through the Network service, Cloudflare Access JWT verification, and the attention v1.2 send path (offered times and picks, booked plans, deferrals, gate reasons). Updated 2026-10-08: one console for four apps (ntwrk, slop, peon, friends): the app switcher, roles per app, a world per app, per-app rows in real mode, and the cross-app person view ([admin-console.md](admin-console.md) 4.6). How to run it: [runbook-simulation.md](runbook-simulation.md) (game mode) and [runbook-real.md](runbook-real.md) (real-world mode). Code: `packages/observatory`. PRD anchors: 34.3 (World Simulator), 34.4 (what the simulator measures), 35 (admin console: social graph explorer, member 360, member perspective timeline, opportunity pipeline, matching run inspector, fairness, simulation lab), 32.1-32.19 (data model).
+Status: v1 built and verified 2026-10-06 (results: `docs/results/2026-10-06-observatory.md`, in git history at 16cde70). Updated 2026-10-07: NYC map, the consent-first Network, the review queue, hidden member text in real mode, and a new UI. Updated again the same day: staff roles, Cloudflare Access sign-in, the audit log, review edit and re-roll, the member timeline, safety cases, requests, health alerts, the scorecard, the simulation lab, run compare, search and a real-only server (section 9). Updated a third time the same day: real-mode staff actions through the Network service, Cloudflare Access JWT verification, and the attention v1.2 send path (offered times and picks, booked plans, deferrals, gate reasons). Updated 2026-10-08: one console for four apps (ntwrk, slop, peon, friends): the app switcher, roles per app, a world per app, per-app rows in real mode, and the cross-app person view ([admin-console.md](admin-console.md) 4.6). How to run it: [runbook-simulation.md](runbook-simulation.md) (game mode) and [runbook-real.md](runbook-real.md) (real-world mode). Code: `apps/observatory`. PRD anchors: 34.3 (World Simulator), 34.4 (what the simulator measures), 35 (admin console: social graph explorer, member 360, member perspective timeline, opportunity pipeline, matching run inspector, fairness, simulation lab), 32.1-32.19 (data model).
 
 ## 1. What it is
 
@@ -24,7 +24,7 @@ The game is the simulator made playable. You can play the Network (matchmaker), 
 ## 2. Architecture
 
 ```
-            ┌──────────────── packages/observatory ────────────────┐
+            ┌──────────────── apps/observatory ────────────────┐
  data/      │  sources/game.ts  ── World (packages/sim) ── engine-v1 │
  synthetic ─┤      │   onRecord ─┐                                    │
             │      ▼             ▼                                    │
@@ -79,7 +79,7 @@ Learned edges follow PRD 32.13: delivered invitations to both sides give `introd
 
 ## 5. Real-world mode
 
-- Connection: `NETWORK_DATABASE_URL` (falls back to `DATABASE_URL`). The schema is `packages/observatory/db/schema.sql`. It is the proposed canonical `network` schema from PRD 32.1, 32.2, 32.4, 32.10, 32.11, 32.13 and 32.19: members, facets, intents, presence, edges, opportunities, participations, messages, feedback, events and matching_runs. Production does not exist yet, so this file is the contract the Eliza Cloud Network module should implement, or map to with views.
+- Connection: `NETWORK_DATABASE_URL` (falls back to `DATABASE_URL`). The schema is `packages/db/schema.sql`. It is the proposed canonical `network` schema from PRD 32.1, 32.2, 32.4, 32.10, 32.11, 32.13 and 32.19: members, facets, intents, presence, edges, opportunities, participations, messages, feedback, events and matching_runs. Production does not exist yet, so this file is the contract the Eliza Cloud Network module should implement, or map to with views.
 - Safety: every session sets `default_transaction_read_only = on`; the adapter only issues SELECT; `channel_identities` (phone, email) is never read. Unless `OBSERVATORY_REVEAL_PII=1` (local use only): names are shown as "First L."; what a member wrote (inbound messages, feedback text) never leaves the database, and the UI shows "[member message hidden]" with its length and time; the agent's texts have phones, emails and canary references masked; agent-private facets are withheld.
 - Review: `network.review_items` holds the review record of each opportunity (PRD 32.8): queued time, deadline, decision (approve, reject, expired), the approver (`judge` or `staff`), the judge's verdict and the exception reason, reason, note, reviewer, origin, seconds spent, edits, re-rolls and why an approval was invalidated. Real mode shows it and never writes it.
 - Network state: when `network.network_state` exists (written by `PgStore`, [network.md](network.md) section 1.1), real mode reads the view `network.network_state_console`, never the table: the trust levels, counters, gate reasons, safety cases, the matching switch, the pending deferred sends (kind and type only), how the Network treats each member's age, and the calendar and weekly opt-ins. "Under 18" follows the Network (a stated age, a minor signal, an age conflict, an unknown age), with the record age as a fallback, and so do minor contacts. It also reads `network.requests` and `network.participations`.
@@ -149,8 +149,8 @@ pnpm run observatory                                        # prints http://127.
 pnpm run observatory --level under_13_join                  # play a scenario as a level
 pnpm run observatory --time-aware                           # personas answer offered times from a hidden week (runbook-simulation 6.1.2)
 # Real-world mode against a local dev Postgres seeded from a simulated run:
-node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts up               # local cluster on :54339 + schema
-node --import tsx --env-file-if-exists=.env packages/observatory/db/seed.ts --from-sim --days 14
+node --import tsx --env-file-if-exists=.env packages/db/dev-pg.ts up               # local cluster on :54339 + schema
+node --import tsx --env-file-if-exists=.env apps/observatory/db/seed.ts --from-sim --days 14
 NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/network pnpm run observatory --mode real
 # Real-mode staff actions: also set NETWORK_SERVICE_URL and NETWORK_SERVICE_TOKEN (runbook-real 4.4).
 # Production: point NETWORK_DATABASE_URL at a read-only login (role network_observatory) on the
@@ -160,7 +160,7 @@ NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/network pnpm run observato
 OBSERVATORY_TOKENS="admin@*:<t>,reviewer@slop:<t>,engineer@*:<t>" pnpm run observatory
 # Real mode per app: OBSERVATORY_DATABASE_URL_SLOP=<a login in network_observatory_slop>;
 # the cross-app person view: OBSERVATORY_PLATFORM_DATABASE_URL=<a login in network_observatory_cross_app>.
-node --import tsx --env-file-if-exists=.env packages/observatory/src/report.ts --days 14       # headless findings (JSON)
+node --import tsx --env-file-if-exists=.env apps/observatory/src/report.ts --days 14       # headless findings (JSON)
 ```
 
 Access: the server listens on 127.0.0.1 only (`OBSERVATORY_HOST` changes it). Every `/api/*` route and the `/ws` WebSocket need a staff identity (section 9). With no settings, the server makes a random admin token and prints it at startup. Send a token as `Authorization: Bearer <token>` only (`?token=` is refused; tokens need 32 or more characters). The page `/` is public. The server refuses a `Host` other than localhost and an `Origin` other than its own, unless `OBSERVATORY_ALLOWED_ORIGINS` (comma-separated) lists it.

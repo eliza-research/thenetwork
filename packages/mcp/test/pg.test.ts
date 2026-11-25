@@ -6,9 +6,9 @@ import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { randomUUID } from "node:crypto";
 import { APPS, createPublicApi, PgPeopleStore } from "@thenetwork/platform";
-import { migrate } from "../../observatory/db/migrate.ts";
-import { DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
-import { pgAvailable } from "../../observatory/test/pg.ts";
+import { migrate } from "../../db/migrate.ts";
+import { DEV_PG_PORT, devPgUp } from "../../db/dev-pg.ts";
+import { pgAvailable } from "../../../apps/observatory/test/pg.ts";
 import { PgOAuthStore } from "../src/pg-store.ts";
 import type { AuthRequest, ConsentGrantWrites } from "../src/store.ts";
 import { createMcpHandler } from "../src/handler.ts";
@@ -608,4 +608,94 @@ describe.skipIf(!EXPLICIT_PG && !pgAvailable)("PgOAuthStore", () => {
       }
     });
   }
+
+  test("SD-390: sweep keeps a registered client that once got a grant even after the revoked grant is purged", async () => {
+    const env = setup({ store });
+    const personId = await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
+    expect(personId).toBeTruthy();
+    const { client } = await connect(env, "peon.biz", PHONE_A);
+    const grants = await store.sql<{ id: string }[]>`select id from oauth.grants where client_id = ${client.client_id}`;
+    expect(grants).toHaveLength(1);
+    await env.handler.revokeAllFor(PHONE_A, "peon");
+    await store.sweep(env.clock.t + 31 * 24 * 3_600_000);
+    expect(await store.getGrant(grants[0]!.id)).toBeUndefined();
+    expect(await store.getClient(client.client_id)).toBeDefined();
+    const q = new URLSearchParams({
+      response_type: "code", client_id: client.client_id, redirect_uri: "https://client.example/callback",
+      code_challenge: CHALLENGE, code_challenge_method: "S256", state: "reauth",
+    });
+    const res = await env.fetch(new Request(`${origin("peon.biz")}/oauth/authorize?${q}`));
+    expect(res.status).toBe(200);
+    expect(await res.text()).not.toContain("not registered");
+  });
+
+  test("SD-397: a denial racing behind a winning approval denies nothing on Postgres", async () => {
+    const other = new PgOAuthStore(testUrl.toString());
+    const env = setup({ store });
+    const domain = "peon.biz";
+    const personId = await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
+    const session = await env.sessions.create("peon", PHONE_A, personId);
+    const client = await register(env, domain);
+    const q = new URLSearchParams({
+      response_type: "code", client_id: client.body.client_id, redirect_uri: "https://client.example/callback",
+      code_challenge: CHALLENGE, code_challenge_method: "S256", state: "race",
+    });
+    const start = await env.fetch(new Request(`${origin(domain)}/oauth/authorize?${q}`, { headers: { cookie: `sid_peon=${session.token}` } }));
+    const rid = /name="rid" value="([^"]+)"/.exec(await start.text())![1]!;
+    const browser = /((?:__Host-)?mcp_auth=[^;]+)/.exec(start.headers.get("set-cookie") ?? "")![1]!;
+    const cookie = `${browser}; sid_peon=${session.token}`;
+    // Build a second handler sharing the same platform state so the denial runs on a separate DB connection.
+    const denyHandler = createMcpHandler({
+      platform: platformHooks({ store: env.people, otp: env.otp, accounts: env.accounts, sessions: env.sessions, app: id => APPS[id], cookieName: id => `sid_${id}` }),
+      store: other, now: () => env.clock.t, minOtpStartMs: 0,
+    });
+    let markAcquired!: () => void, releaseLock!: () => void;
+    const acquired = new Promise<void>(resolve => { markAcquired = resolve; });
+    const released = new Promise<void>(resolve => { releaseLock = resolve; });
+    const commit = store.commitConsentGrant.bind(store);
+    store.commitConsentGrant = (id, at, confirm, writes) => commit(id, at, async approval => {
+      markAcquired();
+      await released;
+      return confirm(approval);
+    }, writes);
+
+    const approving = env.fetch(new Request(`${origin(domain)}/oauth/authorize/consent`, {
+      method: "POST",
+      headers: { cookie, origin: origin(domain), "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ rid, decision: "approve" }).toString(),
+    }));
+    await Promise.race([acquired, approving]);
+    const denying = denyHandler.fetch(new Request(`${origin(domain)}/oauth/authorize/consent`, {
+      method: "POST",
+      headers: { cookie, origin: origin(domain), "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ rid, decision: "deny" }).toString(),
+    }));
+    try {
+      await vi.waitFor(async () => {
+        const [row] = await store.sql<{ blocked: boolean }[]>`select exists (
+          select 1 from pg_stat_activity where datname = current_database()
+            and wait_event_type = 'Lock' and query like 'delete from oauth.auth_requests where id%'
+        ) as blocked`;
+        expect(row?.blocked).toBe(true);
+      });
+    } finally {
+      releaseLock();
+    }
+    try {
+      const [approveRes, denyRes] = await Promise.all([approving, denying]);
+      expect(approveRes.status).toBe(303);
+      expect(new URL(approveRes.headers.get("location")!).searchParams.get("code")).toBeTruthy();
+      expect(denyRes!.status).toBe(400);
+      expect(denyRes!.headers.has("location")).toBe(false);
+      expect(await denyRes!.text()).toContain("expired");
+      expect(await store.sql`select kind from oauth.audit where client_id = ${client.body.client_id} order by id`).toEqual([
+        { kind: "client_registered" },
+        { kind: "consent_granted" },
+        { kind: "code_issued" },
+      ]);
+      expect(await store.sql`select id from oauth.grants where client_id = ${client.body.client_id} and revoked_at is null`).toHaveLength(1);
+    } finally {
+      await other.close();
+    }
+  });
 });

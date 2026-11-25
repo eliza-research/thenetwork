@@ -3,8 +3,8 @@ import { enableCompileCache } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { withFormalCache } from "../tools/vibestack/vibestack/cache.ts";
-import { precomputeSimulations, readSpecs, show, type Spec } from "../tools/vibestack/vibestack/pipeline.ts";
+import { precomputeSimulations, readSpecs, withFormalCache } from "../tools/vibestack/vibestack/formal.ts";
+import { show, type Spec } from "../tools/vibestack/vibestack/pipeline.ts";
 import { assertUnchanged, formalFiles, prepareProject, root } from "./vibestack.ts";
 
 // Use historical summed Quint subprocess seconds to give both runners a similar load.

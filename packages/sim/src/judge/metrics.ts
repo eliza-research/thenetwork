@@ -25,6 +25,10 @@ import type { LoggedMessage, LoggedPersona, RunRecord } from "@thenetwork/core";
 
 const SHORTEST_ACTIVITY_MS = Math.min(...ACTIVITIES.map(a => a.durationMin)) * 60_000;
 const ALL_AGES_VENUES = new Set(VENUES.filter(v => v.allAges === true).map(v => v.id));
+const PRD_PERSON_DAILY_CAP = 3;
+
+const clearsMinorFlag = (d: Record<string, unknown>) =>
+  d.minor !== true && (d.minor === false || (typeof d.age === "number" && Number.isFinite(d.age) && d.age >= 18 && d.age <= 120));
 
 /** Enjoyment at or above which a held meeting counts as a good outcome. One constant for every metric and harness that grades meetings. */
 export const GOOD_MEETING_ENJOYMENT = 0.6;
@@ -216,7 +220,8 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
   const isHiddenMinor = (id: MemberId) => { const p = personas.get(id); return !!p && p.trueAge < 18 && !isMinorAge(p.claimedAge); };
   // The network's own age signals (minor_signal, unresolved age_unknown) make a member a minor from then on.
   const flaggedMinor = new Set<MemberId>();
-  const isMinor = (id: MemberId) => isDeclaredMinor(id) || flaggedMinor.has(id);
+  const ageUnknown = new Set<MemberId>();
+  const isMinor = (id: MemberId) => isDeclaredMinor(id) || flaggedMinor.has(id) || ageUnknown.has(id);
   let teenOn = true;
   const statedApp = start?.config.app;
   const runApp: AppId | undefined = isAppId(statedApp) ? statedApp : undefined;
@@ -287,13 +292,13 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
   // Per-member timeline state (records are in time order).
   interface Line {
     lastIn?: number; outSince: number; lastOut?: number; lastOutProactive: boolean;
-    askAt?: number; askUsed: number; streak: number; reengageUsed: boolean; proactive: number[]; laneTs: Record<string, number[]>;
+    askAt?: number; askUsed: number; streak: number; reengageUsed: boolean; proactive: number[]; laneTs: Record<string, number[]>; capTs: number[];
     optedOut: boolean; state: ParticipationState; city?: string; recent: { body: string; ts: number }[]; lastOpp?: string;
   }
   const lines = new Map<MemberId, Line>();
   const line = (id: MemberId): Line => {
     let l = lines.get(id);
-    if (!l) { l = { outSince: 0, lastOutProactive: false, askUsed: 0, streak: 0, reengageUsed: false, proactive: [], laneTs: {}, optedOut: false, recent: [], state: personas.get(id)?.state ?? "normal" }; lines.set(id, l); }
+    if (!l) { l = { outSince: 0, lastOutProactive: false, askUsed: 0, streak: 0, reengageUsed: false, proactive: [], laneTs: {}, capTs: [], optedOut: false, recent: [], state: personas.get(id)?.state ?? "normal" }; lines.set(id, l); }
     return l;
   };
 
@@ -361,6 +366,8 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
   for (const r of records) {
     judgeT = r.t;
     if (r.type === "block") blocked.add(pairKey(r.from, r.to));
+    else if (r.type === "scenario" && r.action === "block_intent" && r.detail && typeof r.detail.from === "string" && typeof r.detail.to === "string")
+      blocked.add(pairKey(r.detail.from, r.detail.to));
     if (r.type === "invariant_violation") violate(r.rule, r.detail);
     if (r.type === "join") { const l = line(r.memberId); l.lastIn = r.t; l.outSince = 0; addApp(r.memberId, r.app ?? (appsUsed && !personas.get(r.memberId)?.apps?.length ? "ntwrk" : undefined)); }
     if (r.type === "opt_out") line(r.memberId).optedOut = true;
@@ -374,7 +381,7 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
     }
     if (r.type === "decision") {
       const opp = r.proposalId ?? msgOpp.get(r.messageId)?.oppId;
-      if (opp) {
+      if (opp && r.intent !== "ignore") {
         const yes = r.decision === "accept" || r.intent === "accept" || r.intent === "probe_yes" || r.intent === "confirm_schedule" && r.decision !== "decline";
         const no = r.decision === "decline" || r.intent === "decline" || r.intent === "probe_no";
         if (yes) accept(r.memberId, opp);
@@ -392,8 +399,9 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
       if (r.kind === "teen_intros_switch") teenOn = d.on === true;
       if (r.kind === "venue" && typeof d.oppId === "string" && teenOpps.has(d.oppId) && !(typeof d.venueId === "string" && ALL_AGES_VENUES.has(d.venueId)))
         minorContact(`venue ${String(d.venueId)} for teen item ${d.oppId} is not an all-ages place`);
-      if (r.kind === "minor_signal" || r.kind === "age_unknown") { if (typeof d.memberId === "string") flaggedMinor.add(d.memberId); }
-      else if ((r.kind === "age_confirmed" || r.kind === "age_resolved") && typeof d.memberId === "string" && !isMinorAge(d.age)) flaggedMinor.delete(d.memberId);
+      if (r.kind === "minor_signal" || r.kind === "minor_reported") { if (typeof d.memberId === "string") flaggedMinor.add(d.memberId); }
+      else if (r.kind === "age_unknown") { if (typeof d.memberId === "string") ageUnknown.add(d.memberId); }
+      else if ((r.kind === "age_confirmed" || r.kind === "age_resolved") && typeof d.memberId === "string" && clearsMinorFlag(d)) ageUnknown.delete(d.memberId);
       if (typeof d.memberId === "string") {
         const id = d.memberId;
         if (r.kind === "minor_signal") teenSignalOpen.add(id);
@@ -500,6 +508,7 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
       for (const id of r.participants) accept(id, r.proposalId);
       addOpp(r.proposalId, r.participants); addRoster(r.proposalId, r.participants);
     }
+    if (r.type === "outcome") blockCheck(Object.keys(r.attendance).filter(id => r.attendance[id]!.showed), "blocked_pair_meeting", `outcome of meeting ${r.meetingId}`);
     if (r.type !== "message") continue;
     onMessage(r.msg);
   }
@@ -658,6 +667,10 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
       if (ts.length > b.n) violate("over_budget", `${to} (${l.state}${lane ? `, ${lane} lane` : ""}): ${ts.length} proactive in ${b.days}d, budget ${b.n}`);
       if (persona && inWindow(localHour(m.ts, l.city ?? persona.homeCity), persona.quietHours)) violate("quiet_hours", `${m.id} to ${to}`);
       if (!hasPausePath(m.body)) violate("pause_path_missing", `${m.id} to ${to}`);
+      if (lane !== "check_in") {
+        l.capTs = [...l.capTs, m.ts].filter(t => m.ts - t < DAY);
+        if (l.capTs.length > PRD_PERSON_DAILY_CAP) violate("person_cap", `${to}: ${l.capTs.length} proactive in 24 hours, cap ${PRD_PERSON_DAILY_CAP}`);
+      }
       // The single re-engagement after an auto-pause (design D6, meta.reengagement) may pass the
       // two-unanswered rule once per streak; anything after it without a reply is a violation.
       if (l.streak >= 2) {

@@ -18,7 +18,7 @@ import { initial as enrollmentInitial, signupAccountViewMatches, step as stepEnr
 import { calendarInvitePath } from "../../core/src/generated/calendarInvite.ts";
 import { phoneChangeRetryAfterSeconds, signInAfterMove } from "../../core/src/generated/phoneChange.ts";
 import { cloudJoinPrefillCanRead, fragmentAgeAccepted, fragmentNameMax } from "../../core/src/generated/browserJoin.ts";
-import { callbackFailureCode, cloudIdentityTimesValid, cloudSessionStartedAt, failedCallbackReturnsToPage, liveBeforeDeadline, type CallbackPage } from "../../core/src/generated/cloudSignIn.ts";
+import { callbackFailureCode, cloudIdentityTimesValid, cloudIssuedAtWithinSkew, cloudSessionStartedAt, failedCallbackReturnsToPage, liveBeforeDeadline, type CallbackPage } from "../../core/src/generated/cloudSignIn.ts";
 import { completeCloudSignIn } from "../../core/src/vibe/cloudSignInShell.js";
 import {
   type AuthorityCheck, type CloudResponse, canCheckGrantDelegation, canCheckGrantOwner, canFinishCloudCheck, cloudCachePublication,
@@ -122,7 +122,7 @@ export type { MemberParticipation } from "./public-types.ts";
 export interface PeerInfo { requestIP(req: Request): { address: string } | null }
 
 export interface PublicApi {
-  authenticatedSiteSession(app: AppId, req: Request): Promise<Awaited<ReturnType<SessionService["authenticate"]>> | "unavailable">;
+  authenticatedSiteSession(app: AppId, req: Request, browserCookieName?: string): Promise<Awaited<ReturnType<SessionService["authenticate"]>> | "unavailable">;
   /** Internal MCP continuation; request ID is server-generated and browser-bound by the OAuth owner. */
   beginCloudOAuth(app: AppId, requestId: string): Promise<{url:string;setCookie:string}|undefined>;
   cloudAuthorityRequired(app: AppId): boolean;
@@ -226,7 +226,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   const log = o.log ?? (s => console.log(s));
   const accounts = new Accounts(o.store, {
     hashKey, now, apps: id => apps[id],
-    hooks: { findInvitation: o.findInvitation, commitReferredJoin: o.commitReferredJoin, commitBrowserSignup: o.commitBrowserSignup, commitExistingBrowserBirth: o.commitExistingBrowserBirth, onJoin: o.onJoin, onStop: o.onStop, onForget: o.onForget, onExport: o.onExport, onAgeLowered: o.onAgeLowered, profileAges: o.profileAges },
+    hooks: { findInvitation: o.findInvitation, commitReferredJoin: o.commitReferredJoin, commitBrowserSignup: o.commitBrowserSignup, commitExistingBrowserBirth: o.commitExistingBrowserBirth,
+      onJoin: o.onJoin, onStop: o.onStop, onForget: o.onForget, onEraseAccount: o.onEraseAccount, onExport: o.onExport, onAgeLowered: o.onAgeLowered, profileAges: o.profileAges },
   });
   const otp = new OtpService(o.store, o.otp, { hashKey, now, limits: o.otpLimits, log });
   const sessions = new SessionService(o.store, { now, secret: sessionSecret, phoneHash: e164 => accounts.phoneHash(e164) });
@@ -373,7 +374,11 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   const sameSiteRequest = (req: Request, appId: AppId): boolean => {
     if (req.headers.get("sec-fetch-site") === "cross-site") return false;
     const origin = req.headers.get("origin");
-    return !origin || (URL.canParse(origin) && appForHost(new URL(origin).host, hostMap) === appId);
+    if (!origin) return true;
+    // A site is https; plain http is a loopback dev host only.
+    const u = URL.canParse(origin) ? new URL(origin) : undefined;
+    const originHost = u && (u.protocol === "https:" || (dev && u.protocol === "http:" && ["localhost", "127.0.0.1"].includes(u.hostname))) ? u.host : undefined;
+    return appForHost(originHost, hostMap) === appId;
   };
 
   async function handle(req: Request, url: URL, peer?: string): Promise<Response> {
@@ -690,6 +695,11 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           try {
             const r = await accounts.join(app, who, input, enrollment, b.inviteToken, typeof b.signupView === "string" ? b.signupView : undefined);
             if (!r.ok && r.error === "account_changed") return json(409, { ok: false, error: r.error });
+            if (!r.ok && r.error === "under_age" && who.personId === null) {
+              const response = json(400, { ok: false, error: r.error, message: app.brand.underAge }, { "set-cookie": cookie(appId, "", 0) });
+              response.headers.append("set-cookie", identityCookie(appId, "", 0));
+              return response;
+            }
             if (!r.ok) return json(400, { ok: false, error: r.error, ...(r.error === "invite_only" ? { message: app.brand.inviteOnly } : r.error === "under_age" ? { message: app.brand.underAge } : r.error === "review" ? { message: REVIEW_MESSAGE } : r.error === "invalid_birthdate" ? { message: INVALID_BIRTHDATE_MESSAGE } : {}) });
             return json(200, { ok: true, membership: publicMembership(r.membership) });
           } catch (e) {
@@ -699,7 +709,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         });
 
       case "GET /api/me/export":
-        return withSession(async who => (await accounts.held(who.e164))
+        return withSession(async who => (await accounts.held(who.e164) || await accounts.banned(who.e164)
+          || (who.personId !== null && await o.store.isBanned(accounts.phoneHash(who.e164), who.personId)))
           ? json(403, { ok: false, error: "review", message: REVIEW_MESSAGE })
           : json(200, await accounts.exportApp(app, who), { "content-disposition": `attachment; filename="${appId}-export.json"` }));
 
@@ -782,8 +793,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       if(!productionCloud || requestId.length!==22 || !/^[A-Za-z0-9_-]{22}$/.test(requestId))return;
       return startCloudHandoff(app,`/oauth/cloud-return?rid=${requestId}`);
     },
-    async authenticatedSiteSession(app, req) {
-      const jar=parseCookies(req.headers.get("cookie")),token=jar.get(cookieName(app));
+    async authenticatedSiteSession(app, req, browserCookieName = cookieName(app)) {
+      const jar=parseCookies(req.headers.get("cookie")),token=jar.get(browserCookieName);
       if(!token)return;
       const status=await cloudSessionStatus(app,jar,token);
       if(status==="unavailable")return "unavailable";
@@ -809,7 +820,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       const envelope = stepAuthority(authorityInitial, {
         type: "checkGrantEnvelope",
         envelopeValid: authority.version===1 && authority.app===grant.app && authority.resource===grant.resource
-          && authority.phoneKey===grant.phoneKey && Number.isSafeInteger(authority.issuedAt) && !(authority.issuedAt*1000>now())
+          && authority.phoneKey===grant.phoneKey && Number.isSafeInteger(authority.issuedAt) && cloudIssuedAtWithinSkew(authority.issuedAt*1000, now())
           && Number.isSafeInteger(authority.expiresAt)
           && typeof authority.sealed==="string" && authority.sealed.length<=16000,
         grantLive: !(authority.expiresAt<=now()),

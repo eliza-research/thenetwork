@@ -1,12 +1,4 @@
 import { setTimeout as waitForMs } from "node:timers/promises";
-// The remote MCP server and its OAuth 2.1 authorization server, as one fetch handler that the
-// service mounts next to the platform's /api/*. Each site's Worker forwards /mcp, /oauth/* and
-// /.well-known/oauth-* to the shared backend, so every site is its own issuer and resource:
-//   https://slop.date/mcp          the MCP endpoint (resource) for slop; clients registered here are bound to slop
-//   https://ntwrk.party/mcp/openai  the same server for the public OpenAI plugin (slop is hidden)
-// Spec: MCP 2026-07-28 (Streamable HTTP, stateless, per-request _meta; initialize kept for 2025-03-26
-// to 2025-11-25 clients), OAuth 2.1 with PKCE S256, RFC 7591 (registration), RFC 8414 and RFC 9728
-// (metadata), RFC 8707 (resource), RFC 9207 (iss), RFC 7009 (revocation).
 import { createHmac } from "node:crypto";
 import { devShortcutsAllowed, INVALID_BIRTHDATE_MESSAGE, ipBucket, parseJoin, type Env } from "@thenetwork/platform";
 import { verifyProxyHeaders } from "@thenetwork/platform/src/proxy.ts";
@@ -34,14 +26,14 @@ import {
 import {
   configuredHostServes, connectorAddressCeilingMinute, connectorAnonymousPerAddressMinute, connectorLimitKey, connectorRegisterBucket,
   connectorRegisterLimit, connectorRequestsPerGrantMinute, connectorTokenAddressCeilingMinute,
-  connectorTokenPerGrantMinute, profileDailyCap, profileLimitReached, type RegisterBucket,
+  connectorTokenPerGrantMinute, grantServesApp, hostBindsApp, profileDailyCap, profileLimitReached, type RegisterBucket, siteOffersOpenAi,
 } from "../../core/src/generated/connectorTools.ts";
 import { assistantGrantCounts, projectAssistantActivity } from "../../core/src/generated/notificationDelivery.ts";
 import { signupDraftAfterAgeRecorded, signupDraftAfterSignup, signupDraftAppEnabled, signupDraftClaimRoute, signupDraftRefusedRoute } from "../../core/src/generated/mcpSignupDraft.ts";
 import { confirmHandoff, grantHandoff, offerHandoff } from "./signup-handoff.ts";
-import { connectorApp, connectorSurface, defaultApps, defaultHostMap, type McpApp, type McpAppId, type Surface } from "./apps.ts";
+import { appAtPath, connectorApp, connectorSurface, defaultApps, defaultHostMap, mcpPath, type McpApp, type McpAppId, type Surface } from "./apps.ts";
 import type { AssistantKind, BrowserSignup, PlatformHooks, SignedIn } from "./hooks.ts";
-import { codePage, consentPage, consentsPage, messagePage, phonePage, signupPage } from "./pages.ts";
+import { codePage, consentPage, consentsPage, messagePage, phonePage, signupPage, type SignupPrefill } from "./pages.ts";
 import { DEFAULT_SCOPES, MemoryOAuthStore, samePendingAuthPage, type AssistantGrantCandidate, type AuthCode, type AuthRequest, type ClientAuthMethod, type Grant, type BrowserGrantRemoval, type OAuthClient, type OAuthStore, type Scope, SCOPES, scopesOn, type Token } from "./store.ts";
 import { callTool, canCallTool, checkArgs, checkGrantOwner, connectionOf, TOOL_NAMES, TOOL_SCOPE, tokenCovers, type ToolName, toolDefs, toolInstructions } from "./tools.ts";
 import { cookieValue, isLoopbackHost, json, pkceS256, randomId, randomToken, readForm, readJson, safeEqual, sha256hex, validChallenge, validVerifier } from "./util.ts";
@@ -98,7 +90,8 @@ export const TTL = {
   /** A consent lasts at most this long; then the person signs in again. */
   grantMs: 90 * 24 * 3_600_000,
   codeMs: 5 * 60_000,
-  requestMs: 15 * 60_000,
+  /** A sign-in request (it holds the number once the person types it) lasts at most this long; then it is swept. */
+  requestMs: 10 * 60_000,
 };
 export const LIMITS = {
   authorizePerIpHour: 60,
@@ -127,9 +120,11 @@ export interface McpHandler {
   assistantUpdateSurfaces(personId: string, app: McpAppId): Promise<AssistantKind[]>;
   /** Map grants under the provider claim lock for the already verified current owner. */
   assistantUpdateSurfacesForClaim(candidates: readonly AssistantGrantCandidate[]): AssistantKind[];
+  /** Delete what expired (store.sweep), at most once a minute. Every OAuth request calls it; call it on a timer too, so nothing waits for traffic. */
+  sweep(): Promise<void>;
 }
 
-interface Ctx { app: McpApp; issuer: string; ip: string; req: Request; url: URL }
+interface Ctx { app: McpApp; host: McpApp; issuer: string; ip: string; req: Request; url: URL }
 interface Authed { token: Token; grant: Grant; client: OAuthClient }
 
 const browserPages: Record<AuthRequest["step"], StoredPage> = {
@@ -203,7 +198,7 @@ const tokenAuthority: Record<"valid" | "invalid" | "unavailable", TokenAuthority
 const PROFILE_DAY_MS = 86_400_000;
 
 const OWNED = (p: string) =>
-  p === "/mcp" || p === "/mcp/openai" || p.startsWith("/oauth/") ||
+  p === "/mcp" || p.startsWith("/mcp/") || p.startsWith("/oauth/") ||
   p.startsWith("/.well-known/oauth-authorization-server") || p.startsWith("/.well-known/oauth-protected-resource");
 
 const rpcError = (id: unknown, code: number, message: string, data?: unknown) =>
@@ -305,28 +300,52 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (ok) await reconcileAssistantSignal(await store.getGrant(id));
     return ok;
   }
+  async function revokeGrantWithAudit(grant: Grant, at: number, detail: string) {
+    if (await revokeGrant(grant.id, at)) {
+      await store.audit({ at, kind: "consent_revoked", clientId: grant.clientId, grantId: grant.id, app: grant.app, detail });
+    }
+  }
   const hostMap = o.hostMap ?? defaultHostMap(apps);
   const dev = devShortcutsAllowed(env);
   if (o.trustForwardedHost && !dev) throw new Error("trustForwardedHost is for the dev site proxy only (PLATFORM_ENV=dev)");
-  const issuerOf = (a: McpApp) => (typeof o.issuer === "function" ? o.issuer(a) : o.issuer ?? `https://${a.domain}`).replace(/\/+$/, "");
-  for (const a of Object.values(apps)) {
-    const u = new URL(issuerOf(a));
+  const issuers = new Map(Object.values(apps).map(a => {
+    const u = new URL(typeof o.issuer === "function" ? o.issuer(a) : o.issuer ?? `https://${a.domain}`);
     if (u.protocol !== "https:" && !(u.protocol === "http:" && isLoopbackHost(u.hostname))) throw new Error(`the issuer for ${a.id} must be https (http only on a loopback host)`);
-    if (u.pathname !== "/" || u.search || u.hash) throw new Error(`the issuer for ${a.id} must be an origin with no path`);
+    if (u.pathname.replace(/\/+$/, "") || u.search || u.hash || u.username || u.password) throw new Error(`the issuer for ${a.id} must be an origin with no path`);
+    return [a.id, u] as const;
+  }));
+  const issuerOf = (a: McpApp) => issuers.get(a.id)!.origin;
+  const secureCookies = (a: McpApp) => issuers.get(a.id)!.protocol === "https:";
+  const browserCookie = (host: McpApp, app: McpAppId) => {
+    if (!secureCookies(host)) return `mcp_auth_${app}`;
+    return host.id === app ? "__Host-mcp_auth" : `__Host-mcp_auth_${app}`;
+  };
+  let lastSweep: number | undefined;
+  async function sweep() {
+    const at = now();
+    if (lastSweep !== undefined && at - lastSweep < 60_000) return;
+    lastSweep = at;
+    await store.sweep(at);
   }
-  const secureCookies = (a: McpApp) => new URL(issuerOf(a)).protocol === "https:";
-  const browserCookie = (a: McpApp) => secureCookies(a) ? "__Host-mcp_auth" : `mcp_auth_${a.id}`;
-  let lastSweep = 0;
 
-  const resourceFor = (issuer: string, surface: Surface) => `${issuer}${surface === "openai" ? "/mcp/openai" : "/mcp"}`;
+  function resourceOf(issuer: string, host: McpAppId, app: McpAppId, surface: Surface): string {
+    const path = mcpPath(host, app, surface);
+    if (path === undefined) throw new Error(`${host} does not serve ${app}`);
+    return `${issuer}${path}`;
+  }
+  const resourceFor = (c: Pick<Ctx, "issuer" | "host" | "app">, surface: Surface) => resourceOf(c.issuer, c.host.id, c.app.id, surface);
   const prmUrl = (resource: string) => { const u = new URL(resource); return `${u.origin}/.well-known/oauth-protected-resource${u.pathname}`; };
-  /** RFC 8707: the canonical form of a resource parameter, or undefined when it is not this site's MCP endpoint. */
-  function canonicalResource(raw: string, issuer: string): string | undefined {
+  function servedResource(raw: string, c: Pick<Ctx, "issuer" | "host">): { app: McpAppId; surface: Surface; resource: string } | undefined {
     let u: URL;
     try { u = new URL(raw); } catch { return undefined; }
-    if (u.hash || u.search) return undefined;
-    const c = `${u.protocol.toLowerCase()}//${u.host.toLowerCase()}${u.pathname.replace(/\/+$/, "")}`;
-    return c === resourceFor(issuer, "full") || c === resourceFor(issuer, "openai") ? c : undefined;
+    if (u.hash || u.search || `${u.protocol.toLowerCase()}//${u.host.toLowerCase()}` !== c.issuer) return undefined;
+    const path = u.pathname.replace(/\/+$/, "");
+    const at = appAtPath(c.host.id, path);
+    return at && apps[at.app] ? { ...at, resource: `${c.issuer}${path}` } : undefined;
+  }
+  function canonicalResource(raw: string, c: Pick<Ctx, "issuer" | "host" | "app">): string | undefined {
+    const served = servedResource(raw, c);
+    return served && served.app === c.app.id && (served.surface !== "openai" || openAiOn(c)) ? served.resource : undefined;
   }
   const challenge = (resource: string, extra: Record<string, string> = {}) =>
     "Bearer " + Object.entries({ resource_metadata: prmUrl(resource), scope: "membership:read", ...extra }).map(([k, v]) => `${k}="${v.replace(/"/g, "'")}"`).join(", ");
@@ -352,7 +371,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!origin) return true;
     if (origin === c.issuer || extra.includes(origin)) return true;
     // The site's own hosts (its www name and its Pages name) are this site too.
-    try { const h = new URL(origin).host; if (origin.startsWith("https://") && hostMap[h] === c.app.id) return true; } catch { /* not a URL */ }
+    try { const h = new URL(origin).host; if (origin.startsWith("https://") && hostMap[h] === c.host.id) return true; } catch { /* not a URL */ }
     // The pages send Referrer-Policy: no-referrer, so a browser's own form POST carries "Origin: null".
     // Sec-Fetch-Site is set by the browser only (a page cannot forge it): same-origin is this site.
     return origin === "null" && c.req.headers.get("sec-fetch-site") === "same-origin";
@@ -361,9 +380,13 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   // ---------------------------------------------------------------- clients
   // Private pilot is DCR-only. Re-check persisted clients on every auth/write path so an
   // operator disabling the opt-in suspends access without deleting consent or blocking revoke.
-  function openAiUnavailable(c: Pick<Ctx, "app">, client: OAuthClient): boolean {
+  function openAiOn(c: Pick<Ctx, "app" | "host">): boolean {
+    return c.app.openai && siteOffersOpenAi(connectorApp[c.host.id], connectorApp[c.app.id]);
+  }
+
+  function openAiUnavailable(c: Pick<Ctx, "app" | "host">, client: OAuthClient): boolean {
     const openAi = assistantOf(client) === "chatgpt" || (client.kind === "cimd" && isOpenAiHost(new URL(client.id).hostname));
-    return openAi && !c.app.openai && !slopChatGptClient(c, client) && (client.kind !== "dcr" || !privateOpenAiApps.has(c.app.id));
+    return openAi && !openAiOn(c) && !slopChatGptClient(c, client) && (client.kind !== "dcr" || !privateOpenAiApps.has(c.app.id));
   }
 
   function chatGptRedirects(uris: readonly string[]): boolean {
@@ -374,17 +397,17 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   }
 
   function slopChatGptClient(c: Pick<Ctx, "app">, client: OAuthClient): boolean {
-    return c.app.id === "slop" && client.kind === "dcr" && chatGptRedirects(client.redirectUris);
+    return c.app.id === "slop" && client.app === "slop" && client.kind === "dcr" && chatGptRedirects(client.redirectUris);
   }
 
   function grantAllowsUpdates(grant: Grant, client: OAuthClient): boolean {
-    const app = apps[grant.app];
-    if (!app || app.id !== client.app || !tokenCovers("get_updates", grant.scopes)) return false;
-    const pathSurface = grant.resource.endsWith("/mcp/openai") ? "openai" : o.surface ?? "full";
-    if (grant.resource !== resourceFor(issuerOf(app), pathSurface)) return false;
+    const app = apps[grant.app], host = apps[client.app];
+    if (!app || !host || !hostBindsApp(connectorApp[host.id], connectorApp[app.id]) || !tokenCovers("get_updates", grant.scopes)) return false;
+    const pathSurface = grant.resource.endsWith("/openai") ? "openai" : o.surface ?? "full";
+    if (grant.resource !== resourceOf(issuerOf(host), host.id, app.id, pathSurface)) return false;
     const surface = pathSurface === "openai" || client.surface === "openai" ? "openai" : "full";
-    return configuredHostServes(connectorSurface[surface], connectorApp[app.id], app.openai)
-      && !openAiUnavailable({ app }, client);
+    return configuredHostServes(connectorSurface[surface], connectorApp[app.id], openAiOn({ app, host }))
+      && !openAiUnavailable({ app, host }, client);
   }
 
   function localUpdateSurface(grant: Grant, client: OAuthClient, at: number): AssistantKind | undefined {
@@ -424,10 +447,10 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const method = doc.token_endpoint_auth_method ?? "none";
     if (!uris.length || uris.length > 10 || !uris.every(redirectUriAllowed) || method !== "none") return undefined;
     const surface: Surface = uris.some(r => isOpenAiHost(new URL(r).hostname)) || isOpenAiHost(u.hostname) ? "openai" : "full";
-    if (surface === "openai" && !c.app.openai) return undefined;
+    if (surface === "openai" && !openAiOn(c)) return undefined;
     const client: OAuthClient = {
       id, secretHash: null, name: typeof doc.client_name === "string" ? doc.client_name.slice(0, 100) : u.hostname,
-      redirectUris: uris, authMethod: "none", app: c.app.id, surface, kind: "cimd", createdAt: now(),
+      redirectUris: uris, authMethod: "none", app: c.host.id, surface, kind: "cimd", createdAt: now(),
     };
     await store.putClient(client);
     return client;
@@ -453,11 +476,11 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!Array.isArray(responses) || !responses.every(r => r === "code")) return bad("response_types may be code only.");
     if (b.scope !== undefined && (typeof b.scope !== "string" || !parseScopes(b.scope, scopesOn(c.app.id)))) return bad(`Supported scopes: ${scopesOn(c.app.id).join(", ")}.`);
     const name = typeof b.client_name === "string" ? b.client_name.replace(/[\u0000-\u001f]/g, "").slice(0, 100) : null;
-    const slopChatGpt = c.app.id === "slop" && chatGptRedirects(uris as string[]);
+    const slopChatGpt = c.app.id === "slop" && c.host.id === "slop" && chatGptRedirects(uris as string[]);
     const surface: Surface = !slopChatGpt && !privateOpenAiApps.has(c.app.id) && (uris as string[]).some(r => isOpenAiHost(new URL(r).hostname)) ? "openai" : "full";
-    if (surface === "openai" && !c.app.openai) return bad("This app is not available for this client.");
+    if (surface === "openai" && !openAiOn(c)) return bad("This app is not available for this client.");
     const secret = method === "none" ? null : randomToken("ntws_");
-    const client: OAuthClient = { id: `mcp_${randomId()}`, secretHash: secret ? sha256hex(secret) : null, name, redirectUris: uris as string[], authMethod: method, app: c.app.id, surface, kind: "dcr", createdAt: now() };
+    const client: OAuthClient = { id: `mcp_${randomId()}`, secretHash: secret ? sha256hex(secret) : null, name, redirectUris: uris as string[], authMethod: method, app: c.host.id, surface, kind: "dcr", createdAt: now() };
     await store.putClient(client);
     await store.audit({ at: now(), kind: "client_registered", clientId: client.id, grantId: null, app: c.app.id, detail: `${method} ${surface}` });
     return json(201, {
@@ -477,14 +500,15 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       try { dec = Buffer.from(auth.slice(6), "base64").toString("utf8"); } catch { return fail(); }
       const i = dec.indexOf(":");
       if (i < 0) return fail();
-      const [bid, bsec] = [decodeURIComponent(dec.slice(0, i)), decodeURIComponent(dec.slice(i + 1))];
+      let bid: string, bsec: string;
+      try { [bid, bsec] = [decodeURIComponent(dec.slice(0, i)), decodeURIComponent(dec.slice(i + 1))]; } catch { return fail(); }
       if (id && id !== bid) return fail();
       if (secret) return fail(); // one method per request
       id = bid; secret = bsec; basic = true;
     }
     if (!id) return fail();
     const client = await getClient(id, c);
-    if (!client || client.app !== c.app.id) return fail();
+    if (!client || client.app !== c.host.id) return fail();
     if (client.authMethod === "none") return secret ? fail() : client;
     if (!secret || !client.secretHash || !safeEqual(sha256hex(secret), client.secretHash)) return fail();
     if ((client.authMethod === "client_secret_basic") !== basic) return fail();
@@ -502,50 +526,52 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   async function authorizeStart(c: Ctx): Promise<Response> {
     const q = c.url.searchParams;
     const keys = [...q.keys()];
-    if (new Set(keys).size !== keys.length) return messagePage(c.app, "This link does not work", "The sign-in link from the assistant is not valid. Go back to the assistant and try again.");
-    if (await limited(`authz:ip:${sha256hex(ipBucket(c.ip))}`, lim.authorizePerIpHour, 3_600_000)) return messagePage(c.app, "Too many tries", "Please wait an hour and try again.", 429);
+    if (new Set(keys).size !== keys.length) return messagePage(c, "This link does not work", "The sign-in link from the assistant is not valid. Go back to the assistant and try again.");
+    if (await limited(`authz:ip:${sha256hex(ipBucket(c.ip))}`, lim.authorizePerIpHour, 3_600_000)) return messagePage(c, "Too many tries", "Please wait an hour and try again.", 429);
     const client = await getClient(q.get("client_id") ?? "", c);
     // An unknown client or a redirect URI it did not register: show an error, never redirect (open redirector).
-    if (!client || client.app !== c.app.id) return messagePage(c.app, "This link does not work", "The assistant is not registered on this site. Go back to the assistant and try again.");
-    if (openAiUnavailable(c, client)) return messagePage(c.app, "Not available", "This assistant connection is not available on this site.", 403);
+    if (!client || client.app !== c.host.id) return messagePage(c, "This link does not work", "The assistant is not registered on this site. Go back to the assistant and try again.");
+    if (openAiUnavailable(c, client)) return messagePage(c, "Not available", "This assistant connection is not available on this site.", 403);
     const asked = q.get("redirect_uri");
     const redirectUri = asked ?? (client.redirectUris.length === 1 ? client.redirectUris[0]! : null);
-    if (!redirectUri || !client.redirectUris.includes(redirectUri)) return messagePage(c.app, "This link does not work", "The assistant asked to return to an address it did not register.");
+    if (!redirectUri || !client.redirectUris.includes(redirectUri)) return messagePage(c, "This link does not work", "The assistant asked to return to an address it did not register.");
     const state = q.get("state");
     // A malformed request is an error page here, never a redirect (RFC 9700 4.11.2): open registration
     // would otherwise let anyone bounce a person from this site to any https page with no click.
     // Only the person's Cancel action redirects back with an error.
-    const fail = (_error: string, description: string) => messagePage(c.app, "This link does not work", `The assistant sent a sign-in link this site cannot use (${description}). Go back to the assistant and try again.`, 400);
+    const fail = (_error: string, description: string) => messagePage(c, "This link does not work", `The assistant sent a sign-in link this site cannot use (${description}). Go back to the assistant and try again.`, 400);
     if (q.get("response_type") !== "code") return fail("unsupported_response_type", "response_type must be code");
     const challengeIn = q.get("code_challenge");
     if (q.get("code_challenge_method") !== "S256" || !validChallenge(challengeIn)) return fail("invalid_request", "PKCE with code_challenge_method=S256 is required");
     const scopes = parseScopes(q.get("scope"), scopesOn(c.app.id));
     if (!scopes) return fail("invalid_scope", `Supported scopes: ${scopesOn(c.app.id).join(", ")}.`);
     const rawResource = q.get("resource");
-    const resource = rawResource ? canonicalResource(rawResource, c.issuer) : resourceFor(c.issuer, client.surface);
+    const resource = rawResource ? canonicalResource(rawResource, c) : resourceFor(c, client.surface);
     if (!resource) return fail("invalid_target", "resource must be this site's MCP endpoint");
-    if (slopChatGptClient(c, client) && resource !== resourceFor(c.issuer, "full")) return fail("invalid_target", "this connection must use the /mcp endpoint");
-    if (client.surface === "openai" && resource !== resourceFor(c.issuer, "openai")) return fail("invalid_target", "this client must use the /mcp/openai endpoint");
+    if (slopChatGptClient(c, client) && resource !== resourceFor(c, "full")) return fail("invalid_target", "this connection must use the /mcp endpoint");
+    if (client.surface === "openai" && resource !== resourceFor(c, "openai")) return fail("invalid_target", "this client must use the /openai endpoint of the app");
     // login_hint, phone or any other person data in the URL is never read: the person types it on our page.
-    const browser = randomToken();
+    // A second tab in this browser shares the first tab's token: the cookie holds one value, so a new one would end the first tab.
+    const held = cookieValue(c.req.headers.get("cookie"), browserCookie(c.host, c.app.id));
+    const browser = held && /^[A-Za-z0-9_-]{32,128}$/.test(held) ? held : randomToken();
     const r = {
       id: randomId(), browserHash: sha256hex(browser), clientId: client.id, app: c.app.id, redirectUri, state,
       codeChallenge: challengeIn, scopes, resource, e164: null, personId: null, step: "phone" as const, createdAt: now(), expiresAt: now() + ttl.requestMs,
     };
     await store.putAuthRequest(r);
-    const cookie = `${browserCookie(c.app)}=${browser}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(ttl.requestMs / 1000)}${secureCookies(c.app) ? "; Secure" : ""}`;
+    const cookie = `${browserCookie(c.host, r.app)}=${browser}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(ttl.requestMs / 1000)}${secureCookies(c.host) ? "; Secure" : ""}`;
     const response = await authorizeEntry(c, r, client, false);
     response.headers.append("set-cookie", cookie);
     return response;
   }
 
   async function readAuthorizationSession(c: Ctx) {
-    try { return await o.platform.session?.(c.app.id, c.req); }
+    try { return await o.platform.session?.(c.app.id, c.req, c.host.id); }
     catch { return "unavailable" as const; }
   }
 
   function signupClientAllowed(c: Ctx, r: AuthRequest, client: OAuthClient): boolean {
-    const surfaceOffered = c.app.openai || (client.surface === "full" && r.resource === resourceFor(c.issuer, "full")
+    const surfaceOffered = openAiOn(c) || (client.surface === "full" && r.resource === resourceFor(c, "full")
       && assistantOf(client) !== "chatgpt" && !slopChatGptClient(c, client));
     return browserSignupAppAllowed(c.app.id, surfaceOffered, tokenCovers("check_status", r.scopes), tokenCovers("submit_profile", r.scopes))
       && !!o.platform.session && !!o.platform.signupEnrollment && !!o.platform.joinSignup;
@@ -576,7 +602,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
   function currentConsentPage(c: Ctx, r: AuthRequest, client: OAuthClient, options: { unavailable?: boolean; canSignup?: boolean } = {}) {
     const redirect = new URL(r.redirectUri);
-    return consentPage(c.app, r.id, client.name, redirect.host, redirect.origin, r.scopes, {
+    return consentPage(c, r.id, client.name, redirect.host, redirect.origin, r.scopes, {
       ...options,
       ...(r.step === "enrolled" ? { signupSaved: true, signupApproval: signupFormProof(r, "approval") } : {}),
     });
@@ -591,7 +617,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
   /** Retry the initial session check on this unadvanced request without making a new browser binding. */
   async function authorizeEntry(c: Ctx, r: AuthRequest, client: OAuthClient, retry: boolean): Promise<Response> {
-    const expired = () => messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.", 400);
+    const expired = () => messagePage(c, "This page has expired", "Go back to the assistant and connect again.", 400);
     const page = { ...pageInitial, turnstileOn: !!o.turnstile };
     const answer = (reply: PageReply, respond: () => Response | Promise<Response>) => {
       const allowed = retry ? canRetryConnection({ ...page, view: "PleaseRetryView" }, reply) : canOpenPage(page, reply);
@@ -618,7 +644,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       });
       if (identity.phase !== "ShowingConsent") {
         if (!retry) await store.deleteAuthRequest(r.id);
-        return answer("ReplyNotAvailable", () => messagePage(c.app, "Not available", "This account cannot use this assistant connection.", 403));
+        return answer("ReplyNotAvailable", () => messagePage(c, "Not available", "This account cannot use this assistant connection.", 403));
       }
       const verified = { ...r, e164: signedIn.e164, personId: signedIn.personId, step: "consent" as const };
       if (!await store.advanceAuthRequest(r, verified, now)) return expired();
@@ -628,22 +654,22 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       const handoff = await o.platform.beginCloudOAuth?.(c.app.id, r.id);
       if (!handoff) {
         if (!retry) await store.deleteAuthRequest(r.id);
-        return answer("ReplySignInUnavailable", () => messagePage(c.app, "Sign-in unavailable", "Go back to the assistant and try again later.", 503));
+        return answer("ReplySignInUnavailable", () => messagePage(c, "Sign-in unavailable", "Go back to the assistant and try again later.", 503));
       }
       return answer("ReplyCloud", () => new Response(null, { status: 302, headers: { location: handoff.url, "cache-control": "no-store", "set-cookie": handoff.setCookie } }));
     }
-    return answer("ReplyPhone", () => phonePage(c.app, r.id, { turnstileSiteKey: o.turnstile?.siteKey }));
+    return answer("ReplyPhone", () => phonePage(c, r.id, { turnstileSiteKey: o.turnstile?.siteKey, redirectOrigin: new URL(r.redirectUri).origin }));
   }
 
   /** The live request of this browser (rid in the form, the cookie from the start). */
   async function liveRequest(c: Ctx, form: URLSearchParams) {
     const rid = form.get("rid") ?? "";
     const r = rid ? await store.getAuthRequest(rid) : undefined;
-    const cookies = c.req.headers.get("cookie");
-    const browser = cookieValue(cookies, browserCookie(c.app))
-      ?? (secureCookies(c.app) ? undefined : cookieValue(cookies, "mcp_auth"));
     if (!r) return undefined;
-    const sameApp = r.app === c.app.id;
+    const sameApp = r.app === c.app.id && canonicalResource(r.resource, c) === r.resource;
+    const cookies = c.req.headers.get("cookie");
+    const browser = cookieValue(cookies, browserCookie(c.host, r.app))
+      ?? (c.host.id === r.app && !secureCookies(c.host) ? cookieValue(cookies, "mcp_auth") : undefined);
     if (!mayCompareBrowserDigest(sameApp, sameApp && requestIsLive(now(), r.expiresAt), !!browser) || !browser) return undefined;
     const bound = stepBrowser(browserInitial, { type: "bindBrowser", matchesDigest: safeEqual(sha256hex(browser), r.browserHash) });
     if (bound.phase !== "CheckingClient") return undefined;
@@ -660,17 +686,17 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   }
 
   function validBrowserEntry(c: Ctx, r: AuthRequest, client: OAuthClient): boolean {
-    return client.app === c.app.id && client.redirectUris.includes(r.redirectUri) && !!canonicalResource(r.resource, c.issuer)
-      && (client.surface !== "openai" || r.resource === resourceFor(c.issuer, "openai"))
-      && (!slopChatGptClient(c, client) || r.resource === resourceFor(c.issuer, "full"))
+    return client.app === c.host.id && client.redirectUris.includes(r.redirectUri) && !!canonicalResource(r.resource, c)
+      && (client.surface !== "openai" || r.resource === resourceFor(c, "openai"))
+      && (!slopChatGptClient(c, client) || r.resource === resourceFor(c, "full"))
       && validChallenge(r.codeChallenge) && !openAiUnavailable(c, client);
   }
 
   async function authorizeRetry(c: Ctx): Promise<Response> {
     const live = await liveBrowserEntry(c);
-    if (!live) return messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.", 400);
+    if (!live) return messagePage(c, "This page has expired", "Go back to the assistant and connect again.", 400);
     const { r, client } = live;
-    if (!validBrowserEntry(c, r, client)) return messagePage(c.app, "This link does not work", "Go back to the assistant and connect again.", 400);
+    if (!validBrowserEntry(c, r, client)) return messagePage(c, "This link does not work", "Go back to the assistant and connect again.", 400);
     return authorizeEntry(c, r, client, true);
   }
 
@@ -679,15 +705,15 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     // Initial session retry used this address on OTP apps before /oauth/retry.
     if (!o.platform.cloudAuthorityRequired?.(c.app.id)) return authorizeRetry(c);
     const live = await liveBrowserEntry(c);
-    if (!live) return messagePage(c.app,"This page has expired","Go back to the assistant and connect again.",400);
+    if (!live) return messagePage(c,"This page has expired","Go back to the assistant and connect again.",400);
     const { r, client, flow } = live;
-    const expired = () => messagePage(c.app,"This page has expired","Go back to the assistant and connect again.",400);
+    const expired = () => messagePage(c,"This page has expired","Go back to the assistant and connect again.",400);
     // spec/authorizationPages.md, "The return from Cloud sign-in and the retry link resume the same request": each reply passes the generated guard first; a refused one gets "This page has expired".
     const answer = async (reply: PageReply, respond: () => Response | Promise<Response>) => (cloudReturnAllows(reply, !!o.turnstile) ? respond() : expired());
     if (!cloudReturnAllows("ReplyConsent", !!o.turnstile)) return expired();
     const form = stepBrowser(flow, { type: "readBrowserForm", page: browserPages[r.step], hasPhone: !!r.e164, form: "CloudReturn", approve: false });
     if (form.phase !== "CheckingIdentity") return expired();
-    if (!validBrowserEntry(c, r, client)) return answer("ReplyLinkInvalid", () => messagePage(c.app, "This link does not work", "Go back to the assistant and connect again.", 400));
+    if (!validBrowserEntry(c, r, client)) return answer("ReplyLinkInvalid", () => messagePage(c, "This link does not work", "Go back to the assistant and connect again.", 400));
     const who = await readAuthorizationSession(c);
     const identity = stepBrowser(form, {
       type: "recordBrowserIdentity",
@@ -696,7 +722,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
         : "IdentityRejected",
     });
     if (identity.phase === "SessionRetry") return answer("ReplyRetryLater",()=>browserUnavailable(c,c.url.pathname+c.url.search));
-    if (identity.phase !== "ShowingConsent" || !who || who === "unavailable") return answer("ReplyConnectAgain",()=>messagePage(c.app,"Connect again","Return to your agent or text conversation and connect again.",403));
+    if (identity.phase !== "ShowingConsent" || !who || who === "unavailable") return answer("ReplyConnectAgain",()=>messagePage(c,"Connect again","Return to your agent or text conversation and connect again.",403));
     return answer("ReplyConsent", async () => {
       const verified = { ...r, e164: who.e164, personId: who.personId, step: "consent" as const };
       if (!await store.advanceAuthRequest(r, verified, now)) return expired();
@@ -704,10 +730,19 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     });
   }
 
+  async function signupPrefillFor(c: Ctx, r: AuthRequest, who: SignedIn): Promise<SignupPrefill | undefined> {
+    const key = o.platform.phoneKey(who.e164);
+    try {
+      const ageAllowed = await o.platform.signupAgeAllowed(key, c.app.id, now());
+      const fields = await store.useSignupPrefill({ clientId: r.clientId, app: c.app.id, phoneKey: key, personId: r.personId, ageAllowed }, now());
+      return fields?.firstName ? { firstName: fields.firstName, ...(fields.homeCity ? { homeCity: fields.homeCity } : {}) } : undefined;
+    } catch { return undefined; }
+  }
+
   async function authorizeSignup(c: Ctx): Promise<Response> {
     if (c.req.method !== "POST") return json(405, { error: "method_not_allowed" }, { allow: "POST" });
-    if (!originOk(c)) return messagePage(c.app, "Not allowed", "This form must be sent from this site.", 403);
-    const expired = () => messagePage(c.app, "This page has expired", "Go back to your assistant and connect again.", 400);
+    if (!originOk(c)) return messagePage(c, "Not allowed", "This form must be sent from this site.", 403);
+    const expired = () => messagePage(c, "This page has expired", "Go back to your assistant and connect again.", 400);
     const form = await readForm(c.req);
     const live = form && await liveRequest(c, form);
     if (!form || !live) return expired();
@@ -728,33 +763,34 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (decision !== "open" && !(decision === "join" && exactForm)) return expired();
     const enrollment = await availableSignup(c, who);
     if (!enrollment || !requestIsLive(now(), r.expiresAt)) return expired();
-    const showSignup = (error?: string, birthdateError?: string) => {
-      const response = signupPage(c.app, r.id, { ...enrollment, signupView, error, birthdateError });
+    const showSignup = (error?: string, prefill?: SignupPrefill, birthdateError?: string) => {
+      const response = signupPage(c, r.id, { ...enrollment, signupView, error, prefill, birthdateError });
       if (who.setCookie) response.headers.append("set-cookie", who.setCookie);
       return response;
     };
-    if (decision === "open") return showSignup();
+    if (decision === "open") return showSignup(undefined, await signupPrefillFor(c, r, who));
+    const sentCity = form.get("homeCity");
+    const sent: SignupPrefill = { firstName: (form.get("firstName") ?? "").slice(0, 50), ...(sentCity === "nyc" || sentCity === "sf" ? { homeCity: sentCity } : {}) };
 
     const version = form.get("consentVersion");
     const offered = offerHandoff(browserSignupJoinAllowed(true, exactForm, form.get("smsConsent") === "yes", version === enrollment.consent.version));
     if (offered.phase !== "AwaitingPhoneConfirmation")
-      return showSignup("Review and accept the current text message terms to continue.");
+      return showSignup("Review and accept the current text message terms to continue.", sent);
     const birthdate = form.get("birthdate") ?? "";
     const typedBirthdate = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(birthdate);
     const birth: CalendarDate | undefined = typedBirthdate
       ? { year: Number(typedBirthdate[1]), month: Number(typedBirthdate[2]), day: Number(typedBirthdate[3]) }
       : undefined;
     const today = calendarDateOfDay(signupClockDay(now()));
-    if (!birth || !birthdateAccepted(birth, today))
-      return showSignup(undefined, "Enter your birthday. It must be a real date, not after today.");
+    if (!birth || !birthdateAccepted(birth, today)) return showSignup(undefined, sent, "Enter your birthday. It must be a real date, not after today.");
     const input = parseJoin({
       firstName: form.get("firstName"), birthdate,
       homeCity: form.get("homeCity"), consent: { sms: true, version },
     });
-    if (!input) return showSignup("Enter your first name, birthday and home city.");
+    if (!input) return showSignup("Enter your first name, birthday and home city.", sent);
     const typedInvitation = form.get("invitation");
     const invitation = signupInvitation(c.app, typedInvitation);
-    if ((enrollment.requiresInvitation || typedInvitation?.trim()) && !invitation) return showSignup("Enter a valid invitation for this app.");
+    if ((enrollment.requiresInvitation || typedInvitation?.trim()) && !invitation) return showSignup("Enter a valid invitation for this app.", sent);
 
     const pending = { ...r, step: "enrolling" as const, handoff: offered };
     if (!await store.advanceAuthRequest(r, pending, now)) return expired();
@@ -764,12 +800,16 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       if (!joined.ok) {
         const owner = await o.platform.login(who.e164);
         if (owner === "held" || owner.personId !== r.personId || !await store.advanceAuthRequest(pending, r, now)) return expired();
-        if (joined.error === "under_age") return showSignup(undefined, "You can’t join this app with the birthday entered.");
+        if (joined.error === "under_age") {
+          const response = showSignup(undefined, sent, "You can’t join this app with the birthday entered.");
+          if (r.personId === null) response.headers.append("set-cookie", `${browserCookie(c.host, r.app)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.host) ? "; Secure" : ""}`);
+          return response;
+        }
         const error = joined.error === "invalid_invitation" || joined.error === "invite_only" ? "Enter a current invitation for this app."
           : joined.error === "consent_wording" ? "The text message terms changed. Open signup again to review them."
           : joined.error === "invalid_birthdate" ? INVALID_BIRTHDATE_MESSAGE
           : "We couldn’t finish signup. Return to the connection page or try again later.";
-        return showSignup(error);
+        return showSignup(error, sent);
       }
       const member = joined.membership;
       const owner = await o.platform.login(who.e164);
@@ -787,22 +827,22 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       if (!await store.advanceAuthRequest(pending, enrolled, now)) return expired();
       return verifiedConsentPage(c, enrolled, client, who);
     } catch {
-      return messagePage(c.app, "Connect again", "We couldn’t confirm signup. Check your membership before starting a new connection.", 503);
+      return messagePage(c, "Connect again", "We couldn’t confirm signup. Check your membership before starting a new connection.", 503);
     }
   }
 
   async function authorizeStep(c: Ctx, step: PageForm): Promise<Response> {
     if (c.req.method !== "POST") return json(405, { error: "method_not_allowed" }, { allow: "POST" });
-    if (!originOk(c)) return messagePage(c.app, "Not allowed", "This form must be sent from this site.", 403);
+    if (!originOk(c)) return messagePage(c, "Not allowed", "This form must be sent from this site.", 403);
     const form = await readForm(c.req);
     const live = form && (await liveRequest(c, form));
-    if (!form || !live) return messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.");
+    if (!form || !live) return messagePage(c, "This page has expired", "Go back to the assistant and connect again.");
     const { r, client, flow } = live;
-    if (openAiUnavailable(c, client)) return messagePage(c.app, "Not available", "This assistant connection is not available on this site.", 403);
-    const clearCookie = `${browserCookie(c.app)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.app) ? "; Secure" : ""}`;
+    if (openAiUnavailable(c, client)) return messagePage(c, "Not available", "This assistant connection is not available on this site.", 403);
+    const clearCookie = `${browserCookie(c.host, r.app)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.host) ? "; Secure" : ""}`;
 
     const approving = step === "consent" && form.get("decision") === "approve";
-    const expired = () => messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.");
+    const expired = () => messagePage(c, "This page has expired", "Go back to the assistant and connect again.");
     if (!browserSignupConsentAllowed(browserPages[r.step], safeEqual(form.get("signupApproval") ?? "", signupFormProof(r, "approval")))) return expired();
     // spec/authorizationPages.md: the page that sent this form, and the generated guard of the form in front of the route
     // and of each reply. A refused form or reply gets "This page has expired", the answer to a form that does not belong
@@ -815,28 +855,29 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       type: "readBrowserForm", page: browserPages[r.step], hasPhone: !!r.e164, form: browserForms[step], approve: approving,
     });
     if (action.phase === "BrowserExpired") return expired();
-    if (action.phase === "AlreadyVerified") return answer("ReplyAlreadySignedIn", () => messagePage(c.app, "Already signed in", "Go back to the previous page to finish."));
+    if (action.phase === "AlreadyVerified") return answer("ReplyAlreadySignedIn", () => messagePage(c, "Already signed in", "Go back to the previous page to finish."));
 
     if (action.phase === "StartingOtp") {
       const t0 = performance.now();
       const pad = async () => { const left = (o.minOtpStartMs ?? 700) - (performance.now() - t0); if (left > 0) await waitForMs(left); };
       const turnstile = o.turnstile;
-      if (turnstile && !(await turnstile.verify(form.get("cf-turnstile-response") ?? undefined, c.ip, c.app.id))) {
-        return answer("ReplyCheckFailed", () => phonePage(c.app, r.id, { error: "Please complete the check and try again.", turnstileSiteKey: turnstile.siteKey }));
+      const redirectOrigin = new URL(r.redirectUri).origin;
+      if (turnstile && !(await turnstile.verify(form.get("cf-turnstile-response") ?? undefined, c.ip, c.host.id))) {
+        return answer("ReplyCheckFailed", () => phonePage(c, r.id, { error: "Please complete the check and try again.", turnstileSiteKey: turnstile.siteKey, redirectOrigin }));
       }
       const e164 = o.platform.normalizePhone(form.get("phone"));
-      if (!e164) return answer("ReplyPhoneInvalid", () => phonePage(c.app, r.id, { error: "Enter a US or Canada phone number.", turnstileSiteKey: o.turnstile?.siteKey }));
+      if (!e164) return answer("ReplyPhoneInvalid", () => phonePage(c, r.id, { error: "Enter a US or Canada phone number.", turnstileSiteKey: o.turnstile?.siteKey, redirectOrigin }));
       const sent = await o.platform.startOtp(c.app.id, e164, c.ip);
       await pad();
       const next = stepBrowser(action, { type: "recordOtpSend", sent: sent.ok });
       if (next.phase !== "ShowingCode") {
         const limited = !sent.ok && sent.error === "rate_limited";
         const text = limited ? "Too many codes were asked for. Please wait and try again." : "Sign-in is not available for this app right now.";
-        return answer(limited ? "ReplyTooManyCodes" : "ReplySendUnavailable", () => phonePage(c.app, r.id, { error: text, turnstileSiteKey: o.turnstile?.siteKey }));
+        return answer(limited ? "ReplyTooManyCodes" : "ReplySendUnavailable", () => phonePage(c, r.id, { error: text, turnstileSiteKey: o.turnstile?.siteKey, redirectOrigin }));
       }
       return answer("ReplyCode", async () => {
         if (!await store.advanceAuthRequest(r, { e164, personId: null, step: "code" }, now)) return expired();
-        return codePage(c.app, r.id, e164.slice(-4));
+        return codePage(c, r.id, e164.slice(-4), { redirectOrigin });
       });
     }
 
@@ -844,7 +885,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       const code = (form.get("code") ?? "").replace(/\s/g, "");
       const proof = stepBrowser(action, { type: "recordOtpVerification", verified: await o.platform.verifyOtp(c.app.id, r.e164, code, c.ip) });
       const last4 = r.e164.slice(-4);
-      if (proof.phase !== "CheckingIdentity") return answer("ReplyCodeRejected", () => codePage(c.app, r.id, last4, { error: "That code did not work. Check the newest text and try again." }));
+      if (proof.phase !== "CheckingIdentity") return answer("ReplyCodeRejected", () => codePage(c, r.id, last4, { error: "That code did not work. Check the newest text and try again.", redirectOrigin: new URL(r.redirectUri).origin }));
       const who = await o.platform.login(r.e164);
       const identity = stepBrowser(proof, {
         type: "recordBrowserIdentity",
@@ -853,7 +894,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       if (identity.phase !== "ShowingConsent" || who === "held") {
         return answer("ReplyCheckNumber", async () => {
           await store.deleteAuthRequest(r.id);
-          const res = messagePage(c.app, "We need to check this number", "We need to check this number before it can be used here. Please try again later, or email us for help.", 403);
+          const res = messagePage(c, "We need to check this number", "We need to check this number before it can be used here. Please try again later, or email us for help.", 403);
           res.headers.append("set-cookie", clearCookie);
           return res;
         });
@@ -863,14 +904,14 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
         const verified = { ...r, e164, personId: who.personId, step: "consent" as const };
         if (!await store.advanceAuthRequest(r, verified, now)) return expired();
         const res = await verifiedConsentPage(c, verified, client, { e164, personId: who.personId });
-        const site = o.platform.createSession ? await o.platform.createSession(c.app.id, { e164, personId: who.personId }) : undefined;
+        const site = await o.platform.createSession?.(c.app.id, { e164, personId: who.personId }, c.host.id);
         if (site) res.headers.append("set-cookie", site);
         return res;
       });
     }
 
     if (action.phase === "CheckingConsentOwner" && r.e164) {
-      const current = o.platform.session ? await o.platform.session(c.app.id, c.req) : undefined;
+      const current = await o.platform.session?.(c.app.id, c.req, c.host.id);
       const owner = current === "unavailable" ? undefined : await o.platform.login(r.e164);
       const checked = stepBrowser(action, {
         type: "readConsentOwner",
@@ -883,7 +924,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       if (checked.phase !== "CheckingCloudGrant") {
         return answer("ReplyConnectAgain", async () => {
           await store.deleteAuthRequest(r.id);
-          const response = messagePage(c.app, "Connect again", "Your account changed. Go back to your assistant and connect again.", 403);
+          const response = messagePage(c, "Connect again", "Your account changed. Go back to your assistant and connect again.", 403);
           response.headers.append("set-cookie", clearCookie);
           return response;
         });
@@ -897,7 +938,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       });
       if (readiness.phase === "SessionRetry") return answer("ReplyConsentRetry", () => consentUnavailable(c, r, client));
       if (readiness.phase !== "ConsentReady" || authority === "unavailable")
-        return answer("ReplyConnectAgain", () => messagePage(c.app, "Connect again", "Return to your agent or text conversation and connect again.", 403));
+        return answer("ReplyConnectAgain", () => messagePage(c, "Connect again", "Return to your agent or text conversation and connect again.", 403));
       // The gate in front of this route allowed ReplyApproved. The issuance can also answer "This page has expired",
       // the retry consent page or "Connect again"; each is an approve reply of the same consent page.
       const response = await finishAuthorization(c, { ...r, e164: r.e164 }, client, authority);
@@ -907,7 +948,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
     if (action.phase !== "ConsentDeclined") return expired();
     return answer("ReplyDeclined", async () => {
-      await store.deleteAuthRequest(r.id);
+      // An approval that took the request first wins: the denial then has nothing to deny.
+      if (!(await store.deleteAuthRequest(r.id))) return answer("ReplyExpired", expired);
       await store.audit({ at: now(), kind: "consent_denied", clientId: client.id, grantId: null, app: c.app.id, detail: null });
       return redirectTo(r.redirectUri, { error: "access_denied", error_description: "Connection cancelled", state: r.state, iss: c.issuer }, 303, { "set-cookie": clearCookie });
     });
@@ -915,7 +957,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
   /** Validate Cloud authority before the atomic issuance so outages remain retryable. */
   async function finishAuthorization(c: Ctx, r: AuthRequest & { e164: string }, client: OAuthClient, authority?: Grant["cloudAuthority"]): Promise<Response> {
-    const clearCookie = `${browserCookie(c.app)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.app) ? "; Secure" : ""}`;
+    const clearCookie = `${browserCookie(c.host, r.app)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.host) ? "; Secure" : ""}`;
     const issued = await issueConnectorGrant<Grant>(r, {
       now,
       makeGrant: at => ({
@@ -966,11 +1008,11 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     });
     switch (issued.kind) {
       case "expired":
-        return messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.");
+        return messagePage(c, "This page has expired", "Go back to the assistant and connect again.");
       case "retry":
         return consentUnavailable(c, r, client);
       case "denied":
-        return messagePage(c.app, "Connect again", "This connection is no longer valid. Return to your agent or text conversation and connect again.", 403);
+        return messagePage(c, "Connect again", "This connection is no longer valid. Return to your agent or text conversation and connect again.", 403);
       case "issued":
         await reconcileAssistantSignal(issued.grant);
         return redirectTo(r.redirectUri, { code: issued.code, state: r.state, iss: c.issuer }, 303, { "set-cookie": clearCookie });
@@ -1009,6 +1051,10 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (openAiUnavailable(c, client)) return json(401, { error: "invalid_client" });
     const bad = (error: string, d?: string) => json(400, { error, ...(d ? { error_description: d } : {}) });
     const refused = (flow: TokenFlow) => flow.phase === "RetryAuthority" ? temporarilyUnavailable() : bad(...tokenErrors[flow.reason]);
+    const grantAppClosed = (grant: Grant) => {
+      const app = apps[grant.app];
+      return !app || !hostBindsApp(connectorApp[c.host.id], connectorApp[app.id]) || openAiUnavailable({ app, host: c.host }, client);
+    };
     const at = now();
     const grantType = form.get("grant_type");
 
@@ -1033,21 +1079,22 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       const res = form.get("resource");
       const binding = stepToken(read, {
         type: "readCodeBinding", redirectMatches, verifierMatches,
-        resourceMatches: verifierMatches && (!res || canonicalResource(res, c.issuer) === ac.resource),
+        resourceMatches: verifierMatches && (!res || servedResource(res, c)?.resource === ac.resource),
       });
       if (binding.phase !== "CheckingGrant") return refused(binding);
       const { grant, flow: authorized } = await checkTokenGrant(binding, ac.grantId, ac.expiresAt, at);
       if (!grant || authorized.phase !== "AwaitingConsumption") return refused(authorized);
+      if (grantAppClosed(grant)) return json(401, { error: "invalid_client" });
       // The Cloud check may be slow: recheck expiry and atomically consume only after it succeeds.
       if (!codeCanBeConsumed(authorized, !(ac.expiresAt <= now()) && !(grant.expiresAt <= now()))) return refused(authorized);
       const pair = tokenPair(client, grant, ac.scopes, ac.resource);
       const result = await store.commitCodeExchange({ code: ac, grant, tokens: pair.tokens, now, audit: {
-        kind: "token_issued", clientId: client.id, grantId: grant.id, app: c.app.id, detail: ac.scopes.join(" "),
+        kind: "token_issued", clientId: client.id, grantId: grant.id, app: grant.app, detail: ac.scopes.join(" "),
       } });
       const ready = stepToken(authorized, { type: "readCodeExchange", result });
       if (ready.phase === "RevokeGrant") {
         await revokeGrant(ac.grantId, now());
-        await store.audit({ at: now(), kind: "code_replay", clientId: client.id, grantId: ac.grantId, app: c.app.id, detail: "grant revoked" });
+        await store.audit({ at: now(), kind: "code_replay", clientId: client.id, grantId: ac.grantId, app: grant.app, detail: "grant revoked" });
       }
       return ready.phase === "TokensReady" ? json(200, pair.response) : refused(ready);
     }
@@ -1062,10 +1109,11 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       if (!t || read.phase !== "CheckingGrant") return refused(read);
       const { grant, flow: authorized } = await checkTokenGrant(read, t.grantId, t.expiresAt, at);
       if (!grant || !canReadRefreshBinding(authorized)) return refused(authorized);
-      const asked = form.get("scope") === null ? t.scopes : parseScopes(form.get("scope"), scopesOn(c.app.id));
+      if (grantAppClosed(grant)) return json(401, { error: "invalid_client" });
+      const asked = form.get("scope") === null ? t.scopes : parseScopes(form.get("scope"), scopesOn(grant.app));
       const scopeAllowed = !!asked && asked.every(s => t.scopes.includes(s));
       const res = form.get("resource");
-      const resourceMatches = scopeAllowed && (!res || canonicalResource(res, c.issuer) === t.resource);
+      const resourceMatches = scopeAllowed && (!res || servedResource(res, c)?.resource === t.resource);
       const refreshedAt = resourceMatches ? now() : at;
       const binding = stepToken(authorized, {
         type: "readRefreshBinding", scopeAllowed, resourceMatches,
@@ -1074,13 +1122,13 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       if (!asked || !canRecordRotation(binding)) return refused(binding);
       const pair = tokenPair(client, grant, asked, t.resource);
       const result = await store.rotateRefresh({ refresh: t, grant, tokens: pair.tokens, now, audit: {
-        kind: "token_refreshed", clientId: client.id, grantId: grant.id, app: c.app.id, detail: asked.join(" "),
+        kind: "token_refreshed", clientId: client.id, grantId: grant.id, app: grant.app, detail: asked.join(" "),
       } });
       const rotation = stepToken(binding, { type: "recordRotation", result });
       if (rotation.phase === "RevokeGrant") {
         // A refresh token used twice: someone else has a copy. End the whole grant.
         await revokeGrant(t.grantId, now());
-        await store.audit({ at: now(), kind: "refresh_replay", clientId: client.id, grantId: t.grantId, app: c.app.id, detail: "grant revoked" });
+        await store.audit({ at: now(), kind: "refresh_replay", clientId: client.id, grantId: t.grantId, app: t.app, detail: "grant revoked" });
         return refused(rotation);
       }
       return rotation.phase === "TokensReady" ? json(200, pair.response) : refused(rotation);
@@ -1103,7 +1151,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       const at = now();
       if (effect === "EndGrant") await revokeGrant(t.grantId, at);
       else await store.revokeToken(t.hash, at);
-      await store.audit({ at, kind: "token_revoked", clientId: client.id, grantId: t.grantId, app: c.app.id, detail: effect === "EndGrant" ? "refresh: grant revoked" : "access" });
+      await store.audit({ at, kind: "token_revoked", clientId: client.id, grantId: t.grantId, app: t.app, detail: effect === "EndGrant" ? "refresh: grant revoked" : "access" });
     }
     return new Response(null, { status: 200, headers: { "cache-control": "no-store" } });
   }
@@ -1118,37 +1166,49 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   }
 
   async function consents(c: Ctx, revokeOne: boolean): Promise<Response> {
-    const who = await readAuthorizationSession(c);
-    if (who === "unavailable") return browserUnavailable(c, "/oauth/consents");
-    const signInFirst = () => messagePage(c.app, "Sign in first", "Connect this app in your agent and confirm your phone during authorization, then open this page again.", 401);
-    if (!who) return signInFirst();
-    const owner = { app: c.app.id, phoneKey: o.platform.phoneKey(who.e164), personId: who.personId };
-    const owns = (grant: Grant, at: number) => browserOwnsLiveGrant(grant.app === owner.app, grant.phoneKey === owner.phoneKey,
-      grant.personId === owner.personId, grant.revokedAt === null, at, grant.expiresAt);
+    const served = [c.host, ...Object.values(apps).filter(a => a.id !== c.host.id && hostBindsApp(connectorApp[c.host.id], connectorApp[a.id]))];
+    const signInFirst = () => messagePage(c, "Sign in first", "Connect this app in your agent and confirm your phone during authorization, then open this page again.", 401);
+    type Session = { app: McpApp; who: SignedIn; owner: { app: McpAppId; phoneKey: string; personId: string | null } };
+    const sessions: Session[] = [];
+    for (const app of served) {
+      const who = await readAuthorizationSession({ ...c, app });
+      if (who === "unavailable") return browserUnavailable(c, "/oauth/consents");
+      if (who) sessions.push({ app, who, owner: { app: app.id, phoneKey: o.platform.phoneKey(who.e164), personId: who.personId } });
+    }
+    if (!sessions.length) return signInFirst();
+    const sessionOf = (app: McpAppId) => sessions.find(s => s.app.id === app);
+    const owns = (s: Session, grant: Grant, at: number) => browserOwnsLiveGrant(grant.app === s.owner.app, grant.phoneKey === s.owner.phoneKey,
+      grant.personId === s.owner.personId, grant.revokedAt === null, at, grant.expiresAt);
+    const withCookies = (response: Response) => {
+      for (const s of sessions) if (s.who.setCookie) response.headers.append("set-cookie", s.who.setCookie);
+      return response;
+    };
     let removal: Extract<RemoveReply, "Removed" | "NothingRemoved"> | undefined;
     if (revokeOne) {
       if (c.req.method !== "POST") return json(405, { error: "method_not_allowed" }, { allow: "POST" });
       // A cross-site form cannot remove access for the person: the Origin must be this site.
-      if (!originOk(c) || (c.req.headers.get("origin") === null && c.req.headers.get("sec-fetch-site") !== "same-origin")) return messagePage(c.app, "Not allowed", "This form must be sent from this site.", 403);
+      if (!originOk(c) || (c.req.headers.get("origin") === null && c.req.headers.get("sec-fetch-site") !== "same-origin")) return messagePage(c, "Not allowed", "This form must be sent from this site.", 403);
       const form = await readForm(c.req);
       const id = form?.get("grant");
       const grant = id ? await store.getGrant(id) : undefined;
+      const s = grant ? sessionOf(grant.app) : undefined;
       const proof = /^([0-9]{1,15})\.([A-Za-z0-9_-]{43})$/.exec(form?.get("confirmation") ?? "");
       const until = proof ? Number(proof[1]) : 0;
-      const sessionHash = who.browserBinding;
+      const sessionHash = s?.who.browserBinding;
       const proves = (binding?: string) => !!(grant && proof && binding && safeEqual(proof[2]!, consentRemovalMac(binding, grant, until)));
-      const matches = browserRemovalProofMatches(!!sessionHash, proves(sessionHash), proves(who.rotatedFromBrowserBinding));
-      const currentOwner = matches && who.personId === await o.platform.personForKey(owner.phoneKey);
+      const matches = browserRemovalProofMatches(!!sessionHash, proves(sessionHash), proves(s?.who.rotatedFromBrowserBinding));
+      const currentOwner = !!s && matches && s.who.personId === await o.platform.personForKey(s.owner.phoneKey);
       const at = now();
       removal = "NothingRemoved";
-      if (grant && sessionHash && removalFormMayRevoke(currentOwner && owns(grant, at), matches, at, until)
-        && await revokeGrant(grant.id, at, { ...owner, e164: who.e164, sessionHash, confirmationEndsAt: until, now })) {
-        await store.audit({ at: now(), kind: "consent_revoked", clientId: grant.clientId, grantId: grant.id, app: c.app.id, detail: "by the person" });
+      if (grant && s && sessionHash && removalFormMayRevoke(currentOwner && owns(s, grant, at), matches, at, until)
+        && await revokeGrant(grant.id, at, { ...s.owner, e164: s.who.e164, sessionHash, confirmationEndsAt: until, now })) {
+        await store.audit({ at: now(), kind: "consent_revoked", clientId: grant.clientId, grantId: grant.id, app: grant.app, detail: "by the person" });
         removal = "Removed";
       }
     }
     const startedAt = now();
-    const candidates = (await store.grantsFor(owner.phoneKey, owner.app, startedAt)).filter(grant => owns(grant, startedAt));
+    const candidates = (await Promise.all(sessions.map(async s =>
+      (await store.grantsFor(s.owner.phoneKey, s.owner.app, startedAt)).filter(grant => owns(s, grant, startedAt))))).flat();
     const checked = new Map(await Promise.all(candidates.map(async grant => {
       const [authority, client] = await Promise.all([
         usesCloudGrantAuthority(grant) ? cloudGrantCurrent(grant) : "valid" as const,
@@ -1156,29 +1216,31 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       ]);
       return [grant.id, { authority, clientName: client?.name ?? null }] as const;
     })));
-    const current = candidates.length ? await store.grantsFor(owner.phoneKey, owner.app, now()) : [];
-    if (who.personId !== await o.platform.personForKey(owner.phoneKey)) return signInFirst();
+    const current: Array<{ s: Session; grants: Grant[] }> = [];
+    for (const s of sessions) {
+      const grants = candidates.some(g => g.app === s.owner.app) ? await store.grantsFor(s.owner.phoneKey, s.owner.app, now()) : [];
+      if (s.who.personId === await o.platform.personForKey(s.owner.phoneKey)) current.push({ s, grants });
+    }
+    if (!current.length) return signInFirst();
+    const label = (grant: Grant, name: string | null) => served.length > 1 ? `${name ?? "An unnamed assistant"} (${apps[grant.app]?.name ?? grant.app})` : name;
     const at = now();
     const grants: Array<Grant & { clientName: string | null }> = [];
-    for (const grant of current) {
-      const check = checked.get(grant.id);
-      if (!check) continue;
-      const visibility = browserGrantVisibility(owns(grant, at), check.authority);
-      if (visibility === "RetryBrowserGrantList") {
-        const response = browserUnavailable(c, "/oauth/consents", removalListRetry(removal ?? "") === "RemovedListUnavailable");
-        if (who.setCookie) response.headers.append("set-cookie", who.setCookie);
-        return response;
+    for (const { s, grants: live } of current) {
+      for (const grant of live) {
+        const check = checked.get(grant.id);
+        if (!check) continue;
+        const visibility = browserGrantVisibility(owns(s, grant, at), check.authority);
+        if (visibility === "RetryBrowserGrantList") return withCookies(browserUnavailable(c, "/oauth/consents", removalListRetry(removal ?? "") === "RemovedListUnavailable"));
+        if (visibility === "ShowBrowserGrant") grants.push({ ...grant, clientName: label(grant, check.clientName) });
       }
-      if (visibility === "ShowBrowserGrant") grants.push({ ...grant, clientName: check.clientName });
     }
     const selected = revokeOne ? undefined : grants.find(grant => grant.id === c.url.searchParams.get("remove"));
+    const binding = selected ? sessionOf(selected.app)?.who.browserBinding : undefined;
     const until = selected ? removalConfirmationEndsAt(at, selected.expiresAt) : 0;
-    const confirmation = selected && who.browserBinding ? {
-      grantId: selected.id, proof: `${until}.${consentRemovalMac(who.browserBinding, selected, until)}`,
+    const confirmation = selected && binding ? {
+      grantId: selected.id, proof: `${until}.${consentRemovalMac(binding, selected, until)}`,
     } : undefined;
-    const page = consentsPage(c.app, grants, ms => new Date(ms).toISOString().slice(0, 10), { removal, confirmation });
-    if (who.setCookie) page.headers.append("set-cookie", who.setCookie);
-    return page;
+    return withCookies(consentsPage(c, grants, ms => new Date(ms).toISOString().slice(0, 10), { removal, confirmation }));
   }
 
   // ---------------------------------------------------------------- metadata
@@ -1205,12 +1267,12 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   }
   function prMetadata(c: Ctx, surface: Surface) {
     return {
-      resource: resourceFor(c.issuer, surface),
+      resource: resourceFor(c, surface),
       authorization_servers: [c.issuer],
       scopes_supported: scopesOn(c.app.id),
       bearer_methods_supported: ["header"],
       resource_name: `${c.app.name} (powered by The Network)`,
-      resource_documentation: `${c.issuer}/SKILL.md`,
+      resource_documentation: c.app.id === c.host.id ? `${c.issuer}/SKILL.md` : `${c.app.links.site}/SKILL.md`,
     };
   }
 
@@ -1223,8 +1285,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!m) return "invalid";
     const at = now();
     const t = await store.getToken(sha256hex(m[1]!));
-    // RFC 8707: a token minted for another resource (another site, or the other surface) is refused.
-    if (!t || t.kind !== "access" || t.revokedAt !== null || t.expiresAt <= at || t.resource !== resource || t.app !== c.app.id) return "invalid";
+    if (!t || t.kind !== "access" || t.revokedAt !== null || t.expiresAt <= at || t.resource !== resource
+      || !grantServesApp(connectorApp[t.app], connectorApp[c.app.id])) return "invalid";
     const [grant, client] = await Promise.all([store.getGrant(t.grantId), store.getClient(t.clientId)]);
     if (!grant || grant.revokedAt !== null || grant.expiresAt <= at || !client) return "invalid";
     // spec/oauthTokenLifecycle.md, "The request needs current grant authority and must stay within its consent"
@@ -1241,7 +1303,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (owner === "GrantOwnerUnavailable") return "unavailable";
     if (owner === "GrantOwnerHeld") return "invalid";
     if (owner === "GrantOwnerChanged") {
-      try { await revokeGrant(grant.id, now()); } catch { return "unavailable"; }
+      try { await revokeGrantWithAudit(grant, now(), "the number or its person changed"); } catch { return "unavailable"; }
       return "invalid";
     }
     return cloudGrantCurrent(grant);
@@ -1270,7 +1332,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const text = accessRemoved
       ? "Access removed. We can’t check your other connections right now. Try again shortly."
       : "We can’t check your connection right now. Try again shortly, or return to your agent or text conversation.";
-    const response = messagePage(c.app, "Please try again", text, accessRemoved ? 200 : 503, retryPath);
+    const response = messagePage(c, "Please try again", text, accessRemoved ? 200 : 503, retryPath);
     if (!accessRemoved) response.headers.set("retry-after", "5");
     return response;
   }
@@ -1285,7 +1347,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   }
 
   async function mcp(c: Ctx, pathSurface: Surface): Promise<Response> {
-    const resource = resourceFor(c.issuer, pathSurface);
+    const resource = resourceFor(c, pathSurface);
     const cors: Record<string, string> = {};
     const origin = c.req.headers.get("origin");
     if (origin && (origin === c.issuer || o.allowedOrigins?.includes(origin))) Object.assign(cors, { "access-control-allow-origin": origin, "access-control-expose-headers": "WWW-Authenticate", vary: "Origin" });
@@ -1345,7 +1407,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const result = (r: Record<string, unknown>) => out(200, { jsonrpc: "2.0", id, result: modern ? { resultType: "complete", ...r, _meta: { ...(r._meta as object | undefined), "io.modelcontextprotocol/serverInfo": SERVER_INFO } } : r });
     const host = c.app;
     // spec/connectorTools.md, "A connection binds to one host on one surface"
-    if (!configuredHostServes(connectorSurface[surface], connectorApp[host.id], host.openai)) {
+    if (!configuredHostServes(connectorSurface[surface], connectorApp[host.id], openAiOn(c))) {
       return out(404, rpcError(id, -32601, "Not available"));
     }
 
@@ -1404,7 +1466,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
         log(`[mcp] ${host.id} ${surface} ${tool} ${r.kind}${auth ? ` grant=${auth.grant.id}` : ""}`);
         if (r.kind === "grant_unavailable") return out(503, rpcError(id, -32603, "Your connection cannot be checked right now. Please try again shortly."), { "retry-after": "5" });
         if (r.kind === "invalid_grant" || r.kind === "grant_held") {
-          if (auth && r.kind === "invalid_grant") await revokeGrant(auth.grant.id, now());
+          if (auth && r.kind === "invalid_grant") await revokeGrantWithAudit(auth.grant, now(), "the number or its person changed");
           return out(401, rpcError(id, -31401, "The access token is not valid here"), { "www-authenticate": challenge(resource, { error: "invalid_token" }) });
         }
         if (r.kind === "error") return result({ content: [{ type: "text", text: r.message }], isError: true });
@@ -1416,11 +1478,47 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
   // ---------------------------------------------------------------- routing
 
+  const PRM = "/.well-known/oauth-protected-resource";
+  const AUTH_FORMS = new Set(["/oauth/authorize/phone", "/oauth/authorize/code", "/oauth/authorize/signup", "/oauth/authorize/consent", "/oauth/authorize/cancel"]);
+
+  async function storedRequestApp(host: McpApp, rid: string | null | undefined): Promise<McpApp | undefined> {
+    const stored = rid && /^[A-Za-z0-9_-]{22}$/.test(rid) ? await store.getAuthRequest(rid) : undefined;
+    const app = stored ? apps[stored.app] : undefined;
+    return app && hostBindsApp(connectorApp[host.id], connectorApp[app.id]) ? app : undefined;
+  }
+
+  async function requestApp(c: Ctx, p: string): Promise<{ app: McpApp; path: string } | null> {
+    const own = { app: c.host, path: p };
+    if (p === "/mcp" || p.startsWith("/mcp/") || p.startsWith(`${PRM}/mcp`)) {
+      const meta = p.startsWith(PRM);
+      const at = appAtPath(c.host.id, meta ? p.slice(PRM.length) : p);
+      const app = at ? apps[at.app] : undefined;
+      if (!at || !app) return null;
+      const path = at.surface === "openai" ? "/mcp/openai" : "/mcp";
+      return { app, path: meta ? `${PRM}${path}` : path };
+    }
+    if (p === "/oauth/authorize") {
+      const raw = c.url.searchParams.get("resource");
+      const served = raw ? servedResource(raw, c) : undefined;
+      return served ? { app: apps[served.app]!, path: p } : own;
+    }
+    if (p === "/oauth/retry" || p === "/oauth/cloud-return") return { app: await storedRequestApp(c.host, c.url.searchParams.get("rid")) ?? c.host, path: p };
+    if (AUTH_FORMS.has(p) && c.req.method === "POST") {
+      if (!originOk(c)) return own;
+      const form = await readForm(c.req.clone());
+      return { app: await storedRequestApp(c.host, form?.get("rid")) ?? c.host, path: p };
+    }
+    return own;
+  }
+
   async function handle(req: Request, url: URL, peer?: string): Promise<Response> {
     const r = await resolve(req, peer);
     if (!r) return json(404, { error: "unknown_app" });
-    const c: Ctx = { app: r.app, issuer: issuerOf(r.app), ip: r.ip, req, url };
-    const p = url.pathname.replace(/\/+$/, "") || "/";
+    const site: Ctx = { app: r.app, host: r.app, issuer: issuerOf(r.app), ip: r.ip, req, url };
+    const bound = await requestApp(site, url.pathname.replace(/\/+$/, "") || "/");
+    if (!bound) return json(404, { error: "not_found" });
+    const c: Ctx = { ...site, app: bound.app };
+    const p = bound.path;
     const pub = { "cache-control": "public, max-age=300", "access-control-allow-origin": "*" };
     const get = req.method === "GET" || req.method === "HEAD";
     if (req.method === "OPTIONS" && !p.startsWith("/mcp")) {
@@ -1433,11 +1531,11 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       case "/.well-known/oauth-protected-resource/mcp":
         return get ? json(200, prMetadata(c, "full"), pub) : json(405, { error: "method_not_allowed" });
       case "/.well-known/oauth-protected-resource/mcp/openai":
-        return !c.app.openai ? json(404, { error: "not_found" }) : get ? json(200, prMetadata(c, "openai"), pub) : json(405, { error: "method_not_allowed" });
+        return !openAiOn(c) ? json(404, { error: "not_found" }) : get ? json(200, prMetadata(c, "openai"), pub) : json(405, { error: "method_not_allowed" });
       case "/mcp":
         return mcp(c, o.surface ?? "full");
       case "/mcp/openai":
-        return c.app.openai ? mcp(c, "openai") : json(404, { error: "not_found" });
+        return openAiOn(c) ? mcp(c, "openai") : json(404, { error: "not_found" });
       case "/oauth/register": {
         const res = await register(c);
         res.headers.set("access-control-allow-origin", "*");
@@ -1537,11 +1635,12 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       }
       return revoked;
     },
+    sweep,
     async fetch(req, server) {
       const url = new URL(req.url);
       if (!OWNED(url.pathname)) return undefined;
       try {
-        if (now() - lastSweep > 10 * 60_000) { lastSweep = now(); await store.sweep(now()); }
+        await sweep();
         let peer: string | undefined;
         try { peer = server?.requestIP(req)?.address; } catch { /* not a served request (tests) */ }
         return await handle(req, url, peer);

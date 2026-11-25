@@ -13,7 +13,7 @@ import {
 import {
   canCheckSlots, canCleanImage, canFinishRerate, canRecordRatingClear, canRecordRemovedBytes, canRecordRemovedRow,
   canRecordUploadBytes, canRecordUploadDiscard, canRecordUploadRow, canReserveRow, canScreenFile,
-  initial as photoChangeInitial, photoHoldAllowed, ratingHoldAllowed, type PhotoChange, step as stepPhotoChange, unfinishedPhotoDue,
+  initial as photoChangeInitial, photoChangeStaleMs, photoHoldAllowed, ratingHoldAllowed, type PhotoChange, step as stepPhotoChange, unfinishedPhotoDue,
 } from "../../core/src/generated/photoRetention.ts";
 import { canBeMatched } from "../../core/src/policy.ts";
 import { effectiveAgeAt } from "./age.ts";
@@ -56,6 +56,8 @@ export const PHOTO_APPS: readonly AppId[] = ["slop"];
 export const PHOTO_MAX_BYTES = uploadMaxBytes;
 export const PHOTO_MAX_PER_PERSON = uploadMaxPerPerson;
 export const PHOTO_VIEW_TTL_MS = 5 * 60_000;
+/** A reserved or hidden photo row older than this is from an upload or a delete that did not finish (a crash): the sweep ends it. */
+export const PHOTO_PENDING_MS = photoChangeStaleMs;
 export const PHOTO_CONSENT = {
   version: "2026-11-23",
   text: "I agree that slop.date may store these photos privately. The matchmaker may use them, privately, to learn who I might like and who might like me. No other member sees them unless I ask the agent to send one to a match, and no score from them is ever shown to anyone. A person on the safety team looks at a photo after a report, and at a photo that I send to a match when the automatic check does not clear it. Photos are for adults (18+) only. I can delete them and their rating by texting DELETE PHOTOS, except after a ban, when the safety team keeps them.",
@@ -193,7 +195,7 @@ function riffChunks(b: Uint8Array, at: number, end: number, keep: Set<string>): 
   let i = at;
   while (i + 8 <= end) {
     const type = ascii(b, i, 4);
-    const len = b[i + 4]! | (b[i + 5]! << 8) | (b[i + 6]! << 16) | ((b[i + 7]! << 24) >>> 0);
+    const len = (b[i + 4]! | (b[i + 5]! << 8) | (b[i + 6]! << 16) | (b[i + 7]! << 24)) >>> 0;
     const padded = len + (len & 1);
     if (i + 8 + len > end) throw new BadImage("webp: bad chunk");
     if (keep.has(type)) {
@@ -654,8 +656,9 @@ export class PhotoService {
     return row?.id === id ? this.erasePhoto(row, personId, app, true) : false;
   }
 
-  async deleteFor(personId: string, app?: AppId, ownerLocked = false): Promise<number> {
-    const rows = await this.o.meta.hide(personId, this.now(), { app, ownerLocked });
+  async deleteFor(personId: string, app?: AppId, ownerLocked: boolean | { personLocked?: boolean } = false): Promise<number> {
+    const locked = typeof ownerLocked === "boolean" ? ownerLocked : ownerLocked.personLocked === true;
+    const rows = await this.o.meta.hide(personId, this.now(), { app, ownerLocked: locked });
     let removed = 0;
     for (const r of rows) if (await this.erasePhoto(r, personId, app, false)) removed++;
     if (removed) this.o.log?.(`[photos] deleted ${removed} photo(s)${app ? ` on ${app}` : ""}`);
@@ -666,12 +669,12 @@ export class PhotoService {
     let change = stepPhotoChange(photoChangeInitial, {
       type: "beginRemoval", owned: row.personId === personId && (app === undefined || row.app === app), rerate,
     });
-    if (!canRecordRemovedBytes(change)) return false;
-    await this.o.storage?.delete(row.storageKey);
-    change = stepPhotoChange(change, { type: "recordRemovedBytes" });
     if (!canRecordRatingClear(change)) return false;
     await this.o.onRemoved?.(personId, row.app, row.id);
     change = stepPhotoChange(change, { type: "recordRatingClear" });
+    if (!canRecordRemovedBytes(change)) return false;
+    await this.o.storage?.delete(row.storageKey);
+    change = stepPhotoChange(change, { type: "recordRemovedBytes" });
     if (!canRecordRemovedRow(change)) return false;
     await this.o.meta.delete(row.id);
     change = stepPhotoChange(change, { type: "recordRemovedRow" });
@@ -698,8 +701,8 @@ export class PhotoService {
     for (const u of await this.o.meta.unfinished(SWEEP_BATCH)) {
       if (!unfinishedPhotoDue(u.reserved, u.hidden, u.changedAt, at)) continue;
       await attempt(`photo ${u.row.id}`, async () => {
-        await this.o.storage?.delete(u.row.storageKey);
         if (!u.reserved) await this.o.onRemoved?.(u.row.personId, u.row.app, u.row.id);
+        await this.o.storage?.delete(u.row.storageKey);
         await this.o.meta.delete(u.row.id);
         if (!u.reserved) rerate.set(`${u.row.personId}:${u.row.app}`, { personId: u.row.personId, app: u.row.app });
         finished++;

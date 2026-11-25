@@ -11,6 +11,7 @@ import * as runtime from "vibelang-runtime/internal";
 import { alertPostWindowMs, metricsFreshMs, turnWatchComplianceAfterMs, turnWatchReplyAfterMs, turnWatchWindowMs, judgeCannotRunAlertAbove, judgeRateMinDecisions, judgeRateMarginBp, initial, catalogStaleAfterMs, inv, reportedSmsTotal, countSendOutcome, lawPendingDeliveryHasNoOutcome, lawAnExactSmsZeroReplacesTheLegacyTotal, chooseFiringPlan, chooseMissingPlan, lawUnreadSourceKeepsEpisode, canPrepareDispatch, prepareDispatch, canRecordDelivery, recordDelivery, batchWasAttempted, batchWasAccepted, batchWasHeld, sometimesRejected, stepResultFollowsAttempt, sometimesHeld, sometimesAccepted, opsRoundDue, cachedOpsMetricsFresh, roundReport, turnWatchAfterMs, turnWatchUnconfirmed, turnWatchPossibleCompliance, lawAcceptedReceiptConfirms, lawRejectedComplianceIsWatched, turnWatchOverdue, lawComplianceIsWatchedSooner, lawFreshTurnIsNotOverdue, lawUnresolvedTurnStaysWatched, turnWatchRaises, turnWatchLevel, turnWatchLeads, turnWatchAlertKey, lawPossibleStopIsBad, lawTurnWatchKeysDiffer, catalogScanOverdue, lawRecentScanIsQuiet, lawMissedDayAndRetryAlerts, lawNewProcessWaitsForFirstScan, judgeDownRaises, judgeRateRaises, lawFewDecisionsAreQuiet, lawNoRecordIsQuiet, lawTenCannotRunIsQuiet, enabled, step, parseEvent, parseState, snapshot_opsAlertDispatch } from "./opsAlertDispatch.effect.vibe.pure.js";
 export { alertPostWindowMs, metricsFreshMs, turnWatchComplianceAfterMs, turnWatchReplyAfterMs, turnWatchWindowMs, judgeCannotRunAlertAbove, judgeRateMinDecisions, judgeRateMarginBp, initial, catalogStaleAfterMs, inv, reportedSmsTotal, countSendOutcome, lawPendingDeliveryHasNoOutcome, lawAnExactSmsZeroReplacesTheLegacyTotal, chooseFiringPlan, chooseMissingPlan, lawUnreadSourceKeepsEpisode, canPrepareDispatch, prepareDispatch, canRecordDelivery, recordDelivery, batchWasAttempted, batchWasAccepted, batchWasHeld, sometimesRejected, stepResultFollowsAttempt, sometimesHeld, sometimesAccepted, opsRoundDue, cachedOpsMetricsFresh, roundReport, turnWatchAfterMs, turnWatchUnconfirmed, turnWatchPossibleCompliance, lawAcceptedReceiptConfirms, lawRejectedComplianceIsWatched, turnWatchOverdue, lawComplianceIsWatchedSooner, lawFreshTurnIsNotOverdue, lawUnresolvedTurnStaysWatched, turnWatchRaises, turnWatchLevel, turnWatchLeads, turnWatchAlertKey, lawPossibleStopIsBad, lawTurnWatchKeysDiffer, catalogScanOverdue, lawRecentScanIsQuiet, lawMissedDayAndRetryAlerts, lawNewProcessWaitsForFirstScan, judgeDownRaises, judgeRateRaises, lawFewDecisionsAreQuiet, lawNoRecordIsQuiet, lawTenCannotRunIsQuiet, enabled, step, parseEvent, parseState };
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
+import { PreventSchedulerYield } from "effect/References";
 /** The rules do not allow this event in this state. */
 export class Rejected extends TaggedError("Rejected") {
     static {
@@ -67,7 +68,7 @@ export class Machine extends runtime.$service("thenetwork/spec/opsAlertDispatch.
 export function machineOver(load, keep) {
     return Effect_1.gen(function* machineOver() {
         const shown = yield* SubscriptionRef.make(snapshot_opsAlertDispatch(yield* load()));
-        function send(event) {
+        function send(event, isCurrent) {
             return Effect_1.gen(function* send() {
                 const input = snapshot_opsAlertDispatch({ event });
                 let completion_1 = runtime.$normal;
@@ -75,8 +76,14 @@ export function machineOver(load, keep) {
                     {
                         completion_1 = { kind: "return", value: yield* SubscriptionRef.modifyEffect(shown, () => {
                                 return Effect_1.gen(function* () {
-                                    const next = yield* apply(snapshot_opsAlertDispatch(yield* orDie(load())), input.event);
-                                    yield* keep(snapshot_opsAlertDispatch(next));
+                                    const current = snapshot_opsAlertDispatch(yield* orDie(load()));
+                                    const next = yield* apply(current, input.event);
+                                    const save = Effect_1.gen(function* save() {
+                                        if (isCurrent && !isCurrent(snapshot_opsAlertDispatch(current)))
+                                            return yield* Effect_1.fail(new Rejected({ ...input, state: current }));
+                                        yield* keep(snapshot_opsAlertDispatch(next));
+                                    });
+                                    yield* (isCurrent ? Effect.provideService(save, PreventSchedulerYield, true) : save);
                                     return [snapshot_opsAlertDispatch(next), next];
                                 });
                             }) };

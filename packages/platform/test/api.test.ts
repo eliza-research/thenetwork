@@ -151,7 +151,9 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     const underage = newPhone();
     const minor = await login(c, "slop", underage);
     expect((await call(c, "slop", "POST", "/api/join", { ...body, age: 12, consent: consentOf("slop") }, minor)).body.error).toBe("under_age");
-    expect((await join(c, "slop", minor, 29)).body.error).toBe("unauthorized");
+    const minorRetry = await join(c, "slop", minor, 29);
+    expect(minorRetry.status).toBe(401);
+    expect(minorRetry.body.error).toBe("unauthorized");
     expect((await join(c, "slop", await login(c, "slop", underage), 29)).body.error).toBe("under_age");
     expect(await c.api.accounts.personFor(underage)).toBeUndefined();
     expect(attributed).toEqual([referral]);
@@ -234,13 +236,14 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
 
   test("age is person-level: 15 on ntwrk (invited), then 25 on slop joins as 15 (a minor: never matched)", async () => {
     const c = make(store), phone = newPhone();
-    const ntwrk = await login(c, "ntwrk", phone);
-    expect((await join(c, "ntwrk", ntwrk, 15)).body.error).toBe("invite_only");
+    const before = await login(c, "ntwrk", phone);
+    expect((await join(c, "ntwrk", before, 15)).body.error).toBe("invite_only");
     const inv = await c.api.accounts.invite(APPS.ntwrk, phone);
-    expect((await call(c, "ntwrk", "GET", "/api/me", undefined, ntwrk)).status).toBe(401);
-    const invited = await login(c, "ntwrk", phone);
-    expect((await call(c, "ntwrk", "GET", "/api/me", undefined, invited)).body).toMatchObject({ membership: { state: "invited" }, canJoin: true });
-    expect((await join(c, "ntwrk", invited, 15)).status).toBe(200);
+    // The invite made the person: a session from before it ends (SD-054), and a new login gets the person.
+    expect((await call(c, "ntwrk", "GET", "/api/me", undefined, before)).status).toBe(401);
+    const ntwrk = await login(c, "ntwrk", phone);
+    expect((await call(c, "ntwrk", "GET", "/api/me", undefined, ntwrk)).body).toMatchObject({ membership: { state: "invited" }, canJoin: true });
+    expect((await join(c, "ntwrk", ntwrk, 15)).status).toBe(200);
     // The join keeps the invited member id (an invite may already name it).
     expect(c.joined.at(-1)).toBe(inv!.memberId);
     const slop = await login(c, "slop", phone);
@@ -321,12 +324,15 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     expect(await store.isSuppressed(c.api.accounts.phoneHash(phone))).toBe(false);
   });
 
-  test("PLAT-01 the under-age refusal is sticky: refused at 12, a retry at 25 is refused in the same and in a new session (web)", async () => {
+  test("PLAT-01 the under-age refusal is sticky: refused at 12, the session ends and a retry at 25 in a new session is refused (web)", async () => {
     // Before the fix an under-age refusal stored nothing, so the same session joined at once by saying 25.
+    // An under-13 refusal also ends the session (SD-491), so a retry needs a new login.
     const c = make(store), phone = newPhone();
     const cookie = await login(c, "slop", phone);
     expect((await join(c, "slop", cookie, 12)).body.error).toBe("under_age");
-    expect((await join(c, "slop", cookie, 25)).body.error).toBe("unauthorized");
+    const retry = await join(c, "slop", cookie, 25);
+    expect(retry.status).toBe(401);
+    expect(retry.body.error).toBe("unauthorized");
     expect((await join(c, "slop", await login(c, "slop", phone), 25)).body.error).toBe("under_age");
     expect((await join(c, "peon", await login(c, "peon", phone), 30)).body.error).toBe("under_age");
     expect(await store.findPhone(phone)).toBeUndefined(); // still nothing stored for the app: only the age floor

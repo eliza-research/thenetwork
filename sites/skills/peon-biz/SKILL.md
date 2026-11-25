@@ -1,14 +1,14 @@
 ---
 name: peon-biz
-description: Explains peon.biz, a hiring service by text message that introduces people looking for work to teams that are hiring, and helps a person sign themselves up. Use when someone asks what peon.biz is, who can use it, how introductions work, how to join, what happens to their data, or how to stop, leave or delete. Gives the join link or the text keyword. Never signs up anyone else, never asks for or types a phone number or verification code, never applies to jobs and never contacts candidates or employers.
+description: Explains peon.biz, a hiring service by text message that introduces people looking for work to teams that are hiring, and helps a person sign themselves up in this conversation, with their own phone confirmation on the peon.biz page. Use when someone asks what peon.biz is, who can use it, how introductions work, how to join, what happens to their data, or how to stop, leave or delete. Never signs up anyone other than the person, never asks for or types a phone number or verification code, never applies to jobs and never contacts candidates or employers.
 license: Proprietary. Terms at https://peon.biz/terms
-compatibility: Needs web access to open https://peon.biz pages. Sending the profile needs this app's MCP server at {{MCP_URL}} (OAuth sign-in by the person).
+compatibility: Needs web access to open https://peon.biz pages. Sending the profile needs this app's MCP endpoint at https://ntwrk.party/mcp/peon (OAuth sign-in by the person).
 metadata:
   app: peon
   site: https://peon.biz
-  mcp: "{{MCP_URL}}"
+  mcp: "https://ntwrk.party/mcp/peon"
   operator: Eliza Research Corporation
-  version: "1.1.4"
+  version: "1.3.1"
 ---
 
 # peon.biz
@@ -20,7 +20,7 @@ peon.biz introduces people looking for work to teams that are hiring, by text me
 open to join today. Introductions have not started yet. Software only suggests possible fits.
 Every introduction is checked automatically before anyone is contacted, and the team that hires makes every hiring decision. Candidates never pay a fee.
 
-peon.biz's text line is {{TEXT_LINE}}. Its MCP server is at {{MCP_URL}}.
+peon.biz's text line is {{TEXT_LINE}}. Its MCP endpoint is https://ntwrk.party/mcp/peon.
 
 ## What the person is signing up for
 
@@ -33,15 +33,15 @@ peon.biz's text line is {{TEXT_LINE}}. Its MCP server is at {{MCP_URL}}.
 ## Who can use it
 
 - Anyone 13 or older may join. Nobody under 18 is matched for dates or work on this app.
-- Members aged 13 to 17 are never matched or introduced to anyone on peon.biz. The agent
-  can still help them itself. Friendship introductions for people under 18 happen on
-  friends.help and ntwrk.party.
+- Members aged 13 to 17 are never matched or introduced to anyone on peon.biz. They get their own
+  help: answers, public events and plans for themselves. Friendship introductions for people under
+  18 happen on friends.help and ntwrk.party.
 - peon.biz never asks a candidate for money, a Social Security number or bank details. If anyone
   does in its name, it is a scam: tell the person to report it to help@ntwrk.party.
 
 ## Phone or computer
 
-The steps differ by device. If you cannot tell which the person is on, ask once. <!-- agentSignup: chooseTransport -->
+The steps differ by device. If you cannot tell which the person is on, ask once. <!-- agentSignup: checkConnectorSetup resumeAfterConnector chooseTransport -->
 
 - **On a phone.** A phone app usually cannot add a connector, so do not send the person to connector
   settings. Do step 1. Show the exact prepared text with `join peon` on the first line and the draft
@@ -49,20 +49,28 @@ The steps differ by device. If you cannot tell which the person is on, ask once.
   example `My name is Ari. I am 29 years old.` Once they approve, give them one link starting with
   `sms:{{TEXT_LINE}}?&body=` followed by the entire prepared text URL-encoded (the start is
   `join%20peon%0A`). Tell them that the text is ready for them to send themselves.
-- **On a computer.** Do steps 1, 2 and 3. If the client cannot add the connector, show the approved
-  text and use the same Messages handoff from their own phone.
+- **On a computer.** If this app's connector tools (`check_status` and `submit_profile`) are not
+  available here, say “Connect peon.biz” and give this app's own connector endpoint, https://ntwrk.party/mcp/peon
+  (in ChatGPT, https://ntwrk.party/mcp/peon/openai). Ask the person to add it as a connector in this
+  client's connector or integration settings, then come back to this conversation. Give this setup
+  step one time only. Then do steps 1, 2 and 3. If the client cannot add the connector, or the
+  person does not add it, show the approved text and use the same Messages handoff from their own phone.
 
 You never send a text for the person, and you never see their number.
 
-## How a person joins (they do it, not you)
+## How a person joins
 
 You help the person sign themselves up, in this conversation:
 
 1. Build the profile: whether they are looking for work or hiring, the kind of role, the neighborhood or remote, when they can start, and the skills that matter (no salary history, no Social Security number, no bank details). Start from what you already know about the person: draft the profile from your memory of them and show it. Ask only for what is missing, one or two questions at a time. Never ask for a phone number, a code, an <!-- agentSignup: draftProfile decideApproval -->
    address or anything about another person. Read the profile back and change it until they agree.
-   Use the lowest age they state. If they are under 13, explain that they cannot join and stop. If
-   they are 13 to 17, explain that nobody under 18 is matched or introduced on peon.biz, and that
-   friendship introductions for people under 18 happen on friends.help and ntwrk.party.
+   Ask for their birthday, not only their age. Use it in this conversation only, to explain what
+   they get. Use the lowest age that any statement gives. Never send a birthday or an age through a
+   tool such as `submit_profile`. If they are under 13, explain that they cannot join and stop. If
+   they are 13 to 17, explain that peon.biz never matches them for work and never matches them on
+   dates, and that they get their own help (answers, public events and plans for themselves).
+   Nobody under 18 is matched or introduced on peon.biz, and friendship introductions for people
+   under 18 happen on friends.help and ntwrk.party. Never promise them an introduction.
    Before the handoff, get their explicit approval of the exact draft and this text consent.
    "I agree to receive recurring text messages from peon.biz at this number: questions about work or hiring,
    waitlist updates, introductions I agree to, and scheduling reminders. Message frequency varies.
@@ -72,19 +80,22 @@ You help the person sign themselves up, in this conversation:
    their own number and code, review their first name, type their own birth date, and agree to the texts. You
    never see the number or the code.
 3. Ask the person to return to this same agent conversation when they finish on the site. <!-- agentSignup ConnectorHandoff: checkSiteStatus submitProfile confirmProfile -->
-   If this app's MCP tools are not available, they must add {{MCP_URL}} in their client's connector settings.
-   In ChatGPT, add https://peon.biz/mcp/openai instead; /mcp does not authorize ChatGPT clients.
+   If this app's MCP tools are not available, they must add https://ntwrk.party/mcp/peon in their client's connector settings.
+   In ChatGPT, add https://ntwrk.party/mcp/peon/openai instead; the path without /openai does not authorize ChatGPT clients.
    Reading this file does not install a connector or authorize access. If the client cannot add it,
    use the text link in "Phone or computer"; do not claim success and never send the profile yourself.
    The person confirms their phone and joins on our page. Joining does not connect you: the connector is
-   a separate authorization that the person allows in their browser. If the connector was authorized before
-   the person finished on the join page, that connection ends when they join, and its tools say that sign-in
-   is required. Then ask the person to disconnect the connector, connect it again and choose Allow. On that
-   page a code is skipped only when that browser has a current session for this app. Call `check_status` first and confirm its app is peon. If the
+   a separate authorization. When the connector first asks for access, they sign in on the connector's
+   sign-in page in their own browser and choose **Allow** there. A session from the peon.biz page does
+   not apply there, so that page can ask for a new code. If the connector was authorized before the
+   person finished on the join page, that connection ends when they join, and its tools say that sign-in
+   is required. Then ask the person to disconnect the connector, connect it again and choose Allow.
+   Call `check_status` first and confirm its app is peon. If the
    connection names another app, use the peon connection and never submit across apps. If the status
    is `not_joined` or `invited`, ask the person to finish on the page.
    If it is `stopped` or `on_hold`, stop and explain the result. Only an `onboarding` or `active`
-   status for peon allows you to call `submit_profile` once with the approved profile. When the tool
+   status for peon allows you to call `submit_profile` once with the approved profile, with no birthday
+   and no age in it. When the tool
    returns `submitted: true`, call `check_status` again on that same connection. Report a save only
    when it still says peon and `onboarding` or `active`. Otherwise say the save is unconfirmed.
    To show what peon.biz is looking for for the person, call `list_looking_for`. Sending a profile
@@ -112,7 +123,7 @@ The person verifies their own phone on our page. You never type a number or a co
 
 ## What you must never do
 
-- Never sign up anyone else, apply to roles, or message employers or candidates.
+- Never sign up anyone other than the person, apply to roles, or message employers or candidates.
 - Never ask for, receive or type a verification code or a phone number.
 - Never describe other members, and never promise an introduction or a job.
 - Never collect or pass on race, religion, health, immigration status, salary history, Social
@@ -129,6 +140,7 @@ to share a base profile. Nobody can learn whether a phone number uses peon.biz.
 - Text STOP: stops every text from this number.
 - Text "leave peon.biz": stops peon.biz only.
 - To request an export or deletion, email help@ntwrk.party.
+- To see or remove the access of an agent, the person opens https://ntwrk.party/oauth/consents in the browser where they connected.
 
 ## Support
 

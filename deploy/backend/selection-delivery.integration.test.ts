@@ -5,7 +5,7 @@ import { signBlooioPayload } from "../../packages/blooio/src/blooio/webhook.ts";
 import { DryRunAdapter } from "../../packages/network/service/channel.ts";
 import { NetworkService, WEBHOOK_PATH } from "../../packages/network/service/service.ts";
 import { START } from "../../packages/network/test/mini.ts";
-import { dropTestDb, pgAvailable, testDb } from "../../packages/observatory/test/pg.ts";
+import { dropTestDb, pgAvailable, testDb } from "../../apps/observatory/test/pg.ts";
 import { createBackend, jsonLogger, loadConfig } from "./backend.ts";
 
 const SECRET = "whsec_selection_delivery";

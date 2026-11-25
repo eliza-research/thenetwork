@@ -1,13 +1,13 @@
 import { channelCredentialsMissing, channelSettingInvalid, minimumSecretLength, sendChannel, workersAiSetupMissing, type LineAndStaffProblems, type SendChannel } from "../../core/src/generated/bootPolicy.ts";
-import { parseTokenGrants } from "../../observatory/src/staff.ts";
+import { parseTokenGrants } from "../../../apps/observatory/src/staff.ts";
 import { networkRoutePolicy } from "./route-authority.ts";
 
 type Env = Record<string, string | undefined>;
 
 export interface LineAndStaffFacts { turnSecretLength: number; staffTokenCount: number; shortestStaffTokenLength: number; turnSecretIsStaffToken: boolean }
 
-export function serviceTokenGrants(value: string | undefined, production: boolean): ReturnType<typeof parseTokenGrants> {
-  return parseTokenGrants(value, { explicitApp: production, variable: "NETWORK_SERVICE_TOKENS" });
+export function serviceTokenGrants(value: string | undefined, production: boolean, minLength?: number): ReturnType<typeof parseTokenGrants> {
+  return parseTokenGrants(value, { explicitApp: production, minLength, variable: "NETWORK_SERVICE_TOKENS" });
 }
 
 export function lineAndStaffFacts(e: Env, production: boolean): LineAndStaffFacts {

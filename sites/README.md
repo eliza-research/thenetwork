@@ -54,6 +54,8 @@ Ages on the pages equal the platform registry (`packages/platform/src/apps.ts` `
   defaults `https://api.ntwrk.party` and `https://{domain}/mcp`). Each site is its own MCP endpoint
   (the router forwards `/mcp` with the site's signed host); the backend origin's `/mcp` names no app. The build fills `{{BACKEND_ORIGIN}}`,
   `{{MCP_URL}}`, `{{TEXT_LINE}}`, `{{MESSAGES_HREF}}` and `{{TURNSTILE_SITE_KEY}}` in pages and skills, and fails on a leftover `{{`.
+  When the MCP URL of ntwrk.party is not `https://ntwrk.party/mcp`, the build also moves each `https://ntwrk.party/mcp...`
+  connector endpoint and each `https://ntwrk.party/oauth...` page that a skill names to that ntwrk.party host.
 - The pages use the shared React components and the typed client in `packages/ui/src/api`, and only
   the brand record (name, logo, accent and text) differs between the sites (spec/brandIdentity.md).
 - `sites.ts`: the site list and the build (the `apps/site` client and prerender, the favicon, then

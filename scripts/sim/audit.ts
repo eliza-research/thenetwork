@@ -19,6 +19,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DAY, HOUR, type MemberId, type RunRecord } from "../../packages/core/src/index.ts";
+import { appEndpointPath, appOpenAiEndpointPath } from "../../packages/core/src/generated/agentEntry.ts";
 import { INTERESTS } from "../../packages/engine/src/packs/network/vocabulary.ts";
 import { pairKey } from "../../packages/engine/src/world.ts";
 import { PolicyPersonaAgent, World } from "../../packages/sim/src/index.ts";
@@ -244,7 +245,7 @@ async function trustAndPlans(b: Block) {
 // ---------------------------------------------------------------- console page and engine wiring
 async function consoleAndEngine(b: Block) {
   await b.run("observatory-1: no console web code hands a string to an HTML sink (tooltips and popups get textNode); the page has a CSP", () => {
-    const dir = join(REPO, "packages/observatory/web");
+    const dir = join(REPO, "apps/observatory/web");
     const bad: string[] = [];
     let tooltips = 0;
     for (const f of readdirSync(dir).filter(f => /\.(ts|tsx)$/.test(f))) {
@@ -314,19 +315,22 @@ async function sitesGates(b: Block) {
       } finally { rmSync(copy, { recursive: true, force: true }); }
     });
 
-    await b.run("plugin-prototypes-26, platform-9: one SKILL.md per site, same backend, its own agent transport; STOP stops every app and \"leave <site>\" one, in the skill and the SMS terms", () => {
+    await b.run("plugin-prototypes-26, platform-9: each published skill uses its own connector path on the common host; STOP stops every app and \"leave <site>\" one", () => {
       for (const s of SITES) {
         const r = built[s.domain]!;
         const skill = readFileSync(join(r.out, "SKILL.md"), "utf8");
-        expect([s.domain, skill.includes(`https://${s.domain}/mcp`)]).toEqual([s.domain, true]);
+        const siteEndpoint = `https://ntwrk.party${appEndpointPath(s.key)}`;
+        const openAiEndpoint = `https://ntwrk.party${appOpenAiEndpointPath(s.key)}`;
+        const skillEndpoints = new Set(skill.match(/https:\/\/[\w.-]+\/mcp(?:\/[\w-]+)*/g));
+        expect([s.domain, skillEndpoints.has(siteEndpoint)]).toEqual([s.domain, true]);
+        expect([s.domain, [...skillEndpoints].filter(endpoint => endpoint !== siteEndpoint && endpoint !== openAiEndpoint)]).toEqual([s.domain, []]);
         if (["friends", "slop", "ntwrk"].includes(s.app)) {
           expect(skill).toContain(`https://${s.domain}/api/app`);
-          expect(skill).toContain("native OAuth flow");
+          expect(skill).toMatch(/native (?:connector )?OAuth (?:flow|handoff)/);
           expect(skill).toContain("<!-- agentSignup: offerHandoff -->");
           expect(skill).not.toMatch(/\/api\/(?:auth\/otp\/verify|me\/export)/);
         }
         expect(skill).toContain("help@ntwrk.party");
-        for (const o of SITES.filter(o => o.domain !== s.domain)) expect([s.domain, o.domain, skill.includes(`https://${o.domain}/mcp`)]).toEqual([s.domain, o.domain, false]);
         expect([s.domain, readFileSync(join(r.out, "_worker.js"), "utf8").includes(DEFAULT_BACKEND_ORIGIN)]).toEqual([s.domain, true]);
         expect([s.domain, /13 or older/i.test(skill) && /18 (and|or) older|under 18/i.test(skill)]).toEqual([s.domain, true]);
         if (s.app === "ntwrk") continue;
@@ -360,6 +364,7 @@ async function deployGuard(b: Block) {
     const refuse = [
       ["deploy"], ["--config", "x.toml", "deploy"], ["-c", "wrangler.toml", "deploy"], ["--env", "production", "deploy"],
       ["--some-new-flag", "deploy", "whoami"], ["deploy", "--dry-run", "--no-dry-run"], ["deploy", "--dry-run=false"],
+      ["deploy", "--dry-run", "--dryRun=false"], ["deploy", "--dry-run", "--no-dryRun"], ["--help", "--no-help", "deploy"], ["--help", "--help=false", "deploy"], ["--help", "false", "deploy"], ["dev", "--remote=1"],
       ["pages", "deploy", "dist", "--project-name", "slop-date", "--branch", "main"], ["pages", "project", "create", "x"],
       ["versions", "upload"], ["versions", "deploy"], ["secret", "put", "X"], ["pages", "secret", "put", "X"],
       ["kv", "key", "put", "k", "v"], ["r2", "object", "put", "b/k"], ["r2", "bucket", "create", "b"], ["d1", "execute", "db"],
@@ -377,12 +382,12 @@ async function deployGuard(b: Block) {
 
 // ---------------------------------------------------------------- the console's WebSockets (observatory-6)
 async function consoleSockets(b: Block) {
-  const { pgAvailable } = await import("../../packages/observatory/test/pg.ts");
+  const { pgAvailable } = await import("../../apps/observatory/test/pg.ts");
   if (!pgAvailable) { b.track("observatory-6: skipped (no Postgres on this machine)", false); return; }
   const pg = await import("../../packages/platform/test/pg.ts");
   let url: string;
   try { url = await pg.migratedDb("simaudit"); } catch (e) { b.track("observatory-6: skipped (the dev Postgres did not start)", false, (e as Error).message.split("\n")[0]); return; }
-  const { createServer, WS_FORBIDDEN } = await import("../../packages/observatory/src/server.ts");
+  const { createServer, WS_FORBIDDEN } = await import("../../apps/observatory/src/server.ts");
   const audit = mkdtempSync(join(tmpdir(), "audit-console-"));
   const E = "sim-engineer-token-0000000000000000000", R = "sim-reviewer-token-0000000000000000000";
   const srv = await createServer({ port: 0, hostname: "127.0.0.1", mode: "game", tokens: `engineer@*:${E},reviewer@ntwrk:${R}`, real: { url, pollMs: 600_000 }, staffRolesUrl: false, peopleUrl: false, audit: { dir: audit }, development: false, socketCheckMs: 600_000 });
@@ -417,10 +422,10 @@ async function consoleSockets(b: Block) {
 
 // ---------------------------------------------------------------- the service under its own login (network-service-M1)
 async function serviceLogin(b: Block) {
-  const { pgAvailable } = await import("../../packages/observatory/test/pg.ts");
+  const { pgAvailable } = await import("../../apps/observatory/test/pg.ts");
   if (!pgAvailable) { b.track("network-service-M1: skipped (no Postgres on this machine)", false); return; }
   const pg = await import("../../packages/platform/test/pg.ts");
-  const { DEV_PG_PORT } = await import("../../packages/observatory/db/dev-pg.ts");
+  const { DEV_PG_PORT } = await import("../../packages/db/dev-pg.ts");
   const { SQL } = await import("../../packages/core/src/runtime/postgres.ts");
   const { MINUTE, SimClock } = await import("../../packages/core/src/index.ts");
   const H = await import("./pipeline/harness.ts");

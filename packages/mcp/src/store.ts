@@ -8,7 +8,7 @@ import { removalFormMayRevoke } from "../../core/src/generated/connectedAssistan
 import { decideProfileClaim, type ProfileClaim } from "../../core/src/generated/mcpProfileSubmission.ts";
 import { signupDraftExpired, signupDraftGrantAllowed, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import { requestIsLive } from "../../core/src/generated/oauthGrantIssuance.ts";
-import { defaultScopes, scopeName, scopeOfferedOn, scopes as connectorScopes } from "../../core/src/generated/authorizationPages.ts";
+import { defaultScopes, scopeName, scopeOfferedOn, scopes as connectorScopes, signupPrefillAllowed, useSignupPrefill as markSignupPrefillUsed } from "../../core/src/generated/authorizationPages.ts";
 import { codeExchangeMayCommit, type CodeExchangeResult, refreshStoredAuthorityCurrent, type RefreshRotationResult } from "../../core/src/generated/oauthTokenLifecycle.ts";
 import type { PhoneHandoff } from "../../core/src/generated/agentPhoneHandoff.ts";
 import type { CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
@@ -166,6 +166,7 @@ export function checkRefreshRotation(rotation: RefreshRotation, refresh: Token |
 
 export interface SignupDraftFields { firstName: string; homeCity?: "nyc" | "sf" }
 export interface SignupDraft { grantId: string; app: McpAppId; phoneKey: string; fields: SignupDraftFields; expiresAt: number }
+export interface SignupPrefillAsk { clientId: string; app: McpAppId; phoneKey: string; personId: string | null; ageAllowed: boolean }
 
 export type ProfileSubmissionGrant = Pick<Grant, "id" | "app" | "phoneKey" | "personId">;
 
@@ -174,6 +175,7 @@ export type AssistantGrantCandidate = { grant: Grant; client: OAuthClient };
 export interface OAuthStore {
   putSignupDraft(d: SignupDraft, at: number): Promise<boolean>;
   deleteSignupDrafts(phoneKey: string, app: McpAppId): Promise<void>;
+  useSignupPrefill(ask: SignupPrefillAsk, at: number): Promise<SignupDraftFields | undefined>;
   /** Atomically admit the first intake for the fingerprint under this live grant. */
   claimProfileSubmission(grant: ProfileSubmissionGrant, fingerprint: string, at: number): Promise<ProfileClaim>;
   /** Store observed acceptance, or release a claim only after intake explicitly refused it. */
@@ -190,7 +192,8 @@ export interface OAuthStore {
   /** Check the current approval, then consume it and persist the grant, code and audit together.
    * False leaves no issuance. The callback must inspect the approval only. */
   commitConsentGrant(id: string, at: number, confirm: (approval: AuthRequest) => Promise<boolean>, writes: ConsentGrantWrites): Promise<boolean>;
-  deleteAuthRequest(id: string): Promise<void>;
+  /** Delete a sign-in request. True when this call deleted it (false: it was already taken or deleted). */
+  deleteAuthRequest(id: string): Promise<boolean>;
 
   putGrant(g: Grant): Promise<void>;
   getGrant(id: string): Promise<Grant | undefined>;
@@ -263,6 +266,20 @@ export class MemoryOAuthStore implements OAuthStore {
   async deleteSignupDrafts(phoneKey: string, app: McpAppId) {
     for (const [id, d] of this.signupDrafts) if (d.phoneKey === phoneKey && d.app === app) this.signupDrafts.delete(id);
   }
+  async useSignupPrefill(ask: SignupPrefillAsk, at: number) {
+    const request = { client: ask.clientId, app: ask.app, phone: ask.phoneKey, asOf: at, ageAllowed: ask.ageAllowed };
+    const drafts = [...this.signupDrafts.values()].filter(d => {
+      const g = this.grants.get(d.grantId);
+      return !!g && signupDraftGrantAllowed(g.personId === ask.personId && g.app === d.app && g.phoneKey === d.phoneKey, g.expiresAt > at, g.revokedAt === null, g.scopes.includes("profile:write"))
+        && signupPrefillAllowed({ client: g.clientId, app: d.app, phone: d.phoneKey, used: false, expiresAt: d.expiresAt }, request);
+    });
+    if (!signupDraftUnique(drafts.length)) return undefined;
+    const d = drafts[0]!, fields = structuredClone(d.fields);
+    const g = this.grants.get(d.grantId)!;
+    if (!markSignupPrefillUsed({ client: g.clientId, app: d.app, phone: d.phoneKey, used: false, expiresAt: d.expiresAt }, request).used) return undefined;
+    this.signupDrafts.delete(d.grantId);
+    return fields;
+  }
 
   async claimProfileSubmission(grant: ProfileSubmissionGrant, fingerprint: string, at: number): Promise<ProfileClaim> {
     const current = this.grants.get(grant.id);
@@ -318,7 +335,7 @@ export class MemoryOAuthStore implements OAuthStore {
     this.rows.push(...prepared.audit);
     return true;
   }
-  async deleteAuthRequest(id: string) { this.requests.delete(id); }
+  async deleteAuthRequest(id: string) { return this.requests.delete(id); }
 
   private requireNewGrant(grant: Grant) {
     if (grant.id.startsWith("grant_cloud_") && grant.cloudAuthority?.version !== 1) throw new Error("Cloud grant authority required");
@@ -418,7 +435,10 @@ export class MemoryOAuthStore implements OAuthStore {
     for (const [k, w] of this.windows) if (w.start + w.windowMs <= at) this.windows.delete(k);
     for (const [id, g] of this.grants) if (g.revokedAt !== null || g.expiresAt <= at) this.profileSubmissions.delete(id);
     for (const [k, g] of this.grants) if (Math.min(g.revokedAt ?? Infinity, g.expiresAt) <= at - GRANT_KEEP_MS) this.dropGrant(k);
-    const used = new Set([...this.grants.values()].map(g => g.clientId));
+    const used = new Set([
+      ...[...this.grants.values()].map(g => g.clientId),
+      ...this.rows.filter(r => r.kind === "consent_granted" && r.clientId !== null).map(r => r.clientId!),
+    ]);
     for (const [k, c] of this.clients) if (!used.has(k) && c.createdAt <= at - CLIENT_UNUSED_MS) this.clients.delete(k);
   }
 

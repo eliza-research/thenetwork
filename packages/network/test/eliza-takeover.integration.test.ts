@@ -7,7 +7,7 @@ import {afterAll, beforeAll, expect, test} from "vitest";
 import {randomUUID} from "node:crypto";
 import {SQL} from "../../core/src/runtime/postgres.ts";
 import {SimClock, MINUTE} from "@thenetwork/core";
-import {applySchema} from "../../observatory/db/dev-pg.ts";
+import {applySchema} from "../../db/dev-pg.ts";
 import {APPS} from "../../platform/src/apps.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {TURN_PATH, DELIVER_PATH, RELAY_PATH, type RelaySendRequest, type RelaySendResponse, type TurnRequest} from "../../core/src/svc/contract.ts";

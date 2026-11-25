@@ -1,5 +1,7 @@
 #!/usr/bin/env -S node --import=tsx
 import { RealClock } from "@thenetwork/core";
+import { SQL } from "../../core/src/runtime/postgres.ts";
+import { serviceLoginProblem } from "../../../deploy/backend/backend.ts";
 import { BlooioClient } from "../../blooio/src/blooio/client.ts";
 import { BlooioAdapter as ProviderAdapter } from "../../blooio/src/adapters/blooio-adapter.ts";
 import { resolveSenderLine } from "../../blooio/src/line.ts";
@@ -36,8 +38,15 @@ async function main() {
   const channel = configuredChannel(process.env, process.argv);
   const blooioWebhook = backendWebhookServed(process.env.NETWORK_CHANNEL ?? "");
   const once = process.argv.includes("--once");
-  const url = process.env.NETWORK_DATABASE_URL ?? process.env.DATABASE_URL;
+  const url = process.env.NETWORK_DATABASE_URL || process.env.DATABASE_URL;
   if (!url) throw new Error("set NETWORK_DATABASE_URL (or DATABASE_URL) to the Postgres with the network and platform schemas (pnpm run db:migrate)");
+  if (env !== "dev") {
+    const sql = new SQL({ url, max: 1 });
+    try {
+      const why = await serviceLoginProblem(q => sql.unsafe(q));
+      if (why) throw new Error(`refusing to start: ${why}. Use a network_service login for NETWORK_DATABASE_URL (docs/deploy.md).`);
+    } finally { await sql.close(); }
+  }
   const clock = new RealClock();
   const blooio = channel === "blooio";
   const cloud = channel === "eliza_cloud";

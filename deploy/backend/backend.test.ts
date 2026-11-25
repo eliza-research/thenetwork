@@ -7,7 +7,7 @@ import { afterAll, describe, expect, test } from "vitest";
 import { DEFAULT_HOST_MAP } from "../../packages/platform/src/apps.ts";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { dropDb, emptyDb, pgAvailable } from "../../packages/platform/test/pg.ts";
-import { migrate } from "../../packages/observatory/db/migrate.ts";
+import { migrate } from "../../packages/db/migrate.ts";
 import { SimClock } from "../../packages/core/src/clock.ts";
 import { createPublicEventRefresh } from "./public-events.ts";
 import { PROXY_MAX_SKEW_S, signProxyHeaders } from "../../packages/platform/src/proxy.ts";
@@ -70,20 +70,22 @@ describe("config", () => {
     expect(dev.migrationUrl).toBe(dev.databaseUrl);
     // The boot check refuses a superuser, BYPASSRLS or an owner of the tables.
     const as = (r: Record<string, unknown>) => serviceLoginProblem(async () => [r]);
-    expect(await as({ rolsuper: true, rolbypassrls: false, owner: false })).toMatch(/superuser/);
-    expect(await as({ rolsuper: false, rolbypassrls: true, owner: false })).toMatch(/BYPASSRLS/);
-    expect(await as({ rolsuper: false, rolbypassrls: false, owner: true })).toMatch(/owns/);
-    expect(await as({ rolsuper: false, rolbypassrls: false, owner: false })).toBeUndefined();
+    expect(await as({ member: false, rolsuper: false, rolbypassrls: false, owner: false })).toMatch(/network_service/);
+    expect(await as({ member: true, rolsuper: true, rolbypassrls: false, owner: false })).toMatch(/superuser/);
+    expect(await as({ member: true, rolsuper: false, rolbypassrls: true, owner: false })).toMatch(/BYPASSRLS/);
+    expect(await as({ member: true, rolsuper: false, rolbypassrls: false, owner: true })).toMatch(/owns/);
+    expect(await as({ member: true, rolsuper: false, rolbypassrls: false, owner: false })).toBeUndefined();
   });
 
   test("a deployed environment needs every secret", () => {
-    for (const k of ["DATABASE_URL", "PLATFORM_HASH_KEY", "LEAK_LABEL_KEY", "PLATFORM_PROXY_SECRET", "TURNSTILE_SECRET_KEY", "TWILIO_AUTH_TOKEN"]) {
+    for (const k of ["DATABASE_URL", "PLATFORM_HASH_KEY", "PLATFORM_SESSION_SECRET", "LEAK_LABEL_KEY", "PLATFORM_PROXY_SECRET", "TURNSTILE_SECRET_KEY", "TWILIO_AUTH_TOKEN"]) {
       const e: Record<string, string | undefined> = { ...DEPLOYED, [k]: undefined };
       expect(() => loadConfig(e)).toThrow(k);
     }
     expect(() => loadConfig({ ...DEPLOYED, OTP_PROVIDER: "dev" })).toThrow(/OTP_PROVIDER=twilio/);
     expect(() => loadConfig({ ...DEPLOYED, PLATFORM_PROXY_SECRET: "short" })).toThrow(/at least 32/);
     expect(() => loadConfig({ ...DEPLOYED, PLATFORM_HASH_KEY: "short" })).toThrow(/at least 32/);
+    expect(() => loadConfig({ ...DEPLOYED, PLATFORM_SESSION_SECRET: "short" })).toThrow(/at least 32/);
   });
 
   // spec/bootPolicy.md, "The combined backend entry checks its own database, provider and secret configuration"
@@ -778,9 +780,11 @@ describe("ensureServiceLogin (first deploy)", () => {
     const q = async (s: string) => { qs.push(s); return s.startsWith("select") && exists ? [{ x: 1 }] : []; };
     const url = "postgres://network_backend:" + encodeURIComponent("a'b" + "x".repeat(30)) + "@h:5432/railway";
     expect(await ensureServiceLogin(q, url)).toEqual({ role: "network_backend", created: true });
-    expect(qs[1]).toContain("password 'a''b");
-    expect(qs[1]).toContain("nosuperuser nobypassrls");
-    expect(qs[2]).toBe("grant network_service to network_backend");
+    expect(qs[1]).toBe("begin");
+    expect(qs[2]).toContain("password 'a''b");
+    expect(qs[2]).toContain("nosuperuser nobypassrls");
+    expect(qs[3]).toBe("grant network_service to network_backend");
+    expect(qs[5]).toBe("commit");
     exists = true; qs.length = 0;
     expect(await ensureServiceLogin(q, url)).toEqual({ role: "network_backend", created: false });
     expect(qs.length).toBe(1);

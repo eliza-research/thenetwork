@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { SimClock } from "@thenetwork/core";
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { applySchema, devPgUp, DEV_PG_URL } from "../../observatory/db/dev-pg.ts";
+import { applySchema, devPgUp, DEV_PG_URL } from "../../db/dev-pg.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { DryRunAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";

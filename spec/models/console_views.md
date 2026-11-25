@@ -14,7 +14,7 @@ The browser calls [Observatory detail and photo reads](../consoleMemberView.md) 
 
 The convention of [staff_console](staff_console.md) applies: the intended `propose` in `step` uses `canPropose`, which blocks a pick that the store does not know, and `canPropose_noMinor` is in `safety`. `proposeCode` and `canProposeCode` (one `canProposeBy(code, ...)` body) follow the code and are outside `step`; `unknownPickTest` shows both gates.
 
-Open defect VIEWS-TRAY (low, simulated world only): the propose tray in `packages/observatory/web/main.tsx` (`Tray`) computes `minor` as `picks.some(id => s.members.get(id)?.minor)`, so a pick that the store does not know does not block the button. The game server (`GameSource.propose` in `packages/observatory/src/sources/game.ts`) refuses an unknown or under-18 participant, so no such proposal is accepted.
+Open defect VIEWS-TRAY (low, simulated world only): the propose tray in `apps/observatory/web/main.tsx` (`Tray`) computes `minor` as `picks.some(id => s.members.get(id)?.minor)`, so a pick that the store does not know does not block the button. The game server (`GameSource.propose` in `apps/observatory/src/sources/game.ts`) refuses an unknown or under-18 participant, so no such proposal is accepted.
 
 ```quint
 // -*- mode: Bluespec; -*-
@@ -23,7 +23,7 @@ Open defect VIEWS-TRAY (low, simulated world only): the propose tray in `package
 // console_views: the Observatory staff console, person views, on the browser side.
 //
 // WHAT THIS MODELS
-//   The browser state of the member panel and the drawer in packages/observatory/web:
+//   The browser state of the member panel and the drawer in apps/observatory/web:
 //   - Detail reads (useLive in panels.tsx, Search in main.tsx). A read starts, the server answers
 //     late, out of order, more than once, or never. A dependency change cancels the reads that started.
 //     A credential change (authEpoch) also takes the data off the screen.

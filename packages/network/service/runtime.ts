@@ -87,11 +87,11 @@ import type { HeldMemberInvitation, ReferralJoin } from "../../platform/src/invi
 import { inviteReviewContactToken, type InviteRelationship, type MemberInviteEvidence, type MemberInviteRequest } from "../src/invitation.ts";
 import { outputLeaks } from "../../mcp/src/leaks.ts";
 // The Observatory's event shape and run summaries, so the console reads what this writes.
-import { eventOf, membersOf, type EventRow } from "../../observatory/src/events.ts";
+import { eventOf, membersOf, type EventRow } from "../../../apps/observatory/src/events.ts";
 
 import { GATEWAY_WAITING, NOT_SENT, WAITING, type QueueRow, type RecipientCheck, type RecipientWindowKey } from "../../blooio/src/outbound-queue.ts";
 import { StateView } from "./state-view.ts";
-import { summarizeRun } from "../../observatory/src/engineCapture.ts";
+import { summarizeRun } from "../../../apps/observatory/src/engineCapture.ts";
 import type { JobPosting } from "../src/jobs.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
 import { savePosting } from "./postings.ts";
@@ -275,7 +275,7 @@ export class NetworkRuntime {
       ...o.network,
       ...(this.calendarScheduling ? { calendarFreeBusy: scope => scope.app === this.app.id && scope.purpose === calendarSchedulingPurpose ? this.calendarViews.getStore()?.get(scope.memberId) : undefined } : {}),
       engine: this.engineConfig,
-      app: o.app, inlineJudge: undefined, store: this.store,
+      app: o.app, city: o.city, inlineJudge: undefined, store: this.store,
       onEngineRun: (log, proposals, at) => {
         const s = summarizeRun(log, proposals, { at, city: this.city as City, wallMs: Math.round(log.timingsMs.total ?? 0) });
         this.unit.runs.push({ id: this.app.id === "ntwrk" ? s.id : `${this.app.id}.${s.id}`, app_id: this.app.id, at: new Date(at), city: this.city, engine_version: s.engineVersion, proposals: s.proposals, wall_ms: s.wallMs, summary: s });
@@ -616,11 +616,20 @@ export class NetworkRuntime {
       matchId = request.matchId;
       from = request.from;
     } else {
-      const [rec] = await tx<{ opportunity_id: string; kind: string; from_member: MemberId; to_member: MemberId; decision: string; review: string | null; reasons: string[] }[]>`
-        select opportunity_id,kind,from_member,to_member,decision,review,reasons from network.relay_records where app_id=${app} and item_id=${id[1]!}`;
+      const [rec] = await tx<{ opportunity_id: string; kind: string; from_member: MemberId; to_member: MemberId; at: Date | string; decision: string; review: string | null; reasons: string[] }[]>`
+        select opportunity_id,kind,from_member,to_member,at,decision,review,reasons from network.relay_records where app_id=${app} and item_id=${id[1]!}`;
       if (!rec || rec.to_member !== to) return no("relay:not_passed");
       const withdrawn = rec.reasons.includes(SWAP_WITHDRAWN);
       if (!relayRecordMayDispatch(rec.decision === "pass", rec.review === "rejected", withdrawn)) return no(withdrawn ? SWAP_WITHDRAWN : "relay:not_passed");
+      if (rec.kind === "contact_share") {
+        const [other] = await tx<{ decision: string; review: string | null; reasons: string[] | null; status: string | null }[]>`
+          select r.decision,r.review,r.reasons,o.status from network.relay_records r
+          left join platform.outbound o on o.app_id = r.app_id and o.id = 'relay:' || r.item_id
+          where r.app_id=${app} and r.opportunity_id=${rec.opportunity_id} and r.kind='contact_share'
+            and r.from_member=${rec.to_member} and r.to_member=${rec.from_member} and r.at=${rec.at} limit 1`;
+        if (!other || !relayRecordMayDispatch(other.decision === "pass", other.review === "rejected", !!other.reasons?.includes(SWAP_WITHDRAWN))
+          || (other.status && NOT_SENT.test(other.status))) return no("relay:swap_partner");
+      }
       from = rec.from_member;
       matchId = rec.opportunity_id;
       textItem = rec.kind === "text";
@@ -823,10 +832,11 @@ export class NetworkRuntime {
   }
 
   /** The stored state of this network (inside an app-scoped transaction). */
-  private async loadState(): Promise<NetworkState | undefined> {
+  private async loadState(fence = false): Promise<NetworkState | undefined> {
     return this.scoped(async tx => {
-      const [r] = await tx`select state from network.network_state where id = ${this.pg.id}`;
+      const [r] = await tx`select state, xmin::text as v from network.network_state where id = ${this.pg.id}`;
       const s = r?.state;
+      if (fence) this.pg.seen = r?.v;
       // A state without its relay log gets it back from network.relay_records (store.ts).
       return loadRelayRows(tx, s === undefined ? undefined : ((typeof s === "string" ? JSON.parse(s) : s) as NetworkState), this.app.id, this.pg.id);
     });
@@ -840,7 +850,6 @@ export class NetworkRuntime {
    * about an opportunity that closed.
    */
   async start() {
-    // The ledger starts from what is stored (events this process did not emit), oldest first.
     for (const r of await this.scoped(tx => tx<{ event: CapitalEvent | string }[]>`select event from network.capital_events where app_id = ${this.app.id} order by seq`)) {
       try { this.capital.ledger.record(typeof r.event === "string" ? JSON.parse(r.event) : r.event); } catch { /* out of order: counted by the wiring only for new events */ }
     }
@@ -859,7 +868,7 @@ export class NetworkRuntime {
       load: async () => {
         this.unit = newUnit();
         await this.refresh();
-        const state = await this.loadState();
+        const state = await this.loadState(true);
         await this.scoped(tx => this.view.load(tx));
         this.net.setGatheringRepeatSources([]);
         if (state?.matchingEnabled && this.matchingAllowed && this.id === "ntwrk:nyc" && this.host.accountsFor) {
@@ -1450,8 +1459,11 @@ export class NetworkRuntime {
         or jsonb_exists(coalesce(payload->'attendance', '{}'::jsonb), ${id}))`;
       await tx`delete from network.review_judgments where app_id = ${app} and ${id} = any(member_ids)`;
       await tx`delete from network.capital_events where app_id = ${app} and (member_id = ${id} or position(${`"${id}"`} in event::text) > 0)`;
-      await tx`delete from platform.profile_suggestion_batches where app_id = ${app} and member_id = ${id}`;
+      await tx`update network.matching_runs set summary = jsonb_set(summary, '{top}', coalesce((select jsonb_agg(t order by n) from jsonb_array_elements(summary->'top') with ordinality as x(t, n)
+          where not coalesce(t->'participants', '[]'::jsonb) @> to_jsonb(${id}::text)), '[]'::jsonb))
+        where app_id = ${app} and jsonb_typeof(summary->'top') = 'array' and position(${`"${id}"`} in (summary->'top')::text) > 0`;
       await tx`delete from network.facets where app_id = ${app} and member_id = ${id}`;
+      await tx`delete from platform.profile_suggestion_batches where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.intents where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.presence where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.edges where app_id = ${app} and (from_id = ${id} or to_id = ${id})`;
@@ -1573,6 +1585,12 @@ export class NetworkRuntime {
       and m.status = any(${tx.array([...WAITING_STATUSES, ...GATEWAY_WAITING], "TEXT")}) and o.status <> all(${tx.array([...WAITING, ...GATEWAY_WAITING], "TEXT")})`);
   }
 
+  async stateCurrent(tx?: SQL): Promise<boolean> {
+    const read = (t: SQL) => tx ? t`select xmin::text as v from network.network_state where id = ${this.pg.id} for share` : t`select xmin::text as v from network.network_state where id = ${this.pg.id}`;
+    const [r] = tx ? await read(tx) : await this.scoped(read);
+    return !r || r.v === this.pg.seen;
+  }
+
   /** Repair the existing Notify projection after acceptance, including a crash after its SQL commit. */
   async projectNotifications() {
     if (!this.host.delivered) return;
@@ -1676,7 +1694,7 @@ export class NetworkRuntime {
   /** A unit that waits for the lock (an inbound message or a staff action), then delivery. */
   async unitOfWork<T>(fn: (n: ConsentNetwork) => Promise<T> | T, scheduling?: CalendarSchedulingTarget): Promise<T> {
     const out = await this.withSchedulingCalendar(scheduling, () => runStored(this.net, this.store, fn));
-    await this.deliver();
+    await this.deliver().catch(e => this.host.log(`[deliver] delivery after a committed unit failed (${this.id}): ${(e as Error).message}`));
     return out;
   }
 
@@ -1737,16 +1755,17 @@ export class NetworkRuntime {
       const memberContext = stepContext(membership, { type: "checkMember", memberAndModeExist: state !== null });
       if (memberContext.phase !== "CheckingLabels" || state === null) return null;
       const firstName = member.name.trim().split(/\s+/)[0] ?? "";
-      const forbidden = [e164, binding.person.id, ...snapshot.facets.map(f => f.id), ...snapshot.members.flatMap(m => {
+      const ids = [e164, binding.person.id, ...snapshot.facets.map(f => f.id), ...snapshot.members.map(m => m.id)];
+      const forbidden = [...ids, ...snapshot.members.flatMap(m => {
         const first = m.name.trim().split(/\s+/)[0] ?? "";
         // A shared first name is also the caller's own public name. Keep other full names private.
         const otherName = m.name.trim().toLowerCase() !== firstName.toLowerCase() ? [m.name] : [];
-        return m.id === memberId ? [m.id] : [m.id, ...otherName, ...(first.toLowerCase() !== firstName.toLowerCase() ? [first] : [])];
+        return m.id === memberId ? [] : [...otherName, ...(first.toLowerCase() !== firstName.toLowerCase() ? [first] : [])];
       })];
       const facts = [...snapshot.facets.filter(f => f.scope === "agent_private").map(f => f.value),...(participation.window?.note?[participation.window.note]:[])];
       const safe = (text: string) => outputLeaks(text, {forbidden, facts, contacts: true}).length === 0;
       // spec/sharedContext.md, "Check the public labels and each confirmed shareable fact"
-      const labels = stepContext(memberContext, { type: "checkLabels", labelsSafe: safe(firstName) && safe(member.homeCity) });
+      const labels = stepContext(memberContext, { type: "checkLabels", labelsSafe: outputLeaks(firstName, { forbidden: ids, facts, contacts: true }).length === 0 });
       if (labels.phase !== "CheckingFacets") return null;
       const newest = (f: { observedAt?: number; validFrom?: number }) => f.observedAt ?? f.validFrom ?? 0;
       const facets = snapshot.facets.filter(f => contextFacetEligible(f.memberId === memberId, f.scope === "shareable", f.confirmedByMember === true,
@@ -1761,6 +1780,7 @@ export class NetworkRuntime {
       const present = presentInNyc(snapshot, member.id, snapshot.now, snapshot.now + 6 * DAY);
       const ageEligible = canBeMatched(await accounts.lowestAge(e164, binding.person));
       await this.importStored();
+      const minor = this.net.exportState().members.find(m => m.id === memberId)?.minor === true;
       const live = this.net.relayLiveMatches(memberId as MemberId).map(x => ({ ...x,
         day: `${x.meeting ? "meeting" : "introduced"} ${new Intl.DateTimeFormat("en-US", { timeZone: CITY_TZ[this.city as City], month: "short", day: "numeric" }).format(x.match.at)}` }));
       const shown = live.flatMap(({ match, otherFirstName, day }) => {
@@ -1774,7 +1794,7 @@ export class NetworkRuntime {
       const activeItems = shown.slice(0, contextActiveItemCount(shown.length));
       return {
         firstName, city: member.homeCity, state, stateFrom: participation.active?participation.window!.from:null, stateUntil: participation.active?participation.window!.until:null, facets,
-        activeItems: activeItems.length ? activeItems : null, singlePlayer: contextSinglePlayer(present, present && ageEligible),
+        activeItems: activeItems.length ? activeItems : null, singlePlayer: contextSinglePlayer(present, present && !minor && ageEligible),
       };
     });
   }
