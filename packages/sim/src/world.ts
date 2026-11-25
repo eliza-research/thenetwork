@@ -29,6 +29,7 @@ export type WorldAction =
   | { do: "go_silent"; persona: MemberId }
   | { do: "force_flake"; persona: MemberId; how: "notice" | "no_show" }
   | { do: "say"; persona: MemberId; text: string }
+  | { do: "block"; persona: MemberId; other: MemberId }
   /** source "player": a human playing the Network in the observatory (counted like Network output). */
   | { do: "propose"; proposal: Proposal; source?: "scenario" | "player" }
   | { do: "opt_out"; persona: MemberId };
@@ -119,6 +120,7 @@ export class World {
   private meetings = new Map<string, MeetingReport & { id: string }>();
   private notices = new Set<string>(); // `${meetingId}|${memberId}` notices received from participants
   private cancelledDeliveries = new Set<string>(); // `${meetingId}|${memberId}` terminal notices received
+  private cancelled = new Set<string>(); // meeting ids called off before they happened
   private namesIn: ReturnType<typeof simulatedNameMatcher>;
   private meetingSeq = 0;
   private spawnSeq = 0;
@@ -195,6 +197,8 @@ export class World {
         this.rec({ type: "block", from, to });
       },
       log: (kind, detail) => {
+        if ((kind === "meeting_cancelled" || (kind === "opportunity_closed" && detail.reason === "blocked")) && typeof detail.proposalId === "string")
+          for (const m of this.meetings.values()) if (m.proposalId === detail.proposalId && m.at > this.clock.now()) this.cancelled.add(m.id);
         if (kind === "feedback") this.rec({ type: "feedback", memberId: detail.memberId as string, proposalId: detail.proposalId as string, text: String(detail.text ?? "") });
         else this.rec({ type: "network_log", kind, detail });
       },
@@ -271,7 +275,8 @@ export class World {
   private personaSend(p: Persona, text: string, options: { reaction?: Reaction; noticeMeetingId?: string; inReplyTo?: string } = {}): SimMessage | undefined {
     const { reaction, noticeMeetingId } = options;
     const mem = this.memories.get(p.id)!;
-    if (mem.optedOut && (reaction !== undefined || detectKeyword(text) !== "START")) return undefined;
+    const kw = reaction !== undefined ? undefined : detectKeyword(text);
+    if (mem.optedOut && kw !== "START" && kw !== "HELP") return undefined;
     // A tapback is an inbound message too: it answers the Network (resets `unanswered` below).
     const m = this.channel.receive(p.id, text, options);
     const meeting = noticeMeetingId ? this.meetings.get(noticeMeetingId) : undefined;
@@ -286,6 +291,18 @@ export class World {
       this.rec({ type: "opt_in", memberId: p.id });
     }
     return m;
+  }
+
+  /**
+   * Sends a block of `otherId` and logs a block_intent scenario record so the judge sees the
+   * member's block even if the Network under test ignores it.
+   */
+  private personaBlock(personaId: MemberId, otherId: MemberId) {
+    const mem = this.memories.get(personaId)!, other = this.personas.get(otherId);
+    if (!other) return;
+    if (!mem.blocked.includes(otherId)) mem.blocked.push(otherId);
+    if (this.personaSend(this.personas.get(personaId)!, `block ${other.name}`))
+      this.rec({ type: "scenario", action: "block_intent", detail: { from: personaId, to: otherId } });
   }
 
   // ------------------------------------------------------------------ run
@@ -343,6 +360,10 @@ export class World {
     s.on<{ personaId: MemberId; text: string; reaction?: Reaction; noticeMeetingId?: string; inReplyTo?: string }>("persona_send", ev => {
       if (this.hasGoneSilent(this.memories.get(ev.data.personaId))) return;
       this.personaSend(this.personas.get(ev.data.personaId)!, ev.data.text, ev.data);
+    });
+    s.on<{ personaId: MemberId; otherId: MemberId }>("persona_block", ev => {
+      if (this.hasGoneSilent(this.memories.get(ev.data.personaId))) return;
+      this.personaBlock(ev.data.personaId, ev.data.otherId);
     });
     s.on<{ msg: SimMessage }>("network_inbound", async ev => {
       const m = ev.data.msg;
@@ -457,10 +478,9 @@ export class World {
         ...(reply.reaction ? { reaction: reply.reaction } : {}), ...(notice ? { noticeMeetingId: notice.id } : {}) });
       if (reply.block?.length) {
         for (const b of reply.block) {
-          const other = this.personas.get(b);
-          if (other && !mem.blocked.includes(b)) {
+          if (this.personas.has(b) && !mem.blocked.includes(b)) {
             mem.blocked.push(b);
-            this.scheduler.after(reply.delayMs + 2 * MINUTE, "persona_send", { personaId: p.id, text: `block ${other.name}` });
+            this.scheduler.after(reply.delayMs + 2 * MINUTE, "persona_block", { personaId: p.id, otherId: b });
           }
         }
       }
@@ -474,8 +494,10 @@ export class World {
     if (mem.joined && !mem.optedOut && !this.hasGoneSilent(mem)) {
       const ini = await this.agent.initiative(this.personaCtx(p, `ini${this.clock.now()}`));
       if (ini) {
-        if (ini.block) for (const b of ini.block) if (!mem.blocked.includes(b)) mem.blocked.push(b);
+        const blocks = (ini.block ?? []).filter(b => !mem.blocked.includes(b));
+        mem.blocked.push(...blocks);
         const m = this.personaSend(p, ini.text);
+        if (m) for (const b of blocks) this.rec({ type: "scenario", action: "block_intent", detail: { from: id, to: b } });
         if (m && ini.adversarial) this.rec({ type: "adversarial_attempt", memberId: id, kind: ini.adversarial, messageId: m.id });
       }
     }
@@ -514,6 +536,7 @@ export class World {
   }
 
   private onMeeting(meetingId: string) {
+    if (this.cancelled.has(meetingId)) return;
     const m = this.meetings.get(meetingId);
     if (!m) return;
     const prop = this.proposals.get(m.proposalId);
@@ -587,6 +610,7 @@ export class World {
         break;
       }
       case "say": this.personaSend(this.personas.get(a.persona)!, a.text); break;
+      case "block": this.personaBlock(a.persona, a.other); break;
       case "opt_out": this.personaSend(this.personas.get(a.persona)!, "STOP"); break;
       case "propose": {
         const p = { ...a.proposal, createdAt: this.clock.now() };

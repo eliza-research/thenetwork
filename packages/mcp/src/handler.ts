@@ -88,7 +88,8 @@ export const TTL = {
   /** A consent lasts at most this long; then the person signs in again. */
   grantMs: 90 * 24 * 3_600_000,
   codeMs: 5 * 60_000,
-  requestMs: 15 * 60_000,
+  /** A sign-in request (it holds the number once the person types it) lasts at most this long; then it is swept. */
+  requestMs: 10 * 60_000,
 };
 export const LIMITS = {
   registerPerIpHour: 20,
@@ -113,6 +114,8 @@ export interface McpHandler {
   assistantUpdateSurfaces(personId: string, app: McpAppId): Promise<AssistantKind[]>;
   /** Map grants under the provider claim lock for the already verified current owner. */
   assistantUpdateSurfacesForClaim(candidates: readonly AssistantGrantCandidate[]): AssistantKind[];
+  /** Delete what expired (store.sweep), at most once a minute. Every OAuth request calls it; call it on a timer too, so nothing waits for traffic. */
+  sweep(): Promise<void>;
 }
 
 interface Ctx { app: McpApp; host: McpApp; issuer: string; ip: string; req: Request; url: URL }
@@ -286,6 +289,11 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (ok) await reconcileAssistantSignal(await store.getGrant(id));
     return ok;
   }
+  async function revokeGrantWithAudit(grant: Grant, at: number, detail: string) {
+    if (await revokeGrant(grant.id, at)) {
+      await store.audit({ at, kind: "consent_revoked", clientId: grant.clientId, grantId: grant.id, app: grant.app, detail });
+    }
+  }
   const hostMap = o.hostMap ?? defaultHostMap(apps);
   const dev = devShortcutsAllowed(env);
   if (o.trustForwardedHost && !dev) throw new Error("trustForwardedHost is for the dev site proxy only (PLATFORM_ENV=dev)");
@@ -301,7 +309,13 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!secureCookies(host)) return `mcp_auth_${app}`;
     return host.id === app ? "__Host-mcp_auth" : `__Host-mcp_auth_${app}`;
   };
-  let lastSweep = 0;
+  let lastSweep: number | undefined;
+  async function sweep() {
+    const at = now();
+    if (lastSweep !== undefined && at - lastSweep < 60_000) return;
+    lastSweep = at;
+    await store.sweep(at);
+  }
 
   function resourceOf(issuer: string, host: McpAppId, app: McpAppId, surface: Surface): string {
     const path = mcpPath(host, app, surface);
@@ -477,7 +491,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       try { dec = Buffer.from(auth.slice(6), "base64").toString("utf8"); } catch { return fail(); }
       const i = dec.indexOf(":");
       if (i < 0) return fail();
-      const [bid, bsec] = [decodeURIComponent(dec.slice(0, i)), decodeURIComponent(dec.slice(i + 1))];
+      let bid: string, bsec: string;
+      try { [bid, bsec] = [decodeURIComponent(dec.slice(0, i)), decodeURIComponent(dec.slice(i + 1))]; } catch { return fail(); }
       if (id && id !== bid) return fail();
       if (secret) return fail(); // one method per request
       id = bid; secret = bsec; basic = true;
@@ -527,7 +542,9 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (customSlopClient(c, client) && resource !== resourceFor(c, "full")) return fail("invalid_target", "this connection must use the /mcp endpoint");
     if (client.surface === "openai" && resource !== resourceFor(c, "openai")) return fail("invalid_target", "this client must use the /openai endpoint of the app");
     // login_hint, phone or any other person data in the URL is never read: the person types it on our page.
-    const browser = randomToken();
+    // A second tab in this browser shares the first tab's token: the cookie holds one value, so a new one would end the first tab.
+    const held = cookieValue(c.req.headers.get("cookie"), browserCookie(c.host, c.app.id));
+    const browser = held && /^[A-Za-z0-9_-]{32,128}$/.test(held) ? held : randomToken();
     const r = {
       id: randomId(), browserHash: sha256hex(browser), clientId: client.id, app: c.app.id, redirectUri, state,
       codeChallenge: challengeIn, scopes, resource, e164: null, personId: null, step: "phone" as const, createdAt: now(), expiresAt: now() + ttl.requestMs,
@@ -615,7 +632,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       }
       return answer("ReplyCloud", () => new Response(null, { status: 302, headers: { location: handoff.url, "cache-control": "no-store", "set-cookie": handoff.setCookie } }));
     }
-    return answer("ReplyPhone", () => phonePage(c, r.id, { turnstileSiteKey: o.turnstile?.siteKey }));
+    return answer("ReplyPhone", () => phonePage(c, r.id, { turnstileSiteKey: o.turnstile?.siteKey, redirectOrigin: new URL(r.redirectUri).origin }));
   }
 
   /** The live request of this browser (rid in the form, the cookie from the start). */
@@ -766,7 +783,11 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       if (!joined.ok) {
         const owner = await o.platform.login(who.e164);
         if (owner === "held" || owner.personId !== r.personId || !await store.advanceAuthRequest(pending, r, now)) return expired();
-        if (joined.error === "under_age") return showSignup(undefined, sent, "You can’t join this app with the birthday entered.");
+        if (joined.error === "under_age") {
+          const response = showSignup(undefined, sent, "You can’t join this app with the birthday entered.");
+          if (r.personId === null) response.headers.append("set-cookie", `${browserCookie(c.host, r.app)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.host) ? "; Secure" : ""}`);
+          return response;
+        }
         const error = joined.error === "invalid_invitation" || joined.error === "invite_only" ? "Enter a current invitation for this app."
           : joined.error === "consent_wording" ? "The text message terms changed. Open signup again to review them."
           : "We couldn’t finish signup. Return to the connection page or try again later.";
@@ -819,21 +840,22 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       const t0 = performance.now();
       const pad = async () => { const left = (o.minOtpStartMs ?? 700) - (performance.now() - t0); if (left > 0) await waitForMs(left); };
       const turnstile = o.turnstile;
+      const redirectOrigin = new URL(r.redirectUri).origin;
       if (turnstile && !(await turnstile.verify(form.get("cf-turnstile-response") ?? undefined, c.ip, c.host.id))) {
-        return answer("ReplyCheckFailed", () => phonePage(c, r.id, { reply: "ReplyCheckFailed", turnstileSiteKey: turnstile.siteKey }));
+        return answer("ReplyCheckFailed", () => phonePage(c, r.id, { reply: "ReplyCheckFailed", turnstileSiteKey: turnstile.siteKey, redirectOrigin }));
       }
       const e164 = o.platform.normalizePhone(form.get("phone"));
-      if (!e164) return answer("ReplyPhoneInvalid", () => phonePage(c, r.id, { reply: "ReplyPhoneInvalid", turnstileSiteKey: o.turnstile?.siteKey }));
+      if (!e164) return answer("ReplyPhoneInvalid", () => phonePage(c, r.id, { reply: "ReplyPhoneInvalid", turnstileSiteKey: o.turnstile?.siteKey, redirectOrigin }));
       const sent = await o.platform.startOtp(c.app.id, e164, c.ip);
       await pad();
       const next = stepBrowser(action, { type: "recordOtpSend", sent: sent.ok });
       if (next.phase !== "ShowingCode") {
         const reply = codeSendFailureReply(!sent.ok && sent.error === "rate_limited");
-        return answer(reply, () => phonePage(c, r.id, { reply: phoneSendError(reply), turnstileSiteKey: o.turnstile?.siteKey }));
+        return answer(reply, () => phonePage(c, r.id, { reply: phoneSendError(reply), turnstileSiteKey: o.turnstile?.siteKey, redirectOrigin }));
       }
       return answer("ReplyCode", async () => {
         if (!await store.advanceAuthRequest(r, { e164, personId: null, step: "code" }, now)) return expired();
-        return codePage(c, r.id, e164.slice(-4));
+        return codePage(c, r.id, e164.slice(-4), { redirectOrigin });
       });
     }
 
@@ -841,7 +863,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       const code = (form.get("code") ?? "").replace(/\s/g, "");
       const proof = stepBrowser(action, { type: "recordOtpVerification", verified: await o.platform.verifyOtp(c.app.id, r.e164, code, c.ip) });
       const last4 = r.e164.slice(-4);
-      if (proof.phase !== "CheckingIdentity") return answer("ReplyCodeRejected", () => codePage(c, r.id, last4, { reply: "ReplyCodeRejected" }));
+      if (proof.phase !== "CheckingIdentity") return answer("ReplyCodeRejected", () => codePage(c, r.id, last4, { reply: "ReplyCodeRejected", redirectOrigin: new URL(r.redirectUri).origin }));
       const who = await o.platform.login(r.e164);
       const identity = stepBrowser(proof, {
         type: "recordBrowserIdentity",
@@ -906,7 +928,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
     if (action.phase !== "ConsentDeclined") return expired();
     return answer("ReplyDeclined", async () => {
-      await store.deleteAuthRequest(r.id);
+      // An approval that took the request first wins: the denial then has nothing to deny.
+      if (!(await store.deleteAuthRequest(r.id))) return answer("ReplyExpired", expired);
       await store.audit({ at: now(), kind: "consent_denied", clientId: client.id, grantId: null, app: c.app.id, detail: null });
       return redirectTo(r.redirectUri, { error: "access_denied", error_description: "Connection cancelled", state: r.state, iss: c.issuer }, 303, { "set-cookie": clearCookie });
     });
@@ -1258,7 +1281,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (owner === "GrantOwnerUnavailable") return "unavailable";
     if (owner === "GrantOwnerHeld") return "invalid";
     if (owner === "GrantOwnerChanged") {
-      try { await revokeGrant(grant.id, now()); } catch { return "unavailable"; }
+      try { await revokeGrantWithAudit(grant, now(), "the number or its person changed"); } catch { return "unavailable"; }
       return "invalid";
     }
     return cloudGrantCurrent(grant);
@@ -1420,7 +1443,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
         log(`[mcp] ${host.id} ${surface} ${tool} ${r.kind}${auth ? ` grant=${auth.grant.id}` : ""}`);
         if (r.kind === "grant_unavailable") return out(503, rpcError(id, -32603, "Your connection cannot be checked right now. Please try again shortly."), { "retry-after": "5" });
         if (r.kind === "invalid_grant" || r.kind === "grant_held") {
-          if (auth && r.kind === "invalid_grant") await revokeGrant(auth.grant.id, now());
+          if (auth && r.kind === "invalid_grant") await revokeGrantWithAudit(auth.grant, now(), "the number or its person changed");
           return out(401, rpcError(id, -31401, "The access token is not valid here"), { "www-authenticate": challenge(resource, { error: "invalid_token" }) });
         }
         if (r.kind === "error") return result({ content: [{ type: "text", text: r.message }], isError: true });
@@ -1625,11 +1648,12 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       }
       return revoked;
     },
+    sweep,
     async fetch(req, server) {
       const url = new URL(req.url);
       if (!OWNED(url.pathname)) return undefined;
       try {
-        if (now() - lastSweep > 10 * 60_000) { lastSweep = now(); await store.sweep(now()); }
+        await sweep();
         let peer: string | undefined;
         try { peer = server?.requestIP(req)?.address; } catch { /* not a served request (tests) */ }
         return await handle(req, url, peer);

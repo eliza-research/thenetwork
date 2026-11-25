@@ -34,9 +34,10 @@ interface Respond { turnstileSiteKey?: string; formTargets?: string[]; status?: 
 /** One server-rendered page: the shared React view in a document with the brand on <html>, the design-system CSS and a strict CSP. */
 function respond(app: McpApp, title: string, view: ReactElement, o: Respond = {}): Response {
   const ts = o.turnstileSiteKey ? ` ${TURNSTILE}` : "";
+  const targets = (o.formTargets ?? []).filter(t => t.length > 0 && !/[;,\s\u0000-\u001f\u007f]/.test(t));
   const csp = [
     "default-src 'none'", `style-src ${styleSource}`, "font-src 'self'", "img-src 'self' data:", `script-src${ts || " 'none'"}`, `frame-src${ts || " 'none'"}`,
-    `connect-src 'self'${ts}`, `form-action 'self'${(o.formTargets ?? []).map(t => ` ${t}`).join("")}`, "base-uri 'none'", "frame-ancestors 'none'",
+    `connect-src 'self'${ts}`, `form-action 'self'${targets.map(t => ` ${t}`).join("")}`, "base-uri 'none'", "frame-ancestors 'none'",
   ].join("; ");
   const doc = h("html", { lang: "en", "data-brand": brandIdFor[appKeyOf(app)] },
     h("head", null,
@@ -59,7 +60,7 @@ const pageFor = (reply: Reply, turnstileOn = false): AuthPage => showReply(reply
 export type PhoneError = Extract<Reply, "ReplyCheckFailed" | "ReplyPhoneInvalid" | "ReplyTooManyCodes" | "ReplySendUnavailable">;
 
 /** A failed security check is shown only when the page has the check. */
-export type PhonePageOptions = { reply: "ReplyCheckFailed"; turnstileSiteKey: string } | { reply?: Exclude<PhoneError, "ReplyCheckFailed">; turnstileSiteKey?: string };
+export type PhonePageOptions = { reply: "ReplyCheckFailed"; turnstileSiteKey: string; redirectOrigin?: string } | { reply?: Exclude<PhoneError, "ReplyCheckFailed">; turnstileSiteKey?: string; redirectOrigin?: string };
 
 const phoneSendErrors = ["ReplyPhoneInvalid", "ReplyTooManyCodes", "ReplySendUnavailable"] as const satisfies readonly PhoneError[];
 
@@ -75,14 +76,14 @@ export function phonePage(at: PageApp, rid: string, o: PhonePageOptions = {}) {
   // spec/authorizationPages.md, "The server reply selects the page view"
   if (!alwaysFieldErrorStaysOnItsPage(shown)) throw new Error(`The phone page cannot show ${o.reply} without the security check`);
   const view = h(AuthPhoneView, { app: appKeyOf(app), siteOrigin, rid, fieldError: shown.fieldError as PhoneFieldError, turnstileSiteKey: o.turnstileSiteKey });
-  return respond(app, "Sign in", view, { turnstileSiteKey: o.turnstileSiteKey, status: o.reply ? 400 : 200 });
+  return respond(app, "Sign in", view, { turnstileSiteKey: o.turnstileSiteKey, formTargets: o.redirectOrigin ? [o.redirectOrigin] : [], status: o.reply ? 400 : 200 });
 }
 
-export function codePage(at: PageApp, rid: string, last4: string, o: { reply?: Extract<Reply, "ReplyCodeRejected"> } = {}) {
+export function codePage(at: PageApp, rid: string, last4: string, o: { reply?: Extract<Reply, "ReplyCodeRejected">; redirectOrigin?: string } = {}) {
   const { app, siteOrigin } = pageAppOf(at);
   const shown = pageFor(o.reply ?? "ReplyCode");
   const view = h(AuthCodeView, { app: appKeyOf(app), siteOrigin, rid, last4, fieldError: shown.fieldError as CodeFieldError });
-  return respond(app, "Enter your code", view, { status: o.reply ? 400 : 200 });
+  return respond(app, "Enter your code", view, { formTargets: o.redirectOrigin ? [o.redirectOrigin] : [], status: o.reply ? 400 : 200 });
 }
 
 /** One pending OAuth connection, not an account page or a sign-in destination. */
@@ -120,12 +121,17 @@ const messageReplies = {
 /** The heading of a page that stops the connection. */
 export type MessageTitle = keyof typeof messageReplies | "Sign in first";
 
+function safeRetryPath(path: string | undefined): string | undefined {
+  if (!path || !path.startsWith("/") || path.startsWith("//") || /[\u0000-\u001f\u007f\\]/.test(path)) return undefined;
+  return path;
+}
+
 export function messagePage(at: PageApp, title: MessageTitle, text: string, status = 400, retryPath?: string) {
   const { app, siteOrigin } = pageAppOf(at);
   const view = title === "Sign in first"
     ? load(consentsInitial, "LoadedSignedOut", 0).view
     : pageFor(title === "Please try again" && !retryPath ? "ReplySignupUnavailable" : messageReplies[title]).view;
-  return respond(app, title, h(AuthMessageView, { app: appKeyOf(app), siteOrigin, view: view as AuthMessage, text, retryHref: retryPath }), { status });
+  return respond(app, title, h(AuthMessageView, { app: appKeyOf(app), siteOrigin, view: view as AuthMessage, text, retryHref: safeRetryPath(retryPath) }), { status });
 }
 
 /**

@@ -506,4 +506,36 @@ describe.skipIf(!pgAvailable)("PgStore", () => {
       ["attended", "no_show", "accepted"],
     ]);
   }, T);
+
+  test("save runs on the advisory lock connection so a terminated lock cannot overwrite the next holder (SD-110)", async () => {
+    const a = new PgStore(TEST_URL);
+    const b = new PgStore(TEST_URL);
+    stores.push(a, b);
+    const w = new Mini([climber("lock-a", "Ana Diaz")], { review: "auto" });
+    await w.onboard("lock-a");
+    await a.save(w.net.exportState());
+    let releaseA!: () => void;
+    const paused = new Promise<void>(r => { releaseA = r; });
+    let lockAcquired!: () => void;
+    const locked = new Promise<void>(r => { lockAcquired = r; });
+    const txA = a.withLock(async () => {
+      const s = await a.load();
+      lockAcquired();
+      await paused;
+      await a.save(s!);
+    });
+    await locked;
+    const [{ pid }] = await (a as any).lockConn`select pg_backend_pid() as pid`;
+    await b.sql`select pg_terminate_backend(${pid})`;
+    await b.withLock(async () => {
+      const s = (await b.load())!;
+      w.net.importState(s);
+      await w.net.onInbound({ id: "stop-lock-a", memberId: "lock-a", body: "STOP", keyword: "STOP", ts: w.clock.now(), channel: "sms" });
+      await b.save(w.net.exportState());
+    });
+    releaseA();
+    await expect(txA).rejects.toThrow();
+    const final = (await b.load())!;
+    expect(final.members.find(m => m.id === "lock-a")?.optedOut).toBe(true);
+  }, T);
 });

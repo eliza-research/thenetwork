@@ -100,13 +100,22 @@ export class Inbox {
         && signedAdmissionOpen(admitUntil !== undefined, now, admitUntil ?? 0);
       if (!mayStartClaimWrite(senderLock, admissionOpen)) return { senderLock, admissionOpen, inserted: false };
       // A turn whose worker stopped (no completion within the lease) is unresolved, not processing forever.
-      await tx`update platform.inbound set status='unresolved',event=null,sender=null
-        where sender_hash=${senderHash} and status='processing' and request_hash is not null and arrived_at<${new Date(now - processingLeaseMs)}`;
-      const rows = await tx`insert into platform.inbound(id,line,sender,received_at,arrived_at,event,status,request_hash,sender_hash,network_authority)
-      select ${id},null,null,${new Date(input.receivedAt)},${new Date(now)},null,'processing',${requestHash},${senderHash},${input.networkAuthority ?? null}::jsonb
-      where not exists(select 1 from platform.inbound where sender_hash=${senderHash} and (status='processing'
-        or (${ordinaryTurnMustWait(keyword)} and (status='pending' or (status='unresolved' and arrived_at>${new Date(now - unresolvedBlockMs)})))))
+      await tx`update platform.inbound set status='unresolved',event=null,sender=null,replies='[]'::jsonb
+        where sender_hash=${senderHash} and status='processing' and request_hash is not null and coalesce(lease_at,arrived_at)<${new Date(now - processingLeaseMs)}`;
+      let rows = await tx`insert into platform.inbound(id,line,sender,received_at,arrived_at,lease_at,event,status,request_hash,sender_hash,network_authority,compliance)
+      select ${id},null,null,${new Date(input.receivedAt)},${new Date(now)},${new Date(now)},null,'processing',${requestHash},${senderHash},${input.networkAuthority ?? null}::jsonb,${keyword}
+      where not exists(select 1 from platform.inbound where sender_hash=${senderHash} and ((status='processing' and (not ${keyword} or compliance))
+        or (${ordinaryTurnMustWait(keyword)} and (status='pending' or (status='unresolved' and coalesce(lease_at,arrived_at)>${new Date(now - unresolvedBlockMs)})))))
       on conflict do nothing returning id`;
+      if (!rows.length && keyword) {
+        // A compliance turn that never answered (its worker died, or staff resolved it) runs again on the retry of
+        // the same request: the consent ledger and the member's unit are idempotent per message.
+        rows = await tx`update platform.inbound set status='processing',lease_at=${new Date(now)},sender_hash=${senderHash},compliance=true
+          where id=${id} and request_hash=${requestHash} and status='unresolved' and handled_at is null and response is null
+          and not exists(select 1 from platform.inbound where sender_hash=${senderHash} and status='processing' and compliance)
+          returning id`;
+      }
+      await this.stopCancels(tx, input, rows);
       return { senderLock, admissionOpen, inserted: rows.length > 0 };
     });
     const claimed = stepSignedInbox(initialSignedInbox, { type: "recordClaim", ...claim });
@@ -127,7 +136,7 @@ export class Inbox {
     const turn: InboundTurn = {id,from:input.from};
     // Renew the lease while the turn runs, so a slow turn (an LLM read, lock waits) is never swept as abandoned after its effects committed.
     const renew = setInterval(() => {
-      this.o.sql`update platform.inbound set arrived_at=${new Date(this.o.clock.now())} where id=${id} and status='processing'`.catch(() => {});
+      this.o.sql`update platform.inbound set lease_at=${new Date(this.o.clock.now())} where id=${id} and status='processing'`.catch(() => {});
     }, this.o.leaseRenewMs ?? leaseRenewMs);
     (renew as {unref?: () => void}).unref?.();
     try {
@@ -147,10 +156,26 @@ export class Inbox {
         const rescued = await this.rescueCompliance(id, turn, failed).catch(() => undefined);
         if (rescued) { this.o.log(`[inbound] compliance turn ${id} failed after its consent change: ${(e as Error).message}`); return rescued; }
       }
-      await this.o.sql`update platform.inbound set status='unresolved',event=null,sender=null where id=${id} and status='processing'`;
+      await this.o.sql`update platform.inbound set status='unresolved',event=null,sender=null,replies='[]'::jsonb where id=${id} and status='processing'`;
       return {status:409,body:{error:"turn_unresolved",retryable:false}};
     } finally {
       clearInterval(renew);
+    }
+  }
+
+  /**
+   * A claimed signed STOP or STOP ALL cancels the sender's ordinary legacy-webhook rows received before it, in the
+   * claim transaction (under the sender lock), as a legacy STOP does: a waiting row is never acted on after the STOP.
+   */
+  private async stopCancels(tx: SQL, input: TurnRequest, claimed: unknown[]): Promise<void> {
+    if (!claimed.length || !isStopText(input.text)) return;
+    const sender = normalizeAddress(input.from);
+    const waiting = await tx`select id, event from platform.inbound where sender = ${sender} and status = 'pending' and received_at <= ${new Date(input.receivedAt)}`;
+    const ids = (waiting as any[]).filter(w => !isComplianceText(((typeof w.event === "string" ? JSON.parse(w.event) : w.event) as {ev?: InboundMessage})?.ev?.text)).map(w => w.id as string);
+    if (ids.length) {
+      await tx`update platform.inbound set status = 'done', outcome = 'cancelled_by_stop', handled_at = ${new Date(this.o.clock.now())},
+        handled_order = nextval('platform.inbound_handled_seq'), event = null, sender = null where id = any(${tx.array(ids, "TEXT")})`;
+      this.o.log(`[inbound] ${ids.length} earlier message(s) cancelled by a signed STOP`);
     }
   }
 
@@ -265,15 +290,19 @@ export class Inbox {
     return n;
   }
 
-  /** Retention: handled rows older than `before` (a provider retries for hours, not weeks). */
+  /** Retention: handled rows, and signed turns that lost their worker, older than `before` (a provider retries for hours, not weeks). */
   async purge(before: number): Promise<number> {
     const sealed = await this.o.sql`update platform.inbound set status='unresolved',response=null,replies='[]'::jsonb,receipt=null,receipt_hash=null,action_receipts='{}'::jsonb,
       sender=null,event=null,sender_hash=null,member_id=null,app_id=null
       where request_hash is not null and status='done' and handled_at<${new Date(before)} returning id`;
+    // A signed turn that lost its worker and whose sender never wrote again (the claim's sweep never ran for it):
+    // an unresolved tombstone, with nothing about the sender kept past the retention window.
+    const orphans = await this.o.sql`update platform.inbound set status='unresolved',sender=null,event=null,sender_hash=null,member_id=null,app_id=null,replies='[]'::jsonb
+      where request_hash is not null and status='processing' and coalesce(lease_at,arrived_at)<${new Date(before)} returning id`;
     const removed = await this.o.sql`delete from platform.inbound where request_hash is null and status not in ('pending','processing','unresolved') and arrived_at < ${new Date(before)} returning id`;
     // Signed-turn tombstones keep replays refused for a while, then go: platform.inbound does not grow without bound.
     const tombstones = await this.o.sql`delete from platform.inbound where request_hash is not null and status='unresolved' and arrived_at < ${new Date(before - turnTombstoneKeepMs)} returning id`;
-    return sealed.length + removed.length + tombstones.length;
+    return sealed.length + orphans.length + removed.length + tombstones.length;
   }
 
   /**
@@ -281,7 +310,7 @@ export class Inbox {
    * longer holds back the sender's later messages. Returns false when the row is not a stuck signed turn.
    */
   async resolve(id: string): Promise<boolean> {
-    const rows = await this.o.sql`update platform.inbound set status='unresolved',sender_hash=null,event=null,sender=null
+    const rows = await this.o.sql`update platform.inbound set status='unresolved',sender_hash=null,event=null,sender=null,replies='[]'::jsonb
       where id=${id} and request_hash is not null and status in ('processing','unresolved') returning id`;
     return rows.length > 0;
   }
@@ -318,8 +347,8 @@ export class Inbox {
         const now = this.o.clock.now();
         const blockedSince = new Date(now - unresolvedBlockMs), stale = new Date(now - processingLeaseMs);
         const rows = await this.o.sql`select 1 from platform.inbound where sender_hash = ${this.o.senderKey(sender)}
-          and request_hash is not null and ((status = 'processing' and arrived_at > ${stale})
-            or (status = 'unresolved' and arrived_at > ${blockedSince})) limit 1`;
+          and request_hash is not null and ((status = 'processing' and coalesce(lease_at, arrived_at) > ${stale})
+            or (status = 'unresolved' and coalesce(lease_at, arrived_at) > ${blockedSince})) limit 1`;
         return rows.length > 0;
       },
       handle: async ({ event }) => {

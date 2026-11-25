@@ -32,19 +32,20 @@ import { cellMiles, MARKET_ANCHOR_ZIP } from "../../packages/engine/src/packs/sl
 import { laneLimits, laneOffset } from "../../packages/core/src/generated/matchLane.ts";
 import { parityAllowed, standingGap } from "../../packages/core/src/generated/pairValue.ts";
 import { EngineRng as Rng } from "../../packages/core/src/index.ts";
+import { SLOP_PROBE_PHOTOS } from "../../packages/network/service/packs.ts";
 import { slopLiveArm } from "./slop-live.ts";
 import type { EngineInput, EngineProposal } from "../../packages/engine/src/types.ts";
 import { World } from "../../packages/engine/src/world.ts";
 import { BODY_TYPE_DEFAULTS } from "../../packages/sim/src/apps/slop/bodyType.ts";
 import { slopEngineInput, slopEngineMatcher } from "../../packages/sim/src/apps/slop/enginePack.ts";
-import { extraOf, gates3, runArm, type WorldSpec } from "../../packages/sim/src/apps/slop/packEval.ts";
+import { extraOf, gates3, runArm, worldOptions, type WorldSpec } from "../../packages/sim/src/apps/slop/packEval.ts";
 import { generateSlopPersonas, type SlopPersona } from "../../packages/sim/src/apps/slop/persona.ts";
 import { buildSlopSnapshot, RATER_DEFAULTS, SLOP_WORLD_START, type SlopNetworkState } from "../../packages/sim/src/apps/slop/snapshot.ts";
 import { BASELINES } from "../../packages/sim/src/apps/slop/baselines.ts";
 import { slopMetrics } from "../../packages/sim/src/apps/slop/metrics.ts";
 import { isSafe } from "../../packages/sim/src/apps/slop/oracle.ts";
 import { createSlopWorld, runSlopWorld, runSlopWorldAsync, type FlowRecord } from "../../packages/sim/src/apps/slop/world.ts";
-import { mergeRelayStats } from "../../packages/sim/src/apps/slop/relay.ts";
+import { contactShaped, mergeRelayStats } from "../../packages/sim/src/apps/slop/relay.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
 
@@ -52,10 +53,12 @@ const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 
 export const SLOP_PINNED = { seeds: [13, 14, 15, 16], weeks: 4, perCity: 300 };
 const POPULATION: WorldSpec = { catfish: 0.005, bodyTypes: true };
-const WORLD: WorldSpec = { verification: true, relay: { engine: true }, review: 3, widen: true, checkin: true };
+// Founder decision 9: no ID check (production has no verification step), so the pinned world has none.
+const WORLD: WorldSpec = { relay: { engine: true }, review: 3, widen: true, checkin: true };
 // Founder decision 2026-10-11 (#22): no photo is shown between members (no photo in the probe, no photo relay);
-// the AI only rates photos. The sim matches the product: the rater is on, the probe photo is off.
-const PACK_WORLD: WorldSpec = { rater: true };
+// the AI only rates photos. The sim follows the product: the rater is on, and the probe photo path is on only when
+// the live flag SLOP_PROBE_PHOTOS is on, so the "0 probes carry a photo" gate fails if the product turns photos on.
+const PACK_WORLD: WorldSpec = { rater: true, ...(SLOP_PROBE_PHOTOS ? { photos: 1 } : {}) };
 /** Gates that fail in every photos arm on held-out seeds today (docs/results/2026-10-08-slop-pack.md I5.4): tracked, not blocking. */
 const TRACKED = [/^Dates per member-month vs random/, /^Minor contacts \(age liars\) cut/, /^Adversary contacts cut/, /^Lowest group vs overall/, /^Same, feasible members/,
   // Not in the founder's tracked list, but it does not pass on the pinned seeds (86.9%; I5.4 reports 87% on seeds 13-16 at 4 weeks).
@@ -114,8 +117,19 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
   b.gate("relay world: 0 relays to or from a minor (declared, or after an age slip); every slip blocked", rs.minorRelays === 0 && cls("minor_signal").stopped === cls("minor_signal").n, `${rs.minorRelays} relays, slips ${cls("minor_signal").stopped}/${cls("minor_signal").n}`);
   b.gate("relay world: contact shares only with explicit consent (0 without; every bad-consent item blocked)", rs.contactWithoutConsent === 0 && cls("contact_share").n > 0 && cls("bad_consent").stopped === cls("bad_consent").n, `${cls("contact_share").n - cls("contact_share").stopped} shared with consent, ${cls("bad_consent").stopped}/${cls("bad_consent").n} bad-consent blocked`);
   b.gate("relay world: relay log rows carry no message body or contact value", rs.logBodies === 0, String(rs.logBodies));
+  await b.run("relay world judge: the contact-leak counter catches contacts the relay guard passes (spelled number, split digits, email in words)", () => {
+    for (const t of ["two one two five five five, then zero one four seven", "two12 five55 o147", "I'm sam r at gmail"]) expect([t, contactShaped(t)]).toEqual([t, true]);
+    for (const t of ["Can we push it to 7:30 instead of 7?", "Running about 10 minutes late, sorry!", "I'll be the one in the green jacket."]) expect([t, contactShaped(t)]).toEqual([t, false]);
+  });
   const ph = pack.extra.reduce((s, e) => s + (e.photos?.withPhoto ?? 0), 0), noPh = pack.extra.reduce((s, e) => s + (e.photos?.withoutPhoto ?? 0), 0);
   await b.run(`no photo is shown between members: 0 probes carry a photo (${ph} with, ${noPh} without)`, () => expect(ph).toBe(0));
+  // Founder decision 9: no ID check, and production writes no verify:* fact (packages/network/service/packs.ts). The pinned world
+  // of the slop arm must not hold members on a check that does not exist live, or the safety gates above measure a filter production lacks.
+  await b.run("pinned world matches production: no verify:* fact in the slop arm's snapshot (decision 9, no ID check)", () => {
+    const wo = worldOptions({ ...POPULATION, ...WORLD, ...PACK_WORLD });
+    const snap = buildSlopSnapshot(generateSlopPersonas({ seed: SLOP_PINNED.seeds[0]!, perCity: 60 }), { ...emptySlopState(), ...(wo.verification ? { verification: wo.verification } : {}), ...(wo.platform ? { platform: wo.platform } : {}) });
+    expect(snap.facets.filter(f => f.tags.some(t => t.startsWith("verify:"))).length).toBe(0);
+  });
 
   // ---- world invariants: no hidden truth in the agent's view; baselines; the ban loop ----------------
   await b.run("world: personas deterministic by seed; the snapshot carries no hidden truth, canary or adversary label", () => {

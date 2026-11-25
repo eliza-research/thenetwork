@@ -274,7 +274,7 @@ export async function opsBlock(b: Block): Promise<void> {
     expect([ok.status, (await ok.json()).ok]).toEqual([200, true]);
     expect(() => loadConfig({ ...base, OPS_METRICS_TOKEN: "short" })).toThrow();
     const thrown = (f: () => unknown) => { try { f(); return ""; } catch (e) { return (e as Error).message; } };
-    expect(thrown(() => loadConfig({ PLATFORM_ENV: "staging", DATABASE_URL: "postgres://x@db/x", MIGRATION_DATABASE_URL: "postgres://o@db/x", PLATFORM_HASH_KEY: "h".repeat(40), LEAK_LABEL_KEY: "l".repeat(40), PLATFORM_PROXY_SECRET: "s".repeat(40),
+    expect(thrown(() => loadConfig({ PLATFORM_ENV: "staging", DATABASE_URL: "postgres://x@db/x", MIGRATION_DATABASE_URL: "postgres://o@db/x", PLATFORM_HASH_KEY: "h".repeat(40), PLATFORM_SESSION_SECRET: "e".repeat(40), LEAK_LABEL_KEY: "l".repeat(40), PLATFORM_PROXY_SECRET: "s".repeat(40),
       TURNSTILE_SECRET_KEY: "f", OTP_PROVIDER: "twilio", TWILIO_ACCOUNT_SID: "AC", TWILIO_AUTH_TOKEN: "t", TWILIO_VERIFY_SERVICE_SID: "VA", ALERT_WEBHOOK_URL: "http://hooks.example.test/x" }))).toMatch(/must be https/);
     // A tick that never finishes: healthy until TICK_LATE_MS (15 min by default), then 503 for the uptime monitor.
     void on.startTicks();
@@ -316,7 +316,7 @@ export async function opsBlock(b: Block): Promise<void> {
     const env = deploy({ ...good, OBSERVATORY_REAL_ONLY: "0", NODE_ENV: "development" });
     expect([env.OBSERVATORY_REAL_ONLY, env.NODE_ENV, env.PORT]).toEqual(["1", "production", "4747"]);
     // The settings the Worker accepts are settings the console's own start guard accepts.
-    expect(deployGuard({ realOnly: true, trustCfAccess: env.OBSERVATORY_TRUST_CF_ACCESS === "1", platformEnv: env.PLATFORM_ENV, databaseUrls: [env.NETWORK_DATABASE_URL] })).toBeUndefined();
+    expect(deployGuard({ realOnly: true, trustCfAccess: env.OBSERVATORY_TRUST_CF_ACCESS === "1", platformEnv: env.PLATFORM_ENV, databaseUrls: [env.NETWORK_DATABASE_URL], audit: "postgres" })).toBeUndefined();
     const refused = (config: Record<string, unknown>, platformEnv?: string) => { try { deploy(config, platformEnv); return ""; } catch (e) { return (e as Error).message; } };
     expect(refused({ ...good, OBSERVATORY_TOKEN: "t".repeat(40) })).toMatch(/OBSERVATORY_TOKEN is refused/);
     expect(refused({ ...good, OBSERVATORY_TOKENS: `admin@*:${"t".repeat(40)}` })).toMatch(/OBSERVATORY_TOKENS is refused/);

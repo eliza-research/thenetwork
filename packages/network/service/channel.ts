@@ -573,6 +573,7 @@ export class BlooioAdapter implements ChannelAdapter {
   private readonly city: string;
   private readonly gate?: (app: string) => boolean;
   private q?: OutboundQueue;
+  private rt?: NetworkRuntime;
 
   constructor(private readonly o: BlooioAdapterOptions) {
     this.env = o.env ?? process.env;
@@ -594,6 +595,7 @@ export class BlooioAdapter implements ChannelAdapter {
   }
 
   attach(rt: NetworkRuntime) {
+    this.rt = rt;
     const policy = blooioRecipientPolicy(rt.net, rt.memberOf);
     const leaks = forbiddenProvider(rt.net, to => rt.memberOf(to));
     const num = (k: string) => { const v = Number(this.env[k]); return Number.isFinite(v) && v > 0 ? v : undefined; };
@@ -620,6 +622,12 @@ export class BlooioAdapter implements ChannelAdapter {
             ? rt.net.recipientPolicy(row.memberId, "reengage", { proactive: true })
             : { ok: false, reason: "reengagement_changed" };
         }
+        if (venueBookingNoticeBase(row.id)) {
+          const recipient = (row.memberId as MemberId | undefined) ?? rt.memberOf(row.to);
+          if (!rt.net.approvedBookingLink(row.oppId, recipient, row.text, row.id)) {
+            return { ok: false, reason: "booking_changed" };
+          }
+        }
         return !row.memberId && !rt.memberOf(row.to) ? { ok: true }
           : policy(row.to, { kind: row.kind, ...(row.oppId && !terminalNotice(row) ? { briefId: row.oppId } : {}), agentInitiated });
       },
@@ -642,28 +650,15 @@ export class BlooioAdapter implements ChannelAdapter {
       // PgStore.save locks the state before erasing members. Dispatch takes the
       // same order, then the existing admit check revalidates current parties.
       lockAdmission: async (row, tx) => {
+        if (!(await rt.stateCurrent(tx))) return false;
         if (row.app === "slop" && row.oppId) await rt.lockSlopPairAdmission(tx, row);
         if (row.oppId) await lockPublicEventContact(tx, row, rt.pg.id);
         if (row.id.startsWith(monthlyGatheringInvitePrefix)) await lockGatheringAdmission(tx, rt.app.id, rt.pg.id, row);
         if (row.id.startsWith(monthlyGatheringNoticePrefix)) await lockGatheringNoticeAdmission(tx, rt.app.id, rt.pg.id, row);
         if (row.oppId?.startsWith(gatheringRepeatOppPrefix)) await rt.lockGatheringRepeatClaim(tx, row.oppId);
-        if (row.id.startsWith(RESCHEDULE_QUEUE_PREFIX) || row.id.startsWith(interruptionFeedbackPrefix)
-          || row.id.startsWith(reengagementDeliveryPrefix) || row.id.startsWith(replacementProbePrefix) || row.id.startsWith(meetingFeedbackPrefix)) {
-          await tx`select id from network.network_state where id=${rt.pg.id} for share`;
-        }
-        if (row.id.startsWith(engineQuestionDeliveryPrefix)) {
-          await tx`select id from network.network_state where app_id=${row.app} and id=${rt.pg.id} for share`;
-        }
-        if (row.id.startsWith(friendPlanProbeDeliveryPrefix)) {
-          await tx`select id from network.network_state where app_id=${row.app} and id=${rt.pg.id} for share`;
-        }
-        if (row.id.startsWith(lateArrivalDeliveryPrefix)) await tx`select id from network.network_state where id=${rt.pg.id} for share`;
-        if (row.id.startsWith("relay:") || row.id.startsWith("invite-notice:") || row.id.startsWith(EXPECTED_INVITATION_PREFIX) || row.id.startsWith(cofounderDeliveryIdPrefix)
-          || bookedReminderKind(row.id) || terminalNotice(row) === "booking") {
-          await tx`select id from network.network_state where id=${rt.pg.id} for share`;
-        }
         if (row.id.startsWith("home-help-consent:")) await rt.lockHomeHelpConsentAdmission(tx, row.id, row.memberId);
         if (row.oppId && row.memberId) await lockPeerOpportunityContact(tx, row.app, rt.pg.id, row.memberId, row.id);
+        return true;
       },
       // A relayed item: its match and both members are read again inside the admission transaction (runtime.ts).
       admit: async (row, tx) => {
@@ -757,7 +752,9 @@ export class BlooioAdapter implements ChannelAdapter {
   async direct(to: string, body: string, id: string, kind: DirectKind): Promise<string> {
     if (!this.live) { this.log(`[blooio] refused a direct send: live sending needs ${this.flags}`); return "refused_not_approved"; }
     await this.queue.enqueue(this.queue.sql, [{ id, to, kind, text: body, city: this.city }]);
-    await this.queue.drain();
+    // The drain moves this app's other rows too: their network.messages status follows, as after the runtime's own drain.
+    const changes = await this.queue.drain();
+    await this.rt?.storeStatuses(changes.filter(d => d.memberId && d.app === this.app));
     return (await this.queue.statusOf(id)) ?? "failed";
   }
 

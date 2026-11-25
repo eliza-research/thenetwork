@@ -63,12 +63,17 @@ export class SessionService {
     if (!s || flow.phase === "Refused") return undefined;
     if (flow.phase === "Usable") return { session: s, token, rotated: false };
     if (flow.phase !== "RevokingOld") return undefined;
-    await this.store.revokeSession(s.tokenHash, flow.revokeAt);
-    flow = step(flow, { type: "recordRevocation" });
-    if (flow.phase !== "IssuingReplacement") return undefined;
     const cloud = token.startsWith("cloud.");
-    const next = await this.create(app, s.e164, s.personId, s.tokenHash, s.startedAt, cloud ? s.expiresAt : undefined, cloud ? true : undefined);
-    if (step(flow, { type: "recordReplacement" }).phase === "Rotated") return { ...next, rotated: true };
+    const nextToken = `${cloud ? "cloud." : ""}${newToken()}`;
+    const expiresAt = sessionDeadline(at, s.startedAt, this.opts.ttlMs ?? SESSION_TTL_MS, this.opts.maxMs ?? SESSION_MAX_MS,
+      cloud, cloud ? s.expiresAt : 0);
+    // The old row ends and the next one starts in one step, with the person the old row has at that moment.
+    const next = await this.store.rotateSession(s.tokenHash, {
+      tokenHash: this.hash(nextToken), app, e164: s.e164, personId: s.personId, createdAt: at, startedAt: s.startedAt, expiresAt, rotatedFrom: s.tokenHash, revokedAt: null,
+    }, flow.revokeAt, at);
+    flow = step(flow, { type: "recordRevocation" });
+    if (!next || flow.phase !== "IssuingReplacement") return undefined;
+    if (step(flow, { type: "recordReplacement" }).phase === "Rotated") return { session: next, token: nextToken, rotated: true };
   }
 
   /** True when the session's OTP login is recent enough for delete everything. */

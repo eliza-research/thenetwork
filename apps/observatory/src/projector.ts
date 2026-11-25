@@ -282,7 +282,7 @@ export class Projector {
           this.setState(o, "SKIPPED", String(r.detail.reason ?? "skipped"));
           this.changed(o, r);
           if (o.source === "player") s.pushFeed({ t: r.t, kind: "skip", text: `Your intro for ${this.names(o.participants)} was not sent: ${o.reason}`, members: o.participants, opportunityId: o.id, severity: "warn" });
-        } else if (r.kind === "opportunity_closed" && !isTerminal(o.state) && o.state !== "SCHEDULED") {
+        } else if (r.kind === "opportunity_closed" && !isTerminal(o.state)) {
           const reason = String(r.detail.reason ?? "closed");
           this.setState(o, reason === "declined" ? "DECLINED" : reason === "expired" ? "EXPIRED" : "CANCELLED", reason);
           if (reason === "expired") for (const [id, st] of Object.entries(o.status)) if (st === "invited" || st === "ignored") o.status[id] = "expired";

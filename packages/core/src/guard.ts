@@ -229,10 +229,18 @@ export function contactVariants(s: string): string[] {
 }
 
 const YEAR = /^(?:19|20)\d\d$/;
-/** A phone-pattern match that is not an order number, a booking reference or a list of years. */
+/** Ten digits of a North American number, with or without the country code. */
+const NANP = /^1?[2-9]\d\d[2-9]\d{6}$/;
+/**
+ * A phone-pattern match that is not an order number, a booking reference or a list of years. A label
+ * word excuses a number only when it has no explicit `+` prefix and is not a North American number:
+ * "my id 2125550102" and "id +44 7911 123456" are caught, while "order #1234567890" and "ref 555-0102" stay clean.
+ */
 function isPhone(text: string, m: RegExpExecArray): boolean {
   const before = text.slice(Math.max(0, m.index - 24), m.index);
-  if (/#\s*$|\b(?:order|conf|confirmation|ref|reference|booking|ticket|tracking|invoice|receipt|account|acct|case|id)\b[\s:#.no]*$/.test(before)) return false;
+  const digits = m[0].replace(/\D/g, "");
+  if (/#\s*$|\b(?:order|conf|confirmation|ref|reference|booking|ticket|tracking|invoice|receipt|account|acct|case|id)\b[\s:#.no]*$/.test(before)
+    && !m[0].startsWith("+") && !NANP.test(digits)) return false;
   const groups = m[0].split(/[^\d]+/).filter(Boolean);
   if (groups.length >= 2 && groups.every(g => YEAR.test(g))) return false;
   return true;

@@ -58,6 +58,8 @@ export interface RelayMember {
   /** A safety hold, a paused or restricted account. */
   held: boolean;
 }
+/** Block families that are about what the sender wrote (RELAY_REASON_FAMILIES.block): a threat, a slur, a severe classifier label. */
+const SEVERE_FAMILIES: ReadonlySet<string> = new Set(["harass_severe", "llm_severe", "clef_severe"]);
 /** A two-person match as the relay sees it. */
 export interface RelayMatch {
   id: string;
@@ -81,6 +83,8 @@ export interface RelayHost {
   /** The app rates photos (slop): run `appearanceLeak` on relayed text. */
   ratesPhotos: boolean;
   observeSenderAge?(memberId: MemberId, text: string): boolean;
+  /** The relay blocked what `id` wrote (SEVERE_FAMILIES): a staff case event for them, with the reason families only. */
+  severeBlock?(id: MemberId, families: string[]): void;
   /** Send `body` to `to` through the Network's send path. `key` is the outbound id. "sent", "deferred" or "refused". */
   send(to: MemberId, body: string, o: { from: MemberId; matchId: string; key: string; contact?: string; photoIds?: string[]; approvedPhotos?: ApprovedRelayPhoto[] }): "sent" | "deferred" | "refused";
 }
@@ -268,7 +272,13 @@ export class RelayDesk {
       rateOnly: res.decision === "hold" && res.reasons.every(r => r.startsWith("rate:") || r === "rate"),
       hasText: !!item.text, ageSignal: res.record.ageSignal,
     });
-    if (decision.phase === "Blocked") return { itemId: item.id, decision: "refused", reason: res.senderNotice };
+    const fam = (r: string) => r.split(":")[0]!;
+    if (decision.phase === "Blocked") {
+      // A threat, a slur or a severe classifier label is about the sender's own words: staff see it (SD-254).
+      const severe = [...new Set(res.reasons.map(fam).filter(f => SEVERE_FAMILIES.has(f)))].sort();
+      if (severe.length) this.host.severeBlock?.(item.from, severe);
+      return { itemId: item.id, decision: "refused", reason: res.senderNotice };
+    }
     if (decision.phase === "Held") this.s.held.push({
       itemId: item.id, matchId: match.id, app: this.host.app, kind: item.kind, from: item.from, to: item.to, at: item.at, reasons: res.reasons, status: "held",
       ...(decision.retainsText ? { text: item.text } : {}), ...(item.photoIds?.length ? { photoIds: [...item.photoIds] } : {}),
@@ -356,7 +366,8 @@ export class RelayDesk {
   /** An item this desk already decided (replay of the same signed request). */
   private prior(itemId: string): Omit<RelayOutcome, "replayed"> | undefined {
     const r = this.s.log.find(x => x.itemId === itemId);
-    if (r) return { itemId, decision: r.decision === "pass" ? "sent" : r.decision === "hold" ? "held" : "refused", delivered: r.decision === "pass", reason: r.decision === "pass" ? "Sent." : r.decision === "hold" ? "I'm holding that one for a quick check before I pass it on." : "I can't pass that on." };
+    // A hold that is only the rate limit is answered, not kept: the member (or staff, for a selected photo with its fixed id) can try again.
+    if (r && !(r.decision === "hold" && r.reasons.every(x => x.split(":")[0] === "rate"))) return { itemId, decision: r.decision === "pass" ? "sent" : r.decision === "hold" ? "held" : "refused", delivered: r.decision === "pass", reason: r.decision === "pass" ? "Sent." : r.decision === "hold" ? "I'm holding that one for a quick check before I pass it on." : "I can't pass that on." };
     if (this.s.swaps.some(x => x.itemId === itemId)) return { itemId, decision: "held", reason: NOTICE.swapWait };
     return undefined;
   }
