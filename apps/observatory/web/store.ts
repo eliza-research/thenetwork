@@ -8,6 +8,7 @@ import {
   type Subject, switchMode, toggleHelp, togglePick as toggleNavPick,
 } from "../../../packages/core/src/generated/consoleNavigation.ts";
 import { allowedByRole, scopedGrants } from "../../../packages/core/src/generated/staffPermissions.ts";
+import { CITY_TZ, fromLocal, localParts } from "../../../packages/core/src/time.ts";
 import { APP_IDS } from "../../../packages/core/src/types.ts";
 import { NEIGHBORHOOD, type Borough } from "@thenetwork/network/geo";
 import type { ConsoleApp } from "../src/apps.ts";
@@ -94,12 +95,10 @@ import { DAY, HOUR } from "../../../packages/core/src/clock.ts";
 export { DAY, HOUR };
 export const DEFAULT_FILTERS: Filters = { range: "7d", borough: "all", members: "all", origin: "all", stateGroup: "all" };
 
-const NYC_TZ = "America/New_York";
-const hms = new Intl.DateTimeFormat("en-US", { timeZone: NYC_TZ, hour: "numeric", minute: "numeric", second: "numeric", hourCycle: "h23" });
-/** Start of the NYC calendar day that contains t. */
+/** Start of the NYC calendar day that contains t, using the offset at midnight rather than at t. */
 export function nycDayStart(t: number): number {
-  const p = Object.fromEntries(hms.formatToParts(t).map(x => [x.type, x.value]));
-  return t - ((Number(p.hour) % 24) * 3600 + Number(p.minute) * 60 + Number(p.second)) * 1000 - (t % 1000);
+  const { year, month, day } = localParts(t, CITY_TZ.nyc);
+  return fromLocal(year, month, day, 0, CITY_TZ.nyc);
 }
 const NAV_TAB: Record<DrawerTab, NavTab> = {
   review: "ReviewTab", feed: "FeedTab", pipeline: "PipelineTab", requests: "RequestsTab", engine: "EngineTab",
