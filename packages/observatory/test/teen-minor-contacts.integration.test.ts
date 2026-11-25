@@ -51,6 +51,8 @@ describe.skipIf(!pgAvailable)("real mode: minor contacts in friends.help teen it
         and (select count(*) from network.participations p where p.app_id = o.app_id and p.opportunity_id = o.id and p.role = 'participant') = 2
         and not exists (select 1 from network.participations p where p.app_id = o.app_id and p.opportunity_id = o.id and p.role = 'alternate')
         and exists (select 1 from network.messages x where x.app_id = o.app_id and x.opportunity_id = o.id and x.direction = 'outbound' and not x.system)
+        and not exists (select 1 from network.messages x where x.app_id = o.app_id and x.opportunity_id = o.id and x.direction = 'outbound' and not x.system
+          and x.member_id not in (select p.member_id from network.participations p where p.app_id = o.app_id and p.opportunity_id = o.id and p.role = 'participant'))
       order by o.id limit 1`);
     expect(pick).toBeDefined();
     opp = pick.id;
@@ -144,5 +146,23 @@ describe.skipIf(!pgAvailable)("real mode: minor contacts in friends.help teen it
     expect(signalled - on).toBe(pairRows + 1);
     await event(t0 - 30_000, "safety_action", { action: "clear_teen_doubt", memberId: teens[1], actor: "safety@example.org" });
     expect(await count()).toBe(on);
+  }, T);
+
+  test("a probe to a candidate of unknown age who is not a participant of the 16+17 item is counted, whatever the generator", async () => {
+    const [cand] = await sql`select m.id from network.members m where m.app_id = 'friends' and m.person_id is null
+      and m.id not in (select p.member_id from network.participations p where p.app_id = 'friends' and p.opportunity_id = ${opp})
+      order by m.id limit 1`;
+    expect(cand).toBeDefined();
+    const at = t0 + 1_000;
+    const before = await count();
+    await message("teen-candidate-probe", cand.id, at, "probe", "Someone nearby likes the same things. Want an intro?");
+    expect(await count()).toBe(before + 1);
+    const [{ generator }] = await sql`select generator from network.opportunities where app_id = 'friends' and id = ${opp}`;
+    await sql`update network.opportunities set generator = 'second_encounter' where app_id = 'friends' and id = ${opp}`;
+    const other = await count();
+    await friends(tx => tx`delete from network.messages where id = 'teen-candidate-probe'`);
+    expect(other - await count()).toBe(1);
+    await sql`update network.opportunities set generator = ${generator} where app_id = 'friends' and id = ${opp}`;
+    expect(await count()).toBe(before);
   }, T);
 });

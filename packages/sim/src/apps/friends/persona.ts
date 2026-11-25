@@ -4,9 +4,9 @@
 // results and safety cues the Network itself observed. See docs/results/2026-10-08-friends-pack.md.
 import { requireSimulationCount } from "../../input.ts";
 import type { MemberId } from "@thenetwork/core";
-import { ACTIVITIES } from "@thenetwork/engine/src/packs/network/activities.ts";
+import { ACTIVITIES, activityAllAges, type ActivityType } from "@thenetwork/engine/src/packs/network/activities.ts";
 import { FRIENDS_EXCLUDED_ACTIVITIES, FRIENDS_SLOTS, NEIGHBORHOODS, type FriendsSlot, type Neighborhood } from "@thenetwork/engine/src/packs/friends/index.ts";
-import { Rng, clamp01, earliestDayKeyOf, fromLocal, hash32 } from "@thenetwork/core";
+import { Rng, canBeMatched, clamp01, earliestDayKeyOf, fromLocal, hash32 } from "@thenetwork/core";
 import { birthKeyForAgeOn } from "../../generator.ts";
 import { FIRST_NAMES, LAST_NAMES } from "../../taxonomy.ts";
 import type { RichnessTier } from "../../sources.ts";
@@ -16,7 +16,14 @@ import { teenFriendMaxAge } from "../../../../core/src/generated/friendIntroAge.
 
 export type { RichnessTier };
 export const FRIEND_ACTIVITIES = ACTIVITIES.filter(a => !FRIENDS_EXCLUDED_ACTIVITIES.has(a.id));
-export const ACTIVITY_IDS = FRIEND_ACTIVITIES.map(a => a.id);
+export const ADULT_PLAN_ACTIVITIES = FRIEND_ACTIVITIES.filter(a => a.adultPlans);
+export const TEEN_PLAN_ACTIVITIES = FRIEND_ACTIVITIES.filter(activityAllAges);
+export const ACTIVITY_IDS = ADULT_PLAN_ACTIVITIES.map(a => a.id);
+interface ActivityPool { activities: readonly ActivityType[]; ids: readonly string[]; families: readonly string[] }
+const poolOf = (activities: readonly ActivityType[]): ActivityPool => ({ activities, ids: activities.map(a => a.id), families: [...new Set(activities.map(a => a.family))] });
+const ADULT_POOL = poolOf(ADULT_PLAN_ACTIVITIES), TEEN_POOL = poolOf(TEEN_PLAN_ACTIVITIES);
+const poolFor = (claimedAge: number): ActivityPool => (canBeMatched(claimedAge) ? ADULT_POOL : TEEN_POOL);
+export const planActivitiesFor = (claimedAge: number): readonly ActivityType[] => poolFor(claimedAge).activities;
 export const SLOTS = FRIENDS_SLOTS;
 export type { FriendsSlot };
 
@@ -122,7 +129,6 @@ export const FRIENDS_DEFAULTS = {
 
 /** Activities most people enjoy at least moderately (food with others). */
 export const UNIVERSAL: ReadonlySet<string> = new Set(["restaurant_dinner", "coffee_crawl"]);
-const FAMILIES = [...new Set(FRIEND_ACTIVITIES.map(a => a.family))];
 const WORK_HUBS = ["midtown", "financial_district", "flatiron", "chelsea", "downtown_brooklyn", "long_island_city", "soho", "murray_hill"].filter(h => NEIGHBORHOODS.some(n => n.id === h));
 const byId = new Map(NEIGHBORHOODS.map(n => [n.id, n]));
 
@@ -189,13 +195,14 @@ export function generateFriendsPersonas(o: FriendsGenOptions): FriendsPersona[] 
     if (r.bool(0.35)) { const same = NEIGHBORHOODS.filter(x => x.zone === homeH.zone && x.id !== homeH.id); if (same.length) often.push(r.pick(same).id); }
     const oftenU = [...new Set(often.filter(x => x !== homeH.id))];
     // Activities: 2-3 favourite families lift every activity in them; loves = like >= 0.65 (2-6 of them).
-    const favs = new Set(r.sample(FAMILIES, r.int(2, 3)));
+    const pool = poolFor(claimedAge);
+    const favs = new Set(r.sample(pool.families, r.int(2, 3)));
     const likes: Record<string, number> = {};
-    for (const a of FRIEND_ACTIVITIES) likes[a.id] = clamp01(r.normal(0.32, 0.17) + (favs.has(a.family) ? 0.28 : 0) + (UNIVERSAL.has(a.id) ? 0.2 : 0) + (lifeStage === "parent" && a.family === "civic" ? 0.1 : 0) - (a.intensity === 2 && trueAge > 50 ? 0.15 : 0));
+    for (const a of pool.activities) likes[a.id] = clamp01(r.normal(0.32, 0.17) + (favs.has(a.family) ? 0.28 : 0) + (UNIVERSAL.has(a.id) ? 0.2 : 0) + (lifeStage === "parent" && a.family === "civic" ? 0.1 : 0) - (a.intensity === 2 && trueAge > 50 ? 0.15 : 0));
     // Planted: the circle topics are exactly the loves (like >= 0.65); every other activity stays below.
-    if (planted) for (const a of ACTIVITY_IDS) likes[a] = planted.topics.includes(a) ? Math.max(likes[a]!, 0.7) : Math.min(likes[a]!, 0.64);
-    let loves = ACTIVITY_IDS.filter(a => likes[a]! >= 0.65);
-    if (loves.length < 2) { const top = [...ACTIVITY_IDS].sort((x, y) => likes[y]! - likes[x]!).slice(0, 2); for (const t of top) likes[t] = Math.max(likes[t]!, 0.68); loves = top; }
+    if (planted) for (const a of pool.ids) likes[a] = planted.topics.includes(a) ? Math.max(likes[a]!, 0.7) : Math.min(likes[a]!, 0.64);
+    let loves = pool.ids.filter(a => likes[a]! >= 0.65);
+    if (loves.length < 2) { const top = [...pool.ids].sort((x, y) => likes[y]! - likes[x]!).slice(0, 2); for (const t of top) likes[t] = Math.max(likes[t]!, 0.68); loves = top; }
     if (loves.length > 6) loves = [...loves].sort((x, y) => likes[y]! - likes[x]!).slice(0, 6);
     const energy = clamp01(r.range(0.08, 0.95));
     const groupPref: GroupPref = energy < 0.38 ? r.weighted([["one_to_one", 0.4], ["either", 0.45], ["group", 0.15]] as const)
@@ -226,10 +233,10 @@ export function generateFriendsPersonas(o: FriendsGenOptions): FriendsPersona[] 
     // Stated side: true loves (85% each), one aspirational activity (40%), noisy energy, free slots, tolerance.
     const sr = new Rng(hash32("friends-stated", o.seed, i));
     const stated = loves.filter(() => sr.bool(0.85));
-    if (sr.bool(0.4)) { const asp = ACTIVITY_IDS.filter(a => !loves.includes(a) && likes[a]! >= 0.35); if (asp.length) stated.push(sr.pick(asp)); }
+    if (sr.bool(0.4)) { const asp = pool.ids.filter(a => !loves.includes(a) && likes[a]! >= 0.35); if (asp.length) stated.push(sr.pick(asp)); }
     // Dinner and coffee are near-universal ways to meet people (Timeleft runs on dinners alone): half
     // the members also name one they enjoy, even when it is not among their favourites.
-    if (sr.bool(0.5)) { const u = [...UNIVERSAL].filter(a => likes[a]! >= 0.5 && !stated.includes(a)); if (u.length) stated.push(sr.pick(u)); }
+    if (sr.bool(0.5)) { const u = [...UNIVERSAL].filter(a => (likes[a] ?? 0) >= 0.5 && !stated.includes(a)); if (u.length) stated.push(sr.pick(u)); }
     if (!stated.length) stated.push(loves[0]!);
     const usuallyFree = SLOTS.filter((_, k) => (slotFree[k]! >= 0.5 ? sr.bool(0.9) : sr.bool(0.08)));
     const verify = verification(sr, hidden, claimedAge);

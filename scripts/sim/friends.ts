@@ -117,7 +117,7 @@ export async function friendsScheduleGates(b: Block): Promise<void> {
   });
 
   await b.run("plans: every offered time fits the selected venue's opening hours", () => {
-    const partnerSeeds = new Set([103, 120]);
+    const partnerSeeds = new Set([102, 120]);
     for (const seed of [101, 102, 103, 120]) {
       const r = runFriendsWorld({ seed, n: 160, weeks: 3, matcher: BASELINES.random });
       r.world.state.week = 3; r.world.state.now += 7 * DAY;
