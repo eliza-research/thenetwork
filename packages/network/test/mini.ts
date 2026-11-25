@@ -26,6 +26,7 @@ export class Mini {
   readonly sent: { t: number; to: MemberId; body: string; meta: SimMeta; reply?: boolean }[] = [];
   readonly logs: { t: number; kind: string; detail: Record<string, unknown> }[] = [];
   readonly meetings: MeetingReport[] = [];
+  readonly proposals: { t: number; source: string; proposal: Proposal }[] = [];
   readonly members: Member[] = [];
   readonly facets: Facet[] = [];
   readonly intents: Intent[] = [];
@@ -78,7 +79,7 @@ export class Mini {
         return { id: `o${++this.seq}`, ts: t, direction: "outbound", channel: "sms", from: "network", to: memberId, memberId, body, status: "delivered", meta: o?.meta } satisfies SimMessage;
       },
       snapshot: () => ({ now: this.clock.now(), members: this.members, facets: this.facets, intents: this.intents, presence: this.presence, edges: this.edges, recentProposals: [] }),
-      recordProposal: () => {},
+      recordProposal: (p, source = "network") => { this.proposals.push({ t: this.clock.now(), source, proposal: p }); },
       recordMeeting: m => { this.meetings.push(m); return `mt${this.meetings.length}`; },
       recordBlock: () => {},
       log: (kind, detail) => { this.logs.push({ t: this.clock.now(), kind, detail }); },

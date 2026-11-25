@@ -187,6 +187,7 @@ export class Projector {
         o.meetingAt = r.at;
         for (const id of r.participants) {
           // The booking establishes the roster. A late addition can emit another record for the same meeting.
+          if (!o.participants.includes(id)) o.participants.push(id);
           if (o.status[id] !== "cancelled_with_notice") this.setParticipantStatus(o, id, "confirmed");
         }
         for (const [id, st] of Object.entries(o.status)) if (st === "pending" || st === "invited" || st === "ignored") o.status[id] = "dropped";
