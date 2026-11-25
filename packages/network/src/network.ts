@@ -7238,22 +7238,30 @@ export class ConsentNetwork implements NetworkUnderTest {
   private view(m: MemberState, now: number): attention.MemberAttention {
     const state = (["open", "normal", "quiet", "receiving", "paused"].includes(m.state) ? m.state : "normal") as ParticipationState;
     const day = Math.floor(now / DAY), n = m.replies?.length ?? 0;
+    const tz = this.memberZone(m.id);
     let c = this.profiles.get(m.id);
     const q = m.quietHours.join("-");
-    if (!c || c.day !== day || c.n !== n || c.state !== state || c.q !== q) {
-      const prof = attention.learnSendProfile(m.replies ?? [], NY, now, m.quietHours);
-      c = { day, n, state, q, hours: { weekday: prof.weekday, weekend: prof.weekend } };
+    if (!c || c.day !== day || c.n !== n || c.state !== state || c.q !== q || c.tz !== tz) {
+      const prof = attention.learnSendProfile(m.replies ?? [], tz, now, m.quietHours);
+      c = { day, n, state, q, tz, hours: { weekday: prof.weekday, weekend: prof.weekend } };
       this.profiles.set(m.id, c);
     }
     return {
-      memberId: m.id, state, age: m.minor ? 13 : validAge(m.age) ? m.age! : validAge(m.statedAge) ? m.statedAge! : 13, tz: NY, quietHours: m.quietHours,
+      memberId: m.id, state, age: m.minor ? 13 : validAge(m.age) ? m.age! : validAge(m.statedAge) ? m.statedAge! : 13, tz, quietHours: m.quietHours,
       onlyWhenAsked: m.onlyWhenAsked, prefs: { ...attention.defaultCadence(state), sendHours: c.hours },
       // The record's opt-ins, never a default: the engine's romance item gate fails closed on them (engine-attention-plans-7).
       categoriesOptIn: [...(this.record(m.id)?.prefs?.categoriesOptIn ?? [])],
     };
   }
   /** Learned send hours per member, recomputed once a day or after a new reply (not stored: deterministic from the replies). */
-  private profiles = new Map<MemberId, { day: number; n: number; state: ParticipationState; q: string; hours: { weekday: number; weekend: number } }>();
+  private profiles = new Map<MemberId, { day: number; n: number; state: ParticipationState; q: string; tz: string; hours: { weekday: number; weekend: number } }>();
+
+  private memberZone(id: MemberId): string {
+    const home = this.record(id)?.homeCity;
+    if (home === "nyc" || home === "sf" || home === "la") return CITY_TZ[home];
+    if (this.opts.city === "nyc" || this.opts.city === "sf" || this.opts.city === "la") return CITY_TZ[this.opts.city];
+    return NY;
+  }
 
   /** May a send with this timing go out now? Quiet hours always win; interruptions also need the send window. */
   private timingOk(m: MemberState, timing: Timing, now: number): boolean {
