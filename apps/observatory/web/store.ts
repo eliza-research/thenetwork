@@ -607,7 +607,7 @@ class ObsStore {
   }
   /** Switch the app: every panel reloads for it. "all": the health of every app. */
   // spec/consoleNavigation.md, "The app switcher opens one app or the all-apps page"
-  setApp(app: string) {
+  setApp(app: string, opts: { keepHash?: boolean } = {}) {
     const nav = this.nav();
     if (app === "all") {
       if (!canOpenAllApps(nav)) return;
@@ -619,7 +619,7 @@ class ObsStore {
     const changed = this.changeView(app, this.mode);
     this.commitNav(selectApp(nav, !changed));
     if (changed) { this.connect(); this.load(); }
-    this.replaceHash();
+    if (!opts.keepHash) this.replaceHash();
   }
   // spec/consoleNavigation.md, "Only a cross-app viewer in real mode opens one person across apps"
   /** The cross-app person view (cross_app_safety or admin; the server checks). */
@@ -785,9 +785,8 @@ class ObsStore {
     if (page.kind === "all") { if (this.page.kind !== "all") this.setApp("all"); return; }
     if (page.kind === "person") { if (this.page.kind !== "person" || this.page.id !== page.id) this.openPerson(page.id); return; }
     if (this.page.kind !== "app" || app !== this.app) {
-      const switching = app !== this.app;
-      this.setApp(app);
-      if (switching) return;
+      const popped = parseHash();
+      this.setApp(app, { keepHash: popped?.kind === "neighborhood" });
     }
     const f = parseHash();
     if (sameFocus(f, this.ui.focus)) return;
