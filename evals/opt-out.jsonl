@@ -267,3 +267,15 @@
 {"text": "don't ever forget me", "label": "not_stop", "lang": "en"}
 {"text": "she said don't ever text me", "label": "not_stop", "lang": "en"}
 {"text": "don't just text me", "label": "not_stop", "lang": "en"}
+{"text": "forget my number", "label": "stop", "lang": "en"}
+{"text": "wipe my number", "label": "stop", "lang": "en"}
+{"text": "forget my number please", "label": "stop", "lang": "en"}
+{"text": "delete my details", "label": "stop", "lang": "en"}
+{"text": "remove my details", "label": "stop", "lang": "en"}
+{"text": "forget my details", "label": "stop", "lang": "en"}
+{"text": "please wipe my number", "label": "stop", "lang": "en"}
+{"text": "don't forget my number", "label": "not_stop", "lang": "en"}
+{"text": "she said forget my number", "label": "not_stop", "lang": "en"}
+{"text": "i forgot my number", "label": "not_stop", "lang": "en"}
+{"text": "he forgot my number", "label": "not_stop", "lang": "en"}
+{"text": "forget my number, use my new one", "label": "not_stop", "lang": "en"}
