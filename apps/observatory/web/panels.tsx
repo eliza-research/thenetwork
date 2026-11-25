@@ -362,8 +362,8 @@ function MemberPanel({ id }: { id: string }) {
   for (const o of d?.opportunities ?? []) oppMap.set(o.id, o);
   for (const o of s.opps.values()) if (o.participants.includes(id)) oppMap.set(o.id, o);
   const opps = [...oppMap.values()].filter(o => o.source !== "shadow").sort((a, b) => b.updatedAt - a.updatedAt);
-  const open = opps.filter(o => OPEN.has(o.state) && !INACTIVE_PARTICIPANT_STATUS.has(o.status[id] ?? "pending"));
-  const past = opps.filter(o => !OPEN.has(o.state) || INACTIVE_PARTICIPANT_STATUS.has(o.status[id] ?? "pending"));
+  const open = opps.filter(o => OPEN.has(o.state) && !INACTIVE_PARTICIPANT_STATUS.has(o.status[id] ?? "pending") && !o.booked?.cancelled[id]);
+  const past = opps.filter(o => !OPEN.has(o.state) || INACTIVE_PARTICIPANT_STATUS.has(o.status[id] ?? "pending") || !!o.booked?.cancelled[id]);
   const meanEnj = m.counters.enjoymentN ? m.counters.enjoymentSum / m.counters.enjoymentN : undefined;
   const request = open.find(o => originOf(o) === "request" && o.participants[0] === id);
   const prompts = (s.game?.prompts ?? []).filter(p => p.memberId === id);
