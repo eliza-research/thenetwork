@@ -1617,7 +1617,16 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
       /\b(?:both|either)\b/.test(strongAll?.[0] ?? ""), open.length)) {
       return { ...unclear, why: "slot" };
     }
-    const chosen = picked.length >= 2 && /\bwhichever\b/.test(allAt[0])
+    // "Whichever" narrows to the named times only when they were offered as an
+    // explicit "X or Y" choice. Times the member merely mentions (two busy days
+    // joined by "and") carry no choice, so the cue keeps every open time.
+    const namedMentions = mentions.filter(m => memberChoiceAt(m.at)
+      && matchingOffered(m).some(key => picked.includes(key))).sort((x, y) => x.at - y.at);
+    const orJoined = namedMentions.some((m, i) => {
+      const next = namedMentions[i + 1];
+      return next !== undefined && /^[\s,]*(?:\bor\b|and\/or)[\s,]*$/.test(t.slice(m.end, next.at));
+    });
+    const chosen = picked.length >= 2 && /\bwhichever\b/.test(allAt[0]) && orJoined
       ? picked.filter(key => !neg.has(key) && open.includes(key)) : open;
     return chosen.length ? explicitYes(chosen) : { ...unclear, why: "slot" };
   }

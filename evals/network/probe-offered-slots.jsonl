@@ -193,3 +193,7 @@
 {"text":"Saturday or Sunday, all three","answer":"yes","keys":["a","b","c"]}
 {"text":"Saturday or Sunday, all of them","answer":"yes","keys":["a","b","c"]}
 {"text":"Saturday or Sunday, whichever, but not Saturday","answer":"yes","keys":["c"]}
+{"text":"I'm at a wedding Saturday and my sister visits Sunday, so whichever","answer":"yes","keys":["a","b","c"]}
+{"text":"wedding Saturday and family Sunday, so whichever","answer":"yes","keys":["a","b","c"]}
+{"text":"Saturday and Sunday, whichever","answer":"yes","keys":["a","b","c"]}
+{"text":"Sat or Sun whichever","answer":"yes","keys":["a","b","c"]}
