@@ -29,7 +29,7 @@ interface MemberRec {
   activated: boolean; valueInWindow: boolean; safetyFlagged: boolean;
   /** Providers who confirmed the invitee's first creditable value (vouch provenance). */
   valueProviders: MemberId[];
-  vouchCreditId?: string; stakeTaken: boolean;
+  vouchCreditId?: string; stakeTaken: boolean; stakePending: boolean;
   /** Removed for any reason: earns nothing more. */
   removed: boolean;
   /** First confirmed abuse: the vouch stake window is measured to this time, not to the removal. */
@@ -154,7 +154,7 @@ export class CapitalLedger {
         this.members.set(ev.member, {
           // A member cannot vouch for themself (capital-17).
           joinedAt: ev.t, eligible: !isMinor(ev.age), vouchedBy: ev.vouchedBy === ev.member ? undefined : ev.vouchedBy,
-          activated: false, valueInWindow: false, valueProviders: [], safetyFlagged: false, stakeTaken: false, removed: false,
+          activated: false, valueInWindow: false, valueProviders: [], safetyFlagged: false, stakeTaken: false, stakePending: false, removed: false,
         });
         break;
       }
@@ -163,6 +163,11 @@ export class CapitalLedger {
         // accruing now; a member who turns 18 starts accruing from now (nothing is back-filled).
         const m = this.members.get(ev.member);
         if (m) m.eligible = !isMinor(ev.age);
+        if (m && m.eligible) {
+          for (const [inviteeId, invitee] of this.members) {
+            if (invitee.vouchedBy === ev.member && invitee.stakePending) this.takeStake(inviteeId, invitee, ev, out);
+          }
+        }
         break;
       }
       case "member_activated": {
@@ -206,11 +211,12 @@ export class CapitalLedger {
         if (ev.reason !== "serious_abuse" || !m.vouchedBy || m.stakeTaken) break;
         // The window runs to the confirmed abuse, so a slow removal process does not save the stake.
         if (Math.min(m.abuseAt ?? ev.t, ev.t) - m.joinedAt > c.vouch.stakeWindowDays * DAY) break;
-        m.stakeTaken = true;
         const v = m.vouchedBy;
-        if (!this.isEligible(v)) break;
-        if (m.vouchCreditId) this.reverse(v, m.vouchCreditId, ev, "vouch credit reversed: invitee removed", out);
-        this.penalize(v, "vouch_stake", c.penalty.vouchStake, ev, [ev.member], "vouch stake: invitee removed for serious abuse", out);
+        if (!this.isEligible(v)) {
+          m.stakePending = true;
+          break;
+        }
+        this.takeStake(ev.member, m, ev, out);
         break;
       }
       case "abuse_confirmed": {
@@ -372,7 +378,15 @@ export class CapitalLedger {
     if (ev.t - m.joinedAt > this.cfg.vouch.valueWindowDays * DAY) return;
     const e = this.credit(m.vouchedBy, "vouch", this.cfg.credit.vouch, ev, [invitee], m.valueProviders, "vouch: invitee active and got value", out);
     if (e) m.vouchCreditId = e.id;
-  }
+    }
+    private takeStake(inviteeId: MemberId, invitee: MemberRec, ev: CapitalEvent, out: LedgerEntry[]): void {
+      const voucher = invitee.vouchedBy;
+      if (!voucher || invitee.stakeTaken || !this.isEligible(voucher)) return;
+      invitee.stakeTaken = true;
+      invitee.stakePending = false;
+      if (invitee.vouchCreditId) this.reverse(voucher, invitee.vouchCreditId, ev, "vouch credit reversed: invitee removed", out);
+      this.penalize(voucher, "vouch_stake", this.cfg.penalty.vouchStake, ev, [inviteeId], "vouch stake: invitee removed for serious abuse", out);
+    }
 
   private noShow(member: MemberId, ev: CapitalEvent, outcome: string, out: LedgerEntry[]) {
     if (!this.isEligible(member)) return;
