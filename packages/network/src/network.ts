@@ -55,7 +55,7 @@ import { lateArrivalBookingCurrent, lateArrivalBookingReceiptCurrent, lateArriva
 import { isLateArrivalPairBooking, isLateArrivalReport, lateArrivalDeliveryId, type LateArrivalDelivery } from "./group-late-arrival.ts";
 import { calendarPreferenceCommand, readCalendarFreeBusy, type CalendarFreeBusyAuthority } from "../../core/src/calendar-free-busy.ts";
 import { calendarPreferenceMayApply, calendarSchedulingPurpose } from "../../core/src/generated/calendarFreeBusy.ts";
-import { bookedCancellationAllowed, bookedCancellationPrefix } from "../../core/src/generated/outboundAdmission.ts";
+import { bookedCancellationAllowed, bookedCancellationPrefix, peerContactTypes } from "../../core/src/generated/outboundAdmission.ts";
 import { slopFirstIntroductionAt, slopPairContactAllowed } from "../../core/src/generated/datingRadius.ts";
 import { bookReplacementPlan, canTryGroupReplacement, mayOfferReviewedAlternate, recoveryPlanCanProceed, replacementAnswerAllowed, viableReplacementSlot } from "../../core/src/generated/bookedGroupReplacement.ts";
 import { bookingNoticeRosterCurrent, rescheduleAnswerAfterReceipt, rescheduleBookingSelected, rescheduleDeadline, rescheduleDraftCurrent, rescheduleTimeEligible, rescheduleVote } from "../../core/src/generated/meetingReschedule.ts";
@@ -129,7 +129,7 @@ import {
   step as stepSafetyCase, teenDoubtClearResult, type CasePhase, type ReportPhase, type StaffActionResult,
 } from "../../core/src/generated/safetyCase.ts";
 import {
-  groupAgeAllowed, minorSignalOpens, rosterHasMinor, teenFriendCandidate, teenFriendRole, teenIntroShape, teenPartnerAge, teenPlaceAllowed, teenReady, teenRosterMaximum,
+  friendsVerifyPasses, groupAgeAllowed, minorSignalOpens, rosterHasMinor, teenFriendCandidate, teenFriendRole, teenIntroShape, teenPartnerAge, teenPlaceAllowed, teenReady, teenRosterMaximum,
   teenRosterSizeAllowed, type AgeSide,
 } from "../../core/src/generated/friendIntroAge.ts";
 import { laneOffered, teenFriendApp, teenFriendCategory, teenFriendLane, teenGenerator, teenGroupPlanApp, type MatchLane } from "../../core/src/generated/matchLane.ts";
@@ -4404,6 +4404,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (this.busy(id, o.id)) return "busy_elsewhere";
     }
     if (this.rosterAgeBlocked(o)) return "participant_minor";
+    if (!this.friendsRosterVerificationCurrent(this.oppRoster(o))) return "friends_verification_required";
     for (let i = 0; i < o.participants.length; i++) for (let j = i + 1; j < o.participants.length; j++)
       if (!this.pairAllowed(o.participants[i]!, o.participants[j]!)) return "blocked_pair";
     if (o.category === "romance") {
@@ -4483,6 +4484,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (this.rosterAgeBlocked(o)) {
       this.gate("participant_minor", o.participants);
       return this.close(o, "participant_minor");
+    }
+    if (!this.friendsRosterVerificationCurrent(this.oppRoster(o))) {
+      this.gate("friends_verification_required", o.participants);
+      return this.close(o, "friends_verification_required");
     }
     o.review = { queuedAt: now, deadline: now + (o.sameDay ? 1 : this.opts.reviewSlaHours) * HOUR };
     for (const p of o.participants) o.status.set(p, "queued");
@@ -5032,6 +5037,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    * not on the cap, and only while the member has at most 2 messages unanswered.
    */
   private reveal(o: Opp) {
+    if (!this.friendsRosterVerificationCurrent(o.participants)) return this.close(o, "friends_verification_required", { releasePartial: true });
     if (!this.currentDatingPair(o)) return this.close(o, "slop_pair_changed", { releasePartial: true });
     if (o.seat && !this.hireContactCurrent(o, o.seat.manager, true)) return this.close(o, "peon_search_changed", { releasePartial: true });
     if (this.holdHelpOpportunity(o)) return this.close(o, "bounded help needs safety review");
@@ -6174,6 +6180,20 @@ export class ConsentNetwork implements NetworkUnderTest {
     return rosterHasMinor(this.oppRoster(o).map(id => this.rosterSideOf(id)));
   }
 
+  private friendsRosterVerificationCurrent(roster: readonly MemberId[]): boolean {
+    if (this.app.id !== "friends") return true;
+    const seats = roster.map(id => ({ id, side: this.rosterSideOf(id) }));
+    const withMinor = this.teenIntrosEnabled() && rosterHasMinor(seats.map(seat => seat.side));
+    const now = this.now();
+    const facets = this.snapshotCached().facets;
+    return seats.every(({ id, side }) => {
+      if (friendsVerifyPasses(withMinor, side.ready, false)) return true;
+      const tags = facets.filter(facet => facet.memberId === id && (facet.validFrom ?? -Infinity) <= now && now <= (facet.validTo ?? Infinity))
+        .flatMap(facet => facet.tags);
+      return friendsKit.friendsStaffVerified(tags);
+    });
+  }
+
   private teenMeetingEnd(o: Opp): number {
     return teenMeetingEndOf(o, this.now());
   }
@@ -6919,6 +6939,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       seated.push(id);
     }
     keep = seated;
+    if (!this.friendsRosterVerificationCurrent(keep)) {
+      return this.close(o, "friends_verification_required", { releasePartial: true });
+    }
     // Never a member on watch, and a minor only on a teen plan seat: any later message about this plan to them is a contact.
     const tell = (ids: MemberId[]) => { for (const id of ids) if ((!this.member(id).minor || (o.teenRuleAt !== undefined && this.teenPlanSeat(id))) && this.trust.ok(id)) this.noteFor(id, copy.planNotTogether); };
     // spec/planDecision.md, "A group plan never books two members directly"
@@ -8460,6 +8483,10 @@ export class ConsentNetwork implements NetworkUnderTest {
   private send(m: MemberState, body: string, meta: SimMeta, kind: SendKind, o: SendOpts = {}): SendResult {
     const now = this.now();
     const opportunity = this.opps.get(meta.proposalId ?? meta.probe?.key ?? meta.plan?.planId ?? "");
+    if (opportunity && this.app.id === "friends" && meta.type && peerContactTypes.includes(meta.type)) {
+      const roster = meta.booked && meta.participants?.length ? meta.participants : this.oppRoster(opportunity);
+      if (!this.friendsRosterVerificationCurrent(roster)) return this.refuse(m.id, kind, "friends_verification_required", this.hookFns(m, o.hook));
+    }
     if (this.app.id === "slop" && opportunity?.category === "romance" && this.opts.hooks?.hardDatingPairCurrent
       && (o.hook?.t === "probe" || o.hook?.t === "times" || o.hook?.t === "reveal")) {
       const approved = reviewApproved(opportunity.review);

@@ -1234,6 +1234,103 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await verified()).toEqual({ [ari]: true, [bo]: false });
   }, T);
 
+  test.each([
+    { name: "age check missing", age: undefined, liveness: "pass", teen: false, delivered: false },
+    { name: "liveness check missing", age: "pass", liveness: undefined, teen: false, delivered: false },
+    { name: "age check failed", age: "fail", liveness: "pass", teen: false, delivered: false },
+    { name: "liveness check failed", age: "pass", liveness: "fail", teen: false, delivered: false },
+    { name: "both staff checks passed", age: "pass", liveness: "pass", teen: false, delivered: true },
+    { name: "eligible teen and 18-year-old", age: undefined, liveness: undefined, teen: true, delivered: true },
+  ] as const)("Friends booking delivery checks the current roster: $name", async fixture => {
+    await fresh();
+    const clock = new SimClock(START);
+    const delivered: SendRequest[] = [];
+    const { s, otp } = service(clock, {
+      adapter: (_net, runtime) => runtime.app.id !== "friends" ? new DryRunAdapter(() => {}) : new BlooioAdapter({
+        app: "friends", city: "nyc", from: "+12125550199", clock, log: () => {},
+        provider: { kind: "sim", send: async request => {
+          delivered.push(request);
+          return { providerMessageId: `friends-fixture:${request.idempotencyKey}`, status: "sent" };
+        } },
+      }),
+    });
+    const web = site(s, clock, otp);
+    const recipientPhone = newPhone(), peerPhone = newPhone();
+    const recipientAge = fixture.teen ? { birthdate: "2008-06-01" } : { age: 30 };
+    const peerBirthdate = fixture.teen ? "2009-06-01" : "2008-06-01";
+    for (const [phone, firstName, ageFields] of [
+      [recipientPhone, "Ari", recipientAge], [peerPhone, "Blair", { birthdate: peerBirthdate }],
+    ] as const) {
+      await web.login("friends", phone);
+      expect((await web.json("friends", "POST", "/api/join", {
+        firstName, ...ageFields, consent: { sms: true, wording: APPS.friends.consent.text },
+      })).status).toBe(200);
+    }
+    const recipient = (await memberOf("friends", recipientPhone))!.id;
+    const peer = (await memberOf("friends", peerPhone))!.id;
+    const roster = [recipient, peer];
+    const snapshot = await loadSnapshot(sql, clock.now(), { app: "friends", city: "nyc" });
+    expect(snapshot.members.find(member => member.id === peer)).toMatchObject({
+      age: fixture.teen ? 17 : 18, birthExact: true, ageConflict: false,
+    });
+    if (fixture.teen) {
+      expect(snapshot.members.find(member => member.id === recipient)).toMatchObject({ age: 18, birthExact: true, ageConflict: false });
+    }
+    const verify = async (memberId: string, check: "age" | "liveness", result: "pass" | "fail") => {
+      expect(await (await staff(s, "saf-tok", "POST", `/apps/friends/members/${memberId}/verify`, {
+        check, result, note: "staff verification fixture",
+      })).json()).toEqual({ ok: true });
+    };
+    if (!fixture.teen) {
+      await verify(recipient, "age", "pass");
+      await verify(recipient, "liveness", "pass");
+      if (fixture.age) await verify(peer, "age", "pass");
+      if (fixture.liveness) await verify(peer, "liveness", "pass");
+    }
+    const world = new Mini([
+      { id: recipient, name: "Ari", age: fixture.teen ? 18 : 30, area: "Greenpoint", interests: ["climbing"] },
+      { id: peer, name: "Blair", age: fixture.teen ? 17 : 18, area: "Greenpoint", interests: ["climbing"] },
+    ], { app: "friends", inlineJudge: simulatedReviewJudge({ exceptions: false }), plans: false, growth: false });
+    world.clock.set(clock.now());
+    Object.assign(world.members[1]!, { birthKey: Number(peerBirthdate.replaceAll("-", "")), birthExact: true });
+    if (fixture.teen) Object.assign(world.members[0]!, { birthKey: 20080601, birthExact: true });
+    else for (const memberId of roster) world.facets.push({ id: `${memberId}:verified-before-booking`, memberId, kind: "fact", value: "Staff verified",
+      tags: ["verify:age:pass", "verify:liveness:pass"], scope: "agent_private", provenance: "vouched", confidence: 1 });
+    await world.onboard(...roster);
+    if (fixture.teen) await world.say(peer, "Can you find me a regular climbing partner?");
+    else world.propose(roster);
+    await world.answerProbes(roster);
+    const ready = world.net.exportState();
+    const booked = ready.opps.find(opportunity => opportunity.stage === "scheduled");
+    expect(booked?.participants.toSorted()).toEqual(roster.toSorted());
+    expect(booked?.teenRuleAt !== undefined).toBe(fixture.teen);
+    clock.set(booked!.meetingAt! - 2 * HOUR);
+    const rt = s.runtimeFor("friends")!;
+    const adapter = rt.adapter as BlooioAdapter;
+    await sql`update network.members set prefs=prefs || ${{ quietHours: [0, 0] }}::jsonb where app_id='friends'`;
+    await adapter.engaged(recipientPhone);
+    await adapter.lineSafety("review");
+    const id = "friends-staff-verification-booking-fixture";
+    await rt.unitOfWork(net => {
+      net.importState({ ...net.exportState(), members: ready.members, opps: ready.opps });
+      rt.unit.sends.push({ id, memberId: recipient, to: recipientPhone, kind: "transactional", type: "proposal",
+        oppId: booked!.id, bookingRoster: roster, body: "Your meeting at the park is booked.", proactive: false, system: false, ts: clock.now() });
+    });
+    expect(await adapter.queue.statusOf(id)).toBe("retry_scheduled");
+
+    if (fixture.age === "fail") await verify(peer, "age", "fail");
+    if (fixture.liveness === "fail") await verify(peer, "liveness", "fail");
+    await adapter.lineSafety(undefined);
+    clock.advance(HOUR);
+    await adapter.engaged(recipientPhone);
+    await rt.deliver();
+    const [row] = await sql`select status, attempts, note from platform.outbound where id=${id}`;
+    expect({ status: row?.status, attempts: Number(row?.attempts), providerCalled: delivered.some(request => request.idempotencyKey === `tn:${id}`) }, row?.note)
+      .toEqual(fixture.delivered
+        ? { status: "sent", attempts: 1, providerCalled: true }
+        : { status: "suppressed_ineligible", attempts: 0, providerCalled: false });
+  }, T);
+
   // spec/travelPresence.md, "Use my travel dates for matching"
   test("friends matching uses bounded trips and drops them at the end", async () => {
     await fresh();

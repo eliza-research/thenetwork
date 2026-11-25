@@ -34,6 +34,10 @@ function friendStatementOf(gender: string | undefined, openGender: string | unde
 
 export const VERIFY_PASS = "pass";
 export const verifyTag = (r: "passed" | "failed" | "pending" | "pass" | "fail") => (r === "passed" || r === "pass" ? "pass" : r === "failed" || r === "fail" ? "fail" : "pending");
+export function friendsStaffVerified(tags: readonly string[]): boolean {
+  return tags.find(t => t.startsWith(FT.age)) === `${FT.age}${VERIFY_PASS}`
+    && tags.find(t => t.startsWith(FT.liveness)) === `${FT.liveness}${VERIFY_PASS}`;
+}
 
 export const DEFAULT_TOLERANCE = 40;
 const cache = new WeakMap<World, Map<MemberId, FriendsInfo>>();
@@ -77,7 +81,7 @@ export function friendsInfo(w: World): Map<MemberId, FriendsInfo> {
     const tol = Number(val(FT.maxTravel));
     m.set(id, {
       home, often, tolerance: Number.isFinite(tol) && tol > 0 ? tol : DEFAULT_TOLERANCE,
-      verified: val(FT.liveness) === VERIFY_PASS && val(FT.age) === VERIFY_PASS,
+      verified: friendsStaffVerified(ts),
       safetyCue: ts.some(t => t.startsWith(FT.safety)) && !ts.includes(FT.reviewCleared),
       groupPref: val(FT.groupPref), energy: val(FT.energy), lifeStage: val(FT.lifeStage),
       friend: friendStatementOf(val(FT.gender), val(FT.openGender)),

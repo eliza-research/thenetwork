@@ -2,6 +2,7 @@ import type { CandidateRule, MemberRule, PairRule } from "../../pack.ts";
 import { NETWORK_MEMBER_RULES, NETWORK_PAIR_RULES } from "../network/rules.ts";
 import { friendsMutuallyOpen } from "../../../../core/src/generated/mutualOpenness.ts";
 import { friendsVerifyPasses } from "../../../../core/src/generated/friendIntroAge.ts";
+import { isMinor } from "../../filters.ts";
 import { friendsInfo } from "./info.ts";
 import type { World } from "../../world.ts";
 import type { MemberId } from "@thenetwork/core";
@@ -28,11 +29,20 @@ export function attendedGroup(w: World, id: MemberId): boolean {
   return s.has(id);
 }
 
+export function friendsSeatVerified(w: World, id: MemberId, withMinor: boolean): boolean {
+  return friendsVerifyPasses(withMinor && w.teenIntros, w.get(id)?.m.teenReady === true, friendsInfo(w).get(id)?.verified === true);
+}
+
+export function friendsRosterVerified(w: World, roster: readonly MemberId[]): boolean {
+  const withMinor = roster.some(id => isMinor(w, id));
+  return roster.every(id => friendsSeatVerified(w, id, withMinor));
+}
+
 let memberRules: readonly MemberRule[] | undefined;
 export const friendsMemberRules = (): readonly MemberRule[] => (memberRules ??= [
   { id: "romance_excluded", check: (_w, _id, _mi, c) => (c.category === "romance" ? "romance_excluded" : null) },
   net("category_opt_out"),
-  { id: "unverified", check: (w, id) => (friendsVerifyPasses(w.get(id)?.m.teenReady === true, friendsInfo(w).get(id)?.verified === true) ? null : "unverified") },
+  { id: "unverified", check: (w, id) => (friendsSeatVerified(w, id, true) ? null : "unverified") },
   { id: "safety_review", check: (w, id) => (friendsInfo(w).get(id)?.safetyCue ? "safety_review" : null) },
   net("only_when_asked"),
   net("reliability_holdout"),
@@ -61,4 +71,6 @@ export const FRIENDS_CANDIDATE_PRE_RULES: readonly CandidateRule[] = [
     },
   },
 ];
-export const FRIENDS_CANDIDATE_POST_RULES: readonly CandidateRule[] = [];
+export const FRIENDS_CANDIDATE_POST_RULES: readonly CandidateRule[] = [
+  { id: "unverified", check: (w, c) => friendsRosterVerified(w, c.participants) ? null : "unverified" },
+];

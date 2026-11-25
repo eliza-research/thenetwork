@@ -11,7 +11,7 @@ const OPEN = new Set(["review", "probing", "scheduled"]);
 
 type StoredOpp = NetworkState["opps"][number];
 type StoredMember = NetworkState["members"][number];
-type RosterSide = AgeSide & { minor: boolean };
+type RosterSide = AgeSide & { id: string; minor: boolean };
 
 export type StoredTeenStatus = "unmarked" | "adult" | "current" | "failed";
 
@@ -48,32 +48,33 @@ async function rosterSides(tx: SQL, app: string, st: NetworkState | undefined, i
     const member = st?.members.find(x => x.id === id);
     const age = row ? effectiveAgeOf(row, now) : undefined;
     const minor = !row || !canBeMatched(age) || (member ? member.minor === true : row.minor_signal_at !== null);
-    if (!row || !st || !member || st.declinedIds.includes(id)) return { adult: false, ready: false, birthKey: 0, minor };
+    if (!row || !st || !member || st.declinedIds.includes(id)) return { id, adult: false, ready: false, birthKey: 0, minor };
     const fields = birthFieldsOf(row, now);
     const side = storedAgeSideOf(st, member, age, {
       birthKey: fields.birthKey, birthExact: fields.birthExact === true, ageConflict: fields.ageConflict === true,
       barred: fields.teenBarred === true || fields.teenHeld === true,
       ...(row.minor_signal_at ? { minorSignalAt: new Date(row.minor_signal_at).getTime() } : {}),
     });
-    return { ...side, minor };
+    return { ...side, id, minor };
   });
 }
 
-export async function storedTeenStatus(tx: SQL, app: string, oppId: string, now: number, roster: readonly string[] = []): Promise<{ status: StoredTeenStatus; minor: boolean }> {
+export async function storedTeenStatus(tx: SQL, app: string, oppId: string, now: number, roster: readonly string[] = []): Promise<{ status: StoredTeenStatus; minor: boolean; contactMinor: boolean }> {
   const [saved] = await tx<{ state: NetworkState }[]>`select state from network.network_state
-    where app_id=${app} and state->'opps' @> ${JSON.stringify([{ id: oppId }])}::jsonb order by id limit 1`;
+    where app_id=${app} and state->'opps' @> ${tx.json([{ id: oppId }])}::jsonb order by id limit 1`;
   const st = saved?.state;
   const opp: StoredOpp | undefined = st?.opps.find(o => o.id === oppId);
   const marked = !!st && !!opp && opp.teenRuleAt !== undefined;
-  if (!marked && !roster.length) return { status: "unmarked", minor: false };
+  if (!marked && !roster.length) return { status: "unmarked", minor: false, contactMinor: false };
   const ids = [...new Set([...(opp ? teenRosterWithHost(opp) : []), ...roster])];
   const sides = ids.length ? await rosterSides(tx, app, st, ids, now) : [];
   const minor = sides.some(x => x.minor);
-  if (!st || !opp || !marked) return { status: "unmarked", minor };
-  if (!rosterHasMinor(sides)) return { status: "adult", minor };
+  const contactMinor = sides.some(side => side.minor && roster.includes(side.id));
+  if (!st || !opp || !marked) return { status: "unmarked", minor, contactMinor };
+  if (!rosterHasMinor(sides)) return { status: "adult", minor, contactMinor };
   const end = teenMeetingEndOf(opp, now);
   const current = OPEN.has(opp.stage) && teenFriendApp(app) && !storedTeenStop(st) && teenStoredItemShape(app, opp)
     && teenRosterSizeAllowed(true, teenRosterWithHost(opp).length)
     && groupAgeAllowed(true, teenFriendCategory(app, opp.category), earliestDayKeyOf(now), latestDayKeyOf(Math.max(now, end)), sides);
-  return { status: current ? "current" : "failed", minor };
+  return { status: current ? "current" : "failed", minor, contactMinor };
 }
