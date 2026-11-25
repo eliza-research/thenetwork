@@ -23,6 +23,12 @@ export type SessionResult = "SignedOut" | "ReadFailed" | "MayJoin" | "AlreadyIn"
 export interface SessionView { result: SessionResult; account: number; reason: BlockReason }
 /** Story: Confirm my own phone / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/browserJoin.md) */
 export type AuthLookup = "LookupFailed" | "ModeOtp" | "ModeCloud";
+/** Story: Confirm my own phone / The phone step shows its parts from the sign-in mode (spec/browserJoin.md) */
+export type PhoneButton = "PhoneButtonWaiting" | "PhoneButtonOpening" | "PhoneButtonCloud" | "PhoneButtonSending" | "PhoneButtonSend";
+/** Story: Confirm my own phone / The phone step shows its parts from the sign-in mode (spec/browserJoin.md) */
+export type PhoneSubmit = "NoPhoneSubmit" | "ContinueWithCloud" | "SendTheNumber";
+/** Story: Confirm my own phone / The phone step shows its parts from the sign-in mode (spec/browserJoin.md) */
+export interface PhoneStepParts { numberField: boolean; check: boolean; busy: boolean; button: PhoneButton; submit: PhoneSubmit }
 /** Story: Confirm my own phone / A sent code opens the code step, and each answer uses up the security check (spec/browserJoin.md) */
 export type StartResult = "CodeSent" | "StartRateLimited" | "StartCheckRejected" | "StartFailed";
 /** Story: Confirm my own phone / Only a well-formed code goes to the server, and only a verified code signs the person in (spec/browserJoin.md) */
@@ -300,6 +306,41 @@ export function lawOnlyCloudAnswerUsesCloud(lookup: AuthLookup): boolean {
   return (authModeFor(lookup) === "CloudMode") === (lookup === "ModeCloud");
 }
 
+/** Story: Confirm my own phone / The phone step shows its parts from the sign-in mode (spec/browserJoin.md) */
+//@ pure
+export function phoneStepParts(formWaiting: boolean, numberForm: boolean, cloudButton: boolean, loading: boolean): PhoneStepParts {
+  const local_1 = loading || formWaiting;
+  return { numberField: !cloudButton && (numberForm || formWaiting), check: numberForm && !cloudButton, busy: local_1, button: formWaiting ? "PhoneButtonWaiting" : (cloudButton ? (loading ? "PhoneButtonOpening" : "PhoneButtonCloud") : (loading ? "PhoneButtonSending" : "PhoneButtonSend")), submit: local_1 ? "NoPhoneSubmit" : (cloudButton ? "ContinueWithCloud" : "SendTheNumber") };
+}
+
+/** Story: Confirm my own phone / The phone step shows its parts from the sign-in mode (spec/browserJoin.md) */
+//@ pure
+export function lawBusyPhoneStepSendsNothing(numberForm: boolean, cloudButton: boolean): boolean {
+  //@ ensures \result === true
+  return phoneStepParts(true, numberForm, cloudButton, false).submit === "NoPhoneSubmit" && phoneStepParts(false, numberForm, cloudButton, true).submit === "NoPhoneSubmit";
+}
+
+/** Story: Confirm my own phone / The phone step shows its parts from the sign-in mode (spec/browserJoin.md) */
+//@ pure
+export function lawCheckNeedsTheNumberForm(formWaiting: boolean, numberForm: boolean, cloudButton: boolean, loading: boolean): boolean {
+  //@ ensures \result === true
+  return !phoneStepParts(formWaiting, numberForm, cloudButton, loading).check || (numberForm && !cloudButton);
+}
+
+/** Story: Confirm my own phone / The phone step shows its parts from the sign-in mode (spec/browserJoin.md) */
+//@ pure
+export function lawCloudSignInShowsNoNumberField(formWaiting: boolean, numberForm: boolean, loading: boolean): boolean {
+  //@ ensures \result === true
+  const local_2: PhoneStepParts = phoneStepParts(formWaiting, numberForm, true, loading);
+  return !local_2.numberField && !local_2.check;
+}
+
+/** Story: Confirm my own phone / The page sends a number only when it is valid and the security check passed (spec/browserJoin.md) */
+//@ pure
+export function canSettleCheck(page: JoinPage): boolean {
+  return page.check === "CheckRunning";
+}
+
 /** Story: Confirm my own phone / The page sends a number only when it is valid and the security check passed (spec/browserJoin.md) */
 //@ pure
 export function canExpireCheck(page: JoinPage): boolean {
@@ -362,12 +403,6 @@ export function stepCodeRequestNeedsPassedCheck(before: JoinPage, via: string, a
 
 /** Story: Confirm my own phone / The page sends a number only when it is valid and the security check passed (spec/browserJoin.md) */
 //@ pure
-export function canSettleCheck(page: JoinPage): boolean {
-  return page.check === "CheckRunning";
-}
-
-/** Story: Confirm my own phone / The page sends a number only when it is valid and the security check passed (spec/browserJoin.md) */
-//@ pure
 export function settleCheck(page: JoinPage, passed: boolean): JoinPage {
   //@ ensures (inv(page) && canSettleCheck(page)) ==> alwaysAddressCleanAfterOpening(\result)
   //@ ensures (inv(page) && canSettleCheck(page)) ==> alwaysBlockedHasReason(\result)
@@ -384,9 +419,9 @@ export function settleCheck(page: JoinPage, passed: boolean): JoinPage {
   //@ ensures (inv(page) && canSettleCheck(page)) ==> stepSignInKeepsFormValues(page, "settleCheck", \result)
   //@ ensures (inv(page) && canSettleCheck(page)) ==> stepDoneFollowsSavedProfile(page, "settleCheck", \result)
   //@ ensures (inv(page) && canSettleCheck(page)) ==> stepOneRequestAtATime(page, \result)
-  const local_1 = page.formError === "CheckPending" || page.formError === "CheckFailed";
-  const local_2: InlineError = page.screen !== "Phone" ? page.formError : (!passed && (page.formError === "NoError" || local_1) ? "CheckFailed" : (passed && local_1 ? "NoError" : page.formError));
-  return { ...page, check: passed ? "CheckPassed" : "CheckBroken", formError: local_2 };
+  const local_3 = page.formError === "CheckPending" || page.formError === "CheckFailed";
+  const local_4: InlineError = page.screen !== "Phone" ? page.formError : (!passed && (page.formError === "NoError" || local_3) ? "CheckFailed" : (passed && local_3 ? "NoError" : page.formError));
+  return { ...page, check: passed ? "CheckPassed" : "CheckBroken", formError: local_4 };
 }
 
 /** Story: Confirm my own phone / A sent code opens the code step, and each answer uses up the security check (spec/browserJoin.md) */
@@ -431,8 +466,8 @@ export function answerCodeStart(page: JoinPage, started: StartResult): JoinPage 
   //@ ensures (inv(page) && canAnswerCodeStart(page)) ==> stepSignInKeepsFormValues(page, "answerCodeStart", \result)
   //@ ensures (inv(page) && canAnswerCodeStart(page)) ==> stepDoneFollowsSavedProfile(page, "answerCodeStart", \result)
   //@ ensures (inv(page) && canAnswerCodeStart(page)) ==> stepOneRequestAtATime(page, \result)
-  const local_3: CheckState = page.check === "NoCheck" ? "NoCheck" : "CheckRunning";
-  return started === "CodeSent" ? ({ ...page, pending: "Idle", check: local_3, screen: "Code", formError: "NoError" } as JoinPage) : ({ ...page, pending: "Idle", check: local_3, formError: startError(started) } as JoinPage);
+  const local_5: CheckState = page.check === "NoCheck" ? "NoCheck" : "CheckRunning";
+  return started === "CodeSent" ? ({ ...page, pending: "Idle", check: local_5, screen: "Code", formError: "NoError" } as JoinPage) : ({ ...page, pending: "Idle", check: local_5, formError: startError(started) } as JoinPage);
 }
 
 /** Story: Confirm my own phone / Only a well-formed code goes to the server, and only a verified code signs the person in (spec/browserJoin.md) */
@@ -667,8 +702,8 @@ export function recheck(page: JoinPage, view: SessionView): JoinPage {
   //@ ensures (inv(page) && canRecheck(page, view)) ==> stepSignInKeepsFormValues(page, "recheck", \result)
   //@ ensures (inv(page) && canRecheck(page, view)) ==> stepDoneFollowsSavedProfile(page, "recheck", \result)
   //@ ensures (inv(page) && canRecheck(page, view)) ==> stepOneRequestAtATime(page, \result)
-  const local_4: JoinPage = routed(view, page, page.inviteOnly);
-  return { ...local_4, notice: signedInResult(view.result) || page.notice === "AccountChanged" ? page.notice : (view.result === "SignedOut" ? "SessionEnded" : "ApiUnreachable") };
+  const local_6: JoinPage = routed(view, page, page.inviteOnly);
+  return { ...local_6, notice: signedInResult(view.result) || page.notice === "AccountChanged" ? page.notice : (view.result === "SignedOut" ? "SessionEnded" : "ApiUnreachable") };
 }
 
 /** Story: Confirm my details and join / The page sends the profile only with a name, an age from 1 to 120 and the text consent ticked (spec/browserJoin.md) */
@@ -768,17 +803,17 @@ export function answerJoin(page: JoinPage, joinAnswer: JoinOutcome): JoinPage {
   //@ ensures (inv(page) && canAnswerJoin(page)) ==> stepSignInKeepsFormValues(page, "answerJoin", \result)
   //@ ensures (inv(page) && canAnswerJoin(page)) ==> stepDoneFollowsSavedProfile(page, "answerJoin", \result)
   //@ ensures (inv(page) && canAnswerJoin(page)) ==> stepOneRequestAtATime(page, \result)
-  const local_5: JoinPage = { ...page, pending: "Idle" };
-  const local_6: BlockReason = joinRefusal(joinAnswer);
-  return joinAnswer === "JoinedOk" ? ({ ...local_5, screen: "Done", notice: "NoNotice" } as JoinPage) : (local_6 !== "NoBlock" ? ({ ...local_5, screen: "Blocked", reason: local_6 } as JoinPage) : (joinAnswer === "JoinAccountChanged" ? ({ ...local_5, screen: "Checking", account: 0, formHasValues: false, consented: false, notice: "AccountChanged", formError: "NoError" } as JoinPage) : (joinAnswer === "JoinUnauthorized" ? ({ ...local_5, screen: "Phone", account: 0, formHasValues: false, consented: false, notice: "SessionEnded", formError: "NoError" } as JoinPage) : ({ ...local_5, formError: "RequestFailed" } as JoinPage))));
+  const local_7: JoinPage = { ...page, pending: "Idle" };
+  const local_8: BlockReason = joinRefusal(joinAnswer);
+  return joinAnswer === "JoinedOk" ? ({ ...local_7, screen: "Done", notice: "NoNotice" } as JoinPage) : (local_8 !== "NoBlock" ? ({ ...local_7, screen: "Blocked", reason: local_8 } as JoinPage) : (joinAnswer === "JoinAccountChanged" ? ({ ...local_7, screen: "Checking", account: 0, formHasValues: false, consented: false, notice: "AccountChanged", formError: "NoError" } as JoinPage) : (joinAnswer === "JoinUnauthorized" ? ({ ...local_7, screen: "Phone", account: 0, formHasValues: false, consented: false, notice: "SessionEnded", formError: "NoError" } as JoinPage) : ({ ...local_7, formError: "RequestFailed" } as JoinPage))));
 }
 
 /** Story: Confirm my details and join / The server answer decides between done, blocked and a new sign-in (spec/browserJoin.md) */
 //@ pure
 export function lawFailedSaveKeepsOwnedProfile(page: JoinPage): boolean {
   //@ ensures \result === true
-  const local_7: JoinPage = answerJoin(page, "JoinFailed");
-  return !(page.screen === "Profile" && canAnswerJoin(page)) || (canSubmitProfile(local_7) && local_7.account === page.account && local_7.formHasValues === page.formHasValues && local_7.consented === page.consented);
+  const local_9: JoinPage = answerJoin(page, "JoinFailed");
+  return !(page.screen === "Profile" && canAnswerJoin(page)) || (canSubmitProfile(local_9) && local_9.account === page.account && local_9.formHasValues === page.formHasValues && local_9.consented === page.consented);
 }
 
 /** Story: Confirm my details and join / A Peon invitation stays in memory until the verified account agrees to join (spec/browserJoin.md) */
@@ -816,8 +851,8 @@ export function lawBrowserInvitationCannotRideAnotherAccount(beforeAccount: numb
 //@ pure
 export function lawBrowserInvitationNeedsCleanConsentedAccount(page: JoinPage, form: ProfileForm, boundAccount: boolean): boolean {
   //@ ensures \result === true
-  const local_8: JoinPage = submitProfile(page, form);
-  return !(canSubmitProfile(page) && canAnswerJoin(local_8) && browserInvitationMaySubmit(boundAccount, local_8.addressClean, local_8.consented)) || (boundAccount && page.addressClean && profileComplete(form) && local_8.consented);
+  const local_10: JoinPage = submitProfile(page, form);
+  return !(canSubmitProfile(page) && canAnswerJoin(local_10) && browserInvitationMaySubmit(boundAccount, local_10.addressClean, local_10.consented)) || (boundAccount && page.addressClean && profileComplete(form) && local_10.consented);
 }
 
 /** Story: Confirm my details and join / A Peon invitation stays in memory until the verified account agrees to join (spec/browserJoin.md) */

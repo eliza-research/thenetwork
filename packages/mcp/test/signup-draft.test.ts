@@ -38,6 +38,8 @@ test("verified-phone OAuth draft is app-bound, recoverable until deliberate use,
   expect(saved.body!.result.structuredContent).toMatchObject({
     prepared: true, url: "https://friends.help/SKILL.md", next_step: expect.stringContaining("in your agent"),
   });
+  expect(saved.body!.result.structuredContent.next_step).toContain("ticks the text consent");
+  expect(saved.body!.result.structuredContent.next_step).not.toMatch(/approve your details and text consent there/i);
   expect(saved.text).not.toContain(PHONE_A);
   expect(await e.accounts.personFor(PHONE_A)).toBeUndefined();
   const retry = await call(e,"https://friends.help/mcp","prepare_signup",{firstName:"Overwrite"},{token});

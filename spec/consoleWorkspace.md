@@ -79,17 +79,17 @@ pure def stepNewViewerClosesForms(before: Workspace, via: str, after: Workspace)
 
 ### Each panel shows a loading, refused, unavailable, failed, empty or full view
 
-A panel that waits for its first answer shows a loading row. A 403 answer shows that the role cannot see the panel. A 404 answer for the held texts or the bias monitor shows that the feature is not available here. Any other failure shows the error. An answer with no rows shows the empty row. A refused answer never shows rows.
+A panel that waits for its first answer shows a loading row. A 403 answer shows that the role cannot see the panel. A 404 answer for the held texts or the bias monitor, and a 503 answer for the monthly gatherings, show that the feature is not available here. The [monthly gathering spec](monthlyGathering.md) gives the answer of the gathering panel. Any other failure shows the error. An answer with no rows shows the empty row. A refused answer never shows rows.
 
 ```quint
-type WorkPanel = HeldPanel | CasesPanel | ReportsPanel | RequestsPanel | ConfigPanel | AuditPanel | LabPanel | BiasPanel
+type WorkPanel = HeldPanel | CasesPanel | ReportsPanel | RequestsPanel | ConfigPanel | AuditPanel | LabPanel | BiasPanel | GatheringPanel
 type PanelAnswer = NotAnswered | AnswerRows | AnswerForbidden | AnswerMissing | AnswerFailed
 type PanelView = PanelLoading | PanelForbidden | PanelUnavailable | PanelFailed | PanelEmpty | PanelRows
 
 pure def panelView(panel: WorkPanel, answer: PanelAnswer, rowCount: int): PanelView =
   if (answer == NotAnswered) PanelLoading
   else if (answer == AnswerForbidden) PanelForbidden
-  else if (answer == AnswerMissing and (panel == HeldPanel or panel == BiasPanel)) PanelUnavailable
+  else if (answer == AnswerMissing and (panel == HeldPanel or panel == BiasPanel or panel == GatheringPanel)) PanelUnavailable
   else if (answer != AnswerRows) PanelFailed
   else if (rowCount <= 0) PanelEmpty
   else PanelRows
@@ -103,7 +103,7 @@ pure def lawRowsNeedAnAnswer(panel: WorkPanel, answer: PanelAnswer, rowCount: in
 
 ### Each panel opens only for the roles that can read it
 
-Held texts, safety cases and reports need the safety role. The server records the staff member and selected app before it reads or returns the safety queue. An audit failure refuses the read. The matching switch and the lab need the analyst role. The audit log needs the admin role. The bias monitor needs the analyst role and real data. Member requests are open to every staff role.
+Held texts, safety cases and reports need the safety role. The server records the staff member and selected app before it reads or returns the safety queue. An audit failure refuses the read. The matching switch and the lab need the analyst role. The audit log needs the admin role. The bias monitor needs the analyst role and real data. The monthly gatherings need the admin role and real data with the Network service. Member requests are open to every staff role.
 
 ```quint
 pure def panelAllowed(panel: WorkPanel, staff: StaffView): bool =
@@ -111,6 +111,7 @@ pure def panelAllowed(panel: WorkPanel, staff: StaffView): bool =
   else if (panel == ConfigPanel or panel == LabPanel) staff.analyst
   else if (panel == AuditPanel) staff.admin
   else if (panel == BiasPanel) (staff.analyst and staff.mode != SimulatedWorld)
+  else if (panel == GatheringPanel) (staff.admin and staff.mode == RealWithService)
   else true
 
 pure val staffValues: Set[StaffView] = Set(
@@ -121,6 +122,9 @@ pure val staffValues: Set[StaffView] = Set(
 )
 
 pure def lawAuditLogIsAdminOnly(staff: StaffView): bool = panelAllowed(AuditPanel, staff) iff staff.admin
+
+pure def lawGatheringPanelNeedsARealAdmin(staff: StaffView): bool =
+  panelAllowed(GatheringPanel, staff) iff (staff.admin and staff.mode == RealWithService)
 ```
 
 ## Story: Decide a held text with a reason

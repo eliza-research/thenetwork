@@ -4,6 +4,21 @@ The runtime commands below use the current project entrypoints. The [pre-migrati
 
 These dated decisions were recorded in the former repository instructions. The [product specification](../README.md) reconciles them with the PRD, MVP plan, and later decisions.
 
+## Product owner decision — 2026-11-23: slop.date signup works in ChatGPT
+
+Question: "Should slop.date signup work in ChatGPT, as you decided before?" Answer, in the owner's exact words: "Yes, restore it".
+
+This decision confirms the founder decision of 2026-11-18: signup must work in ChatGPT, slop.date included. It also confirms that the slop.date ChatGPT connector is open to all, and that slop.date stays out of the ChatGPT directory plugin.
+
+1. The ntwrk.party hub serves `https://ntwrk.party/mcp/slop/openai`. A person can sign up for slop.date in ChatGPT at that endpoint. On the OpenAI surface, only that endpoint lists slop.date.
+2. `/mcp/openai`, `/mcp/peon/openai` and `/mcp/friends/openai` do not name slop.date or dating in the tool list, the discovery documents, `app_info`, `start_signup` or any other text.
+3. The slop.date site has no OpenAI surface of its own.
+4. The OpenAI plugin (`plugins/openai`) lists one server, `https://ntwrk.party/mcp/openai`. It has no slop.date skill and no slop.date or dating words.
+5. The slop.date skill gives ChatGPT the endpoint `https://ntwrk.party/mcp/slop/openai`.
+6. slop.date stays adults only. Every age rule stays as it is.
+
+Commit 9f8dbcd7 ("Restore the private Slop connector boundary") is superseded by this decision. Do not apply its rule again.
+
 ## Founder decision — 2026-11-22: members aged 13 to 17 and friendship introductions
 
 The owner's exact words:

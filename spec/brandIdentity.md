@@ -78,6 +78,21 @@ pure def lawBrandsAreDistinct(a: AppKey, b: AppKey): bool =
   )
 ```
 
+### Each app has one design-system brand
+
+The design system keeps the tokens of each brand in one folder. The name of the folder is also the `data-brand` value of the page. This rule is the only map from an app to its design-system brand. The site build, the shared components, the connector pages and the design-system build read it from here.
+
+```quint
+pure def designBrandId(app: AppKey): str =
+  if (app == Ntwrk) "network"
+  else if (app == Slop) "slop"
+  else if (app == Peon) "peon"
+  else "friends"
+
+pure def lawDesignBrandIdsAreDistinct(a: AppKey, b: AppKey): bool =
+  a != b implies designBrandId(a) != designBrandId(b)
+```
+
 ### Only The Network asks for an invitation
 
 ntwrk.party is invite-only. slop.date, peon.biz and friends.help are open to every person who is old enough to join.
@@ -111,7 +126,7 @@ pure def lawAccentInkDiffersFromAccent(accent: Accent): bool =
 
 ### An app site never names The Network or another app
 
-slop.date, peon.biz and friends.help name only themselves on every page, in the agent skill and in the skill catalog. There are three exceptions. The support address help@ntwrk.party can show on every surface, because it is the only inbox that receives mail. The agent skill of an app can also name the connector endpoint of that app, because ntwrk.party serves the connector of every app ([agent entry](./agentEntry.md)). The full endpoint is `https://ntwrk.party/mcp/<app>`. Peon and friends also have a public ChatGPT endpoint at `https://ntwrk.party/mcp/<app>/openai`. Slop has no public ChatGPT endpoint. The agent skill of an app can also name the page where the person sees and removes the access of an agent, `https://ntwrk.party/oauth/consents`, because the person gives that access on ntwrk.party. The skill names only the endpoint of its own app, and it does not name The Network in other words. The skill of The Network names its own endpoint, `https://ntwrk.party/mcp`.
+slop.date, peon.biz and friends.help name only themselves on every page, in the agent skill and in the skill catalog. There are three exceptions. The support address help@ntwrk.party can show on every surface, because it is the only inbox that receives mail. The agent skill of an app can also name the connector endpoint of that app, because ntwrk.party serves the connector of every app ([agent entry](./agentEntry.md)). This endpoint is `https://ntwrk.party/mcp/<app>`, and `https://ntwrk.party/mcp/<app>/openai` in ChatGPT. The agent skill of an app can also name the page where the person sees and removes the access of an agent, `https://ntwrk.party/oauth/consents`, because the person gives that access on ntwrk.party. The skill names only the endpoint of its own app, and it does not name The Network in other words. The skill of The Network names its own endpoint, `https://ntwrk.party/mcp`.
 
 ```quint
 type Surface = LandingSurface | LegalSurface | NotFoundSurface | JoinSurface | SkillSurface | CatalogSurface
@@ -128,14 +143,13 @@ pure def connectorEndpoint(app: AppKey): str =
 
 pure def openaiConnectorEndpoint(app: AppKey): str =
   if (app == Ntwrk) "https://ntwrk.party/mcp/openai"
-  else if (app == Slop) ""
+  else if (app == Slop) "https://ntwrk.party/mcp/slop/openai"
   else if (app == Peon) "https://ntwrk.party/mcp/peon/openai"
   else "https://ntwrk.party/mcp/friends/openai"
 
 pure def hubTextsOnAppSurface(site: AppKey, surface: Surface): List[str] =
-  if (surface != SkillSurface) List(supportEmail)
-  else if (openaiConnectorEndpoint(site) == "") List(supportEmail, agentAccessPage, connectorEndpoint(site))
-  else List(supportEmail, agentAccessPage, openaiConnectorEndpoint(site), connectorEndpoint(site))
+  if (surface == SkillSurface) List(supportEmail, agentAccessPage, openaiConnectorEndpoint(site), connectorEndpoint(site))
+  else List(supportEmail)
 
 pure def lawAppEndpointsAreDistinct(a: AppKey, b: AppKey): bool =
   a != b implies (connectorEndpoint(a) != connectorEndpoint(b) and openaiConnectorEndpoint(a) != openaiConnectorEndpoint(b)
@@ -184,4 +198,69 @@ pure def partTokens(app: AppKey, part: SharedPart): AccentTokens = accentTokens(
 
 pure def lawPartsTakeTheBrandTokens(app: AppKey, part: SharedPart, other: SharedPart): bool =
   partTokens(app, part) == partTokens(app, other) and partTokens(app, part) == accentTokens(brandFor(app).accent)
+```
+
+### The focus ring, the hover fill, the state colors and the inverse surface obey fixed color rules
+
+The focus ring has the accent color of each theme, so that the token `ring` is equal to the token `primary`. The hover fill `accent` has the hue of the accent, or no hue when the accent has no hue. The hover fill is not near the accent color. The state colors `ok`, `warn`, `info` and `destructive` are not near the accent color, so that a person can tell a state from the main action. Near means an OKLab distance that is less than the floor. The inverse surface `inverse` is the fill of the Messages entry and of a tooltip. Its text `inverse-foreground` has a contrast ratio of 4.5:1 or more on it. The inverse surface has a contrast ratio of 3:1 or more on the page, so that a person can see its edge (WCAG 1.4.11). The design-system build measures each value and gives the measurement to these rules. The floors are in thousandths of an OKLab distance and in tenths of a contrast ratio.
+
+```quint
+type StateColor = OkColor | WarnColor | InfoColor | DestructiveColor
+
+pure val stateColors: List[StateColor] = List(OkColor, WarnColor, InfoColor, DestructiveColor)
+
+pure def stateToken(color: StateColor): str =
+  if (color == OkColor) "ok"
+  else if (color == WarnColor) "warn"
+  else if (color == InfoColor) "info"
+  else "destructive"
+
+pure val nearColorFloorPermille: int = 100
+pure val inverseTextContrastFloorTenths: int = 45
+pure val inverseEdgeContrastFloorTenths: int = 30
+
+pure def ringIsTheAccent(ring: str, primary: str): bool = ring == primary
+
+pure def colorIsClearOfAccent(distancePermille: int): bool = distancePermille >= nearColorFloorPermille
+
+pure def hoverFillIsClear(distancePermille: int, sameHue: bool): bool =
+  sameHue and colorIsClearOfAccent(distancePermille)
+
+pure def inverseIsReadable(textContrastTenths: int, edgeContrastTenths: int): bool =
+  textContrastTenths >= inverseTextContrastFloorTenths and edgeContrastTenths >= inverseEdgeContrastFloorTenths
+
+pure def lawRingEqualsTheAccent(color: str): bool = ringIsTheAccent(color, color)
+
+pure def lawTheAccentIsNeverClearOfItself(sameHue: bool): bool =
+  not(colorIsClearOfAccent(0)) and not(hoverFillIsClear(0, sameHue))
+
+pure def lawStateTokensAreDistinct(a: StateColor, b: StateColor): bool =
+  a != b implies stateToken(a) != stateToken(b)
+
+pure def lawInverseNeedsBothContrasts(textContrastTenths: int, edgeContrastTenths: int): bool =
+  inverseIsReadable(textContrastTenths, edgeContrastTenths) implies
+    (textContrastTenths >= 45 and edgeContrastTenths >= 30)
+```
+
+### The logo and the favicon take only tokens, and the favicon has one variant for each color scheme
+
+Each logo has a tile under it. GraphMark, HeartMark and NecktieMark have a tile in the accent color. TwoCirclesMark has a tile in the page color, so that the header shows no change, and a browser tab bar of a different color shows the two circles on that tile. The logo uses no current text color. The favicon is the logo in the colors of one color scheme. The page links the light favicon with no media condition, so that a browser that ignores the condition shows the light favicon. The page then links the dark favicon with the dark media condition.
+
+```quint
+type MarkFill = PrimaryFill | BackgroundFill
+type ColorScheme = LightScheme | DarkScheme
+
+pure val colorSchemes: List[ColorScheme] = List(LightScheme, DarkScheme)
+
+pure def markTileFill(logo: LogoMark): MarkFill =
+  if (logo == TwoCirclesMark) BackgroundFill else PrimaryFill
+
+pure def faviconMedia(scheme: ColorScheme): str =
+  if (scheme == LightScheme) "" else "(prefers-color-scheme: dark)"
+
+pure def lawOnlyTheTwoCirclesTileTakesThePageColor(logo: LogoMark): bool =
+  (markTileFill(logo) == BackgroundFill) iff (logo == TwoCirclesMark)
+
+pure def lawLightFaviconHasNoCondition(scheme: ColorScheme): bool =
+  (faviconMedia(scheme) == "") iff (scheme == LightScheme)
 ```

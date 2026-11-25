@@ -703,7 +703,8 @@ module oauth_mcp {
    * signupPrefillFor and the store's useSignupPrefill: the signup form of request `r` (a person who
    * has not joined the request's app) shows the one live draft of the same client, app, phone key and person, under
    * the age policy (withSignupAgePolicy: an under-13 person gets no prefill). The draft is used once: its fields are
-   * scrubbed and consumed_at is set in the same transaction. No draft, two drafts or a refusal give an empty form.
+   * scrubbed and consumed_at is set in the same transaction. The live checks in this atomic step represent the
+   * current Clock reading after both row locks in the store. No draft, two drafts or a refusal give an empty form.
    */
   action openSignup(r: int): bool = all {
     val q = oa.reqs.get(r)

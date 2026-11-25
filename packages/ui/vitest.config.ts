@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import { project } from "../../tools/vibestack/vibestack/testing/vitest.ts";
 
@@ -9,5 +10,10 @@ const stories = project({ root: import.meta.dirname });
  */
 export default async (env: Parameters<typeof stories>[0]) => {
   const config = await stories(env);
-  return { ...config, plugins: [...(config.plugins ?? []), tailwindcss()] };
+  return {
+    ...config,
+    publicDir: resolve(import.meta.dirname, "../../apps/site/public"),
+    define: { ...config.define, __STORY_MATRIX__: "true" },
+    plugins: [...(config.plugins ?? []), tailwindcss()],
+  };
 };

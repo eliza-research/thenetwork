@@ -656,9 +656,11 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         expect((await rpc(pilot, "slop", "/mcp/openai", "tools/list", {}, token)).res.status).toBe(404);
         expect((await pilot.site("slop", "/.well-known/oauth-protected-resource/mcp/openai")).status).toBe(404);
         expect(JSON.stringify(toolData(await rpc(pilot, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: {} })))).not.toMatch(/slop|dating/i);
-        expect((await rpc(pilot, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "app_info", arguments: {} })).res.status).toBe(404);
-        expect((await pilot.site("ntwrk", "/.well-known/oauth-protected-resource/mcp/slop/openai")).status).toBe(404);
-        expect((await rpc(pilot, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "check_status", arguments: {} }, token)).res.status).toBe(404);
+        expect(toolData(await rpc(pilot, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "app_info", arguments: { app: "slop" } })).id).toBe("slop");
+        const slopOpenAiMeta = await pilot.site("ntwrk", "/.well-known/oauth-protected-resource/mcp/slop/openai");
+        expect(slopOpenAiMeta.status).toBe(200);
+        expect(((await slopOpenAiMeta.json()) as { resource: string }).resource).toBe(`${pilot.sites.ntwrk.origin}/mcp/slop/openai`);
+        expect((await rpc(pilot, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "check_status", arguments: {} }, token)).res.status).toBe(401);
         const client = (await pilot.mcp.store.getClient(c.client.client_id))!;
         const cimd = { ...client, id: "https://chatgpt.com/oauth/client.json", kind: "cimd" as const, redirectUris: ["https://client.example/callback"] };
         await pilot.mcp.store.putClient(cimd);
@@ -1039,7 +1041,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       expect(tm.age).toBe(15);
     }, T);
 
-    test("public OpenAI discovery serves Network, Peon and Friends and refuses Slop on both hosts", async () => {
+    test("public OpenAI discovery lists slop.date only at the hub /mcp/slop/openai endpoint, and the slop.date site has no OpenAI surface", async () => {
       const list = toolData(await rpc(st, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: {} }));
       expect(list.apps.map((a: { id: string }) => a.id)).toEqual(["ntwrk", "peon", "friends"]);
       expect(JSON.stringify(list)).not.toMatch(/slop|dating/i);
@@ -1047,7 +1049,13 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         const info = toolData(await rpc(st, "ntwrk", `/mcp/${app}/openai`, "tools/call", { name: "app_info", arguments: { app } }));
         expect(info.id).toBe(app);
       }
-      expect((await rpc(st, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "app_info", arguments: { app: "slop" } })).res.status).toBe(404);
+      for (const path of ["/mcp/peon/openai", "/mcp/friends/openai"]) {
+        const other = await rpc(st, "ntwrk", path, "tools/list");
+        expect(JSON.stringify(other.body), path).not.toMatch(/slop|dating/i);
+      }
+      const slopInfo = toolData(await rpc(st, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "app_info", arguments: { app: "slop" } }));
+      expect(slopInfo.id).toBe("slop");
+      expect(JSON.stringify((await rpc(st, "ntwrk", "/mcp/slop/openai", "tools/list")).body)).toContain("slop");
       const full = toolData(await rpc(st, "ntwrk", "/mcp", "tools/call", { name: "app_info", arguments: {} }));
       expect(full.apps.map((a: { id: string }) => a.id)).toContain("slop");
       expect((await rpc(st, "slop", "/mcp/openai", "tools/list")).res.status).toBe(404);

@@ -218,9 +218,9 @@ describe.skipIf(!EXPLICIT_PG && !pgAvailable)("PgOAuthStore", () => {
     expect(await response.json()).toMatchObject({draft:{firstName:"Ari",homeCity:"sf"},signupView:expect.any(String)});
     const restarted = new PgOAuthStore(testUrl.toString());
     try {
-      expect(await restarted.claimSignupDraft(env.accounts.phoneHash("+12125550199"), "friends", null, env.clock.t)).toBeUndefined();
-      expect(await restarted.claimSignupDraft(env.accounts.phoneHash(PHONE_A), "ntwrk", null, env.clock.t)).toBeUndefined();
-      const pair = await Promise.all([store, restarted].map(s => s.claimSignupDraft(env.accounts.phoneHash(PHONE_A), "friends", null, env.clock.t)));
+      expect(await restarted.claimSignupDraft(env.accounts.phoneHash("+12125550199"), "friends", null, () => env.clock.t)).toBeUndefined();
+      expect(await restarted.claimSignupDraft(env.accounts.phoneHash(PHONE_A), "ntwrk", null, () => env.clock.t)).toBeUndefined();
+      const pair = await Promise.all([store, restarted].map(s => s.claimSignupDraft(env.accounts.phoneHash(PHONE_A), "friends", null, () => env.clock.t)));
       expect(pair).toEqual([{ firstName: "Ari", homeCity: "sf" }, { firstName: "Ari", homeCity: "sf" }]);
       await store.discardSignupDrafts(env.accounts.phoneHash(PHONE_A), "friends", env.clock.t);
       const grants = await store.grantsFor(env.accounts.phoneHash(PHONE_A), "friends", env.clock.t);
@@ -232,11 +232,11 @@ describe.skipIf(!EXPLICIT_PG && !pgAvailable)("PgOAuthStore", () => {
       const all = await store.grantsFor(env.accounts.phoneHash(PHONE_A), "friends", env.clock.t);
       const pending = all.find((g: import("../src/store.ts").Grant) => g.clientId === next.client.client_id)!;
       await store.revokeGrant(pending.id, env.clock.t);
-      expect(await restarted.claimSignupDraft(env.accounts.phoneHash(PHONE_A), "friends", null, env.clock.t)).toBeUndefined();
+      expect(await restarted.claimSignupDraft(env.accounts.phoneHash(PHONE_A), "friends", null, () => env.clock.t)).toBeUndefined();
       expect((await store.sql`select fields from oauth.signup_drafts where grant_id=${pending.id}`)[0].fields).toEqual({});
       const fresh = await connect(env, "friends.help", PHONE_A);
       await call(env, "https://friends.help/mcp", "prepare_signup", { firstName: "Tess" }, { token: fresh.token.access_token });
-      expect(await restarted.claimSignupDraft(env.accounts.phoneHash(PHONE_A), "friends", null, env.clock.t)).toEqual({ firstName: "Tess" });
+      expect(await restarted.claimSignupDraft(env.accounts.phoneHash(PHONE_A), "friends", null, () => env.clock.t)).toEqual({ firstName: "Tess" });
     } finally { await restarted.close(); }
   });
 

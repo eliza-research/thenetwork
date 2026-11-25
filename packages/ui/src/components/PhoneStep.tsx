@@ -1,5 +1,6 @@
-// spec/browserJoin.md, "The page asks the server which sign-in to use and uses text codes when it cannot tell"
+// spec/browserJoin.md, "The phone step shows its parts from the sign-in mode"
 import { type ComponentProps, type FormEvent, type ReactNode, useId } from "react";
+import { type PhoneButton, phoneStepParts } from "../../../core/src/generated/browserJoin.ts";
 import { Button } from "./Button.tsx";
 import { Field } from "./Field.tsx";
 import { FieldError } from "./FieldError.tsx";
@@ -26,30 +27,38 @@ export type PhoneStepProps = Omit<ComponentProps<"section">, "children" | "title
   onContinueWithPhone: () => void;
 };
 
+const buttonText: Record<PhoneButton, string> = {
+  PhoneButtonWaiting: "Loading sign-in…",
+  PhoneButtonOpening: "Opening…",
+  PhoneButtonCloud: "Continue with your phone",
+  PhoneButtonSending: "Sending…",
+  PhoneButtonSend: "Text me a code",
+};
+
 /**
- * The join step where a person types their own number to get a code, or leaves for the cloud sign-in.
+ * The join step where a person types their own number to get a code, or leaves for the cloud sign-in. The generated `phoneStepParts` gives each part.
  * @model spec/browserJoin.md
  */
 export function PhoneStep({ formWaiting = false, numberForm = false, cloudButton = false, loading = false, phone, onPhoneChange, error, check, onSubmitPhone, onContinueWithPhone, ...props }: PhoneStepProps) {
   const errorId = useId();
+  const parts = phoneStepParts(formWaiting, numberForm, cloudButton, loading);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (loading || formWaiting) return;
-    if (cloudButton) onContinueWithPhone();
-    else onSubmitPhone();
+    if (parts.submit === "ContinueWithCloud") onContinueWithPhone();
+    else if (parts.submit === "SendTheNumber") onSubmitPhone();
   };
   return (
-    <StepFrame title="Confirm your phone number" loading={loading || formWaiting} {...props}>
-      <form noValidate onSubmit={submit} aria-busy={loading || formWaiting || undefined} className="flex flex-col gap-4">
-        {cloudButton || !(numberForm || formWaiting) ? null : (
+    <StepFrame title="Confirm your phone number" loading={parts.busy} {...props}>
+      <form noValidate onSubmit={submit} aria-busy={parts.busy || undefined} className="flex flex-col gap-4">
+        {parts.numberField ? (
           <Field label="Mobile number">
             <PhoneInput name="phone" placeholder="(212) 555-0123" required data-focus disabled={formWaiting} readOnly={loading} aria-describedby={error ? errorId : undefined} value={phone} onChange={(event) => onPhoneChange(event.target.value)} />
           </Field>
-        )}
-        {numberForm && !cloudButton ? check : null}
+        ) : null}
+        {parts.check ? check : null}
         <FieldError id={errorId}>{error}</FieldError>
-        <Button type="submit" loading={loading || formWaiting} disabled={formWaiting} className="self-start">
-          {formWaiting ? "Loading sign-in…" : cloudButton ? (loading ? "Opening…" : "Continue with your phone") : loading ? "Sending…" : "Text me a code"}
+        <Button type="submit" loading={parts.busy} disabled={formWaiting} className="self-start">
+          {buttonText[parts.button]}
         </Button>
       </form>
     </StepFrame>
