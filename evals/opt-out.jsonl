@@ -279,3 +279,20 @@
 {"text": "i forgot my number", "label": "not_stop", "lang": "en"}
 {"text": "he forgot my number", "label": "not_stop", "lang": "en"}
 {"text": "forget my number, use my new one", "label": "not_stop", "lang": "en"}
+{"text": "no me escribas", "label": "stop", "lang": "es"}
+{"text": "no me mandes", "label": "stop", "lang": "es"}
+{"text": "no me envies", "label": "stop", "lang": "es"}
+{"text": "no me contactes", "label": "stop", "lang": "es"}
+{"text": "no me textees", "label": "stop", "lang": "es"}
+{"text": "no me llames", "label": "stop", "lang": "es"}
+{"text": "no me manden", "label": "stop", "lang": "es"}
+{"text": "no me escriban", "label": "stop", "lang": "es"}
+{"text": "no me textees mas", "label": "stop", "lang": "es"}
+{"text": "por favor no me escribas", "label": "stop", "lang": "es"}
+{"text": "no me mandes la direccion", "label": "not_stop", "lang": "es"}
+{"text": "no me llames a trabajar", "label": "not_stop", "lang": "es"}
+{"text": "no me textees a esta hora", "label": "not_stop", "lang": "es"}
+{"text": "no me escribas el informe", "label": "not_stop", "lang": "es"}
+{"text": "no me escribas ahora", "label": "not_stop", "lang": "es"}
+{"text": "no me llames ahora", "label": "not_stop", "lang": "es"}
+{"text": "ella dijo no me escribas", "label": "not_stop", "lang": "es"}
