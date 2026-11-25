@@ -40,7 +40,7 @@ pure def lawVouchCapacityIsBounded(good: int, lost: int, base: int, perGood: int
 
 ### Vouch capacity counts only the vouches and stakes of its rolling period
 
-The capacity is a rate per rolling period. The default period is thirty days. A good vouch or a lost stake counts only when its time is after the period start and not after the evaluation time. An entry exactly one period old no longer counts. So a lost stake lowers the allowance for one period, not for good, and an old good vouch does not raise it for good. The shell converts the configured days to milliseconds and counts the entries for which this check holds.
+The capacity is a rate per rolling period. The default period is thirty days. A good vouch or a lost stake counts only when its time is after the period start and not after the evaluation time. An entry exactly one period old no longer counts. So a lost stake lowers the allowance for one period, not for good, and an old good vouch does not raise it for good. The shell converts the configured days to milliseconds and counts the entries for which this check holds. A lost stake that the ledger has reversed stops counting from the time of the reversal: the reversal names that stake, and only that stake stops counting.
 
 ```quint
 pure def vouchInPeriod(entryAt: int, asOf: int, periodMs: int): bool =
