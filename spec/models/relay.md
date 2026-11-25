@@ -8,7 +8,9 @@ A matched member needs to control which text or contact details The Network shar
 
 Check per-item consent and withdrawal, relay decisions, age restrictions, and erasure. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-Production calls the generated [relay verdict, request and consent rules](../relayDecision.md) and [item lifecycle](../relayLifecycle.md). Text parsing stays in the engine and network boundaries. An operative condition before or after the request can supply uncertainty to the private request rule. A prior condition can still apply when a separate clause follows it or it names a private item that must come first. Reports, quotations, instructions to proceed and unrelated remarks supply no such evidence. A clear statement about the same named actor, action, specified item, and explicit repeat or manner can settle a prior request to wait. The reader keeps those details when it compares the condition with the completion. An ordinary statement of purpose does not identify a transfer recipient. If the condition explicitly names the transfer recipient, the reader also compares that recipient with the request. A question leaves the condition open. The reader can recognize a complete quoted body as an explicit text relay. The body follows the ordinary text path and privacy checks. The reader checks a complete recipient against the selected match, including a recipient after a dash or the words “over to.” An unresolved destination after a question, in a quotation, or in a separate directive leaves the private request unapproved. An ordinary courtesy or an independent scheduling statement can follow a complete request. Phone swaps and durable queue acceptance remain separate.
+Production calls the generated [relay verdict, request and consent rules](../relayDecision.md) and [item lifecycle](../relayLifecycle.md). Text parsing stays in the engine and network boundaries. An operative condition before or after the request can supply uncertainty to the private request rule. A prior condition can still apply when a separate clause follows it or it names a private item that must come first. Reports, quotations, instructions to proceed and unrelated remarks supply no such evidence. A clear statement about the same named actor, action, specified item, and explicit repeat or manner can settle a prior request to wait. The reader keeps those details when it compares the condition with the completion. An ordinary statement of purpose does not identify a transfer recipient. If the condition explicitly names the transfer recipient, the reader also compares that recipient with the request. A question leaves the condition open. The reader can recognize a complete quoted body as an explicit text relay. The body follows the ordinary text path and privacy checks. An existing direct number withdrawal after a complete ordinary message stays out of the relayed body. Literal colon text and quoted refusal words stay in the message. The reader checks a complete recipient against the selected match, including a recipient after a dash or the words “over to.” An unresolved destination after a question, in a quotation, or in a separate directive leaves the private request unapproved. An ordinary courtesy or an independent scheduling statement can follow a complete request. Phone swaps and durable queue acceptance remain separate.
+
+An ordinary scheduling statement can name a different time from the separate phone transfer. An unresolved reference to a private transfer cannot supply the ordinary message when the private request is uncertain or withdrawn. An unresolved condition or refusal among the authored envelope words makes the direct phone request uncertain. A later assertion can release a recognized prerequisite only when it matches the same actor, action and specified item. A question cannot release a prerequisite. The reader excludes literal quotations from condition evidence.
 
 The [member age rules](../memberAge.md#a-near-birthday-gives-an-estimate-for-the-present-age) distinguish direct age evidence from moderation. The engine can block a message when the sender gives a near-birthday or current school-year cue. The shell checks the cue's speaker and excludes another person's quoted or reported words, a hypothetical and a complete adult school role. A teacher's attribution can explain the speaker's own grade. Only a direct age disclosure can lower the durable relay age. The signed relay and standalone corpus exercise the reader. The model takes the evidence category as input.
 
@@ -319,14 +321,20 @@ module relay {
   // signals after claiming the receipt. An operative unmet condition can supply uncertainty before
   // the private request. The reader checks authorship, scope and any stated completion.
   // Only a direct transfer clause supplies a private request. A transfer attributed to someone else
-  // supplies none. A later independent directive can supply one, whether it follows a sentence
-  // boundary or a comma after a tell/ask/let clause with no condition or refusal word, and an
-  // ordinary text envelope still follows the text path. Signed tests cover this reader boundary.
+  // supplies none. Quoted or colon-introduced payload follows the ordinary text path. A later
+  // independent phone directive can use the share path, whether it follows a sentence boundary or
+  // a comma after a tell/ask/let clause with no condition or refusal word. Its unresolved condition
+  // or explicit withdrawal can leave a preceding ordinary message that contains no private
+  // instruction or prior assent. Signed tests cover this reader boundary.
   pure def privateRelayRequestAllowed(refused: bool, uncertain: bool): bool =
     not(refused) and not(uncertain)
 
   action claimPrivateContact(k: str, refused: bool, uncertain: bool, withdraws: bool): bool =
     claim(k, if (privateRelayRequestAllowed(refused, uncertain)) "share" else if (withdraws) "withdraw" else "none")
+
+  action claimUnapprovedEnvelopeNumber(k: str, uncertain: bool, refused: bool, privateBody: bool, withdrawn: bool): bool =
+    if (not(privateBody) and ((uncertain and not(refused)) or withdrawn)) claim(k, "text")
+    else claimPrivateContact(k, refused, uncertain, withdrawn)
 
   // The unit commits its effects and the receipt in one transaction (runtime.ts writeUnit, completeAction last).
   pure def committed(e: Endpoint, k: str): Endpoint =
@@ -1014,6 +1022,36 @@ module relay {
       .then(setQuiet("B", false)).then(tickFlush(Set())).then(queueSend("a1"))
       .expect(safety)
       .expect(not(witness_deferredFlushed))
+
+  // A pending counterpart grant survives a regular text relay when the other grant is uncertain.
+  run uncertainNumberEnvelopeKeepsOrdinaryTextTest =
+    init
+      .then(claim("a1", "share")).then(commitShare("a1", false, false, false, false, false)).then(answer("a1"))
+      .then(claimUnapprovedEnvelopeNumber("b1", true, false, false, false)).then(commitText("b1", "pass", false)).then(answer("b1"))
+      .expect(desk.swaps.exists(sw => sw.src == "A") and desk.log.get("b1").kind == "text"
+        and queue.rows.keys().contains("b1") and not(queue.rows.get("b1").send.number)
+        and not(numberPending("A")) and not(numberPending("B")) and safety)
+
+  // A signed turn takes back B's pending grant first. Its separate ordinary text uses the text receipt.
+  run withdrawnNumberEnvelopeKeepsOrdinaryTextTest =
+    init
+      .then(claim("b1", "share")).then(commitShare("b1", false, false, false, false, false)).then(answer("b1"))
+      .expect(desk.swaps.exists(sw => sw.src == "B"))
+      .then(readPendingSwapReply("B", true, true, false))
+      .then(claimUnapprovedEnvelopeNumber("b2", false, true, false, true))
+      .then(commitText("b2", "pass", false)).then(answer("b2"))
+      .expect(desk.swaps.size() == 0 and desk.log.get("b2").kind == "text"
+        and queue.rows.keys().contains("b2") and not(queue.rows.get("b2").send.number)
+        and not(numberPending("A")) and not(numberPending("B")) and safety)
+
+  // A refusal inside literal text gives the turn no authority to withdraw the sender's pending grant.
+  run literalNumberRefusalKeepsPendingSwapTest =
+    init
+      .then(claim("b1", "share")).then(commitShare("b1", false, false, false, false, false)).then(answer("b1"))
+      .then(readPendingSwapReply("B", false, false, false))
+      .then(claim("b2", "text")).then(commitText("b2", "pass", false)).then(answer("b2"))
+      .expect(desk.swaps.exists(sw => sw.src == "B") and desk.log.get("b2").kind == "text"
+        and queue.rows.keys().contains("b2") and not(queue.rows.get("b2").send.number) and safety)
 
   // The reader found a qualified contact request and separately an explicit text relay. The
   // text's privacy verdict is a model input. scripts/sim/relay.ts checks both reader outcomes.

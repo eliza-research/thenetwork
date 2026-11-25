@@ -449,3 +449,52 @@
 {"text": "Tell him Ana said, send him my number", "want": "text"}
 {"text": "Tell him hi, I'm joking, send him my number", "want": "text"}
 {"text": "Tell him hi, hypothetically, send him my number", "want": "text"}
+{"text": "Tell Ana that she should send him my number. Please send Ari my number.", "want": "contact_share"}
+{"text": "Tell Ana she should send him my number. Please send Ari my number.", "want": "contact_share"}
+{"text": "Tell them I asked Ana to send him my number. Please send Ari my number.", "want": "contact_share"}
+{"text": "Tell Ana to have Sam send him my number. Please send Ari my number.", "want": "contact_share"}
+{"text": "Tell them Ana asked me to send my number. Please send Ari my number if he asks.", "want": "none"}
+{"text": "Tell them Ana asked me to send my number. Please send Ari my number. Never mind.", "want": "none"}
+{"text": "Tell them I'm on my way. Please send Ari this photo.", "want": "text"}
+{"text": "Tell them I'm on my way. Please send Ari my email.", "want": "text"}
+{"text": "Tell Ari this exact text:\nSend Ari my number.", "want": "text"}
+{"text": "Tell Ari:\nSend Ari my number.", "want": "text"}
+{"text": "Let Ari know:\nSend Ari my number.", "want": "text"}
+{"text": "Tell Ari: “I am running late.” Please send Ari my number.", "want": "contact_share"}
+{"text": "Tell Ari I am running late. Please send Ari my number if he asks.", "want": "text"}
+{"text": "Tell Ari I am running late. If he asks, send Ari my number.", "want": "text"}
+{"text": "Tell Ari I am running late. If you can, send Ari my number.", "want": "text"}
+{"text": "If he asks, send Ari my number.", "want": "none"}
+{"text": "Tell Ari I am running late. Wait for Ari to agree. Share my number with Ari.", "want": "none"}
+{"text": "Tell Ari I am running late. Wait for Ari to agree. Ari has already agreed. Share my number with Ari.", "want": "contact_share"}
+{"text": "Tell Ari I am running late. Please send Ari my number. Don't send my number.", "want": "text"}
+{"text": "Tell Ari I asked Ana to share my number. Please send Ari my number. Don't send my number.", "want": "none"}
+{"text": "Tell Ari I am running late. Please send Ari my number. Never mind.", "want": "none"}
+{"text": "Please send my number to Ari Casey.", "want": "none"}
+{"text": "Please send this photo to Ari Casey.", "want": "none"}
+{"text": "Please send my number to Ari, please.", "want": "contact_share"}
+{"text": "Please send this photo to Ari when you can.", "want": "photo"}
+{"text": "Yes, send it to Ari.", "want": "contact_share"}
+{"text": "Yes, send it to Ari Smith.", "want": "none"}
+{"text": "Yes, send it to my match.", "want": "contact_share"}
+{"text": "Tell Ari I am running late. Please send my number to Ari9.", "want": "none"}
+{"text": "Tell Ari I will be there tomorrow. Please send my number to Ari9.", "want": "none"}
+{"text": "Tell Ari I will be there tomorrow. Please send Ari my number.", "want": "contact_share"}
+{"text": "Tell Ari I will be there tomorrow at seven. Please send Ari my number.", "want": "contact_share"}
+{"text": "Tell Ari I will be there tomorrow. Please send Ari my number tomorrow.", "want": "text"}
+{"text": "Tell Ari to send it. Please send Ari my number if he asks.", "want": "none"}
+{"text": "Tell Ari “Send it.” Please send Ari my number if he asks.", "want": "text"}
+{"text": "Tell Ari I will be there tomorrow. Wait for Ari to agree. Share my number with Ari.", "want": "none"}
+{"text": "Tell him he can have it if he asks. Send him my number.", "want": "text"}
+{"text": "Tell him I'll send it when he asks. Send him my number.", "want": "none"}
+{"text": "Tell him only if he asks. Send him my number.", "want": "text"}
+{"text": "Tell him he has to ask first. Send him my number.", "want": "text"}
+{"text": "Tell him to wait until I say so. Send him my number.", "want": "text"}
+{"text": "Tell him I'm not ready. Send him my number.", "want": "text"}
+{"text": "Tell him no. Send him my number.", "want": "text"}
+{"text": "Tell him only if Ari asks. Taylor agreed. Send him my number.", "want": "text"}
+{"text": "Tell him no. Ari agreed? Send him my number.", "want": "text"}
+{"text": "Tell him I'm not ready. Ari agreed. Send him my number.", "want": "text"}
+{"text": "Tell him only after Ari agrees. Ari agreed? Send him my number.", "want": "text"}
+{"text": "Tell him only after Ari agrees. Ari agreed. Send him my number.", "want": "contact_share"}
+{"text": "Tell him “If it rains, bring a jacket.” Send him my number.", "want": "contact_share"}
