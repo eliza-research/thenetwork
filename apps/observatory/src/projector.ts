@@ -136,6 +136,7 @@ export class Projector {
         const p = r.proposal;
         const source = r.source as OppSource;
         const prev = s.opps.get(p.id);
+        const before = prev ? [...prev.participants] : undefined;
         const o: ObsOpportunity = {
           origin: prev?.origin, venue: prev?.venue, review: prev?.review, ...(prev?.times ? { times: prev.times } : {}), ...(prev?.booked ? { booked: prev.booked } : {}),
           id: p.id, kind: p.kind, source, generator: p.generator, category: p.category, city: p.city,
@@ -146,6 +147,10 @@ export class Projector {
         };
         s.upsertOpp(o);
         if (!prev) this.count(o);
+        else if (before && this.counted.has(o.id) && (before.length !== o.participants.length || before.some(id => !o.participants.includes(id)))) {
+          this.count({ id: o.id, participants: before }, -1);
+          this.count(o);
+        }
         this.opts.onOpp?.(o, r);
         if (source === "player" || source === "scenario") {
           s.pushFeed({ t: r.t, kind: "proposal", text: `${source === "player" ? "You proposed" : "Scenario proposed"} ${p.kind.replace(/_/g, " ")}: ${this.names(p.participants)}`, members: p.participants, opportunityId: p.id });
