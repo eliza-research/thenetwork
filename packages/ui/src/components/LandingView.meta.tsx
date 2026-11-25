@@ -69,7 +69,9 @@ export const meta: ComponentMeta<LandingViewProps> = {
       await showsBrand(context);
       await userEvent.click(view.getByRole("button", { name: copyLabel("CopyReady") }));
       await expect(args.onCopy).toHaveBeenCalledTimes(1);
-      await expect(view.queryByRole("link", { name: "Open in ChatGPT" })).toBeNull();
+      const chatGpt = new URL(view.getByRole("link", { name: "Open in ChatGPT" }).getAttribute("href") ?? "");
+      await expect(chatGpt.origin).toBe("https://chatgpt.com");
+      await expect(chatGpt.searchParams.get("q")).toBe(args.links.prompt);
       await userEvent.click(view.getByRole("link", { name: "Open in Claude" }));
       await expect(args.onChooseAgent).toHaveBeenCalledWith("Claude");
       await userEvent.click(view.getByRole("link", { name: messagesEntryLabel }));

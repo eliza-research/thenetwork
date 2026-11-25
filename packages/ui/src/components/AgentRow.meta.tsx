@@ -15,9 +15,11 @@ export const meta: ComponentMeta<AgentRowProps> = {
     Default: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
       await expect(within(canvasElement).getByRole("link", { name: "Open in ChatGPT" })).toBeTruthy();
     },
-    Slop: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    Slop: async ({ args, canvasElement }: { args: AgentRowProps; canvasElement: HTMLElement }) => {
       const row = within(canvasElement);
-      await expect(row.queryByRole("link", { name: "Open in ChatGPT" })).toBeNull();
+      const chatGpt = new URL(row.getByRole("link", { name: "Open in ChatGPT" }).getAttribute("href") ?? "");
+      await expect(chatGpt.origin).toBe("https://chatgpt.com");
+      await expect(chatGpt.searchParams.get("q")).toBe(args.links.prompt);
       await expect(row.getByRole("link", { name: "Open in Claude" })).toBeTruthy();
     },
     Phone: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
