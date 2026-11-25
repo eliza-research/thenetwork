@@ -24,7 +24,7 @@ export interface EventRow {
 /** Network log kinds stored as events (packages/network ctx.log). "learned" and "feedback" hold member facts or words: never stored. */
 export const NETWORK_EVENT_KINDS: ReadonlySet<string> = new Set([
   "review_queued", "review_decision", "review_expired", "review_invalidated", "review_refused", "review_mode", "matching_switch",
-  "probe_started", "probe_sent", "probe_answer", "probe_replaced", "probe_closed", "proposal_skipped", "opportunity_closed", "venue",
+  "probe_started", "probe_sent", "probe_answer", "probe_unclear", "probe_replaced", "probe_closed", "proposal_skipped", "opportunity_closed", "venue",
   "request", "request_result", "request_withdrawn_want", "trust", "abuse", "safety_action", "guard_blocked", "send_refused", "send_skipped",
   "age_unknown", "age_resolved", "age_conflict", "minor_signal", "join_declined", "invite", "growth_ask", "reengagement",
   "only_when_asked", "outreach_resumed", "ask_sent", "ask_answered", "empty_intent_followup", "interruption_feedback",
@@ -195,6 +195,7 @@ export function describe(row: EventRow, name: (id: string) => string = id => id)
       text = p.expired ? `${name(p.memberId)}: probe expired unanswered` : `${name(p.memberId)}: ${p.yes ? "available" : "not available"}${p.yes && pk ? ` · picked ${pk}` : ""}`;
       severity = p.yes ? "good" : undefined; keep("yes", "expired"); if (pk) detail.picked = pk; break;
     }
+    case "probe_unclear": text = `${name(p.memberId)}: probe answer unclear; asked again, nothing booked`; break;
     case "time_answer": { const pk = picks(p.picked); text = `${name(p.memberId)}: other times offered · picked ${pk ?? "none"}`; if (pk) detail.picked = pk; break; }
     case "send_deferred":
       // Interruptions (probes, asks, the weekly check-in) wait for the member's send window; logistics only for quiet hours (network.md 6.4).

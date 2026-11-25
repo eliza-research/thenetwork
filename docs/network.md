@@ -156,7 +156,7 @@ What the reviewer sees and does:
 - `opts` (`ReviewOptions`): `reason`, `note`, `reviewer`, `secondsSpent`, `explanations`, `objective`, `swapOut`.
 - `secondsSpent` is added up per item and logged. It is a training label (PRD 32.8).
 - `setReviewMode(mode, actor)` changes the mode and logs `review_mode { mode, actor }`. A switch to `"auto"` (simulator only) lets the simulated reviewer approve what waits.
-- Logs: `review_queued`, `review_decision`, `review_refused`, `review_invalidated`, `review_expired`, `review_mode`. `probe_started` names the origin, the reviewer who approved the opportunity, and the member probed first (`first`). `probe_sent` names the member, the number of time options, and whether it was an initial invite. Every message about an opportunity carries `meta.proposalId` (the judge's `unreviewed_contact` check reads these).
+- Logs: `review_queued`, `review_decision`, `review_refused`, `review_invalidated`, `review_expired`, `review_mode`. `probe_started` names the origin, the reviewer who approved the opportunity, and the member probed first (`first`). `probe_sent` names the member, the number of time options, and whether it was an initial invite. `probe_unclear` names the member whose probe answer was neither a clear yes nor a clear no and who was asked again. Every message about an opportunity carries `meta.proposalId` (the judge's `unreviewed_contact` check reads these).
 
 A member who asked for something still hears "On it" at once. The opportunity itself waits for review.
 
