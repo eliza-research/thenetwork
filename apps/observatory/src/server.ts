@@ -441,6 +441,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
     const staff = u.via === "sso" ? staffUser(u.id, ssoGrants(u.id, auth), "sso") : u;
     return allowed(staff, ["safety"], app, readMode);
   };
+  const SAFETY_REPORT_EVENTS: ReadonlySet<string> = new Set(["report_received", "minor_reported"]);
   function revealCurrent(u: StaffUser, app: AppId, readMode: Mode, until: number): boolean {
     const now = Date.now();
     return staffRevealMayDisclose(readMode === mode, currentSafety(u, app, readMode), u.expiresAt === undefined || u.expiresAt > now, until - now);
@@ -635,8 +636,9 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         const id = decodeURIComponent(req.params.id!);
         const no = await record(u, app, { action: "read_opportunity", targetType: "opportunity", targetId: id, ok: true });
         if (no) return no;
-        const d = await (await source(mode, app)).opportunity(id, { truth: truthFor(u, app), historyBefore });
-        if (!d) return json({ error: "not found" }, 404);
+        const full = await (await source(mode, app)).opportunity(id, { truth: truthFor(u, app), historyBefore });
+        if (!full) return json({ error: "not found" }, 404);
+        const d = currentSafety(u, app, mode) ? full : { ...full, events: full.events.filter(e => !SAFETY_REPORT_EVENTS.has(e.type)) };
         // An analyst sees the opportunity's shape, never the people in it or the texts written to them.
         if (viewClass(rolesFor(u, app, mode)) === "counts") return json({
           ...d, opportunity: countsOpp(d.opportunity), members: d.members.map(countsMember), messages: [],

@@ -1,7 +1,3 @@
-// A report filed in the check-in after a date (docs/admin-console.md 3.5 SHOULD: full event
-// history per opportunity) names its opportunity, so the opportunity's History shows it. The
-// Network logs the report with the opportunity's id; the observatory reads that id from the
-// event row (eventOf -> describe -> the opportunity detail) to place the row in the history.
 import { describe, expect, test } from "vitest";
 import { DAY, HOUR } from "@thenetwork/core";
 import { describe as describeEvent, eventOf } from "../../../apps/observatory/src/events.ts";
@@ -47,7 +43,6 @@ describe("a check-in report names its opportunity in the event log", () => {
     expect(row!.object_type).toBe("opportunity");
     expect(row!.object_id).toBe(oppId);
     expect(describeEvent(row!).opportunityId).toBe(oppId);
-    expect(row!.object_type === "opportunity" ? row!.object_id === oppId : (row!.payload as any)?.oppId === oppId).toBe(true);
   });
 
   test("a report with no opportunity stays out of every opportunity History", async () => {
