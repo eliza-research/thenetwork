@@ -22,7 +22,7 @@ import {
 } from "../../../packages/core/src/generated/consoleWorkspace.ts";
 import type { AppProfile360, BookedPlan, DeliveryReason, HealthAlert, MemberDetail, MemberPhoto, PeonProfile360, SlopProfile360, MemberTimeline, ObsFeedItem, ObsMember, ObsMessage, OpportunityDetail, SystemEvent, TimeChoice } from "../src/types.ts";
 import { historyBetween, isBusyElsewhere, ReviewActions, reviewLine, VenueLink, wantsOf } from "./review.tsx";
-import { isMemberActive, OPEN, originLabel, originOf, store, useStore, type DrawerTab, type Fetched, type Focus, type Opp } from "./store.ts";
+import { isMemberActive, INACTIVE_PARTICIPANT_STATUS, OPEN, originLabel, originOf, store, useStore, type DrawerTab, type Fetched, type Focus, type Opp } from "./store.ts";
 import { ago, COMPONENT_SIGN, consoleNav, dur, humanize, jumpTo, num, pct, pickMember, sentence, shortDate, stamp } from "./ui.tsx";
 
 const TONE: Record<string, StatusTone> = { bad: "destructive", warn: "warn", good: "ok", info: "primary", gold: "primary", neutral: "neutral" };
@@ -362,8 +362,8 @@ function MemberPanel({ id }: { id: string }) {
   for (const o of d?.opportunities ?? []) oppMap.set(o.id, o);
   for (const o of s.opps.values()) if (o.participants.includes(id)) oppMap.set(o.id, o);
   const opps = [...oppMap.values()].filter(o => o.source !== "shadow").sort((a, b) => b.updatedAt - a.updatedAt);
-  const open = opps.filter(o => OPEN.has(o.state));
-  const past = opps.filter(o => !OPEN.has(o.state));
+  const open = opps.filter(o => OPEN.has(o.state) && !INACTIVE_PARTICIPANT_STATUS.has(o.status[id] ?? "pending") && !o.booked?.cancelled[id]);
+  const past = opps.filter(o => !OPEN.has(o.state) || INACTIVE_PARTICIPANT_STATUS.has(o.status[id] ?? "pending") || !!o.booked?.cancelled[id]);
   const meanEnj = m.counters.enjoymentN ? m.counters.enjoymentSum / m.counters.enjoymentN : undefined;
   const request = open.find(o => originOf(o) === "request" && o.participants[0] === id);
   const prompts = (s.game?.prompts ?? []).filter(p => p.memberId === id);
