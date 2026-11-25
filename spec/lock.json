@@ -710,6 +710,10 @@
       "Story: Count what I contributed once and preserve its history / A reversal restores room only for a credit in the same rolling period": [
         "a3f5491aebf1",
         "1d3700430619"
+      ],
+      "Story: Count what I contributed once and preserve its history / A vouch stake waits when the voucher is ineligible at removal": [
+        "cde11aa15d4b",
+        "3e566fe2e01e"
       ]
     },
     "spec/capitalLevers.md": {
@@ -4192,6 +4196,10 @@
       "Story: Ask the agent to relay my own words / Polite wording still needs a direct request to send a private item": [
         "87b6afe90e7d",
         "47021c6c1a22"
+      ],
+      "Story: Ask the agent to relay my own words / A separate direct phone request can take the place of a text envelope": [
+        "fbdab81e9600",
+        "d83fa2a235a6"
       ]
     },
     "spec/repeatEncounter.md": {
