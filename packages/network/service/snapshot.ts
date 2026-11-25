@@ -96,7 +96,7 @@ export interface SnapshotScope { app: string; city?: string; homeCities?: readon
  */
 export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope = { app: "ntwrk" }): Promise<WorldSnapshot> {
   const app = scope.app;
-  const [members, facets, intents, presence, edges, recent, parts, personBlocks, events] = await Promise.all([
+  const [members, facets, intents, presence, edges, recent, parts, personBlocks, events, accepted] = await Promise.all([
     sql`select m.*, a.age as matching_age, a.banned as canonical_banned, (a.staff_held or a.report_held) as safety_held,
       ${scope.includeMaturedSignup ? sql`a.age >= ${ADULT_AGE} and exists (select 1 from platform.signup_eligibility s where s.person_id=m.person_id)` : sql`false`} as matured_signup
       from network.members m
@@ -116,6 +116,12 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
       join network.members f on f.person_id = pb.from_person and f.app_id = ${app}
       join network.members t on t.person_id = pb.to_person and t.app_id = ${app} order by f.id, t.id`,
     scope.purpose === "profile_review" ? [] : readPublicEvents(sql, now, scope.city),
+    sql`select p.opportunity_id, p.member_id, o.created_at from network.participations p
+      join network.opportunities o on o.id = p.opportunity_id and o.app_id = ${app}
+      where p.app_id = ${app} and p.role = 'participant'
+        and p.status in ('accepted', 'confirmed', 'attended', 'no_show', 'cancelled_with_notice')
+        and o.state in ('SCHEDULED', 'COMPLETED', 'CANCELLED')
+      order by o.created_at, o.id, p.member_id`,
   ]);
   // Runtime conversation ownership takes precedence; it never creates or changes physical presence.
   const joined = new Set((members as any[]).map(r => r.id as string));
@@ -129,6 +135,24 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
   const keep = (id: string) => joined.has(id) && (!inCity || inCity.has(id));
   const partsBy = new Map<string, any[]>();
   for (const p of parts as any[]) { if (!partsBy.has(p.opportunity_id)) partsBy.set(p.opportunity_id, []); partsBy.get(p.opportunity_id)!.push(p); }
+  const storedIntroduced = new Set((edges as any[]).filter(e => e.type === "introduced").map(e => [e.from_id, e.to_id].sort().join("|")));
+  const acceptedBy = new Map<string, { group: string[]; createdAt: number }>();
+  for (const r of accepted as any[]) {
+    if (!acceptedBy.has(r.opportunity_id)) acceptedBy.set(r.opportunity_id, { group: [], createdAt: ms(r.created_at) ?? 0 });
+    acceptedBy.get(r.opportunity_id)!.group.push(r.member_id);
+  }
+  const introducedEdges: Edge[] = [];
+  const seenPairs = new Set<string>();
+  for (const { group, createdAt } of acceptedBy.values()) {
+    const kept = group.filter(keep);
+    for (let i = 0; i < kept.length; i++) for (let j = i + 1; j < kept.length; j++) {
+      const [from, to] = [kept[i]!, kept[j]!].sort();
+      const key = `${from}|${to}`;
+      if (seenPairs.has(key) || storedIntroduced.has(key)) continue;
+      seenPairs.add(key);
+      introducedEdges.push({ from, to, type: "introduced", strength: 0.3, explicit: false, createdAt });
+    }
+  }
   const snap: WorldSnapshot = {
     now,
     ...(events.length ? { events } : {}),
@@ -149,6 +173,7 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
       ...(edges as any[]).filter(e => CORE_EDGES.has(e.type) && keep(e.from_id) && keep(e.to_id)).map((e): Edge => ({ from: e.from_id, to: e.to_id, type: e.type, strength: e.strength, explicit: e.explicit, createdAt: ms(e.created_at) ?? 0 })),
       ...(personBlocks as any[]).filter(e => keep(e.from_id) && keep(e.to_id) && !(edges as any[]).some(x => x.type === "blocked" && x.from_id === e.from_id && x.to_id === e.to_id))
         .map((e): Edge => ({ from: e.from_id, to: e.to_id, type: "blocked", strength: 1, explicit: true, createdAt: ms(e.created_at) ?? 0 })),
+      ...introducedEdges,
     ],
     recentProposals: (recent as any[]).map((o): Proposal => ({
       id: o.id, kind: o.kind, participants: (partsBy.get(o.id) ?? []).filter(p => p.role === "participant").map(p => p.member_id),
