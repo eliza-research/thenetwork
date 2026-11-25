@@ -44,6 +44,9 @@ export type CapitalEvent =
   | Base & { type: "safety_flag"; member: MemberId; serious: boolean }
   /** Removal of a member. Only `serious_abuse` (confirmed) costs the voucher's stake. */
   | Base & { type: "member_removed"; member: MemberId; reason: "serious_abuse" | "left" | "other" }
+    /** A serious-abuse removal overturned on review. The ledger returns the voucher's lost stake. */
+    | Base & { type: "removal_overturned"; member: MemberId }
+  
   /** Confirmed spam, harassment, scam or policy violation by the member themself (alongside safety action). */
   | Base & { type: "abuse_confirmed"; member: MemberId; kind: "spam" | "harassment" | "scam" | "policy" }
   /** The member said yes to an intro, group, plan or event. */
