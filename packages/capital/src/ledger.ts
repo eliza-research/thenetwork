@@ -206,9 +206,9 @@ export class CapitalLedger {
         if (ev.reason !== "serious_abuse" || !m.vouchedBy || m.stakeTaken) break;
         // The window runs to the confirmed abuse, so a slow removal process does not save the stake.
         if (Math.min(m.abuseAt ?? ev.t, ev.t) - m.joinedAt > c.vouch.stakeWindowDays * DAY) break;
-        m.stakeTaken = true;
         const v = m.vouchedBy;
         if (!this.isEligible(v)) break;
+        m.stakeTaken = true;
         if (m.vouchCreditId) this.reverse(v, m.vouchCreditId, ev, "vouch credit reversed: invitee removed", out);
         this.penalize(v, "vouch_stake", c.penalty.vouchStake, ev, [ev.member], "vouch stake: invitee removed for serious abuse", out);
         break;
