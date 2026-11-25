@@ -195,24 +195,39 @@ export function agePartEvidenceOf(age: number, part: string, after: string, atCl
 const AGE_FORM_EXPLICIT_PART = new RegExp(`${AGE_FORM_START}${AGE_FORM_SELF}${AGE_FORM_QUALIFIER}(\\d{1,2})(${AGE_PART})`, "g");
 const AGE_FORM_NEAR_BIRTHDAY = new RegExp(`${AGE_FORM_START}${AGE_FORM_SELF}${AGE_FORM_QUALIFIER}(\\d{1,2})\\b${AGE_BIRTHDAY_AFTER_AGE}${AGE_BIRTHDAY_END}`, "g");
 
-const RELAY_AGE_WORDS: Record<string, number> = { thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18 };
-const RELAY_NEXT_AGE = `(1[3-8]|${Object.keys(RELAY_AGE_WORDS).join("|")})\\b`;
+const RELAY_AGE_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+  thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18,
+};
+const RELAY_TEEN_NEXT_AGE = "(1[3-8]|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen)\\b";
+const RELAY_ANY_NEXT_AGE = `([1-9]|1[0-8]|${Object.keys(RELAY_AGE_WORDS).join("|")})\\b`;
+const RELAY_MINOR_AGE_WORDS = "one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen";
 const RELAY_AGE_APPROXIMATION = "(?:almost|nearly|turning|about to (?:be|turn))\\s+";
+const RELAY_TURNING_APPROXIMATION = "(?:turning|about to (?:be|turn))\\s+";
 const RELAY_NEAR_BIRTHDAY = `(?:${AGE_BIRTHDAY_AFTER_AGE}|(?:\\s*${BIRTHDAY_AGE_MARKER})?${BIRTHDAY_SEPARATOR}(?:today|this\\s+(?:week|month|year))\\b)`;
 const RELAY_QUOTE_END = String.raw`(?=\s*["'])`;
 const RELAY_BIRTHDAY_END = `(?:${AGE_BIRTHDAY_END}|${RELAY_QUOTE_END})`;
 const RELAY_ESTIMATE_END = `(?:${RELAY_NEAR_BIRTHDAY}${RELAY_BIRTHDAY_END}|(?:\\s*${BIRTHDAY_AGE_MARKER})?(?:${AGE_FORM_END}|${RELAY_QUOTE_END}))`;
+const RELAY_UNDER13_ESTIMATE_END = `(?:${RELAY_NEAR_BIRTHDAY}${RELAY_BIRTHDAY_END}|\\s*${BIRTHDAY_AGE_MARKER}(?:${AGE_FORM_END}|${RELAY_QUOTE_END}))`;
 const RELAY_BIRTHDAY_ESTIMATES = [
-  new RegExp(`\\b${AGE_FORM_SELF}${RELAY_AGE_APPROXIMATION}${RELAY_NEXT_AGE}${RELAY_ESTIMATE_END}`, "g"),
-  new RegExp(`\\bi(?:(?:'ll| will) be| turn)\\s+${RELAY_NEXT_AGE}${RELAY_NEAR_BIRTHDAY}${RELAY_BIRTHDAY_END}`, "g"),
-  new RegExp(`^${RELAY_AGE_APPROXIMATION}${RELAY_NEXT_AGE}(?:${RELAY_NEAR_BIRTHDAY})?\\s*[.!]*$`, "g"),
-  new RegExp(`^${RELAY_NEXT_AGE}${RELAY_NEAR_BIRTHDAY}\\s*[.!]*$`, "g"),
+  new RegExp(`\\b${AGE_FORM_SELF}${RELAY_AGE_APPROXIMATION}${RELAY_TEEN_NEXT_AGE}${RELAY_ESTIMATE_END}`, "g"),
+  new RegExp(`\\b${AGE_FORM_SELF}${RELAY_AGE_APPROXIMATION}${RELAY_ANY_NEXT_AGE}${RELAY_UNDER13_ESTIMATE_END}`, "g"),
+  new RegExp(`\\bi(?:(?:'ll| will) be| turn)\\s+${RELAY_ANY_NEXT_AGE}${RELAY_NEAR_BIRTHDAY}${RELAY_BIRTHDAY_END}`, "g"),
+  new RegExp(`^${RELAY_AGE_APPROXIMATION}${RELAY_TEEN_NEXT_AGE}(?:${RELAY_NEAR_BIRTHDAY})?\\s*[.!]*$`, "g"),
+  new RegExp(`^${RELAY_TURNING_APPROXIMATION}${RELAY_ANY_NEXT_AGE}${RELAY_NEAR_BIRTHDAY}\\s*[.!]*$`, "g"),
+  new RegExp(`^${RELAY_TEEN_NEXT_AGE}${RELAY_NEAR_BIRTHDAY}\\s*[.!]*$`, "g"),
 ];
-const RELAY_GRADE = "(?:6|7|8|9|10|11|12)(?:st|nd|rd|th)?";
+const RELAY_DIRECT_MINOR_PHRASES = [
+  new RegExp(`\\b${AGE_FORM_SELF}${AGE_FORM_QUALIFIER}(?:thirteen|fourteen|fifteen|sixteen|seventeen)\\b(?:\\s*${BIRTHDAY_AGE_MARKER})?(?:${AGE_FORM_END}|${RELAY_QUOTE_END})`, "g"),
+  new RegExp(`\\b${AGE_FORM_SELF}${AGE_FORM_QUALIFIER}(?:${RELAY_MINOR_AGE_WORDS})\\s*${BIRTHDAY_AGE_MARKER}(?:${AGE_FORM_END}|${RELAY_QUOTE_END})`, "g"),
+  new RegExp(`\\b${AGE_FORM_SELF}an?\\s+(?:[1-9]|1[0-7]|${RELAY_MINOR_AGE_WORDS})[\\s-]+${BIRTHDAY_AGE_MARKER}(?:${AGE_FORM_END}|${RELAY_QUOTE_END})`, "g"),
+];
+const RELAY_GRADE = "(?:[1-9]|1[0-2])(?:st|nd|rd|th)?";
+const RELAY_GRADE_WORD = "first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth";
 const RELAY_SCHOOL_YEAR = "freshman|sophomore|junior|senior";
 const RELAY_SCHOOL_ESTIMATE = new RegExp(
-  String.raw`\b${AGE_FORM_SELF}(?:in\s+(?:the\s+)?(?:${RELAY_GRADE}|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth)\s+grade|a\s+${RELAY_GRADE}\s+grader|` +
-  String.raw`(?:a\s+)?(?:${RELAY_SCHOOL_YEAR})\s+(?:in|at)\s+(?:high school|hs)|a\s+(?:high school|hs)\s+(?:${RELAY_SCHOOL_YEAR}|student))\b` +
+  String.raw`\b${AGE_FORM_SELF}(?:in\s+(?:the\s+)?(?:${RELAY_GRADE}|${RELAY_GRADE_WORD})\s+grade|an?\s+(?:${RELAY_GRADE}|${RELAY_GRADE_WORD})\s+grader|` +
+  String.raw`(?:a\s+)?(?:${RELAY_SCHOOL_YEAR})\s+(?:in|at)\s+(?:high school|hs)|a\s+(?:(?:high|middle)\s+school|hs)\s+(?:${RELAY_SCHOOL_YEAR}|student)|a\s+(?:high|middle)\s+schooler)\b` +
   String.raw`(?=\s*(?:$|[.!?,;:)"']|and\b|but\b|here\b|now\b|lol\b|btw\b|tho(?:ugh)?\b))`,
   "g",
 );
@@ -242,6 +257,11 @@ export function relayMinorEstimate(text: string): boolean {
       const value = reading[1]!;
       const upcoming = RELAY_AGE_WORDS[value] ?? Number(value);
       if (!canBeMatched(precedingBirthdayAge(upcoming)) && ownsRelayEstimate(normalized, reading.index!, reading.index! + reading[0].length)) return true;
+    }
+  }
+  for (const rule of RELAY_DIRECT_MINOR_PHRASES) {
+    for (const reading of normalized.matchAll(rule)) {
+      if (ownsRelayEstimate(normalized, reading.index!, reading.index! + reading[0].length)) return true;
     }
   }
   for (const reading of normalized.matchAll(RELAY_SCHOOL_ESTIMATE)) {
