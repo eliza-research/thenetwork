@@ -742,7 +742,7 @@
         "f30e028641b2"
       ],
       "Story: Count what I contributed once and preserve its history / A reversal adds a new entry for the original owner": [
-        "3f7ffcfe6865",
+        "bfc165d42808",
         "d63ed17902de"
       ],
       "Story: Count what I contributed once and preserve its history / A reversal restores room only for a credit in the same rolling period": [
@@ -1338,8 +1338,8 @@
         "873aff669d03"
       ],
       "Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question": [
-        "bd0375670fc2",
-        "54c1a0d18207"
+        "fc290b78935c",
+        "8367a86225ff"
       ],
       "Story: Resolve a report with its own disposition / A complete name or confirmation identifies one safety target": [
         "205cc0f318fc",
