@@ -173,3 +173,33 @@
 {"text": "Please cease messaging me", "label": "stop", "lang": "en"}
 {"text": "She said to quit texting me", "label": "not_stop", "lang": "en"}
 {"text": "How can I cease messaging me?", "label": "not_stop", "lang": "en"}
+{"text": "Don't delete my number", "label": "not_stop", "lang": "en"}
+{"text": "Please don't delete my info", "label": "not_stop", "lang": "en"}
+{"text": "How do I delete my number?", "label": "not_stop", "lang": "en"}
+{"text": "How can I remove my number?", "label": "not_stop", "lang": "en"}
+{"text": "She said to delete my number", "label": "not_stop", "lang": "en"}
+{"text": "He told me to remove my number", "label": "not_stop", "lang": "en"}
+{"text": "She said to unsubscribe", "label": "not_stop", "lang": "en"}
+{"text": "Quit texting", "label": "stop", "lang": "en"}
+{"text": "Please cease messaging", "label": "stop", "lang": "en"}
+{"text": "Don't quit texting", "label": "not_stop", "lang": "en"}
+{"text": "ST\u00ADOP", "label": "stop", "lang": "en"}
+{"text": "ST\u2060OP", "label": "stop", "lang": "en"}
+{"text": "S\u200ETOP", "label": "stop", "lang": "en"}
+{"text": "Don't lose my number", "label": "not_stop", "lang": "en"}
+{"text": "She said to opt out", "label": "not_stop", "lang": "en"}
+{"text": "How do I lose my number from this list?", "label": "not_stop", "lang": "en"}
+{"text": "She said \"stop, delete my number\"", "label": "not_stop", "lang": "en"}
+{"text": "She said, \"delete my number\"", "label": "not_stop", "lang": "en"}
+{"text": "I asked to unsubscribe twice, unsubscribe me", "label": "stop", "lang": "en"}
+{"text": "I already asked to unsubscribe. Stop texting me", "label": "stop", "lang": "en"}
+{"text": "I've asked to opt out three times. remove me", "label": "stop", "lang": "en"}
+{"text": "asked to remove me last week, remove my number", "label": "stop", "lang": "en"}
+{"text": "How do I delete my account? Never mind, just delete my number", "label": "stop", "lang": "en"}
+{"text": "I can't delete my account so remove my number", "label": "stop", "lang": "en"}
+{"text": "the app won't delete my info so delete my number", "label": "stop", "lang": "en"}
+{"text": "I said delete my number", "label": "stop", "lang": "en"}
+{"text": "She said, delete my number. I agree, delete my number", "label": "stop", "lang": "en"}
+{"text": "my wife said, unsubscribe. unsubscribe me", "label": "stop", "lang": "en"}
+{"text": "He told me, delete it. Delete my number", "label": "stop", "lang": "en"}
+{"text": "I asked to unsubscribe. Unsubscribe from slop", "label": "not_stop", "lang": "en"}
