@@ -51,6 +51,58 @@ test.skipIf(!pgAvailable)("persisted proposal activity follows the seeded game r
   }
 }, 60_000);
 
+test.skipIf(!pgAvailable)("a probe replacement moves persisted proposal activity with the roster", async () => {
+  // spec/observatoryRoster.md, "Reviewed offers contribute to a member's proposal activity after approval"
+  // A probe replacement swaps a participant after approval: the outgoing member keeps no credit and
+  // the incoming member carries it, in game mode as in persisted real mode.
+  const url = await testDb();
+  const sql = new SQL(url);
+  const game = new GameSource({ seed: 4, personas: 80, days: 14, network: "consent",
+    review: "human", city: "all", pushMs: HOUR, tickMs: HOUR });
+  async function compare() {
+    const expected = game.state();
+    await writeRows(sql, rowsFromGame(game), { truncate: true });
+    const real = new RealSource({ url, service: false, pollMs: HOUR, pushMs: HOUR });
+    try {
+      await real.init();
+      const actual = real.state();
+      expect(actual.env.error).toBeUndefined();
+      expect(actual.stats.proposals).toBe(expected.stats.proposals);
+      expect(Object.fromEntries(actual.members.map(m => [m.id, m.counters.proposals])))
+        .toEqual(Object.fromEntries(expected.members.map(m => [m.id, m.counters.proposals])));
+    } finally { await real.dispose(); }
+  }
+  try {
+    await game.init();
+    const tracked = new Map<string, string[]>();
+    let replaced: { id: string; out: string; in: string } | undefined;
+    for (let hour = 0; hour < 14 * 24 && !replaced; hour++) {
+      expect((await game.control({ type: "step", ms: HOUR })).ok).toBe(true);
+      for (const o of game.state().opportunities.filter(o => o.state === "IN_REVIEW")) {
+        if (tracked.size < 5 && o.alternates.length > 0 && !tracked.has(o.id)) {
+          expect((await game.control({ type: "review", oppId: o.id, decision: "approve" })).ok).toBe(true);
+          tracked.set(o.id, [...o.participants]);
+        }
+      }
+      for (const [id, before] of tracked) {
+        const now = game.state().opportunities.find(o => o.id === id);
+        if (!now || now.participants.join(",") === before.join(",")) continue;
+        replaced = {
+          id,
+          out: before.find(x => !now.participants.includes(x))!,
+          in: now.participants.find(x => !before.includes(x))!,
+        };
+      }
+    }
+    expect(replaced).toBeDefined();
+    await compare();
+  } finally {
+    await game.dispose();
+    await sql.close();
+    await dropTestDb();
+  }
+}, 120_000);
+
 test.skipIf(!pgAvailable)("an archived invalidated review keeps proposal credit only for an exactly published offer", async () => {
   const url = await testDb();
   const sql = new SQL(url);
