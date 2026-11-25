@@ -3,6 +3,8 @@
 
 /** Story: Recover an agent profile submission without sending it again / Only the first claim can invoke intake for the exact profile and grant (spec/mcpProfileSubmission.md) */
 export type ProfileClaim = "ProfileClaimRefused" | "ProfileClaimStart" | "ProfileClaimAccepted" | "ProfileClaimPending";
+/** Story: Recover an agent profile submission without sending it again / The Network keeps no copy of the agent's profile text (spec/mcpProfileSubmission.md) */
+export type InboundBody = "InboundBodyAgentProfile" | "InboundBodyFeedback" | "InboundBodyText";
 
 
 /** Story: Recover an agent profile submission without sending it again / Only the first claim can invoke intake for the exact profile and grant (spec/mcpProfileSubmission.md) */
@@ -43,4 +45,31 @@ export function lawUnresolvedProfileNeverReportsAcceptance(intakeAccepted: boole
 export function lawIntakeMustRecordReceipt(intakeAccepted: boolean): boolean {
   //@ ensures \result === true
   return !profileSubmissionAccepted("ProfileClaimStart", intakeAccepted, false);
+}
+
+/** Story: Recover an agent profile submission without sending it again / The Network keeps no copy of the agent's profile text (spec/mcpProfileSubmission.md) */
+//@ pure
+export function inboundBody(source: string, feedbackAnswer: boolean): InboundBody {
+  return source !== "thread" ? "InboundBodyAgentProfile" : (feedbackAnswer ? "InboundBodyFeedback" : "InboundBodyText");
+}
+
+/** Story: Recover an agent profile submission without sending it again / The Network keeps no copy of the agent's profile text (spec/mcpProfileSubmission.md) */
+//@ pure
+export function lawAgentProfileTextNotKept(source: string, feedbackAnswer: boolean): boolean {
+  //@ ensures \result === true
+  return !(source !== "thread") || inboundBody(source, feedbackAnswer) === "InboundBodyAgentProfile";
+}
+
+/** Story: Recover an agent profile submission without sending it again / The Network keeps no copy of the agent's profile text (spec/mcpProfileSubmission.md) */
+//@ pure
+export function lawFeedbackAnswerTextNotKept(feedbackAnswer: boolean): boolean {
+  //@ ensures \result === true
+  return !feedbackAnswer || inboundBody("thread", feedbackAnswer) === "InboundBodyFeedback";
+}
+
+/** Story: Recover an agent profile submission without sending it again / The Network keeps no copy of the agent's profile text (spec/mcpProfileSubmission.md) */
+//@ pure
+export function lawThreadTextKept(feedbackAnswer: boolean): boolean {
+  //@ ensures \result === true
+  return !(!feedbackAnswer) || inboundBody("thread", feedbackAnswer) === "InboundBodyText";
 }

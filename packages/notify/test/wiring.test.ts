@@ -10,10 +10,11 @@ import { pgAvailable } from "../../../apps/observatory/test/pg.ts";
 import { OutboundQueue, recipientWindowHasher } from "../../blooio/src/outbound-queue.ts";
 import type { ChannelAdapter, SendRequest } from "../../blooio/src/types.ts";
 import { APPS } from "../../platform/src/apps.ts";
-import { Notifier, queuePolicy, queueSink, threadHooks, type Recipient } from "../src/index.ts";
+import { buttonPageLink, Notifier, queuePolicy, queueSink, threadHooks, type Recipient } from "../src/index.ts";
 import { deliveryIdFor } from "../src/scheduler.ts";
 
 import { PgNotifyStore } from "../src/pg-store.ts";
+import { WEEK_MS } from "../src/store.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
 
 const user = process.env.USER ?? "postgres";
@@ -155,7 +156,7 @@ describe.skipIf(!pgAvailable)("notify + the Postgres outbound queue", () => {
     const ids = itemSets.map(set => deliveryIdFor(r.personId, set));
     const recorded = await Promise.all(itemSets.map((itemIds, index) => store.recordDelivery({
       deliveryId: ids[index]!, personId: r.personId, itemIds, target: "imessage", countsTowardCap: true, sentAt: now(),
-    })));
+    }, 2)));
 
     expect(recorded.filter(Boolean)).toHaveLength(1);
     const [first, shared, last] = await store.getItems(items);
@@ -164,6 +165,43 @@ describe.skipIf(!pgAvailable)("notify + the Postgres outbound queue", () => {
     expect(await store.getDelivery(ids[recorded[0] ? 1 : 0]!)).toBeUndefined();
   });
 
+
+  test("SD-150: two overlapping scheduler replicas record at most the weekly cap of counting digests", async () => {
+    const { now, store, queue, sink, sent: calls, r } = await setup();
+    const urgent = (subject: string) => ({ ...req(r.personId, subject, `Update ${subject}.`), urgency: "urgent" as const });
+    const cfg = { isQuiet: () => false, weeklyCap: 1, urgentDelayMs: 0 };
+    let reached!: () => void, release!: () => void;
+    const atGate = new Promise<void>(resolve => { reached = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let replicaB!: Notifier, runB!: Promise<Awaited<ReturnType<Notifier["dispatch"]>>>;
+    let gated = false;
+    const storeB = Object.assign(Object.create(store), {
+      getItems: async (ids: string[], lock?: boolean) => {
+        if (!gated) { gated = true; reached(); await gate; }
+        return store.getItems(ids, lock);
+      },
+    }) as PgNotifyStore;
+    let lookupsA = 0;
+    const replicaA = new Notifier(store, { get: async id => {
+      if (id !== r.personId) return undefined;
+      if (++lookupsA === 2) {
+        await replicaA.add(urgent("second"), now());
+        runB = replicaB.dispatch(now(), sink);
+        await atGate;
+      }
+      return r;
+    } }, cfg);
+    replicaB = new Notifier(storeB, { get: id => (id === r.personId ? r : undefined) }, cfg);
+    const { item: first } = await replicaA.add(urgent("first"), now());
+    const a = await replicaA.dispatch(now(), sink);
+    release();
+    const b = await runB;
+    expect(a.sent.map(plan => plan.itemIds)).toEqual([[first.id]]);
+    expect(b.sent).toEqual([]);
+    expect(await store.capSendsSince(r.personId, now() - WEEK_MS + 1)).toEqual([now()]);
+    await queue.drain();
+    expect(calls.map(call => call.text)).toEqual(["Update first."]);
+  });
 
   test.each(["expired", "mixed", "erased", "left_app"] as const)("queued notification with %s content is suppressed", async mode => {
     const { clock, now, notifier, queue, sink, sent: calls, r } = await setup();
@@ -253,6 +291,18 @@ describe.skipIf(!pgAvailable)("notify + the Postgres outbound queue", () => {
       ignored: outcome === "ignored" ? 1 : 0,
       ignoredStreak: outcome === "ignored" ? 1 : 0,
     });
+  });
+
+  test("an SMS member with a linked assistant gets the button page, not the assistant's own link", async () => {
+    const { now, notifier, sink, r } = await setup({ channel: "sms", explicit: "claude" });
+    notifier.setAssistantUpdatesLookup(async (personId, app) => personId === r.personId && app === "friends" ? ["claude"] : []);
+    await notifier.setActive(r.personId, "claude", true);
+    await notifier.add(req(r.personId, "sms-linked"), now());
+    const { sent } = await notifier.dispatch(now(), sink);
+    expect(sent).toEqual([expect.objectContaining({ delivery: { mode: "button_page", assistants: ["claude"], reason: "explicit" }, token: expect.any(String) })]);
+    const plan = sent[0]!;
+    expect(plan.text.endsWith(`\n${buttonPageLink(plan.token!)}`)).toBe(true);
+    expect(plan.text).not.toContain("https://claude.ai/");
   });
 
   test("thread hooks: readUpdates clears the inbox; an inbound message counts as acting", async () => {

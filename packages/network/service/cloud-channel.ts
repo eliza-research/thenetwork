@@ -3,7 +3,7 @@ import {ChannelSendError, type SendReceipt, type SendRequest} from "../../blooio
 import {readCappedText} from "../../platform/src/body.ts";
 import {normalizePhone} from "../../platform/src/phone.ts";
 import {cloudDeliveryReceiptAllowed, cloudDispatchMayRetry, cloudLookupConfirmsAbsence, cloudReceiptTimeAllowed} from "../../core/src/generated/cloudDeliveryReceipt.ts";
-import {DELIVER_PATH, NETWORK_APP_IDS, parseApprovedRelayPhotos, type DeliverRequest, type NetworkAppId} from "../../core/src/svc/contract.ts";
+import {DELIVER_PATH, NETWORK_APP_IDS, type DeliverRequest, type NetworkAppId} from "../../core/src/svc/contract.ts";
 import {SVC_MAX_SKEW_S, svcSign} from "../../core/src/svc/svc-auth.ts";
 import {BlooioAdapter, type BlooioAdapterOptions} from "./channel.ts";
 
@@ -28,13 +28,7 @@ export class CloudChannelAdapter extends BlooioAdapter {
         throw new ChannelSendError("Cloud delivery needs a canonical text and persisted queue scope","invalid");
       if (options.env?.NETWORK_ROUTE_AUTHORITY_POLICY !== undefined)
         throw new ChannelSendError("Isolated route delivery requires its original signed turn authority", "invalid");
-      const photos=scope.approvedPhotos?.length?parseApprovedRelayPhotos(scope.approvedPhotos):undefined;
-      if (scope.approvedPhotos !== undefined && (!photos || !scope.id.startsWith("relay:") || !scope.memberId
-        || photos.some(p=>p.app!==scope.app || p.itemId!==scope.id.slice(6) || p.recipientMemberId!==scope.memberId)))
-        throw new ChannelSendError("Cloud delivery needs a bound approved photo selection","invalid");
       const payload:DeliverRequest={id:scope.id,to:request.to,text:request.text,app:options.app,memberId:scope.memberId,channel:"blooio",
-        // A relayed item (packages/network/src/relay.ts) is queued with the outbound id "relay:<item>".
-        ...(photos?{approvedPhotos:photos}:{}),
         kind:scope.kind==="reply" || scope.kind==="compliance" ? "reply" : scope.id.startsWith("relay:") ? "relay" : "proactive"};
       const path=receiptOnly?DELIVER_RECEIPT_PATH:DELIVER_PATH,body=JSON.stringify(payload);
       let response:Response,value:unknown;

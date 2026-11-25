@@ -4,6 +4,7 @@ import { attention } from "@thenetwork/engine";
 import { calendarSchedulingPurpose, calendarSource } from "../../core/src/generated/calendarFreeBusy.ts";
 import { readCalendarFreeBusy, type CalendarFreeBusyScope } from "../../core/src/calendar-free-busy.ts";
 import { Mini, START } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 const scopeAt = (now: number): CalendarFreeBusyScope => ({ app: "ntwrk", memberId: "a", purpose: calendarSchedulingPurpose, now });
 const connectionId = "private-scheduling-connection";
@@ -108,7 +109,7 @@ test("a current busy conflict discovered after the probes cannot book the picked
 test("a dated probe stays open for relative times and duration-only answers", async () => {
   // spec/probeReply.md, "A relative time or duration alone cannot choose an offered slot"
   const world = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], {
-    plans: false, growth: false, review: "human",
+    plans: false, growth: false, inlineJudge: holdEveryItem.inline,
   });
   await world.onboard("a", "b");
   const oppId = world.propose(["a", "b"]);
@@ -165,7 +166,7 @@ test.each(["neither works this week sorry", "Neither.", "Thursday 7pm works.", "
   const ids = ["a", "b"];
   let modelReads = 0;
   const world = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], {
-    plans: false, growth: false, review: "human",
+    plans: false, growth: false, inlineJudge: holdEveryItem.inline,
     calendarFreeBusy: scope => {
       const { grant, observation } = authorized(scope);
       const busy = attention.candidateSlots("America/New_York", scope.now)

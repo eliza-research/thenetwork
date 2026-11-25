@@ -1,11 +1,3 @@
-// slop.date judge (pass 2 only, PRD 40.4): a dating rubric on a pseudonymous context. It runs only
-// when an LLM is wired (the service's NETWORK_ENGINE_JUDGE=1); without one runEngine never calls it,
-// so the simulator's slop gates do not move. The judge can only remove a pair: hard filters (minors,
-// blocks, holds, mutual orientation, age ranges, radius, dealbreakers) ran before it in code.
-// The context carries what each person STATED (who they are and seek, age range, goal, dealbreakers,
-// stated values), an age band and a distance band, shared interests, and safety signals (cues,
-// verification, the Network's own records). Never a name, an exact age, a zip, a photo, an
-// appearance rating, a body type or a learned attraction score.
 import type { MemberId } from "@thenetwork/core";
 import type { JudgePack } from "../../pack.ts";
 import type { Candidate } from "../../types.ts";
@@ -14,11 +6,12 @@ import { ageBand } from "./copy.ts";
 import { mutualMarkets } from "./geo.ts";
 import type { SlopPackOptions } from "./options.ts";
 import { slopProfiles, type SlopProfile } from "./profile.ts";
+import { seekingMatches } from "./rules.ts";
 import { distanceBand } from "./zips.ts";
 
-export const SLOP_JUDGE_VERSION = "slop-judge-0.2";
+export const SLOP_JUDGE_VERSION = "slop-judge-0.3";
 
-export const SLOP_JUDGE_SYSTEM = `You review one proposed first date between two adults (P1 and P2) for slop.date, a dating matchmaker that texts each person an anonymous suggestion and reveals nobody until both say yes. A human reviewer approves every suggestion; you only check fit and safety.
+export const SLOP_JUDGE_SYSTEM = `You review one proposed first date between two adults (P1 and P2) for slop.date, a dating matchmaker that texts each person an anonymous suggestion and reveals nobody until both say yes. You check fit and safety; your answer can only remove a suggestion.
 Use ONLY the context: what each person stated (who they are and who they want to meet, the age range they want, what they are looking for, dealbreakers, stated values), their age band, the distance band between them, interests, and safety signals.
 Stated preferences come first: a pair where either person's stated wants are not met is a "no", even if everything else looks good. Unknown values never count against anyone.
 Safety: any safety cue, failed verification, reports, blocks after shared encounters, no-shows or back-outs in the context lower social_comfort and raise red_flags; a serious one (scam pattern, age signal, hostile language) is a dealbreaker.
@@ -28,7 +21,6 @@ Return JSON only: {"reasoning": "...", "cited_facts": [{"ref": "P1", "field": ".
 
 const sorted = (xs: readonly string[]) => [...xs].sort();
 
-/** One side of the context: stated fields and safety signals only. */
 function side(p: SlopProfile) {
   const h = p.history;
   return {
@@ -44,7 +36,6 @@ function side(p: SlopProfile) {
   };
 }
 
-/** Pseudonymous judge context for a dating pair. */
 export function slopJudgeContext(w: World, c: Candidate, o: SlopPackOptions): { context: object; refs: Record<string, MemberId> } {
   const P = slopProfiles(w.input);
   const [a, b] = c.participants as [MemberId, MemberId];
@@ -58,23 +49,21 @@ export function slopJudgeContext(w: World, c: Candidate, o: SlopPackOptions): { 
       lane: "first date", P1: side(pa), P2: side(pb),
       distance_band: mm.length ? distanceBand(mm[0]!.miles) : null,
       shared_interests: shared,
-      mutual_preferences: !!pa.is && !!pb.is && pa.seeks.includes(pb.is) && pb.seeks.includes(pa.is),
+      mutual_preferences: seekingMatches(pa, pb),
     },
   };
 }
 
-/** The dating judge for a pack's options (slop/index.ts wires it). */
 export function slopJudge(o: SlopPackOptions): JudgePack {
   return {
     rubric: { compact: { version: SLOP_JUDGE_VERSION, system: SLOP_JUDGE_SYSTEM }, matchable: { version: SLOP_JUDGE_VERSION, system: SLOP_JUDGE_SYSTEM } },
     buildContext: (w, c) => slopJudgeContext(w, c, o),
-    // After the model: still two adults who are each in the other's stated seeking set.
     hardGate: (w, c) => {
       if (c.participants.length !== 2 || c.category !== "romance") return "not_one_to_one";
       const P = slopProfiles(w.input);
       const [pa, pb] = c.participants.map(id => P.get(id));
       if (!pa?.adult || !pb?.adult) return "underage";
-      return pa.is && pb.is && pa.seeks.includes(pb.is) && pb.seeks.includes(pa.is) ? null : "orientation_mismatch";
+      return seekingMatches(pa, pb) ? null : "orientation_mismatch";
     },
   };
 }

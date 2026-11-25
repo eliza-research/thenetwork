@@ -1,9 +1,3 @@
-// The Hire lane's level band (spec/pairValue.md, "A pair needs both utilities over the floor and a
-// standing gap within the band"; spec/memberStanding.md, "A member with no reviewed facts gets the
-// widest uncertainty"). Role levels are 25 standing points apart and the Hire band is 15, so a
-// two-level gap (50) passes only while the candidate's uncertainty is 17 or more: a candidate with
-// two reviewed facets (a trusted level and a trusted skill) is refused it, and a trusted facet that
-// carries both the level and the skill is one reviewed fact, not two.
 import { expect, test } from "vitest";
 import { DAY, type MemberId } from "@thenetwork/core";
 import { noPairValue } from "../../core/src/generated/pairValue.ts";
@@ -29,19 +23,19 @@ function addMember(input: EngineInput, id: MemberId, facets: { tags: string[]; p
     details: job ? JOB_INTENT : SEARCH_INTENT, status: "active", createdAt: NOW - DAY, horizonDays: 90 });
 }
 
-/** A candidate at `level` with Python at level 5; `trusted`: a connected source gave both facts; `oneFacet`: both sit in one facet. */
-function addCandidate(input: EngineInput, id: MemberId, o: { level: number; trusted: boolean; oneFacet: boolean }) {
+function addCandidate(input: EngineInput, id: MemberId, o: { level: number; trusted: boolean; oneFacet: boolean; proven?: number }) {
   const source: Source = o.trusted ? "connected_source" : "said";
   const role = [`${T.family}software_engineer`, `${T.seniority}${o.level}`, `${T.mode}remote`];
   const skill = [`${T.skill}python:5`];
   addMember(input, id, [
     { tags: [`${T.entity}candidate`] },
     ...(o.oneFacet ? [{ tags: [...role, ...skill], provenance: source }] : [{ tags: role, provenance: source }, { tags: skill, provenance: source }]),
+    ...Array.from({ length: o.proven ?? 0 }, (_, k) => ({ tags: [`${T.skill}extra${k}:5`], provenance: "connected_source" as Source })),
     { tags: [`${T.floor}60`, `${T.auth}yes`, `${T.needsSponsor}no`] },
   ], false);
 }
 
-test("a two-level Hire gap passes only while the candidate has at most one reviewed facet", () => {
+test("a Hire pair never passes a two-level gap, and a one-level gap passes for every candidate", () => {
   const input: EngineInput = { now: NOW, members: [], facets: [], intents: [], presence: [], edges: [], recentProposals: [], interactions: [] };
   addMember(input, "job", [
     { tags: [`${T.entity}job`] },
@@ -52,17 +46,25 @@ test("a two-level Hire gap passes only while the candidate has at most one revie
   addCandidate(input, "stated", { level: 2, trusted: false, oneFacet: false });
   addCandidate(input, "together", { level: 2, trusted: true, oneFacet: true });
   addCandidate(input, "apart", { level: 2, trusted: true, oneFacet: false });
+  addCandidate(input, "stated-near", { level: 3, trusted: false, oneFacet: false });
   addCandidate(input, "apart-near", { level: 3, trusted: true, oneFacet: false });
+  addCandidate(input, "seven-near", { level: 3, trusted: true, oneFacet: false, proven: 5 });
+  addCandidate(input, "proven-near", { level: 3, trusted: true, oneFacet: false, proven: 8 });
+  addCandidate(input, "proven-far", { level: 2, trusted: true, oneFacet: false, proven: 8 });
   for (const seed of [1, 2]) {
     const w = new World(input, resolveConfig({ ...PEON_ENGINE_CONFIG, seed }), localEmbed, peonPack);
-    // The remote seat has one entity per market; every candidate is in nyc.
     const hire = (id: MemberId) => w.match.profilesOf(id).find(p => p.lane === "Hire" && p.market === "nyc")!;
-    // Uncertainty 20 - 2 x reviewed facets: the posting 1, stated 0, together 1, apart 2.
-    expect([hire("job"), hire("stated"), hire("together"), hire("apart")].map(p => p.uncertainty)).toEqual([18, 20, 18, 16]);
+    expect([hire("job"), hire("stated"), hire("together"), hire("apart")].map(p => p.uncertainty)).toEqual([3, 20, 18, 16]);
     expect(hire("job").standing - hire("apart").standing).toBe(50);
-    expect(w.match.value(hire("job"), hire("stated"))).toBeGreaterThanOrEqual(0);   // 50 <= 15 + 18 + 20
-    expect(w.match.value(hire("job"), hire("together"))).toBeGreaterThanOrEqual(0); // 50 <= 15 + 18 + 18
-    expect(w.match.value(hire("job"), hire("apart"))).toBe(noPairValue);            // 50 > 15 + 18 + 16
-    expect(w.match.value(hire("job"), hire("apart-near"))).toBeGreaterThanOrEqual(0); // one level: 25
+    expect(w.match.value(hire("job"), hire("stated"))).toBe(noPairValue);
+    expect(w.match.value(hire("job"), hire("together"))).toBe(noPairValue);
+    expect(w.match.value(hire("job"), hire("apart"))).toBe(noPairValue);
+    expect(w.match.value(hire("job"), hire("proven-far"))).toBe(noPairValue);
+    expect(hire("job").standing - hire("stated-near").standing).toBe(25);
+    expect([hire("seven-near"), hire("proven-near")].map(p => p.uncertainty)).toEqual([6, 3]);
+    expect(w.match.value(hire("job"), hire("stated-near"))).toBeGreaterThanOrEqual(0);
+    expect(w.match.value(hire("job"), hire("apart-near"))).toBeGreaterThanOrEqual(0);
+    expect(w.match.value(hire("job"), hire("seven-near"))).toBeGreaterThanOrEqual(0);
+    expect(w.match.value(hire("job"), hire("proven-near"))).toBeGreaterThanOrEqual(0);
   }
 });

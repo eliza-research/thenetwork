@@ -8,6 +8,7 @@
 !apps/observatory/
 !deploy/
 !evals/relay/clef-relay-weights.json
+!evals/review/qualified.json
 !tools/vibestack/vibestack/design/
 **/node_modules
 **/.env

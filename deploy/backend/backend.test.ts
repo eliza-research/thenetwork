@@ -8,26 +8,35 @@ import { DEFAULT_HOST_MAP } from "../../packages/platform/src/apps.ts";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { dropDb, emptyDb, pgAvailable } from "../../packages/platform/test/pg.ts";
 import { migrate } from "../../packages/db/migrate.ts";
+import { SimClock } from "../../packages/core/src/clock.ts";
+import { createPublicEventRefresh } from "./public-events.ts";
 import { PROXY_MAX_SKEW_S, signProxyHeaders } from "../../packages/platform/src/proxy.ts";
 import { PROFILE_REVIEW_DISCONNECT_PATH } from "../../packages/core/src/svc/profile-review-disconnect.ts";
 import { PROFILE_REVIEW_WITHDRAWAL_PATH } from "../../packages/core/src/svc/profile-review-withdrawal.ts";
 import { calendarOwnerPath } from "../../packages/core/src/generated/calendarFreeBusy.ts";
+import { RELAY_PHOTO_RESOLVE_PATH } from "../../packages/core/src/svc/contract.ts";
 import {
   BUILD_HEADER, CLIENT_IP, createBackend, ipOf, jsonLogger, loadConfig, normalizeEdge, PROXY_HEADERS,
   redact, routeLabel, serviceLoginProblem, type BackendConfig, type ServiceLike,
 } from "./backend.ts";
+import type { BackendBoot } from "../../packages/core/src/generated/bootPolicy.ts";
+import { createPublicApi } from "../../packages/platform/src/api.ts";
+import { MemoryPeopleStore } from "../../packages/platform/src/store.ts";
 
 const SECRET = "s".repeat(40);
 const DEPLOYED = {
-  PLATFORM_ENV: "staging", DATABASE_URL: "postgres://svc@db.invalid/x", MIGRATION_DATABASE_URL: "postgres://owner@db.invalid/x", PLATFORM_HASH_KEY: "h".repeat(40), PLATFORM_SESSION_SECRET: "e".repeat(40), LEAK_LABEL_KEY: "l".repeat(40), PLATFORM_PROXY_SECRET: SECRET,
-  TURNSTILE_SECRET_KEY: "fake", OTP_PROVIDER: "twilio", TWILIO_ACCOUNT_SID: "ACfake", TWILIO_AUTH_TOKEN: "fake", TWILIO_VERIFY_SERVICE_SID: "VAfake",
+  PLATFORM_ENV: "staging", DATABASE_URL: "postgres://svc@db.invalid/x", MIGRATION_DATABASE_URL: "postgres://owner@db.invalid/x", PLATFORM_HASH_KEY: "h".repeat(40), LEAK_LABEL_KEY: "l".repeat(40), PLATFORM_PROXY_SECRET: SECRET,
+  TURNSTILE_SECRET_KEY: "fake", TURNSTILE_SITE_KEY: "fake-site", OTP_PROVIDER: "twilio", TWILIO_ACCOUNT_SID: "ACfake", TWILIO_AUTH_TOKEN: "fake", TWILIO_VERIFY_SERVICE_SID: "VAfake",
+  SERVICE_TURN_SECRET: "t".repeat(40), NETWORK_SERVICE_TOKENS: `admin@*:${"a".repeat(40)}`, NETWORK_PUBLIC_EVENTS_DATABASE_URL: "postgres://events@db.invalid/x",
+  PLATFORM_SESSION_SECRET: "e".repeat(40), PHOTO_STORAGE: "r2", CLOUDFLARE_AI_TOKEN: "synthetic-ai-token", CLOUDFLARE_ACCOUNT_ID: "synthetic-account",
+  SURPLUS_API_KEY: "synthetic-surplus-key",
 };
 
 describe("config", () => {
   test("isolated signed route cannot enable direct Blooio or proactive Cloud sends", () => {
     const policy = JSON.stringify({authority:{version:1,routeId:"qa",generation:"g1",audience:"network-qa",realmId:"qa"},admitUntil:1000,drainUntil:2000});
     for (const NETWORK_CHANNEL of ["blooio", "eliza_cloud"]) {
-      const c = loadConfig({...DEPLOYED,NETWORK_ROUTE_AUTHORITY_POLICY:policy,NETWORK_CHANNEL,BLOOIO_ALLOW_SEND:"1",NTWRK_LIVE_APPROVED:"1",FRIENDS_LIVE_APPROVED:"1",BLOOIO_API_KEY:"synthetic",BLOOIO_FROM:"+12125550142"});
+      const c = loadConfig({...DEPLOYED,NETWORK_ROUTE_AUTHORITY_POLICY:policy,NETWORK_CHANNEL,BLOOIO_API_KEY:"synthetic",BLOOIO_FROM:"+12125550142",NETWORK_CLOUD_DELIVERY_ORIGIN:"https://cloud.example.test"});
       expect(c.channel).toBe("dry-run");
     }
     expect(() => loadConfig({...DEPLOYED,PLATFORM_ENV:"production",NETWORK_ROUTE_AUTHORITY_POLICY:policy})).toThrow(/staging/);
@@ -79,23 +88,141 @@ describe("config", () => {
     expect(() => loadConfig({ ...DEPLOYED, PLATFORM_SESSION_SECRET: "short" })).toThrow(/at least 32/);
   });
 
+  // spec/bootPolicy.md, "The combined backend entry checks its own database, provider and secret configuration"
+  test("a deployed backend refuses to start without the signup connector, the shared line or the staff API (audit OPS29, PER33)", () => {
+    for (const k of ["TURNSTILE_SITE_KEY", "NETWORK_SERVICE_TOKENS", "SERVICE_TURN_SECRET", "NETWORK_PUBLIC_EVENTS_DATABASE_URL"]) {
+      expect(() => loadConfig({ ...DEPLOYED, [k]: undefined }), k).toThrow(k);
+      expect(() => loadConfig({ ...DEPLOYED, PLATFORM_ENV: "production", [k]: undefined }), k).toThrow(k);
+    }
+    expect(() => loadConfig({ ...DEPLOYED, TURNSTILE_SITE_KEY: "  " })).toThrow("TURNSTILE_SITE_KEY");
+    expect(() => loadConfig({ ...DEPLOYED, SERVICE_TURN_SECRET: "t".repeat(31) })).toThrow(/SERVICE_TURN_SECRET of at least 32/);
+    expect(() => loadConfig({ ...DEPLOYED, NETWORK_SERVICE_TOKENS: `admin@*:${"a".repeat(40)},reviewer@slop:short-token` })).toThrow(/every NETWORK_SERVICE_TOKENS token/);
+    expect(() => loadConfig({ ...DEPLOYED, PLATFORM_ENV: "production", NETWORK_SERVICE_TOKENS: `admin:${"a".repeat(40)}` })).toThrow(/names no app/);
+    const dev = loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x" });
+    expect(dev.warnings.join(" ")).toMatch(/NETWORK_SERVICE_TOKENS is not set/);
+  });
+
+  // spec/bootPolicy.md, "The combined backend entry checks its own database, provider and secret configuration"
+  test("every refused boot fact stops loadConfig with its own message, in staging and production", () => {
+    const refusals: Record<Exclude<keyof BackendBoot, "deployed">, [Record<string, string | undefined>, RegExp]> = {
+      devConflict: [{ PLATFORM_ENV: "dev", NODE_ENV: "production" }, /a NODE_ENV other than production when PLATFORM_ENV=dev/],
+      databaseMissing: [{ DATABASE_URL: undefined }, /DATABASE_URL \(or NETWORK_DATABASE_URL\)/],
+      turnstileMissing: [{ TURNSTILE_SECRET_KEY: undefined }, /TURNSTILE_SECRET_KEY/],
+      turnstileSiteMissing: [{ TURNSTILE_SITE_KEY: undefined }, /TURNSTILE_SITE_KEY/],
+      proxyMissing: [{ PLATFORM_PROXY_SECRET: undefined }, /PLATFORM_PROXY_SECRET(;|$)/],
+      hashMissing: [{ PLATFORM_HASH_KEY: undefined }, /PLATFORM_HASH_KEY(;|$)/],
+      proxyShort: [{ PLATFORM_PROXY_SECRET: "p".repeat(31) }, /PLATFORM_PROXY_SECRET of at least 32 characters/],
+      hashShort: [{ PLATFORM_HASH_KEY: "h".repeat(31) }, /PLATFORM_HASH_KEY of at least 32 characters/],
+      sessionMissing: [{ PLATFORM_SESSION_SECRET: undefined }, /PLATFORM_SESSION_SECRET(;|$)/],
+      sessionShort: [{ PLATFORM_SESSION_SECRET: "e".repeat(31) }, /PLATFORM_SESSION_SECRET of at least 32 characters/],
+      sessionReused: [{ PLATFORM_SESSION_SECRET: DEPLOYED.PLATFORM_HASH_KEY }, /PLATFORM_SESSION_SECRET that differs from PLATFORM_HASH_KEY/],
+      leakKeyShort: [{ LEAK_LABEL_KEY: "l".repeat(31) }, /LEAK_LABEL_KEY of at least 32 bytes/],
+      migrationMissing: [{ MIGRATION_DATABASE_URL: undefined }, /MIGRATION_DATABASE_URL \(or MIGRATE_ON_BOOT=0\)/],
+      sharedLogin: [{ MIGRATION_DATABASE_URL: DEPLOYED.DATABASE_URL }, /different login/],
+      turnSecretShort: [{ SERVICE_TURN_SECRET: "t".repeat(31) }, /SERVICE_TURN_SECRET of at least 32/],
+      staffTokensMissing: [{ NETWORK_SERVICE_TOKENS: undefined }, /NETWORK_SERVICE_TOKENS \(the staff API/],
+      staffTokenShort: [{ NETWORK_SERVICE_TOKENS: `admin@*:${"a".repeat(40)},reviewer@slop:${"r".repeat(31)}` }, /every NETWORK_SERVICE_TOKENS token/],
+      publicEventsLoginMissing: [{ NETWORK_PUBLIC_EVENTS_DATABASE_URL: undefined }, /NETWORK_PUBLIC_EVENTS_DATABASE_URL/],
+      turnSecretReused: [{ SERVICE_TURN_SECRET: "a".repeat(40) }, /not also a NETWORK_SERVICE_TOKENS token/],
+      modelProviderMissing: [{ SURPLUS_API_KEY: undefined, OPENAI_API_KEY: undefined }, /JUDGE_PROVIDER and RECOMMENDER_PROVIDER need an API key \(SURPLUS_API_KEY or OPENAI_API_KEY\)/],
+      devSwitchSet: [{ PLATFORM_DEV_CONSOLE_OTP: "1" }, /unset PLATFORM_DEV_CONSOLE_OTP \(dev only\)/],
+    };
+    for (const environment of ["staging", "production"]) {
+      const ready = { ...DEPLOYED, PLATFORM_ENV: environment };
+      expect(loadConfig(ready).env).toBe(environment);
+      for (const [field, [change, message]] of Object.entries(refusals)) {
+        expect(() => loadConfig({ ...ready, ...change }), `${environment} ${field}`).toThrow(message);
+      }
+    }
+    expect(loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x", PLATFORM_DEV_CONSOLE_OTP: "1" }).env).toBe("dev");
+    expect(() => loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x", JUDGE_PROVIDER: "elsewhere" })).toThrow(/JUDGE_PROVIDER\/RECOMMENDER_PROVIDER names an unknown provider/);
+    expect(() => loadConfig({ ...DEPLOYED, RECOMMENDER_PROVIDER: "openai" })).toThrow(/need an API key/);
+    expect(loadConfig({ ...DEPLOYED, SURPLUS_API_KEY: undefined, OPENAI_API_KEY: "synthetic-openai-key", JUDGE_PROVIDER: "openai" }).env).toBe("staging");
+    expect(() => createPublicApi({ store: new MemoryPeopleStore(), env: { PLATFORM_ENV: "staging" }, hashKey: "h".repeat(40), turnstile: { verify: async () => true },
+      otp: { name: "fixture", send: async () => ({ code: "123456" }) } })).toThrow(/PLATFORM_SESSION_SECRET/);
+    for (const environment of ["staging", "production"]) {
+      expect(() => createPublicApi({ store: new MemoryPeopleStore(), env: { PLATFORM_ENV: environment }, hashKey: "h".repeat(40), sessionSecret: "h".repeat(40),
+        turnstile: { verify: async () => true }, otp: { name: "fixture", send: async () => ({ code: "123456" }) } }), environment).toThrow(/PLATFORM_SESSION_SECRET must differ from PLATFORM_HASH_KEY/);
+    }
+    expect(() => createPublicApi({ store: new MemoryPeopleStore(), env: { PLATFORM_ENV: "dev" }, hashKey: "h".repeat(40), sessionSecret: "",
+      otp: { name: "fixture", send: async () => ({ code: "123456" }) } })).not.toThrow();
+  });
+
+  // spec/bootPolicy.md, "A deployed backend keeps photos in private storage"
+  test("a deployed backend needs private photo storage", () => {
+    for (const PHOTO_STORAGE of [undefined, "", "local", "R2"]) {
+      expect(() => loadConfig({ ...DEPLOYED, PHOTO_STORAGE }), String(PHOTO_STORAGE)).toThrow("PHOTO_STORAGE=r2 (private photo storage) on a deployed backend");
+    }
+    expect(loadConfig(DEPLOYED).photoStorage).toBe(true);
+    const dev = loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x" });
+    expect(dev.photoStorage).toBe(false);
+    expect(loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x", PHOTO_STORAGE: "local" }).photoStorage).toBe(true);
+  });
+
+  // spec/bootPolicy.md, "Exactly one system answers the carrier's inbound messages"
+  test("with NETWORK_CHANNEL=eliza_cloud the backend does not own the carrier webhook (audit SHA43)", () => {
+    expect(loadConfig(DEPLOYED).blooioWebhook).toBe(true);
+    expect(loadConfig({ ...DEPLOYED, NETWORK_CHANNEL: "blooio", BLOOIO_API_KEY: "k", BLOOIO_FROM: "+12125550100" }).blooioWebhook).toBe(true);
+    const cloud = loadConfig({ ...DEPLOYED, NETWORK_CHANNEL: "eliza_cloud", NETWORK_CLOUD_DELIVERY_ORIGIN: "https://cloud.example.test", BLOOIO_FROM: "+12125550100", BLOOIO_WEBHOOK_SECRET: "w".repeat(40) });
+    expect([cloud.channel, cloud.blooioWebhook]).toEqual(["eliza_cloud", false]);
+    expect(loadConfig({ ...DEPLOYED, NETWORK_CHANNEL: "eliza_cloud", NETWORK_CLOUD_DELIVERY_ORIGIN: "https://cloud.example.test", BLOOIO_FROM: "+12125550100" }, ["--dry-run"]).blooioWebhook).toBe(false);
+    expect(cloud.warnings.join(" ")).toMatch(/BLOOIO_WEBHOOK_SECRET is ignored/);
+    expect(cloud.warnings.join(" ")).not.toMatch(/BLOOIO_WEBHOOK_SECRET is not set/);
+  });
+
   test("the staff API never shares the public port", () => {
     expect(() => loadConfig({ ...DEPLOYED, PORT: "4848" })).toThrow(/STAFF_PORT/);
     expect(loadConfig({ ...DEPLOYED, PORT: "4848", BACKEND_STAFF: "off" }).staff).toBeUndefined();
     expect(() => loadConfig({ ...DEPLOYED, PORT: "http" })).toThrow(/PORT/);
   });
 
-  test("sends stay dry-run unless every global live flag is set", () => {
-    const base = { ...DEPLOYED, NETWORK_CHANNEL: "blooio", BLOOIO_API_KEY: "k", BLOOIO_FROM: "+15550100" };
+  // spec/bootPolicy.md, "The configured channel alone decides whether a send is real" (owner decision 2026-11-22)
+  test("the configured channel alone decides real sends for every app; a channel without its credentials does not start", () => {
+    const blooio = { ...DEPLOYED, NETWORK_CHANNEL: "blooio", BLOOIO_API_KEY: "k", BLOOIO_FROM: "+15550100" };
+    const cloud = { ...DEPLOYED, NETWORK_CHANNEL: "eliza_cloud", NETWORK_CLOUD_DELIVERY_ORIGIN: "https://cloud.example.test", BLOOIO_FROM: "+15550100" };
     expect(loadConfig(DEPLOYED).channel).toBe("dry-run");
-    expect(loadConfig(base).channel).toBe("dry-run");
-    expect(loadConfig({ ...base, BLOOIO_ALLOW_SEND: "1" }).channel).toBe("dry-run");
-    expect(loadConfig({ ...base, NTWRK_LIVE_APPROVED: "1" }).channel).toBe("dry-run");
-    expect(loadConfig({ ...base, BLOOIO_ALLOW_SEND: "true", NTWRK_LIVE_APPROVED: "1" }).channel).toBe("dry-run");
-    expect(loadConfig({ ...base, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" }, ["--dry-run"]).channel).toBe("dry-run");
-    expect(loadConfig({ ...base, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" }).channel).toBe("blooio");
-    expect(loadConfig(base).warnings.join(" ")).toMatch(/stay dry-run/);
-    expect(() => loadConfig({ ...base, BLOOIO_API_KEY: undefined, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" })).toThrow(/BLOOIO_API_KEY/);
+    expect(loadConfig({ ...DEPLOYED, BLOOIO_API_KEY: "k", BLOOIO_FROM: "+15550100" }).channel).toBe("dry-run");
+    expect(() => loadConfig({ ...DEPLOYED, NETWORK_CHANNEL: "Blooio", BLOOIO_API_KEY: "k", BLOOIO_FROM: "+15550100" })).toThrow(/NETWORK_CHANNEL/);
+    expect(() => loadConfig({ ...DEPLOYED, NETWORK_CHANNEL: "eliza-cloud", NETWORK_CLOUD_DELIVERY_ORIGIN: "https://cloud.example.test", BLOOIO_FROM: "+15550100" })).toThrow(/NETWORK_CHANNEL/);
+    expect(loadConfig(blooio).channel).toBe("blooio");
+    expect(loadConfig(cloud).channel).toBe("eliza_cloud");
+    expect(loadConfig(blooio, ["--dry-run"]).channel).toBe("dry-run");
+    expect(loadConfig(blooio, ["--dry-run"]).warnings.join(" ")).toMatch(/stay dry-run/);
+    expect(loadConfig(cloud, ["--dry-run"]).channel).toBe("dry-run");
+    expect(() => loadConfig({ ...blooio, BLOOIO_API_KEY: undefined })).toThrow(/BLOOIO_API_KEY/);
+    expect(() => loadConfig({ ...blooio, BLOOIO_FROM: undefined })).toThrow(/BLOOIO_FROM/);
+    expect(() => loadConfig({ ...cloud, NETWORK_CLOUD_DELIVERY_ORIGIN: undefined })).toThrow(/NETWORK_CLOUD_DELIVERY_ORIGIN/);
+    expect(() => loadConfig({ ...cloud, BLOOIO_FROM: undefined })).toThrow(/BLOOIO_FROM/);
+    expect(() => loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x", NETWORK_CHANNEL: "blooio" })).toThrow(/BLOOIO_API_KEY/);
+    expect(loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x" }).channel).toBe("dry-run");
+  });
+
+  test("the production start command has no dry-run option: eliza_cloud owns inbound and every queued send is real from the first deploy", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const toml = await readFile(new URL("./railway.toml", import.meta.url), "utf8");
+    const dockerfile = await readFile(new URL("./Dockerfile", import.meta.url), "utf8");
+    const start = /^startCommand = "(.+)"$/m.exec(toml)?.[1];
+    const cmd = JSON.parse(/^CMD (\[.+\])$/m.exec(dockerfile)?.[1] ?? "null") as string[] | null;
+    expect(start).toBe("node --import tsx deploy/backend/server.ts");
+    expect(cmd).toEqual(start!.split(" "));
+    expect(toml).not.toMatch(/^startCommand = ".*--dry-run/m);
+    const c = loadConfig({ ...DEPLOYED, PLATFORM_ENV: "production", NETWORK_CHANNEL: "eliza_cloud", NETWORK_CLOUD_DELIVERY_ORIGIN: "https://cloud.example.test", BLOOIO_FROM: "+15550100" }, start!.split(" "));
+    expect([c.channel, c.blooioWebhook]).toEqual(["eliza_cloud", false]);
+    expect(c.warnings.join(" ")).not.toMatch(/stay dry-run/);
+    expect(loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x" }, start!.split(" ")).channel).toBe("dry-run");
+  });
+
+  // spec/bootPolicy.md, "A deployed entry refuses a partial Workers AI setup, and production needs Workers AI" (owner decisions 2026-11-22, D18)
+  test("a deployed backend refuses a Workers AI token without its account, and production refuses a start without Workers AI", () => {
+    expect(() => loadConfig({ ...DEPLOYED, CLOUDFLARE_ACCOUNT_ID: undefined })).toThrow(/CLOUDFLARE_ACCOUNT_ID/);
+    expect(() => loadConfig({ ...DEPLOYED })).not.toThrow();
+    expect(() => loadConfig({ ...DEPLOYED, CLOUDFLARE_AI_TOKEN: undefined })).not.toThrow();
+    expect(() => loadConfig({ ...DEPLOYED, CLOUDFLARE_AI_TOKEN: undefined, CLOUDFLARE_ACCOUNT_ID: undefined })).not.toThrow();
+    expect(() => loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://x@localhost/x", CLOUDFLARE_AI_TOKEN: "t" })).not.toThrow();
+    expect(() => loadConfig({ ...DEPLOYED, PLATFORM_ENV: "production" })).not.toThrow();
+    expect(() => loadConfig({ ...DEPLOYED, PLATFORM_ENV: "production", CLOUDFLARE_AI_TOKEN: undefined })).toThrow(/CLOUDFLARE_AI_TOKEN and CLOUDFLARE_ACCOUNT_ID/);
+    expect(() => loadConfig({ ...DEPLOYED, PLATFORM_ENV: "production", CLOUDFLARE_ACCOUNT_ID: undefined })).toThrow(/CLOUDFLARE_AI_TOKEN and CLOUDFLARE_ACCOUNT_ID/);
+    expect(() => loadConfig({ ...DEPLOYED, PLATFORM_ENV: "production", CLOUDFLARE_AI_TOKEN: undefined, CLOUDFLARE_ACCOUNT_ID: undefined })).toThrow(/relay classifier/);
   });
 
   test("extra hosts are for staging only and must name a known app", () => {
@@ -258,7 +385,21 @@ describe("routing", () => {
     expect(calls.at(-1)!.path).toBe("/webhooks/blooio/slop");
   });
 
-  test("the Eliza gateway's signed routes reach the service on the public port, /internal/relay included (it was 404), each under its own body cap", async () => {
+  // spec/bootPolicy.md, "Exactly one system answers the carrier's inbound messages"
+  test("with the Eliza gateway as the inbound owner, neither port serves the direct Blooio webhook (audit SHA43)", async () => {
+    const { svc, calls } = fakeService();
+    const b = createBackend({ svc, config: cfg({ blooioWebhook: false }), log: silent, ping: async () => true });
+    for (const path of ["/webhooks/blooio", "/webhooks/blooio/slop"]) {
+      const pub = await b.publicFetch(new Request(`http://api.example.test${path}`, { method: "POST", body: "{}" }));
+      const staff = await b.staffFetch(new Request(`http://10.0.0.2:4848${path}`, { method: "POST", body: "{}" }));
+      expect([pub.status, (await pub.json()).error, staff.status, (await staff.json()).error]).toEqual([404, "webhook_not_served", 404, "webhook_not_served"]);
+    }
+    expect(calls).toEqual([]);
+    expect((await b.publicFetch(new Request("http://api.example.test/internal/turn", { method: "POST", body: "{}" }))).status).toBe(200);
+    expect((await b.staffFetch(new Request("http://10.0.0.2:4848/review"))).status).toBe(200);
+  });
+
+  test("the Eliza gateway's signed routes reach the service on the public port, /internal/relay included (it was 404), each under its own body cap, and the removed relay-photo resolve answers 404", async () => {
     const { svc, calls } = fakeService();
     const b = createBackend({ svc, config: cfg(), log: silent, ping: async () => true });
     for (const p of ["/internal/turn", "/internal/turn-receipt", "/internal/set-state", "/internal/signals", "/internal/updates", "/internal/relay",
@@ -276,6 +417,10 @@ describe("routing", () => {
       method: "POST", body: "x".repeat(17 * 1024), headers: { "content-length": String(17 * 1024) },
     }));
     expect(oversizedCalendar.status).toBe(413);
+    for (const body of ["{}", "x".repeat(17 * 1024)]) {
+      const resolve = await b.publicFetch(new Request(`http://api.example.test${RELAY_PHOTO_RESOLVE_PATH}`, { method: "POST", body, headers: { "content-length": String(body.length), "content-type": "application/json" } }));
+      expect([resolve.status, (await resolve.json()).error]).toEqual([404, "not_found"]);
+    }
     expect(calls.length).toBe(n);
     // The same size is fine on the turn route (256 KiB).
     expect((await b.publicFetch(new Request("http://api.example.test/internal/turn", { method: "POST", body: "x".repeat(17 * 1024), headers: { "content-length": String(17 * 1024) } }))).status).toBe(200);
@@ -361,13 +506,49 @@ describe("router to backend (deploy/router.ts, the real Worker code)", () => {
 describe("deployed tick round", () => {
   // spec/platformRetention.md, "Platform rows and inbox payloads have separate cutoffs"
   // spec/backendLifecycle.md, "Reserve each tick worker before starting its work"
-  test("redrives inbound work, ticks networks, purges expired data, and then runs notifications", async () => {
+  test("redrives inbound work before the network ticks, and purges expired data and runs notifications in every round", async () => {
     const { svc } = fakeService();
     const b = createBackend({ svc, config: cfg(), log: silent, ping: async () => true });
-    const round = ["inbox", "network:ntwrk:nyc", "retention", "notify"];
     await b.tickAll();
     await b.tickAll();
-    expect(svc.rounds).toEqual([...round, ...round]);
+    const [first, second] = [svc.rounds.slice(0, 4), svc.rounds.slice(4)];
+    for (const round of [first, second]) {
+      expect([...round].sort()).toEqual(["inbox", "network:ntwrk:nyc", "notify", "retention"]);
+      expect(round.indexOf("inbox")).toBeLessThan(round.indexOf("network:ntwrk:nyc"));
+    }
+  });
+
+  // spec/backendLifecycle.md, "Reserve each tick worker before starting its work"
+  test("a long network tick does not delay retention or notifications in the same round", async () => {
+    const { svc, release } = fakeService();
+    svc.slowTick = true;
+    const b = createBackend({ svc, config: cfg(), log: silent, ping: async () => true });
+    const first = b.tickAll();
+    await sleep(10);
+    expect([...svc.rounds].sort()).toEqual(["inbox", "network:ntwrk:nyc", "notify", "retention"]);
+    await b.tickAll();
+    expect(svc.rounds.filter(r => r === "notify")).toHaveLength(2);
+    expect(svc.rounds.filter(r => r === "retention")).toHaveLength(2);
+    expect(svc.ticks).toBe(1);
+    release();
+    await first;
+  });
+
+  // spec/backendLifecycle.md, "Reserve each tick worker before starting its work"
+  test("the public event catalog refresh runs in every round on its own key, beside the network work (audit PER32)", async () => {
+    const { svc } = fakeService();
+    let refreshes = 0, release: () => void = () => {};
+    const b = createBackend({ svc, config: cfg(), log: silent, ping: async () => true,
+      publicEvents: async () => { if (++refreshes === 1) await new Promise<void>(r => { release = r; }); } });
+    const first = b.tickAll();
+    await sleep(10);
+    expect([...svc.rounds].sort()).toEqual(["inbox", "network:ntwrk:nyc", "notify", "retention"]);
+    await b.tickAll().then(() => undefined, () => undefined);
+    expect(refreshes).toBe(1);
+    release();
+    await first;
+    await b.tickAll();
+    expect(refreshes).toBe(2);
   });
 
   test("a redrive or retention error does not stop the remaining workers", async () => {
@@ -377,7 +558,7 @@ describe("deployed tick round", () => {
     svc.purge = async () => { svc.rounds.push("retention"); throw new Error("retention unavailable"); };
     const b = createBackend({ svc, config: cfg(), log: jsonLogger(s => lines.push(s)), ping: async () => true });
     await b.tickAll();
-    expect(svc.rounds).toEqual(["inbox", "network:ntwrk:nyc", "retention", "notify"]);
+    expect([...svc.rounds].sort()).toEqual(["inbox", "network:ntwrk:nyc", "notify", "retention"]);
     expect(lines.join("\n")).toMatch(/"msg":"inbox tick failed"/);
     expect(lines.join("\n")).toMatch(/"msg":"retention tick failed"/);
   });
@@ -466,21 +647,29 @@ describe.skipIf(!pgAvailable)("boot (dev Postgres, a database of its own)", () =
       await owner.unsafe(`create role ${role} login nosuperuser nobypassrls`);
       await owner.unsafe(`grant network_service to ${role}`);
       await owner.unsafe(`grant connect on database ${new URL(url).pathname.slice(1)} to ${role}`);
+      await owner.unsafe(`drop role if exists ${role}_events`);
+      await owner.unsafe(`create role ${role}_events login nosuperuser nobypassrls`);
+      await owner.unsafe(`grant network_public_event_ingest to ${role}_events`);
+      await owner.unsafe(`grant connect on database ${new URL(url).pathname.slice(1)} to ${role}_events`);
+      await owner`insert into network.public_event_imports (source, checked_at) values ('nyc-parks', now())`;
     } finally { await owner.close(); }
     const svcUrl = Object.assign(new URL(url), { username: role }).toString();
+    const eventsUrl = Object.assign(new URL(url), { username: `${role}_events` }).toString();
     const env: Record<string, string> = {
-      ...process.env as Record<string, string>, ...DEPLOYED, DATABASE_URL: svcUrl, MIGRATION_DATABASE_URL: url, PORT: String(port), STAFF_PORT: String(staff), TICK_MS: "3600000",
-      PLATFORM_DB_ENVIRONMENT_INIT: "1", BUILD_ID: "boot-test", NODE_ENV: "", NETWORK_CHANNEL: "", BLOOIO_ALLOW_SEND: "", NTWRK_LIVE_APPROVED: "", NETWORK_PROFILE_REVIEW_ENABLED: "0",
+      ...process.env as Record<string, string>, ...DEPLOYED, DATABASE_URL: svcUrl, MIGRATION_DATABASE_URL: url, NETWORK_PUBLIC_EVENTS_DATABASE_URL: eventsUrl, PORT: String(port), STAFF_PORT: String(staff), TICK_MS: "3600000",
+      PLATFORM_DB_ENVIRONMENT_INIT: "1", BUILD_ID: "boot-test", NODE_ENV: "", NETWORK_CHANNEL: "",
+      R2_ENDPOINT: "https://r2.example.test", R2_BUCKET: "boot-photos", R2_ACCESS_KEY_ID: "fixture", R2_SECRET_ACCESS_KEY: "fixture",
     };
     const proc = spawnProcess([process.execPath, "--import", "tsx", `${import.meta.dirname}/server.ts`], { env, stdout: "pipe", stderr: "pipe" });
     const out = new Response(proc.stdout).text();
+    const err = new Response(proc.stderr).text();
     try {
       let ok = false;
       for (let i = 0; i < 100 && !ok; i++) {
         await sleep(100);
         ok = await fetch(`http://127.0.0.1:${port}/healthz`).then(r => r.status === 200, () => false);
       }
-      if (!ok) { proc.kill("SIGKILL"); throw new Error(`the backend did not become healthy:\n${(await out).split("\n").filter(l => !l.includes('"applied ')).slice(-5).join("\n")}`); }
+      if (!ok) { proc.kill("SIGKILL"); throw new Error(`the backend did not become healthy:\n${(await out).split("\n").filter(l => !l.includes('"applied ')).slice(-5).join("\n")}\n${(await err).split("\n").slice(-5).join("\n")}`); }
       const h = await fetch(`http://127.0.0.1:${port}/healthz`);
       expect(h.headers.get(BUILD_HEADER)).toBe("boot-test");
       const hosts = Object.entries(DEFAULT_HOST_MAP).filter(([h]) => !h.includes(":") && !h.startsWith("www.") && !h.endsWith(".pages.dev"));
@@ -514,7 +703,72 @@ describe.skipIf(!pgAvailable)("boot (dev Postgres, a database of its own)", () =
     for (const l of lines) expect(() => JSON.parse(l)).not.toThrow();
     expect(logs).toMatch(/"msg":"shutdown complete".*"clean":true/);
     expect(logs).toMatch(/"sends":"dry-run"/);
-    expect(logs).not.toMatch(/"sends":"live"/);
+    expect(logs).not.toMatch(/"sends":"(blooio|eliza_cloud)"/);
+    expect(logs).toMatch(/"msg":"sends".*"channel":"dry-run".*"inbound":"backend webhook".*"turnReplies":"sent by the gateway"/);
+    expect(logs).toMatch(/"msg":"mcp".*"enabled":true/);
+    expect(logs).toMatch(/"msg":"photo relay".*"enabled":true/);
+    expect(logs).not.toMatch(/"msg":"photo relay".*"version"/);
+  }, 30_000);
+});
+
+// spec/publicEventCatalog.md, "The backend scans once a day, at most one process at a time, and waits after a failed attempt"
+describe.skipIf(!pgAvailable)("public event catalog refresh (dev Postgres, the ingest login; audit PER32)", () => {
+  let url = "";
+  const role = `backend_events_${process.pid}`;
+  afterAll(async () => { if (url) await dropDb(url); });
+
+  test("scans when the catalog is missing or a day old, never twice at once, and waits an hour after a failure", async () => {
+    url = await emptyDb("backend_events");
+    await migrate(url, { lockTimeout: "5s" });
+    const owner = new SQL({ url, max: 1 });
+    const HOUR = 3_600_000, DAY = 24 * HOUR;
+    const clock = new SimClock(Date.UTC(2026, 9, 6, 12));
+    let feedCalls = 0, feedDown = false;
+    const feed: typeof fetch = async () => {
+      feedCalls++;
+      if (feedDown) return new Response(null, { status: 503 });
+      return Response.json([{ guid: "2257118", title: "Outdoor climbing", categories: "Fitness", location: "McCarren Park",
+        starttime: "2026-10-09T18:00:00.000", endtime: "2026-10-09T19:00:00.000", coordinates: "40.7206,-73.9518",
+        link: { url: "https://www.nycgovparks.org/events/2026/10/09/climbing" } }]);
+    };
+    let created = false, events: SQL | undefined;
+    try {
+      await owner.unsafe(`drop role if exists ${role}`);
+      await owner.unsafe(`create role ${role} login nosuperuser nobypassrls`);
+      created = true;
+      await owner.unsafe(`grant network_public_event_ingest to ${role}`);
+      await owner.unsafe(`grant connect on database ${new URL(url).pathname.slice(1)} to ${role}`);
+      events = new SQL({ url: Object.assign(new URL(url), { username: role }).toString(), max: 2 });
+      const refresh = createPublicEventRefresh({ sql: events, clock, request: feed });
+      expect(await refresh()).toEqual({ kind: "scanned", published: true, events: 1 });
+      expect(await refresh()).toEqual({ kind: "not_due" });
+      clock.advance(DAY - 1);
+      expect(await refresh()).toEqual({ kind: "not_due" });
+      clock.advance(1);
+      expect(await refresh()).toEqual({ kind: "scanned", published: true, events: 1 });
+      expect(feedCalls).toBe(2);
+      clock.advance(DAY);
+      feedDown = true;
+      await expect(refresh()).rejects.toThrow(/HTTP 503/);
+      const [kept] = await owner`select checked_at from network.public_event_imports`;
+      expect(new Date(kept.checked_at).getTime()).toBe(clock.now() - DAY);
+      clock.advance(HOUR - 1);
+      expect(await refresh()).toEqual({ kind: "not_due" });
+      expect(feedCalls).toBe(3);
+      feedDown = false;
+      clock.advance(1);
+      expect(await refresh()).toEqual({ kind: "scanned", published: true, events: 1 });
+      clock.advance(DAY);
+      await owner`select pg_advisory_lock(hashtext('thenetwork-public-events-refresh'))`;
+      expect(await refresh()).toEqual({ kind: "lease_held" });
+      await owner`select pg_advisory_unlock(hashtext('thenetwork-public-events-refresh'))`;
+      expect(feedCalls).toBe(4);
+      expect(await refresh()).toEqual({ kind: "scanned", published: true, events: 1 });
+    } finally {
+      await events?.close();
+      if (created) await owner.unsafe(`drop owned by ${role}`);
+      await owner.close();
+    }
   }, 30_000);
 });
 

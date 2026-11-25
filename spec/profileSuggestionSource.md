@@ -8,7 +8,7 @@ The Network handles private suggestions for a resolved owner, app and chat. Sign
 
 ### Resolve the owner and any claimed collection turn before authorizing live sources
 
-The owner must be eligible to collect. A claimed collection requires the stored, matching member turn and its exact collection scope. Internal collection without a claim goes from owner eligibility directly to source authorization. Every suggestion still needs its source authorization before the transaction considers a replay or new batch.
+The owner must be eligible to collect. Eligibility reads the canonical consent ledger as well as the member row, so a STOP or leave in the ledger stops collection before its projection reaches the member row. A claimed collection requires the stored, matching member turn and its exact collection scope. Internal collection without a claim goes from owner eligibility directly to source authorization. Each distinct source and connection of the suggestions needs one source authorization, and the owner must still be eligible when the source authorizations return, before the transaction considers a replay or new batch. An accept of a suggestion uses the same check: its source authorization and a second eligibility read after it. The source authorizations run before the service takes the person and member row locks, so a STOP or leave never waits for Cloud during a collection. The eligibility read after them is under those locks, together with a second read of the claimed collection turn. At that read the owner is also not eligible when a disconnect, delete or withdrawal of one of the connections committed with a Cloud cutoff that covers that connection's source authorization (`cleanupCoversGrant` of the cleanup rule below), so a cleanup that ran during the calls is not undone. Changed (audits SD-112, SD-175, SD-455, Q-profile_learning-1 and IPP-1, 2026-11-18 to 2026-11-22): eligibility was read once from the member row, each suggestion had its own authorization, the Cloud calls held the row locks, and the commit compared the times in SQL -> the rule reads the ledger, authorizes each source and connection once, reads eligibility again under the locks after the calls, and uses `cleanupCoversGrant`, because a STOP, hold or ban during the calls let a batch commit.
 
 ```quint
 type SourcePhase =
@@ -27,9 +27,14 @@ pure def canReadCollectionTurn(flow: SourceFlow): bool = flow.phase == CheckingC
 pure def readCollectionTurn(flow: SourceFlow, matches: bool): SourceFlow =
   { phase: if (matches) CheckingLiveSources else SourceDenied }
 
+pure def sourceUseAllowed(allowed: bool, stillEligible: bool): bool = allowed and stillEligible
+
 pure def canReadLiveSourceConsent(flow: SourceFlow): bool = flow.phase == CheckingLiveSources
-pure def readLiveSourceConsent(flow: SourceFlow, allowed: bool): SourceFlow =
-  { phase: if (allowed) ReadingCollectionReceipt else SourceDenied }
+pure def readLiveSourceConsent(flow: SourceFlow, allowed: bool, stillEligible: bool): SourceFlow =
+  { phase: if (sourceUseAllowed(allowed, stillEligible)) ReadingCollectionReceipt else SourceDenied }
+
+pure def lawSourceUseNeedsCurrentEligibility(allowed: bool): bool =
+  not(sourceUseAllowed(allowed, false))
 ```
 
 ### A collection replay only returns its original private pending batch
@@ -77,9 +82,23 @@ pure def sometimesReplaysSourceCollection(flow: SourceFlow): bool = flow.phase =
 
 ### Cleanup uses current owner authority and any required stored withdrawal turn
 
-Use the current owner and the matching cleanup proof. An owner withdrawal also requires the stored member turn at or before the proof cutoff. The shell scopes rows to the authorized owner and connection and applies the proof's cutoff for signed cleanup. Cleanup does not require an active source-read grant.
+Use the current owner and the matching cleanup proof. An owner withdrawal also requires the stored member turn that the proof names by channel, message and command hash. The shell scopes rows to the authorized owner and connection and applies the proof's cutoff for signed cleanup: a suggestion is in scope when the Cloud time of the source authorization that collected it is at or before the proof's revocation or cutoff time (`cleanupCoversGrant`). Both times come from Cloud, so the comparison uses one clock. The cleanup scope and the collection commit check use this one rule, and the SQL does not compare the times. Cleanup does not require an active source-read grant. A suggestion row saved before the rows had a Cloud authorization time has the Unix epoch as its time (the migration wrote it), so every later cleanup of its connection covers it. Changed (audits SD-172, SD-242, IPP-1 and IPP-2, 2026-11-21 and 2026-11-22): the cutoff compared the Network batch time with Cloud time in three SQL places, and old rows carried the Network batch time -> one rule compares two Cloud times and old rows carry the epoch, because clock skew kept facts that a disconnect or delete must remove and refused valid withdrawals.
 
 ```quint
+pure def cleanupCoversGrant(cutoffAt: int, authorizedAt: int): bool = authorizedAt <= cutoffAt
+
+pure val cutoffAtValues = Set(0, 1, 2)
+pure val authorizedAtValues = Set(0, 1, 2)
+
+pure def lawCleanupCoversGrantAtSameTime(authorizedAt: int): bool =
+  cleanupCoversGrant(authorizedAt, authorizedAt)
+
+pure def lawCleanupMissesLaterGrant(cutoffAt: int): bool =
+  not(cleanupCoversGrant(cutoffAt, cutoffAt + 1))
+
+pure def lawUnstampedRowIsCovered(cutoffAt: int): bool =
+  cutoffAt >= 0 implies cleanupCoversGrant(cutoffAt, 0)
+
 pure def canStartSourceCleanup(flow: SourceFlow): bool = flow.phase == SourceInitial
 pure def startSourceCleanup(flow: SourceFlow, authorized: bool, ownerWithdrawal: bool): SourceFlow =
   { phase: if (not(authorized)) SourceDenied else if (ownerWithdrawal) CheckingWithdrawalTurn else ReadingCleanupReceipt }

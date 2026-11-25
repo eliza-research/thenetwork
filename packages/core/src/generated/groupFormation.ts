@@ -20,6 +20,8 @@ export type Event =
 
 /** Story: Form a compatible group and keep eligible backups / A member's share of a circle is highest when the circle is a clique (spec/groupFormation.md) */
 export const circleShareScale: number = 1000;
+/** Story: Grow circles that fit and keep crews together / An earlier circle is tried before new triangles (spec/groupFormation.md) */
+export const circleRepeatWindowDays: number = 21;
 /** Story: Form a compatible group and keep eligible backups / Only eligible adults enter the group search (spec/groupFormation.md) */
 export const initial: Formation = { phase: "AwaitingPool", hostRequired: false, primary: ([] as string[]), alternates: ([] as string[]), alternateLimit: 0, circle: ({ size: 0, lowestPairValue: 0, pairValueTotal: 0, pairCount: 0, standingLow: 0, standingHigh: 0, uncertaintyTotal: 0 } as CircleEvidence), circleLimits: ({ minimum: 0, maximum: 0, pairFloor: 0, parityBand: 0 } as CircleLimits) };
 
@@ -31,14 +33,8 @@ export function inv(current: Formation): boolean {
 
 /** Story: Form a compatible group and keep eligible backups / Only eligible adults enter the group search (spec/groupFormation.md) */
 //@ pure
-export function poolEligible(adult: boolean): boolean {
-  return adult;
-}
-
-/** Story: Form a compatible group and keep eligible backups / Only eligible adults enter the group search (spec/groupFormation.md) */
-//@ pure
-export function extensionAllowed(alreadyIncluded: boolean, compatible: boolean): boolean {
-  return !alreadyIncluded && compatible;
+export function poolEligible(ageEligible: boolean): boolean {
+  return ageEligible;
 }
 
 /** Story: Form a compatible group and keep eligible backups / Only eligible adults enter the group search (spec/groupFormation.md) */
@@ -61,12 +57,6 @@ export function canStartSearch(g: Formation, forcedEligible: boolean): boolean {
 //@ pure
 export function groupLocationAllowed(hasOverlap: boolean, requiresCity: boolean, matchingCity: boolean): boolean {
   return hasOverlap && (!requiresCity || matchingCity);
-}
-
-/** Story: Form a compatible group and keep eligible backups / A primary group has a common place and meets its requirements (spec/groupFormation.md) */
-//@ pure
-export function groupFitAllowed(hasPairs: boolean, belowPairFloor: boolean): boolean {
-  return !hasPairs || !belowPairFloor;
 }
 
 /** Story: Form a compatible group and keep eligible backups / A primary group has a common place and meets its requirements (spec/groupFormation.md) */
@@ -199,6 +189,59 @@ export function stepFinishedStaysFinished(before: Formation, after: Formation): 
 //@ pure
 export function sometimesFinishedWithAlternate(g: Formation): boolean {
   return g.phase === "Finished" && g.alternates.length > 0;
+}
+
+/** Story: Grow circles that fit and keep crews together / An earlier circle is tried before new triangles (spec/groupFormation.md) */
+//@ pure
+export function circleSeedAllowed(circleSize: number, maximum: number, membersOpen: boolean, lowestPairValue: number, pairFloor: number, spreadAllowed: boolean): boolean {
+  return 2 <= circleSize && circleSize <= maximum && membersOpen && lowestPairValue >= pairFloor && spreadAllowed;
+}
+
+/** Story: Grow circles that fit and keep crews together / An earlier circle is tried before new triangles (spec/groupFormation.md) */
+//@ pure
+export function lawAllowedSeedFitsTheCircle(circleSize: number, maximum: number, membersOpen: boolean, lowestPairValue: number, pairFloor: number, spreadAllowed: boolean): boolean {
+  //@ ensures \result === true
+  return !circleSeedAllowed(circleSize, maximum, membersOpen, lowestPairValue, pairFloor, spreadAllowed) || (lowestPairValue >= pairFloor && circleSize <= maximum && membersOpen && spreadAllowed);
+}
+
+/** Story: Grow circles that fit and keep crews together / A swap between two circles raises the lower of their lowest pair values (spec/groupFormation.md) */
+//@ pure
+export function circleSwapRoundRuns(ranked: boolean, forcedCount: number): boolean {
+  return !ranked && forcedCount <= 0;
+}
+
+/** Story: Grow circles that fit and keep crews together / A swap between two circles raises the lower of their lowest pair values (spec/groupFormation.md) */
+//@ pure
+export function circleSwapImproves(lowestFirst: number, lowestSecond: number, lowestFirstAfter: number, lowestSecondAfter: number): boolean {
+  const local_1 = lowestFirst < lowestSecond ? lowestFirst : lowestSecond;
+  const local_2 = lowestFirstAfter < lowestSecondAfter ? lowestFirstAfter : lowestSecondAfter;
+  return local_2 > local_1 && exact_groupFormation(lowestFirstAfter + lowestSecondAfter) >= exact_groupFormation(lowestFirst + lowestSecond);
+}
+
+/** Story: Grow circles that fit and keep crews together / A swap between two circles raises the lower of their lowest pair values (spec/groupFormation.md) */
+//@ pure
+export function lawForcedBuildKeepsGreedyCircles(ranked: boolean, forcedCount: number): boolean {
+  //@ ensures \result === true
+  return !(ranked || forcedCount > 0) || !circleSwapRoundRuns(ranked, forcedCount);
+}
+
+/** Story: Grow circles that fit and keep crews together / A swap between two circles raises the lower of their lowest pair values (spec/groupFormation.md) */
+//@ pure
+export function lawSwapLeavesNoCircleAtTheOldLow(lowestFirst: number, lowestSecond: number, lowestFirstAfter: number, lowestSecondAfter: number): boolean {
+  //@ ensures \result === true
+  return !circleSwapImproves(lowestFirst, lowestSecond, lowestFirstAfter, lowestSecondAfter) || ((lowestFirstAfter > lowestFirst || lowestFirstAfter > lowestSecond) && (lowestSecondAfter > lowestFirst || lowestSecondAfter > lowestSecond));
+}
+
+/** Story: Grow circles that fit and keep crews together / A swap between two circles raises the lower of their lowest pair values (spec/groupFormation.md) */
+//@ pure
+export function lawSwapLosesNoMoreThanItGains(lowestFirst: number, lowestSecond: number, lowestFirstAfter: number, lowestSecondAfter: number): boolean {
+  //@ ensures \result === true
+  const local_3 = lowestFirst < lowestSecond ? lowestFirst : lowestSecond;
+  const local_4 = lowestFirst < lowestSecond ? lowestSecond : lowestFirst;
+  const local_5 = lowestFirstAfter < lowestSecondAfter ? lowestFirstAfter : lowestSecondAfter;
+  const local_6 = lowestFirstAfter < lowestSecondAfter ? lowestSecondAfter : lowestFirstAfter;
+  const local_7 = circleSwapImproves(lowestFirst, lowestSecond, lowestFirstAfter, lowestSecondAfter);
+  return !local_7 || exact_groupFormation(local_4 - local_6) <= exact_groupFormation(local_5 - local_3);
 }
 
 /** Do the rules allow this event in this state? */

@@ -13,12 +13,18 @@ export type AdmissionPhase = "RouteUnchecked" | "RouteAdmitted" | "RouteRefused"
 export interface RouteCheck { phase: AdmissionPhase; decision: Admission }
 /** Story: See only the detail my role permits / The analyst view shows counts and shapes rather than people (spec/staffPermissions.md) */
 export type MemberAccess = "AnyMember" | "OpenReviewMember" | "MemberRefused";
+/** Story: Take a gate or safety step in the console as myself / Each console staff step needs the role that its staff route needs (spec/staffPermissions.md) */
+export type StaffStep = "ReadPostings" | "SavePosting" | "ClosePosting" | "VerifyEmployer" | "ReadHomeHelp" | "DecideHomeHelp" | "ReadMemberInvitations" | "DecideMemberInvitation" | "SeedInvitations" | "VerifyMember" | "InviteMember" | "ReadAgentSignals" | "DecideAgentSignal" | "OpenPrivacyRequest" | "ConfirmPrivacyRequest" | "ReplayPrivacy" | "ReadHeldRelay" | "DecideHeldRelay" | "ResolveInboundTurn" | "ReadTurnWatch" | "DecideReviewItem" | "DecideSafetyCase" | "ReadJudgedReviews" | "StopApprovedReview";
+/** Story: Take a gate or safety step in the console as myself / The staff API takes a step that needs a person only from a named person (spec/staffPermissions.md) */
+export type StepActor = "NamedReviewer" | "SharedToken";
 
 /** One variant per transition in the spec. */
 export type Event =
   | { type: "enterHandler" }
   | { type: "authorizeRoute"; routeFacts: RouteFacts; roles: string[]; requiredRoles: string[] };
 
+/** Story: See only the detail my role permits / The server grants a reveal for 5, 10 or 15 minutes only (spec/staffPermissions.md) */
+export const staffRevealMinuteChoices: number[] = [5, 10, 15];
 /** Story: Work within my assigned staff role / Only an admitted route can reach its handler (spec/staffPermissions.md) */
 export const appRead: RouteFacts = { appRoute: true, roleRestricted: false, mutating: false, hasModeHeader: false, matchesMode: true };
 /** Story: Work within my assigned staff role / Only an admitted route can reach its handler (spec/staffPermissions.md) */
@@ -123,6 +129,125 @@ export function fullStaffView(roles: string[]): boolean {
 //@ pure
 export function staffMemberAccess(roles: string[], realMode: boolean): MemberAccess {
   return allowedByRole(roles, (["safety"] as string[])) || (!realMode && roles.includes("engineer")) ? "AnyMember" : (roles.includes("reviewer") ? "OpenReviewMember" : "MemberRefused");
+}
+
+/** Story: See only the detail my role permits / The server grants a reveal for 5, 10 or 15 minutes only (spec/staffPermissions.md) */
+//@ pure
+export function staffRevealMinutesAccepted(revealMinutes: number): boolean {
+  return staffRevealMinuteChoices.includes(revealMinutes);
+}
+
+/** Story: See only the detail my role permits / The server grants a reveal for 5, 10 or 15 minutes only (spec/staffPermissions.md) */
+//@ pure
+export function lawAcceptedRevealEndsWithinFifteenMinutes(revealMinutes: number): boolean {
+  //@ ensures \result === true
+  return !staffRevealMinutesAccepted(revealMinutes) || (revealMinutes >= 5 && revealMinutes <= 15);
+}
+
+/** Story: See only the detail my role permits / The server grants a reveal for 5, 10 or 15 minutes only (spec/staffPermissions.md) */
+//@ pure
+export function lawRevealRefusesOneMinute(revealMinutes: number): boolean {
+  //@ ensures \result === true
+  return !(revealMinutes < 5) || !staffRevealMinutesAccepted(revealMinutes);
+}
+
+/** Story: Take a gate or safety step in the console as myself / Each console staff step needs the role that its staff route needs (spec/staffPermissions.md) */
+//@ pure
+export function staffStepRoles(staffStep: StaffStep): string[] {
+  return staffStep === "ReadPostings" ? (["reviewer"] as string[]) : staffStep === "SavePosting" ? (["admin"] as string[]) : staffStep === "ClosePosting" ? (["admin"] as string[]) : staffStep === "VerifyEmployer" ? (["admin"] as string[]) : staffStep === "ReadHomeHelp" ? (["safety"] as string[]) : staffStep === "DecideHomeHelp" ? (["safety"] as string[]) : staffStep === "ReadMemberInvitations" ? (["reviewer", "safety"] as string[]) : staffStep === "DecideMemberInvitation" ? (["reviewer", "safety"] as string[]) : staffStep === "SeedInvitations" ? (["admin"] as string[]) : staffStep === "VerifyMember" ? (["safety"] as string[]) : staffStep === "InviteMember" ? (["admin"] as string[]) : staffStep === "ReadAgentSignals" ? (["reviewer", "safety"] as string[]) : staffStep === "DecideAgentSignal" ? (["safety"] as string[]) : staffStep === "OpenPrivacyRequest" ? (["admin"] as string[]) : staffStep === "ConfirmPrivacyRequest" ? (["admin"] as string[]) : staffStep === "ReplayPrivacy" ? (["admin"] as string[]) : staffStep === "ReadHeldRelay" ? (["safety"] as string[]) : staffStep === "DecideHeldRelay" ? (["safety"] as string[]) : staffStep === "ResolveInboundTurn" ? (["admin"] as string[]) : staffStep === "ReadTurnWatch" ? (["admin"] as string[]) : staffStep === "DecideReviewItem" ? (["reviewer"] as string[]) : staffStep === "DecideSafetyCase" ? (["safety"] as string[]) : staffStep === "ReadJudgedReviews" ? (["reviewer", "safety"] as string[]) : (["reviewer", "safety"] as string[]);
+}
+
+/** Story: Take a gate or safety step in the console as myself / Each console staff step needs the role that its staff route needs (spec/staffPermissions.md) */
+//@ pure
+export function staffStepEveryApp(staffStep: StaffStep): boolean {
+  return staffStep === "OpenPrivacyRequest" ? true : staffStep === "ConfirmPrivacyRequest" ? true : staffStep === "ReplayPrivacy" ? true : staffStep === "ResolveInboundTurn" ? true : staffStep === "ReadTurnWatch" ? true : false;
+}
+
+/** Story: Take a gate or safety step in the console as myself / Each console staff step needs the role that its staff route needs (spec/staffPermissions.md) */
+//@ pure
+export function staffStepOffered(staffStep: StaffStep, appName: string): boolean {
+  return staffStep === "ReadPostings" ? appName === "peon" : staffStep === "SavePosting" ? appName === "peon" : staffStep === "ClosePosting" ? appName === "peon" : staffStep === "VerifyEmployer" ? appName === "peon" : true;
+}
+
+/** Story: Take a gate or safety step in the console as myself / Each console staff step needs the role that its staff route needs (spec/staffPermissions.md) */
+//@ pure
+export function staffStepAdmitted(staffStep: StaffStep, appName: string, appRoles: string[], globalRoles: string[]): boolean {
+  return staffStepOffered(staffStep, appName) && allowedByRole(staffStepEveryApp(staffStep) ? globalRoles : appRoles, staffStepRoles(staffStep));
+}
+
+/** Story: Take a gate or safety step in the console as myself / Each console staff step needs the role that its staff route needs (spec/staffPermissions.md) */
+//@ pure
+export function lawEveryAppStepNeedsGlobalAdmin(staffStep: StaffStep, appName: string, appRoles: string[], globalRoles: string[]): boolean {
+  //@ ensures \result === true
+  return !(staffStepEveryApp(staffStep) && staffStepAdmitted(staffStep, appName, appRoles, globalRoles)) || globalRoles.includes("admin");
+}
+
+/** Story: Take a gate or safety step in the console as myself / Each console staff step needs the role that its staff route needs (spec/staffPermissions.md) */
+//@ pure
+export function lawStepWithoutAppRoleRefused(staffStep: StaffStep, appName: string, globalRoles: string[]): boolean {
+  //@ ensures \result === true
+  return !(!staffStepEveryApp(staffStep)) || !staffStepAdmitted(staffStep, appName, ([] as string[]), globalRoles);
+}
+
+/** Story: Take a gate or safety step in the console as myself / Each console staff step needs the role that its staff route needs (spec/staffPermissions.md) */
+//@ pure
+export function lawEmployerVerificationOnlyOnPeon(appName: string, appRoles: string[], globalRoles: string[]): boolean {
+  //@ ensures \result === true
+  return !staffStepAdmitted("VerifyEmployer", appName, appRoles, globalRoles) || appName === "peon";
+}
+
+/** Story: Take a gate or safety step in the console as myself / The staff API takes a step that needs a person only from a named person (spec/staffPermissions.md) */
+//@ pure
+export function staffStepNeedsPerson(staffStep: StaffStep): boolean {
+  return staffStep === "DecideReviewItem" ? false : staffStep === "StopApprovedReview" ? false : staffStep === "ReadJudgedReviews" ? false : true;
+}
+
+/** Story: Take a gate or safety step in the console as myself / The staff API takes a step that needs a person only from a named person (spec/staffPermissions.md) */
+//@ pure
+export function staffStepActorAccepted(consoleConfigured: boolean, staffStep: StaffStep, actor: StepActor): boolean {
+  return actor === "NamedReviewer" || !consoleConfigured || !staffStepNeedsPerson(staffStep);
+}
+
+/** Story: Take a gate or safety step in the console as myself / The staff API takes a step that needs a person only from a named person (spec/staffPermissions.md) */
+//@ pure
+export function lawConsoleServiceRefusesSharedToken(consoleConfigured: boolean, staffStep: StaffStep): boolean {
+  //@ ensures \result === true
+  return !(consoleConfigured && staffStepNeedsPerson(staffStep)) || !staffStepActorAccepted(consoleConfigured, staffStep, "SharedToken");
+}
+
+/** Story: Take a gate or safety step in the console as myself / The staff API takes a step that needs a person only from a named person (spec/staffPermissions.md) */
+//@ pure
+export function lawOnlyReviewDeskStepsTakeSharedToken(staffStep: StaffStep): boolean {
+  //@ ensures \result === true
+  return !staffStepActorAccepted(true, staffStep, "SharedToken") || (staffStep === "DecideReviewItem" || staffStep === "StopApprovedReview" || staffStep === "ReadJudgedReviews");
+}
+
+/** Story: Take a gate or safety step in the console as myself / The staff API takes a step that needs a person only from a named person (spec/staffPermissions.md) */
+//@ pure
+export function lawSafetyCaseNeedsPerson(consoleConfigured: boolean): boolean {
+  //@ ensures \result === true
+  return !consoleConfigured || !staffStepActorAccepted(consoleConfigured, "DecideSafetyCase", "SharedToken");
+}
+
+/** Story: Take a gate or safety step in the console as myself / The staff API takes a step that needs a person only from a named person (spec/staffPermissions.md) */
+//@ pure
+export function lawNamedReviewerAlwaysAccepted(consoleConfigured: boolean, staffStep: StaffStep): boolean {
+  //@ ensures \result === true
+  return staffStepActorAccepted(consoleConfigured, staffStep, "NamedReviewer");
+}
+
+/** Story: Take a gate or safety step in the console as myself / The staff API takes a step that needs a person only from a named person (spec/staffPermissions.md) */
+//@ pure
+export function lawConsoleTokenOnlyTightens(staffStep: StaffStep, actor: StepActor): boolean {
+  //@ ensures \result === true
+  return !staffStepActorAccepted(true, staffStep, actor) || staffStepActorAccepted(false, staffStep, actor);
+}
+
+/** Story: Take a gate or safety step in the console as myself / The staff API takes a step that needs a person only from a named person (spec/staffPermissions.md) */
+//@ pure
+export function lawConsoleTokenDecidesOnlyForSharedToken(consoleConfigured: boolean, staffStep: StaffStep, actor: StepActor): boolean {
+  //@ ensures \result === true
+  return !(staffStepActorAccepted(consoleConfigured, staffStep, actor) !== staffStepActorAccepted(!consoleConfigured, staffStep, actor)) || actor === "SharedToken";
 }
 
 /** Do the rules allow this event in this state? */

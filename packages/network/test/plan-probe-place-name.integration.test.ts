@@ -4,7 +4,7 @@
 import { expect, test } from "vitest";
 import { buildWorld, localEmbed, plans, resolveConfig } from "@thenetwork/engine";
 import { randomWorld } from "../../engine/src/testkit.ts";
-import { PLAN_VENUES } from "../src/plans.ts";
+import { PLAN_VENUE_AGES, PLAN_VENUES } from "../src/plans.ts";
 
 const NY = "America/New_York";
 
@@ -23,12 +23,12 @@ test("an invitee whose name shares a word with the venue does not drop the other
       size: { min: 3, target: 3, max: 6 }, quorum: 3, probeDeadline: Date.UTC(2026, 9, 9), score: 0.5, u: {}, familiar: {}, createdAt: 0, category: "social",
     };
     for (const me of ids.slice(0, 2)) {
-      const text = plans.buildPlanProbe(w, plan, me, NY);
+      const text = plans.buildPlanProbe(w, plan, me, NY, PLAN_VENUE_AGES);
       expect(text, v.name).toContain(v.name);
       expect(text!).not.toMatch(/\bDee\b/);
     }
     const partner = { ...plan, partner: true, invited: [ids[0]!, ids[2]!] };
-    expect(plans.buildPlanProbe(w, partner, ids[0]!, NY, [{ key: "a", label: "Saturday at 11" }])).toContain(v.name);
-    expect(plans.buildPlanProbe(w, partner, ids[0]!, NY, [{ key: "a", label: "Park" }])).toBeNull();
+    expect(plans.buildPlanProbe(w, partner, ids[0]!, NY, PLAN_VENUE_AGES, [{ key: "a", label: "Saturday at 11" }])).toContain(v.name);
+    expect(plans.buildPlanProbe(w, partner, ids[0]!, NY, PLAN_VENUE_AGES, [{ key: "a", label: "Park" }])).toBeNull();
   }
 });

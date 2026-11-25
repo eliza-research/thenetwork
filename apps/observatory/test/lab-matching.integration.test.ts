@@ -8,7 +8,7 @@ import { Lab, LAB_ARMS } from "../src/lab.ts";
 import { createServer, type ObservatoryServer } from "../src/server.ts";
 import type { ObsState } from "../src/types.ts";
 
-test("game and lab runs honor app matching locks before dispatch", async () => {
+test("game and lab runs match for peon as for ntwrk (spec/runtimeUnit.md: the registry row alone decides)", async () => {
   const dir = await mkdtemp(join(tmpdir(), "lab-matching-"));
   const lab = new Lab({ dir: join(dir, "lab"), concurrency: 1 });
   let server: ObservatoryServer | undefined;
@@ -35,10 +35,9 @@ test("game and lab runs honor app matching locks before dispatch", async () => {
         await control({ type: "step", ms: 7 * DAY });
       }
       const s = await state();
-      if (app === "peon") expect(s.stats.invites).toBe(0);
-      else expect(s.stats.invites).toBeGreaterThan(0);
-      expect(s.env.matchingLocked === true).toBe(app === "peon");
-      expect((await (await server.source("game", app)).config()).matchingEnabled).toBe(app !== "peon");
+      expect(s.stats.invites).toBeGreaterThan(0);
+      expect(s.env.matchingLocked).toBeUndefined();
+      expect((await (await server.source("game", app)).config()).matchingEnabled).toBe(true);
       expect(s.stats.judge).toMatchObject({ invariants: 0, canaryLeaks: 0, minorContacts: 0 });
     }
     for (const app of ["peon", "ntwrk"] as const) {
@@ -52,9 +51,8 @@ test("game and lab runs honor app matching locks before dispatch", async () => {
       expect({ status: done.status, error: done.error }).toEqual({ status: "done", error: undefined });
       expect(done.results.map(r => r.arm).sort()).toEqual([...LAB_ARMS].sort());
       for (const result of done.results) {
-        expect(result).toMatchObject({ canaryLeaks: 0, minorContacts: 0 });
-        if (app === "peon") expect(result).toMatchObject({ meetings: 0, judgeInvariants: 0 });
-        else expect(result.meetings).toBeGreaterThan(0);
+        expect(result).toMatchObject({ judgeInvariants: 0, canaryLeaks: 0, minorContacts: 0 });
+        expect(result.meetings).toBeGreaterThan(0);
       }
       expect(JSON.parse(await readFile(done.file, "utf8")).results).toEqual(done.results);
     }

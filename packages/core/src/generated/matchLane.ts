@@ -40,7 +40,7 @@ export function lawLaneSidesSymmetric(lane: MatchLane, laneNearRole: LaneSide, l
 /** Story: Peers meet as equals / Every lane keeps its rules and bounds in one table (spec/matchLane.md) */
 //@ pure
 export function laneLimits(lane: MatchLane): LaneLimits {
-  return lane === "Friend" ? ({ rules: ({ utilityFloor: 150, parityBand: 100, parityFreeGap: 100, parityPenaltyPerPoint: 0, balanceRequired: false, exchangeFloor: 0, balanceTolerancePercent: 100 } as pairValue_PairRules), standingOffset: 0, weeklyCapacity: 3, searchLimit: 12, searchBudget: 600, circleMinimum: 3, circleMaximum: 6, circlePairFloor: 150 } as LaneLimits) : lane === "Date" ? ({ rules: ({ utilityFloor: 350, parityBand: 15, parityFreeGap: 10, parityPenaltyPerPoint: 10, balanceRequired: false, exchangeFloor: 0, balanceTolerancePercent: 100 } as pairValue_PairRules), standingOffset: 0, weeklyCapacity: 2, searchLimit: 10, searchBudget: 600, circleMinimum: 0, circleMaximum: 0, circlePairFloor: 0 } as LaneLimits) : lane === "Cofounder" ? ({ rules: ({ utilityFloor: 400, parityBand: 20, parityFreeGap: 8, parityPenaltyPerPoint: 10, balanceRequired: true, exchangeFloor: 200, balanceTolerancePercent: 50 } as pairValue_PairRules), standingOffset: 0, weeklyCapacity: 2, searchLimit: 10, searchBudget: 600, circleMinimum: 0, circleMaximum: 0, circlePairFloor: 0 } as LaneLimits) : lane === "Intro" ? ({ rules: ({ utilityFloor: 350, parityBand: 20, parityFreeGap: 8, parityPenaltyPerPoint: 10, balanceRequired: true, exchangeFloor: 200, balanceTolerancePercent: 50 } as pairValue_PairRules), standingOffset: 0, weeklyCapacity: 3, searchLimit: 12, searchBudget: 600, circleMinimum: 3, circleMaximum: 6, circlePairFloor: 400 } as LaneLimits) : lane === "Hire" ? ({ rules: ({ utilityFloor: 400, parityBand: 15, parityFreeGap: 5, parityPenaltyPerPoint: 15, balanceRequired: false, exchangeFloor: 0, balanceTolerancePercent: 100 } as pairValue_PairRules), standingOffset: 0, weeklyCapacity: 3, searchLimit: 10, searchBudget: 600, circleMinimum: 0, circleMaximum: 0, circlePairFloor: 0 } as LaneLimits) : lane === "Mentor" ? ({ rules: ({ utilityFloor: 350, parityBand: 15, parityFreeGap: 5, parityPenaltyPerPoint: 10, balanceRequired: false, exchangeFloor: 0, balanceTolerancePercent: 100 } as pairValue_PairRules), standingOffset: 25, weeklyCapacity: 2, searchLimit: 8, searchBudget: 400, circleMinimum: 0, circleMaximum: 0, circlePairFloor: 0 } as LaneLimits) : ({ rules: ({ utilityFloor: 400, parityBand: 15, parityFreeGap: 5, parityPenaltyPerPoint: 15, balanceRequired: false, exchangeFloor: 0, balanceTolerancePercent: 100 } as pairValue_PairRules), standingOffset: 0, weeklyCapacity: 2, searchLimit: 8, searchBudget: 400, circleMinimum: 0, circleMaximum: 0, circlePairFloor: 0 } as LaneLimits);
+  return lane === "Friend" ? ({ rules: ({ utilityFloor: 150, parityBand: 100, parityFreeGap: 100, parityPenaltyPerPoint: 0, balanceRequired: false, exchangeFloor: 0, balanceTolerancePercent: 100 } as pairValue_PairRules), standingOffset: 0, weeklyCapacity: 3, searchLimit: 12, searchBudget: 600, circleMinimum: 3, circleMaximum: 6, circlePairFloor: 150 } as LaneLimits) : lane === "Date" ? ({ rules: ({ utilityFloor: 350, parityBand: 15, parityFreeGap: 10, parityPenaltyPerPoint: 10, balanceRequired: false, exchangeFloor: 0, balanceTolerancePercent: 100 } as pairValue_PairRules), standingOffset: 0, weeklyCapacity: 2, searchLimit: 10, searchBudget: 600, circleMinimum: 0, circleMaximum: 0, circlePairFloor: 0 } as LaneLimits) : lane === "Cofounder" ? ({ rules: ({ utilityFloor: 400, parityBand: 20, parityFreeGap: 8, parityPenaltyPerPoint: 10, balanceRequired: true, exchangeFloor: 200, balanceTolerancePercent: 50 } as pairValue_PairRules), standingOffset: 0, weeklyCapacity: 2, searchLimit: 10, searchBudget: 600, circleMinimum: 0, circleMaximum: 0, circlePairFloor: 0 } as LaneLimits) : lane === "Intro" ? ({ rules: ({ utilityFloor: 350, parityBand: 20, parityFreeGap: 8, parityPenaltyPerPoint: 10, balanceRequired: true, exchangeFloor: 200, balanceTolerancePercent: 50 } as pairValue_PairRules), standingOffset: 0, weeklyCapacity: 3, searchLimit: 12, searchBudget: 600, circleMinimum: 3, circleMaximum: 6, circlePairFloor: 400 } as LaneLimits) : lane === "Hire" ? ({ rules: ({ utilityFloor: 400, parityBand: 22, parityFreeGap: 5, parityPenaltyPerPoint: 15, balanceRequired: false, exchangeFloor: 0, balanceTolerancePercent: 100 } as pairValue_PairRules), standingOffset: 0, weeklyCapacity: 3, searchLimit: 10, searchBudget: 600, circleMinimum: 0, circleMaximum: 0, circlePairFloor: 0 } as LaneLimits) : lane === "Mentor" ? ({ rules: ({ utilityFloor: 350, parityBand: 15, parityFreeGap: 5, parityPenaltyPerPoint: 10, balanceRequired: false, exchangeFloor: 0, balanceTolerancePercent: 100 } as pairValue_PairRules), standingOffset: 25, weeklyCapacity: 2, searchLimit: 8, searchBudget: 400, circleMinimum: 0, circleMaximum: 0, circlePairFloor: 0 } as LaneLimits) : ({ rules: ({ utilityFloor: 400, parityBand: 15, parityFreeGap: 5, parityPenaltyPerPoint: 15, balanceRequired: false, exchangeFloor: 0, balanceTolerancePercent: 100 } as pairValue_PairRules), standingOffset: 0, weeklyCapacity: 2, searchLimit: 8, searchBudget: 400, circleMinimum: 0, circleMaximum: 0, circlePairFloor: 0 } as LaneLimits);
 }
 
 /** Story: Peers meet as equals / Every lane keeps its rules and bounds in one table (spec/matchLane.md) */
@@ -104,6 +104,106 @@ export function laneOffered(app: string, lane: MatchLane): boolean {
 export function lawEveryAppHasALane(app: string): boolean {
   //@ ensures \result === true
   return !(app === "ntwrk" || app === "slop" || app === "peon" || app === "friends") || (laneOffered(app, "Friend") || laneOffered(app, "Date") || laneOffered(app, "Cofounder") || laneOffered(app, "Intro") || laneOffered(app, "Hire") || laneOffered(app, "Mentor") || laneOffered(app, "Invest"));
+}
+
+/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
+//@ pure
+export function teenFriendApp(app: string): boolean {
+  return app === "friends" || app === "ntwrk";
+}
+
+/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
+//@ pure
+export function teenFriendCategory(app: string, category: string): boolean {
+  return (app === "friends" && (category === "social" || category === "hobby")) || (app === "ntwrk" && category === "social");
+}
+
+/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
+//@ pure
+export function teenGroupPlanApp(app: string): boolean {
+  return app === "friends";
+}
+
+/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
+//@ pure
+export function teenFriendLane(app: string, lane: MatchLane): boolean {
+  return teenFriendApp(app) && lane === "Friend";
+}
+
+/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
+//@ pure
+export function lawNtwrkTeenCategoryIsSocial(category: string): boolean {
+  //@ ensures \result === true
+  return !teenFriendCategory("ntwrk", category) || category === "social";
+}
+
+/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
+//@ pure
+export function lawTeenPlansOnlyOnFriends(app: string): boolean {
+  //@ ensures \result === true
+  return !teenGroupPlanApp(app) || app === "friends";
+}
+
+/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
+//@ pure
+export function lawTeenLanesOnlyInFriendApps(app: string, lane: MatchLane, category: string): boolean {
+  //@ ensures \result === true
+  return !(teenFriendLane(app, lane) || teenFriendCategory(app, category) || teenGroupPlanApp(app)) || (app === "friends" || app === "ntwrk");
+}
+
+/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
+//@ pure
+export function lawNoTeenOnSlopOrPeon(lane: MatchLane, category: string): boolean {
+  //@ ensures \result === true
+  return !(teenFriendLane("slop", lane) || teenFriendLane("peon", lane) || teenFriendCategory("slop", category) || teenFriendCategory("peon", category) || teenGroupPlanApp("slop") || teenGroupPlanApp("peon"));
+}
+
+/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
+//@ pure
+export function lawTeenFriendLaneSameOnBothApps(lane: MatchLane): boolean {
+  //@ ensures \result === true
+  return teenFriendLane("friends", lane) === teenFriendLane("ntwrk", lane);
+}
+
+/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
+//@ pure
+export function lawTeenFriendLaneIsOffered(app: string, lane: MatchLane): boolean {
+  //@ ensures \result === true
+  return !teenFriendLane(app, lane) || laneOffered(app, lane);
+}
+
+/** Story: Friendship lanes offer teen introductions / A teen is never in a date or work lane (spec/matchLane.md) */
+//@ pure
+export function lawNoTeenDateOrWork(app: string): boolean {
+  //@ ensures \result === true
+  return !teenFriendLane(app, "Date") && !teenFriendLane(app, "Hire") && !teenFriendLane(app, "Cofounder") && !teenFriendLane(app, "Invest") && !teenFriendLane(app, "Mentor") && !teenFriendLane(app, "Intro") && !teenFriendCategory(app, "romance") && !teenFriendCategory(app, "professional");
+}
+
+/** Story: Friendship lanes offer teen introductions / Only a known friendship generator makes a teen item (spec/matchLane.md) */
+//@ pure
+export function teenGenerator(app: string, generator: string): boolean {
+  return (app === "ntwrk" && (generator === "intent_to_capability" || generator === "group_composer" || generator === "request")) || (app === "friends" && (generator === "friend_circle" || generator === "activity_partner" || generator === "request" || generator === "plan" || generator === "friends_repeat" || generator === "crew"));
+}
+
+/** Story: Friendship lanes offer teen introductions / Only a known friendship generator makes a teen item (spec/matchLane.md) */
+//@ pure
+export function lawTeenGeneratorOnlyInFriendApps(app: string, generator: string): boolean {
+  //@ ensures \result === true
+  return !teenGenerator(app, generator) || teenFriendApp(app);
+}
+
+/** Story: Friendship lanes offer teen introductions / Only a known friendship generator makes a teen item (spec/matchLane.md) */
+//@ pure
+export function lawNtwrkHasNoTeenPlans(generator: string): boolean {
+  //@ ensures \result === true
+  return !(generator === "plan" || generator === "friends_repeat" || generator === "crew") || !teenGenerator("ntwrk", generator);
+}
+
+/** Story: Friendship lanes offer teen introductions / Only a known friendship generator makes a teen item (spec/matchLane.md) */
+//@ pure
+export function lawRepeatsAndContributorsNeverTeen(app: string): boolean {
+  //@ ensures \result === true
+  return !(teenGenerator(app, "second_encounter") || teenGenerator(app, "same_table_again") || teenGenerator(app, "event_anchor") || teenGenerator(app, "warm_path") || teenGenerator(app, "help_request") || teenGenerator(app, "newcomer_welcome") || teenGenerator(app, "network_growth") || teenGenerator(app, "gathering_second_encounter") || teenGenerator(app, "player"));
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */

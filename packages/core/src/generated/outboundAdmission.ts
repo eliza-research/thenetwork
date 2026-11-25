@@ -1,10 +1,14 @@
 // GENERATED from spec/outboundAdmission.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Recheck a queued message at send time / A current row needs live approval and the recipient's eligibility (spec/outboundAdmission.md) */
-export type Admission = "Proceed" | "Expired" | "ApprovalMissing" | "OptedOut" | "RecipientIneligible" | "ReplyTooOld" | "InvalidZone" | "QuietHours" | "AwaitingReply" | "LinePaused" | "RecipientCap" | "LineCap" | "NewConversationCap" | "PersonCap" | "LeakReview" | "Admit";
+/** Story: Recheck a queued message at send time / A current row needs a delivering line and the recipient's eligibility (spec/outboundAdmission.md) */
+export type Admission = "Proceed" | "Expired" | "DryRunLine" | "OptedOut" | "RecipientIneligible" | "ReplyTooOld" | "InvalidZone" | "QuietHours" | "AwaitingReply" | "LinePaused" | "RecipientCap" | "LineCap" | "NewConversationCap" | "PersonCap" | "LeakReview" | "Admit";
 /** Story: Recheck a queued message at send time / Replies, quiet hours and unanswered messages limit when a send can go out (spec/outboundAdmission.md) */
 export interface ConversationAdmission { decision: Admission; reengage: boolean }
+/** Story: Recheck a queued message at send time / A check that cannot answer delays the row and never sends it (spec/outboundAdmission.md) */
+export type DispatchFailure = "RetryDispatch" | "ParkDispatch";
+/** Story: Recheck a queued message at send time / A claim needs the Network state that its checks read (spec/outboundAdmission.md) */
+export type ViewCheck = "ViewCurrent" | "ViewChanged";
 
 /** Story: Recheck a queued message at send time / A cancelled booking can notify a participant who received the booked plan (spec/outboundAdmission.md) */
 export const bookedCancellationPrefix: string = "booked-cancellation:";
@@ -13,37 +17,37 @@ export const peerContactTypes: string[] = ["probe", "plan_probe", "scheduling", 
 /** Story: Recheck a queued message at send time / Recheck blocks between the participants before contact (spec/outboundAdmission.md) */
 export const peerContactSeatStatuses: string[] = ["pending", "checking", "available", "accepted", "confirmed", "attended"];
 
-/** Story: Recheck a queued message at send time / A current row needs live approval and the recipient's eligibility (spec/outboundAdmission.md) */
+/** Story: Recheck a queued message at send time / A current row needs a delivering line and the recipient's eligibility (spec/outboundAdmission.md) */
 //@ pure
 export function closedOpportunityRowStale(closed: boolean, terminalNotice: boolean): boolean {
   return closed && !terminalNotice;
 }
 
-/** Story: Recheck a queued message at send time / A current row needs live approval and the recipient's eligibility (spec/outboundAdmission.md) */
+/** Story: Recheck a queued message at send time / A current row needs a delivering line and the recipient's eligibility (spec/outboundAdmission.md) */
 //@ pure
 export function livePolicy(live: boolean): Admission {
-  return live ? "Proceed" : "ApprovalMissing";
+  return live ? "Proceed" : "DryRunLine";
 }
 
-/** Story: Recheck a queued message at send time / A current row needs live approval and the recipient's eligibility (spec/outboundAdmission.md) */
+/** Story: Recheck a queued message at send time / A current row needs a delivering line and the recipient's eligibility (spec/outboundAdmission.md) */
 //@ pure
 export function consentPolicy(compliance: boolean, optedOut: boolean): Admission {
   return !compliance && optedOut ? "OptedOut" : "Proceed";
 }
 
-/** Story: Recheck a queued message at send time / A current row needs live approval and the recipient's eligibility (spec/outboundAdmission.md) */
+/** Story: Recheck a queued message at send time / A current row needs a delivering line and the recipient's eligibility (spec/outboundAdmission.md) */
 //@ pure
 export function recipientPolicy(compliance: boolean, eligible: boolean): Admission {
   return !compliance && !eligible ? "RecipientIneligible" : "Proceed";
 }
 
-/** Story: Recheck a queued message at send time / A current row needs live approval and the recipient's eligibility (spec/outboundAdmission.md) */
+/** Story: Recheck a queued message at send time / A current row needs a delivering line and the recipient's eligibility (spec/outboundAdmission.md) */
 //@ pure
 export function duePolicy(stale: boolean): Admission {
   return stale ? "Expired" : "Proceed";
 }
 
-/** Story: Recheck a queued message at send time / A current row needs live approval and the recipient's eligibility (spec/outboundAdmission.md) */
+/** Story: Recheck a queued message at send time / A current row needs a delivering line and the recipient's eligibility (spec/outboundAdmission.md) */
 //@ pure
 export function lawOptedOutOnlyGetsCompliance(compliance: boolean): boolean {
   //@ ensures \result === true
@@ -112,6 +116,45 @@ export function quietPolicy(agent: boolean, validZone: boolean, quiet: boolean):
 //@ pure
 export function conversationPolicy(compliance: boolean, atCap: boolean, agent: boolean, reengaged: boolean, waited: boolean): ConversationAdmission {
   return compliance || !atCap ? ({ decision: "Proceed", reengage: false } as ConversationAdmission) : (agent && !reengaged && waited ? ({ decision: "Proceed", reengage: true } as ConversationAdmission) : ({ decision: "AwaitingReply", reengage: false } as ConversationAdmission));
+}
+
+/** Story: Recheck a queued message at send time / A row does not wait for an answer that the person already gave (spec/outboundAdmission.md) */
+//@ pure
+export function holdForReply(personWroteSinceRead: boolean): Admission {
+  return personWroteSinceRead ? "Proceed" : "AwaitingReply";
+}
+
+/** Story: Recheck a queued message at send time / A row does not wait for an answer that the person already gave (spec/outboundAdmission.md) */
+//@ pure
+export function lawWriteDuringCheckReleasesRow(personWroteSinceRead: boolean): boolean {
+  //@ ensures \result === true
+  return !(holdForReply(personWroteSinceRead) === "AwaitingReply") || !personWroteSinceRead;
+}
+
+/** Story: Recheck a queued message at send time / A check that cannot answer delays the row and never sends it (spec/outboundAdmission.md) */
+//@ pure
+export function dispatchFailurePolicy(hasAttemptsLeft: boolean): DispatchFailure {
+  return hasAttemptsLeft ? "RetryDispatch" : "ParkDispatch";
+}
+
+/** Story: Recheck a queued message at send time / A check that cannot answer delays the row and never sends it (spec/outboundAdmission.md) */
+//@ pure
+export function lawDispatchParksOnlyWithoutAttempts(hasAttemptsLeft: boolean): boolean {
+  //@ ensures \result === true
+  return (dispatchFailurePolicy(hasAttemptsLeft) === "ParkDispatch") === !hasAttemptsLeft;
+}
+
+/** Story: Recheck a queued message at send time / A claim needs the Network state that its checks read (spec/outboundAdmission.md) */
+//@ pure
+export function viewPolicy(storedVersion: string, viewVersion: string): ViewCheck {
+  return viewVersion !== "" && storedVersion === viewVersion ? "ViewCurrent" : "ViewChanged";
+}
+
+/** Story: Recheck a queued message at send time / A claim needs the Network state that its checks read (spec/outboundAdmission.md) */
+//@ pure
+export function lawClaimOnlyFromStoredVersion(storedVersion: string, viewVersion: string): boolean {
+  //@ ensures \result === true
+  return !(viewPolicy(storedVersion, viewVersion) === "ViewCurrent") || (viewVersion !== "" && storedVersion === viewVersion);
 }
 
 /** Story: Recheck a queued message at send time / A STOP or an app leave does not release a text held for an answer (spec/outboundAdmission.md) */

@@ -17,7 +17,7 @@ test.skipIf(!pgAvailable)("signed gathering RSVPs bind to the approved app and r
   const admin = "gathering-rsvp-fixture-admin", reviewer = "gathering-rsvp-fixture-reviewer";
   const app = APPS.ntwrk;
   const createService = () => new NetworkService({ url, clock, photoStorage: null, log: () => {},
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret },
+    env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret },
     tokens: `admin@ntwrk:${admin},reviewer@ntwrk:${reviewer}`,
     networks: [{ id: "ntwrk:nyc", matchingEnabled: false }, { id: "friends:nyc", matchingEnabled: false }],
   });

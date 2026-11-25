@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { defaultApps } from "../src/apps.ts";
+import type { MinorNotice } from "../../core/src/generated/textEnrollment.ts";
 import { addMember, call, connect, MODERN, origin, PHONE_A, PHONE_B, register, rpc, setup } from "./harness.ts";
 
 const NTWRK = `${origin("ntwrk.party")}/mcp`;
@@ -17,11 +18,11 @@ describe("Streamable HTTP, 2026-07-28", () => {
     expect(d.body!.result._meta["io.modelcontextprotocol/serverInfo"].name).toBe("the-network");
 
     const l = await rpc(env, NTWRK, "tools/list");
-    expect(l.body!.result.tools.map((t: any) => t.name)).toEqual(["app_info", "start_signup", "prepare_signup", "check_status", "read_profile", "submit_profile", "get_updates"]);
+    expect(l.body!.result.tools.map((t: any) => t.name)).toEqual(["app_info", "start_signup", "prepare_signup", "check_status", "read_profile", "submit_profile", "list_looking_for", "pause_looking_for", "resume_looking_for", "get_updates"]);
     for (const t of l.body!.result.tools) {
-      // Profile submission and reading updates modify the person's own state.
-      const ro = !["submit_profile", "get_updates", "prepare_signup"].includes(t.name);
-      expect(t.annotations).toEqual({ title: expect.any(String), readOnlyHint: ro, destructiveHint: false, idempotentHint: ro, openWorldHint: false });
+      const ro = !["submit_profile", "get_updates", "prepare_signup", "pause_looking_for", "resume_looking_for"].includes(t.name);
+      const idempotent = ro || ["pause_looking_for", "resume_looking_for"].includes(t.name);
+      expect(t.annotations).toEqual({ title: expect.any(String), readOnlyHint: ro, destructiveHint: false, idempotentHint: idempotent, openWorldHint: false });
       expect(t.inputSchema.additionalProperties).toBe(false);
     }
     const info = await call(env, NTWRK, "app_info", { app: "peon" });
@@ -81,7 +82,7 @@ describe("Streamable HTTP, 2026-07-28", () => {
     const future = await rpc(env, NTWRK, "initialize", { protocolVersion: "2030-01-01", capabilities: {} }, { modern: false });
     expect(future.body!.result.protocolVersion).toBe("2025-11-25");
     const list = await rpc(env, NTWRK, "tools/list", {}, { modern: false, headers: { "mcp-protocol-version": "2025-06-18" } });
-    expect(list.body!.result.tools).toHaveLength(7);
+    expect(list.body!.result.tools).toHaveLength(10);
     const tool = await call(env, NTWRK, "app_info", {}, { modern: false });
     expect(tool.body!.result.structuredContent.apps.map((a: any) => a.id)).toEqual(["ntwrk", "slop", "peon", "friends"]);
   });
@@ -93,6 +94,71 @@ describe("Streamable HTTP, 2026-07-28", () => {
     expect(r.res.headers.get("www-authenticate")).toBe('Bearer resource_metadata="https://slop.date/.well-known/oauth-protected-resource/mcp", scope="membership:read"');
     // A bad token on any call is 401, never served as anonymous.
     expect((await call(env, NTWRK, "app_info", {}, { token: "ntwa_forged" })).res.status).toBe(401);
+  });
+
+  for (const [app, domain] of [["friends", "friends.help"], ["ntwrk", "ntwrk.party"]] as const) {
+    test(`check_status takes the ${domain} text for a member under 18 from the network's notice, promises nothing without it, and an adult gets the plain text`, async () => {
+      const single = "You are signed up. Since you're under 18, I won't introduce you to other members, but I can suggest public places and events.";
+      const bare = setup();
+      await addMember(bare, PHONE_A, [{ app, state: "active" }], 16);
+      const bareConnection = await connect(bare, domain, PHONE_A, { scope: "membership:read" });
+      expect((await call(bare, `${origin(domain)}/mcp`, "check_status", {}, { token: bareConnection.token.access_token })).body!.result.structuredContent)
+        .toMatchObject({ status: "active", next_step: single });
+
+      let answer: MinorNotice | undefined = "MinorTeenFriendNotice";
+      const asked: string[] = [];
+      const env = setup({ minorNotice: async (personId, id) => { asked.push(`${personId}:${id}`); return answer; } });
+      const teen = await addMember(env, PHONE_A, [{ app, state: "active" }], 16);
+      await addMember(env, PHONE_B, [{ app, state: "active" }], 30);
+      const status = async (phone: string) => {
+        env.clock.t += 3_600_000;
+        const connection = await connect(env, domain, phone, { scope: "membership:read" });
+        return (await call(env, `${origin(domain)}/mcp`, "check_status", {}, { token: connection.token.access_token })).body!.result.structuredContent;
+      };
+      expect(await status(PHONE_A)).toMatchObject({ status: "active", next_step: "You are signed up. People under 18 are introduced only for friendship, to people close to their age." });
+      answer = "MinorSinglePlayerNotice";
+      expect(await status(PHONE_A)).toMatchObject({ status: "active", next_step: single });
+      answer = "MinorBirthdayNotice";
+      expect(await status(PHONE_A)).toMatchObject({
+        status: "active",
+        next_step: `${single} If you tell me your birthday (month, day and year), I can look for friends close to your age.`,
+      });
+      answer = undefined;
+      expect(await status(PHONE_A)).toMatchObject({ status: "active", next_step: single });
+      expect(asked).toEqual([`${teen}:${app}`, `${teen}:${app}`, `${teen}:${app}`, `${teen}:${app}`]);
+      expect(await status(PHONE_B)).toMatchObject({ status: "active", next_step: "You are signed up." });
+      expect(asked).toHaveLength(4);
+    });
+  }
+
+  test("check_status tells a peon.biz member under 18 that there is no work matching and where friendship introductions happen", async () => {
+    const env = setup();
+    await addMember(env, PHONE_A, [{ app: "peon", state: "active" }], 16);
+    await addMember(env, PHONE_B, [{ app: "peon", state: "active" }], 30);
+    const status = async (phone: string) => {
+      const connection = await connect(env, "peon.biz", phone, { scope: "membership:read" });
+      return (await call(env, `${origin("peon.biz")}/mcp`, "check_status", {}, { token: connection.token.access_token })).body!.result.structuredContent;
+    };
+    expect(await status(PHONE_A)).toMatchObject({
+      status: "active",
+      next_step: "You are signed up. peon.biz doesn't match anyone under 18 for work. I can still help you myself. Friendship introductions for people under 18 happen on friends.help and ntwrk.party.",
+    });
+    expect(await status(PHONE_B)).toMatchObject({ status: "active", next_step: "You are signed up." });
+  });
+
+  test("check_status tells a slop.date member under 18 that there are no dates and that friendship introductions happen on friends.help and ntwrk.party", async () => {
+    const env = setup();
+    await addMember(env, PHONE_A, [{ app: "slop", state: "active" }], 16);
+    await addMember(env, PHONE_B, [{ app: "slop", state: "active" }], 30);
+    const status = async (phone: string) => {
+      const connection = await connect(env, "slop.date", phone, { scope: "membership:read" });
+      return (await call(env, `${origin("slop.date")}/mcp`, "check_status", {}, { token: connection.token.access_token })).body!.result.structuredContent;
+    };
+    expect(await status(PHONE_A)).toMatchObject({
+      status: "active",
+      next_step: "You are signed up. slop.date doesn't match anyone under 18 for dates. Friendship introductions for people under 18 happen on friends.help and ntwrk.party.",
+    });
+    expect(await status(PHONE_B)).toMatchObject({ status: "active", next_step: "You are signed up." });
   });
 
   test("active membership status stays read-only and does not promise matching or delivery", async () => {
@@ -156,6 +222,14 @@ describe("the public OpenAI surface", () => {
     expect((await call(env, NTWRK, "app_info", { app: "slop" })).body!.result.structuredContent.adults_only.join(" ")).toContain("Photos");
   });
 
+  test("app_info names teen friendship introductions on friends.help and ntwrk.party, and none on slop.date or peon.biz", async () => {
+    const env = setup();
+    const rule = async (app: string) => (await call(env, NTWRK, "app_info", { app })).body!.result.structuredContent.adults_only[0];
+    const teen = "Matching is for adults 18 or older, except friendship introductions between people aged 13 to 18 born at most 2 years apart, after an automatic check approves each one.";
+    const adult = "Nobody under 18 is matched for dates or work on this app. Friendship introductions for people under 18 happen on friends.help and ntwrk.party.";
+    expect([await rule("ntwrk"), await rule("friends"), await rule("slop"), await rule("peon")]).toEqual([teen, teen, adult, adult]);
+  });
+
   test("a public tool answers that an app is not available when the agent names an app that is not in the registry", async () => {
     const env = setup();
     for (const endpoint of [NTWRK, OPENAI]) {
@@ -168,10 +242,11 @@ describe("the public OpenAI surface", () => {
     }
   });
 
-  test("an OpenAI client is put on the OpenAI surface even at /mcp, and cannot register on slop.date's own site", async () => {
+  test("an OpenAI client is put on the OpenAI surface even at /mcp, except the slop.date ChatGPT connector, which registers on the full surface for everyone", async () => {
     const env = setup();
     const chatgpt = { redirect_uris: ["https://chatgpt.com/connector_platform_oauth_redirect"] };
-    expect((await register(env, "slop.date", chatgpt)).res.status).toBe(400);
+    expect((await register(env, "slop.date", chatgpt)).res.status).toBe(201);
+    expect((await register(env, "slop.date", { redirect_uris: ["https://platform.openai.com/callback"] })).res.status).toBe(400);
     const c = await connect(env, "ntwrk.party", PHONE_A, { register: chatgpt, redirectUri: chatgpt.redirect_uris[0] });
     // Its token is for /mcp/openai only.
     expect((await rpc(env, NTWRK, "tools/list", {}, { token: c.token.access_token })).res.status).toBe(401);
@@ -195,7 +270,7 @@ describe("no tool accepts a phone number or a code", () => {
     await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
     for (const url of [NTWRK, OPENAI, `${origin("slop.date")}/mcp`]) {
       for (const t of (await rpc(env, url, "tools/list")).body!.result.tools) {
-        expect(Object.keys(t.inputSchema.properties)).toEqual(t.name === "submit_profile" ? ["app", "about"] : t.name === "get_updates" ? ["app", "update_token"] : t.name === "prepare_signup" ? ["app", "firstName", "homeCity"] : ["app"]);
+        expect(Object.keys(t.inputSchema.properties)).toEqual(t.name === "submit_profile" ? ["app", "about"] : t.name === "get_updates" ? ["app", "update_token"] : t.name === "prepare_signup" ? ["app", "firstName", "homeCity"] : t.name === "pause_looking_for" || t.name === "resume_looking_for" ? ["app", "ref"] : t.name === "photo_request" ? ["app", "words"] : ["app"]);
         expect(JSON.stringify(t.inputSchema)).not.toMatch(t.name === "prepare_signup" ? /phone|code|otp|age|birth|orientation|gender/i : /phone|code|otp|name|age|birth/i);
       }
     }

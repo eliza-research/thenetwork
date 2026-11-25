@@ -40,6 +40,7 @@ do $$ begin
       check (step in ('phone', 'code', 'consent', 'enrolling', 'enrolled'));
   end if;
 end $$;
+alter table oauth.auth_requests add column if not exists handoff jsonb;
 create index if not exists auth_requests_expires on oauth.auth_requests (expires_at);
 create index if not exists auth_requests_by_person on oauth.auth_requests (person_id, app_id) where person_id is not null;
 
@@ -134,15 +135,15 @@ create table if not exists oauth.rate_limits (
   count integer not null
 );
 
--- App/verified-phone bound draft; no bearer handoff URL. Grant deletion erases it.
 create table if not exists oauth.signup_drafts (
   grant_id text primary key references oauth.grants(id) on delete cascade,
   app_id text not null check (app_id in ('ntwrk','friends')),
   phone_key text not null,
   fields jsonb not null,
-  expires_at timestamptz not null,
-  consumed_at timestamptz
+  expires_at timestamptz not null
 );
+alter table oauth.signup_drafts drop column if exists consumed_at;
+create index if not exists signup_drafts_phone_app on oauth.signup_drafts (phone_key, app_id);
 
 -- A private at-most-once connector intake claim. The digest is keyed outside this database.
 create table if not exists oauth.profile_submissions (

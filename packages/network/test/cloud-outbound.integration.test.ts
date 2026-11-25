@@ -22,9 +22,9 @@ let waiting:Promise<void>,entered:Promise<void>;
 const scriptedDelivery = new Map<string, (path: string, body: string) => Response>();
 const firstDispatchTime = new Map<string, number>();
 const start=async()=>{
-  service=new NetworkService({url,clock,photoStorage:null,tokens:"safety:saf-tok",env:{PLATFORM_ENV:"dev",CLEF_RATINGS:"off",SERVICE_TURN_SECRET:secret},networks:[{id:"friends:nyc",matchingEnabled:false}],network:{seed:1},log:()=>{},
+  service=new NetworkService({url,clock,photoStorage:null,tokens:"safety:saf-tok",env:{PLATFORM_ENV:"dev",SERVICE_TURN_SECRET:secret},networks:[{id:"friends:nyc",matchingEnabled:false}],network:{seed:1},log:()=>{},
     adapter:(_net,rt)=>new CloudChannelAdapter({clock,app:rt.app.id,city:rt.city,from:"+12125550170",origin:cloud.url.origin,secret,
-      env:{PLATFORM_ENV:"dev",BLOOIO_ALLOW_SEND:"1",NTWRK_LIVE_APPROVED:"1",FRIENDS_LIVE_APPROVED:"1"}})});
+      env:{PLATFORM_ENV:"dev"}})});
   await service.start();
 };
 beforeAll(async()=>{
@@ -319,6 +319,12 @@ test("signed-turn replies pass the queue's leak guard (a failing one is parked f
   expect((await sql`select status from network.messages where id='canary-reply'`)[0].status).toBe("dropped_leak_review");
   expect((await sql`select reason from network.staff_audit where action='leak_drop' and target_id='canary-reply'`)[0].reason).toBe("a test canary, never send");
   expect(await (await staffCall("/queue/leak-review/canary-reply?app=friends","POST",{decision:"release",reason:"changed my mind"})).json()).toMatchObject({ok:false,reason:"not_parked"});
+  const beforeRelay=dispatches;
+  await rt.unitOfWork(()=>rt.system(memberId,"relay:leak-1",'Ari says: "Your code is CANARY_TEST_77_x"',"transactional","relay"));
+  expect((await sql`select status from platform.outbound where id='relay:leak-1'`)[0].status).toBe("dropped_leak_review");
+  const parked=await (await staffCall("/queue/leak-review?app=friends")).json() as {items:{id:string}[]};
+  expect(parked.items.map(x=>x.id)).not.toContain("relay:leak-1");
+  expect(dispatches).toBe(beforeRelay);
   // A message whose own status lagged the queue's (a crash between the acceptance commit and the status write):
   // projected once, its status repaired from the queue's, and never selected again.
   await rt.unitOfWork(()=>rt.unit.sends.push({id:"drift-1",memberId,to:phone2,body:"Your requested reminder is ready.",kind:"reply",type:"reminder",proactive:false,system:false,ts:clock.now()}));

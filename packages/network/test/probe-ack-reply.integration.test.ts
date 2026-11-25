@@ -5,11 +5,12 @@
 import { expect, test } from "vitest";
 import { parseReply } from "../../core/src/replies.ts";
 import { Mini } from "./mini.ts";
+import { simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";
 
 const climber = (id: string, name: string) => ({ id, name, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"], skills: ["belaying"], wants: [{ objective: "find a regular climbing partner", category: "hobby" as const }] });
 
 test("a thanks for another message is not a yes to the waiting probe", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   await w.onboard("a", "b");
   w.propose(["a", "b"]);
   expect(await w.runUntil(() => w.probed("a"))).toBe(true);
@@ -28,7 +29,7 @@ test("a thanks for another message is not a yes to the waiting probe", async () 
 });
 
 test("a bare thanks right after the probe still answers it", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   await w.onboard("a", "b");
   w.propose(["a", "b"]);
   expect(await w.runUntil(() => w.probed("a"))).toBe(true);
@@ -66,7 +67,7 @@ test.each([
   ["Yes, please don’t go ahead without me.", "unsure"],
   ["She said, “Go ahead without me.” I can make it.", "yes"],
 ] as const)("reads %s as %s on both the shared reader and an actual delivered probe", async (reply, answer) => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   await w.onboard("a", "b");
   w.propose(["a", "b"]);
   expect(await w.runUntil(() => w.probed("a"))).toBe(true);
@@ -85,7 +86,7 @@ test.each([
 });
 
 test("a booked plan survives a negated withdrawal and ends on a direct one", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   await w.onboard("a", "b");
   w.propose(["a", "b"]);
   await w.answerProbes(["a", "b"]);

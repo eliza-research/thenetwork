@@ -94,7 +94,7 @@ export function snippet(text: string, re: RegExp, width = 60): string {
 export const REVIEW_BLOCK_ERRORS: Record<string, string> = {
   not_in_review: "that opportunity is not waiting for review",
   note_required: "reason \"other\" needs a note",
-  participant_minor: "a participant is under 18: members under 18 are never introduced to anyone",
+  participant_minor: "a participant is under 18 and the roster fails the age rule for minors: friendship only, ages 13 to 18, born at most 2 years apart, teen introductions on",
   participant_declined: "a participant was declined at join (under 13)",
   matching_paused: "proactive matching is off: approvals wait until an admin turns it back on",
   nothing_to_edit: "an edit needs a new explanation or objective",
@@ -109,6 +109,10 @@ export const REVIEW_BLOCK_ERRORS: Record<string, string> = {
   opted_out: "approved, but a participant opted out: nothing was sent",
   blocked_pair: "approved, but two participants now block each other: nothing was sent",
   unknown_member: "approved, but a participant is unknown: nothing was sent",
+  not_held_for_staff: "the review judge has not held that item: staff approve only held items, and may reject any open item",
+  reviewer_required: "a named staff member is required",
+  reviewer_reserved: "that reviewer name belongs to the review judge",
+  not_stoppable: "that item is not approved, or its reveal has gone out: it cannot be stopped",
 };
 /** Why a safety action was refused. */
 export const SAFETY_ERRORS: Record<string, string> = {

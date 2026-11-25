@@ -21,7 +21,7 @@
 import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { defaultLLM, endpointsFor, Rng, HOUR } from "../../packages/core/src/index.ts";
 import {
-  applyCorrection, extractSlopProfile, extractSlopProfileLLM, hardComplete, hasField, HARD_FIELDS, llmSlopReader, markAsked, nextQuestion, readBack, readBackFacts,
+  applyCorrection, emptyOnboarding, extractSlopProfile, extractSlopProfileLLM, hardComplete, hasField, HARD_FIELDS, llmSlopReader, markAsked, nextQuestion, readBack, readBackFacts, seeksAnswerOf, transAnswerOf, transStatusOf,
   type OnboardField, type SlopOnboarding, type SlopReader,
 } from "../../packages/engine/src/packs/slop/index.ts";
 import { SLOP_READBACK, slopOnboarding } from "../../packages/network/service/packs.ts";
@@ -41,7 +41,7 @@ function valueOf(p: SlopOnboarding, f: string): unknown {
   switch (f) {
     case "age": return p.age?.value;
     case "gender": return p.gender?.value;
-    case "seeks": return p.seeks?.value;
+    case "seeks": return seeksAnswerOf(p);
     case "ageRange": return p.ageRange?.value;
     case "distance": { const d = p.distance?.value; return d?.mode === "multi" ? { ...d, markets: [...d.markets].sort() } : d; }
     case "location": return p.location?.value.known ? (p.location.value.area ?? p.location.value.zip) : undefined;
@@ -52,6 +52,9 @@ function valueOf(p: SlopOnboarding, f: string): unknown {
     case "activities": return p.activities.map(d => d.value).sort();
     case "free": return p.free.map(d => d.value);
     case "values": return Object.fromEntries(Object.entries(p.values).map(([k, v]) => [k, v?.value]));
+    case "transOpenness": return transAnswerOf(p);
+    case "transStatus": return transStatusOf(p.identity?.value);
+    case "shownTo": return p.shownTo?.value;
   }
   return undefined;
 }
@@ -197,6 +200,19 @@ async function corpusGates(b: Block, extract: (msgs: { text: string; asked?: Onb
   }
   gate(`${label}soft fields: accuracy >= 90% (n ${soft.length} rows, ${sN} fields)`, soft.length >= 60 && sOk / sN >= 0.9, `${pct(sOk / sN)} (${sOk}/${sN})${sMiss.length && sOk / sN < 0.9 ? `; misses: ${sMiss.slice(0, 6).join(" | ")}` : ""}`);
 
+  const open = await jsonl<Omit<Row, "messages"> & { messages?: (string | { text: string; asked?: OnboardField })[]; asks?: Record<string, number> }>("openness.jsonl");
+  const openWrong: string[] = [];
+  for (const r of open) {
+    const turns = (r.messages ?? [r.text!]).map(t => (typeof t === "string" ? { text: t, asked: r.asked } : t));
+    const msgs = turns.map(t => t.text);
+    const prior = r.asks ? { ...emptyOnboarding(), askCounts: { ...r.asks } } : undefined;
+    const p = await extract(turns, prior);
+    for (const [f, want] of Object.entries(r.expect ?? {})) if (!matches(p, f, want)) openWrong.push(`${f} ${JSON.stringify(msgs.join(" / "))} -> ${JSON.stringify(valueOf(p, f))} (want ${JSON.stringify(want)})`);
+    for (const f of r.unset ?? []) if (valueOf(p, f) !== undefined) openWrong.push(`${f} ${JSON.stringify(msgs.join(" / "))} -> ${JSON.stringify(valueOf(p, f))} (want unset)`);
+    rbProblems.push(...readBackProblems(p, msgs));
+  }
+  gate(`${label}stated openness: 0 dropped or wrong trans answers, 0 straight defaults after a stated label (n ${open.length})`, open.length >= 20 && openWrong.length === 0, openWrong.slice(0, 6).join(" | "));
+
   gate(`${label}read-back: 0 sensitive or unstated facts over every corpus row`, rbProblems.length === 0, rbProblems.slice(0, 5).join(" | "));
   const total = (await jsonl<Row>("hard.jsonl")).length + (await jsonl<Row>("hard-heldout.jsonl")).length + amb.length + ages.length + corr.length + soft.length;
   if (!label) b.track(`corpus size: ${total} rows (target 300+)`, total >= 300, `hard ${(await jsonl<Row>("hard.jsonl")).length} + held-out ${(await jsonl<Row>("hard-heldout.jsonl")).length}, ambiguous ${amb.length}, ages ${ages.length}, corrections ${corr.length}, soft ${soft.length}`);
@@ -309,6 +325,8 @@ class Speaker {
       age: () => this.age(), orientation: () => this.orientation(), seeks: () => this.seeks(), gender: () => this.self(), ageRange: () => this.range(),
       distance: () => this.distance(), location: () => this.location(), dealbreakers: () => this.basics(), goal: () => this.r.pick(GOAL_SAY[this.S().goal]!),
       interests: () => this.interests(), activities: () => this.activities(), free: () => this.free(),
+      transOpenness: () => { const a = this.S().transOpenness; return a === "open" ? this.r.pick(["yes", "yeah i'm open", "sure"]) : a === "only" ? "only trans people" : a === "not_open" ? this.r.pick(["no", "not really"]) : "rather not say"; },
+      shownTo: () => { const s = this.S().shownTo; return s.length === 2 ? "both" : s[0] === "woman" ? "women" : s[0] === "man" ? "men" : "neither"; },
     };
     return this.noisy((say[f] ?? (() => "ok"))());
   }
@@ -414,7 +432,7 @@ async function simGates(b: Block, o: { quick: boolean }, read: (text: string, as
   const seeds = o.quick ? [13] : [13, 14];
   const rows: { per: SlopPersona; res: ConvResult }[] = [];
   for (const seed of seeds) {
-    const personas = generateSlopPersonas({ seed, perCity: perCity ?? (o.quick ? 40 : 100), minorShare: 0.06 });
+    const personas = generateSlopPersonas({ seed, perCity: perCity ?? (o.quick ? 40 : 100), minorShare: 0.06, statedOpenness: true });
     for (const per of personas) rows.push({ per, res: await converse(per, seed, (text, asked, p) => read(text, asked, p, per.hidden.homeCity)) });
   }
   const adults = rows.filter(x => x.per.stated.claimedAge >= 18), minors = rows.filter(x => x.per.stated.claimedAge < 18);
@@ -614,13 +632,13 @@ export async function onboardBlock(b: Block, o: { quick: boolean; llm?: boolean 
       });
     }
   });
-  await corpusGates(b, async msgs => extractSlopProfile(msgs));
+  await corpusGates(b, async (msgs, prior) => extractSlopProfile(msgs, prior));
   await llmMergeGate(b);
   await simGates(b, o, async (text, asked, p, market) => extractSlopProfile([{ text, asked }], p, { market: market as "nyc" }));
   if (!o.llm) return;
   if (!endpointsFor("surplus").length && !endpointsFor("openai").length) { b.track("LLM arm: skipped (no provider key)", false); return; }
   const reader: SlopReader = llmSlopReader(defaultLLM());
   const llmOpts = { llm: { enabled: true, reader } };
-  await corpusGates(b, async msgs => extractSlopProfileLLM(msgs, undefined, llmOpts), "LLM arm: ", false);
+  await corpusGates(b, async (msgs, prior) => extractSlopProfileLLM(msgs, prior, llmOpts), "LLM arm: ", false);
   await simGates(b, { quick: true }, async (text, asked, p, market) => extractSlopProfileLLM([{ text, asked }], p, { ...llmOpts, market: market as "nyc" }), "LLM arm: ", 20, false);
 }

@@ -1,36 +1,26 @@
-import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
-// Outbound channels for the production service (service.ts). The Network composes every message;
-// a ChannelAdapter only delivers what the Network already decided to send.
-//  - DryRunAdapter (the default): nothing leaves the machine. The service stores each send in
-//    network.messages with status "dry_run", and the adapter logs one line (no message text).
-//  - BlooioAdapter: the persisted queue (packages/blooio outbound-queue.ts, platform.outbound). The
-//    runtime writes each send into the queue in the same transaction as the Network state; the queue
-//    delivers after the commit, with the Network's send-time checks (consent, the recipient, the person
-//    cap, the leak lists). It sends only when BLOOIO_ALLOW_SEND=1, NTWRK_LIVE_APPROVED=1 and the app's
-//    own <APP>_LIVE_APPROVED=1 (founder approval per app; for ntwrk the last two are the same flag).
-//    Otherwise every message is refused ("refused_not_approved") and the provider is never called.
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { MemberId, TimeOption } from "@thenetwork/core";
 import { plans } from "@thenetwork/engine";
-import { blooioRecipientPolicy, bookedReminderKey, bookedReminderKind, bookedReminderWindow, forbiddenProvider, gatheringRepeatOppPrefix, meetingFeedbackKey, replacementProbeKey, replacementProbePrefix, storedInterruptionSurveyCurrent, type BookedReminderKind, type NetworkState } from "../src/network.ts";
+import { blooioRecipientPolicy, bookedReminderKey, bookedReminderKind, bookedReminderWindow, forbiddenProvider, gatheringRepeatOppPrefix, meetingFeedbackKey, replacementProbeKey, replacementProbePrefix, reviewApproved, storedInterruptionSurveyCurrent, type BookedReminderKind, type NetworkState, type StoredReview } from "../src/network.ts";
 import { interruptionFeedbackPrefix } from "../src/interruption-feedback.ts";
 import { canBeMatched } from "../../core/src/policy.ts";
 import { RESCHEDULE_QUEUE_PREFIX, rescheduleNoticeCurrent, rescheduleUpdateKey, rescheduleUpdatePrefix } from "../src/rescheduling.ts";
 import { OutboundQueue, WAITING, type AppChecks, type ClaimCheck, type MessageKind, type QueueRow, type RecipientCheck } from "../../blooio/src/outbound-queue.ts";
-import type { Clock, ChannelAdapter as ProviderAdapter, StatusUpdate } from "../../blooio/src/types.ts";
+import { ChannelSendError, type Clock, type ChannelAdapter as ProviderAdapter, type StatusUpdate } from "../../blooio/src/types.ts";
 import type { NetworkRuntime } from "./runtime.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { isMemberInvitationLink } from "../src/invitation.ts";
 import { EXPECTED_INVITATION_PREFIX } from "./expected-invitation-store.ts";
 import { cofounderDeliveryIdPrefix } from "../../core/src/generated/cofounderDispatch.ts";
 import { bookingNoticeRosterCurrent, originalBookingNoticeCurrent } from "../../core/src/generated/meetingReschedule.ts";
-import { bookingNoticeReceived, bookingNoticeReceiptMayArrive, bookingNoticeRetryMs, dayBeforeReminderEndMs, meetingFeedbackPrefix, meetingFeedbackWindow, queuedBookingCancellationClaim, queuedMeetingFeedbackClaim, queuedReminderClaim, settlementDelayMs } from "../../core/src/generated/meetingSettlement.ts";
+import { bookingNoticePending, bookingNoticeReceived, bookingNoticeReceiptMayArrive, bookingNoticeRetryMs, dayBeforeReminderEndMs, meetingFeedbackPrefix, meetingFeedbackWindow, queuedBookingCancellationClaim, queuedMeetingFeedbackClaim, queuedReminderClaim, settlementDelayMs } from "../../core/src/generated/meetingSettlement.ts";
 import { lateArrivalDeliveryPrefix } from "../../core/src/generated/groupLateArrival.ts";
 import { parseLateArrivalDeliveryId } from "../src/group-late-arrival.ts";
 import { bookedCancellationAllowed, bookedCancellationPrefix, closedOpportunityRowStale, queuedProbePolicy } from "../../core/src/generated/outboundAdmission.ts";
 import { engineQuestionDeliveryPrefix, queuedEngineQuestionAllowed } from "../../core/src/generated/engineAsks.ts";
 import { friendPlanProbeDeliveryPrefix } from "../../core/src/generated/friendsPlanTimeChoice.ts";
 import { queuedPlanProbeAllowed } from "../../core/src/generated/planDispatch.ts";
+import { queuedProbeRosterAdmission } from "./probe-roster-admission.ts";
 import { reengagementDeliveryPrefix, reengagementMayDispatch } from "../../core/src/generated/outreachPolicy.ts";
 import { recoveryPlanCanProceed } from "../../core/src/generated/bookedGroupReplacement.ts";
 import { effectiveParticipation } from "./snapshot.ts";
@@ -151,7 +141,7 @@ function terminalNotice(row: QueueRow): TerminalNotice | undefined {
   if (row.kind === "transactional" && row.id === `${bookedCancellationPrefix}${key}`) return "booking";
 }
 
-type BookingReceipt = { status: string; sent_at: Date | null };
+type BookingReceipt = { status: string; sent_at: Date | null; gateway_reply: boolean };
 
 function receivedBookingNotice(receipt: BookingReceipt, now: number): boolean {
   return bookingNoticeReceived(receipt.status, receipt.sent_at?.getTime() ?? -1, now);
@@ -165,10 +155,10 @@ export async function currentBookingReceipts(tx: SQL, app: string, bookings: rea
     return { idx, opp_id: oppId, member_id: memberId, kind: revision === 0 ? "proposal" : "scheduling",
       notice_id: revision === 0 ? null : lane === "Cofounder" ? `${cofounderDeliveryIdPrefix}reveal:${key}` : key };
   });
-  const notices = await tx<(BookingReceipt & { idx: number })[]>`select expected.idx, exact.status, exact.sent_at
+  const notices = await tx<(BookingReceipt & { idx: number })[]>`select expected.idx, exact.status, exact.sent_at, exact.gateway_reply
     from jsonb_to_recordset(${expected}::jsonb) as expected(idx int,opp_id text,member_id text,kind text,notice_id text)
     cross join lateral (
-      select receipt.status,receipt.sent_at from network.messages notice
+      select receipt.status,receipt.sent_at,notice.inbound_id is not null as gateway_reply from network.messages notice
       join platform.outbound receipt on receipt.app_id=notice.app_id and receipt.id=notice.id and receipt.member_id=notice.member_id
       where notice.app_id=${app} and notice.opportunity_id=expected.opp_id and notice.member_id=expected.member_id
         and notice.direction='outbound' and notice.type=expected.kind and (expected.notice_id is null or notice.id=expected.notice_id)
@@ -189,7 +179,8 @@ async function cancellationBookingReceipts(tx: SQL, app: string, oppId: string, 
   const deliveryPrefix = lane === "Cofounder" ? `${cofounderDeliveryIdPrefix}reveal:` : "";
   const prefix = `${deliveryPrefix}${rescheduleUpdatePrefix(oppId)}`;
   const suffix = `:${memberId}`;
-  const notices = await tx<(BookingReceipt & { id: string; type: string })[]>`select notice.id,notice.type,receipt.status,receipt.sent_at
+  const notices = await tx<(BookingReceipt & { id: string; type: string })[]>`select notice.id,notice.type,receipt.status,receipt.sent_at,
+    notice.inbound_id is not null as gateway_reply
     from network.messages notice join platform.outbound receipt
       on receipt.app_id=notice.app_id and receipt.id=notice.id and receipt.member_id=notice.member_id
     where notice.app_id=${app} and notice.opportunity_id=${oppId} and notice.member_id=${memberId} and notice.direction='outbound'
@@ -203,7 +194,6 @@ async function cancellationBookingReceipts(tx: SQL, app: string, oppId: string, 
   });
 }
 
-/** The exact outbound record and accepted seat authorize a closed outcome notice. */
 async function releaseAdmission(tx: SQL, row: QueueRow, kind: TerminalNotice, runtimeId: string, now: number): Promise<ClaimCheck> {
   const refused = { ok: false, reason: "opportunity_release_changed" } as const;
   if (!row.memberId || !row.oppId) return refused;
@@ -224,7 +214,7 @@ async function releaseAdmission(tx: SQL, row: QueueRow, kind: TerminalNotice, ru
   const current = bookedCancellationAllowed(release.state === "CANCELLED", release.status === "accepted", release.told, start - now);
   const receipts = current ? await cancellationBookingReceipts(tx, row.app, row.oppId, row.memberId, release.revision, release.lane) : [];
   switch (queuedBookingCancellationClaim(current, receipts.some(receipt => receivedBookingNotice(receipt, now)),
-    receipts.some(receipt => bookingNoticeReceiptMayArrive(receipt.status)))) {
+    receipts.some(receipt => bookingNoticeReceiptMayArrive(receipt.status, receipt.gateway_reply)))) {
     case "SendCancellation": return { ok: true };
     case "WaitForCancellationReceipt":
       return { ok: false, reason: "booking_notice_pending", retryAt: Math.min(now + bookingNoticeRetryMs, start) };
@@ -249,10 +239,8 @@ async function bookedReminderAdmission(tx: SQL, row: QueueRow, kind: BookedRemin
   const current = row.id === bookedReminderKey(kind, row.oppId, row.memberId, meeting.revision)
     && bookedReminderWindow(kind, now, start);
   const receipt = current ? await currentBookingReceipt(tx, row.app, row.oppId, row.memberId, meeting.revision, meeting.lane) : undefined;
-  const status = receipt?.status;
-  const accepted = !!receipt && receivedBookingNotice(receipt, now);
-  const pending = status !== undefined && (WAITING.includes(status) || ["collected", "send_unknown", "parked_leak_review"].includes(status));
-  switch (queuedReminderClaim(current, accepted, pending)) {
+  switch (queuedReminderClaim(current, !!receipt && receivedBookingNotice(receipt, now),
+    !!receipt && bookingNoticePending(receipt.status, receipt.gateway_reply))) {
     case "SendReminder": return { ok: true };
     case "WaitForBookingNotice": {
       const cutoff = start - (kind === "day-before-reminder" ? dayBeforeReminderEndMs : 0);
@@ -262,7 +250,6 @@ async function bookedReminderAdmission(tx: SQL, row: QueueRow, kind: BookedRemin
   }
 }
 
-/** spec/meetingSettlement.md, "Send feedback requests during the open attendance period" */
 async function meetingFeedbackAdmission(tx: SQL, row: QueueRow, runtimeId: string, now: number): Promise<ClaimCheck> {
   const refused = { ok: false, reason: "meeting_feedback_changed" } as const;
   if (!row.memberId || !row.oppId || row.kind !== "transactional") return refused;
@@ -288,7 +275,7 @@ async function meetingFeedbackAdmission(tx: SQL, row: QueueRow, runtimeId: strin
   const receipt = meeting.open && meeting.accepted && exact && meetingFeedbackWindow(elapsed)
     ? await currentBookingReceipt(tx, row.app, row.oppId, row.memberId, meeting.revision, meeting.lane) : undefined;
   switch (queuedMeetingFeedbackClaim(meeting.open, meeting.accepted, exact, elapsed,
-    !!receipt && receivedBookingNotice(receipt, now), !!receipt && bookingNoticeReceiptMayArrive(receipt.status))) {
+    !!receipt && receivedBookingNotice(receipt, now), !!receipt && bookingNoticeReceiptMayArrive(receipt.status, receipt.gateway_reply))) {
     case "SendMeetingFeedback": return { ok: true };
     case "WaitForMeetingBookingReceipt":
       return { ok: false, reason: "booking_notice_pending", retryAt: Math.min(now + bookingNoticeRetryMs, start + settlementDelayMs) };
@@ -304,7 +291,7 @@ type QueuedProbe = Parameters<typeof effectiveParticipation>[0] & {
 };
 
 type StoredPlanProbe = {
-  stage: string | null; review_decision: string | null; review_invalidated: string | null;
+  stage: string | null; review: StoredReview | null;
   review_revision: number;
   pending_seat: boolean | null; probe_deadline: number | null;
   activity_window: plans.StatedWindows["windows"][number] | null; stated: plans.StatedWindows | null;
@@ -377,7 +364,8 @@ async function engineQuestionAdmission(tx: SQL, row: QueueRow, runtimeId: string
 async function probeAdmission(tx: SQL, row: QueueRow, rt: NetworkRuntime, now: number): Promise<RecipientCheck> {
   const reviewedKey = row.id.startsWith(friendPlanProbeDeliveryPrefix);
   const refused = { ok: false, reason: "plan_probe_changed" } as const;
-  if (row.kind !== "proactive" || !row.memberId) return reviewedKey ? refused : { ok: true };
+  if (!row.memberId) return reviewedKey ? refused : { ok: true };
+  if (row.kind !== "proactive") return reviewedKey ? refused : queuedProbeRosterAdmission(tx, row, rt.pg.id);
   const [probe] = await tx<QueuedProbe[]>`select msg.type,opp.category,member.prefs,member.participation_state,member.participation_window,member.opted_out,
       (msg.opportunity_id=${row.oppId ?? null} and msg.body=${row.text}) as exact_message
     from network.messages msg join network.members member on member.app_id=msg.app_id and member.id=msg.member_id
@@ -390,11 +378,11 @@ async function probeAdmission(tx: SQL, row: QueueRow, rt: NetworkRuntime, now: n
   const categoryAllowed = probe.category !== null && Array.isArray(categories) && categories.includes(probe.category)
     && (probe.category !== "romance" || probe.prefs?.romanceOptIn === true);
   if (queuedProbePolicy(true, paused, categoryAllowed) !== "Proceed") return { ok: false, reason: "matching_settings_changed" };
-  if (probe.type !== "plan_probe") return { ok: true };
+  if (probe.type !== "plan_probe") return queuedProbeRosterAdmission(tx, row, rt.pg.id);
 
   // lockPeerOpportunityContact already shares the exact runtime row against
   // updates to either the plan or the recipient's check-in state.
-  const [current] = await tx<StoredPlanProbe[]>`select plan.stage, plan.review->>'decision' as review_decision, plan.review->'invalidated' as review_invalidated,
+  const [current] = await tx<StoredPlanProbe[]>`select plan.stage, plan.review,
       case when jsonb_typeof(plan.review->'rerolls')='array' then jsonb_array_length(plan.review->'rerolls') else 0 end as review_revision,
       plan."planRun"->'answers'->>${row.memberId}::text='pending' as pending_seat,
       (plan.plan->>'probeDeadline')::double precision as probe_deadline, plan.plan->'window' as activity_window, member.stated,
@@ -411,7 +399,7 @@ async function probeAdmission(tx: SQL, row: QueueRow, rt: NetworkRuntime, now: n
     where saved.app_id=${row.app} and saved.id=${rt.pg.id}`;
   if (!current?.stage || !current.activity_window || current.probe_deadline === null) return refused;
   const laneOpen = rt.net.planProbeWindowOpen(current.stage, { window: current.activity_window, probeDeadline: current.probe_deadline }, now);
-  if (!queuedPlanProbeAllowed(current.review_decision === "approve" && !current.review_invalidated, current.pending_seat === true, laneOpen)) {
+  if (!queuedPlanProbeAllowed(reviewApproved(current.review ?? undefined), current.pending_seat === true, laneOpen)) {
     return refused;
   }
   if (current.reviewed_offer || reviewedKey) {
@@ -434,7 +422,7 @@ async function replacementProbeAdmission(tx: SQL, row: QueueRow, rt: NetworkRunt
   const source = saved?.state.opps.find(o => o.id === replacement.replacementFor);
   const sourceClosed = source?.stage === "closed" && source.closedFrom === "scheduled" && source.closedReason === "participant dropped";
   const run = replacement.planRun;
-  const pending = replacement.stage === "probing" && replacement.review?.decision === "approve" && !replacement.review.invalidated
+  const pending = replacement.stage === "probing" && reviewApproved(replacement.review)
     && run?.stage === "probing" && replacement.participants.includes(row.memberId) && run.answers[row.memberId] === "pending"
     && replacement.participants.every(id => run.answers[id] === "pending" || run.answers[id] === "yes");
   if (!recoveryPlanCanProceed(sourceClosed, pending, now < replacement.plan.probeDeadline)) return refused;
@@ -450,7 +438,6 @@ export interface Outbound {
   body: string;
   /** HTTPS links to attachments (a photo). */
   mediaUrls?: string[];
-  approvedPhotos?: ApprovedRelayPhoto[];
   invitationJoins?: readonly MemberId[];
   bookingRoster?: readonly MemberId[];
   /** reply: an answer to the member's own message; compliance: STOP/HELP confirmations; proactive; transactional: everything else. */
@@ -507,22 +494,21 @@ export interface ChannelAdapter {
 /** The kinds of a direct text (never "proactive": a direct text is not an introduction or a probe). */
 export type DirectKind = Exclude<MessageKind, "proactive">;
 
-/** The app's own live flag: NTWRK_LIVE_APPROVED, SLOP_LIVE_APPROVED, ... */
-export const liveFlag = (app: string) => `${app.toUpperCase()}_LIVE_APPROVED`;
+const DRY_RUN_LINE = "dry-run";
 
-/**
- * Live sends need BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1 (the founder's approval), and for an
- * app other than ntwrk its own <APP>_LIVE_APPROVED=1 too.
- */
-export function liveSendAllowed(env: Record<string, string | undefined> = process.env, app = "ntwrk"): boolean {
-  return env.BLOOIO_ALLOW_SEND === "1" && env.NTWRK_LIVE_APPROVED === "1" && env[liveFlag(app)] === "1";
-}
-
-/** Nothing leaves the machine. The service stores every send with status "dry_run". */
 export class DryRunAdapter implements ChannelAdapter {
   readonly name = "dry_run" as const;
   readonly storedStatus = "dry_run";
+  private q?: OutboundQueue;
   constructor(private log: (line: string) => void = console.log) {}
+  attach(rt: NetworkRuntime) {
+    const provider: ProviderAdapter = { kind: "sim", send: async () => { throw new ChannelSendError("A dry run never sends", "invalid"); } };
+    this.q = lineQueue(rt, { provider, clock: rt.clock, line: DRY_RUN_LINE, app: rt.app.id, env: {}, live: () => false, log: this.log });
+  }
+  get queue(): OutboundQueue {
+    if (!this.q) throw new Error("DryRunAdapter is not attached to a network runtime");
+    return this.q;
+  }
   async deliver(msgs: Outbound[]): Promise<Delivery[]> {
     // The text is in network.messages; the log line never holds it.
     for (const m of msgs) this.log(`[dry-run] ${m.kind} ${m.type ?? "message"} to ${m.memberId}${m.oppId ? ` (${m.oppId})` : ""}, ${m.body.length} chars, id ${m.id}`);
@@ -539,31 +525,151 @@ export class DryRunAdapter implements ChannelAdapter {
 const CLOSED_STAGES = new Set(["done", "closed"]);
 
 export interface BlooioAdapterOptions {
-  /** The provider (packages/blooio BlooioAdapter over a BlooioClient). The simulations pass a recording fake. */
   provider: ProviderAdapter;
   clock: Clock;
-  /** The sending line (BLOOIO_FROM). Required: the queue's counters are per line. */
   from?: string;
-  /** The app this adapter sends for (its live flag). Default "ntwrk". */
   app?: string;
-  /** The network's city: its zone is the quiet-hours fallback. Default "nyc". */
   city?: string;
-  /** Read for the live flags on every send. Default process.env. */
   env?: Record<string, string | undefined>;
-  /**
-   * Replaces the live flags. Accepted only with a provider whose kind is "sim" (a fake that cannot reach
-   * Blooio): the pipeline simulation drives the real queue with it. Any real provider keeps the flags.
-   */
-  liveGate?: (app: string) => boolean;
-  /** Queue limits (the per-line caps come from P3; defaults in outbound-queue.ts). Env: BLOOIO_LINE_DAILY_CAP, BLOOIO_LINE_NEW_CHATS_PER_DAY. */
   limits?: { perLinePerDay?: number; newChatsPerLinePerDay?: number; perRecipientPerHour?: number; baseBackoffMs?: number; leaseMs?: number };
   log?: (line: string) => void;
-  /** Accepted for older callers and ignored: the runtime supplies the Network and the address book (attach). */
-  net?: unknown;
-  memberOf?: unknown;
 }
 
-/** Blooio behind the live flags, through the persisted queue (one queue object per app; one line lock for all). */
+interface LineQueueOptions {
+  provider: ProviderAdapter;
+  clock: Clock;
+  line: string;
+  app: string;
+  env: Record<string, string | undefined>;
+  live: () => boolean;
+  limits?: BlooioAdapterOptions["limits"];
+  log: (line: string) => void;
+}
+
+function lineQueue(rt: NetworkRuntime, o: LineQueueOptions): OutboundQueue {
+  const policy = blooioRecipientPolicy(rt.net, rt.memberOf);
+  const leaks = forbiddenProvider(rt.net, to => rt.memberOf(to));
+  const num = (k: string) => { const v = Number(o.env[k]); return Number.isFinite(v) && v > 0 ? v : undefined; };
+  const checks: AppChecks = {
+    live: o.live,
+    stale: async row => row.id.startsWith("ntf_") ? !await rt.notificationCurrent(row.id)
+      : !!row.oppId && (row.id.startsWith("relay:") ? (rt.net.opps.get(row.oppId)?.stage ?? "closed") === "closed"
+        : closedOpportunityRowStale(CLOSED_STAGES.has(rt.net.opps.get(row.oppId)?.stage ?? ""),
+          terminalNotice(row) !== undefined || row.id.startsWith(meetingFeedbackPrefix))),
+    optedOut: row => rt.optedOut(row.id, row.memberId as MemberId | undefined, row.to),
+    privatePayload: row => row.id.startsWith(EXPECTED_INVITATION_PREFIX) || row.id.startsWith("relay:"),
+    recipient: (row, agentInitiated) => {
+      if (row.id.startsWith(lateArrivalDeliveryPrefix)) {
+        const notice = parseLateArrivalDeliveryId(row.id);
+        return notice && notice.app === row.app && row.memberId === notice.to && rt.memberOf(row.to) === notice.to
+          ? rt.net.recipientPolicy(notice.to, "relay", { about: [notice.from] })
+          : { ok: false, reason: "group_late_arrival_changed" };
+      }
+      if (row.id.startsWith(reengagementDeliveryPrefix)) {
+        return row.memberId && rt.memberOf(row.to) === row.memberId
+          ? rt.net.recipientPolicy(row.memberId, "reengage", { proactive: true })
+          : { ok: false, reason: "reengagement_changed" };
+      }
+      if (venueBookingNoticeBase(row.id)
+        && !rt.net.approvedBookingLink(row.oppId, (row.memberId as MemberId | undefined) ?? rt.memberOf(row.to), row.text, row.id)) {
+        return { ok: false, reason: "booking_changed" };
+      }
+      return !row.memberId && !rt.memberOf(row.to) ? { ok: true }
+        : policy(row.to, { kind: row.kind, ...(row.oppId && !terminalNotice(row) ? { briefId: row.oppId } : {}), agentInitiated });
+    },
+    leaks: async row => {
+      const sender = rt.net.relaySenderOf(row.id), recipient = (row.memberId as MemberId | undefined) ?? rt.memberOf(row.to);
+      const base = sender && recipient ? rt.net.leakSources([recipient], [sender]) : leaks(row.to);
+      const digestLink = row.id.startsWith("ntf_") ? await rt.notificationHandoffUrl(row.id, row.text) : undefined;
+      if (digestLink) return { ...base, contactAllow: [digestLink] };
+      const inviteLink = row.id.startsWith(EXPECTED_INVITATION_PREFIX) && row.text.split("\n")[1];
+      if (inviteLink && isMemberInvitationLink(rt.app, inviteLink)) return { ...base, contactAllow: [inviteLink] };
+      const from = rt.net.relayContactShareFrom(row.id), number = from && rt.addressOf(from);
+      const bookingLink = row.kind === "reply" || row.kind === "transactional"
+        ? rt.net.approvedBookingLink(row.oppId, recipient, row.text, row.id) : undefined;
+      return number ? { ...base, allow: [number] }
+        : bookingLink ? { ...base, contactAllow: [bookingLink] } : base;
+    },
+    lockAdmission: async (row, tx) => {
+      if (!(await rt.stateCurrent(tx))) return false;
+      if (row.app === "slop" && row.oppId) await rt.lockSlopPairAdmission(tx, row);
+      if (row.oppId) await lockPublicEventContact(tx, row, rt.pg.id);
+      if (row.id.startsWith(monthlyGatheringInvitePrefix)) await lockGatheringAdmission(tx, rt.app.id, rt.pg.id, row);
+      if (row.id.startsWith(monthlyGatheringNoticePrefix)) await lockGatheringNoticeAdmission(tx, rt.app.id, rt.pg.id, row);
+      if (row.oppId?.startsWith(gatheringRepeatOppPrefix)) await rt.lockGatheringRepeatClaim(tx, row.oppId);
+      if (row.id.startsWith("home-help-consent:")) await rt.lockHomeHelpConsentAdmission(tx, row.id, row.memberId);
+      if (row.oppId && row.memberId) await lockPeerOpportunityContact(tx, row.app, rt.pg.id, row.memberId, row.id);
+      return true;
+    },
+    admit: async (row, tx) => {
+      if (row.id.startsWith("ntf_")) {
+        return await rt.notificationClaimCurrent(tx, row) ? { ok: true } : { ok: false, reason: "notification_obsolete" };
+      }
+      if (row.app === "slop" && row.oppId) {
+        const authority = await rt.slopPairAdmission(tx, row);
+        if (!authority.ok) return authority;
+      }
+      if (row.app === "peon" && row.oppId) {
+        const authority = await rt.peonHireAdmission(tx, row);
+        if (!authority.ok) return authority;
+      }
+      if (row.id.startsWith(monthlyGatheringInvitePrefix)) return rt.gatheringInvitationAdmission(tx, row);
+      if (row.id.startsWith(monthlyGatheringNoticePrefix)) return rt.gatheringNoticeAdmission(tx, row);
+      if (row.oppId?.startsWith(gatheringRepeatOppPrefix) && !await rt.gatheringRepeatClaim(tx, row)) return { ok: false, reason: "gathering_repeat_changed" };
+      if (row.oppId) {
+        const event = await publicEventContactAdmission(tx, row, rt.pg.id, rt.city, o.clock.now());
+        if (!event.ok) return event;
+      }
+      if (row.oppId && row.memberId && await peerOpportunityContactRestricted(tx, row.app, row.memberId, [row.id], o.clock.now())) {
+        return { ok: false, reason: "opportunity_roster_blocked" };
+      }
+      if ((row.oppId || venueBookingNoticeBase(row.id)) && await originalBookingNoticeStale(tx, row.app, rt.pg.id, [row.id], o.clock, row)) return { ok: false, reason: "booking_changed" };
+      if (row.id.startsWith(RESCHEDULE_QUEUE_PREFIX)) return rescheduleAdmission(tx, row, rt.pg.id, o.clock.now());
+      if (row.id.startsWith(interruptionFeedbackPrefix)) return interruptionSurveyAdmission(tx, row, rt.pg.id, o.clock.now());
+      if (row.id.startsWith(reengagementDeliveryPrefix)) return reengagementAdmission(tx, row, rt.pg.id, o.clock.now());
+      if (row.id.startsWith(replacementProbePrefix)) return replacementProbeAdmission(tx, row, rt, o.clock.now());
+      if (row.id.startsWith("relay:")) return rt.relayAdmission(tx, row);
+      if (row.id.startsWith(lateArrivalDeliveryPrefix)) return rt.groupLateArrivalAdmission(tx, row);
+      if (row.id.startsWith(cofounderDeliveryIdPrefix)) {
+        const authority = await rt.cofounderAdmission(tx, row);
+        const prefix = `${cofounderDeliveryIdPrefix}reveal:`;
+        if (!authority.ok || !row.id.startsWith(`${prefix}${RESCHEDULE_QUEUE_PREFIX}`)) return authority;
+        return rescheduleAdmission(tx, { ...row, id: row.id.slice(prefix.length) }, rt.pg.id, o.clock.now());
+      }
+      if (row.id.startsWith("invite-notice:")) return await rt.invitationNoticeAdmission(tx, row.id, row.memberId)
+        ? { ok: true } : { ok: false, reason: "invitation_notice_changed" };
+      if (row.id.startsWith("home-help-consent:")) return await rt.homeHelpConsentAdmission(tx, row)
+        ? { ok: true } : { ok: false, reason: "home_help_consent_changed" };
+      if (row.id.startsWith(EXPECTED_INVITATION_PREFIX)) return !row.memberId && row.kind === "transactional" && await rt.expectedInvitationAdmission(tx, row)
+        ? { ok: true } : { ok: false, reason: "expected_invitation_changed" };
+      const notice = terminalNotice(row);
+      if (notice) return releaseAdmission(tx, row, notice, rt.pg.id, o.clock.now());
+      if (row.id.startsWith(bookedCancellationPrefix)) return { ok: false, reason: "opportunity_release_changed" };
+      const reminder = bookedReminderKind(row.id);
+      if (reminder) return bookedReminderAdmission(tx, row, reminder, rt.pg.id, o.clock.now());
+      if (row.id.startsWith(meetingFeedbackPrefix)) return meetingFeedbackAdmission(tx, row, rt.pg.id, o.clock.now());
+      if (row.id.startsWith(engineQuestionDeliveryPrefix)) return engineQuestionAdmission(tx, row, rt.pg.id, o.clock.now());
+      return probeAdmission(tx, row, rt, o.clock.now());
+    },
+    claimed: async (row, tx) => {
+      if (row.id.startsWith(EXPECTED_INVITATION_PREFIX)) await rt.expectedInvitationClaimed(tx, row);
+    },
+    capTake: row => rt.capTake(row.id, row.memberId as MemberId),
+    capRelease: row => rt.capRelease(row.id),
+  };
+  const admitStored = checks.admit!;
+  checks.admit = async (row, tx) => {
+    const decision = await admitStored(row, tx);
+    return decision.ok && !await rt.view.isCurrent(tx) ? { ok: false, reason: "network_state_changed", retryAt: o.clock.now() } : decision;
+  };
+  return new OutboundQueue({
+    sql: rt.db, clock: o.clock, provider: o.provider, line: o.line, app: o.app, checks, instance: rt.instance,
+    recipientWindowKey: rt.outboundRecipientKey,
+    perLinePerDay: num("BLOOIO_LINE_DAILY_CAP"), newChatsPerLinePerDay: num("BLOOIO_LINE_NEW_CHATS_PER_DAY"), ...o.limits, leakAllow: OWN_DOMAINS,
+    onAlert: (id, why) => o.log(`[blooio] alert ${why} on ${id} (${o.app})`),
+  });
+}
+
 export class BlooioAdapter implements ChannelAdapter {
   readonly name: ChannelAdapter["name"] = "blooio";
   readonly storedStatus = "queued";
@@ -571,7 +677,6 @@ export class BlooioAdapter implements ChannelAdapter {
   private readonly env: Record<string, string | undefined>;
   private readonly log: (line: string) => void;
   private readonly city: string;
-  private readonly gate?: (app: string) => boolean;
   private q?: OutboundQueue;
   private rt?: NetworkRuntime;
 
@@ -581,14 +686,8 @@ export class BlooioAdapter implements ChannelAdapter {
     this.app = o.app ?? "ntwrk";
     this.city = o.city ?? "nyc";
     if (!o.from) throw new Error("the Blooio adapter needs the sending line (BLOOIO_FROM)");
-    if (o.liveGate && o.provider.kind !== "sim") throw new Error("liveGate is only for a simulated provider: a real provider always reads the live flags");
-    this.gate = o.liveGate;
   }
 
-  get live() { return this.gate ? this.gate(this.app) : liveSendAllowed(this.env, this.app); }
-  private get flags() { return ["BLOOIO_ALLOW_SEND=1", "NTWRK_LIVE_APPROVED=1", ...(this.app === "ntwrk" ? [] : [`${liveFlag(this.app)}=1`])].join(", "); }
-
-  /** The queue, after attach(). */
   get queue(): OutboundQueue {
     if (!this.q) throw new Error("BlooioAdapter is not attached to a network runtime");
     return this.q;
@@ -596,151 +695,19 @@ export class BlooioAdapter implements ChannelAdapter {
 
   attach(rt: NetworkRuntime) {
     this.rt = rt;
-    const policy = blooioRecipientPolicy(rt.net, rt.memberOf);
-    const leaks = forbiddenProvider(rt.net, to => rt.memberOf(to));
-    const num = (k: string) => { const v = Number(this.env[k]); return Number.isFinite(v) && v > 0 ? v : undefined; };
-    const checks: AppChecks = {
-      live: () => this.live,
-      // A relayed item still goes after the date (the thread stays open for a week); a closed match stops it.
-      stale: async row => row.id.startsWith("ntf_") ? !await rt.notificationCurrent(row.id)
-        : !!row.oppId && (row.id.startsWith("relay:") ? (rt.net.opps.get(row.oppId)?.stage ?? "closed") === "closed"
-          : closedOpportunityRowStale(CLOSED_STAGES.has(rt.net.opps.get(row.oppId)?.stage ?? ""),
-            terminalNotice(row) !== undefined || row.id.startsWith(meetingFeedbackPrefix))),
-      optedOut: row => rt.optedOut(row.id, row.memberId as MemberId | undefined, row.to),
-      privatePayload: row => row.id.startsWith(EXPECTED_INVITATION_PREFIX),
-      // A direct text to someone who is not a member of this app (no member on the row, none at the address)
-      // is fixed copy: the member policy has nobody to check. Consent, quiet hours, caps and the leak guard still apply.
-      recipient: (row, agentInitiated) => {
-        if (row.id.startsWith(lateArrivalDeliveryPrefix)) {
-          const notice = parseLateArrivalDeliveryId(row.id);
-          return notice && notice.app === row.app && row.memberId === notice.to && rt.memberOf(row.to) === notice.to
-            ? rt.net.recipientPolicy(notice.to, "relay", { about: [notice.from] })
-            : { ok: false, reason: "group_late_arrival_changed" };
-        }
-        if (row.id.startsWith(reengagementDeliveryPrefix)) {
-          return row.memberId && rt.memberOf(row.to) === row.memberId
-            ? rt.net.recipientPolicy(row.memberId, "reengage", { proactive: true })
-            : { ok: false, reason: "reengagement_changed" };
-        }
-        if (venueBookingNoticeBase(row.id)) {
-          const recipient = (row.memberId as MemberId | undefined) ?? rt.memberOf(row.to);
-          if (!rt.net.approvedBookingLink(row.oppId, recipient, row.text, row.id)) {
-            return { ok: false, reason: "booking_changed" };
-          }
-        }
-        return !row.memberId && !rt.memberOf(row.to) ? { ok: true }
-          : policy(row.to, { kind: row.kind, ...(row.oppId && !terminalNotice(row) ? { briefId: row.oppId } : {}), agentInitiated });
-      },
-      // A relayed item may carry its sender's own private facts, as the Network's guard allows (guardCheck
-      // relayFrom): the queue excludes the sender's facts too, so it never parks what the Network passed.
-      // Allow only this row's mutually approved number or its exact public booking link.
-      leaks: async row => {
-        const sender = rt.net.relaySenderOf(row.id), recipient = (row.memberId as MemberId | undefined) ?? rt.memberOf(row.to);
-        const base = sender && recipient ? rt.net.leakSources([recipient], [sender]) : leaks(row.to);
-        const digestLink = row.id.startsWith("ntf_") ? await rt.notificationHandoffUrl(row.id, row.text) : undefined;
-        if (digestLink) return { ...base, contactAllow: [digestLink] };
-        const inviteLink = row.id.startsWith(EXPECTED_INVITATION_PREFIX) && row.text.split("\n")[1];
-        if (inviteLink && isMemberInvitationLink(rt.app, inviteLink)) return { ...base, contactAllow: [inviteLink] };
-        const from = rt.net.relayContactShareFrom(row.id), number = from && rt.addressOf(from);
-        const bookingLink = row.kind === "reply" || row.kind === "transactional"
-          ? rt.net.approvedBookingLink(row.oppId, recipient, row.text, row.id) : undefined;
-        return number ? { ...base, allow: [number] }
-          : bookingLink ? { ...base, contactAllow: [bookingLink] } : base;
-      },
-      // PgStore.save locks the state before erasing members. Dispatch takes the
-      // same order, then the existing admit check revalidates current parties.
-      lockAdmission: async (row, tx) => {
-        if (!(await rt.stateCurrent(tx))) return false;
-        if (row.app === "slop" && row.oppId) await rt.lockSlopPairAdmission(tx, row);
-        if (row.oppId) await lockPublicEventContact(tx, row, rt.pg.id);
-        if (row.id.startsWith(monthlyGatheringInvitePrefix)) await lockGatheringAdmission(tx, rt.app.id, rt.pg.id, row);
-        if (row.id.startsWith(monthlyGatheringNoticePrefix)) await lockGatheringNoticeAdmission(tx, rt.app.id, rt.pg.id, row);
-        if (row.oppId?.startsWith(gatheringRepeatOppPrefix)) await rt.lockGatheringRepeatClaim(tx, row.oppId);
-        if (row.id.startsWith("home-help-consent:")) await rt.lockHomeHelpConsentAdmission(tx, row.id, row.memberId);
-        if (row.oppId && row.memberId) await lockPeerOpportunityContact(tx, row.app, rt.pg.id, row.memberId, row.id);
-        return true;
-      },
-      // A relayed item: its match and both members are read again inside the admission transaction (runtime.ts).
-      admit: async (row, tx) => {
-        if (row.approvedPhotos?.length && this.name !== "eliza_cloud") return { ok: false, reason: "approved_photos_require_cloud" };
-        if (row.id.startsWith("ntf_")) {
-          return await rt.notificationClaimCurrent(tx, row) ? { ok: true } : { ok: false, reason: "notification_obsolete" };
-        }
-        if (row.app === "slop" && row.oppId) {
-          const authority = await rt.slopPairAdmission(tx, row);
-          if (!authority.ok) return authority;
-        }
-        if (row.app === "peon" && row.oppId) {
-          const authority = await rt.peonHireAdmission(tx, row);
-          if (!authority.ok) return authority;
-        }
-        if (row.id.startsWith(monthlyGatheringInvitePrefix)) return rt.gatheringInvitationAdmission(tx, row);
-        if (row.id.startsWith(monthlyGatheringNoticePrefix)) return rt.gatheringNoticeAdmission(tx, row);
-        if (row.oppId?.startsWith(gatheringRepeatOppPrefix) && !await rt.gatheringRepeatClaim(tx, row)) return { ok: false, reason: "gathering_repeat_changed" };
-        if (row.oppId) {
-          const event = await publicEventContactAdmission(tx, row, rt.pg.id, rt.city, this.o.clock.now());
-          if (!event.ok) return event;
-        }
-        if (row.oppId && row.memberId && await peerOpportunityContactRestricted(tx, row.app, row.memberId, [row.id])) {
-          return { ok: false, reason: "opportunity_roster_blocked" };
-        }
-        if ((row.oppId || venueBookingNoticeBase(row.id)) && await originalBookingNoticeStale(tx, row.app, rt.pg.id, [row.id], this.o.clock, row)) return { ok: false, reason: "booking_changed" };
-        if (row.id.startsWith(RESCHEDULE_QUEUE_PREFIX)) return rescheduleAdmission(tx, row, rt.pg.id, this.o.clock.now());
-        if (row.id.startsWith(interruptionFeedbackPrefix)) return interruptionSurveyAdmission(tx, row, rt.pg.id, this.o.clock.now());
-        if (row.id.startsWith(reengagementDeliveryPrefix)) return reengagementAdmission(tx, row, rt.pg.id, this.o.clock.now());
-        if (row.id.startsWith(replacementProbePrefix)) return replacementProbeAdmission(tx, row, rt, this.o.clock.now());
-        if (row.id.startsWith("relay:")) return rt.relayAdmission(tx, row);
-        if (row.id.startsWith(lateArrivalDeliveryPrefix)) return rt.groupLateArrivalAdmission(tx, row);
-        if (row.id.startsWith(cofounderDeliveryIdPrefix)) {
-          const authority = await rt.cofounderAdmission(tx, row);
-          const prefix = `${cofounderDeliveryIdPrefix}reveal:`;
-          if (!authority.ok || !row.id.startsWith(`${prefix}${RESCHEDULE_QUEUE_PREFIX}`)) return authority;
-          return rescheduleAdmission(tx, { ...row, id: row.id.slice(prefix.length) }, rt.pg.id, this.o.clock.now());
-        }
-        if (row.id.startsWith("invite-notice:")) return await rt.invitationNoticeAdmission(tx, row.id, row.memberId)
-          ? { ok: true } : { ok: false, reason: "invitation_notice_changed" };
-        if (row.id.startsWith("home-help-consent:")) return await rt.homeHelpConsentAdmission(tx, row)
-          ? { ok: true } : { ok: false, reason: "home_help_consent_changed" };
-        if (row.id.startsWith(EXPECTED_INVITATION_PREFIX)) return !row.memberId && row.kind === "transactional" && await rt.expectedInvitationAdmission(tx, row)
-          ? { ok: true } : { ok: false, reason: "expected_invitation_changed" };
-        const notice = terminalNotice(row);
-        if (notice) return releaseAdmission(tx, row, notice, rt.pg.id, this.o.clock.now());
-        if (row.id.startsWith(bookedCancellationPrefix)) return { ok: false, reason: "opportunity_release_changed" };
-        const reminder = bookedReminderKind(row.id);
-        if (reminder) return bookedReminderAdmission(tx, row, reminder, rt.pg.id, this.o.clock.now());
-        if (row.id.startsWith(meetingFeedbackPrefix)) return meetingFeedbackAdmission(tx, row, rt.pg.id, this.o.clock.now());
-        if (row.id.startsWith(engineQuestionDeliveryPrefix)) return engineQuestionAdmission(tx, row, rt.pg.id, this.o.clock.now());
-        return probeAdmission(tx, row, rt, this.o.clock.now());
-      },
-      claimed: async (row, tx) => {
-        if (row.id.startsWith(EXPECTED_INVITATION_PREFIX)) await rt.expectedInvitationClaimed(tx, row);
-      },
-      capTake: row => rt.capTake(row.id, row.memberId as MemberId),
-      capRelease: row => rt.capRelease(row.id),
-    };
-    this.q = new OutboundQueue({
-      sql: rt.db, clock: this.o.clock, provider: this.o.provider, line: this.o.from!, app: this.app, checks, instance: rt.instance,
-      recipientWindowKey: rt.outboundRecipientKey,
-      perLinePerDay: num("BLOOIO_LINE_DAILY_CAP"), newChatsPerLinePerDay: num("BLOOIO_LINE_NEW_CHATS_PER_DAY"), ...this.o.limits, leakAllow: OWN_DOMAINS,
-      onAlert: (id, why) => this.log(`[blooio] alert ${why} on ${id} (${this.app})`),
-    });
+    this.q = lineQueue(rt, { provider: this.o.provider, clock: this.o.clock, line: this.o.from!, app: this.app, env: this.env,
+      live: () => true, limits: this.o.limits, log: this.log });
   }
 
   async enqueue(tx: SQL, msgs: Outbound[], forgotten: ReadonlySet<MemberId>): Promise<Map<string, string>> {
     const out = new Map<string, string>();
-    if (!this.live) {
-      if (msgs.length) this.log(`[blooio] refused ${msgs.length} send(s): live sending needs ${this.flags}`);
-      for (const m of msgs) out.set(m.id, "refused_not_approved");
-      return out;
-    }
     const go = msgs.filter(m => {
-      if (m.approvedPhotos?.length && this.name !== "eliza_cloud") { out.set(m.id, "refused_photo_transport"); return false; }
       return m.to ? true : (out.set(m.id, "failed_no_address"), false);
     });
     await this.queue.enqueue(tx, go.map(m => ({
       // A member the unit forgets gets the one decline as a text to a non-member: nothing about them is kept.
       id: m.id, ...(forgotten.has(m.memberId) ? {} : { memberId: m.memberId }), to: m.to!, kind: m.kind, text: m.body,
-      ...(m.mediaUrls?.length ? { mediaUrls: m.mediaUrls } : {}), ...(m.approvedPhotos?.length ? { approvedPhotos: m.approvedPhotos } : {}), ...(m.oppId ? { oppId: m.oppId } : {}), city: this.city,
+      ...(m.mediaUrls?.length ? { mediaUrls: m.mediaUrls } : {}), ...(m.oppId ? { oppId: m.oppId } : {}), city: this.city,
     })));
     return out;
   }
@@ -750,11 +717,8 @@ export class BlooioAdapter implements ChannelAdapter {
   recover() { return this.queue.recover(); }
 
   async direct(to: string, body: string, id: string, kind: DirectKind): Promise<string> {
-    if (!this.live) { this.log(`[blooio] refused a direct send: live sending needs ${this.flags}`); return "refused_not_approved"; }
     await this.queue.enqueue(this.queue.sql, [{ id, to, kind, text: body, city: this.city }]);
-    // The drain moves this app's other rows too: their network.messages status follows, as after the runtime's own drain.
-    const changes = await this.queue.drain();
-    await this.rt?.storeStatuses(changes.filter(d => d.memberId && d.app === this.app));
+    await this.rt!.deliver();
     return (await this.queue.statusOf(id)) ?? "failed";
   }
 
@@ -762,4 +726,9 @@ export class BlooioAdapter implements ChannelAdapter {
   purge() { return this.queue.purge(); }
   status(u: StatusUpdate): Promise<Delivery | undefined> { return this.queue.applyStatus(u); }
   lineSafety(action: string | undefined, eventType?: string) { return this.queue.setLineSafety(action, eventType); }
+}
+
+export function collectedReplyGuard(adapter: ChannelAdapter): OutboundQueue {
+  if (adapter instanceof BlooioAdapter || adapter instanceof DryRunAdapter) return adapter.queue;
+  throw new Error(`The ${adapter.name} adapter has no line queue for collected replies`);
 }

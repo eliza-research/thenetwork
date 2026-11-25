@@ -143,7 +143,7 @@ export function decide(ctx: PersonaContext, msg: SimMessage, worldStart: number,
   // Plans (PolicyOptions.plans): the weekly check-in, anonymous plan probes and crew offers.
   else if (plans && isCheckIn(type, msg.body)) ({ d, commit: commitPick } = decideCheckIn(ctx, base, plans));
   else if (plans && type === "plan_probe" && meta.plan) ({ d, commit: commitPick } = decidePlanProbe(ctx, meta.plan, base, recent, plans));
-  else if (plans && type === "crew_offer" && meta.crew) ({ d, commit: commitPick } = decideCrew(ctx, meta.crew.crewId, base));
+  else if (plans && type === "crew_offer" && meta.crew) ({ d, commit: commitPick } = decideCrew(ctx, meta.crew.crewId, meta.crew.activity, base));
   else switch (type) {
     case "onboarding":
     case "question": {
@@ -484,7 +484,8 @@ function decidePlanProbe(ctx: PersonaContext, plan: PlanMeta, base: PolicyDecisi
     const at = o.start ?? plan.window?.start ?? now;
     const like = activityLike(p, o.activity ?? plan.activity);
     const primed = plans.windowPriming && stated.some(w => windowCovers(w, at));
-    if (planYesDraw(seed, plan.planId, o.key, p.id) >= planYesProb(ctx.oracle, p, like, size, city, at, recentAsks, primed)) continue;
+    const coin = ctx.oracle.coins.key(`plan|${p.id}|${o.activity ?? plan.activity}|${at}`, `${plan.planId}|${o.key}`);
+    if (planYesDraw(seed, coin, p.id) >= planYesProb(ctx.oracle, p, like, size, city, at, recentAsks, primed)) continue;
     wanted = true; primedAny ||= primed;
     if (freeFor(p, at, city, seed, ctx.oracle)) picked.push(o);
   }
@@ -497,18 +498,19 @@ function decidePlanProbe(ctx: PersonaContext, plan: PlanMeta, base: PolicyDecisi
       const pid = o.proposalId ?? plan.planId;
       const like = activityLike(p, o.activity ?? plan.activity);
       const showProb = clamp01((1 - p.hidden.flakiness * (size > 2 ? 1.3 : 1)));
-      const plannedShow = new RngCtor(hash32(seed, "plan-show", pid, p.id)).next() < showProb;
+      const showCoin = ctx.oracle.coins.key(`plan-show|${p.id}|${o.activity ?? plan.activity}|${o.start ?? plan.window?.start ?? "-"}`, pid);
+      const plannedShow = new RngCtor(hash32(seed, "plan-show", showCoin, p.id)).next() < showProb;
       mem.proposals[pid] = { decision: "accept", plannedShow, enjoyment: Math.round(0.85 * (0.4 + 0.6 * like) * 0.75 * 1000) / 1000, others: [], at: o.start ?? plan.window?.start };
     }
   };
   return { d: { ...base, intent, proposalId: picked[0]?.proposalId ?? plan.planId, decision: picks.length ? "accept" : "decline", worthwhile: wanted, planAnswer: { picks, options: shown } }, commit };
 }
 
-/** A crew offer after a plan (SimMeta.crew): opt in with p = 0.7 (the ignore draw in decide() makes it 0.7 x (1 - ignore), as the harness). */
-function decideCrew(ctx: PersonaContext, crewId: string, base: PolicyDecision): { d: PolicyDecision; commit: () => void } {
+function decideCrew(ctx: PersonaContext, crewId: string, activity: string | undefined, base: PolicyDecision): { d: PolicyDecision; commit: () => void } {
   const { persona: p, memory: mem } = ctx;
   const prior = mem.crews?.[crewId];
-  const yes = prior ?? crewOptInDraw(ctx.seed ?? 0, crewId, p.id) < CREW_OPT_IN;
+  const coin = ctx.oracle.coins.key(`crew|${p.id}|${activity ?? "-"}|d${Math.floor(ctx.now / DAY)}`, crewId);
+  const yes = prior ?? crewOptInDraw(ctx.seed ?? 0, coin, p.id) < CREW_OPT_IN;
   return { d: { ...base, intent: yes ? "crew_yes" : "crew_no", worthwhile: yes }, commit: () => { (mem.crews ??= {})[crewId] = yes; } };
 }
 

@@ -31,6 +31,12 @@ export function inboxItemAllowedForRecipient(requested: boolean, proactiveAllowe
 
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
 //@ pure
+export function rereadCountsPossible(plannedCount: number, remainingCount: number): boolean {
+  return plannedCount >= 1 && remainingCount >= 0 && remainingCount <= plannedCount;
+}
+
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
+//@ pure
 export function inboxItemStillPending(seen: boolean, notified: boolean): boolean {
   return !seen && !notified;
 }
@@ -49,14 +55,14 @@ export function inboxItemDigestible(seen: boolean, notified: boolean, hasExpiry:
 
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
 //@ pure
-export function canRereadItems(digest: DigestFlow): boolean {
-  return digest.phase === "DigestStarting";
+export function canRereadItems(digest: DigestFlow, plannedCount: number, remainingCount: number): boolean {
+  return digest.phase === "DigestStarting" && rereadCountsPossible(plannedCount, remainingCount);
 }
 
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
 //@ pure
 export function rereadItems(digest: DigestFlow, plannedCount: number, remainingCount: number, recipientAvailable: boolean, destinationChanged: boolean): DigestFlow {
-  //@ ensures (inv(digest) && canRereadItems(digest)) ==> stepQueueRequiresRecordedDigest(digest, "rereadItems", \result)
+  //@ ensures (inv(digest) && canRereadItems(digest, plannedCount, remainingCount)) ==> stepQueueRequiresRecordedDigest(digest, "rereadItems", \result)
   return { phase: remainingCount === 0 || !recipientAvailable ? "DigestCancelled" : (remainingCount === plannedCount && !destinationChanged ? "ReusingDigest" : "RebuildingDigest") };
 }
 
@@ -78,6 +84,19 @@ export function lawMissingRecipientCancels(plannedCount: number, remainingCount:
 //@ pure
 export function digestItemSetCanBeRecorded(itemCount: number, pendingOwnedCount: number): boolean {
   return itemCount > 0 && itemCount === pendingOwnedCount;
+}
+
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) */
+//@ pure
+export function digestWithinWeeklyCap(countsTowardCap: boolean, countedSends: number, weeklyCap: number): boolean {
+  return !countsTowardCap || countedSends < weeklyCap;
+}
+
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) */
+//@ pure
+export function lawRecordedCountingDigestStaysUnderCap(countedSends: number, weeklyCap: number): boolean {
+  //@ ensures \result === true
+  return !digestWithinWeeklyCap(true, countedSends, weeklyCap) || exact_notificationDispatch(countedSends + 1) <= weeklyCap;
 }
 
 /** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) */
@@ -185,7 +204,7 @@ export function lawForeignQueuedDigestCannotSend(threadCopy: boolean, boundLink:
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: DigestFlow, event: Event): boolean {
-  if (event.type === "rereadItems") return canRereadItems(current);
+  if (event.type === "rereadItems") return canRereadItems(current, event.plannedCount, event.remainingCount);
   if (event.type === "recordDigest") return canRecordDigest(current);
   if (event.type === "enqueueDigest") return canEnqueueDigest(current);
   if (event.type === "readQueuedDigest") return canReadQueuedDigest(current);
@@ -198,7 +217,7 @@ export function enabled(current: DigestFlow, event: Event): boolean {
 export function step(current: DigestFlow, event: Event): DigestFlow {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "rereadItems") return canRereadItems(current) ? rereadItems(current, event.plannedCount, event.remainingCount, event.recipientAvailable, event.destinationChanged) : current;
+  if (event.type === "rereadItems") return canRereadItems(current, event.plannedCount, event.remainingCount) ? rereadItems(current, event.plannedCount, event.remainingCount, event.recipientAvailable, event.destinationChanged) : current;
   if (event.type === "recordDigest") return canRecordDigest(current) ? recordDigest(current, event.recorded) : current;
   if (event.type === "enqueueDigest") return canEnqueueDigest(current) ? enqueueDigest(current) : current;
   if (event.type === "readQueuedDigest") return canReadQueuedDigest(current) ? readQueuedDigest(current, event.sameDigest) : current;
@@ -251,4 +270,10 @@ export function parseState(x: unknown): DigestFlow | undefined {
 export function initialHolds(): DigestFlow {
   //@ ensures inv(\result)
   return initial;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_notificationDispatch(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }

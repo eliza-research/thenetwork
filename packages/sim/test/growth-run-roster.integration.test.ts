@@ -5,6 +5,7 @@ import { expect, test } from "vitest";
 import { fileAt } from "../../core/src/runtime/files.ts";
 import { friendFactory } from "../../network/harness/growth.ts";
 import { ConsentNetwork } from "../../network/src/network.ts";
+import { simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";
 import { scenarioWorldOptions } from "../src/scenario.ts";
 import { World } from "../src/world.ts";
 
@@ -18,14 +19,14 @@ test.each([true, false])("a growth run with writeLog=%s returns the invited pers
       actions: [{ at: { day: 1, hour: 11 }, do: "say", persona: "host",
         text: "my friend Maya would love this, can you invite them?" }],
       expectations: [],
-    }, { network: () => new ConsentNetwork({ seed, review: "auto", matchingEnabled: false, plans: false }) });
+    }, { network: () => new ConsentNetwork({ seed, inlineJudge: simulatedReviewJudge({ exceptions: false }), matchingEnabled: false, plans: false }) });
     const initial = opts.personas;
     const world = new World({ ...opts, writeLog, runsDir, spawnFriend: friendFactory({
       seed, joinRate: 1, badActorRate: 0, joinDays: [0, 0],
     }) });
     const result = await world.run();
     const joined = result.records.flatMap(record => record.type === "join" ? [record.memberId] : []);
-    const expected = ["host", "nyc-g1-0001"];
+    const expected = ["host", "nyc-gmrvtce-0001"];
     expect(joined).toEqual(expected);
     expect(result.records.flatMap(record => record.type === "persona" ? [record.persona.id] : [])).toEqual(expected);
     expect(initial.map(persona => persona.id)).toEqual(["host"]);

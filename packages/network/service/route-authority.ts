@@ -1,4 +1,3 @@
-// Isolated route policy is server configuration, never a sender-provided clock or URL.
 import { parseNetworkRouteAuthorityV1, type NetworkRouteAuthorityV1 } from "../../core/src/svc/contract.ts";
 
 export interface NetworkRoutePolicy {
@@ -28,7 +27,6 @@ export function sameNetworkAuthority(a: unknown, b: NetworkRouteAuthorityV1): bo
     && parsed.audience === b.audience && parsed.realmId === b.realmId;
 }
 
-/** Reject an isolated envelope on a legacy receiver too; never fall back to production. */
 export function routeEnvelopeAllowed(policy: NetworkRoutePolicy | undefined, value: unknown, now: number): boolean {
   return policy ? now < policy.drainUntil && sameNetworkAuthority(value, policy.authority) : value === undefined;
 }

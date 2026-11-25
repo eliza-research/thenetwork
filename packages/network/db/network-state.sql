@@ -70,6 +70,9 @@ alter table network.review_items add column if not exists seconds_spent real;
 alter table network.review_items add column if not exists edits jsonb;
 alter table network.review_items add column if not exists rerolls int not null default 0;
 alter table network.review_items add column if not exists invalidated text;
+alter table network.review_items add column if not exists approver text check (approver in ('judge', 'staff'));
+alter table network.review_items add column if not exists exception_reason text;
+alter table network.review_items add column if not exists judge_verdict text check (judge_verdict in ('approve', 'flag', 'undecided', 'cannot_run'));
 
 -- Member requests (admin-console 3.8). The member's own words are never stored: only what the
 -- classifier read from them.

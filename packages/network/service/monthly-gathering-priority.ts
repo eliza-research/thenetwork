@@ -17,8 +17,6 @@ interface GatheringRow {
 }
 
 interface MemberPhones { id: string; phones: string[] }
-
-/** Recheck the ordered engine shortlist against current app membership and RSVP records. */
 export async function eligibleGatheringInvitees(tx: SQL, accounts: Pick<Accounts, "activeMembership" | "lowestAge">,
   app: AppInfo, key: GatheringRsvpKey, ranked: readonly string[], capacity: number, now: number): Promise<string[]> {
   if (app.id !== "ntwrk" || !ranked.length) return [];
@@ -42,8 +40,6 @@ export async function eligibleGatheringInvitees(tx: SQL, accounts: Pick<Accounts
   }
   return result;
 }
-
-/** Authorized by the staff caller. The approved gathering is immutable and this read never sends. */
 export async function readGatheringInvitees(rt: NetworkRuntime, accountsFor: (tx: SQL) => Pick<Accounts, "activeMembership" | "lowestAge">,
   key: GatheringRsvpKey, now: () => number): Promise<string[] | undefined> {
   const { app, city } = rt;

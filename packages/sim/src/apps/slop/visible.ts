@@ -4,11 +4,14 @@ import { canBeMatched, type Facet, type MemberId } from "@thenetwork/core";
 import { distanceBucket, zipInfo, zipMiles, CITY_ANCHOR_ZIP, type DistanceBucket, type SlopCity } from "./geo.ts";
 import { SLOTS, TASTE_DIMS, type DateActivity, type Dealbreaker, type Goal, type LocationScope, type MatchGender, type Slot } from "./persona.ts";
 import type { SlopSnapshot } from "./snapshot.ts";
+import { mutuallyOpen, type DatingStatement } from "../../../../core/src/generated/mutualOpenness.ts";
+import { datingFactsOf, datingStatementOf } from "@thenetwork/engine/src/packs/slop/profile.ts";
 
 export interface VisibleProfile {
   id: MemberId; name: string; age: number; matchable: boolean; paused: boolean;
   homeZip: string; homeCity: SlopCity;
   matchGender?: MatchGender; seeks: MatchGender[];
+  dating: DatingStatement;
   /** Undefined when the agent has not asked yet (minimal tier). */
   ageRange?: [number, number]; scope?: LocationScope; maxMiles?: number; goal?: Goal;
   values: Record<string, string>; dealbreakers: Dealbreaker[];
@@ -48,6 +51,7 @@ export function visibleProfiles(s: SlopSnapshot): Map<MemberId, VisibleProfile> 
       id: m.id, name: m.name, age: m.age, matchable: canBeMatched(m.age) && m.prefs.romanceOptIn, paused: m.state === "paused",
       homeZip: zip, homeCity: (zipInfo.get(zip)?.city ?? m.homeCity) as SlopCity,
       matchGender: has("romance:is:")[0] as MatchGender | undefined, seeks: has("romance:seeks:") as MatchGender[],
+      dating: datingStatementOf(datingFactsOf(tags.map(x => x.t))),
       ageRange: age ? (age.split("-").map(Number) as [number, number]) : undefined,
       scope, maxMiles: has("slop:max_miles:")[0] ? Number(has("slop:max_miles:")[0]) : undefined,
       goal: has("slop:goal:")[0] as Goal | undefined, values,
@@ -79,7 +83,7 @@ const rangeOf = (v: VisibleProfile): [number, number] => v.ageRange ?? [Math.max
  */
 export function visibleMutualCities(a: VisibleProfile, b: VisibleProfile): SlopCity[] {
   if (a.id === b.id || !a.matchable || !b.matchable || a.paused || b.paused) return [];
-  if (!a.matchGender || !b.matchGender || !a.seeks.includes(b.matchGender) || !b.seeks.includes(a.matchGender)) return [];
+  if (!a.matchGender || !b.matchGender || !mutuallyOpen(a.dating, b.dating)) return [];
   const [alo, ahi] = rangeOf(a), [blo, bhi] = rangeOf(b);
   if (b.age < alo || b.age > ahi || a.age < blo || a.age > bhi) return [];
   const out: SlopCity[] = [];

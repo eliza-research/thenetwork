@@ -11,7 +11,6 @@ import type {
 export const FEED_LIMIT = 400;
 const SYMMETRIC = new Set(["knows", "met", "introduced", "enjoyed", "would_interact_again", "group_only", "avoid"]);
 
-/** Stable edge id: symmetric types are keyed on the sorted pair, directed ones on (from, to). */
 export function edgeId(type: string, from: MemberId, to: MemberId): string {
   if (SYMMETRIC.has(type)) return from < to ? `${type}:${from}|${to}` : `${type}:${to}|${from}`;
   return `${type}:${from}>${to}`;
@@ -21,7 +20,6 @@ export function emptyCounters(): ObsMember["counters"] {
   return { msgsIn: 0, msgsOut: 0, proactive: 0, proposals: 0, accepted: 0, meetings: 0, enjoymentSum: 0, enjoymentN: 0 };
 }
 
-/** Counters that are incremented as records arrive (the rest of ObsStats is derived on demand). */
 export interface RunningCounts {
   messages: number; inbound: number; outbound: number; proactive: number; invites: number; accepts: number; declines: number;
   meetingsScheduled: number; meetingsHeld: number; attended: number; noShows: number; cancelledWithNotice: number;
@@ -29,7 +27,6 @@ export interface RunningCounts {
   invariantViolations: number; errors: number;
 }
 const CLOSED_STATES = new Set(["COMPLETED", "FEEDBACK_COLLECTED", "DECLINED", "EXPIRED", "CANCELLED", "SKIPPED", "ABANDONED", "QUORUM_FAILED"]);
-/** An opportunity with its age (hours since created; for a closed one, from creation to its last change). */
 export function withAge(o: ObsOpportunity, now: number): ObsOpportunity {
   const end = CLOSED_STATES.has(o.state) ? o.updatedAt : now;
   return { ...o, ageHours: Math.round(((end - o.createdAt) / HOUR) * 10) / 10 };
@@ -49,11 +46,8 @@ export class Store {
   feed: ObsFeedItem[] = [];
   truth?: Record<MemberId, MemberTruth>;
   counts: RunningCounts = zeroCounts();
-  /** Game only: the judge scorer's counts (set by GameSource). */
   judge?: JudgeStats;
-  /** Health alerts, the PRD 28.2 scorecard and growth (set by the source). */
   health?: { alerts: HealthAlert[]; scorecard: ScoreMetric[]; growth: GrowthStats };
-  /** Member requests, newest first (set by the source). */
   requests: ObsRequest[] = [];
   private requestsDirty = false;
   version = 0;
@@ -75,7 +69,6 @@ export class Store {
   touchMember(id: MemberId) { if (this.members.has(id)) this.dirtyMembers.add(id); }
   member(id: MemberId) { return this.members.get(id); }
 
-  /** Add or strengthen an edge. Returns true if it is new. */
   addEdge(e: Omit<ObsEdge, "id">): boolean {
     const id = edgeId(e.type, e.from, e.to);
     const cur = this.edges.get(id);
@@ -155,7 +148,6 @@ export class Store {
       meetingsScheduled: c.meetingsScheduled, meetingsHeld: c.meetingsHeld, attended: c.attended, noShows: c.noShows,
       cancelledWithNotice: c.cancelledWithNotice, enjoymentSum: c.enjoymentSum, enjoymentN: c.enjoymentN,
       blocks: c.blocks, optOuts: c.optOuts, adversarialAttempts: c.adversarialAttempts,
-      // Game mode: the judge's invariant count. Real mode: invariant_violation events.
       invariantViolations: this.judge?.invariants ?? c.invariantViolations, errors: c.errors, compatible, unsafe, oracleJudged, edgesByType,
       ...(this.judge ? { judge: this.judge } : {}),
       ...(this.health ? { alerts: this.health.alerts, scorecard: this.health.scorecard, growth: this.health.growth } : {}),
@@ -174,7 +166,6 @@ export class Store {
     return this.edgesRemoved || this.dirtyMembers.size + this.dirtyEdges.size + this.dirtyOpps.size + this.removedOpps.size + this.newFeed.length > 0 || this.runsDirty || this.envDirty || this.requestsDirty || this.healthDirty;
   }
 
-  /** Everything that changed since the last call (and bump the version). */
   takeDelta(game?: GameState): ObsDelta {
     const changed = this.hasChanges();
     if (changed) this.version++;

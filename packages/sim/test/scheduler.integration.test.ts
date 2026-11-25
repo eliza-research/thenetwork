@@ -11,7 +11,7 @@ test.each(["accelerated", "realtime"] as const)("a join added while pacing in %s
   const make = (runMode: RunMode) => {
     const [person] = generatePersonas({ n: 1, seed: 1, minorShare: 0, adversarialRate: 0 });
     person!.joinDay = 2; // The action, rather than the initial schedule, joins this persona.
-    return { person: person!, world: new World({
+    return { person: person!, world: new World({ app: "ntwrk",
       seed: 1, personas: [person!], days: 1, mode: runMode, speed,
       network: new StubNetwork({ seed: 1, randomIntros: false }), writeLog: false,
     }) };

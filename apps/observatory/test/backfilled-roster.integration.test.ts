@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import { DAY, HOUR } from "@thenetwork/core";
 import type { plans } from "@thenetwork/engine";
+import { holdEveryItem } from "../../../packages/engine/src/reviewJudge.ts";
 import { Mini } from "../../../packages/network/test/mini.ts";
 import { Projector } from "../src/projector.ts";
 import { emptyCounters, Store } from "../src/store.ts";
@@ -8,7 +9,7 @@ import { emptyCounters, Store } from "../src/store.ts";
 test("a reviewed plan snapshots its roster through backfill and closure", async () => {
   // spec/product/stories.md, "F35 — Inspect a member's experience as staff"
   const primary = ["a", "b", "c"], all = [...primary, "d"];
-  const world = new Mini(all.map(id => ({ id, name: id, age: 30, area: "Inwood", interests: ["hiking"] })), { review: "human" });
+  const world = new Mini(all.map(id => ({ id, name: id, age: 30, area: "Inwood", interests: ["hiking"] })), { inlineJudge: holdEveryItem.inline });
   await world.onboard(...all);
   const now = world.clock.now();
   const startsAt = Date.UTC(2026, 9, 10, 14);
@@ -23,6 +24,7 @@ test("a reviewed plan snapshots its roster through backfill and closure", async 
   for (const member of snapshot.members) member.stated = { windows: [window], at: now, until: now + 7 * DAY };
   world.net.importState(snapshot);
   (world.net as unknown as { submitPlan(plan: plans.Plan, at: number): void }).submitPlan(plan, now);
+  await world.net.tick(now);
   const { oppId } = world.net.reviewQueue()[0]!;
   expect(world.net.review(oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
   expect(await world.runUntil(() => primary.every(id => world.probed(id)), DAY)).toBe(true);

@@ -38,3 +38,27 @@ pure def lawUnresolvedProfileNeverReportsAcceptance(intakeAccepted: bool, receip
 pure def lawIntakeMustRecordReceipt(intakeAccepted: bool): bool =
   not(profileSubmissionAccepted(ProfileClaimStart, intakeAccepted, false))
 ```
+
+### The Network keeps no copy of the agent's profile text
+
+The member approved the profile in their own agent before the agent submits it. The Network learns the facts from the text in the unit of work that stores the inbound row. The row of profile text from the agent ("mcp") keeps a fixed placeholder body and the type agent_profile, never the raw text. A text that the member wrote in the thread ("thread") keeps its body, except an answer to an invitation feedback question, which keeps a fixed feedback body and the type interruption_feedback. A source that is not known keeps no text. Changed 2026-11-22: the stored row kept the full agent summary with no limit, against the policy to delete raw pasted summaries after confirmation (stories-b-6, stories-a-3). Changed 2026-11-22 after review: the rule now decides the stored body kind, so the shell maps the kind to the body and type and does not choose them itself.
+
+```quint
+type InboundBody = InboundBodyAgentProfile | InboundBodyFeedback | InboundBodyText
+
+pure def inboundBody(source: str, feedbackAnswer: bool): InboundBody =
+  if (source != "thread") InboundBodyAgentProfile
+  else if (feedbackAnswer) InboundBodyFeedback
+  else InboundBodyText
+
+pure val sourceValues = Set("thread", "mcp", "")
+
+pure def lawAgentProfileTextNotKept(source: str, feedbackAnswer: bool): bool =
+  source != "thread" implies inboundBody(source, feedbackAnswer) == InboundBodyAgentProfile
+
+pure def lawFeedbackAnswerTextNotKept(feedbackAnswer: bool): bool =
+  feedbackAnswer implies inboundBody("thread", feedbackAnswer) == InboundBodyFeedback
+
+pure def lawThreadTextKept(feedbackAnswer: bool): bool =
+  not(feedbackAnswer) implies inboundBody("thread", feedbackAnswer) == InboundBodyText
+```

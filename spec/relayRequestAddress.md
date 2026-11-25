@@ -23,14 +23,15 @@ pure def lawNamedRelayRequiresTheSelectedCounterpart(named: bool): bool =
 
 ### A name identifies one recipient on an unselected relay
 
-If a signed relay does not select an item, the service keeps its newest open
-mutual match. For a named request to that counterpart, refuse the relay when a
-different person in another open mutual match has the same name. Multiple
-opportunities with the same person do not make their name ambiguous. A
-selected item must still come from the original turn and keeps its exact
-match. The name must match that counterpart. A photo also needs the current
-consent and review for that match. A refusal leaves any existing swap or photo
-selection in place.
+For text or a number, an unselected name must match the counterpart of the
+newest live match. Refuse the relay if another live match has a different
+counterpart with that name. Ask for the match if more than one person is a
+live counterpart. If all live matches are with the named person, use the
+newest one. A selected item must come from the original turn and keeps its
+exact match. The name must match that counterpart. In a photo request the
+name may select a live counterpart when no item is selected, but must identify
+one person. A photo also needs the current consent and review for that match.
+A refusal does not write a swap, photo draft, or offer.
 
 ```quint
 pure def relayNameCollisionRefuses(selectedItem: bool, otherCounterpartMatches: bool): bool =

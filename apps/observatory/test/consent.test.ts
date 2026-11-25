@@ -1,6 +1,3 @@
-// Game mode with the consent-first Network (the default): NYC only, human review before any
-// contact (PRD 32.8), probes before reveals, real venues, growth joiners, scenario levels, the age
-// policy, private facets behind the truth lens, the judge scorer, and Postgres parity.
 import { afterAll, afterEach, describe, expect, test } from "vitest";
 import { SQL } from "../../../packages/core/src/runtime/postgres.ts";
 import { DAY, MINUTE } from "@thenetwork/core";
@@ -24,7 +21,9 @@ async function captureSixDayGame() {
   const g = await game();
   const initial = structuredClone(g.state());
   await g.control({ type: "step", ms: 6 * DAY });
-  return { initial, ...structuredClone({ state: g.state(), rows: rowsFromGame(g) }) };
+  const state = g.state();
+  const messages = Object.fromEntries(state.members.map(m => [m.id, g.world.channel.messagesFor(m.id)]));
+  return { initial, ...structuredClone({ state, rows: rowsFromGame(g), messages }) };
 }
 
 // These two journeys read the same six-day result. The other games still have their own state.
@@ -32,12 +31,14 @@ let sixDayGame: ReturnType<typeof captureSixDayGame> | undefined;
 const defaultGameFixture = () => sixDayGame ??= captureSixDayGame();
 
 /** Messages the Network sent a member about an opportunity (probe key or proposal id). */
-const about = (g: GameSource, memberId: string, oppId: string) =>
-  g.world.channel.messagesFor(memberId).filter(m => m.direction === "outbound" && (m.meta?.proposalId === oppId || (m.meta?.probe as { key?: string } | undefined)?.key === oppId));
+type Sent = ReturnType<GameSource["world"]["channel"]["messagesFor"]>;
+const outboundAbout = (messages: Sent, oppId: string) =>
+  messages.filter(m => m.direction === "outbound" && (m.meta?.proposalId === oppId || (m.meta?.probe as { key?: string } | undefined)?.key === oppId));
+const about = (g: GameSource, memberId: string, oppId: string) => outboundAbout(g.world.channel.messagesFor(memberId), oppId);
 
 describe("consent-first game mode (NYC)", () => {
   test("NYC only; probes come before reveals; meetings at real venues; engine runs linked", async () => {
-    const { initial, state: s } = await defaultGameFixture();
+    const { initial, state: s, messages } = await defaultGameFixture();
     expect(initial.members.length).toBe(250);
     expect(initial.members.every(m => m.city === "nyc")).toBe(true);
     expect(initial.env.label).toContain("consent-first");
@@ -55,10 +56,14 @@ describe("consent-first game mode (NYC)", () => {
     for (const o of met) { expect(o.venue).toBeDefined(); expect(o.venue!.lat).toBeGreaterThan(40.5); expect(o.venue!.lng).toBeLessThan(-73.7); }
     const skipped = s.opportunities.filter(o => o.state === "SKIPPED");
     expect(skipped.every(o => !!o.reason)).toBe(true);
-    // Game mode defaults to the simulated reviewer: every Network opportunity was reviewed first.
-    expect(s.network!.review).toMatchObject({ mode: "auto", queued: 0, rejected: 0, expired: 0 });
+    expect(s.network!.review).toMatchObject({ rejected: 0 });
     expect(s.network!.review.approved).toBeGreaterThan(0);
-    expect(engineOpps.every(o => o.review?.decision === "approve" && o.review.reviewer === "sim_auto_reviewer")).toBe(true);
+    expect(engineOpps.every(o => o.state === "IN_REVIEW" || o.review?.decision === "expired" || !!o.review?.invalidated
+      || (o.review?.decision === "approve" && o.review.approver === "judge" && o.review.reviewer === "sim_review_judge"))).toBe(true);
+    for (const o of engineOpps.filter(x => x.review?.decision !== "approve")) for (const id of o.participants) expect(outboundAbout(messages[id] ?? [], o.id)).toEqual([]);
+    expect(engineOpps.filter(o => o.review?.decision === "approve" && o.review.approver === "judge").length).toBeGreaterThan(0);
+    expect(engineOpps.filter(o => o.review?.decision === "approve").every(o => o.review!.approver === "judge" || o.review!.approver === "staff")).toBe(true);
+    expect(engineOpps.filter(o => o.review?.decision === "expired").every(o => !!o.review!.exceptionReason)).toBe(true);
     // The judge scorer runs over the records: no canary leaks, no minor contacts.
     expect(s.stats.judge).toBeDefined();
     expect(s.stats.judge!.canaryLeaks).toBe(0);
@@ -66,12 +71,11 @@ describe("consent-first game mode (NYC)", () => {
     expect(s.stats.invariantViolations).toBe(s.stats.judge!.invariants);
   }, T);
 
-  test("human review: nothing is sent before approval; approve starts probes; reject and expiry send nothing", async () => {
-    const g = await game({ review: "human" });
+  test("held for staff: nothing is sent before approval; approve starts probes; reject and expiry send nothing", async () => {
+    const g = await game({ judge: "hold-every-item" });
     await g.control({ type: "step", ms: DAY }); // the nightly engine run is at 9:00; the world starts at 13:00
     let s = g.state();
-    expect(s.network!.review.mode).toBe("human");
-    const queued = s.opportunities.filter(o => o.state === "IN_REVIEW");
+    const queued = s.opportunities.filter(o => o.state === "IN_REVIEW" && o.review?.exceptionReason);
     expect(queued.length).toBeGreaterThanOrEqual(3);
     expect(s.network!.review.queued).toBe(queued.length);
     expect(queued.every(o => o.review && !o.review.decision && o.review.deadline > o.review.queuedAt)).toBe(true);
@@ -101,17 +105,13 @@ describe("consent-first game mode (NYC)", () => {
     for (const id of late.participants) expect(about(g, id, late.id)).toEqual([]);
     expect(s.network!.review.rejected).toBe(1);
     expect(s.network!.review.expired).toBeGreaterThan(0);
-    // Switching to the simulated reviewer approves what is waiting.
-    expect((await g.control({ type: "review_mode", mode: "auto" })).ok).toBe(true);
-    s = g.state();
-    expect(s.network!.review).toMatchObject({ mode: "auto", queued: 0 });
-    expect(s.opportunities.some(o => o.state === "IN_REVIEW")).toBe(false);
   }, T);
 
   test("review rules: reason 'other' needs a note; approve is refused when the member record turns minor while the item waits", async () => {
-    const g = await game({ review: "human" });
+    const g = await game({ judge: "hold-every-item" });
     await g.control({ type: "step", ms: DAY });
-    const [a, b] = g.state().opportunities.filter(o => o.state === "IN_REVIEW");
+    const [a, b] = g.state().opportunities.filter(o => o.state === "IN_REVIEW" && o.review?.exceptionReason);
+    expect(b).toBeDefined();
     expect(await g.control({ type: "review", oppId: a!.id, decision: "reject", reason: "other" })).toMatchObject({ ok: false, error: expect.stringContaining("needs a note") });
     expect((await g.control({ type: "review", oppId: a!.id, decision: "reject", reason: "other", note: "duplicate of a staff intro" })).ok).toBe(true);
     // A staff correction: the record now says 16. The Network reads the record again and takes the
@@ -122,6 +122,28 @@ describe("consent-first game mode (NYC)", () => {
     expect(g.consent!.review(b!.id, "approve", { reviewer: "script" })).toBe(false);
     await g.control({ type: "step", ms: 2 * 3_600_000 });
     for (const id of b!.participants) expect(about(g, id, b!.id)).toEqual([]);
+  }, T);
+
+  test("a booked plan that the Network closes shows as cancelled, and a later outcome for it adds only a feed line", async () => {
+    const g = await game();
+    let booked: ReturnType<GameSource["state"]>["opportunities"][number] | undefined;
+    for (let day = 0; day < 10 && !booked; day++) {
+      await g.control({ type: "step", ms: DAY });
+      const now = g.state().clock.now;
+      booked = g.state().opportunities.find(o => o.state === "SCHEDULED" && (o.meetingAt ?? 0) > now + 6 * 3_600_000);
+    }
+    expect(booked).toBeDefined();
+    const id = booked!.id;
+    g.world.personaList().find(p => p.id === booked!.participants[0])!.public.claimedAge = 16;
+    await g.control({ type: "step", ms: 30 * MINUTE });
+    const closed = g.state().opportunities.find(o => o.id === id)!;
+    expect([closed.state, closed.reason]).toEqual(["CANCELLED", "minors policy"]);
+    await g.control({ type: "step", ms: (booked!.meetingAt! - g.state().clock.now) + DAY });
+    const after = g.state();
+    const later = after.opportunities.find(o => o.id === id)!;
+    expect(later.state).toBe("CANCELLED");
+    expect(Object.values(later.status).filter(st => st === "attended" || st === "no_show")).toEqual([]);
+    expect(after.feed.filter(f => f.opportunityId === id && f.kind === "outcome").every(f => f.text.includes("outcome after the plan closed"))).toBe(true);
   }, T);
 
   test("member detail: agent-private facets (and their canaries) only under the truth lens", async () => {
@@ -137,14 +159,14 @@ describe("consent-first game mode (NYC)", () => {
   }, T);
 
   test("player intros wait for review like everything else, then go through probes; propose() refuses a known minor", async () => {
-    const g = await game({ engine: "off", review: "human" });
+    const g = await game({ engine: "off", judge: "hold-every-item" });
     await g.control({ type: "step", ms: 2 * DAY });
     const s = g.state();
     const adults = s.members.filter(m => m.joined && !m.minor && m.trust !== "hold");
     const minor = s.members.find(m => m.minor && m.joined)!;
     const ok = await g.control({ type: "propose", participants: [adults[0]!.id, adults[1]!.id], why: "you both like climbing" });
     const id = (ok.data as { id: string }).id;
-    expect((ok.data as { dispatch: string }).dispatch).toContain("review queue");
+    expect((ok.data as { dispatch: string }).dispatch).toContain("review judge");
     const refused = await g.control({ type: "propose", participants: [minor.id, adults[2]!.id] });
     expect(refused.ok).toBe(false);
     expect(refused.error).toContain("under 18");

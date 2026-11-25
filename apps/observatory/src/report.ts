@@ -4,8 +4,7 @@
 // dispatch skips, fairness over time, the graph the Network learned, the review gate, and the
 // judge scorer's invariant, canary-leak and minor-contact counts).
 //   node --import tsx --env-file-if-exists=.env apps/observatory/src/report.ts --days 14 --seed 1 [--engine engine-v1|random|off]
-//       [--network consent|stub] [--review auto|human]
-// With --review human nobody reviews, so every queued opportunity expires unsent (a check of the gate).
+//       [--network consent|stub] [--judge stand-in|hold-every-item]
 import { parseArgs } from "node:util";
 import { DAY } from "@thenetwork/core";
 import { scoreboard } from "./scoring.ts";
@@ -13,7 +12,7 @@ import { GameSource } from "./sources/game.ts";
 
 const { values: a } = parseArgs({ options: {
   days: { type: "string", default: "14" }, seed: { type: "string", default: "1" }, engine: { type: "string", default: "engine-v1" }, personas: { type: "string", default: "0" },
-  network: { type: "string", default: "consent" }, review: { type: "string", default: "auto" },
+  network: { type: "string", default: "consent" }, judge: { type: "string", default: "stand-in" },
 } });
 
 function choice<T extends string>(name: string, value: string | undefined, allowed: readonly T[]): T {
@@ -25,7 +24,7 @@ function choice<T extends string>(name: string, value: string | undefined, allow
 
 const engine = choice("engine", a.engine, ["engine-v1", "random", "off"]);
 const network = choice("network", a.network, ["consent", "stub"]);
-const review = choice("review", a.review, ["auto", "human"]);
+const judge = choice("judge", a.judge, ["stand-in", "hold-every-item"]);
 const seed = Number(a.seed);
 if (!a.seed?.trim() || !Number.isFinite(seed)) {
   console.error("--seed must be a finite number");
@@ -34,7 +33,7 @@ if (!a.seed?.trim() || !Number.isFinite(seed)) {
 const days = Number(a.days);
 const g = new GameSource({
   seed, days, engine, personas: Number(a.personas), pushMs: 3_600_000, tickMs: 3_600_000,
-  network, review,
+  network, judge,
 });
 const t0 = performance.now();
 await g.init();

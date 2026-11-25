@@ -1,6 +1,6 @@
 // Current Friends pack, baselines, and ablations for options the planner still exposes.
 import { BASELINES } from "./baselines.ts";
-import { friendsPackMatcher } from "./packMatcher.ts";
+import { friendsPackMatcher, friendsTeenMatcher } from "./packMatcher.ts";
 import type { FriendsMatcher, FriendsWorld } from "./world.ts";
 
 export type FriendsArm = FriendsMatcher | ((w: FriendsWorld) => FriendsMatcher);
@@ -9,6 +9,7 @@ export type FriendsArm = FriendsMatcher | ((w: FriendsWorld) => FriendsMatcher);
 export function friendsArms(packOverride: Record<string, unknown> = {}): Record<string, FriendsArm> {
   return {
     pack: friendsPackMatcher(packOverride),
+    "pack-teen": friendsTeenMatcher(friendsPackMatcher(packOverride)),
     random: BASELINES.random, greedy: BASELINES.greedy, oracle: BASELINES.oracle,
     "pack-no-crews": friendsPackMatcher({ name: "pack-no-crews", policy: { crews: false } }),
     "pack-no-repeat": friendsPackMatcher({ name: "pack-no-repeat", policy: { crews: false, repeat: false } }),

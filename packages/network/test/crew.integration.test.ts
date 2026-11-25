@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 import { DAY, HOUR, type InitialInviteReceipt } from "@thenetwork/core";
 import { probeReplyReceiptKey } from "../src/network.ts";
 import { Mini } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 const ids = ["a", "b", "c", "d", "e", "f"];
 const members = ids.map(id => ({ id, name: `${id.toUpperCase()}nton Q`, age: 30, area: "Prospect Heights", interests: ["coffee", "climbing"] }));
@@ -21,13 +22,13 @@ test("a recurring crew needs the configured positive history or a stated recurri
     const people = scenario === "two-recurring" ? members.map(member => ({
       ...member, wants: [{ objective: "Find a regular climbing partner", category: "hobby" as const }],
     })) : members;
-    const w = new Mini(people, { seed, review: "human", plans: true, matchingEnabled: true, plansConfig: { crews: { minPlans } } });
+    const w = new Mini(people, { seed, inlineJudge: holdEveryItem.inline, plans: true, matchingEnabled: true, plansConfig: { crews: { minPlans } } });
     await w.onboard(...ids);
     const positives: string[][] = [];
     for (let round = 0; round < rounds; round++) {
       expect(await w.runUntil(() => w.net.reviewQueue().some(q => q.origin === "planner"), 14 * DAY)).toBe(true);
       const q = w.net.reviewQueue().find(q => q.origin === "planner")!;
-      expect(w.net.review(q.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
+      expect(w.net.review(q.oppId, "approve", { reviewer: "sim_staff", revision: q.revision })).toBe(true);
       const plan = () => w.net.exportState().opps.find(o => o.id === q.oppId)!;
       for (let pick = 0; pick < ids.length && plan().stage === "probing"; pick++) {
         if (!await w.runUntil(() => ids.some(id => w.probed(id)), 4 * DAY)) break;
@@ -56,7 +57,7 @@ test("a recurring crew needs the configured positive history or a stated recurri
 });
 
 test("opt-in follows acceptance of that member's exact open crew offer", async () => {
-  const w = new Mini(members, { review: "human", plans: true, matchingEnabled: true });
+  const w = new Mini(members, { inlineJudge: holdEveryItem.inline, plans: true, matchingEnabled: true });
   const receipts = new Map<string, InitialInviteReceipt>();
   const prompts = new Map<string, string>();
   const context = w.ctx();
@@ -75,7 +76,7 @@ test("opt-in follows acceptance of that member's exact open crew offer", async (
   await w.onboard(...ids);
   expect(await w.runUntil(() => w.net.reviewQueue().some(q => q.origin === "planner"), 14 * DAY)).toBe(true);
   const q = w.net.reviewQueue().find(q => q.origin === "planner")!;
-  expect(w.net.review(q.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
+  expect(w.net.review(q.oppId, "approve", { reviewer: "sim_staff", revision: q.revision })).toBe(true);
   await w.answerProbes(ids);
   const plan = w.net.exportState().opps.find(o => o.id === q.oppId)!;
   expect(plan.stage).toBe("scheduled");

@@ -1,24 +1,4 @@
 import { isDeepStrictEqual } from "node:util";
-// The slop-live arm (run inside the slop block): slop.date as it will run live. The production
-// ConsentNetwork with the slop wiring (packages/network/service/packs.ts appWiring("slop"): makeSlopPack
-// with no ID check, the slop engine config, the slop hooks: the engine's onboarding loop, the probe
-// text, timeOptions, the venue, the booked copy, the check-in and post-date reports; plans off), review
-// mode "human" with a reviewer who approves everything (the worst case: the core rules must hold
-// whatever a reviewer does), and matching on. The world: the sim World in New York, 30 days, daters who
-// answer slop's questions in their own words (scripted from their stated truth: who they are and seek,
-// an age range, a distance, a zip, the basics), two declared minors and one age liar who says "I'm 16"
-// on day 8. Nothing reads hidden truth except the scripted replies and the judge.
-//
-// The snapshot keeps no romance tags: as in production, the Network learns orientation, age range,
-// distance and place only from what members text, through the onboarding loop (AppHooks.onboarding:
-// extractSlopProfile -> slopOnboardTags -> readBack / nextQuestion).
-//
-// PINNED: seeds 21-22, 30 days, 80 personas. BLOCKING (the invariants): the judge (0 invariant
-// violations, minor contacts, canary leaks, errors), the loop ran (questions, read-backs, tags, probes),
-// no probe without an approval, no minor in a probe, reveal or booked date, consent before reveal, every
-// probe passes the leak guard, names no one and is slop's copy, the booked copy and the check-in are
-// slop's, one date at a time, at most 3 proactive texts a day.
-// TRACKED: the quality numbers (probes, mutual yes per probe, dates booked and held).
 import { DAY, HOUR, localParts, type MemberId, type RunRecord } from "../../packages/core/src/index.ts";
 import { Mini } from "../../packages/network/test/mini.ts";
 import { planFromInput, slopProfiles, SLOP_ASK_QUESTIONS, SLOP_ONBOARD_QUESTIONS } from "../../packages/engine/src/packs/slop/index.ts";
@@ -28,7 +8,8 @@ import { PolicyPersonaAgent, World, generatePersonas, type Persona } from "../..
 import type { AgentReply, Initiative, PersonaAgent, PersonaContext } from "../../packages/sim/src/agent/types.ts";
 import type { SimMessage } from "../../packages/sim/src/channel.ts";
 import type { InboundMessage, NetworkContext, NetworkUnderTest, Proposal } from "../../packages/core/src/index.ts";
-import { ConsentNetwork } from "../../packages/network/src/network.ts";
+import { ConsentNetwork, SIM_REVIEW_JUDGE } from "../../packages/network/src/network.ts";
+import { holdEveryItem, simulatedReviewJudge } from "../../packages/engine/src/reviewJudge.ts";
 import { styleViolations } from "../../packages/network/src/copy.ts";
 import { appWiring, SLOP_READBACK, zipForArea } from "../../packages/network/service/packs.ts";
 import { PERSON_DAILY_CAP } from "../../packages/network/service/service.ts";
@@ -45,9 +26,29 @@ type Log = Extract<RunRecord, { type: "network_log" }>;
 const logs = (records: RunRecord[], kind: string) => records.filter((r): r is Log => r.type === "network_log" && r.kind === kind);
 const outbound = (records: RunRecord[]) => records.filter((r): r is Msg => r.type === "message" && r.msg.direction === "outbound" && !r.msg.system);
 
+function secondBookings(records: readonly RunRecord[]): string[] {
+  const ends = new Map<string, number[]>();
+  const end = (key: string, t: number) => ends.set(key, [...(ends.get(key) ?? []), t]);
+  for (const x of records) {
+    if (x.type !== "network_log") continue;
+    if (x.kind === "opportunity_closed" && typeof x.detail.proposalId === "string") end(x.detail.proposalId, x.t);
+    if (x.kind === "booked_cancelled" && typeof x.detail.oppId === "string" && typeof x.detail.memberId === "string") end(`${x.detail.oppId}|${x.detail.memberId}`, x.t);
+  }
+  const firstEnd = (key: string, from: number) => Math.min(...(ends.get(key) ?? []).filter(t => t >= from));
+  const byMember = new Map<MemberId, { t: number; until: number; proposalId: string }[]>();
+  for (const x of records) if (x.type === "meeting_scheduled") for (const id of x.participants) {
+    const until = Math.min(x.at, firstEnd(x.proposalId, x.t), firstEnd(`${x.proposalId}|${id}`, x.t));
+    byMember.set(id, [...(byMember.get(id) ?? []), { t: x.t, until, proposalId: x.proposalId }]);
+  }
+  const out: string[] = [];
+  for (const [id, bookings] of byMember) {
+    const s = [...bookings].sort((a, c) => a.t - c.t);
+    for (let i = 1; i < s.length; i++) if (s.slice(0, i).some(earlier => s[i]!.t < earlier.until)) out.push(`${id} ${s[i]!.proposalId}`);
+  }
+  return out;
+}
+
 /**
- * The live slop network behind a human review queue with a reviewer who approves every item at the
- * next tick (after the Network's own tick, so an approval always comes before any probe it allows).
  * The snapshot loses the romance tags the sim generator would hand over: production learns them from texts.
  */
 export class ReviewedSlopNetwork implements NetworkUnderTest {
@@ -56,8 +57,7 @@ export class ReviewedSlopNetwork implements NetworkUnderTest {
   approved = 0;
   constructor(seed: number) {
     const w = appWiring("slop");
-    // The same options the production runtime passes (service/runtime.ts): the pack, hooks, engine config, plans off, review "human".
-    this.net = new ConsentNetwork({ seed, app: "slop", review: "human", matchingEnabled: true, pack: w.pack, hooks: w.hooks, plans: w.plans ?? true, engine: w.engine });
+    this.net = new ConsentNetwork({ seed, app: "slop", inlineJudge: simulatedReviewJudge({ exceptions: false }), matchingEnabled: true, pack: w.pack, hooks: w.hooks, plans: w.plans ?? true, engine: w.engine });
   }
   init(ctx: NetworkContext) {
     this.net.init({ ...ctx, snapshot: () => { const s = ctx.snapshot(); return { ...s, facets: s.facets.filter(f => !f.tags.some(t => t.startsWith("romance:"))) }; } });
@@ -65,7 +65,7 @@ export class ReviewedSlopNetwork implements NetworkUnderTest {
   onInbound(m: InboundMessage) { return this.net.onInbound(m); }
   async tick(now: number) {
     await this.net.tick(now);
-    for (const item of this.net.reviewQueue()) if (item.kind !== "fraud" && this.net.review(item.oppId, "approve", { reviewer: SLOP_LIVE_REVIEWER })) this.approved++;
+    for (const item of this.net.reviewQueue()) if (item.exception && this.net.review(item.oppId, "approve", { reviewer: SLOP_LIVE_REVIEWER, revision: item.revision })) this.approved++;
   }
   submitProposal(p: Proposal) { this.net.submitProposal(p); }
 }
@@ -93,6 +93,8 @@ export function slopAnswer(p: Persona, reason: string): string {
     case "slop_location": case "slop_zip": return zip ? `My zip is ${zip}.` : "Not sure, somewhere in Brooklyn.";
     case "slop_basics": case "slop_goal": return "Something long-term, and no smokers.";
     case "slop_widen": return "Sure, that's fine.";
+    case "slop_trans_openness": return "Rather not say.";
+    case "slop_shown_to": return "Neither.";
     case "slop_activities": return "Coffee or a walk.";
     case "slop_free": return "Thursday evenings and Saturday afternoons.";
     default: return `I'm a ${p.gender} looking for ${seeks}, ${lo}-${hi}, within 10 miles${zip ? ` of ${zip}` : ""}.`;
@@ -161,7 +163,7 @@ export async function runSlopLive(seed: number, o: { days?: number; n?: number }
   const start = Date.UTC(2026, 9, 5, 7);
   const liarToldAt = start + LIAR_TELLS_DAY * DAY + 15 * 3_600_000;
   const w = new World({
-    seed, personas, days, start, writeLog: false, network, agent: new SlopDaterAgent(start, new Set(personas.map(p => p.name.split(" ")[0]!))), onRecord: r => records.push(r),
+    seed, personas, days, start, app: network.net.app.id, writeLog: false, network, agent: new SlopDaterAgent(start, new Set(personas.map(p => p.name.split(" ")[0]!))), onRecord: r => records.push(r),
     actions: [{ at: liarToldAt, action: { do: "say", persona: liar, text: "honestly I'm 16, my older sister made this for me" } }],
   });
   await w.run();
@@ -175,12 +177,13 @@ export async function slopLiveArm(b: Block, o: { quick: boolean }): Promise<void
     const w = new Mini([
       { id: "a", name: "Alex", age: 30, interests: ["hiking"], romance: { is: "man", seeks: ["woman"] } },
       { id: "b", name: "Blair", age: 30, interests: ["hiking"], romance: { is: "woman", seeks: ["man"] } },
-    ], { app: "slop", review: "human", pack: wiring.pack, hooks: wiring.hooks, plans: wiring.plans ?? true, engine: wiring.engine });
+    ], { app: "slop", inlineJudge: holdEveryItem.inline, pack: wiring.pack, hooks: wiring.hooks, plans: wiring.plans ?? true, engine: wiring.engine });
     for (const id of ["a", "b"]) {
       await w.say(id, "Hi");
       await w.say(id, `I'm a ${id === "a" ? "man looking for women" : "woman looking for men"}, aged 30. Ages 25-40, within 10 miles of 11211. Looking for a long-term relationship. I love cooking and reading, and no smokers. For a first date I want a hike. Usually free Saturday afternoons.`);
     }
     await w.say("a", "Yes, that's right.");
+    await w.say("a", "Rather not say.");
     const opp = w.propose(["a", "b"], { category: "romance", objective: "hike" });
     expect(await w.runUntil(() => w.net.reviewQueue().some(q => q.oppId === opp))).toBe(true);
     expect(w.net.review(opp, "approve", { reviewer: "sim_staff" })).toBe(true);
@@ -189,6 +192,7 @@ export async function slopLiveArm(b: Block, o: { quick: boolean }): Promise<void
     w.restart();
     expect(w.net.memberList().find(m => m.id === "b")?.awaiting?.ask?.reason).toBe(SLOP_READBACK);
     await w.say("b", "Yes, that's right.");
+    await w.say("b", "Rather not say.");
     expect(w.log("probe_answer").some(r => r.detail.oppId === opp && r.detail.memberId === "b")).toBe(false);
     expect(w.meetings).toEqual([]);
     expect(await w.runUntil(() => w.probed("b"))).toBe(true);
@@ -213,12 +217,13 @@ export async function slopLiveArm(b: Block, o: { quick: boolean }): Promise<void
       const w = new Mini([
         { id: "a", name: "Alex", age: 30, interests: ["hiking"], shareable: true, romance: { is: "man", seeks: ["woman"] } },
         { id: "b", name: "Blair", age: 30, interests: ["hiking"], shareable: true, romance: { is: "woman", seeks: ["man"] } },
-      ], { seed, app: "slop", review: "human", pack: wiring.pack, hooks: wiring.hooks, plans: wiring.plans ?? true, engine: wiring.engine });
+      ], { seed, app: "slop", inlineJudge: holdEveryItem.inline, pack: wiring.pack, hooks: wiring.hooks, plans: wiring.plans ?? true, engine: wiring.engine });
       w.clock.set(start);
       for (const id of ids) {
         await w.say(id, "Hi");
         await w.say(id, `I'm a ${id === "a" ? "man looking for women" : "woman looking for men"}, aged 30. Ages 25-40, within 10 miles of 11211. Looking for a long-term relationship. I love cooking and reading, and no smokers. For a first date I want ${c.activity}. ${c.free}`);
         await w.say(id, "Yes, that's right.");
+        await w.say(id, "Rather not say.");
       }
       w.restart();
       const input = w.net.packInput(w.clock.now());
@@ -285,7 +290,12 @@ export async function slopLiveArm(b: Block, o: { quick: boolean }): Promise<void
       const id = String(m.msg.meta?.proposalId ?? (m.msg.meta?.probe as { key?: string } | undefined)?.key);
       expect([id, (approvedAt.get(id) ?? Infinity) <= m.msg.ts]).toEqual([id, true]);
     }
-    expect(logs(r.records, "review_decision").every(l => l.detail.reviewer === SLOP_LIVE_REVIEWER)).toBe(true);
+    const held = new Set(logs(r.records, "review_exception").map(l => String(l.detail.oppId)));
+    expect(logs(r.records, "review_decision").filter(l => l.detail.decision === "approve")
+      .filter(l => !((l.detail.approver === "judge" && l.detail.reviewer === SIM_REVIEW_JUDGE) || (l.detail.approver === "staff" && l.detail.reviewer === SLOP_LIVE_REVIEWER && held.has(String(l.detail.oppId)))))
+      .map(l => [l.detail.oppId, l.detail.approver, l.detail.reviewer])).toEqual([]);
+    const rules = computeMetrics(r.records, { requireReview: true }).invariants.byRule;
+    expect([rules.unreviewed_contact ?? 0, rules.exception_contact_without_staff ?? 0]).toEqual([0, 0]);
   });
 
   await each("minors: no declared minor (and no age liar after they say 16) in a probe, an alternate, a reveal or a booked date", r => {
@@ -344,23 +354,19 @@ export async function slopLiveArm(b: Block, o: { quick: boolean }): Promise<void
     for (const m of outbound(r.records).filter(m => m.msg.meta?.type === "feedback_request")) expect(m.msg.body).toMatch(/(^|[.!] )How did your date with .+ go\? If anything felt wrong/);
   });
 
-  await each("one date at a time: a member has at most one active future booking", r => {
-    const byMember = new Map<MemberId, { proposalId: string; at: number }>();
-    const closed = new Set<string>();
-    for (const record of [...r.records].sort((first, second) => first.t - second.t)) {
-      if (record.type === "network_log" && record.kind === "opportunity_closed" && typeof record.detail.proposalId === "string") {
-        closed.add(record.detail.proposalId);
-      }
-      if (record.type !== "meeting_scheduled") continue;
-      for (const memberId of record.participants) {
-        const previous = byMember.get(memberId);
-        const overlapping = previous && previous.proposalId !== record.proposalId
-          && previous.at > record.t && !closed.has(previous.proposalId);
-        expect([memberId, previous?.proposalId, record.proposalId, Boolean(overlapping)])
-          .toEqual([memberId, previous?.proposalId, record.proposalId, false]);
-        byMember.set(memberId, record);
-      }
-    }
+  await b.run("slop-live: the one-date check holds a pending booking and releases one the network called off", () => {
+    const meet = (t: number, at: number, proposalId: string, participants: MemberId[]): RunRecord => ({ t, type: "meeting_scheduled", meetingId: `m-${proposalId}`, proposalId, participants, at, city: "nyc" });
+    const log = (t: number, kind: string, detail: Record<string, unknown>): RunRecord => ({ t, type: "network_log", kind, detail });
+    expect(secondBookings([meet(1, 100, "p1", ["a", "b"]), meet(50, 200, "p2", ["a", "c"])])).toEqual(["a p2"]);
+    expect(secondBookings([meet(1, 100, "p1", ["a", "b"]), meet(150, 200, "p2", ["a", "c"])])).toEqual([]);
+    expect(secondBookings([meet(1, 100, "p1", ["a", "b"]), log(40, "booked_cancelled", { oppId: "p1", memberId: "a" }), meet(50, 200, "p2", ["a", "c"])])).toEqual([]);
+    expect(secondBookings([meet(1, 100, "p1", ["a", "b"]), log(40, "booked_cancelled", { oppId: "p1", memberId: "b" }), meet(50, 200, "p2", ["a", "c"])])).toEqual(["a p2"]);
+    expect(secondBookings([meet(1, 100, "p1", ["a", "b"]), log(40, "opportunity_closed", { proposalId: "p1" }), meet(50, 200, "p2", ["b", "c"])])).toEqual([]);
+    expect(secondBookings([log(0, "opportunity_closed", { proposalId: "p1" }), meet(1, 100, "p1", ["a", "b"]), meet(50, 200, "p2", ["a", "c"])])).toEqual(["a p2"]);
+    expect(secondBookings([meet(1, 300, "p1", ["a", "b"]), meet(50, 400, "p2", ["c", "d"]), meet(60, 500, "p3", ["a", "d"])])).toEqual(["a p3", "d p3"]);
+  });
+  await each("one date at a time: no member is booked for a second date before the first one has happened or the network called it off", r => {
+    expect(secondBookings(r.records)).toEqual([]);
   });
 
   await each(`the person cap: at most ${PERSON_DAILY_CAP} proactive texts reach a member in any 24 hours`, r => {
@@ -386,7 +392,7 @@ export async function slopLiveArm(b: Block, o: { quick: boolean }): Promise<void
   const rules = [...new Set(styleBad.flatMap(t => styleViolations(t)))].join(", ");
   b.track("slop-live style: probe texts that break the Network's style rules (target 0)", styleBad.length === 0, `${styleBad.length} of ${probeTexts.length}${rules ? ` (${rules})` : ""}`);
   b.track("slop-live quality: yes per probe answer", answered > 0 && yes / answered >= 0.25, answered ? (yes / answered).toFixed(3) : "n/a");
-  b.track("slop-live quality: dates booked per opportunity approved", opps > 0, `${dates} dates, ${opps} opportunities, ${sum(r => r.approved)} approvals`);
+  b.track("slop-live quality: dates booked per opportunity approved", opps > 0, `${dates} dates, ${opps} opportunities, ${sum(r => logs(r.records, "review_decision").filter(l => l.detail.decision === "approve").length)} approvals (${sum(r => r.approved)} by staff on held items)`);
   b.track("slop-live quality: dates held (both showed)", held > 0, String(held));
   b.track("slop-live quality: share of adult daters booked at least once in 30 days", daters > 0 && dated / daters >= 0.3, daters ? (dated / daters).toFixed(3) : "n/a");
 }

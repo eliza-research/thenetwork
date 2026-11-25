@@ -1,9 +1,12 @@
 // Hard filters (Section 33.5). Hard constraints are never traded for score (33.1): a candidate
 // failing any of these is dropped before scoring, and the reason is counted in the run funnel.
 import type { Category, Member, MemberId } from "@thenetwork/core";
-import { ADULT_AGE as CORE_ADULT_AGE, canBeMatched, DAY, HOUR } from "@thenetwork/core";
+import { ADULT_AGE as CORE_ADULT_AGE, ageSideOf, canBeMatched, DAY, HOUR, latestDayKeyOf, type AgeSide } from "@thenetwork/core";
 import { candidateBackfillAllowed, initial, step, type CheckPhase } from "../../core/src/generated/candidateScreening.ts";
-import { laneSidesCompatible, type MatchLane } from "../../core/src/generated/matchLane.ts";
+import {
+  groupAgeAllowed, rosterHasMinor, teenFriendCandidate, teenFriendFormat, teenFriendRole, teenIntroShape, teenRosterSizeAllowed, viaAllowedForRoster,
+} from "../../core/src/generated/friendIntroAge.ts";
+import { laneSidesCompatible, teenFriendCategory, teenFriendLane, teenGenerator, teenGroupPlanApp, type MatchLane } from "../../core/src/generated/matchLane.ts";
 import { publicEventMemberAllowsMatch } from "../../core/src/generated/publicEventCatalog.ts";
 import type { EngineConfig } from "./config.ts";
 import type { MatchProfile } from "./match/profile.ts";
@@ -27,12 +30,6 @@ export type FilterReason =
 import type { MemberCheck } from "./pack.ts";
 export type { MemberCheck };
 
-/**
- * Minors policy (founder decisions 2026-10-05 and 2026-10-07; `packages/core/src/policy.ts`):
- * under-13s cannot join; members aged 13-17 may join but are NEVER matched or connected to other
- * people. This age is policy, not a tuning knob: config can raise the bar (`ageMin`) but never
- * lower it below 18. Missing / non-numeric ages fail closed.
- */
 export const ADULT_AGE = CORE_ADULT_AGE;
 export const isMinorAge = (age: unknown): boolean => !canBeMatched(age);
 /** Scope the shared catalog's event format separately from each member's matching category. */
@@ -46,16 +43,63 @@ export function isMinor(w: World, id: MemberId): boolean {
   const mi = w.get(id);
   return !!mi && isMinorAge(mi.m.age);
 }
-/**
- * Every member a candidate touches in ANY role: participants, alternates (backfill), and the
- * warm-path intermediary (`via`). Used for the minors hard filter.
- */
 export function involvedMembers(c: Pick<Candidate, "participants" | "alternates" | "via">): MemberId[] {
   return [...c.participants, ...(c.alternates ?? []), ...(c.via ? [c.via] : [])];
 }
-export function involvesMinor(w: World, c: Pick<Candidate, "participants" | "alternates" | "via">): boolean {
-  return involvedMembers(c).some(id => isMinor(w, id));
+
+const friendshipLaneOf = (w: World, category: Category, lane: MatchLane | undefined): boolean =>
+  teenFriendCategory(w.pack.id, category) && (lane === undefined || teenFriendLane(w.pack.id, lane));
+
+const belowMatchAge = (w: World, age: number): boolean =>
+  isMinorAge(age) || !(age >= w.cfg.ageMin) || !(age >= w.pack.eligibility.minMatchAge);
+
+export function teenCandidateIn(w: World, id: MemberId, category: Category): boolean {
+  const mi = w.get(id);
+  if (!mi) return false;
+  const side = ageSideOf(mi.m);
+  return teenFriendCandidate(side.adult, side.ready, side.birthKey, w.minDay, w.maxDay, w.teenIntros, teenFriendCategory(w.pack.id, category));
 }
+
+const ageSidesOf = (w: World, ids: readonly MemberId[]): AgeSide[] =>
+  ids.flatMap(id => { const mi = w.get(id); return mi ? [ageSideOf(mi.m)] : []; });
+
+function rosterAgeReason(w: World, ids: readonly MemberId[], friendshipLane: boolean, maxDay: number = w.maxDay): "underage" | null {
+  const roster = [...new Set(ids)];
+  const sides = ageSidesOf(w, roster);
+  if (!rosterHasMinor(sides)) return null;
+  if (sides.length !== roster.length || roster.length < 2) return "underage";
+  return groupAgeAllowed(w.teenIntros, friendshipLane, w.minDay, maxDay, sides) ? null : "underage";
+}
+
+const meetingMaxDay = (w: World, ends: readonly (number | undefined)[]): number =>
+  latestDayKeyOf(Math.max(w.now, ...ends.filter((end): end is number => end !== undefined)));
+
+export type AgeCheckedCandidate = Pick<Candidate, "participants" | "alternates" | "category">
+  & Partial<Pick<Candidate, "via" | "roles" | "format" | "generator" | "window" | "fixedWindow" | "anchor" | "lane">>;
+
+export function candidateAgeReason(w: World, c: AgeCheckedCandidate): "underage" | null {
+  const roster = [...new Set([...c.participants, ...c.alternates])];
+  if (c.via !== undefined && !viaAllowedForRoster(ageSidesOf(w, [...roster, c.via]))) return "underage";
+  const friendshipLane = friendshipLaneOf(w, c.category, c.lane);
+  const reason = rosterAgeReason(w, roster, friendshipLane, meetingMaxDay(w, [c.window?.end, c.fixedWindow?.end]));
+  if (reason !== null || !rosterHasMinor(ageSidesOf(w, roster))) return reason;
+  const { roles, format, generator } = c;
+  if (roles === undefined || format === undefined || generator === undefined) return "underage";
+  const everyRoleTeen = roster.every(id => { const role = roles[id]; return role !== undefined && teenFriendRole(role); });
+  return teenGenerator(w.pack.id, generator)
+    && teenIntroShape(friendshipLane, format, everyRoleTeen, c.via !== undefined, c.anchor?.type === "event")
+    && teenRosterSizeAllowed(true, roster.length) ? null : "underage";
+}
+
+export function teenGroupReason(w: World, ids: readonly MemberId[], category: Category, meetingEnd: number): "underage" | null {
+  const roster = [...new Set(ids)];
+  if (!rosterHasMinor(ageSidesOf(w, roster))) return null;
+  if (!teenGroupPlanApp(w.pack.id) || !teenRosterSizeAllowed(true, roster.length)) return "underage";
+  return rosterAgeReason(w, roster, teenFriendCategory(w.pack.id, category), meetingMaxDay(w, [meetingEnd]));
+}
+
+const teenSeat = (w: World, id: MemberId, c: Pick<MemberCheck, "category" | "lane" | "role" | "format">): boolean =>
+  teenCandidateIn(w, id, c.category) && friendshipLaneOf(w, c.category, c.lane) && teenFriendRole(c.role) && teenFriendFormat(c.format);
 
 /** Member-level hard constraints for taking part in a candidate with a given role. */
 export function memberReason(w: World, id: MemberId, c: MemberCheck): FilterReason | null {
@@ -63,8 +107,7 @@ export function memberReason(w: World, id: MemberId, c: MemberCheck): FilterReas
   const mi = w.get(id);
   if (!mi) return "unknown_member";
   const m = mi.m;
-  // Core prefix (cannot be overridden or reordered by a pack): minors / age floor, holds, pause.
-  if (isMinorAge(m.age) || !(m.age >= cfg.ageMin) || !(m.age >= w.pack.eligibility.minMatchAge)) return "underage";
+  if (!teenSeat(w, id, c) && belowMatchAge(w, m.age)) return "underage";
   if (w.holds.has(id)) return "safety_hold";
   if (m.state === "paused") return "state_paused";
   // Pack rules in order (networkPack: packs/network/rules.ts, the pre-refactor order).
@@ -87,7 +130,7 @@ export function romanceMutual(w: World, a: MemberId, b: MemberId): boolean {
 /** Pair-level hard constraints. Completed / positive history never blocks (ME-005). */
 export function pairReason(w: World, a: MemberId, b: MemberId, category: Category, lane?: MatchLane): FilterReason | null {
   if (a === b) return "duplicate_participant";
-  if (isMinor(w, a) || isMinor(w, b)) return "underage"; // minors are never paired with anyone
+  if (rosterAgeReason(w, [a, b], friendshipLaneOf(w, category, lane))) return "underage";
   // Core prefix: blocks win (either direction).
   if (w.blocked.has(pairKey(a, b))) return "blocked";
   const ma = w.get(a), mb = w.get(b);
@@ -220,7 +263,7 @@ function screeningReason(check: ScreeningCheck, w: World, c: Candidate, usage?: 
       return null;
     }
     case "Age":
-      return involvesMinor(w, c) ? "underage" : null;
+      return candidateAgeReason(w, c);
     case "Intermediary": {
       // The warm-path intermediary is named to both sides and asked to vouch.
       if (!c.via) return null;
@@ -368,18 +411,19 @@ function presenceReason(w: World, c: Candidate): FilterReason | null {
  *  - a block (either direction) with anyone else still in the opportunity.
  * `optedOut` lets the caller add channel-level opt-outs (STOP) that the World doesn't model.
  */
-export function sendTimeReason(w: World, id: MemberId, others: MemberId[] = [], optedOut?: (id: MemberId) => boolean, lane?: Category): FilterReason | "opted_out" | null {
+export function sendTimeReason(w: World, id: MemberId, others: MemberId[] = [], optedOut?: (id: MemberId) => boolean, category?: Category): FilterReason | "opted_out" | null {
   const mi = w.get(id);
   if (!mi) return "unknown_member";
-  // The effective match age (config ageMin and the pack's floor), not only the 18 policy floor.
-  if (isMinorAge(mi.m.age) || !(mi.m.age >= w.cfg.ageMin) || !(mi.m.age >= w.pack.eligibility.minMatchAge)) return "underage";
+  if (!(category !== undefined && teenCandidateIn(w, id, category)) && belowMatchAge(w, mi.m.age)) return "underage";
+  const roster = others.filter(o => o !== id);
+  if (roster.length > 0 && rosterAgeReason(w, [id, ...roster], category !== undefined && teenFriendCategory(w.pack.id, category))) return "underage";
   if (w.holds.has(id)) return "safety_hold";
   if (mi.m.state === "paused") return "state_paused";
   if (optedOut?.(id)) return "opted_out";
   // With the lane: a lane opt-in withdrawn after the proposal (engine-pipeline-10), romance included.
-  if (lane !== undefined) {
-    if (!mi.m.prefs.categoriesOptIn.includes(lane)) return "category_opt_out";
-    if (lane === "romance" && !mi.m.prefs.romanceOptIn) return "romance_opt_out";
+  if (category !== undefined) {
+    if (!mi.m.prefs.categoriesOptIn.includes(category)) return "category_opt_out";
+    if (category === "romance" && !mi.m.prefs.romanceOptIn) return "romance_opt_out";
   }
   for (const o of others) if (o !== id && w.blocked.has(pairKey(id, o))) return "blocked";
   return null;

@@ -9,7 +9,7 @@ test("Slop baselines block active relay holds and resume matching after review c
   const clearedProposals = { random: 0, greedy: 0, oracle: 0 };
   const boundaryProposals = { random: 0, greedy: 0, oracle: 0 };
   for (const arm of ["random", "greedy", "oracle"] as const) for (const review of [undefined, 10, 3, 7]) {
-    runSlopWorld({ seed: 16, perCity: 120, weeks: 8, ...worldOptions({ relay: true, ...(review === undefined ? {} : { review }) }), matcher(w) {
+    runSlopWorld({ seed: 16, perCity: 120, weeks: 8, ...worldOptions({ relay: { falsePositive: 0.05 }, ...(review === undefined ? {} : { review }) }), matcher(w) {
       const native = BASELINES[arm](w);
       return { ...native, propose(ctx: MatcherContext) {
         const { now, safetyHolds } = ctx.snapshot;

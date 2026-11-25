@@ -3,6 +3,7 @@ import { DAY } from "@thenetwork/core";
 import { copy } from "../src/copy.ts";
 import { nextAt } from "../src/outreach.ts";
 import { Mini } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 test.each(["expiry", "expiry followed by STOP", "quorum failure"] as const)("the Network releases only contacted acceptors on %s", async cause => {
   // spec/opportunityLifecycle.md, "Closing an underfilled proposal releases the members who accepted"
@@ -11,7 +12,7 @@ test.each(["expiry", "expiry followed by STOP", "quorum failure"] as const)("the
   const w = new Mini(ids.map(id => ({
     id, name: `${id.toUpperCase()}nton Q`, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"],
     skills: ["belaying"], quietHours: id === "c" ? [20, 19] : [21, 9],
-  })), { review: "human", plans: false, growth: false });
+  })), { inlineJudge: holdEveryItem.inline, plans: false, growth: false });
   await w.onboard(...ids);
   const id = w.propose(ids);
   const opportunity = () => w.net.exportState().opps.find(o => o.id === id);

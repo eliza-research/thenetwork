@@ -56,7 +56,7 @@ beforeAll(async () => {
   obs = await createServer({
     port: 0, development: false, token: TOK.legacy, tokens: `admin:${TOK.admin},reviewer:${TOK.reviewer},safety:${TOK.safety},analyst:${TOK.analyst}`,
     audit: { dir: join(dir, "audit") }, lab: { dir: join(dir, "lab") },
-    game: { seed: 1, review: "human", pushMs: 3_600_000, tickMs: 3_600_000 },
+    game: { seed: 1, judge: "hold-every-item", pushMs: 3_600_000, tickMs: 3_600_000 },
   });
   base = obs.url;
   expect((await control(TOK.admin, { type: "step", ms: DAY })).status).toBe(200);
@@ -97,7 +97,8 @@ describe("staff roles, audit and PII reveal", () => {
 
   test("per-command and per-route role checks on the server", async () => {
     const s = (await (await as(TOK.analyst, "/api/state")).json()) as ObsState;
-    const item = s.opportunities.find(o => o.state === "IN_REVIEW")!;
+    const item = s.opportunities.find(o => o.state === "IN_REVIEW" && o.review?.exceptionReason)!;
+    expect(item).toBeDefined();
     const inReview = item.participants[0]!;
     const busy = new Set(s.opportunities.filter(o => o.state === "IN_REVIEW").flatMap(o => o.participants));
     const other = s.members.find(m => m.joined && !busy.has(m.id))!.id;
@@ -114,7 +115,7 @@ describe("staff roles, audit and PII reveal", () => {
     expect(await code(TOK.reviewer, `/api/member/${inReview}`)).toBe(200);
     expect(await code(TOK.reviewer, `/api/member/${other}`)).toBe(403);
     expect(await code(TOK.reviewer, "/api/control", { type: "matching", on: false })).toBe(403);
-    expect(await code(TOK.reviewer, "/api/control", { type: "review_mode", mode: "auto" })).toBe(403);
+    expect(await code(TOK.reviewer, "/api/control", { type: "review_mode", mode: "auto" })).toBe(400);
     expect(await code(TOK.reviewer, "/api/control", { type: "reset" })).toBe(403);
     expect(await code(TOK.reviewer, "/api/config")).toBe(403);
     expect(await code(TOK.reviewer, "/api/reveal", { memberId: inReview, reason: "checking a report" })).toBe(403);
@@ -132,6 +133,28 @@ describe("staff roles, audit and PII reveal", () => {
     expect(after.review).toMatchObject({ decision: "approve", reviewer, secondsSpent: 30 });
   }, T);
 
+  test("an analyst's members carry no age band: no age, minor flag, under-13 decline, weekly or calendar opt-in or community", async () => {
+    const game = (await obs.source()) as GameSource;
+    const marked = [...game.store.members.values()].slice(0, 3);
+    expect(marked.length).toBe(3);
+    const flags = [["declined", marked[0]!], ["weekly", marked[1]!], ["calendar", marked[2]!]] as const;
+    const before = flags.map(([key, member]) => [key, member, Object.prototype.hasOwnProperty.call(member, key), member[key]] as const);
+    try {
+      for (const [key, member] of flags) member[key] = true;
+      const full = (await (await as(TOK.admin, "/api/state")).json()) as ObsState;
+      expect(full.members.filter(m => m.declined || m.weekly || m.calendar).length).toBeGreaterThanOrEqual(3);
+      const s = (await (await as(TOK.analyst, "/api/state")).json()) as ObsState;
+      expect(s.members.length).toBeGreaterThan(0);
+      const ageBand = ["age", "minor", "ageUnknown", "declined", "weekly", "calendar", "community"];
+      expect(s.members.flatMap(m => Object.keys(m).filter(k => ageBand.includes(k)))).toEqual([]);
+    } finally {
+      for (const [key, member, had, value] of before) {
+        if (had) member[key] = value as boolean;
+        else delete member[key];
+      }
+    }
+  }, T);
+
   test("matching switch and config history: admin only, with the staff id", async () => {
     const admin = ((await (await as(TOK.admin, "/api/me")).json()) as StaffUser).id;
     expect((await control(TOK.admin, { type: "matching", on: false })).status).toBe(200);
@@ -140,12 +163,17 @@ describe("staff roles, audit and PII reveal", () => {
     expect(cfg.history.map(h => [h.key, h.to, h.actor])).toEqual([["matching", false, admin], ["matching", true, admin]]);
   }, T);
 
-  test("PII reveal: safety or admin, with a reason, at most 15 minutes; audited before data; staff access shown on the member", async () => {
+  test("PII reveal: safety or admin, with a reason, for 5, 10 or 15 minutes only; audited before data; staff access shown on the member", async () => {
     const s = (await (await as(TOK.analyst, "/api/state")).json()) as ObsState;
     const m = s.members.find(x => x.joined)!;
     expect((await post(TOK.safety, "/api/reveal", { memberId: m.id, reason: "x" })).status).toBe(400);
     expect((await post(TOK.safety, "/api/reveal", { memberId: "nobody", reason: "checking a report" })).status).toBe(404);
-    const g = await (await post(TOK.safety, "/api/reveal", { memberId: m.id, reason: "checking a safety report", minutes: 90 })).json() as { ok: boolean; until: number; at: number };
+    for (const minutes of [90, 1, 7, 0, "15"]) {
+      const refused = await post(TOK.safety, "/api/reveal", { memberId: m.id, reason: "checking a safety report", minutes });
+      expect([minutes, refused.status, (await refused.json()).code]).toEqual([minutes, 400, "bad_minutes"]);
+    }
+    expect(((await (await as(TOK.safety, "/api/reveal")).json()) as unknown[])).toEqual([]);
+    const g = await (await post(TOK.safety, "/api/reveal", { memberId: m.id, reason: "checking a safety report" })).json() as { ok: boolean; until: number; at: number };
     expect(g.ok).toBe(true);
     expect(g.until - g.at).toBe(15 * 60_000);
     const d = (await (await as(TOK.safety, `/api/member/${m.id}`)).json()) as MemberDetail;
@@ -163,6 +191,7 @@ describe("staff roles, audit and PII reveal", () => {
     const mine = entries.filter(e => e.actor === safetyId && e.targetId === m.id);
     expect(mine.slice(0, 3).map(e => e.action)).toEqual(["read_timeline", "read_member", "reveal"]);
     expect(mine.find(e => e.action === "reveal")).toMatchObject({ reason: "checking a safety report", ok: true, detail: { minutes: 15 } });
+    expect(mine.filter(e => e.action === "reveal" && !e.ok).map(e => e.detail)).toEqual(Array(5).fill({ refused: "bad_minutes" }));
     expect(entries.some(e => e.action === "review" && e.ok && (e.detail as any)?.phase === "result")).toBe(true);
     expect(entries.some(e => e.action === "matching" && e.targetType === "config")).toBe(true);
     expect(entries.some(e => e.action === "review" && !e.ok && (e.detail as any)?.refused === "forbidden")).toBe(true);
@@ -221,7 +250,10 @@ describe("staff roles, audit and PII reveal", () => {
     expect((await control(TOK.safety, { type: "lens", on: false })).status).toBe(200);
     expect((await state(TOK.safety)).truth).toBeUndefined();
     // Opportunity detail: the analyst never gets a member's words; safety (who may open any member) does.
-    expect((await control(TOK.admin, { type: "review_mode", mode: "auto" })).status).toBe(200);
+    for (const o of (await state(TOK.analyst)).opportunities.filter(x => x.state === "IN_REVIEW" && x.review?.exceptionReason)) {
+      const decided = await control(TOK.reviewer, { type: "review", oppId: o.id, decision: "approve" });
+      expect([o.id, decided.status]).toEqual([o.id, 200]);
+    }
     expect((await control(TOK.admin, { type: "step", ms: 2 * DAY })).status).toBe(200);
     let checked = 0;
     for (const o of (await state(TOK.analyst)).opportunities) {
@@ -230,7 +262,7 @@ describe("staff roles, audit and PII reveal", () => {
       if (!saf.length) continue;
       // A reviewer may open only members in an open review item: past items show the length, not the words.
       const rev = await read(TOK.reviewer);
-      const open = new Set((await state(TOK.analyst)).opportunities.filter(x => x.state === "IN_REVIEW").flatMap(x => x.participants));
+      const open = new Set((await state(TOK.analyst)).opportunities.filter(x => x.state === "IN_REVIEW" && x.review?.exceptionReason).flatMap(x => x.participants));
       const hidden = rev.messages.filter(m => m.direction === "inbound" && !m.system && !open.has(m.memberId));
       expect(hidden.map(m => m.body)).toEqual(hidden.map(() => HIDDEN_MESSAGE));
       // The analyst gets the opportunity's shape only: no messages, no names (audit observatory-18).
@@ -253,11 +285,16 @@ describe("SSO and the production switch", () => {
   test("Cloudflare Access: the JWT is verified (signature, audience, issuer, expiry, issue time) before the email is trusted", async () => {
     const k = await accessKeys();
     const now = Math.floor(Date.now() / 1000);
-    const claims = (email: string, more: Record<string, unknown> = {}) => ({ aud: [AUD], iss: ISS, email, iat: now - 30, exp: now + 3600, type: "app", ...more });
+    const claims = (email: string, more: Record<string, unknown> = {}) => ({ aud: [AUD], iss: ISS, email, iat: now - 30, exp: now + 3600, type: "app", amr: ["pwd", "mfa"], ...more });
     // Unit: each check refuses on its own; the keys are fetched once and cached.
     const v = new AccessVerifier({ team: "ntwrk", aud: AUD, fetch: k.fetch });
     expect(v.certsUrl).toBe("https://ntwrk.cloudflareaccess.com/cdn-cgi/access/certs");
-    expect(await v.verify(await k.sign(claims("Rev@Example.org")))).toEqual({ email: "rev@example.org", exp: (now + 3600) * 1000 });
+    expect(await v.verify(await k.sign(claims("Rev@Example.org")))).toEqual({ email: "rev@example.org", exp: (now + 3600) * 1000, secondFactor: true });
+    expect(await v.verify(await k.sign(claims("rev@example.org", { amr: ["pwd"] })))).toEqual({ email: "rev@example.org", exp: (now + 3600) * 1000, secondFactor: false });
+    expect(await v.verify(await k.sign(claims("rev@example.org", { amr: undefined })))).toEqual({ email: "rev@example.org", exp: (now + 3600) * 1000, secondFactor: false });
+    for (const [amr, secondFactor] of [[["otp"], false], [["swk"], false], [["hwk"], false], [["sc"], false], [["OTP", "otp"], false], [["otp", ""], false], [["pwd", "otp"], true], [["MFA"], true]] as const) {
+      expect([amr, await v.verify(await k.sign(claims("rev@example.org", { amr: [...amr] })))]).toEqual([amr, { email: "rev@example.org", exp: (now + 3600) * 1000, secondFactor }]);
+    }
     expect(await v.verify(await k.sign(claims("rev@example.org", { aud: ["other-app"] })))).toEqual({ error: "wrong audience" });
     expect(await v.verify(await k.sign(claims("rev@example.org", { iss: "https://evil.cloudflareaccess.com" })))).toEqual({ error: "wrong issuer" });
     expect(await v.verify(await k.sign(claims("rev@example.org", { exp: now - 120 })))).toEqual({ error: "expired" });
@@ -295,6 +332,20 @@ describe("SSO and the production switch", () => {
       expect((await get("/api/me", { "cf-access-jwt-assertion": await jwt("stranger@example.org") })).status).toBe(403);
       expect((await get("/api/audit", { "cf-access-jwt-assertion": await jwt("rev@example.org") })).status).toBe(403);
       expect((await get("/api/audit", { "cf-access-jwt-assertion": await jwt("ana@example.org") })).status).toBe(200);
+      const oneFactor = await jwt("ana@example.org", { amr: ["pwd"] });
+      const identity = await get("/api/me", { "cf-access-jwt-assertion": oneFactor });
+      expect([identity.status, await identity.json()]).toEqual([200, expect.objectContaining({ id: "ana@example.org", roles: ["admin"], via: "sso", secondFactor: false })]);
+      expect(await (await get("/api/me", { "cf-access-jwt-assertion": await jwt("ana@example.org") })).json()).toMatchObject({ secondFactor: true });
+      for (const single of [oneFactor, await jwt("ana@example.org", { amr: ["otp"] }), await jwt("ana@example.org", { amr: ["swk"] })]) {
+        expect(await (await get("/api/me", { "cf-access-jwt-assertion": single })).json()).toMatchObject({ secondFactor: false });
+        for (const path of ["/api/audit", "/api/state", "/api/health", "/api/staff/home-help"]) {
+          const refused = await get(path, { "cf-access-jwt-assertion": single });
+          expect([path, refused.status, (await refused.json()).code]).toEqual([path, 403, "second_factor_required"]);
+        }
+      }
+      const ticket = await fetch(sso.url + "/api/ws-ticket", { method: "POST", headers: { "cf-access-jwt-assertion": oneFactor } });
+      expect([ticket.status, (await ticket.json()).code]).toEqual([403, "second_factor_required"]);
+      expect(await webSocketUpgradeStatus(`${sso.url}/ws`, { "cf-access-jwt-assertion": oneFactor })).toBe(403);
       expect(k.calls()).toBe(3); // one fetch per verifier: the two above, then the server's, once for all its requests
     } finally { await sso.stop(); }
     // Not enabled: the headers mean nothing.
@@ -305,7 +356,7 @@ describe("SSO and the production switch", () => {
     // spec/consoleMemberView.md, "Serving revealed details requires current staff authority"
     const url = await testDb();
     const sql = new SQL(url);
-    const game = new GameSource({ seed: 1, review: "human", tickMs: 3_600_000, pushMs: 3_600_000 });
+    const game = new GameSource({ seed: 1, judge: "hold-every-item", tickMs: 3_600_000, pushMs: 3_600_000 });
     let startAudit!: () => void, finishAudit!: () => void;
     const auditStarted = new Promise<void>(resolve => { startAudit = resolve; });
     const auditCanFinish = new Promise<void>(resolve => { finishAudit = resolve; });
@@ -319,7 +370,7 @@ describe("SSO and the production switch", () => {
       await sql`insert into platform.staff_roles (email, role, app_id, granted_by) values ('rev@example.org','safety','ntwrk','test')`;
       const keys = await accessKeys();
       const now = Math.floor(Date.now() / 1000);
-      const jwt = await keys.sign({ aud: [AUD], iss: ISS, email: "rev@example.org", iat: now - 30, exp: now + 3600 });
+      const jwt = await keys.sign({ aud: [AUD], iss: ISS, email: "rev@example.org", iat: now - 30, exp: now + 3600, amr: ["mfa"] });
       srv = await createServer({
         port: 0, development: false, trustCfAccess: true, roles: "rev@example.org:reviewer@ntwrk", mode: "real", platformEnv: "dev",
         real: { url, pollMs: 3_600_000, service: false }, staffRolesUrl: url, staffRolesEveryMs: 25,
@@ -374,7 +425,7 @@ describe("SSO and the production switch", () => {
       const st = (await (await fetch(prod.url + "/api/state", { headers: h })).json()) as ObsState;
       expect(st.env).toMatchObject({ mode: "real", realOnly: true });
       expect((await fetch(prod.url + "/api/mode", { method: "POST", headers: h, body: JSON.stringify({ mode: "game" }) })).status).toBe(403);
-      for (const type of ["play", "step", "propose", "reset", "review_mode", "god"]) {
+      for (const type of ["play", "step", "propose", "reset", "god"]) {
         const r = await fetch(prod.url + "/api/control", { method: "POST", headers: h, body: JSON.stringify({ type, ms: 1 }) });
         expect([type, r.status, (await r.json()).code]).toEqual([type, 403, "real_only"]);
       }
@@ -382,6 +433,25 @@ describe("SSO and the production switch", () => {
       expect((await fetch(prod.url + "/api/lab/run", { method: "POST", headers: h, body: JSON.stringify({ arms: ["consent"], seeds: [1], days: 1 }) })).status).toBe(403);
       await expect(prod.source("game")).rejects.toThrow("OBSERVATORY_REAL_ONLY");
     } finally { await prod.stop(); }
+  }, T);
+
+  test("real mode: the judged reviews and the stop of an approved review are open to reviewer, safety and admin only (D15 to D17)", async () => {
+    const real = await createServer({ port: 0, development: false, realOnly: true, platformEnv: "dev",
+      tokens: `admin:${TOK.admin},reviewer:${TOK.reviewer},safety:${TOK.safety},analyst:${TOK.analyst}`,
+      audit: { dir: join(dir, "audit-judged") }, lab: { dir: join(dir, "lab-judged") }, real: { url: undefined, pollMs: 3_600_000 } });
+    try {
+      const call = (tok: string, path: string, body?: unknown) => fetch(real.url + path, {
+        method: body ? "POST" : "GET", headers: { authorization: `Bearer ${tok}`, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
+      const steps: [string, unknown?][] = [["/api/staff/review/judged?app=ntwrk&since=0"], ["/api/staff/review/judged/opp-1/0?app=ntwrk"], ["/api/staff/review/opp-1/stop?app=ntwrk", { revision: 0 }]];
+      for (const [path, body] of steps) {
+        const refused = await call(TOK.analyst, path, body);
+        expect([path, refused.status, (await refused.json()).code]).toEqual([path, 403, "forbidden"]);
+        for (const tok of [TOK.reviewer, TOK.safety, TOK.admin]) {
+          const admitted = await call(tok, path, body);
+          expect([path, admitted.status, (await admitted.json()).code]).toEqual([path, 503, "read_only"]);
+        }
+      }
+    } finally { await real.stop(); }
   }, T);
 });
 
@@ -396,7 +466,8 @@ describe("the start guard fails closed (docs/deploy.md 2.6)", () => {
       const real = (url: string) => ({ url, pollMs: 3_600_000, service: false as const });
       // OBSERVATORY_REAL_ONLY=1 with no PLATFORM_ENV: refused (it used to start with a token).
       expect(await start({ realOnly: true, token: long("guard-admin"), real: real(LOCAL) })).toMatch(/refusing to start: real data .* needs PLATFORM_ENV/);
-      expect(await start({ realOnly: true, platformEnv: "prod", token: long("guard-admin"), real: real(LOCAL) })).toMatch(/unknown PLATFORM_ENV/);
+      expect(await start({ realOnly: true, platformEnv: "prod", token: long("guard-admin"), real: real(LOCAL) })).toMatch(/unknown PLATFORM_ENV "prod"/);
+      expect(await start({ realOnly: true, platformEnv: "prod", trustCfAccess: true, cfAccess: { team: "ntwrk", aud: AUD, fetch: async () => Response.json({ keys: [] }) }, real: real(LOCAL) })).toMatch(/unknown PLATFORM_ENV "prod"/);
       // A game server whose real-mode database is remote: PLATFORM_ENV is required too, and dev with a remote host needs Access.
       expect(await start({ mode: "game", token: long("guard-admin"), real: real(REMOTE), game: { seed: 1, pushMs: 3_600_000, tickMs: 3_600_000 } })).toMatch(/needs PLATFORM_ENV/);
       expect(await start({ mode: "game", platformEnv: "dev", token: long("guard-admin"), real: real(REMOTE), game: { seed: 1, pushMs: 3_600_000, tickMs: 3_600_000 } })).toMatch(/tokens are for local databases only/);
@@ -544,7 +615,7 @@ const within = <X>(p: Promise<X>, ms: number) => Promise.race([p, sleep(ms, unde
 describe("live sockets are authorized again (OBS-04, OBS-05)", () => {
   test("OBS-04: after a switch to real mode an engineer's socket is closed (4403) and gets no member; an admin's stays", async () => {
     const eng = long("eng-socket"), adm = long("adm-socket");
-    const srv = await createServer({ port: 0, development: false, tokens: `engineer:${eng},admin:${adm}`, audit: { dir: join(dir, "audit-ws") }, lab: { dir: join(dir, "lab-ws") }, game: { seed: 1, review: "auto", pushMs: 50, tickMs: 3_600_000 }, real: { url: undefined, pollMs: 3_600_000, pushMs: 50, service: false } });
+    const srv = await createServer({ port: 0, development: false, tokens: `engineer:${eng},admin:${adm}`, audit: { dir: join(dir, "audit-ws") }, lab: { dir: join(dir, "lab-ws") }, game: { seed: 1, pushMs: 50, tickMs: 3_600_000 }, real: { url: undefined, pollMs: 3_600_000, pushMs: 50, service: false } });
     try {
       const wsUrl = `${srv.url.replace("http", "ws")}/ws`;
       const e = openSocket(wsUrl, { authorization: `Bearer ${eng}` }), a = openSocket(wsUrl, { authorization: `Bearer ${adm}` });
@@ -566,7 +637,7 @@ describe("live sockets are authorized again (OBS-04, OBS-05)", () => {
   test("OBS-05: an SSO socket closes when the Access token expires (4401); tokens are refused when SSO is on", async () => {
     const k = await accessKeys();
     const now = Math.floor(Date.now() / 1000);
-    const jwt = (email: string, exp: number) => k.sign({ aud: [AUD], iss: ISS, email, iat: now - 30, exp, type: "app" });
+    const jwt = (email: string, exp: number) => k.sign({ aud: [AUD], iss: ISS, email, iat: now - 30, exp, type: "app", amr: ["mfa"] });
     const srv = await createServer({ port: 0, development: false, trustCfAccess: true, tokens: `admin:${long("static-admin")}`, roles: "ana@example.org:admin", cfAccess: { team: "ntwrk", aud: AUD, fetch: k.fetch }, audit: { dir: join(dir, "audit-ws2") }, lab: { dir: join(dir, "lab-ws2") }, game: { seed: 1, pushMs: 50, tickMs: 3_600_000 }, socketCheckMs: 100 });
     try {
       // A static token is refused while single sign-on is on (audit observatory-8).
@@ -585,7 +656,7 @@ describe("live sockets are authorized again (OBS-04, OBS-05)", () => {
     await sql`insert into platform.staff_roles (email, role, app_id, granted_by) values ('rev@example.org', 'reviewer', null, 'test')`;
     const srv = await createServer({ port: 0, development: false, trustCfAccess: true, roles: "", cfAccess: { team: "ntwrk", aud: AUD, fetch: k.fetch }, staffRolesUrl: url, staffRolesEveryMs: 100, socketCheckMs: 100, audit: { dir: join(dir, "audit-ws3") }, lab: { dir: join(dir, "lab-ws3") }, game: { seed: 1, pushMs: 50, tickMs: 3_600_000 } });
     try {
-      const s = openSocket(`${srv.url.replace("http", "ws")}/ws`, { "cf-access-jwt-assertion": await k.sign({ aud: [AUD], iss: ISS, email: "rev@example.org", iat: now - 30, exp: now + 3600 }) });
+      const s = openSocket(`${srv.url.replace("http", "ws")}/ws`, { "cf-access-jwt-assertion": await k.sign({ aud: [AUD], iss: ISS, email: "rev@example.org", iat: now - 30, exp: now + 3600, amr: ["mfa"] }) });
       await s.open;
       await sleep(300);
       expect(s.closed()).toBeUndefined();

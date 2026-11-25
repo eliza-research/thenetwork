@@ -32,7 +32,7 @@ pure def lawGatheringRsvpFencesInvitation(currentMember: bool, trustedActiveMemb
 
 ### One approved text goes through the usual outbound controls
 
-The exact event, revision and recipient determine one durable message key. The card contains the public time and place and an exact RSVP command. It contains no other attendee information, staff notes, private scored reasons or contact values. The proactive outreach controller applies its budget, timing and pause path. The persisted channel applies current live approval, shared caps, quiet hours, leak checks and delivery receipts. The final claim checks that the immutable text matches the approved card and that its matching Network message exists. Retries and restart use the original key.
+The exact event, revision and recipient determine one durable message key. The card contains the public time and place and an exact RSVP command. It contains no other attendee information, staff notes, private scored reasons or contact values. The proactive outreach controller applies its budget, timing and pause path. The persisted channel applies shared caps, quiet hours, leak checks and delivery receipts. Changed (owner decision 2026-11-22): the channel no longer applies a live approval, because the owner approved every app and the configured channel alone decides whether a send is real. The final claim checks that the immutable text matches the approved card and that its matching Network message exists. Retries and restart use the original key.
 
 ```quint
 pure def gatheringInvitationMayAdmit(currentReview: bool, eligibleRecipient: bool, exactPayload: bool, exactQueueKey: bool, storedMessage: bool): bool =

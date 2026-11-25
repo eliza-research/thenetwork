@@ -1,31 +1,22 @@
-// Ongoing bias monitor for appearance-aware matching (iteration 4). ADMIN ONLY, aggregates only.
-//
-// For each group, outcome rates per member-month (proposals, dates, second dates) and their ratio to
-// the overall rate; a ratio under `threshold` (default 0.8, the four-fifths rule) for a group with at
-// least `minN` members raises an alert. Groups come from consented, self-reported demographics or an
-// external audit sample, never inferred from photos or names; the monitor also accepts internal
-// groupings such as the rating quintile (to check that low-rated members are not starved of dates).
-// Iteration 3 showed a biased rater moves match QUALITY (second dates) before it moves volume
-// (dates), so the second-date ratio is the one to watch. Nothing here is member-facing.
 import {
   biasAnalysisGroupMinimum, biasGroupEligible, biasRateFor, biasRatingQuintile,
   biasRatioBelowThreshold, biasRatioFor, biasThresholdDenominator, biasThresholdNumerator,
 } from "../../../../core/src/generated/weeklyBias.ts";
+import type { DateStandingValidity } from "./standing.ts";
 
 export interface MemberOutcome {
   group: string;
-  /** Member-months observed (weeks / 4.345 for a full-window member). */
   memberMonths: number;
   proposals: number; dates: number; secondDates: number;
 }
 export type OutcomeMetric = "proposals" | "dates" | "secondDates";
-export interface GroupOutcome { n: number; memberMonths: number; rate: Record<OutcomeMetric, number>; ratio: Record<OutcomeMetric, number> }
+interface GroupOutcome { n: number; memberMonths: number; rate: Record<OutcomeMetric, number>; ratio: Record<OutcomeMetric, number> }
 export interface BiasReport {
   overall: Record<OutcomeMetric, number>;
   groups: Record<string, GroupOutcome>;
-  /** The lowest ratio per metric among groups with n >= minN. */
   min: Record<OutcomeMetric, { group: string; ratio: number }>;
   alerts: { group: string; metric: OutcomeMetric; ratio: number }[];
+  dateStanding?: DateStandingValidity;
 }
 export const OUTCOME_METRICS: readonly OutcomeMetric[] = ["proposals", "dates", "secondDates"];
 export const DEFAULT_BIAS_THRESHOLD = biasThresholdNumerator / biasThresholdDenominator;
@@ -56,7 +47,6 @@ export function biasMonitor(rows: Iterable<MemberOutcome>, o: { minN?: number; t
   return { overall, groups, min, alerts };
 }
 
-/** Quintile of the overall rating (1 = lowest), for the internal "are low-rated members starved?" check. */
 export function ratingQuintiles(overall: ReadonlyMap<string, number>): Map<string, string> {
   const xs = [...overall.entries()].sort((a, b) => a[1] - b[1] || (a[0] < b[0] ? -1 : 1));
   return new Map(xs.map(([id], i) => [id, `q${biasRatingQuintile(i, xs.length)}`]));

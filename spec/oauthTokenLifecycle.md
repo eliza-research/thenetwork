@@ -41,7 +41,7 @@ pure def readRefresh(flow: TokenFlow, refreshMatches: bool): TokenFlow =
 
 ### The request needs current grant authority and must stay within its consent
 
-Use a live grant for an eligible member. Check the current authority. A current ban of the grant's phone or person makes the authority invalid, also for a grant issued before the ban. An expired credential is refused before an unavailable authority is reported as temporary. Only a current authority advances the request. Refresh allows the same or a narrower set of scopes and keeps the original resource. Check both deadlines again before using the credential in the store. Each use of an access token makes the same check: an expired token or grant is invalid, and otherwise the current authority decides.
+Use a live grant. Check the current authority. A current ban of the grant's phone or person makes the authority invalid, also for a grant issued before the ban. An expired credential is refused before an unavailable authority is reported as temporary. Only a current authority advances the request. Refresh allows the same or a narrower set of scopes and keeps the original resource. Check both deadlines again before using the credential in the store. Each use of an access token makes the same check: an expired token or grant is invalid, and otherwise the current authority decides. The owner decision of 2026-11-22 (D19) removed the slop.date ChatGPT allowlist, so the separate eligibility input of this check is gone and every connector uses the same live grant and current authority.
 
 ```quint
 type TokenAuthority = Current | Invalid | Unavailable
@@ -56,8 +56,8 @@ pure def lawBannedAccessTokenIsInvalid(credentialLive: bool): bool =
   accessTokenAuthority(credentialLive, Invalid) == Invalid
 
 pure def canReadGrant(flow: TokenFlow): bool = flow.phase == CheckingGrant
-pure def readGrant(flow: TokenFlow, grantLive: bool, eligible: bool): TokenFlow =
-  if (grantLive and eligible) { ...flow, phase: CheckingAuthority } else refuse(InvalidGrant, flow)
+pure def readGrant(flow: TokenFlow, grantLive: bool): TokenFlow =
+  if (grantLive) { ...flow, phase: CheckingAuthority } else refuse(InvalidGrant, flow)
 
 pure def canReadAuthority(flow: TokenFlow): bool = flow.phase == CheckingAuthority
 pure def readAuthority(flow: TokenFlow, credentialLive: bool, authority: TokenAuthority): TokenFlow =

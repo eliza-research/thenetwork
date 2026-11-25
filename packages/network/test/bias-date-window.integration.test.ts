@@ -11,6 +11,7 @@ import { existsSync } from "node:fs";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../db/dev-pg.ts";
 import { BIAS_WINDOW_MS } from "../service/bias.ts";
 import { DryRunAdapter } from "../service/channel.ts";
@@ -52,7 +53,7 @@ describe.skipIf(!pgAvailable)("weekly bias monitor: dates by meeting time (Netwo
     const make = () => new NetworkService({
       url: URL_, clock, instance: "bias-window", log: () => {}, env: { PLATFORM_ENV: "dev" }, networks: [{ id: "slop:nyc" }],
       tokens: `admin:${ADMIN},reviewer:${REVIEWER}`, webhookSecret: SECRET, network: { seed: 1 }, photoStorage: null, notify: false,
-      adapter: () => new DryRunAdapter(() => {}),
+      adapter: () => new DryRunAdapter(() => {}), reviewJudge: holdEveryItem.judge,
     });
     let s = svc = make();
     await s.start();
@@ -120,6 +121,10 @@ describe.skipIf(!pgAvailable)("weekly bias monitor: dates by meeting time (Netwo
       const overall = report!.report.overall, months = BIAS_WINDOW_MS / (30.44 * DAY);
       frames.push({ proposals: Math.round(overall.proposals * months), dates: Math.round(overall.dates * months), secondDates: overall.secondDates });
     }
+    const reports = (await staff(ADMIN, "GET", "/bias")).reports;
+    expect(reports[0].report.dateStanding).toEqual({ positives: 0, negatives: 0, concordantTwice: 0, predicts: true });
+    const shown = JSON.stringify(reports);
+    for (const secret of [...opp.participants, "appearance"]) expect(shown).not.toContain(secret);
     expect((await sql`select distinct status from network.messages where direction = 'outbound'`).map((r: any) => r.status)).toEqual(["dry_run"]);
     // The proposal leaves the window one millisecond after its creation time does; the date stays until its meeting does.
     expect(frames).toEqual([

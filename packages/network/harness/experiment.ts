@@ -6,8 +6,6 @@
 //   node --import tsx --env-file-if-exists=.env --conditions=eliza-source packages/network/harness/experiment.ts --days 21 --seed 1 [--only consent] [--live-asks] [--time-aware] [--paraphrase] [--primed-met 0.96 --primed-partial 0.82]
 // --paraphrase: personas say the same things in other words (harness/paraphrase.ts), so the Network's
 // text understanding is not graded on the simulator's own sentences (audit matching-e2e-1).
-// Consent arms use the simulated reviewer (review "auto"): every opportunity is still queued and
-// approved before any member is contacted, so the run log shows the review step.
 // --live-asks: personas ask only for wants that are still live in hidden truth (sim PolicyOptions).
 // --time-aware: personas answer offered times and booked plans from a hidden week, and attendance
 // depends on the meeting time (sim PolicyOptions.timeAware and WorldOptions.timeAware).
@@ -33,6 +31,7 @@ import { createEngine } from "../../sim/src/engineAdapter.ts";
 import { simulationSeed } from "../../sim/src/input.ts";
 import { friendFactory } from "./growth.ts";
 import { ConsentNetwork, type NetworkOptions } from "../src/network.ts";
+import { simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";
 import { capitalWiring } from "../src/capital.ts";
 import { ParaphraseAgent } from "./paraphrase.ts";
 
@@ -74,6 +73,7 @@ export interface ArmResult {
   fairness?: { population: number; zeroProposalShare: number; zeroMeetingShare: number; meetingGini: number; top10Share: number };
   /** Personas spoke in paraphrases (ParaphraseAgent), not the taxonomy's own sentences. */
   paraphrase?: boolean;
+  expected: { perProposal: number; perMember: number };
 }
 
 
@@ -105,7 +105,7 @@ export async function runArm(arm: ExperimentArm, o: { days: number; seed: number
   const start = manifest.snapshotNow as number;
   const cap = arm === "consent" && o.capital ? capitalWiring() : undefined;
   const consent = arm === "push_baseline" ? undefined : new ConsentNetwork({
-    seed: o.seed, review: "auto", ...(arm === "push_v2" ? { probes: false, selective: false, growth: false, plans: false } : {}), ...o.network,
+    seed: o.seed, inlineJudge: simulatedReviewJudge({ exceptions: false }), ...(arm === "push_v2" ? { probes: false, selective: false, growth: false, plans: false } : {}), ...o.network,
     ...(cap ? { onLedger: cap.onLedger, capital: cap.capital } : {}),
     // The NYC world is one market.
     engine: { cities: ["nyc"], ...o.network?.engine },
@@ -115,7 +115,7 @@ export async function runArm(arm: ExperimentArm, o: { days: number; seed: number
   const network: NetworkUnderTest = consent ?? new StubNetwork({ seed: o.seed, randomIntros: false, matchingEnabled });
   const records: RunRecord[] = [];
   const w = new World({
-    seed: o.seed, personas, days: o.days, start, writeLog: false, network, agent: (a => (o.paraphrase ? new ParaphraseAgent(a) : a))(new PolicyPersonaAgent(start, { liveAsksOnly: o.liveAsks ?? false, ...(o.timeAware ? { timeAware: true } : {}), ...(simPlans ? { plans: true } : {}) })),
+    seed: o.seed, personas, days: o.days, start, app: consent?.app.id ?? "ntwrk", writeLog: false, network, agent: (a => (o.paraphrase ? new ParaphraseAgent(a) : a))(new PolicyPersonaAgent(start, { liveAsksOnly: o.liveAsks ?? false, ...(o.timeAware ? { timeAware: true } : {}), ...(simPlans ? { plans: true } : {}) })),
     ...(o.timeAware ? { timeAware: true } : {}), ...(simPlans ? { plans: true } : {}),
     engine: consent || !matchingEnabled ? undefined : wrapNycOnly(createEngine()), spawnFriend: friendFactory({ seed: o.seed }), onRecord: r => records.push(r),
   });
@@ -188,6 +188,7 @@ export function summarize(arm: string, days: number, records: RunRecord[], w: Wo
     precision: r3(compatible / Math.max(1, props.length)), unsafe, adversarialInProposals: adversarialIn,
     proactivePerMemberWeek: memberWeeks > 0 ? r3(proactive / memberWeeks) : 0, optOuts, newMembersJoined: newJoined,
     judge: { invariants: 0, byRule: {}, canaryLeaks: 0, minorContacts: 0 }, scorecard: { worthwhile: 0, optIn: null, completion: 0, firstOutcome14d: 0 },
+    expected: { perProposal: 0, perMember: 0 },
   };
   const jm = computeMetrics(records, consent ? { requireReview: true } : {});
   res.judge = { invariants: jm.invariants.total, byRule: jm.invariants.byRule, canaryLeaks: jm.privacy.canaryLeaks, minorContacts: jm.safety.minorContacts, examples: jm.invariants.examples };
@@ -204,6 +205,10 @@ export function summarize(arm: string, days: number, records: RunRecord[], w: Wo
   for (const p of props) for (const id of p.proposal.participants) propCount.set(id, (propCount.get(id) ?? 0) + 1);
   for (const o of outcomes) { const showed = Object.entries(o.attendance).filter(([, a]) => a.showed); if (showed.length >= 2) for (const [id] of showed) meetCount.set(id, (meetCount.get(id) ?? 0) + 1); }
   res.fairness = fairnessOf(honest, propCount, meetCount);
+  const ev = props.map(p => ({ n: p.proposal.participants.length, v: p.oracle.compatible ? Object.values(p.oracle.participants).reduce((x, o) => x * o.acceptProb * o.showProb, 1) : 0 }));
+  const evSum = ev.reduce((s, x) => s + x.v, 0);
+  const r4 = (x: number) => Math.round(x * 10_000) / 10_000;
+  res.expected = { perProposal: r4(evSum / Math.max(1, ev.length)), perMember: r4(ev.reduce((s, x) => s + x.v * x.n, 0) / Math.max(1, honest.length)) };
   if (consent) {
     // Precision over every probed opportunity (matching-e2e-7), judged by the same oracle.
     const probed = [...consent.opps.values()].filter(o => o.contacted.size > 0 && !o.plan);

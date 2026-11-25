@@ -1,14 +1,6 @@
-// The four apps on one backend (PRD 40; docs/research/2026-10-08-platform-architecture.md). Policy
-// values here are the founder decisions of 2026-10-08 (AGENTS.md "Platform decisions") and match the
-// platform.apps rows (migrations 0003 and 0007). Change them in one place: the database rows for a
-// running server, this file for code that has no database (tests, the simulator).
-//  - Join age 13 on every app; matching 18+ everywhere (minors are single-player).
-//  - One line for every app: the first message routes by keyword (APP_KEYWORDS). With no keyword the
-//    person joins The Network, which asks what they are looking for (LOOKING_FOR).
-//  - STOP on the shared line stops every app; "leave <app>" leaves one.
-
 import { ADULT_AGE, MIN_MEMBER_AGE } from "../../core/src/policy.ts";
 import { APP_IDS, isAppId, type AppId } from "../../core/src/types.ts";
+import { lookingForApps, type LookingForMention, type LookingForReading } from "../../core/src/generated/lineRouting.ts";
 export { APP_IDS, isAppId, type AppId };
 
 export type JoinMode = "invite" | "open" | "waitlist";
@@ -17,10 +9,7 @@ export type JoinMode = "invite" | "open" | "waitlist";
 export interface AppBrand {
   /** How the agent names itself. */
   agentName: string;
-  /** Reply to STOP (the shared line, STOP ALL, the site's stop button): every app on this number stops. */
   stop: string;
-  /** Reply to STOP on this app's own line when PLATFORM_STOP_SCOPE=app: this app only. */
-  stopApp: string;
   start: string;
   help: string;
   /** The polite answer when a person tries to join an invite-only app on its site. */
@@ -57,7 +46,6 @@ function brand(name: string, domain: string, agentName: string, what: string, mi
   return {
     agentName,
     stop: `You're unsubscribed and won't get more messages from any app on this number. Reply START to resume ${name}.`,
-    stopApp: `You're unsubscribed from ${name} and won't get more messages from it. Reply START to resume.`,
     start: `You're back on ${name}. Reply STOP anytime to stop all messages, HELP for help.`,
     help: `${name}: ${what} Message frequency varies. Reply STOP to stop all messages on this number, or "leave ${domain}" to leave ${name} only. Help: ${SUPPORT_EMAIL}`,
     inviteOnly: `${name} is invite-only right now. If a member invites you, you can join then.`,
@@ -104,28 +92,35 @@ export function keywordApp(text: string, apps: Record<AppId, Pick<AppInfo, "id" 
   return undefined;
 }
 
-/**
- * What a person who joined The Network with no keyword says they are looking for, as app ids
- * (founder decision 2: friends, dating, work). A negated word ("not dating") does not count.
- */
-export function lookingFor(text: string): AppId[] {
+export function lookingForReading(text: string): LookingForReading {
   // "I work at a bank" describes the person, not what they want.
-  const t = ` ${text.normalize("NFKC").toLowerCase().replace(/[‘’]/g, "'").replace(/[^\p{L}' ]+/gu, " ").replace(/\s+/g, " ")} `
+  const t = ` ${text.normalize("NFKC").toLowerCase().replace(/[‘’]/g, "'").replace(/[,;.!?]+/g, " , ").replace(/[^\p{L}', ]+/gu, " ").replace(/\s+/g, " ")} `
     .replace(/ (i|i'm|im|i am) (work|working|worked|date|dating|dated) /g, " ");
-  const apps = [
-    ["friends", "friends?|friendship|friendships|new people|people to hang out with|hanging out|hang out|social life|crew"],
-    ["slop", "dating|date|dates|love|romance|romantic|relationship|a relationship|partner|boyfriend|girlfriend|someone to date"],
-    ["peon", "work|job|jobs|hiring|hire|career|employment|recruiting|a job|clients|gigs?"],
-  ] as const;
-  const all = "all apps|all of (?:them|it|these|the apps)|everything|all three";
-  const names = (words: string) => new RegExp(` (${words}) `).test(t);
-  const namesAll = names(all);
-  const neg = `(?:not|no|never|don't want|dont want|without|except|excluding|other than|minus${namesAll ? "|but" : ""})(?: \\S+){0,2} `;
-  const refuses = (words: string) => new RegExp(` ${neg}(${words}) `).test(t);
-  // Broad enrollment needs an explicit all-app choice without a conflicting exclusion.
-  if (namesAll && !refuses(all) && !apps.some(([, words]) => refuses(words))) return apps.map(([app]) => app);
-  return apps.filter(([, words]) => names(words) && !refuses(words)).map(([app]) => app);
+  const friends = "friends?|friendship|friendships|new people|people to hang out with|hanging out|hang out|social life|crew";
+  const dating = "dating|date|dates|for love|find love|in love|romance|romantic|relationship|partner|boyfriend|girlfriend";
+  const work = "work|job|jobs|hiring|hire|career|employment|recruiting|clients|gigs?";
+  const all = "all apps|all of (?:them|it|these|the apps)|everything|all three|anything (?:but|except)";
+  const namesAll = new RegExp(` (?:${all}) `).test(t);
+  const neg = "not|no|never|nothing|none|neither|nor|without|except|excluding|other than|minus|don't want|dont want|do not want|don't need|dont need";
+  const negBut = `anything but|everything but|all but${namesAll ? "|but" : ""}`;
+  const stops = "but|just|only|though|however|instead|rather|yes|yeah|yep|maybe|so|also";
+  const clause = `(?: (?!(?:,|${stops}) )\\S+)*`;
+  const butClause = `(?: (?!(?:,|${stops}|mostly|mainly|especially|particularly|primarily|ideally|preferably) )\\S+)*`;
+  const list = `(?: , (?:or|nor)${clause})*`;
+  const after = "no|nope|nah|never|not really|no thanks|not for me";
+  const refused = (words: string) => new RegExp(` (?:(?:${neg})${clause}|(?:${negBut})${butClause})${list} (?:${words}) `).test(t);
+  const mention = (words: string): LookingForMention =>
+    refused(words) || new RegExp(` (?:${words}) (?:, )?(?:${after}) (?:,|$)`).test(t)
+      ? "MentionRefused" : new RegExp(` (?:${words}) `).test(t) ? "MentionWanted" : "MentionAbsent";
+  return {
+    friends: mention(friends),
+    dating: mention(dating),
+    work: mention(work),
+    everything: namesAll && !refused(all),
+  };
 }
+
+export const lookingFor = (text: string): AppId[] => lookingForApps(lookingForReading(text)).filter(isAppId);
 
 /** The network id for an app and a city: network.network_state.id and platform.networks.id. */
 export const networkId = (app: AppId, city: string) => `${app}:${city}`;

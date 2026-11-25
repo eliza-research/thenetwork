@@ -82,9 +82,10 @@ test.each([
 ] as const)("keeps the private swap and booking consents separate (%s)", async (body, cancelled, awaiting) => {
   const { w, booked } = await bookedPair();
   const request = await w.net.relayRequest({ itemId: "my-number-swap", from: "a", kind: "contact_share", matchId: booked.id }, {
+    hook: async () => ({ flags: [], block: [] }),
     contactOf: id => id === "a" ? "+12125550147" : "+12125550148",
   });
-  expect(request.decision).toBe("held");
+  expect(request.decision).toBe("waiting");
   expect(w.net.exportState().relay?.swaps.map(swap => swap.from)).toEqual(["a"]);
   const marker = w.mark();
   await w.say("a", body);

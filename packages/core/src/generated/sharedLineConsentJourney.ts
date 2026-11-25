@@ -32,20 +32,14 @@ export function inv(current: LineConsent): boolean {
 
 /** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
 //@ pure
-export function canTextStop(s: LineConsent, wording: StopWording): boolean {
-  return true;
-}
-
-/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
-//@ pure
 export function sometimesBothAppsStop(s: LineConsent): boolean {
   return !s.slopMayText && !s.friendsMayText;
 }
 
 /** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
 //@ pure
-export function stopCoversEveryApp(explicitAll: boolean, sharedLine: boolean, dedicatedLineGlobal: boolean): boolean {
-  return explicitAll || sharedLine || dedicatedLineGlobal;
+export function canTextStop(s: LineConsent, wording: StopWording): boolean {
+  return true;
 }
 
 /** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */

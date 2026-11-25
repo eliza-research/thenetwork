@@ -13,6 +13,7 @@ import {
 } from "../../core/src/generated/weeklyBias.ts";
 import { biasMonitor, DEFAULT_BIAS_THRESHOLD, ratingQuintiles, type BiasReport, type MemberOutcome } from "../../engine/src/packs/slop/biasMonitor.ts";
 import { parseAppearance } from "../../engine/src/packs/slop/appearance.ts";
+import type { DateStandingValidity } from "../../engine/src/packs/slop/standing.ts";
 
 export const BIAS_WINDOW_MS = biasWindowMs;
 export const BIAS_EVERY_MS = biasEveryMs;
@@ -50,12 +51,16 @@ export function biasRows(members: readonly BiasMember[], opps: readonly BiasOpp[
 
 export interface StoredBiasReport { network: string; app: string; at: number; members: number; report: BiasReport }
 
-/** The report for one network now. */
-export function biasReport(network: string, app: string, members: readonly BiasMember[], opps: readonly BiasOpp[], now: number, o: { minN?: number; threshold?: number } = {}): StoredBiasReport {
+export function biasReport(network: string, app: string, members: readonly BiasMember[], opps: readonly BiasOpp[], now: number,
+  o: { minN?: number; threshold?: number; dateStanding?: DateStandingValidity } = {}): StoredBiasReport {
   const rows = biasRows(members, opps, now);
-  return { network, app, at: now, members: rows.length, report: biasMonitor(rows, { minN: o.minN ?? BIAS_MIN_N, threshold: o.threshold ?? BIAS_THRESHOLD }) };
+  const report = biasMonitor(rows, { minN: o.minN ?? BIAS_MIN_N, threshold: o.threshold ?? BIAS_THRESHOLD });
+  return { network, app, at: now, members: rows.length, report: o.dateStanding ? { ...report, dateStanding: o.dateStanding } : report };
 }
 
-/** The alert lines for a report (empty when every group is at 0.8x or more). */
-export const biasAlerts = (r: StoredBiasReport) =>
-  r.report.alerts.map(a => `[alert] bias ${r.network}: group ${a.group} ${a.metric} at ${a.ratio.toFixed(2)}x the overall rate (under ${BIAS_THRESHOLD}x)`);
+export function biasAlerts(r: StoredBiasReport): string[] {
+  const lines = r.report.alerts.map(a => `[alert] bias ${r.network}: group ${a.group} ${a.metric} at ${a.ratio.toFixed(2)}x the overall rate (under ${BIAS_THRESHOLD}x)`);
+  const d = r.report.dateStanding;
+  if (d && !d.predicts) lines.push(`[alert] bias ${r.network}: the Date lane does not use photo standing (the standing gap does not predict mutual yes; ${d.positives} positive, ${d.negatives} negative outcomes)`);
+  return lines;
+}

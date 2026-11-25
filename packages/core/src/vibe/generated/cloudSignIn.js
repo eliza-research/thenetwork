@@ -4,6 +4,8 @@
 import { sessionDeadline as webSession_sessionDeadline } from "./webSession.js";
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 export const cloudClockSkewMs = exact_cloudSignIn(30 * 1000);
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
+export const cloudProofLifeMs = exact_cloudSignIn(exact_cloudSignIn(60 * 60) * 1000);
 /** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
 export const validHandoff = { bindingValid: true, pendingLive: true, codeWellFormed: true };
 /** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
@@ -43,13 +45,18 @@ export function cloudIssuedAtWithinSkew(issuedAtMs, asOf) {
 }
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 //@ pure
+export function cloudProofLifeValid(issuedAtMs, expiresAtMs) {
+    return expiresAtMs <= exact_cloudSignIn(issuedAtMs + cloudProofLifeMs);
+}
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
+//@ pure
 export function cloudSessionStartedAt(issuedAtMs, asOf) {
     return issuedAtMs <= asOf ? issuedAtMs : asOf;
 }
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 //@ pure
 export function cloudIdentityTimesValid(issuedAtMs, expiresAtMs, asOf) {
-    return cloudIssuedAtWithinSkew(issuedAtMs, asOf) && liveBeforeDeadline(asOf, expiresAtMs);
+    return cloudIssuedAtWithinSkew(issuedAtMs, asOf) && liveBeforeDeadline(asOf, expiresAtMs) && cloudProofLifeValid(issuedAtMs, expiresAtMs);
 }
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 //@ pure
@@ -79,6 +86,18 @@ export function checkIdentity(signIn, identityAvailable, identityValid) {
     //@ ensures (inv(signIn) && canCheckIdentity(signIn)) ==> alwaysSessionRequiresAcceptedHandoff(\result)
     const local_1 = identityAvailable && identityValid;
     return { ...signIn, identityAccepted: local_1, phase: !identityAvailable ? "CloudUnavailable" : (local_1 ? "AwaitingPhone" : "DenySignIn") };
+}
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
+//@ pure
+export function lawCloudProofLivesAtMostOneHour(issuedAtMs, asOf) {
+    //@ ensures \result === true
+    return !cloudIdentityTimesValid(issuedAtMs, exact_cloudSignIn(exact_cloudSignIn(issuedAtMs + cloudProofLifeMs) + 1), asOf);
+}
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
+//@ pure
+export function lawOneHourProofIsAcceptedWhenIssued(issuedAtMs) {
+    //@ ensures \result === true
+    return !(issuedAtMs > 0) || cloudIdentityTimesValid(issuedAtMs, exact_cloudSignIn(issuedAtMs + cloudProofLifeMs), issuedAtMs);
 }
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 //@ pure
@@ -144,6 +163,28 @@ export function sometimesDeniesSignIn(signIn) {
 //@ pure
 export function sometimesCloudUnavailable(signIn) {
     return signIn.phase === "CloudUnavailable";
+}
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) */
+//@ pure
+export function callbackFailureCode(failureStatus) {
+    return failureStatus === 400 ? "sign_in_expired" : (failureStatus === 403 ? "sign_in_refused" : "sign_in_unavailable");
+}
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) */
+//@ pure
+export function failedCallbackReturnsToPage(page) {
+    return page === "PhoneReturn" || page === "HomeHelpReturn";
+}
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) */
+//@ pure
+export function lawFailureCodeIsOneOfThree(failureStatus) {
+    //@ ensures \result === true
+    return ["sign_in_expired", "sign_in_refused", "sign_in_unavailable"].includes(callbackFailureCode(failureStatus));
+}
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) */
+//@ pure
+export function lawJoinAndConnectorFailuresStayJson(page) {
+    //@ ensures \result === true
+    return !(page === "JoinReturn" || page === "ConnectorReturn" || page === "NoReturn") || !failedCallbackReturnsToPage(page);
 }
 /** Do the rules allow this event in this state? */
 //@ pure

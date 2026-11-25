@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import { DAY, HOUR, MINUTE } from "@thenetwork/core";
 import { Mini } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 test("feedback: resumed ticks keep check-in reply state after a booking expires", async () => {
     const outcomes: { seed: number; kind: string; prompts: number; awaiting: string; recorded: string; stage: string }[] = [];
@@ -8,7 +9,7 @@ test("feedback: resumed ticks keep check-in reply state after a booking expires"
       const w = new Mini([
         { id: "a", name: "Ana Diaz", age: 30, area: "Greenpoint", interests: ["climbing", "hiking"], quietHours: kind === "quiet_gap" ? [16, 9] : [23, 8] },
         { id: "b", name: "Ben Ito", age: 30, area: "Greenpoint", interests: ["climbing", "hiking"], quietHours: kind === "quiet_gap" ? [16, 9] : [23, 8] },
-      ], { seed, review: "human", growth: false });
+      ], { seed, inlineJudge: holdEveryItem.inline, growth: false });
       // Friday: book Saturday, so the booking reply state is still live an hour before the meeting.
       w.clock.advance(4 * DAY);
       await w.onboard("a", "b");

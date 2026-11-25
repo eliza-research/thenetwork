@@ -3,14 +3,13 @@
 // minor contacts). Each seed is one child process of packages/network/harness/experiment.ts (the
 // same arms and the same judge numbers as the results docs), at most 2 at a time; the rest wait in a
 // queue. Each run is saved to runs/lab/<id>.json and loaded again when the server starts.
-import { simulatedMatchingMode } from "../../../packages/core/src/generated/simulationMatching.ts";
 import { labHasQueueCapacity } from "../../../packages/core/src/generated/labQueue.ts";
 import { spawnProcess } from "../../../packages/core/src/runtime/process.ts";
 import { labAcceptsWork, labRunInterrupted } from "../../../packages/core/src/generated/consolePanels.ts";
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { APP_IDS, DEFAULT_APP, isAppId, matchingAllowed, type AppId } from "./apps.ts";
+import { APP_IDS, DEFAULT_APP, isAppId, type AppId } from "./apps.ts";
 import { REPO } from "./staff.ts";
 import type { LabArm, LabArmResult, LabRequest, LabRun } from "./types.ts";
 
@@ -41,7 +40,6 @@ export interface LabOptions {
   /** The child script (default packages/network/harness/experiment.ts). It gets --only, --days and --seed and prints { results: [...] } JSON. */
   script?: string;
   concurrency?: number;
-  /** A real-only console has no lab: nothing is read from or written to disk (the image has no writable directory). */
   disabled?: boolean;
 }
 
@@ -82,14 +80,8 @@ export function resultsOf(out: string): { results?: Record<string, any>[] } | un
   return undefined;
 }
 
-/**
- * The child's arguments. A locked app runs with matching off across every experiment arm.
- * Joins, onboarding and safety still run. The experiment world is The
- * Network's NYC world for every app; it has no per-app join age yet.
- */
 export function labArgs(r: LabRequest, seed: number): string[] {
-  const app = isAppId(r.app) ? r.app : DEFAULT_APP;
-  return ["--only", r.arms.join(","), "--days", String(r.days), "--seed", String(seed), ...(simulatedMatchingMode(matchingAllowed(app), false) === "SimulationMatchingOpen" ? [] : ["--matching-off"])];
+  return ["--only", r.arms.join(","), "--days", String(r.days), "--seed", String(seed)];
 }
 
 export class Lab {
@@ -186,9 +178,7 @@ export class Lab {
   private async exec(run: LabRun, seed: number) {
     const r = run.request;
     try {
-      // Inside the try: a failed save fails this seed, and the run still ends (it does not stay running).
       if (run.status === "queued") { run.status = "running"; run.startedAt = Date.now(); await this.save(run); }
-      // The first status write can finish after the lab closes admission.
       if (!labAcceptsWork(this.stopping)) return;
       const child = spawnProcess([process.execPath, "--import", "tsx", this.script, ...labArgs(r, seed)], {
         cwd: REPO, stdout: "pipe", stderr: "pipe", env: labEnv(),
@@ -209,7 +199,6 @@ export class Lab {
       run.finishedAt = Date.now();
       run.results.sort((a, b) => a.arm.localeCompare(b.arm) || a.seed - b.seed);
     }
-    // A failed last save fails the run in memory; the file keeps an earlier status, and load() marks it failed.
     await this.save(run).catch(e => {
       run.error = [run.error, String((e as Error).message ?? e)].filter(Boolean).join("; ");
       if (run.progress.done === run.progress.total) run.status = "failed";

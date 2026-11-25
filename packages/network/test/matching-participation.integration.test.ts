@@ -4,12 +4,13 @@ import { resolveConfig } from "@thenetwork/engine/src/config.ts";
 import { localEmbed } from "@thenetwork/engine/src/embed.ts";
 import { World } from "@thenetwork/engine/src/world.ts";
 import { Mini } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 async function setup() {
   const w = new Mini([
     { id: "a", name: "Alice Able", age: 30, interests: ["climbing"] },
     { id: "b", name: "Boris Bell", age: 32, interests: ["climbing"], skills: ["climbing_belay"], shareable: true },
-  ], { review: "human", onboardingRequests: false });
+  ], { inlineJudge: holdEveryItem.inline, onboardingRequests: false });
   await w.onboard("a", "b");
   return w;
 }
@@ -20,6 +21,7 @@ test.each(["a", "b"])("a request cannot select a member who opted out of its cat
   record.prefs.categoriesOptIn = record.prefs.categoriesOptIn.filter(category => category !== "hobby");
   w.restart();
   await w.say("a", "Find me a climbing partner.");
+  expect(await w.runUntil(() => w.net.reviewQueue().length > 0, 60 * 60 * 1000)).toBe(false);
   expect(w.net.reviewQueue()).toHaveLength(0);
   expect(w.sent.some(message => message.meta.type === "probe")).toBe(false);
 });
@@ -27,6 +29,7 @@ test.each(["a", "b"])("a request cannot select a member who opted out of its cat
 test.each(["paused", "category"] as const)("staff approval rechecks participation after intake (%s)", async change => {
   const w = await setup();
   await w.say("a", "Find me a climbing partner.");
+  expect(await w.runUntil(() => w.net.reviewQueue().length > 0)).toBe(true);
   const [queued] = w.net.reviewQueue();
   expect(queued?.proposal.participants).toEqual(["a", "b"]);
   const record = w.members.find(member => member.id === "b")!;
@@ -53,7 +56,7 @@ test("a public venue request skips earlier members who opted out of event matche
     { id: "a", name: "Alice Able", age: 30, area: "Williamsburg" },
     { id: "b", name: "Boris Bell", age: 32, area: "Williamsburg" },
     { id: "c", name: "Casey Cole", age: 31, area: "Williamsburg" },
-  ], { review: "human", onboardingRequests: false, plans: false });
+  ], { inlineJudge: holdEveryItem.inline, onboardingRequests: false, plans: false });
   await w.onboard("a", "b", "c");
   const first = w.members.find(member => member.id === "a")!;
   first.prefs.categoriesOptIn = first.prefs.categoriesOptIn.filter(category => category !== "events");
@@ -61,6 +64,7 @@ test("a public venue request skips earlier members who opted out of event matche
   for (const id of ["a", "b", "c"]) await w.say(id, "Anything fun near Williamsburg this weekend?");
   expect(w.sent.find(message => message.to === "a" && message.body.startsWith("A few ideas nearby"))?.body)
     .toContain("Happy to suggest more anytime.");
+  expect(await w.runUntil(() => w.net.reviewQueue().length > 0)).toBe(true);
   const [queued] = w.net.reviewQueue();
   expect(queued?.proposal.participants).toEqual(["c", "b"]);
   expect(w.net.requests.find(request => request.memberId === "a")?.oppId).toBeUndefined();
@@ -75,7 +79,7 @@ test.each([["helper", "available"], ["peer", "receiving"]] as const)("a staff re
     { id: "b", name: "Boris Bell", age: 32, interests: ["climbing"] },
     { id: "receiving", name: "Casey Cole", age: 30, interests: ["climbing"] },
     { id: "available", name: "Drew Dale", age: 32, interests: ["climbing"] },
-  ], { review: "human", onboardingRequests: false, plans: false });
+  ], { inlineJudge: holdEveryItem.inline, onboardingRequests: false, plans: false });
   await w.onboard("a", "b", "receiving", "available");
   const id = w.propose(["a", "b"], { alternates: ["receiving", "available"] });
   expect(await w.runUntil(() => w.net.reviewQueue().some(item => item.oppId === id))).toBe(true);

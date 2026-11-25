@@ -139,7 +139,7 @@ const genOpts = {
 const personas = a["llm-personas"] && llm ? await generateLLMPersonas({ ...genOpts, llm }) : generatePersonas(genOpts);
 
 const res = await runWorld({
-  seed, personas, days, mode, speed, network: makeNetwork(engine), engine, agent,
+  seed, personas, days, mode, speed, network: makeNetwork(engine), app: "ntwrk", engine, agent,
   writeLog: !a["no-log"],
   ...(a["stable-decisions"] || a.logistics ? { oracle: { stableDecisions: a["stable-decisions"], logistics: a.logistics } } : {}),
   onDay: d => { if (!a.json) process.stderr.write(`  day ${d}/${days}\r`); },

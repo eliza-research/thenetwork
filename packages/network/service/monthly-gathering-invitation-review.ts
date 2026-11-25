@@ -100,8 +100,6 @@ async function recordGatheringInvitationReview(
       ${{ revision: key.revision, count: memberIds.length }}::jsonb,${app})`;
   return receipt(key, recorded!, false);
 }
-
-/** The staff route passes the authenticated actor and keeps the engine recommendation current through the write. */
 export async function handleMonthlyGatheringInvitationReview(req: Request, path: string, ctx: GatheringInvitationReviewContext): Promise<Response | undefined> {
   const matched = PATH.exec(path);
   if (!matched) return;

@@ -4,8 +4,22 @@ import * as M from "./opsAlertDispatch.js";
 export const alertPostWindowMs = M.alertPostWindowMs;
 /** Story: Report the result of each operations round / Collect scheduled rounds and reuse fresh metrics (spec/opsAlertDispatch.md) @throws {never} */
 export const metricsFreshMs = M.metricsFreshMs;
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) @throws {never} */
+export const turnWatchComplianceAfterMs = M.turnWatchComplianceAfterMs;
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) @throws {never} */
+export const turnWatchReplyAfterMs = M.turnWatchReplyAfterMs;
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) @throws {never} */
+export const turnWatchWindowMs = M.turnWatchWindowMs;
+/** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) @throws {never} */
+export const judgeCannotRunAlertAbove = M.judgeCannotRunAlertAbove;
+/** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) @throws {never} */
+export const judgeRateMinDecisions = M.judgeRateMinDecisions;
+/** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) @throws {never} */
+export const judgeRateMarginBp = M.judgeRateMarginBp;
 /** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) @throws {never} */
 export const initial = M.initial;
+/** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) @throws {never} */
+export const catalogStaleAfterMs = M.catalogStaleAfterMs;
 /** Every `always` rule at once. Holds initially and after every transition. @throws {never} */
 export function inv(current) { return M.inv(current); }
 /** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) @throws {never} */
@@ -50,6 +64,54 @@ export function opsRoundDue(elapsedMs, intervalMs) { return M.opsRoundDue(elapse
 export function cachedOpsMetricsFresh(elapsedMs) { return M.cachedOpsMetricsFresh(elapsedMs); }
 /** Story: Report the result of each operations round / A completed round reports the post separately from its heartbeat (spec/opsAlertDispatch.md) @throws {never} */
 export function roundReport(hasNotices, postAttempted, delivered, heldNotices, heartbeatConfigured) { return M.roundReport(hasNotices, postAttempted, delivered, heldNotices, heartbeatConfigured); }
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) @throws {never} */
+export function turnWatchAfterMs(possibleCompliance) { return M.turnWatchAfterMs(possibleCompliance); }
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) @throws {never} */
+export function turnWatchUnconfirmed(receipt, complianceReply) { return M.turnWatchUnconfirmed(receipt, complianceReply); }
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) @throws {never} */
+export function turnWatchPossibleCompliance(condition, complianceReply) { return M.turnWatchPossibleCompliance(condition, complianceReply); }
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) @throws {never} */
+export function lawAcceptedReceiptConfirms(complianceReply) { return M.lawAcceptedReceiptConfirms(complianceReply); }
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) @throws {never} */
+export function lawRejectedComplianceIsWatched(receipt) { return M.lawRejectedComplianceIsWatched(receipt); }
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) @throws {never} */
+export function turnWatchOverdue(condition, complianceReply, ageMs) { return M.turnWatchOverdue(condition, complianceReply, ageMs); }
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) @throws {never} */
+export function lawComplianceIsWatchedSooner(condition, ageMs) { return M.lawComplianceIsWatchedSooner(condition, ageMs); }
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) @throws {never} */
+export function lawFreshTurnIsNotOverdue(condition, complianceReply, ageMs) { return M.lawFreshTurnIsNotOverdue(condition, complianceReply, ageMs); }
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) @throws {never} */
+export function lawUnresolvedTurnStaysWatched(complianceReply, ageMs) { return M.lawUnresolvedTurnStaysWatched(complianceReply, ageMs); }
+/** Story: Hear when a shared-line turn may have reached nobody / Each condition is one alert, and a possible STOP makes it bad and first (spec/opsAlertDispatch.md) @throws {never} */
+export function turnWatchRaises(overdueCount) { return M.turnWatchRaises(overdueCount); }
+/** Story: Hear when a shared-line turn may have reached nobody / Each condition is one alert, and a possible STOP makes it bad and first (spec/opsAlertDispatch.md) @throws {never} */
+export function turnWatchLevel(complianceCount) { return M.turnWatchLevel(complianceCount); }
+/** Story: Hear when a shared-line turn may have reached nobody / Each condition is one alert, and a possible STOP makes it bad and first (spec/opsAlertDispatch.md) @throws {never} */
+export function turnWatchLeads(complianceCount) { return M.turnWatchLeads(complianceCount); }
+/** Story: Hear when a shared-line turn may have reached nobody / Each condition is one alert, and a possible STOP makes it bad and first (spec/opsAlertDispatch.md) @throws {never} */
+export function turnWatchAlertKey(condition) { return M.turnWatchAlertKey(condition); }
+/** Story: Hear when a shared-line turn may have reached nobody / Each condition is one alert, and a possible STOP makes it bad and first (spec/opsAlertDispatch.md) @throws {never} */
+export function lawPossibleStopIsBad(complianceCount) { return M.lawPossibleStopIsBad(complianceCount); }
+/** Story: Hear when a shared-line turn may have reached nobody / Each condition is one alert, and a possible STOP makes it bad and first (spec/opsAlertDispatch.md) @throws {never} */
+export function lawTurnWatchKeysDiffer(first, second) { return M.lawTurnWatchKeysDiffer(first, second); }
+/** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) @throws {never} */
+export function catalogScanOverdue(scanned, scanAgeMs, uptimeMs) { return M.catalogScanOverdue(scanned, scanAgeMs, uptimeMs); }
+/** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) @throws {never} */
+export function lawRecentScanIsQuiet(scanAgeMs, uptimeMs) { return M.lawRecentScanIsQuiet(scanAgeMs, uptimeMs); }
+/** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) @throws {never} */
+export function lawMissedDayAndRetryAlerts(uptimeMs) { return M.lawMissedDayAndRetryAlerts(uptimeMs); }
+/** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) @throws {never} */
+export function lawNewProcessWaitsForFirstScan(scanAgeMs) { return M.lawNewProcessWaitsForFirstScan(scanAgeMs); }
+/** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) @throws {never} */
+export function judgeDownRaises(cannotRun) { return M.judgeDownRaises(cannotRun); }
+/** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) @throws {never} */
+export function judgeRateRaises(approved, held, qualified, qualifiedRateBp) { return M.judgeRateRaises(approved, held, qualified, qualifiedRateBp); }
+/** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) @throws {never} */
+export function lawFewDecisionsAreQuiet(approved, held, qualifiedRateBp) { return M.lawFewDecisionsAreQuiet(approved, held, qualifiedRateBp); }
+/** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) @throws {never} */
+export function lawNoRecordIsQuiet(approved, held, qualifiedRateBp) { return M.lawNoRecordIsQuiet(approved, held, qualifiedRateBp); }
+/** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) @throws {never} */
+export function lawTenCannotRunIsQuiet(cannotRun) { return M.lawTenCannotRunIsQuiet(cannotRun); }
 /** Do the rules allow this event in this state? @throws {never} */
 export function enabled(current, event) { return M.enabled(current, event); }
 /** Apply an event. An event the rules do not allow leaves the state unchanged. @throws {never} */

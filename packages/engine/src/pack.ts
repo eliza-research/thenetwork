@@ -6,24 +6,11 @@
 //   peon    peon.biz (hiring)     peonPack
 //   friends friends.help (NYC)    friendsPack
 //
-// THE CORE OWNS INVARIANTS, PACKS OWN POLICY. A pack is data plus small, pure, synchronous hooks,
-// called in a fixed order. Pack rules run IN ADDITION to the core rules and can only remove
-// candidates. These core invariants hold for every pack and cannot be configured away:
-//   1. Minors (13-17, and any missing / invalid age) may join any app but are NEVER matched or
-//      connected to anyone, in any role (participant, alternate, `via`, host, plan member). A pack
-//      can raise `eligibility.minMatchAge`, never lower it below 18. Enforced in five layers (world
-//      index, member filter, pair filter, configuration filter, final guard) plus attention and plans.
-//   2. Blocks win: a blocked or avoided pair is never a warm tie, never paired, never a `via`.
-//   3. Hard filters run before scoring and before every judge pass; the judge can only remove.
-//   4. LeakGuard on every member-facing string (explanations, probes, judge "why", questions).
-//   5. Determinism: seeded RNG, stable ordering, no clock reads; same input + config + pack = same bytes.
-//   6. Consent before reveal: nobody is named to anyone before the pack's consent flow allows it.
-//
 // BYTE IDENTITY (section 3.2). Pack identity travels BESIDE the config (`deps.pack`, the World
 // constructor), never inside it: EngineConfig / AttentionConfig / PlansConfig keep their shapes and
 // hashes. Run logs get no new fields for networkPack. Rule and generator order is the contract.
 import type { AppId, Category, City, Facet, Intent, MemberId, OpportunityKind, Proposal } from "@thenetwork/core";
-import type { MatchLane } from "../../core/src/generated/matchLane.ts";
+import { teenFriendCategory, type MatchLane } from "../../core/src/generated/matchLane.ts";
 import type { ActivityType } from "./packs/network/activities.ts";
 import type { AttentionConfig, EngineConfig } from "./config.ts";
 import type { GenCtx } from "./genkit.ts";
@@ -80,8 +67,7 @@ export interface AppPack {
 // ---------------------------------------------------------------------------------------- ontology
 export interface LaneDef {
   id: LaneId;
-  /** Core invariant: every lane is adults-only for matching. There is no `false`. */
-  adultOnly: true;
+  minors: "never" | "teenFriendship";
   /** Plans never use this lane. networkPack: romance (D15). */
   neverInPlans?: boolean;
 }
@@ -295,10 +281,6 @@ export function judgePackOf(w: World): JudgePack {
   return j;
 }
 
-/**
- * Validates a pack against the core contract. Throws on: a match age under 18, a matchable account
- * tier, a lane that is not adults-only, duplicate generator / rule / lane ids.
- */
 export function validatePack(p: AppPack): AppPack {
   const errs: string[] = [];
   if (!(p.eligibility.minMatchAge >= 18)) errs.push(`minMatchAge ${p.eligibility.minMatchAge} < 18 (core invariant)`);
@@ -306,7 +288,10 @@ export function validatePack(p: AppPack): AppPack {
     if ((t as { matchable: boolean }).matchable !== false) errs.push(`account tier ${t.label} must not be matchable`);
     if (t.maxAge >= 18 && t.minAge < 18) errs.push(`account tier ${t.label} straddles 18`);
   }
-  for (const l of p.ontology.lanes) if ((l as { adultOnly: boolean }).adultOnly !== true) errs.push(`lane ${l.id} must be adultOnly`);
+  for (const l of p.ontology.lanes) {
+    const minors: unknown = l.minors;
+    if (minors !== "never" && !(minors === "teenFriendship" && teenFriendCategory(p.id, l.id))) errs.push(`lane ${l.id} cannot admit minors`);
+  }
   const dup = (xs: string[], what: string) => { const s = new Set<string>(); for (const x of xs) { if (s.has(x)) errs.push(`duplicate ${what} ${x}`); s.add(x); } };
   dup(p.generators.map(g => g.name), "generator");
   dup(p.eligibility.memberRules.map(r => r.id), "member rule");

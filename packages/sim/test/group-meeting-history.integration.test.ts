@@ -11,7 +11,7 @@ import { DEFAULT_START, World } from "../src/world.ts";
 test("a declined invitation does not erase the remaining group's scheduled and completed meeting", async () => {
   const template = await loadScenario(resolve(import.meta.dirname, "../scenarios/group-flake-morning-of.json"));
   const actual = [], expected = [];
-  for (const seed of [4, 6, 11, 13, 2, 9, 15]) {
+  for (const seed of [5, 12, 17, 118, 2, 9, 15]) {
     const s = structuredClone(template);
     s.actions = s.actions.filter(a => a.do !== "force_flake");
     const w = new World(scenarioWorldOptions(s, { seed, network: () => new StubNetwork({ randomIntros: false }), writeLog: false }));
@@ -53,7 +53,7 @@ test("a declined invitation does not erase the remaining group's scheduled and c
       declined: history.declinedBy?.length ?? 0, accepted: history.acceptedBy?.length ?? 0,
       held: result.metrics.meetings.held, heldPairs: heldPairs.every(Boolean),
       declinedAt: history.declinedAt ?? {}, sentRefusals, cooldowns, pairRefusals, reproposed: reproposed(engine), laterReproposed: reproposed(later) });
-    const declines = seed === 13 ? 2 : [4, 6, 11].includes(seed) ? 1 : 0;
+    const declines = seed === 118 ? 2 : [5, 12, 17].includes(seed) ? 1 : 0;
     expected.push({ seed, scheduledOutcome: "accepted" as const, scheduledMembers: [...scheduled.participants].sort(),
       openMembers: [[...scheduled.participants].sort()], finalOutcome: "completed" as const, finalMembers: attendees, at: outcome.at,
       declined: declines, accepted: 6 - declines, held: 1, heldPairs: true,

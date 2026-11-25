@@ -5,7 +5,7 @@ deliverability). Used by the Network service (`packages/network/service`), the s
 (`deploy/backend/server.ts`) and the notifier (`packages/notify`). Research and live verification results are in
 [docs/research/blooio.md](../../docs/research/blooio.md).
 
-Nothing here sends a real message unless the backend runs with `BLOOIO_ALLOW_SEND=1` and the founder's approval flags (otherwise `DryRunAdapter`).
+Nothing here sends a real message unless the backend runs with a configured channel (`NETWORK_CHANNEL`, otherwise `DryRunAdapter`).
 Promoted from `prototypes/messaging-blooio` on 2026-10-08; the standalone receiver, the simulated bus, the one-off
 scripts and the tests were dropped (they remain in git history).
 
@@ -34,6 +34,12 @@ apps together.
 - **Retries.** Retryable errors back off (30 s, doubling, at most 30 min) and fail after 6 attempts. Blooio conversation limits hold the row until the person writes. Number-level blocks end it (`blocked`).
 - **Receipts.** `message.delivered`, `message.read` and `message.failed` webhooks move a row to `delivered`, `read` or `failed`. A status never goes back.
 - **Non-members.** A row to someone who is not a member (a join question, a decline) keeps the address and the text only until it ends.
+- **Replies another transport delivers.** In a signed turn the Network's replies go back to Eliza Cloud, which sends them; they never pass dispatch. `collectedLeaks` runs this queue's leak guard on each one (canary shapes, contacts, the recipient's leak sources and the thread check) in the caller's transaction, and `recordCollected` writes it as `collected` so that the thread history includes it. `collectedReceipt` applies the turn receipt: accepted makes the reply `sent` with a send time and a count in the unanswered streak, unknown makes it `send_unknown`, rejected makes it `refused_gateway`. A reply with no final receipt ends `failed_unknown` after the receipt deadline (6 h); an accepted or rejected receipt that comes later still applies (`gatewayReceiptApplies` in `spec/outboundReceipt.md`), and a late accepted receipt records the send at the time the reply was collected (`gatewayReplySendTime`).
+- **Refusal reasons.** A row that a check refuses for good keeps the reason in `note` (for example `reengagement_changed` from the claim transaction).
+- **A check that cannot answer.** A hook that throws never sends the row. A throw from the stale check is not "current": the error goes to the drain, and the row waits. One bad row never stops the drain. Only a row that still has the status that the drain read takes the error, because erasure can end the row meanwhile. The row retries with backoff and is parked (`parked_error`) after 6 attempts. A claimed row whose result cannot be written keeps its lease and its payload for recovery (`claimed_outcome_write_failed`).
+- **Hold until reply.** `inbound()` takes no line lock. When the person writes while dispatch holds a row, the release in `inbound()` can run first and find no held row. So the hold reads the conversation again after its write: a new inbound message makes the row due at once (`holdForReply`).
+- **The unanswered streak.** A send that the provider or the gateway accepted adds to the conversation's streak and starts its 14-day clock. A send accepted at the same instant as the person's last message counts toward the streak, because a reply follows the message that it answers. Only a send accepted before their message is already answered.
+- **Person-cap slots.** A status that did not go out gives the slot back. `failed_unknown` can have gone out, so it keeps its slot.
 
 ## Send-time checks (at dispatch, in this order)
 
@@ -42,9 +48,9 @@ Agent-initiated means every kind except `reply` (a direct answer to the member's
 database at send time, so a STOP that arrives while a message waits wins. Every app hook fails closed.
 
 1. **Too old or stale**: a proactive row after 24 h, any row after 3 days, or a row about an opportunity that closed: `expired`.
-2. **The live flags** (`refused_not_approved`).
+2. **The dry-run line** (`refused_not_approved`): only the line of a dry-run service refuses here. A hook that throws refuses too.
 3. **Consent** (not compliance): the platform consent ledger, bans and the member's own opt-out (`refused_opted_out`).
-4. **The recipient at send time** (not compliance): paused, blocked, on safety hold, a minor for content about others (`suppressed_ineligible`). The Network runtime supplies it.
+4. **The recipient at send time** (not compliance): paused, blocked, on safety hold, a minor for content about others, or a venue booking notice whose link the current booking no longer approves (`suppressed_ineligible`). The Network runtime supplies it.
 5. **A reply** must answer an inbound message from the same person within the last hour.
 6. **Quiet hours** (default 21:00-09:00 recipient local) for every agent-initiated kind: deferred, never dropped. An unusable zone parks the row (`parked_invalid_timezone`).
 7. **Apple line safety**: at most **3 unanswered** messages per conversation (line and address, across apps). After that, exactly **one re-engagement** once **14 days** have passed since our last send. Anything else waits until the person writes back (a message or a tapback), which resets both counters (`platform.line_conversations`).
@@ -61,7 +67,6 @@ database at send time, so a STOP that arrives while a message waits wins. Every 
 | `BLOOIO_FROM` | The sending line, E.164 (no default; set it in the deploy environment). |
 | `BLOOIO_FROM_NUMBER` | Accepted alias for `BLOOIO_FROM` (older `.env` files). If both are set they must match. |
 | `BLOOIO_WEBHOOK_SECRET` | `whsec_...` for webhook verification |
-| `BLOOIO_ALLOW_SEND` | `1` to send for real (with the founder's `NTWRK_LIVE_APPROVED=1` and `<APP>_LIVE_APPROVED=1`); otherwise dry-run |
 | `BLOOIO_LINE_DAILY_CAP`, `BLOOIO_LINE_NEW_CHATS_PER_DAY` | The line's daily caps (defaults 200 and 20) |
 
 Validation: `pnpm run sim --only pipeline` drives the queue end to end (signed webhook in, Postgres, the queue,

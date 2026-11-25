@@ -1,24 +1,17 @@
 #!/usr/bin/env -S node --import=tsx
-// The Network service for every app (README.md in this folder).
-//   node --import tsx --env-file-if-exists=.env packages/network/service/main.ts [--once] [--dry-run] [--port N] [--host H] [--api-port N]
-//
-// It runs one network per row of platform.networks ('<app>:<city>'). Without --once: each network
-// ticks every minute on its own (a second instance skips a network while its lock is held), the
-// staff and webhook HTTP server binds 127.0.0.1:4848, and the public API the sites call (/api/*)
-// binds 127.0.0.1:8790 (PLATFORM_API_PORT). --once runs one tick of every network, delivers, and
-// exits. Sends are dry-run unless NETWORK_CHANNEL=blooio; the Blooio adapter still refuses every send
-// unless BLOOIO_ALLOW_SEND=1, NTWRK_LIVE_APPROVED=1 and the app's <APP>_LIVE_APPROVED=1 (founder approval).
 import { RealClock } from "@thenetwork/core";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { serviceLoginProblem } from "../../../deploy/backend/backend.ts";
 import { BlooioClient } from "../../blooio/src/blooio/client.ts";
 import { BlooioAdapter as ProviderAdapter } from "../../blooio/src/adapters/blooio-adapter.ts";
 import { resolveSenderLine } from "../../blooio/src/line.ts";
-import { assertBootConfig } from "../../platform/src/env.ts";
-import { networkRoutePolicy } from "./route-authority.ts";
+import { assertBootConfig, isProduction } from "../../platform/src/env.ts";
+import { photoRaterFromEnv } from "../../platform/src/photos.ts";
 import { CloudChannelAdapter } from "./cloud-channel.ts";
-import { BlooioAdapter, liveFlag, liveSendAllowed } from "./channel.ts";
+import { BlooioAdapter } from "./channel.ts";
 import { serveService, startTicks } from "./serve.ts";
+import { backendWebhookServed, declaredEnvironment, deployedEnvironment, lineAndStaffProblems, lineAndStaffRefused, photoStorageSetup } from "../../core/src/generated/bootPolicy.ts";
+import { configuredChannel, lineAndStaffFacts, lineAndStaffMessages, workersAiProblem } from "./line-staff-boot.ts";
 import { NetworkService, webhookSecretsFromEnv } from "./service.ts";
 
 function arg(name: string): string | undefined {
@@ -27,12 +20,24 @@ function arg(name: string): string | undefined {
 }
 
 async function main() {
-  // Fail closed: the environment must be declared, and production (or staging) refuses to start
-  // without Twilio, Turnstile, the proxy secret, the hash key, the session secret, a database and
-  // review mode "human" (env.ts bootConfigProblems). Only PLATFORM_ENV=dev gets the dev shortcuts.
   const env = assertBootConfig();
+  const deployed = deployedEnvironment(declaredEnvironment(process.env.PLATFORM_ENV ?? "", process.env.NODE_ENV ?? ""));
+  const production = isProduction(process.env);
+  const lineStaff = lineAndStaffFacts(process.env, production);
+  const lineStaffProblems = lineAndStaffProblems(deployed, lineStaff.turnSecretLength, lineStaff.staffTokenCount, lineStaff.shortestStaffTokenLength, lineStaff.turnSecretIsStaffToken);
+  const workersAi = workersAiProblem(deployed, production, process.env);
+  const photoStorage = photoStorageSetup(deployed, Boolean(process.env.PHOTO_STORAGE), process.env.PHOTO_STORAGE === "r2") === "PhotoStorageRefused"
+    ? "PHOTO_STORAGE=r2 (private photo storage) on a deployed service" : undefined;
+  const problems = [
+    ...(lineAndStaffRefused(lineStaffProblems) ? lineAndStaffMessages(lineStaffProblems) : []),
+    ...(workersAi ? [workersAi] : []), ...(photoStorage ? [photoStorage] : []),
+  ];
+  if (problems.length) throw new Error(`refusing to start (PLATFORM_ENV=${env}): needs ${problems.join("; ")}`);
+  const rater = await photoRaterFromEnv(process.env, { log: s => console.warn(s) });
+  if (rater.status === "refused_weights") throw new Error(`refusing to start: CLEF_WEIGHTS_PATH was refused (${rater.detail ?? "no detail"})`);
+  const channel = configuredChannel(process.env, process.argv);
+  const blooioWebhook = backendWebhookServed(process.env.NETWORK_CHANNEL ?? "");
   const once = process.argv.includes("--once");
-  const dryRun = process.argv.includes("--dry-run") || !!networkRoutePolicy(process.env);
   const url = process.env.NETWORK_DATABASE_URL || process.env.DATABASE_URL;
   if (!url) throw new Error("set NETWORK_DATABASE_URL (or DATABASE_URL) to the Postgres with the network and platform schemas (pnpm run db:migrate)");
   if (env !== "dev") {
@@ -43,37 +48,34 @@ async function main() {
     } finally { await sql.close(); }
   }
   const clock = new RealClock();
-  const blooio = !dryRun && process.env.NETWORK_CHANNEL === "blooio";
-  const cloud = !dryRun && process.env.NETWORK_CHANNEL === "eliza_cloud";
+  const blooio = channel === "blooio";
+  const cloud = channel === "eliza_cloud";
   const host = arg("--host") ?? process.env.NETWORK_SERVICE_HOST ?? "127.0.0.1";
   const local = host === "127.0.0.1" || host === "localhost";
   const svc = await NetworkService.fromDatabase({
-    url, clock, instance: process.env.NETWORK_SERVICE_INSTANCE ?? `${process.pid}`,
+    url, clock, instance: process.env.NETWORK_SERVICE_INSTANCE ?? `${process.pid}`, photoRater: rater.rater,
     tokens: process.env.NETWORK_SERVICE_TOKENS, consoleToken: process.env.NETWORK_SERVICE_CONSOLE_TOKEN, webhookSecret: process.env.BLOOIO_WEBHOOK_SECRET, webhookSecrets: webhookSecretsFromEnv(),
     auditUrl: process.env.NETWORK_SERVICE_AUDIT_DATABASE_URL,
     network: { seed: Number(process.env.NETWORK_SEED ?? 1) },
-    // The dev site proxy (scripts/sites-dev.ts) names the site in X-Forwarded-Host. Trust it only on a local, non-production bind.
     publicApi: { trustForwardedHost: local && env === "dev" },
     adapter: cloud ? (_net,rt)=>new CloudChannelAdapter({clock,from:resolveSenderLine(),app:rt.app.id,city:rt.city,env:process.env,
-      origin:process.env.NETWORK_CLOUD_DELIVERY_ORIGIN??"",secret:process.env.SERVICE_TURN_SECRET??""}) : blooio ? (net, rt) => {
-      const key = process.env.BLOOIO_API_KEY;
-      if (!key) throw new Error("NETWORK_CHANNEL=blooio needs BLOOIO_API_KEY");
+      origin:process.env.NETWORK_CLOUD_DELIVERY_ORIGIN!,secret:process.env.SERVICE_TURN_SECRET!}) : blooio ? (_net, rt) => {
       const from = resolveSenderLine();
-      return new BlooioAdapter({ net, provider: new ProviderAdapter(new BlooioClient({ apiKey: key }), from), clock, memberOf: rt.memberOf, from, app: rt.app.id, city: rt.city });
+      return new BlooioAdapter({ provider: new ProviderAdapter(new BlooioClient({ apiKey: process.env.BLOOIO_API_KEY! }), from), clock, from, app: rt.app.id, city: rt.city });
     } : undefined,
   });
   await svc.start();
   for (const rt of svc.runtimes.values()) {
-    const mode = cloud ? (liveSendAllowed(process.env,rt.app.id) ? "eliza_cloud LIVE" : "eliza_cloud (refusing: live approval flags are needed)") : blooio ? (liveSendAllowed(process.env, rt.app.id) ? "blooio LIVE" : `blooio (refusing: BLOOIO_ALLOW_SEND=1, NTWRK_LIVE_APPROVED=1${rt.app.id === "ntwrk" ? "" : ` and ${liveFlag(rt.app.id)}=1`} are needed)`) : "dry-run";
-    console.log(`network ${rt.id}: sends ${mode}, review "human", matching ${rt.matchingAllowed ? "allowed (the admin switch decides)" : "not allowed (platform.networks)"}`);
+    console.log(`network ${rt.id}: sends ${channel}, review by the judge (staff decide held items), matching ${rt.matchingAllowed ? "allowed (the admin switch decides)" : "not allowed (registry row)"}`);
   }
   if (!process.env.NETWORK_SERVICE_TOKENS) console.warn("NETWORK_SERVICE_TOKENS is not set: every staff route answers 401");
-  if (!process.env.BLOOIO_WEBHOOK_SECRET) console.warn("BLOOIO_WEBHOOK_SECRET is not set: the shared-line webhook answers 503");
-
   if (!process.env.SERVICE_TURN_SECRET) console.warn("SERVICE_TURN_SECRET is not set: /internal/turn and the other signed routes answer 503");
+  if (blooioWebhook && !process.env.BLOOIO_WEBHOOK_SECRET) console.warn("BLOOIO_WEBHOOK_SECRET is not set: the shared-line webhook answers 503");
+  if (!blooioWebhook) console.log("inbound: the Eliza gateway owns the carrier webhook (NETWORK_CHANNEL=eliza_cloud); /webhooks/blooio is not served");
   if (once) {
     await svc.inboxTick();
     for (const rt of svc.runtimes.values()) console.log(`${rt.id}: ${(await rt.tick()) ? "tick done" : "tick skipped: another instance holds the lock"}`);
+    await svc.reviewJudgeTick();
     await svc.close();
     return;
   }
@@ -81,7 +83,7 @@ async function main() {
   const port = Number(arg("--port") ?? process.env.NETWORK_SERVICE_PORT ?? 4848);
   const apiPort = Number(arg("--api-port") ?? process.env.PLATFORM_API_PORT ?? 8790);
   if (!local) console.warn(`binding ${host}: use this only behind an access proxy (runbook-real 7)`);
-  const servers = await serveService(svc, { host, port, apiPort });
+  const servers = await serveService(svc, { host, port, apiPort, blooioWebhook });
   const ticks = startTicks(svc);
   await ticks.first;
   const stop = async () => { await ticks.stop(); servers.stop(); await svc.close(); process.exit(0); };

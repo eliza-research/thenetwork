@@ -73,15 +73,39 @@ pure def lawDayBeforeReminderDoesNotRepeat(accepted: bool, bookingDelivered: boo
 
 ### Claim a reminder only after the member received the current booking notice
 
-The reminder claim requires a positive provider or signed gateway receipt for this member's booking notice. A rescheduled meeting requires the notice for its current revision. A pending notice puts the reminder back in the queue with the same key while the window remains open. Refuse a reminder when the notice is absent or refused, the booking or seat is no longer current, or the window closes.
+The reminder claim requires a positive provider or signed gateway receipt for this member's booking notice. A rescheduled meeting requires the notice for its current revision. A pending notice puts the reminder back in the queue with the same key while the window remains open. A notice is pending while it waits in the queue, waits for leak review, or was handed off and its receipt can still arrive. A receipt can still arrive for a notice that is sending, whose provider acceptance is unknown, or that a signed turn gave to the gateway. A gateway reply whose acceptance passed the receipt deadline (failed unknown) can still get a late turn receipt. A provider send whose acceptance passed the deadline cannot, because the queue does not look it up again. Refuse a reminder when the notice is absent or refused, the booking or seat is no longer current, or the window closes. Changed 2026-11-22: the reminder claim computed part of the pending decision in the service, and every failed unknown notice counted as one whose receipt can arrive, also a provider send that nothing looks up again, so the claims retried until their cutoff for no reason.
 
 ```quint
 type ReminderClaim = SendReminder | WaitForBookingNotice | RefuseReminder
 pure val bookingNoticeRetryMs = 5 * 60000
 
+pure val receiptStatusValues = Set("pending", "retry_scheduled", "deferred_quiet_hours", "held_awaiting_reply", "parked_leak_review", "collected",
+  "send_unknown", "sending", "unknown_acceptance", "failed_unknown", "accepted", "sent", "delivered", "read", "refused_gateway")
+
 pure def bookingNoticeReceived(receiptStatus: str, sentAt: int, checkedAt: int): bool =
   (receiptStatus == "accepted" or receiptStatus == "sent" or receiptStatus == "delivered" or receiptStatus == "read")
     and 0 <= sentAt and sentAt <= checkedAt
+
+pure def bookingNoticeReceiptMayArrive(receiptStatus: str, gatewayReply: bool): bool =
+  receiptStatus == "collected" or receiptStatus == "send_unknown" or receiptStatus == "sending" or receiptStatus == "unknown_acceptance"
+    or (receiptStatus == "failed_unknown" and gatewayReply)
+
+pure def bookingNoticePending(receiptStatus: str, gatewayReply: bool): bool =
+  receiptStatus == "pending" or receiptStatus == "retry_scheduled" or receiptStatus == "deferred_quiet_hours"
+    or receiptStatus == "held_awaiting_reply" or receiptStatus == "parked_leak_review"
+    or bookingNoticeReceiptMayArrive(receiptStatus, gatewayReply)
+
+pure def lawExpiredProviderNoticeGetsNoReceipt(receiptStatus: str): bool =
+  receiptStatus == "failed_unknown" implies not(bookingNoticePending(receiptStatus, false))
+
+pure def lawExpiredGatewayNoticeMayGetReceipt(receiptStatus: str): bool =
+  receiptStatus == "failed_unknown" implies bookingNoticeReceiptMayArrive(receiptStatus, true)
+
+pure def lawArrivingReceiptIsPending(receiptStatus: str, gatewayReply: bool): bool =
+  bookingNoticeReceiptMayArrive(receiptStatus, gatewayReply) implies bookingNoticePending(receiptStatus, gatewayReply)
+
+pure def lawReceivedNoticeIsNotPending(receiptStatus: str, gatewayReply: bool): bool =
+  bookingNoticeReceived(receiptStatus, 0, 0) implies not(bookingNoticePending(receiptStatus, gatewayReply))
 
 pure def queuedReminderClaim(bookingCurrent: bool, noticeAccepted: bool, noticePending: bool): ReminderClaim =
   if (not(bookingCurrent)) RefuseReminder
@@ -101,13 +125,10 @@ pure def lawFutureBookingReceiptIsNotEvidence(receiptStatus: str, sentAt: int, c
 
 ### Claim a cancellation only for a member who received booking details
 
-A recorded booking notice can be waiting in the queue. Require positive provider or signed gateway receipt for the same app, opportunity and member before sending a terminal cancellation. Receipt of the original booking or any committed updated schedule qualifies, since the participant may still expect to meet. An invitation, an offer to move the meeting, or a notice that never left the queue is insufficient. If the booking notice was already handed off and its receipt can still arrive, retry the same cancellation before the start. Keep the content neutral.
+A recorded booking notice can be waiting in the queue. Require positive provider or signed gateway receipt for the same app, opportunity and member before sending a terminal cancellation. Receipt of the original booking or any committed updated schedule qualifies, since the participant may still expect to meet. An invitation, an offer to move the meeting, or a notice that never left the queue is insufficient. If the booking notice was already handed off and its receipt can still arrive, retry the same cancellation before the start. A gateway reply whose acceptance passed the receipt deadline (failed unknown) can still get a late turn receipt, so it counts as a receipt that can arrive; a provider send past the same deadline does not. Keep the content neutral. Changed 2026-11-22: a booking notice in a signed turn ended failed unknown six hours after the turn, and the reminder, cancellation and feedback claims then refused for good, also after a late accepted receipt showed that the member got the booking.
 
 ```quint
 type BookedCancellationClaim = SendCancellation | WaitForCancellationReceipt | RefuseCancellation
-
-pure def bookingNoticeReceiptMayArrive(receiptStatus: str): bool =
-  receiptStatus == "collected" or receiptStatus == "send_unknown" or receiptStatus == "sending" or receiptStatus == "unknown_acceptance"
 
 pure def queuedBookingCancellationClaim(cancellationCurrent: bool, noticeAccepted: bool, receiptMayArrive: bool): BookedCancellationClaim =
   if (not(cancellationCurrent)) RefuseCancellation
@@ -271,7 +292,7 @@ pure def lawWithdrawnSeatCannotEnterFeedbackHistory(status: str): bool =
 
 ### Learn a dating availability slot from the booked time
 
-Slop uses completed meeting evidence when it ranks future time options. Read the booked start in the meeting venue's time zone, or the zone of the planned meeting. Keep the time feedback was received for feedback history. An older interaction can use the booked start from its stored opportunity. The synthetic dating world uses UTC for its local calendar.
+Slop uses completed meeting evidence when it ranks future time options. Read the booked start in the time zone recorded at booking: the meeting venue's time zone, else the zone of the planned meeting, else the New York zone for a place that the Network picked in New York. Keep the time feedback was received for feedback history. An older interaction can use the booked start from its stored opportunity. A completed interaction whose booked meeting is not known gives no slot. An interaction without a booked meeting field (an input from an older caller) uses its own time in the time zone of the member's home city. The synthetic dating world records the booked start and the time zone of the date's city.
 
 ```quint
 pure def completedMeetingSlot(localWeekday: int, localHour: int): int =
@@ -411,4 +432,101 @@ pure def verifiedMeetingValueAllowed(attended: bool, worthwhile: bool, independe
 
 pure def lawMeetingValueCannotConfirmItself(attended: bool, worthwhile: bool): bool =
   not(verifiedMeetingValueAllowed(attended, worthwhile, 0))
+```
+
+## Story: Choose a report or a block after a meeting that went wrong
+
+> As a member who tells the check-in that something went wrong, I want the Network to ask me once whether to report or block the person, so that I do not have to know the right words.
+
+### A check-in answer that describes a problem asks once whether to report or block
+
+Read the member's answer to the feedback prompt with the existing readers only: the check-in report reader gives a report kind (a cue), and the urgent kinds are harassment, unsafe, scam, minor and older_than_stated (the check-in reader never gives older_than_stated; staff and the age checks file it); the no-show reader gives a no-show cue; the concern reader finds a problem said without a report kind, such as "he made me uncomfortable" or "something felt off", and ignores a denied concern ("I wasn't uncomfortable at all"). A positive or neutral answer, and a negative answer about chemistry only ("we didn't click", "not my type"), is fine and asks nothing. An urgent cue files the report at once, without a question, for every meeting that is not a group plan, in every app, whatever the ages and the number of other attendees. Any other cue, and a concern, about the one other attendee of such a pair gets one question in the member's own thread: whether to report that person to the safety team, block them, or neither. The same steps apply in every app. An adult pair is a meeting that is not a group plan, with exactly one other booked attendee, where both people are known adults by the existing age decisions. A teen pair is a meeting that is not a group plan, with exactly one other booked attendee, of a done teen friendship item whose roster still passes the teen friendship rule at the time of the answer and holds both people. Any other meeting (an age doubt, more than one other attendee, a group plan) gets no question; a group plan also gets no urgent path. The question names only the first name that the feedback prompt already named; to a member of a teen pair it names nobody and says "them". It offers report, block or no, and goes through the leak guard as a direct reply (no pause path, no proactive cap). If the leak guard refuses it, the member gets the ordinary thanks and nothing waits. The Network stores ids and the report kind, never the member's words: the member, the meeting, the person asked about, the kind (the cue, else "other"), and the time of the question. The feedback is kept as feedback whatever the member answers later. Changed (owner decisions D1 and D7 of 2026-11-22): before, slop.date and peon.biz filed every cue at once, ntwrk.party and friends.help kept a problem said without the word "report" or "block" only as feedback, and a teen got only the thanks; now every app asks the one question for a non-urgent cue or a concern in an adult or teen pair, and an urgent cue opens the case at once for every meeting that is not a group plan in every app, so that no app loses the urgent path that slop.date and peon.biz had. Changed (verification 2026-11-23): the urgent list now names older_than_stated, which the code already treated as urgent, because a report that a teen partner is older than stated is a child-safety signal that needs the same immediate hold as a minor report.
+
+```quint
+type CheckInReading = CheckInFine | CheckInConcern | CheckInCue | CheckInUrgent
+type CheckInSafetyStep = CheckInNoStep | CheckInAsk | CheckInFileNow
+
+pure def checkInReading(cueRead: bool, urgentCue: bool, concernRead: bool): CheckInReading =
+  if (cueRead and urgentCue) CheckInUrgent
+  else if (cueRead) CheckInCue
+  else if (concernRead) CheckInConcern
+  else CheckInFine
+
+pure def checkInSafetyStep(reading: CheckInReading, groupPlan: bool, adultPair: bool, teenPair: bool): CheckInSafetyStep =
+  if (reading == CheckInFine or groupPlan) CheckInNoStep
+  else if (reading == CheckInUrgent) CheckInFileNow
+  else if (not(adultPair or teenPair)) CheckInNoStep
+  else CheckInAsk
+
+pure def lawFineAnswerAsksNothing(groupPlan: bool, adultPair: bool, teenPair: bool): bool =
+  checkInSafetyStep(CheckInFine, groupPlan, adultPair, teenPair) == CheckInNoStep
+
+pure def lawNoCueAndNoConcernIsFine(urgentCue: bool): bool =
+  checkInReading(false, urgentCue, false) == CheckInFine
+
+pure def lawUrgentCueFilesAtOnceOutsideAPlan(adultPair: bool, teenPair: bool): bool =
+  checkInSafetyStep(CheckInUrgent, false, adultPair, teenPair) == CheckInFileNow
+
+pure def lawUrgentCueIsNeverAsked(groupPlan: bool, adultPair: bool, teenPair: bool): bool =
+  checkInSafetyStep(CheckInUrgent, groupPlan, adultPair, teenPair) != CheckInAsk
+
+pure def lawNonUrgentCueAsksInAPair(adultPair: bool, teenPair: bool): bool =
+  (adultPair or teenPair) implies checkInSafetyStep(CheckInCue, false, adultPair, teenPair) == CheckInAsk
+
+pure def lawQuestionNeedsAPair(reading: CheckInReading, groupPlan: bool): bool =
+  checkInSafetyStep(reading, groupPlan, false, false) != CheckInAsk
+
+pure def lawGroupPlanGetsNoStep(reading: CheckInReading, adultPair: bool, teenPair: bool): bool =
+  checkInSafetyStep(reading, true, adultPair, teenPair) == CheckInNoStep
+
+pure def lawConcernAsksInAPair(teenPair: bool): bool =
+  checkInSafetyStep(CheckInConcern, false, true, teenPair) == CheckInAsk and checkInSafetyStep(CheckInConcern, false, teenPair, true) == CheckInAsk
+
+pure def lawTeenPairGetsTheAdultPairStep(reading: CheckInReading): bool =
+  checkInSafetyStep(reading, false, false, true) == checkInSafetyStep(reading, false, true, false)
+```
+
+### The answer to the check-in question acts once, then the question closes
+
+The question waits for the member's next own text (not a reaction, not text from an assistant) for 24 hours, the same window as "Who do you mean?", and the shared line routes a short answer to the app that asked in the same way. While another question of the Network is open in the same thread (an anonymous probe, a day-of check-in for a booked meeting, a crew offer or the weekly check-in), only a text that uses the words report, flag or block answers the check-in question; a bare yes or no goes to the other question and the check-in question stays open. Otherwise any own text closes the question, so it is never asked again. An answer received before the question or handled more than 24 hours after it is not an answer: the question lapses and the feedback stays. The Network reads the answer clause by clause. A clause that ends in a question mark ("Should I report him?") chooses nothing. A clause with a refusal before the word ("I don't want to report him", "rather not block") refuses that choice. "Both" counts only as a whole answer ("both", "both please"), never inside a sentence ("we both moved on"). An answer that says report (also "report and block", "both", or "report him") opens the safety case exactly as a check-in report does: the pair block, the close of the pair's open items, the trust report as someone who met the person, the report with its stored kind, source "check_in" and the meeting, and the urgent hold when the kind is urgent. A report also blocks, so an answer that refuses the block does not choose the report. An answer that says block blocks exactly as "block <name>" does for a person the member met. An answer that says no or neither, or refuses each choice it names, closes the question with a short acknowledgement. An answer that both refuses and chooses ("No, report him") is unclear. A report or block command that names a person other than the person asked about, or a name that matches nobody or more than one person, goes to the ordinary report and block flow. Any other answer is unclear: it opens no case, it is not asked again, and the Network reads the text as an ordinary message. The check-in log keeps flags and ids only, never the member's words. Changed (owner decision D7 of 2026-11-22): this answer is new, because before it the Network asked nothing after a check-in answer; a refusal wins over a choice and a bare answer goes to another open question, so that the reader never files a report the member refused and never takes the answer to a probe or a day-of check-in.
+
+```quint
+type CheckInSafetyAnswer = AnswerReport | AnswerBlock | AnswerNeither | AnswerUnclear
+
+pure val checkInSafetyAnswerMs = 24 * 3600000
+
+pure def checkInSafetyAnswerCurrent(questionAt: int, answerAt: int, answerHandledAt: int): bool =
+  questionAt <= answerAt and answerAt <= answerHandledAt and answerHandledAt - questionAt <= checkInSafetyAnswerMs
+
+pure def checkInSafetyAnswerApplies(namesChoice: bool, otherQuestionOpen: bool): bool =
+  namesChoice or not(otherQuestionOpen)
+
+pure def checkInSafetyAnswer(wantsReport: bool, wantsBlock: bool, declines: bool): CheckInSafetyAnswer =
+  if (declines and (wantsReport or wantsBlock)) AnswerUnclear
+  else if (wantsReport) AnswerReport
+  else if (wantsBlock) AnswerBlock
+  else if (declines) AnswerNeither
+  else AnswerUnclear
+
+pure val questionAtValues = Set(0, 1)
+pure val answerAtValues = Set(-1, 0, 1, 86400000, 86400001, 86400002)
+pure val answerHandledAtValues = Set(0, 1, 86400000, 86400001, 86400002)
+
+pure def lawReportAndBlockFilesTheReport(otherQuestionOpen: bool): bool =
+  checkInSafetyAnswerApplies(true, otherQuestionOpen) and checkInSafetyAnswer(true, true, false) == AnswerReport
+
+pure def lawRefusalWithAChoiceActsOnNobody(wantsReport: bool, wantsBlock: bool): bool =
+  checkInSafetyAnswer(wantsReport, wantsBlock, true) != AnswerReport and checkInSafetyAnswer(wantsReport, wantsBlock, true) != AnswerBlock
+
+pure def lawBareAnswerWaitsForTheOtherQuestion(otherQuestionOpen: bool): bool =
+  checkInSafetyAnswerApplies(false, otherQuestionOpen) == not(otherQuestionOpen)
+
+pure def lawUnclearAnswerActsOnNobody(declines: bool): bool =
+  checkInSafetyAnswer(false, false, declines) != AnswerReport and checkInSafetyAnswer(false, false, declines) != AnswerBlock
+
+pure def lawLateAnswerLapses(questionAt: int, answerAt: int): bool =
+  not(checkInSafetyAnswerCurrent(questionAt, answerAt, questionAt + checkInSafetyAnswerMs + 1))
+
+pure def lawEarlyAnswerIsNotTheAnswer(questionAt: int, answerHandledAt: int): bool =
+  not(checkInSafetyAnswerCurrent(questionAt, questionAt - 1, answerHandledAt))
 ```

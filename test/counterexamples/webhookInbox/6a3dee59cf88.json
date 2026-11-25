@@ -1,0 +1,20 @@
+{
+  "origin": "stop row failing after six attempts stays pending",
+  "seed": 1,
+  "trace": [
+    [
+      "sender-a",
+      {
+        "type": "startWebhook",
+        "attempts": 6,
+        "stopCommand": true
+      }
+    ],
+    [
+      "sender-a",
+      {
+        "type": "recordFailure"
+      }
+    ]
+  ]
+}

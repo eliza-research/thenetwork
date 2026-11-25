@@ -2,6 +2,8 @@
 import * as M from "./cloudSignIn.js";
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
 export const cloudClockSkewMs = M.cloudClockSkewMs;
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
+export const cloudProofLifeMs = M.cloudProofLifeMs;
 /** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) @throws {never} */
 export const validHandoff = M.validHandoff;
 /** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) @throws {never} */
@@ -19,6 +21,8 @@ export function lawAnExpiredHandoffIsNeverLive(expiresAt) { return M.lawAnExpire
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
 export function cloudIssuedAtWithinSkew(issuedAtMs, asOf) { return M.cloudIssuedAtWithinSkew(issuedAtMs, asOf); }
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
+export function cloudProofLifeValid(issuedAtMs, expiresAtMs) { return M.cloudProofLifeValid(issuedAtMs, expiresAtMs); }
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
 export function cloudSessionStartedAt(issuedAtMs, asOf) { return M.cloudSessionStartedAt(issuedAtMs, asOf); }
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
 export function cloudIdentityTimesValid(issuedAtMs, expiresAtMs, asOf) { return M.cloudIdentityTimesValid(issuedAtMs, expiresAtMs, asOf); }
@@ -32,6 +36,10 @@ export function recordExchange(signIn, exchangeAccepted) { return M.recordExchan
 export function canCheckIdentity(signIn) { return M.canCheckIdentity(signIn); }
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
 export function checkIdentity(signIn, identityAvailable, identityValid) { return M.checkIdentity(signIn, identityAvailable, identityValid); }
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
+export function lawCloudProofLivesAtMostOneHour(issuedAtMs, asOf) { return M.lawCloudProofLivesAtMostOneHour(issuedAtMs, asOf); }
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
+export function lawOneHourProofIsAcceptedWhenIssued(issuedAtMs) { return M.lawOneHourProofIsAcceptedWhenIssued(issuedAtMs); }
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
 export function lawCloudIdentityNeedsFutureExpiry(issuedAtMs, asOf) { return M.lawCloudIdentityNeedsFutureExpiry(issuedAtMs, asOf); }
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) @throws {never} */
@@ -56,6 +64,14 @@ export function sometimesRejectsCallback(signIn) { return M.sometimesRejectsCall
 export function sometimesDeniesSignIn(signIn) { return M.sometimesDeniesSignIn(signIn); }
 /** Story: Use my Cloud identity to sign in to this app / A completed callback passed each issuance check (spec/cloudSignIn.md) @throws {never} */
 export function sometimesCloudUnavailable(signIn) { return M.sometimesCloudUnavailable(signIn); }
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) @throws {never} */
+export function callbackFailureCode(failureStatus) { return M.callbackFailureCode(failureStatus); }
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) @throws {never} */
+export function failedCallbackReturnsToPage(page) { return M.failedCallbackReturnsToPage(page); }
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) @throws {never} */
+export function lawFailureCodeIsOneOfThree(failureStatus) { return M.lawFailureCodeIsOneOfThree(failureStatus); }
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) @throws {never} */
+export function lawJoinAndConnectorFailuresStayJson(page) { return M.lawJoinAndConnectorFailuresStayJson(page); }
 /** Do the rules allow this event in this state? @throws {never} */
 export function enabled(current, event) { return M.enabled(current, event); }
 /** Apply an event. An event the rules do not allow leaves the state unchanged. @throws {never} */

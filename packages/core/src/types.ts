@@ -94,6 +94,12 @@ export interface Member {
   connectedSources?: ConnectedSourceSummary[];
   /** Apps this person has a membership in (absent = ["ntwrk"]). */
   apps?: AppId[];
+  birthKey?: number;
+  birthExact?: boolean;
+  ageConflict?: boolean;
+  teenBarred?: boolean;
+  teenHeld?: boolean;
+  teenReady?: boolean;
 }
 export type EdgeType =
   | "invited_by" | "vouched_for" | "knows" | "met" | "introduced" | "helped" | "hosted"
@@ -146,4 +152,5 @@ export interface WorldSnapshot {
   now: number; members: Member[]; facets: Facet[]; intents: Intent[];
   presence: Presence[]; edges: Edge[]; recentProposals: Proposal[];
   events?: NetworkEvent[];
+  teenIntros?: boolean;
 }

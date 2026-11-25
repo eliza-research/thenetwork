@@ -4,7 +4,7 @@
 // simulated world (network.test.ts) stays the end-to-end check.
 import { DAY, HOUR, SimClock, type Category, type Edge, type Facet, type Intent, type Member, type MemberId, type ParticipationState, type Presence, type Proposal } from "@thenetwork/core";
 import type { MeetingReport, NetworkContext, SimMessage, SimMeta } from "@thenetwork/sim";
-import { ConsentNetwork, type NetworkOptions } from "../src/index.ts";
+import { ConsentNetwork, simulatedReviewJudge, type NetworkOptions } from "../src/index.ts";
 
 /** 2026-10-05 13:00 New York. */
 export const START = Date.UTC(2026, 9, 5, 17);
@@ -39,7 +39,7 @@ export class Mini {
     for (const s of specs) this.add(s);
     // No engine opportunities unless a test asks for them: flows here are driven explicitly.
     // The mini world is one market (NYC) unless a test names others.
-    this.opts = { seed: 1, review: "auto", maxNewPerDay: 0, ...opts, engine: { cities: ["nyc"], ...opts.engine } };
+    this.opts = { seed: 1, inlineJudge: simulatedReviewJudge({ exceptions: false }), maxNewPerDay: 0, ...opts, engine: { cities: ["nyc"], ...opts.engine } };
     this.net = new ConsentNetwork(this.opts);
     this.net.init(this.ctx());
   }
@@ -93,6 +93,15 @@ export class Mini {
   /** Join and finish onboarding (the welcome question, then availability and format). */
   async onboard(...ids: MemberId[]) {
     for (const id of ids) for (const a of ["hi!", "More time outdoors.", "Weekends, mostly.", "One-on-one is good."]) await this.say(id, a);
+  }
+
+  async onboardStatingThirty(...ids: MemberId[]) {
+    for (const id of ids) for (const a of ["hi!", "I'm 30.", "More time outdoors.", "Weekends, mostly.", "One-on-one is good."]) await this.say(id, a);
+  }
+
+  verify(...ids: MemberId[]) {
+    for (const id of ids) this.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
+      tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
   }
 
   /** Advance time in hourly ticks (the world's job tick). */

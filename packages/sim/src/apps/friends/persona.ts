@@ -4,16 +4,26 @@
 // results and safety cues the Network itself observed. See docs/results/2026-10-08-friends-pack.md.
 import { requireSimulationCount } from "../../input.ts";
 import type { MemberId } from "@thenetwork/core";
-import { ACTIVITIES } from "@thenetwork/engine/src/packs/network/activities.ts";
+import { ACTIVITIES, activityAllAges, type ActivityType } from "@thenetwork/engine/src/packs/network/activities.ts";
 import { FRIENDS_EXCLUDED_ACTIVITIES, FRIENDS_SLOTS, NEIGHBORHOODS, type FriendsSlot, type Neighborhood } from "@thenetwork/engine/src/packs/friends/index.ts";
-import { Rng, clamp01, hash32 } from "@thenetwork/core";
+import { Rng, canBeMatched, clamp01, earliestDayKeyOf, fromLocal, hash32 } from "@thenetwork/core";
+import { birthKeyForAgeOn } from "../../generator.ts";
 import { FIRST_NAMES, LAST_NAMES } from "../../taxonomy.ts";
 import type { RichnessTier } from "../../sources.ts";
 import { plantLatent, type PlantedMark, type PlantedSpec } from "../../planted.ts";
+import { friendsMutuallyOpen, type FriendStatement } from "../../../../core/src/generated/mutualOpenness.ts";
+import { teenFriendMaxAge } from "../../../../core/src/generated/friendIntroAge.ts";
 
 export type { RichnessTier };
 export const FRIEND_ACTIVITIES = ACTIVITIES.filter(a => !FRIENDS_EXCLUDED_ACTIVITIES.has(a.id));
-export const ACTIVITY_IDS = FRIEND_ACTIVITIES.map(a => a.id);
+export const ADULT_PLAN_ACTIVITIES = FRIEND_ACTIVITIES.filter(a => a.adultPlans);
+export const TEEN_PLAN_ACTIVITIES = FRIEND_ACTIVITIES.filter(activityAllAges);
+export const ACTIVITY_IDS = ADULT_PLAN_ACTIVITIES.map(a => a.id);
+interface ActivityPool { activities: readonly ActivityType[]; ids: readonly string[]; families: readonly string[] }
+const poolOf = (activities: readonly ActivityType[]): ActivityPool => ({ activities, ids: activities.map(a => a.id), families: [...new Set(activities.map(a => a.family))] });
+const ADULT_POOL = poolOf(ADULT_PLAN_ACTIVITIES), TEEN_POOL = poolOf(TEEN_PLAN_ACTIVITIES);
+const poolFor = (claimedAge: number): ActivityPool => (canBeMatched(claimedAge) ? ADULT_POOL : TEEN_POOL);
+export const planActivitiesFor = (claimedAge: number): readonly ActivityType[] => poolFor(claimedAge).activities;
 export const SLOTS = FRIENDS_SLOTS;
 export type { FriendsSlot };
 
@@ -25,6 +35,8 @@ export type VerifyResult = "passed" | "failed" | "pending";
 
 export interface FriendsHidden {
   trueAge: number;
+  trueBirthKey: number;
+  poser?: true;
   /** True age 13-17 (hidden flag; the snapshot carries only the claimed age). */
   isMinor: boolean;
   lifeStage: LifeStage;
@@ -59,6 +71,8 @@ export interface FriendsHidden {
 
 export interface FriendsStated {
   claimedAge: number;
+  birthKey: number;
+  birthExact: boolean;
   home: string; often: string[];
   lifeStage: LifeStage;
   /** Activities they say they'd love to do with new people (ids). */
@@ -70,6 +84,19 @@ export interface FriendsStated {
   newToCity: boolean;
   /** Outcomes of the onboarding checks (selfie liveness; facial age estimation with an ID fallback under 25). */
   verify: { liveness: VerifyResult; age: VerifyResult };
+  gender?: FriendGender;
+  openGender?: "women" | "men";
+}
+
+type FriendGender = "woman" | "man" | "nonbinary";
+const FRIEND_GENDER_SHARES = { unstated: 0.15, nonbinary: 0.01, woman: 0.53, womenOnly: 0.2, menOnly: 0.08 };
+function drawFriendGender(seed: number | string, i: number, statedOpenness: boolean): Pick<FriendsStated, "gender" | "openGender"> {
+  const S = FRIEND_GENDER_SHARES, r = new Rng(hash32("friends-gender", seed, i));
+  const u = r.next();
+  const gender: FriendGender = u < S.nonbinary ? "nonbinary" : u < S.nonbinary + S.woman ? "woman" : "man";
+  const stated = !r.bool(S.unstated);
+  const openGender = !statedOpenness ? undefined : gender === "woman" && r.bool(S.womenOnly) ? "women" as const : gender === "man" && r.bool(S.menOnly) ? "men" as const : undefined;
+  return { ...(stated ? { gender } : {}), ...(openGender ? { openGender } : {}) };
 }
 
 export interface FriendsPersona { id: MemberId; name: string; hidden: FriendsHidden; stated: FriendsStated }
@@ -80,6 +107,8 @@ export interface FriendsGenOptions {
   n?: number;
   /** Share of 13-17 year olds who join (default 0.04); share of them who claim 18+ (default 0.4). */
   minorShare?: number; minorLiarShare?: number;
+  adultPoserShare?: number;
+  teenBirthDates?: boolean;
   /** Adult adversary shares (default romance_seeker 0.025, mlm 0.015, bot 0.02, harasser 0.01). */
   adversaryShares?: Partial<Record<Exclude<AdversaryKind, "age_liar">, number>>;
   richnessMix?: Partial<Record<RichnessTier, number>>;
@@ -89,19 +118,24 @@ export interface FriendsGenOptions {
    * truth is on `hidden.planted`.
    */
   planted?: PlantedSpec;
+  statedOpenness?: boolean;
 }
 
 export const FRIENDS_DEFAULTS = {
-  n: 400, minorShare: 0.04, minorLiarShare: 0.4,
+  n: 400, minorShare: 0.04, minorLiarShare: 0.4, adultPoserShare: 0,
   adversaryShares: { romance_seeker: 0.025, mlm: 0.015, bot: 0.02, harasser: 0.01 } as Record<Exclude<AdversaryKind, "age_liar">, number>,
   richnessMix: { minimal: 0.15, light: 0.25, medium: 0.3, rich: 0.2, very_rich: 0.1 } as Record<RichnessTier, number>,
 };
 
 /** Activities most people enjoy at least moderately (food with others). */
 export const UNIVERSAL: ReadonlySet<string> = new Set(["restaurant_dinner", "coffee_crawl"]);
-const FAMILIES = [...new Set(FRIEND_ACTIVITIES.map(a => a.family))];
 const WORK_HUBS = ["midtown", "financial_district", "flatiron", "chelsea", "downtown_brooklyn", "long_island_city", "soho", "murray_hill"].filter(h => NEIGHBORHOODS.some(n => n.id === h));
 const byId = new Map(NEIGHBORHOODS.map(n => [n.id, n]));
+
+export const NYC_TZ = "America/New_York";
+export const FRIENDS_WORLD_DATE = { y: 2026, m: 10, d: 12 };
+export const FRIENDS_WORLD_START = fromLocal(FRIENDS_WORLD_DATE.y, FRIENDS_WORLD_DATE.m, FRIENDS_WORLD_DATE.d, 0, NYC_TZ);
+export const FRIENDS_START_DAY_KEY = earliestDayKeyOf(FRIENDS_WORLD_START);
 
 function drawAge(r: Rng): number {
   return r.bool(0.75) ? Math.max(18, Math.min(60, Math.round(r.normal(30, 6)))) : r.int(18, 68);
@@ -119,6 +153,7 @@ export function generateFriendsPersonas(o: FriendsGenOptions): FriendsPersona[] 
   const n = o.n ?? FRIENDS_DEFAULTS.n;
   requireSimulationCount(n, "Friends population", 0);
   const minorShare = o.minorShare ?? FRIENDS_DEFAULTS.minorShare, liarShare = o.minorLiarShare ?? FRIENDS_DEFAULTS.minorLiarShare;
+  const poserShare = o.adultPoserShare ?? FRIENDS_DEFAULTS.adultPoserShare;
   const adv = { ...FRIENDS_DEFAULTS.adversaryShares, ...(o.adversaryShares ?? {}) };
   const mix = { ...FRIENDS_DEFAULTS.richnessMix, ...(o.richnessMix ?? {}) };
   const root = new Rng(hash32("friends-personas", o.seed));
@@ -137,16 +172,22 @@ export function generateFriendsPersonas(o: FriendsGenOptions): FriendsPersona[] 
       const u = r.next(); let acc = 0;
       for (const k of ["romance_seeker", "mlm", "bot", "harasser"] as const) { acc += adv[k]; if (u < acc) { adversary = k; break; } }
     }
-    return { i, r, id, name, isMinor, trueAge, adversary };
+    const br = new Rng(hash32("friends-birth", o.seed, i));
+    const poserCoin = br.next();
+    const poser = !isMinor && !adversary && trueAge >= 19 && trueAge <= 40 && poserCoin < poserShare;
+    const trueBirthKey = birthKeyForAgeOn(trueAge, FRIENDS_START_DAY_KEY, br);
+    return { i, r, br, id, name, isMinor, trueAge, trueBirthKey, poser, adversary };
   });
   const latent = o.planted
     ? plantLatent({ topicsPerCircle: 3, interestsPerMember: [2, 4], ...o.planted },
-      drafts.map(d => ({ id: d.id, market: "nyc", eligible: !d.isMinor && !d.adversary })), ACTIVITY_IDS, o.seed)
+      drafts.map(d => ({ id: d.id, market: "nyc", eligible: !d.isMinor && !d.adversary && !d.poser })), ACTIVITY_IDS, o.seed)
     : undefined;
   const out: FriendsPersona[] = [];
-  for (const { i, r, id, name, isMinor, trueAge, adversary } of drafts) {
+  for (const { i, r, br, id, name, isMinor, trueAge, trueBirthKey, poser, adversary } of drafts) {
     const planted = latent?.marks.get(id);
-    const claimedAge = adversary === "age_liar" ? r.int(18, 21) : trueAge;
+    const liarAge = adversary === "age_liar" ? r.int(18, 21) : trueAge;
+    const claimedAge = poser ? br.int(14, 17) : liarAge;
+    const statedBirthKey = claimedAge === trueAge ? trueBirthKey : birthKeyForAgeOn(claimedAge, FRIENDS_START_DAY_KEY, br);
     const lifeStage = isMinor ? "student" : lifeStageFor(trueAge, r);
     const homeH: Neighborhood = r.weighted(hoods);
     const often: string[] = [];
@@ -154,13 +195,14 @@ export function generateFriendsPersonas(o: FriendsGenOptions): FriendsPersona[] 
     if (r.bool(0.35)) { const same = NEIGHBORHOODS.filter(x => x.zone === homeH.zone && x.id !== homeH.id); if (same.length) often.push(r.pick(same).id); }
     const oftenU = [...new Set(often.filter(x => x !== homeH.id))];
     // Activities: 2-3 favourite families lift every activity in them; loves = like >= 0.65 (2-6 of them).
-    const favs = new Set(r.sample(FAMILIES, r.int(2, 3)));
+    const pool = poolFor(claimedAge);
+    const favs = new Set(r.sample(pool.families, r.int(2, 3)));
     const likes: Record<string, number> = {};
-    for (const a of FRIEND_ACTIVITIES) likes[a.id] = clamp01(r.normal(0.32, 0.17) + (favs.has(a.family) ? 0.28 : 0) + (UNIVERSAL.has(a.id) ? 0.2 : 0) + (lifeStage === "parent" && a.family === "civic" ? 0.1 : 0) - (a.intensity === 2 && trueAge > 50 ? 0.15 : 0));
+    for (const a of pool.activities) likes[a.id] = clamp01(r.normal(0.32, 0.17) + (favs.has(a.family) ? 0.28 : 0) + (UNIVERSAL.has(a.id) ? 0.2 : 0) + (lifeStage === "parent" && a.family === "civic" ? 0.1 : 0) - (a.intensity === 2 && trueAge > 50 ? 0.15 : 0));
     // Planted: the circle topics are exactly the loves (like >= 0.65); every other activity stays below.
-    if (planted) for (const a of ACTIVITY_IDS) likes[a] = planted.topics.includes(a) ? Math.max(likes[a]!, 0.7) : Math.min(likes[a]!, 0.64);
-    let loves = ACTIVITY_IDS.filter(a => likes[a]! >= 0.65);
-    if (loves.length < 2) { const top = [...ACTIVITY_IDS].sort((x, y) => likes[y]! - likes[x]!).slice(0, 2); for (const t of top) likes[t] = Math.max(likes[t]!, 0.68); loves = top; }
+    if (planted) for (const a of pool.ids) likes[a] = planted.topics.includes(a) ? Math.max(likes[a]!, 0.7) : Math.min(likes[a]!, 0.64);
+    let loves = pool.ids.filter(a => likes[a]! >= 0.65);
+    if (loves.length < 2) { const top = [...pool.ids].sort((x, y) => likes[y]! - likes[x]!).slice(0, 2); for (const t of top) likes[t] = Math.max(likes[t]!, 0.68); loves = top; }
     if (loves.length > 6) loves = [...loves].sort((x, y) => likes[y]! - likes[x]!).slice(0, 6);
     const energy = clamp01(r.range(0.08, 0.95));
     const groupPref: GroupPref = energy < 0.38 ? r.weighted([["one_to_one", 0.4], ["either", 0.45], ["group", 0.15]] as const)
@@ -177,7 +219,7 @@ export function generateFriendsPersonas(o: FriendsGenOptions): FriendsPersona[] 
     const tolerance = Math.max(12, Math.round(statedTol + r.normal(0, 5)));
     const richness = r.weighted(Object.entries(mix) as [RichnessTier, number][]);
     const hidden: FriendsHidden = {
-      trueAge, isMinor, lifeStage, home: homeH.id, often: oftenU, likes, loves, energy, groupPref, slotFree, shock: 0.15,
+      trueAge, trueBirthKey, ...(poser ? { poser: true as const } : {}), isMinor, lifeStage, home: homeH.id, often: oftenU, likes, loves, energy, groupPref, slotFree, shock: 0.15,
       appetite, loneliness, newToCity,
       flakiness: Math.min(0.6, r.logNormal(0.08, 0.7)), replyProb: clamp01(r.normal(0.85, 0.1)), honesty: clamp01(r.normal(0.9, 0.07)),
       tolerance, travelCost: Math.max(0.05, r.normal(0.35, 0.12)),
@@ -191,31 +233,24 @@ export function generateFriendsPersonas(o: FriendsGenOptions): FriendsPersona[] 
     // Stated side: true loves (85% each), one aspirational activity (40%), noisy energy, free slots, tolerance.
     const sr = new Rng(hash32("friends-stated", o.seed, i));
     const stated = loves.filter(() => sr.bool(0.85));
-    if (sr.bool(0.4)) { const asp = ACTIVITY_IDS.filter(a => !loves.includes(a) && likes[a]! >= 0.35); if (asp.length) stated.push(sr.pick(asp)); }
+    if (sr.bool(0.4)) { const asp = pool.ids.filter(a => !loves.includes(a) && likes[a]! >= 0.35); if (asp.length) stated.push(sr.pick(asp)); }
     // Dinner and coffee are near-universal ways to meet people (Timeleft runs on dinners alone): half
     // the members also name one they enjoy, even when it is not among their favourites.
-    if (sr.bool(0.5)) { const u = [...UNIVERSAL].filter(a => likes[a]! >= 0.5 && !stated.includes(a)); if (u.length) stated.push(sr.pick(u)); }
+    if (sr.bool(0.5)) { const u = [...UNIVERSAL].filter(a => (likes[a] ?? 0) >= 0.5 && !stated.includes(a)); if (u.length) stated.push(sr.pick(u)); }
     if (!stated.length) stated.push(loves[0]!);
     const usuallyFree = SLOTS.filter((_, k) => (slotFree[k]! >= 0.5 ? sr.bool(0.9) : sr.bool(0.08)));
     const verify = verification(sr, hidden, claimedAge);
     out.push({
       id, name, hidden,
       stated: {
-        claimedAge, home: homeH.id, often: oftenU, lifeStage, activities: [...new Set(stated)], energy: energyBucket(clamp01(energy + sr.normal(0, 0.15))),
-        groupPref, usuallyFree, maxTravel: statedTol, newToCity, verify,
+        claimedAge, birthKey: statedBirthKey, birthExact: o.teenBirthDates !== false || claimedAge > teenFriendMaxAge, home: homeH.id, often: oftenU, lifeStage: poser ? "student" : lifeStage, activities: [...new Set(stated)], energy: energyBucket(clamp01(energy + sr.normal(0, 0.15))),
+        groupPref, usuallyFree, maxTravel: statedTol, newToCity, verify, ...drawFriendGender(o.seed, i, o.statedOpenness === true),
       },
     });
   }
   return out;
 }
 
-/**
- * Onboarding checks (observable outcomes, not labels). Liveness: people pass 95%, 4% never finish
- * (pending), 1% fail; bots fail 85% (10% spoof it). Age assurance: a facial age estimate (true age +
- * N(0, 2.5)); 25+ passes; under 25 the member is asked for an ID: real adults finish it 90% of the
- * time, lying minors fail 97% (3% get through with a borrowed ID). Declared minors are never matched;
- * their checks stay pending.
- */
 function verification(r: Rng, h: FriendsHidden, claimedAge: number): FriendsStated["verify"] {
   if (claimedAge < 18) return { liveness: "pending", age: "pending" };
   const u = r.next();
@@ -229,15 +264,13 @@ function verification(r: Rng, h: FriendsHidden, claimedAge: number): FriendsStat
 }
 
 export const hoodOf = (id: string) => byId.get(id)!;
-/**
- * Uniform [0, 1) from any key parts. hash32 (FNV-1a) alone barely moves its high bits when only the
- * last part changes by one character (week 3 vs week 4), so draws keyed that way are correlated; the
- * murmur3 finalizer fixes the avalanche.
- */
-export function h01(...parts: (string | number)[]): number {
-  let h = hash32(...parts);
-  h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16;
-  return (h >>> 0) / 4294967296;
-}
 /** Real members: true adults who are not adversaries (per-member metrics use these). */
-export const isReal = (p: FriendsPersona) => !p.hidden.isMinor && !p.hidden.adversary;
+export const isReal = (p: FriendsPersona) => !p.hidden.isMinor && !p.hidden.adversary && !p.hidden.poser;
+
+function statedFriend(p: FriendsPersona): FriendStatement {
+  const G = { woman: "GenderWoman", man: "GenderMan", nonbinary: "GenderNonbinary" } as const;
+  const O = { women: "FriendsWithWomen", men: "FriendsWithMen" } as const;
+  return { friendGender: p.stated.gender ? G[p.stated.gender] : "GenderUnstated", friendOpenness: p.stated.openGender ? O[p.stated.openGender] : "FriendsWithAnyone" };
+}
+export const friendsStatedOpen = (a: FriendsPersona, b: FriendsPersona): boolean => friendsMutuallyOpen(statedFriend(a), statedFriend(b));
+export const openGroupOf = (p: FriendsPersona): string => (p.stated.openGender === "women" ? "women only" : p.stated.openGender === "men" ? "men only" : "anyone");

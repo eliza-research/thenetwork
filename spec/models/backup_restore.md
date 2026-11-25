@@ -8,7 +8,7 @@ An operator needs to restore a backup into a scratch database without modifying 
 
 Check target placement, manifest validation, decryption, and privilege flags. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [database restore spec](../databaseRestore.md) generates the current restore command decisions. This imported model includes other branch behavior for server identity and cleanup. The current command uses the existing host and port comparison and leaves a failed scratch restore for operator cleanup.
+The [database restore spec](../databaseRestore.md) generates the current restore command decisions. This imported model includes other branch behavior for server identity and cleanup. The current command uses the existing host and port comparison and leaves a failed scratch restore for operator cleanup. The privacy replay after the count check (erasures, STOPs, leaves and bans of the source database after the backup) and the recovery's refusal without a replay source or a stated loss are outside this model: the generated spec has them, and `packages/network/test/privacy-support.integration.test.ts` covers them. The queued items run at backend start, each claimed by one runner, and an item that cannot run yet stays open (spec/databaseRestore.md, "The backend runs the queued replay at start, and each item by one runner until it holds"); a STOP after the backup runs the member STOP path on each membership it still covers. An erasure after the backup is found in the append-only erasure ledger (a new join of the same number revives the tombstone but keeps the ledger row), and the backend runs the queue only after the connector forget and erasure hooks are registered.
 
 Imported from `quint/backup_restore.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -174,7 +174,7 @@ module backup_restore {
   // restore.ts header "roles.sql runs only with --roles, and only on a server that is not the source" (runsRoles),
   // as the code can see it: the backup names its source, and the target host string is another one.
   val rolesOnlyOffRecordedSource = created.forall(c => c.rolesRan implies (c.sourceRecorded and not(c.hostIsSource)))
-  // SD-165 fix (restore.ts:48-53, manifest.source.systemId): when the backup records the cluster
+  // SD-165 fix (restore.ts, manifest.source.systemId): when the backup records the cluster
   // identifier, roles.sql never runs on the source server, under any host name.
   val rolesNeverOnSourceWithSystemId = created.forall(c => (c.rolesRan and c.systemIdRecorded) implies c.server != "S")
   // docs/deploy.md 8.2 "The drill (default) restores with --no-owner --no-privileges" (privilegeFlags).

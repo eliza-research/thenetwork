@@ -39,7 +39,7 @@ import { detectKeyword, leaveTarget } from "../../platform/src/consent.ts";
 export function isComplianceText(text: unknown): boolean {
   return typeof text === "string" && (detectKeyword(text) !== undefined || leaveTarget(text) !== undefined);
 }
-const isStopText = (text: unknown) => typeof text === "string" && ((k => k === "stop" || k === "stop_all")(detectKeyword(text)));
+export const isStopText = (text: unknown) => typeof text === "string" && ((k => k === "stop" || k === "stop_all")(detectKeyword(text)));
 
 export interface InboxOptions {
   sql: SQL;
@@ -108,8 +108,6 @@ export class Inbox {
         or (${ordinaryTurnMustWait(keyword)} and (status='pending' or (status='unresolved' and coalesce(lease_at,arrived_at)>${new Date(now - unresolvedBlockMs)})))))
       on conflict do nothing returning id`;
       if (!rows.length && keyword) {
-        // A compliance turn that never answered (its worker died, or staff resolved it) runs again on the retry of
-        // the same request: the consent ledger and the member's unit are idempotent per message.
         rows = await tx`update platform.inbound set status='processing',lease_at=${new Date(now)},sender_hash=${senderHash},compliance=true
           where id=${id} and request_hash=${requestHash} and status='unresolved' and handled_at is null and response is null
           and not exists(select 1 from platform.inbound where sender_hash=${senderHash} and status='processing' and compliance)
@@ -163,10 +161,6 @@ export class Inbox {
     }
   }
 
-  /**
-   * A claimed signed STOP or STOP ALL cancels the sender's ordinary legacy-webhook rows received before it, in the
-   * claim transaction (under the sender lock), as a legacy STOP does: a waiting row is never acted on after the STOP.
-   */
   private async stopCancels(tx: SQL, input: TurnRequest, claimed: unknown[]): Promise<void> {
     if (!claimed.length || !isStopText(input.text)) return;
     const sender = normalizeAddress(input.from);
@@ -263,6 +257,12 @@ export class Inbox {
   }
 
 
+  async answerOpenReplay(tx: SQL, id: string, reply: CollectedReply, response: TurnResponse): Promise<boolean> {
+    const rows = await tx`update platform.inbound set response=${response}::jsonb,replies=(${{items: [reply]}}::jsonb->'items')
+      where id=${id} and status='done' and response->>'outcome'='open' and replies='[]'::jsonb returning id`;
+    return rows.length === 1;
+  }
+
   /** Store one inbound message and handle what waits for its sender. Returns this message's outcome, "duplicate", or "retry_later". */
   async receive(ev: InboundMessage, app?: string): Promise<string> {
     const id = `msg:${ev.channel}:${ev.messageId}`;
@@ -290,18 +290,15 @@ export class Inbox {
     return n;
   }
 
-  /** Retention: handled rows, and signed turns that lost their worker, older than `before` (a provider retries for hours, not weeks). */
+  /** Retention: handled rows older than `before` (a provider retries for hours, not weeks). */
   async purge(before: number): Promise<number> {
     const sealed = await this.o.sql`update platform.inbound set status='unresolved',response=null,replies='[]'::jsonb,receipt=null,receipt_hash=null,action_receipts='{}'::jsonb,
       sender=null,event=null,sender_hash=null,member_id=null,app_id=null
       where request_hash is not null and status='done' and handled_at<${new Date(before)} returning id`;
-    // A signed turn that lost its worker and whose sender never wrote again (the claim's sweep never ran for it):
-    // an unresolved tombstone, with nothing about the sender kept past the retention window.
     const orphans = await this.o.sql`update platform.inbound set status='unresolved',sender=null,event=null,sender_hash=null,member_id=null,app_id=null,replies='[]'::jsonb
       where request_hash is not null and status='processing' and coalesce(lease_at,arrived_at)<${new Date(before)} returning id`;
     const removed = await this.o.sql`delete from platform.inbound where request_hash is null and status not in ('pending','processing','unresolved') and arrived_at < ${new Date(before)} returning id`;
-    // Signed-turn tombstones keep replays refused for a while, then go: platform.inbound does not grow without bound.
-    const tombstones = await this.o.sql`delete from platform.inbound where request_hash is not null and status='unresolved' and arrived_at < ${new Date(before - turnTombstoneKeepMs)} returning id`;
+    const tombstones = await this.o.sql`delete from platform.inbound where request_hash is not null and status='unresolved' and sender_hash is null and arrived_at < ${new Date(before - turnTombstoneKeepMs)} returning id`;
     return sealed.length + orphans.length + removed.length + tombstones.length;
   }
 

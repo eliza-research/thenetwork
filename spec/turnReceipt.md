@@ -79,3 +79,5 @@ pure def stepReceiptNeedsAdmission(before: TurnReceipt, via: str, after: TurnRec
 pure def sometimesCanStoreReceipt(receipt: TurnReceipt): bool = receipt.phase == Stored
 pure def sometimesCanReplayReceipt(receipt: TurnReceipt): bool = receipt.phase == Replayed
 ```
+
+Conformance. test/fixtures/turnReceiptMachineWorker.ts sends each receipt through the signed POST /internal/turn-receipt of a staging service with a route authority. The shell does all steps of one receipt in one request, so the worker keeps the facts of the accepted steps and makes a new handled STOP turn for each observation. The worker gives the accepted facts and, to each later step, the facts that make that step fail. The step that answers is the phase. A failure of a step without accepted facts is that step waiting; a failure of a step with accepted facts is its end state. To change the authority while the receipt waits, the worker holds the turn row lock until the request waits on it.

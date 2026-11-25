@@ -1,17 +1,4 @@
-// slopPack: slop.date (dating) on The Network's shared engine (docs/results/2026-10-08-slop-pack.md).
-//
-//   geo        radius / zip / multi-city, mutual radius d <= min(rA, rB) on coarse cells, distance bands
-//   filters    mutual gender & orientation inclusion, age ranges both ways, stated dealbreakers,
-//              safety cues and records -> review hold; no race filter (no such field)
-//   matching   the Date lane of the match core (generators.ts slopVectors): bounded candidate search,
-//              the pack value = each side's compatibility estimate (score.ts), the private appearance
-//              rating = the lane standing (parity band); ratings are NEVER shared (appearance.ts)
-//   selection  weekly greedy assignment over the lane's edges (assign.ts), lane capacity, congestion
-//              caps, the exposure floor, receptivity pacing, "your turn" limit
-//   consent    probe first (wanter first), then a booked first date the agent plans; romance ships alone
-//   asks       unknown age range, distance or orientation -> ask instead of proposing
-// Core invariants (minors never matched, blocks win, hard filters before scoring, LeakGuard,
-// determinism, consent before reveal) are the engine's and cannot be loosened here.
+import { canBeMatched } from "@thenetwork/core";
 import {
   compatibilityQuestionDue, compatibilityTypeQuestionDue, requiredQuestionDue, slopQuestionSubject, slopQuestionTrack, widerRadiusQuestion, wideningPoolEligible,
 } from "../../../../core/src/generated/engineAsks.ts";
@@ -29,12 +16,8 @@ import { missingFields, needsBasics, reviewReason, SLOP_CANDIDATE_PRE_RULES, SLO
 import { slopJudge } from "./judge.ts";
 import { distanceBand } from "./zips.ts";
 
-export const SLOP_PACK_VERSION = "slop-pack-2.0.0";
+const SLOP_PACK_VERSION = "slop-pack-2.0.0";
 
-/**
- * Engine config for slop.date runs (pass as runEngine's config; the pack travels in deps.pack).
- * The weights make the score the reciprocal value itself: NetValue = mutualBenefit x confidence.
- */
 export const SLOP_ENGINE_CONFIG: EngineConfigInput = {
   cities: ["sf", "nyc", "la"],
   timezones: { sf: "America/Los_Angeles", nyc: "America/New_York", la: "America/Los_Angeles" },
@@ -50,14 +33,12 @@ export const SLOP_ENGINE_CONFIG: EngineConfigInput = {
   personalGrowthAsHobby: false,
 };
 export const SLOP_ENGINE_DEFAULTS: EngineConfig = resolveConfig(SLOP_ENGINE_CONFIG);
-/** Attention: romance always ships alone (never in a digest); otherwise the shared v1.2 defaults. */
-export const SLOP_ATTENTION: AttentionConfig = { ...DEFAULT_ATTENTION, romanceInDigest: false };
+const SLOP_ATTENTION: AttentionConfig = { ...DEFAULT_ATTENTION, romanceInDigest: false };
 
 export function makeSlopPack(over: DeepPartial<SlopPackOptions> = {}): AppPack & { options: SlopPackOptions } {
   const o = slopOptions(over);
   const eligibility: EligibilityPolicy = {
     minMatchAge: 18,
-    // Founder decision: 13-17 may join slop.date but are never matched (the core rule stands).
     accountTiers: [{ minAge: 13, maxAge: 17, matchable: false, label: "member under 18 (never matched)" }],
     memberRules: slopMemberRules(o),
     pairRules: slopPairRules(o),
@@ -70,14 +51,12 @@ export function makeSlopPack(over: DeepPartial<SlopPackOptions> = {}): AppPack &
     version: SLOP_PACK_VERSION,
     options: o,
     ontology: {
-      lanes: [{ id: SLOP_LANE, adultOnly: true, neverInPlans: true }],
+      lanes: [{ id: SLOP_LANE, minors: "never", neverInPlans: true }],
       contributorRoles: new Set(),
-      // Dating has no warm graph: a "friend of" never routes a date (and a minor never could).
       warmEdges: new Set(),
       funnelProbe: { lane: SLOP_LANE, role: "peer" },
       objectives: [{ id: "date", pattern: /\bdate|dating|romance\b/i, needs: [], interests: [], romance: true }],
       objectivesFor: () => [],
-      // Constraints are read from typed profiles (profile.ts); this view feeds the core's romance shape.
       constraints: fs => {
         const tags = fs.flatMap(f => f.tags);
         const dealbreakers = tags.filter(t => t.startsWith("slop:dealbreaker:")).map(t => t.slice(17));
@@ -99,15 +78,12 @@ export function makeSlopPack(over: DeepPartial<SlopPackOptions> = {}): AppPack &
     generators: slopGenerators(o),
     vectors: slopVectors(o),
     scoring: {
-      // Dating carries social risk for both people; the score stays the reciprocal value (weight 0).
       socialRisk: (_c, v) => v + 0.1,
     },
     selection: {
       assign: (w, scored, ctx) => slopAssign(o, w, scored, ctx),
       askQuestions: SLOP_ASK_QUESTIONS,
       extraAsksEnabled: () => o.asks || o.compatAsks,
-      // Ask instead of proposing: unknown orientation, age range or distance (holds the member back
-      // until answered, via the needs_answer rule); goal / dealbreakers / basics (does not hold back).
       extraAsks: (w, id, _mi, lastAsk, add) => {
         const p = slopProfiles(w.input).get(id);
         if (!p || !slopQuestionSubject(p.adult, p.optedIn, p.paused, w.holds.has(id)) || reviewReason(p, o)) return;
@@ -122,15 +98,12 @@ export function makeSlopPack(over: DeepPartial<SlopPackOptions> = {}): AppPack &
         }
         if (wideningPoolEligible(o.widen.enabled, dateCandidateCount(w, id), o.widen.maxDegree)
           && widerRadiusQuestion(limitMiles(p, o) ?? Infinity, o.widen.miles, !!p.askCounts.slop_widen)) add("slop_widen", intent?.id);
-        // Compatibility questions (one message; never re-asked within 3 weeks): basics, then type.
         if (!o.compatAsks) return;
         if (needsBasics(p) && compatibilityQuestionDue(w.now - lastAsk(["slop_basics"]))) add("slop_basics", intent?.id);
         if (compatibilityTypeQuestionDue(o.typeAsk, !p.wants || !p.self, w.now - lastAsk(["slop_type"]))) add("slop_type", intent?.id);
       },
     },
     consent: {
-      // Founder decision: probe first (the member with the live want first, then the other on a yes),
-      // then the reveal is the booked first date the agent planned, with an easy opt-out.
       default: { kind: "probe_first", order: "wanter_first", reveal: "opt_out", anonymousProbe: true },
       byKind: {},
     },
@@ -138,14 +111,13 @@ export function makeSlopPack(over: DeepPartial<SlopPackOptions> = {}): AppPack &
       config: SLOP_ATTENTION,
       shipsAloneLane: SLOP_LANE,
       noWarmMentionLanes: [SLOP_LANE],
-      itemGate: (m, it) => (it.category === SLOP_LANE && (!(typeof m.age === "number" && Number.isFinite(m.age) && m.age >= 18) || !(m.categoriesOptIn ?? [SLOP_LANE]).includes(SLOP_LANE)) ? "romance_not_allowed" : null),
+      itemGate: (m, it) => (it.category === SLOP_LANE && (!canBeMatched(m.age) || !(m.categoriesOptIn ?? [SLOP_LANE]).includes(SLOP_LANE)) ? "romance_not_allowed" : null),
       probeAllowed: (lane, n) => lane === SLOP_LANE && n === 1,
       laneActivity: SLOP_LANE_ACTIVITY,
       probeText: (ctx, activity, attribute) => slopProbeText(ctx, activity, attribute),
     },
     explain: {
       facetPhrase: SLOP_FACET_PHRASE,
-      // One or two sentences from shareable facts only, framed as a guess; the distance as a band.
       leadBits: (w, c, me) => {
         const P = prof(w);
         const other = c.participants.find(x => x !== me)!;
@@ -164,15 +136,12 @@ export function makeSlopPack(over: DeepPartial<SlopPackOptions> = {}): AppPack &
         return bits;
       },
       safeFallback: SLOP_SAFE_FALLBACK,
-      // Lane words from slop's facet templates that say nothing about anyone (everyone here is dating).
       publicWords: ["date", "dates", "dating", "first", "they", "their", "they're", "theyre"],
     },
-    // Pass 2 dating rubric (judge.ts, from PR #12): runs only when the engine has an LLM; the no-LLM path is unchanged.
     judge: slopJudge(o),
   };
 }
 
-/** slop.date's pack with the tuned defaults. */
 export const slopPack = makeSlopPack();
 
 export { slopOptions, SLOP_DEFAULT_OPTIONS, type SlopPackOptions } from "./options.ts";
@@ -186,6 +155,6 @@ export { CLEF_FEATURES, CLEF_MODEL_IDS, CLEF_PRICE_PER_M_INPUT, CLEF_QUESTIONS, 
 export { DEFAULT_CLEF_WEIGHTS, loadClefWeights, validateClefWeights, type ClefWeights } from "./clefWeights.ts";
 export { biasMonitor, ratingQuintiles, type BiasReport, type MemberOutcome } from "./biasMonitor.ts";
 export { dateTags, firstOf, SLOP_GENERATOR, slopVectors } from "./generators.ts";
-export { extractSlopProfile, extractSlopProfileLLM, llmSlopReader, slopReaderPrompt, validateSlopReading, slopOnboardTags, readMessage, emptyOnboarding, hardFilled, hasField, coarsePlace, HARD_FIELDS, DEALBREAKER_IDS, DATE_ACTIVITY_IDS, LLM_FILL_BELOW, type SlopOnboarding, type OnboardField, type HardField, type Field, type Evidence, type Distance, type Location, type ExtractOptions, type SlopReader, type SlopTag, type Dealbreaker, type DateActivity } from "./extract.ts";
+export { extractSlopProfile, extractSlopProfileLLM, llmSlopReader, slopReaderPrompt, validateSlopReading, slopOnboardTags, seeksAnswerOf, transAnswerOf, transStatusOf, readMessage, emptyOnboarding, hardFilled, hasField, coarsePlace, HARD_FIELDS, DEALBREAKER_IDS, DATE_ACTIVITY_IDS, LLM_FILL_BELOW, type SlopOnboarding, type OnboardField, type HardField, type Field, type Evidence, type Distance, type Location, type ExtractOptions, type SlopReader, type SlopTag, type Dealbreaker, type DateActivity } from "./extract.ts";
 export { readBack, readBackFacts, applyCorrection, nextQuestion, markAsked, hardComplete, SLOP_ONBOARD_QUESTIONS, READBACK_FIELDS, MAX_ASKS_PER_QUESTION, type ReadBackFact } from "./onboard.ts";
 export { slopJudge, slopJudgeContext, SLOP_JUDGE_SYSTEM, SLOP_JUDGE_VERSION } from "./judge.ts";

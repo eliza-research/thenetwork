@@ -2,11 +2,11 @@
 // app, and the answer to slop's check-in after a date. A report keeps ids and a kind, never the
 // reporter's words. Urgent kinds (harassment, unsafe, scam, minor) have a 1-hour staff target; the
 // others 24 hours.
-import type { MemberId } from "@thenetwork/core";
+import { classifyYesNo, type MemberId } from "@thenetwork/core";
 import { ADULT_AGE, isMinor, quoteStillOpen, validAge } from "@thenetwork/core";
 import { acceptsMinorReportEvidence, acceptsReportEvidence } from "../../core/src/generated/safetyCase.ts";
 
-export type ReportKind = "harassment" | "lying" | "no_show" | "unsafe" | "scam" | "minor" | "other";
+export type ReportKind = "harassment" | "lying" | "no_show" | "unsafe" | "scam" | "minor" | "older_than_stated" | "other";
 export type ReportStatus = "open" | "held" | "banned" | "dismissed";
 export interface SafetyReport {
   id: string; kind: ReportKind; reporterId: MemberId; subjectId: MemberId; opportunityId?: string; at: number; status: ReportStatus;
@@ -14,7 +14,7 @@ export interface SafetyReport {
   source: "message" | "check_in";
   decidedBy?: string; decidedAt?: number;
 }
-export const URGENT_REPORTS: ReadonlySet<ReportKind> = new Set(["harassment", "unsafe", "scam", "minor"]);
+export const URGENT_REPORTS: ReadonlySet<ReportKind> = new Set(["harassment", "unsafe", "scam", "minor", "older_than_stated"]);
 const ABSENCE = /\b(no[- ]?show(ed)?|(?:never|didn'?t|did not) (?:show(?:ed)?(?: up)?|c[ao]me|turn(?:ed)? up|arriv(?:e|ed))(?!\s+(?:me|us|you|him|her|them|up|off|around|any|much)\b)|stood (?:me|us) up)\b/i;
 const MISSED_MEETING = /\b(?:(?:couldn'?t|could not|didn'?t|did not)\s+make\s+it\b(?!\s+(?:happen|work|awkward|worse|better|easy|hard)\b)|had\s+to\s+bail\b(?!\s+(?:me|us|you|him|her|them|out)\b))/i;
 const ABSENCE_PHRASE = new RegExp(`${ABSENCE.source}|${MISSED_MEETING.source}`, "gi");
@@ -147,9 +147,11 @@ export function groupFeedbackAbsence(text: string, attendees: readonly { id: Mem
   return [...missing];
 }
 
+const folded = (text: string) => text.normalize("NFKC").replace(/[‘’ʼ]/g, "'");
+
 /** The kind of a report from its words (most serious first). "other" when nothing names a kind. */
 export function reportKindOf(text: string): ReportKind {
-  const t = text.normalize("NFKC").replace(/[‘’ʼ]/g, "'");
+  const t = folded(text);
   if (otherAgeStated(t) !== undefined || BARE_MINOR_REPORT.test(t.trim())) return "minor";
   for (const [k, re] of KINDS) {
     const directHarm = k === "unsafe" && DIRECT_CHOKING_REPORT.test(t.trim());
@@ -167,5 +169,47 @@ export function reportKindOf(text: string): ReportKind {
 export function checkInReport(text: string): ReportKind | undefined {
   const k = reportKindOf(text);
   if (k !== "other") return k;
-  return reportsHarm(text.normalize("NFKC").replace(/[‘’ʼ]/g, "'"), /\b(report|flag|safety team)\b/i) ? "other" : undefined;
+  return reportsHarm(folded(text), /\b(report|flag|safety team)\b/i) ? "other" : undefined;
+}
+
+const CONCERN = /\b(?:uncomfortable|uneasy|unsettl(?:ed|ing)|sketchy|red flags?|(?:made|making) me (?:feel )?(?:weird|bad|uneasy|nervous|on edge)|(?:felt|seemed) off|(?:weird|bad|strange) vibes?|didn'?t feel right|went (?:badly|wrong)|(?:bad|awful|horrible) experience|crossed a line|overstepped)\b/i;
+const REPORT_WORD = /\b(?:report|flag)\b/i;
+const BLOCK_WORD = /\bblock\b/i;
+const REFUSAL = /\b(?:not|never|no|nor|don'?t|do not|doesn'?t|won'?t|wouldn'?t|shouldn'?t|can'?t|cannot)\b/i;
+const BOTH_ANSWER = /^(?:both|both of them|both please|both pls|do both|both thanks)$/i;
+const NEITHER_ANSWER = /^(?:neither|neither please|neither one|none|nothing|no thanks|no thank you|never ?mind|nvm|forget it|leave it|no need)$/i;
+
+export function checkInConcern(text: string): boolean {
+  return reportsHarm(folded(text), CONCERN);
+}
+
+function choiceClauses(text: string): { clause: string; asks: boolean }[] {
+  return (folded(text).match(/[^,.;:!?\n—]+\?*/g) ?? []).flatMap(part => {
+    const asks = part.endsWith("?");
+    const pieces = part.replace(/\?+$/, "").split(/\b(?:but|however|although|though)\b/i);
+    return pieces.map((piece, i) => ({ clause: piece.trim().toLowerCase(), asks: asks && i === pieces.length - 1 }));
+  }).filter(x => x.clause);
+}
+
+export function checkInSafetyChoice(text: string): { report: boolean; block: boolean; declines: boolean; namesChoice: boolean } {
+  let askedReport = false, askedBlock = false, refusedReport = false, refusedBlock = false, refusal = false, namesChoice = false;
+  for (const { clause, asks } of choiceClauses(text)) {
+    const r = REPORT_WORD.exec(clause), b = BLOCK_WORD.exec(clause);
+    if (r || b) namesChoice = true;
+    if (asks) continue;
+    if (!r && !b) {
+      if (BOTH_ANSWER.test(clause)) { askedReport = true; askedBlock = true; }
+      else if (NEITHER_ANSWER.test(clause) || (clause.split(/\s+/).length <= 3 && classifyYesNo(clause) === "no")) refusal = true;
+      continue;
+    }
+    if (r) { if (REFUSAL.test(clause.slice(0, r.index))) refusedReport = true; else askedReport = true; }
+    if (b) { if (REFUSAL.test(clause.slice(0, b.index))) refusedBlock = true; else askedBlock = true; }
+  }
+  const wantsReport = askedReport && !refusedReport, wantsBlock = askedBlock && !refusedBlock;
+  return {
+    report: wantsReport && !refusedBlock,
+    block: wantsBlock,
+    declines: refusal || ((refusedReport || refusedBlock) && !wantsReport && !wantsBlock),
+    namesChoice,
+  };
 }

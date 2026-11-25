@@ -12,14 +12,6 @@
 // layer (RelayClefWeights: one logistic head per category, a hold threshold, and for harassment a block
 // rule on the threat and slur answers) maps the vector to five scores:
 //   scam, harassment, contact_fishing, rating_probe, minor_signal.
-// `clefRelayClassifier(opts)` wraps it as a RelayClassifierHook for `relayItemAsync`:
-//   - the rules run first and keep their decision; Clef only adds reasons (`clef:<category>` holds,
-//     `clef_severe:<category>` blocks). Clef can never pass an item the rules hold or block;
-//   - clef-flash by default (cheaper; billed on input tokens), model configurable;
-//   - a timeout or a failure falls back to the rules alone, except that a message with a high-risk cue
-//     (money, links, ages 13-17, threats, contact words) is held (`clef:unavailable`); a Clef answer
-//     with low confidence and a middling score on a high-risk category holds too (`clef:uncertain`);
-//   - no body is ever logged: `onEvent` gets the model, latency, token count, outcome and categories.
 //
 // The HTTP layer is the shared one in packs/slop/clef.ts (`clefRun`). Recorded answers (`answers`)
 // let the sim and the eval CLI score the Clef arm offline from a cache (evals/relay/clef-answers.jsonl);
@@ -34,7 +26,6 @@ import type { RelayClassifierHook, RelayClassifierInput, RelayClassifierOutput }
 export const RELAY_CLEF_BANK_VERSION = "relay-clef-bank-1";
 export const RELAY_CLEF_CATEGORIES = ["scam", "harassment", "contact_fishing", "rating_probe", "minor_signal"] as const;
 export type RelayClefCategory = (typeof RELAY_CLEF_CATEGORIES)[number];
-/** Categories where an unsure Clef answer (or no answer) holds rather than passes. */
 export const RELAY_CLEF_HIGH_RISK: readonly RelayClefCategory[] = ["scam", "harassment", "minor_signal"];
 
 const HARM = ["none", "low", "some", "high", "severe"];
@@ -120,7 +111,6 @@ export interface RelayClefWeights {
   bank: string;
   mode: RelayClefMode;
   heads: Record<RelayClefCategory, RelayClefHead>;
-  /** Hold (`clef:uncertain`) when Clef's mean answer confidence < minConfidence and a high-risk p >= floor. */
   uncertain: { minConfidence: number; floor: number };
   provenance?: { fitter: string; fittedAt: string; rows: number; files: string[]; model: string; notes?: string; report?: unknown };
 }
@@ -225,8 +215,6 @@ export interface RelayClefEvent {
   hold: RelayClefCategory[];
   block: RelayClefCategory[];
   uncertain: boolean;
-  /** On a failure: whether the message had a high-risk cue (and was held). */
-  fallbackHold?: boolean;
   status?: number;
 }
 
@@ -234,7 +222,6 @@ export interface ClefRelayOptions extends Partial<ClefCallOptions> {
   /** "clef-flash" (default, cheaper) or "clef". */
   model?: ClefModel;
   weights?: RelayClefWeights;
-  /** Per-call timeout (default 2500 ms). A timeout falls back to the rules. */
   timeoutMs?: number;
   /** Recorded answers: looked up first by `relayClefKey`. A hit makes no call. */
   answers?: (key: string) => ClefResult | undefined | Promise<ClefResult | undefined>;
@@ -242,24 +229,11 @@ export interface ClefRelayOptions extends Partial<ClefCallOptions> {
   record?: (key: string, result: ClefResult) => void | Promise<void>;
   /** Make no live call (a cache miss is then a failure). Default: live when a token and account are set. */
   offline?: boolean;
-  /** On a failure, hold messages with a high-risk cue (default true). false = rules alone, always. */
-  holdOnUnavailable?: boolean;
   onEvent?: (e: RelayClefEvent) => void;
   /** Injected clock for latency (default performance.now). */
   clock?: () => number;
 }
 
-/**
- * Cheap high-risk cues for the failure path: money and payment words, amounts, links, ages 13-17 and
- * school words, threats, contact and handle words. Only used when Clef did not answer.
- */
-export const RELAY_HIGH_RISK_CUE = /\$\s?\d|\b\d{2,}\s?(?:dollars|bucks|usd|k)\b|\b(?:money|cash|pay|paid|loan|lend|borrow|bank|card|gift|crypto|bitcoin|btc|usdt|invest\w*|trading|wallet|fee|fees|venmo|zelle|paypal|cash ?app|wire|western union)\b|https?:\/\/|\bwww\.|\b[a-z0-9-]+\.(?:com|net|org|io|ly|me|app|link|xyz)\b|\b1[3-7]\b|\b(?:school|homeroom|parents?|mom|dad)\b|\b(?:kill|hurt|regret|find you|outside your|watch your back|expose)\b|\b(?:number|phone|whats ?app|telegram|signal|snap|insta|ig|email|address|where do you live)\b|\b(?:rate|rated|rating|score|hot|attractive)\b/i;
-
-/**
- * The Clef relay classifier as a `RelayClassifierHook`. Never throws: on a timeout, an HTTP error or
- * a cache miss with `offline`, it returns no flags (the rules decide) or, for a message with a
- * high-risk cue, the hold flag `unavailable`.
- */
 export function clefRelayClassifier(opts: ClefRelayOptions = {}): RelayClassifierHook {
   const model: ClefModel = opts.model ?? "clef-flash";
   const w = validateRelayClefWeights(opts.weights ?? DEFAULT_RELAY_CLEF_WEIGHTS);
@@ -271,9 +245,8 @@ export function clefRelayClassifier(opts: ClefRelayOptions = {}): RelayClassifie
     const key = relayClefKey(model, input.text, context, !!input.met);
     const emit = (e: Omit<RelayClefEvent, "model" | "ms">) => { try { opts.onEvent?.({ model, ms: Math.round(now() - t0), ...e }); } catch { /* telemetry never breaks the relay */ } };
     const fallback = (outcome: RelayClefEvent["outcome"], status?: number): RelayClassifierOutput => {
-      const cue = (opts.holdOnUnavailable ?? true) && RELAY_HIGH_RISK_CUE.test(input.text);
-      emit({ outcome, hold: [], block: [], uncertain: false, fallbackHold: cue, ...(status ? { status } : {}) });
-      return { flags: cue ? ["unavailable"] : [], source: "clef" };
+      emit({ outcome, hold: [], block: [], uncertain: false, ...(status ? { status } : {}) });
+      return { flags: [], unavailable: true };
     };
     let result: ClefResult | undefined;
     let outcome: RelayClefEvent["outcome"] = "cached";
@@ -297,7 +270,7 @@ export function clefRelayClassifier(opts: ClefRelayOptions = {}): RelayClassifie
     if (input.met) x.offplatform = 0;
     const d = relayClefDecide(w, x, confidence);
     emit({ outcome, hold: d.hold, block: d.block, uncertain: d.uncertain, ...(result.usage?.input_tokens ? { inputTokens: result.usage.input_tokens } : {}) });
-    return { flags: [...d.hold, ...(d.uncertain ? ["uncertain"] : [])], block: d.block, source: "clef", scores: d.scores };
+    return { flags: [...d.hold, ...(d.uncertain ? ["uncertain"] : [])], block: d.block, scores: d.scores };
   };
 }
 

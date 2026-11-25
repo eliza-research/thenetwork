@@ -7,17 +7,21 @@
 //   guard/         the shared leak guard (contacts in disguise, private facts, homoglyphs, benign text)
 import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { classifyYesNo, findLeaks, maskPii, parseOptOut, parseReply, type ReplyAnswer } from "../../packages/core/src/index.ts";
-import { ageAnswer, classify, extractProfile, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
+import { ageAnswer, birthDateAnswer, birthDateStated, classify, extractProfile, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
 import { mergeConsent } from "../../packages/network/src/extract.ts";
 import { detectKeyword, leaveTarget, optOutPhrase } from "../../packages/platform/src/consent.ts";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
-import { APPS, lookingFor, type AppId } from "../../packages/platform/src/apps.ts";
+import { APPS, keywordApp, lookingFor, lookingForReading, type AppId } from "../../packages/platform/src/apps.ts";
+import { parseJoinText } from "../../packages/network/service/service.ts";
+import { phoneChangeLinkRequest } from "../../packages/network/service/phone-change-link.ts";
 import { MemoryPeopleStore } from "../../packages/platform/src/store.ts";
 import { outputLeaks } from "../../packages/mcp/src/leaks.ts";
+import { parseReviewJudgeReply } from "../../packages/engine/src/reviewJudge.ts";
 import { resolveConfig } from "../../packages/engine/src/config.ts";
 import { riskTerms } from "../../packages/engine/src/filters.ts";
 import { Block, expect } from "./gate.ts";
 import { planAgainOf } from "../../packages/network/src/classify.ts";
+import { readPhotoMessage, type PhotoReading, type PhotoSlot, type ReaderContext, type ReaderDraft, type ReaderThread } from "../../packages/network/service/photoReference.ts";
 
 const ROOT = `${import.meta.dirname}/../../evals`;
 const jsonl = async <T>(name: string): Promise<T[]> => (await fileAt(`${ROOT}/${name}`).text()).trim().split("\n").filter(Boolean).map(l => JSON.parse(l) as T);
@@ -170,6 +174,11 @@ export async function evalsBlock(b: Block): Promise<void> {
   const againMiss = again.filter(l => planAgainOf(l.text) !== l.label).map(l => `${JSON.stringify(l.text)} -> ${planAgainOf(l.text)} (want ${l.label})`);
   b.gate(`plan again answers (n ${again.length}): every row read as labelled`, again.length >= 40 && againMiss.length === 0, againMiss.slice(0, 5).join("; "));
 
+  const phoneLink = await jsonl<{ text: string; request: boolean }>("network/phone-change-link.jsonl");
+  const phoneLinkMiss = phoneLink.filter(l => phoneChangeLinkRequest(l.text) !== l.request || (l.request && (detectKeyword(l.text) !== undefined || leaveTarget(l.text) !== undefined)))
+    .map(l => `${JSON.stringify(l.text)} -> ${phoneChangeLinkRequest(l.text)} (want ${l.request})`);
+  b.gate(`phone change link requests (n ${phoneLink.length}): every row read as labelled, and no request is a carrier keyword or an app leave`, phoneLink.length >= 25 && phoneLinkMiss.length === 0, phoneLinkMiss.slice(0, 5).join("; "));
+
   // ---- core reply parser -------------------------------------------------------------------------
   const replies = await jsonl<{ text: string; label: ReplyAnswer }>("replies.jsonl");
   const replyMiss = replies.filter(r => classifyYesNo(r.text) !== r.label).map(r => `${JSON.stringify(r.text)} -> ${classifyYesNo(r.text)} (want ${r.label})`);
@@ -216,8 +225,31 @@ export async function evalsBlock(b: Block): Promise<void> {
     expect(["not interested at all", sorted("not interested at all")]).toEqual(["not interested at all", []]);
     expect(["just friends, that's all", sorted("just friends, that's all")]).toEqual(["just friends, that's all", ["friends"]]);
     // A negated "all apps"/"everything" answer must not enroll anyone (the all-apps branch obeys the negation guard).
-    for (const t of ["I don't want all apps", "not everything", "dont want all of them", "without all apps", "all apps except dating", "all of these but work"]) expect([t, sorted(t)]).toEqual([t, []]);
+    for (const t of ["I don't want all apps", "not everything", "dont want all of them", "without all apps"]) expect([t, sorted(t)]).toEqual([t, []]);
+    expect([sorted("all apps except dating"), sorted("all of these but work")]).toEqual([["friends", "peon"], ["friends", "slop"]]);
   });
+
+  type Routing = { kind: "first" | "join" | "lookingFor"; text: string; reading: Record<string, unknown> };
+  const routing = await jsonl<Routing>("network/line-routing.jsonl");
+  const lineCommand = { stop: "LineStop", stop_all: "LineStop", help: "LineHelp", start: "LineStart" } as const;
+  const routingReading = (row: Routing): Record<string, unknown> => {
+    if (row.kind === "first") {
+      const keyword = detectKeyword(row.text);
+      return { command: keyword ? lineCommand[keyword] : "LineNoCommand", app: keywordApp(row.text) ?? null };
+    }
+    if (row.kind === "join") {
+      const said = parseJoinText(row.text, APP_WORDS, true, BIRTHDAY_DAY);
+      return { age: said.age ?? null, ...("name" in row.reading ? { name: said.name } : {}) };
+    }
+    return { ...lookingForReading(row.text) };
+  };
+  const routingMiss = routing.filter(row => JSON.stringify(routingReading(row)) !== JSON.stringify(row.reading))
+    .map(row => `${row.kind} ${JSON.stringify(row.text)} -> ${JSON.stringify(routingReading(row))}`);
+  const routingKinds = (["first", "join", "lookingFor"] as const).map(kind => routing.filter(row => row.kind === kind).length);
+  b.gate(`shared-line routing readings (n ${routing.length}): every row read as labelled`,
+    routing.length >= 60 && routingKinds.every(n => n >= 15) && routingMiss.length === 0, routingMiss.slice(0, 5).join("; "));
+  await birthdayBlock(b);
+  await photoReferenceBlock(b);
 
   // ---- leak guard ------------------------------------------------------------------------------------
   type G = { text: string; want: "contact" | "leak" | "clean"; note: string; facts?: string[]; forbidden?: string[]; privateVocab?: string[]; canaries?: string[]; allow?: string[]; publicPhrases?: string[]; contacts?: boolean };
@@ -240,4 +272,85 @@ export async function evalsBlock(b: Block): Promise<void> {
     for (const t of ["Someone nearby wants to play tennis this weekend. Reply in the text thread.", "Your plan is booked: Saturday 11 AM at McCarren Park (Williamsburg).", "Nothing new right now."]) expect(outputLeaks(t)).toEqual([]);
     expect(outputLeaks("she is going through a divorce", { facts: ["is going through a divorce"] }).length).toBeGreaterThan(0);
   });
+
+  const judgeReplies = await jsonl<{ kind: string; rubric: "adult" | "minor"; reply: string; verdict: string; reason: string }>("review/judge-replies.jsonl");
+  const judgeMiss = judgeReplies.map(row => ({ row, read: parseReviewJudgeReply(row.reply, row.rubric) }))
+    .filter(({ row, read }) => read.verdict !== row.verdict || read.reason !== row.reason || (row.reason === "unparseable" && read.explanation !== ""))
+    .map(({ row, read }) => `${row.kind} (${row.rubric}) -> ${read.verdict}/${read.reason} (want ${row.verdict}/${row.reason})`);
+  b.gate(`review judge parser: every row (n ${judgeReplies.length})`, judgeReplies.length >= 48 && judgeMiss.length === 0, judgeMiss.slice(0, 5).join("; "));
+}
+
+const BIRTHDAY_DAY = 20261122;
+const APP_WORDS = Object.values(APPS).flatMap(a => [a.id, ...a.domain.split(".")]);
+
+type BirthdayRow =
+  | { kind: "answer" | "stated"; text: string; birthDate: number | null }
+  | { kind: "join"; text: string; reading: { age: number | null; birthDate: number | null; name: string | null } }
+  | { kind: "self"; text: string; oldestAge: number | null };
+
+async function birthdayBlock(b: Block): Promise<void> {
+  const rows = await jsonl<BirthdayRow>("birthdays.jsonl");
+  const reading = (row: BirthdayRow): unknown => {
+    if (row.kind === "answer") return birthDateAnswer(row.text, BIRTHDAY_DAY) ?? null;
+    if (row.kind === "stated") return birthDateStated(row.text, BIRTHDAY_DAY) ?? null;
+    if (row.kind === "self") return classify(row.text).oldestAge ?? null;
+    const said = parseJoinText(row.text, APP_WORDS, true, BIRTHDAY_DAY);
+    return { age: said.age ?? null, birthDate: said.birthDate ?? null, name: said.name ?? null };
+  };
+  const want = (row: BirthdayRow): unknown => row.kind === "join" ? row.reading : row.kind === "self" ? row.oldestAge : row.birthDate;
+  const misses = rows.filter(row => JSON.stringify(reading(row)) !== JSON.stringify(want(row)))
+    .map(row => `${row.kind} ${JSON.stringify(row.text)} -> ${JSON.stringify(reading(row))}`);
+  const kinds = (["answer", "stated", "join", "self"] as const).map(kind => rows.filter(row => row.kind === kind).length);
+  b.gate(`birthday readings (n ${rows.length}): every form read as labelled, two-digit years, impossible and future dates refused`,
+    kinds.every(n => n >= 4) && misses.length === 0, misses.slice(0, 5).join("; "));
+}
+
+type PhotoReferenceFixture = {
+  now: string;
+  timeZone: string;
+  photos: (Omit<PhotoSlot, "addedAt"> & { addedAt: string })[];
+  threads: Record<string, ReaderThread>;
+  contexts: Record<string, { threads: string[]; current: string | null; draft: (Omit<ReaderDraft, "recipientMemberId"> & { recipient: string }) | null }>;
+};
+
+type PhotoReferenceRow = { ctx: string; text: string; expect: Record<string, unknown> };
+
+function photoReadingView(r: PhotoReading): Record<string, unknown> {
+  switch (r.kind) {
+    case "send":
+      return { kind: r.kind, pick: r.result.pick, numbers: r.numbers, thread: r.target.kind === "one" ? r.target.thread.threadId : null,
+        recipients: r.target.kind === "one" ? 1 : r.target.recipients, why: r.why, alsoText: r.alsoText, wantsSet: r.wantsSet };
+    case "draft":
+      return { kind: r.kind, pick: r.result?.pick ?? null, numbers: r.numbers, yes: r.yes, no: r.no, hasReference: r.hasReference, why: r.why, wantsSet: r.wantsSet };
+    case "holdings": return { kind: r.kind, firstName: r.firstName };
+    case "name": return { kind: r.kind, n: r.n, label: r.label };
+    case "name_refused": return { kind: r.kind, reason: r.reason };
+    case "delete": return { kind: r.kind, pick: r.result.pick, numbers: r.numbers };
+    case "take_back": return { kind: r.kind, thread: r.threadId, numbers: r.numbers };
+    case "none": case "ambiguous_match": case "photos_ok": case "no_more_photos": return { kind: r.kind };
+    default: { const _exhaustive: never = r; return _exhaustive; }
+  }
+}
+
+async function photoReferenceBlock(b: Block): Promise<void> {
+  const fixture = JSON.parse(await fileAt(`${ROOT}/photo-references.fixture.json`).text()) as PhotoReferenceFixture;
+  const rows = await jsonl<PhotoReferenceRow>("photo-references.jsonl");
+  const photos = fixture.photos.map(p => ({ ...p, addedAt: Date.parse(p.addedAt) }));
+  const contextOf = (name: string): ReaderContext => {
+    const c = fixture.contexts[name]!;
+    return {
+      photos, now: Date.parse(fixture.now), timeZone: fixture.timeZone, threads: c.threads.map(id => fixture.threads[id]!), currentThreadId: c.current,
+      draft: c.draft ? { recipientMemberId: fixture.threads[c.draft.recipient]!.recipientMemberId, shown: c.draft.shown, proposed: c.draft.proposed, wantsSet: c.draft.wantsSet, listed: c.draft.listed } : null,
+    };
+  };
+  const misses: string[] = [], guesses: string[] = [], foreign: string[] = [];
+  for (const row of rows) {
+    const seen = photoReadingView(readPhotoMessage(row.text, contextOf(row.ctx)));
+    if (Object.entries(row.expect).some(([key, want]) => JSON.stringify(seen[key] ?? null) !== JSON.stringify(want))) misses.push(`${row.ctx} ${JSON.stringify(row.text)} -> ${JSON.stringify(seen)}`);
+    const numbers = (seen.numbers ?? []) as number[];
+    if (seen.pick === "ProposePhotos" && seen.wantsSet === false && numbers.length !== 1) guesses.push(`guess ${JSON.stringify(row.text)}`);
+    if (numbers.some(n => n < 1 || n > photos.length)) foreign.push(`foreign ${JSON.stringify(row.text)}`);
+  }
+  b.gate(`photo references (n ${rows.length}): every reference read as labelled, no guess, no foreign photo`,
+    rows.length >= 90 && misses.length === 0 && guesses.length === 0 && foreign.length === 0, [...misses, ...guesses, ...foreign].slice(0, 5).join("; "));
 }

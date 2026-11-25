@@ -86,6 +86,35 @@ export function checkNumbers(ids: string[]): void {
   if (bad.length) throw new Error(`migrations: duplicate or reserved numbers in ${MIGRATIONS_DIR}: ${bad.join("; ")}. Give the later file the next free number.`);
 }
 
+/**
+ * Ledger ids of migrations that moved to the next free number when 0073_qsm_state_machine_fixes took 0073.
+ * A database that applied a file under its old id keeps that row under the new id, so the file does not run twice.
+ */
+export const RENUMBERED: ReadonlyArray<readonly [string, string]> = [
+  ["0073_erasure_ledger", "0074_erasure_ledger"],
+  ["0074_capital_event_seq", "0075_capital_event_seq"],
+  ["0075_photo_reservation", "0076_photo_reservation"],
+  ["0076_profile_suggestion_source_time", "0077_profile_suggestion_source_time"],
+  ["0077_photo_upload_links", "0078_photo_upload_links"],
+  ["0078_person_minor_signals", "0079_person_minor_signals"],
+  ["0079_profile_suggestion_legacy_source_time", "0080_profile_suggestion_legacy_source_time"],
+  ["0080_agent_opt_out_signals_applied", "0081_agent_opt_out_signals_applied"],
+  ["0081_person_birth_readings", "0082_person_birth_readings"],
+  ["0082_matching_ages_birth", "0083_matching_ages_birth"],
+  ["0083_photo_offers", "0084_photo_offers"],
+  ["0084_teen_pool_holds", "0085_teen_pool_holds"],
+  ["0085_photo_relay_screen", "0086_photo_relay_screen"],
+  ["0086_relay_holds_closed", "0087_relay_holds_closed"],
+  ["0087_teen_pair_avoid_phone_move", "0088_teen_pair_avoid_phone_move"],
+  ["0088_photo_offer_end_facts", "0089_photo_offer_end_facts"],
+  ["0089_review_judgments", "0090_review_judgments"],
+  ["0090_console_teen_reads", "0091_console_teen_reads"],
+  ["0091_platform_minor_signal_read", "0092_platform_minor_signal_read"],
+  ["0092_privacy_support_requests", "0093_privacy_support_requests"],
+  ["0093_privacy_replay_stop_and_claim", "0094_privacy_replay_stop_and_claim"],
+  ["0094_matching_signup_eligibility", "0095_matching_signup_eligibility"],
+];
+
 const checksum = (text: string) => createHash("sha256").update(text).digest("hex");
 
 export interface MigrateResult { applied: string[]; skipped: string[] }
@@ -104,6 +133,10 @@ export async function migrate(url: string, opts: { reset?: boolean; lockTimeout?
       if (opts.reset) await tx.unsafe("drop schema if exists network cascade; drop schema if exists platform cascade; drop schema if exists notify cascade; drop table if exists public.__migrations");
       await tx.unsafe(`create table if not exists public.__migrations (
         id text primary key, checksum text not null, repeatable boolean not null default false, applied_at timestamptz not null default now())`);
+      for (const [from, to] of RENUMBERED.slice().reverse()) {
+        await tx`update public.__migrations set id = ${to} where id = ${from}
+          and not exists (select 1 from public.__migrations where id = ${to})`;
+      }
       const done = new Map<string, string>();
       for (const r of await tx`select id, checksum from public.__migrations`) done.set(r.id, r.checksum);
       for (let i = 0; i < list.length; i++) {

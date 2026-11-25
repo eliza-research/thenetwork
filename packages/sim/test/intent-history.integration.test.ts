@@ -9,7 +9,7 @@ test("conversation snapshots preserve answered intent check-ins when responsiven
   for (const seed of [7, 9]) for (const richness of [false, true]) {
     const personas = generatePersonas({ n: 40, seed, richness, adversarialRate: 0, minorShare: 0, joinSpreadDays: 1, intentLapse: { meanDays: 20 } });
     const seen = new Map<string, { status: string; createdAt: number }>();
-    const w = new World({ seed, personas, days: 100, writeLog: false, network: new StubNetwork({ seed }), onDay() {
+    const w = new World({ app: "ntwrk", seed, personas, days: 100, writeLog: false, network: new StubNetwork({ seed }), onDay() {
       const snapshot = w.snapshot();
       for (const intent of snapshot.intents) {
         const prev = seen.get(intent.id);

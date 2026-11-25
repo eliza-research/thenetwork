@@ -11,13 +11,14 @@ import { BlooioAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
 import type { ReviewItem } from "../src/network.ts";
 import { Mini } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 test("a booked group that continues after a withdrawal records only its active participants", async () => {
   const planned = ["ana", "ben", "cy", "dee"];
   const remaining = planned.slice(0, 3);
   const world = new Mini(planned.map(id => ({
     id, name: id, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"],
-  })), { review: "human", growth: false });
+  })), { inlineJudge: holdEveryItem.inline, growth: false });
   await world.onboard(...planned);
   const id = world.propose(planned);
   expect(await world.runUntil(() => world.net.reviewQueue().some(item => item.oppId === id))).toBe(true);
@@ -89,7 +90,7 @@ test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current adm
   ] as const;
   const calls: SendRequest[] = [];
   const makeService = () => {
-    const adapter = new BlooioAdapter({ app: app.id, from: "+12125550370", clock, liveGate: () => true, log: () => {}, provider: {
+    const adapter = new BlooioAdapter({ app: app.id, from: "+12125550370", clock, log: () => {}, provider: {
       kind: "sim", send: async request => {
         calls.push(request);
         return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent" };
@@ -97,7 +98,7 @@ test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current adm
     } });
     return { adapter, service: new NetworkService({
       url, clock, log: () => {}, photoStorage: null, adapter: () => adapter,
-      env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret },
+      env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret }, reviewJudge: holdEveryItem.judge,
       networks: [{ id: networkId }], devMatching: [networkId],
       network: { plans: false, growth: false, maxNewPerDay: 0, plansConfig: { probeWindowHours: 6 } }, tokens: "reviewer@friends:group-reviewer",
     }) };
@@ -185,6 +186,7 @@ test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current adm
       net.importState({ ...net.exportState(), members: fixture.net.exportState().members.map(member => ({ ...member, stated })) });
       net["submitPlan"](plan, now);
     });
+    await service.reviewJudgeTick();
     const [original] = await awaitingReview();
     if (!original) throw new Error("The original plan did not reach staff review");
     expect(original.proposal.participants).toEqual(invited);
@@ -331,6 +333,7 @@ test.runIf(pgAvailable).each(scenes)("a reviewed Friends group keeps current adm
       expect(cancel.text).toContain("off now");
       expect(cancel.text).not.toMatch(/\b(?:Ari|Blair|Charlie|Drew|Elliot)\b/i);
     }
+    await service.reviewJudgeTick();
     const reviews = await awaitingReview();
     expect(reviews).toHaveLength(1);
     const replacement = reviews[0]!;

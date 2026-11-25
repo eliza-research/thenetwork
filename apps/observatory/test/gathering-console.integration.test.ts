@@ -15,7 +15,7 @@ test.skipIf(!pgAvailable)("the real Network workspace authors and reviews the ex
   const serviceToken = "fixture-console-service-token";
   const admin = "fixture-ntwrk-admin", reviewer = "fixture-ntwrk-reviewer", friends = "fixture-friends-admin";
   const network = new NetworkService({ url, clock, photoStorage: null, notify: false, log: () => {},
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off" }, networks: [{ id: "ntwrk:nyc", matchingEnabled: false }],
+    env: { PLATFORM_ENV: "dev" }, networks: [{ id: "ntwrk:nyc", matchingEnabled: false }],
     tokens: `admin@ntwrk:${serviceToken}`, consoleToken: serviceToken,
   });
   const delegated: Array<{ path: string; actor: string | null }> = [];

@@ -66,7 +66,7 @@ test("the same client's next authorization shows the approved draft once; the pe
   expect(neverPrefilledAgeOrConsent(first.form)).toBe(true);
   expect(first.form).toContain("Finish signup");
   expect(first.form).not.toContain(PHONE_A);
-  expect([...(e.store as MemoryOAuthStore).signupDrafts.values()].map(d => d.fields)).toEqual([{ firstName: "" }]);
+  expect((e.store as MemoryOAuthStore).signupDrafts.size).toBe(0);
   await first.post("/oauth/authorize/signup", { decision: "skip", signupView: field(first.form, "signupView") });
   expect(blank(await (await first.post("/oauth/authorize/signup", { decision: "open" })).text())).toBe(true);
   expect(blank((await openSignup(e, "friends.help", clientId, PHONE_A)).form)).toBe(true);
@@ -106,12 +106,13 @@ test("another client, another app, another phone, an expired draft and a stale g
 test("a recorded age below 13 hides and scrubs the draft; a birthday below 13 on the form is refused and a teen joins unmatched", async () => {
   const e = setup(), clientId = await draftFor(e, "friends.help", PHONE_A);
   await e.accounts.recordAge(PHONE_A, undefined, 12);
-  expect([...(e.store as MemoryOAuthStore).signupDrafts.values()].map(d => d.fields)).toEqual([{ firstName: "" }]);
+  expect((e.store as MemoryOAuthStore).signupDrafts.size).toBe(0);
   const minor = await authorize(e, "friends.help", clientId, PHONE_A);
   expect(minor.consent).not.toMatch(/\bAri\b/);
   const opened = await (await minor.post("/oauth/authorize/signup", { decision: "open" })).text();
   expect(opened).not.toMatch(/\bAri\b/);
   expect(blank(opened)).toBe(true);
+  expect((e.store as MemoryOAuthStore).signupDrafts.size).toBe(0);
 
   const child = setup(), childClient = await draftFor(child, "friends.help", PHONE_A);
   const page = await openSignup(child, "friends.help", childClient, PHONE_A);
@@ -211,7 +212,7 @@ test.skipIf(!pgAvailable)("on Postgres the draft shows on one form only, also wh
     const ask = { clientId, app: "friends" as const, phoneKey: key, personId: null, ageAllowed: true };
     const pair = await Promise.all([store.useSignupPrefill(ask, e.clock.t), restarted.useSignupPrefill(ask, e.clock.t)]);
     expect(pair.filter(Boolean)).toEqual([{ firstName: "Ari", homeCity: "sf" }]);
-    expect((await store.sql`select fields, consumed_at is not null as used from oauth.signup_drafts where phone_key=${key}`)).toEqual([{ fields: {}, used: true }]);
+    expect((await store.sql`select grant_id from oauth.signup_drafts where phone_key=${key}`)).toEqual([]);
     expect(blank((await openSignup(e, "friends.help", clientId, PHONE_A)).form)).toBe(true);
     const again = await draftFor(e, "friends.help", PHONE_A, { firstName: "Rae", homeCity: "nyc" });
     expect(shows((await openSignup(e, "friends.help", again, PHONE_A)).form, "Rae", "nyc")).toBe(true);

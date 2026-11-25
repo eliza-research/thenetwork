@@ -22,7 +22,7 @@ type Viewer = {
   known: bool, mode: ConsoleMode, appsHeld: int, crossApp: bool,
   admin: bool, analyst: bool, simRole: bool, safety: bool, realOnly: bool,
 }
-type QueueFacts = { humanReview: bool, reviewItems: bool, requestsKnown: bool }
+type QueueFacts = { reviewItems: bool, requestsKnown: bool }
 type ConsoleNav = {
   page: ConsolePage, stage: ConsoleStage, subject: Subject, depth: int,
   wantedTab: DrawerTab, drawerOpen: bool, popoverOpen: bool, queryChars: int, picks: int,
@@ -39,7 +39,7 @@ pure val initial: ConsoleNav = {
     known: false, mode: SimulatedMode, appsHeld: 0, crossApp: false,
     admin: false, analyst: false, simRole: false, safety: false, realOnly: false,
   },
-  queues: { humanReview: false, reviewItems: false, requestsKnown: false },
+  queues: { reviewItems: false, requestsKnown: false },
 }
 
 pure def allAppsAllowed(heldApps: int, crossAppRole: bool): bool = heldApps >= 2 or crossAppRole
@@ -365,13 +365,13 @@ pure def sometimesGraphStage(nav: ConsoleNav): bool = nav.stage == GraphStage an
 
 ### Each drawer tab shows only where it applies
 
-The review tab shows in the simulated world when a person reviews, and in real mode when items wait for review. The game tab shows only in the simulated world. The requests tab shows when requests exist or the network is a consent network. The lab tab needs the analyst role and a server that is not real-only. The config tab needs the analyst role. An admin holds the analyst role. The feed, pipeline, runs, safety and metrics tabs always show. A wanted tab that does not show falls back to the feed.
+The review tab shows when items wait for staff, in the simulated world and in real mode. The game tab shows only in the simulated world. The requests tab shows when requests exist or the network is a consent network. The lab tab needs the analyst role and a server that is not real-only. The config tab needs the analyst role. An admin holds the analyst role. The feed, pipeline, runs, safety and metrics tabs always show. A wanted tab that does not show falls back to the feed. Changed (owner decisions D15 to D17 of 2026-11-22): the review mode "human" was removed and the review judge holds items for staff in both worlds, so the review tab no longer depends on a review mode.
 
 ```quint
-type TabFacts = { simulated: bool, analystRole: bool, realOnlyServer: bool, humanReview: bool, reviewItems: bool, requestsKnown: bool }
+type TabFacts = { simulated: bool, analystRole: bool, realOnlyServer: bool, reviewItems: bool, requestsKnown: bool }
 
 pure def tabVisible(tab: DrawerTab, facts: TabFacts): bool =
-  if (tab == ReviewTab) (if (facts.simulated) facts.humanReview else facts.reviewItems)
+  if (tab == ReviewTab) facts.reviewItems
   else if (tab == GameTab) facts.simulated
   else if (tab == RequestsTab) facts.requestsKnown
   else if (tab == LabTab) facts.analystRole and not(facts.realOnlyServer)
@@ -382,21 +382,21 @@ pure def shownTab(wanted: DrawerTab, facts: TabFacts): DrawerTab = if (tabVisibl
 
 pure def factsOf(nav: ConsoleNav): TabFacts = {
   simulated: nav.viewer.mode == SimulatedMode, analystRole: nav.viewer.analyst, realOnlyServer: nav.viewer.realOnly,
-  humanReview: nav.queues.humanReview, reviewItems: nav.queues.reviewItems, requestsKnown: nav.queues.requestsKnown,
+  reviewItems: nav.queues.reviewItems, requestsKnown: nav.queues.requestsKnown,
 }
 
 pure def tabNow(nav: ConsoleNav): DrawerTab = shownTab(nav.wantedTab, factsOf(nav))
 
 pure def canReceiveQueues(nav: ConsoleNav): bool = nav.viewer.known
 
-pure def receiveQueues(nav: ConsoleNav, humanReview: bool, reviewItems: bool, requestsKnown: bool): ConsoleNav =
-  { ...nav, queues: { humanReview: humanReview, reviewItems: reviewItems, requestsKnown: requestsKnown } }
+pure def receiveQueues(nav: ConsoleNav, reviewItems: bool, requestsKnown: bool): ConsoleNav =
+  { ...nav, queues: { reviewItems: reviewItems, requestsKnown: requestsKnown } }
 
 pure val factsValues: Set[TabFacts] = Set(
-  { simulated: true, analystRole: true, realOnlyServer: false, humanReview: true, reviewItems: false, requestsKnown: true },
-  { simulated: true, analystRole: false, realOnlyServer: false, humanReview: false, reviewItems: true, requestsKnown: false },
-  { simulated: false, analystRole: true, realOnlyServer: true, humanReview: false, reviewItems: true, requestsKnown: true },
-  { simulated: false, analystRole: false, realOnlyServer: false, humanReview: true, reviewItems: false, requestsKnown: false },
+  { simulated: true, analystRole: true, realOnlyServer: false, reviewItems: false, requestsKnown: true },
+  { simulated: true, analystRole: false, realOnlyServer: false, reviewItems: true, requestsKnown: false },
+  { simulated: false, analystRole: true, realOnlyServer: true, reviewItems: true, requestsKnown: true },
+  { simulated: false, analystRole: false, realOnlyServer: false, reviewItems: false, requestsKnown: false },
 )
 
 pure def lawShownTabIsVisible(wanted: DrawerTab, facts: TabFacts): bool = tabVisible(shownTab(wanted, facts), facts)

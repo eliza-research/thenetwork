@@ -1,4 +1,3 @@
-import { simulatedMatchingMode } from "../../../../packages/core/src/generated/simulationMatching.ts";
 import { staffSearchHitVisible } from "../../../../packages/core/src/generated/staffSearch.ts";
 import { gameResetControlsAllowed } from "../../../../packages/core/src/generated/gameReset.ts";
 import { setTimeout as waitForMs } from "node:timers/promises";
@@ -17,8 +16,8 @@ import {
 import { loadPersonas } from "../../../../scripts/synthetic/load.ts";
 import { DATA_DIR, readJsonl, type EdgeRecord, type HiddenTruthRecord, type MemberRecord } from "../../../../scripts/synthetic/common.ts";
 import { CapturingEngine, summarizeRun } from "../engineCapture.ts";
-import { ConsentNetwork, OUTREACH, SIM_AUTO_REVIEWER, type ReviewOptions } from "@thenetwork/network";
-import { appBanner, APPS, DEFAULT_APP, MATCHING_OFF_TEXT, matchingAllowed, slaHours, type AppId } from "../apps.ts";
+import { ConsentNetwork, holdEveryItem, OUTREACH, reviewStateOf, simulatedReviewJudge, type ReviewOptions } from "@thenetwork/network";
+import { appBanner, APPS, DEFAULT_APP, slaHours, type AppId } from "../apps.ts";
 import { friendFactory, SCENARIOS, ScriptedJoinAgent } from "@thenetwork/network/harness";
 import { describe, eventOf, onTimeline, requestLabel, toMs } from "../events.ts";
 import { memberFacets } from "../appProfile.ts";
@@ -57,12 +56,7 @@ export interface GameOptions {
   personas?: number;
   dataDir?: string;
   sparksPerDay?: number;
-  /**
-   * Review gate of the consent Network (PRD 32.8). "auto" (default): a simulated reviewer approves
-   * everything that passed the gates. "human": the player is the reviewer; nothing is sent until
-   * they approve it, and an item past its SLA expires unsent.
-   */
-  review?: "human" | "auto";
+  judge?: "stand-in" | "hold-every-item";
   /**
    * Personas answer offered times and booked plans from a hidden week, and attendance depends on the
    * meeting time (sim PolicyOptions.timeAware and WorldOptions.timeAware; runbook-simulation 6.1.2).
@@ -124,7 +118,6 @@ export class GameSource implements DataSource {
   private inviters = new Set<MemberId>();
   /** Leak-guard fallbacks per member and time (the timeline marks those messages). */
   private guardFallback = new Set<string>();
-  /** Matching switch and review mode changes (admin-console 3.11). */
   private configHistory: ConfigChange[] = [];
   /** Wall time of the last health computation. */
   private healthWall = 0;
@@ -138,7 +131,7 @@ export class GameSource implements DataSource {
       app: this.app,
       seed: opts.seed ?? 1, days: opts.days ?? 60, engine: opts.engine ?? "engine-v1", personas: opts.personas ?? 0,
       dataDir: opts.dataDir ?? DATA_DIR, sparksPerDay: opts.sparksPerDay ?? 6, pushMs: opts.pushMs ?? 250, tickMs: opts.tickMs ?? 100,
-      network: opts.network ?? "consent", city: opts.city ?? "nyc", scenario: opts.scenario ?? null, review: opts.review ?? "auto",
+      network: opts.network ?? "consent", city: opts.city ?? "nyc", scenario: opts.scenario ?? null, judge: opts.judge ?? "stand-in",
       timeAware: opts.timeAware ?? false,
     };
   }
@@ -176,8 +169,8 @@ export class GameSource implements DataSource {
 
     const clock: ClockInfo = { now: this.start, start: this.start, end: this.start + o.days * DAY, day: 1, playing: false, speed: SPEEDS.sixHours, waitingForPlayer: false };
     this.store = new Store({
-      mode: "game", app: this.app, ...(matchingAllowed(this.app) ? {} : { matchingLocked: true }),
-      label: `SIMULATION · ${appBanner(this.app)} · seed ${o.seed}${o.timeAware ? " · time-aware" : ""} · ${synthetic ? `synthetic v1 (${personas.length} ${o.city === "nyc" ? "NYC" : "SF/NYC"})` : `${o.personas} generated personas`} · ${o.network === "consent" ? "consent-first Network" : "stub Network"}${o.scenario ? ` · level: ${o.scenario}` : ""}${minAge > MIN_MEMBER_AGE ? ` · join ${minAge}+` : ""}${matchingAllowed(this.app) ? "" : ` · ${MATCHING_OFF_TEXT}`}`,
+      mode: "game", app: this.app,
+      label: `SIMULATION · ${appBanner(this.app)} · seed ${o.seed}${o.timeAware ? " · time-aware" : ""} · ${synthetic ? `synthetic v1 (${personas.length} ${o.city === "nyc" ? "NYC" : "SF/NYC"})` : `${o.personas} generated personas`} · ${o.network === "consent" ? "consent-first Network" : "stub Network"}${o.scenario ? ` · level: ${o.scenario}` : ""}${minAge > MIN_MEMBER_AGE ? ` · join ${minAge}+` : ""}`,
       dataset: synthetic ? "synthetic-v1" : `generated-${o.personas}`,
       capabilities: { canStep: true, canIntervene: true, hiddenTruth: true, readOnly: false },
     }, clock);
@@ -208,15 +201,14 @@ export class GameSource implements DataSource {
     this.judgeHour = -1; this.healthHour = -1;
     this.recent = []; this.stopHistory.clear(); this.inviters.clear(); this.guardFallback.clear(); this.configHistory = [];
     this.consent = o.network === "consent" ? new ConsentNetwork({
-      seed: o.seed, review: o.review, engine: { cities: ["nyc"] }, ...(o.engine === "off" ? { maxNewPerDay: 0 } : {}), ...(matchingAllowed(this.app) ? {} : { matchingEnabled: false }),
+      seed: o.seed, inlineJudge: o.judge === "hold-every-item" ? holdEveryItem.inline : simulatedReviewJudge({ exceptions: true }), engine: { cities: ["nyc"] }, ...(o.engine === "off" ? { maxNewPerDay: 0 } : {}),
       onEngineRun: (log, proposals, at) => {
         const sum = summarizeRun(log, proposals, { at, city: "nyc", wallMs: Math.round(log.timingsMs.total ?? 0) });
         this.store.addRun(sum);
         this.store.pushFeed({ t: at, kind: "engine", text: `engine-v1 · NYC: ${proposals.length} candidates proposed from ${sum.funnel.generated}; the Network gates them (skeptical) and checks availability first` });
       },
     }) : undefined;
-    const matchingEnabled = simulatedMatchingMode(matchingAllowed(this.app), false) === "SimulationMatchingOpen";
-    this.engine = o.engine === "engine-v1" && !this.consent && matchingEnabled
+    this.engine = o.engine === "engine-v1" && !this.consent
       ? new CapturingEngine(s => {
         this.store.addRun(s);
         this.store.clock.busy = undefined;
@@ -227,7 +219,6 @@ export class GameSource implements DataSource {
     this.projector = new Projector(this.store, {
       joinState: id => (this.personas.get(id)?.archetype === "busy_parent" ? "quiet" : "normal"),
       runOf: pid => this.engine?.runOf.get(pid),
-      quietReview: () => this.consent?.reviewMode() !== "human",
       onOpp: (opp, rec) => {
         if (rec.type === "proposal" && opp.source === "player" && opp.oracle?.unsafe && !this.strikeIds.has(opp.id)) {
           this.strikeIds.add(opp.id);
@@ -237,8 +228,8 @@ export class GameSource implements DataSource {
       },
     });
     this.world = new World({
-      seed: o.seed, personas, days: o.days, start: this.start, writeLog: false, ...(o.timeAware ? { timeAware: true } : {}),
-      network: this.consent ?? new StubNetwork({ seed: o.seed, randomIntros: o.engine === "random", matchingEnabled }),
+      seed: o.seed, personas, days: o.days, start: this.start, app: this.consent?.app.id ?? "ntwrk", writeLog: false, ...(o.timeAware ? { timeAware: true } : {}),
+      network: this.consent ?? new StubNetwork({ seed: o.seed, randomIntros: o.engine === "random" }),
       engine: this.engine, agent: this.takeover,
       spawnFriend: joinGate(friendFactory({ seed: o.seed, ...(cast?.badInvitees ? { joinRate: 1, badActorRate: 1 } : {}) }), minAge),
       actions: cast?.actions,
@@ -304,7 +295,7 @@ export class GameSource implements DataSource {
     const sc = this.opts.scenario ? SCENARIOS.find(x => x.id === this.opts.scenario) : undefined;
     return {
       kind: "consent", counters: { ...n.counters }, gateReasons: { ...n.gateReasons },
-      review: { mode: n.reviewMode(), queued: n.reviewQueue().length, approved: n.counters.reviewApproved, rejected: n.counters.reviewRejected, expired: n.counters.reviewExpired },
+      review: { queued: n.reviewQueue().length, approved: n.counters.reviewApproved, rejected: n.counters.reviewRejected, expired: n.counters.reviewExpired },
       requests: {
         total: reqs.filter(r => r.kind === "people").length, fulfilled: reqs.filter(r => r.outcome === "fulfilled").length,
         probing: reqs.filter(r => r.outcome === "probing").length, waiting: reqs.filter(r => r.kind === "people" && r.outcome === "none").length,
@@ -350,9 +341,9 @@ export class GameSource implements DataSource {
     const judge = this.store.judge;
     const last = this.store.runs.filter(r => !r.shadow).at(-1);
     const alerts = healthAlerts({
-      now, start: this.start, reviewOpen: n?.reviewQueue() ?? [], sla: { app: this.app, hours: slaHours()[this.app] }, matchingLocked: !matchingAllowed(this.app), reviewExpired: this.recent.filter(x => x.key === "review_expired").length,
+      now, start: this.start, reviewOpen: n?.reviewQueue() ?? [], sla: { app: this.app, hours: slaHours()[this.app] }, reviewExpired: this.recent.filter(x => x.key === "review_expired").length,
       deferred: n ? n.exportState().deferred.length : null, refusals, guardBlocked: this.recent.filter(x => x.key === "guard_blocked").length,
-      lastEngineRun: last?.at, expectEngine: !!n || this.opts.engine === "engine-v1", matchingEnabled: n?.matchingEnabled() ?? matchingAllowed(this.app),
+      lastEngineRun: last?.at, expectEngine: !!n || this.opts.engine === "engine-v1", matchingEnabled: n?.matchingEnabled() ?? true,
       invariants: judge?.invariants ?? null, canaryLeaks: judge?.canaryLeaks ?? null, minorContacts: judge?.minorContacts ?? null,
     });
     const members = [...this.store.members.values()];
@@ -361,7 +352,7 @@ export class GameSource implements DataSource {
       now, start: this.start, members, opps, requests, stopHistory: this.stopHistory, invites: c.invites, accepts: c.accepts,
       messages: this.world.channel.all().filter(m => !m.system).map(m => ({ memberId: m.memberId, ts: m.ts, direction: m.direction, proactive: !!m.meta?.proactive, status: m.status })),
       reviewSeconds: opps.reduce((a, o) => a + (o.review?.secondsSpent ?? 0), 0),
-      sentProposals: opps.filter(o => o.review?.decision === "approve" && !o.review.invalidated && o.review.reviewer !== SIM_AUTO_REVIEWER).length,
+      sentProposals: opps.filter(o => o.review?.decision === "approve" && !o.review.invalidated).length,
       inviters: this.inviters.size, minorContacts: judge?.minorContacts ?? null, leaks: judge?.canaryLeaks ?? null,
     });
     const growth = growthStats({
@@ -563,8 +554,7 @@ export class GameSource implements DataSource {
   }
 
   inOpenReview(memberId: string): boolean {
-    for (const o of this.store.opps.values()) if (o.state === "IN_REVIEW" && o.participants.includes(memberId)) return true;
-    return false;
+    return this.consent?.reviewQueue().some(x => x.exception && x.proposal.participants.includes(memberId)) ?? false;
   }
 
   async safety(): Promise<SafetyInfo> {
@@ -608,9 +598,16 @@ export class GameSource implements DataSource {
     const opts = n ? (n as unknown as { opts: Record<string, unknown> }).opts : {};
     const network = Object.fromEntries(Object.entries(opts).filter(([, v]) => v === null || ["number", "boolean", "string"].includes(typeof v))) as ConfigInfo["network"];
     return {
-      matchingEnabled: n?.matchingEnabled() ?? matchingAllowed(this.app), reviewMode: n?.reviewMode() ?? null, network,
+      matchingEnabled: n?.matchingEnabled() ?? true, reviewJudge: n ? this.reviewJudgeCounts(n) : null, network,
       outreach: JSON.parse(JSON.stringify(OUTREACH)), history: [...this.configHistory], canChange: !!n,
     };
+  }
+
+  private reviewJudgeCounts(n: ConsentNetwork): NonNullable<ConfigInfo["reviewJudge"]> {
+    const now = this.world.clock.now();
+    const held = n.reviewQueue().filter(x => x.exception);
+    return { awaiting: [...n.opps.values()].filter(o => reviewStateOf(o).phase === "AwaitingJudge").length, exceptions: held.length,
+      exceptionsOverdue: held.filter(x => now >= x.deadline).length };
   }
 
   private recordConfig(actor: string, key: ConfigChange["key"], from: ConfigChange["from"], to: ConfigChange["to"]) {
@@ -625,7 +622,7 @@ export class GameSource implements DataSource {
     const messages = this.world.channel.all();
     for (let index = messages.length - 1; index >= 0 && hits.length < limit; index--) {
       const m = messages[index]!;
-      if (!staffSearchHitVisible(m.direction === "outbound" && !m.system && m.status === "delivered", re.test(m.body))) continue;
+      if (!staffSearchHitVisible(m.direction === "outbound" && !m.system && m.meta?.type !== "relay" && m.status === "delivered", re.test(m.body))) continue;
       hits.push({ memberId: m.memberId, memberName: name(m.memberId), t: m.ts, kind: "message", snippet: snippet(m.body, re), type: m.meta?.type, ...(m.meta?.proposalId ? { opportunityId: m.meta.proposalId } : {}) });
     }
     const initial = hits.length;
@@ -744,20 +741,9 @@ export class GameSource implements DataSource {
           if (!r.ok) return { ok: false, error: REVIEW_BLOCK_ERRORS[r.reason] ?? `not sent: ${r.reason.replace(/_/g, " ")}`, code: r.reason };
           return { ok: true, data: { decision: cmd.decision } };
         }
-        case "review_mode": {
-          if (!this.consent) return { ok: false, error: "review needs the consent Network" };
-          if (cmd.mode !== "human" && cmd.mode !== "auto") return { ok: false, error: "review mode must be human or auto" };
-          const from = this.consent.reviewMode();
-          this.opts.review = cmd.mode;
-          this.consent.setReviewMode(cmd.mode, actor ?? "player");
-          if (from !== cmd.mode) this.recordConfig(actor ?? "player", "review_mode", from, cmd.mode);
-          await this.settle();
-          break;
-        }
         case "matching": {
           if (!this.consent) return { ok: false, error: "the matching switch needs the consent Network", code: "no_consent_network" };
           if (typeof cmd.on !== "boolean") return { ok: false, error: "on must be true or false" };
-          if (cmd.on && !matchingAllowed(this.app)) return { ok: false, error: `${this.app}: ${MATCHING_OFF_TEXT}`, code: "matching_locked" };
           const from = this.consent.matchingEnabled();
           this.consent.setMatchingEnabled(cmd.on, actor ?? "player");
           if (from !== cmd.on) this.recordConfig(actor ?? "player", "matching", from, cmd.on);
@@ -806,8 +792,7 @@ export class GameSource implements DataSource {
     this.world.act({ do: "propose", proposal: p, source: "player" });
     await this.settle();
     this.push();
-    // A composed intro waits for review like every other opportunity (PRD 32.8).
-    const dispatch = this.consent?.reviewMode() === "human" ? "joins the review queue with the next morning batch (approve it in the Review tab)" : "goes out with the next morning batch (10am local)";
+    const dispatch = "goes to the review judge with the next morning batch; an item the judge holds waits in the Review tab";
     return { ok: true, data: { id: p.id, dispatch } };
   }
 
@@ -829,7 +814,7 @@ export class GameSource implements DataSource {
 }
 
 /** Commands that change the world or the Network: they wait for a running step (idle()). Clock controls and reads do not. */
-const WAITS_FOR_WORLD = new Set<ControlCommand["type"]>(["review", "review_mode", "matching", "propose", "say", "god", "check_scenario"]);
+const WAITS_FOR_WORLD = new Set<ControlCommand["type"]>(["review", "matching", "propose", "say", "god", "check_scenario"]);
 
 /** Why an item is no longer waiting for review, from what the console shows now. */
 function notInReview(o: ObsOpportunity | undefined): string {

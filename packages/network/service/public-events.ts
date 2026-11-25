@@ -7,13 +7,9 @@ interface CatalogRow {
   source_url: string; title: string; venue: string; area: string; latitude: number; longitude: number;
   starts_at: Date; ends_at: Date; checked_at: Date; category: "events" | "hobby"; tags: string[];
 }
-
-/** The importer takes the same lock exclusively before replacing the public source. */
 export async function lockPublicEventCatalog(tx: SQL): Promise<void> {
   await tx`select pg_advisory_xact_lock_shared(hashtext('thenetwork-public-events-nyc-parks'))`;
 }
-
-/** The catalog is public and city-scoped. No app record, private feed or audit event is read here. */
 export async function readPublicEvents(sql: SQL, now: number, city?: string, eventId?: string): Promise<NetworkEvent[]> {
   if (city !== undefined && city !== "nyc") return [];
   const eventKey = eventId?.match(/^([^:]+):([^:]+)$/u);

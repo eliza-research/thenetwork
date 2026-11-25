@@ -1,5 +1,6 @@
 import type { ConsentPhase, Event, MutualConsentJourney, ReceiptResult } from "../../packages/core/src/generated/mutualConsentJourney.ts";
 import type { TurnReceiptRequest } from "../../packages/core/src/svc/contract.ts";
+import { holdEveryItem } from "../../packages/engine/src/reviewJudge.ts";
 import { startClimbingRequestFixture } from "./climbingRequestFixture.ts";
 import { serveJourney } from "./serveJourney.ts";
 
@@ -17,12 +18,13 @@ try {
   await serveJourney<Event>({
     async reset() {
       await fixture?.close();
-      fixture = startClimbingRequestFixture();
-      const { item, decideReview } = await fixture.ready;
+      fixture = startClimbingRequestFixture(holdEveryItem.judge);
+      const { item, service, decideReview } = await fixture.ready;
+      await service.reviewJudgeTick();
       const review = await decideReview(item, "approve");
       const body: unknown = await review.json();
       if (!review.ok || !body || typeof body !== "object" || !("ok" in body) || body.ok !== true) {
-        throw new Error("The human reviewer did not approve the climbing introduction");
+        throw new Error("The staff member did not approve the climbing introduction that the judge held");
       }
       bookingReceipt = undefined;
       output = [];

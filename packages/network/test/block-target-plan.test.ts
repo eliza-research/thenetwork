@@ -9,7 +9,7 @@ const climber = (id: string, name: string) => ({ id, name, age: 30, area: "Green
 
 describe("block and report targets in a group plan", () => {
   test("a probe-only invitee is neither offered nor shown names", async () => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss"), climber("d", "Dee Park"), climber("e", "Eve Lu")], { review: "auto" });
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss"), climber("d", "Dee Park"), climber("e", "Eve Lu")]);
     await w.onboard("a", "b", "c", "d", "e");
     const id = w.propose(["a", "b", "c"]);
     for (let i = 0; i < 6 && w.meetings.length === 0; i++) {
@@ -44,7 +44,7 @@ describe("block and report targets in a group plan", () => {
   });
 
   test("a booked group closes when only two consenting members remain", async () => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")]);
     await w.onboard("a", "b", "c");
     const id = w.propose(["a", "b", "c"]);
     for (let i = 0; i < 6 && w.meetings.length === 0; i++) {
@@ -79,7 +79,7 @@ describe("block and report targets in a group plan", () => {
   });
 
   test("a report by pronoun with no date ahead asks who first; the name then files it", async () => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
     await w.onboard("a", "b");
     w.propose(["a", "b"]);
     await w.answerProbes(["a", "b"]);
@@ -96,7 +96,7 @@ describe("block and report targets in a group plan", () => {
   });
 
   test("affirming 'Who do you mean: Ben?' with 'yes' files the report", async () => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
     await w.onboard("a", "b");
     w.propose(["a", "b"]);
     await w.answerProbes(["a", "b"]);
@@ -112,7 +112,7 @@ describe("block and report targets in a group plan", () => {
   });
 
   test("a member with no counterparts can block someone by name after answering 'Who do you mean?'", async () => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
     await w.onboard("a", "b");
     let from = w.mark();
     await w.say("a", "block him");
@@ -129,7 +129,7 @@ describe("block and report targets in a group plan", () => {
   });
 
   test("active probe reply 'yes' is not hijacked by pendingSafety", async () => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")]);
     await w.onboard("a", "b", "c");
     // 'a' triggers a safety clarification question
     let from = w.mark();
@@ -150,7 +150,7 @@ describe("block and report targets in a group plan", () => {
   });
 
   test.each([["yes", true], ["no", true], ["never mind", false]] as const)("a competing probe and a %s safety reply", async (reply, keepsQuestion) => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")]);
     await w.onboard("a", "b", "c");
     w.propose(["a", "b"]);
     await w.answerProbes(["a", "b"]);
@@ -178,7 +178,7 @@ describe("block and report targets in a group plan", () => {
   });
 
   test("a long answer that names nobody keeps the safety question", async () => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
     await w.onboard("a", "b");
     w.propose(["a", "b"]);
     await w.answerProbes(["a", "b"]);
@@ -195,7 +195,7 @@ describe("block and report targets in a group plan", () => {
   });
 
   test("a long reply that rules out the named person ends the question without filing", async () => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
     await w.onboard("a", "b");
     w.propose(["a", "b"]);
     await w.answerProbes(["a", "b"]);
@@ -215,7 +215,7 @@ describe("block and report targets in a group plan", () => {
   });
 
   test.each([true, false])("an explicit exclusion of Ben ends the safety question (competing probe: %s)", async competing => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")]);
     await w.onboard("a", "b", "c");
     w.propose(["a", "b"]);
     await w.answerProbes(["a", "b"]);
@@ -238,7 +238,7 @@ describe("block and report targets in a group plan", () => {
   });
 
   test("someone else in an unrelated reply keeps the safety question", async () => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
     await w.onboard("a", "b");
     w.propose(["a", "b"]);
     await w.answerProbes(["a", "b"]);
@@ -254,7 +254,7 @@ describe("block and report targets in a group plan", () => {
   });
 
   test.each([true, false])("an invitation survey considers only a current safety question (current: %s)", async current => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
     await w.onboard("a", "b");
     const invitation = w.propose(["a", "b"]);
     await w.answerProbes(["a", "b"]);
@@ -277,7 +277,7 @@ describe("block and report targets in a group plan", () => {
 
   test.each(["him and Cy", "him? actually, don't report him", "him?", "my date"])(
     "a pronoun with other words cannot file the sole pending report: %s", async answer => {
-      const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+      const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
       await w.onboard("a", "b");
       w.propose(["a", "b"]);
       await w.answerProbes(["a", "b"]);
@@ -290,7 +290,7 @@ describe("block and report targets in a group plan", () => {
 
   // spec/safetyCase.md, "A complete name or confirmation identifies one safety target"
   test("an ambiguous qualified name cannot confirm a different offered person", async () => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Yeah Yes"), climber("c", "Yes Moss"), climber("d", "Dana Shaw")], { review: "auto" });
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Yeah Yes"), climber("c", "Yes Moss"), climber("d", "Dana Shaw")]);
     await w.onboard("a", "b", "c", "d");
     const recentMatch = w.propose(["a", "d"]);
     await w.answerProbes(["a", "d"]);
@@ -314,7 +314,7 @@ describe("block and report targets in a group plan", () => {
   test("a name with a word around it, or a pronoun, answers 'Who do you mean?'", async () => {
     // One person named: a pronoun, or the name with a yes / please around it, files the report.
     for (const answer of ["him", "yes, Ben", "Ben please", "him please", "yeah, Ben"]) {
-      const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+      const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
       await w.onboard("a", "b");
       w.propose(["a", "b"]);
       await w.answerProbes(["a", "b"]);
@@ -327,7 +327,7 @@ describe("block and report targets in a group plan", () => {
     }
     // Two people named: the name with a word around it blocks the one named.
     for (const answer of ["Ben please", "yes, Ben"]) {
-      const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+      const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")]);
       await w.onboard("a", "b", "c");
       const id = w.propose(["a", "b", "c"]);
       for (let i = 0; i < 6 && w.meetings.length === 0; i++) {
@@ -343,7 +343,7 @@ describe("block and report targets in a group plan", () => {
     }
     // Guard: a longer answer that merely mentions the name blocks nobody.
     for (const answer of ["Ben's friend", "not Ben, Cy"]) {
-      const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+      const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")]);
       await w.onboard("a", "b", "c");
       w.propose(["a", "b", "c"]);
       await w.answerProbes(["a", "b", "c"]);
@@ -362,7 +362,7 @@ describe("block and report targets in a group plan", () => {
     // "c" is onboarded up front but never meets "a", so the competing probe can use a fresh pair:
     // re-proposing the pair that just met is refused by the pair-history rule.
     const probeSetup = async () => {
-      const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+      const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")]);
       await w.onboard("a", "b", "c");
       w.propose(["a", "b"]);
       await w.answerProbes(["a", "b"]);
@@ -395,7 +395,7 @@ describe("block and report targets in a group plan", () => {
     }
     // A booked date waits: the pronoun is read as the booked confirmation, the named answer files the report.
     const bookedSetup = async () => {
-      const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+      const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")]);
       await w.onboard("a", "b", "c");
       const id = w.propose(["a", "b", "c"]);
       await w.answerProbes(["a", "b", "c"]);
@@ -423,7 +423,7 @@ describe("block and report targets in a group plan", () => {
   });
 
   test("reporting someone not a counterpart after 'Who do you mean?' does not file a report", async () => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
     await w.onboard("a", "b");
     let from = w.mark();
     await w.say("a", "report him, he was creepy");

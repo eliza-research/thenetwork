@@ -14,7 +14,9 @@ const OLD = "o".repeat(40), NEW = "n".repeat(40), OTHER = "x".repeat(40);
 const NOW = 1_800_000_000_000;
 const DEPLOYED = {
   PLATFORM_ENV: "staging", DATABASE_URL: "postgres://svc@db.invalid/x", MIGRATION_DATABASE_URL: "postgres://owner@db.invalid/x", PLATFORM_HASH_KEY: "h".repeat(40), PLATFORM_SESSION_SECRET: "e".repeat(40), LEAK_LABEL_KEY: "l".repeat(40),
-  TURNSTILE_SECRET_KEY: "fake", OTP_PROVIDER: "twilio", TWILIO_ACCOUNT_SID: "ACfake", TWILIO_AUTH_TOKEN: "fake", TWILIO_VERIFY_SERVICE_SID: "VAfake",
+  TURNSTILE_SECRET_KEY: "fake", TURNSTILE_SITE_KEY: "fake-site", OTP_PROVIDER: "twilio", TWILIO_ACCOUNT_SID: "ACfake", TWILIO_AUTH_TOKEN: "fake", TWILIO_VERIFY_SERVICE_SID: "VAfake",
+  SERVICE_TURN_SECRET: "t".repeat(40), NETWORK_SERVICE_TOKENS: `admin@*:${"a".repeat(40)}`, NETWORK_PUBLIC_EVENTS_DATABASE_URL: "postgres://events@db.invalid/x",
+  PHOTO_STORAGE: "r2", CLOUDFLARE_AI_TOKEN: "synthetic-ai-token", CLOUDFLARE_ACCOUNT_ID: "synthetic-account", SURPLUS_API_KEY: "synthetic-surplus-key",
 };
 
 const inner = async (req: Request) => {

@@ -14,7 +14,8 @@
 import { canBeMatched, type MemberId } from "@thenetwork/core";
 import { Rng, hash32, clamp01 } from "@thenetwork/core";
 import { zipMiles, zipInfo, type SlopCity } from "./geo.ts";
-import { SLOTS, citiesInWeek, violates, zipIn, type DateActivity, type SlopPersona } from "./persona.ts";
+import { SLOTS, citiesInWeek, statedDating, violates, zipIn, type DateActivity, type SlopPersona } from "./persona.ts";
+import { datingOneWayOpen, mutuallyOpen } from "../../../../core/src/generated/mutualOpenness.ts";
 import { bodyTerm, type BodyTypeModel } from "./bodyType.ts";
 
 export const ORACLE_PARAMS = {
@@ -80,7 +81,7 @@ export class SlopOracle {
     if (a.id === b.id) return false;
     const A = a.stated, B = b.stated;
     if (!canBeMatched(A.claimedAge) || !canBeMatched(B.claimedAge)) return false;
-    if (!A.seeks.includes(B.matchGender) || !B.seeks.includes(A.matchGender)) return false;
+    if (!mutuallyOpen(statedDating(a), statedDating(b))) return false;
     if (B.claimedAge < A.ageRange[0] || B.claimedAge > A.ageRange[1] || A.claimedAge < B.ageRange[0] || A.claimedAge > B.ageRange[1]) return false;
     return sharedCities(a, b, week).length > 0;
   }
@@ -88,7 +89,7 @@ export class SlopOracle {
   statedAccepts(a: SlopPersona, b: SlopPersona, week?: number): boolean {
     const A = a.stated, B = b.stated;
     if (!canBeMatched(A.claimedAge) || !canBeMatched(B.claimedAge)) return false;
-    if (!A.seeks.includes(B.matchGender) || B.claimedAge < A.ageRange[0] || B.claimedAge > A.ageRange[1]) return false;
+    if (!datingOneWayOpen(statedDating(a), statedDating(b)) || B.claimedAge < A.ageRange[0] || B.claimedAge > A.ageRange[1]) return false;
     return sharedCities(a, b, week, "a").length > 0;
   }
   /** statedMutual and safe by hidden truth (true adults, no adversary): the oracle-optimal pool. */

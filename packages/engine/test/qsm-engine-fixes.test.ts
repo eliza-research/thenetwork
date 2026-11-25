@@ -86,7 +86,7 @@ describe("QSM ported engine fixes", () => {
     expect(next.stage).toBe("revealed");
   });
 
-  test("SD-064: relayItemAsync marks ageSignal when classifier returns minor_signal", async () => {
+  test("SD-064: relayItemAsync blocks (never holds) and marks ageSignal when classifier returns minor_signal", async () => {
     const res = await relayItemAsync(
       { id: "item-minor", from: "a", to: "b", kind: "text", text: "meet at the park after class", at: NOW },
       {
@@ -99,7 +99,7 @@ describe("QSM ported engine fixes", () => {
       },
       { hook: async () => ({ flags: ["minor_signal"], source: "clef" }) },
     );
-    expect(res.decision).toBe("hold");
+    expect(res.decision).toBe("block");
     expect(res.record.ageSignal).toBe(true);
     expect(res.reasons).toContain("clef:minor_signal");
   });

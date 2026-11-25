@@ -172,7 +172,7 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
         const app = role === "network_observatory" ? "ntwrk" : role.slice("network_observatory_".length);
         if (apps.includes(app) && [
           `network.network_state_console_${app}`, `network.outbound_evidence_${app}`, `network.booking_receipts_${app}`,
-          `platform.person_blocks_${app}`, `platform.matching_ages_${app}`,
+          `platform.person_blocks_${app}`, `platform.matching_ages_${app}`, `platform.teen_pair_avoid_members_${app}`,
         ].includes(rel)) return true;
         if (catalog.includes(rel)) return apps.includes(app) || role === "network_observatory_cross_app";
         if (role === "network_observatory") return ["network.staff_audit", "platform.staff_roles", "network.ops_alerts", "network.ops_alert_posts"].includes(rel);
@@ -272,6 +272,163 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
       expect(await sql`insert into platform.consent_events (e164, app_id, state, source, ref, at) values ('+12125550175', null, 'opted_out', 'keyword:stop', 'in:1', now())`.then(() => "ok", e => String(e.message))).toContain("duplicate");
       // The service role is the platform's text channel too: it inherits platform_service.
       expect(await sql.begin(async tx => { await tx`set local role network_service`; return tx`select count(*)::int as n from platform.phone_identities`; }).then(() => "ok", e => String(e.message))).toBe("ok");
+    });
+
+    test("birth readings, teen pool safety tables, and private age projection grants", async () => {
+      const columns = async (table: string) => (await sql`select column_name from information_schema.columns
+        where table_schema = 'platform' and table_name = ${table} order by ordinal_position`).map((r: any) => r.column_name as string);
+      expect(await columns("people")).toEqual(expect.arrayContaining(["birth_date", "birth_lower", "birth_upper", "birth_youngest", "birth_first_exact"]));
+      expect(await columns("age_floor")).toEqual(expect.arrayContaining(["birth_lower", "birth_upper", "birth_youngest"]));
+      expect(await columns("pending_texts")).toContain("birth_date");
+      expect((await sql`select to_regclass('platform.teen_age_confirmations') as t`)[0].t).toBeNull();
+      expect(await columns("teen_pool_bars")).toEqual(["phone_hash", "reason", "at"]);
+      expect(await columns("teen_pool_holds")).toEqual(["phone_hash", "app_id", "at"]);
+      expect(await columns("teen_pair_avoid")).toEqual(["phone_hash_a", "phone_hash_b", "at"]);
+      const internalAgeFacts = ["birth_date", "birth_lower", "birth_upper", "birth_youngest", "floor_birth_lower", "floor_birth_upper",
+        "floor_birth_youngest", "teen_pool_barred", "teen_pool_held", "signup_minor_cap", "signup_age_observed"];
+      const apps = (await sql`select id from platform.apps order by id`).map((r: any) => r.id as string);
+      for (const view of ["matching_ages", ...apps.map(app => `matching_ages_${app}`)]) {
+        const cols = await columns(view);
+        expect([view, cols.slice(0, 8)]).toEqual([view, ["app_id", "member_id", "age", "banned", "staff_held", "report_held", "minor_signal_at", "birth_date"]]);
+        expect([view, cols.slice(-internalAgeFacts.length)]).toEqual([view, internalAgeFacts]);
+        expect([view, cols.includes("teen_confirmed_birth")]).toEqual([view, false]);
+      }
+      const can = async (role: string, table: string, privilege: string) =>
+        (await sql`select has_table_privilege(${role}, ${`platform.${table}`}, ${privilege}) as ok`)[0].ok as boolean;
+      for (const privilege of ["select", "insert", "update", "delete"]) expect(["teen_pool_bars", privilege, await can("network_service", "teen_pool_bars", privilege)]).toEqual(["teen_pool_bars", privilege, true]);
+      for (const table of ["teen_pool_holds", "teen_pair_avoid"]) {
+        for (const privilege of ["select", "insert", "delete"]) expect([table, privilege, await can("network_service", table, privilege)]).toEqual([table, privilege, true]);
+        for (const privilege of ["select", "delete"]) expect([table, privilege, await can("platform_service", table, privilege)]).toEqual([table, privilege, true]);
+        expect([table, await can("platform_service", table, "update")]).toEqual([table, false]);
+      }
+      expect([await can("platform_service", "teen_pair_avoid", "insert"), await can("platform_service", "teen_pool_holds", "insert")]).toEqual([true, false]);
+      for (const table of ["teen_pool_bars", "teen_pool_holds", "teen_pair_avoid"]) {
+        expect([table, await can("public", table, "select")]).toEqual([table, false]);
+        for (const app of apps) expect([table, app, await can(`network_observatory_${app}`, table, "select")]).toEqual([table, app, false]);
+      }
+      expect([await can("platform_service", "teen_pool_bars", "insert"), await can("platform_service", "teen_pool_bars", "delete")]).toEqual([true, false]);
+      expect(await can("platform_service", "person_minor_signals", "delete")).toBe(false);
+      for (const role of ["public", "network_observatory", "network_observatory_cross_app", ...apps.map(app => `network_observatory_${app}`)]) {
+        expect([role, await can(role, "signup_eligibility", "select")]).toEqual([role, false]);
+      }
+      expect(await columns("age_floor")).toContain("birth_first_exact");
+      const readAs = (role: string, query: string) =>
+        sql.begin(async tx => { await tx.unsafe(`set local role ${role}`); return tx.unsafe(query); }).then(() => "ok", e => String(e.message));
+      for (const column of ["birth_date", "birth_lower", "birth_upper", "birth_youngest", "birth_first_exact"]) {
+        expect([column, await readAs("network_observatory_cross_app", `select ${column} from platform.people limit 1`)]).toEqual([column, expect.stringContaining("permission denied")]);
+      }
+      expect(await readAs("network_observatory_cross_app", "select * from platform.people limit 1")).toContain("permission denied");
+      expect(await readAs("network_observatory_cross_app", "select id, lowest_age, created_at, deleted_at from platform.people limit 1")).toBe("ok");
+      const err = (q: Promise<unknown>) => q.then(() => "ok", e => String(e.message));
+      const [p] = await sql`insert into platform.people (id) values (gen_random_uuid()) returning id`;
+      expect(await err(sql`update platform.people set birth_date = 18991231, birth_lower = 18991230, birth_upper = 18991231, birth_youngest = 18991231 where id = ${p.id}`)).toContain("check");
+      expect(await err(sql`update platform.people set birth_upper = 20100315 where id = ${p.id}`)).toContain("check");
+      expect(await err(sql`update platform.people set birth_date = 20100315 where id = ${p.id}`)).toContain("check");
+      expect(await err(sql`insert into platform.teen_pool_bars (phone_hash, reason, at) values ('h', 'because', now())`)).toContain("check");
+      expect(await err(sql`update platform.people set birth_date = 20100315, birth_lower = 20100314, birth_upper = 20100315, birth_youngest = 20100315 where id = ${p.id}`)).toBe("ok");
+    });
+
+    test("0083: photo offers, drafts, page links and receive preferences; the photo wire columns and the choice list are gone", async () => {
+      const columns = async (table: string) => (await sql`select column_name from information_schema.columns
+        where table_schema = 'platform' and table_name = ${table} order by ordinal_position`).map((r: any) => r.column_name as string);
+      expect(await columns("photo_relay_offers")).toEqual([]);
+      expect(await columns("outbound")).not.toContain("approved_photos");
+      const items = await columns("photo_relay_items");
+      for (const gone of ["action_id", "delivery_intent", "delivery_expires_at"]) expect([gone, items.includes(gone)]).toEqual([gone, false]);
+      expect(items).toContain("offer_id");
+      expect(await columns("photos")).toEqual(expect.arrayContaining(["label", "batch_id"]));
+      const apps = (await sql`select id from platform.apps order by id`).map((r: any) => r.id as string);
+      const can = async (role: string, table: string, privilege: string) =>
+        (await sql`select has_table_privilege(${role}, ${`platform.${table}`}, ${privilege}) as ok`)[0].ok as boolean;
+      for (const table of ["photo_relay_drafts", "photo_offers", "photo_page_links", "photo_receive_prefs"]) {
+        for (const privilege of ["select", "insert", "update", "delete"]) expect([table, privilege, await can("platform_service", table, privilege)]).toEqual([table, privilege, true]);
+        expect([table, await can("platform_service", table, "truncate")]).toEqual([table, false]);
+        expect([table, await can("public", table, "select")]).toEqual([table, false]);
+        for (const app of apps) expect([table, app, await can(`network_observatory_${app}`, table, "select")]).toEqual([table, app, false]);
+      }
+      const err = (q: Promise<unknown>) => q.then(() => "ok", e => String(e.message));
+      const [p] = await sql`insert into platform.people (id) values (gen_random_uuid()) returning id`;
+      const photo = (id: string, label: string | null) => sql`insert into platform.photos (id, person_id, app_id, storage_key, content_type, bytes, sha256, consent_version, created_at, stored_at, label)
+        values (${id}, ${p.id}, 'slop', ${id.slice(3).padEnd(48, "0")}, 'image/jpeg', 10, ${"a".repeat(64)}, 'v', now(), now(), ${label})`;
+      expect(await err(photo(`ph_${"1".repeat(24)}`, "Beach"))).toContain("check");
+      expect(await err(photo(`ph_${"2".repeat(24)}`, "beach day"))).toBe("ok");
+      expect(await err(photo(`ph_${"3".repeat(24)}`, "beach day"))).toContain("duplicate");
+      expect(await err(sql`insert into platform.photo_page_links (id, person_id, app_id, purpose, issued_at, expires_at)
+        values (${"b".repeat(64)}, ${p.id}, 'slop', 'view', now(), now() + interval '1 hour')`)).toContain("check");
+    });
+
+    test("0085: relay items wait for the automatic check, view links have no expiry, and the view window is gone", async () => {
+      const columns = async (table: string) => (await sql`select column_name from information_schema.columns
+        where table_schema = 'platform' and table_name = ${table} order by ordinal_position`).map((r: any) => r.column_name as string);
+      const offers = await columns("photo_offers");
+      for (const gone of ["ready_by", "view_until"]) expect([gone, offers.includes(gone)]).toEqual([gone, false]);
+      expect(offers).toContain("taken_back_ids");
+      expect(await columns("photo_relay_items")).toEqual(expect.arrayContaining(["screen_attempts", "screen_at"]));
+      const definition = async (name: string) => String((await sql`select pg_get_constraintdef(c.oid) as def from pg_constraint c join pg_namespace n on n.oid = c.connamespace
+        where n.nspname = 'platform' and c.conname = ${name}`)[0]?.def ?? "");
+      const phases = await definition("photo_offers_phase_check");
+      expect(phases).toContain("ready");
+      expect(phases).not.toMatch(/'(viewing|closed)'/);
+      expect(await definition("photo_relay_items_state_check")).toContain("screening");
+      expect(await definition("photo_relay_items_screen_at")).toContain("screen_at IS NOT NULL");
+      expect(await definition("photo_page_links_view_open")).toContain("expires_at IS NULL");
+      const err = (q: Promise<unknown>) => q.then(() => "ok", e => String(e.message));
+      const [p] = await sql`insert into platform.people (id) values (gen_random_uuid()) returning id`;
+      expect(await err(sql`insert into platform.photo_page_links (id, person_id, app_id, purpose, issued_at, expires_at)
+        values (${"c".repeat(64)}, ${p.id}, 'slop', 'mine', now(), null)`)).toContain("check");
+      expect(await err(sql`insert into platform.photo_page_links (id, person_id, app_id, purpose, issued_at, expires_at)
+        values (${"d".repeat(64)}, ${p.id}, 'slop', 'mine', now(), now() + interval '15 minutes')`)).toBe("ok");
+    });
+
+    test("0088: a ready offer does not hold its pair, and a block, a ban, a hold, a report hold or erasure records an end fact on the open offers of that person only", async () => {
+      const err = (q: Promise<unknown>) => q.then(() => "ok", e => String(e.message));
+      const person = async () => (await sql`insert into platform.people (id) values (gen_random_uuid()) returning id`)[0].id as string;
+      let n = 0;
+      const offer = async (from: string, to: string, phase: string, app = "slop") => {
+        const id = `pof_${crypto.randomUUID().replaceAll("-", "")}`;
+        n++;
+        await sql`insert into platform.photo_offers (id, request_key, app_id, thread_id, sender_person_id, recipient_person_id, sender_member_id, recipient_member_id,
+            photo_ids, photo_sha256, photo_count, consent_id, consented_at, policy_version, phase, answer_by, created_at, changed_at, checked_at)
+          values (${id}, ${`rk0088_${id}`}, ${app}, 'thread_0088', ${from}::uuid, ${to}::uuid, ${`m0088_${n}_a`}, ${`m0088_${n}_b`},
+            ${[`ph_${"a".repeat(24)}`]}::text[], ${["a".repeat(64)]}::text[], 1, ${`pcn0088_${id}`}, now(), 'v', ${phase}, now() + interval '1 day', now(), now(), now())`;
+        return id;
+      };
+      const ended = async (ids: string[]) => {
+        const rows = await sql<{ id: string; party_ended: boolean }[]>`select id, party_ended from platform.photo_offers where id = any(${ids}::text[])`;
+        return ids.map(id => rows.find(r => r.id === id)!.party_ended);
+      };
+
+      const a = await person(), b = await person(), c = await person();
+      const ready1 = await offer(a, b, "ready"), ready2 = await offer(a, b, "ready");
+      const asking = await offer(a, b, "asking");
+      expect(await err(offer(a, b, "reviewing"))).toContain("photo_offers_one_open");
+      const declined = await offer(a, b, "declined");
+      const other = await offer(a, c, "ready");
+      const back = await offer(b, a, "ready");
+      await sql`insert into platform.person_blocks (from_person, to_person, origin_app, at) values (${b}::uuid, ${a}::uuid, 'slop', now())`;
+      expect(await ended([ready1, ready2, asking, declined, other, back])).toEqual([true, true, true, false, false, true]);
+
+      const banned = await person(), friend = await person();
+      const toBanned = await offer(friend, banned, "ready"), fromFriend = await offer(friend, c, "asking");
+      await sql`insert into platform.bans (id, scope, person_id, reason, banned_by) values (${`ban0088_${banned}`}, 'person', ${banned}::uuid, 'fixture', 'staff_fixture')`;
+      expect(await ended([toBanned, fromFriend])).toEqual([true, false]);
+
+      const held = await person(), peer = await person();
+      const slopOffer = await offer(held, peer, "ready", "slop"), friendsOffer = await offer(peer, held, "ready", "friends");
+      await sql`insert into platform.staff_safety_holds (person_id, app_id, decision_id, held_at, released_apps) values (${held}::uuid, null, gen_random_uuid(), now(), '{friends}')`;
+      expect(await ended([slopOffer, friendsOffer])).toEqual([true, false]);
+      await sql`update platform.staff_safety_holds set released_apps = '{}' where person_id = ${held}::uuid and app_id is null`;
+      expect(await ended([slopOffer, friendsOffer])).toEqual([true, true]);
+
+      const reported = await person(), other2 = await person();
+      const reportedSlop = await offer(other2, reported, "reviewing", "slop"), reportedFriends = await offer(other2, reported, "ready", "friends");
+      await sql`insert into platform.report_safety_carryovers (app_id, origin_runtime_id, report_id, person_id) values ('slop', 'slop:nyc', 'report_0088', ${reported}::uuid)`;
+      expect(await ended([reportedSlop, reportedFriends])).toEqual([true, false]);
+
+      const erased = await person(), other3 = await person();
+      const erasedOffer = await offer(erased, other3, "ready");
+      await sql`update platform.people set deleted_at = now() where id = ${erased}::uuid`;
+      expect(await ended([erasedOffer])).toEqual([true]);
     });
 
     test("platform.audit is append-only", async () => {

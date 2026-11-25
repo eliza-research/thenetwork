@@ -29,31 +29,8 @@ on:
       - '.github/actions/setup-dafny/**'
       - '.github/actions/setup-quint/**'
   pull_request:
-    paths:
-      - 'spec/**'
-      - '!spec/models/**'
-      - 'packages/core/src/generated/**'
-      - 'packages/core/src/vibe/**'
-      - 'scripts/spec-snapshots.ts'
-      - 'scripts/*formal-shard*'
-      - 'tools/vibestack/**'
-      - 'scripts/vibestack.ts'
-      - 'apps/site/**'
-      - 'sites/**'
-      - 'packages/design-system/**'
-      - 'packages/ui/**'
-      - 'deploy/router.ts'
-      - 'packages/platform/src/**'
-      - 'scripts/sites-dev.ts'
-      - 'test/bombadil.ts'
-      - 'test/fixtures/browserSignup.ts'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - '.nvmrc'
-      - '.github/workflows/vibespec.yml'
-      - '.github/actions/setup-dafny/**'
-      - '.github/actions/setup-quint/**'
+  schedule:
+    - cron: '41 3 * * *'
   workflow_dispatch:
     inputs:
       cold_formal_cache:
@@ -70,9 +47,9 @@ concurrency:
 
 jobs:
   full-check:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (github.base_ref == 'develop' || github.base_ref == 'main'))
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (github.base_ref == 'develop' || github.base_ref == 'main'))
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: ${{ github.event_name == 'schedule' && 60 || 30 }}
     concurrency:
       group: vibestack-full-check-${{ github.ref }}
       cancel-in-progress: false
@@ -116,6 +93,7 @@ jobs:
           echo "$bin" >> "$GITHUB_PATH"
           "$bin/pg_isready" -h localhost -p 54339
           node --import tsx scripts/require-pg.ts
+          node --import tsx packages/db/dev-pg.ts up
       - &formal-keys
         name: Identify formal action archives
         id: formal-keys
@@ -123,7 +101,7 @@ jobs:
         env:
           TOOLS: ${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'tools/vibestack/pnpm-lock.yaml') }}
           ACTION_TOOLS: ${{ hashFiles('tools/vibestack/vibestack/action.ts', 'tools/vibestack/vibestack/cache.ts', 'tools/vibestack/vibestack/installed.ts', 'tools/vibestack/vibestack/run.ts', 'tools/vibestack/vibestack/simulator.ts') }}
-          RESTORE: ${{ (github.event_name == 'workflow_dispatch' && !inputs.cold_formal_cache) || (github.event_name == 'pull_request' && (github.base_ref == 'develop' || github.base_ref == 'main')) }}
+          RESTORE: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.cold_formal_cache) || (github.event_name == 'pull_request' && (github.base_ref == 'develop' || github.base_ref == 'main')) }}
         run: |
           printf '%s\n' "restore=$RESTORE" "complete=formal-full-complete-v4-$TOOLS-$ACTION_TOOLS-" \
             "previous=formal-full-complete-v4-$TOOLS-" "complete_v3=formal-full-complete-v3-$TOOLS-" "complete_v2=formal-full-complete-v2-$TOOLS-" \
@@ -197,6 +175,7 @@ jobs:
       - name: Start the full verification deadline
         env:
           COLD: ${{ github.event_name == 'workflow_dispatch' && inputs.cold_formal_cache }}
+          BUDGET: ${{ github.event_name == 'schedule' && 3420 || 1620 }}
         shell: bash
         run: |
           mkdir -p .spec-cache/formal
@@ -205,7 +184,7 @@ jobs:
           fi
           find .spec-cache/formal -maxdepth 1 -type f \( -name 'action-*.json.zst' -o -name 'action-*.json.gz' \) -printf '%f\n' |
             sort > "$RUNNER_TEMP/formal-actions-before"
-          echo "FORMAL_DEADLINE=$(( $(date +%s) + 1620 ))" >> "$GITHUB_ENV"
+          echo "FORMAL_DEADLINE=$(( $(date +%s) + BUDGET ))" >> "$GITHUB_ENV"
       - name: Precompute the heavier formal shard on this runner
         if: steps.shards.outputs.enabled == 'true'
         shell: bash
@@ -246,14 +225,18 @@ jobs:
         if: steps.download-shard.outcome == 'success'
         continue-on-error: true
         run: python3 scripts/formal-shard-artifacts.py restore "$RUNNER_TEMP/formal-artifact"
-      - name: Run the full Vibestack check
+      - name: Build the connector CSS
+        run: pnpm run connector:css
+      - name: Run the full Vibestack check (the nightly profile on the schedule)
         id: check
         shell: bash
+        env:
+          PROFILE: ${{ github.event_name == 'schedule' && '--nightly' || '' }}
         run: |
           # Leave time to upload completed receipts before the job deadline.
           remaining=$(( FORMAL_DEADLINE - $(date +%s) ))
           (( remaining > 0 ))
-          timeout --kill-after=15s "${remaining}s" pnpm run check
+          timeout --kill-after=15s "${remaining}s" pnpm run check $PROFILE
       - name: Prepare completed actions for upload
         if: ${{ !cancelled() && (steps.check.outcome == 'success' || steps.check.outcome == 'failure') }}
         id: ready
@@ -286,6 +269,7 @@ jobs:
           key: ${{ steps.formal-keys.outputs.checkpoint }}${{ github.run_id }}-${{ github.run_attempt }}
 
   generation:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -364,6 +348,7 @@ jobs:
           retention-days: 2
 
   browser:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:

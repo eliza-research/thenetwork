@@ -4,11 +4,11 @@ The [whole-flow model](models/opportunity.md) follows participant replies, retri
 
 ## Story: Review a proposal before contacting anyone
 
-> As a member, I want a person to review a proposal before the Network can ask me about it.
+> As a member, I want a recorded review of a proposal before the Network can ask me about it.
 
 ### An opportunity starts in review
 
-Every proposal starts in review. An approval can start probing only after the review is recorded and the eligibility recheck has passed. A reviewer can reroll a proposal in review. A replacement starts a fresh review revision and deadline, and needs a new approval. A reroll with no replacement closes the proposal.
+Every proposal starts in review. An approval can start probing only after the review is recorded and the eligibility recheck has passed. The recorded approval is a recorded approval by the review judge or by a named staff member ([automated review](automatedReview.md)). A reviewer can reroll a proposal in review. A replacement starts a fresh review revision and deadline, and needs a new approval. A reroll with no replacement closes the proposal. Changed (owner decision 2026-11-22, D15 to D17): the approval came from a person; now the review judge records it, and a named staff member records it only for an item that the judge held.
 
 ```quint
 type OpportunityPhase = InReview | Probing | Scheduled | Done | Closed
@@ -158,21 +158,62 @@ pure def lawPlayerAttendanceConfirmationNeedsAClearYes(exactPromptBooking: bool,
   not(playerBookingConfirmationAllowed(exactPromptBooking, startAt, receivedAt, cancellationRequest, false))
 ```
 
-### A new minor signal closes an unbooked opportunity involving that person
+### A new minor signal closes an opportunity involving that person
 
-Close an opportunity still in review or probing when a person involved becomes known to be a minor. This applies to current members, alternates, and someone who received a probe and was already replaced. A booked opportunity uses the existing cancellation path if the minor is on the booked roster. A booked opportunity also closes when the minor received a probe for it and was replaced before the booking: a minor who was asked stays on its roster, so a reminder or feedback request about it describes them. Decision 2026-11-17 (NYC world, seed 3): a member who stated 20 declined a probe, was replaced, and was found to be 16 the next day; the two adults then got 4 messages about the booked plan.
+Close an opportunity still in review or probing when a person involved becomes known to be a minor. This applies to current members, alternates, and someone who received a probe and was already replaced. A booked opportunity always closes when the minor is on its roster or was asked about it, whatever the size of the group: the adults do not go on to meet at a time and place that a minor was told. A minor who was asked stays on the roster of the opportunity, so a reminder or feedback request about it describes them. A minor who is going leaves through the ordinary drop path, and that path closes the booking even when three or more adults remain. The Network also checks each member on a plan or asked about it at the moment the plan books, falls back or takes a late yes, and a member whose record now says minor closes it for the minors policy. A member of a recurring crew counts as asked about each session of that crew, because the crew meets at one time and place. A plan that keeps the time and place of an earlier plan counts as asked about for each member who was asked about that earlier plan: the replacement for a cancelled booking, the smaller partner plan that a plan fell back to, and the repeat of a table. A booking that closes for a minor records the minors policy as its reason; it is not the minor's decision, so it does not count as a declined reveal. The adults hear that the plan is off, with no reason, only while it is still in the future, and each of them can be matched again in the ordinary way. When an opportunity in probing closes for a minor, each other member who received a probe and said yes hears that it did not come together; the minor and the requester, whom the request path tells, do not. A stated age under the join age, which declines the person and deletes what the Network holds about them, is a minor signal too: the Network applies this rule first, while it still knows what the person was asked about, and deletes after. A teen friendship item is the one exception: an item that passed the teen friendship age rule at creation stays open for its teen members while teen introductions are not stopped and the rule holds for its whole roster up to the end of the meeting; the teen sweep closes it as a whole otherwise, with no replacement, recovery or fallback plan, because each member was told its place ([teen introduction stop](teenIntroSwitch.md)). Changed (minor safety and owner decision 2026-11-22, D1): the check read only the plan's own roster, the late yes and the fallback did not run it, and a group of three or more adults went on without the minor -> every plan that keeps a time and place a minor was told closes, and only a current teen friendship item stays open, because adults went on to meet where a minor was told to be.
+
+The cancellation that a minor signal causes is part of the safety action. The Network sends it at once, before it records the signal, and does not keep it in its own deferred queue. The delivery queue still holds it through the recipient's quiet hours, because it is not a reply. The text gives no reason and names nobody. At the same signal the Network removes from its deferred queue every send about an opportunity that the minor was on, was an alternate for, or received a probe for, whatever its stage. A queued cancellation that is still valid goes at once in the same way, so a member who was owed one is still told. No other queued send about that opportunity, such as a booked plan, a reminder, or a feedback request, ever goes, because a message about such an opportunity is about a plan with a minor on it. Changed (minor safety): the cancellations waited in the deferred queue through the adults' quiet hours, and queued reminders still went -> the cancellation goes at once and every other queued send about the opportunity is dropped, because the judge counted minor contacts in the mini NYC world.
 
 ```quint
 pure def closesForMinor(proposal: OpportunityLifecycle, minorSignal: bool, participant: bool, alternate: bool, contacted: bool): bool =
   minorSignal and (
     ((proposal.phase == InReview or proposal.phase == Probing) and (participant or alternate or contacted))
-    or (proposal.phase == Scheduled and contacted and not(participant)))
+    or (proposal.phase == Scheduled and (participant or contacted)))
+
+pure def bookedGroupCanContinue(remaining: int, minorSignal: bool): bool =
+  not(minorSignal) and groupCanContinue(remaining)
 
 pure def lawAskedMinorClosesABookedOpportunity(proposal: OpportunityLifecycle): bool =
   proposal.phase == Scheduled implies closesForMinor(proposal, true, false, false, true)
 
+pure def lawMinorOnTheRosterClosesABookedOpportunity(proposal: OpportunityLifecycle): bool =
+  proposal.phase == Scheduled implies closesForMinor(proposal, true, true, false, false)
+
+pure def lawAMinorNeverLeavesABookedGroupRunning(proposal: OpportunityLifecycle, remaining: int): bool =
+  proposal.phase == Scheduled
+    implies (closesForMinor(proposal, true, true, false, false) and not(bookedGroupCanContinue(remaining, true))
+             and canClose(proposal) and not(canBook(close(proposal), true)))
+
+pure def lawOtherDropsKeepTheGroupRule(proposal: OpportunityLifecycle, remaining: int): bool =
+  (proposal.phase == Scheduled and not(bookedGroupCanContinue(remaining, false)))
+    implies (remaining < 3 and canClose(proposal) and not(canBook(close(proposal), true)))
+
+pure def lawNoMinorCloseWithoutAMinorSignal(proposal: OpportunityLifecycle, participant: bool, alternate: bool, contacted: bool): bool =
+  not(closesForMinor(proposal, false, participant, alternate, contacted))
+
 pure def lawMinorContactClosesAnUnbookedOpportunity(proposal: OpportunityLifecycle): bool =
   (proposal.phase == InReview or proposal.phase == Probing) implies closesForMinor(proposal, true, false, false, true)
+
+pure def minorCloseTellsAcceptor(before: OpportunityLifecycle, contacted: bool, accepted: bool, minor: bool, requester: bool): bool =
+  before.phase == Probing and contacted and accepted and not(minor) and not(requester)
+
+pure def lawMinorCloseNeverTellsTheMinor(before: OpportunityLifecycle, contacted: bool, accepted: bool, minor: bool, requester: bool): bool =
+  minorCloseTellsAcceptor(before, contacted, accepted, minor, requester)
+    implies (before.phase == Probing and closesForMinor(before, true, false, false, contacted)
+             and not(minor) and not(requester) and canClose(before))
+```
+
+### A minor signal ends the recurring plans that the minor knows
+
+A recurring crew meets at the time and place of the plan it came from, and a repeat of a table uses the time and place of the plan it copies. A crew offer forms, and a crew gets a new session, only while no crew member and no member who was asked about the plan it came from is a known minor, and only if no member who was asked about that plan ever had a minor signal. A table is repeated only while no member who was asked about the plan it copies is a known minor, and only if no member who was asked about it ever had a minor signal. The same check covers every earlier plan whose time and place the plan keeps, and the Network offers a replacement for a cancelled booking only when the check passes for that booking. The check runs at the moment the Network offers, forms, or schedules. At a minor signal, which includes a decline for an age under the join age, the Network also ends every crew and open crew offer that the minor is in, and marks every opportunity that the minor was asked about, finished ones included. A record age under 18 is such a signal at the next unit even when nothing the minor was asked about is still open. The crew stays ended, and the mark stays, after the Network deletes the minor's id; the mark names nobody. The minor hears nothing more about them. The whole-flow model [plan crew](models/plan_crew.md) checks the invariant noSessionAMinorKnows. Each unit reads the member records again when it starts: a network tick, an inbound message, a staff decision, a judge result, a judge packet read, a relay request, a reviewed send, a join and every other step that the service or a staff tool starts never uses a record that the Network read before the unit. So a staff or judge approval right after the record says minor is refused, and a booked, scheduled, probing or in-review item with that member closes at the first tick or inbound message after the change. Changed (verification 2026-11-23): a tick, a staff decision or a judge result used a record read up to 20 minutes earlier, so a booked plan stayed open and an approval went through after the record said 16 -> every unit reads the records again, because a minor stayed on a booked plan and could be contacted. Changed (minor safety): the check read only the plan itself and a finished table got no mark -> the check covers every earlier plan and the plan a crew came from, and a minor signal marks finished opportunities too, because a crew, a repeat or a replacement went on at a time and place a minor was told, also after a delete on request.
+
+```quint
+pure def recurrenceAllowed(roster: List[str], knownMinors: List[str], minorWasTold: bool): bool =
+  not(minorWasTold) and roster.every(id => not(knownMinors.includes(id)))
+
+pure def lawNoRecurrenceThatAMinorKnows(roster: List[str], knownMinors: List[str], minorWasTold: bool, member: str): bool =
+  (minorWasTold or (roster.includes(member) and knownMinors.includes(member)))
+    implies not(recurrenceAllowed(roster, knownMinors, minorWasTold))
 ```
 
 ### A block closes an open opportunity for the active pair
@@ -224,4 +265,19 @@ pure def releasesPartialAcceptance(before: OpportunityLifecycle, unresolved: boo
 pure def lawReleaseNeedsAContactedAcceptor(before: OpportunityLifecycle, unresolved: bool, systemProposal: bool,
     contacted: bool, accepted: bool): bool =
   releasesPartialAcceptance(before, unresolved, systemProposal, contacted, accepted) implies (contacted and accepted)
+```
+
+### Closing by the requester releases each contacted person who said yes
+
+When the member's own words close a standing thing and that close retires a linked opportunity in probing, each other person who received a probe for it and said yes gets one short neutral note. The note names nobody and gives no reason. The requester hears the close acknowledgment instead. Use the ordinary safety and timing checks for cancellation messages. Changed (owner decision 2026-11-22): before, a person who said yes to a member's request heard nothing when the requester closed it.
+
+```quint
+pure def releasesOnRequesterClose(before: OpportunityLifecycle, contacted: bool, accepted: bool, requester: bool): bool =
+  before.phase == Probing and before.approved and contacted and accepted and not(requester)
+
+pure def lawRequesterCloseNeverReleasesTheRequester(before: OpportunityLifecycle, contacted: bool, accepted: bool): bool =
+  not(releasesOnRequesterClose(before, contacted, accepted, true))
+
+pure def lawRequesterCloseReleasesOnlyAContactedAcceptor(before: OpportunityLifecycle, contacted: bool, accepted: bool, requester: bool): bool =
+  releasesOnRequesterClose(before, contacted, accepted, requester) implies (contacted and accepted)
 ```

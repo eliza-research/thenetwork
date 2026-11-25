@@ -3,6 +3,7 @@ import { DAY, HOUR, SimClock } from "@thenetwork/core";
 import { OutboundQueue, recipientWindowHasher } from "../../../packages/blooio/src/outbound-queue.ts";
 import { SQL } from "../../../packages/core/src/runtime/postgres.ts";
 import { currentBookingReceipt } from "../../../packages/network/service/channel.ts";
+import { simulatedReviewJudge } from "../../../packages/engine/src/reviewJudge.ts";
 import { ConsentNetwork } from "../../../packages/network/src/network.ts";
 import { rescheduleUpdateKey } from "../../../packages/network/src/rescheduling.ts";
 import { DEFAULT_START, generatePersonas, World } from "../../../packages/sim/src/index.ts";
@@ -97,7 +98,7 @@ test("the game projects booking receipt times only for delivered notices", async
     id: p.id, name: p.name, city: p.homeCity, joined: false, minor: p.public.claimedAge < 18, state: "not_joined", counters: emptyCounters(),
   });
   const projector = new Projector(store);
-  const world = new World({ seed, personas, days: 10, failureRate: 0.25, network: new ConsentNetwork({ seed, review: "auto" }), writeLog: false,
+  const world = new World({ seed, personas, days: 10, app: "ntwrk", failureRate: 0.25, network: new ConsentNetwork({ seed, inlineJudge: simulatedReviewJudge({ exceptions: false }) }), writeLog: false,
     onRecord: record => projector.apply(record) });
   await world.run();
   let delivered = 0, failed = 0;

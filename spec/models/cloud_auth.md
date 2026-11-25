@@ -8,12 +8,12 @@ An Eliza Cloud member needs to authorize their own access to The Network.
 
 Check grant ownership and expiry, ban checks, auth mode, and validation cache behavior. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [Cloud sign-in spec](../cloudSignIn.md) generates the platform callback machine. The VibeLang shell uses it from handoff through the stored session. The [Cloud authority spec](../cloudAuthority.md) generates per-request site proof, cache, and grant eligibility decisions. The staging callback permits up to 30 seconds of future issue time. The production delegation parser checks the issue time before the callback rule runs. It requires an issue time no later than the local clock, as do grant and profile proof checks. This standalone model compares a request's start with the latest cache invalidation to represent the runtime's in-flight validation rounds. It also covers app configuration and storage-level interactions.
+The [Cloud sign-in spec](../cloudSignIn.md) generates the platform callback machine. The VibeLang shell uses it from handoff through the stored session. The [Cloud authority spec](../cloudAuthority.md) generates per-request site proof, cache, and grant eligibility decisions. The staging callback and the production delegation parser permit up to 30 seconds of future issue time (`cloudIdentityTimesValid`). Grant and profile proof checks require an issue time no later than the local clock. This standalone model compares a request's start with the latest cache invalidation to represent the runtime's in-flight validation rounds. It also covers app configuration and storage-level interactions.
 
 Imported from `quint/cloud_auth.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
-// quint-check: max-steps=20 max-samples=10000 verify-steps=5
+// quint-check: max-steps=20 max-samples=40000 verify-steps=5
 // -*- mode: Bluespec; -*-
 //
 // cloud_auth: the Eliza Cloud sign-in and the validation of Cloud proofs and Cloud MCP grants. This is a
@@ -21,39 +21,66 @@ Imported from `quint/cloud_auth.qnt` at `30d950e`. See [model index](README.md) 
 // rotation, the edge and the svc-auth hop). Module plan: docs/research/2026-11-07-state-machines.md
 // section 9.6.2 (`cloud_auth`, items W3-125, W3-126, W3-127, W3-134, W3-373, W3-671).
 //
-// The model follows the code at e4f0a32:
-//   packages/platform/src/api.ts                cloudFor (per-app mode), the callback, cloudSessionStatus and
-//                                               its `validated` cache, auth(), authenticatedSiteSession,
-//                                               cloudGrantAuthority, validateCloudGrant
+// Compared with the code on branch vibestack-matching on 2026-11-18 (locations are by function name):
+//   packages/platform/src/api.ts                cloudFor (per-app mode), "GET /api/auth/cloud/callback" with
+//                                               completeCloudSignIn (spec/cloudSignIn.md), cloudSessionStatus
+//                                               with its `validated` cache and `validationRounds`, auth(),
+//                                               authenticatedSiteSession, cloudGrantAuthority, validateCloudGrant
 //   packages/platform/src/cloud-delegation.ts   productionCloudDelegation.exchange / validate
-//   packages/core/src/svc/network-delegation.ts parseNetworkDelegation (no future issue time, one-hour proof life)
+//   packages/core/src/svc/network-delegation.ts parseNetworkDelegation (cloudIdentityTimesValid: skew and one-hour proof life)
 //   packages/core/src/svc/profile-review-*.ts  owner, source, withdrawal and disconnect proof windows
-//   packages/platform/src/sessions.ts           create, authenticate (no rotation for a Cloud session), revoke
-//   packages/platform/src/accounts.ts           createPerson + bindSessions (a person-less session ends)
+//   packages/platform/src/sessions.ts           create, authenticate (rotation after 24 h), revoke
+//   packages/platform/src/pg-store.ts           admitMembership and attachPerson: only the joining session
+//                                               gets the new person, every other person-less session of the
+//                                               number ends (AE-3 fixed on 2026-11-21; see textJoin)
 //
 // Proof states: issued (the callback stored it in a session), validated (a live `validated` cache entry,
-// api.ts:267), expired (now >= expiresAt), revoked (Cloud denies it: `denied`).
+// api.ts), expired (now >= expiresAt), revoked (Cloud denies it: `denied`).
 //
 // Abstractions (each one is listed so that a reader can check it):
 //  - Time is an integer in seconds. `tick` moves it by one of a few named steps.
 //  - The Cloud answer is an oracle: `cloudAnswer` computes it from the Cloud state at the moment Cloud
 //    answers. A revoked proof, or a proof whose account no longer has that phone, gets "invalid"; any
 //    other proof gets "valid" or "unavailable". HMAC and the AES-GCM seal cannot be forged.
-//  - One validation is three actions (the awaits of api.ts:277 and 695): the request begins and reads the
-//    cache, Cloud answers, the request ends and writes the cache. Other requests run between them.
-//  - The Cloud callback is one action. Its awaits (api.ts:439-444) can let a ban commit between the ban
-//    check and sessions.create; quint/auth_edge.qnt owns that race (W3-128).
+//  - One validation is three actions (the awaits of cloudSessionStatus and validateCloudGrant): the
+//    request begins and reads the cache, Cloud answers, the request ends and writes the cache. Other
+//    requests run between them. The code's `validationRounds` (one round object per session, deleted at
+//    each cache clear) is modelled by `invalidatedAt` and the request's `startSeq`
+//    (cloudCachePublication: publish only a positive answer of the current round, outside production).
+//  - The Cloud callback is one action. Its awaits (completeCloudSignIn: phoneAllowed, then
+//    endPreviousSession, recordPhoneSeen, findPersonId, createSession) can let a ban commit between the
+//    ban check and sessions.create; auth_edge owns that race (W3-128).
 //  - The OTP login is one action here: only its interplay with the per-app mode is in this model.
 //  - Two apps (slop, ntwrk), two phones (X, Y), two humans (alice, bob).
-//  - A Cloud session never rotates: its expiry is at most the proof expiry, at most one hour after
-//    issuedAt (network-delegation.ts:42, api.ts:444), and sessions.ts:53 rotates only after 24 h. So the
-//    cache write on rotation (api.ts:330, W3-373) cannot run with the default SESSION_ROTATE_MS. The
-//    invariant `cloudSessionNeverRotates` keeps that fact checked.
-//  - The 10 000-entry clear (api.ts:280) is the action `cacheClear` (it only removes entries).
+//  - A Cloud session never rotates: its expiry is at most the proof expiry (sessionDeadline with the
+//    identity expiry), and SessionService.authenticate rotates only after 24 h. The staging-local
+//    callback (parseCloudIdentity in api.ts) and the production parser (parseNetworkDelegation) both call
+//    cloudIdentityTimesValid of spec/cloudSignIn.md, which caps the proof at one hour after issuedAt
+//    (cloudProofLifeValid). W3-373 closed on 2026-11-22: the staging callback had no cap, and a longer
+//    staging proof gave a Cloud session that could rotate. rotatedCookies no longer reseals a Cloud
+//    identity, because a Cloud session never reaches the rotation age. PROOF_LIFE holds for every mode,
+//    and the invariant `cloudSessionNeverRotates` checks it.
+//  - The 10 000-entry clear (publishCloudValidation) is the action `cacheClear` (it only removes entries).
 //  - A restart (new env) is `restart`: the in-memory cache and the requests in flight are lost.
-//  - Assumption (recycled numbers, quint/phone_identity.qnt and auth_edge): when a carrier gives a number
-//    with a person to another human, the number is held for staff (accounts.held); the model sets `held`
-//    in `recycle`. That keeps the old person out of this model; the 12-month rule itself is not here.
+//  - Assumption (recycled numbers, phone_identity and auth_edge): when a carrier gives a number with a
+//    person to another human, the number is held for staff (accounts.held); the model sets `held` in
+//    `recycle`. That keeps the old person out of this model; the 12-month rule itself is not here.
+//  - ASSUMPTION ASSUME_CARRIER_AGING (environment, the same as auth_edge; no code enforces it): a
+//    disconnected number ages at least 45 days before the carrier gives it to another human, so every
+//    Cloud proof for that number (at most one hour in production) has expired at the reassignment. Then
+//    every Cloud session and Cloud grant of the earlier holder has ended with its proof. OTP sessions of
+//    the earlier holder (30 days, rotated every 24 h) can still be live; auth_edge covers them
+//    (staleSessionNoAct, AE-3). The step uses `recycle` (both assumptions). The assumption does NOT hold
+//    for a number that is handed over without aging: `recycleUnaged` and `recycleStale` drop it, and the
+//    trace w3_126NullGrantTest shows what then breaks.
+//  - AE-3 (fixed on 2026-11-21, recorded in auth_edge): `textJoin` is the code: a text join has no joining
+//    session, so every person-less session of the number ends (SD-054; pg-store.ts attachPerson). Without
+//    carrier aging, a Cloud request that Cloud answered "valid" before the reassignment then acts for
+//    nobody (ae3IntendedRevokesTest). Before the fix the code gave those sessions the new person.
+//  - AE-5 (closed 2026-11-21): parseNetworkDelegation calls cloudIdentityTimesValid of
+//    spec/cloudSignIn.md, so the production exchange and validation allow the same 30 s of issue time
+//    ahead of the local clock as the staging callback (cloudProofClockRules, cloudSkewKind). The other
+//    proof kinds keep 0 s.
 //  - ASSUMPTION ASSUME_CLOUD_PHONE_CURRENT (W3-127, upstream, not confirmed): the phone that Cloud signs
 //    into a Network delegation names the current holder of the number. Cloud signs the account's
 //    "matching verified phone projection" (docs/results/2026-10-18-production-cloud-network-handoff.md),
@@ -68,13 +95,13 @@ module cloud_auth {
   pure val MINUTE = 60
   pure val HOUR = 3600
   pure val DAY = 86400
-  // api.ts:266 VALIDATION_TTL_MS (default 60 s).
+  // api.ts VALIDATION_TTL_MS (default 60 s).
   pure val VALIDATION_TTL = 60
-  // api.ts:102 CLOUD_CLOCK_SKEW_MS (30 s).
+  // api.ts CLOUD_CLOCK_SKEW_MS (30 s).
   pure val CLOUD_SKEW = 30
-  // network-delegation.ts:42: a delegation lives at most one hour after issuedAt.
+  // spec/cloudSignIn.md cloudProofLifeMs: a Cloud proof lives at most one hour after issuedAt, in every mode.
   pure val PROOF_LIFE = HOUR
-  // sessions.ts:13-14.
+  // sessions.ts.
   pure val SESSION_TTL = 30 * DAY
   pure val SESSION_ROTATE = DAY
   pure val NONE = -1
@@ -82,9 +109,10 @@ module cloud_auth {
   pure val APPS = Set("slop", "ntwrk")
   pure val PHONES = Set("X", "Y")
   pure val HUMANS = Set("alice", "bob")
-  // Only the staging login identity omits the production delegation check before the callback.
   pure val PROOF_KINDS = Set("staging-login", "production-delegation", "grant", "owner", "source", "withdrawal", "disconnect")
-  pure def skewAllowed(kind: str): int = if (kind == "staging-login") CLOUD_SKEW else 0
+  // The Cloud sign-in identity (cloudIdentityTimesValid in spec/cloudSignIn.md) in staging and in production.
+  pure def cloudSkewKind(kind: str): bool = kind == "staging-login" or kind == "production-delegation"
+  pure def skewAllowed(kind: str): int = if (cloudSkewKind(kind)) CLOUD_SKEW else 0
   // Cloud issue time relative to the local time, in seconds.
   pure val OFFSETS = Set(-1, 0, 20, 30, 31)
 
@@ -92,9 +120,9 @@ module cloud_auth {
 
   // ------------------------------------------------------------------ types
 
-  // Auth mode (api.ts:153-193): prod is productionCloud (production-v1 or own-pages-fresh-person-v1,
+  // Auth mode (api.ts): prod is productionCloud (production-v1 or own-pages-fresh-person-v1,
   // every app is Cloud); "staging-local" makes only the app of NETWORK_CLOUD_AUTH_SITE_ORIGIN Cloud
-  // (cloudFor, api.ts:193); "off" is OTP everywhere.
+  // (cloudFor, api.ts); "off" is OTP everywhere.
   type Cfg = { name: str, prod: bool, cloudApps: Set[str] }
   // A Network delegation that Cloud issued (the sealed identity cookie holds it).
   type Proof = { human: str, phone: str, app: str, issuedAt: int, expiresAt: int }
@@ -103,13 +131,13 @@ module cloud_auth {
   // browser that holds the cookie.
   type Session = { app: str, phone: str, human: str, person: str, proof: int, kind: str,
                    created: int, expires: int, revoked: bool }
-  // An OAuth grant with Cloud authority (api.ts:668-680; mcp handler.ts:549). personId "" = null.
+  // An OAuth grant with Cloud authority (api.ts; mcp handler.ts). personId "" = null.
   type Grant = { app: str, phone: str, human: str, personId: str, proof: int, expires: int }
-  // One cloudSessionStatus or validateCloudGrant call in flight. path: "auth" (auth(), api.ts:314-322),
-  // "site" (authenticatedSiteSession, api.ts:660-667), "grant" (cloudGrantAuthority, api.ts:668-680),
-  // "gvalid" (validateCloudGrant, api.ts:681-697). answer "" until Cloud answers.
+  // One cloudSessionStatus or validateCloudGrant call in flight. path: "auth" (auth(), api.ts),
+  // "site" (authenticatedSiteSession, api.ts), "grant" (cloudGrantAuthority, api.ts),
+  // "gvalid" (validateCloudGrant, api.ts). answer "" until Cloud answers.
   type Req = { sess: int, grant: int, path: str, startSeq: int, answer: str, answerSeq: int, bannedAtBegin: bool }
-  // A `validated` entry (api.ts:267). answered is ghost: the event number of the Cloud answer it came from.
+  // A `validated` entry (api.ts). answered is ghost: the event number of the Cloud answer it came from.
   type Entry = { until: int, answered: int }
 
   type World = {
@@ -170,7 +198,7 @@ module cloud_auth {
 
   pure def lookup(m: int -> int, k: int, d: int): int = if (m.keys().contains(k)) m.get(k) else d
 
-  // sessions.ts:47-51 authenticate: the row is live (decisions.ts sessionLive). A Cloud row never rotates.
+  // SessionService.authenticate: the row is live (spec/webSession.md readRow). A Cloud row never rotates.
   def rowLive(s: Session, at: int): bool = not(s.revoked) and s.expires > at
 
   def proofExpired(w: World, pid: int, at: int): bool = w.proofs.get(pid).expiresAt <= at
@@ -234,7 +262,7 @@ module cloud_auth {
     cfg' = cfg, world' = world, sess' = sess, cache' = cache, flight' = flight, ghost' = ghost,
   }
 
-  // A deploy with a new env (api.ts:153-193 run once in createPublicApi). The cache (api.ts:267) and the
+  // A deploy with a new env (api.ts run once in createPublicApi). The cache (api.ts) and the
   // requests in flight are in memory: a restart loses them. Sessions and grants are in Postgres.
   action restart(n: str): bool = all {
     now' = now,
@@ -245,7 +273,7 @@ module cloud_auth {
     ghost' = ghost,
   }
 
-  // api.ts:280: above 10 000 entries the whole cache is cleared before the next write.
+  // api.ts: above 10 000 entries the whole cache is cleared before the next write.
   action cacheClear: bool = all {
     cache.keys().size() > 0,
     cache' = Map(),
@@ -254,8 +282,8 @@ module cloud_auth {
 
   // ------------------------------------------------------------------ logins
 
-  // api.ts:482-499 POST /api/auth/otp/verify (one action here; quint/auth_edge.qnt has the challenge).
-  // In a Cloud-mode app the OTP routes answer 409 (api.ts:465, 483): the guard.
+  // api.ts POST /api/auth/otp/verify (one action here; quint/auth_edge.qnt has the challenge).
+  // In a Cloud-mode app the OTP routes answer 409 (api.ts): the guard.
   action otpLogin(h: str, p: str, a: str): bool = all {
     not(cfg.cloudApps.contains(a)),
     world.holder.get(p) == h,
@@ -268,11 +296,11 @@ module cloud_auth {
     now' = now, cfg' = cfg, world' = world, cache' = cache, flight' = flight,
   }
 
-  // api.ts:413-455 GET /api/auth/cloud/callback. cloudFor(app) must be set (404 otherwise, api.ts:414).
+  // api.ts GET /api/auth/cloud/callback. cloudFor(app) must be set (404 otherwise, api.ts).
   // Cloud exchanges the code for a delegation that names the phone of the Cloud account of `h`
-  // (cloud-delegation.ts:22-28). The callback refuses a held, banned or suppressed number (api.ts:439),
-  // revokes the old cookie's session (440), creates a "cloud." session that ends with the proof (444) and
-  // writes a cache entry for it (447): the exchange is a fresh Cloud answer.
+  // (cloud-delegation.ts). The callback refuses a held, banned or suppressed number (api.ts),
+  // revokes the old cookie's session, creates a "cloud." session that ends with the proof and
+  // writes a cache entry for it: the exchange is a fresh Cloud answer.
   action cloudLogin(h: str, a: str): bool = {
     val p = world.cloudPhone.get(h)
     val pid = world.nextProof
@@ -302,12 +330,12 @@ module cloud_auth {
   // ------------------------------------------------------------------ cloud-session-validation
 
   // The start of one request with the session cookie of `sid` (the browser of its human).
-  // api.ts:268-276 cloudSessionStatus up to the Cloud call, then auth() (314-322), authenticatedSiteSession
-  // (660-667) or cloudGrantAuthority (668-676) for an answer that needs no Cloud call.
-  //  - cloudFor(app) unset: a "cloud." token is "invalid", any other token is "valid" (api.ts:270).
+  // api.ts cloudSessionStatus up to the Cloud call, then auth(), authenticatedSiteSession
+  // or cloudGrantAuthority for an answer that needs no Cloud call.
+  //  - cloudFor(app) unset: a "cloud." token is "invalid", any other token is "valid" (api.ts).
   //  - cloudFor(app) set: no identity cookie (an OTP session) or an expired proof is "invalid", and the
-  //    cache entry is deleted (273-274). Outside production a live cache entry answers "valid" (275).
-  //  - "invalid" revokes the session row on the auth() path only (api.ts:320).
+  //    cache entry is deleted. Outside production a live cache entry answers "valid".
+  //  - "invalid" revokes the session row on the auth() path only (api.ts).
   action reqBegin(sid: int, path: str): bool = {
     val s = sess.rows.get(sid)
     val cloudApp = cfg.cloudApps.contains(s.app)
@@ -321,7 +349,7 @@ module cloud_auth {
     all {
       sess.rows.keys().contains(sid),
       path == "auth" or path == "site" or (path == "grant" and cfg.prod),
-      // api.ts:669: cloudGrantAuthority answers undefined for another resource or outside production.
+      // api.ts: cloudGrantAuthority answers undefined for another resource or outside production.
       if (invalidNow) all {
         sess' = if (path == "auth") { ...sess, rows: sess.rows.set(sid, { ...s, revoked: true }) } else sess,
         cache' = if (badIdentity) cache.keys().filter(k => k != sid).mapBy(k => cache.get(k)) else cache,
@@ -330,12 +358,12 @@ module cloud_auth {
         world' = world,
         ghost' = { ...ghost, otpRefusedOnCloud: ghost.otpRefusedOnCloud or (cloudApp and s.kind == "otp") },
       } else if (noCloudValid or cacheHit) all {
-        // "valid" with no Cloud call, then sessions.authenticate (api.ts:321, 666, 675).
+        // "valid" with no Cloud call, then sessions.authenticate (api.ts).
         sess' = sess, cache' = cache, flight' = flight,
         world' = if (acceptNow and path == "grant") grantFrom(world, s) else world,
         ghost' = if (acceptNow) acceptGhost(ghost, s, cacheHit) else ghost,
       } else all {
-        // validate() is called (api.ts:277): the request waits for Cloud.
+        // validate() is called (api.ts): the request waits for Cloud.
         flight' = { ...flight, reqs: flight.reqs.put(rid, { sess: sid, grant: NONE, path: path, startSeq: flight.seq,
                                                               answer: "", answerSeq: NONE, bannedAtBegin: false }),
                     nextReq: rid + 1 },
@@ -345,15 +373,15 @@ module cloud_auth {
     }
   }
 
-  // api.ts:677-679 cloudGrantAuthority: the sealed authority of the session, then the grant that
-  // finishAuthorization creates (mcp handler.ts:549): its personId is the auth request's person
+  // api.ts cloudGrantAuthority: the sealed authority of the session, then the grant that
+  // finishAuthorization creates (mcp handler.ts): its personId is the auth request's person
   // (personFor at consent), its expiry is min(session, proof).
   def grantFrom(w: World, s: Session): World =
     { ...w, grants: w.grants.put(w.nextGrant, { app: s.app, phone: s.phone, human: s.human, personId: actsFor(w, s.phone),
                                                  proof: s.proof, expires: imin(s.expires, w.proofs.get(s.proof).expiresAt) }),
             nextGrant: w.nextGrant + 1 }
 
-  // cloud-delegation.ts:29-40 validate (production) and api.ts:285-300 (staging-local): Cloud answers
+  // cloud-delegation.ts validate (production) and api.ts (staging-local): Cloud answers
   // for the delegation at this moment. Cloud rechecks owner, phone and logout markers: a revoked
   // delegation, or one whose account no longer has that phone, is "invalid" (403 ok:false).
   action cloudAnswer(rid: int, up: bool): bool = {
@@ -374,10 +402,10 @@ module cloud_auth {
   // The end of cloudSessionStatus, then the caller. An expired proof is "invalid".
   // A positive result may publish only in the non-production cache and only if its round is current.
   // Denial, expiry or unavailability clears the positive cache and invalidates its in-flight round. Then:
-  //  auth():                   "invalid" revokes the row (320), "unavailable" answers 503 (319, 706),
-  //                            "valid" runs sessions.authenticate (321).
-  //  authenticatedSiteSession: "invalid" answers undefined and does NOT revoke the row (665).
-  //  cloudGrantAuthority:      "valid" and a live row give the grant authority (675-679).
+  //  auth():                   "invalid" revokes the row, "unavailable" answers 503,
+  //                            "valid" runs sessions.authenticate.
+  //  authenticatedSiteSession: "invalid" answers undefined and does NOT revoke the row.
+  //  cloudGrantAuthority:      "valid" and a live row give the grant authority.
   action reqEnd(rid: int): bool = {
     val r = flight.reqs.get(rid)
     val s = sess.rows.get(r.sess)
@@ -409,10 +437,10 @@ module cloud_auth {
 
   // ------------------------------------------------------------------ Cloud MCP grants (validateCloudGrant)
 
-  // api.ts:681-694 validateCloudGrant before the Cloud call: the authority is bound to app, resource and
+  // api.ts validateCloudGrant before the Cloud call: the authority is bound to app, resource and
   // phone, issuedAt no later than the local clock, not expired; grant.personId is null or the number's owner; the
   // number is not held, banned or suppressed. A refusal answers "invalid" at once (no request in flight).
-  // mcp handler.ts:775-786 cloudGrantCurrent checks the ban first as well.
+  // mcp handler.ts cloudGrantCurrent checks the ban first as well.
   action grantBegin(gid: int): bool = {
     val g = world.grants.get(gid)
     val ok = g.expires > now and (g.personId == "" or g.personId == world.person.get(g.phone))
@@ -430,7 +458,7 @@ module cloud_auth {
     }
   }
 
-  // api.ts:695-696: the Cloud answer, then "invalid" when the authority expired during the call.
+  // api.ts: the Cloud answer, then "invalid" when the authority expired during the call.
   // A "valid" grant then acts (mcp tools: grantStillTheirs(personId, personForKey(phoneKey))): for its
   // personId, or for the number's person when personId is null.
   action grantEnd(rid: int): bool = {
@@ -470,10 +498,12 @@ module cloud_auth {
     now' = now, cfg' = cfg, sess' = sess, cache' = cache, flight' = flight, ghost' = ghost,
   }
 
-  // The carrier gives number p to human h (after the 45-day aging). With ASSUME_CLOUD_PHONE_CURRENT, Cloud
-  // drops the binding of every other account to p at once. A number with a person goes on hold.
-  action recycleWith(p: str, h: str, assumeCloudCurrent: bool): bool = all {
+  // The carrier gives number p to human h. With ASSUME_CLOUD_PHONE_CURRENT, Cloud drops the binding of
+  // every other account to p at once. With ASSUME_CARRIER_AGING every proof for p has expired first.
+  // A number with a person goes on hold.
+  action recycleWith(p: str, h: str, assumeCloudCurrent: bool, assumeAged: bool): bool = all {
     world.holder.get(p) != h,
+    assumeAged implies world.proofs.keys().forall(k => world.proofs.get(k).phone != p or world.proofs.get(k).expiresAt <= now),
     world' = { ...world,
                holder: world.holder.set(p, h),
                cloudPhone: if (assumeCloudCurrent) HUMANS.mapBy(x => if (x != h and world.cloudPhone.get(x) == p) "" else world.cloudPhone.get(x))
@@ -481,12 +511,15 @@ module cloud_auth {
                held: if (world.person.get(p) != "") world.held.union(Set(p)) else world.held },
     now' = now, cfg' = cfg, sess' = sess, cache' = cache, flight' = flight, ghost' = ghost,
   }
-  action recycle(p: str, h: str): bool = recycleWith(p, h, true)
-  // The same carrier event without the assumption (W3-127): Cloud keeps the earlier holder's binding.
-  action recycleStale(p: str, h: str): bool = recycleWith(p, h, false)
+  action recycle(p: str, h: str): bool = recycleWith(p, h, true, true)
+  // Without carrier aging (a number handed over at once); Cloud is current.
+  action recycleUnaged(p: str, h: str): bool = recycleWith(p, h, true, false)
+  // Without either assumption (W3-126, W3-127): Cloud keeps the earlier holder's binding.
+  action recycleStale(p: str, h: str): bool = recycleWith(p, h, false, false)
 
-  // A text join (service.ts join path, accounts.createPerson): the holder gets a person on p, and every
-  // person-less session of p ends (bindSessions, SD-054 fix). OAuth grants are not touched.
+  // A text join (service.ts NetworkService.join, accounts.createPerson): the holder gets a person on p,
+  // and every person-less session of p ends (SD-054; pg-store.ts admitMembership -> attachPerson with no
+  // joining session, AE-3 fixed). OAuth grants are not touched.
   action textJoin(p: str): bool = all {
     world.person.get(p) == "",
     not(world.banned.contains(p)),
@@ -562,32 +595,32 @@ module cloud_auth {
   // In production every request asks Cloud and leaves the cache empty.
   val prodNoCacheAccept = not(ghost.prodCacheAccept) and (cfg.prod implies cache.keys().size() == 0)
 
-  // W3-125. api.ts:193 cloudFor, 270, 273, 465, 483, 405, 414: each app has one auth mode at a time. A
+  // W3-125. api.ts cloudFor, cloudSessionStatus and the OTP and Cloud routes: each app has one auth mode at a time. A
   // login path runs only on an app of its mode, and a session is accepted only on an app of its mode
   // (an OTP session on a Cloud app has no identity cookie; a Cloud token on an OTP app is "invalid").
   val authModeMatches = not(ghost.wrongModeAccept) and not(ghost.wrongModeLogin)
 
-  // W3-127, W3-126. AGENTS.md decision 9 ("phone login is the identity check") and accounts.ts:300-304
+  // W3-127, W3-126. AGENTS.md decision 9 ("phone login is the identity check") and accounts.ts
   // (a session must never act for the person of a later holder of the number): a Cloud session or a
   // Cloud grant acts only for a person of its own human. Holds under ASSUME_CLOUD_PHONE_CURRENT only.
   val cloudActsForHolder = not(ghost.foreignAct) and not(ghost.staleLogin)
 
-  // AGENTS.md founder decisions 2026-10-09 #3 (bans by phone; MCP included) and mcp handler.ts:776: a
+  // AGENTS.md founder decisions 2026-10-09 #3 (bans by phone; MCP included) and mcp handler.ts: a
   // grant validation that began after the ban committed never answers "valid". A ban that commits while
   // the Cloud call is in flight is concurrent with it (witness_lateBanGrantValid), as SD-013's remainder.
   val bannedGrantRefused = not(ghost.bannedGrantValid)
 
-  // api.ts:274, 278, 685, 696 and network-delegation.ts:41: an expired proof never authorizes a request.
+  // api.ts and network-delegation.ts: an expired proof never authorizes a request.
   val expiredNeverAccepted = not(ghost.expiredAccept)
 
-  // The staging callback uses the 30-second window in cloudSignIn.md. Production exchange and
-  // validation parseNetworkDelegation first. The MCP grant envelope and profile proof windows
-  // also require a current issue time. The service signature window is a separate check.
+  // The staging callback and the production exchange and validation (parseNetworkDelegation) use the
+  // 30-second window in cloudSignIn.md. The MCP grant envelope and profile proof windows require a
+  // current issue time. The service signature window is a separate check.
   val cloudProofClockRules = ghost.proofClockChecks.forall(check =>
-    if (check.kind == "staging-login") check.accepted == (check.offset <= CLOUD_SKEW)
+    if (cloudSkewKind(check.kind)) check.accepted == (check.offset <= CLOUD_SKEW)
     else check.accepted == (check.offset <= 0))
 
-  // W3-373 (the rotation write of api.ts:330): a Cloud session ends before sessions.ts:53 would rotate it.
+  // W3-373 (the rotation write of api.ts): a Cloud session ends before sessions.ts would rotate it.
   val cloudSessionNeverRotates = sess.rows.keys().forall(k =>
     val r = sess.rows.get(k)
     r.kind != "cloud" or r.expires - r.created < SESSION_ROTATE)
@@ -649,7 +682,7 @@ module cloud_auth {
       .then(reqBegin(1, "auth"))
       .expect(ghost.cacheAccepts == 1 and flight.reqs.keys().size() == 0 and safety)
 
-  // Production has no such window: the same trace accepts nothing from the cache (api.ts:275).
+  // Production has no such window: the same trace accepts nothing from the cache (api.ts).
   run w3_671ProductionTest =
     initWith("production")
       .then(cloudLogin("alice", "slop"))
@@ -722,9 +755,10 @@ module cloud_auth {
       .then(cloudLogin("bob", "slop"))
       .expect(ghost.staleLogin and ghost.foreignAct and not(cloudActsForHolder))
 
-  // W3-126: bob gets a Cloud grant on Y while Y has no person (personId null). Without the assumption,
-  // the carrier gives Y to alice and alice joins by text: the grant passes the owner check of api.ts:693
-  // (null personId) and Cloud's answer, and acts for alice's person.
+  // W3-126 (counterexample, neither assumption): bob gets a Cloud grant on Y while Y has no person
+  // (personId null). The carrier gives Y to alice while the grant is live and alice joins by text: the
+  // grant passes the owner check of validateCloudGrant (null personId) and Cloud's answer, and acts for
+  // alice's person. `cloudActsForHolder` fails: the invariant is not vacuous.
   run w3_126NullGrantTest =
     initWith("production")
       .then(cloudLogin("bob", "slop"))
@@ -739,19 +773,56 @@ module cloud_auth {
       .then(grantEnd(2))
       .expect(ghost.grantsValid == 1 and ghost.foreignAct and not(cloudActsForHolder))
 
-  // W3-126 with the assumption: Cloud denies the earlier holder's delegation; the grant is not valid.
+  // W3-126 with ASSUME_CLOUD_PHONE_CURRENT and no aging: Cloud denies the earlier holder's delegation;
+  // the grant is not valid.
   run w3_126AssumptionTest =
     initWith("production")
       .then(cloudLogin("bob", "slop"))
       .then(reqBegin(1, "grant"))
       .then(cloudAnswer(1, true))
       .then(reqEnd(1))
-      .then(recycle("Y", "alice"))
+      .then(recycleUnaged("Y", "alice"))
       .then(textJoin("Y"))
       .then(grantBegin(1))
       .then(cloudAnswer(2, true))
       .then(grantEnd(2))
       .expect(ghost.grantsValid == 0 and safety)
+
+  // W3-126 with carrier aging: the grant ends with its proof (at most one hour), so the carrier cannot
+  // give Y to alice while it is live; after the reassignment the grant is refused before any Cloud call.
+  run w3_126AgedTest =
+    initWith("production")
+      .then(cloudLogin("bob", "slop"))
+      .then(reqBegin(1, "grant"))
+      .then(cloudAnswer(1, true))
+      .then(reqEnd(1))
+      .then(recycle("Y", "alice"))
+      .fail()
+
+  run w3_126AgedRefusedTest =
+    initWith("production")
+      .then(cloudLogin("bob", "slop"))
+      .then(reqBegin(1, "grant"))
+      .then(cloudAnswer(1, true))
+      .then(reqEnd(1))
+      .then(tick(HOUR))
+      .then(recycle("Y", "alice"))
+      .then(textJoin("Y"))
+      .then(grantBegin(1))
+      .expect(flight.reqs == Map() and ghost.grantsValid == 0 and world.cloudPhone.get("bob") == "" and safety)
+
+  // AE-3: bob's request on his person-less Cloud session on Y got Cloud's "valid" before
+  // the carrier gave Y to alice (no aging). Alice's text join ends bob's session, so the late answer
+  // acts for nobody.
+  run ae3IntendedRevokesTest =
+    initWith("production")
+      .then(cloudLogin("bob", "slop"))
+      .then(reqBegin(1, "auth"))
+      .then(cloudAnswer(1, true))
+      .then(recycleUnaged("Y", "alice"))
+      .then(textJoin("Y"))
+      .then(reqEnd(1))
+      .expect(ghost.freshAccepts == 0 and sess.rows.get(1).revoked and safety)
 
   // Bans by phone: a grant validation that begins after the ban is refused before the Cloud call; one
   // in flight when the ban commits can still answer valid (concurrent, like SD-013's remainder).
@@ -770,7 +841,7 @@ module cloud_auth {
       .expect(flight.reqs == Map() and safety)
 
   // An expired proof: the grant answers "invalid" after a Cloud call that outlived the authority
-  // (api.ts:696), and the session answers "invalid" before any Cloud call (api.ts:274).
+  // (api.ts), and the session answers "invalid" before any Cloud call (api.ts).
   run expiryTest =
     initWith("production")
       .then(cloudLogin("alice", "slop"))
@@ -785,7 +856,7 @@ module cloud_auth {
       .then(reqBegin(1, "auth"))
       .expect(sess.rows.get(1).revoked and flight.reqs == Map() and safety)
 
-  // api.ts:278: the proof expires while validate() is in flight; Cloud's late "valid" is not used and
+  // api.ts: the proof expires while validate() is in flight; Cloud's late "valid" is not used and
   // the auth() path revokes the row.
   run sessionExpiryInFlightTest =
     initWith("production")
@@ -796,12 +867,13 @@ module cloud_auth {
       .then(reqEnd(1))
       .expect(ghost.freshAccepts == 0 and sess.rows.get(1).revoked and expiredNeverAccepted)
 
-  // W3-134 / SD-308: only the staging callback allows a proof issued ahead of the local clock.
+  // W3-134 / SD-308 / AE-5: only the Cloud sign-in identity allows a proof issued ahead of the local clock.
   run w3_134SkewTest =
     initWith("off")
       .then(proofArrives("staging-login", 30))
       .then(proofArrives("staging-login", 31))
-      .then(proofArrives("production-delegation", 1))
+      .then(proofArrives("production-delegation", 30))
+      .then(proofArrives("production-delegation", 31))
       .then(proofArrives("grant", 1))
       .then(proofArrives("owner", 1))
       .then(proofArrives("source", 1))
@@ -809,6 +881,7 @@ module cloud_auth {
       .then(proofArrives("disconnect", 1))
       .then(proofArrives("production-delegation", 0))
       .then(proofArrives("grant", 0))
-      .expect(cloudProofClockRules and ghost.proofClockChecks.size() == 10)
+      .expect(cloudProofClockRules and ghost.proofClockChecks.size() == 11
+              and ghost.proofClockChecks.contains({ kind: "production-delegation", offset: 30, accepted: true }))
 }
 ```

@@ -1,63 +1,72 @@
 // GENERATED from spec/relayLifecycle.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md) */
-export type RelayPhase = "AwaitingVerdict" | "Blocked" | "RateLimited" | "Held" | "ReadyToSend" | "Released" | "Rejected" | "Sent" | "Deferred" | "SendRefused";
-/** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md) */
+/** Story: Decide and deliver a selected relay item / A first decision blocks or admits an item (spec/relayLifecycle.md) */
 export type DeliveryResult = "Delivered" | "Queued" | "Refused";
-/** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md) */
-export type RelayVerdict = "Pass" | "Hold" | "Block";
-/** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md) */
-export interface RelayLifecycle { phase: RelayPhase; staffReviewed: boolean; retainsText: boolean }
+/** Story: Decide and deliver a selected relay item / A first decision blocks or admits an item (spec/relayLifecycle.md) */
+export type RelayVerdict = "Pass" | "Block";
+/** Story: Decide and deliver a selected relay item / A first decision blocks or admits an item (spec/relayLifecycle.md) */
+export type RelayPhase = "AwaitingVerdict" | "Blocked" | "ReadyToSend" | "Sent" | "Deferred" | "SendRefused";
+/** Story: Decide and deliver a selected relay item / A first decision blocks or admits an item (spec/relayLifecycle.md) */
+export interface RelayLifecycle { phase: RelayPhase; cleared: boolean }
 
 /** One variant per transition in the spec. */
 export type Event =
-  | { type: "recordVerdict"; verdict: RelayVerdict; rateOnly: boolean; hasText: boolean; ageSignal: boolean }
-  | { type: "recordDelivery"; delivery: DeliveryResult; policyPermits: boolean }
-  | { type: "reviewHold"; released: boolean };
+  | { type: "recordVerdict"; verdict: RelayVerdict }
+  | { type: "recordDelivery"; delivery: DeliveryResult };
 
-/** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md) */
-export const initial: RelayLifecycle = { phase: "AwaitingVerdict", staffReviewed: false, retainsText: false };
-/** Story: Resolve a held item / Staff review clears the held text (spec/relayLifecycle.md) */
-export const storedHold: RelayLifecycle = { ...initial, phase: "Held" };
+/** Story: Decide and deliver a selected relay item / A first decision blocks or admits an item (spec/relayLifecycle.md) */
+export const initial: RelayLifecycle = { phase: "AwaitingVerdict", cleared: false };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: RelayLifecycle): boolean {
-  return alwaysOnlyHeldItemRetainsText(current);
+  return alwaysClearedExactlyAfterAPass(current);
 }
 
-/** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md) */
+/** Story: Decide and deliver a selected relay item / A first decision blocks or admits an item (spec/relayLifecycle.md) */
+//@ pure
+export function recordVerdict(relay: RelayLifecycle, verdict: RelayVerdict): RelayLifecycle {
+  //@ ensures (inv(relay) && canRecordVerdict(relay)) ==> alwaysClearedExactlyAfterAPass(\result)
+  //@ ensures (inv(relay) && canRecordVerdict(relay)) ==> stepABlockedItemStaysBlocked(relay, \result)
+  return verdict === "Pass" ? ({ phase: "ReadyToSend", cleared: true } as RelayLifecycle) : ({ phase: "Blocked", cleared: false } as RelayLifecycle);
+}
+
+/** Story: Decide and deliver a selected relay item / A first decision blocks or admits an item (spec/relayLifecycle.md) */
+//@ pure
+export function alwaysClearedExactlyAfterAPass(relay: RelayLifecycle): boolean {
+  return relay.cleared === (relay.phase === "ReadyToSend" || relay.phase === "Sent" || relay.phase === "Deferred" || relay.phase === "SendRefused");
+}
+
+/** Story: Decide and deliver a selected relay item / A first decision blocks or admits an item (spec/relayLifecycle.md) */
+//@ pure
+export function stepABlockedItemStaysBlocked(before: RelayLifecycle, after: RelayLifecycle): boolean {
+  return !(before.phase === "Blocked") || after.phase === "Blocked";
+}
+
+/** Story: Decide and deliver a selected relay item / A first decision blocks or admits an item (spec/relayLifecycle.md) */
+//@ pure
+export function sometimesBlocked(relay: RelayLifecycle): boolean {
+  return relay.phase === "Blocked";
+}
+
+/** Story: Decide and deliver a selected relay item / A first decision blocks or admits an item (spec/relayLifecycle.md) */
 //@ pure
 export function canRecordVerdict(relay: RelayLifecycle): boolean {
   return relay.phase === "AwaitingVerdict";
 }
 
-/** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md) */
+/** Story: Decide and deliver a selected relay item / The send path determines the result of an admitted item (spec/relayLifecycle.md) */
 //@ pure
-export function recordVerdict(relay: RelayLifecycle, verdict: RelayVerdict, rateOnly: boolean, hasText: boolean, ageSignal: boolean): RelayLifecycle {
-  //@ ensures (inv(relay) && canRecordVerdict(relay)) ==> alwaysOnlyHeldItemRetainsText(\result)
-  //@ ensures (inv(relay) && canRecordVerdict(relay)) ==> stepReviewRemainsRecorded(relay, \result)
-  return verdict === "Block" ? ({ ...relay, phase: "Blocked" } as RelayLifecycle) : (verdict === "Pass" ? ({ ...relay, phase: "ReadyToSend" } as RelayLifecycle) : (rateOnly ? ({ ...relay, phase: "RateLimited" } as RelayLifecycle) : ({ ...relay, phase: "Held", retainsText: hasText && !ageSignal } as RelayLifecycle)));
-}
-
-/** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md) */
-//@ pure
-export function alwaysOnlyHeldItemRetainsText(relay: RelayLifecycle): boolean {
-  return !relay.retainsText || relay.phase === "Held";
+export function canRecordDelivery(relay: RelayLifecycle): boolean {
+  return relay.phase === "ReadyToSend";
 }
 
 /** Story: Decide and deliver a selected relay item / The send path determines the result of an admitted item (spec/relayLifecycle.md) */
 //@ pure
-export function canRecordDelivery(relay: RelayLifecycle, policyPermits: boolean): boolean {
-  return (relay.phase === "ReadyToSend" || relay.phase === "Released") && policyPermits;
-}
-
-/** Story: Decide and deliver a selected relay item / The send path determines the result of an admitted item (spec/relayLifecycle.md) */
-//@ pure
-export function recordDelivery(relay: RelayLifecycle, delivery: DeliveryResult, policyPermits: boolean): RelayLifecycle {
-  //@ ensures (inv(relay) && canRecordDelivery(relay, policyPermits)) ==> alwaysOnlyHeldItemRetainsText(\result)
-  //@ ensures (inv(relay) && canRecordDelivery(relay, policyPermits)) ==> stepReviewRemainsRecorded(relay, \result)
+export function recordDelivery(relay: RelayLifecycle, delivery: DeliveryResult): RelayLifecycle {
+  //@ ensures (inv(relay) && canRecordDelivery(relay)) ==> alwaysClearedExactlyAfterAPass(\result)
+  //@ ensures (inv(relay) && canRecordDelivery(relay)) ==> stepABlockedItemStaysBlocked(relay, \result)
   return { ...relay, phase: delivery === "Delivered" ? "Sent" : (delivery === "Queued" ? "Deferred" : "SendRefused") };
 }
 
@@ -67,57 +76,17 @@ export function sometimesDeliveryWaits(relay: RelayLifecycle): boolean {
   return relay.phase === "Deferred";
 }
 
-/** Story: Resolve a held item / Staff review clears the held text (spec/relayLifecycle.md) */
+/** Story: Decide and deliver a selected relay item / The send path determines the result of an admitted item (spec/relayLifecycle.md) */
 //@ pure
-export function canReviewHold(relay: RelayLifecycle): boolean {
-  return relay.phase === "Held";
-}
-
-/** Story: Resolve a held item / Staff review clears the held text (spec/relayLifecycle.md) */
-//@ pure
-export function staffMayReleaseHeldText(verdict: RelayVerdict, isText: boolean, senderHeld: boolean, recipientHeld: boolean): boolean {
-  return verdict === "Hold" && isText && !(senderHeld || recipientHeld);
-}
-
-/** Story: Resolve a held item / Staff review clears the held text (spec/relayLifecycle.md) */
-//@ pure
-export function reviewHold(relay: RelayLifecycle, released: boolean): RelayLifecycle {
-  //@ ensures (inv(relay) && canReviewHold(relay)) ==> alwaysOnlyHeldItemRetainsText(\result)
-  //@ ensures (inv(relay) && canReviewHold(relay)) ==> stepReviewRemainsRecorded(relay, \result)
-  return { phase: released ? "Released" : "Rejected", staffReviewed: true, retainsText: false };
-}
-
-/** Story: Resolve a held item / Staff review clears the held text (spec/relayLifecycle.md) */
-//@ pure
-export function stepReviewRemainsRecorded(before: RelayLifecycle, after: RelayLifecycle): boolean {
-  return !before.staffReviewed || after.staffReviewed;
-}
-
-/** Story: Resolve a held item / Staff review clears the held text (spec/relayLifecycle.md) */
-//@ pure
-export function sometimesReviewReleases(relay: RelayLifecycle): boolean {
-  return relay.phase === "Released";
-}
-
-/** Story: Resolve a held item / Staff review clears the held text (spec/relayLifecycle.md) */
-//@ pure
-export function sometimesReviewRejects(relay: RelayLifecycle): boolean {
-  return relay.phase === "Rejected";
-}
-
-/** Story: Resolve a held item / Staff review clears the held text (spec/relayLifecycle.md) */
-//@ pure
-export function lawStaffTextReleaseRequiresBothPartiesClear(verdict: RelayVerdict, isText: boolean, senderHeld: boolean, recipientHeld: boolean): boolean {
-  //@ ensures \result === true
-  return !staffMayReleaseHeldText(verdict, isText, senderHeld, recipientHeld) || !(senderHeld || recipientHeld);
+export function sometimesSent(relay: RelayLifecycle): boolean {
+  return relay.phase === "Sent";
 }
 
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: RelayLifecycle, event: Event): boolean {
   if (event.type === "recordVerdict") return canRecordVerdict(current);
-  if (event.type === "recordDelivery") return canRecordDelivery(current, event.policyPermits);
-  if (event.type === "reviewHold") return canReviewHold(current);
+  if (event.type === "recordDelivery") return canRecordDelivery(current);
   return false;
 }
 
@@ -126,9 +95,8 @@ export function enabled(current: RelayLifecycle, event: Event): boolean {
 export function step(current: RelayLifecycle, event: Event): RelayLifecycle {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "recordVerdict") return canRecordVerdict(current) ? recordVerdict(current, event.verdict, event.rateOnly, event.hasText, event.ageSignal) : current;
-  if (event.type === "recordDelivery") return canRecordDelivery(current, event.policyPermits) ? recordDelivery(current, event.delivery, event.policyPermits) : current;
-  if (event.type === "reviewHold") return canReviewHold(current) ? reviewHold(current, event.released) : current;
+  if (event.type === "recordVerdict") return canRecordVerdict(current) ? recordVerdict(current, event.verdict) : current;
+  if (event.type === "recordDelivery") return canRecordDelivery(current) ? recordDelivery(current, event.delivery) : current;
   return current;
 }
 
@@ -146,9 +114,8 @@ export function parseEvent(x: unknown): Event | undefined {
     return undefined;
   }
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "recordVerdict" && (raw.verdict === "Pass" || raw.verdict === "Hold" || raw.verdict === "Block") && typeof raw.rateOnly === "boolean" && typeof raw.hasText === "boolean" && typeof raw.ageSignal === "boolean") return { type: "recordVerdict", verdict: raw.verdict, rateOnly: raw.rateOnly, hasText: raw.hasText, ageSignal: raw.ageSignal };
-  if (raw.type === "recordDelivery" && (raw.delivery === "Delivered" || raw.delivery === "Queued" || raw.delivery === "Refused") && typeof raw.policyPermits === "boolean") return { type: "recordDelivery", delivery: raw.delivery, policyPermits: raw.policyPermits };
-  if (raw.type === "reviewHold" && typeof raw.released === "boolean") return { type: "reviewHold", released: raw.released };
+  if (raw.type === "recordVerdict" && (raw.verdict === "Pass" || raw.verdict === "Block")) return { type: "recordVerdict", verdict: raw.verdict };
+  if (raw.type === "recordDelivery" && (raw.delivery === "Delivered" || raw.delivery === "Queued" || raw.delivery === "Refused")) return { type: "recordDelivery", delivery: raw.delivery };
   return undefined;
 }
 
@@ -166,8 +133,8 @@ export function parseState(x: unknown): RelayLifecycle | undefined {
   } catch {
     return undefined;
   }
-  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "AwaitingVerdict" || raw.phase === "Blocked" || raw.phase === "RateLimited" || raw.phase === "Held" || raw.phase === "ReadyToSend" || raw.phase === "Released" || raw.phase === "Rejected" || raw.phase === "Sent" || raw.phase === "Deferred" || raw.phase === "SendRefused") && typeof raw.staffReviewed === "boolean" && typeof raw.retainsText === "boolean" && Object.keys(raw).length === 3)) return undefined;
-  const parsed: RelayLifecycle = ({ phase: raw.phase, staffReviewed: raw.staffReviewed, retainsText: raw.retainsText });
+  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "AwaitingVerdict" || raw.phase === "Blocked" || raw.phase === "ReadyToSend" || raw.phase === "Sent" || raw.phase === "Deferred" || raw.phase === "SendRefused") && typeof raw.cleared === "boolean" && Object.keys(raw).length === 2)) return undefined;
+  const parsed: RelayLifecycle = ({ phase: raw.phase, cleared: raw.cleared });
   return inv(parsed) ? parsed : undefined;
 }
 

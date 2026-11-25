@@ -23,6 +23,8 @@ export type Event = {
     at: number;
 } | {
     type: "recordRevocation";
+    rowLive: boolean;
+    rotatedMeanwhile: boolean;
 } | {
     type: "recordReplacement";
 };
@@ -45,6 +47,8 @@ export declare function sessionDeadline(createdAt: number, startedAt: number, tt
 /** Story: Stay signed in to the app where I proved my phone / A session has an absolute limit from sign-in (spec/webSession.md) */
 export declare function lawCloudDeadlineCapsSession(createdAt: number, startedAt: number, ttl: number, maxAge: number, expiresBefore: number): boolean;
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md) */
+export declare function sessionRowLive(sameApp: boolean, expiresAt: number, revoked: boolean, revokedAt: number, now: number): boolean;
+/** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md) */
 export declare function canReadToken(flow: SessionFlow): boolean;
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md) */
 export declare function readToken(flow: SessionFlow, tokenPresent: boolean, tokenLength: number): SessionFlow;
@@ -55,7 +59,7 @@ export declare function readRow(flow: SessionFlow, sameAppRow: boolean, expired:
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md) */
 export declare function canRecordRevocation(flow: SessionFlow): boolean;
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md) */
-export declare function recordRevocation(flow: SessionFlow): SessionFlow;
+export declare function recordRevocation(flow: SessionFlow, rowLive: boolean, rotatedMeanwhile: boolean): SessionFlow;
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md) */
 export declare function canRecordReplacement(flow: SessionFlow): boolean;
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md) */
@@ -65,9 +69,17 @@ export declare function stepRotationRequiresAReplacement(before: SessionFlow, vi
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md) */
 export declare function sometimesRotates(flow: SessionFlow): boolean;
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md) */
+export declare function lawErasedRowIssuesNoReplacement(rotatedMeanwhile: boolean, revokeAt: number): boolean;
+/** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md) */
 export declare function lawBannedSessionIsRefused(sameAppRow: boolean, expired: boolean, hasRevocation: boolean, revocationDue: boolean, rotationRequested: boolean, oldEnough: boolean, at: number): boolean;
 /** Story: Stay signed in to the app where I proved my phone / Sensitive account changes require a fresh sign-in (spec/webSession.md) */
 export declare function freshSignIn(elapsed: number): boolean;
+/** Story: Keep an earlier holder's sign-in away from my new account / A session without a person never outlives its number getting a person (spec/webSession.md) */
+export declare function unboundSessionTakesNewPerson(numberHasPerson: boolean, provedSinceArrival: boolean): boolean;
+/** Story: Keep an earlier holder's sign-in away from my new account / A session without a person never outlives its number getting a person (spec/webSession.md) */
+export declare function unboundSessionEnds(numberHasPerson: boolean, provedSinceArrival: boolean): boolean;
+/** Story: Keep an earlier holder's sign-in away from my new account / A session without a person never outlives its number getting a person (spec/webSession.md) */
+export declare function lawNoUnboundSessionBesideAPerson(numberHasPerson: boolean, provedSinceArrival: boolean): boolean;
 /** Do the rules allow this event in this state? */
 export declare function enabled(current: SessionFlow, event: Event): boolean;
 /** Apply an event. An event the rules do not allow leaves the state unchanged. */
