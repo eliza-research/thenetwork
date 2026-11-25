@@ -273,7 +273,7 @@ export class CapitalLedger {
       }
       case "feedback_given": {
         const p = this.plans.get(planKey(ev.member, ev.planId));
-        if (!p || !p.attendedEntry || p.feedback) break;
+        if (!p || !p.attendedEntry || p.feedback || this.reversed.has(p.attendedEntry.id)) break;
         p.feedback = true;
         // No counterparts: feedback must not speed up the pair decay for the next real meeting.
         // Its own category (capital-7): as "attendance" it sped up the attendance decay, so giving
