@@ -326,7 +326,7 @@ export class CapitalLedger {
             const dependent = e.provenance.basis !== undefined && this.reversed.has(e.provenance.basis);
             if (capitalFraudReverses(involved, dependent)) this.reverse(m, e.id, ev, "clawback: credit found to be fraudulent", out);
           }
-                    if (!this.isEligible(m)) continue;
+            if (!this.isEligible(m)) continue;
           // One fraud penalty per member per period: several review cases about the same ring only claw back.
           const recentFraud = (this.byMember.get(m) ?? []).some(e => e.category === "fraud" && ev.t - e.t < c.antiGaming.periodDays * DAY);
           if (!recentFraud) this.penalize(m, "fraud", c.penalty.fraud, ev, [...set].filter(x => x !== m), "gaming confirmed by review", out);
