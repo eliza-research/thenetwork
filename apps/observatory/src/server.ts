@@ -441,6 +441,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
     const staff = u.via === "sso" ? staffUser(u.id, ssoGrants(u.id, auth), "sso") : u;
     return allowed(staff, ["safety"], app, readMode);
   };
+  const SAFETY_REPORT_EVENTS: ReadonlySet<string> = new Set(["report_received", "minor_reported"]);
   function revealCurrent(u: StaffUser, app: AppId, readMode: Mode, until: number): boolean {
     const now = Date.now();
     return staffRevealMayDisclose(readMode === mode, currentSafety(u, app, readMode), u.expiresAt === undefined || u.expiresAt > now, until - now);
@@ -592,8 +593,9 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         const read = await startMemberRead(u, app, decodeURIComponent(req.params.id!), "read_timeline");
         if (read instanceof Response) return read;
         const { id, readMode, grant } = read;
-        const t = await (await source(readMode, app)).timeline(id, { reveal: !!grant, historyBefore });
-        if (!t) return json({ error: "not found" }, 404);
+        const full = await (await source(readMode, app)).timeline(id, { reveal: !!grant, historyBefore });
+        if (!full) return json({ error: "not found" }, 404);
+        const t = currentSafety(u, app, readMode) ? full : { ...full, entries: full.entries.filter(e => e.kind !== "event" || !SAFETY_REPORT_EVENTS.has(e.event.type)) };
         return memberReadRefusal(u, app, read) ?? json(grant ? { ...t, revealed: { until: grant.until } } : t);
       }),
       "/api/member/:id/app": guard(async (req, u, app) => {

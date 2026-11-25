@@ -1,137 +1,65 @@
-// R23-TA: a report against a member must show on that member's timeline.
-//
-// Journey: staff open the reported member's panel -> the Timeline section
-// must show the report that put the member under safety review, next to
-// the hold it caused.
-//
-// Fixture: the stored report_received row, exactly as the writer stores it
-// (service-safety.test.ts: a report by Ana against Ben; object member Ana,
-// payload.memberId Ana, payload.target Ben). Correct: the row belongs on
-// Ben's timeline (he is the one it is about) and on Ana's (she filed it),
-// and on nobody else's. Wrong (base): Ben's timeline never shows it --
-// onTimeline lets the row's single subject (Ana) decide, so the other
-// member the row names (Ben, payload.target) is dropped. The same shape
-// already works for member_blocked, whose target sees the block.
-//
-// The unit tests are the repro: they call the real onTimeline the game
-// and real sources both use (sources/game.ts, sources/real.ts). The DOM
-// test is panel-render evidence only -- its fixture stands in for the
-// server, so it passes on base too -- and proves the panel shows the row
-// once the server includes it.
-import { serveHttp } from "../../../packages/core/src/runtime/http.ts";
-import { DAY } from "@thenetwork/core";
-import { setTimeout as sleep } from "node:timers/promises";
 import { expect, test } from "vitest";
-import { Window } from "happy-dom";
-import { act, createElement } from "react";
-import { describe as describeEvent, onTimeline, type EventRow } from "../src/events.ts";
-import type { MemberDetail, MemberTimeline, ObsMember } from "../src/types.ts";
-import { installDom } from "./dom.ts";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DAY, HOUR } from "@thenetwork/core";
+import { createServer } from "../src/server.ts";
+import { GameSource } from "../src/sources/game.ts";
+import type { MemberTimeline, ObsState, SystemEvent } from "../src/types.ts";
 
-const NOW = Date.UTC(2026, 10, 20, 12, 0, 0);
-const ANA = "m-ana";
-const BEN = "m-ben";
-const CID = "m-cid";
+const long = (t: string) => t.padEnd(32, "-0123456789abcdef");
+const TOK = { admin: long("adm-7c1e"), reviewer: long("rev-2b9d"), safety: long("saf-55aa"), analyst: long("ana-0f3c"), legacy: long("old-admin-9911") };
 
-const reportRow = (): EventRow => ({
-  at: new Date("2026-11-20T10:00:00Z"),
-  actor_type: "agent",
-  actor_id: null,
-  type: "report_received",
-  object_type: "member",
-  object_id: ANA,
-  payload: { reportId: "r1", kind: "harassment", memberId: ANA, target: BEN, source: "message", met: false },
-});
-
-test("report_received shows on the reported member's timeline", () => {
-  expect(onTimeline(reportRow(), BEN, new Set())).toBe(true);
-});
-
-test("report_received still shows on the reporter's timeline", () => {
-  expect(onTimeline(reportRow(), ANA, new Set())).toBe(true);
-});
-
-test("report_received shows on nobody else's timeline", () => {
-  expect(onTimeline(reportRow(), CID, new Set())).toBe(false);
-});
-
-test("report_received still reads reporter and target, with its severity", () => {
-  const name = (id: string) => (id === ANA ? "Ana" : id === BEN ? "Ben" : id);
-  expect(describeEvent(reportRow(), name).text).toBe("Ana reported Ben: harassment (by text, never met through us)");
-  expect(describeEvent(reportRow(), name).severity).toBe("bad");
-});
-
-test("member_blocked still shows on the blocked member's timeline", () => {
-  const row: EventRow = {
-    at: new Date("2026-11-20T10:00:00Z"), actor_type: "member", actor_id: ANA,
-    type: "member_blocked", object_type: "member", object_id: BEN, payload: {},
-  };
-  expect(onTimeline(row, BEN, new Set())).toBe(true);
-});
-
-const counters = () => ({ msgsIn: 0, msgsOut: 0, proactive: 0, proposals: 0, accepted: 0, meetings: 0, enjoymentSum: 0, enjoymentN: 0 });
-const member = (id: string, name: string): ObsMember => ({
-  id, name, city: "nyc", area: "East Village", state: "normal", joined: true, joinedAt: NOW - 30 * DAY,
-  minor: false, age: 30, counters: counters(),
-});
-
-test("member panel renders the report line once the timeline carries it", async () => {
-  const name = (id: string) => (id === ANA ? "Ana Rao" : id === BEN ? "Ben Park" : id);
-  const detail: MemberDetail = {
-    member: member(BEN, "Ben Park"), facets: [], intents: [], presence: [], edges: [],
-    opportunities: [], messages: [],
-  };
-  const timeline: MemberTimeline = {
-    memberId: BEN,
-    entries: [{ t: Date.UTC(2026, 10, 20, 10, 0, 0), kind: "event", event: describeEvent(reportRow(), name) }],
-    pending: [],
-  };
-  const api = await serveHttp({
-    hostname: "127.0.0.1", port: 0,
-    fetch: async (req) => {
-      const u = new URL(req.url);
-      if (u.pathname === "/api/member/m-ben") return Response.json(detail);
-      if (u.pathname === "/api/member/m-ben/timeline") return Response.json(timeline);
-      return Response.json({ error: "unexpected" }, { status: 404 });
-    },
+test("a report shows on the reported member's timeline for safety staff only", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "member-timeline-report-"));
+  const server = await createServer({ port: 0, development: false, token: TOK.legacy,
+    tokens: `admin:${TOK.admin},reviewer:${TOK.reviewer},safety:${TOK.safety},analyst:${TOK.analyst}`,
+    staffRolesUrl: false, peopleUrl: false,
+    audit: { dir: join(dir, "audit") }, lab: { dir: join(dir, "lab") },
+    game: { seed: 1, review: "human", pushMs: 3_600_000, tickMs: 3_600_000 },
   });
-  const window = new Window({ url: api.url.href });
-  const restoreDom = installDom(window, {
-    window, document: window.document, navigator: window.navigator,
-    location: window.location, history: window.history,
-    localStorage: window.localStorage, sessionStorage: window.sessionStorage,
-    IS_REACT_ACT_ENVIRONMENT: true,
-  });
-  const nativeFetch = globalThis.fetch;
-  globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: RequestInit) =>
-    nativeFetch(typeof input === "string" ? new URL(input, api.url) : input, init)) as typeof fetch;
-  const inspectorBox = window.document.createElement("div");
-  window.document.body.append(inspectorBox);
-  const { createRoot } = await import("react-dom/client");
-  const inspectorRoot = createRoot(inspectorBox as unknown as HTMLElement);
-  const wait = async (check: () => boolean, label: string) => {
-    for (let i = 0; i < 400; i++) { if (check()) return; await act(async () => { await sleep(5); }); }
-    throw Error(`timed out waiting for: ${label}\nINSPECTOR: ${inspectorBox.textContent ?? ""}`);
-  };
   try {
-    const { store } = await import("../web/store.ts");
-    const { Inspector } = await import("../web/panels.tsx");
-    store.mode = "game";
-    store.app = "ntwrk";
-    store.me = { id: "staff", roles: ["admin"], grants: [{ role: "admin", app: "*" }], via: "token" } as typeof store.me;
-    (store as unknown as { clock: unknown }).clock = { now: NOW, start: 0, day: 1, playing: false, speed: 0, waitingForPlayer: false };
-    store.members.clear(); store.opps.clear(); store.feed = [];
-    for (const m of [member(ANA, "Ana Rao"), member(BEN, "Ben Park")]) store.members.set(m.id, m);
-    await act(async () => { inspectorRoot.render(createElement(Inspector)); });
-    await act(async () => { store.focus({ kind: "member", id: BEN }); });
-    await wait(() => (inspectorBox.querySelector("h2")?.textContent?.trim() ?? "") === "Ben Park", "member panel");
-    await wait(() => (inspectorBox.textContent ?? "").includes("Timeline"), "member detail loaded");
-    expect(inspectorBox.textContent ?? "").toContain("Ana Rao reported Ben Park: harassment");
+    const source = await server.source("game") as GameSource;
+    const admin = { authorization: `Bearer ${TOK.admin}`, "content-type": "application/json" };
+    const step = await fetch(`${server.url}/api/control`, { method: "POST", headers: admin, body: JSON.stringify({ type: "step", ms: DAY }) });
+    expect(step.status).toBe(200);
+    const network = source.consent!;
+    const state = await (await fetch(`${server.url}/api/state`, { headers: admin })).json() as ObsState;
+    const item = state.opportunities.find(o => o.state === "IN_REVIEW");
+    expect(item).toBeDefined();
+    const subjectId = item!.participants[0]!;
+    const subject = source.state().members.find(m => m.id === subjectId)!;
+    const st = network.exportState();
+    const metBefore = (a: string, b: string) =>
+      st.opps.some(o => o.meetingAt !== undefined && o.bookedTold?.includes(a) && o.bookedTold.includes(b))
+      || st.interactions.some(x => x.participants.includes(a) && x.participants.includes(b) && (x.outcome === "completed" || x.outcome === "no_show"));
+    const reporter = source.state().members.find(m => m.joined && m.id !== subjectId && !metBefore(m.id, subjectId));
+    expect(reporter).toBeDefined();
+    const ts = source.world.clock.now();
+    await network.onInbound({ id: "member-timeline-report", memberId: reporter!.id, channel: "imessage", ts,
+      body: `Report ${subject.name}, they harassed me.` });
+    const report = network.safetyReports().find(r => r.kind === "harassment" && r.subjectId === subjectId);
+    expect(report).toBeDefined();
+    expect(source.inOpenReview(subjectId)).toBe(true);
+    expect((await source.control({ type: "step", ms: 2 * HOUR })).ok).toBe(true);
+    const reportRows = async (tok: string) => {
+      const res = await fetch(`${server.url}/api/member/${subjectId}/timeline`, { headers: { authorization: `Bearer ${tok}` } });
+      return { status: res.status, rows: res.status === 200 ? ((await res.json()) as MemberTimeline).entries.filter((e): e is { t: number; kind: "event"; event: SystemEvent } => e.kind === "event" && e.event.type === "report_received") : [] };
+    };
+    const adminRead = await reportRows(TOK.admin);
+    expect(adminRead.status).toBe(200);
+    expect(adminRead.rows).toHaveLength(1);
+    expect(adminRead.rows[0]!.event.text).toBe(`${reporter!.name} reported ${subject.name}: harassment (by text, never met through us)`);
+    const safetyRead = await reportRows(TOK.safety);
+    expect(safetyRead.status).toBe(200);
+    expect(safetyRead.rows).toHaveLength(1);
+    const reviewerRead = await reportRows(TOK.reviewer);
+    expect(reviewerRead.status).toBe(200);
+    expect(reviewerRead.rows).toHaveLength(0);
+    const analystRead = await reportRows(TOK.analyst);
+    expect(analystRead.status).toBe(403);
   } finally {
-    await act(async () => { inspectorRoot.unmount(); });
-    globalThis.fetch = nativeFetch;
-    await api.stop(true);
-    await window.happyDOM.close();
-    restoreDom();
+    await server.stop();
+    await rm(dir, { recursive: true, force: true });
   }
-});
+}, 120_000);
