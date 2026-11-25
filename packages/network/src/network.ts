@@ -126,7 +126,7 @@ import { temporaryPresenceWindow } from "../../core/src/travel-presence.ts";
 import {
   archivedReportHoldAllowed, carryReportOnAppLeave, caseCloseResult, emergencyCheckInReport, holdAuthority, holdLiftResult, holdSubjectKnown,
   immediateDangerReply, initial as initialCase, minorClearResult, reportAfterDecision, reportClarificationTimeCurrent,
-  reportRestrictsMatching, safetyQuestionAcceptsName, safetyQuestionAppliesTarget, safetyQuestionIsCurrent, safetyQuestionResolves, safetyQuestionUsesSoleOffer,
+  reportRestrictsMatching, safetyQuestionAcceptsName, safetyQuestionAppliesTarget, safetyQuestionExclusion, safetyQuestionIsCurrent, safetyQuestionResolves, safetyQuestionUsesSoleOffer, safetyReplyAfterExclusion,
   step as stepSafetyCase,
   type CasePhase, type ReportPhase, type StaffActionResult,
 } from "../../core/src/generated/safetyCase.ts";
@@ -138,7 +138,7 @@ import { currentPairAllowed } from "../../core/src/generated/currentPairRestrict
 import { draftUsesMatchingSlot, newMatchCategoryAllowed, newMatchParticipationAllowed, replacementCanTakeRole, reviewDraftWasUnsent } from "../../core/src/generated/newMatchParticipation.ts";
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS, type DesireDef } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
-import { ageAnswer, agesStated, availabilityTags, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, feedbackOf, isCompleteParticipationRefusal, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, plansPlaceQuestion, publicPlanLocation, type Classified, type TimeOption } from "./classify.ts";
+import { ageAnswer, agesStated, availabilityTags, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, feedbackOf, isCompleteParticipationRefusal, isNamedProbeTime, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, plansPlaceQuestion, publicPlanLocation, sentencesOf, type Classified, type TimeOption } from "./classify.ts";
 import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import {
   directInviteVouch, inviteReviewContactToken, inviteReviewReference, inviteVouchEvidence, inviteVouchRisk, isMemberInvitationLink,
@@ -179,14 +179,45 @@ function safetyReplyConsent(text: string) {
   return complete ? consentOf(text).answer : "unclear";
 }
 
-function excludesSoleSafetyTarget(text: string, names: readonly (string | undefined)[], competing: boolean): boolean {
-  const reply = safetyName(text).replace(/^(?:no|nope)(?:[,.!?;:]\s*| )/, "");
-  const clause = reply.split(/[,.!?;:]/, 1)[0]!.trim();
-  if (names.some(name => name && clause === `not ${safetyName(name)}`)) return true;
-  if (competing) return false;
-  if (["not him", "not her", "not them"].includes(clause)) return true;
+function isSafetyAttributionQualifier(text: string): boolean {
+  const words = safetyName(text);
+  // A qualifier can finish with a guess about who it was. A hedge in a time choice stays separate.
+  const attribution = /(?:^|(?:[,:]? (?:if|whether))?[,:]? )(?:it|that) (was(?:n't)?|(?:could|may|might) have been)\b/.exec(words);
+  const qualifier = words.slice(0, attribution?.index ?? words.length);
+  if (attribution) {
+    const subject = words.slice(attribution.index + attribution[0].length).trim();
+    const timeChoice = /^(.+?) (?:that|which) (?:works?|worked|(?:would|could) work)(?: for (?:me|us))?$/.exec(subject);
+    if (timeChoice && isNamedProbeTime(timeChoice[1]!)) return false;
+  }
+  const hedge = attribution === null ? qualifier : qualifier.replace(/^(?:actually|well|sorry)[,:]? /, "");
+  const modalGuess = attribution !== null && /^(?:could|may|might) /.test(attribution[1]!) && /^(?:actually|well|sorry)?$/.test(qualifier);
+  return modalGuess || /^(?:maybe|perhaps|possibly|probably|i think|i guess|(?:i(?:'m| am) )?(?:not sure|unsure))$/.test(hedge)
+    || (attribution !== null && /^(?:(?:i(?:'m| am) )?(?:not certain|uncertain)|i don't know|i (?:could|may|might) be wrong)$/.test(hedge))
+    || (text.includes("?") && /^(?:right|correct|wasn't it)$/.test(words));
+}
+
+function readSoleSafetyTargetExclusion(text: string, names: readonly (string | undefined)[], competing: boolean) {
+  const reply = text.normalize("NFKC").trim().replace(/^(?:no|nope)(?:[,.!?;:]\s*|\s+)/i, "");
+  let first = sentencesOf(reply, true)[0]!;
+  if (first.text.trimEnd().endsWith(";")) {
+    const tail = reply.slice(first.at + first.text.length).trim();
+    if (isSafetyAttributionQualifier(sentencesOf(tail, true)[0]!.text)) first = sentencesOf(reply.replaceAll(";", ","), true)[0]!;
+  }
+  const openingSentence = first.text;
+  const opening = openingSentence.split(/[,.!?;:]/, 1)[0]!;
+  const clause = safetyName(opening);
+  const rejectsName = names.some(name => name && clause === `not ${safetyName(name)}`);
   const replacement = clause.replace(/^(?:it was|i mean|i meant) /, "");
-  return ["someone else", "somebody else"].some(phrase => replacement === phrase || replacement.startsWith(`${phrase} `));
+  const openingIsQuestion = openingSentence.includes("?");
+  const rejectsWithCorrection = first.at === 0 && !openingIsQuestion && /^it was (?:someone|somebody) else$/.test(safetyName(openingSentence));
+  const qualified = consentOf(openingSentence).why === "hedged" || isSafetyAttributionQualifier(openingSentence.slice(opening.length + 1));
+  const refersToAnotherPerson = !openingIsQuestion && !qualified && ["someone else", "somebody else"].some(phrase =>
+    replacement === phrase || (replacement !== clause && replacement.startsWith(`${phrase} `)));
+  const unnamedRejection = refersToAnotherPerson || ["not him", "not her", "not them"].includes(clause);
+  return {
+    excludes: safetyQuestionExclusion(rejectsName || rejectsWithCorrection, unnamedRejection, competing),
+    separateReply: rejectsWithCorrection ? reply.slice(first.at + openingSentence.length).trim() : undefined,
+  };
 }
 
 const SAFETY_TARGET_PREFIX = /^(?:i (?:mean|meant)|it'?s)\s+/;
@@ -1269,7 +1300,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (msg.keyword === "STOP") { m.optedOut = true; m.pendingInviteDraft = undefined; m.interruptionSurvey = undefined; this.dropMember(m.id, "opted out"); return; }
     if (msg.keyword === "START") { m.optedOut = false; this.send(m, copy.stopWelcomeBack, { type: "info" }, "reply"); return; }
     if (msg.keyword === "HELP") return;
-    const body = msg.body.trim();
+    let body = msg.body.trim();
     // Classify first, the first message included (audit P1-4): the age policy runs before the
     // welcome and before the trust-hold return (P2-17).
     const parsed = classify(body);
@@ -1340,7 +1371,15 @@ export class ConsentNetwork implements NetworkUnderTest {
       return;
     }
     // The answer to "Who do you mean?" (a block or report waiting for its target): the member's own text only.
-    if (m.pendingSafety && !mcp && this.answerWho(m, body, msg.signedReceivedAt)) return;
+    if (m.pendingSafety && !mcp) {
+      const remaining = this.answerWho(m, body, msg.signedReceivedAt);
+      if (remaining === undefined) return;
+      if (remaining !== body) {
+        body = remaining;
+        this.understood = undefined;
+        c = classify(body);
+      }
+    }
     if (this.trust.level(m.id) === "hold") { if (c.abuse.length) this.trust.add(m.id, now, c.abuse[0]!, 0); return; }
     // "He asked me to venmo him $50": what someone else did, never the sender's abuse (ids and kinds only).
     if (c.disclosure?.length) this.ctx.log("abuse_disclosed", { memberId: m.id, kinds: c.disclosure });
@@ -2683,14 +2722,15 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /**
    * The member's answer to "Who do you mean?" (within a day). A bare yes can confirm the one
-   * person named in the question if another action is not also waiting for a reply.
+   * person named in the question if another action is not also waiting for a reply. Return the
+   * text still available for another prompt, or undefined when this question handled it all.
    */
-  private answerWho(m: MemberState, body: string, signedReceivedAt: number | undefined): boolean {
+  private answerWho(m: MemberState, body: string, signedReceivedAt: number | undefined): string | undefined {
     const p = m.pendingSafety!;
     const now = this.now();
     const oldestQuestion = now - DAY;
-    if (!safetyQuestionIsCurrent(p.at, oldestQuestion)) { m.pendingSafety = undefined; return false; }
-    if (signedReceivedAt !== undefined && !reportClarificationTimeCurrent(p.at, signedReceivedAt, now, oldestQuestion)) return false;
+    if (!safetyQuestionIsCurrent(p.at, oldestQuestion)) { m.pendingSafety = undefined; return body; }
+    if (signedReceivedAt !== undefined && !reportClarificationTimeCurrent(p.at, signedReceivedAt, now, oldestQuestion)) return body;
     const text = body.trim();
     const reply = safetyQuestionReply(text);
     const matches = new Map<MemberId, MemberState>();
@@ -2701,27 +2741,27 @@ export class ConsentNetwork implements NetworkUnderTest {
       }
     }
     const named = reply.acceptsName && matches.size === 1 ? matches.values().next().value : undefined;
-    const competing = !!m.awaiting && ["probe", "booked", "crew", "checkin"].includes(m.awaiting.kind);
+    const competing = Boolean(m.awaiting);
     const sole = p.targets?.length === 1 ? this.members.get(p.targets[0]!) : undefined;
     const exactConfirmation = !reply.explicitlyNamed && !text.normalize("NFKC").includes("?") && reply.names.some(isSafetyConfirmation);
     const confirmed = safetyQuestionUsesSoleOffer(!!sole, competing, exactConfirmation, matches.size > 0) ? sole : undefined;
     const target = named ?? confirmed;
     const allowedTarget = target && (p.verb === "block" || this.counterparts(m.id).some(x => x.m.id === target.id)) ? target : undefined;
     const cancels = reply.cancels || (!competing && reply.refuses);
-    const rulesOutTarget = !!sole && excludesSoleSafetyTarget(text, [this.fullNames.get(sole.id), sole.display, sole.first], !!competing);
+    const exclusion = sole && readSoleSafetyTargetExclusion(text, [this.fullNames.get(sole.id), sole.display, sole.first], competing);
+    const rulesOutTarget = exclusion?.excludes ?? false;
     // spec/safetyCase.md, "An unrelated reply keeps a current safety question"
-    if (!safetyQuestionResolves(!!allowedTarget, !!competing, cancels, rulesOutTarget, text.split(/\s+/).length <= 4)) return false;
+    if (!safetyQuestionResolves(!!allowedTarget, competing, cancels, rulesOutTarget, text.split(/\s+/).length <= 4)) return body;
     m.pendingSafety = undefined;
     if (allowedTarget && safetyQuestionAppliesTarget(true, rulesOutTarget)) {
       this.applyBlock(m, p.verb, p.kind, allowedTarget);
-      return true;
+      return;
     }
-    if (competing) return false;
-    if (cancels) { this.ack(m, "Okay."); return true; }
-    if (p.verb === "block") { this.applyBlock(m, p.verb, p.kind, undefined); return true; }
+    if (competing) return safetyReplyAfterExclusion(competing, exclusion?.separateReply !== undefined, body, exclusion?.separateReply ?? "") || undefined;
+    if (cancels) { this.ack(m, "Okay."); return; }
+    if (p.verb === "block") { this.applyBlock(m, p.verb, p.kind, undefined); return; }
     this.ctx.log(`${p.verb}_unresolved`, { memberId: m.id });
     this.send(m, copy.whoUnresolved, { type: "info" }, "reply");
-    return true;
   }
 
   /**

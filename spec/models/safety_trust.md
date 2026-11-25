@@ -793,13 +793,19 @@ module safety_trust {
     }
   }
 
-  // The reader has identified an explicit exclusion of the sole offered counterpart. A
-  // competing prompt can still handle the message, but no report can use the expired choice.
-  action excludeWhoTarget(m: Mid): bool = {
+  // The reader has identified a rejection of the sole offered counterpart. Only a named
+  // rejection or a complete correction excludes it while another prompt owns the reply slot.
+  pure def whoExclusionAllowed(competing: bool, explicitExclusion: bool): bool =
+    explicitExclusion or not(competing)
+
+  action excludeWhoTarget(m: Mid, competing: bool, explicitExclusion: bool, replacementSentence: bool, separateReply: bool): bool = {
     val p = s.pendingWho.get(m)
+    val forwards = competing and (not(replacementSentence) or separateReply)
     all {
       p.asked, p.offered, s.live.get(m), inboundOk(s, m.p), s.now - p.at <= 1,
-      s' = { ...s, pendingWho: s.pendingWho.set(m, NO_WHO), lastAction: "whoTargetExcluded" },
+      whoExclusionAllowed(competing, explicitExclusion), replacementSentence implies explicitExclusion,
+      s' = { ...s, pendingWho: s.pendingWho.set(m, NO_WHO),
+        lastAction: if (forwards) "whoTargetExcludedForwarded" else "whoTargetExcluded" },
     }
   }
 
@@ -1128,7 +1134,7 @@ module safety_trust {
       answerWhoBySoleOffer(m, flag, flag2, risk == 2),
       keepWhoAfterUnrelatedReply(m, flag, flag2),
       receiveWhoControl(m, flag, flag2, risk == 1),
-      excludeWhoTarget(m),
+      excludeWhoTarget(m, flag, flag2, risk == 1 or risk == 2, risk == 2),
       staleSignedWhoReply(m, if (flag) s.pendingWho.get(m).at - 1 else s.now + 1),
       answerWhoShared(m, app, flag, flag2),
       abuse(m, risk),
@@ -1831,9 +1837,17 @@ module safety_trust {
     init
       .then(bookDate("o1", "slop", "ana", "ben"))
       .then(report("ana", "slop", "ben", "report", "harassment", true))
-      .then(excludeWhoTarget(ANA_S))
-      .expect(not(s.pendingWho.get(ANA_S).asked) and s.reports == Set())
+      .expect(not(whoExclusionAllowed(true, false)) and s.pendingWho.get(ANA_S).asked and s.reports == Set())
+      .then(excludeWhoTarget(ANA_S, true, true, true, false))
+      .expect(not(s.pendingWho.get(ANA_S).asked) and s.reports == Set() and s.lastAction == "whoTargetExcluded")
       .then(answerWho(ANA_S).fail())
+
+  run safetyReplacementForwardsSeparateReplyTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(report("ana", "slop", "ben", "report", "harassment", true))
+      .then(excludeWhoTarget(ANA_S, true, true, true, true))
+      .expect(not(s.pendingWho.get(ANA_S).asked) and s.reports == Set() and s.lastAction == "whoTargetExcludedForwarded")
 
   run staleSignedWhoReplyKeepsCurrentQuestionTest =
     init

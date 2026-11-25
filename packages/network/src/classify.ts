@@ -1062,6 +1062,12 @@ function timeMentions(text: string, recoverTrailingPair = false): TimeMention[] 
   return [...days, ...times.filter(t => t.day || t.group || t.minute === undefined || !INCIDENTAL_CLOCK.test(text.slice(0, t.at)))];
 }
 
+/** Recognize a complete time expression without treating it as acceptance. */
+export function isNamedProbeTime(text: string): boolean {
+  const normalized = normText(text).trim();
+  return timeMentions(normalized).some(mention => mention.at === 0 && mention.end === normalized.length);
+}
+
 const NAMED_TIME_JOIN = String.raw`\s*(?:(?:,|&|\/)\s*(?:(?:and|or)\b\s*)?|(?:and|or)\b\s+)`;
 const BARE_NAMED_TIME_JOIN = new RegExp(`^${NAMED_TIME_JOIN}$`);
 const SHORT_DAY_TOKEN = DAY_NAMES.map(([, abbreviation]) => abbreviation).join("|");
