@@ -2354,7 +2354,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const r = { id: this.sid(`rp${++this.reportSeq}`), kind, reporterId: reporter, subjectId: subject, ...(o.oppId ? { opportunityId: o.oppId } : {}), at: now, status: "open" as const, source: o.source, met: o.met };
     this.reports.push(r);
     if (o.caseEvent !== false) this.caseEvent(subject, { at: now, kind: `report:${kind}`, points: 0, by: reporter });
-    this.ctx.log("report_received", { reportId: r.id, kind, memberId: reporter, target: subject, opportunityId: o.oppId ?? null, source: o.source, met: o.met });
+    this.ctx.log("report_received", { reportId: r.id, kind, memberId: reporter, target: subject, oppId: o.oppId ?? null, source: o.source, met: o.met });
     if (this.reportHeld(subject)) this.dropMember(subject, "report under review");
     this.dirty = true;
   }

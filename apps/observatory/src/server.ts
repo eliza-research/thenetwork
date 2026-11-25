@@ -637,8 +637,9 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         const id = decodeURIComponent(req.params.id!);
         const no = await record(u, app, { action: "read_opportunity", targetType: "opportunity", targetId: id, ok: true });
         if (no) return no;
-        const d = await (await source(mode, app)).opportunity(id, { truth: truthFor(u, app), historyBefore });
-        if (!d) return json({ error: "not found" }, 404);
+        const full = await (await source(mode, app)).opportunity(id, { truth: truthFor(u, app), historyBefore });
+        if (!full) return json({ error: "not found" }, 404);
+        const d = currentSafety(u, app, mode) ? full : { ...full, events: full.events.filter(e => !SAFETY_REPORT_EVENTS.has(e.type)) };
         // An analyst sees the opportunity's shape, never the people in it or the texts written to them.
         if (viewClass(rolesFor(u, app, mode)) === "counts") return json({
           ...d, opportunity: countsOpp(d.opportunity), members: d.members.map(countsMember), messages: [],
