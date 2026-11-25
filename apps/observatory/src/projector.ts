@@ -449,6 +449,8 @@ export class Projector {
         const recorded = d.proposal as Proposal | undefined;
         const incoming = d.in as MemberId, outgoing = d.out as MemberId | undefined;
         const mode = replacementRosterMode(recorded !== undefined, outgoing !== undefined, o.participants.includes(incoming));
+        const wasCounted = this.counted.has(o.id);
+        const before = [...o.participants];
         if (mode === "recorded" && recorded) {
           o.participants = [...recorded.participants];
           o.alternates = [...(recorded.alternates ?? [])];
@@ -458,8 +460,12 @@ export class Projector {
           o.alternates = o.alternates.filter(id => id !== incoming);
         }
         if (outgoing !== undefined) delete o.status[outgoing];
-        o.status[incoming] = "checking";
+        if (incoming !== undefined) o.status[incoming] = "checking";
         if (recorded?.explanations) o.explanations = { ...recorded.explanations };
+        if (wasCounted && (before.length !== o.participants.length || before.some(id => !o.participants.includes(id)))) {
+          this.count({ id: o.id, participants: before }, -1);
+          this.count(o);
+        }
         this.changed(o, r);
         return true;
       }
