@@ -210,7 +210,7 @@ export function describe(row: EventRow, name: (id: string) => string = id => id)
     case "weekly_checkin_consent": text = p.on === false ? "Weekly check-in turned off" : "Weekly check-in on (Sundays, in their send window)"; keep("on"); break;
     case "checkin_sent": text = "Weekly check-in sent (\"What's your week like?\")"; break;
     case "availability_stated": text = `Stated availability for 7 days: ${availability(p.tags) || "none read"}`; if (Array.isArray(p.tags)) detail.tags = (p.tags as string[]).join(","); break;
-    case "probe_replaced": text = `Swapped ${name(p.out)} for ${name(p.in)}`; keep("out", "in"); break;
+    case "probe_replaced": text = typeof p.in === "string" ? `Swapped ${name(p.out)} for ${name(p.in)}` : `${name(p.out)} left; the group goes on with no substitute`; keep("out", "in"); break;
     case "probe_closed": text = `Check closed: ${human(p.reason ?? "not sent")}`; keep("reason"); break;
     case "proposal_skipped": text = `Not sent: ${human(p.reason)}`; severity = "warn"; keep("reason"); break;
     case "opportunity_closed": text = `Closed: ${human(p.reason)}`; keep("reason"); break;
