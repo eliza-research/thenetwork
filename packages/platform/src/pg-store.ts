@@ -807,7 +807,8 @@ export class PgPeopleStore implements PeopleStore {
 
   private async movePhoneGrants(tx: SQL, move: PhoneMove, at: Date): Promise<void> {
     const [oauth] = await tx`select case when to_regclass('oauth.grants') is null then false
-      else has_schema_privilege('oauth', 'USAGE') and has_table_privilege(to_regclass('oauth.grants'), 'UPDATE') end as ok`;
+      else has_schema_privilege('oauth', 'USAGE') and has_table_privilege(to_regclass('oauth.grants'), 'UPDATE') end as ok,
+      to_regclass('oauth.signup_drafts') is not null as has_drafts`;
     if (!oauth?.ok) return;
     // Cloud's grant trigger forbids moving its sealed phone authority. Unbound grants also cannot prove this person owns the grant.
     const cloudBound = tx`(id like 'grant_cloud_%' or cloud_authority is not null)`;
@@ -822,5 +823,6 @@ export class PgPeopleStore implements PeopleStore {
         select ${at},'consent_revoked',client_id,id,app_id,'phone changed' from ended`;
     await tx`update oauth.grants set phone_key=${move.newHash}
         where person_id=${move.personId} and phone_key=${move.oldHash} and revoked_at is null and expires_at>${at} and not ${cloudBound}`;
+    if (oauth.has_drafts) await tx`delete from oauth.signup_drafts where phone_key=${move.oldHash}`;
   }
 }

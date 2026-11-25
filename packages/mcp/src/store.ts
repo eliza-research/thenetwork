@@ -6,7 +6,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { removalFormMayRevoke } from "../../core/src/generated/connectedAssistants.ts";
 import { decideProfileClaim, type ProfileClaim } from "../../core/src/generated/mcpProfileSubmission.ts";
-import { signupDraftExpired, signupDraftGrantAllowed, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
+import { signupDraftCanPrepare, signupDraftExpired, signupDraftGrantAllowed, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import { requestIsLive } from "../../core/src/generated/oauthGrantIssuance.ts";
 import { defaultScopes, scopeName, scopeOfferedOn, scopes as connectorScopes, signupPrefillAllowed, useSignupPrefill as markSignupPrefillUsed } from "../../core/src/generated/authorizationPages.ts";
 import { codeExchangeMayCommit, type CodeExchangeResult, refreshStoredAuthorityCurrent, type RefreshRotationResult } from "../../core/src/generated/oauthTokenLifecycle.ts";
@@ -246,6 +246,7 @@ const copy = <T extends object>(v: T | undefined): T | undefined => (v ? structu
 
 export class MemoryOAuthStore implements OAuthStore {
   readonly signupDrafts = new Map<string, SignupDraft>();
+  private readonly preparedSignupDraftGrants = new Set<string>();
   private readonly profileSubmissions = new Map<string, Map<string, boolean>>();
   private readonly assistantProjections = new Map<string, Promise<void>>();
   readonly clients = new Map<string, OAuthClient>();
@@ -259,8 +260,9 @@ export class MemoryOAuthStore implements OAuthStore {
   async putSignupDraft(d: SignupDraft, at: number) {
     const g = this.grants.get(d.grantId);
     if (!g || !signupDraftGrantAllowed(g.app === d.app && g.phoneKey === d.phoneKey, g.expiresAt > at, g.revokedAt === null, g.scopes.includes("profile:write"))
-      || signupDraftExpired(d.expiresAt, at) || this.signupDrafts.has(g.id)) return false;
+      || signupDraftExpired(d.expiresAt, at) || !signupDraftCanPrepare(this.preparedSignupDraftGrants.has(g.id))) return false;
     this.signupDrafts.set(g.id, structuredClone(d));
+    this.preparedSignupDraftGrants.add(g.id);
     return true;
   }
   async deleteSignupDrafts(phoneKey: string, app: McpAppId) {
@@ -464,6 +466,7 @@ export class MemoryOAuthStore implements OAuthStore {
   private dropGrant(id: string) {
     this.grants.delete(id);
     this.signupDrafts.delete(id);
+    this.preparedSignupDraftGrants.delete(id);
     this.profileSubmissions.delete(id);
     for (const [k, c] of this.codes) if (c.grantId === id) this.codes.delete(k);
     for (const [k, t] of this.tokens) if (t.grantId === id) this.tokens.delete(k);

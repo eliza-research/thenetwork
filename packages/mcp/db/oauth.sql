@@ -67,6 +67,7 @@ do $$ begin
 end $$;
 alter table oauth.grants alter column phone_key set not null;
 alter table oauth.grants add column if not exists cloud_authority jsonb;
+alter table oauth.grants add column if not exists signup_draft_prepared boolean not null default false;
 do $$ begin
   if not exists(select 1 from pg_constraint where conname='grants_cloud_authority_required' and conrelid='oauth.grants'::regclass) then
     alter table oauth.grants add constraint grants_cloud_authority_required check
@@ -142,6 +143,9 @@ create table if not exists oauth.signup_drafts (
   fields jsonb not null,
   expires_at timestamptz not null
 );
+update oauth.grants g set signup_draft_prepared=true
+  from oauth.signup_drafts d where g.id=d.grant_id and not g.signup_draft_prepared;
+delete from oauth.signup_drafts d where d.fields = '{}'::jsonb or (to_jsonb(d)->>'consumed_at') is not null;
 alter table oauth.signup_drafts drop column if exists consumed_at;
 create index if not exists signup_drafts_phone_app on oauth.signup_drafts (phone_key, app_id);
 

@@ -192,6 +192,12 @@ export function signupDraftGrantAllowed(bindingMatches: boolean, grantCurrent: b
 
 /** Story: Drop the draft when I can no longer use it / A draft is written only under the grant that saves it, and only the signup prefill reads it (spec/mcpSignupDraft.md) */
 //@ pure
+export function signupDraftCanPrepare(alreadyPrepared: boolean): boolean {
+  return !alreadyPrepared;
+}
+
+/** Story: Drop the draft when I can no longer use it / A draft is written only under the grant that saves it, and only the signup prefill reads it (spec/mcpSignupDraft.md) */
+//@ pure
 export function signupDraftUnique(matches: number): boolean {
   return matches === 1;
 }
@@ -200,6 +206,13 @@ export function signupDraftUnique(matches: number): boolean {
 //@ pure
 export function signupDraftExpired(expiresAt: number, asOf: number): boolean {
   return expiresAt <= asOf;
+}
+
+/** Story: Drop the draft when I can no longer use it / A draft is written only under the grant that saves it, and only the signup prefill reads it (spec/mcpSignupDraft.md) */
+//@ pure
+export function lawOneDraftPerGrant(alreadyPrepared: boolean): boolean {
+  //@ ensures \result === true
+  return !alreadyPrepared || !signupDraftCanPrepare(alreadyPrepared);
 }
 
 /** Story: Drop the draft when I can no longer use it / The signup result settles the draft (spec/mcpSignupDraft.md) */

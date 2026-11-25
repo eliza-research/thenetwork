@@ -101,11 +101,16 @@ pure def lawRefusedBannedSessionDeletesDraft(banned: bool): bool =
 
 ### A draft is written only under the grant that saves it, and only the signup prefill reads it
 
-A write needs a live unrevoked grant with the profile write scope and the matching app and phone. Exactly one row is written for each grant. No route reads the draft fields. Only the Finish signup page reads them, once, to prefill the form, and it deletes the row when it reads it. Finish signup keeps or deletes the row, and the signup result, a recorded age, a ban, erasure, a number change and the deadline delete it. Changed (2026-11-23): the rule described a read by phone, app and person, but the only read was removed with the Join page route, so the read decision `signupDraftRowReadable` and the store read are removed.
+A write needs a live unrevoked grant with the profile write scope and the matching app and phone. At most one draft is written for each grant. A private flag on the grant records the first write. Deleting the draft removes its fields and binding. The flag stays with the grant until grant deletion. An upgrade sets the flag for each retained draft or old consumed record before it removes consumed records. No route reads the draft fields. Only the Finish signup page reads them, once, to prefill the form, and it deletes the row when it reads it. Finish signup keeps or deletes the row, and the signup result, a recorded age, a ban, erasure, a number change and the deadline delete it. Changed (2026-11-23): the rule described a read by phone, app and person, but the only read was removed with the Join page route, so the read decision `signupDraftRowReadable` and the store read are removed.
 
 ```quint
 pure def signupDraftGrantAllowed(bindingMatches: bool, grantCurrent: bool, unrevoked: bool, writeScope: bool): bool =
   bindingMatches and grantCurrent and unrevoked and writeScope
+
+pure def signupDraftCanPrepare(alreadyPrepared: bool): bool = not(alreadyPrepared)
+
+pure def lawOneDraftPerGrant(alreadyPrepared: bool): bool =
+  alreadyPrepared implies not(signupDraftCanPrepare(alreadyPrepared))
 
 pure def signupDraftUnique(matches: int): bool = matches == 1
 pure def signupDraftExpired(expiresAt: int, asOf: int): bool = expiresAt <= asOf
