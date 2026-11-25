@@ -1351,7 +1351,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const pos = new Set<string>(), neg = new Set<string>(), strong = new Set<string>();
   const individual = new Set<string>(), grouped = new Set<string>();
   const pickedClauses = new Set<string>(), refusedClauses = new Set<string>();
-  const qualifiedTimeRefusals = new Map<number, number>();
+  const qualifiedTimeRefusals = new Map<number, [number, readonly string[], boolean]>();
   const refusedTails = new Map<number, [number, string[]]>();
   let conditionalTimeRefusal = false;
   const memberChoiceAt = (at: number) => {
@@ -1364,25 +1364,26 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     for (const key of keys) neg.add(key);
     if (clause !== undefined) refusedClauses.add(clause);
   };
-  const rememberQualifiedTimeRefusal = (at: number, end: number) => {
+  const rememberQualifiedTimeRefusal = (at: number, end: number, keys: readonly string[]) => {
     if (!probeChoiceAuthored(t.slice(0, at))) return;
     const tail = t.slice(end);
     const refusal = REFUSES_OFFERED_TIME.exec(tail)?.[0];
     if (!refusal) return;
+    const qualified = QUALIFIED_TIME_REFUSAL.test(tail);
     const rest = tail.slice(refusal.length);
-    if (!QUALIFIED_TIME_REFUSAL.test(tail)
+    if (!qualified
       && (!/[a-z0-9]/i.test(rest)
         || /\b(?:nothing|none|no\s+other\s+(?:day|option|slot|one)s?)\b/.test(rest))) return;
     const clause = clauseAt(t, at, end - at);
     if (/\bif\b/.test(clause) || COND_RX.test(clause)) conditionalTimeRefusal = true;
-    else if (c.why === "refusal" || c.why === "mixed") qualifiedTimeRefusals.set(end, end + refusal.length);
+    else if (c.why === "refusal" || c.why === "mixed") qualifiedTimeRefusals.set(end, [end + refusal.length, keys, qualified]);
   };
   const onlyPick = (i: number, len: number) => /^[\s\W]*(?:the\s+)?$/.test(t.slice(0, i)) && /^[\s\W]*(?:one|option|works?|please|pls|lol)?[\s\W]*$/.test(t.slice(i + len));
   const mark = (keys: string[], i: number, len: number, calendar = false, group = false) => {
     if (!memberChoiceAt(i)) return;
     const cl = clauseAt(t, i, len);
     if (probeTimeIsRefused(t, i, i + len)) {
-      rememberQualifiedTimeRefusal(i, i + len);
+      rememberQualifiedTimeRefusal(i, i + len, keys);
       return refuse(keys, cl);
     }
     pickedClauses.add(cl);
@@ -1429,7 +1430,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     const trailing = /^\s*,?\s*(?:(?:too|also|as\s+well)\s*,?\s*)?either\b(?!\s+(?:way|one|option|time|or)\b)/.exec(t.slice(m.end));
     if (trailing) return m.end + trailing.index + trailing[0].lastIndexOf("either");
     const leading = /\beither\s*$/.exec(t.slice(0, m.at));
-    if (leading && !new RegExp(`^\\s+or\\s+(?:${DAY_TOKEN})\\b`).test(t.slice(m.end))) return leading.index;
+    if (leading && !new RegExp(`^\\s+(?:(?:and|or)\\s+)?(?:${DAY_TOKEN})\\b`).test(t.slice(m.end))) return leading.index;
     return -1;
   };
   let weakOrdinalMissing = false;
@@ -1438,7 +1439,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     const option = options.at(ordinal.index);
     if (!option) weakOrdinalMissing = true;
     else if (ordinal.choiceEnd === undefined || joinedRefusals.has(ordinal)) {
-      rememberQualifiedTimeRefusal(ordinal.at, ordinal.end);
+      rememberQualifiedTimeRefusal(ordinal.at, ordinal.end, [option.key]);
       refuse([option.key], clauseAt(t, ordinal.at, ordinal.end - ordinal.at));
     }
     else mark([option.key], ordinal.at, ordinal.choiceEnd - ordinal.at);
@@ -1497,7 +1498,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
       explicitAlternative ||= currentAlternative && matching.length > 0;
       contradictedExclusion ||= exclusion && (NEG_AFTER.test(t.slice(m.end)) || REFUSES_OFFERED_TIME.test(t.slice(m.end)));
       refusedGroup ||= !!m.group;
-      rememberQualifiedTimeRefusal(m.at, m.end);
+      rememberQualifiedTimeRefusal(m.at, m.end, matching);
       const refusalTail = REFUSES_OFFERED_TIME.exec(t.slice(m.end));
       if (refusalTail) refusedTails.set(m.end, [m.end + refusalTail[0].length, matching]);
       // An either-refusal records no clause: its clause is shared with the other
@@ -1529,9 +1530,10 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     if (c.why !== "mixed" && c.why !== "refusal") c = { answer: "no", why: "refusal" };
   }
   // Read a general answer without the words already bound to a specific refused time.
-  if (qualifiedTimeRefusals.size) {
+  const strippedRefusals = [...qualifiedTimeRefusals].filter(([, [, keys, qualified]]) => qualified || !keys.some(key => strong.has(key)));
+  if (strippedRefusals.length) {
     let remaining = t;
-    for (const [at, end] of [...qualifiedTimeRefusals].sort(([first], [second]) => second - first)) {
+    for (const [at, [end]] of strippedRefusals.sort(([first], [second]) => second - first)) {
       remaining = `${remaining.slice(0, at)} ${remaining.slice(end)}`;
     }
     c = consentScan(remaining);
