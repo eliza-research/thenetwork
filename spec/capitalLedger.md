@@ -76,7 +76,7 @@ pure def needCapitalSourceOpen(alreadyCredited: bool, selfConfirmed: bool, allow
 
 ### A reversal adds a new entry for the original owner
 
-The original entry stays in the log. Append the reversal on the original owner's ledger. An entry can be reversed once. Confirmed fraud can reverse a positive credit when a named member confirmed or participated in it, or when the credit depends on another reversal. A successful clawback records the original entry ID.
+The original entry stays in the log. Append the reversal on the original owner's ledger. An entry can be reversed once. Confirmed fraud can reverse a positive credit when a named member confirmed or participated in it, or when the credit depends on another reversal. Feedback on an attendance that is already reversed earns nothing. A successful clawback records the original entry ID.
 
 ```quint
 pure def mayReverseCapitalEntry(sameOwner: bool, alreadyReversed: bool): bool =
