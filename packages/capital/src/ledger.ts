@@ -219,7 +219,7 @@ export class CapitalLedger {
         if (!m || !m.vouchedBy || !m.stakeEntryId) break;
         const stake = this.byId.get(m.stakeEntryId);
         if (!stake || stake.category !== "vouch_stake" || stake.member !== m.vouchedBy) break;
-        if (ev.t - stake.t >= c.vouch.periodDays * DAY) break;
+        if (ev.t - stake.t >= c.levers.vouch.periodDays * DAY) break;
         this.reverse(m.vouchedBy, m.stakeEntryId, ev, "vouch stake reversed: removal overturned on review", out);
         break;
       }
