@@ -50,6 +50,13 @@ export function relayEnvelopeTextAllowed(delegatedPrivateRequest: boolean, direc
 
 /** Story: Ask the agent to relay my own words / A separate direct phone request can take the place of a text envelope (spec/relayRequestAddress.md) */
 //@ pure
+export function lawDirectNumberRequestTakesPrecedence(delegatedPrivateRequest: boolean): boolean {
+  //@ ensures \result === true
+  return !relayEnvelopeTextAllowed(delegatedPrivateRequest, true, false, false, false, false);
+}
+
+/** Story: Ask the agent to relay my own words / A separate direct phone request can take the place of a text envelope (spec/relayRequestAddress.md) */
+//@ pure
 export function lawUncertainNumberRequestKeepsOnlyOrdinaryText(refused: boolean, bodyContainsPrivateInstruction: boolean): boolean {
   //@ ensures \result === true
   return relayEnvelopeTextAllowed(false, true, true, refused, bodyContainsPrivateInstruction, false) === !(refused || bodyContainsPrivateInstruction);
@@ -60,11 +67,4 @@ export function lawUncertainNumberRequestKeepsOnlyOrdinaryText(refused: boolean,
 export function lawWithdrawnNumberRequestKeepsOnlyOrdinaryText(uncertain: boolean, bodyContainsPrivateInstruction: boolean): boolean {
   //@ ensures \result === true
   return relayEnvelopeTextAllowed(false, true, uncertain, true, bodyContainsPrivateInstruction, true) === !bodyContainsPrivateInstruction;
-}
-
-/** Story: Ask the agent to relay my own words / A separate direct phone request can take the place of a text envelope (spec/relayRequestAddress.md) */
-//@ pure
-export function lawDirectNumberRequestTakesPrecedence(delegatedPrivateRequest: boolean): boolean {
-  //@ ensures \result === true
-  return !relayEnvelopeTextAllowed(delegatedPrivateRequest, true, false, false, false, false);
 }
