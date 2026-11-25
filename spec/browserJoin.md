@@ -1,16 +1,20 @@
 # Join in the browser
 
-The peon.biz site keeps one browser page at `/join`. A person's agent sends the person to `https://peon.biz/join?via=agent#firstName=..&age=..`. On this page the person confirms their own phone, reviews their first name and age, agrees to the texts and joins. This spec models only what the page shows and what the page lets the person do. The server owns the join rules ([site enrollment](siteEnrollment.md)) and the code limits ([phone verification limits](otpLimits.md)). The browser shell owns the address, the fetch calls, the security check widget, the focus and the copy. The shell keeps a Peon invitation token only in the page's memory: the token survives direct phone verification in the same page, the Cloud phone sign-in provider receives no token, and the page puts no invitation in persistent storage. After Cloud returns, the person reopens the original invitation link in the verified session. For a first Cloud sign-in, the site can seal the allowed name, age and agent-return flag with the pending Peon handoff, and the Cloud service receives none of these fields. If the callback issues a session, the site makes the draft available until the handoff expires. The site clears the draft cookie when the returning tab presents its one-use receipt. The page stores only the receipt across navigation and clears it on return. The shell sends each server answer to this machine as one event. The public sites have no sign-in link, no settings page and no member dashboard: this page is only for joining.
+The peon.biz site keeps one browser page at `/join`. A person's agent sends the person to `https://peon.biz/join?via=agent#firstName=..`. On this page the person confirms their own phone, reviews their first name, types their birthday, agrees to the texts and joins. The agent never puts a birthday or an age in the link or in a tool call. This spec models only what the page shows and what the page lets the person do. The server owns the join rules ([site enrollment](siteEnrollment.md)) and the code limits ([phone verification limits](otpLimits.md)). The browser shell owns the address, the fetch calls, the security check widget, the focus and the copy. The shell keeps a Peon invitation token only in the page's memory: the token survives direct phone verification in the same page, the Cloud phone sign-in provider receives no token, and the page puts no invitation in persistent storage. After Cloud returns, the person reopens the original invitation link in the verified session. For a first Cloud sign-in, the site can seal the allowed name and agent-return flag with the pending Peon handoff, and the Cloud service receives none of these fields. If the callback issues a session, the site makes the draft available until the handoff expires. The site clears the draft cookie when the returning tab presents its one-use receipt. The page stores only the receipt across navigation and clears it on return. The shell sends each server answer to this machine as one event. The public sites have no sign-in link, no settings page and no member dashboard: this page is only for joining.
 
 ## Story: Open the join page from my agent's link
 
-> As a person who approved a profile with my agent, I want the join page to show the first name and age that I approved, so that I only check them and do not type them again.
+> As a person who approved a profile with my agent, I want the join page to show the first name that I approved, so that I only check it and do not type it again.
 
-### The page takes the approved name and age from the fragment and then removes the fragment
+### The page takes the approved name from the fragment and then removes the fragment
 
-The agent puts only the first name and the age in the fragment, after `#`. The page reads them once, when it opens. It keeps at most 50 characters of the name. It keeps the age only when the age has only digits, has one to three digits and is not more than 120. A name or an accepted age fills the profile form. Then the page removes the fragment from the address, before it loads anything. The page also records if the link came from an agent (`via=agent`).
+The agent puts only the first name in the fragment, after `#`. The page reads it once, when it opens. It keeps at most 50 characters of the name. A name fills the profile form. The page never takes a birthday or an age from the fragment: it ignores an `age` or a `birthdate` field there, and the birthday field is empty when the page opens. Then the page removes the fragment from the address, before it loads anything. The page also records if the link came from an agent (`via=agent`).
+
+The site's reader of an older Cloud draft keeps `fragmentAgeAccepted`. It refuses a draft age that does not have only digits, that does not have one to three digits or that is more than 120. The page sends no age in a draft, and it does not show a draft age.
 
 ```quint
+import authorizationPages as Auth from "./authorizationPages"
+
 type JoinScreen = Opening | Loading | Phone | Code | Checking | Profile | Member | Blocked | Done | LeftForCloud
 type AuthMode = AuthPending | OtpMode | CloudMode
 type CheckState = NoCheck | CheckRunning | CheckPassed | CheckBroken
@@ -18,7 +22,7 @@ type Pending = Idle | StartingCode | VerifyingCode | ResendingCode | SavingProfi
 type BlockReason = NoBlock | UnderAge | InviteOnly | InReview | NotValid | OtherReason
 type FlowNotice = NoNotice | ApiUnreachable | SessionEnded | AccountChanged
 type InlineError = NoError | InvalidPhone | CheckPending | CheckFailed | CheckRejected | CheckAgain |
-  RateLimited | CodeFormat | InvalidCode | NewCodeSent | ProfileIncomplete | CloudUnavailable | RequestFailed
+  RateLimited | CodeFormat | InvalidCode | NewCodeSent | ProfileIncomplete | InvalidBirthdate | CloudUnavailable | RequestFailed
 type JoinPage = {
   screen: JoinScreen,
   auth: AuthMode,
@@ -32,12 +36,13 @@ type JoinPage = {
   viaAgent: bool,
   addressClean: bool,
   formHasValues: bool,
+  birthdayGiven: bool,
   consented: bool,
 }
 pure val initial: JoinPage = {
   screen: Opening, auth: AuthPending, check: NoCheck, pending: Idle, reason: NoBlock, notice: NoNotice,
   formError: NoError, account: 0, inviteOnly: false, viaAgent: false, addressClean: false,
-  formHasValues: false, consented: false,
+  formHasValues: false, birthdayGiven: false, consented: false,
 }
 
 pure val fragmentNameMax = 50
@@ -55,9 +60,11 @@ pure def fragmentAgeAccepted(ageDigitsOnly: bool, ageDigitCount: int, fragmentAg
 
 pure def canOpenPage(page: JoinPage): bool = page.screen == Opening
 
-pure def openPage(page: JoinPage, viaAgent: bool, fragmentName: bool, ageDigitsOnly: bool, ageDigitCount: int, fragmentAge: int): JoinPage =
-  { ...page, screen: Loading, viaAgent: viaAgent, addressClean: true,
-    formHasValues: fragmentName or fragmentAgeAccepted(ageDigitsOnly, ageDigitCount, fragmentAge) }
+pure def openPage(page: JoinPage, viaAgent: bool, fragmentName: bool): JoinPage =
+  { ...page, screen: Loading, viaAgent: viaAgent, addressClean: true, formHasValues: fragmentName, birthdayGiven: false }
+
+pure def lawFragmentNeverGivesBirthday(page: JoinPage, viaAgent: bool, fragmentName: bool): bool =
+  not(openPage(page, viaAgent, fragmentName).birthdayGiven)
 
 pure def alwaysAddressCleanAfterOpening(page: JoinPage): bool =
   page.screen != Opening implies page.addressClean
@@ -330,46 +337,63 @@ pure def recheck(page: JoinPage, view: SessionView): JoinPage =
 
 ## Story: Confirm my details and join
 
-> As a person who confirmed my phone, I want to check my first name and age and agree to the texts myself, so that I join with details I approved.
+> As a person who confirmed my phone, I want to check my first name, type my birthday and agree to the texts myself, so that I join with details I approved.
 
-### The page sends the profile only with a name, an age from 1 to 120 and the text consent ticked
+### The page sends the profile only with a name, a real birthday that is not after today and the text consent ticked
 
-The person can change the fields while no request runs. The page refuses a profile with no first name, an age that is not a whole number from 1 to 120, or the consent box not ticked. The page does not decide the minimum join age: the server does.
+The profile form has a "Birthday" date field (`yyyy-mm-dd`), not an age field. Only the person types the birthday, on this page. The person can change the fields while no request runs. The shell takes the year, the month and the day from the typed text. An empty field or a text that is not `yyyy-mm-dd` gives a date that does not exist. The shell takes today from the browser clock as the calendar date in UTC-12, as the server does (`Auth::signupClockDay` and `Auth::calendarDateOfDay`).
+
+The page refuses a profile with no first name or with the consent box not ticked, and shows "profile incomplete". With a name and the consent ticked, the page refuses a birthday that does not exist, a birthday after today or an age on today's date (`Auth::ageOnDate`) of more than 120 (`Auth::birthdateAccepted`). Then it shows "invalid birthday" on the birthday field. The page does not decide the minimum join age: the server does. The page sends a birthday of a person under 13 and of a person from 13 to 17. The server counts the age on its own date. Under the app's minimum join age, the server refuses with "under age" and stores nothing, and the page shows the blocked step. A person from 13 to 17 joins, and the server never matches that person.
+
+The page sends only the birthday as text (`birthdate`), never an age.
 
 ```quint
-type ProfileForm = { nameGiven: bool, age: int, consentTicked: bool }
+type ProfileForm = { nameGiven: bool, birthday: Auth::CalendarDate, today: Auth::CalendarDate, consentTicked: bool }
+pure val formToday: Auth::CalendarDate = { year: 2026, month: 11, day: 22 }
 pure val formValues = Set(
-  { nameGiven: true, age: 30, consentTicked: true },
-  { nameGiven: true, age: 12, consentTicked: true },
-  { nameGiven: true, age: 30, consentTicked: false },
-  { nameGiven: false, age: 30, consentTicked: true },
-  { nameGiven: true, age: 0, consentTicked: true },
-  { nameGiven: true, age: 121, consentTicked: true },
+  { nameGiven: true, birthday: { year: 1996, month: 3, day: 14 }, today: formToday, consentTicked: true },
+  { nameGiven: true, birthday: { year: 2012, month: 6, day: 1 }, today: formToday, consentTicked: true },
+  { nameGiven: true, birthday: { year: 2016, month: 6, day: 1 }, today: formToday, consentTicked: true },
+  { nameGiven: true, birthday: { year: 1996, month: 3, day: 14 }, today: formToday, consentTicked: false },
+  { nameGiven: false, birthday: { year: 1996, month: 3, day: 14 }, today: formToday, consentTicked: true },
+  { nameGiven: true, birthday: { year: 0, month: 0, day: 0 }, today: formToday, consentTicked: true },
+  { nameGiven: true, birthday: { year: 2001, month: 2, day: 29 }, today: formToday, consentTicked: true },
+  { nameGiven: true, birthday: { year: 2026, month: 12, day: 1 }, today: formToday, consentTicked: true },
+  { nameGiven: true, birthday: { year: 1900, month: 1, day: 1 }, today: formToday, consentTicked: true },
 )
 
 pure def profileComplete(form: ProfileForm): bool =
-  form.nameGiven and form.age >= 1 and form.age <= 120 and form.consentTicked
+  form.nameGiven and Auth::birthdateAccepted(form.birthday, form.today) and form.consentTicked
 
 pure def canEditProfile(page: JoinPage): bool = page.screen == Profile and page.pending == Idle
 
-pure def editProfile(page: JoinPage): JoinPage = { ...page, formHasValues: true }
+pure def editProfile(page: JoinPage, birthdayGiven: bool): JoinPage = { ...page, formHasValues: true, birthdayGiven: birthdayGiven }
 
 pure def canSubmitProfile(page: JoinPage): bool = page.screen == Profile and page.pending == Idle
 
 pure def submitProfile(page: JoinPage, form: ProfileForm): JoinPage =
   if (profileComplete(form)) { ...page, pending: SavingProfile, consented: true, formError: NoError }
+  else if (form.nameGiven and form.consentTicked) { ...page, formError: InvalidBirthdate }
   else { ...page, formError: ProfileIncomplete }
 
 pure def lawProfileNeedsConsent(form: ProfileForm): bool =
   profileComplete(form) implies form.consentTicked
+
+pure def lawProfileNeedsRealPastBirthday(form: ProfileForm): bool =
+  profileComplete(form) implies
+    (Auth::calendarDateExists(form.birthday) and not(Auth::dateBefore(form.today, form.birthday)))
+
+pure def lawYoungBirthdayReachesServer(form: ProfileForm): bool =
+  (form.nameGiven and form.consentTicked and Auth::birthdateAccepted(form.birthday, form.today) and
+    Auth::ageOnDate(form.birthday, form.today) < 18) implies profileComplete(form)
 ```
 
 ### The server answer decides between done, blocked and a new sign-in
 
-A saved profile shows the done step and clears the notice. "Under age", "invite only", "review" and an unavailable invitation show the blocked step. "Account changed" clears the form, reads the session again and shows a notice. "Session ended" clears the form and shows the phone step with a notice. A temporary failure keeps the same account, profile values and consent on the profile step and shows the server's message. The person can retry the form when the failed request ends.
+A saved profile shows the done step and clears the notice. "Under age", "invite only", "review" and an unavailable invitation show the blocked step. "Invalid birthday" (a date that does not exist, a date after the server's today or a year before 1900) keeps the profile step, the account, the name and the consent, and shows the error on the birthday field. "Account changed" clears the form, reads the session again and shows a notice. "Session ended" clears the form and shows the phone step with a notice. A temporary failure keeps the same account, profile values and consent on the profile step and shows the server's message. The person can retry the form when the failed request ends, with the same birthday. After every other answer, the page clears the birthday field: it never shows a birthday again after the server refused or took the form, and the person types it again to retry.
 
 ```quint
-type JoinOutcome = JoinedOk | JoinUnderAge | JoinInviteOnly | JoinReview | JoinAccountChanged | JoinUnauthorized | JoinInvalidInvitation | JoinFailed
+type JoinOutcome = JoinedOk | JoinUnderAge | JoinInviteOnly | JoinReview | JoinAccountChanged | JoinUnauthorized | JoinInvalidInvitation | JoinInvalidBirthdate | JoinFailed
 
 pure def joinRefusal(joinAnswer: JoinOutcome): BlockReason =
   if (joinAnswer == JoinUnderAge) UnderAge
@@ -382,25 +406,41 @@ pure def canAnswerJoin(page: JoinPage): bool = page.pending == SavingProfile
 
 pure def answerJoin(page: JoinPage, joinAnswer: JoinOutcome): JoinPage =
   val idle = { ...page, pending: Idle }
+  val cleared = { ...idle, birthdayGiven: false }
   val refusal = joinRefusal(joinAnswer)
-  if (joinAnswer == JoinedOk) { ...idle, screen: Done, notice: NoNotice }
-  else if (refusal != NoBlock) { ...idle, screen: Blocked, reason: refusal }
+  if (joinAnswer == JoinedOk) { ...cleared, screen: Done, notice: NoNotice }
+  else if (refusal != NoBlock) { ...cleared, screen: Blocked, reason: refusal }
+  else if (joinAnswer == JoinInvalidBirthdate) { ...cleared, formError: InvalidBirthdate }
   else if (joinAnswer == JoinAccountChanged)
-    { ...idle, screen: Checking, account: 0, formHasValues: false, consented: false, notice: AccountChanged, formError: NoError }
+    { ...cleared, screen: Checking, account: 0, formHasValues: false, consented: false, notice: AccountChanged, formError: NoError }
   else if (joinAnswer == JoinUnauthorized)
-    { ...idle, screen: Phone, account: 0, formHasValues: false, consented: false, notice: SessionEnded, formError: NoError }
+    { ...cleared, screen: Phone, account: 0, formHasValues: false, consented: false, notice: SessionEnded, formError: NoError }
   else { ...idle, formError: RequestFailed }
+
+pure def birthdateErrorShown(page: JoinPage): bool = page.screen == Profile and page.formError == InvalidBirthdate
+
+pure def stepJoinAnswerClearsBirthday(before: JoinPage, via: str, after: JoinPage): bool =
+  (via == "answerJoin" and after.formError != RequestFailed) implies not(after.birthdayGiven)
+
+pure def alwaysBirthdayOnlyOnProfile(page: JoinPage): bool =
+  page.birthdayGiven implies (page.screen == Profile and page.formHasValues)
+
+pure def lawRefusedBirthdateKeepsOwnedProfile(page: JoinPage): bool =
+  val refused = answerJoin(page, JoinInvalidBirthdate)
+  (page.screen == Profile and canAnswerJoin(page)) implies
+    (canSubmitProfile(refused) and birthdateErrorShown(refused) and not(refused.birthdayGiven) and
+      refused.account == page.account and refused.formHasValues == page.formHasValues and refused.consented == page.consented)
 
 pure def lawFailedSaveKeepsOwnedProfile(page: JoinPage): bool =
   val failed = answerJoin(page, JoinFailed)
   (page.screen == Profile and canAnswerJoin(page)) implies
-    (canSubmitProfile(failed) and failed.account == page.account and
+    (canSubmitProfile(failed) and failed.account == page.account and failed.birthdayGiven == page.birthdayGiven and
       failed.formHasValues == page.formHasValues and failed.consented == page.consented)
 ```
 
 ### A Peon invitation stays in memory until the verified account agrees to join
 
-Read one valid token from Peon's issued `/join#invite=` link. Remove the fragment before any API request. Keep the token in the memory of this page. Only the same-origin Peon session can bind the token to its verified account marker. A new owner of the same verified phone has a different marker. The page sends the token, with its account marker, in the same-origin Join JSON request only when the bound account sends a complete profile with text consent and the address is clean. The server decides whether the invitation is current and can be accepted by that account. If it refuses the invitation, the page cannot join without it on that attempt. The page clears the token after a definite answer, and when it loses or replaces the verified account. A temporary request failure can retry with the same verified account.
+Read one valid token from Peon's issued `/join#invite=` link. Remove the fragment before any API request. Keep the token in the memory of this page. Only the same-origin Peon session can bind the token to its verified account marker. A new owner of the same verified phone has a different marker. The page sends the token, with its account marker, in the same-origin Join JSON request only when the bound account sends a complete profile with text consent and the address is clean. The server decides whether the invitation is current and can be accepted by that account. If it refuses the invitation, the page cannot join without it on that attempt. The page clears the token after a definite answer, and when it loses or replaces the verified account. A temporary request failure and a refused birthday can retry with the same verified account.
 
 An invitation stays through direct phone verification in the same page. The Cloud phone sign-in provider receives no invitation token. After Cloud returns, open the original invitation link again in the verified session. The page puts no invitation in persistent storage.
 
@@ -415,7 +455,7 @@ pure def browserInvitationKeepsAccount(beforeAccount: int, afterAccount: int): b
   beforeAccount == 0 or beforeAccount == afterAccount
 
 pure def browserInvitationMayRetry(joinAnswer: JoinOutcome): bool =
-  joinAnswer == JoinFailed
+  joinAnswer == JoinFailed or joinAnswer == JoinInvalidBirthdate
 
 pure def lawBrowserInvitationNeedsCleanConsentedAccount(page: JoinPage, form: ProfileForm, boundAccount: bool): bool =
   val submitted = submitProfile(page, form)
@@ -432,9 +472,9 @@ pure def lawBrowserInvitationCannotRideAnotherAccount(beforeAccount: int, afterA
 
 ### Profile values never pass from one account to another
 
-The approved name and age from the agent's link stay in the form through the first sign-in. A changed number, a new code, a verified code and the session read after it do not clear the form. When the page loses or replaces the account that it shows, it clears the form.
+The approved name from the agent's link stays in the form through the first sign-in. A changed number, a new code, a verified code and the session read after it do not clear the form. When the page loses or replaces the account that it shows, it clears the form. The birthday is only on the profile step. Nothing fills it except the person's own typing.
 
-For a first Cloud sign-in, the site can seal the allowed name, age and agent-return flag with the pending Peon handoff. The Cloud service receives none of these fields. If the callback issues a session, the site makes the draft available until the handoff expires. The returning tab presents its one-use receipt to the same-origin session read. Only the exact callback session on Peon, while it can join, receives the draft. A link with an agent flag, name, age or invitation takes precedence over a draft from a prior handoff. The page withholds the saved receipt for such a link. Only a loading page with an empty form and no agent flag can restore a draft. The page restores the fields without text consent. The site clears the draft cookie when the returning tab presents its receipt. The page stores only the receipt across navigation and clears it on return. An invitation stays in the original page's memory.
+For a first Cloud sign-in, the site can seal the allowed name and agent-return flag with the pending Peon handoff. The page puts no birthday and no age in the draft. The Cloud service receives none of these fields. If the callback issues a session, the site makes the draft available until the handoff expires. The returning tab presents its one-use receipt to the same-origin session read. Only the exact callback session on Peon, while it can join, receives the draft. A link with an agent flag, name or invitation takes precedence over a draft from a prior handoff. The page withholds the saved receipt for such a link. Only a loading page with an empty form and no agent flag can restore a draft. The page restores the name and the agent flag without text consent and without a birthday. The site clears the draft cookie when the returning tab presents its receipt. The page stores only the receipt across navigation and clears it on return. An invitation stays in the original page's memory.
 
 ```quint
 pure def stepFormClearedWhenAccountLeaves(before: JoinPage, after: JoinPage): bool =
@@ -452,11 +492,11 @@ pure def lawCloudPrefillNeedsOwnLiveHandoff(eligible: bool, receiptMatches: bool
   (not(receiptMatches) or not(sessionMatches) or asOf >= expiresAt) implies
     not(cloudJoinPrefillCanRead(eligible, receiptMatches, sessionMatches, asOf, expiresAt))
 
-pure def browserPrefillMayPresentReceipt(fromAgent: bool, linkName: bool, linkAge: bool, linkInvitation: bool): bool =
-  not(fromAgent or linkName or linkAge or linkInvitation)
+pure def browserPrefillMayPresentReceipt(fromAgent: bool, linkName: bool, linkInvitation: bool): bool =
+  not(fromAgent or linkName or linkInvitation)
 
-pure def lawInvitationLinkDoesNotPresentPriorPrefillReceipt(fromAgent: bool, linkName: bool, linkAge: bool): bool =
-  not(browserPrefillMayPresentReceipt(fromAgent, linkName, linkAge, true))
+pure def lawInvitationLinkDoesNotPresentPriorPrefillReceipt(fromAgent: bool, linkName: bool): bool =
+  not(browserPrefillMayPresentReceipt(fromAgent, linkName, true))
 
 pure def canRestoreCloudPrefill(page: JoinPage, view: SessionView): bool =
   page.screen == Loading and view.result == MayJoin and sessionConsistent(view) and not(page.formHasValues) and not(page.viaAgent)
@@ -465,7 +505,7 @@ pure def lawCloudPrefillKeepsFreshFields(page: JoinPage, view: SessionView): boo
   (page.formHasValues or page.viaAgent) implies not(canRestoreCloudPrefill(page, view))
 
 pure def restoreCloudPrefill(page: JoinPage, view: SessionView, fromAgent: bool, hasFields: bool): JoinPage =
-  { ...page, viaAgent: fromAgent, formHasValues: hasFields, consented: false }
+  { ...page, viaAgent: fromAgent, formHasValues: hasFields, birthdayGiven: false, consented: false }
 ```
 
 ### The done step comes only from a saved profile with consent
@@ -527,6 +567,8 @@ pure def sometimesOtherReason(page: JoinPage): bool = page.screen == Blocked and
 pure def sometimesCheckRejected(page: JoinPage): bool = page.screen == Phone and page.formError == CheckRejected
 pure def sometimesCodeFormat(page: JoinPage): bool = page.formError == CodeFormat
 pure def sometimesProfileIncomplete(page: JoinPage): bool = page.formError == ProfileIncomplete
+pure def sometimesInvalidBirthdate(page: JoinPage): bool = birthdateErrorShown(page)
+pure def sometimesBirthdayTyped(page: JoinPage): bool = page.birthdayGiven
 pure def sometimesRequestFailed(page: JoinPage): bool = page.formError == RequestFailed
 pure def sometimesLeftForCloud(page: JoinPage): bool = page.screen == LeftForCloud
 pure def sometimesCloudUnavailable(page: JoinPage): bool = page.formError == CloudUnavailable
@@ -543,7 +585,7 @@ pure def sometimesNewCodeSent(page: JoinPage): bool = page.formError == NewCodeS
 pure def sometimesPrefilledProfile(page: JoinPage): bool = page.screen == Profile and page.formHasValues
 
 pure val eval_witness_sometimesCodeFormat = (
-  ("openPage", false, false, false, 0, 0),
+  ("openPage", false, false),
   ("loaded", { result: SignedOut, account: 0, reason: NoBlock }, false, false),
   ("readAuthMode", ModeOtp, false),
   ("submitPhone", true),
@@ -552,7 +594,7 @@ pure val eval_witness_sometimesCodeFormat = (
 )
 
 pure val eval_witness_sometimesCheckAgain = (
-  ("openPage", false, false, false, 0, 0),
+  ("openPage", false, false),
   ("loaded", { result: SignedOut, account: 0, reason: NoBlock }, false, false),
   ("readAuthMode", ModeOtp, true),
   ("settleCheck", true),
@@ -562,7 +604,7 @@ pure val eval_witness_sometimesCheckAgain = (
 )
 
 pure val eval_witness_sometimesInvalidCode = (
-  ("openPage", false, false, false, 0, 0),
+  ("openPage", false, false),
   ("loaded", { result: SignedOut, account: 0, reason: NoBlock }, false, false),
   ("readAuthMode", ModeOtp, false),
   ("submitPhone", true),
@@ -572,7 +614,7 @@ pure val eval_witness_sometimesInvalidCode = (
 )
 
 pure val eval_witness_sometimesNewCodeSent = (
-  ("openPage", false, false, false, 0, 0),
+  ("openPage", false, false),
   ("loaded", { result: SignedOut, account: 0, reason: NoBlock }, false, false),
   ("readAuthMode", ModeOtp, false),
   ("submitPhone", true),

@@ -92,7 +92,7 @@ const mounted = (device: DeviceKind) => landingStep(landingStart, { type: "mount
 
 /** The join page after it read the app and the session, as the generated join machine reaches it. */
 function joinAt(view: "SignedOut" | "MayJoin", checkOn: boolean): JoinPage {
-  const opened = joinStep(joinStart, { type: "openPage", viaAgent: false, fragmentName: false, ageDigitsOnly: false, ageDigitCount: 0, fragmentAge: 0 });
+  const opened = joinStep(joinStart, { type: "openPage", viaAgent: false, fragmentName: false });
   const loaded = joinStep(opened, { type: "loaded", view: { result: view, account: view === "SignedOut" ? 0 : 1, reason: "NoBlock" }, appUnreachable: false, inviteOnly: false });
   return view === "SignedOut" ? joinStep(loaded, { type: "readAuthMode", lookup: "ModeOtp", checkOn }) : loaded;
 }
@@ -109,8 +109,19 @@ afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 describe.each(SITES)("$domain", (s) => {
   test("every required page is built, and the spec's brand record is this site", () => {
     expect([brandFor(s.key).domain, brandFor(s.key).skillName]).toEqual([s.domain, s.skill]);
-    const need = ["index.html", "privacy.html", "terms.html", "404.html", ...(s.app === "peon" ? ["join.html"] : [])];
+    const need = ["index.html", "privacy.html", "terms.html", "404.html", "phone.html", ...(s.app === "peon" ? ["join.html"] : []), ...(s.app === "ntwrk" ? ["home-help.html"] : [])];
     if (s.app !== "peon") expect(htmlFiles(s)).not.toContain("join.html");
+    if (s.app !== "ntwrk") expect(htmlFiles(s)).not.toContain("home-help.html");
+    for (const page of ["add", "check", "mine", "view"]) {
+      const file = join(out(s), "photos", `${page}.html`);
+      expect(existsSync(file), `${s.domain} photos/${page}.html`).toBe(s.app === "slop");
+      if (s.app !== "slop" || page === "add") continue;
+      const html = read(s, join("photos", `${page}.html`));
+      expect(html, `photos/${page}.html`).toContain('<meta name="robots" content="noindex">');
+      expect(html, `photos/${page}.html`).not.toContain('property="og:');
+      expect(/<script\b/.test(html), `photos/${page}.html`).toBe(true);
+      expect(html, `photos/${page}.html`).not.toMatch(/href="\/(settings|join)|Sign in/);
+    }
     expect(htmlFiles(s)).not.toContain("sms-terms.html");
 
     expect(htmlFiles(s)).toEqual(expect.arrayContaining(need));
@@ -168,6 +179,12 @@ describe.each(SITES)("$domain", (s) => {
     const ageText = text(s.app === "peon" ? renderJoin(profile, joinOptions(s)) : read(s, "SKILL.md"));
     expect(ageText).toMatch(/13(?: or older|\s*\+)/);
     expect(ageText).toMatch(/18(?: and older|\s*\+)/);
+    if (s.app === "peon") {
+      const html = renderJoin(profile, joinOptions(s));
+      expect(html).toMatch(/<input[^>]*name="birthdate"[^>]*>/);
+      expect(html.match(/<input[^>]*name="birthdate"[^>]*>/)?.[0]).toContain('type="date"');
+      expect(html).not.toContain('name="age"');
+    }
   });
 
   test("STOP stops every app; 'leave <app>' stops one (PRD 40.3). No page says STOP ALL", () => {
@@ -274,6 +291,11 @@ describe.each(SITES)("$domain", (s) => {
     expect(h).toContain("script-src 'self' https://challenges.cloudflare.com;");
     expect(h).toContain("frame-src https://challenges.cloudflare.com;");
     expect(h).toContain("connect-src 'self';");
+    if (s.app === "slop") expect(h).toContain("img-src 'self' data: blob:;");
+    else {
+      expect(h).toContain("img-src 'self' data:;");
+      expect(h).not.toContain("blob:");
+    }
     expect(h).toContain("X-Frame-Options: DENY");
     expect(h).toContain("Referrer-Policy: no-referrer");
     expect(h).toContain("X-Content-Type-Options: nosniff");
@@ -483,8 +505,7 @@ test("landing pages keep agent onboarding and the Messages entry", () => {
       expect(html, `${s.domain} ${f}`).toMatch(/<link rel="icon" href="\/favicon-[a-z0-9]+\.svg" type="image\/svg\+xml">/);
       expect(html, `${s.domain} ${f}`).toContain(`<html lang="en" data-brand="${{ ntwrk: "network", slop: "slop", peon: "peon", friends: "friends" }[s.app]}">`);
     }
-    // Only the landing page and the join page ship the page script.
-    for (const f of htmlFiles(s)) expect(/<script\b/.test(read(s, f)), `${s.domain} ${f}`).toBe(f === "index.html" || f === "join.html");
+    for (const f of htmlFiles(s)) expect(/<script\b/.test(read(s, f)), `${s.domain} ${f}`).toBe(["index.html", "join.html", "phone.html", "home-help.html"].includes(f));
   }
 });
 

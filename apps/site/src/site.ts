@@ -15,14 +15,28 @@ export interface SiteData {
   turnstileSiteKey: string;
 }
 
-/** The pages that need the page script: the landing page (Copy, the agent tiles and Messages) and the browser join flow. */
-export type ScriptPage = "LandingPage" | "JoinPage";
+/** The pages that need the page script: the landing page (Copy, the agent tiles and Messages), the browser join flow and the one-step pages. */
+export type ScriptPage =
+  | "LandingPage"
+  | "JoinPage"
+  | "PhonePage"
+  | "HomeHelpPage"
+  | "PhotosAddPage"
+  | "PhotosCheckPage"
+  | "PhotosMinePage"
+  | "PhotosViewPage";
 
 /** True when the page ships the page script. The other pages are complete without it. */
 export function pageNeedsScript(page: SitePage): page is ScriptPage {
   switch (page) {
     case "LandingPage":
     case "JoinPage":
+    case "PhonePage":
+    case "HomeHelpPage":
+    case "PhotosAddPage":
+    case "PhotosCheckPage":
+    case "PhotosMinePage":
+    case "PhotosViewPage":
       return true;
     case "PrivacyPage":
     case "TermsPage":
@@ -113,5 +127,9 @@ export function readRoot(root: HTMLElement, turnstileSiteKey: string): { page: S
   const brand = parseBrand(parseJson(brandRecord));
   const links = parseLinks(parseJson(landingLinks));
   if (known === undefined || brand === undefined || links === undefined || !Number.isSafeInteger(minJoinAge)) return undefined;
-  return { page: known, brand, data: { links, minJoinAge, consentText: consentWording ?? "", turnstileSiteKey } };
+  return {
+    page: known,
+    brand,
+    data: { links, minJoinAge, consentText: consentWording ?? "", turnstileSiteKey },
+  };
 }

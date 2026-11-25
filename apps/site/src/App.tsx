@@ -1,5 +1,26 @@
 // spec/sitePages.md, "Every site serves public pages and each special page has one site"
-import { JoinView, type LegalText, LandingView, LegalDocument, NotFoundView, PageShell, useJoin, useLanding } from "@thenetwork/ui";
+import {
+  HomeHelpPageView,
+  JoinView,
+  type LegalText,
+  LandingView,
+  LegalDocument,
+  NotFoundView,
+  PageShell,
+  PhonePageView,
+  PhotosCheckPageView,
+  PhotosMinePageView,
+  PhotosViewPageView,
+  PhotoUploadPageView,
+  useHomeHelpPage,
+  useJoin,
+  useLanding,
+  usePhonePage,
+  usePhotosCheckPage,
+  usePhotosMinePage,
+  usePhotosViewPage,
+  usePhotoUploadPage,
+} from "@thenetwork/ui";
 import type { Brand } from "../../../packages/core/src/generated/brandIdentity.ts";
 import type { SitePage } from "../../../packages/core/src/generated/sitePages.ts";
 import type { SiteData } from "./site.ts";
@@ -45,6 +66,42 @@ export function App({ brand, view, site }: AppProps) {
           <Join brand={brand} site={site} />
         </PageShell>
       );
+    case "PhonePage":
+      return (
+        <PageShell brand={brand}>
+          <PhoneChange site={site} />
+        </PageShell>
+      );
+    case "HomeHelpPage":
+      return (
+        <PageShell brand={brand}>
+          <HomeHelp site={site} />
+        </PageShell>
+      );
+    case "PhotosAddPage":
+      return (
+        <PageShell brand={brand}>
+          <PhotosAdd />
+        </PageShell>
+      );
+    case "PhotosCheckPage":
+      return (
+        <PageShell brand={brand}>
+          <PhotosCheck />
+        </PageShell>
+      );
+    case "PhotosMinePage":
+      return (
+        <PageShell brand={brand}>
+          <PhotosMine />
+        </PageShell>
+      );
+    case "PhotosViewPage":
+      return (
+        <PageShell brand={brand}>
+          <PhotosView />
+        </PageShell>
+      );
     default: {
       const unknownView: never = view;
       return unknownView;
@@ -80,4 +137,54 @@ function Join({ brand, site }: PartProps) {
       }}
     />
   );
+}
+
+type StepPartProps = Pick<AppProps, "site">;
+
+/**
+ * The phone change page over the phone page state of `usePhonePage`.
+ * @model spec/phonePage.md
+ */
+function PhoneChange({ site }: StepPartProps) {
+  return <PhonePageView {...usePhonePage({ siteKey: site.turnstileSiteKey })} />;
+}
+
+/**
+ * The home-help address page over the home-help page state of `useHomeHelpPage`.
+ * @model spec/homeHelpPage.md
+ */
+function HomeHelp({ site }: StepPartProps) {
+  return <HomeHelpPageView {...useHomeHelpPage({ siteKey: site.turnstileSiteKey })} />;
+}
+
+/**
+ * The photo upload page over the photo upload state of `usePhotoUploadPage`. The photo consent comes from the link status.
+ * @model spec/photoUploadPage.md
+ */
+function PhotosAdd() {
+  return <PhotoUploadPageView {...usePhotoUploadPage()} />;
+}
+
+/**
+ * The photo check page over the photo check state of `usePhotosCheckPage`.
+ * @model spec/photosCheckPage.md
+ */
+function PhotosCheck() {
+  return <PhotosCheckPageView {...usePhotosCheckPage()} />;
+}
+
+/**
+ * The my photos page over the photo holdings state of `usePhotosMinePage`.
+ * @model spec/photosMinePage.md
+ */
+function PhotosMine() {
+  return <PhotosMinePageView {...usePhotosMinePage()} />;
+}
+
+/**
+ * The photo view page over the photo view state of `usePhotosViewPage`.
+ * @model spec/photosViewPage.md
+ */
+function PhotosView() {
+  return <PhotosViewPageView {...usePhotosViewPage()} />;
 }
