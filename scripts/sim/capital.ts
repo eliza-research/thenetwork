@@ -50,3 +50,86 @@ export async function capitalBlock(b: Block, o: { quick: boolean }): Promise<voi
   b.gate("gaming: each strategy's mean net gain <= 25% of a regular's NC", lg.gaming.pass, Object.entries(lg.gaming.gainShare).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(", "));
   b.track("health target: bottom/top V14 ratio >= 0.80", lg.healthTarget.met, f(lg.healthTarget.ratio));
 }
+
+export async function feedbackAfterFraudGate(b: Block): Promise<void> {
+  await b.run("capital: feedback on a reversed attendance earns nothing", () => {
+    const T0 = Date.UTC(2026, 0, 1);
+    const at = (d: number, n = 0) => T0 + d * DAY + n;
+    // Feedback after the fraud reversal: the attendance is gone, so
+    // giving feedback on it afterwards must not earn anything. On the
+    // base code the feedback credit is still written, leaving a +0.5 NC
+    // credit on a fraudulent attendance.
+    const L = new CapitalLedger();
+    for (const [i, who] of ["a", "b"].entries())
+      L.record({ id: `join-${who}`, t: at(0, i), type: "member_joined", member: who, age: 30 });
+    L.record({ id: "accept-a-p1", t: at(1), type: "plan_accepted", member: "a", planId: "p1", kind: "plan", startsAt: at(2) });
+    L.record({ id: "confirm-a-p1", t: at(1, 1), type: "plan_confirmed", member: "a", planId: "p1" });
+    L.record({ id: "attend-a-p1", t: at(2), type: "plan_attended", member: "a", planId: "p1", counterparts: ["b"], verifiedBy: ["checkin"], origin: "engine", publicVenue: false });
+    const attendedA = L.all().find(e => e.category === "attendance" && e.member === "a")!;
+    expect(attendedA.amount).toBe(2);
+    expect(L.balance("a")).toBe(2);
+    L.record({ id: "fraud-a-b", t: at(3), type: "fraud_confirmed", members: ["a", "b"] });
+    expect(L.isReversed(attendedA.id)).toBe(true);
+    expect(L.balance("a")).toBe(-10);
+    L.record({ id: "feedback-a-p1", t: at(4), type: "feedback_given", member: "a", planId: "p1" });
+    expect(L.all().filter(e => e.category === "feedback" && e.member === "a")).toEqual([]);
+    expect(L.balance("a")).toBe(-10);
+    // Control: feedback given before the fraud is reversed with the
+    // attendance (basis), so the member ends at the same -10 balance.
+    const M = new CapitalLedger();
+    for (const [i, who] of ["d", "e"].entries())
+      M.record({ id: `join-${who}`, t: at(0, i), type: "member_joined", member: who, age: 30 });
+    M.record({ id: "accept-d-p2", t: at(1), type: "plan_accepted", member: "d", planId: "p2", kind: "plan", startsAt: at(2) });
+    M.record({ id: "confirm-d-p2", t: at(1, 1), type: "plan_confirmed", member: "d", planId: "p2" });
+    M.record({ id: "attend-d-p2", t: at(2), type: "plan_attended", member: "d", planId: "p2", counterparts: ["e"], verifiedBy: ["checkin"], origin: "engine", publicVenue: false });
+    M.record({ id: "feedback-d-p2", t: at(3), type: "feedback_given", member: "d", planId: "p2" });
+    const feedbackD = M.all().find(e => e.category === "feedback" && e.member === "d")!;
+    expect(feedbackD.amount).toBe(0.5);
+    expect(M.balance("d")).toBe(2.5);
+    M.record({ id: "fraud-d-e", t: at(4), type: "fraud_confirmed", members: ["d", "e"] });
+    expect(M.isReversed(feedbackD.id)).toBe(true);
+    expect(M.all().filter(e => e.category === "clawback" && e.provenance.reverses === feedbackD.id).length).toBe(1);
+    expect(M.balance("d")).toBe(-10);
+  });
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
