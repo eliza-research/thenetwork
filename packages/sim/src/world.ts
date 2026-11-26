@@ -221,7 +221,7 @@ export class World {
     if (existing) {
       const added = m.participants.filter(p => !existing.participants.includes(p));
       existing.participants = [...existing.participants, ...added];
-      this.rec({ type: "meeting_scheduled", meetingId: existing.id, proposalId: m.proposalId, participants: existing.participants, at: m.at, city: m.city });
+      this.rec({ type: "meeting_scheduled", meetingId: existing.id, proposalId: m.proposalId, participants: existing.participants, at: m.at, city: m.city, ...(m.previousAt === undefined ? {} : { previousAt: m.previousAt }) });
       const morning = nextLocalHour(m.at - 14 * HOUR, m.city, 8) + this.rng.int(0, 60) * MINUTE;
       for (const pid of added) {
         const memory = this.memories.get(pid);
@@ -236,7 +236,7 @@ export class World {
       const memory = this.memories.get(pid);
       if (memory?.forceFlake && !memory.forceFlakeFor) memory.forceFlakeFor = { meetingId: id, proposalId: m.proposalId };
     }
-    this.rec({ type: "meeting_scheduled", meetingId: id, proposalId: m.proposalId, participants: m.participants, at: m.at, city: m.city });
+    this.rec({ type: "meeting_scheduled", meetingId: id, proposalId: m.proposalId, participants: m.participants, at: m.at, city: m.city, ...(m.previousAt === undefined ? {} : { previousAt: m.previousAt }) });
     // Morning-of flake check (8-9am local on the meeting day, or now if that has passed).
     const morning = nextLocalHour(m.at - 14 * HOUR, m.city, 8) + this.rng.int(0, 60) * MINUTE;
     for (const pid of m.participants) this.scheduler.at(Math.min(morning, m.at - 30 * MINUTE), "flake_check", { meetingId: id, personaId: pid });

@@ -1153,7 +1153,7 @@ export class NetworkRuntime {
       verifiedJoinedInviteeName: (inviter, invitee) => this.joinedInviteeNames.get(`${inviter}\0${invitee}`),
       // A proposal record has no oracle in production; eventOf reads only the proposal and the source.
       recordProposal: (proposal, source = "network") => ev({ t: this.clock.now(), type: "proposal", source, proposal }),
-      recordMeeting: m => { ev({ t: this.clock.now(), type: "meeting_scheduled", meetingId: m.proposalId, proposalId: m.proposalId, participants: m.participants, at: m.at, city: m.city }); return m.proposalId; },
+      recordMeeting: m => { ev({ t: this.clock.now(), type: "meeting_scheduled", meetingId: m.proposalId, proposalId: m.proposalId, participants: m.participants, at: m.at, city: m.city, ...(m.previousAt === undefined ? {} : { previousAt: m.previousAt }) }); return m.proposalId; },
       recordBlock: (from, to) => { this.unit.blocks.push([from, to]); ev({ t: this.clock.now(), type: "block", from, to }); },
       log: (kind, detail) => ev({ t: this.clock.now(), type: "network_log", kind, detail }),
     };

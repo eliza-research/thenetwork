@@ -9,6 +9,7 @@ import { requestEventView } from "../../../packages/core/src/generated/requestRe
 import type { RunRecord } from "@thenetwork/core";
 import { desireById } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { SLOT_KINDS, URGENT_REPORTS, type SendKind } from "@thenetwork/network";
+import { describeBookingStart } from "../../../packages/network/src/rescheduling.ts";
 import type { SystemEvent } from "./types.ts";
 
 export interface EventRow {
@@ -76,7 +77,7 @@ export function eventOf(rec: RunRecord): EventRow | undefined {
     case "decision":
       if (rec.messageType !== "proposal" || !["accept", "decline"].includes(rec.intent)) return undefined;
       return ev("member", rec.memberId, rec.intent === "accept" ? "member_accepted" : "member_declined", "opportunity", rec.proposalId ?? null);
-    case "meeting_scheduled": return ev("agent", null, "meeting_scheduled", "opportunity", rec.proposalId, { participants: rec.participants, at: rec.at });
+    case "meeting_scheduled": return ev("agent", null, "meeting_scheduled", "opportunity", rec.proposalId, { participants: rec.participants, at: rec.at, ...(rec.previousAt === undefined ? {} : { previousAt: rec.previousAt }) });
     case "outcome": return ev("sim", null, "interaction_occurred", "opportunity", rec.proposalId, { attendance: rec.attendance });
     case "feedback": return ev("member", rec.memberId, "feedback_given", "opportunity", rec.proposalId ?? null, { text: rec.text });
     case "block": return ev("member", rec.from, "member_blocked", "member", rec.to);
@@ -156,7 +157,12 @@ export function describe(row: EventRow, name: (id: string) => string = id => id)
     case "opportunity_proposed": text = `${human(p.source ?? "engine")} proposed a ${human(p.kind ?? "opportunity")}`; keep("source", "kind"); break;
     case "member_accepted": text = `${name(row.actor_id ?? "")} said yes`; severity = "good"; break;
     case "member_declined": text = `${name(row.actor_id ?? "")} passed`; break;
-    case "meeting_scheduled": text = "Meeting scheduled"; severity = "good"; break;
+    case "meeting_scheduled":
+      if (typeof p.previousAt === "number" && Number.isFinite(p.previousAt) && Number.isFinite(p.at)) {
+        text = `Meeting rescheduled: ${describeBookingStart(p.previousAt)} → ${describeBookingStart(p.at)} (New York time)`;
+        keep("previousAt", "at");
+      } else text = "Meeting scheduled";
+      severity = "good"; break;
     case "interaction_occurred": {
       const showed = Object.values(p.attendance ?? {}).filter((a: any) => a?.showed).length;
       text = `Meeting happened (${showed} showed)`; severity = showed >= 2 ? "good" : "warn"; detail.showed = showed; break;
