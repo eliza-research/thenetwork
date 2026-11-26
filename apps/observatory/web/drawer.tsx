@@ -153,15 +153,17 @@ function Feed() {
   const player = (x: ObsFeedItem) => x.kind === "game" || (!!x.opportunityId && s.opps.get(x.opportunityId)?.source === "player");
   const items = s.feed.filter(x => feedShows(groupOf(x.kind), seg, player(x), s.feed.length) && s.matchFeed(x) && s.focusFeed(x)).slice(-150).reverse();
   const note = feedEmptyNote(!s.feed.length, !!s.env?.capabilities.canStep, !!s.ui.focus);
-  const open = (x: ObsFeedItem) => {
-    if (x.opportunityId && s.opps.has(x.opportunityId)) store.focus({ kind: "opportunity", id: x.opportunityId });
-    else if (x.members?.[0]) store.focus({ kind: "member", id: x.members[0] });
+  const openAction = (x: ObsFeedItem): (() => void) | undefined => {
+    const opportunity = x.opportunityId;
+    if (opportunity && s.opps.has(opportunity)) return () => store.focus({ kind: "opportunity", id: opportunity });
+    const member = x.members?.find(id => s.members.has(id));
+    return member ? () => store.focus({ kind: "member", id: member }) : undefined;
   };
   return (
     <div className="flex flex-col gap-3">
       <Segments aria-label="Feed" value={seg} onValueChange={v => { if (canChooseFeedSegment(panels, v as FeedSegment)) setWanted(chooseFeedSegment(panels, v as FeedSegment).feedSegment); }} options={segs} className="self-start" />
       <div className="flex flex-col">
-        {items.map(x => <FeedLine key={x.seq} x={x} onOpen={() => open(x)} />)}
+        {items.map(x => <FeedLine key={x.seq} x={x} onOpen={openAction(x)} />)}
         {!items.length && <EmptyState title={note === "NothingMatchesNote" ? s.nothing() : FEED_NOTE[note]} />}
       </div>
     </div>

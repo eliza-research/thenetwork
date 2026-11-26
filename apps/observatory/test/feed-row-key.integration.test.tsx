@@ -51,7 +51,10 @@ test("FeedLine opens on Space release and Enter press, stops Space propagation, 
   store.members.set("m1", member("m1", "Maya Rao"));
   store.members.set("m2", member("m2", "Jon Park"));
   store.opps.set(opp.id, opp);
-  store.feed = [{ seq: 1, t: NOW - 60_000, kind: "proposal", text: "Proposed intro for Maya Rao and Jon Park", members: ["m1", "m2"], opportunityId: opp.id }];
+  store.feed = [
+    { seq: 1, t: NOW - 60_000, kind: "proposal", text: "Proposed intro for Maya Rao and Jon Park", members: ["m1", "m2"], opportunityId: opp.id },
+    { seq: 2, t: NOW - 30_000, kind: "engine", text: "Engine finished its pass" },
+  ];
   store.setUI({ drawer: "feed", drawerOpen: true, focus: null });
 
   let windowSpaceCount = 0;
@@ -59,7 +62,10 @@ test("FeedLine opens on Space release and Enter press, stops Space propagation, 
   window.addEventListener("keydown", onWindowKey);
   try {
     await act(async () => { root.render(createElement(Drawer)); });
-    const row = box.querySelector('div[role="button"]');
+    expect(box.textContent).toContain("Engine finished its pass");
+    const rows = [...box.querySelectorAll('div[role="button"]')];
+    expect(rows.some(r => r.textContent?.includes("Engine finished its pass"))).toBe(false);
+    const row = rows.find(r => r.textContent?.includes("Proposed intro"));
     expect(row).toBeTruthy();
     const innerButton = row!.querySelector("button");
     expect(innerButton?.textContent).toContain("Maya");
