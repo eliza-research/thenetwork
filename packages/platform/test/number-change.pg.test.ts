@@ -133,6 +133,38 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
     expect((await store.consentEvents(B, "slop")).map((e: { state: string }) => e.state)).toEqual(["opted_in"]);
   }, T);
 
+  // spec/carrierConsent.md, "A global STOP beats an older or simultaneous app opt-in"
+  test("a STOP sent from the new number before the code is confirmed still holds after the move", async () => {
+    const t = setup();
+    const [A, B] = ["+12125550277", "+12125550278"];
+    const b = t.browser();
+    await b.login(A);
+    expect((await t.join(b)).status).toBe(200);
+    expect(await t.api.accounts.optedIn("slop", A)).toBe(true);
+    expect((await b.call("POST", "/api/me/phone/start", { phone: B })).status).toBe(200);
+    t.tick(MIN);
+    await store.addConsent({ e164: B, app: null, state: "opted_out", source: "keyword:stop", at: t.now() });
+    expect((await b.call("POST", "/api/me/phone/confirm", { code: t.codes.get(B) })).status).toBe(200);
+    expect(await t.api.accounts.optedIn("slop", B)).toBe(false);
+    expect((await store.consentEvents(B, "slop")).map((e: { state: string }) => e.state)).toEqual(["opted_in"]);
+  }, T);
+
+  // spec/accountPrivacy.md, "A phone move after consent carries the recorded opt-out with the person"
+  test("an app opt-out recorded at the new number still holds after the move", async () => {
+    const t = setup();
+    const [A, B] = ["+12125550279", "+12125550280"];
+    const b = t.browser();
+    await b.login(A);
+    expect((await t.join(b)).status).toBe(200);
+    t.tick(MIN);
+    await store.addConsent({ e164: B, app: "slop", state: "opted_out", source: "site:leave", at: t.now() });
+    t.tick(MIN);
+    expect((await b.call("POST", "/api/me/phone/start", { phone: B })).status).toBe(200);
+    expect((await b.call("POST", "/api/me/phone/confirm", { code: t.codes.get(B) })).status).toBe(200);
+    expect(await t.api.accounts.optedIn("slop", B)).toBe(false);
+    expect((await store.consentEvents(B, "slop")).map((e: { state: string }) => e.state)).toEqual(["opted_in", "opted_out"]);
+  }, T);
+
   test("a login older than 10 minutes cannot start a change; a change not confirmed in 15 minutes is gone", async () => {
     const t = setup();
     const [A, B] = ["+12125550183", "+12125550184"];
