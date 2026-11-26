@@ -1,13 +1,11 @@
 #!/usr/bin/env -S node --import=tsx
-// Runnable Node 26 CLI controller for @thenetwork/marketing.
-// Commands:
-//   seed-nyc | status | scan-devices | discover-nyc | tick | hire-batch | slop-cash-preview | serve
-// Options:
-//   --db <postgres-url>  (falls back to NETWORK_DATABASE_URL, else ephemeral in-memory store)
 
 import { RealClock } from "../../../packages/core/src/clock.ts";
 import { createPaidAdapterRegistry } from "./adapters/paid.ts";
 import { AgentLifecycleManager } from "./agent-lifecycle.ts";
+import { computeBanditAllocations, createDefaultNycBanditArms } from "./bandit.ts";
+import { normalizeCityCode } from "./cities.ts";
+import { DEFAULT_MARKETING_HOST, DEFAULT_MARKETING_PORT } from "./constants.ts";
 import { CrowdsourcingEngine, type HiringRole } from "./crowdsourcing.ts";
 import { DeviceBridge } from "./devices/bridge.ts";
 import { discoverNycLeads } from "./discovery.ts";
@@ -19,6 +17,11 @@ import {
   PgMarketingStore,
   type MarketingStore,
 } from "./store.ts";
+import {
+  lintVideoScript,
+  STARTER_COMEDY_SCRIPTS,
+} from "./video-factory.ts";
+import { VipDiscoveryEngine } from "./vip-engine.ts";
 
 function parseCliArgs(argv: string[]): {
   command: string;
@@ -28,8 +31,8 @@ function parseCliArgs(argv: string[]): {
   const positionals: string[] = [];
   const flags: Record<string, string | boolean> = {};
   for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]!;
-    if (arg === "--") continue;
+    const arg = argv[i];
+    if (!arg || arg === "--") continue;
     if (arg.startsWith("--")) {
       const eq = arg.indexOf("=");
       if (eq >= 0) {
@@ -55,7 +58,9 @@ function parseCliArgs(argv: string[]): {
   };
 }
 
-async function openStore(dbUrl?: string): Promise<{ store: MarketingStore; mode: "postgres" | "memory" }> {
+async function openStore(
+  dbUrl?: string,
+): Promise<{ store: MarketingStore; mode: "postgres" | "memory" }> {
   const clock = new RealClock();
   if (dbUrl && dbUrl.trim().length > 0) {
     const store = new PgMarketingStore(dbUrl.trim(), { clock });
@@ -71,16 +76,21 @@ function printUsage(): void {
       "Usage: pnpm run marketing:cli -- <command> [options]",
       "",
       "Commands:",
-      "  seed-nyc            Seed the Month-1 $10,000 NYC campaign, 5 agents, Tier-2 slots & agencies",
+      "  seed-nyc            Seed the Month-1 $10,000 NYC campaign, 5 agents, Tier-2 slots, Bandit, BD, VIP & Video assets",
       "  status              Show campaign overview, budget burn, agents, devices, adapters & slop.cash status",
       "  scan-devices        Probe USB-attached Android & iPhone devices on this MacBook",
-      "  discover-nyc        Run Tier-1 $0 open-web NYC discovery feeds",
+      "  discover            Run Tier-1 $0 open-web multi-city discovery (--city nyc|sf|la|chicago|miami|austin|london)",
       "  tick                Run one autonomous agent orchestration tick",
-      "  hire-batch          Generate a compliant Tier-4 hiring packet (--role street_fliering|creator_video|event_activation|agency_booking --budget 25000)",
+      "  bandit              Run Thompson-Sampling Bandit rebalance preview (--seed <n>)",
+      "  hire-batch          Generate a compliant Tier-4 hiring packet (--role ... --city nyc --budget 25000)",
+      "  bd-list             List BD venue and event-host deals",
+      "  vip-invite          Generate & validate a <75-word VIP salon invite (--name ... --archetype ... --city nyc)",
+      "  video-lint          Lint all 10 starter short-form video scripts",
       "  slop-cash-preview   Preview disabled slop.cash hook schema without settling (--task <id>)",
       "  serve               Start the local HTTP Command Center & REST API (--port 4949)",
       "",
       "Options:",
+      "  --city <code >      City code (nyc, sf, la, chicago, miami, austin, london)",
       "  --db <url>          Postgres connection string (defaults to NETWORK_DATABASE_URL, else in-memory)",
     ].join("\n"),
   );
@@ -94,6 +104,7 @@ async function main(): Promise<void> {
   }
 
   const dbFlag = typeof flags.db === "string" ? flags.db : process.env.NETWORK_DATABASE_URL;
+  const city = normalizeCityCode(typeof flags.city === "string" ? flags.city : "nyc");
   const { store, mode } = await openStore(dbFlag);
   const clock = store.clock;
 
@@ -125,12 +136,13 @@ async function main(): Promise<void> {
       return;
     }
 
-    if (command === "discover-nyc") {
+    if (command === "discover" || command === "discover-nyc") {
       const limit = typeof flags.limit === "string" ? Number(flags.limit) : 10;
       const result = await discoverNycLeads({
         clock,
-        city: typeof flags.city === "string" ? flags.city : "nyc",
+        city,
         limitPerSource: Number.isFinite(limit) && limit > 0 ? limit : 10,
+        includeVipBdSources: flags["vip-bd"] === true,
       });
       console.log(JSON.stringify({ mode, ...result }, null, 2));
       return;
@@ -151,19 +163,80 @@ async function main(): Promise<void> {
       return;
     }
 
+    if (command === "bandit") {
+      const nowIso = new Date(clock.now()).toISOString();
+      const seed = typeof flags.seed === "string" ? flags.seed : "nyc-cli-1";
+      const arms = createDefaultNycBanditArms(NYC_LAUNCH_CAMPAIGN.id, nowIso);
+      const rebalance = computeBanditAllocations({
+        campaignId: NYC_LAUNCH_CAMPAIGN.id,
+        arms,
+        availableCents: 1_000_000,
+        seed,
+        nowIso,
+        riskDial: "balanced",
+        billingArmed: true,
+      });
+      console.log(JSON.stringify({ mode, rebalance }, null, 2));
+      return;
+    }
+
     if (command === "hire-batch") {
       const role = (
         typeof flags.role === "string" ? flags.role : "street_fliering"
       ) as HiringRole;
-      const city = typeof flags.city === "string" ? flags.city : "nyc";
       const budgetCents =
         typeof flags.budget === "string" ? Number(flags.budget) : 25_000;
       const engine = new CrowdsourcingEngine({ store, clock });
       const packet = engine.buildHiringPacket(role, city, budgetCents, {
         neighborhood:
           typeof flags.neighborhood === "string" ? flags.neighborhood : "West Village",
+        boroughLicenceRef:
+          typeof flags.licence === "string" ? flags.licence : undefined,
       });
       console.log(JSON.stringify({ mode, packet }, null, 2));
+      return;
+    }
+
+    if (command === "bd-list") {
+      if ((await store.listCampaigns()).length === 0 && mode === "memory") {
+        await seedNycLaunch(store);
+      }
+      const deals = await store.listBdDeals({ city });
+      console.log(JSON.stringify({ mode, city, deals }, null, 2));
+      return;
+    }
+
+    if (command === "vip-invite") {
+      const vipEngine = new VipDiscoveryEngine({ clock });
+      const invite = vipEngine.buildAndValidateVipInvite({
+        firstName: typeof flags.name === "string" ? flags.name : "Maya",
+        archetypeSlug: typeof flags.archetype === "string" ? flags.archetype : "oss_maintainer",
+        city,
+        neighborhood: typeof flags.neighborhood === "string" ? flags.neighborhood : "West Village",
+        proofOfWork1Line:
+          typeof flags.hook === "string"
+            ? flags.hook
+            : "your open-source distributed systems benchmarks",
+        senderName: "The Operator",
+      });
+      console.log(JSON.stringify({ mode, invite }, null, 2));
+      if (!invite.valid) process.exitCode = 1;
+      return;
+    }
+
+    if (command === "video-lint") {
+      const results = STARTER_COMEDY_SCRIPTS.map((script) => ({
+        id: script.id,
+        personaId: script.personaId,
+        appId: script.appId,
+        title: script.title,
+        lint: lintVideoScript(script),
+      }));
+      const failed = results.filter((r) => !r.lint.pass);
+      console.log(
+        JSON.stringify({ total: results.length, passed: results.length - failed.length, results }, null, 2),
+      );
+      if (failed.length > 0) process.exitCode = 1;
       return;
     }
 
@@ -193,20 +266,23 @@ async function main(): Promise<void> {
       const port =
         typeof flags.port === "string"
           ? Number(flags.port)
-          : Number(process.env.MARKETING_PORT || 4949);
+          : Number(process.env.MARKETING_PORT || DEFAULT_MARKETING_PORT);
       const started = await createMarketingServer({
         store,
         clock,
         port,
-        hostname: typeof flags.host === "string" ? flags.host : "127.0.0.1",
+        hostname: typeof flags.host === "string" ? flags.host : DEFAULT_MARKETING_HOST,
       });
       console.log(
         `Marketing Command Center (${mode}): ${started.url}/#token=${started.token}`,
       );
-      await new Promise<void>((resolve) => {
+      await new Promise<void>((resolveDone) => {
+        let done = false;
         const stop = async () => {
+          if (done) return;
+          done = true;
           await started.stop();
-          resolve();
+          resolveDone();
         };
         process.on("SIGINT", () => void stop());
         process.on("SIGTERM", () => void stop());

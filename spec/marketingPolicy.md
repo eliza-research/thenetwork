@@ -1,6 +1,6 @@
 # Marketing policy
 
-Pure campaign authorization, age eligibility, proof verification, agent subscription quota, and consent fence rules shared by `@thenetwork/marketing`. Callers read campaign ledgers, proof verification metadata, agent session health, and contact consent records, then pass explicit integers and booleans to these rules.
+Pure campaign authorization, age eligibility, proof verification, anti-fraud payout caps, BD deal bounds, bandit arm eligibility, agent subscription quota, and consent fence rules shared by `@thenetwork/marketing`. Callers read campaign ledgers, proof verification metadata, anti-fraud registries, BD deal state, bandit telemetry, agent session health, and contact consent records, then pass explicit integers and booleans to these rules.
 
 ## Story: Hire and pay only verified adult participants within campaign limits
 
@@ -104,6 +104,51 @@ pure def lawLockdownBlocksTier3And4(
   ))
 ```
 
+### Only open-source developer bounties may use the slop.cash payout rail
+
+The `slop.cash` rail is restricted strictly to `oss_dev_bounty` tasks. Consumer street-team, event-activation, creator-video, and agency tasks never authorize on `slop.cash` even when `slopCashEnabled` is true.
+
+```quint
+pure def isOssDevBounty(taskKindIsOssDev: bool): bool =
+  taskKindIsOssDev
+
+pure def canAuthorizeTaskSpend(
+  tier: int,
+  amountCents: int,
+  perTaskCapCents: int,
+  dailySpentCents: int,
+  dailyCapCents: int,
+  monthlySpentCents: int,
+  monthlyCapCents: int,
+  billingArmed: bool,
+  lockdown: bool,
+  useSlopCash: bool,
+  slopCashEnabled: bool,
+  taskKindIsOssDev: bool
+): bool =
+  canAuthorizeSpend(
+    tier, amountCents, perTaskCapCents, dailySpentCents, dailyCapCents,
+    monthlySpentCents, monthlyCapCents, billingArmed, lockdown, useSlopCash, slopCashEnabled
+  ) and (not(useSlopCash) or isOssDevBounty(taskKindIsOssDev))
+
+pure def lawConsumerTaskNeverUsesSlopCash(
+  tier: int,
+  amountCents: int,
+  perTaskCapCents: int,
+  dailySpentCents: int,
+  dailyCapCents: int,
+  monthlySpentCents: int,
+  monthlyCapCents: int,
+  billingArmed: bool,
+  lockdown: bool,
+  slopCashEnabled: bool
+): bool =
+  not(canAuthorizeTaskSpend(
+    tier, amountCents, perTaskCapCents, dailySpentCents, dailyCapCents,
+    monthlySpentCents, monthlyCapCents, billingArmed, lockdown, true, slopCashEnabled, false
+  ))
+```
+
 ### Human street-team and creator payouts require complete proof and verified adult status
 
 A submitted proof is approved only when it carries an evidence URL, FTC disclosure, valid geolocation and time window, verified signups or completed shift evidence, a verified adult worker aged 18 through 120, and a non-banned worker.
@@ -151,6 +196,211 @@ pure def lawProofRequiresEvidenceAndAdult(
       and adultParticipantAge(workerAge)
       and not(workerBanned)
   )
+```
+
+### Creator video proofs also require signed commercial likeness releases
+
+Whenever a proof requires commercial likeness releases (such as NY Civil Rights Law sections 50-51 street-interview videos), `hasRelease` must be true before proof approval succeeds.
+
+```quint
+pure def likenessReleaseOk(needsRelease: bool, hasRelease: bool): bool =
+  not(needsRelease) or hasRelease
+
+pure def canApproveCreatorProof(
+  hasEvidenceUrl: bool,
+  ftcDisclosed: bool,
+  geoTimeValid: bool,
+  verifiedSignupsOrShiftDone: bool,
+  workerAge: int,
+  workerBanned: bool,
+  needsRelease: bool,
+  hasRelease: bool
+): bool =
+  canApproveProof(
+    hasEvidenceUrl, ftcDisclosed, geoTimeValid, verifiedSignupsOrShiftDone, workerAge, workerBanned
+  ) and likenessReleaseOk(needsRelease, hasRelease)
+
+pure def lawCreatorProofRequiresLikenessRelease(
+  hasEvidenceUrl: bool,
+  ftcDisclosed: bool,
+  geoTimeValid: bool,
+  verifiedSignupsOrShiftDone: bool,
+  workerAge: int,
+  workerBanned: bool
+): bool =
+  not(canApproveCreatorProof(
+    hasEvidenceUrl, ftcDisclosed, geoTimeValid, verifiedSignupsOrShiftDone, workerAge, workerBanned, true, false
+  ))
+```
+
+## Story: Enforce anti-fraud payout caps, BD deal bounds, and bandit eligibility
+
+> As a campaign operator, I want referral bonuses, contractor payouts, venue deals, and bandit budget arms to stay inside hard anti-fraud, tax, verification, and safety thresholds.
+
+### Anti-fraud payout checks block VoIP, cap prepaid/MVNO and lifetime consumer bonuses, enforce W-9 over $500, and block duplicates or quarantined clusters
+
+An anti-fraud payout check requires `tier >= 1`, a positive payout amount, non-negative prior lifetime and annual totals, a non-VoIP phone line, at most 200 cents ($2) for prepaid or MVNO carriers, at most 2,000 cents ($20) cumulative lifetime consumer referral bonus for tiers below 4, a verified W-9 whenever cumulative annual worker payouts exceed 50,000 cents ($500), no duplicate media hash, and no Sybil cluster quarantine.
+
+```quint
+pure val mvnoBonusCapCents: int = 200
+pure val consumerLifetimeBonusCapCents: int = 2000
+pure val w9AnnualThresholdCents: int = 50000
+
+pure def antiFraudPayoutAllowed(
+  tier: int,
+  amountCents: int,
+  isPrepaidOrMvno: bool,
+  isVoip: bool,
+  priorLifetimeCents: int,
+  annualWorkerCents: int,
+  hasW9: bool,
+  mediaDuplicate: bool,
+  clusterQuarantined: bool
+): bool =
+  tier >= 1
+    and amountCents > 0
+    and priorLifetimeCents >= 0
+    and annualWorkerCents >= 0
+    and not(isVoip)
+    and (not(isPrepaidOrMvno) or amountCents <= mvnoBonusCapCents)
+    and (tier >= 4 or priorLifetimeCents + amountCents <= consumerLifetimeBonusCapCents)
+    and (annualWorkerCents + amountCents <= w9AnnualThresholdCents or hasW9)
+    and not(mediaDuplicate)
+    and not(clusterQuarantined)
+
+pure def lawVoipNeverPaid(
+  tier: int,
+  amountCents: int,
+  isPrepaidOrMvno: bool,
+  priorLifetimeCents: int,
+  annualWorkerCents: int,
+  hasW9: bool,
+  mediaDuplicate: bool,
+  clusterQuarantined: bool
+): bool =
+  not(antiFraudPayoutAllowed(
+    tier, amountCents, isPrepaidOrMvno, true, priorLifetimeCents, annualWorkerCents, hasW9, mediaDuplicate, clusterQuarantined
+  ))
+
+pure def lawMvnoBonusCappedAt200(
+  tier: int,
+  amountCents: int,
+  isVoip: bool,
+  priorLifetimeCents: int,
+  annualWorkerCents: int,
+  hasW9: bool,
+  mediaDuplicate: bool,
+  clusterQuarantined: bool
+): bool =
+  (amountCents > mvnoBonusCapCents) implies not(antiFraudPayoutAllowed(
+    tier, amountCents, true, isVoip, priorLifetimeCents, annualWorkerCents, hasW9, mediaDuplicate, clusterQuarantined
+  ))
+
+pure def lawConsumerLifetimeCapNeverExceeded(
+  tier: int,
+  amountCents: int,
+  isPrepaidOrMvno: bool,
+  isVoip: bool,
+  priorLifetimeCents: int,
+  annualWorkerCents: int,
+  hasW9: bool,
+  mediaDuplicate: bool,
+  clusterQuarantined: bool
+): bool =
+  (tier < 4 and priorLifetimeCents + amountCents > consumerLifetimeBonusCapCents) implies not(antiFraudPayoutAllowed(
+    tier, amountCents, isPrepaidOrMvno, isVoip, priorLifetimeCents, annualWorkerCents, hasW9, mediaDuplicate, clusterQuarantined
+  ))
+
+pure def lawW9RequiredOver500Usd(
+  tier: int,
+  amountCents: int,
+  isPrepaidOrMvno: bool,
+  isVoip: bool,
+  priorLifetimeCents: int,
+  annualWorkerCents: int,
+  mediaDuplicate: bool,
+  clusterQuarantined: bool
+): bool =
+  (annualWorkerCents + amountCents > w9AnnualThresholdCents) implies not(antiFraudPayoutAllowed(
+    tier, amountCents, isPrepaidOrMvno, isVoip, priorLifetimeCents, annualWorkerCents, false, mediaDuplicate, clusterQuarantined
+  ))
+
+pure def lawDuplicateOrQuarantinedBlocked(
+  tier: int,
+  amountCents: int,
+  isPrepaidOrMvno: bool,
+  isVoip: bool,
+  priorLifetimeCents: int,
+  annualWorkerCents: int,
+  hasW9: bool
+): bool =
+  not(antiFraudPayoutAllowed(
+    tier, amountCents, isPrepaidOrMvno, isVoip, priorLifetimeCents, annualWorkerCents, hasW9, true, false
+  )) and not(antiFraudPayoutAllowed(
+    tier, amountCents, isPrepaidOrMvno, isVoip, priorLifetimeCents, annualWorkerCents, hasW9, false, true
+  ))
+```
+
+### Automated BD venue deals stay inside venue budget bounds and require phone callback and signed contract
+
+A BD venue deal passes autonomous approval only when `offeredCents` and `maxVenueCents` are non-negative, `offeredCents <= maxVenueCents`, the venue business phone callback succeeded, and the clickwrap contract is signed.
+
+```quint
+pure def bdDealWithinBounds(
+  offeredCents: int,
+  maxVenueCents: int,
+  hasPhoneCallback: bool,
+  contractSigned: bool
+): bool =
+  offeredCents >= 0
+    and maxVenueCents >= 0
+    and offeredCents <= maxVenueCents
+    and hasPhoneCallback
+    and contractSigned
+
+pure def lawBdDealRequiresBoundsCallbackAndContract(
+  offeredCents: int,
+  maxVenueCents: int,
+  hasPhoneCallback: bool,
+  contractSigned: bool
+): bool =
+  bdDealWithinBounds(offeredCents, maxVenueCents, hasPhoneCallback, contractSigned) implies (
+    offeredCents >= 0
+      and offeredCents <= maxVenueCents
+      and hasPhoneCallback
+      and contractSigned
+  )
+```
+
+### Bandit arms stay eligible only within CPA and STOP-rate ceilings
+
+A bandit allocation arm remains eligible for spend only when its observed CPA is non-negative and at or below `maxCpaCents`, and its STOP rate in basis points is non-negative and at or below `maxStopRateBps` (default 500 bps = 5%).
+
+```quint
+pure val banditMaxStopRateBps: int = 500
+
+pure def banditArmEligible(
+  cpaCents: int,
+  maxCpaCents: int,
+  stopRateBps: int,
+  maxStopRateBps: int
+): bool =
+  cpaCents >= 0
+    and maxCpaCents >= 0
+    and cpaCents <= maxCpaCents
+    and stopRateBps >= 0
+    and maxStopRateBps >= 0
+    and stopRateBps <= maxStopRateBps
+
+pure def lawBanditKillsHighCpaOrStopRate(
+  cpaCents: int,
+  maxCpaCents: int,
+  stopRateBps: int,
+  maxStopRateBps: int
+): bool =
+  (cpaCents > maxCpaCents or stopRateBps > maxStopRateBps) implies not(banditArmEligible(
+    cpaCents, maxCpaCents, stopRateBps, maxStopRateBps
+  ))
 ```
 
 ## Story: Enforce agent subscription caps and the global STOP fence
@@ -206,14 +456,22 @@ pure def lawStopFenceBlocksAgentAndOutreach(
   not(canDispatchAgentTurn(agentPaused, rateLimited, sessionHealthy, turnsToday, dailyTurnCap, true, lockdown))
     and not(canSendOutreach(true, targetBanned, lockdown, sentToday, dailyOutreachCap))
 
-pure val tierValues = Set(1, 2, 3, 4)
-pure val amountCentsValues = Set(-10, 0, 100, 400, 500)
+pure val tierValues = Set(0, 1, 2, 3, 4)
+pure val amountCentsValues = Set(-10, 0, 100, 200, 400, 500)
 pure val perTaskCapCentsValues = Set(0, 400)
 pure val dailySpentCentsValues = Set(-1, 0, 300, 500)
 pure val dailyCapCentsValues = Set(0, 500)
 pure val monthlySpentCentsValues = Set(-1, 0, 600, 1000)
 pure val monthlyCapCentsValues = Set(0, 1000)
 pure val workerAgeValues = Set(-1, 0, 16, 17, 18, 24, 120, 121)
+pure val priorLifetimeCentsValues = Set(-1, 0, 1800, 2000)
+pure val annualWorkerCentsValues = Set(-1, 0, 49800, 50000)
+pure val offeredCentsValues = Set(-1, 0, 200, 500)
+pure val maxVenueCentsValues = Set(0, 200)
+pure val cpaCentsValues = Set(-1, 0, 850, 2200)
+pure val maxCpaCentsValues = Set(0, 2125)
+pure val stopRateBpsValues = Set(-1, 0, 300, 500, 600)
+pure val maxStopRateBpsValues = Set(0, 500)
 pure val turnsTodayValues = Set(-1, 0, 1, 2)
 pure val dailyTurnCapValues = Set(0, 2)
 pure val sentTodayValues = Set(-1, 0, 1, 2)

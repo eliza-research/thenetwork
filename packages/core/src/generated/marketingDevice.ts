@@ -3,13 +3,13 @@
 
 
 /** Story: Protect attached phones from battery, thermal, and warm-up abuse / Safe device operation requires battery between 35 and 80 percent and temperature between 0 and 41 C (spec/marketingDevice.md) */
-export const deviceTempMaxC: number = 41;
-/** Story: Protect attached phones from battery, thermal, and warm-up abuse / Safe device operation requires battery between 35 and 80 percent and temperature between 0 and 41 C (spec/marketingDevice.md) */
 export const deviceBatteryMin: number = 35;
 /** Story: Protect attached phones from battery, thermal, and warm-up abuse / Safe device operation requires battery between 35 and 80 percent and temperature between 0 and 41 C (spec/marketingDevice.md) */
 export const deviceBatteryMax: number = 80;
 /** Story: Protect attached phones from battery, thermal, and warm-up abuse / Safe device operation requires battery between 35 and 80 percent and temperature between 0 and 41 C (spec/marketingDevice.md) */
 export const deviceTempMinC: number = 0;
+/** Story: Protect attached phones from battery, thermal, and warm-up abuse / Safe device operation requires battery between 35 and 80 percent and temperature between 0 and 41 C (spec/marketingDevice.md) */
+export const deviceTempMaxC: number = 41;
 
 /** Story: Protect attached phones from battery, thermal, and warm-up abuse / Safe device operation requires battery between 35 and 80 percent and temperature between 0 and 41 C (spec/marketingDevice.md) */
 //@ pure
@@ -30,22 +30,35 @@ export function lawWarmupCapMonotone(dayA: number, dayB: number): boolean {
   return !(dayA <= dayB) || warmupDailyCap(dayA) <= warmupDailyCap(dayB);
 }
 
-/** Story: Protect attached phones from battery, thermal, and warm-up abuse / Device execution requires online status, exclusive lease, safe envelope, remaining warm-up quota, and no lockdown or STOP (spec/marketingDevice.md) */
+/** Story: Protect attached phones from battery, thermal, and warm-up abuse / Device execution requires online status, exclusive lease, safe envelope, remaining warm-up quota, and no lockdown, STOP, or human takeover challenge (spec/marketingDevice.md) */
 //@ pure
 export function canExecuteDeviceAction(deviceOnline: boolean, leasedByOther: boolean, batteryPct: number, tempC: number, actionsToday: number, warmupDay: number, lockdown: boolean, targetStopped: boolean): boolean {
   return deviceOnline && !leasedByOther && deviceBatterySafe(batteryPct, tempC) && actionsToday >= 0 && actionsToday < warmupDailyCap(warmupDay) && !lockdown && !targetStopped;
 }
 
-/** Story: Protect attached phones from battery, thermal, and warm-up abuse / Device execution requires online status, exclusive lease, safe envelope, remaining warm-up quota, and no lockdown or STOP (spec/marketingDevice.md) */
+/** Story: Protect attached phones from battery, thermal, and warm-up abuse / Device execution requires online status, exclusive lease, safe envelope, remaining warm-up quota, and no lockdown, STOP, or human takeover challenge (spec/marketingDevice.md) */
+//@ pure
+export function canDispatchDeviceStep(deviceOnline: boolean, leasedByOther: boolean, needsTakeover: boolean, batteryPct: number, tempC: number, actionsToday: number, warmupDay: number, lockdown: boolean, targetStopped: boolean): boolean {
+  return !needsTakeover && canExecuteDeviceAction(deviceOnline, leasedByOther, batteryPct, tempC, actionsToday, warmupDay, lockdown, targetStopped);
+}
+
+/** Story: Protect attached phones from battery, thermal, and warm-up abuse / Device execution requires online status, exclusive lease, safe envelope, remaining warm-up quota, and no lockdown, STOP, or human takeover challenge (spec/marketingDevice.md) */
 //@ pure
 export function lawHotOrLowBatteryBlocked(deviceOnline: boolean, leasedByOther: boolean, batteryPct: number, tempC: number, actionsToday: number, warmupDay: number, lockdown: boolean, targetStopped: boolean): boolean {
   //@ ensures \result === true
   return !(batteryPct < deviceBatteryMin || batteryPct > deviceBatteryMax || tempC < deviceTempMinC || tempC > deviceTempMaxC) || !canExecuteDeviceAction(deviceOnline, leasedByOther, batteryPct, tempC, actionsToday, warmupDay, lockdown, targetStopped);
 }
 
-/** Story: Protect attached phones from battery, thermal, and warm-up abuse / Device execution requires online status, exclusive lease, safe envelope, remaining warm-up quota, and no lockdown or STOP (spec/marketingDevice.md) */
+/** Story: Protect attached phones from battery, thermal, and warm-up abuse / Device execution requires online status, exclusive lease, safe envelope, remaining warm-up quota, and no lockdown, STOP, or human takeover challenge (spec/marketingDevice.md) */
 //@ pure
 export function lawLeasedOrStoppedDeviceBlocked(deviceOnline: boolean, leasedByOther: boolean, batteryPct: number, tempC: number, actionsToday: number, warmupDay: number, lockdown: boolean, targetStopped: boolean): boolean {
   //@ ensures \result === true
   return !(!deviceOnline || leasedByOther || lockdown || targetStopped) || !canExecuteDeviceAction(deviceOnline, leasedByOther, batteryPct, tempC, actionsToday, warmupDay, lockdown, targetStopped);
+}
+
+/** Story: Protect attached phones from battery, thermal, and warm-up abuse / Device execution requires online status, exclusive lease, safe envelope, remaining warm-up quota, and no lockdown, STOP, or human takeover challenge (spec/marketingDevice.md) */
+//@ pure
+export function lawTakeoverBlocksDeviceStep(deviceOnline: boolean, leasedByOther: boolean, batteryPct: number, tempC: number, actionsToday: number, warmupDay: number, lockdown: boolean, targetStopped: boolean): boolean {
+  //@ ensures \result === true
+  return !canDispatchDeviceStep(deviceOnline, leasedByOther, true, batteryPct, tempC, actionsToday, warmupDay, lockdown, targetStopped);
 }

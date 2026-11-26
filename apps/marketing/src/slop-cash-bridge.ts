@@ -2,18 +2,24 @@
 // STRICTLY DISABLED BY DEFAULT (inv_slop_cash_disabled):
 //   - isEnabled() returns false unless BOTH env.MARKETING_SLOP_CASH_ENABLED === "1"
 //     AND explicit configEnabled === true.
-//   - settleHook() always checks proved marketingPolicy.canAuthorizeSpend(..., true, slopCashEnabled)
-//     and fails closed with SlopCashDisabledError when disabled.
+//   - settleHook() fails closed with SlopCashDisabledError when disabled, then delegates
+//     spend, OSS task-kind, youngest-age, and proof checks to canonical ./policy.ts.
 //   - Non-OSS consumer marketing tasks (street fliering, event activations, creators, agencies)
 //     are permanently ineligible for slop.cash settlement.
 
 import { RealClock } from "../../../packages/core/src/clock.ts";
 import {
-  adultParticipantAge,
-  canApproveProof,
-  canAuthorizeSpend,
-} from "../../../packages/core/src/generated/marketingPolicy.ts";
-import { PolicyViolationError, type MarketingStore } from "./store.ts";
+  DEFAULT_SLOP_CASH_CHAIN,
+  DEFAULT_SLOP_CASH_REPO,
+} from "./constants.ts";
+import {
+  assertSpendAuth,
+  evaluateProofPolicy,
+  isAdultReading,
+  minAgeReading,
+  PolicyViolationError,
+} from "./policy.ts";
+import type { MarketingStore } from "./store.ts";
 import type {
   Campaign,
   Clock,
@@ -104,9 +110,6 @@ export interface SettleSlopCashResult {
   reason: string;
 }
 
-const DEFAULT_REPO_SLUG = "eliza-research/thenetwork";
-const DEFAULT_VAULT_CHAIN: SlopCashVaultChain = "base";
-
 function scoreBandForCents(amountCents: number): SlopCashScoreBand {
   if (amountCents <= 2_500) return { band: "Micro", points: 10 };
   if (amountCents <= 7_500) return { band: "Small", points: 30 };
@@ -128,8 +131,8 @@ export class SlopCashBridge {
     this.env = opts.env ?? process.env;
     this.configEnabled = opts.configEnabled === true;
     this.clock = opts.clock ?? opts.store?.clock ?? new RealClock();
-    this.defaultRepoSlug = opts.defaultRepoSlug ?? DEFAULT_REPO_SLUG;
-    this.defaultVaultChain = opts.defaultVaultChain ?? DEFAULT_VAULT_CHAIN;
+    this.defaultRepoSlug = opts.defaultRepoSlug ?? DEFAULT_SLOP_CASH_REPO;
+    this.defaultVaultChain = opts.defaultVaultChain ?? DEFAULT_SLOP_CASH_CHAIN;
     this.store = opts.store;
   }
 
@@ -230,48 +233,27 @@ export class SlopCashBridge {
   }
 
   /**
-   * Enforces proved marketingPolicy.canAuthorizeSpend(..., true, slopCashEnabled)
-   * and fails closed with SlopCashDisabledError whenever disabled (the default).
+   * Fails closed with SlopCashDisabledError whenever disabled (the default), then
+   * enforces proved marketingPolicy.canAuthorizeTaskSpend (including oss_dev_bounty),
+   * youngest-age adult check, and proved proof verification via ./policy.ts.
    */
   async settleHook(input: SettleSlopCashInput): Promise<SettleSlopCashResult> {
     const slopCashEnabled = this.isEnabled() && input.campaign.slopCashEnabled;
-
-    const spendAuthorized = canAuthorizeSpend(
-      input.task.tier,
-      input.task.amountCents,
-      input.campaign.maxTaskCents,
-      input.campaign.dailySpentCents,
-      input.campaign.dailyCapCents,
-      input.campaign.spentCents + input.campaign.reservedCents,
-      input.campaign.monthlyBudgetCents,
-      input.campaign.billingArmed,
-      input.campaign.riskDial === "lockdown",
-      true,
-      slopCashEnabled,
-    );
-
     if (!slopCashEnabled) {
       throw new SlopCashDisabledError();
     }
 
-    if (input.task.taskKind !== "oss_dev_bounty") {
-      throw new PolicyViolationError(
-        "SLOP_CASH_OSS_ONLY",
-        "inv_slop_cash_disabled",
-        `slop.cash settlement is forbidden for task kind '${input.task.taskKind}'; only oss_dev_bounty is permitted.`,
-      );
-    }
+    assertSpendAuth({
+      campaign: input.campaign,
+      tier: input.task.tier,
+      amountCents: input.task.amountCents,
+      useSlopCash: true,
+      slopCashEnvEnabled: this.isEnabled(),
+      taskKind: input.task.taskKind,
+    });
 
-    if (!spendAuthorized) {
-      throw new PolicyViolationError(
-        "SPEND_NOT_AUTHORIZED",
-        "inv_budget_never_exceeded",
-        "slop.cash settlement rejected by proved marketingPolicy.canAuthorizeSpend.",
-      );
-    }
-
-    const workerAge = input.workerAge ?? input.task.assigneeAgeYears ?? -1;
-    if (!adultParticipantAge(workerAge)) {
+    const workerAge = minAgeReading(input.workerAge, input.task.assigneeAgeYears) ?? -1;
+    if (!isAdultReading(workerAge)) {
       throw new PolicyViolationError(
         "UNDERAGE_OR_UNKNOWN_WORKER",
         "inv_adult_only_paid",
@@ -280,24 +262,21 @@ export class SlopCashBridge {
     }
 
     const proof = input.proof ?? null;
-    const proofOk =
-      input.task.proofVerified &&
-      proof !== null &&
-      proof.verdict === "verified" &&
-      canApproveProof(
-        Boolean(proof.evidenceUrl && proof.evidenceUrl.trim().length > 0),
-        proof.ftcDisclosed,
-        proof.geoTimeValid,
-        true,
-        workerAge,
-        Boolean(input.workerBanned),
-      );
+    const proofDecision =
+      input.task.proofVerified && proof !== null && proof.verdict === "verified"
+        ? evaluateProofPolicy({
+            proof,
+            workerAge,
+            workerBanned: Boolean(input.workerBanned),
+            shiftDone: true,
+          })
+        : { approved: false, reason: "proof_missing_or_unverified" };
 
-    if (!proofOk) {
+    if (!proofDecision.approved) {
       throw new PolicyViolationError(
         "PROOF_NOT_VERIFIED",
         "inv_proof_required_before_payout",
-        "slop.cash settlement requires a verified proof passing marketingPolicy.canApproveProof.",
+        `slop.cash settlement requires a verified proof (${proofDecision.reason ?? "proof_not_verified"}).`,
       );
     }
 

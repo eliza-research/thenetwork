@@ -77,7 +77,7 @@ Craigslist remains the highest-ROI, zero-markup source of NYC street-team labor,
   * **+25 pts:** Resides in NYC 5 boroughs (neighborhood match within 35 min transit of target zone).
   * **+25 pts:** Prior street-team, hospitality, sales, promo, or content experience (keyword + coherence check).
   * **+25 pts:** Completed 20-second phone intro clip showing clear speech and friendly energy (auto-scored by multimodal LLM).
-  * **Auto-Hire Threshold:** Score >= 75 moves immediately to shift booking. Score 60–74 goes to the standby bench.
+  * **Auto-Hire Threshold:** Score >= 75 moves immediately to shift booking. Score 50–74 goes to the standby bench (`crowdsourcing.ts`). Below 50 is rejected.
 * **Anti-No-Show Protocol:**
   * **Overbook Standby Bench:** For every 2 primary activators scheduled on a shift, book 1 paid-on-activation standby ($15 standby retainer if not called in; full $22/hr if activated at T-2h).
   * **3-Step Automated Check-In:** (1) T-24h SMS/email `"Reply YES to lock tomorrow's 2 PM Union Square shift"`, (2) T-3h confirm, (3) T-15m live GPS selfie at the exact corner landmark before boxes/bundles release. Missing T-3h automatically promotes the standby worker.
@@ -270,7 +270,7 @@ All autonomous hiring briefs, clickwrap contracts, and automated proof checks en
 
 ## 6. Zero-Human-Intervention Agent Email Templates & Proof-of-Work Protocol
 
-Copy-paste templates configured in `apps/marketing/src/nyc-seed.ts` for automated outbound dispatch. Replace `{{BRACKETED_TOKENS}}` programmatically via `renderEmailTemplate()`.
+Copy-paste templates stored canonically in `apps/marketing/src/constants.ts` (re-exported via `apps/marketing/src/nyc-seed.ts`) for automated outbound dispatch. Replace `{{BRACKETED_TOKENS}}` programmatically via `renderMarketingEmailTemplate()` / `renderEmailTemplate()`.
 
 ### 6.1 Template A — Craigslist NYC Gig Ad (`evg` / `lbg` Street Team)
 
@@ -409,17 +409,17 @@ ops-nyc@ntwrk.party
 
 ### 6.5 Automated Proof-of-Work Verification Protocol (`proofVerified == true`)
 
-In `apps/marketing` (aligned with `spec/marketingPolicy.md` and Quint invariant `inv_proof_required_before_payout`), **no base payout or performance bonus releases automatically until every deterministic check passes**:
+In `apps/marketing` (aligned with `spec/marketingPolicy.md` Dafny-proved `canApproveCreatorProof` and `antiFraudPayoutAllowed`, plus Quint invariants `inv_proof_required_before_payout` and `inv_antifraud_caps_respected`), **no base payout or performance bonus releases automatically until every deterministic check passes**:
 
 | Verification Check | Street-Team Shift (Tracks a & e) | Event Activator (Track c) | Street-Interview Creator (Track b) | Automated Pass Rule |
 | :--- | :---: | :---: | :---: | :--- |
-| **1. Age & Contract Gate** | Required | Required | Required | `adultParticipantAge(workerAge)` AND `nyll_191d_contract_signed == true` |
-| **2. Unique Batch QR / Shortlink** | Printed on every flier (`?b=NYC-001`) | Printed on rigid hand-card (`?e=EVT-01`) | Shown on screen + pinned link (`?c=CR-01`) | Active attribution code registered in DB before start |
-| **3. Timestamped Geo Check-Ins** | 3 photos: Start (T+0), Mid (T+2h), End (T+4h) + remaining stack photo | 2 photos: Venue arrival + mid-event badge/card + receipt (if stipend) | Shoot start photo + raw clip upload link | EXIF/upload timestamp within shift window AND GPS within 400m of target NYC zone |
-| **4. Live Public Video & FTC Check** | N/A | N/A | Public live URL (YouTube/TikTok/IG) | HTTP 200 live URL + automated audio/frame check detects `#Ad`/`Paid Partnership` + spoken disclosure |
-| **5. NY §§ 50–51 Release Audit** | N/A | N/A | Mobile release DB records | `likeness_releases_count >= featured_interviewees_count` |
-| **6. Base Pay vs. Bonus Gate** | Base ($22/hr): Checks 1–3 pass + `>= 1` real scan/spot check. Bonus: `>= 6` verified unique 18+ NYC signups | Base ($30/hr): Checks 1–3 pass. Bonus: per verified 18+ signup | Flat fee: Checks 1–5 pass. Bonus: per verified 18+ signup (Day 14 settle) | Base pay never withheld past NYLL § 191-d SLA when shift work is verified; bonus strictly tied to deduplicated phone-verified 18+ NYC signups |
-| **7. Anti-Fraud Anomaly Check** | Rejects same-IP / same-device / emulator bursts | Same | Same | Phone OTP verification + geo/rate-limit check rejects fake signups before bonus calc |
+| **1. Age & Contract Gate** | Required | Required | Required | `adultParticipantAge(minAgeReading(...))` AND `nyll_191d_contract_signed == true` (youngest age wins) |
+| **2. Unique Batch QR / Shortlink** | Printed on every flier (`?b=NYC-001`) | Printed on rigid hand-card (`?e=EVT-01`) | Shown on screen + pinned link (`?c=CR-01`) | Active serialized batch registered in `marketing.qr_batches` before start |
+| **3. Timestamped Geo Check-Ins** | 3 photos: Start (T+0), Mid (T+2h), End (T+4h) + remaining stack photo | 2 photos: Venue arrival + mid-event badge/card + receipt (if stipend) | Shoot start photo + raw clip upload link | EXIF/upload timestamp within shift window AND GPS within 400m of target zone |
+| **4. Live Public Video & FTC Check** | N/A | N/A | Public `https://` live URL (YouTube/TikTok/IG) | `validatePublicHttpsUrl` (SSRF-safe) + verified `#Ad`/`Paid Partnership` + spoken disclosure |
+| **5. NY §§ 50–51 Release Audit** | N/A | N/A | Mobile release DB records | `likenessReleaseOk == true` (`canApproveCreatorProof`) for every recognizable interviewee |
+| **6. Base Pay vs. Bonus Gate** | Base ($22/hr): Checks 1–3 pass + `>= 1` real scan/spot check. Bonus: `>= 6` verified unique 18+ NYC signups | Base ($30/hr): Checks 1–3 pass. Bonus: per verified 18+ signup | Flat fee: Checks 1–5 pass. Bonus: per verified 18+ signup (Day 14 settle) | Base pay never withheld past NYLL § 191-d SLA (`<= 15d`); W-9 required over `$500/yr` (`lawW9RequiredOver500Usd`) |
+| **7. Anti-Fraud & Sybil Check** | VoIP blocked, `$2` MVNO cap, `$20` lifetime consumer cap, SHA-256 media dedup | Same | Same | `antiFraudPayoutAllowed` + connected-component Sybil cluster quarantine (`antifraud.ts`) |
 
 ---
 
@@ -439,7 +439,7 @@ Once NYC hits target CPA (`<= $9.00/verified 18+ signup`) and proves reliable ze
 
 ### 7.1 Replication Gate Checklist (Before Unlocking City #2+)
 
-1. Register city neighborhoods and seed venues in `packages/core` city metadata.
-2. Confirm local labor classification rule (**CA AB5 -> W-2 only** for hourly street teams in SF/LA; **UK Schedule 3A licence** before any hand-to-hand fliering in London).
-3. Generate city-prefixed serialized QR batches (`SF-001`, `LA-001`, `CHI-001`, `MIA-001`, `ATX-001`, `LDN-001`) so every physical flier, event card, and creator video maps cleanly to city-level CPA inside `apps/marketing`.
-4. Launch with the exact same **Week-1 test gate ($1,500–$1,800)** before unlocking Weeks 2–4 spend.
+1. City corridors, transit keywords, discovery endpoints, and legal rules are already codified in `apps/marketing/src/cities.ts` for all 7 metros (`nyc`, `sf`, `la`, `chicago`, `miami`, `austin`, `london`).
+2. `checkCityHiringCompliance()` enforces local labor and flier statutes in code (**CA AB5 -> W-2 only** for hourly street teams in `sf`/`la`; **UK EPA 1990 Schedule 3A `boroughLicenceRef`** before any hand-to-hand fliering in `london`).
+3. Generate city-prefixed serialized QR batches (`SF-001`, `LA-001`, `CHI-001`, `MIA-001`, `ATX-001`, `LDN-001`) in `marketing.qr_batches` so every physical flier, event card, BD partner kit, and creator video maps cleanly to city-level CPA inside `apps/marketing`.
+4. Verify `canActivateCityExpansion()` readiness thresholds (verified 18+ Stage-2 waitlist adults + signed partner venues) and launch with the **Week-1 test gate ($1,500–$1,800)** before unlocking Weeks 2–4 spend.

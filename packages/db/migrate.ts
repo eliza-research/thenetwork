@@ -161,15 +161,39 @@ export async function migrate(url: string, opts: { reset?: boolean; lockTimeout?
   return out;
 }
 
-if (import.meta.main) {
+async function runCli(): Promise<void> {
   const { parseArgs } = await import("node:util");
   const { values: a } = parseArgs({ options: { url: { type: "string" }, reset: { type: "boolean", default: false } } });
-  const { DEV_PG_URL, devPgUp } = await import("./dev-pg.ts");
-  const isLocalUrl = (u: string) => { try { return LOOPBACK.has(new URL(u).hostname); } catch { return false; } };
-  let url = a.url ?? process.env.NETWORK_DATABASE_URL;
-  if (!url) { await devPgUp(); url = DEV_PG_URL; }
-  if (!isLocalUrl(url)) { console.error(`refusing to migrate non-local database ${new URL(url).hostname}`); process.exit(1); }
+  const parseHost = (u: string): string | null => {
+    try {
+      return new URL(u).hostname;
+    } catch {
+      return null;
+    }
+  };
+  let url = a.url?.trim() || process.env.NETWORK_DATABASE_URL?.trim();
+  if (!url) {
+    const { DEV_PG_URL, devPgUp } = await import("./dev-pg.ts");
+    await devPgUp();
+    url = DEV_PG_URL;
+  }
+  const host = parseHost(url);
+  if (!host) {
+    console.error("refusing to migrate malformed database URL");
+    process.exit(1);
+  }
+  if (!LOOPBACK.has(host)) {
+    console.error(`refusing to migrate non-local database ${host}`);
+    process.exit(1);
+  }
   const r = await migrate(url, { reset: a.reset, log: s => console.log(s) });
   console.log(JSON.stringify(r));
   process.exit(0);
+}
+
+if (import.meta.main) {
+  void runCli().catch((err) => {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  });
 }

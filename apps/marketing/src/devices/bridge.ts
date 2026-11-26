@@ -4,33 +4,38 @@
 // scalable to N physical devices.
 //
 // Formal safety boundary:
-//   Every telemetry safety check and device action dispatch calls the
-//   Vibestack/Dafny-proved functions `deviceBatterySafe`, `warmupDailyCap`, and
-//   `canExecuteDeviceAction` from `packages/core/src/generated/marketingDevice.ts`.
+//   Every telemetry safety check and device action dispatch delegates via ../policy.ts
+//   to Vibestack/Dafny-proved `deviceBatterySafe`, `warmupDailyCap`, and
+//   `canDispatchDeviceStep` from `packages/core/src/generated/marketingDevice.ts`.
 //   Live hardware commands never run unless `MARKETING_LIVE_DEVICE === "1"`.
 //   CAPTCHA / 2FA challenges are never bypassed: they immediately halt and
 //   return `status: "needs_takeover"` for human operator intervention.
 
+import { RealClock } from "../../../../packages/core/src/clock.ts";
 import {
-  canExecuteDeviceAction,
-  deviceBatteryMax,
-  deviceBatteryMin,
   deviceBatterySafe,
-  deviceTempMaxC,
-  deviceTempMinC,
   warmupDailyCap,
 } from "../../../../packages/core/src/generated/marketingDevice.ts";
 import {
   findExecutable,
   spawnProcess,
 } from "../../../../packages/core/src/runtime/process.ts";
+import {
+  deriveDeviceTelemetryStatus,
+  deriveWarmupStage,
+  evaluateDeviceActionPolicy,
+  isDeviceLeaseHeldByOther,
+} from "../policy.ts";
 import type {
   Clock,
   DeviceNode,
   DevicePlatform,
   DeviceStatus,
   DeviceWarmupStage,
+  FetchFn,
 } from "../types.ts";
+
+export { deriveWarmupStage, type FetchFn };
 
 export interface DeviceActionInput {
   deviceOnline: boolean;
@@ -45,6 +50,7 @@ export interface DeviceActionInput {
 
 export interface ExecOptions {
   timeoutMs?: number;
+  maxOutputBytes?: number;
 }
 
 export interface ExecResult {
@@ -57,11 +63,6 @@ export type ExecFn = (cmd: string[], opts?: ExecOptions) => Promise<ExecResult>;
 
 export type FindExecutableFn = (name: string) => string | null;
 
-export type FetchFn = (
-  input: string | URL | Request,
-  init?: RequestInit,
-) => Promise<Response>;
-
 export interface DeviceBridgeOptions {
   exec?: ExecFn;
   findExecutable?: FindExecutableFn;
@@ -70,6 +71,7 @@ export interface DeviceBridgeOptions {
   env?: Record<string, string | undefined>;
   hostMachine?: string;
   wdaBaseUrl?: string;
+  execTimeoutMs?: number;
 }
 
 export interface ScannedDevice {
@@ -182,14 +184,197 @@ export interface SetupDiagnostics {
 }
 
 const DEFAULT_WDA_URL = "http://127.0.0.1:8100";
-const DEFAULT_EXEC_TIMEOUT_MS = 10_000;
+const DEFAULT_EXEC_TIMEOUT_MS = 15_000;
+const KILL_GRACE_MS = 1_500;
+const DEFAULT_MAX_OUTPUT_BYTES = 1_048_576;
 const DEFAULT_WDA_TIMEOUT_MS = 5_000;
+const MAX_TEXT_LENGTH = 500;
+const MAX_COORD = 20_000;
 
-const SYSTEM_CLOCK: Clock = {
-  now: () => Date.now(),
-};
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+const KNOWN_ADB_STATES = new Set([
+  "device",
+  "offline",
+  "unauthorized",
+  "recovery",
+  "sideload",
+  "bootloader",
+  "authorizing",
+  "no",
+]);
+const SERIAL_RE = /^[A-Za-z0-9._:-]{2,128}$/;
+const PACKAGE_NAME_RE = /^[a-zA-Z0-9._-]+$/;
+const ACTIVITY_RE = /^[a-zA-Z0-9._$/-]+$/;
+const BUNDLE_ID_RE = /^[a-zA-Z0-9._-]{2,128}$/;
+const SAFE_OUTPUT_PATH_RE = /^\/(?:sdcard|tmp)\/[A-Za-z0-9._/-]+$/;
+const SAFE_FLAG_VALUE_RE = /^[A-Za-z0-9._-]{1,64}$/;
 
-/** Default Node 26 process runner backed by `spawnProcess` with timeout and safe ENOENT handling. */
+const ALLOWED_SCRCPY_BOOL_FLAGS = new Set([
+  "--stay-awake",
+  "--turn-screen-off",
+  "--no-audio",
+  "--no-control",
+  "--read-only",
+  "--always-on-top",
+  "--no-playback",
+  "--power-off-on-close",
+  "--show-touches",
+]);
+
+const ALLOWED_SCRCPY_VALUE_FLAGS = new Set([
+  "--max-size",
+  "--max-fps",
+  "--video-bit-rate",
+  "--display-orientation",
+  "--window-x",
+  "--window-y",
+  "--window-width",
+  "--window-height",
+]);
+
+function createDefaultClock(): Clock {
+  return new RealClock();
+}
+
+function hasControlChars(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function stripControlChars(value: string): string {
+  let out = "";
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code >= 0x20 && code !== 0x7f) {
+      out += value[i];
+    }
+  }
+  return out;
+}
+
+function isValidSerial(serial: string): boolean {
+  return SERIAL_RE.test(serial) && !serial.startsWith("-");
+}
+
+function isValidPackageName(pkg: string): boolean {
+  return (
+    pkg.length > 0 &&
+    pkg.length <= 160 &&
+    PACKAGE_NAME_RE.test(pkg) &&
+    !pkg.startsWith("-") &&
+    !pkg.includes("..")
+  );
+}
+
+function isValidActivity(activity: string): boolean {
+  return (
+    activity.length > 0 &&
+    activity.length <= 160 &&
+    ACTIVITY_RE.test(activity) &&
+    !activity.startsWith("-") &&
+    !activity.includes("..")
+  );
+}
+
+function isValidOutputPath(path: string): boolean {
+  return (
+    path.length > 0 &&
+    path.length <= 240 &&
+    SAFE_OUTPUT_PATH_RE.test(path) &&
+    !path.includes("..")
+  );
+}
+
+function validateScrcpyArgs(args: readonly string[] | undefined): string | null {
+  if (!args || args.length === 0) return null;
+  if (args.length > 12) return "scrcpy_cmd accepts at most 12 allowlisted arguments.";
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (ALLOWED_SCRCPY_BOOL_FLAGS.has(arg)) continue;
+    const eq = arg.indexOf("=");
+    if (eq > 0) {
+      const flag = arg.slice(0, eq);
+      const val = arg.slice(eq + 1);
+      if (ALLOWED_SCRCPY_VALUE_FLAGS.has(flag) && SAFE_FLAG_VALUE_RE.test(val)) {
+        continue;
+      }
+      return `Disallowed scrcpy argument: ${arg}`;
+    }
+    if (ALLOWED_SCRCPY_VALUE_FLAGS.has(arg)) {
+      const next = args[i + 1];
+      if (!next || !SAFE_FLAG_VALUE_RE.test(next)) {
+        return `Missing or invalid value for scrcpy flag: ${arg}`;
+      }
+      i += 1;
+      continue;
+    }
+    return `Disallowed scrcpy argument: ${arg}`;
+  }
+  return null;
+}
+
+function isLoopbackUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl);
+    return (
+      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase())
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isValidCoord(value: number): boolean {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= MAX_COORD;
+}
+
+async function readBoundedStream(
+  stream: ReadableStream<Uint8Array> | null,
+  maxBytes: number,
+): Promise<string> {
+  if (!stream) return "";
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let total = 0;
+  let out = "";
+  let truncated = false;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      if (total < maxBytes) {
+        const remaining = maxBytes - total;
+        const slice = value.byteLength > remaining ? value.subarray(0, remaining) : value;
+        out += decoder.decode(slice, { stream: true });
+        total += slice.byteLength;
+        if (value.byteLength > remaining) {
+          truncated = true;
+        }
+      } else {
+        truncated = true;
+      }
+    }
+    out += decoder.decode();
+  } catch {
+    // Stream closed after process kill.
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // Ignore already released lock.
+    }
+  }
+  return truncated ? `${out}\n[truncated]` : out;
+}
+
+/** Default Node 26 process runner backed by `spawnProcess` with SIGTERM->SIGKILL timeout and bounded output. */
 export async function defaultProcessExec(
   cmd: string[],
   opts?: ExecOptions,
@@ -197,8 +382,19 @@ export async function defaultProcessExec(
   if (cmd.length === 0) {
     return { exitCode: 127, stdout: "", stderr: "Empty command" };
   }
-  const timeoutMs = opts?.timeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS;
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutMs =
+    opts?.timeoutMs !== undefined && Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0
+      ? Math.round(opts.timeoutMs)
+      : DEFAULT_EXEC_TIMEOUT_MS;
+  const maxOutputBytes =
+    opts?.maxOutputBytes !== undefined &&
+    Number.isFinite(opts.maxOutputBytes) &&
+    opts.maxOutputBytes > 0
+      ? Math.round(opts.maxOutputBytes)
+      : DEFAULT_MAX_OUTPUT_BYTES;
+
+  let softTimer: ReturnType<typeof setTimeout> | undefined;
+  let hardTimer: ReturnType<typeof setTimeout> | undefined;
   try {
     const proc = spawnProcess(cmd, {
       stdout: "pipe",
@@ -206,21 +402,27 @@ export async function defaultProcessExec(
     });
 
     let timedOut = false;
-    timer = setTimeout(() => {
+    softTimer = setTimeout(() => {
       timedOut = true;
       try {
-        proc.kill("SIGKILL");
+        proc.kill("SIGTERM");
       } catch {
-        // Ignore kill race if process already exited.
+        // Process already exited.
       }
+      hardTimer = setTimeout(() => {
+        try {
+          proc.kill("SIGKILL");
+        } catch {
+          // Process already exited.
+        }
+      }, KILL_GRACE_MS);
     }, timeoutMs);
 
     const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout ? new Response(proc.stdout).text() : Promise.resolve(""),
-      proc.stderr ? new Response(proc.stderr).text() : Promise.resolve(""),
+      readBoundedStream(proc.stdout, maxOutputBytes),
+      readBoundedStream(proc.stderr, maxOutputBytes),
       proc.exited,
     ]);
-    clearTimeout(timer);
 
     if (timedOut) {
       return {
@@ -231,18 +433,12 @@ export async function defaultProcessExec(
     }
     return { exitCode, stdout, stderr };
   } catch (err) {
-    if (timer) clearTimeout(timer);
     const message = err instanceof Error ? err.message : String(err);
     return { exitCode: 127, stdout: "", stderr: message };
+  } finally {
+    if (softTimer) clearTimeout(softTimer);
+    if (hardTimer) clearTimeout(hardTimer);
   }
-}
-
-/** Maps a device warm-up day to its PRD DeviceWarmupStage label. */
-export function deriveWarmupStage(warmupDay: number): DeviceWarmupStage {
-  if (warmupDay < 1) return "birth_passive";
-  if (warmupDay <= 3) return "light_organic";
-  if (warmupDay <= 14) return "branded_cadence";
-  return "steady_state";
 }
 
 /** Parses `adb devices -l` stdout into structured ScannedDevice entries. */
@@ -258,7 +454,9 @@ export function parseAdbDevicesOutput(stdout: string): ScannedDevice[] {
     const tokens = line.split(/\s+/);
     const serial = tokens[0];
     const state = tokens[1];
-    if (!serial || !state) continue;
+    if (!serial || !state || !KNOWN_ADB_STATES.has(state) || !isValidSerial(serial)) {
+      continue;
+    }
 
     const transportDetails: Record<string, string> = {};
     for (let i = 2; i < tokens.length; i += 1) {
@@ -273,7 +471,7 @@ export function parseAdbDevicesOutput(stdout: string): ScannedDevice[] {
     const connectionState: ScannedDevice["connectionState"] =
       state === "device"
         ? "online"
-        : state === "unauthorized"
+        : state === "unauthorized" || state === "authorizing"
           ? "unauthorized"
           : "offline";
 
@@ -298,7 +496,8 @@ export function parseAdbBatteryOutput(stdout: string): {
   tempC: number | null;
   charging: boolean | null;
 } {
-  let batteryPct: number | null = null;
+  let rawLevel: number | null = null;
+  let scale: number | null = null;
   let tempC: number | null = null;
   let acPowered = false;
   let usbPowered = false;
@@ -314,13 +513,18 @@ export function parseAdbBatteryOutput(stdout: string): {
 
     if (key === "level") {
       const parsed = Number.parseInt(val, 10);
-      if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 100) {
-        batteryPct = parsed;
+      if (Number.isFinite(parsed) && parsed >= 0) {
+        rawLevel = parsed;
+      }
+    } else if (key === "scale") {
+      const parsed = Number.parseInt(val, 10);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        scale = parsed;
       }
     } else if (key === "temperature") {
       // Android dumpsys reports temperature in tenths of a degree Celsius (e.g., 325 => 32.5 C).
       const parsed = Number.parseFloat(val);
-      if (Number.isFinite(parsed)) {
+      if (Number.isFinite(parsed) && parsed >= -200 && parsed <= 1000) {
         tempC = Math.round((parsed / 10) * 10) / 10;
       }
     } else if (key === "ac powered") {
@@ -332,6 +536,14 @@ export function parseAdbBatteryOutput(stdout: string): {
     } else if (key === "wireless powered") {
       sawPowerField = true;
       wirelessPowered = val.toLowerCase() === "true";
+    }
+  }
+
+  let batteryPct: number | null = null;
+  if (rawLevel !== null) {
+    const normalized = scale && scale !== 100 ? Math.round((rawLevel / scale) * 100) : rawLevel;
+    if (normalized >= 0 && normalized <= 100) {
+      batteryPct = normalized;
     }
   }
 
@@ -349,18 +561,23 @@ export function parseDevicectlOutput(stdout: string): ScannedDevice[] {
 
   for (const rawLine of lines) {
     const line = rawLine.trim();
-    if (!line || line.startsWith("Name") || /^[-=]+$/.test(line)) {
+    if (!line || line.startsWith("Name") || /^[\s-=]+$/.test(line)) {
       continue;
     }
     const cols = line.split(/\s{2,}/).map((c) => c.trim()).filter(Boolean);
-    if (cols.length < 4) continue;
+    if (cols.length < 3) continue;
+
+    // Locate identifier column dynamically in case Hostname is omitted on USB-only devices.
+    const idIdx = cols.findIndex((c, idx) => idx >= 1 && /^[0-9a-fA-F-]{8,}$/.test(c));
+    if (idIdx < 1) continue;
 
     const name = cols[0] ?? "iPhone";
-    const identifier = cols[2] ?? "";
-    const stateRaw = (cols[3] ?? "").toLowerCase();
-    const model = cols[4] ?? null;
+    const hostname = idIdx >= 2 ? (cols[1] ?? "") : "";
+    const identifier = cols[idIdx] ?? "";
+    const stateRaw = (cols[idIdx + 1] ?? "").toLowerCase();
+    const model = cols[idIdx + 2] ?? null;
 
-    if (!identifier || !/[0-9a-fA-F-]{8,}/.test(identifier)) continue;
+    if (!isValidSerial(identifier)) continue;
 
     const isIosModel =
       !model ||
@@ -383,8 +600,8 @@ export function parseDevicectlOutput(stdout: string): ScannedDevice[] {
       connectionState,
       source: "devicectl",
       transportDetails: {
-        hostname: cols[1] ?? "",
-        state: cols[3] ?? "",
+        hostname,
+        state: cols[idIdx + 1] ?? "",
       },
     });
   }
@@ -409,7 +626,7 @@ export function parsePymobiledeviceUsbmuxOutput(stdout: string): ScannedDevice[]
           : typeof rec["Identifier"] === "string"
             ? rec["Identifier"]
             : null;
-      if (!udid) continue;
+      if (!udid || !isValidSerial(udid)) continue;
 
       const name =
         typeof rec["DeviceName"] === "string" ? rec["DeviceName"] : `iphone-${udid.slice(-4)}`;
@@ -434,6 +651,19 @@ export function parsePymobiledeviceUsbmuxOutput(stdout: string): ScannedDevice[]
   }
 }
 
+function normalizeAppleBatteryTempC(rawTemp: number): number | null {
+  if (!Number.isFinite(rawTemp)) return null;
+  // Apple IOPMPowerSource reports centi-degrees Celsius (e.g., 2950 => 29.5 C, 950 => 9.5 C).
+  if (rawTemp >= 500) {
+    return Math.round((rawTemp / 100) * 10) / 10;
+  }
+  // Deci-degrees Celsius fallback (e.g., 310 => 31.0 C).
+  if (rawTemp > 100) {
+    return Math.round((rawTemp / 10) * 10) / 10;
+  }
+  return Math.round(rawTemp * 10) / 10;
+}
+
 /** Parses `pymobiledevice3 diagnostics battery single` JSON or key-value output. */
 export function parsePymobiledeviceBatteryOutput(stdout: string): {
   batteryPct: number | null;
@@ -445,7 +675,7 @@ export function parsePymobiledeviceBatteryOutput(stdout: string): {
 
   try {
     const parsed: unknown = JSON.parse(trimmed);
-    if (parsed && typeof parsed === "object") {
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       const rec = parsed as Record<string, unknown>;
       const rawPct =
         typeof rec["CurrentCapacity"] === "number"
@@ -462,20 +692,9 @@ export function parsePymobiledeviceBatteryOutput(stdout: string): {
             ? rec["BatteryIsCharging"]
             : null;
 
-      let tempC: number | null = null;
-      if (rawTemp !== null && Number.isFinite(rawTemp)) {
-        if (rawTemp > 1000) {
-          tempC = Math.round((rawTemp / 100) * 10) / 10;
-        } else if (rawTemp > 100) {
-          tempC = Math.round((rawTemp / 10) * 10) / 10;
-        } else {
-          tempC = Math.round(rawTemp * 10) / 10;
-        }
-      }
-
       return {
         batteryPct: rawPct !== null && rawPct >= 0 && rawPct <= 100 ? Math.round(rawPct) : null,
-        tempC,
+        tempC: rawTemp !== null ? normalizeAppleBatteryTempC(rawTemp) : null,
         charging,
       };
     }
@@ -499,12 +718,7 @@ export function parsePymobiledeviceBatteryOutput(stdout: string): {
     } else if (key === "temperature") {
       const n = Number.parseFloat(val);
       if (Number.isFinite(n)) {
-        tempC =
-          n > 1000
-            ? Math.round((n / 100) * 10) / 10
-            : n > 100
-              ? Math.round((n / 10) * 10) / 10
-              : n;
+        tempC = normalizeAppleBatteryTempC(n);
       }
     } else if (key === "ischarging" || key === "batteryischarging") {
       charging = val.toLowerCase() === "true";
@@ -514,12 +728,13 @@ export function parsePymobiledeviceBatteryOutput(stdout: string): {
   return { batteryPct, tempC, charging };
 }
 
-/** Escapes text for Android `adb shell input text <value>` without shell injection. */
-function escapeAndroidInputText(text: string): string {
-  return text
+/** Escapes text for Android `adb shell input text <value>` while stripping control chars and shell metacharacters. */
+export function escapeAndroidInputText(text: string): string {
+  return stripControlChars(text)
     .replace(/\\/g, "\\\\")
+    .replace(/%/g, "\\%")
     .replace(/ /g, "%s")
-    .replace(/(["'&|<>()$`!;*?[\]{}~#])/g, "\\$1");
+    .replace(/(["'&|<>()$`!;*?[\]{}~#^])/g, "\\$1");
 }
 
 function isAndroidAction(action: DeviceAction): action is AndroidDeviceAction {
@@ -541,6 +756,83 @@ function isIosAction(action: DeviceAction): action is IosDeviceAction {
     action.kind === "wda_launch" ||
     action.kind === "wda_screenshot"
   );
+}
+
+function validateDeviceAction(serial: string, action: DeviceAction): string | null {
+  if (!isValidSerial(serial)) {
+    return `Invalid device serialOrUdid: ${serial}`;
+  }
+  switch (action.kind) {
+    case "tap":
+    case "wda_tap":
+      if (!isValidCoord(action.x) || !isValidCoord(action.y)) {
+        return `Invalid coordinates for ${action.kind}: (${String(action.x)}, ${String(action.y)})`;
+      }
+      return null;
+    case "text":
+      if (typeof action.text !== "string" || action.text.length === 0 || action.text.length > MAX_TEXT_LENGTH) {
+        return `Android text action requires a non-empty string up to ${MAX_TEXT_LENGTH} chars.`;
+      }
+      if (hasControlChars(action.text)) {
+        return "Android text action rejects control characters (\\n, \\r, \\0, etc.) to prevent shell injection.";
+      }
+      return null;
+    case "wda_type":
+      if (typeof action.text !== "string" || action.text.length === 0 || action.text.length > MAX_TEXT_LENGTH) {
+        return `iOS wda_type action requires a non-empty string up to ${MAX_TEXT_LENGTH} chars.`;
+      }
+      if (hasControlChars(action.text)) {
+        return "iOS wda_type action rejects control characters.";
+      }
+      return null;
+    case "swipe":
+      if (
+        !isValidCoord(action.x1) ||
+        !isValidCoord(action.y1) ||
+        !isValidCoord(action.x2) ||
+        !isValidCoord(action.y2)
+      ) {
+        return "Invalid coordinates for swipe action.";
+      }
+      if (
+        action.durationMs !== undefined &&
+        (!Number.isFinite(action.durationMs) || action.durationMs < 50 || action.durationMs > 10_000)
+      ) {
+        return "Invalid durationMs for swipe action (must be 50..10000).";
+      }
+      return null;
+    case "launch_app":
+      if (!isValidPackageName(action.packageName)) {
+        return `Invalid Android packageName: ${action.packageName}`;
+      }
+      if (action.activity !== undefined && !isValidActivity(action.activity)) {
+        return `Invalid Android activity: ${action.activity}`;
+      }
+      return null;
+    case "screenshot": {
+      const target = action.outputPath ?? "/sdcard/marketing-screen.png";
+      if (!isValidOutputPath(target)) {
+        return `Invalid screenshot outputPath (must be under /sdcard/ or /tmp/ with safe characters): ${target}`;
+      }
+      return null;
+    }
+    case "ui_dump": {
+      const target = action.outputPath ?? "/sdcard/marketing-ui.xml";
+      if (!isValidOutputPath(target)) {
+        return `Invalid ui_dump outputPath (must be under /sdcard/ or /tmp/ with safe characters): ${target}`;
+      }
+      return null;
+    }
+    case "scrcpy_cmd":
+      return validateScrcpyArgs(action.args);
+    case "wda_launch":
+      if (!BUNDLE_ID_RE.test(action.bundleId) || action.bundleId.startsWith("-")) {
+        return `Invalid iOS bundleId: ${action.bundleId}`;
+      }
+      return null;
+    case "wda_screenshot":
+      return null;
+  }
 }
 
 function buildAndroidCommand(serial: string, action: AndroidDeviceAction): string[] {
@@ -625,45 +917,10 @@ function buildAndroidCommand(serial: string, action: AndroidDeviceAction): strin
   }
 }
 
-function describeSafetyBlock(input: DeviceActionInput): string {
-  const reasons: string[] = [];
-  if (!input.deviceOnline) reasons.push("device is offline or not ready");
-  if (input.leasedByOther) reasons.push("device is leased by another holder");
-  if (!deviceBatterySafe(input.batteryPct, input.tempC)) {
-    reasons.push(
-      `telemetry outside proved safety envelope (battery=${input.batteryPct}% needs ${deviceBatteryMin}..${deviceBatteryMax}%, temp=${input.tempC}C needs ${deviceTempMinC}..${deviceTempMaxC}C)`,
-    );
-  }
-  const cap = warmupDailyCap(input.warmupDay);
-  if (input.actionsToday < 0 || input.actionsToday >= cap) {
-    reasons.push(`daily warm-up cap reached (${input.actionsToday}/${cap} on day ${input.warmupDay})`);
-  }
-  if (input.lockdown) reasons.push("campaign is in lockdown");
-  if (input.targetStopped) reasons.push("target contact is on global STOP fence");
-  return reasons.length > 0 ? reasons.join("; ") : "blocked by device safety core";
-}
-
-function deriveRecommendedStatus(
-  reachable: boolean,
-  batteryPct: number,
-  tempC: number,
-  currentStatus: DeviceStatus,
-): DeviceStatus {
-  if (!reachable) return "offline";
-  if (currentStatus === "needs_takeover") return "needs_takeover";
-  if (tempC > deviceTempMaxC || tempC < deviceTempMinC) {
-    return "thermal_cooldown";
-  }
-  if (batteryPct < deviceBatteryMin || batteryPct > deviceBatteryMax) {
-    return "charging_wait";
-  }
-  return currentStatus === "leased" ? "leased" : "online";
-}
-
 /** Converts a ScannedDevice into a DeviceNode suitable for MarketingStore registration. */
 export function toDeviceNode(
   scanned: ScannedDevice,
-  clock: Clock = SYSTEM_CLOCK,
+  clock: Clock = createDefaultClock(),
   overrides?: Partial<DeviceNode>,
 ): DeviceNode {
   const warmupDay = overrides?.warmupDay ?? 0;
@@ -705,20 +962,32 @@ export class DeviceBridge {
   private readonly env: Record<string, string | undefined>;
   private readonly hostMachine: string;
   private readonly wdaBaseUrl: string;
+  private readonly execTimeoutMs: number;
 
   constructor(opts?: DeviceBridgeOptions) {
     this.usingDefaultExec = opts?.exec === undefined;
     this.exec = opts?.exec ?? defaultProcessExec;
     this.findExecutableFn = opts?.findExecutable ?? null;
     this.fetchFn = opts?.fetchFn ?? fetch;
-    this.clock = opts?.clock ?? SYSTEM_CLOCK;
+    this.clock = opts?.clock ?? createDefaultClock();
     this.env = opts?.env ?? process.env;
     this.hostMachine = opts?.hostMachine ?? "local-macbook";
-    this.wdaBaseUrl = (
+    const candidateWda = (
       opts?.wdaBaseUrl ??
       this.env["MARKETING_WDA_URL"] ??
       DEFAULT_WDA_URL
     ).replace(/\/+$/, "");
+    this.wdaBaseUrl = isLoopbackUrl(candidateWda) ? candidateWda : DEFAULT_WDA_URL;
+    this.execTimeoutMs =
+      opts?.execTimeoutMs !== undefined &&
+      Number.isFinite(opts.execTimeoutMs) &&
+      opts.execTimeoutMs > 0
+        ? Math.round(opts.execTimeoutMs)
+        : DEFAULT_EXEC_TIMEOUT_MS;
+  }
+
+  private runCmd(cmd: string[], timeoutMs = this.execTimeoutMs): Promise<ExecResult> {
+    return this.exec(cmd, { timeoutMs });
   }
 
   isLiveDeviceEnabled(): boolean {
@@ -731,7 +1000,11 @@ export class DeviceBridge {
     sessionId: string | null;
     osVersion: string | null;
   }> {
-    const url = `${(baseUrl ?? this.wdaBaseUrl).replace(/\/+$/, "")}/status`;
+    const resolvedBase = (baseUrl ?? this.wdaBaseUrl).replace(/\/+$/, "");
+    if (!isLoopbackUrl(resolvedBase)) {
+      return { reachable: false, sessionId: null, osVersion: null };
+    }
+    const url = `${resolvedBase}/status`;
     try {
       const res = await this.fetchFn(url, {
         method: "GET",
@@ -769,9 +1042,9 @@ export class DeviceBridge {
     const bySerial = new Map<string, ScannedDevice>();
 
     const [adbRes, devicectlRes, pymdRes, wdaStatus] = await Promise.all([
-      this.exec(["adb", "devices", "-l"]),
-      this.exec(["xcrun", "devicectl", "list", "devices"]),
-      this.exec(["pymobiledevice3", "usbmux", "list"]),
+      this.runCmd(["adb", "devices", "-l"]),
+      this.runCmd(["xcrun", "devicectl", "list", "devices"]),
+      this.runCmd(["pymobiledevice3", "usbmux", "list"]),
       this.probeWdaStatus(),
     ]);
 
@@ -846,8 +1119,29 @@ export class DeviceBridge {
     const dailyActionCap = warmupDailyCap(device.warmupDay);
     const warmupStage = deriveWarmupStage(device.warmupDay);
 
+    if (!isValidSerial(device.serialOrUdid)) {
+      const fallbackSafe = deviceBatterySafe(device.batteryPct, device.tempC);
+      return {
+        deviceId: device.id,
+        serialOrUdid: device.serialOrUdid,
+        platform: device.platform,
+        reachable: false,
+        batteryPct: device.batteryPct,
+        tempC: device.tempC,
+        charging: null,
+        batterySafe: fallbackSafe,
+        warmupDay: device.warmupDay,
+        warmupStage,
+        dailyActionCap,
+        recommendedStatus: "offline",
+        polledAt,
+        source: "cached_fallback",
+        error: `Invalid device serialOrUdid: ${device.serialOrUdid}`,
+      };
+    }
+
     if (device.platform === "android") {
-      const res = await this.exec([
+      const res = await this.runCmd([
         "adb",
         "-s",
         device.serialOrUdid,
@@ -874,7 +1168,7 @@ export class DeviceBridge {
             warmupDay: device.warmupDay,
             warmupStage,
             dailyActionCap,
-            recommendedStatus: deriveRecommendedStatus(
+            recommendedStatus: deriveDeviceTelemetryStatus(
               true,
               batteryPct,
               tempC,
@@ -907,7 +1201,7 @@ export class DeviceBridge {
       };
     }
 
-    const pymdRes = await this.exec([
+    const pymdRes = await this.runCmd([
       "pymobiledevice3",
       "diagnostics",
       "battery",
@@ -934,7 +1228,7 @@ export class DeviceBridge {
           warmupDay: device.warmupDay,
           warmupStage,
           dailyActionCap,
-          recommendedStatus: deriveRecommendedStatus(
+          recommendedStatus: deriveDeviceTelemetryStatus(
             true,
             batteryPct,
             tempC,
@@ -965,9 +1259,9 @@ export class DeviceBridge {
               : null;
           const level = typeof value?.["level"] === "number" ? value["level"] : null;
           const state = typeof value?.["state"] === "number" ? value["state"] : null;
-          if (level !== null && Number.isFinite(level)) {
+          if (level !== null && Number.isFinite(level) && level >= 0) {
             const batteryPct =
-              level <= 1 ? Math.round(level * 100) : Math.round(level);
+              level <= 1 ? Math.round(level * 100) : Math.min(100, Math.round(level));
             const tempC = device.tempC;
             const batterySafe = deviceBatterySafe(batteryPct, tempC);
             return {
@@ -982,7 +1276,7 @@ export class DeviceBridge {
               warmupDay: device.warmupDay,
               warmupStage,
               dailyActionCap,
-              recommendedStatus: deriveRecommendedStatus(
+              recommendedStatus: deriveDeviceTelemetryStatus(
                 true,
                 batteryPct,
                 tempC,
@@ -1023,7 +1317,7 @@ export class DeviceBridge {
 
   /**
    * Executes one Android or iOS device action.
-   * Strictly checks proved `canExecuteDeviceAction(...)` from `marketingDevice.ts`
+   * Strictly checks proved `canDispatchDeviceStep(...)` via `evaluateDeviceActionPolicy`
    * BEFORE dispatching any subprocess or HTTP request.
    * Stays in safe dry-run mode unless `MARKETING_LIVE_DEVICE === "1"` AND `context.dryRun !== true`.
    */
@@ -1032,17 +1326,15 @@ export class DeviceBridge {
     action: DeviceAction,
     context: DeviceActionContext,
   ): Promise<DeviceExecutionResult> {
-    const executedAt = new Date(this.clock.now()).toISOString();
+    const nowMs = this.clock.now();
+    const executedAt = new Date(nowMs).toISOString();
     const wdaBase = (context.wdaBaseUrl ?? this.wdaBaseUrl).replace(/\/+$/, "");
 
-    const commandPreview = isAndroidAction(action)
-      ? buildAndroidCommand(device.serialOrUdid, action).join(" ")
-      : `${action.kind} -> ${wdaBase}`;
+    const leasedByOther = isDeviceLeaseHeldByOther(device, context.leaseHolder, nowMs);
 
     const safetyInput: DeviceActionInput = {
       deviceOnline: device.status === "online" || device.status === "leased",
-      leasedByOther:
-        device.leaseHolder !== null && device.leaseHolder !== context.leaseHolder,
+      leasedByOther,
       batteryPct: device.batteryPct,
       tempC: device.tempC,
       actionsToday: device.dailyActionsUsed,
@@ -1054,7 +1346,57 @@ export class DeviceBridge {
     const liveAllowed = this.isLiveDeviceEnabled() && context.dryRun !== true;
     const effectiveDryRun = !liveAllowed;
 
-    if (context.challengeDetected || device.status === "needs_takeover") {
+    const validationError = validateDeviceAction(device.serialOrUdid, action);
+    if (validationError) {
+      return {
+        ok: false,
+        executed: false,
+        dryRun: effectiveDryRun,
+        status: "failed",
+        deviceId: device.id,
+        serialOrUdid: device.serialOrUdid,
+        platform: device.platform,
+        action,
+        commandPreview: `${action.kind} (rejected)`,
+        output: null,
+        reason: validationError,
+        safetyInput,
+        executedAt,
+      };
+    }
+
+    if (isIosAction(action) && !isLoopbackUrl(wdaBase)) {
+      return {
+        ok: false,
+        executed: false,
+        dryRun: effectiveDryRun,
+        status: "failed",
+        deviceId: device.id,
+        serialOrUdid: device.serialOrUdid,
+        platform: device.platform,
+        action,
+        commandPreview: `${action.kind} -> (rejected non-loopback WDA URL)`,
+        output: null,
+        reason: "WebDriverAgent URL must target a loopback host (127.0.0.1, localhost, or ::1).",
+        safetyInput,
+        executedAt,
+      };
+    }
+
+    const commandPreview = isAndroidAction(action)
+      ? buildAndroidCommand(device.serialOrUdid, action).join(" ")
+      : `${action.kind} -> ${wdaBase}`;
+
+    const policyDecision = evaluateDeviceActionPolicy({
+      device,
+      leaseHolder: context.leaseHolder,
+      nowMs,
+      lockdown: context.lockdown,
+      targetStopped: context.targetStopped,
+      challengeDetected: context.challengeDetected,
+    });
+
+    if (policyDecision.needsTakeover) {
       return {
         ok: false,
         executed: false,
@@ -1075,7 +1417,8 @@ export class DeviceBridge {
 
     if (
       (device.platform === "android" && !isAndroidAction(action)) ||
-      (device.platform === "ios" && !isIosAction(action))
+      (device.platform === "ios" && !isIosAction(action)) ||
+      (device.platform !== "android" && device.platform !== "ios")
     ) {
       return {
         ok: false,
@@ -1094,17 +1437,7 @@ export class DeviceBridge {
       };
     }
 
-    const allowed = canExecuteDeviceAction(
-      safetyInput.deviceOnline,
-      safetyInput.leasedByOther,
-      safetyInput.batteryPct,
-      safetyInput.tempC,
-      safetyInput.actionsToday,
-      safetyInput.warmupDay,
-      safetyInput.lockdown,
-      safetyInput.targetStopped,
-    );
-    if (!allowed) {
+    if (!policyDecision.allowed) {
       return {
         ok: false,
         executed: false,
@@ -1116,7 +1449,7 @@ export class DeviceBridge {
         action,
         commandPreview,
         output: null,
-        reason: describeSafetyBlock(safetyInput),
+        reason: policyDecision.reason ?? "blocked by device safety core",
         safetyInput,
         executedAt,
       };
@@ -1145,7 +1478,7 @@ export class DeviceBridge {
 
     if (isAndroidAction(action)) {
       const cmd = buildAndroidCommand(device.serialOrUdid, action);
-      const res = await this.exec(cmd);
+      const res = await this.runCmd(cmd);
       if (res.exitCode !== 0) {
         return {
           ok: false,
@@ -1200,6 +1533,7 @@ export class DeviceBridge {
     commandPreview: string,
     executedAt: string,
   ): Promise<DeviceExecutionResult> {
+    let createdEphemeralSessionId: string | null = null;
     try {
       let sessionId = providedSessionId;
       if (!sessionId) {
@@ -1239,6 +1573,7 @@ export class DeviceBridge {
                 typeof (created["value"] as Record<string, unknown>)["sessionId"] === "string"
               ? ((created["value"] as Record<string, unknown>)["sessionId"] as string)
               : null;
+        createdEphemeralSessionId = sessionId;
       }
 
       if (!sessionId) {
@@ -1341,6 +1676,20 @@ export class DeviceBridge {
         safetyInput,
         executedAt,
       };
+    } finally {
+      if (createdEphemeralSessionId) {
+        try {
+          await this.fetchFn(
+            `${wdaBase}/session/${encodeURIComponent(createdEphemeralSessionId)}`,
+            {
+              method: "DELETE",
+              signal: AbortSignal.timeout(2_000),
+            },
+          );
+        } catch {
+          // Best-effort cleanup of ephemeral WDA session.
+        }
+      }
     }
   }
 
@@ -1395,7 +1744,7 @@ export class DeviceBridge {
             ? this.findExecutableFn(spec.tool)
             : this.usingDefaultExec
               ? findExecutable(spec.tool)
-              : await this.exec(["which", spec.tool]).then((r) =>
+              : await this.runCmd(["which", spec.tool]).then((r) =>
                   r.exitCode === 0 ? r.stdout.trim() || null : null,
                 );
           if (!foundPath) {
@@ -1409,7 +1758,7 @@ export class DeviceBridge {
               installHint: spec.installHint,
             };
           }
-          const verRes = await this.exec(spec.versionCmd);
+          const verRes = await this.runCmd(spec.versionCmd);
           const firstLine =
             (verRes.stdout || verRes.stderr).split(/\r?\n/).find((l) => l.trim().length > 0)?.trim() ??
             null;
@@ -1417,7 +1766,7 @@ export class DeviceBridge {
             tool: spec.tool,
             platform: spec.platform,
             required: spec.required,
-            status: "ready",
+            status: verRes.exitCode === 0 ? "ready" : "missing",
             path: foundPath,
             version: firstLine,
             installHint: spec.installHint,

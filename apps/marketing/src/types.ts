@@ -1,8 +1,13 @@
 // Shared domain types for @thenetwork/marketing matching docs/marketing/PRD.md
-// and the PostgreSQL marketing.* schema.
+// and the PostgreSQL marketing.* schema (Pass 2 canonical source of truth).
+
+import type { Clock } from "../../../packages/core/src/clock.ts";
+
+export type { Clock };
 
 export type AppId = "slop" | "peon" | "friends" | "ntwrk" | "all";
 export type BrandAppId = "slop" | "peon" | "friends" | "ntwrk";
+export type SupportedCity = "nyc" | "sf" | "la" | "chicago" | "miami" | "austin" | "london";
 export type ImplementationTier = 1 | 2 | 3 | 4;
 
 export type RiskZone = "zone_1_green" | "zone_2_amber" | "zone_3_red";
@@ -13,7 +18,7 @@ export type AgentAuthMode = "cli" | "mcp" | "oauth" | "browser" | "api";
 export type PersonaId = "chadwick" | "sloane" | "peon" | "venn" | "operator";
 export type AgentStatus = "idle" | "running" | "cooldown" | "rate_limited" | "paused_stop";
 
-export type DevicePlatform = "android" | "ios";
+export type DevicePlatform = "macbook" | "android" | "ios";
 export type DeviceWarmupStage = "birth_passive" | "light_organic" | "branded_cadence" | "steady_state";
 export type DeviceStatus =
   | "online"
@@ -106,9 +111,47 @@ export type SlopCashHookState =
 
 export type SlopCashVaultChain = "base" | "solana" | "robinhood_4663";
 
-export interface Clock {
-  now(): number;
-}
+export type BanditArmStatus = "active" | "killed" | "paused";
+
+export type BdDealStage =
+  | "prospect"
+  | "enriched"
+  | "pitched"
+  | "negotiating"
+  | "contracted"
+  | "kit_shipped"
+  | "live"
+  | "audited"
+  | "closed_lost";
+
+export type QrBatchAssigneeType = "human" | "bd_deal";
+
+export type VipProspectStatus =
+  | "discovered"
+  | "scored"
+  | "drafted"
+  | "invited"
+  | "replied"
+  | "onboarded"
+  | "declined";
+
+export type VideoAssetStage =
+  | "trend"
+  | "script"
+  | "voice_render"
+  | "qa"
+  | "published"
+  | "measured"
+  | "killed";
+
+export type PhoneLineType = "postpaid" | "prepaid" | "mvno" | "voip" | "landline" | "unknown";
+
+export type AntiFraudClaimStatus = "vesting" | "approved" | "quarantined" | "rejected";
+
+export type FetchFn = (
+  input: string | URL | Request,
+  init?: RequestInit,
+) => Promise<Response>;
 
 export interface Campaign {
   id: string;
@@ -271,6 +314,7 @@ export interface BudgetEntry {
   tier: ImplementationTier;
   amountCents: number;
   entryType: BudgetEntryType;
+  fromReserve?: boolean;
   idempotencyKey: string;
   externalRef: string | null;
   createdAt: string;
@@ -285,6 +329,107 @@ export interface SlopCashHook {
   estimatedUsdcCents: number;
   hookState: SlopCashHookState;
   externalTxHash: string | null;
+  createdAt: string;
+}
+
+export interface BanditArm {
+  id: string;
+  campaignId: string;
+  armKey: string;
+  label: string;
+  track: string;
+  alpha: number;
+  beta: number;
+  weight: number;
+  spendCents: number;
+  signups: number;
+  stopEvents: number;
+  totalContacts: number;
+  status: BanditArmStatus;
+  updatedAt: string;
+}
+
+export interface BdDeal {
+  id: string;
+  campaignId: string;
+  city: string;
+  venueName: string;
+  vertical: AppId;
+  contactEmail: string | null;
+  businessPhone: string | null;
+  stage: BdDealStage;
+  offeredCents: number;
+  phoneCallbackVerified: boolean;
+  contractHash: string | null;
+  qrBatchId: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface QrBatch {
+  id: string;
+  campaignId: string;
+  city: string;
+  batchCode: string;
+  destinationUrl: string;
+  dubLinkId: string | null;
+  printQty: number;
+  assignedToType: QrBatchAssigneeType | null;
+  assignedToId: string | null;
+  scans: number;
+  verifiedSignups: number;
+  createdAt: string;
+}
+
+export interface VipProspect {
+  id: string;
+  campaignId: string;
+  city: string;
+  name: string;
+  archetype: string;
+  organization: string | null;
+  publicSource: string;
+  sourceUrl: string | null;
+  prestigeScore: number;
+  contactEmail: string | null;
+  inviteDraft: string | null;
+  status: VipProspectStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VideoAsset {
+  id: string;
+  campaignId: string;
+  agentId: string | null;
+  title: string;
+  hook: string;
+  script: string;
+  stage: VideoAssetStage;
+  videoUrl: string | null;
+  platform: string | null;
+  views: number;
+  retention3sPct: number;
+  signups: number;
+  ftcDisclosed: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AntiFraudClaim {
+  id: string;
+  campaignId: string;
+  personKey: string;
+  workerId: string | null;
+  taskId: string | null;
+  phoneLineType: PhoneLineType;
+  mediaHash: string | null;
+  clusterId: string | null;
+  vestingTier: number;
+  amountCents: number;
+  status: AntiFraudClaimStatus;
+  reason: string | null;
   createdAt: string;
 }
 

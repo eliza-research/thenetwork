@@ -1,14 +1,20 @@
 // Subscription-connected multi-agent lifecycle coordinator for @thenetwork/marketing (Node 26).
 // Manages the 5 branded agents (Chadwick, Sloane, Peon, Venn, The Operator) and any
 // additional agents connected via ChatGPT, Claude, Gemini, or Surplus subscriptions.
-// Enforces Vibestack-generated canDispatchAgentTurn, automatic provider failover
-// on rate limits, and core LeakGuard + parseOptOut safety middleware.
+// Enforces Vibestack-generated canDispatchAgentTurn via ./policy.ts, automatic provider
+// failover on rate limits without bouncing back to tried providers, sanitized CLI env,
+// bounded process output, and core LeakGuard + parseOptOut safety middleware.
 
 import { RealClock } from "../../../packages/core/src/clock.ts";
-import { canDispatchAgentTurn } from "../../../packages/core/src/generated/marketingPolicy.ts";
 import { LeakGuard } from "../../../packages/core/src/guard.ts";
 import { parseOptOut } from "../../../packages/core/src/replies.ts";
 import { spawnProcess } from "../../../packages/core/src/runtime/process.ts";
+import {
+  CANONICAL_MARKETING_AGENTS,
+  FALLBACK_PROVIDER_ORDER,
+  type CanonicalAgentSpec,
+} from "./constants.ts";
+import { evaluateAgentTurnPolicy } from "./policy.ts";
 import type { MarketingStore, UpsertAgentInput } from "./store.ts";
 import type {
   AgentAuthMode,
@@ -17,6 +23,8 @@ import type {
   MarketingAgent,
   SubscriptionProvider,
 } from "./types.ts";
+
+export { CANONICAL_MARKETING_AGENTS, type CanonicalAgentSpec };
 
 export type SubscriptionConnectionMode =
   | AgentAuthMode
@@ -32,73 +40,6 @@ export function normalizeAuthMode(mode: SubscriptionConnectionMode): AgentAuthMo
   if (mode === "api_key" || mode === "api") return "api";
   return "mcp";
 }
-
-export interface CanonicalAgentSpec extends UpsertAgentInput {
-  systemPrompt: string;
-}
-
-export const CANONICAL_MARKETING_AGENTS: readonly CanonicalAgentSpec[] = [
-  {
-    personaId: "chadwick",
-    displayName: "Chadwick",
-    appId: "ntwrk",
-    provider: "chatgpt",
-    failoverProvider: "claude",
-    authMode: "cli",
-    sessionRef: "codex:chadwick-nyc",
-    dailyTurnCap: 60,
-    systemPrompt:
-      "You are Chadwick, NYC social & hospitality connector for The Network (ntwrk.party). Speak concisely, never leak private contacts, and respect STOP opt-outs.",
-  },
-  {
-    personaId: "sloane",
-    displayName: "Sloane",
-    appId: "slop",
-    provider: "claude",
-    failoverProvider: "gemini",
-    authMode: "cli",
-    sessionRef: "claude:sloane-nyc",
-    dailyTurnCap: 60,
-    systemPrompt:
-      "You are Sloane, dating growth and creator-partnerships agent for slop.date (18+ only). Never contact minors, enforce FTC #Ad disclosure, and respect STOP opt-outs.",
-  },
-  {
-    personaId: "peon",
-    displayName: "Peon",
-    appId: "peon",
-    provider: "gemini",
-    failoverProvider: "chatgpt",
-    authMode: "cli",
-    sessionRef: "gemini:peon-nyc",
-    dailyTurnCap: 60,
-    systemPrompt:
-      "You are Peon, builder/career networking and OSS growth agent for peon.biz. Keep outreach authentic, never spam, and honor STOP immediately.",
-  },
-  {
-    personaId: "venn",
-    displayName: "Venn",
-    appId: "friends",
-    provider: "claude",
-    failoverProvider: "chatgpt",
-    authMode: "cli",
-    sessionRef: "claude:venn-nyc",
-    dailyTurnCap: 60,
-    systemPrompt:
-      "You are Venn, NYC friend-group and local event community agent for friends.help. Coordinate local IRL events and honor STOP immediately.",
-  },
-  {
-    personaId: "operator",
-    displayName: "The Operator",
-    appId: "ntwrk",
-    provider: "chatgpt",
-    failoverProvider: "claude",
-    authMode: "cli",
-    sessionRef: "codex:operator-nyc",
-    dailyTurnCap: 80,
-    systemPrompt:
-      "You are The Operator, campaign coordinator for The Network across ntwrk.party, slop.date, peon.biz, and friends.help. Enforce 18+ rules, budget caps, proof checks, and STOP fences.",
-  },
-];
 
 export interface CliRunResult {
   exitCode: number;
@@ -194,8 +135,63 @@ export interface AutopilotTickResult {
 }
 
 const DEFAULT_COOLDOWN_MS = 15 * 60_000;
-const DEFAULT_CLI_TIMEOUT_MS = 20_000;
-const FALLBACK_PROVIDER_ORDER: readonly SubscriptionProvider[] = ["claude", "chatgpt", "gemini"];
+const DEFAULT_CLI_TIMEOUT_MS = 30_000;
+const CLI_KILL_GRACE_MS = 1_500;
+const MAX_CLI_OUTPUT_BYTES = 1024 * 1024;
+
+const BASE_CLI_ENV_ALLOWLIST: readonly string[] = [
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "LANG",
+  "LC_ALL",
+  "TERM",
+  "TMPDIR",
+  "XDG_CONFIG_HOME",
+  "XDG_CACHE_HOME",
+  "XDG_STATE_HOME",
+  "NO_COLOR",
+];
+
+const PROVIDER_CLI_ENV_ALLOWLIST: Record<SubscriptionProvider, readonly string[]> = {
+  claude: ["CLAUDE_CONFIG_DIR", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"],
+  chatgpt: ["CODEX_HOME", "CODEX_CONFIG_DIR"],
+  gemini: ["GEMINI_CLI_HOME", "GEMINI_CONFIG_DIR"],
+  surplus: [],
+};
+
+const DEFAULT_MARKETING_LEAK_ALLOW: readonly string[] = [
+  "ops-nyc@ntwrk.party",
+  "ntwrk.party",
+  "slop.date",
+  "peon.biz",
+  "friends.help",
+  "go.ntwrk.party",
+  "go.slop.date",
+  "go.peon.biz",
+  "go.friends.help",
+];
+
+/** Builds a minimal non-secret environment for subscription CLI subprocesses. */
+export function sanitizeCliEnv(
+  provider: SubscriptionProvider,
+  env: Record<string, string | undefined>,
+): Record<string, string> {
+  const clean: Record<string, string> = {};
+  const allowedKeys = [
+    ...BASE_CLI_ENV_ALLOWLIST,
+    ...PROVIDER_CLI_ENV_ALLOWLIST[provider],
+  ];
+  for (const key of allowedKeys) {
+    const val = env[key];
+    if (typeof val === "string" && val.length > 0) {
+      clean[key] = val;
+    }
+  }
+  return clean;
+}
 
 function isRateLimitMessage(text: string): boolean {
   return /\b(429|rate[ -]?limit|quota|too many requests|limit reached|try again later|capacity)\b/i.test(
@@ -210,10 +206,48 @@ function cliCommandForProvider(provider: SubscriptionProvider, prompt: string): 
   return ["codex", "exec", prompt];
 }
 
+async function readBoundedStream(
+  stream: ReadableStream<Uint8Array> | null,
+  maxBytes: number,
+): Promise<string> {
+  if (!stream) return "";
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value || value.byteLength === 0) continue;
+      if (total < maxBytes) {
+        const remaining = maxBytes - total;
+        const slice = value.byteLength > remaining ? value.subarray(0, remaining) : value;
+        chunks.push(slice);
+        total += slice.byteLength;
+      }
+    }
+  } catch {
+    // Stream closed after process termination.
+  } finally {
+    reader.releaseLock();
+  }
+  const combined = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(combined);
+}
+
 async function defaultCliRunner(
   cmd: readonly string[],
   opts: { stdin?: string; timeoutMs: number; env?: Record<string, string | undefined> },
 ): Promise<CliRunResult> {
+  let timedOut = false;
+  let softTimer: ReturnType<typeof setTimeout> | undefined;
+  let hardTimer: ReturnType<typeof setTimeout> | undefined;
+
   try {
     const proc = spawnProcess(cmd, {
       stdin: opts.stdin !== undefined ? new Blob([opts.stdin]) : "ignore",
@@ -221,29 +255,45 @@ async function defaultCliRunner(
       stderr: "pipe",
       env: opts.env,
     });
-    const timer = setTimeout(() => {
+    const timeoutMs = Math.max(250, opts.timeoutMs);
+    softTimer = setTimeout(() => {
+      timedOut = true;
       try {
-        proc.kill();
+        proc.kill("SIGTERM");
       } catch {
         // Process already exited.
       }
-    }, opts.timeoutMs);
-    try {
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout ? new Response(proc.stdout).text() : Promise.resolve(""),
-        proc.stderr ? new Response(proc.stderr).text() : Promise.resolve(""),
-        proc.exited,
-      ]);
-      return { exitCode, stdout, stderr };
-    } finally {
-      clearTimeout(timer);
+      hardTimer = setTimeout(() => {
+        try {
+          proc.kill("SIGKILL");
+        } catch {
+          // Process already exited.
+        }
+      }, CLI_KILL_GRACE_MS);
+    }, timeoutMs);
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      readBoundedStream(proc.stdout, MAX_CLI_OUTPUT_BYTES),
+      readBoundedStream(proc.stderr, MAX_CLI_OUTPUT_BYTES),
+      proc.exited,
+    ]);
+    if (timedOut) {
+      return {
+        exitCode: 124,
+        stdout,
+        stderr: stderr || `CLI command timed out after ${timeoutMs}ms`,
+      };
     }
+    return { exitCode, stdout, stderr };
   } catch (err) {
     return {
       exitCode: 127,
       stdout: "",
       stderr: err instanceof Error ? err.message : String(err),
     };
+  } finally {
+    if (softTimer) clearTimeout(softTimer);
+    if (hardTimer) clearTimeout(hardTimer);
   }
 }
 
@@ -267,7 +317,13 @@ export class AgentLifecycleManager {
     this.cliRunner = opts.cliRunner ?? defaultCliRunner;
     this.browserRunner = opts.browserRunner;
     this.oauthOrApiRunner = opts.oauthOrApiRunner;
-    this.leakGuard = opts.leakGuard ?? new LeakGuard({ contacts: false });
+    this.leakGuard =
+      opts.leakGuard ??
+      new LeakGuard({
+        contacts: true,
+        canaryShapes: true,
+        allow: [...DEFAULT_MARKETING_LEAK_ALLOW],
+      });
     this.defaultCooldownMs = opts.defaultCooldownMs ?? DEFAULT_COOLDOWN_MS;
     this.cliTimeoutMs = opts.cliTimeoutMs ?? DEFAULT_CLI_TIMEOUT_MS;
   }
@@ -280,7 +336,19 @@ export class AgentLifecycleManager {
       if (existing) {
         roster.push(existing);
       } else {
-        roster.push(await this.store.upsertAgent(spec));
+        roster.push(
+          await this.store.upsertAgent({
+            id: spec.id,
+            personaId: spec.personaId,
+            displayName: spec.displayName,
+            appId: spec.appId,
+            provider: spec.provider,
+            failoverProvider: spec.failoverProvider,
+            authMode: spec.authMode,
+            sessionRef: spec.sessionRef,
+            dailyTurnCap: spec.dailyTurnCap,
+          }),
+        );
       }
     }
     return roster;
@@ -316,23 +384,25 @@ export class AgentLifecycleManager {
     }
 
     const remainingTurnsToday = Math.max(0, agent.dailyTurnCap - agent.turnsUsedToday);
-    const healthy =
-      agent.sessionHealthy &&
-      agent.status !== "paused_stop" &&
-      agent.status !== "rate_limited" &&
-      !cooldownActive &&
-      remainingTurnsToday > 0;
+    const decision = evaluateAgentTurnPolicy({
+      agent,
+      nowMs,
+      targetStopped: false,
+      lockdown: false,
+    });
 
-    let reason: string | undefined;
-    if (agent.status === "paused_stop") reason = "paused_stop";
-    else if (cooldownActive || agent.status === "rate_limited") reason = "cooldown_or_rate_limited";
-    else if (!agent.sessionHealthy) reason = "session_unhealthy";
-    else if (remainingTurnsToday <= 0) reason = "daily_turn_cap_reached";
+    const reason = decision.allowed
+      ? undefined
+      : decision.reason === "agent_paused"
+        ? "paused_stop"
+        : decision.reason === "rate_limited"
+          ? "cooldown_or_rate_limited"
+          : decision.reason;
 
     return {
       agent,
-      healthy,
-      inCooldown: cooldownActive,
+      healthy: decision.allowed,
+      inCooldown: decision.inCooldown,
       remainingTurnsToday,
       checkedAt,
       ...(reason ? { reason } : {}),
@@ -353,10 +423,10 @@ export class AgentLifecycleManager {
 
   /**
    * Dispatches one turn on a subscription-connected agent.
-   * Strictly checks proved marketingPolicy.canDispatchAgentTurn before executing,
+   * Strictly checks proved marketingPolicy.canDispatchAgentTurn via evaluateAgentTurnPolicy,
    * respects contact STOP fences (and parses opt-outs on lastMessageText),
-   * runs LeakGuard on output, and automatically fails over to a healthy backup
-   * subscription provider when rate-limited.
+   * runs LeakGuard on output, and fails over across untried backup subscription
+   * providers when rate-limited.
    */
   async dispatchTurn(
     agentId: string,
@@ -412,34 +482,29 @@ export class AgentLifecycleManager {
       }
     }
 
-    const inCooldown = agent.cooldownUntil !== null && Date.parse(agent.cooldownUntil) > nowMs;
-    const precheckAllowed = canDispatchAgentTurn(
-      agent.status === "paused_stop",
-      agent.status === "rate_limited" || inCooldown,
-      agent.sessionHealthy,
-      agent.turnsUsedToday,
-      agent.dailyTurnCap,
+    const policyDecision = evaluateAgentTurnPolicy({
+      agent,
+      nowMs,
       targetStopped,
       lockdown,
-    );
+    });
 
     const allowFailover = opts.allowFailover !== false;
     let activeProvider = agent.provider;
     let failedOverFrom: SubscriptionProvider | null = null;
+    const triedProviders = new Set<SubscriptionProvider>([activeProvider]);
 
-    if (!precheckAllowed) {
+    if (!policyDecision.allowed) {
       const onlyRateLimited =
-        agent.status !== "paused_stop" &&
+        policyDecision.reason === "rate_limited" &&
         agent.sessionHealthy &&
-        agent.turnsUsedToday < agent.dailyTurnCap &&
-        !targetStopped &&
-        !lockdown &&
-        (agent.status === "rate_limited" || inCooldown);
+        agent.turnsUsedToday < agent.dailyTurnCap;
+      const backup = this.pickBackupProvider(agent, triedProviders);
 
-      const backup = this.pickBackupProvider(agent);
       if (onlyRateLimited && allowFailover && backup) {
-        failedOverFrom = agent.provider;
+        failedOverFrom = activeProvider;
         activeProvider = backup;
+        triedProviders.add(backup);
         agent = await this.store.updateAgent(agent.id, {
           provider: backup,
           failoverProvider: failedOverFrom,
@@ -447,17 +512,6 @@ export class AgentLifecycleManager {
           cooldownUntil: null,
         });
       } else {
-        const blockedReason = targetStopped
-          ? "target_stopped"
-          : lockdown
-            ? "campaign_lockdown"
-            : agent.status === "paused_stop"
-              ? "agent_paused"
-              : !agent.sessionHealthy
-                ? "session_unhealthy"
-                : agent.turnsUsedToday >= agent.dailyTurnCap
-                  ? "daily_turn_cap_reached"
-                  : "rate_limited";
         return {
           ok: false,
           agent,
@@ -466,7 +520,7 @@ export class AgentLifecycleManager {
           authMode: agent.authMode,
           outputText: null,
           leakReasons: [],
-          blockedReason,
+          blockedReason: policyDecision.reason ?? "policy_blocked",
           dryRun,
           dispatchedAt,
         };
@@ -474,19 +528,23 @@ export class AgentLifecycleManager {
     }
 
     let exec = await this.executeProvider(agent, activeProvider, prompt, dryRun);
-    if (!exec.ok && exec.rateLimited && allowFailover) {
-      const backup = this.pickBackupProvider({ ...agent, provider: activeProvider });
-      if (backup) {
-        failedOverFrom = activeProvider;
-        activeProvider = backup;
-        agent = await this.store.updateAgent(agent.id, {
-          provider: backup,
-          failoverProvider: failedOverFrom,
-          status: "idle",
-          cooldownUntil: null,
-        });
-        exec = await this.executeProvider(agent, activeProvider, prompt, dryRun);
-      }
+    while (!exec.ok && exec.rateLimited && allowFailover) {
+      const backup = this.pickBackupProvider(
+        { ...agent, provider: activeProvider },
+        triedProviders,
+      );
+      if (!backup) break;
+      if (failedOverFrom === null) failedOverFrom = activeProvider;
+      const prevProvider = activeProvider;
+      activeProvider = backup;
+      triedProviders.add(backup);
+      agent = await this.store.updateAgent(agent.id, {
+        provider: backup,
+        failoverProvider: prevProvider,
+        status: "idle",
+        cooldownUntil: null,
+      });
+      exec = await this.executeProvider(agent, activeProvider, prompt, dryRun);
     }
 
     if (!exec.ok) {
@@ -616,7 +674,7 @@ export class AgentLifecycleManager {
       const task = openTasks[dispatched.length];
       const prompt = task
         ? `[Campaign ${campaign.slug} | ${campaign.city}] Advance task "${task.title}" (${task.taskKind}, status=${task.status}) while obeying 18+, FTC #Ad, and STOP rules.`
-        : `[Campaign ${campaign.slug} | ${campaign.city}] Prepare next ${hb.agent.displayName} (${hb.agent.appId}) zero-cost NYC discovery and outreach draft.`;
+        : `[Campaign ${campaign.slug} | ${campaign.city}] Prepare next ${hb.agent.displayName} (${hb.agent.appId}) zero-cost ${campaign.city.toUpperCase()} discovery and outreach draft.`;
 
       const targetHuman = task?.assigneeHumanId
         ? await this.store.getHuman(task.assigneeHumanId)
@@ -639,12 +697,21 @@ export class AgentLifecycleManager {
     };
   }
 
-  private pickBackupProvider(agent: MarketingAgent): SubscriptionProvider | null {
-    if (agent.failoverProvider && agent.failoverProvider !== agent.provider) {
+  private pickBackupProvider(
+    agent: MarketingAgent,
+    tried: ReadonlySet<SubscriptionProvider>,
+  ): SubscriptionProvider | null {
+    if (
+      agent.failoverProvider &&
+      agent.failoverProvider !== agent.provider &&
+      !tried.has(agent.failoverProvider)
+    ) {
       return agent.failoverProvider;
     }
     for (const candidate of FALLBACK_PROVIDER_ORDER) {
-      if (candidate !== agent.provider) return candidate;
+      if (candidate !== agent.provider && !tried.has(candidate)) {
+        return candidate;
+      }
     }
     return null;
   }
@@ -666,7 +733,7 @@ export class AgentLifecycleManager {
       const cmd = cliCommandForProvider(provider, prompt);
       const res = await this.cliRunner(cmd, {
         timeoutMs: this.cliTimeoutMs,
-        env: this.env,
+        env: sanitizeCliEnv(provider, this.env),
       });
       if (res.exitCode === 0) {
         return { ok: true, text: res.stdout.trim() || "(ok)" };
