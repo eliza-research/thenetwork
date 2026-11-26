@@ -845,24 +845,62 @@ function reversedByMeetingPositive(t: string, from: number): boolean {
     const c = clause.trim();
     if (!c) continue;
     const clickAt = c.search(/\b(?:clicked|connected)\b/);
-    if (clickAt >= 0 && !/\b(?:not|never|hardly|barely|no)\b|n't/.test(c.slice(0, clickAt))) return true;
+    if (clickAt >= 0 && !/\b(?:not|never|hardly|barely|no)\b|n't/.test(c.slice(0, clickAt))) {
+      const afterClick = c.slice(clickAt).replace(/^(?:clicked|connected)\b\s*/, "");
+      if (!/^(?:like|the dots|on\b|a\b|an\b|the link|the button)\b/.test(afterClick)) return true;
+    }
     if (/\b(?:easy|effortless)\b/.test(c) && !/\b(?:not|never|no)\b|n't/.test(c.slice(0, c.search(/\b(?:easy|effortless)\b/)))) return true;
+    if (/\b(?:he|she|they)\s+made\s+it\s+(?:easy|simple|effortless|fun|great)\b/.test(c)) return true;
+    if (/\b(?:he|she|they)\s+put\s+me\s+at\s+ease\b/.test(c)) return true;
+    if (/\b(?:he|she|they)\s+made\s+up\s+for\s+it\b/.test(c)) return true;
+    if (/\b(?:he|she|they)(?:'s|\s+is|\s+was|\s+seems|\s+seemed)\s+(?:a\s+)?(?:gem|dream|delight|sweetheart|keeper|great|wonderful|lovely|nice|amazing|kind|funny|charming|sweet)\b/.test(c)) return true;
+    if (/\b(?:great|wonderful|lovely|nice|amazing|kind|funny|charming|sweet)\s+(?:guy|girl|man|woman|person|member|date)\b/.test(c)) return true;
+    if (/\b(?:this|that)\s+(?:guy|girl|man|woman|person|member)\s+is\s+(?:a\s+)?(?:gem|dream|delight|sweetheart|keeper|great|wonderful|lovely|nice|amazing|kind|funny|charming|sweet)\b/.test(c)) return true;
+    if (/\b(?:loved|enjoyed)\s+(?:it|that|the\s+(?:night|evening|meeting|date|time|chat|conversation)|(?:her|his|their)\s+company|talking)\b/.test(c)) return true;
+    if (/\bfor the (?:food|cafe|coffee|venue|restaurant|bar|drinks?)\b|\b(?:food|cafe|coffee|venue|restaurant|bar|drinks?) was\b/.test(c)) continue;
     if (/\b(?:great|amazing|wonderful|lovely|nice|good|fun|enjoyable)\s+(?:night|evening|meeting|date|time|chat|conversation|session)\b/.test(c)) return true;
     if (/\b(?:night|evening|meeting|date|time|chat|conversation)\s+was\s+(?:great|amazing|wonderful|lovely|nice|good|fun)\b/.test(c)) return true;
+    if (/\bconversation\s+flowed\b/.test(c)) return true;
     if (/\b(?:it|this|that)\s+was\s+(?:great|amazing|wonderful|lovely|fun)\b/.test(c)) return true;
-    if (/\b(?:loved|enjoyed)\s+(?:it|that|the\s+(?:night|evening|meeting|date|time|chat|conversation)|(?:her|his|their)\s+company|talking)\b/.test(c)) return true;
   }
   return false;
 }
-function genericObject(comp: string): boolean {
-  const words = comp.trim().split(/\s+/).filter(Boolean);
+function objectKind(comp: string): "member" | "meeting" | "other" | "unknown" | "none" {
+  const words = comp.replace(/\b(?:at all|really|very much)\b/g, " ").trim().split(/\s+/).filter(Boolean);
   const first = words[0] ?? "";
-  if (first === "him" || first === "her" || first === "them" || first === "each") return false;
-  if (first === "a" || first === "an" || first === "any" || first === "some" || first === "anyone" || first === "someone" || first === "anybody" || first === "somebody" || first === "everyone" || first === "everybody") return true;
-  if (first === "the" || first === "my" || first === "his" || first === "their" || first === "this" || first === "that") {
-    return words.slice(0, 4).some(w => w === "last" || w === "previous" || w === "past" || w === "earlier" || w === "former");
+  if (!first) return "none";
+  if (first === "him" || first === "her" || first === "them" || first === "me" || first === "us") return "member";
+  if (first === "each" && words[1] === "other") return "member";
+  const meeting = new Set(["conversation", "chat", "meeting", "date", "night", "evening", "time", "session"]);
+  const other = new Set(["a", "an", "any", "some", "anyone", "someone", "anybody", "somebody", "everyone", "everybody", "new", "stranger", "strangers", "people", "person", "persons", "guys", "girls", "men", "women", "coworker", "coworkers", "dating", "apps", "ex", "friends", "friend", "sex", "venue", "cafe", "coffee", "food", "restaurant", "bar", "dots", "like", "last", "previous", "past", "earlier", "former"]);
+  if (meeting.has(first)) return "meeting";
+  if (other.has(first)) return "other";
+  if (first === "the" || first === "my" || first === "his" || first === "her" || first === "their" || first === "this" || first === "that") {
+    const head = words.slice(0, 5);
+    if (head.some(w => meeting.has(w))) return "meeting";
+    if (head.some(w => other.has(w))) return "other";
+    return "unknown";
   }
-  return true;
+  return "unknown";
+}
+function clickCounts(rest: string): boolean {
+  if (!rest || /^(?:at first|at all|really|very much)\b/.test(rest)) return true;
+  const comp = rest.match(/^(?:with|to)\s+(.+)$/);
+  if (!comp) return false;
+  const kind = objectKind(comp[1] ?? "");
+  return kind === "member" || kind === "meeting";
+}
+function talkCounts(rest: string, personSubject: boolean): boolean {
+  const comp = rest.match(/^(?:to|with)\s+(.+)$/);
+  if (!comp) return personSubject;
+  const kind = objectKind(comp[1] ?? "");
+  if (kind === "none") return personSubject;
+  return kind === "member";
+}
+function disappointedClauseCounts(clause: string): boolean {
+  const c = clause.trim();
+  if (/\b(?:lives|lived|moving away|move away|rush off to work|had to\b[^.!?;,]*\bwork\b|seated us|by the kitchen|venue|weather|traffic|went by so fast|ended so soon|didn't ask|did not ask|i forgot|my fault)\b/.test(c)) return false;
+  return /\b(?:left early|was late|showed up late|arrived late|was rude|was creepy|was awkward|was terrible|was uncomfortable|didn't click|did not click|never clicked|never connected|wasn't easy to talk|was not easy to talk|nothing in common|checked (?:his|her|their) phone|talked over me|ignored me|stood me up|didn't show|did not show)\b/.test(c);
 }
 function negatedPositiveFeedback(t: string): boolean {
   for (const m of t.matchAll(/\bdid not\s+(?:(?:really|quite)\s+)?(?:click|connect|enjoy)\b|\bdid not have much\b/g)) {
@@ -873,18 +911,14 @@ function negatedPositiveFeedback(t: string): boolean {
     const rest = clauseAfter(t, end);
     if (/\bbefore\b|\bpreviously\b|\bsince\b|\buntil now\b|\bin the past\b/.test(rest)) continue;
     if (/\b(?:so|this|that)\s+(?:\w+ly|fast|hard|well|soon|much)\b|\b(?:faster|quicker|better|sooner|more)\b|\blike (?:that|this)\b/.test(rest)) continue;
-    const comp = rest.match(/^(?:with|to)\s+(.+)$/);
-    if (comp && genericObject(comp[1] ?? "")) continue;
+    if (!clickCounts(rest)) continue;
     if (!reversedByMeetingPositive(t, end)) return true;
   }
   for (const m of t.matchAll(/(?:\bnot|\bnever|n't)\s+(?:really\s+|very\s+)?easy to talk\b/g)) {
     const end = m.index + m[0].length;
     const rest = clauseAfter(t, end);
     const personSubject = /\b(?:he|she|they)\b/.test(clauseBefore(t, m.index));
-    const comp = rest.match(/^(?:to|with)\s+(.+)$/);
-    if (comp) {
-      if (genericObject(comp[1] ?? "")) continue;
-    } else if (!personSubject) continue;
+    if (!talkCounts(rest, personSubject)) continue;
     if (!reversedByMeetingPositive(t, end)) return true;
   }
   for (const m of t.matchAll(/\bdisappoint(?:ed|ing)\b/g)) {
@@ -911,13 +945,13 @@ function negatedPositiveFeedback(t: string): boolean {
     const prep = rest.match(/^(?:in|with|by|at)\s+(.+)$/);
     if (prep) {
       const comp = prep[1] ?? "";
-      if (/^(?:him|her|them)\b/.test(comp) || /^(?:the|my|this|that)\s+(?:night|evening|meeting|date|time|chat|conversation|session)\b/.test(comp)) {
+      if (/^(?:him|her|them)\b/.test(comp) || /^(?:how it went|how the (?:meeting|date|night|evening|chat|conversation) went)\b/.test(comp) || /^(?:the|my|this|that)\s+(?:night|evening|meeting|date|time|chat|conversation|session)\b/.test(comp)) {
         if (!reversedByMeetingPositive(t, end)) return true;
       }
       continue;
     }
     const clause = rest.replace(/^(?:that|when|because)\s+/, "");
-    if (/^(?:he|she|they)\b/.test(clause) && !reversedByMeetingPositive(t, end)) return true;
+    if (disappointedClauseCounts(clause) && !reversedByMeetingPositive(t, end)) return true;
   }
   return false;
 }
