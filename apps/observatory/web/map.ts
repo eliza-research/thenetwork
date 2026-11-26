@@ -12,7 +12,7 @@ const NYC: L.LatLngExpression = [40.73, -73.95];
 const MEETING_STATES = new Set(["SCHEDULED", "COMPLETED", "FEEDBACK_COLLECTED"]);
 
 /**
- * The Network on a map of New York, drawn with Leaflet on OpenStreetMap tiles (attribution required; the tiles are
+ * The Network on a map drawn with Leaflet on OpenStreetMap tiles (attribution required; the tiles are
  * darkened in dark mode by the `[data-map] .tiles-dark` rule in styles.css). Members stand at their home neighborhoods,
  * with their relationships, open opportunities as dashed lines, meetings at their public venues, and every venue the
  * Network can suggest. The borough filter hides members; the members filter and the focus dim them; a focus change flies
@@ -33,6 +33,7 @@ export class MapView {
   private edgeKey = "";
   private lastFocusKey = "";
   private lastBorough = "all";
+  private initialViewportDone = false;
   private raf = 0;
   private last = 0;
   private stopObservingSize: () => void;
@@ -48,7 +49,14 @@ export class MapView {
       this.venues.push(L.circleMarker([v.lat, v.lng], { renderer: this.renderer, radius: 3.5, weight: 1, fillOpacity: 0.25 })
         .bindTooltip(textNode(`${v.name} · ${v.neighborhood}`), { direction: "top" }).addTo(this.venueLayer));
     }
-    if (store.pendingFly) { this.map.setView([store.pendingFly.lat, store.pendingFly.lng], 15); store.pendingFly = null; this.lastFocusKey = focusKey(store.ui.focus); }
+    if (store.pendingFly) {
+      this.map.setView([store.pendingFly.lat, store.pendingFly.lng], 15);
+      store.pendingFly = null;
+      this.lastFocusKey = focusKey(store.ui.focus);
+      this.initialViewportDone = true;
+    }
+    // A user pan/zoom or explicit navigation before the first snapshot takes precedence.
+    this.map.once("movestart zoomstart", () => { this.initialViewportDone = true; });
     this.stopObservingSize = observeMapSize(el, () => {
       this.map.invalidateSize({ animate: false, debounceMoveend: true });
     });
@@ -108,6 +116,14 @@ export class MapView {
     const ink = readPalette();
     this.restyleVenues(ink);
     this.followFocus();
+    if (!this.initialViewportDone && store.members.size) {
+      this.initialViewportDone = true;
+      const members = [...store.members.values()];
+      const city = members[0]!.city;
+      if (!f && ui.filters.borough === "all" && (city === "sf" || city === "la") && members.every(m => m.city === city)) {
+        this.map.fitBounds(L.latLngBounds(members.map(m => this.point(m))), { padding: [40, 40], maxZoom: 12, animate: false });
+      }
+    }
     if (ui.filters.borough !== this.lastBorough && store.members.size) {
       this.lastBorough = ui.filters.borough;
       const pts = [...store.members.values()].filter(m => store.inBorough(m)).map(m => this.point(m));

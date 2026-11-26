@@ -352,7 +352,7 @@ function MapStage() {
     store.stage = m;
     return () => { m.destroy(); if (store.stage === m) store.stage = null; };
   }, []);
-  return <div ref={ref} data-map className="absolute inset-0 isolate bg-muted" aria-label="Map of members in New York" />;
+  return <div ref={ref} data-map className="absolute inset-0 isolate bg-muted" aria-label="Map of members" />;
 }
 
 function GraphCanvas() {

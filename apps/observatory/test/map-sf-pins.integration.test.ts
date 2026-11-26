@@ -113,3 +113,66 @@ test("MapView focuses SF members in San Francisco, Bay Area zips near their cent
     restoreDom();
   }
 });
+
+test("MapView fits the initial single-city non-NYC snapshot and does not refit later snapshots", async () => {
+  const window = new Window({ url: "http://127.0.0.1/" });
+  const restoreDom = installDom(window, {
+    window, document: window.document, navigator: window.navigator,
+    location: window.location, history: window.history,
+    localStorage: window.localStorage, sessionStorage: window.sessionStorage,
+    requestAnimationFrame: () => 1, cancelAnimationFrame: () => {},
+  });
+  installCanvasShim(window);
+  const el = window.document.createElement("div");
+  Object.defineProperty(el, "clientWidth", { value: 960, configurable: true });
+  Object.defineProperty(el, "clientHeight", { value: 660, configurable: true });
+  window.document.body.append(el);
+  const { store } = await import("../web/store.ts");
+  const { MapView } = await import("../web/map.ts");
+  store.members.clear();
+  store.edges.clear();
+  store.opps.clear();
+  let stage = new MapView(el as unknown as HTMLElement);
+  try {
+    stage["sync"]();
+    expect(stage["map"].getCenter().lng).toBeCloseTo(-73.95, 2);
+    const names = ["Dogpatch", "Berkeley"];
+    names.forEach((name, index) => {
+      const id = `sf-fixture-${index}`;
+      store.members.set(id, makeMember(id, name, "sf", name));
+    });
+    stage["sync"]();
+    const bounds = stage["map"].getBounds();
+    names.forEach((name, index) => {
+      const point = memberPoint(`sf-fixture-${index}`, name, "sf");
+      expect(bounds.contains([point.lat, point.lng])).toBe(true);
+    });
+    stage["map"].setView([37.79, -122.45], 15, { animate: false });
+    store.members.set("sf-fixture-3", makeMember("sf-fixture-3", "Palo Alto", "sf", "Palo Alto"));
+    stage["sync"]();
+    expect(stage["map"].getZoom()).toBe(15);
+    expect(stage["map"].getCenter().lng).toBeCloseTo(-122.45, 2);
+
+    // A deliberate zoom before data arrives wins over the one-time auto-fit.
+    stage.destroy();
+    store.members.clear();
+    stage = new MapView(el as unknown as HTMLElement);
+    stage["map"].setZoom(14, { animate: false });
+    store.members.set("sf-fixture-0", makeMember("sf-fixture-0", "Dogpatch", "sf", "Dogpatch"));
+    stage["sync"]();
+    expect(stage["map"].getZoom()).toBe(14);
+    expect(stage["map"].getCenter().lng).toBeCloseTo(-73.95, 2);
+
+    // A mixed-city snapshot retains the existing default.
+    stage.destroy();
+    stage = new MapView(el as unknown as HTMLElement);
+    store.members.set("ny-fixture-0", makeMember("ny-fixture-0", "Harlem", "nyc", "Harlem"));
+    stage["sync"]();
+    expect(stage["map"].getCenter().lng).toBeCloseTo(-73.95, 2);
+  } finally {
+    store.members.clear();
+    stage.destroy();
+    await window.happyDOM.close();
+    restoreDom();
+  }
+});
