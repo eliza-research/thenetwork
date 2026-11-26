@@ -710,7 +710,7 @@ const RENEW_PRIVATE_ITEM = new RegExp(String.raw`\bsend\s+(it|${CONTACT_RELAY_IT
 const PRIVATE_RELAY_COURTESY = /^(?:[,\s]+(?:now|please|pls|kindly|thanks|thank you|no (?:rush|worries|problem)))*\s*$/i;
 const FLEXIBLE_PRIVATE_TIMING = String.raw`whenever|any\s*time`;
 const RECURRING_PRIVATE_CONDITION = String.raw`${FLEXIBLE_PRIVATE_TIMING}|(?:(?:each\s+and\s+)?every(?:\s+single)?|each)\s*time`;
-const PRIVATE_CONDITION_MARKER = String.raw`if|when|${RECURRING_PRIVATE_CONDITION}|unless|once|after|until|provided|as\s+long\s+as|in\s+case`;
+const PRIVATE_CONDITION_MARKER = String.raw`if|when|${RECURRING_PRIVATE_CONDITION}|unless|once|after|until|provided|as\s+long\s+as|in\s+case|in\s+the\s+event|on\s+(?:the\s+)?condition|subject\s+to|should\s+(?:he|she|they)|were\s+(?:he|she|they)\s+to`;
 const TRAILING_PRIVATE_CONDITION = new RegExp(
   String.raw`^[\s,:–—-]*(?:(?:and|but|now|please|kindly|pls|just|thanks)[\s,:–—-]+)*(?:(?:wait|hold(?:\s+(?:it|off|on))?)\s+(?=(?:until|till)\b))?(\(\s*)?((?:only\s+)?(?:${PRIVATE_CONDITION_MARKER}|till)\b.*)$`,
   "iu",
