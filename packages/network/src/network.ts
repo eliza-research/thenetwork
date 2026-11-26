@@ -710,10 +710,11 @@ export function explicitBookingCancellation(text: string): BookingCancellation |
   if (dayTime) {
     const two = (n: number) => String(n).padStart(2, "0");
     let time: string | undefined;
-    if (dayTime[4] && Number(dayTime[2]) >= 1 && Number(dayTime[2]) <= 12) {
+    if (dayTime[4] && Number(dayTime[2]) >= 1 && Number(dayTime[2]) <= 12 && Number(dayTime[3] ?? "00") <= 59) {
       const hour = Number(dayTime[2]) % 12 + (dayTime[4].toLowerCase() === "pm" ? 12 : 0);
       time = `${two(hour)}:${dayTime[3] ?? "00"}`;
-    } else if (dayTime[5] && Number(dayTime[5]) <= 23) time = `${two(Number(dayTime[5]))}:${dayTime[6]}`;
+    } else if (dayTime[5] && Number(dayTime[5]) <= 23 && Number(dayTime[6]) <= 59) time = `${two(Number(dayTime[5]))}:${dayTime[6]}`;
+    if ((dayTime[2] || dayTime[5]) && !time) return { needsExactStart: true };
     return { day: dayTime[1]!.toLowerCase(), ...(time ? { time } : {}) };
   }
   const namedDay = ATTENDANCE_DAY_CANCEL.exec(command);

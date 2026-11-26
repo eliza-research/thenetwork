@@ -36,3 +36,23 @@ test("a cancellation naming a start with no matching booking reports none and le
   expect(x.net.exportState().opps.find(o => o.id === oppId)!.stage).toBe("scheduled");
   expect(x.sent.slice(before).filter(s => s.to === "a").map(s => s.body)).toContain("I couldn't find a matching upcoming meeting.");
 });
+
+test("a cancellation naming the same day at a different time leaves the booking", async () => {
+  const { x, oppId } = await bookedPair();
+  const before = x.sent.length;
+  await x.say("a", "Cancel Saturday 10 PM");
+  expect(x.net.exportState().opps.find(o => o.id === oppId)!.stage).toBe("scheduled");
+  expect(x.sent.slice(before).filter(s => s.to === "a").map(s => s.body)).toContain("I couldn't find a matching upcoming meeting.");
+  expect(x.sent.slice(before).filter(s => s.to === "b")).toHaveLength(0);
+});
+
+test("a cancellation naming a time that cannot be read leaves the booking and asks for the start", async () => {
+  for (const text of ["Cancel Saturday 13:00 PM", "Cancel Saturday 15pm", "Cancel Saturday 25:00", "Cancel Saturday 0 AM"]) {
+    const { x, oppId } = await bookedPair();
+    const before = x.sent.length;
+    await x.say("a", text);
+    expect(x.net.exportState().opps.find(o => o.id === oppId)!.stage).toBe("scheduled");
+    expect(x.sent.slice(before).filter(s => s.to === "a").map(s => s.body).some(body => body.includes("Which meeting should I cancel?"))).toBe(true);
+    expect(x.sent.slice(before).filter(s => s.to === "b")).toHaveLength(0);
+  }
+});
