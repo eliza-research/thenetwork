@@ -114,6 +114,12 @@ export class MapView {
       if (!f && pts.length > 1) this.map.flyToBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 14, duration: 0.6 });
     }
     let pinsMoved = false;
+    for (const [id, marker] of this.members) {
+      if (store.members.has(id)) continue;
+      marker.remove();
+      this.members.delete(id);
+      pinsMoved = true;
+    }
     for (const m of store.members.values()) {
       let mk = this.members.get(m.id);
       const shown = store.inBorough(m) || !!bright?.has(m.id);
