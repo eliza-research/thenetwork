@@ -61,7 +61,7 @@ day, and a day with no part still takes the default.
 | `pnpm run sim --only evals` | 41/41 blocking gates pass |
 | the same gate with the `classify.ts` change stashed | fails, naming `Friday at 9am -> ["evening:Fri"] want ["morning:Fri"]` |
 | `pnpm run typecheck` | passes |
-| `pnpm run sim --only network` | see the PR |
+| `pnpm run sim --only network` | 123/123 blocking gates pass, 13 tracked; 1907.6s |
 
 ## Risks and trade-offs
 
