@@ -1,5 +1,5 @@
 import type { AppId, Facet, MemberId } from "@thenetwork/core";
-import { canBeMatched } from "@thenetwork/core";
+import { ADULT_AGE, canBeMatched } from "@thenetwork/core";
 import { APPEARANCE_PREFIX, canRatePhotos, parseAppearance } from "./packs/slop/appearance.ts";
 import { provenanceWeight, type World } from "./world.ts";
 
@@ -38,7 +38,7 @@ export interface SpringRankResult {
 const MIN_STATUS_COHORT = 20;
 
 export function canComputeStatus(age: number, adultMin: number): boolean {
-  return Number.isFinite(age) && age >= 18 && age >= adultMin && canBeMatched(age);
+  return Number.isFinite(age) && age >= ADULT_AGE && age >= adultMin && canBeMatched(age);
 }
 
 export function clampStatusZ(x: number): number {
@@ -407,7 +407,7 @@ export function memberWelcomesNewcomers(w: World, id: MemberId): boolean {
   let set = welcomesCache.get(w);
   if (!set) {
     const s = new Set<MemberId>();
-    const adultFloor = Math.max(18, w.pack.eligibility.minMatchAge, w.cfg.ageMin);
+    const adultFloor = Math.max(ADULT_AGE, w.pack.eligibility.minMatchAge, w.cfg.ageMin);
     for (const mid of w.ids) {
       const mi = w.get(mid)!;
       if (w.minors.has(mid) || !canComputeStatus(mi.m.age, adultFloor)) continue;
@@ -423,7 +423,7 @@ export function worldStatusBeliefs(w: World): ReadonlyMap<MemberId, StatusBelief
   const cached = statusCache.get(w);
   if (cached) return cached;
 
-  const adultFloor = Math.max(18, w.pack.eligibility.minMatchAge, w.cfg.ageMin);
+  const adultFloor = Math.max(ADULT_AGE, w.pack.eligibility.minMatchAge, w.cfg.ageMin);
   const adults: MemberId[] = [];
   for (const id of w.ids) {
     const mi = w.get(id);
