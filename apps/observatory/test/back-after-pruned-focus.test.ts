@@ -50,6 +50,26 @@ test("console Back skips a browser history entry whose opportunity the latest sn
     arrived("first", 1);
     expect(back).toHaveBeenCalledTimes(3);
     expect(store.ui.focus?.id).toBe("first");
+
+    // A new navigation before popstate clears the pending back target so Back never locks out.
+    store.focus({ kind: "opportunity", id: "current" });
+    store.back();
+    expect(back).toHaveBeenCalledTimes(4);
+    store.focus({ kind: "opportunity", id: "first" });
+    store.back();
+    expect(back).toHaveBeenCalledTimes(5);
+    arrived("current", 2);
+    expect(store.ui.focus?.id).toBe("current");
+
+    // A failing history.back() clears appBackTarget instead of locking out later Back clicks.
+    back.mockImplementationOnce(() => { throw new Error("history unavailable"); });
+    store.focus({ kind: "opportunity", id: "first" });
+    store.back();
+    expect(back).toHaveBeenCalledTimes(6);
+    store.back();
+    expect(back).toHaveBeenCalledTimes(7);
+    arrived("current", 2);
+    expect(store.ui.focus?.id).toBe("current");
   } finally {
     back.mockRestore();
     store.disconnect();

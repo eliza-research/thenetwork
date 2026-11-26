@@ -515,6 +515,7 @@ class ObsStore {
   /** Stop live socket traffic, pending reconnects, and queued subscriber notifications. */
   disconnect() {
     this.wsGen++;
+    this.appBackTarget = undefined;
     if (this.reconnectTimer !== undefined) { clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined; }
     if (this.notifyTimer !== undefined) { clearTimeout(this.notifyTimer); this.notifyTimer = undefined; }
     this.notifyQueued = false;
@@ -769,6 +770,7 @@ class ObsStore {
    * `focus` is the subject that the new state names, and `history` is the list that its depth counts from the end.
    */
   private commitNav(next: ConsoleNav, opts: { focus?: Focus; history?: Focus[]; person?: string } = {}) {
+    this.appBackTarget = undefined;
     const before = this.nav();
     const patch: Partial<UIState> = {};
     const view = next.stage === "GraphStage" ? "graph" : "map";
@@ -824,7 +826,7 @@ class ObsStore {
     if (((history.state as { obsDepth?: number } | null)?.obsDepth ?? 0) > 0) {
       if (this.appBackTarget) return;
       this.appBackTarget = prev;
-      history.back();
+      try { history.back(); } catch { this.appBackTarget = undefined; }
       return;
     }
     this.commitNav(goBack(nav, subjectOf(prev)), { focus: prev, history: this.focusHistory.slice(0, -1) });
@@ -855,7 +857,7 @@ class ObsStore {
         sameFocus(appBackTarget, this.focusHistory.at(-1) ?? null) &&
         ((history.state as { obsDepth?: number } | null)?.obsDepth ?? 0) > 0) {
       this.appBackTarget = appBackTarget;
-      history.back();
+      try { history.back(); } catch { this.appBackTarget = undefined; }
       return;
     }
     if (page.kind === "all") { if (this.page.kind !== "all") this.setApp("all"); return; }

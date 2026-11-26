@@ -162,7 +162,7 @@ export class MapView {
       }
     }
     const oppVersion = `${store.version}|${ui.showOpps}|${JSON.stringify(ui.filters)}|${focusKey(f)}|${Math.floor(store.now() / 3_600_000)}|${this.venueInk}`;
-    if (oppVersion !== this.oppVersion) {
+    if (pinsMoved || oppVersion !== this.oppVersion) {
       this.oppVersion = oppVersion;
       this.oppLayer.clearLayers(); this.meetLayer.clearLayers();
       const meetings = new Map<string, { lat: number; lng: number; name: string; n: number; upcoming: number; opps: string[] }>();
