@@ -5,6 +5,7 @@
 // not stored as events, and leak-guard reasons keep only their kind. One exception, as before:
 // feedback_given keeps the feedback text in its payload; describe() never shows it.
 import type { MemberId } from "@thenetwork/core";
+import { observatoryMeetingHeld } from "../../../packages/core/src/generated/observatoryRoster.ts";
 import { requestEventView } from "../../../packages/core/src/generated/requestResultView.ts";
 import type { RunRecord } from "@thenetwork/core";
 import { desireById } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
@@ -166,7 +167,9 @@ export function describe(row: EventRow, name: (id: string) => string = id => id)
       severity = "good"; break;
     case "interaction_occurred": {
       const showed = Object.values(p.attendance ?? {}).filter((a: any) => a?.showed).length;
-      text = `Meeting happened (${showed} showed)`; severity = showed >= 2 ? "good" : "warn"; detail.showed = showed; break;
+      const held = observatoryMeetingHeld(showed);
+      text = `${held ? "Meeting happened" : "Meeting fell through"} (${showed} showed)`;
+      severity = held ? "good" : "warn"; detail.showed = showed; break;
     }
     case "feedback_given": text = `${name(row.actor_id ?? "")} gave feedback`; break;
     case "member_blocked": text = `${name(row.actor_id ?? "")} blocked ${name(row.object_id ?? "")}`; severity = "warn"; break;
