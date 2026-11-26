@@ -107,7 +107,8 @@ export class SlopOracle {
     const out = age < A.ageRange[0] ? A.ageRange[0] - age : age > A.ageRange[1] ? age - A.ageRange[1] : 0;
     const genderOk = A.seeks.includes(B.matchGender) ? 0 : -4;
     const body = this.bodyTypes ? bodyTerm(a.id, b.id, this.bodyTypes) : 0;
-    return P.c0 + A.warmth + P.wDesire * B.desirability + P.wTaste * taste - P.ageOutPerYear * out - P.wSelect * A.desirability + genderOk + body;
+    const cliff = !A.planted && !B.planted && A.desirability - B.desirability > 1.45 ? -0.18 * (A.desirability - B.desirability - 1.45) : 0;
+    return P.c0 + A.warmth + P.wDesire * B.desirability + P.wTaste * taste - P.ageOutPerYear * out - P.wSelect * A.desirability + genderOk + body + cliff;
   }
   /** P(a likes b's profile) before meeting. */
   attraction(a: SlopPersona, b: SlopPersona): number { return sigmoid(this.latent(a, b)); }
@@ -127,6 +128,15 @@ export class SlopOracle {
     if (A.goal === "long_term" && ((va.wantsKids === "yes" && vb.wantsKids === "no") || (va.wantsKids === "no" && vb.wantsKids === "yes"))) c *= 0.7;
     const shared = A.interests.filter(t => B.interests.includes(t)).length;
     c *= shared >= 2 ? 1 : shared === 1 ? 0.95 : 0.88;
+    if (!A.planted && !B.planted) {
+      if (A.attachmentStyle && B.attachmentStyle) {
+        const trap = (A.attachmentStyle === "anxious" && B.attachmentStyle === "avoidant")
+          || (A.attachmentStyle === "avoidant" && B.attachmentStyle === "anxious");
+        if (trap && A.goal === "long_term") c *= 0.92;
+        else if (A.attachmentStyle === "secure" && B.attachmentStyle === "secure") c = Math.min(1, c * 1.02);
+      }
+      if (A.humorRegister && A.humorRegister === B.humorRegister) c = Math.min(1, c * 1.02);
+    }
     return c;
   }
 

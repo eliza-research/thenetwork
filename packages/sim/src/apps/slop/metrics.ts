@@ -40,6 +40,15 @@ export interface SlopMetrics {
   timeToFirstDate: { medianDays: number | null; shareWithDate: number };
   expected: { goodPerProposal: number; secondPerProposal: number; goodPerMember: number };
   fairness: { byGroup: Record<string, GroupMetrics>; byGender: Record<string, GroupMetrics>; minMaxDateRatio: number };
+  assortativity: {
+    meanDesirabilityGap: number;
+    crossTierMismatchShare: number;
+    topDecileRejectionCascadeRate: number;
+    bottom40DateRate: number;
+    bottom40SecondDateRate: number;
+    secondDateByDesirabilityQuartile: { q1: number; q2: number; q3: number; q4: number };
+    anxiousAvoidantDateShare: number;
+  };
 }
 
 const topShare = (xs: number[], q = 0.1) => {
@@ -114,6 +123,44 @@ export function slopMetrics(res: SlopRunResult): SlopMetrics {
   const byGroup = by(groupOf), byGender = by(p => p.stated.matchGender);
   const rates = Object.values(byGroup).filter(g => g.n >= 15).map(g => g.datesPerMemberMonth);
   const days = real.map(p => firstDay.get(p.id)).filter((d): d is number => d !== undefined).sort((x, y) => x - y);
+  const rankedReal = [...real].sort((x, y) => (x.hidden.desirability - y.hidden.desirability) || (x.id < y.id ? -1 : 1));
+  const R = rankedReal.length;
+  const bottom40Ids = new Set(R ? rankedReal.slice(0, Math.max(1, Math.round(R * 0.40))).map(p => p.id) : []);
+  const topDecileIds = new Set(R ? rankedReal.slice(Math.max(0, R - Math.max(1, Math.round(R * 0.10)))).map(p => p.id) : []);
+  const qOf = new Map<MemberId, "q1" | "q2" | "q3" | "q4">();
+  rankedReal.forEach((p, idx) => {
+    const frac = R > 1 ? idx / R : 0.5;
+    qOf.set(p.id, frac < 0.25 ? "q1" : frac < 0.50 ? "q2" : frac < 0.75 ? "q3" : "q4");
+  });
+  const realIds = new Set(real.map(p => p.id));
+  let gapSum = 0, gapN = 0, crossTier = 0, topCascadeRej = 0, topCascadeN = 0;
+  let b40Dates = 0, b40Second = 0, aaDates = 0;
+  const qDates = { q1: { d: 0, s: 0 }, q2: { d: 0, s: 0 }, q3: { d: 0, s: 0 }, q4: { d: 0, s: 0 } };
+  for (const f of flows) {
+    const a = P.get(f.first), b = P.get(f.partner);
+    if (!a || !b || !realIds.has(a.id) || !realIds.has(b.id)) continue;
+    const gap = Math.abs(a.hidden.desirability - b.hidden.desirability);
+    gapSum += gap; gapN++;
+    if (gap > 1.5) crossTier++;
+    if ((topDecileIds.has(a.id) || topDecileIds.has(b.id)) && gap > 1.2 && f.stage !== "dropped_first_cap" && f.stage !== "dropped_partner_cap" && f.stage !== "dropped_policy") {
+      topCascadeN++;
+      if (f.stage === "first_no" || f.stage === "partner_no" || f.stage === "backout") topCascadeRej++;
+    }
+    if (f.stage === "date") {
+      if (bottom40Ids.has(a.id) || bottom40Ids.has(b.id)) {
+        b40Dates++;
+        if (f.secondDate) b40Second++;
+      }
+      const trap = (a.hidden.attachmentStyle === "anxious" && b.hidden.attachmentStyle === "avoidant")
+        || (a.hidden.attachmentStyle === "avoidant" && b.hidden.attachmentStyle === "anxious");
+      if (trap) aaDates++;
+      for (const id of [a.id, b.id]) {
+        const q = qOf.get(id);
+        if (q) { qDates[q].d++; if (f.secondDate) qDates[q].s++; }
+      }
+    }
+  }
+  const b40MemberDates = [...bottom40Ids].reduce((s, id) => s + (datesOf.get(id) ?? 0), 0);
   return {
     matcher: res.matcher, seed: world.seed, members: real.length, weeks: world.weeks,
     proposals: flows.length, probesDelivered: probes, droppedForCap: dropped,
@@ -135,5 +182,19 @@ export function slopMetrics(res: SlopRunResult): SlopMetrics {
       goodPerMember: div(2 * flows.reduce((s, f) => s + f.expected.good, 0), real.length),
     },
     fairness: { byGroup, byGender, minMaxDateRatio: rates.length ? div(Math.min(...rates), Math.max(...rates)) : 0 },
+    assortativity: {
+      meanDesirabilityGap: div(gapSum, gapN),
+      crossTierMismatchShare: div(crossTier, gapN),
+      topDecileRejectionCascadeRate: div(topCascadeRej, topCascadeN),
+      bottom40DateRate: div(b40MemberDates, bottom40Ids.size * months),
+      bottom40SecondDateRate: div(b40Second, b40Dates),
+      secondDateByDesirabilityQuartile: {
+        q1: div(qDates.q1.s, qDates.q1.d),
+        q2: div(qDates.q2.s, qDates.q2.d),
+        q3: div(qDates.q3.s, qDates.q3.d),
+        q4: div(qDates.q4.s, qDates.q4.d),
+      },
+      anxiousAvoidantDateShare: div(aaDates, dates),
+    },
   };
 }

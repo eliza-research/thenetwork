@@ -3,7 +3,7 @@
 // enrich these with realistic bios and voices afterwards.
 import { requireSimulationCount, requireSimulationShare } from "./input.ts";
 import type { City } from "@thenetwork/core";
-import { Rng, clamp01, earliestDayKeyOf, hash32 } from "@thenetwork/core";
+import { Rng, canBeMatched, clamp01, earliestDayKeyOf, hash32 } from "@thenetwork/core";
 import { teenFriendMaxAge, teenFriendMinAge } from "../../core/src/generated/friendIntroAge.ts";
 import {
   BOUNDARIES, DESIRES, FIRST_NAMES, INTERESTS, LAST_NAMES, NEIGHBORHOODS, PRIVATE_DISCLOSURES,
@@ -14,7 +14,7 @@ import type {
   AdversarialKind, Archetype, Desire, Gender, HiddenTruth, Persona, PublicProfile,
   RelationshipType, Responsiveness, Routine,
 } from "./persona.ts";
-import { drawLapse } from "./persona.ts";
+import { computeStrataSignals, drawLapse, projectNoisyPublicSignals } from "./persona.ts";
 import { plantLatent, type PlantedLatent, type PlantedSpec } from "./planted.ts";
 
 export const ARCHETYPE_MIX: Record<Archetype, number> = {
@@ -156,6 +156,19 @@ function generateWorld(opts: GeneratorOptions): { personas: Persona[]; latent?: 
   }
   if (opts.richness) attachKnowledge(personas, root.fork("richness"), opts.richness === true ? DEFAULT_RICHNESS_MIX : opts.richness, opts.knowledgeNow ?? KNOWLEDGE_NOW_DEFAULT);
   statedTeenAges(personas, opts.seed, opts.minorLiarShare ?? 0, opts.adultPoserShare ?? 0);
+  const strataRoot = root.fork("strata-v2");
+  for (const p of personas) {
+    const sr = strataRoot.fork(p.id);
+    const strata = computeStrataSignals(p, sr.fork("truth"));
+    Object.assign(p.hidden, strata);
+    if (!canBeMatched(p.hidden.trueAge)) p.hidden.trueAttractiveness = undefined;
+    if (opts.planted) {
+      p.public.projectedFacets = [];
+      p.public.projectedIntents = [];
+    } else {
+      projectNoisyPublicSignals(p, strata, sr.fork("public"));
+    }
+  }
   return { personas, latent };
 }
 

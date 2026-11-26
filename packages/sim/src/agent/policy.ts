@@ -107,7 +107,7 @@ export interface PolicyOptions {
    */
   tripClock?: boolean;
 }
-const UNSAFE_FOR_ME = ["ex_partners", "romance_mismatch", "adversarial_participant"];
+const UNSAFE_FOR_ME = ["ex_partners", "romance_mismatch", "adversarial_participant", "grift_risk"];
 const loseTrust = (mem: PersonaContext["memory"], x: number) => { mem.trust = Math.max(0, Math.min(1, (mem.trust ?? 1) - x)); };
 
 export function decide(ctx: PersonaContext, msg: SimMessage, worldStart: number, opts: PolicyOptions = {}): PolicyDecision {
