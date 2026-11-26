@@ -162,6 +162,22 @@ test("Harlem place detail Meetings KPI and the pipeline Met column agree after l
     const closed = window.document.querySelector('section[aria-label="Closed"]')!;
     expect(text(closed.querySelector("b"))).toBe("1");
     expect(text(closed)).toContain("Maya + Jon");
+
+    // This time both meetings were held in range, but only one comes from a request.
+    // The same Origin filter must apply to the KPI and to the column it opens.
+    await act(async () => {
+      store.opps.set("o-request", {
+        ...opp("o-request", "COMPLETED", ["m1", "m2"], NOW - DAY, NOW - DAY),
+        source: "network", origin: "request",
+      });
+      store.setFilters({ origin: "request", stateGroup: "all" });
+      await sleep(40);
+    });
+    await act(async () => { kpi.dispatchEvent(new window.MouseEvent("click", { bubbles: true })); await sleep(40); });
+    await wait(() => !!box.querySelector('section[aria-label="Met"]'), "the request-origin Met column");
+    const requestMet = box.querySelector('section[aria-label="Met"]')!;
+    expect(text(requestMet.querySelector("b"))).toBe("1");
+    expect(text(kpi)).toMatch(/^1Meetings/);
   } finally {
     await act(async () => { appRoot?.unmount(); });
     disconnectStore?.();

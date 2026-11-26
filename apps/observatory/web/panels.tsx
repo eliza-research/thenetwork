@@ -259,7 +259,7 @@ function KpiGrid({ area }: { area?: string }) {
   const revealed = opps.filter(o => originOk(o) && s.inRange(o.updatedAt) && o.participants.every(id => REVEALED.has(o.status[id] ?? "")));
   const allYes = revealed.filter(o => o.participants.every(id => SAID_YES.has(o.status[id] ?? ""))).length;
   const yesRate = revealed.length ? allYes / revealed.length : undefined;
-  const met = opps.filter(o => MET.has(o.state) && o.meetingAt !== undefined && s.inRange(o.meetingAt)).length;
+  const met = opps.filter(o => originOk(o) && MET.has(o.state) && o.meetingAt !== undefined && s.inRange(o.meetingAt)).length;
   const upcoming = opps.filter(o => o.state === "SCHEDULED").length;
   const requests = s.network && !area && f.borough === "all"
     ? s.network.requests.waiting + s.network.requests.probing
