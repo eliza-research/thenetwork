@@ -123,4 +123,7 @@ MSG
   fi
 fi
 
+if command -v corepack >/dev/null 2>&1; then
+  exec corepack pnpm@10.24.0 dlx "wrangler@${WRANGLER_VERSION}" "$@"
+fi
 exec pnpm dlx "wrangler@${WRANGLER_VERSION}" "$@"

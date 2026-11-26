@@ -125,7 +125,7 @@ async function main() {
   servers.push(pub);
   log.info("listening", { port: "public", url: `http://${c.host}:${pub.port}` });
   if (c.staff) {
-    const staff = await serveHttp({ hostname: c.staff.host, port: c.staff.port, fetch: req => backend.staffFetch(req) });
+    const staff = await serveHttp({ hostname: c.staff.host, port: c.staff.port, maxRequestBodySize: 256 * 1024, fetch: req => backend.staffFetch(req) });
     servers.push(staff);
     log.info("listening", { port: "staff", url: `http://${c.staff.host.includes(":") ? `[${c.staff.host}]` : c.staff.host}:${staff.port}` });
   }

@@ -122,10 +122,14 @@ const cand = <T>(value: T, s: Sentence, m: { index: number; 0: string }, conf: n
   const len = sub ? sub.len : m[0].length;
   return { value, start: s.start + at, end: s.start + at + len, conf };
 };
+const GLOBAL_RX = new WeakMap<RegExp, RegExp>();
 function* all(re: RegExp, s: string): Generator<RegExpExecArray> {
-  const g = new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g");
-  let m: RegExpExecArray | null;
-  while ((m = g.exec(s))) { yield m; if (!m[0].length) g.lastIndex++; }
+  let g = GLOBAL_RX.get(re);
+  if (!g) {
+    g = new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g");
+    GLOBAL_RX.set(re, g);
+  }
+  for (const m of s.matchAll(g)) yield m as RegExpExecArray;
 }
 
 const NUM_WORDS: Record<string, number> = {
@@ -250,11 +254,15 @@ const SELF_RULES: RegExp[] = [
 ];
 /** A bare answer to "how do you describe yourself?": "a woman", "a trans guy into men" (only when that was asked). */
 const SELF_ANSWER = new RegExp(`^\\s*(?:(?:i'?d say|just|probably|um|well)[\\s,]+)?(?:a|an)\\s+((?:${ADJ}[\\s,]+){0,3})${SELF_G}(?:\\s+(?:person|human))?\\b(?=\\s*(?:$|[,.!\\/(-]|lookin|looking|seeking|into\\b|who\\s+likes?|for\\b|and\\b))`);
+const WORD_WOMAN = new RegExp(`^(?:${G_WOMAN}|w|f|women|girls)$`);
+const WORD_MAN = new RegExp(`^(?:${G_MAN}|m|men|guys)$`);
+const WORD_NB = new RegExp(`^(?:${G_NB})$`);
+const ORIENT_ALONE_RX = new RegExp(`\\b${ME}\\s+(?:a\\s+|pretty\\s+|very\\s+|mostly\\s+)?(straight|gay|lesbian|bisexual|bi|pansexual|pan|queer|ace|asexual)\\b(?!\\s*(?:friendly|bar|bars|club))|\\b(straight|gay|bi|queer|lesbian|pan)\\s+(?:here|btw|fwiw)\\b|(?:^|,)\\s*(lesbian|bisexual|pansexual|queer)\\s*[,.!]?\\s*(?:$|\\d)`);
 function genderOfWord(w: string): Gender | undefined {
   const x = w.replace(/\s+/g, " ").trim();
-  if (new RegExp(`^(?:${G_WOMAN}|w|f|women|girls)$`).test(x)) return "woman";
-  if (new RegExp(`^(?:${G_MAN}|m|men|guys)$`).test(x)) return "man";
-  if (new RegExp(`^(?:${G_NB})$`).test(x)) return "nonbinary";
+  if (WORD_WOMAN.test(x)) return "woman";
+  if (WORD_MAN.test(x)) return "man";
+  if (WORD_NB.test(x)) return "nonbinary";
   return undefined;
 }
 function identityOf(adj: string, w: string): string | undefined {
@@ -299,7 +307,7 @@ function readGender(t: string, asked?: OnboardField): GenderReading {
     for (const m of all(/\((f|m|nb)\)/, s.text)) out.gender = cand(m[1] === "f" ? "woman" : m[1] === "m" ? "man" : "nonbinary", s, m, 0.9);
     for (const m of all(/\b(m|w|f|nb)4(?:m|w|f|nb|a|any|mw|wm|all)\b/, s.text)) out.gender = cand(m[1] === "m" ? "man" : m[1] === "nb" ? "nonbinary" : "woman", s, m, 0.9);
     // Orientation said alone: "I'm bi", "gay btw", "straight here", "I'm a woman, lesbian".
-    for (const m of all(new RegExp(`\\b${ME}\\s+(?:a\\s+|pretty\\s+|very\\s+|mostly\\s+)?(straight|gay|lesbian|bisexual|bi|pansexual|pan|queer|ace|asexual)\\b(?!\\s*(?:friendly|bar|bars|club))|\\b(straight|gay|bi|queer|lesbian|pan)\\s+(?:here|btw|fwiw)\\b|(?:^|,)\\s*(lesbian|bisexual|pansexual|queer)\\s*[,.!]?\\s*(?:$|\\d)`), s.text)) {
+    for (const m of all(ORIENT_ALONE_RX, s.text)) {
       out.orientation = cand(ORIENT_WORDS[(m[1] ?? m[2] ?? m[3])!]!, s, m, 0.95);
     }
   }
@@ -430,6 +438,9 @@ const DECADE_WORD: Record<string, number> = { twenties: 20, thirties: 30, fortie
 const decadeOf = (token: string): number => DECADE_WORD[token] ?? Number(token.replace(/'?s$/, ""));
 const DECADE_TOKEN = "(?:20|30|40|50|60)'?s|twenties|thirties|forties|fifties|sixties";
 const DECADE = `(?:(early|mid|late)[\\s-]*)?(${DECADE_TOKEN})`;
+const DECADE_PAIR_RX = new RegExp(`\\b(early|mid|late)\\s*(?:-|to|through|thru|–|and)\\s*(early|mid|late)\\s+(${DECADE_TOKEN})(?![a-z])`);
+const DECADE_RANGE_RX = new RegExp(`\\b${DECADE}(?:\\s*(?:-|to|or|and|through|thru|–)\\s*${DECADE})?(?![a-z])`);
+const NUM_DECADE_RX = new RegExp(`(?<![\\d.$])(\\d{2})\\s*(?:-|to|through|thru|–)\\s*${DECADE}(?![a-z])|\\b${DECADE}\\s*(?:-|to|through|thru|–)\\s*(\\d{2})(?![\\d']|\\s*s\\b)`);
 const RANGE_CTX = /\b(?:their|his|her|range|ages?|aged|looking|lookin|into|date|dating|seeking|prefer|want|anyone|someone|somebody|people|folks|guys|girls|women|men|ladies|dudes|between|from|around|older|younger|nb|enbies|partner|ideally|preferably)\b/;
 function decadeBounds(part: string | undefined, d: number): [number, number] {
   return part === "early" ? [d, d + 3] : part === "mid" ? [d + 3, d + 6] : part === "late" ? [d + 6, d + 9] : [d, d + 9];
@@ -459,7 +470,7 @@ function readAgeRange(t: string, asked: OnboardField | undefined, selfAge?: numb
     // A descending pair ("late to early thirties") is not a usable range: refuse it and swallow the
     // whole phrase so the general matcher below cannot read a misleading suffix ("early thirties").
     let skipDecadeUntil = -1;
-    for (const m of all(new RegExp(`\\b(early|mid|late)\\s*(?:-|to|through|thru|–|and)\\s*(early|mid|late)\\s+(${DECADE_TOKEN})(?![a-z])`), s.text)) {
+    for (const m of all(DECADE_PAIR_RX, s.text)) {
       const d = decadeOf(m[3]!);
       const a = decadeBounds(m[1], d), b = decadeBounds(m[2], d);
       if (b[0] < a[0]) {
@@ -473,7 +484,7 @@ function readAgeRange(t: string, asked: OnboardField | undefined, selfAge?: numb
       range = cand([Math.max(18, a[0]), b[1]] as [number, number], s, m, 0.85);
     }
     // Decades: "in their 30s", "late 20s to mid 30s", "late twenties" (never "I'm in my 30s").
-    for (const m of all(new RegExp(`\\b${DECADE}(?:\\s*(?:-|to|or|and|through|thru|–)\\s*${DECADE})?(?![a-z])`), s.text)) {
+    for (const m of all(DECADE_RANGE_RX, s.text)) {
       if (m.index < skipDecadeUntil) continue;
       const before = s.text.slice(Math.max(0, m.index - 12), m.index);
       if (/\b(?:my|i'?m in|im in|in my)\s*$/.test(before) || /\bmy\b/.test(before.slice(-4))) continue;
@@ -486,7 +497,7 @@ function readAgeRange(t: string, asked: OnboardField | undefined, selfAge?: numb
       range = cand([Math.max(18, a[0]), b[1]] as [number, number], s, m, 0.85);
     }
     // A number and a decade: "25 to early 30s", "late 20s to 35".
-    for (const m of all(new RegExp(`(?<![\\d.$])(\\d{2})\\s*(?:-|to|through|thru|–)\\s*${DECADE}(?![a-z])|\\b${DECADE}\\s*(?:-|to|through|thru|–)\\s*(\\d{2})(?![\\d']|\\s*s\\b)`), s.text)) {
+    for (const m of all(NUM_DECADE_RX, s.text)) {
       if (!isBare && !RANGE_CTX.test(s.text)) continue;
       if (negated(s.text, m.index, 2) || RANGE_UNIT_AFTER.test(s.text.slice(m.index + m[0].length))) continue;
       const v = m[1] ? [Number(m[1]), decadeBounds(m[2], decadeOf(m[3]!))[1]] : [decadeBounds(m[4], decadeOf(m[5]!))[0], Number(m[6])];
@@ -539,6 +550,7 @@ function readAgeRange(t: string, asked: OnboardField | undefined, selfAge?: numb
 
 const MARKET_WORDS: [RegExp, City][] = [[/^(?:nyc|new york|ny|new york city)$/, "nyc"], [/^(?:sf|san francisco|the bay|bay area|the bay area|frisco)$/, "sf"], [/^(?:la|los angeles|l\.a\.?)$/, "la"]];
 const MARKET_RX = "(nyc|new york city|new york|ny|sf|san francisco|the bay area|the bay|bay area|la|los angeles|l\\.a\\.?)";
+const MULTI_MARKET_RX = new RegExp(`\\b${MARKET_RX}\\s*(?:and|&|\\+|or|\\/|,)\\s*${MARKET_RX}(?:\\s*(?:and|&|\\+|or|\\/|,)\\s*${MARKET_RX})?\\b`);
 const marketOf = (w: string) => MARKET_WORDS.find(([rx]) => rx.test(w.trim()))?.[1];
 
 /** Markets and a numeric radius are independent preferences; an explicit city choice replaces both. */
@@ -576,7 +588,7 @@ function readDistance(t: string, asked: OnboardField | undefined): Cand<Distance
     for (const m of all(/\b(?:anywhere|any where|all over|wherever)\s+(?:in\s+)?(?:the\s+)?(?:city|nyc|new york|sf|san francisco|la|los angeles|town)\b|\b(?:the\s+)?(?:whole|entire)\s+(?:city|nyc|town|bay)\b|\bcity\s*-?\s*wide\b|\b(?:just|only)\s+(?:the\s+)?(?:city|nyc|sf|la)\b(?!\s+(?:for|to))|\b(?:all|any of the|any)\s+(?:5|five)\s+boroughs\b|\b(?:the\s+)?(?:city|nyc)\s+is\s+(?:fine|good|ok|okay|cool)\b|\bdistance (?:doesn'?t|does not|dont) (?:really )?matter\b|\b(?:i'?ll|i will|happy to|can|could) (?:go|travel) anywhere\b|\bdon'?t care (?:about|how) (?:the )?(?:distance|far)\b|\banywhere is fine\b/, s.text)) {
       best = cand<Distance>({ mode: "city" }, s, m, 0.9);
     }
-    for (const m of all(new RegExp(`\\b${MARKET_RX}\\s*(?:and|&|\\+|or|\\/|,)\\s*${MARKET_RX}(?:\\s*(?:and|&|\\+|or|\\/|,)\\s*${MARKET_RX})?\\b`), s.text)) {
+    for (const m of all(MULTI_MARKET_RX, s.text)) {
       if (!(asked === "distance" || /\b(?:date|dating|split|between|bounce|both|time in|back and forth|live in|half|either)\b/.test(s.text))) continue;
       const ms = [...new Set([m[1], m[2], m[3]].filter(Boolean).map(x => marketOf(x!)).filter((x): x is City => !!x))].sort();
       if (ms.length >= 2) best = cand<Distance>(mergeDistance(best?.value, { mode: "multi", markets: ms }), s, m, 0.9);

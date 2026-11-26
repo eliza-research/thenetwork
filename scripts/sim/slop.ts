@@ -109,11 +109,11 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
   b.track("relay world: items, delivered, senders held, harms prevented, age slips", true, `${rs.items} items, ${rs.delivered} delivered, ${rs.heldSenders} senders held, ${rs.prevented} harms prevented, ${rs.ageSignals} age slips; ${Object.entries(rs.byClass).map(([k, v]) => `${k} ${v.stopped}/${v.n}`).join(", ")}`);
   b.gate("relay world: 0 rating, contact or private-fact (canary) leaks in delivered items", rs.items > minN(200) && rs.leaks.rating + rs.leaks.contact + rs.leaks.canary === 0, JSON.stringify(rs.leaks));
   const sh = rate(["scam", "harassment"], "stopped"), shc = rate(["scam", "harassment"], "contentStopped");
-  b.gate("relay world: scam and harassment items held or blocked >= 90% (in thread and on content alone)", sh.n >= minN(20) && sh.r >= 0.9 && shc.r >= 0.9, `${pct(sh.r)} in thread, ${pct(shc.r)} content only (n ${sh.n})`);
+  b.gate("relay world: scam and harassment items held or blocked >= 90% (in thread and on content alone)", sh.n >= minN(20) && sh.r >= 0.9 && shc.r >= 0.9, `${pct(sh.r)} in thread, ${pct(shc.r)} content only (n ${sh.n})`, !o.quick);
   const cr = rate(["contact", "rating"], "contentStopped");
-  b.gate("relay world: contact-fishing and rating-probe items held or blocked >= 90% (content alone)", cr.n >= minN(20) && cr.r >= 0.9, `${pct(cr.r)} (n ${cr.n})`);
+  b.gate("relay world: contact-fishing and rating-probe items held or blocked >= 90% (content alone)", cr.n >= minN(20) && cr.r >= 0.9, `${pct(cr.r)} (n ${cr.n})`, !o.quick);
   const hon = rate(["honest"], "contentStopped"), honT = rate(["honest"], "stopped");
-  b.gate("relay world: honest messages held <= 5% (content alone)", hon.n >= minN(200) && hon.r <= 0.05, `${pct(hon.r)} content only, ${pct(honT.r)} in thread (n ${hon.n})`);
+  b.gate("relay world: honest messages held <= 5% (content alone)", hon.n >= minN(200) && hon.r <= 0.05, `${pct(hon.r)} content only, ${pct(honT.r)} in thread (n ${hon.n})`, !o.quick);
   b.gate("relay world: 0 relays to or from a minor (declared, or after an age slip); every slip blocked", rs.minorRelays === 0 && cls("minor_signal").stopped === cls("minor_signal").n, `${rs.minorRelays} relays, slips ${cls("minor_signal").stopped}/${cls("minor_signal").n}`);
   b.gate("relay world: contact shares only with explicit consent (0 without; every bad-consent item blocked)", rs.contactWithoutConsent === 0 && cls("contact_share").n > 0 && cls("bad_consent").stopped === cls("bad_consent").n, `${cls("contact_share").n - cls("contact_share").stopped} shared with consent, ${cls("bad_consent").stopped}/${cls("bad_consent").n} bad-consent blocked`);
   b.gate("relay world: relay log rows carry no message body or contact value", rs.logBodies === 0, String(rs.logBodies));

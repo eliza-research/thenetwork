@@ -178,6 +178,15 @@ function asciiDigits(s: string): string {
   });
 }
 
+// Angle brackets are included: "<dot>" and "<at>" are the same defang as "[dot]" and "(at)".
+const SPELLED_DOT = new RegExp(`[\\s([{<]+(?:dot|punto)[\\s)\\]}>]+(?=(?:${TLDS})\\b|[a-z0-9-]+[\\s([{<]+(?:dot|punto)\\b)`, "g");
+// Space before the dot: "example . ai", and "example 。 co" after the lookalike becomes ".".
+const SPACED_DOT = new RegExp(`(?<=[a-z0-9])\\s+\\.\\s*(?=(?:${TLDS})\\b)`, "g");
+const SENTENCE_DOT = new RegExp(`(?<=[a-z0-9])\\.\\s+(?=(?:${SENTENCE_DOT_TLDS})\\b)`, "g");
+// "example · com" only. A spaced middle dot before another word is prose, not a domain.
+const PROSE_SEP_DOMAIN = new RegExp(`(?<=[a-z0-9])\\s+[\\u00b7\\u2022\\u30fb]\\s*(?=(?:${SENTENCE_DOT_TLDS})\\b)`, "g");
+const BRACKET_AT = new RegExp(`(?<=[a-z0-9._%+-])\\s{0,3}(?:\\[\\s{0,3}@\\s{0,3}\\]|\\(\\s{0,3}@\\s{0,3}\\)|\\{\\s{0,3}@\\s{0,3}\\}|<\\s{0,3}@\\s{0,3}>)\\s{0,3}(?=(?:${PROVIDERS})\\b|[a-z0-9-]{1,63}(?:\\.[a-z0-9-]{1,63}){0,8}\\.[a-z]{2,24}(?![a-z]))`, "g");
+
 /**
  * Variants of `plain` text for the contact checks (audit core-2): number words as digits ("two one
  * two" → "2 1 2"), other-script digits as ASCII, letter O/l/i inside numbers as 0/1, keycap emoji
@@ -189,19 +198,11 @@ function asciiDigits(s: string): string {
  */
 export function contactVariants(s: string): string[] {
   const out = new Set<string>();
-  // Angle brackets are included: "<dot>" and "<at>" are the same defang as "[dot]" and "(at)".
-  const spelledDot = new RegExp(`[\\s([{<]+(?:dot|punto)[\\s)\\]}>]+(?=(?:${TLDS})\\b|[a-z0-9-]+[\\s([{<]+(?:dot|punto)\\b)`, "g");
-  // Space before the dot: "example . ai", and "example 。 co" after the lookalike becomes ".".
-  const spacedDot = new RegExp(`(?<=[a-z0-9])\\s+\\.\\s*(?=(?:${TLDS})\\b)`, "g");
-  const sentenceDot = new RegExp(`(?<=[a-z0-9])\\.\\s+(?=(?:${SENTENCE_DOT_TLDS})\\b)`, "g");
-  // "example · com" only. A spaced middle dot before another word is prose, not a domain.
-  const proseSepDomain = new RegExp(`(?<=[a-z0-9])\\s+[\\u00b7\\u2022\\u30fb]\\s*(?=(?:${SENTENCE_DOT_TLDS})\\b)`, "g");
-  const bracketAt = new RegExp(`(?<=[a-z0-9._%+-])\\s{0,3}(?:\\[\\s{0,3}@\\s{0,3}\\]|\\(\\s{0,3}@\\s{0,3}\\)|\\{\\s{0,3}@\\s{0,3}\\}|<\\s{0,3}@\\s{0,3}>)\\s{0,3}(?=(?:${PROVIDERS})\\b|[a-z0-9-]{1,63}(?:\\.[a-z0-9-]{1,63}){0,8}\\.[a-z]{2,24}(?![a-z]))`, "g");
   for (const p of plainVariants(s)) {
     let v = asciiDigits(p).replace(/⃣/g, "");
-    proseSepDomain.lastIndex = 0;
-    bracketAt.lastIndex = 0;
-    v = v.replace(proseSepDomain, ".");
+    PROSE_SEP_DOMAIN.lastIndex = 0;
+    BRACKET_AT.lastIndex = 0;
+    v = v.replace(PROSE_SEP_DOMAIN, ".");
     // "Saturday · in Brooklyn" and "• in the park": the separator is not a dot.
     v = v.replace(/\s+[\u00b7\u2022\u30fb]\s+/g, " ");
     // Middle dot, bullet, hyphenation point, bullet operator, dot operator, katakana middle dot,
@@ -210,18 +211,18 @@ export function contactVariants(s: string): string[] {
     // Spaces around the brackets are part of the defang: "example (.) ai" → "example.ai".
     v = v.replace(/\s{0,3}(?:\[\s{0,3}\.\s{0,3}\]|\(\s{0,3}\.\s{0,3}\)|\{\s{0,3}\.\s{0,3}\}|<\s{0,3}\.\s{0,3}>)\s{0,3}/g, ".");
     // "sam[@]gmail" and "sam(@)outlook". A bare "(@)" in prose is left as it is.
-    v = v.replace(bracketAt, "@");
+    v = v.replace(BRACKET_AT, "@");
     v = v.replace(/\b[a-z]+\b/g, w => NUMBER_WORDS[w] ?? w);
     v = v.replace(/\boh\b(?=[\s.\-]*\d)|(?<=\d[\s.\-]*)\boh\b/g, "0");
     v = v.replace(/(?<=\d[\s.\-]{0,2})[o](?![a-z])|(?<![a-z])[o](?=[\s.\-]{0,2}\d)/g, "0").replace(/(?<=\d[\s.\-]{0,2})[li](?![a-z])|(?<![a-z])[li](?=[\s.\-]{0,2}\d)/g, "1");
     if (/\b(?:at|dot)\b|@/.test(v)) v = v.replace(/\b(?:[a-z][ \t]){2,63}[a-z]\b/g, letters => letters.replace(/[ \t]/g, ""));
     out.add(v);
     // Spelled "dot" only before a known TLD or another spelled dot; spelled "at" only before a domain.
-    spelledDot.lastIndex = 0;
-    const dotted = v.replace(spelledDot, ".");
-    spacedDot.lastIndex = 0;
-    sentenceDot.lastIndex = 0;
-    const closed = dotted.replace(/\s*@\s*/g, "@").replace(spacedDot, ".").replace(sentenceDot, ".")
+    SPELLED_DOT.lastIndex = 0;
+    const dotted = v.replace(SPELLED_DOT, ".");
+    SPACED_DOT.lastIndex = 0;
+    SENTENCE_DOT.lastIndex = 0;
+    const closed = dotted.replace(/\s*@\s*/g, "@").replace(SPACED_DOT, ".").replace(SENTENCE_DOT, ".")
       .replace(/[\s([{<]+at[\s)\]}>]+(?=[a-z0-9-]+\.[a-z]{2,})/g, "@");
     out.add(closed);
   }
@@ -230,12 +231,12 @@ export function contactVariants(s: string): string[] {
 
 export function findContactKinds(
   text: string,
-  o: { kinds?: ReadonlySet<string>; allow?: readonly string[]; phoneExemptions?: boolean } = {},
+  o: { kinds?: ReadonlySet<string>; allow?: readonly string[]; phoneExemptions?: boolean; variants?: readonly string[] } = {},
 ): string[] {
   const found = new Set<string>();
   const allow = o.allow ?? [];
   const exempt = o.phoneExemptions ?? true;
-  for (const p of contactVariants(text)) {
+  for (const p of o.variants ?? contactVariants(text)) {
     let c = p;
     for (const a of allow) c = c.split(a).join(" ");
     for (const { name, re } of CONTACT_PATTERNS) {
@@ -472,7 +473,7 @@ const REF_MARKER = /\s*\(ref [^)]*\)/gi;
 /** A seeded canary prefix ("CANARY_MAYA_PRIVATE_…") is stripped so the fact's real words are matched. */
 const CANARY_PREFIX = /^canary [a-z0-9]+ [a-z]+ /;
 /** Bidirectional embedding, override and isolate controls (used to disguise text; core-23). */
-const BIDI = /[‪-‮⁦-⁩]/;
+const BIDI = /[\u202a-\u202e\u2066-\u2069]/;
 
 const N = 4;
 const words = (folded: string) => (folded ? folded.split(" ") : []);
@@ -622,9 +623,11 @@ export class LeakGuard {
       }
       for (const v of this.vocab) if (padded.includes(v.phrase)) reasons.add(v.label);
     }
+    let cachedContacts: string[] | undefined;
     if (this.exact.length) {
       const sq = plains.map(squash);
-      const digitRuns = contactVariants(text).map(v => v.replace(/\D/g, ""));
+      cachedContacts = contactVariants(text);
+      const digitRuns = cachedContacts.map(v => v.replace(/\D/g, ""));
       for (const e of this.exact) {
         if (reasons.has(e.label) || !counts(e)) continue;
         const found = e.mode === "digits" ? digitRuns.some(d => d.includes(e.digits))
@@ -645,7 +648,8 @@ export class LeakGuard {
     if (this.contacts) {
       const approved = o.contactAllow;
       const contactText = approved?.length ? text.replace(/\S+/gu, token => approved.includes(token) ? " " : token) : text;
-      for (const name of findContactKinds(contactText, { allow: this.allow })) reasons.add(`contact:${name}`);
+      const variants = approved?.length ? undefined : cachedContacts;
+      for (const name of findContactKinds(contactText, { allow: this.allow, variants })) reasons.add(`contact:${name}`);
     }
     return [...reasons];
   }

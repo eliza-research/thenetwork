@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 const FILES = ["contract.ts", "svc-auth.ts"] as const;
 const UPSTREAM = "elizaos/eliza";
 const UPSTREAM_DIR = "plugins/plugin-network/src/backend";
+const UPSTREAM_VIBE_PATH = "packages/plugin-network/src/index.vibe";
 
 const args = process.argv.slice(2);
 const i = args.indexOf("--ref");
@@ -30,19 +31,36 @@ function mirrorHash(file: typeof FILES[number], source: Buffer): string {
   return createHash("sha256").update(body).digest("hex");
 }
 
-async function upstream(file: string): Promise<Buffer> {
-  const p = spawnProcess(["gh", "api", `repos/${UPSTREAM}/contents/${UPSTREAM_DIR}/${file}?ref=${ref}`, "-q", ".content"], { stdout: "pipe", stderr: "pipe" });
+async function fetchUpstreamPath(path: string): Promise<{ ok: true; content: Buffer } | { ok: false; notFound: boolean; error: string }> {
+  const p = spawnProcess(["gh", "api", `repos/${UPSTREAM}/contents/${path}?ref=${ref}`, "-q", ".content"], { stdout: "pipe", stderr: "pipe" });
   const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
-  if (code !== 0) throw new Error(`gh api failed for ${file}: ${err.trim()}`);
-  return Buffer.from(out.replace(/\s+/g, ""), "base64");
+  if (code !== 0) {
+    const trimmed = err.trim();
+    return { ok: false, notFound: /404|Not Found/i.test(trimmed), error: trimmed };
+  }
+  return { ok: true, content: Buffer.from(out.replace(/\s+/g, ""), "base64") };
 }
 
 let ok = true;
 for (const f of FILES) {
   const local = readFileSync(new URL(`../packages/core/src/svc/${f}`, import.meta.url));
-  let remote: Buffer;
-  try { remote = await upstream(f); } catch (e) { console.error((e as Error).message); process.exit(2); }
-  const [l, r] = [mirrorHash(f, local), mirrorHash(f, remote)];
+  const fetched = await fetchUpstreamPath(`${UPSTREAM_DIR}/${f}`);
+  if (!fetched.ok) {
+    if (fetched.notFound) {
+      const vibe = await fetchUpstreamPath(UPSTREAM_VIBE_PATH);
+      if (vibe.ok) {
+        console.error(
+          `${UPSTREAM}@${ref} no longer carries TypeScript files under ${UPSTREAM_DIR} (migrated to VibeLang at ${UPSTREAM_VIBE_PATH}).\n` +
+          `Local mirror pins remain enforced offline by packages/core/test/contract-mirror.test.ts.\n` +
+          `Pass --ref <pre-migration-sha> to compare against the last TypeScript mirror revision.`,
+        );
+        process.exit(2);
+      }
+    }
+    console.error(`gh api failed for ${f}: ${fetched.error}`);
+    process.exit(2);
+  }
+  const [l, r] = [mirrorHash(f, local), mirrorHash(f, fetched.content)];
   console.log(`${l === r ? "same" : "DIFFERENT"}  ${f}  local ${l}  ${UPSTREAM}@${ref} ${r}`);
   if (l !== r) ok = false;
 }

@@ -225,8 +225,10 @@ export class CostLedger {
     return {
       onResponse: (i: ResponseInfo) => {
         if (!llmAttemptIsPriced(i.costMicro)) return;
+        let provider = "unknown";
+        try { provider = new URL(i.baseUrl).hostname || "unknown"; } catch { /* malformed baseUrl */ }
         void this.record({
-          app, kind: "llm", provider: new URL(i.baseUrl).hostname, costUsd: i.costMicro / costMicrosPerUsd, estimated: !i.costKnown,
+          app, kind: "llm", provider, costUsd: i.costMicro / costMicrosPerUsd, estimated: !i.costKnown,
           detail: { purpose, model: i.model, promptTokens: i.usage.promptTokens, completionTokens: i.usage.completionTokens, attempt: i.attempt },
         });
       },

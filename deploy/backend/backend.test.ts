@@ -13,9 +13,12 @@ import { PROFILE_REVIEW_DISCONNECT_PATH } from "../../packages/core/src/svc/prof
 import { PROFILE_REVIEW_WITHDRAWAL_PATH } from "../../packages/core/src/svc/profile-review-withdrawal.ts";
 import { calendarOwnerPath } from "../../packages/core/src/generated/calendarFreeBusy.ts";
 import {
-  BUILD_HEADER, CLIENT_IP, createBackend, ipOf, jsonLogger, loadConfig, normalizeEdge, PROXY_HEADERS,
+  BUILD_HEADER, captureConsole, CLIENT_IP, createBackend, ipOf, jsonLogger, loadConfig, normalizeEdge, PROXY_HEADERS,
   redact, routeLabel, serviceLoginProblem, type BackendConfig, type ServiceLike,
 } from "./backend.ts";
+import { opsConfigFromEnv } from "./ops.ts";
+import { startTicks } from "../../packages/network/service/serve.ts";
+import type { NetworkService } from "../../packages/network/service/service.ts";
 
 const SECRET = "s".repeat(40);
 const DEPLOYED = {
@@ -107,6 +110,13 @@ describe("config", () => {
   test("the build id comes from BUILD_ID, then Railway's commit", () => {
     expect(loadConfig({ ...DEPLOYED, RAILWAY_GIT_COMMIT_SHA: "abc123" }).build).toBe("abc123");
     expect(loadConfig({ ...DEPLOYED, BUILD_ID: "b7", RAILWAY_GIT_COMMIT_SHA: "abc123" }).build).toBe("b7");
+  });
+
+  test("OPS_HEARTBEAT_URL must be a valid URL and https when deployed", () => {
+    expect(() => opsConfigFromEnv({ OPS_HEARTBEAT_URL: "not-a-url" }, { env: "dev", build: "t", deployed: false })).toThrow(/not a URL/);
+    expect(() => opsConfigFromEnv({ OPS_HEARTBEAT_URL: "https://[bad" }, { env: "staging", build: "t", deployed: true })).toThrow(/not a URL/);
+    expect(() => opsConfigFromEnv({ OPS_HEARTBEAT_URL: "http://heartbeat.example/ping" }, { env: "staging", build: "t", deployed: true })).toThrow(/https/);
+    expect(opsConfigFromEnv({ OPS_HEARTBEAT_URL: "https://heartbeat.example/ping" }, { env: "staging", build: "t", deployed: true }).heartbeatUrl).toBe("https://heartbeat.example/ping");
   });
 });
 
@@ -204,6 +214,35 @@ describe("logs", () => {
     expect(routeLabel("/api/auth/otp/start")).toBe("/api/auth/otp");
     expect(routeLabel("/review/opp_123")).toBe("/review/:id");
     expect(routeLabel("/webhooks/blooio/slop")).toBe("/webhooks/blooio/slop");
+  });
+
+  test("nested fields are recursively redacted and circular objects or BigInt never crash logging", () => {
+    const lines: string[] = [];
+    const log = jsonLogger(s => lines.push(s));
+    const cyclic: Record<string, unknown> = { note: "call +15550100123", token: "nested-secret", count: 42n };
+    cyclic.self = cyclic;
+    log.info("nested", { detail: cyclic, items: [{ phone: "+15550100199", msg: "reach (555) 010-0177" }] });
+    const parsed = JSON.parse(lines[0]!);
+    expect(parsed.detail.note).toBe("call [phone]");
+    expect(parsed.detail.token).toBeUndefined();
+    expect(parsed.detail.count).toBe("42");
+    expect(parsed.detail.self).toBe("[circular]");
+    expect(parsed.items[0].phone).toBeUndefined();
+    expect(parsed.items[0].msg).toBe("reach [phone]");
+    expect(lines[0]).not.toMatch(/555|nested-secret/);
+
+    const orig = { log: console.log, info: console.info, warn: console.warn, error: console.error };
+    try {
+      captureConsole(log);
+      expect(() => console.error("captured", cyclic, 99n)).not.toThrow();
+    } finally {
+      Object.assign(console, orig);
+    }
+    const captured = JSON.parse(lines[1]!);
+    expect(captured.level).toBe("error");
+    expect(captured.msg).toContain("[circular]");
+    expect(captured.msg).toContain("99");
+    expect(lines[1]).not.toMatch(/555|nested-secret/);
   });
 });
 
@@ -340,6 +379,54 @@ describe("routing", () => {
     expect(await r.json()).toEqual({ ok: false, error: "internal_error" });
     expect(lines.join("\n")).not.toMatch(/555|phone=/);
   });
+
+  test("an unexpected error on the staff port returns 500 with build header and redacted error log", async () => {
+    const lines: string[] = [];
+    const { svc } = fakeService();
+    svc.fetch = async () => { throw new Error("staff failure for +15550100123"); };
+    const b = createBackend({ svc, config: cfg(), log: jsonLogger(s => lines.push(s)), ping: async () => true });
+    const r = await b.staffFetch(new Request("http://x/review/opp_1"));
+    expect(r.status).toBe(500);
+    expect(r.headers.get(BUILD_HEADER)).toBe("test-build");
+    expect(await r.json()).toEqual({ ok: false, error: "internal_error" });
+    expect(lines.join("\n")).toMatch(/"port":"staff"/);
+    expect(lines.join("\n")).not.toMatch(/555/);
+  });
+
+  test("/ops/metrics requires an explicit Bearer authorization prefix", async () => {
+    const { svc } = fakeService();
+    const token = "m".repeat(40);
+    const baseCfg = cfg();
+    const b = createBackend({
+      svc,
+      config: { ...baseCfg, ops: { ...baseCfg.ops, metricsToken: token } },
+      log: silent,
+      ping: async () => true,
+      ops: { tick: async () => {}, metrics: async () => ({ ok: true }) },
+    });
+    expect((await b.publicFetch(new Request("http://x/ops/metrics", { headers: { authorization: token } }))).status).toBe(401);
+    expect((await b.publicFetch(new Request("http://x/ops/metrics", { headers: { authorization: `Basic ${token}` } }))).status).toBe(401);
+    expect((await b.publicFetch(new Request("http://x/ops/metrics", { headers: { authorization: `Bearer ${token}` } }))).status).toBe(200);
+  });
+
+  test("serveHttp does not kill an active in-flight async handler past idleTimeout", async () => {
+    const listener = await serveHttp({
+      hostname: "127.0.0.1",
+      port: 0,
+      idleTimeout: 1,
+      fetch: async () => {
+        await sleep(1250);
+        return Response.json({ ok: true, slow: true });
+      },
+    });
+    try {
+      const res = await fetch(new URL("/slow", listener.url), { signal: AbortSignal.timeout(5000) });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true, slow: true });
+    } finally {
+      await listener.stop(true);
+    }
+  }, 10_000);
 });
 
 describe("router to backend (deploy/router.ts, the real Worker code)", () => {
@@ -380,6 +467,22 @@ describe("deployed tick round", () => {
     expect(svc.rounds).toEqual(["inbox", "network:ntwrk:nyc", "retention", "notify"]);
     expect(lines.join("\n")).toMatch(/"msg":"inbox tick failed"/);
     expect(lines.join("\n")).toMatch(/"msg":"retention tick failed"/);
+  });
+
+  test("standalone startTicks catches inboxTick and purge errors without crashing the tick loop", async () => {
+    const { svc } = fakeService();
+    const logs: string[] = [];
+    svc.inboxTick = async () => { svc.rounds.push("inbox"); throw new Error("inbox down"); };
+    svc.purge = async () => { svc.rounds.push("retention"); throw new Error("purge down"); };
+    const ticks = startTicks(svc as unknown as NetworkService, s => logs.push(s));
+    try {
+      await ticks.first;
+      expect(svc.rounds).toEqual(["inbox", "network:ntwrk:nyc", "retention", "notify"]);
+      expect(logs).toContain("inbox: tick failed: inbox down");
+      expect(logs).toContain("retention: tick failed: purge down");
+    } finally {
+      await ticks.stop();
+    }
   });
 });
 

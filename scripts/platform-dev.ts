@@ -21,7 +21,7 @@ import { spawnProcess } from "../packages/core/src/runtime/process.ts";
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 import { SQL } from "../packages/core/src/runtime/postgres.ts";
-import { createBackend, ipOf, loadConfig, type Logger } from "../deploy/backend/backend.ts";
+import { createBackend, ipOf, loadConfig, MAX_PUBLIC_BODY_BYTES, type Logger } from "../deploy/backend/backend.ts";
 import { applySchema, DEV_PG_URL, devPgUp } from "../packages/db/dev-pg.ts";
 import { APP_IDS } from "../packages/platform/src/apps.ts";
 import { DevConsoleProvider } from "../packages/platform/src/otp.ts";
@@ -94,7 +94,7 @@ async function main() {
   const mcp = await createServiceMcp(svc, { databaseUrl: url, proxySecret: config.proxySecret, devOrigins, log: s => log.info(s) });
   const pool = new SQL({ url, max: 1 });
   const backend = createBackend({ svc, config, log, ping: async () => { await pool`select 1`; return true; }, mcp: mcp && (req => mcp.fetch(req)) });
-  const pub = await serveHttp({ hostname: HOST, port: apiPort, fetch: (req, server) => backend.publicFetch(req, server), maxRequestBodySize: 256 * 1024 });
+  const pub = await serveHttp({ hostname: HOST, port: apiPort, fetch: (req, server) => backend.publicFetch(req, server), maxRequestBodySize: MAX_PUBLIC_BODY_BYTES });
   const staff = await serveHttp({ hostname: HOST, port: staffPort, fetch: req => backend.staffFetch(req), maxRequestBodySize: 256 * 1024 });
   void backend.startTicks();
 

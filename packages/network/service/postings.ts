@@ -21,6 +21,7 @@ import type { Facet, Intent, MemberId } from "@thenetwork/core";
 import { peonCompanyKey } from "../../engine/src/packs/peon/schema.ts";
 import { postingFacts, postingFromFacts, postingProblem, type JobPosting } from "../src/jobs.ts";
 import type { AuditEntry, StaffRole, StaffUser } from "../../../apps/observatory/src/types.ts";
+import { readCappedText } from "../../platform/src/body.ts";
 import type { NetworkRuntime } from "./runtime.ts";
 
 const ID = /^[A-Za-z0-9_.:-]{1,200}$/;
@@ -75,9 +76,15 @@ export interface PostingRouteDeps {
   log(message: string): void;
 }
 
+const MAX_POSTING_BODY_BYTES = 256 * 1024;
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
 async function readJson(req: Request): Promise<Record<string, any> | undefined> {
-  try { const b = await req.json(); return b && typeof b === "object" && !Array.isArray(b) ? b as Record<string, any> : undefined; } catch { return undefined; }
+  try {
+    const raw = await readCappedText(req, MAX_POSTING_BODY_BYTES);
+    if (raw === "too_large") return undefined;
+    const b = JSON.parse(raw);
+    return b && typeof b === "object" && !Array.isArray(b) ? b as Record<string, any> : undefined;
+  } catch { return undefined; }
 }
 const str = (v: unknown, max: number) => (typeof v === "string" && v.trim() && v.length <= max ? v.trim() : undefined);
 const skills = (v: unknown): { skill: string; level: number }[] | undefined => {

@@ -323,7 +323,7 @@ export class Inbox {
       const key = `inbox-sender:${sender}`;
       try {
         await conn`select pg_advisory_lock(hashtext(${key}))`;
-        try { return await this.handleWaiting(sender); } finally { await conn`select pg_advisory_unlock(hashtext(${key}))`; }
+        try { return await this.handleWaiting(sender); } finally { await conn`select pg_advisory_unlock(hashtext(${key}))`.catch(() => {}); }
       } finally { conn.release(); }
     });
     this.chains.set(sender, run);

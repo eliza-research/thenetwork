@@ -489,20 +489,23 @@ export class PgPeopleStore implements PeopleStore {
   }
 
   /**
-   * One holder at a time in this process (so a waiter never holds a pooled connection that the holder
-   * needs), and a session advisory lock on `key` across processes.
+   * One holder per key at a time in this process (so a waiter never holds a pooled connection that
+   * the holder needs, and distinct keys do not block each other), plus a session advisory lock on
+   * `key` across processes.
    */
-  private lockTail: Promise<unknown> = Promise.resolve();
+  private lockChains = new Map<string, Promise<unknown>>();
   withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
-    const run = this.lockTail.then(() => this.advisory(key, fn), () => this.advisory(key, fn));
-    this.lockTail = run.catch(() => {});
+    const prev = this.lockChains.get(key) ?? Promise.resolve();
+    const run = prev.catch(() => {}).then(() => this.advisory(key, fn));
+    this.lockChains.set(key, run);
+    run.finally(() => { if (this.lockChains.get(key) === run) this.lockChains.delete(key); }).catch(() => {});
     return run;
   }
   private async advisory<T>(key: string, fn: () => Promise<T>): Promise<T> {
     const conn = await this.sql.reserve();
     try {
       await conn`select pg_advisory_lock(hashtext(${`platform:${key}`}))`;
-      try { return await fn(); } finally { await conn`select pg_advisory_unlock(hashtext(${`platform:${key}`}))`; }
+      try { return await fn(); } finally { await conn`select pg_advisory_unlock(hashtext(${`platform:${key}`}))`.catch(() => {}); }
     } finally { conn.release(); }
   }
 
