@@ -12,8 +12,8 @@ export type CloudCachePublication = "PublishCloudValidation" | "ClearCloudValida
 
 /** One variant per transition in the spec. */
 export type Event =
-  | { type: "checkSiteProof"; bindingValid: boolean; proofLive: boolean; productionCloud: boolean; cacheLive: boolean }
   | { type: "useLocalSession"; cloudToken: boolean }
+  | { type: "checkSiteProof"; bindingValid: boolean; proofLive: boolean; productionCloud: boolean; cacheLive: boolean }
   | { type: "finishCloudCheck"; answer: CloudResponse; proofLive: boolean }
   | { type: "checkGrantEnvelope"; envelopeValid: boolean; grantLive: boolean }
   | { type: "checkGrantDelegation"; delegationBound: boolean }
@@ -36,20 +36,6 @@ export function localSessionAllowed(cloudToken: boolean): boolean {
 
 /** Story: Keep site access tied to current Cloud authority / The app's authority and proof choose how a site session is checked (spec/cloudAuthority.md) */
 //@ pure
-export function checkSiteProof(check: AuthorityCheck, bindingValid: boolean, proofLive: boolean, productionCloud: boolean, cacheLive: boolean): AuthorityCheck {
-  //@ ensures (inv(check) && canCheckSiteProof(check)) ==> alwaysOnlyValidChecksUseCache(\result)
-  //@ ensures (inv(check) && canCheckSiteProof(check)) ==> stepOnlyAnAuthorityResultFinishes(check, "checkSiteProof", \result)
-  return !bindingValid || !proofLive ? ({ ...check, phase: "AuthorityInvalid" } as AuthorityCheck) : (!productionCloud && cacheLive ? ({ phase: "AuthorityValid", fromCache: true } as AuthorityCheck) : ({ ...check, phase: "AwaitingCloud" } as AuthorityCheck));
-}
-
-/** Story: Keep site access tied to current Cloud authority / The app's authority and proof choose how a site session is checked (spec/cloudAuthority.md) */
-//@ pure
-export function alwaysOnlyValidChecksUseCache(check: AuthorityCheck): boolean {
-  return !check.fromCache || check.phase === "AuthorityValid";
-}
-
-/** Story: Keep site access tied to current Cloud authority / The app's authority and proof choose how a site session is checked (spec/cloudAuthority.md) */
-//@ pure
 export function canUseLocalSession(check: AuthorityCheck): boolean {
   return check.phase === "AwaitingProof";
 }
@@ -66,6 +52,20 @@ export function useLocalSession(check: AuthorityCheck, cloudToken: boolean): Aut
 //@ pure
 export function canCheckSiteProof(check: AuthorityCheck): boolean {
   return check.phase === "AwaitingProof";
+}
+
+/** Story: Keep site access tied to current Cloud authority / The app's authority and proof choose how a site session is checked (spec/cloudAuthority.md) */
+//@ pure
+export function checkSiteProof(check: AuthorityCheck, bindingValid: boolean, proofLive: boolean, productionCloud: boolean, cacheLive: boolean): AuthorityCheck {
+  //@ ensures (inv(check) && canCheckSiteProof(check)) ==> alwaysOnlyValidChecksUseCache(\result)
+  //@ ensures (inv(check) && canCheckSiteProof(check)) ==> stepOnlyAnAuthorityResultFinishes(check, "checkSiteProof", \result)
+  return !bindingValid || !proofLive ? ({ ...check, phase: "AuthorityInvalid" } as AuthorityCheck) : (!productionCloud && cacheLive ? ({ phase: "AuthorityValid", fromCache: true } as AuthorityCheck) : ({ ...check, phase: "AwaitingCloud" } as AuthorityCheck));
+}
+
+/** Story: Keep site access tied to current Cloud authority / The app's authority and proof choose how a site session is checked (spec/cloudAuthority.md) */
+//@ pure
+export function alwaysOnlyValidChecksUseCache(check: AuthorityCheck): boolean {
+  return !check.fromCache || check.phase === "AuthorityValid";
 }
 
 /** Story: Keep site access tied to current Cloud authority / Only a positive live Cloud response updates the cache (spec/cloudAuthority.md) */
@@ -142,18 +142,6 @@ export function lawStagingRejectedValidationClearsTheCache(roundCurrent: boolean
 
 /** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md) */
 //@ pure
-export function grantResourceMatches(productionCloud: boolean, resource: string, standardMcp: string, openAiMcp: string): boolean {
-  return productionCloud && (resource === standardMcp || resource === openAiMcp);
-}
-
-/** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md) */
-//@ pure
-export function grantExpiresAt(sessionExpiry: number, identityExpiry: number): number {
-  return sessionExpiry <= identityExpiry ? sessionExpiry : identityExpiry;
-}
-
-/** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md) */
-//@ pure
 export function canCheckGrantEnvelope(check: AuthorityCheck): boolean {
   return check.phase === "AwaitingProof";
 }
@@ -196,6 +184,18 @@ export function checkGrantOwner(check: AuthorityCheck, ownerCurrent: boolean, ph
 
 /** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md) */
 //@ pure
+export function grantResourceMatches(productionCloud: boolean, resource: string, standardMcp: string, openAiMcp: string): boolean {
+  return productionCloud && (resource === standardMcp || resource === openAiMcp);
+}
+
+/** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md) */
+//@ pure
+export function grantExpiresAt(sessionExpiry: number, identityExpiry: number): number {
+  return sessionExpiry <= identityExpiry ? sessionExpiry : identityExpiry;
+}
+
+/** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md) */
+//@ pure
 export function lawGrantNeverOutlivesSessionOrIdentity(sessionExpiry: number, identityExpiry: number): boolean {
   //@ ensures \result === true
   return grantExpiresAt(sessionExpiry, identityExpiry) <= sessionExpiry && grantExpiresAt(sessionExpiry, identityExpiry) <= identityExpiry;
@@ -225,8 +225,8 @@ export function lawExpiredGrantIsInvalid(envelopeValid: boolean): boolean {
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: AuthorityCheck, event: Event): boolean {
-  if (event.type === "checkSiteProof") return canCheckSiteProof(current);
   if (event.type === "useLocalSession") return canUseLocalSession(current);
+  if (event.type === "checkSiteProof") return canCheckSiteProof(current);
   if (event.type === "finishCloudCheck") return canFinishCloudCheck(current);
   if (event.type === "checkGrantEnvelope") return canCheckGrantEnvelope(current);
   if (event.type === "checkGrantDelegation") return canCheckGrantDelegation(current);
@@ -239,8 +239,8 @@ export function enabled(current: AuthorityCheck, event: Event): boolean {
 export function step(current: AuthorityCheck, event: Event): AuthorityCheck {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "checkSiteProof") return canCheckSiteProof(current) ? checkSiteProof(current, event.bindingValid, event.proofLive, event.productionCloud, event.cacheLive) : current;
   if (event.type === "useLocalSession") return canUseLocalSession(current) ? useLocalSession(current, event.cloudToken) : current;
+  if (event.type === "checkSiteProof") return canCheckSiteProof(current) ? checkSiteProof(current, event.bindingValid, event.proofLive, event.productionCloud, event.cacheLive) : current;
   if (event.type === "finishCloudCheck") return canFinishCloudCheck(current) ? finishCloudCheck(current, event.answer, event.proofLive) : current;
   if (event.type === "checkGrantEnvelope") return canCheckGrantEnvelope(current) ? checkGrantEnvelope(current, event.envelopeValid, event.grantLive) : current;
   if (event.type === "checkGrantDelegation") return canCheckGrantDelegation(current) ? checkGrantDelegation(current, event.delegationBound) : current;
@@ -262,8 +262,8 @@ export function parseEvent(x: unknown): Event | undefined {
     return undefined;
   }
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "checkSiteProof" && typeof raw.bindingValid === "boolean" && typeof raw.proofLive === "boolean" && typeof raw.productionCloud === "boolean" && typeof raw.cacheLive === "boolean") return { type: "checkSiteProof", bindingValid: raw.bindingValid, proofLive: raw.proofLive, productionCloud: raw.productionCloud, cacheLive: raw.cacheLive };
   if (raw.type === "useLocalSession" && typeof raw.cloudToken === "boolean") return { type: "useLocalSession", cloudToken: raw.cloudToken };
+  if (raw.type === "checkSiteProof" && typeof raw.bindingValid === "boolean" && typeof raw.proofLive === "boolean" && typeof raw.productionCloud === "boolean" && typeof raw.cacheLive === "boolean") return { type: "checkSiteProof", bindingValid: raw.bindingValid, proofLive: raw.proofLive, productionCloud: raw.productionCloud, cacheLive: raw.cacheLive };
   if (raw.type === "finishCloudCheck" && (raw.answer === "CloudAccepted" || raw.answer === "CloudDenied" || raw.answer === "CloudUnavailable") && typeof raw.proofLive === "boolean") return { type: "finishCloudCheck", answer: raw.answer, proofLive: raw.proofLive };
   if (raw.type === "checkGrantEnvelope" && typeof raw.envelopeValid === "boolean" && typeof raw.grantLive === "boolean") return { type: "checkGrantEnvelope", envelopeValid: raw.envelopeValid, grantLive: raw.grantLive };
   if (raw.type === "checkGrantDelegation" && typeof raw.delegationBound === "boolean") return { type: "checkGrantDelegation", delegationBound: raw.delegationBound };

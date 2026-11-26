@@ -23,15 +23,21 @@ export type Event =
   | { type: "retryCheck" }
   | { type: "endSession"; roleRemoved: boolean };
 
-/** Story: Sign in as myself / A second factor is the multi-factor method or two distinct methods (spec/staffSignIn.md) */
-export const staffSignInDistinctMethodsForSecondFactor: number = 2;
 /** Story: Sign in as myself / The console takes a token out of the address before it calls the server (spec/staffSignIn.md) */
 export const initial: StaffSignIn = { phase: "Opening", method: "NoCredential", tokenInAddress: true, secondFactor: false, roleCount: 0 };
+/** Story: Sign in as myself / A second factor is the multi-factor method or two distinct methods (spec/staffSignIn.md) */
+export const staffSignInDistinctMethodsForSecondFactor: number = 2;
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: StaffSignIn): boolean {
   return alwaysAddressHoldsNoTokenAfterOpening(current) && alwaysSignedInHoldsARole(current) && alwaysSignedInNamesItsMethod(current) && alwaysAccessSessionHasASecondFactor(current) && alwaysTokenFormOnlyForTokenServers(current) && alwaysAccessLinkOnlyForAccessServers(current);
+}
+
+/** Story: Sign in as myself / The console takes a token out of the address before it calls the server (spec/staffSignIn.md) */
+//@ pure
+export function canOpenConsole(signIn: StaffSignIn): boolean {
+  return signIn.phase === "Opening";
 }
 
 /** Story: Sign in as myself / The console takes a token out of the address before it calls the server (spec/staffSignIn.md) */
@@ -54,12 +60,6 @@ export function alwaysAddressHoldsNoTokenAfterOpening(signIn: StaffSignIn): bool
   return !(signIn.phase !== "Opening") || !signIn.tokenInAddress;
 }
 
-/** Story: Sign in as myself / The console takes a token out of the address before it calls the server (spec/staffSignIn.md) */
-//@ pure
-export function canOpenConsole(signIn: StaffSignIn): boolean {
-  return signIn.phase === "Opening";
-}
-
 /** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
 //@ pure
 export function phaseForAnswer(answer: IdentityAnswer, viaAccess: boolean, secondFactorShown: boolean, grants: number): SignInPhase {
@@ -76,6 +76,35 @@ export function methodForAnswer(answer: IdentityAnswer, viaAccess: boolean, meth
 //@ pure
 export function canAnswerIdentity(signIn: StaffSignIn, grants: number): boolean {
   return signIn.phase === "Checking" && grants >= 0;
+}
+
+/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
+//@ pure
+export function answerIdentity(signIn: StaffSignIn, answer: IdentityAnswer, viaAccess: boolean, secondFactorShown: boolean, grants: number): StaffSignIn {
+  //@ ensures (inv(signIn) && canAnswerIdentity(signIn, grants)) ==> alwaysAddressHoldsNoTokenAfterOpening(\result)
+  //@ ensures (inv(signIn) && canAnswerIdentity(signIn, grants)) ==> alwaysSignedInHoldsARole(\result)
+  //@ ensures (inv(signIn) && canAnswerIdentity(signIn, grants)) ==> alwaysSignedInNamesItsMethod(\result)
+  //@ ensures (inv(signIn) && canAnswerIdentity(signIn, grants)) ==> alwaysAccessSessionHasASecondFactor(\result)
+  //@ ensures (inv(signIn) && canAnswerIdentity(signIn, grants)) ==> alwaysTokenFormOnlyForTokenServers(\result)
+  //@ ensures (inv(signIn) && canAnswerIdentity(signIn, grants)) ==> alwaysAccessLinkOnlyForAccessServers(\result)
+  //@ ensures (inv(signIn) && canAnswerIdentity(signIn, grants)) ==> stepSignInFollowsAnAcceptedAnswer(signIn, "answerIdentity", \result)
+  //@ ensures (inv(signIn) && canAnswerIdentity(signIn, grants)) ==> stepEndedSessionHoldsNoRoles(signIn, "answerIdentity", \result)
+  const local_0 = answer === "IdentityAccepted";
+  return { ...signIn, phase: phaseForAnswer(answer, viaAccess, secondFactorShown, grants), method: methodForAnswer(answer, viaAccess, signIn.method), secondFactor: local_0 && viaAccess && secondFactorShown, roleCount: local_0 ? grants : 0 };
+}
+
+/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
+//@ pure
+export function lawAccessServerNeverAsksForAToken(answer: IdentityAnswer, secondFactorShown: boolean, grants: number): boolean {
+  //@ ensures \result === true
+  return phaseForAnswer(answer, true, secondFactorShown, grants) !== "AskingToken";
+}
+
+/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
+//@ pure
+export function lawAccessNeedsTheSecondFactor(grants: number): boolean {
+  //@ ensures \result === true
+  return phaseForAnswer("IdentityAccepted", true, false, grants) !== "SignedIn";
 }
 
 /** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
@@ -142,35 +171,6 @@ export function sometimesNeedsSecondFactor(signIn: StaffSignIn): boolean {
 //@ pure
 export function sometimesSiteRefused(signIn: StaffSignIn): boolean {
   return signIn.phase === "SiteRefused";
-}
-
-/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
-//@ pure
-export function answerIdentity(signIn: StaffSignIn, answer: IdentityAnswer, viaAccess: boolean, secondFactorShown: boolean, grants: number): StaffSignIn {
-  //@ ensures (inv(signIn) && canAnswerIdentity(signIn, grants)) ==> alwaysAddressHoldsNoTokenAfterOpening(\result)
-  //@ ensures (inv(signIn) && canAnswerIdentity(signIn, grants)) ==> alwaysSignedInHoldsARole(\result)
-  //@ ensures (inv(signIn) && canAnswerIdentity(signIn, grants)) ==> alwaysSignedInNamesItsMethod(\result)
-  //@ ensures (inv(signIn) && canAnswerIdentity(signIn, grants)) ==> alwaysAccessSessionHasASecondFactor(\result)
-  //@ ensures (inv(signIn) && canAnswerIdentity(signIn, grants)) ==> alwaysTokenFormOnlyForTokenServers(\result)
-  //@ ensures (inv(signIn) && canAnswerIdentity(signIn, grants)) ==> alwaysAccessLinkOnlyForAccessServers(\result)
-  //@ ensures (inv(signIn) && canAnswerIdentity(signIn, grants)) ==> stepSignInFollowsAnAcceptedAnswer(signIn, "answerIdentity", \result)
-  //@ ensures (inv(signIn) && canAnswerIdentity(signIn, grants)) ==> stepEndedSessionHoldsNoRoles(signIn, "answerIdentity", \result)
-  const local_0 = answer === "IdentityAccepted";
-  return { ...signIn, phase: phaseForAnswer(answer, viaAccess, secondFactorShown, grants), method: methodForAnswer(answer, viaAccess, signIn.method), secondFactor: local_0 && viaAccess && secondFactorShown, roleCount: local_0 ? grants : 0 };
-}
-
-/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
-//@ pure
-export function lawAccessServerNeverAsksForAToken(answer: IdentityAnswer, secondFactorShown: boolean, grants: number): boolean {
-  //@ ensures \result === true
-  return phaseForAnswer(answer, true, secondFactorShown, grants) !== "AskingToken";
-}
-
-/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
-//@ pure
-export function lawAccessNeedsTheSecondFactor(grants: number): boolean {
-  //@ ensures \result === true
-  return phaseForAnswer("IdentityAccepted", true, false, grants) !== "SignedIn";
 }
 
 /** Story: Sign in as myself / The token form accepts a pasted token and checks it again (spec/staffSignIn.md) */
@@ -339,14 +339,14 @@ export function lawTokenFormOnlyWhenAskingForAToken(phase: SignInPhase): boolean
 
 /** Story: Start a console that holds real data only behind single sign-on / Real data outside a local development setup needs Cloudflare Access (spec/staffSignIn.md) */
 //@ pure
-export function tokensAccepted(accessOn: boolean): boolean {
-  return !accessOn;
+export function startRefused(realOnlyServer: boolean, remoteDatabase: boolean, platformEnv: PlatformEnv, accessOn: boolean): boolean {
+  return !realOnlyServer && !remoteDatabase ? false : (platformEnv === "EnvUnset" || platformEnv === "EnvUnknown" ? true : (accessOn ? false : (platformEnv !== "EnvDev" ? true : remoteDatabase)));
 }
 
 /** Story: Start a console that holds real data only behind single sign-on / Real data outside a local development setup needs Cloudflare Access (spec/staffSignIn.md) */
 //@ pure
-export function startRefused(realOnlyServer: boolean, remoteDatabase: boolean, platformEnv: PlatformEnv, accessOn: boolean): boolean {
-  return !realOnlyServer && !remoteDatabase ? false : (platformEnv === "EnvUnset" || platformEnv === "EnvUnknown" ? true : (accessOn ? false : (platformEnv !== "EnvDev" ? true : remoteDatabase)));
+export function tokensAccepted(accessOn: boolean): boolean {
+  return !accessOn;
 }
 
 /** Story: Start a console that holds real data only behind single sign-on / Real data outside a local development setup needs Cloudflare Access (spec/staffSignIn.md) */

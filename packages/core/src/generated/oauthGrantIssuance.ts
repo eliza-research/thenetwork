@@ -18,10 +18,10 @@ export type Event =
   | { type: "recordCommit"; committed: boolean }
   | { type: "recordStorageFailure" };
 
-/** Story: Connect my agent after I approve access / Locked approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md) */
-export const eligibleApproval: LockedApproval = { ownerMatches: true, lockedRequestLive: true, pendingGrantLive: true };
 /** Story: Connect my agent after I approve access / An expired request cannot begin issuance (spec/oauthGrantIssuance.md) */
 export const initial: Issuance = { phase: "StartApproval", authorityAccepted: false, sameOwner: false, requestLive: false, grantLive: false };
+/** Story: Connect my agent after I approve access / Locked approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md) */
+export const eligibleApproval: LockedApproval = { ownerMatches: true, lockedRequestLive: true, pendingGrantLive: true };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure

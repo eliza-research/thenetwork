@@ -2,11 +2,11 @@
 //@ backend dafny
 
 /** Story: Confirm my own phone during signup / Offer one app-bound confirmation after the person approves the draft (spec/agentPhoneHandoff.md) */
-export type Approval = "ApproveExact" | "AskChanges" | "DeclineSignup";
-/** Story: Confirm my own phone during signup / Offer one app-bound confirmation after the person approves the draft (spec/agentPhoneHandoff.md) */
 export type HandoffPhase = "DraftingHandoff" | "AwaitingPhoneConfirmation" | "AwaitingSignupGrant" | "ReadyForSignupProfile" | "AwaitingSignupReadBack" | "SignupProfileSaved" | "SignupProfileUnconfirmed" | "HandoffRefused";
 /** Story: Confirm my own phone during signup / Offer one app-bound confirmation after the person approves the draft (spec/agentPhoneHandoff.md) */
 export interface PhoneHandoff { phase: HandoffPhase; approvedDraft: boolean; verifiedEnrollment: boolean; matchingGrant: boolean }
+/** Story: Confirm my own phone during signup / Offer one app-bound confirmation after the person approves the draft (spec/agentPhoneHandoff.md) */
+export type Approval = "ApproveExact" | "AskChanges" | "DeclineSignup";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -24,6 +24,12 @@ export const initial: PhoneHandoff = { phase: "DraftingHandoff", approvedDraft: 
 //@ pure
 export function inv(current: PhoneHandoff): boolean {
   return alwaysHandoffNeedsPriorApproval(current) && alwaysSignupWriteNeedsVerifiedAuthority(current) && alwaysGrantFollowsVerifiedEnrollment(current);
+}
+
+/** Story: Confirm my own phone during signup / Offer one app-bound confirmation after the person approves the draft (spec/agentPhoneHandoff.md) */
+//@ pure
+export function canDecideApproval(handoff: PhoneHandoff): boolean {
+  return handoff.phase === "DraftingHandoff" && !handoff.approvedDraft;
 }
 
 /** Story: Confirm my own phone during signup / Offer one app-bound confirmation after the person approves the draft (spec/agentPhoneHandoff.md) */
@@ -64,12 +70,6 @@ export function alwaysHandoffNeedsPriorApproval(handoff: PhoneHandoff): boolean 
 //@ pure
 export function stepOfferFollowsApproval(before: PhoneHandoff, via: string, after: PhoneHandoff): boolean {
   return !(after.phase === "AwaitingPhoneConfirmation" && before.phase !== "AwaitingPhoneConfirmation") || (via === "offerHandoff" && before.approvedDraft);
-}
-
-/** Story: Confirm my own phone during signup / Offer one app-bound confirmation after the person approves the draft (spec/agentPhoneHandoff.md) */
-//@ pure
-export function canDecideApproval(handoff: PhoneHandoff): boolean {
-  return handoff.phase === "DraftingHandoff" && !handoff.approvedDraft;
 }
 
 /** Story: Confirm my own phone during signup / Only the browser and the authorized connector complete the handoff (spec/agentPhoneHandoff.md) */

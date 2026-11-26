@@ -25,26 +25,28 @@ export function inv(current: HomeHelpRecipientConsent): boolean {
 
 /** Story: Decide privately about the exact reviewed plan / Only the current approved roster can receive a notice (spec/homeHelpConsent.md) */
 //@ pure
-export function homeHelpNoticeAllowed(phase: HomeHelpConsentPhase, reviewedNow: boolean, exactRoster: boolean, consentStopped: boolean, requesterNotice: boolean, requesterAccepted: boolean): boolean {
-  return phase === "Pending" && reviewedNow && exactRoster && !consentStopped && (requesterNotice || requesterAccepted);
-}
-
-/** Story: Decide privately about the exact reviewed plan / Only the current approved roster can receive a notice (spec/homeHelpConsent.md) */
-//@ pure
-export function sometimesNoticePending(c: HomeHelpRecipientConsent): boolean {
-  return c.phase === "Pending";
-}
-
-/** Story: Decide privately about the exact reviewed plan / Only the current approved roster can receive a notice (spec/homeHelpConsent.md) */
-//@ pure
 export function canStageNotice(c: HomeHelpRecipientConsent, reviewedNow: boolean): boolean {
   return c.phase === "Unstaged" && reviewedNow;
 }
 
 /** Story: Decide privately about the exact reviewed plan / Only the current approved roster can receive a notice (spec/homeHelpConsent.md) */
 //@ pure
+export function stageNotice(c: HomeHelpRecipientConsent, reviewedNow: boolean): HomeHelpRecipientConsent {
+  //@ ensures (inv(c) && canStageNotice(c, reviewedNow)) ==> stepAcceptanceFollowsDelivery(c, \result)
+  //@ ensures (inv(c) && canStageNotice(c, reviewedNow)) ==> stepStoppedConsentStaysStopped(c, \result)
+  return canStageNotice(c, reviewedNow) ? ({ phase: "Pending" } as HomeHelpRecipientConsent) : c;
+}
+
+/** Story: Decide privately about the exact reviewed plan / Only the current approved roster can receive a notice (spec/homeHelpConsent.md) */
+//@ pure
 export function homeHelpConsentStopped(phase: HomeHelpConsentPhase): boolean {
   return phase === "Declined" || phase === "Withdrawn" || phase === "Cancelled";
+}
+
+/** Story: Decide privately about the exact reviewed plan / Only the current approved roster can receive a notice (spec/homeHelpConsent.md) */
+//@ pure
+export function homeHelpNoticeAllowed(phase: HomeHelpConsentPhase, reviewedNow: boolean, exactRoster: boolean, consentStopped: boolean, requesterNotice: boolean, requesterAccepted: boolean): boolean {
+  return phase === "Pending" && reviewedNow && exactRoster && !consentStopped && (requesterNotice || requesterAccepted);
 }
 
 /** Story: Decide privately about the exact reviewed plan / Only the current approved roster can receive a notice (spec/homeHelpConsent.md) */
@@ -56,16 +58,8 @@ export function lawHelperNoticeRequiresRequester(phase: HomeHelpConsentPhase, re
 
 /** Story: Decide privately about the exact reviewed plan / Only the current approved roster can receive a notice (spec/homeHelpConsent.md) */
 //@ pure
-export function stageNotice(c: HomeHelpRecipientConsent, reviewedNow: boolean): HomeHelpRecipientConsent {
-  //@ ensures (inv(c) && canStageNotice(c, reviewedNow)) ==> stepAcceptanceFollowsDelivery(c, \result)
-  //@ ensures (inv(c) && canStageNotice(c, reviewedNow)) ==> stepStoppedConsentStaysStopped(c, \result)
-  return canStageNotice(c, reviewedNow) ? ({ phase: "Pending" } as HomeHelpRecipientConsent) : c;
-}
-
-/** Story: Decide privately about the exact reviewed plan / A response belongs to the recipient of a delivered notice (spec/homeHelpConsent.md) */
-//@ pure
-export function homeHelpResponseAfterDelivery(sentAt: number, receivedAt: number, now: number): boolean {
-  return sentAt >= 0 && sentAt <= receivedAt && receivedAt <= now;
+export function sometimesNoticePending(c: HomeHelpRecipientConsent): boolean {
+  return c.phase === "Pending";
 }
 
 /** Story: Decide privately about the exact reviewed plan / A response belongs to the recipient of a delivered notice (spec/homeHelpConsent.md) */
@@ -76,8 +70,22 @@ export function canRecordNoticeSent(c: HomeHelpRecipientConsent, deliveryAllowed
 
 /** Story: Decide privately about the exact reviewed plan / A response belongs to the recipient of a delivered notice (spec/homeHelpConsent.md) */
 //@ pure
+export function recordNoticeSent(c: HomeHelpRecipientConsent, deliveryAllowed: boolean, exactReceipt: boolean): HomeHelpRecipientConsent {
+  //@ ensures (inv(c) && canRecordNoticeSent(c, deliveryAllowed, exactReceipt)) ==> stepAcceptanceFollowsDelivery(c, \result)
+  //@ ensures (inv(c) && canRecordNoticeSent(c, deliveryAllowed, exactReceipt)) ==> stepStoppedConsentStaysStopped(c, \result)
+  return canRecordNoticeSent(c, deliveryAllowed, exactReceipt) ? ({ phase: "Sent" } as HomeHelpRecipientConsent) : c;
+}
+
+/** Story: Decide privately about the exact reviewed plan / A response belongs to the recipient of a delivered notice (spec/homeHelpConsent.md) */
+//@ pure
 export function canChooseHomeHelp(c: HomeHelpRecipientConsent, responseAllowed: boolean, exactActor: boolean): boolean {
   return c.phase === "Sent" && responseAllowed && exactActor;
+}
+
+/** Story: Decide privately about the exact reviewed plan / A response belongs to the recipient of a delivered notice (spec/homeHelpConsent.md) */
+//@ pure
+export function homeHelpResponseAfterDelivery(sentAt: number, receivedAt: number, now: number): boolean {
+  return sentAt >= 0 && sentAt <= receivedAt && receivedAt <= now;
 }
 
 /** Story: Decide privately about the exact reviewed plan / A response belongs to the recipient of a delivered notice (spec/homeHelpConsent.md) */
@@ -85,6 +93,14 @@ export function canChooseHomeHelp(c: HomeHelpRecipientConsent, responseAllowed: 
 export function lawPrematureHomeHelpResponseRefused(sentAt: number, receivedAt: number, now: number): boolean {
   //@ ensures \result === true
   return !(receivedAt < sentAt) || !homeHelpResponseAfterDelivery(sentAt, receivedAt, now);
+}
+
+/** Story: Decide privately about the exact reviewed plan / A response belongs to the recipient of a delivered notice (spec/homeHelpConsent.md) */
+//@ pure
+export function chooseHomeHelp(c: HomeHelpRecipientConsent, responseAllowed: boolean, exactActor: boolean, wantsHelp: boolean): HomeHelpRecipientConsent {
+  //@ ensures (inv(c) && canChooseHomeHelp(c, responseAllowed, exactActor)) ==> stepAcceptanceFollowsDelivery(c, \result)
+  //@ ensures (inv(c) && canChooseHomeHelp(c, responseAllowed, exactActor)) ==> stepStoppedConsentStaysStopped(c, \result)
+  return canChooseHomeHelp(c, responseAllowed, exactActor) ? (wantsHelp ? ({ phase: "Accepted" } as HomeHelpRecipientConsent) : ({ phase: "Declined" } as HomeHelpRecipientConsent)) : c;
 }
 
 /** Story: Decide privately about the exact reviewed plan / A response belongs to the recipient of a delivered notice (spec/homeHelpConsent.md) */
@@ -105,22 +121,6 @@ export function sometimesDeclined(c: HomeHelpRecipientConsent): boolean {
   return c.phase === "Declined";
 }
 
-/** Story: Decide privately about the exact reviewed plan / A response belongs to the recipient of a delivered notice (spec/homeHelpConsent.md) */
-//@ pure
-export function recordNoticeSent(c: HomeHelpRecipientConsent, deliveryAllowed: boolean, exactReceipt: boolean): HomeHelpRecipientConsent {
-  //@ ensures (inv(c) && canRecordNoticeSent(c, deliveryAllowed, exactReceipt)) ==> stepAcceptanceFollowsDelivery(c, \result)
-  //@ ensures (inv(c) && canRecordNoticeSent(c, deliveryAllowed, exactReceipt)) ==> stepStoppedConsentStaysStopped(c, \result)
-  return canRecordNoticeSent(c, deliveryAllowed, exactReceipt) ? ({ phase: "Sent" } as HomeHelpRecipientConsent) : c;
-}
-
-/** Story: Decide privately about the exact reviewed plan / A response belongs to the recipient of a delivered notice (spec/homeHelpConsent.md) */
-//@ pure
-export function chooseHomeHelp(c: HomeHelpRecipientConsent, responseAllowed: boolean, exactActor: boolean, wantsHelp: boolean): HomeHelpRecipientConsent {
-  //@ ensures (inv(c) && canChooseHomeHelp(c, responseAllowed, exactActor)) ==> stepAcceptanceFollowsDelivery(c, \result)
-  //@ ensures (inv(c) && canChooseHomeHelp(c, responseAllowed, exactActor)) ==> stepStoppedConsentStaysStopped(c, \result)
-  return canChooseHomeHelp(c, responseAllowed, exactActor) ? (wantsHelp ? ({ phase: "Accepted" } as HomeHelpRecipientConsent) : ({ phase: "Declined" } as HomeHelpRecipientConsent)) : c;
-}
-
 /** Story: Decide privately about the exact reviewed plan / Any withdrawal or invalidation stops the reviewed consent (spec/homeHelpConsent.md) */
 //@ pure
 export function canWithdrawHomeHelp(c: HomeHelpRecipientConsent, exactActor: boolean): boolean {
@@ -129,28 +129,16 @@ export function canWithdrawHomeHelp(c: HomeHelpRecipientConsent, exactActor: boo
 
 /** Story: Decide privately about the exact reviewed plan / Any withdrawal or invalidation stops the reviewed consent (spec/homeHelpConsent.md) */
 //@ pure
-export function canInvalidateHomeHelp(c: HomeHelpRecipientConsent, planInvalidated: boolean): boolean {
-  return planInvalidated && (c.phase === "Pending" || c.phase === "Sent" || c.phase === "Accepted");
-}
-
-/** Story: Decide privately about the exact reviewed plan / Any withdrawal or invalidation stops the reviewed consent (spec/homeHelpConsent.md) */
-//@ pure
-export function sometimesConsentWithdrawn(c: HomeHelpRecipientConsent): boolean {
-  return c.phase === "Withdrawn";
-}
-
-/** Story: Decide privately about the exact reviewed plan / Any withdrawal or invalidation stops the reviewed consent (spec/homeHelpConsent.md) */
-//@ pure
-export function sometimesConsentCancelled(c: HomeHelpRecipientConsent): boolean {
-  return c.phase === "Cancelled";
-}
-
-/** Story: Decide privately about the exact reviewed plan / Any withdrawal or invalidation stops the reviewed consent (spec/homeHelpConsent.md) */
-//@ pure
 export function withdrawHomeHelp(c: HomeHelpRecipientConsent, exactActor: boolean): HomeHelpRecipientConsent {
   //@ ensures (inv(c) && canWithdrawHomeHelp(c, exactActor)) ==> stepAcceptanceFollowsDelivery(c, \result)
   //@ ensures (inv(c) && canWithdrawHomeHelp(c, exactActor)) ==> stepStoppedConsentStaysStopped(c, \result)
   return canWithdrawHomeHelp(c, exactActor) ? ({ phase: "Withdrawn" } as HomeHelpRecipientConsent) : c;
+}
+
+/** Story: Decide privately about the exact reviewed plan / Any withdrawal or invalidation stops the reviewed consent (spec/homeHelpConsent.md) */
+//@ pure
+export function canInvalidateHomeHelp(c: HomeHelpRecipientConsent, planInvalidated: boolean): boolean {
+  return planInvalidated && (c.phase === "Pending" || c.phase === "Sent" || c.phase === "Accepted");
 }
 
 /** Story: Decide privately about the exact reviewed plan / Any withdrawal or invalidation stops the reviewed consent (spec/homeHelpConsent.md) */
@@ -165,6 +153,18 @@ export function invalidateHomeHelp(c: HomeHelpRecipientConsent, planInvalidated:
 //@ pure
 export function stepStoppedConsentStaysStopped(before: HomeHelpRecipientConsent, after: HomeHelpRecipientConsent): boolean {
   return !homeHelpConsentStopped(before.phase) || before.phase === after.phase;
+}
+
+/** Story: Decide privately about the exact reviewed plan / Any withdrawal or invalidation stops the reviewed consent (spec/homeHelpConsent.md) */
+//@ pure
+export function sometimesConsentWithdrawn(c: HomeHelpRecipientConsent): boolean {
+  return c.phase === "Withdrawn";
+}
+
+/** Story: Decide privately about the exact reviewed plan / Any withdrawal or invalidation stops the reviewed consent (spec/homeHelpConsent.md) */
+//@ pure
+export function sometimesConsentCancelled(c: HomeHelpRecipientConsent): boolean {
+  return c.phase === "Cancelled";
 }
 
 /** Story: Decide privately about the exact reviewed plan / The requester and every member of the exact roster must accept (spec/homeHelpConsent.md) */

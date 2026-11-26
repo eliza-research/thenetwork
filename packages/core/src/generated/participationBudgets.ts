@@ -4,12 +4,12 @@
 /** Story: Set how often Eliza can offer opportunities / A member's state sets the default initial invite cap (spec/participationBudgets.md) */
 export interface OutreachBudget { limit: number; periodDays: number }
 
+/** Story: Set how often Eliza can offer opportunities / A minor's solo offers have a smaller default cap (spec/participationBudgets.md) */
+export const minorInitialInviteBudget: OutreachBudget = { limit: 1, periodDays: 7 };
 /** Story: Receive separately budgeted plans and check-ins / Each separate lane has its own weekly cap (spec/participationBudgets.md) */
 export const planInviteBudget: OutreachBudget = { limit: 1, periodDays: 7 };
 /** Story: Receive separately budgeted plans and check-ins / Each separate lane has its own weekly cap (spec/participationBudgets.md) */
 export const availabilityCheckInBudget: OutreachBudget = { limit: 1, periodDays: 7 };
-/** Story: Set how often Eliza can offer opportunities / A minor's solo offers have a smaller default cap (spec/participationBudgets.md) */
-export const minorInitialInviteBudget: OutreachBudget = { limit: 1, periodDays: 7 };
 
 /** Story: Set how often Eliza can offer opportunities / A member's state sets the default initial invite cap (spec/participationBudgets.md) */
 //@ pure

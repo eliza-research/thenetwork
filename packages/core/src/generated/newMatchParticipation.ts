@@ -50,6 +50,13 @@ export function draftUsesMatchingSlot(created: boolean, closed: boolean): boolea
 
 /** Story: Match only where I have agreed to take part / A refused draft does not consume a matching slot (spec/newMatchParticipation.md) */
 //@ pure
+export function lawClosedDraftLeavesMatchingSlot(created: boolean): boolean {
+  //@ ensures \result === true
+  return !draftUsesMatchingSlot(created, true);
+}
+
+/** Story: Match only where I have agreed to take part / A refused draft does not consume a matching slot (spec/newMatchParticipation.md) */
+//@ pure
 export function reviewDraftWasUnsent(closedFromReview: boolean, contacted: boolean): boolean {
   return closedFromReview && !contacted;
 }
@@ -59,11 +66,4 @@ export function reviewDraftWasUnsent(closedFromReview: boolean, contacted: boole
 export function lawOpenReviewKeepsItsDuplicateLock(contacted: boolean): boolean {
   //@ ensures \result === true
   return !reviewDraftWasUnsent(false, contacted);
-}
-
-/** Story: Match only where I have agreed to take part / A refused draft does not consume a matching slot (spec/newMatchParticipation.md) */
-//@ pure
-export function lawClosedDraftLeavesMatchingSlot(created: boolean): boolean {
-  //@ ensures \result === true
-  return !draftUsesMatchingSlot(created, true);
 }

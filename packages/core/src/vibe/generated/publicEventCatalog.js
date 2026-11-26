@@ -3,16 +3,16 @@
 //@ backend dafny
 /** Story: Find a current public event / Use only an upcoming event from the allowed in-person supply (spec/publicEventCatalog.md) */
 export const publicEventHorizonDays = 14;
-/** Story: Keep the deployed catalog current / The backend scans once a day, at most one process at a time, and waits after a failed attempt (spec/publicEventCatalog.md) */
-export const publicEventRefreshMs = 86400000;
-/** Story: Keep the deployed catalog current / The backend scans once a day, at most one process at a time, and waits after a failed attempt (spec/publicEventCatalog.md) */
-export const publicEventRetryMs = 3600000;
 /** Story: Find a current public event / A successful complete scan replaces the previous source and expires if refresh stops (spec/publicEventCatalog.md) */
 export const publicEventFreshDays = 2;
 /** Story: Find a current public event / A successful complete scan replaces the previous source and expires if refresh stops (spec/publicEventCatalog.md) */
 export const publicEventScanMaxBytes = exact_publicEventCatalog(exact_publicEventCatalog(8 * 1024) * 1024);
 /** Story: Find a current public event / A successful complete scan replaces the previous source and expires if refresh stops (spec/publicEventCatalog.md) */
 export const publicEventScanRowLimit = 5000;
+/** Story: Keep the deployed catalog current / The backend scans once a day, at most one process at a time, and waits after a failed attempt (spec/publicEventCatalog.md) */
+export const publicEventRefreshMs = 86400000;
+/** Story: Keep the deployed catalog current / The backend scans once a day, at most one process at a time, and waits after a failed attempt (spec/publicEventCatalog.md) */
+export const publicEventRetryMs = 3600000;
 /** Story: Find a current public event / Use only an upcoming event from the allowed in-person supply (spec/publicEventCatalog.md) */
 //@ pure
 export function publicEventWindowUsable(asOf, startsAt, endsAt) {
@@ -35,6 +35,12 @@ export function publicEventScanComplete(bytesRead, rowsRead, allRowsRecognizable
 }
 /** Story: Find a current public event / A successful complete scan replaces the previous source and expires if refresh stops (spec/publicEventCatalog.md) */
 //@ pure
+export function lawPartialEventScanCannotPublish(redirected) {
+    //@ ensures \result === true
+    return !publicEventScanResponseAllowed(206, false, redirected) && !publicEventScanResponseAllowed(200, true, redirected);
+}
+/** Story: Find a current public event / A successful complete scan replaces the previous source and expires if refresh stops (spec/publicEventCatalog.md) */
+//@ pure
 export function publicEventPublicationNewer(seen, checkedAt, incomingAt) {
     return !seen || incomingAt > checkedAt;
 }
@@ -42,12 +48,6 @@ export function publicEventPublicationNewer(seen, checkedAt, incomingAt) {
 //@ pure
 export function publicEventCatalogFresh(checkedAt, asOf) {
     return checkedAt <= asOf && exact_publicEventCatalog(checkedAt + exact_publicEventCatalog(publicEventFreshDays * 86400000)) > asOf;
-}
-/** Story: Find a current public event / A successful complete scan replaces the previous source and expires if refresh stops (spec/publicEventCatalog.md) */
-//@ pure
-export function lawPartialEventScanCannotPublish(redirected) {
-    //@ ensures \result === true
-    return !publicEventScanResponseAllowed(206, false, redirected) && !publicEventScanResponseAllowed(200, true, redirected);
 }
 /** Story: Find a current public event / A successful complete scan replaces the previous source and expires if refresh stops (spec/publicEventCatalog.md) */
 //@ pure

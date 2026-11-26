@@ -15,9 +15,9 @@ export type Event =
   | { type: "chooseQuestion"; facts: QuestionFacts; unavailable: string[] };
 
 /** Story: Review the information used for dating / Age restrictions stop dating onboarding before a prompt (spec/slopOnboarding.md) */
-export const readbackReason: string = "slop_readback";
-/** Story: Review the information used for dating / Age restrictions stop dating onboarding before a prompt (spec/slopOnboarding.md) */
 export const initial: PromptRun = { phase: "AwaitingProfile", reason: "" };
+/** Story: Review the information used for dating / Age restrictions stop dating onboarding before a prompt (spec/slopOnboarding.md) */
+export const readbackReason: string = "slop_readback";
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
@@ -80,14 +80,14 @@ export function lawSlopRadiusIncludesBoundaries(upper: boolean): boolean {
 
 /** Story: Review the information used for dating / Age restrictions stop dating onboarding before a prompt (spec/slopOnboarding.md) */
 //@ pure
-export function readbackEligible(hardComplete: boolean, confirmed: boolean, skipped: boolean, belowAskCap: boolean): boolean {
-  return hardComplete && !confirmed && !skipped && belowAskCap;
+export function canRouteProfile(p: PromptRun): boolean {
+  return p.phase === "AwaitingProfile";
 }
 
 /** Story: Review the information used for dating / Age restrictions stop dating onboarding before a prompt (spec/slopOnboarding.md) */
 //@ pure
-export function canRouteProfile(p: PromptRun): boolean {
-  return p.phase === "AwaitingProfile";
+export function readbackEligible(hardComplete: boolean, confirmed: boolean, skipped: boolean, belowAskCap: boolean): boolean {
+  return hardComplete && !confirmed && !skipped && belowAskCap;
 }
 
 /** Story: Review the information used for dating / Age restrictions stop dating onboarding before a prompt (spec/slopOnboarding.md) */
@@ -126,6 +126,15 @@ export function canChooseQuestion(p: PromptRun): boolean {
 
 /** Story: Review the information used for dating / Ask the first missing field that can still be requested (spec/slopOnboarding.md) */
 //@ pure
+export function chooseQuestion(p: PromptRun, facts: QuestionFacts, unavailable: string[]): PromptRun {
+  //@ ensures (inv(p) && canChooseQuestion(p)) ==> alwaysReadyHasReason(\result)
+  //@ ensures (inv(p) && canChooseQuestion(p)) ==> stepRestrictedStaysWithheld(p, \result)
+  const local_0 = nextQuestionReason(facts, unavailable);
+  return { phase: local_0 === "" ? "NoQuestion" : "QuestionReady", reason: local_0 };
+}
+
+/** Story: Review the information used for dating / Ask the first missing field that can still be requested (spec/slopOnboarding.md) */
+//@ pure
 export function alwaysReadyHasReason(p: PromptRun): boolean {
   return (p.phase === "ReadbackReady" || p.phase === "QuestionReady") === (p.reason !== "");
 }
@@ -153,15 +162,6 @@ export function sometimesReadback(p: PromptRun): boolean {
 //@ pure
 export function sometimesQuestion(p: PromptRun): boolean {
   return p.phase === "QuestionReady";
-}
-
-/** Story: Review the information used for dating / Ask the first missing field that can still be requested (spec/slopOnboarding.md) */
-//@ pure
-export function chooseQuestion(p: PromptRun, facts: QuestionFacts, unavailable: string[]): PromptRun {
-  //@ ensures (inv(p) && canChooseQuestion(p)) ==> alwaysReadyHasReason(\result)
-  //@ ensures (inv(p) && canChooseQuestion(p)) ==> stepRestrictedStaysWithheld(p, \result)
-  const local_0 = nextQuestionReason(facts, unavailable);
-  return { phase: local_0 === "" ? "NoQuestion" : "QuestionReady", reason: local_0 };
 }
 
 /** Story: Review the information used for dating / A correction needs another confirmation (spec/slopOnboarding.md) */

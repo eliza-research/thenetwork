@@ -1,6 +1,6 @@
 // Side-by-side Layout <-> State Graph split view bridged live through `postSim` (`gen/<module>.ts`).
 import { useMemo, useState } from "react";
-import { Button, EmptyState, cn, focusRing } from "@repo/ui";
+import { EmptyState, cn, focusRing } from "@repo/ui";
 import type { Component, ComponentIndex } from "../../../stories/emit.ts";
 import type { SpecModelGraph } from "../graph.ts";
 import {
@@ -9,6 +9,7 @@ import {
 } from "./Components.tsx";
 import { StateGraphCanvas } from "./StateGraph.tsx";
 import { graphOf, openComponent, openStateFocus, type Working } from "./studio.ts";
+import { IconButton } from "./text.tsx";
 
 function pickLayoutRoot(spec: Working | undefined, index: ComponentIndex, hierarchy: Hierarchy): Component | undefined {
   const isRoot = (c: Component) => !c.part && !hierarchy.parentOf.has(c.name);
@@ -114,9 +115,9 @@ export function SplitView({
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <div className="grid min-h-0 flex-1 grid-cols-2 divide-x divide-border max-lg:grid-cols-1 max-lg:divide-x-0 max-lg:divide-y">
         <section aria-label="Layout preview pane" className="flex min-h-0 flex-col bg-background">
-          <div className="flex flex-none flex-wrap items-center justify-between gap-2 border-b border-border bg-card px-4 py-2">
+          <div className="flex flex-none flex-wrap items-center justify-between gap-2 border-b border-border bg-card px-4 py-1.5">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-foreground">Layout · {layoutRoot.name}</span>
+              <span className="text-xs font-semibold text-foreground">{layoutRoot.name}</span>
               <div role="group" aria-label="Layout presets" className="flex items-center gap-1">
                 {layoutRoot.stories.map((s, at) => (
                   <button
@@ -135,19 +136,14 @@ export function SplitView({
                 ))}
               </div>
             </div>
-            <div className="flex items-center gap-1.5">
-              <Button
-                variant={inspect ? "primary" : "outline"}
-                size="sm"
-                aria-pressed={inspect}
-                className="h-7 px-2 text-xs"
+            <div className="flex items-center gap-0.5">
+              <IconButton
+                name="inspect"
+                label={inspect ? "Disable element inspector" : "Enable element inspector"}
+                active={inspect}
                 onClick={() => setInspect((v) => !v)}
-              >
-                Inspect {inspect ? "ON" : "OFF"}
-              </Button>
-              <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => openComponent(inspected.id)}>
-                Layout ↗
-              </Button>
+              />
+              <IconButton name="external" label="Open Layout view" align="right" onClick={() => openComponent(inspected.id)} />
             </div>
           </div>
 
@@ -175,24 +171,22 @@ export function SplitView({
         </section>
 
         <section aria-label="State graph pane" className="flex min-h-0 flex-col bg-background">
-          <div className="flex flex-none flex-wrap items-center justify-between gap-2 border-b border-border bg-card px-4 py-2">
+          <div className="flex flex-none flex-wrap items-center justify-between gap-2 border-b border-border bg-card px-4 py-1.5">
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold text-foreground">
-                States · {activeGraph?.stateType ?? activeGraph?.module ?? "Model"}
+                {activeGraph?.stateType ?? activeGraph?.module ?? "Model"}
               </span>
               {activeGraph?.projectionLabel && (
                 <span className="font-mono text-xs text-muted-foreground">{activeGraph.projectionLabel}</span>
               )}
             </div>
             {activeGraph && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-xs"
+              <IconButton
+                name="external"
+                label="Open States view"
+                align="right"
                 onClick={() => openStateFocus(activeGraph.file, { node: selectedNode, edge: selectedEdge })}
-              >
-                States ↗
-              </Button>
+              />
             )}
           </div>
 

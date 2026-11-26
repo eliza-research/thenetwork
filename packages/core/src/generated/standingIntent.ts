@@ -15,12 +15,6 @@ export const renewalRetryMs: number = 86400000;
 
 /** Story: Match only on a current standing intent / A standing intent expires at its recorded deadline (spec/standingIntent.md) */
 //@ pure
-export function cachedStandingIntentsCurrent(firstExpiry: number, asOf: number): boolean {
-  return firstExpiry > asOf;
-}
-
-/** Story: Match only on a current standing intent / A standing intent expires at its recorded deadline (spec/standingIntent.md) */
-//@ pure
 export function classifyStandingIntent(status: string, expiresAt: number, asOf: number): StandingIntentPhase {
   return status === "active" ? (expiresAt > asOf ? "IntentLive" : "IntentExpired") : (status === "paused" ? "IntentPaused" : (status === "closed" ? "IntentClosed" : "IntentInactive"));
 }
@@ -33,9 +27,8 @@ export function standingIntentSuppliesEvidence(phase: StandingIntentPhase): bool
 
 /** Story: Match only on a current standing intent / A standing intent expires at its recorded deadline (spec/standingIntent.md) */
 //@ pure
-export function lawPausedOrClosedSuppliesNoEvidence(expiresAt: number, asOf: number): boolean {
-  //@ ensures \result === true
-  return !standingIntentSuppliesEvidence(classifyStandingIntent("paused", expiresAt, asOf)) && !standingIntentSuppliesEvidence(classifyStandingIntent("closed", expiresAt, asOf));
+export function cachedStandingIntentsCurrent(firstExpiry: number, asOf: number): boolean {
+  return firstExpiry > asOf;
 }
 
 /** Story: Match only on a current standing intent / A standing intent expires at its recorded deadline (spec/standingIntent.md) */
@@ -43,6 +36,13 @@ export function lawPausedOrClosedSuppliesNoEvidence(expiresAt: number, asOf: num
 export function lawDeadlineEndsAnActiveIntent(expiresAt: number): boolean {
   //@ ensures \result === true
   return classifyStandingIntent("active", expiresAt, expiresAt) === "IntentExpired";
+}
+
+/** Story: Match only on a current standing intent / A standing intent expires at its recorded deadline (spec/standingIntent.md) */
+//@ pure
+export function lawPausedOrClosedSuppliesNoEvidence(expiresAt: number, asOf: number): boolean {
+  //@ ensures \result === true
+  return !standingIntentSuppliesEvidence(classifyStandingIntent("paused", expiresAt, asOf)) && !standingIntentSuppliesEvidence(classifyStandingIntent("closed", expiresAt, asOf));
 }
 
 /** Story: Match only on a current standing intent / A fresh statement can replace an expired copy (spec/standingIntent.md) */
@@ -106,20 +106,8 @@ export function standingIntentFacetEvidence(scope: string, fresh: boolean): bool
 
 /** Story: Match only on a current standing intent / Changed matching evidence starts another standing intent search (spec/standingIntent.md) */
 //@ pure
-export function canQueueEngineOpportunity(queuedToday: number, dailyCap: number): boolean {
-  return queuedToday < dailyCap;
-}
-
-/** Story: Match only on a current standing intent / Changed matching evidence starts another standing intent search (spec/standingIntent.md) */
-//@ pure
 export function standingPresencePhase(eligibleMember: boolean, hasStart: boolean, startsAt: number, hasEnd: boolean, endsAt: number, asOf: number): StandingPresencePhase {
   return !eligibleMember || (hasStart && hasEnd && startsAt >= endsAt) || (hasEnd && endsAt <= asOf) ? "IgnorePresence" : (hasStart && asOf < startsAt ? "FuturePresence" : "CurrentPresence");
-}
-
-/** Story: Match only on a current standing intent / Changed matching evidence starts another standing intent search (spec/standingIntent.md) */
-//@ pure
-export function standingIntentRecheckDue(previous: string, evidence: string, liveIntents: number, queuedToday: number, dailyCap: number): boolean {
-  return previous !== evidence && liveIntents > 0 && canQueueEngineOpportunity(queuedToday, dailyCap);
 }
 
 /** Story: Match only on a current standing intent / Changed matching evidence starts another standing intent search (spec/standingIntent.md) */
@@ -134,6 +122,18 @@ export function lawEndedPresenceDoesNotContribute(eligibleMember: boolean, hasSt
 export function lawStartingTripChangesEvidence(startsAt: number, endsAt: number): boolean {
   //@ ensures \result === true
   return !(startsAt < endsAt) || (standingPresencePhase(true, true, startsAt, true, endsAt, exact_standingIntent(startsAt - 1)) === "FuturePresence" && standingPresencePhase(true, true, startsAt, true, endsAt, startsAt) === "CurrentPresence");
+}
+
+/** Story: Match only on a current standing intent / Changed matching evidence starts another standing intent search (spec/standingIntent.md) */
+//@ pure
+export function canQueueEngineOpportunity(queuedToday: number, dailyCap: number): boolean {
+  return queuedToday < dailyCap;
+}
+
+/** Story: Match only on a current standing intent / Changed matching evidence starts another standing intent search (spec/standingIntent.md) */
+//@ pure
+export function standingIntentRecheckDue(previous: string, evidence: string, liveIntents: number, queuedToday: number, dailyCap: number): boolean {
+  return previous !== evidence && liveIntents > 0 && canQueueEngineOpportunity(queuedToday, dailyCap);
 }
 
 /** Story: Match only on a current standing intent / Changed matching evidence starts another standing intent search (spec/standingIntent.md) */

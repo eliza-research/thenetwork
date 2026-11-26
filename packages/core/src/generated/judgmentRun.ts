@@ -2,9 +2,9 @@
 //@ backend dafny
 
 /** Story: Review the strongest possible matches in order / The rubric pass enables the run (spec/judgmentRun.md) */
-export interface PassOption { enabled: boolean; limit: number; supported: boolean }
-/** Story: Review the strongest possible matches in order / The rubric pass enables the run (spec/judgmentRun.md) */
 export type JudgmentPhase = "AwaitingSetup" | "Screening" | "Rubric" | "DeepReview" | "Complete";
+/** Story: Review the strongest possible matches in order / The rubric pass enables the run (spec/judgmentRun.md) */
+export interface PassOption { enabled: boolean; limit: number; supported: boolean }
 /** Story: Review the strongest possible matches in order / The rubric pass enables the run (spec/judgmentRun.md) */
 export interface JudgmentRun { phase: JudgmentPhase; deepAllowed: boolean }
 

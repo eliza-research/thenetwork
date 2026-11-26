@@ -10,9 +10,9 @@ export type AttendanceEvidence = "AttendanceUnverified" | "AttendanceByCounterpa
 
 /** One variant per transition in the spec. */
 export type Event =
-  | { type: "recordLedgerAppend" }
   | { type: "validateLedgerEvent"; valid: boolean }
-  | { type: "checkLedgerSource"; duplicate: boolean; inOrder: boolean };
+  | { type: "checkLedgerSource"; duplicate: boolean; inOrder: boolean }
+  | { type: "recordLedgerAppend" };
 
 /** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md) */
 export const initial: CapitalEventFlow = { phase: "CapitalEventStarting" };
@@ -21,6 +21,32 @@ export const initial: CapitalEventFlow = { phase: "CapitalEventStarting" };
 //@ pure
 export function inv(current: CapitalEventFlow): boolean {
   return true;
+}
+
+/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md) */
+//@ pure
+export function canValidateLedgerEvent(flow: CapitalEventFlow): boolean {
+  return flow.phase === "CapitalEventStarting";
+}
+
+/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md) */
+//@ pure
+export function validateLedgerEvent(flow: CapitalEventFlow, valid: boolean): CapitalEventFlow {
+  //@ ensures (inv(flow) && canValidateLedgerEvent(flow)) ==> stepApplyFollowsLedgerAppend(flow, "validateLedgerEvent", \result)
+  return { phase: valid ? "InspectingCapitalEvent" : "InvalidCapitalEvent" };
+}
+
+/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md) */
+//@ pure
+export function canCheckLedgerSource(flow: CapitalEventFlow): boolean {
+  return flow.phase === "InspectingCapitalEvent";
+}
+
+/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md) */
+//@ pure
+export function checkLedgerSource(flow: CapitalEventFlow, duplicate: boolean, inOrder: boolean): CapitalEventFlow {
+  //@ ensures (inv(flow) && canCheckLedgerSource(flow)) ==> stepApplyFollowsLedgerAppend(flow, "checkLedgerSource", \result)
+  return { phase: duplicate ? "DuplicateCapitalEvent" : (inOrder ? "AppendingCapitalEvent" : "OutOfOrderCapitalEvent") };
 }
 
 /** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md) */
@@ -60,32 +86,6 @@ export function sometimesRejectsTimeOrder(flow: CapitalEventFlow): boolean {
   return flow.phase === "OutOfOrderCapitalEvent";
 }
 
-/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md) */
-//@ pure
-export function canValidateLedgerEvent(flow: CapitalEventFlow): boolean {
-  return flow.phase === "CapitalEventStarting";
-}
-
-/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md) */
-//@ pure
-export function validateLedgerEvent(flow: CapitalEventFlow, valid: boolean): CapitalEventFlow {
-  //@ ensures (inv(flow) && canValidateLedgerEvent(flow)) ==> stepApplyFollowsLedgerAppend(flow, "validateLedgerEvent", \result)
-  return { phase: valid ? "InspectingCapitalEvent" : "InvalidCapitalEvent" };
-}
-
-/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md) */
-//@ pure
-export function canCheckLedgerSource(flow: CapitalEventFlow): boolean {
-  return flow.phase === "InspectingCapitalEvent";
-}
-
-/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md) */
-//@ pure
-export function checkLedgerSource(flow: CapitalEventFlow, duplicate: boolean, inOrder: boolean): CapitalEventFlow {
-  //@ ensures (inv(flow) && canCheckLedgerSource(flow)) ==> stepApplyFollowsLedgerAppend(flow, "checkLedgerSource", \result)
-  return { phase: duplicate ? "DuplicateCapitalEvent" : (inOrder ? "AppendingCapitalEvent" : "OutOfOrderCapitalEvent") };
-}
-
 /** Story: Count what I contributed once and preserve its history / Participation credit needs eligible members and verified outcomes (spec/capitalLedger.md) */
 //@ pure
 export function capitalHelpSourceMayStart(sameMember: boolean, sourceExists: boolean): boolean {
@@ -112,12 +112,6 @@ export function capitalAttendanceMayResolve(accepted: boolean, resolved: boolean
 
 /** Story: Count what I contributed once and preserve its history / Participation credit needs eligible members and verified outcomes (spec/capitalLedger.md) */
 //@ pure
-export function mayEarnCapital(eligible: boolean, removed: boolean, positiveBase: boolean): boolean {
-  return eligible && !removed && positiveBase;
-}
-
-/** Story: Count what I contributed once and preserve its history / Participation credit needs eligible members and verified outcomes (spec/capitalLedger.md) */
-//@ pure
 export function capitalAttendanceEvidence(hasVerification: boolean, independentlyVerified: boolean): AttendanceEvidence {
   return !hasVerification ? "AttendanceUnverified" : (independentlyVerified ? "AttendanceIndependentlyVerified" : "AttendanceByCounterpart");
 }
@@ -126,6 +120,12 @@ export function capitalAttendanceEvidence(hasVerification: boolean, independentl
 //@ pure
 export function acceptsCapitalAttendanceProof(evidence: AttendanceEvidence, hasEligibleConfirmer: boolean): boolean {
   return evidence === "AttendanceIndependentlyVerified" || (evidence === "AttendanceByCounterpart" && hasEligibleConfirmer);
+}
+
+/** Story: Count what I contributed once and preserve its history / Participation credit needs eligible members and verified outcomes (spec/capitalLedger.md) */
+//@ pure
+export function mayEarnCapital(eligible: boolean, removed: boolean, positiveBase: boolean): boolean {
+  return eligible && !removed && positiveBase;
 }
 
 /** Story: Count what I contributed once and preserve its history / Organizing and needs use their original contribution source (spec/capitalLedger.md) */
@@ -219,9 +219,9 @@ export function lawVouchStakeNotDeferredAndTaken(seriousAbuse: boolean, vouched:
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: CapitalEventFlow, event: Event): boolean {
-  if (event.type === "recordLedgerAppend") return canRecordLedgerAppend(current);
   if (event.type === "validateLedgerEvent") return canValidateLedgerEvent(current);
   if (event.type === "checkLedgerSource") return canCheckLedgerSource(current);
+  if (event.type === "recordLedgerAppend") return canRecordLedgerAppend(current);
   return false;
 }
 
@@ -230,9 +230,9 @@ export function enabled(current: CapitalEventFlow, event: Event): boolean {
 export function step(current: CapitalEventFlow, event: Event): CapitalEventFlow {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "recordLedgerAppend") return canRecordLedgerAppend(current) ? recordLedgerAppend(current) : current;
   if (event.type === "validateLedgerEvent") return canValidateLedgerEvent(current) ? validateLedgerEvent(current, event.valid) : current;
   if (event.type === "checkLedgerSource") return canCheckLedgerSource(current) ? checkLedgerSource(current, event.duplicate, event.inOrder) : current;
+  if (event.type === "recordLedgerAppend") return canRecordLedgerAppend(current) ? recordLedgerAppend(current) : current;
   return current;
 }
 
@@ -250,9 +250,9 @@ export function parseEvent(x: unknown): Event | undefined {
     return undefined;
   }
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "recordLedgerAppend") return { type: "recordLedgerAppend" };
   if (raw.type === "validateLedgerEvent" && typeof raw.valid === "boolean") return { type: "validateLedgerEvent", valid: raw.valid };
   if (raw.type === "checkLedgerSource" && typeof raw.duplicate === "boolean" && typeof raw.inOrder === "boolean") return { type: "checkLedgerSource", duplicate: raw.duplicate, inOrder: raw.inOrder };
+  if (raw.type === "recordLedgerAppend") return { type: "recordLedgerAppend" };
   return undefined;
 }
 

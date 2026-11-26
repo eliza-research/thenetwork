@@ -7,15 +7,15 @@ export declare function inv(current: ReceiptLifecycle): boolean;
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
 export declare function receiptRank(phase: ReceiptPhase): number;
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
+export declare function canRecordAcceptance(outbound: ReceiptLifecycle, providerPhase: ReceiptPhase): boolean;
+/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
 export declare function recordAcceptance(outbound: ReceiptLifecycle, providerPhase: ReceiptPhase): ReceiptLifecycle;
+/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
+export declare function canApplyReceipt(outbound: ReceiptLifecycle, providerPhase: ReceiptPhase): boolean;
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
 export declare function applyReceipt(outbound: ReceiptLifecycle, providerPhase: ReceiptPhase): ReceiptLifecycle;
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
-export declare function canRecordAcceptance(outbound: ReceiptLifecycle, providerPhase: ReceiptPhase): boolean;
-/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
 export declare function stepReceiptsDoNotRegress(before: ReceiptLifecycle, via: string, after: ReceiptLifecycle): boolean;
-/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
-export declare function canApplyReceipt(outbound: ReceiptLifecycle, providerPhase: ReceiptPhase): boolean;
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
 export declare function lawDeliveredIgnoresFailure(phase: ReceiptPhase): boolean;
 /** Story: Know whether a queued message reached the provider / A terminal receipt preserves the recipient cap after payload erasure (spec/outboundReceipt.md) @throws {never} */
@@ -67,11 +67,11 @@ export declare function lawReceiptOwnerAcceptanceKeepsRecipientCount(phase: Rece
 /** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) @throws {never} */
 export declare function lawFailedAcceptanceHasNoRecipientCount(receiptOwner: boolean, nonmember: boolean, hadAddress: boolean, windowOpen: boolean): boolean;
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
+export declare function gatewayReplyPhase(pastLimit: boolean): ReceiptPhase;
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
 export declare function gatewayReceiptApplies(replyStatus: string, delivery: string): boolean;
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
 export declare function gatewayReplySendTime(replyStatus: string, collectedAt: number, receivedAt: number): number;
-/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
-export declare function gatewayReplyPhase(pastLimit: boolean): ReceiptPhase;
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
 export declare function lawExpiredReplySendsAtCollection(replyStatus: string, collectedAt: number, receivedAt: number): boolean;
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
@@ -92,5 +92,7 @@ export declare function step(current: ReceiptLifecycle, event: Event): ReceiptLi
 export declare function parseEvent(x: unknown): Event | undefined;
 /** Turn an untrusted value, such as a state loaded from storage, into a state, or undefined if it is not one. It must have exactly the state's shape (no other fields, whole numbers that are safe integers, sets that hold nothing twice, maps as records whose keys carry the "$" every key carries here) and satisfy every `always` rule. The result is a fresh copy, so nothing the caller keeps can change it afterwards. @throws {never} */
 export declare function parseState(x: unknown): ReceiptLifecycle | undefined;
-/** A Machine never shares a state with its callers. @throws {never} */
+/** @throws {never} */
 export declare function snapshot_outboundReceipt<A>(value: A): A;
+/** @throws {never} */
+export declare function snapshot_in_outboundReceipt<A>(value: A): A;

@@ -13,13 +13,13 @@ export function checkAdmission(s, serving) { return M.checkAdmission(s, serving)
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
 export function canCheckDatabase(s) { return M.canCheckDatabase(s); }
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
-export function canCheckTicks(s) { return M.canCheckTicks(s); }
-/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
-export function stepReportIsFinal(before, after) { return M.stepReportIsFinal(before, after); }
-/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
 export function checkDatabase(s, reachable) { return M.checkDatabase(s, reachable); }
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
+export function canCheckTicks(s) { return M.canCheckTicks(s); }
+/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
 export function checkTicks(s, late) { return M.checkTicks(s, late); }
+/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
+export function stepReportIsFinal(before, after) { return M.stepReportIsFinal(before, after); }
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
 export function sometimesReportsReady(s) { return M.sometimesReportsReady(s); }
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
@@ -36,5 +36,33 @@ export function step(current, event) { return M.step(current, event); }
 export function parseEvent(x) { return M.parseEvent(x); }
 /** Turn an untrusted value, such as a state loaded from storage, into a state, or undefined if it is not one. It must have exactly the state's shape (no other fields, whole numbers that are safe integers, sets that hold nothing twice, maps as records whose keys carry the "$" every key carries here) and satisfy every `always` rule. The result is a fresh copy, so nothing the caller keeps can change it afterwards. @throws {never} */
 export function parseState(x) { return M.parseState(x); }
-/** A Machine never shares a state with its callers. @throws {never} */
-export function snapshot_backendHealth(value) { return structuredClone(value); }
+/** @throws {never} */
+export function snapshot_backendHealth(value) {
+    if (value === null || typeof value !== "object" || Object.isFrozen(value))
+        return value;
+    Object.freeze(value);
+    if (Array.isArray(value)) {
+        for (let i = 0; i < value.length; i++)
+            snapshot_backendHealth(value[i]);
+    }
+    else {
+        for (const key of Object.keys(value))
+            snapshot_backendHealth(value[key]);
+    }
+    return value;
+}
+/** @throws {never} */
+export function snapshot_in_backendHealth(value) {
+    if (value === null || typeof value !== "object" || Object.isFrozen(value))
+        return value;
+    if (Array.isArray(value)) {
+        const copy = new Array(value.length);
+        for (let i = 0; i < value.length; i++)
+            copy[i] = snapshot_in_backendHealth(value[i]);
+        return Object.freeze(copy);
+    }
+    const copy = {};
+    for (const key of Object.keys(value))
+        copy[key] = snapshot_in_backendHealth(value[key]);
+    return Object.freeze(copy);
+}

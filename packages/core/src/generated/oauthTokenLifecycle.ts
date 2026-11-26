@@ -50,18 +50,6 @@ export function canReadCode(flow: TokenFlow): boolean {
 
 /** Story: Use and renew an approved connector grant / Each token request must match its own credential binding (spec/oauthTokenLifecycle.md) */
 //@ pure
-export function canReadCodeBinding(flow: TokenFlow): boolean {
-  return flow.phase === "CheckingCodeBinding";
-}
-
-/** Story: Use and renew an approved connector grant / Each token request must match its own credential binding (spec/oauthTokenLifecycle.md) */
-//@ pure
-export function canReadRefresh(flow: TokenFlow): boolean {
-  return flow.phase === "Beginning";
-}
-
-/** Story: Use and renew an approved connector grant / Each token request must match its own credential binding (spec/oauthTokenLifecycle.md) */
-//@ pure
 export function readCode(flow: TokenFlow, clientMatches: boolean, used: boolean, live: boolean): TokenFlow {
   //@ ensures (inv(flow) && canReadCode(flow)) ==> stepTokensRequireStorage(flow, "readCode", \result)
   return !clientMatches ? refuse("InvalidGrant", flow) : (used ? ({ ...flow, phase: "RevokeGrant" } as TokenFlow) : (!live ? refuse("CodeExpired", flow) : ({ ...flow, phase: "CheckingCodeBinding" } as TokenFlow)));
@@ -69,9 +57,21 @@ export function readCode(flow: TokenFlow, clientMatches: boolean, used: boolean,
 
 /** Story: Use and renew an approved connector grant / Each token request must match its own credential binding (spec/oauthTokenLifecycle.md) */
 //@ pure
+export function canReadCodeBinding(flow: TokenFlow): boolean {
+  return flow.phase === "CheckingCodeBinding";
+}
+
+/** Story: Use and renew an approved connector grant / Each token request must match its own credential binding (spec/oauthTokenLifecycle.md) */
+//@ pure
 export function readCodeBinding(flow: TokenFlow, redirectMatches: boolean, verifierMatches: boolean, resourceMatches: boolean): TokenFlow {
   //@ ensures (inv(flow) && canReadCodeBinding(flow)) ==> stepTokensRequireStorage(flow, "readCodeBinding", \result)
   return !redirectMatches ? refuse("RedirectMismatch", flow) : (!verifierMatches ? refuse("VerifierMismatch", flow) : (!resourceMatches ? refuse("InvalidTarget", flow) : ({ ...flow, phase: "CheckingGrant" } as TokenFlow)));
+}
+
+/** Story: Use and renew an approved connector grant / Each token request must match its own credential binding (spec/oauthTokenLifecycle.md) */
+//@ pure
+export function canReadRefresh(flow: TokenFlow): boolean {
+  return flow.phase === "Beginning";
 }
 
 /** Story: Use and renew an approved connector grant / Each token request must match its own credential binding (spec/oauthTokenLifecycle.md) */
@@ -85,30 +85,6 @@ export function readRefresh(flow: TokenFlow, refreshMatches: boolean): TokenFlow
 //@ pure
 export function accessTokenAuthority(credentialLive: boolean, authority: TokenAuthority): TokenAuthority {
   return !credentialLive ? "Invalid" : authority;
-}
-
-/** Story: Use and renew an approved connector grant / The request needs current grant authority and must stay within its consent (spec/oauthTokenLifecycle.md) */
-//@ pure
-export function canReadGrant(flow: TokenFlow): boolean {
-  return flow.phase === "CheckingGrant";
-}
-
-/** Story: Use and renew an approved connector grant / The request needs current grant authority and must stay within its consent (spec/oauthTokenLifecycle.md) */
-//@ pure
-export function canReadAuthority(flow: TokenFlow): boolean {
-  return flow.phase === "CheckingAuthority";
-}
-
-/** Story: Use and renew an approved connector grant / The request needs current grant authority and must stay within its consent (spec/oauthTokenLifecycle.md) */
-//@ pure
-export function canReadRefreshBinding(flow: TokenFlow): boolean {
-  return flow.phase === "CheckingRefreshBinding";
-}
-
-/** Story: Use and renew an approved connector grant / The request needs current grant authority and must stay within its consent (spec/oauthTokenLifecycle.md) */
-//@ pure
-export function codeCanBeConsumed(flow: TokenFlow, bothLive: boolean): boolean {
-  return flow.phase === "AwaitingConsumption" && bothLive;
 }
 
 /** Story: Use and renew an approved connector grant / The request needs current grant authority and must stay within its consent (spec/oauthTokenLifecycle.md) */
@@ -127,9 +103,21 @@ export function lawBannedAccessTokenIsInvalid(credentialLive: boolean): boolean 
 
 /** Story: Use and renew an approved connector grant / The request needs current grant authority and must stay within its consent (spec/oauthTokenLifecycle.md) */
 //@ pure
+export function canReadGrant(flow: TokenFlow): boolean {
+  return flow.phase === "CheckingGrant";
+}
+
+/** Story: Use and renew an approved connector grant / The request needs current grant authority and must stay within its consent (spec/oauthTokenLifecycle.md) */
+//@ pure
 export function readGrant(flow: TokenFlow, grantLive: boolean): TokenFlow {
   //@ ensures (inv(flow) && canReadGrant(flow)) ==> stepTokensRequireStorage(flow, "readGrant", \result)
   return grantLive ? ({ ...flow, phase: "CheckingAuthority" } as TokenFlow) : refuse("InvalidGrant", flow);
+}
+
+/** Story: Use and renew an approved connector grant / The request needs current grant authority and must stay within its consent (spec/oauthTokenLifecycle.md) */
+//@ pure
+export function canReadAuthority(flow: TokenFlow): boolean {
+  return flow.phase === "CheckingAuthority";
 }
 
 /** Story: Use and renew an approved connector grant / The request needs current grant authority and must stay within its consent (spec/oauthTokenLifecycle.md) */
@@ -141,21 +129,27 @@ export function readAuthority(flow: TokenFlow, credentialLive: boolean, authorit
 
 /** Story: Use and renew an approved connector grant / The request needs current grant authority and must stay within its consent (spec/oauthTokenLifecycle.md) */
 //@ pure
+export function canReadRefreshBinding(flow: TokenFlow): boolean {
+  return flow.phase === "CheckingRefreshBinding";
+}
+
+/** Story: Use and renew an approved connector grant / The request needs current grant authority and must stay within its consent (spec/oauthTokenLifecycle.md) */
+//@ pure
 export function readRefreshBinding(flow: TokenFlow, scopeAllowed: boolean, resourceMatches: boolean, bothLive: boolean): TokenFlow {
   //@ ensures (inv(flow) && canReadRefreshBinding(flow)) ==> stepTokensRequireStorage(flow, "readRefreshBinding", \result)
   return !scopeAllowed ? refuse("InvalidScope", flow) : (!resourceMatches ? refuse("InvalidTarget", flow) : (!bothLive ? refuse("InvalidGrant", flow) : ({ ...flow, phase: "AwaitingRotation" } as TokenFlow)));
+}
+
+/** Story: Use and renew an approved connector grant / The request needs current grant authority and must stay within its consent (spec/oauthTokenLifecycle.md) */
+//@ pure
+export function codeCanBeConsumed(flow: TokenFlow, bothLive: boolean): boolean {
+  return flow.phase === "AwaitingConsumption" && bothLive;
 }
 
 /** Story: Use and renew an approved connector grant / Token issuance requires consumption or rotation in storage (spec/oauthTokenLifecycle.md) */
 //@ pure
 export function codeExchangeMayCommit(grantExactAndUnrevoked: boolean, codeExact: boolean, codeUnused: boolean, at: number, grantEndsAt: number, codeEndsAt: number): boolean {
   return grantExactAndUnrevoked && codeExact && codeUnused && at < grantEndsAt && at < codeEndsAt;
-}
-
-/** Story: Use and renew an approved connector grant / Token issuance requires consumption or rotation in storage (spec/oauthTokenLifecycle.md) */
-//@ pure
-export function refreshStoredAuthorityCurrent(grantExactAndUnrevoked: boolean, refreshExactAndUnrevoked: boolean, at: number, grantEndsAt: number, refreshEndsAt: number): boolean {
-  return grantExactAndUnrevoked && refreshExactAndUnrevoked && at < grantEndsAt && at < refreshEndsAt;
 }
 
 /** Story: Use and renew an approved connector grant / Token issuance requires consumption or rotation in storage (spec/oauthTokenLifecycle.md) */
@@ -173,6 +167,19 @@ export function canReadCodeExchange(flow: TokenFlow): boolean {
 
 /** Story: Use and renew an approved connector grant / Token issuance requires consumption or rotation in storage (spec/oauthTokenLifecycle.md) */
 //@ pure
+export function readCodeExchange(flow: TokenFlow, result: CodeExchangeResult): TokenFlow {
+  //@ ensures (inv(flow) && canReadCodeExchange(flow)) ==> stepTokensRequireStorage(flow, "readCodeExchange", \result)
+  return result === "CodeAlreadyUsed" ? ({ ...flow, phase: "RevokeGrant" } as TokenFlow) : (result === "CodePairCommitted" ? ({ ...flow, phase: "TokensReady" } as TokenFlow) : refuse("InvalidGrant", flow));
+}
+
+/** Story: Use and renew an approved connector grant / Token issuance requires consumption or rotation in storage (spec/oauthTokenLifecycle.md) */
+//@ pure
+export function refreshStoredAuthorityCurrent(grantExactAndUnrevoked: boolean, refreshExactAndUnrevoked: boolean, at: number, grantEndsAt: number, refreshEndsAt: number): boolean {
+  return grantExactAndUnrevoked && refreshExactAndUnrevoked && at < grantEndsAt && at < refreshEndsAt;
+}
+
+/** Story: Use and renew an approved connector grant / Token issuance requires consumption or rotation in storage (spec/oauthTokenLifecycle.md) */
+//@ pure
 export function lawExpiredRefreshCannotBeCommitted(grantExactAndUnrevoked: boolean, refreshExactAndUnrevoked: boolean, at: number, grantEndsAt: number, refreshEndsAt: number): boolean {
   //@ ensures \result === true
   return !(refreshEndsAt <= at) || !refreshStoredAuthorityCurrent(grantExactAndUnrevoked, refreshExactAndUnrevoked, at, grantEndsAt, refreshEndsAt);
@@ -182,6 +189,20 @@ export function lawExpiredRefreshCannotBeCommitted(grantExactAndUnrevoked: boole
 //@ pure
 export function canRecordRotation(flow: TokenFlow): boolean {
   return flow.phase === "AwaitingRotation";
+}
+
+/** Story: Use and renew an approved connector grant / Token issuance requires consumption or rotation in storage (spec/oauthTokenLifecycle.md) */
+//@ pure
+export function recordRotation(flow: TokenFlow, result: RefreshRotationResult): TokenFlow {
+  //@ ensures (inv(flow) && canRecordRotation(flow)) ==> stepTokensRequireStorage(flow, "recordRotation", \result)
+  return result === "RefreshAlreadyUsed" ? ({ ...flow, phase: "RevokeGrant" } as TokenFlow) : (result === "RefreshPairCommitted" ? ({ ...flow, phase: "TokensReady" } as TokenFlow) : refuse("InvalidGrant", flow));
+}
+
+/** Story: Use and renew an approved connector grant / Token issuance requires consumption or rotation in storage (spec/oauthTokenLifecycle.md) */
+//@ pure
+export function lawOnlyLiveRefreshReuseEndsGrant(flow: TokenFlow, result: RefreshRotationResult): boolean {
+  //@ ensures \result === true
+  return (recordRotation(flow, result).phase === "RevokeGrant") === (result === "RefreshAlreadyUsed");
 }
 
 /** Story: Use and renew an approved connector grant / Token issuance requires consumption or rotation in storage (spec/oauthTokenLifecycle.md) */
@@ -200,27 +221,6 @@ export function sometimesCanIssue(flow: TokenFlow): boolean {
 //@ pure
 export function sometimesCanRefresh(flow: TokenFlow): boolean {
   return flow.phase === "TokensReady" && flow.refresh;
-}
-
-/** Story: Use and renew an approved connector grant / Token issuance requires consumption or rotation in storage (spec/oauthTokenLifecycle.md) */
-//@ pure
-export function readCodeExchange(flow: TokenFlow, result: CodeExchangeResult): TokenFlow {
-  //@ ensures (inv(flow) && canReadCodeExchange(flow)) ==> stepTokensRequireStorage(flow, "readCodeExchange", \result)
-  return result === "CodeAlreadyUsed" ? ({ ...flow, phase: "RevokeGrant" } as TokenFlow) : (result === "CodePairCommitted" ? ({ ...flow, phase: "TokensReady" } as TokenFlow) : refuse("InvalidGrant", flow));
-}
-
-/** Story: Use and renew an approved connector grant / Token issuance requires consumption or rotation in storage (spec/oauthTokenLifecycle.md) */
-//@ pure
-export function recordRotation(flow: TokenFlow, result: RefreshRotationResult): TokenFlow {
-  //@ ensures (inv(flow) && canRecordRotation(flow)) ==> stepTokensRequireStorage(flow, "recordRotation", \result)
-  return result === "RefreshAlreadyUsed" ? ({ ...flow, phase: "RevokeGrant" } as TokenFlow) : (result === "RefreshPairCommitted" ? ({ ...flow, phase: "TokensReady" } as TokenFlow) : refuse("InvalidGrant", flow));
-}
-
-/** Story: Use and renew an approved connector grant / Token issuance requires consumption or rotation in storage (spec/oauthTokenLifecycle.md) */
-//@ pure
-export function lawOnlyLiveRefreshReuseEndsGrant(flow: TokenFlow, result: RefreshRotationResult): boolean {
-  //@ ensures \result === true
-  return (recordRotation(flow, result).phase === "RevokeGrant") === (result === "RefreshAlreadyUsed");
 }
 
 /** Story: Use and renew an approved connector grant / Revocation affects credentials owned by the authenticated client (spec/oauthTokenLifecycle.md) */

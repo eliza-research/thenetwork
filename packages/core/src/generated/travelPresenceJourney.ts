@@ -1,13 +1,13 @@
 // GENERATED from spec/travelPresenceJourney.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type TravelEntry as travelPresence_TravelEntry, type PresenceWindow as travelPresence_PresenceWindow, meetingAreaInterval as travelPresence_meetingAreaInterval, travelEntryReplyAllowed as travelPresence_travelEntryReplyAllowed, samePresenceWindow as travelPresence_samePresenceWindow, presenceWindowValid as travelPresence_presenceWindowValid, presenceWindowContains as travelPresence_presenceWindowContains, presenceWindowsOverlap as travelPresence_presenceWindowsOverlap, presenceWindowCovers as travelPresence_presenceWindowCovers, lawTripEndsExclusively as travelPresence_lawTripEndsExclusively, presenceWindowCurrentOrFuture as travelPresence_presenceWindowCurrentOrFuture, lawCoveringTripSharesTime as travelPresence_lawCoveringTripSharesTime, lawMeetingAreaNeedsStrictOverlap as travelPresence_lawMeetingAreaNeedsStrictOverlap, decideTravelEntry as travelPresence_decideTravelEntry, lawTripLeavesSnapshotAtItsEnd as travelPresence_lawTripLeavesSnapshotAtItsEnd, lawUnavailableTravelNeverSaves as travelPresence_lawUnavailableTravelNeverSaves, lawRepeatedTravelDoesNotSave as travelPresence_lawRepeatedTravelDoesNotSave } from "./travelPresence.ts";
+import { type PresenceWindow as travelPresence_PresenceWindow, type TravelEntry as travelPresence_TravelEntry, presenceWindowValid as travelPresence_presenceWindowValid, presenceWindowCurrentOrFuture as travelPresence_presenceWindowCurrentOrFuture, lawTripLeavesSnapshotAtItsEnd as travelPresence_lawTripLeavesSnapshotAtItsEnd, presenceWindowContains as travelPresence_presenceWindowContains, presenceWindowsOverlap as travelPresence_presenceWindowsOverlap, presenceWindowCovers as travelPresence_presenceWindowCovers, lawTripEndsExclusively as travelPresence_lawTripEndsExclusively, lawCoveringTripSharesTime as travelPresence_lawCoveringTripSharesTime, meetingAreaInterval as travelPresence_meetingAreaInterval, lawMeetingAreaNeedsStrictOverlap as travelPresence_lawMeetingAreaNeedsStrictOverlap, travelEntryReplyAllowed as travelPresence_travelEntryReplyAllowed, samePresenceWindow as travelPresence_samePresenceWindow, decideTravelEntry as travelPresence_decideTravelEntry, lawUnavailableTravelNeverSaves as travelPresence_lawUnavailableTravelNeverSaves, lawRepeatedTravelDoesNotSave as travelPresence_lawRepeatedTravelDoesNotSave } from "./travelPresence.ts";
 
+/** Story: Keep my travel dates in the app that owns them / A new statement can save one trip in Friends (spec/travelPresenceJourney.md) */
+export type TravelCity = "SanFrancisco" | "LosAngeles";
 /** Story: Keep my travel dates in the app that owns them / A new statement can save one trip in Friends (spec/travelPresenceJourney.md) */
 export type SavedTrip = "NoTrip" | "SanFranciscoTrip" | "LosAngelesTrip";
 /** Story: Keep my travel dates in the app that owns them / A new statement can save one trip in Friends (spec/travelPresenceJourney.md) */
 export type TravelEffect = "TripSaved" | "TripAlreadySaved" | "DatesNeeded" | "DatesConflict" | "NoTravelReply" | "SaveReplayed" | "ReplayRefused";
-/** Story: Keep my travel dates in the app that owns them / A new statement can save one trip in Friends (spec/travelPresenceJourney.md) */
-export type TravelCity = "SanFrancisco" | "LosAngeles";
 /** Story: Keep my travel dates in the app that owns them / A new statement can save one trip in Friends (spec/travelPresenceJourney.md) */
 export interface TravelPresenceJourney { activeFriends: boolean; activeSlop: boolean; reachedEnd: boolean; trip: SavedTrip; hasSaveToRetry: boolean; visibleForMatching: boolean; slopTripCount: number }
 /** Story: Keep my travel dates in the app that owns them / A new statement can save one trip in Friends (spec/travelPresenceJourney.md) */
@@ -43,6 +43,16 @@ export function canDeclareTrip(s: TravelPresenceJourney, city: TravelCity, hasDa
 
 /** Story: Keep my travel dates in the app that owns them / A new statement can save one trip in Friends (spec/travelPresenceJourney.md) */
 //@ pure
+export function declareTrip(s: TravelPresenceJourney, city: TravelCity, hasDates: boolean): TravelStep {
+  //@ ensures (inv(s) && canDeclareTrip(s, city, hasDates)) ==> alwaysOnlyFriendsOwnsTheTrip(\result.state)
+  //@ ensures (inv(s) && canDeclareTrip(s, city, hasDates)) ==> alwaysMatchingUsesTheLiveTrip(\result.state)
+  const local_0: SavedTrip = stayIn(city);
+  const local_1: travelPresence_TravelEntry = travelPresence_decideTravelEntry(s.activeFriends, hasDates, ({ from: 0, to: 1 } as travelPresence_PresenceWindow), s.reachedEnd ? 1 : 0, s.trip !== "NoTrip" && s.trip !== local_0, s.trip === local_0);
+  return local_1 === "TravelSave" ? ({ state: ({ ...s, trip: local_0, hasSaveToRetry: true, visibleForMatching: true } as TravelPresenceJourney), out: (["TripSaved"] as TravelEffect[]) } as TravelStep) : ({ state: s, out: ([local_1 === "TravelAlreadySaved" ? "TripAlreadySaved" : (local_1 === "TravelNeedsDates" ? "DatesNeeded" : (local_1 === "TravelDateConflict" ? "DatesConflict" : "NoTravelReply"))] as TravelEffect[]) } as TravelStep);
+}
+
+/** Story: Keep my travel dates in the app that owns them / A new statement can save one trip in Friends (spec/travelPresenceJourney.md) */
+//@ pure
 export function alwaysOnlyFriendsOwnsTheTrip(s: TravelPresenceJourney): boolean {
   return s.activeSlop && s.slopTripCount === 0 && (!(s.trip !== "NoTrip") || s.activeFriends);
 }
@@ -59,16 +69,6 @@ export function sometimesSavesLosAngeles(s: TravelPresenceJourney): boolean {
   return s.trip === "LosAngelesTrip";
 }
 
-/** Story: Keep my travel dates in the app that owns them / A new statement can save one trip in Friends (spec/travelPresenceJourney.md) */
-//@ pure
-export function declareTrip(s: TravelPresenceJourney, city: TravelCity, hasDates: boolean): TravelStep {
-  //@ ensures (inv(s) && canDeclareTrip(s, city, hasDates)) ==> alwaysOnlyFriendsOwnsTheTrip(\result.state)
-  //@ ensures (inv(s) && canDeclareTrip(s, city, hasDates)) ==> alwaysMatchingUsesTheLiveTrip(\result.state)
-  const local_0: SavedTrip = stayIn(city);
-  const local_1: travelPresence_TravelEntry = travelPresence_decideTravelEntry(s.activeFriends, hasDates, ({ from: 0, to: 1 } as travelPresence_PresenceWindow), s.reachedEnd ? 1 : 0, s.trip !== "NoTrip" && s.trip !== local_0, s.trip === local_0);
-  return local_1 === "TravelSave" ? ({ state: ({ ...s, trip: local_0, hasSaveToRetry: true, visibleForMatching: true } as TravelPresenceJourney), out: (["TripSaved"] as TravelEffect[]) } as TravelStep) : ({ state: s, out: ([local_1 === "TravelAlreadySaved" ? "TripAlreadySaved" : (local_1 === "TravelNeedsDates" ? "DatesNeeded" : (local_1 === "TravelDateConflict" ? "DatesConflict" : "NoTravelReply"))] as TravelEffect[]) } as TravelStep);
-}
-
 /** Story: Keep my travel dates in the app that owns them / The matching snapshot loses the trip at its exclusive end (spec/travelPresenceJourney.md) */
 //@ pure
 export function canReachTripEnd(s: TravelPresenceJourney): boolean {
@@ -77,8 +77,24 @@ export function canReachTripEnd(s: TravelPresenceJourney): boolean {
 
 /** Story: Keep my travel dates in the app that owns them / The matching snapshot loses the trip at its exclusive end (spec/travelPresenceJourney.md) */
 //@ pure
+export function reachTripEnd(s: TravelPresenceJourney): TravelStep {
+  //@ ensures (inv(s) && canReachTripEnd(s)) ==> alwaysOnlyFriendsOwnsTheTrip(\result.state)
+  //@ ensures (inv(s) && canReachTripEnd(s)) ==> alwaysMatchingUsesTheLiveTrip(\result.state)
+  return { state: ({ ...s, reachedEnd: true, visibleForMatching: false } as TravelPresenceJourney), out: ([] as TravelEffect[]) };
+}
+
+/** Story: Keep my travel dates in the app that owns them / The matching snapshot loses the trip at its exclusive end (spec/travelPresenceJourney.md) */
+//@ pure
 export function canRetryTripSave(s: TravelPresenceJourney): boolean {
   return s.hasSaveToRetry;
+}
+
+/** Story: Keep my travel dates in the app that owns them / The matching snapshot loses the trip at its exclusive end (spec/travelPresenceJourney.md) */
+//@ pure
+export function retryTripSave(s: TravelPresenceJourney): TravelStep {
+  //@ ensures (inv(s) && canRetryTripSave(s)) ==> alwaysOnlyFriendsOwnsTheTrip(\result.state)
+  //@ ensures (inv(s) && canRetryTripSave(s)) ==> alwaysMatchingUsesTheLiveTrip(\result.state)
+  return { state: s, out: ([s.activeFriends ? "SaveReplayed" : "ReplayRefused"] as TravelEffect[]) };
 }
 
 /** Story: Keep my travel dates in the app that owns them / The matching snapshot loses the trip at its exclusive end (spec/travelPresenceJourney.md) */
@@ -93,22 +109,6 @@ export function sometimesTheSavedTripExpires(s: TravelPresenceJourney): boolean 
   return s.trip !== "NoTrip" && s.reachedEnd;
 }
 
-/** Story: Keep my travel dates in the app that owns them / The matching snapshot loses the trip at its exclusive end (spec/travelPresenceJourney.md) */
-//@ pure
-export function reachTripEnd(s: TravelPresenceJourney): TravelStep {
-  //@ ensures (inv(s) && canReachTripEnd(s)) ==> alwaysOnlyFriendsOwnsTheTrip(\result.state)
-  //@ ensures (inv(s) && canReachTripEnd(s)) ==> alwaysMatchingUsesTheLiveTrip(\result.state)
-  return { state: ({ ...s, reachedEnd: true, visibleForMatching: false } as TravelPresenceJourney), out: ([] as TravelEffect[]) };
-}
-
-/** Story: Keep my travel dates in the app that owns them / The matching snapshot loses the trip at its exclusive end (spec/travelPresenceJourney.md) */
-//@ pure
-export function retryTripSave(s: TravelPresenceJourney): TravelStep {
-  //@ ensures (inv(s) && canRetryTripSave(s)) ==> alwaysOnlyFriendsOwnsTheTrip(\result.state)
-  //@ ensures (inv(s) && canRetryTripSave(s)) ==> alwaysMatchingUsesTheLiveTrip(\result.state)
-  return { state: s, out: ([s.activeFriends ? "SaveReplayed" : "ReplayRefused"] as TravelEffect[]) };
-}
-
 /** Story: Keep my travel dates in the app that owns them / Leaving Friends removes the trip and retires its saved reply (spec/travelPresenceJourney.md) */
 //@ pure
 export function canLeaveTravelApp(s: TravelPresenceJourney): boolean {
@@ -117,16 +117,16 @@ export function canLeaveTravelApp(s: TravelPresenceJourney): boolean {
 
 /** Story: Keep my travel dates in the app that owns them / Leaving Friends removes the trip and retires its saved reply (spec/travelPresenceJourney.md) */
 //@ pure
-export function sometimesLeavesAfterSaving(s: TravelPresenceJourney): boolean {
-  return s.hasSaveToRetry && !s.activeFriends;
-}
-
-/** Story: Keep my travel dates in the app that owns them / Leaving Friends removes the trip and retires its saved reply (spec/travelPresenceJourney.md) */
-//@ pure
 export function leaveTravelApp(s: TravelPresenceJourney): TravelStep {
   //@ ensures (inv(s) && canLeaveTravelApp(s)) ==> alwaysOnlyFriendsOwnsTheTrip(\result.state)
   //@ ensures (inv(s) && canLeaveTravelApp(s)) ==> alwaysMatchingUsesTheLiveTrip(\result.state)
   return { state: ({ ...s, activeFriends: false, trip: "NoTrip", visibleForMatching: false } as TravelPresenceJourney), out: ([] as TravelEffect[]) };
+}
+
+/** Story: Keep my travel dates in the app that owns them / Leaving Friends removes the trip and retires its saved reply (spec/travelPresenceJourney.md) */
+//@ pure
+export function sometimesLeavesAfterSaving(s: TravelPresenceJourney): boolean {
+  return s.hasSaveToRetry && !s.activeFriends;
 }
 
 /** Do the rules allow this event in this state? */

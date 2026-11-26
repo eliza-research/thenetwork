@@ -26,6 +26,12 @@ export function inv(current: TurnReceipt): boolean {
 
 /** Story: Record the gateway's delivery result once / A receipt belongs to a completed handled turn under current authority (spec/turnReceipt.md) */
 //@ pure
+export function canCheckTurn(receipt: TurnReceipt): boolean {
+  return receipt.phase === "ReadingTurn";
+}
+
+/** Story: Record the gateway's delivery result once / A receipt belongs to a completed handled turn under current authority (spec/turnReceipt.md) */
+//@ pure
 export function checkTurn(receipt: TurnReceipt, handled: boolean): TurnReceipt {
   //@ ensures (inv(receipt) && canCheckTurn(receipt)) ==> stepReceiptNeedsAdmission(receipt, "checkTurn", \result)
   return { phase: handled ? "CheckingAuthority" : "TurnUnavailable" };
@@ -57,24 +63,6 @@ export function readPrevious(receipt: TurnReceipt, identical: boolean, alreadySt
   return identical ? ({ phase: "Replayed" } as TurnReceipt) : (alreadyStored && !(previouslyUnknown && finalDelivery) ? ({ phase: "Conflict" } as TurnReceipt) : ({ phase: "CheckingScope" } as TurnReceipt));
 }
 
-/** Story: Record the gateway's delivery result once / A receipt belongs to a completed handled turn under current authority (spec/turnReceipt.md) */
-//@ pure
-export function canCheckTurn(receipt: TurnReceipt): boolean {
-  return receipt.phase === "ReadingTurn";
-}
-
-/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md) */
-//@ pure
-export function receiptReplyIdsMatch(loadedIds: string[], submittedIds: string[]): boolean {
-  return equal_turnReceipt(loadedIds, submittedIds);
-}
-
-/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md) */
-//@ pure
-export function noHistoryAllowed(accountFree: boolean, replyKind: string, reason: string, memberAbsent: boolean, knownApp: boolean): boolean {
-  return accountFree && (replyKind === "compliance" || (replyKind === "reply" && reason === "onboarding_asked" && memberAbsent && knownApp));
-}
-
 /** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md) */
 //@ pure
 export function canCheckScope(receipt: TurnReceipt): boolean {
@@ -103,6 +91,18 @@ export function checkDelivery(receipt: TurnReceipt, accepted: boolean, providerI
 
 /** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md) */
 //@ pure
+export function receiptReplyIdsMatch(loadedIds: string[], submittedIds: string[]): boolean {
+  return equal_turnReceipt(loadedIds, submittedIds);
+}
+
+/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md) */
+//@ pure
+export function noHistoryAllowed(accountFree: boolean, replyKind: string, reason: string, memberAbsent: boolean, knownApp: boolean): boolean {
+  return accountFree && (replyKind === "compliance" || (replyKind === "reply" && reason === "onboarding_asked" && memberAbsent && knownApp));
+}
+
+/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md) */
+//@ pure
 export function lawReceiptRequiresExactOrder(firstId: string, secondId: string): boolean {
   //@ ensures \result === true
   return !(firstId !== secondId) || !receiptReplyIdsMatch(([firstId, secondId] as string[]), ([secondId, firstId] as string[]));
@@ -113,12 +113,6 @@ export function lawReceiptRequiresExactOrder(firstId: string, secondId: string):
 export function lawAccountBoundReceiptNeedsHistory(replyKind: string, reason: string, memberAbsent: boolean, knownApp: boolean): boolean {
   //@ ensures \result === true
   return !noHistoryAllowed(false, replyKind, reason, memberAbsent, knownApp);
-}
-
-/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md) */
-//@ pure
-export function receiptAccepted(delivery: string): boolean {
-  return delivery === "accepted";
 }
 
 /** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md) */
@@ -136,6 +130,12 @@ export function recordReceipt(receipt: TurnReceipt): TurnReceipt {
 
 /** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md) */
 //@ pure
+export function receiptAccepted(delivery: string): boolean {
+  return delivery === "accepted";
+}
+
+/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md) */
+//@ pure
 export function receiptFinal(delivery: string): boolean {
   return receiptAccepted(delivery) || delivery === "rejected";
 }
@@ -148,6 +148,12 @@ export function receiptMessageStatus(delivery: string): string {
 
 /** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md) */
 //@ pure
+export function stepReceiptNeedsAdmission(before: TurnReceipt, via: string, after: TurnReceipt): boolean {
+  return !(after.phase === "Stored") || (via === "recordReceipt" && canRecordReceipt(before));
+}
+
+/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md) */
+//@ pure
 export function sometimesCanStoreReceipt(receipt: TurnReceipt): boolean {
   return receipt.phase === "Stored";
 }
@@ -156,12 +162,6 @@ export function sometimesCanStoreReceipt(receipt: TurnReceipt): boolean {
 //@ pure
 export function sometimesCanReplayReceipt(receipt: TurnReceipt): boolean {
   return receipt.phase === "Replayed";
-}
-
-/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md) */
-//@ pure
-export function stepReceiptNeedsAdmission(before: TurnReceipt, via: string, after: TurnReceipt): boolean {
-  return !(after.phase === "Stored") || (via === "recordReceipt" && canRecordReceipt(before));
 }
 
 /** Do the rules allow this event in this state? */

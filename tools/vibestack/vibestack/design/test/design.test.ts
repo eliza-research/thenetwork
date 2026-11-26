@@ -1,6 +1,6 @@
 // Runs against packages/design-system: its tokens.json, design.md and installed Tailwind and ESLint.
 import { execFileSync } from "node:child_process"
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { dirname, join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
@@ -11,7 +11,7 @@ import { buildTokenProject, checkTokenProject } from "../project.ts"
 import { type Tokens, applyChanges, contrast, palette, parseTokens } from "../tokens.ts"
 
 const here = (file: string) => resolve(import.meta.dirname, file)
-const dir = here("../../../packages/design-system")
+const dir = [here("../../../packages/design-system"), here("../../../../../template/packages/design-system"), here("../../../../../packages/design-system")].find((candidate) => existsSync(join(candidate, "tokens.json"))) ?? here("../../../packages/design-system")
 // ESLint and its plugins belong to the project, so they resolve from there, not from the tool's directory.
 const project = createRequire(`${dir}/`)
 const load = (name: string) => import(pathToFileURL(project.resolve(name)).href)

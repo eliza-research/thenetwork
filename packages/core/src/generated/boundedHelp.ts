@@ -32,14 +32,14 @@ export function inv(current: HomeHelpPlan): boolean {
 
 /** Story: Ask for manageable help without unexpected contact / A direct home-entry request goes to staff before contacting helpers (spec/boundedHelp.md) */
 //@ pure
-export function openHomeHelpCase(adult: boolean, hasOpenCase: boolean): boolean {
-  return adult && !hasOpenCase;
+export function boundedHelpRoute(highRisk: boolean, homeEntry: boolean): BoundedHelpRoute {
+  return highRisk ? "RefuseHighRiskHelp" : (homeEntry ? "ReviewHomeEntryHelp" : "SearchPublicHelp");
 }
 
 /** Story: Ask for manageable help without unexpected contact / A direct home-entry request goes to staff before contacting helpers (spec/boundedHelp.md) */
 //@ pure
-export function boundedHelpRoute(highRisk: boolean, homeEntry: boolean): BoundedHelpRoute {
-  return highRisk ? "RefuseHighRiskHelp" : (homeEntry ? "ReviewHomeEntryHelp" : "SearchPublicHelp");
+export function openHomeHelpCase(adult: boolean, hasOpenCase: boolean): boolean {
+  return adult && !hasOpenCase;
 }
 
 /** Story: Ask for manageable help without unexpected contact / A direct home-entry request goes to staff before contacting helpers (spec/boundedHelp.md) */
@@ -58,12 +58,6 @@ export function lawHighRiskHelpTakesPrecedence(homeEntry: boolean): boolean {
 
 /** Story: Ask for manageable help without unexpected contact / An unfamiliar helper cannot be the only helper for home entry (spec/boundedHelp.md) */
 //@ pure
-export function boundedHelperCanRank(eligible: boolean, commonPresence: boolean): boolean {
-  return eligible && commonPresence;
-}
-
-/** Story: Ask for manageable help without unexpected contact / An unfamiliar helper cannot be the only helper for home entry (spec/boundedHelp.md) */
-//@ pure
 export function homeHelperSetAllowed(helperCount: number, knownSingleton: boolean): boolean {
   return helperCount >= 2 || (helperCount === 1 && knownSingleton);
 }
@@ -72,6 +66,12 @@ export function homeHelperSetAllowed(helperCount: number, knownSingleton: boolea
 //@ pure
 export function needsSecondHomeHelper(homeEntry: boolean, requestedHelpers: number, knownSingleton: boolean): boolean {
   return homeEntry && requestedHelpers === 1 && !knownSingleton;
+}
+
+/** Story: Ask for manageable help without unexpected contact / An unfamiliar helper cannot be the only helper for home entry (spec/boundedHelp.md) */
+//@ pure
+export function boundedHelperCanRank(eligible: boolean, commonPresence: boolean): boolean {
+  return eligible && commonPresence;
 }
 
 /** Story: Ask for manageable help without unexpected contact / An unfamiliar helper cannot be the only helper for home entry (spec/boundedHelp.md) */
@@ -148,12 +148,24 @@ export function homeHelpRosterAllowed(helperCount: number, knownSingleton: boole
 
 /** Story: Review a private home-help plan with a fixed roster / Fix the roster before review and recheck it at approval (spec/boundedHelp.md) */
 //@ pure
+export function canSetHomeHelpRoster(plan: HomeHelpPlan, now: number, revision: number, rosterKey: string, rosterAllowed: boolean): boolean {
+  return homeHelpOpen(plan, now) && revision === plan.revision && rosterAllowed && rosterKey !== "" && rosterKey !== plan.rosterKey;
+}
+
+/** Story: Review a private home-help plan with a fixed roster / Fix the roster before review and recheck it at approval (spec/boundedHelp.md) */
+//@ pure
 export function setHomeHelpRoster(plan: HomeHelpPlan, now: number, revision: number, rosterKey: string, rosterAllowed: boolean): HomeHelpPlan {
   //@ ensures (inv(plan) && canSetHomeHelpRoster(plan, now, revision, rosterKey, rosterAllowed)) ==> alwaysSubmittedHomeHelpHasDeadline(\result)
   //@ ensures (inv(plan) && canSetHomeHelpRoster(plan, now, revision, rosterKey, rosterAllowed)) ==> alwaysHomeHelpReviewHasFixedRoster(\result)
   //@ ensures (inv(plan) && canSetHomeHelpRoster(plan, now, revision, rosterKey, rosterAllowed)) ==> stepHomeHelpRevisionClearsApproval(plan, \result)
   //@ ensures (inv(plan) && canSetHomeHelpRoster(plan, now, revision, rosterKey, rosterAllowed)) ==> stepClosedHomeHelpStaysClosed(plan, \result)
   return { ...plan, phase: "AwaitingReview", revision: exact_boundedHelp(plan.revision + 1), rosterKey: rosterKey };
+}
+
+/** Story: Review a private home-help plan with a fixed roster / Fix the roster before review and recheck it at approval (spec/boundedHelp.md) */
+//@ pure
+export function canReviseHomeHelp(plan: HomeHelpPlan, now: number, revision: number, draftAllowed: boolean, expiresAt: number): boolean {
+  return homeHelpOpen(plan, now) && revision === plan.revision && draftAllowed && expiresAt > 0 && now < expiresAt && expiresAt <= plan.expiresAt;
 }
 
 /** Story: Review a private home-help plan with a fixed roster / Fix the roster before review and recheck it at approval (spec/boundedHelp.md) */
@@ -174,12 +186,31 @@ export function homeHelpRevisionMatches(plan: HomeHelpPlan, revision: number, ro
 
 /** Story: Review a private home-help plan with a fixed roster / Fix the roster before review and recheck it at approval (spec/boundedHelp.md) */
 //@ pure
+export function canApproveHomeHelp(plan: HomeHelpPlan, now: number, revision: number, rosterKey: string, reviewerAuthorized: boolean, rosterAllowed: boolean): boolean {
+  return plan.phase === "AwaitingReview" && homeHelpOpen(plan, now) && reviewerAuthorized && rosterAllowed && homeHelpRevisionMatches(plan, revision, rosterKey);
+}
+
+/** Story: Review a private home-help plan with a fixed roster / Fix the roster before review and recheck it at approval (spec/boundedHelp.md) */
+//@ pure
 export function approveHomeHelp(plan: HomeHelpPlan, now: number, revision: number, rosterKey: string, reviewerAuthorized: boolean, rosterAllowed: boolean): HomeHelpPlan {
   //@ ensures (inv(plan) && canApproveHomeHelp(plan, now, revision, rosterKey, reviewerAuthorized, rosterAllowed)) ==> alwaysSubmittedHomeHelpHasDeadline(\result)
   //@ ensures (inv(plan) && canApproveHomeHelp(plan, now, revision, rosterKey, reviewerAuthorized, rosterAllowed)) ==> alwaysHomeHelpReviewHasFixedRoster(\result)
   //@ ensures (inv(plan) && canApproveHomeHelp(plan, now, revision, rosterKey, reviewerAuthorized, rosterAllowed)) ==> stepHomeHelpRevisionClearsApproval(plan, \result)
   //@ ensures (inv(plan) && canApproveHomeHelp(plan, now, revision, rosterKey, reviewerAuthorized, rosterAllowed)) ==> stepClosedHomeHelpStaysClosed(plan, \result)
   return { ...plan, phase: "Approved" };
+}
+
+/** Story: Review a private home-help plan with a fixed roster / Fix the roster before review and recheck it at approval (spec/boundedHelp.md) */
+//@ pure
+export function homeHelpApprovalCurrent(plan: HomeHelpPlan, now: number, revision: number, rosterKey: string, rosterAllowed: boolean): boolean {
+  return plan.phase === "Approved" && homeHelpOpen(plan, now) && rosterAllowed && homeHelpRevisionMatches(plan, revision, rosterKey);
+}
+
+/** Story: Review a private home-help plan with a fixed roster / Fix the roster before review and recheck it at approval (spec/boundedHelp.md) */
+//@ pure
+export function lawHomeHelpApprovalNeedsExactRoster(plan: HomeHelpPlan, now: number, revision: number, rosterKey: string, rosterAllowed: boolean): boolean {
+  //@ ensures \result === true
+  return !homeHelpApprovalCurrent(plan, now, revision, rosterKey, rosterAllowed) || homeHelpRevisionMatches(plan, revision, rosterKey);
 }
 
 /** Story: Review a private home-help plan with a fixed roster / Fix the roster before review and recheck it at approval (spec/boundedHelp.md) */
@@ -194,35 +225,10 @@ export function alwaysHomeHelpReviewHasFixedRoster(plan: HomeHelpPlan): boolean 
   return (plan.phase === "AwaitingReview" || plan.phase === "Approved") === (plan.rosterKey !== "");
 }
 
-/** Story: Review a private home-help plan with a fixed roster / Fix the roster before review and recheck it at approval (spec/boundedHelp.md) */
+/** Story: Review a private home-help plan with a fixed roster / Closure and expiry end authority for this plan (spec/boundedHelp.md) */
 //@ pure
-export function canSetHomeHelpRoster(plan: HomeHelpPlan, now: number, revision: number, rosterKey: string, rosterAllowed: boolean): boolean {
-  return homeHelpOpen(plan, now) && revision === plan.revision && rosterAllowed && rosterKey !== "" && rosterKey !== plan.rosterKey;
-}
-
-/** Story: Review a private home-help plan with a fixed roster / Fix the roster before review and recheck it at approval (spec/boundedHelp.md) */
-//@ pure
-export function canReviseHomeHelp(plan: HomeHelpPlan, now: number, revision: number, draftAllowed: boolean, expiresAt: number): boolean {
-  return homeHelpOpen(plan, now) && revision === plan.revision && draftAllowed && expiresAt > 0 && now < expiresAt && expiresAt <= plan.expiresAt;
-}
-
-/** Story: Review a private home-help plan with a fixed roster / Fix the roster before review and recheck it at approval (spec/boundedHelp.md) */
-//@ pure
-export function canApproveHomeHelp(plan: HomeHelpPlan, now: number, revision: number, rosterKey: string, reviewerAuthorized: boolean, rosterAllowed: boolean): boolean {
-  return plan.phase === "AwaitingReview" && homeHelpOpen(plan, now) && reviewerAuthorized && rosterAllowed && homeHelpRevisionMatches(plan, revision, rosterKey);
-}
-
-/** Story: Review a private home-help plan with a fixed roster / Fix the roster before review and recheck it at approval (spec/boundedHelp.md) */
-//@ pure
-export function homeHelpApprovalCurrent(plan: HomeHelpPlan, now: number, revision: number, rosterKey: string, rosterAllowed: boolean): boolean {
-  return plan.phase === "Approved" && homeHelpOpen(plan, now) && rosterAllowed && homeHelpRevisionMatches(plan, revision, rosterKey);
-}
-
-/** Story: Review a private home-help plan with a fixed roster / Fix the roster before review and recheck it at approval (spec/boundedHelp.md) */
-//@ pure
-export function lawHomeHelpApprovalNeedsExactRoster(plan: HomeHelpPlan, now: number, revision: number, rosterKey: string, rosterAllowed: boolean): boolean {
-  //@ ensures \result === true
-  return !homeHelpApprovalCurrent(plan, now, revision, rosterKey, rosterAllowed) || homeHelpRevisionMatches(plan, revision, rosterKey);
+export function canCloseHomeHelp(plan: HomeHelpPlan, now: number, revision: number, authorized: boolean): boolean {
+  return homeHelpOpen(plan, now) && revision === plan.revision && authorized;
 }
 
 /** Story: Review a private home-help plan with a fixed roster / Closure and expiry end authority for this plan (spec/boundedHelp.md) */
@@ -253,6 +259,13 @@ export function expireHomeHelp(plan: HomeHelpPlan, now: number): HomeHelpPlan {
 
 /** Story: Review a private home-help plan with a fixed roster / Closure and expiry end authority for this plan (spec/boundedHelp.md) */
 //@ pure
+export function lawExpiredHomeHelpHasNoApproval(plan: HomeHelpPlan, revision: number, rosterKey: string, rosterAllowed: boolean): boolean {
+  //@ ensures \result === true
+  return !homeHelpApprovalCurrent(plan, plan.expiresAt, revision, rosterKey, rosterAllowed);
+}
+
+/** Story: Review a private home-help plan with a fixed roster / Closure and expiry end authority for this plan (spec/boundedHelp.md) */
+//@ pure
 export function stepClosedHomeHelpStaysClosed(before: HomeHelpPlan, after: HomeHelpPlan): boolean {
   return !(before.phase === "Closed") || after.phase === "Closed";
 }
@@ -267,19 +280,6 @@ export function sometimesHomeHelpCanReachReview(plan: HomeHelpPlan): boolean {
 //@ pure
 export function sometimesHomeHelpCanBeApproved(plan: HomeHelpPlan): boolean {
   return plan.phase === "Approved";
-}
-
-/** Story: Review a private home-help plan with a fixed roster / Closure and expiry end authority for this plan (spec/boundedHelp.md) */
-//@ pure
-export function canCloseHomeHelp(plan: HomeHelpPlan, now: number, revision: number, authorized: boolean): boolean {
-  return homeHelpOpen(plan, now) && revision === plan.revision && authorized;
-}
-
-/** Story: Review a private home-help plan with a fixed roster / Closure and expiry end authority for this plan (spec/boundedHelp.md) */
-//@ pure
-export function lawExpiredHomeHelpHasNoApproval(plan: HomeHelpPlan, revision: number, rosterKey: string, rosterAllowed: boolean): boolean {
-  //@ ensures \result === true
-  return !homeHelpApprovalCurrent(plan, plan.expiresAt, revision, rosterKey, rosterAllowed);
 }
 
 /** Do the rules allow this event in this state? */

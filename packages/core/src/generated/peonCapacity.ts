@@ -28,52 +28,14 @@ export function bookedRecordOccupies(disposition: string): boolean {
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
 //@ pure
-export function bookedOccupies(hasMeeting: boolean, closed: boolean): boolean {
-  return hasMeeting && !closed;
-}
-
-/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
-//@ pure
-export function canObserveCandidate(l: SeatLedger, candidate: string, occupies: boolean): boolean {
-  return l.phase === "Collecting" && occupies && !l.occupied.includes(candidate);
-}
-
-/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
-//@ pure
-export function observeCandidate(l: SeatLedger, candidate: string, occupies: boolean): SeatLedger {
-  //@ ensures (inv(l) && canObserveCandidate(l, candidate, occupies)) ==> stepPublishedOccupancyStaysFixed(l, \result)
-  return { ...l, occupied: l.occupied.concat(([candidate] as string[]).filter((set_x: string) => !l.occupied.includes(set_x))) };
-}
-
-/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
-//@ pure
-export function canPublishLedger(l: SeatLedger): boolean {
-  return l.phase === "Collecting";
-}
-
-/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
-//@ pure
-export function publishLedger(l: SeatLedger): SeatLedger {
-  //@ ensures (inv(l) && canPublishLedger(l)) ==> stepPublishedOccupancyStaysFixed(l, \result)
-  return { ...l, phase: "Published" };
-}
-
-/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
-//@ pure
-export function stepPublishedOccupancyStaysFixed(before: SeatLedger, after: SeatLedger): boolean {
-  return !(before.phase === "Published") || (after.phase === "Published" && before.occupied.length === after.occupied.length);
-}
-
-/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
-//@ pure
-export function sometimesPublishedWithCandidate(l: SeatLedger): boolean {
-  return l.phase === "Published" && l.occupied.length > 0;
-}
-
-/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
-//@ pure
 export function interactionOccupies(disposition: string): boolean {
   return disposition === "pending" || bookedRecordOccupies(disposition);
+}
+
+/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
+//@ pure
+export function bookedOccupies(hasMeeting: boolean, closed: boolean): boolean {
+  return hasMeeting && !closed;
 }
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
@@ -123,6 +85,44 @@ export function lawPendingReviewDoesNotFillOpening(openOpportunity: boolean): bo
   return !bookedRecordOccupies("pending") && seatRecordOccupies(openOpportunity, "pending");
 }
 
+/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
+//@ pure
+export function canObserveCandidate(l: SeatLedger, candidate: string, occupies: boolean): boolean {
+  return l.phase === "Collecting" && occupies && !l.occupied.includes(candidate);
+}
+
+/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
+//@ pure
+export function observeCandidate(l: SeatLedger, candidate: string, occupies: boolean): SeatLedger {
+  //@ ensures (inv(l) && canObserveCandidate(l, candidate, occupies)) ==> stepPublishedOccupancyStaysFixed(l, \result)
+  return { ...l, occupied: l.occupied.concat(([candidate] as string[]).filter((set_x: string) => !l.occupied.includes(set_x))) };
+}
+
+/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
+//@ pure
+export function canPublishLedger(l: SeatLedger): boolean {
+  return l.phase === "Collecting";
+}
+
+/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
+//@ pure
+export function publishLedger(l: SeatLedger): SeatLedger {
+  //@ ensures (inv(l) && canPublishLedger(l)) ==> stepPublishedOccupancyStaysFixed(l, \result)
+  return { ...l, phase: "Published" };
+}
+
+/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
+//@ pure
+export function stepPublishedOccupancyStaysFixed(before: SeatLedger, after: SeatLedger): boolean {
+  return !(before.phase === "Published") || (after.phase === "Published" && before.occupied.length === after.occupied.length);
+}
+
+/** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md) */
+//@ pure
+export function sometimesPublishedWithCandidate(l: SeatLedger): boolean {
+  return l.phase === "Published" && l.occupied.length > 0;
+}
+
 /** Story: Reserve one opening for each candidate still in the hiring flow / Record the time both sides accept a job introduction (spec/peonCapacity.md) */
 //@ pure
 export function peonAcceptedHistoryAt(acceptedAt: number, legacyReceiptAt: number, interviewAt: number): number {
@@ -170,15 +170,15 @@ export function remainingOpenings(posted: number, occupied: number): number {
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / The next slate stays within remaining openings (spec/peonCapacity.md) */
 //@ pure
-export function bookedCapacityReached(posted: number, occupied: number): boolean {
-  return occupied >= posted;
+export function capSlate(planned: number, remaining: number): number {
+  const local_0 = remaining < 0 ? 0 : remaining;
+  return planned < local_0 ? planned : local_0;
 }
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / The next slate stays within remaining openings (spec/peonCapacity.md) */
 //@ pure
-export function capSlate(planned: number, remaining: number): number {
-  const local_0 = remaining < 0 ? 0 : remaining;
-  return planned < local_0 ? planned : local_0;
+export function bookedCapacityReached(posted: number, occupied: number): boolean {
+  return occupied >= posted;
 }
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / The next slate stays within remaining openings (spec/peonCapacity.md) */
@@ -189,16 +189,16 @@ export function closeUnbookedItems(postingClosed: boolean, posted: number, occup
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / The next slate stays within remaining openings (spec/peonCapacity.md) */
 //@ pure
-export function lawRemainingNeverNegative(posted: number, occupied: number): boolean {
+export function lawClosedPostingClosesUnbookedItems(posted: number, occupied: number): boolean {
   //@ ensures \result === true
-  return remainingOpenings(posted, occupied) >= 0;
+  return closeUnbookedItems(true, posted, occupied);
 }
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / The next slate stays within remaining openings (spec/peonCapacity.md) */
 //@ pure
-export function lawClosedPostingClosesUnbookedItems(posted: number, occupied: number): boolean {
+export function lawRemainingNeverNegative(posted: number, occupied: number): boolean {
   //@ ensures \result === true
-  return closeUnbookedItems(true, posted, occupied);
+  return remainingOpenings(posted, occupied) >= 0;
 }
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / The next slate stays within remaining openings (spec/peonCapacity.md) */

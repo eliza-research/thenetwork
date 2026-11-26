@@ -2,15 +2,15 @@
 //@ backend dafny
 
 /** Story: Meet only people who are open to me / A dating pair is admissible only when each member is inside the other's openness (spec/mutualOpenness.md) */
+export type StatedGender = "GenderWoman" | "GenderMan" | "GenderNonbinary" | "GenderUnstated";
+/** Story: Meet only people who are open to me / A dating pair is admissible only when each member is inside the other's openness (spec/mutualOpenness.md) */
 export type TransStatus = "StatedTrans" | "StatedNotTrans" | "TransNotStated";
 /** Story: Meet only people who are open to me / A dating pair is admissible only when each member is inside the other's openness (spec/mutualOpenness.md) */
 export type TransOpenness = "OpenToTrans" | "NotOpenToTrans" | "OnlyTrans" | "TransUnanswered";
 /** Story: Meet only people who are open to me / A dating pair is admissible only when each member is inside the other's openness (spec/mutualOpenness.md) */
-export type StatedGender = "GenderWoman" | "GenderMan" | "GenderNonbinary" | "GenderUnstated";
+export interface DatingStatement { gender: StatedGender; trans: TransStatus; seeksWomen: boolean; seeksMen: boolean; seeksNonbinary: boolean; shownToWomenSeekers: boolean; shownToMenSeekers: boolean; transOpenness: TransOpenness }
 /** Story: Meet only people who are open to me / A dating pair is admissible only when each member is inside the other's openness (spec/mutualOpenness.md) */
 export interface DatingSegmentClass { reachesWomenSeekers: boolean; reachesMenSeekers: boolean; reachesNonbinarySeekers: boolean; transStated: boolean }
-/** Story: Meet only people who are open to me / A dating pair is admissible only when each member is inside the other's openness (spec/mutualOpenness.md) */
-export interface DatingStatement { gender: StatedGender; trans: TransStatus; seeksWomen: boolean; seeksMen: boolean; seeksNonbinary: boolean; shownToWomenSeekers: boolean; shownToMenSeekers: boolean; transOpenness: TransOpenness }
 /** Story: Choose who I make friends with / A friend pair is admissible only when each member is inside the other's friendship openness (spec/mutualOpenness.md) */
 export type FriendOpenness = "FriendsWithWomen" | "FriendsWithMen" | "FriendsWithAnyone";
 /** Story: Choose who I make friends with / A friend pair is admissible only when each member is inside the other's friendship openness (spec/mutualOpenness.md) */

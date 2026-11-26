@@ -6,9 +6,9 @@ export type ProfileFactEditOperation = "CorrectFact" | "RemoveFact" | "ChangeFac
 /** Story: Review my facts and approve a specific change / An explicit command stages one exact draft without writing the fact (spec/profileFactEdit.md) */
 export type ProfileFactEditPhase = "NoProfileFactDraft" | "AwaitingProfileFactConfirmation" | "AppliedProfileFactEdit" | "ClosedProfileFactDraft";
 /** Story: Review my facts and approve a specific change / An explicit command stages one exact draft without writing the fact (spec/profileFactEdit.md) */
-export interface ProfileFactEditStageFacts { direct: boolean; ownerCurrent: boolean; exactFact: boolean; operationAllowed: boolean; validInput: boolean }
-/** Story: Review my facts and approve a specific change / An explicit command stages one exact draft without writing the fact (spec/profileFactEdit.md) */
 export interface ProfileFactEdit { phase: ProfileFactEditPhase; operation: ProfileFactEditOperation; stagedAt: number }
+/** Story: Review my facts and approve a specific change / An explicit command stages one exact draft without writing the fact (spec/profileFactEdit.md) */
+export interface ProfileFactEditStageFacts { direct: boolean; ownerCurrent: boolean; exactFact: boolean; operationAllowed: boolean; validInput: boolean }
 /** Story: Review my facts and approve a specific change / Confirmation must match the current draft and the unchanged saved fact (spec/profileFactEdit.md) */
 export interface ProfileFactEditApplyFacts { direct: boolean; ownerCurrent: boolean; exactDraft: boolean; exactFact: boolean; unchanged: boolean; operationAllowed: boolean; stagedAt: number; now: number }
 
@@ -16,17 +16,17 @@ export interface ProfileFactEditApplyFacts { direct: boolean; ownerCurrent: bool
 export type Event =
   | { type: "stageProfileFact"; stageFacts: ProfileFactEditStageFacts; operation: ProfileFactEditOperation; stagedAt: number }
   | { type: "confirmProfileFact"; applyFacts: ProfileFactEditApplyFacts }
-  | { type: "replayProfileFact"; direct: boolean; ownerCurrent: boolean; exactReceipt: boolean }
-  | { type: "closeProfileFact"; now: number; exactCancellation: boolean };
+  | { type: "closeProfileFact"; now: number; exactCancellation: boolean }
+  | { type: "replayProfileFact"; direct: boolean; ownerCurrent: boolean; exactReceipt: boolean };
 
+/** Story: Review my facts and approve a specific change / An explicit command stages one exact draft without writing the fact (spec/profileFactEdit.md) */
+export const initial: ProfileFactEdit = { phase: "NoProfileFactDraft", operation: "CorrectFact", stagedAt: 0 };
 /** Story: Review my facts and approve a specific change / An explicit command stages one exact draft without writing the fact (spec/profileFactEdit.md) */
 export const profileFactEditTtlMs: number = 900000;
 /** Story: Review my facts and approve a specific change / An explicit command stages one exact draft without writing the fact (spec/profileFactEdit.md) */
 export const validStage: ProfileFactEditStageFacts = { direct: true, ownerCurrent: true, exactFact: true, operationAllowed: true, validInput: true };
 /** Story: Review my facts and approve a specific change / Confirmation must match the current draft and the unchanged saved fact (spec/profileFactEdit.md) */
 export const validApply: ProfileFactEditApplyFacts = { direct: true, ownerCurrent: true, exactDraft: true, exactFact: true, unchanged: true, operationAllowed: true, stagedAt: 0, now: 1 };
-/** Story: Review my facts and approve a specific change / An explicit command stages one exact draft without writing the fact (spec/profileFactEdit.md) */
-export const initial: ProfileFactEdit = { phase: "NoProfileFactDraft", operation: "CorrectFact", stagedAt: 0 };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
@@ -105,17 +105,17 @@ export function canStageProfileFact(draft: ProfileFactEdit, stageFacts: ProfileF
 
 /** Story: Review my facts and approve a specific change / An explicit command stages one exact draft without writing the fact (spec/profileFactEdit.md) */
 //@ pure
-export function sometimesProfileFactDraftStaged(draft: ProfileFactEdit): boolean {
-  return draft.phase === "AwaitingProfileFactConfirmation";
-}
-
-/** Story: Review my facts and approve a specific change / An explicit command stages one exact draft without writing the fact (spec/profileFactEdit.md) */
-//@ pure
 export function stageProfileFact(draft: ProfileFactEdit, stageFacts: ProfileFactEditStageFacts, operation: ProfileFactEditOperation, stagedAt: number): ProfileFactEdit {
   //@ ensures (inv(draft) && canStageProfileFact(draft, stageFacts, operation, stagedAt)) ==> alwaysProfileFactDraftHasStagingTime(\result)
   //@ ensures (inv(draft) && canStageProfileFact(draft, stageFacts, operation, stagedAt)) ==> stepProfileFactApplyNeedsPendingDraft(draft, "stageProfileFact", \result)
   //@ ensures (inv(draft) && canStageProfileFact(draft, stageFacts, operation, stagedAt)) ==> stepProfileFactReplayKeepsState(draft, "stageProfileFact", \result)
   return canStageProfileFact(draft, stageFacts, operation, stagedAt) ? ({ phase: "AwaitingProfileFactConfirmation", operation: operation, stagedAt: stagedAt } as ProfileFactEdit) : draft;
+}
+
+/** Story: Review my facts and approve a specific change / An explicit command stages one exact draft without writing the fact (spec/profileFactEdit.md) */
+//@ pure
+export function sometimesProfileFactDraftStaged(draft: ProfileFactEdit): boolean {
+  return draft.phase === "AwaitingProfileFactConfirmation";
 }
 
 /** Story: Review my facts and approve a specific change / Confirmation must match the current draft and the unchanged saved fact (spec/profileFactEdit.md) */
@@ -134,6 +134,35 @@ export function profileFactEditClearsDerived(operation: ProfileFactEditOperation
 //@ pure
 export function profileFactEditDisablesSourceReplay(operation: ProfileFactEditOperation): boolean {
   return operation === "CorrectFact" || operation === "RemoveFact";
+}
+
+/** Story: Review my facts and approve a specific change / Confirmation must match the current draft and the unchanged saved fact (spec/profileFactEdit.md) */
+//@ pure
+export function canConfirmProfileFact(draft: ProfileFactEdit, applyFacts: ProfileFactEditApplyFacts): boolean {
+  return draft.phase === "AwaitingProfileFactConfirmation" && applyFacts.stagedAt === draft.stagedAt && profileFactEditMayApply(applyFacts);
+}
+
+/** Story: Review my facts and approve a specific change / Confirmation must match the current draft and the unchanged saved fact (spec/profileFactEdit.md) */
+//@ pure
+export function confirmProfileFact(draft: ProfileFactEdit, applyFacts: ProfileFactEditApplyFacts): ProfileFactEdit {
+  //@ ensures (inv(draft) && canConfirmProfileFact(draft, applyFacts)) ==> alwaysProfileFactDraftHasStagingTime(\result)
+  //@ ensures (inv(draft) && canConfirmProfileFact(draft, applyFacts)) ==> stepProfileFactApplyNeedsPendingDraft(draft, "confirmProfileFact", \result)
+  //@ ensures (inv(draft) && canConfirmProfileFact(draft, applyFacts)) ==> stepProfileFactReplayKeepsState(draft, "confirmProfileFact", \result)
+  return canConfirmProfileFact(draft, applyFacts) ? ({ ...draft, phase: "AppliedProfileFactEdit" } as ProfileFactEdit) : draft;
+}
+
+/** Story: Review my facts and approve a specific change / Confirmation must match the current draft and the unchanged saved fact (spec/profileFactEdit.md) */
+//@ pure
+export function lawProfileFactEditNeedsExactCurrentConfirmation(applyFacts: ProfileFactEditApplyFacts): boolean {
+  //@ ensures \result === true
+  return !profileFactEditMayApply(applyFacts) || (applyFacts.direct && applyFacts.ownerCurrent && applyFacts.exactDraft && applyFacts.exactFact && applyFacts.unchanged && profileFactEditDraftCurrent(applyFacts.stagedAt, applyFacts.now));
+}
+
+/** Story: Review my facts and approve a specific change / Confirmation must match the current draft and the unchanged saved fact (spec/profileFactEdit.md) */
+//@ pure
+export function lawChangedProfileFactClearsDerivationAndOldEvidence(operation: ProfileFactEditOperation): boolean {
+  //@ ensures \result === true
+  return !(operation === "CorrectFact" || operation === "RemoveFact") || (profileFactEditClearsDerived(operation) && profileFactEditDisablesSourceReplay(operation));
 }
 
 /** Story: Review my facts and approve a specific change / Confirmation must match the current draft and the unchanged saved fact (spec/profileFactEdit.md) */
@@ -160,35 +189,6 @@ export function sometimesProfileFactScopeChanged(draft: ProfileFactEdit): boolea
   return draft.phase === "AppliedProfileFactEdit" && draft.operation === "ChangeFactScope";
 }
 
-/** Story: Review my facts and approve a specific change / Confirmation must match the current draft and the unchanged saved fact (spec/profileFactEdit.md) */
-//@ pure
-export function canConfirmProfileFact(draft: ProfileFactEdit, applyFacts: ProfileFactEditApplyFacts): boolean {
-  return draft.phase === "AwaitingProfileFactConfirmation" && applyFacts.stagedAt === draft.stagedAt && profileFactEditMayApply(applyFacts);
-}
-
-/** Story: Review my facts and approve a specific change / Confirmation must match the current draft and the unchanged saved fact (spec/profileFactEdit.md) */
-//@ pure
-export function lawProfileFactEditNeedsExactCurrentConfirmation(applyFacts: ProfileFactEditApplyFacts): boolean {
-  //@ ensures \result === true
-  return !profileFactEditMayApply(applyFacts) || (applyFacts.direct && applyFacts.ownerCurrent && applyFacts.exactDraft && applyFacts.exactFact && applyFacts.unchanged && profileFactEditDraftCurrent(applyFacts.stagedAt, applyFacts.now));
-}
-
-/** Story: Review my facts and approve a specific change / Confirmation must match the current draft and the unchanged saved fact (spec/profileFactEdit.md) */
-//@ pure
-export function lawChangedProfileFactClearsDerivationAndOldEvidence(operation: ProfileFactEditOperation): boolean {
-  //@ ensures \result === true
-  return !(operation === "CorrectFact" || operation === "RemoveFact") || (profileFactEditClearsDerived(operation) && profileFactEditDisablesSourceReplay(operation));
-}
-
-/** Story: Review my facts and approve a specific change / Confirmation must match the current draft and the unchanged saved fact (spec/profileFactEdit.md) */
-//@ pure
-export function confirmProfileFact(draft: ProfileFactEdit, applyFacts: ProfileFactEditApplyFacts): ProfileFactEdit {
-  //@ ensures (inv(draft) && canConfirmProfileFact(draft, applyFacts)) ==> alwaysProfileFactDraftHasStagingTime(\result)
-  //@ ensures (inv(draft) && canConfirmProfileFact(draft, applyFacts)) ==> stepProfileFactApplyNeedsPendingDraft(draft, "confirmProfileFact", \result)
-  //@ ensures (inv(draft) && canConfirmProfileFact(draft, applyFacts)) ==> stepProfileFactReplayKeepsState(draft, "confirmProfileFact", \result)
-  return canConfirmProfileFact(draft, applyFacts) ? ({ ...draft, phase: "AppliedProfileFactEdit" } as ProfileFactEdit) : draft;
-}
-
 /** Story: Review my facts and approve a specific change / Cancellation, expiry and replay cannot make another change (spec/profileFactEdit.md) */
 //@ pure
 export function profileFactEditMayCancel(direct: boolean, ownerCurrent: boolean, exactDraft: boolean): boolean {
@@ -205,6 +205,15 @@ export function profileFactEditMayReplay(direct: boolean, ownerCurrent: boolean,
 //@ pure
 export function canCloseProfileFact(draft: ProfileFactEdit, now: number, exactCancellation: boolean): boolean {
   return draft.phase === "AwaitingProfileFactConfirmation" && (exactCancellation || exact_profileFactEdit(now - draft.stagedAt) >= profileFactEditTtlMs);
+}
+
+/** Story: Review my facts and approve a specific change / Cancellation, expiry and replay cannot make another change (spec/profileFactEdit.md) */
+//@ pure
+export function closeProfileFact(draft: ProfileFactEdit, now: number, exactCancellation: boolean): ProfileFactEdit {
+  //@ ensures (inv(draft) && canCloseProfileFact(draft, now, exactCancellation)) ==> alwaysProfileFactDraftHasStagingTime(\result)
+  //@ ensures (inv(draft) && canCloseProfileFact(draft, now, exactCancellation)) ==> stepProfileFactApplyNeedsPendingDraft(draft, "closeProfileFact", \result)
+  //@ ensures (inv(draft) && canCloseProfileFact(draft, now, exactCancellation)) ==> stepProfileFactReplayKeepsState(draft, "closeProfileFact", \result)
+  return canCloseProfileFact(draft, now, exactCancellation) ? ({ ...draft, phase: "ClosedProfileFactDraft" } as ProfileFactEdit) : draft;
 }
 
 /** Story: Review my facts and approve a specific change / Cancellation, expiry and replay cannot make another change (spec/profileFactEdit.md) */
@@ -240,22 +249,13 @@ export function sometimesProfileFactDraftClosed(draft: ProfileFactEdit): boolean
   return draft.phase === "ClosedProfileFactDraft";
 }
 
-/** Story: Review my facts and approve a specific change / Cancellation, expiry and replay cannot make another change (spec/profileFactEdit.md) */
-//@ pure
-export function closeProfileFact(draft: ProfileFactEdit, now: number, exactCancellation: boolean): ProfileFactEdit {
-  //@ ensures (inv(draft) && canCloseProfileFact(draft, now, exactCancellation)) ==> alwaysProfileFactDraftHasStagingTime(\result)
-  //@ ensures (inv(draft) && canCloseProfileFact(draft, now, exactCancellation)) ==> stepProfileFactApplyNeedsPendingDraft(draft, "closeProfileFact", \result)
-  //@ ensures (inv(draft) && canCloseProfileFact(draft, now, exactCancellation)) ==> stepProfileFactReplayKeepsState(draft, "closeProfileFact", \result)
-  return canCloseProfileFact(draft, now, exactCancellation) ? ({ ...draft, phase: "ClosedProfileFactDraft" } as ProfileFactEdit) : draft;
-}
-
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: ProfileFactEdit, event: Event): boolean {
   if (event.type === "stageProfileFact") return canStageProfileFact(current, event.stageFacts, event.operation, event.stagedAt);
   if (event.type === "confirmProfileFact") return canConfirmProfileFact(current, event.applyFacts);
-  if (event.type === "replayProfileFact") return canReplayProfileFact(current, event.direct, event.ownerCurrent, event.exactReceipt);
   if (event.type === "closeProfileFact") return canCloseProfileFact(current, event.now, event.exactCancellation);
+  if (event.type === "replayProfileFact") return canReplayProfileFact(current, event.direct, event.ownerCurrent, event.exactReceipt);
   return false;
 }
 
@@ -266,8 +266,8 @@ export function step(current: ProfileFactEdit, event: Event): ProfileFactEdit {
   //@ ensures inv(\result)
   if (event.type === "stageProfileFact") return canStageProfileFact(current, event.stageFacts, event.operation, event.stagedAt) ? stageProfileFact(current, event.stageFacts, event.operation, event.stagedAt) : current;
   if (event.type === "confirmProfileFact") return canConfirmProfileFact(current, event.applyFacts) ? confirmProfileFact(current, event.applyFacts) : current;
-  if (event.type === "replayProfileFact") return canReplayProfileFact(current, event.direct, event.ownerCurrent, event.exactReceipt) ? replayProfileFact(current, event.direct, event.ownerCurrent, event.exactReceipt) : current;
   if (event.type === "closeProfileFact") return canCloseProfileFact(current, event.now, event.exactCancellation) ? closeProfileFact(current, event.now, event.exactCancellation) : current;
+  if (event.type === "replayProfileFact") return canReplayProfileFact(current, event.direct, event.ownerCurrent, event.exactReceipt) ? replayProfileFact(current, event.direct, event.ownerCurrent, event.exactReceipt) : current;
   return current;
 }
 
@@ -289,8 +289,8 @@ export function parseEvent(x: unknown): Event | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "stageProfileFact" && is_ProfileFactEditStageFacts(raw.stageFacts) && (raw.operation === "CorrectFact" || raw.operation === "RemoveFact" || raw.operation === "ChangeFactScope") && Number.isSafeInteger(raw.stagedAt)) return { type: "stageProfileFact", stageFacts: ({ direct: raw.stageFacts.direct, ownerCurrent: raw.stageFacts.ownerCurrent, exactFact: raw.stageFacts.exactFact, operationAllowed: raw.stageFacts.operationAllowed, validInput: raw.stageFacts.validInput }), operation: raw.operation, stagedAt: raw.stagedAt };
   if (raw.type === "confirmProfileFact" && is_ProfileFactEditApplyFacts(raw.applyFacts)) return { type: "confirmProfileFact", applyFacts: ({ direct: raw.applyFacts.direct, ownerCurrent: raw.applyFacts.ownerCurrent, exactDraft: raw.applyFacts.exactDraft, exactFact: raw.applyFacts.exactFact, unchanged: raw.applyFacts.unchanged, operationAllowed: raw.applyFacts.operationAllowed, stagedAt: raw.applyFacts.stagedAt, now: raw.applyFacts.now }) };
-  if (raw.type === "replayProfileFact" && typeof raw.direct === "boolean" && typeof raw.ownerCurrent === "boolean" && typeof raw.exactReceipt === "boolean") return { type: "replayProfileFact", direct: raw.direct, ownerCurrent: raw.ownerCurrent, exactReceipt: raw.exactReceipt };
   if (raw.type === "closeProfileFact" && Number.isSafeInteger(raw.now) && typeof raw.exactCancellation === "boolean") return { type: "closeProfileFact", now: raw.now, exactCancellation: raw.exactCancellation };
+  if (raw.type === "replayProfileFact" && typeof raw.direct === "boolean" && typeof raw.ownerCurrent === "boolean" && typeof raw.exactReceipt === "boolean") return { type: "replayProfileFact", direct: raw.direct, ownerCurrent: raw.ownerCurrent, exactReceipt: raw.exactReceipt };
   return undefined;
 }
 

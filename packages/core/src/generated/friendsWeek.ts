@@ -134,15 +134,15 @@ export function recurringAvailable(s: FriendsRun, memberId: string): boolean {
 
 /** Story: Find time with familiar people or meet someone nearby / Recurring plans reserve places for later passes (spec/friendsWeek.md) */
 //@ pure
-export function reserveRecurring(s: FriendsRun, kind: RecurringKind, members: string[]): FriendsRun {
-  //@ ensures (inv(s) && canReserveRecurring(s, kind, members)) ==> stepCompletedWeekStaysClosed(s, \result)
-  return { ...s, recurring: reserveIds(s.recurring, members) };
+export function canReserveRecurring(s: FriendsRun, kind: RecurringKind, members: string[]): boolean {
+  return (s.phase === "CrewSessions" && kind === "Session") || (((s.phase === "CrewOffers" && kind === "Offer") || (s.phase === "RepeatPlans" && kind === "Repeat")) && !members.some((memberId: string) => !recurringAvailable(s, memberId)));
 }
 
 /** Story: Find time with familiar people or meet someone nearby / Recurring plans reserve places for later passes (spec/friendsWeek.md) */
 //@ pure
-export function canReserveRecurring(s: FriendsRun, kind: RecurringKind, members: string[]): boolean {
-  return (s.phase === "CrewSessions" && kind === "Session") || (((s.phase === "CrewOffers" && kind === "Offer") || (s.phase === "RepeatPlans" && kind === "Repeat")) && !members.some((memberId: string) => !recurringAvailable(s, memberId)));
+export function reserveRecurring(s: FriendsRun, kind: RecurringKind, members: string[]): FriendsRun {
+  //@ ensures (inv(s) && canReserveRecurring(s, kind, members)) ==> stepCompletedWeekStaysClosed(s, \result)
+  return { ...s, recurring: reserveIds(s.recurring, members) };
 }
 
 /** Story: Find time with familiar people or meet someone nearby / A Friends repeat uses its own completed table and a fresh review (spec/friendsWeek.md) */
@@ -159,6 +159,13 @@ export function friendsRepeatBookingProofCurrent(replyRevision: number, currentR
 
 /** Story: Find time with familiar people or meet someone nearby / A Friends repeat uses its own completed table and a fresh review (spec/friendsWeek.md) */
 //@ pure
+export function lawFriendsRepeatNeedsSettledBooking(replyRevision: number, currentRevision: number): boolean {
+  //@ ensures \result === true
+  return !friendsRepeatBookingProofCurrent(replyRevision, currentRevision, false);
+}
+
+/** Story: Find time with familiar people or meet someone nearby / A Friends repeat uses its own completed table and a fresh review (spec/friendsWeek.md) */
+//@ pure
 export function friendsRepeatAttendanceAllowed(booked: boolean, came: boolean, again: boolean, noShowReported: boolean, crewDeclined: boolean): boolean {
   return booked && came && again && !(noShowReported || crewDeclined);
 }
@@ -171,22 +178,15 @@ export function friendsRepeatRosterCurrent(expected: string[], offered: string[]
 
 /** Story: Find time with familiar people or meet someone nearby / A Friends repeat uses its own completed table and a fresh review (spec/friendsWeek.md) */
 //@ pure
-export function friendsRepeatHostIndex(previousIndex: number, seats: number): number {
-  return previousIndex < 0 || exact_friendsWeek(previousIndex + 1) >= seats ? 0 : exact_friendsWeek(previousIndex + 1);
-}
-
-/** Story: Find time with familiar people or meet someone nearby / A Friends repeat uses its own completed table and a fresh review (spec/friendsWeek.md) */
-//@ pure
-export function lawFriendsRepeatNeedsSettledBooking(replyRevision: number, currentRevision: number): boolean {
-  //@ ensures \result === true
-  return !friendsRepeatBookingProofCurrent(replyRevision, currentRevision, false);
-}
-
-/** Story: Find time with familiar people or meet someone nearby / A Friends repeat uses its own completed table and a fresh review (spec/friendsWeek.md) */
-//@ pure
 export function lawFriendsRepeatNeedsOriginalRoster(expected: string[], offered: string[]): boolean {
   //@ ensures \result === true
   return !friendsRepeatRosterCurrent(expected, offered) || equal_friendsWeek(expected, offered);
+}
+
+/** Story: Find time with familiar people or meet someone nearby / A Friends repeat uses its own completed table and a fresh review (spec/friendsWeek.md) */
+//@ pure
+export function friendsRepeatHostIndex(previousIndex: number, seats: number): number {
+  return previousIndex < 0 || exact_friendsWeek(previousIndex + 1) >= seats ? 0 : exact_friendsWeek(previousIndex + 1);
 }
 
 /** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md) */
@@ -197,14 +197,20 @@ export function newPlanUsed(s: FriendsRun, memberId: string): boolean {
 
 /** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md) */
 //@ pure
+export function newPlanAvailable(s: FriendsRun, memberId: string): boolean {
+  return !newPlanUsed(s, memberId) && (!s.spreadNew || recurringAvailable(s, memberId));
+}
+
+/** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md) */
+//@ pure
 export function newPlanAlternateCanRemain(s: FriendsRun, memberId: string): boolean {
   return !(("$" + memberId) in s.newInvited);
 }
 
 /** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md) */
 //@ pure
-export function newPlanAvailable(s: FriendsRun, memberId: string): boolean {
-  return !newPlanUsed(s, memberId) && (!s.spreadNew || recurringAvailable(s, memberId));
+export function canReserveNewPlan(s: FriendsRun, invited: string[], alternates: string[], reserveAlternates: boolean): boolean {
+  return s.phase === "NewPlans" && !invited.some((memberId: string) => !newPlanAvailable(s, memberId)) && (!reserveAlternates || !alternates.some((memberId: string) => !newPlanAvailable(s, memberId)));
 }
 
 /** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md) */
@@ -219,12 +225,6 @@ export function reserveNewPlan(s: FriendsRun, invited: string[], alternates: str
 //@ pure
 export function sometimesPublishesAPlan(s: FriendsRun): boolean {
   return s.phase === "WeekComplete" && !newPlanAlternateCanRemain(s, "one");
-}
-
-/** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md) */
-//@ pure
-export function canReserveNewPlan(s: FriendsRun, invited: string[], alternates: string[], reserveAlternates: boolean): boolean {
-  return s.phase === "NewPlans" && !invited.some((memberId: string) => !newPlanAvailable(s, memberId)) && (!reserveAlternates || !alternates.some((memberId: string) => !newPlanAvailable(s, memberId)));
 }
 
 /** Story: Find time with familiar people or meet someone nearby / A standby has no initial invitation and holds one bench place (spec/friendsWeek.md) */
@@ -255,15 +255,15 @@ export function friendTableHasMinimumCandidates(compatibleCandidates: number, mi
 
 /** Story: Find time with familiar people or meet someone nearby / An unsuccessful starting member leaves the rest of the table candidates available (spec/friendsWeek.md) */
 //@ pure
-export function friendTableTriesNextStarter(tableReserved: boolean, startersLeft: number): boolean {
-  return !tableReserved && startersLeft > 0;
+export function lawFriendTableBelowMinimumIsRefused(compatibleCandidates: number, minimumInvitees: number): boolean {
+  //@ ensures \result === true
+  return !(compatibleCandidates < minimumInvitees) || !friendTableHasMinimumCandidates(compatibleCandidates, minimumInvitees);
 }
 
 /** Story: Find time with familiar people or meet someone nearby / An unsuccessful starting member leaves the rest of the table candidates available (spec/friendsWeek.md) */
 //@ pure
-export function lawFriendTableBelowMinimumIsRefused(compatibleCandidates: number, minimumInvitees: number): boolean {
-  //@ ensures \result === true
-  return !(compatibleCandidates < minimumInvitees) || !friendTableHasMinimumCandidates(compatibleCandidates, minimumInvitees);
+export function friendTableTriesNextStarter(tableReserved: boolean, startersLeft: number): boolean {
+  return !tableReserved && startersLeft > 0;
 }
 
 /** Story: Find time with familiar people or meet someone nearby / An unsuccessful starting member leaves the rest of the table candidates available (spec/friendsWeek.md) */

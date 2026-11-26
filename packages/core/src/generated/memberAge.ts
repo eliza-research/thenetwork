@@ -6,16 +6,16 @@ export type FractionalAgeEvidence = "FractionalAgeUnknown" | "FractionalAgeLoose
 /** Story: Track age from a birth date / Each age statement is a range of possible birth dates (spec/memberAge.md) */
 export interface BirthReadings { lower: number; upper: number; youngest: number }
 
-/** Story: Join at the eligible age / Joining requires a usable age of at least 13 (spec/memberAge.md) */
-export const minMemberAge: number = 13;
-/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
-export const minLooseHeightAge: number = 8;
 /** Story: Join at the eligible age / Age data outside the human range is unusable (spec/memberAge.md) */
 export const maxAge: number = 120;
-/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
-export const minLooseTeamAge: number = 10;
+/** Story: Join at the eligible age / Joining requires a usable age of at least 13 (spec/memberAge.md) */
+export const minMemberAge: number = 13;
 /** Story: Take part in adult matching / Matching requires a usable age of at least 18 (spec/memberAge.md) */
 export const adultAge: number = 18;
+/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
+export const minLooseHeightAge: number = 8;
+/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
+export const minLooseTeamAge: number = 10;
 /** Story: Track age from a birth date / A birth date gives an age on each day (spec/memberAge.md) */
 export const dayKeyYear: number = 10000;
 /** Story: Track age from a birth date / A birth date gives an age on each day (spec/memberAge.md) */
@@ -61,15 +61,15 @@ export function recordedChatAge(age: number, appMinimum: number, declined: boole
 
 /** Story: Take part in adult matching / Commit a stated age before projecting it across apps (spec/memberAge.md) */
 //@ pure
-export function lawDeclineKeepsStatedAge(age: number, appMinimum: number): boolean {
-  //@ ensures \result === true
-  return recordedChatAge(age, appMinimum, true) === age;
+export function confirmedUnderage(age: number): boolean {
+  return ageInRange(age) && !joinableAge(age);
 }
 
 /** Story: Take part in adult matching / Commit a stated age before projecting it across apps (spec/memberAge.md) */
 //@ pure
-export function confirmedUnderage(age: number): boolean {
-  return ageInRange(age) && !joinableAge(age);
+export function lawDeclineKeepsStatedAge(age: number, appMinimum: number): boolean {
+  //@ ensures \result === true
+  return recordedChatAge(age, appMinimum, true) === age;
 }
 
 /** Story: Take part in adult matching / Quoted age evidence does not change the sender (spec/memberAge.md) */
@@ -80,15 +80,15 @@ export function ownAgeEvidenceAllowed(quoted: boolean): boolean {
 
 /** Story: Take part in adult matching / Quoted age evidence does not change the sender (spec/memberAge.md) */
 //@ pure
-export function ownYouthCueAllowed(quoted: boolean, ownAttribution: boolean, unfinishedCasual: boolean): boolean {
-  return !quoted || ownAttribution || unfinishedCasual;
+export function lawQuotedWordsDoNotSetSenderAge(quoted: boolean): boolean {
+  //@ ensures \result === true
+  return !quoted || !ownAgeEvidenceAllowed(quoted);
 }
 
 /** Story: Take part in adult matching / Quoted age evidence does not change the sender (spec/memberAge.md) */
 //@ pure
-export function lawQuotedWordsDoNotSetSenderAge(quoted: boolean): boolean {
-  //@ ensures \result === true
-  return !quoted || !ownAgeEvidenceAllowed(quoted);
+export function ownYouthCueAllowed(quoted: boolean, ownAttribution: boolean, unfinishedCasual: boolean): boolean {
+  return !quoted || ownAttribution || unfinishedCasual;
 }
 
 /** Story: Take part in adult matching / Quoted age evidence does not change the sender (spec/memberAge.md) */
@@ -152,35 +152,14 @@ export function lawBeforeAnEighteenthBirthdayIsNotAdult(nextAge: number): boolea
 
 /** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
 //@ pure
-export function ageConjunctionAllowed(age: number, statedBirthday: boolean, sportsRecord: boolean, teamResult: boolean): boolean {
-  return statedBirthday || age >= minMemberAge || (!sportsRecord && (!teamResult || age >= minLooseTeamAge));
-}
-
-/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
-//@ pure
-export function lawSmallSportsRecordsDoNotSupplyAge(age: number): boolean {
-  //@ ensures \result === true
-  return !(age < minMemberAge) || !ageConjunctionAllowed(age, false, true, false);
-}
-
-/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
-//@ pure
-export function lawSmallTeamResultsDoNotSupplyAge(age: number): boolean {
-  //@ ensures \result === true
-  return !(age < minLooseTeamAge) || !ageConjunctionAllowed(age, false, false, true);
-}
-
-/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
-//@ pure
-export function lawStatedBirthdaySurvivesSportsContext(age: number): boolean {
-  //@ ensures \result === true
-  return ageConjunctionAllowed(age, true, true, true);
-}
-
-/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
-//@ pure
 export function fractionalAgeEvidence(age: number, possibleHeight: boolean, monthsOrQuarter: boolean, writtenAsAge: boolean, atClauseEnd: boolean, atAgeTail: boolean, future: boolean): FractionalAgeEvidence {
   return future ? "FractionalAgeUnknown" : (writtenAsAge ? "FractionalAgeExplicit" : (possibleHeight && age < minLooseHeightAge ? "FractionalAgeUnknown" : ((!monthsOrQuarter && atClauseEnd) || (joinableAge(age) && atAgeTail) ? "FractionalAgeLoose" : "FractionalAgeUnknown")));
+}
+
+/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
+//@ pure
+export function ageConjunctionAllowed(age: number, statedBirthday: boolean, sportsRecord: boolean, teamResult: boolean): boolean {
+  return statedBirthday || age >= minMemberAge || (!sportsRecord && (!teamResult || age >= minLooseTeamAge));
 }
 
 /** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
@@ -216,6 +195,27 @@ export function lawExplicitCurrentFractionalAgeIsAccepted(age: number, possibleH
 export function lawUnderageMonthOrQuarterNeedsAgeWords(age: number, atClauseEnd: boolean, atAgeTail: boolean): boolean {
   //@ ensures \result === true
   return !(age < minMemberAge) || fractionalAgeEvidence(age, false, true, false, atClauseEnd, atAgeTail, false) === "FractionalAgeUnknown";
+}
+
+/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
+//@ pure
+export function lawSmallSportsRecordsDoNotSupplyAge(age: number): boolean {
+  //@ ensures \result === true
+  return !(age < minMemberAge) || !ageConjunctionAllowed(age, false, true, false);
+}
+
+/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
+//@ pure
+export function lawSmallTeamResultsDoNotSupplyAge(age: number): boolean {
+  //@ ensures \result === true
+  return !(age < minLooseTeamAge) || !ageConjunctionAllowed(age, false, false, true);
+}
+
+/** Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal (spec/memberAge.md) */
+//@ pure
+export function lawStatedBirthdaySurvivesSportsContext(age: number): boolean {
+  //@ ensures \result === true
+  return ageConjunctionAllowed(age, true, true, true);
 }
 
 /** Story: Take part in adult matching / An older age cannot raise the effective age (spec/memberAge.md) */
@@ -303,14 +303,14 @@ export function laterBirthKey(firstKey: number, secondKey: number): number {
 
 /** Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more (spec/memberAge.md) */
 //@ pure
-export function readingsConflict(readings: BirthReadings): boolean {
-  return readings.lower >= readings.upper;
+export function mergeReading(hasEarlier: boolean, earlier: BirthReadings, lower: number, upper: number): BirthReadings {
+  return !hasEarlier ? ({ lower: lower, upper: upper, youngest: upper } as BirthReadings) : ({ lower: earlier.lower >= lower ? earlier.lower : lower, upper: earlier.upper <= upper ? earlier.upper : upper, youngest: laterBirthKey(earlier.youngest, upper) } as BirthReadings);
 }
 
 /** Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more (spec/memberAge.md) */
 //@ pure
-export function mergeReading(hasEarlier: boolean, earlier: BirthReadings, lower: number, upper: number): BirthReadings {
-  return !hasEarlier ? ({ lower: lower, upper: upper, youngest: upper } as BirthReadings) : ({ lower: earlier.lower >= lower ? earlier.lower : lower, upper: earlier.upper <= upper ? earlier.upper : upper, youngest: laterBirthKey(earlier.youngest, upper) } as BirthReadings);
+export function readingsConflict(readings: BirthReadings): boolean {
+  return readings.lower >= readings.upper;
 }
 
 /** Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more (spec/memberAge.md) */
@@ -327,11 +327,34 @@ export function birthDateExact(hasBirthDate: boolean, birthDate: number, reading
 
 /** Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more (spec/memberAge.md) */
 //@ pure
-export function lawAgreeingAgeKeepsTheBirthDateExact(birthKey: number, dayKey: number): boolean {
+export function effectiveAge(readings: BirthReadings, dayKey: number): number {
+  return ageOnDay(effectiveBirthKey(readings), dayKey);
+}
+
+/** Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more (spec/memberAge.md) */
+//@ pure
+export function lawLowerStatedAgeWins(birthKey: number, age: number, dayKey: number): boolean {
   //@ ensures \result === true
   const local_0: BirthReadings = { lower: birthDateLower(birthKey), upper: birthKey, youngest: birthKey };
-  const local_1 = ageOnDay(birthKey, dayKey);
-  return !(dayKey >= birthKey) || birthDateExact(true, birthKey, mergeReading(true, local_0, statedAgeLower(local_1, dayKey), statedAgeUpper(local_1, dayKey)));
+  const local_1: BirthReadings = mergeReading(true, local_0, statedAgeLower(age, dayKey), statedAgeUpper(age, dayKey));
+  return !(dayKey >= birthKey && age >= 0 && age < ageOnDay(birthKey, dayKey)) || ageOnDay(effectiveBirthKey(local_1), dayKey) === age;
+}
+
+/** Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more (spec/memberAge.md) */
+//@ pure
+export function lawLaterBirthDateWins(firstKey: number, secondKey: number): boolean {
+  //@ ensures \result === true
+  const local_2: BirthReadings = { lower: birthDateLower(firstKey), upper: firstKey, youngest: firstKey };
+  return !(firstKey < secondKey) || effectiveBirthKey(mergeReading(true, local_2, birthDateLower(secondKey), secondKey)) === secondKey;
+}
+
+/** Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more (spec/memberAge.md) */
+//@ pure
+export function lawAgreeingAgeKeepsTheBirthDateExact(birthKey: number, dayKey: number): boolean {
+  //@ ensures \result === true
+  const local_3: BirthReadings = { lower: birthDateLower(birthKey), upper: birthKey, youngest: birthKey };
+  const local_4 = ageOnDay(birthKey, dayKey);
+  return !(dayKey >= birthKey) || birthDateExact(true, birthKey, mergeReading(true, local_3, statedAgeLower(local_4, dayKey), statedAgeUpper(local_4, dayKey)));
 }
 
 /** Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more (spec/memberAge.md) */
@@ -343,6 +366,22 @@ export function lawConflictIsPermanent(earlier: BirthReadings, lower: number, up
 
 /** Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more (spec/memberAge.md) */
 //@ pure
+export function lawMergeKeepsYoungest(hasEarlier: boolean, earlier: BirthReadings, lower: number, upper: number): boolean {
+  //@ ensures \result === true
+  const local_5: BirthReadings = mergeReading(hasEarlier, earlier, lower, upper);
+  return local_5.youngest >= upper && (!hasEarlier || local_5.youngest >= earlier.youngest);
+}
+
+/** Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more (spec/memberAge.md) */
+//@ pure
+export function lawMergeKeepsWellFormed(hasEarlier: boolean, earlier: BirthReadings, lower: number, upper: number): boolean {
+  //@ ensures \result === true
+  const local_6: BirthReadings = mergeReading(hasEarlier, earlier, lower, upper);
+  return !((!hasEarlier || earlier.youngest > earlier.lower) && lower < upper) || local_6.youngest > local_6.lower;
+}
+
+/** Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more (spec/memberAge.md) */
+//@ pure
 export function lawOlderClaimNeverUnlocksAdult(earlier: BirthReadings, lower: number, upper: number, dayKey: number): boolean {
   //@ ensures \result === true
   return !(earlier.youngest > earlier.lower && lower < upper) || ageOnDay(effectiveBirthKey(mergeReading(true, earlier, lower, upper)), dayKey) <= ageOnDay(exact_memberAge(earlier.lower + 1), dayKey);
@@ -350,57 +389,31 @@ export function lawOlderClaimNeverUnlocksAdult(earlier: BirthReadings, lower: nu
 
 /** Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more (spec/memberAge.md) */
 //@ pure
-export function lawFloorTwelveRefusesAdultBirthDate(adultBirthKey: number): boolean {
-  //@ ensures \result === true
-  const local_2: BirthReadings = { lower: statedAgeLower(12, 20260601), upper: statedAgeUpper(12, 20260601), youngest: statedAgeUpper(12, 20260601) };
-  return !(adultBirthKey <= local_2.lower) || !joinableAge(ageOnDay(effectiveBirthKey(mergeReading(true, local_2, birthDateLower(adultBirthKey), adultBirthKey)), 20261122));
-}
-
-/** Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more (spec/memberAge.md) */
-//@ pure
-export function effectiveAge(readings: BirthReadings, dayKey: number): number {
-  return ageOnDay(effectiveBirthKey(readings), dayKey);
-}
-
-/** Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more (spec/memberAge.md) */
-//@ pure
-export function lawLaterBirthDateWins(firstKey: number, secondKey: number): boolean {
-  //@ ensures \result === true
-  const local_3: BirthReadings = { lower: birthDateLower(firstKey), upper: firstKey, youngest: firstKey };
-  return !(firstKey < secondKey) || effectiveBirthKey(mergeReading(true, local_3, birthDateLower(secondKey), secondKey)) === secondKey;
-}
-
-/** Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more (spec/memberAge.md) */
-//@ pure
-export function lawMergeKeepsYoungest(hasEarlier: boolean, earlier: BirthReadings, lower: number, upper: number): boolean {
-  //@ ensures \result === true
-  const local_4: BirthReadings = mergeReading(hasEarlier, earlier, lower, upper);
-  return local_4.youngest >= upper && (!hasEarlier || local_4.youngest >= earlier.youngest);
-}
-
-/** Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more (spec/memberAge.md) */
-//@ pure
-export function lawMergeKeepsWellFormed(hasEarlier: boolean, earlier: BirthReadings, lower: number, upper: number): boolean {
-  //@ ensures \result === true
-  const local_5: BirthReadings = mergeReading(hasEarlier, earlier, lower, upper);
-  return !((!hasEarlier || earlier.youngest > earlier.lower) && lower < upper) || local_5.youngest > local_5.lower;
-}
-
-/** Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more (spec/memberAge.md) */
-//@ pure
 export function lawMinorBeforeBirthDatesKeepsMinorAge(adultBirthKey: number): boolean {
   //@ ensures \result === true
-  const local_6: BirthReadings = statedAgeBeforeBirthDates(15, 20260101, 20261122);
-  return !(adultBirthKey <= local_6.lower) || ageOnDay(effectiveBirthKey(mergeReading(true, local_6, birthDateLower(adultBirthKey), adultBirthKey)), 20261122) === 15;
+  const local_7: BirthReadings = statedAgeBeforeBirthDates(15, 20260101, 20261122);
+  return !(adultBirthKey <= local_7.lower) || ageOnDay(effectiveBirthKey(mergeReading(true, local_7, birthDateLower(adultBirthKey), adultBirthKey)), 20261122) === 15;
 }
 
 /** Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more (spec/memberAge.md) */
 //@ pure
-export function lawLowerStatedAgeWins(birthKey: number, age: number, dayKey: number): boolean {
+export function lawFloorTwelveRefusesAdultBirthDate(adultBirthKey: number): boolean {
   //@ ensures \result === true
-  const local_7: BirthReadings = { lower: birthDateLower(birthKey), upper: birthKey, youngest: birthKey };
-  const local_8: BirthReadings = mergeReading(true, local_7, statedAgeLower(age, dayKey), statedAgeUpper(age, dayKey));
-  return !(dayKey >= birthKey && age >= 0 && age < ageOnDay(birthKey, dayKey)) || ageOnDay(effectiveBirthKey(local_8), dayKey) === age;
+  const local_8: BirthReadings = { lower: statedAgeLower(12, 20260601), upper: statedAgeUpper(12, 20260601), youngest: statedAgeUpper(12, 20260601) };
+  return !(adultBirthKey <= local_8.lower) || !joinableAge(ageOnDay(effectiveBirthKey(mergeReading(true, local_8, birthDateLower(adultBirthKey), adultBirthKey)), 20261122));
+}
+
+/** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
+//@ pure
+export function verifiedBrowserBirthMayBeKept(enrollmentVerified: boolean, age: number): boolean {
+  return enrollmentVerified && joinableAge(age) && age <= adultAge;
+}
+
+/** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
+//@ pure
+export function lawBrowserBirthNeedsEligibleVerifiedEnrollment(enrollmentVerified: boolean, age: number): boolean {
+  //@ ensures \result === true
+  return !verifiedBrowserBirthMayBeKept(enrollmentVerified, age) || (enrollmentVerified && age >= minMemberAge && age <= adultAge);
 }
 
 /** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
@@ -413,18 +426,6 @@ export function signupAgeAt(initialMinorAge: number, eligibleAt: number, now: nu
 //@ pure
 export function signupAgeCapNeeded(hasBirth: boolean, matchingBirth: boolean, beforeEligibility: boolean): boolean {
   return !hasBirth || (beforeEligibility && !matchingBirth);
-}
-
-/** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
-//@ pure
-export function mayClearMaturedSignupMinor(maturedSignup: boolean, currentAdult: boolean, otherYouthEvidence: boolean): boolean {
-  return maturedSignup && currentAdult && !otherYouthEvidence;
-}
-
-/** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
-//@ pure
-export function keepLaterEligibilityDate(first: number, second: number): number {
-  return first >= second ? first : second;
 }
 
 /** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
@@ -464,6 +465,12 @@ export function lawSignupAgeKeepsAnIndependentFloor(initialMinorAge: number, eli
 
 /** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
 //@ pure
+export function mayClearMaturedSignupMinor(maturedSignup: boolean, currentAdult: boolean, otherYouthEvidence: boolean): boolean {
+  return maturedSignup && currentAdult && !otherYouthEvidence;
+}
+
+/** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
+//@ pure
 export function lawOtherYouthEvidenceKeepsMinorRestricted(maturedSignup: boolean, currentAdult: boolean): boolean {
   //@ ensures \result === true
   return !mayClearMaturedSignupMinor(maturedSignup, currentAdult, true);
@@ -471,22 +478,15 @@ export function lawOtherYouthEvidenceKeepsMinorRestricted(maturedSignup: boolean
 
 /** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
 //@ pure
+export function keepLaterEligibilityDate(first: number, second: number): number {
+  return first >= second ? first : second;
+}
+
+/** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
+//@ pure
 export function lawAnotherSignupCannotAdvanceEligibility(first: number, second: number): boolean {
   //@ ensures \result === true
   return keepLaterEligibilityDate(first, second) >= first && keepLaterEligibilityDate(first, second) >= second;
-}
-
-/** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
-//@ pure
-export function verifiedBrowserBirthMayBeKept(enrollmentVerified: boolean, age: number): boolean {
-  return enrollmentVerified && joinableAge(age) && age <= adultAge;
-}
-
-/** Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction (spec/memberAge.md) */
-//@ pure
-export function lawBrowserBirthNeedsEligibleVerifiedEnrollment(enrollmentVerified: boolean, age: number): boolean {
-  //@ ensures \result === true
-  return !verifiedBrowserBirthMayBeKept(enrollmentVerified, age) || (enrollmentVerified && age >= minMemberAge && age <= adultAge);
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */

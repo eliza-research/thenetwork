@@ -1,6 +1,6 @@
 // GENERATED from spec/siteEnrollment.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type FractionalAgeEvidence as memberAge_FractionalAgeEvidence, type BirthReadings as memberAge_BirthReadings, minMemberAge as memberAge_minMemberAge, minLooseHeightAge as memberAge_minLooseHeightAge, maxAge as memberAge_maxAge, minLooseTeamAge as memberAge_minLooseTeamAge, adultAge as memberAge_adultAge, dayKeyYear as memberAge_dayKeyYear, earliestBirthKey as memberAge_earliestBirthKey, ownAgeEvidenceAllowed as memberAge_ownAgeEvidenceAllowed, signupAgeAt as memberAge_signupAgeAt, signupAgeCapNeeded as memberAge_signupAgeCapNeeded, mayClearMaturedSignupMinor as memberAge_mayClearMaturedSignupMinor, ownYouthCueAllowed as memberAge_ownYouthCueAllowed, keepLaterEligibilityDate as memberAge_keepLaterEligibilityDate, ageInRange as memberAge_ageInRange, precedingBirthdayAge as memberAge_precedingBirthdayAge, ageQualifierFollows as memberAge_ageQualifierFollows, ageConjunctionAllowed as memberAge_ageConjunctionAllowed, lowerAge as memberAge_lowerAge, ageOnDay as memberAge_ageOnDay, statedAgeLower as memberAge_statedAgeLower, statedAgeUpper as memberAge_statedAgeUpper, birthDateLower as memberAge_birthDateLower, laterBirthKey as memberAge_laterBirthKey, readingsConflict as memberAge_readingsConflict, recordedChatAge as memberAge_recordedChatAge, lawDeclineKeepsStatedAge as memberAge_lawDeclineKeepsStatedAge, lawQuotedWordsDoNotSetSenderAge as memberAge_lawQuotedWordsDoNotSetSenderAge, lawMatchingSignupBirthKeepsBirthdays as memberAge_lawMatchingSignupBirthKeepsBirthdays, lawOtherBirthCannotAdvanceSignupMinor as memberAge_lawOtherBirthCannotAdvanceSignupMinor, lawSignupAgeDoesNotAdvanceEarly as memberAge_lawSignupAgeDoesNotAdvanceEarly, lawSignupAgeAdvancesAtEligibility as memberAge_lawSignupAgeAdvancesAtEligibility, lawSignupAgeKeepsAnIndependentFloor as memberAge_lawSignupAgeKeepsAnIndependentFloor, lawOtherYouthEvidenceKeepsMinorRestricted as memberAge_lawOtherYouthEvidenceKeepsMinorRestricted, lawAnotherSignupCannotAdvanceEligibility as memberAge_lawAnotherSignupCannotAdvanceEligibility, lawAnotherSpeakersYouthCueCannotRestrictSender as memberAge_lawAnotherSpeakersYouthCueCannotRestrictSender, lawDistantBirthdayQualifiesTheAge as memberAge_lawDistantBirthdayQualifiesTheAge, joinableAge as memberAge_joinableAge, lawSmallSportsRecordsDoNotSupplyAge as memberAge_lawSmallSportsRecordsDoNotSupplyAge, lawSmallTeamResultsDoNotSupplyAge as memberAge_lawSmallTeamResultsDoNotSupplyAge, lawStatedBirthdaySurvivesSportsContext as memberAge_lawStatedBirthdaySurvivesSportsContext, lawEffectiveAgeCannotRise as memberAge_lawEffectiveAgeCannotRise, birthKeyUsable as memberAge_birthKeyUsable, matchableAge as memberAge_matchableAge, lawBirthdayAddsOneYear as memberAge_lawBirthdayAddsOneYear, lawLeapDayBirthdayCountsFromMarchFirst as memberAge_lawLeapDayBirthdayCountsFromMarchFirst, statedAgeBeforeBirthDates as memberAge_statedAgeBeforeBirthDates, lawStatedAgeReadsBack as memberAge_lawStatedAgeReadsBack, mergeReading as memberAge_mergeReading, effectiveBirthKey as memberAge_effectiveBirthKey, birthDateExact as memberAge_birthDateExact, confirmedUnderage as memberAge_confirmedUnderage, lawAgreeingAgeKeepsTheBirthDateExact as memberAge_lawAgreeingAgeKeepsTheBirthDateExact, lawConflictIsPermanent as memberAge_lawConflictIsPermanent, lawOlderClaimNeverUnlocksAdult as memberAge_lawOlderClaimNeverUnlocksAdult, lawFloorTwelveRefusesAdultBirthDate as memberAge_lawFloorTwelveRefusesAdultBirthDate, verifiedBrowserBirthMayBeKept as memberAge_verifiedBrowserBirthMayBeKept, lawBeforeAnEighteenthBirthdayIsNotAdult as memberAge_lawBeforeAnEighteenthBirthdayIsNotAdult, fractionalAgeEvidence as memberAge_fractionalAgeEvidence, lawJoiningNeedsUsableAge as memberAge_lawJoiningNeedsUsableAge, lawBirthKeyUsableIsHuman as memberAge_lawBirthKeyUsableIsHuman, lawMatchingNeedsAdultAge as memberAge_lawMatchingNeedsAdultAge, effectiveAge as memberAge_effectiveAge, lawLaterBirthDateWins as memberAge_lawLaterBirthDateWins, lawMergeKeepsYoungest as memberAge_lawMergeKeepsYoungest, lawMergeKeepsWellFormed as memberAge_lawMergeKeepsWellFormed, lawMinorBeforeBirthDatesKeepsMinorAge as memberAge_lawMinorBeforeBirthDatesKeepsMinorAge, lawBrowserBirthNeedsEligibleVerifiedEnrollment as memberAge_lawBrowserBirthNeedsEligibleVerifiedEnrollment, underageCleanupRequired as memberAge_underageCleanupRequired, textUseAllowedAtAge as memberAge_textUseAllowedAtAge, lawAnUpcomingFractionalAgeSuppliesNoCurrentAge as memberAge_lawAnUpcomingFractionalAgeSuppliesNoCurrentAge, lawAFractionalAgeNeedsAgeWordsToBeExplicit as memberAge_lawAFractionalAgeNeedsAgeWordsToBeExplicit, lawPossibleHeightRequiresAgeWords as memberAge_lawPossibleHeightRequiresAgeWords, lawExplicitCurrentFractionalAgeIsAccepted as memberAge_lawExplicitCurrentFractionalAgeIsAccepted, lawUnderageMonthOrQuarterNeedsAgeWords as memberAge_lawUnderageMonthOrQuarterNeedsAgeWords, lawLowerStatedAgeWins as memberAge_lawLowerStatedAgeWins, lawUnderageCleanupNeedsAConfirmedAge as memberAge_lawUnderageCleanupNeedsAConfirmedAge, lawConfirmedUnderageCannotRestart as memberAge_lawConfirmedUnderageCannotRestart } from "./memberAge.ts";
+import { type FractionalAgeEvidence as memberAge_FractionalAgeEvidence, type BirthReadings as memberAge_BirthReadings, maxAge as memberAge_maxAge, ageInRange as memberAge_ageInRange, minMemberAge as memberAge_minMemberAge, joinableAge as memberAge_joinableAge, lawJoiningNeedsUsableAge as memberAge_lawJoiningNeedsUsableAge, adultAge as memberAge_adultAge, matchableAge as memberAge_matchableAge, lawMatchingNeedsAdultAge as memberAge_lawMatchingNeedsAdultAge, recordedChatAge as memberAge_recordedChatAge, confirmedUnderage as memberAge_confirmedUnderage, lawDeclineKeepsStatedAge as memberAge_lawDeclineKeepsStatedAge, ownAgeEvidenceAllowed as memberAge_ownAgeEvidenceAllowed, lawQuotedWordsDoNotSetSenderAge as memberAge_lawQuotedWordsDoNotSetSenderAge, ownYouthCueAllowed as memberAge_ownYouthCueAllowed, lawAnotherSpeakersYouthCueCannotRestrictSender as memberAge_lawAnotherSpeakersYouthCueCannotRestrictSender, underageCleanupRequired as memberAge_underageCleanupRequired, lawUnderageCleanupNeedsAConfirmedAge as memberAge_lawUnderageCleanupNeedsAConfirmedAge, textUseAllowedAtAge as memberAge_textUseAllowedAtAge, lawConfirmedUnderageCannotRestart as memberAge_lawConfirmedUnderageCannotRestart, precedingBirthdayAge as memberAge_precedingBirthdayAge, ageQualifierFollows as memberAge_ageQualifierFollows, lawDistantBirthdayQualifiesTheAge as memberAge_lawDistantBirthdayQualifiesTheAge, lawBeforeAnEighteenthBirthdayIsNotAdult as memberAge_lawBeforeAnEighteenthBirthdayIsNotAdult, minLooseHeightAge as memberAge_minLooseHeightAge, fractionalAgeEvidence as memberAge_fractionalAgeEvidence, minLooseTeamAge as memberAge_minLooseTeamAge, ageConjunctionAllowed as memberAge_ageConjunctionAllowed, lawAnUpcomingFractionalAgeSuppliesNoCurrentAge as memberAge_lawAnUpcomingFractionalAgeSuppliesNoCurrentAge, lawAFractionalAgeNeedsAgeWordsToBeExplicit as memberAge_lawAFractionalAgeNeedsAgeWordsToBeExplicit, lawPossibleHeightRequiresAgeWords as memberAge_lawPossibleHeightRequiresAgeWords, lawExplicitCurrentFractionalAgeIsAccepted as memberAge_lawExplicitCurrentFractionalAgeIsAccepted, lawUnderageMonthOrQuarterNeedsAgeWords as memberAge_lawUnderageMonthOrQuarterNeedsAgeWords, lawSmallSportsRecordsDoNotSupplyAge as memberAge_lawSmallSportsRecordsDoNotSupplyAge, lawSmallTeamResultsDoNotSupplyAge as memberAge_lawSmallTeamResultsDoNotSupplyAge, lawStatedBirthdaySurvivesSportsContext as memberAge_lawStatedBirthdaySurvivesSportsContext, lowerAge as memberAge_lowerAge, lawEffectiveAgeCannotRise as memberAge_lawEffectiveAgeCannotRise, dayKeyYear as memberAge_dayKeyYear, earliestBirthKey as memberAge_earliestBirthKey, ageOnDay as memberAge_ageOnDay, birthKeyUsable as memberAge_birthKeyUsable, lawBirthdayAddsOneYear as memberAge_lawBirthdayAddsOneYear, lawLeapDayBirthdayCountsFromMarchFirst as memberAge_lawLeapDayBirthdayCountsFromMarchFirst, lawBirthKeyUsableIsHuman as memberAge_lawBirthKeyUsableIsHuman, statedAgeLower as memberAge_statedAgeLower, statedAgeUpper as memberAge_statedAgeUpper, birthDateLower as memberAge_birthDateLower, statedAgeBeforeBirthDates as memberAge_statedAgeBeforeBirthDates, lawStatedAgeReadsBack as memberAge_lawStatedAgeReadsBack, laterBirthKey as memberAge_laterBirthKey, mergeReading as memberAge_mergeReading, readingsConflict as memberAge_readingsConflict, effectiveBirthKey as memberAge_effectiveBirthKey, birthDateExact as memberAge_birthDateExact, effectiveAge as memberAge_effectiveAge, lawLowerStatedAgeWins as memberAge_lawLowerStatedAgeWins, lawLaterBirthDateWins as memberAge_lawLaterBirthDateWins, lawAgreeingAgeKeepsTheBirthDateExact as memberAge_lawAgreeingAgeKeepsTheBirthDateExact, lawConflictIsPermanent as memberAge_lawConflictIsPermanent, lawMergeKeepsYoungest as memberAge_lawMergeKeepsYoungest, lawMergeKeepsWellFormed as memberAge_lawMergeKeepsWellFormed, lawOlderClaimNeverUnlocksAdult as memberAge_lawOlderClaimNeverUnlocksAdult, lawMinorBeforeBirthDatesKeepsMinorAge as memberAge_lawMinorBeforeBirthDatesKeepsMinorAge, lawFloorTwelveRefusesAdultBirthDate as memberAge_lawFloorTwelveRefusesAdultBirthDate, verifiedBrowserBirthMayBeKept as memberAge_verifiedBrowserBirthMayBeKept, lawBrowserBirthNeedsEligibleVerifiedEnrollment as memberAge_lawBrowserBirthNeedsEligibleVerifiedEnrollment, signupAgeAt as memberAge_signupAgeAt, signupAgeCapNeeded as memberAge_signupAgeCapNeeded, lawMatchingSignupBirthKeepsBirthdays as memberAge_lawMatchingSignupBirthKeepsBirthdays, lawOtherBirthCannotAdvanceSignupMinor as memberAge_lawOtherBirthCannotAdvanceSignupMinor, lawSignupAgeDoesNotAdvanceEarly as memberAge_lawSignupAgeDoesNotAdvanceEarly, lawSignupAgeAdvancesAtEligibility as memberAge_lawSignupAgeAdvancesAtEligibility, lawSignupAgeKeepsAnIndependentFloor as memberAge_lawSignupAgeKeepsAnIndependentFloor, mayClearMaturedSignupMinor as memberAge_mayClearMaturedSignupMinor, lawOtherYouthEvidenceKeepsMinorRestricted as memberAge_lawOtherYouthEvidenceKeepsMinorRestricted, keepLaterEligibilityDate as memberAge_keepLaterEligibilityDate, lawAnotherSignupCannotAdvanceEligibility as memberAge_lawAnotherSignupCannotAdvanceEligibility } from "./memberAge.ts";
 
 /** Story: Save my approved profile in the app I asked for / A submitted account marker must match the authenticated account (spec/siteEnrollment.md) */
 export type EnrollmentPhase = "AwaitingAccountView" | "AccountChanged" | "AwaitingProfile" | "InvalidProfile" | "AwaitingConsent" | "ConsentMismatch" | "AwaitingEligibility" | "NeedsReview" | "AwaitingMembership" | "NeedsInvite" | "InvalidInvitation" | "AwaitingAge" | "BelowJoinAge" | "ReturnExisting" | "AwaitingRepair" | "AwaitingPersistence" | "Created" | "JoinHookFailed";
@@ -24,12 +24,12 @@ export type Event =
   | { type: "finishRepair"; hookSucceeded: boolean }
   | { type: "finishJoin"; hookSucceeded: boolean };
 
-/** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md) */
-export const completeJoinConsent: JoinConsentEvidence = { smsAccepted: true, wordingSupplied: true, wordingAccepted: true, versionSupplied: true, versionAccepted: true };
 /** Story: Save my approved profile in the app I asked for / A submitted account marker must match the authenticated account (spec/siteEnrollment.md) */
 export const initial: Enrollment = { phase: "AwaitingAccountView", viewChecked: false, validProfile: false, currentConsent: false, currentEligibility: false, rejoin: false, invited: false, referred: false, invalidReferral: false, ageAllowed: false };
 /** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md) */
 export const typedJoinEntry: Enrollment = { ...initial, phase: "AwaitingConsent", validProfile: true, viewChecked: true };
+/** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md) */
+export const completeJoinConsent: JoinConsentEvidence = { smsAccepted: true, wordingSupplied: true, wordingAccepted: true, versionSupplied: true, versionAccepted: true };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
@@ -73,18 +73,6 @@ export function checkAccountView(joining: Enrollment, viewMatches: boolean): Enr
 
 /** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md) */
 //@ pure
-export function joinConsentEvidenceAllowed(evidence: JoinConsentEvidence): boolean {
-  return evidence.smsAccepted && (evidence.wordingSupplied || evidence.versionSupplied) && (!evidence.wordingSupplied || evidence.wordingAccepted) && (!evidence.versionSupplied || evidence.versionAccepted);
-}
-
-/** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md) */
-//@ pure
-export function joinAgeFieldsValid(hasBirthDate: boolean, hasAge: boolean): boolean {
-  return (hasBirthDate || hasAge) && !(hasBirthDate && hasAge);
-}
-
-/** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md) */
-//@ pure
 export function canDecodeProfile(joining: Enrollment): boolean {
   return joining.phase === "AwaitingProfile" && joining.viewChecked;
 }
@@ -100,9 +88,21 @@ export function decodeProfile(joining: Enrollment, decoded: boolean): Enrollment
 
 /** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md) */
 //@ pure
+export function joinConsentEvidenceAllowed(evidence: JoinConsentEvidence): boolean {
+  return evidence.smsAccepted && (evidence.wordingSupplied || evidence.versionSupplied) && (!evidence.wordingSupplied || evidence.wordingAccepted) && (!evidence.versionSupplied || evidence.versionAccepted);
+}
+
+/** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md) */
+//@ pure
 export function lawEverySuppliedJoinConsentFieldMustAgree(evidence: JoinConsentEvidence): boolean {
   //@ ensures \result === true
   return !((evidence.wordingSupplied && !evidence.wordingAccepted) || (evidence.versionSupplied && !evidence.versionAccepted)) || !joinConsentEvidenceAllowed(evidence);
+}
+
+/** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md) */
+//@ pure
+export function joinAgeFieldsValid(hasBirthDate: boolean, hasAge: boolean): boolean {
+  return (hasBirthDate || hasAge) && !(hasBirthDate && hasAge);
 }
 
 /** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md) */
@@ -198,18 +198,6 @@ export function declineEndsUnboundAccess(effectiveAge: number): boolean {
 
 /** Story: Save my approved profile in the app I asked for / Success for a new membership follows the join hook (spec/siteEnrollment.md) */
 //@ pure
-export function joinFailureForgetsMembership(referred: boolean): boolean {
-  return !referred;
-}
-
-/** Story: Save my approved profile in the app I asked for / Success for a new membership follows the join hook (spec/siteEnrollment.md) */
-//@ pure
-export function forgetEndsAppAccess(joinFailed: boolean): boolean {
-  return !joinFailed;
-}
-
-/** Story: Save my approved profile in the app I asked for / Success for a new membership follows the join hook (spec/siteEnrollment.md) */
-//@ pure
 export function canFinishJoin(joining: Enrollment): boolean {
   return joining.phase === "AwaitingPersistence" && !joining.rejoin && !joining.invalidReferral && joining.ageAllowed && joining.currentEligibility && joining.viewChecked && joining.validProfile && joining.currentConsent;
 }
@@ -221,6 +209,18 @@ export function finishJoin(joining: Enrollment, hookSucceeded: boolean): Enrollm
   //@ ensures (inv(joining) && canFinishJoin(joining)) ==> alwaysExistingMembershipStaysExisting(\result)
   //@ ensures (inv(joining) && canFinishJoin(joining)) ==> alwaysReferralOnlyOnNewMembership(\result)
   return { ...joining, phase: hookSucceeded ? "Created" : "JoinHookFailed" };
+}
+
+/** Story: Save my approved profile in the app I asked for / Success for a new membership follows the join hook (spec/siteEnrollment.md) */
+//@ pure
+export function joinFailureForgetsMembership(referred: boolean): boolean {
+  return !referred;
+}
+
+/** Story: Save my approved profile in the app I asked for / Success for a new membership follows the join hook (spec/siteEnrollment.md) */
+//@ pure
+export function forgetEndsAppAccess(joinFailed: boolean): boolean {
+  return !joinFailed;
 }
 
 /** Story: Save my approved profile in the app I asked for / Success for a new membership follows the join hook (spec/siteEnrollment.md) */
@@ -408,6 +408,13 @@ export function floorAgeAfterReading(statedAge: number, mergedAge: number, priva
 
 /** Story: Keep the age readings of a person and a phone / The phone floor keeps the lowest age that a statement gives (spec/siteEnrollment.md) */
 //@ pure
+export function lawPrivateBrowserAgeNeverBecomesATypedFloor(statedAge: number, mergedAge: number): boolean {
+  //@ ensures \result === true
+  return floorAgeAfterReading(statedAge, mergedAge, true, true) === statedAge;
+}
+
+/** Story: Keep the age readings of a person and a phone / The phone floor keeps the lowest age that a statement gives (spec/siteEnrollment.md) */
+//@ pure
 export function lawFloorNeverRaisesTheStatedAge(statedAge: number, mergedAge: number): boolean {
   //@ ensures \result === true
   return floorStatedAge(statedAge, mergedAge) <= statedAge;
@@ -418,13 +425,6 @@ export function lawFloorNeverRaisesTheStatedAge(statedAge: number, mergedAge: nu
 export function lawFloorFollowsALowerMergedAge(statedAge: number, mergedAge: number): boolean {
   //@ ensures \result === true
   return !(memberAge_ageInRange(mergedAge) && mergedAge < statedAge) || floorStatedAge(statedAge, mergedAge) === mergedAge;
-}
-
-/** Story: Keep the age readings of a person and a phone / The phone floor keeps the lowest age that a statement gives (spec/siteEnrollment.md) */
-//@ pure
-export function lawPrivateBrowserAgeNeverBecomesATypedFloor(statedAge: number, mergedAge: number): boolean {
-  //@ ensures \result === true
-  return floorAgeAfterReading(statedAge, mergedAge, true, true) === statedAge;
 }
 
 /** Story: Keep the age readings of a person and a phone / The review of a teen item learns whether the first age reading was a birth date (spec/siteEnrollment.md) */

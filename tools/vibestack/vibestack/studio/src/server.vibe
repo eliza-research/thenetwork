@@ -11,8 +11,8 @@ import { Machine, enabled, machine } from "../gen/index.effect.vibe"
 import type { Event, Session } from "../gen/index.ts"
 import { promptFor } from "./doc.ts"
 import {
-  NODE, PUBLIC, SPEC, checkCommand, closePreview, createServer, finder, graphOfDraft, interactive, manifestFile, opener, ownedFiles, buildPage, appScript, servedAt, buildable, buildCommand, componentsOf,
-  planPublish, projectName, readTree, readManifest, simulateModule, skillPath, specStamp, stateFile, studioPreview, studioRoot, verdictOf, type Check, type JobView, type ProjectTree, type Publish, type Snapshot,
+  PUBLIC, checkCommand, closePreview, createServer, finder, graphOfDraft, interactive, manifestFile, opener, ownedFiles, buildPage, appScript, servedAt, buildable, buildCommand, componentsOf,
+  planPublish, projectName, readTree, readManifest, simulateModule, skillPath, specCommand, specStamp, stateFile, studioPreview, studioRoot, verdictOf, type Check, type JobView, type ProjectTree, type Publish, type Snapshot,
 } from "./project.ts"
 
 const DEEPLINK_LIMIT = 5000 // characters of a prompt a claude-cli:// link carries
@@ -210,7 +210,7 @@ effect function studio(project: Project, agents: Record<string, Agent>, tree: Pr
     check = now
     lastHeard = specStamp(root)
     const line = (text: string): any => { try { return JSON.parse(text) } catch { return undefined } }
-    try run("check", "check", [NODE, [SPEC, "check", "--json"]], undefined, (text) => {
+    try run("check", "check", specCommand(root, ["check", "--json"]), undefined, (text) => {
       const result = line(text)
       // What is not JSON, such as a crash on standard error, is shown as it is.
       if (!result?.stage) return result ? undefined : text
@@ -330,7 +330,7 @@ effect function studio(project: Project, agents: Record<string, Agent>, tree: Pr
         return {}
       case "/api/accept":
         try act({ type: "signOff" })
-        try run("accept", "sign-off", [NODE, [SPEC, "accept"]], undefined, (l) => l, () => effect {
+        try run("accept", "sign-off", specCommand(root, ["accept"]), undefined, (l) => l, () => effect {
           try act({ type: "signedOff" })
           try runCheck()
         })
@@ -457,7 +457,8 @@ export effect function serve(cwd: string, args: string[]) {
   const at = args.indexOf("--port")
   const port = at < 0 ? undefined : Number(args[at + 1])
   if (port !== undefined && !(Number.isInteger(port) && port >= 0 && port < 65536)) throw new Refused({ status: 400, message: `--port ${args[at + 1]}: not a port` })
-  const root = studioRoot(cwd, args[0] === "--port" ? "." : args[0] ?? ".")
+  const dirArg = args.find((a, i) => a !== "--port" && (at < 0 || i !== at + 1)) ?? "."
+  const root = studioRoot(cwd, dirArg)
   const studio = try startStudio({ projects: [{ id: ".", name: projectName(root), root }], port })
   const url = `${studio.url}/?project=.`
   try Console.log(`studio: ${url}`)

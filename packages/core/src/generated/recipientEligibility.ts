@@ -1,15 +1,15 @@
 // GENERATED from spec/recipientEligibility.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { unansweredInviteWaitMs as outreachPolicy_unansweredInviteWaitMs, unansweredInviteLimit as outreachPolicy_unansweredInviteLimit, reengagementSilenceMs as outreachPolicy_reengagementSilenceMs, reengagementHighValueMs as outreachPolicy_reengagementHighValueMs, reengagementDeliveryPrefix as outreachPolicy_reengagementDeliveryPrefix, personDailyCap as outreachPolicy_personDailyCap, inviteJoinNoticeLifetimeMs as outreachPolicy_inviteJoinNoticeLifetimeMs, inviteBudgetDayMs as outreachPolicy_inviteBudgetDayMs, unansweredInviteCounts as outreachPolicy_unansweredInviteCounts, unansweredInvitePause as outreachPolicy_unansweredInvitePause, initialInviteInBudgetWindow as outreachPolicy_initialInviteInBudgetWindow, unansweredInviteCountAfterInbound as outreachPolicy_unansweredInviteCountAfterInbound, reengagementEvidenceCurrent as outreachPolicy_reengagementEvidenceCurrent, initialInviteBudgetSpent as outreachPolicy_initialInviteBudgetSpent, outreachRequiresAdult as outreachPolicy_outreachRequiresAdult, outreachTeenItemKind as outreachPolicy_outreachTeenItemKind, inviteJoinNoticeCurrent as outreachPolicy_inviteJoinNoticeCurrent, inviteJoinNoticeConflictsWithRole as outreachPolicy_inviteJoinNoticeConflictsWithRole, inviteJoinNoticeMayRideReply as outreachPolicy_inviteJoinNoticeMayRideReply, lawInvitationJustSentCounts as outreachPolicy_lawInvitationJustSentCounts, lawUnacceptedInvitationDoesNotCount as outreachPolicy_lawUnacceptedInvitationDoesNotCount, lawInvitationCountsAtTerminalExpiry as outreachPolicy_lawInvitationCountsAtTerminalExpiry, lawInvitationCountsAtWait as outreachPolicy_lawInvitationCountsAtWait, lawTooFewInvitationsDoNotPause as outreachPolicy_lawTooFewInvitationsDoNotPause, lawInboundMessageEndsThePause as outreachPolicy_lawInboundMessageEndsThePause, lawAssistantProfileKeepsUnanswered as outreachPolicy_lawAssistantProfileKeepsUnanswered, reengagementMayStage as outreachPolicy_reengagementMayStage, reengagementMayDispatch as outreachPolicy_reengagementMayDispatch, lawRecruitingRequiresAdult as outreachPolicy_lawRecruitingRequiresAdult, lawRecruitingIsNeverATeenItemKind as outreachPolicy_lawRecruitingIsNeverATeenItemKind, lawInviteJoinNoticeWaitsForNamesake as outreachPolicy_lawInviteJoinNoticeWaitsForNamesake, lawInviteJoinNoticeNeedsAttribution as outreachPolicy_lawInviteJoinNoticeNeedsAttribution, lawInviteJoinNoticeRequiresMemberTurn as outreachPolicy_lawInviteJoinNoticeRequiresMemberTurn, lawInviteJoinNoticeNeverNamesARole as outreachPolicy_lawInviteJoinNoticeNeverNamesARole, lawZeroBudgetIsAlwaysSpent as outreachPolicy_lawZeroBudgetIsAlwaysSpent, lawBudgetBelowLimitIsOpen as outreachPolicy_lawBudgetBelowLimitIsOpen, lawInvitationAtWindowEdgeLeavesTheWindow as outreachPolicy_lawInvitationAtWindowEdgeLeavesTheWindow, lawReplyStopsPendingReengagement as outreachPolicy_lawReplyStopsPendingReengagement } from "./outreachPolicy.ts";
+import { personDailyCap as outreachPolicy_personDailyCap, inviteBudgetDayMs as outreachPolicy_inviteBudgetDayMs, initialInviteInBudgetWindow as outreachPolicy_initialInviteInBudgetWindow, initialInviteBudgetSpent as outreachPolicy_initialInviteBudgetSpent, lawZeroBudgetIsAlwaysSpent as outreachPolicy_lawZeroBudgetIsAlwaysSpent, lawBudgetBelowLimitIsOpen as outreachPolicy_lawBudgetBelowLimitIsOpen, lawInvitationAtWindowEdgeLeavesTheWindow as outreachPolicy_lawInvitationAtWindowEdgeLeavesTheWindow, lawInvitationJustSentCounts as outreachPolicy_lawInvitationJustSentCounts, unansweredInviteWaitMs as outreachPolicy_unansweredInviteWaitMs, unansweredInviteLimit as outreachPolicy_unansweredInviteLimit, unansweredInviteCounts as outreachPolicy_unansweredInviteCounts, unansweredInvitePause as outreachPolicy_unansweredInvitePause, lawUnacceptedInvitationDoesNotCount as outreachPolicy_lawUnacceptedInvitationDoesNotCount, lawInvitationCountsAtTerminalExpiry as outreachPolicy_lawInvitationCountsAtTerminalExpiry, lawInvitationCountsAtWait as outreachPolicy_lawInvitationCountsAtWait, lawTooFewInvitationsDoNotPause as outreachPolicy_lawTooFewInvitationsDoNotPause, unansweredInviteCountAfterInbound as outreachPolicy_unansweredInviteCountAfterInbound, lawInboundMessageEndsThePause as outreachPolicy_lawInboundMessageEndsThePause, lawAssistantProfileKeepsUnanswered as outreachPolicy_lawAssistantProfileKeepsUnanswered, reengagementSilenceMs as outreachPolicy_reengagementSilenceMs, reengagementHighValueMs as outreachPolicy_reengagementHighValueMs, reengagementDeliveryPrefix as outreachPolicy_reengagementDeliveryPrefix, reengagementEvidenceCurrent as outreachPolicy_reengagementEvidenceCurrent, reengagementMayStage as outreachPolicy_reengagementMayStage, reengagementMayDispatch as outreachPolicy_reengagementMayDispatch, lawReplyStopsPendingReengagement as outreachPolicy_lawReplyStopsPendingReengagement, outreachRequiresAdult as outreachPolicy_outreachRequiresAdult, outreachTeenItemKind as outreachPolicy_outreachTeenItemKind, lawRecruitingRequiresAdult as outreachPolicy_lawRecruitingRequiresAdult, lawRecruitingIsNeverATeenItemKind as outreachPolicy_lawRecruitingIsNeverATeenItemKind, inviteJoinNoticeLifetimeMs as outreachPolicy_inviteJoinNoticeLifetimeMs, inviteJoinNoticeCurrent as outreachPolicy_inviteJoinNoticeCurrent, inviteJoinNoticeConflictsWithRole as outreachPolicy_inviteJoinNoticeConflictsWithRole, lawInviteJoinNoticeWaitsForNamesake as outreachPolicy_lawInviteJoinNoticeWaitsForNamesake, inviteJoinNoticeMayRideReply as outreachPolicy_inviteJoinNoticeMayRideReply, lawInviteJoinNoticeNeedsAttribution as outreachPolicy_lawInviteJoinNoticeNeedsAttribution, lawInviteJoinNoticeRequiresMemberTurn as outreachPolicy_lawInviteJoinNoticeRequiresMemberTurn, lawInviteJoinNoticeNeverNamesARole as outreachPolicy_lawInviteJoinNoticeNeverNamesARole } from "./outreachPolicy.ts";
 
-/** Story: Contact only a member who can get this message now / Check the recipient's own state in a fixed order (spec/recipientEligibility.md) */
-export interface OtherParticipantFacts { blocked: boolean; avoided: boolean; present: boolean; verifiedInvitee: boolean; notAdult: boolean; restricted: boolean; matchingStopped: boolean; declinedAtJoin: boolean; reportHeld: boolean; watched: boolean }
 /** Story: Contact only a member who can get this message now / Check the recipient's own state in a fixed order (spec/recipientEligibility.md) */
 export type RecipientVerdict = "RecipientEligible" | "RecipientDeclined" | "RecipientUnknown" | "RecipientOptedOut" | "RecipientAccountRestricted" | "RecipientMatchingNotActive" | "RecipientHeld" | "RecipientOnlyWhenAsked" | "RecipientMinor" | "RecipientOnWatch" | "RecipientBlockedPair" | "RecipientOtherNotMatchable" | "RecipientOtherHeld" | "RecipientOtherOnWatch";
 /** Story: Contact only a member who can get this message now / Check the recipient's own state in a fixed order (spec/recipientEligibility.md) */
 export interface RecipientFacts { declined: boolean; known: boolean; optedOut: boolean; accountRestricted: boolean; matchingStopped: boolean; held: boolean; onlyWhenAsked: boolean; notAdult: boolean; onWatch: boolean }
 /** Story: Contact only a member who can get this message now / Check the recipient's own state in a fixed order (spec/recipientEligibility.md) */
 export interface RecipientSend { kind: string; reply: boolean; proactive: boolean; askKind: boolean; teenItem: boolean }
+/** Story: Contact only a member who can get this message now / Check the recipient's own state in a fixed order (spec/recipientEligibility.md) */
+export interface OtherParticipantFacts { blocked: boolean; avoided: boolean; present: boolean; verifiedInvitee: boolean; notAdult: boolean; restricted: boolean; matchingStopped: boolean; declinedAtJoin: boolean; reportHeld: boolean; watched: boolean }
 /** Story: Contact only a member who can get this message now / Quiet hours hold every send that can wait (spec/recipientEligibility.md) */
 export type RecipientTiming = "TimingNow" | "TimingLogistics" | "TimingSlot";
 
@@ -58,14 +58,26 @@ export function otherParticipantSkipped(kind: string, other: OtherParticipantFac
 
 /** Story: Contact only a member who can get this message now / A message about another member needs two adults with no block between them (spec/recipientEligibility.md) */
 //@ pure
+export function recipientAgeExempt(send: RecipientSend): boolean {
+  return send.teenItem && outreachPolicy_outreachTeenItemKind(send.kind);
+}
+
+/** Story: Contact only a member who can get this message now / A message about another member needs two adults with no block between them (spec/recipientEligibility.md) */
+//@ pure
+export function otherParticipantUnmatchable(send: RecipientSend, other: OtherParticipantFacts): boolean {
+  return !otherParticipantSkipped(send.kind, other) && (!other.present || (other.notAdult && !recipientAgeExempt(send)) || other.restricted || other.declinedAtJoin || (send.kind === "probe" && other.matchingStopped));
+}
+
+/** Story: Contact only a member who can get this message now / A message about another member needs two adults with no block between them (spec/recipientEligibility.md) */
+//@ pure
 export function anyOtherBlocked(kind: string, others: OtherParticipantFacts[]): boolean {
   return others.some((o: OtherParticipantFacts) => o.blocked || (kind === "probe" && o.avoided));
 }
 
 /** Story: Contact only a member who can get this message now / A message about another member needs two adults with no block between them (spec/recipientEligibility.md) */
 //@ pure
-export function recipientAgeExempt(send: RecipientSend): boolean {
-  return send.teenItem && outreachPolicy_outreachTeenItemKind(send.kind);
+export function anyOtherUnmatchable(send: RecipientSend, others: OtherParticipantFacts[]): boolean {
+  return others.some((o: OtherParticipantFacts) => otherParticipantUnmatchable(send, o));
 }
 
 /** Story: Contact only a member who can get this message now / A message about another member needs two adults with no block between them (spec/recipientEligibility.md) */
@@ -82,30 +94,9 @@ export function anyOtherWatched(kind: string, others: OtherParticipantFacts[]): 
 
 /** Story: Contact only a member who can get this message now / A message about another member needs two adults with no block between them (spec/recipientEligibility.md) */
 //@ pure
-export function otherParticipantUnmatchable(send: RecipientSend, other: OtherParticipantFacts): boolean {
-  return !otherParticipantSkipped(send.kind, other) && (!other.present || (other.notAdult && !recipientAgeExempt(send)) || other.restricted || other.declinedAtJoin || (send.kind === "probe" && other.matchingStopped));
-}
-
-/** Story: Contact only a member who can get this message now / A message about another member needs two adults with no block between them (spec/recipientEligibility.md) */
-//@ pure
-export function anyOtherUnmatchable(send: RecipientSend, others: OtherParticipantFacts[]): boolean {
-  return others.some((o: OtherParticipantFacts) => otherParticipantUnmatchable(send, o));
-}
-
-/** Story: Contact only a member who can get this message now / A message about another member needs two adults with no block between them (spec/recipientEligibility.md) */
-//@ pure
 export function recipientVerdict(recipient: RecipientFacts, send: RecipientSend, others: OtherParticipantFacts[]): RecipientVerdict {
   const local_1: RecipientVerdict = recipientOwnVerdict(recipient, send);
   return local_1 !== "RecipientEligible" ? local_1 : (!outreachPolicy_outreachRequiresAdult(send.kind) ? "RecipientEligible" : (recipient.notAdult && !recipientAgeExempt(send) ? "RecipientMinor" : (recipient.onWatch ? "RecipientOnWatch" : (anyOtherBlocked(send.kind, others) ? "RecipientBlockedPair" : (anyOtherUnmatchable(send, others) ? "RecipientOtherNotMatchable" : (anyOtherHeld(send.kind, others) ? "RecipientOtherHeld" : (anyOtherWatched(send.kind, others) ? "RecipientOtherOnWatch" : "RecipientEligible")))))));
-}
-
-/** Story: Contact only a member who can get this message now / A message about another member needs two adults with no block between them (spec/recipientEligibility.md) */
-//@ pure
-export function lawRefusalIsFinal(kind: string, reply: boolean, proactive: boolean, askKind: boolean, declined: boolean, known: boolean, optedOut: boolean, accountRestricted: boolean, matchingStopped: boolean, held: boolean, onlyWhenAsked: boolean, notAdult: boolean, onWatch: boolean, others: OtherParticipantFacts[]): boolean {
-  //@ ensures \result === true
-  const local_2: RecipientFacts = { declined: declined, known: known, optedOut: optedOut, accountRestricted: accountRestricted, matchingStopped: matchingStopped, held: held, onlyWhenAsked: onlyWhenAsked, notAdult: notAdult, onWatch: onWatch };
-  const local_3: RecipientSend = { kind: kind, reply: reply, proactive: proactive, askKind: askKind, teenItem: false };
-  return !(recipientOwnVerdict(local_2, local_3) !== "RecipientEligible") || recipientVerdict(local_2, local_3, others) === recipientOwnVerdict(local_2, local_3);
 }
 
 /** Story: Contact only a member who can get this message now / A message about another member needs two adults with no block between them (spec/recipientEligibility.md) */
@@ -143,17 +134,19 @@ export function lawTeenItemStillRefusesABlock(kind: string, others: OtherPartici
   return !(outreachPolicy_outreachRequiresAdult(kind) && anyOtherBlocked(kind, others)) || recipientVerdict(({ declined: false, known: true, optedOut: false, accountRestricted: false, matchingStopped: false, held: false, onlyWhenAsked: false, notAdult: true, onWatch: false } as RecipientFacts), ({ kind: kind, reply: false, proactive: false, askKind: false, teenItem: true } as RecipientSend), others) !== "RecipientEligible";
 }
 
-/** Story: Contact only a member who can get this message now / The refusal reason names the failed check (spec/recipientEligibility.md) */
+/** Story: Contact only a member who can get this message now / A message about another member needs two adults with no block between them (spec/recipientEligibility.md) */
 //@ pure
-export function recipientRefusalReason(verdict: RecipientVerdict): string {
-  return verdict === "RecipientEligible" ? "" : verdict === "RecipientDeclined" ? "declined" : verdict === "RecipientUnknown" ? "unknown_member" : verdict === "RecipientOptedOut" ? "opted_out" : verdict === "RecipientAccountRestricted" ? "account" : verdict === "RecipientMatchingNotActive" ? "matching_not_active" : verdict === "RecipientHeld" ? "held" : verdict === "RecipientOnlyWhenAsked" ? "only_when_asked" : verdict === "RecipientMinor" ? "minor" : verdict === "RecipientOnWatch" ? "on_watch" : verdict === "RecipientBlockedPair" ? "blocked_pair" : verdict === "RecipientOtherNotMatchable" ? "other_not_matchable" : verdict === "RecipientOtherHeld" ? "other_held" : "other_on_watch";
+export function lawRefusalIsFinal(kind: string, reply: boolean, proactive: boolean, askKind: boolean, declined: boolean, known: boolean, optedOut: boolean, accountRestricted: boolean, matchingStopped: boolean, held: boolean, onlyWhenAsked: boolean, notAdult: boolean, onWatch: boolean, others: OtherParticipantFacts[]): boolean {
+  //@ ensures \result === true
+  const local_2: RecipientFacts = { declined: declined, known: known, optedOut: optedOut, accountRestricted: accountRestricted, matchingStopped: matchingStopped, held: held, onlyWhenAsked: onlyWhenAsked, notAdult: notAdult, onWatch: onWatch };
+  const local_3: RecipientSend = { kind: kind, reply: reply, proactive: proactive, askKind: askKind, teenItem: false };
+  return !(recipientOwnVerdict(local_2, local_3) !== "RecipientEligible") || recipientVerdict(local_2, local_3, others) === recipientOwnVerdict(local_2, local_3);
 }
 
 /** Story: Contact only a member who can get this message now / The refusal reason names the failed check (spec/recipientEligibility.md) */
 //@ pure
-export function lawOnlyEligibleHasNoReason(verdict: RecipientVerdict): boolean {
-  //@ ensures \result === true
-  return (recipientRefusalReason(verdict) === "") === (verdict === "RecipientEligible");
+export function recipientRefusalReason(verdict: RecipientVerdict): string {
+  return verdict === "RecipientEligible" ? "" : verdict === "RecipientDeclined" ? "declined" : verdict === "RecipientUnknown" ? "unknown_member" : verdict === "RecipientOptedOut" ? "opted_out" : verdict === "RecipientAccountRestricted" ? "account" : verdict === "RecipientMatchingNotActive" ? "matching_not_active" : verdict === "RecipientHeld" ? "held" : verdict === "RecipientOnlyWhenAsked" ? "only_when_asked" : verdict === "RecipientMinor" ? "minor" : verdict === "RecipientOnWatch" ? "on_watch" : verdict === "RecipientBlockedPair" ? "blocked_pair" : verdict === "RecipientOtherNotMatchable" ? "other_not_matchable" : verdict === "RecipientOtherHeld" ? "other_held" : "other_on_watch";
 }
 
 /** Story: Contact only a member who can get this message now / The refusal reason names the failed check (spec/recipientEligibility.md) */
@@ -168,6 +161,13 @@ export function lawProbeNeedsActiveMatching(reply: boolean, proactive: boolean, 
 export function lawProbeRefusesAvoidedOrStoppedOther(others: OtherParticipantFacts[]): boolean {
   //@ ensures \result === true
   return !others.some((o: OtherParticipantFacts) => o.avoided || (o.present && o.matchingStopped)) || recipientVerdict(({ declined: false, known: true, optedOut: false, accountRestricted: false, matchingStopped: false, held: false, onlyWhenAsked: false, notAdult: false, onWatch: false } as RecipientFacts), ({ kind: "probe", reply: false, proactive: false, askKind: true, teenItem: false } as RecipientSend), others) !== "RecipientEligible";
+}
+
+/** Story: Contact only a member who can get this message now / The refusal reason names the failed check (spec/recipientEligibility.md) */
+//@ pure
+export function lawOnlyEligibleHasNoReason(verdict: RecipientVerdict): boolean {
+  //@ ensures \result === true
+  return (recipientRefusalReason(verdict) === "") === (verdict === "RecipientEligible");
 }
 
 /** Story: Contact only a member who can get this message now / Quiet hours hold every send that can wait (spec/recipientEligibility.md) */

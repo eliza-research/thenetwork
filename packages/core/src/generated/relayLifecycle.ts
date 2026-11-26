@@ -2,11 +2,11 @@
 //@ backend dafny
 
 /** Story: Decide and deliver a selected relay item / A first decision blocks or admits an item (spec/relayLifecycle.md) */
+export type RelayPhase = "AwaitingVerdict" | "Blocked" | "ReadyToSend" | "Sent" | "Deferred" | "SendRefused";
+/** Story: Decide and deliver a selected relay item / A first decision blocks or admits an item (spec/relayLifecycle.md) */
 export type DeliveryResult = "Delivered" | "Queued" | "Refused";
 /** Story: Decide and deliver a selected relay item / A first decision blocks or admits an item (spec/relayLifecycle.md) */
 export type RelayVerdict = "Pass" | "Block";
-/** Story: Decide and deliver a selected relay item / A first decision blocks or admits an item (spec/relayLifecycle.md) */
-export type RelayPhase = "AwaitingVerdict" | "Blocked" | "ReadyToSend" | "Sent" | "Deferred" | "SendRefused";
 /** Story: Decide and deliver a selected relay item / A first decision blocks or admits an item (spec/relayLifecycle.md) */
 export interface RelayLifecycle { phase: RelayPhase; cleared: boolean }
 
@@ -22,6 +22,12 @@ export const initial: RelayLifecycle = { phase: "AwaitingVerdict", cleared: fals
 //@ pure
 export function inv(current: RelayLifecycle): boolean {
   return alwaysClearedExactlyAfterAPass(current);
+}
+
+/** Story: Decide and deliver a selected relay item / A first decision blocks or admits an item (spec/relayLifecycle.md) */
+//@ pure
+export function canRecordVerdict(relay: RelayLifecycle): boolean {
+  return relay.phase === "AwaitingVerdict";
 }
 
 /** Story: Decide and deliver a selected relay item / A first decision blocks or admits an item (spec/relayLifecycle.md) */
@@ -48,12 +54,6 @@ export function stepABlockedItemStaysBlocked(before: RelayLifecycle, after: Rela
 //@ pure
 export function sometimesBlocked(relay: RelayLifecycle): boolean {
   return relay.phase === "Blocked";
-}
-
-/** Story: Decide and deliver a selected relay item / A first decision blocks or admits an item (spec/relayLifecycle.md) */
-//@ pure
-export function canRecordVerdict(relay: RelayLifecycle): boolean {
-  return relay.phase === "AwaitingVerdict";
 }
 
 /** Story: Decide and deliver a selected relay item / The send path determines the result of an admitted item (spec/relayLifecycle.md) */

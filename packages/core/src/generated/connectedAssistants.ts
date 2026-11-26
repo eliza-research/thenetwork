@@ -2,13 +2,13 @@
 //@ backend dafny
 
 /** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
-export type BrowserGrantVisibility = "ShowBrowserGrant" | "HideBrowserGrant" | "RetryBrowserGrantList";
+export type ConsentsView = "Loading" | "SignInFirstView" | "RetryLaterView" | "NotAllowedView" | "ListView" | "EmptyView" | "ConfirmingRemoval";
 /** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
 export type LoadReply = "LoadedSignedOut" | "LoadedUnavailable" | "LoadedList";
 /** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
-export type ConsentsView = "Loading" | "SignInFirstView" | "RetryLaterView" | "NotAllowedView" | "ListView" | "EmptyView" | "ConfirmingRemoval";
-/** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
 export interface ConsentsPage { view: ConsentsView; grants: number; signedIn: boolean; notice: boolean }
+/** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
+export type BrowserGrantVisibility = "ShowBrowserGrant" | "HideBrowserGrant" | "RetryBrowserGrantList";
 /** Story: See which assistants can use my account / A grant card names the assistant as its claim and shows its date and scopes (spec/connectedAssistants.md) */
 export type AssistantLabel = "NamedByItself" | "UnnamedAssistant";
 /** Story: See which assistants can use my account / A grant card names the assistant as its claim and shows its date and scopes (spec/connectedAssistants.md) */
@@ -28,17 +28,23 @@ export type Event =
   | { type: "keepAccess" }
   | { type: "confirmRemoval"; removal: RemoveReply; grants: number };
 
-/** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
-export const removeConfirmationMs: number = 300000;
-/** Story: See which assistants can use my account / A page without a session offers no sign-in control (spec/connectedAssistants.md) */
-export const noConsentsOffers: ConsentsOffers = { removeAccess: false, confirmRemove: false, keepAccess: false, retryLink: false };
 /** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
 export const initial: ConsentsPage = { view: "Loading", grants: 0, signedIn: false, notice: false };
+/** Story: See which assistants can use my account / A page without a session offers no sign-in control (spec/connectedAssistants.md) */
+export const noConsentsOffers: ConsentsOffers = { removeAccess: false, confirmRemove: false, keepAccess: false, retryLink: false };
+/** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
+export const removeConfirmationMs: number = 300000;
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: ConsentsPage): boolean {
   return alwaysGrantsShowOnlyWithSession(current) && alwaysListMatchesGrants(current) && alwaysNoticeOnlyForSignedInRemoval(current);
+}
+
+/** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
+//@ pure
+export function viewForGrants(grants: number): ConsentsView {
+  return grants > 0 ? "ListView" : "EmptyView";
 }
 
 /** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
@@ -49,15 +55,15 @@ export function browserOwnsLiveGrant(sameApp: boolean, samePhone: boolean, sameP
 
 /** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
 //@ pure
-export function consentsPageReadsSession(siteIsHub: boolean, sessionForSiteApp: boolean): boolean {
-  return siteIsHub || sessionForSiteApp;
+export function lawAnEarlierPhoneOwnerHasNoGrant(sameApp: boolean, samePhone: boolean, active: boolean, asOf: number, grantExpiresAt: number): boolean {
+  //@ ensures \result === true
+  return !browserOwnsLiveGrant(sameApp, samePhone, false, active, asOf, grantExpiresAt);
 }
 
 /** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
 //@ pure
-export function lawAnEarlierPhoneOwnerHasNoGrant(sameApp: boolean, samePhone: boolean, active: boolean, asOf: number, grantExpiresAt: number): boolean {
-  //@ ensures \result === true
-  return !browserOwnsLiveGrant(sameApp, samePhone, false, active, asOf, grantExpiresAt);
+export function consentsPageReadsSession(siteIsHub: boolean, sessionForSiteApp: boolean): boolean {
+  return siteIsHub || sessionForSiteApp;
 }
 
 /** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
@@ -89,33 +95,15 @@ export function browserGrantVisibility(ownedLiveGrant: boolean, authority: strin
 
 /** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
 //@ pure
-export function canLoad(page: ConsentsPage, grants: number): boolean {
-  return page.view === "Loading" && grants >= 0;
-}
-
-/** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
-//@ pure
-export function alwaysGrantsShowOnlyWithSession(page: ConsentsPage): boolean {
-  return !(page.view === "ListView" || page.view === "EmptyView" || page.view === "ConfirmingRemoval") || page.signedIn;
-}
-
-/** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
-//@ pure
-export function alwaysListMatchesGrants(page: ConsentsPage): boolean {
-  return page.grants >= 0 && (!(page.view === "ListView") || page.grants > 0) && (!(page.view === "EmptyView") || page.grants === 0) && (!(page.view === "ConfirmingRemoval") || page.grants > 0);
-}
-
-/** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
-//@ pure
-export function viewForGrants(grants: number): ConsentsView {
-  return grants > 0 ? "ListView" : "EmptyView";
-}
-
-/** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
-//@ pure
 export function lawShownGrantHasCurrentAuthority(ownedLiveGrant: boolean, authority: string): boolean {
   //@ ensures \result === true
   return !(browserGrantVisibility(ownedLiveGrant, authority) === "ShowBrowserGrant") || (ownedLiveGrant && authority === "valid");
+}
+
+/** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
+//@ pure
+export function canLoad(page: ConsentsPage, grants: number): boolean {
+  return page.view === "Loading" && grants >= 0;
 }
 
 /** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
@@ -130,10 +118,16 @@ export function load(page: ConsentsPage, loaded: LoadReply, grants: number): Con
   return loaded === "LoadedSignedOut" ? ({ view: "SignInFirstView", grants: 0, signedIn: false, notice: false } as ConsentsPage) : (loaded === "LoadedUnavailable" ? ({ view: "RetryLaterView", grants: 0, signedIn: false, notice: false } as ConsentsPage) : ({ view: viewForGrants(grants), grants: grants, signedIn: true, notice: false } as ConsentsPage));
 }
 
-/** Story: See which assistants can use my account / A grant card names the assistant as its claim and shows its date and scopes (spec/connectedAssistants.md) */
+/** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
 //@ pure
-export function grantCardNamesItsApp(siteIsHub: boolean): boolean {
-  return siteIsHub;
+export function alwaysGrantsShowOnlyWithSession(page: ConsentsPage): boolean {
+  return !(page.view === "ListView" || page.view === "EmptyView" || page.view === "ConfirmingRemoval") || page.signedIn;
+}
+
+/** Story: See which assistants can use my account / The page lists live grants only for a signed-in session (spec/connectedAssistants.md) */
+//@ pure
+export function alwaysListMatchesGrants(page: ConsentsPage): boolean {
+  return page.grants >= 0 && (!(page.view === "ListView") || page.grants > 0) && (!(page.view === "EmptyView") || page.grants === 0) && (!(page.view === "ConfirmingRemoval") || page.grants > 0);
 }
 
 /** Story: See which assistants can use my account / A grant card names the assistant as its claim and shows its date and scopes (spec/connectedAssistants.md) */
@@ -144,17 +138,23 @@ export function grantCard(named: boolean): GrantCard {
 
 /** Story: See which assistants can use my account / A grant card names the assistant as its claim and shows its date and scopes (spec/connectedAssistants.md) */
 //@ pure
-export function lawOnlyTheHubCardNamesTheApp(siteIsHub: boolean): boolean {
-  //@ ensures \result === true
-  return grantCardNamesItsApp(siteIsHub) === siteIsHub;
-}
-
-/** Story: See which assistants can use my account / A grant card names the assistant as its claim and shows its date and scopes (spec/connectedAssistants.md) */
-//@ pure
 export function lawGrantCardShowsClaimDateAndScopes(named: boolean): boolean {
   //@ ensures \result === true
   const local_0: GrantCard = grantCard(named);
   return local_0.claimNote && local_0.allowedDate && local_0.scopeList && local_0.removeButton;
+}
+
+/** Story: See which assistants can use my account / A grant card names the assistant as its claim and shows its date and scopes (spec/connectedAssistants.md) */
+//@ pure
+export function grantCardNamesItsApp(siteIsHub: boolean): boolean {
+  return siteIsHub;
+}
+
+/** Story: See which assistants can use my account / A grant card names the assistant as its claim and shows its date and scopes (spec/connectedAssistants.md) */
+//@ pure
+export function lawOnlyTheHubCardNamesTheApp(siteIsHub: boolean): boolean {
+  //@ ensures \result === true
+  return grantCardNamesItsApp(siteIsHub) === siteIsHub;
 }
 
 /** Story: See which assistants can use my account / A page without a session offers no sign-in control (spec/connectedAssistants.md) */
@@ -167,18 +167,6 @@ export function offersFor(view: ConsentsView): ConsentsOffers {
 //@ pure
 export function chromeFor(view: ConsentsView): PageChrome {
   return { brandMark: view !== "Loading", legalLinks: view !== "Loading" };
-}
-
-/** Story: See which assistants can use my account / A page without a session offers no sign-in control (spec/connectedAssistants.md) */
-//@ pure
-export function reloadPage(page: ConsentsPage): ConsentsPage {
-  //@ ensures (inv(page) && canReloadPage(page)) ==> alwaysGrantsShowOnlyWithSession(\result)
-  //@ ensures (inv(page) && canReloadPage(page)) ==> alwaysListMatchesGrants(\result)
-  //@ ensures (inv(page) && canReloadPage(page)) ==> alwaysNoticeOnlyForSignedInRemoval(\result)
-  //@ ensures (inv(page) && canReloadPage(page)) ==> stepKeepAccessChangesNothing(page, "reloadPage", \result)
-  //@ ensures (inv(page) && canReloadPage(page)) ==> stepOnlyConfirmedRemovalChangesGrants(page, "reloadPage", \result)
-  //@ ensures (inv(page) && canReloadPage(page)) ==> stepNoticeFollowsConfirmedRemoval(page, "reloadPage", \result)
-  return { ...page, view: "Loading", grants: 0, signedIn: false, notice: false };
 }
 
 /** Story: See which assistants can use my account / A page without a session offers no sign-in control (spec/connectedAssistants.md) */
@@ -199,6 +187,18 @@ export function lawEveryPageShowsBrandAndLegalLinks(view: ConsentsView): boolean
 //@ pure
 export function canReloadPage(page: ConsentsPage): boolean {
   return offersFor(page.view).retryLink;
+}
+
+/** Story: See which assistants can use my account / A page without a session offers no sign-in control (spec/connectedAssistants.md) */
+//@ pure
+export function reloadPage(page: ConsentsPage): ConsentsPage {
+  //@ ensures (inv(page) && canReloadPage(page)) ==> alwaysGrantsShowOnlyWithSession(\result)
+  //@ ensures (inv(page) && canReloadPage(page)) ==> alwaysListMatchesGrants(\result)
+  //@ ensures (inv(page) && canReloadPage(page)) ==> alwaysNoticeOnlyForSignedInRemoval(\result)
+  //@ ensures (inv(page) && canReloadPage(page)) ==> stepKeepAccessChangesNothing(page, "reloadPage", \result)
+  //@ ensures (inv(page) && canReloadPage(page)) ==> stepOnlyConfirmedRemovalChangesGrants(page, "reloadPage", \result)
+  //@ ensures (inv(page) && canReloadPage(page)) ==> stepNoticeFollowsConfirmedRemoval(page, "reloadPage", \result)
+  return { ...page, view: "Loading", grants: 0, signedIn: false, notice: false };
 }
 
 /** Story: Remove an assistant's access / Removal needs a confirmation (spec/connectedAssistants.md) */
@@ -257,21 +257,15 @@ export function removalConfirmationEndsAt(issuedAt: number, grantExpiresAt: numb
 
 /** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
 //@ pure
-export function browserRemovalProofMatches(currentVerified: boolean, exactBinding: boolean, exactDirectPredecessor: boolean): boolean {
-  return currentVerified && (exactBinding || exactDirectPredecessor);
-}
-
-/** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
-//@ pure
-export function removalFormMayRevoke(ownedLiveGrant: boolean, exactBrowserConfirmation: boolean, asOf: number, confirmationEndsAt: number): boolean {
-  return ownedLiveGrant && exactBrowserConfirmation && asOf < confirmationEndsAt;
-}
-
-/** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
-//@ pure
 export function lawConfirmationLastsAtMostFiveMinutes(ownedLiveGrant: boolean, issuedAt: number, grantExpiresAt: number, asOf: number): boolean {
   //@ ensures \result === true
   return !removalFormMayRevoke(ownedLiveGrant, true, asOf, removalConfirmationEndsAt(issuedAt, grantExpiresAt)) || (asOf < exact_connectedAssistants(issuedAt + removeConfirmationMs) && asOf < grantExpiresAt);
+}
+
+/** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
+//@ pure
+export function browserRemovalProofMatches(currentVerified: boolean, exactBinding: boolean, exactDirectPredecessor: boolean): boolean {
+  return currentVerified && (exactBinding || exactDirectPredecessor);
 }
 
 /** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
@@ -286,6 +280,12 @@ export function lawRemovalProofRequiresCurrentSession(exactBinding: boolean, exa
 export function lawAnotherBrowserSessionCannotConfirm(currentVerified: boolean): boolean {
   //@ ensures \result === true
   return !browserRemovalProofMatches(currentVerified, false, false);
+}
+
+/** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
+//@ pure
+export function removalFormMayRevoke(ownedLiveGrant: boolean, exactBrowserConfirmation: boolean, asOf: number, confirmationEndsAt: number): boolean {
+  return ownedLiveGrant && exactBrowserConfirmation && asOf < confirmationEndsAt;
 }
 
 /** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
@@ -309,18 +309,6 @@ export function canConfirmRemoval(page: ConsentsPage, grants: number): boolean {
 
 /** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
 //@ pure
-export function alwaysNoticeOnlyForSignedInRemoval(page: ConsentsPage): boolean {
-  return !page.notice || (page.signedIn && (page.view === "ListView" || page.view === "EmptyView" || page.view === "RetryLaterView"));
-}
-
-/** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
-//@ pure
-export function stepNoticeFollowsConfirmedRemoval(before: ConsentsPage, via: string, after: ConsentsPage): boolean {
-  return !(after.notice && !before.notice) || (via === "confirmRemoval" && before.view === "ConfirmingRemoval");
-}
-
-/** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
-//@ pure
 export function confirmRemoval(page: ConsentsPage, removal: RemoveReply, grants: number): ConsentsPage {
   //@ ensures (inv(page) && canConfirmRemoval(page, grants)) ==> alwaysGrantsShowOnlyWithSession(\result)
   //@ ensures (inv(page) && canConfirmRemoval(page, grants)) ==> alwaysListMatchesGrants(\result)
@@ -329,6 +317,18 @@ export function confirmRemoval(page: ConsentsPage, removal: RemoveReply, grants:
   //@ ensures (inv(page) && canConfirmRemoval(page, grants)) ==> stepOnlyConfirmedRemovalChangesGrants(page, "confirmRemoval", \result)
   //@ ensures (inv(page) && canConfirmRemoval(page, grants)) ==> stepNoticeFollowsConfirmedRemoval(page, "confirmRemoval", \result)
   return removal === "RemoveSignedOut" ? ({ view: "SignInFirstView", grants: 0, signedIn: false, notice: false } as ConsentsPage) : (removal === "RemoveUnavailable" ? ({ view: "RetryLaterView", grants: 0, signedIn: false, notice: false } as ConsentsPage) : (removal === "RemovedListUnavailable" ? ({ view: "RetryLaterView", grants: 0, signedIn: true, notice: true } as ConsentsPage) : (removal === "RemoveRefused" ? ({ view: "NotAllowedView", grants: 0, signedIn: false, notice: false } as ConsentsPage) : ({ view: viewForGrants(grants), grants: grants, signedIn: true, notice: removal === "Removed" } as ConsentsPage))));
+}
+
+/** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
+//@ pure
+export function alwaysNoticeOnlyForSignedInRemoval(page: ConsentsPage): boolean {
+  return !page.notice || (page.signedIn && (page.view === "ListView" || page.view === "EmptyView" || page.view === "RetryLaterView"));
+}
+
+/** Story: Remove an assistant's access / A confirmed removal shows its result (spec/connectedAssistants.md) */
+//@ pure
+export function stepNoticeFollowsConfirmedRemoval(before: ConsentsPage, via: string, after: ConsentsPage): boolean {
+  return !(after.notice && !before.notice) || (via === "confirmRemoval" && before.view === "ConfirmingRemoval");
 }
 
 /** Story: Remove an assistant's access / Each page and each outcome can occur (spec/connectedAssistants.md) */

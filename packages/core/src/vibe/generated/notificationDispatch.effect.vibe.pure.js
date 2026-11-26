@@ -5,21 +5,21 @@ export const initial = M.initial;
 /** Every `always` rule at once. Holds initially and after every transition. @throws {never} */
 export function inv(current) { return M.inv(current); }
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
-export function inboxItemAllowedForRecipient(requested, proactiveAllowed) { return M.inboxItemAllowedForRecipient(requested, proactiveAllowed); }
-/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
-export function rereadCountsPossible(plannedCount, remainingCount) { return M.rereadCountsPossible(plannedCount, remainingCount); }
-/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export function inboxItemStillPending(seen, notified) { return M.inboxItemStillPending(seen, notified); }
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export function inboxItemExpired(hasExpiry, expiresAt, at) { return M.inboxItemExpired(hasExpiry, expiresAt, at); }
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export function inboxItemDigestible(seen, notified, hasExpiry, expiresAt, at) { return M.inboxItemDigestible(seen, notified, hasExpiry, expiresAt, at); }
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
+export function lawExpiredItemLeavesTheDigest(seen, notified, expiresAt, at) { return M.lawExpiredItemLeavesTheDigest(seen, notified, expiresAt, at); }
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
+export function inboxItemAllowedForRecipient(requested, proactiveAllowed) { return M.inboxItemAllowedForRecipient(requested, proactiveAllowed); }
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
+export function rereadCountsPossible(plannedCount, remainingCount) { return M.rereadCountsPossible(plannedCount, remainingCount); }
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export function canRereadItems(digest, plannedCount, remainingCount) { return M.canRereadItems(digest, plannedCount, remainingCount); }
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export function rereadItems(digest, plannedCount, remainingCount, recipientAvailable, destinationChanged) { return M.rereadItems(digest, plannedCount, remainingCount, recipientAvailable, destinationChanged); }
-/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
-export function lawExpiredItemLeavesTheDigest(seen, notified, expiresAt, at) { return M.lawExpiredItemLeavesTheDigest(seen, notified, expiresAt, at); }
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export function lawMissingRecipientCancels(plannedCount, remainingCount, destinationChanged) { return M.lawMissingRecipientCancels(plannedCount, remainingCount, destinationChanged); }
 /** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) @throws {never} */
@@ -68,5 +68,33 @@ export function step(current, event) { return M.step(current, event); }
 export function parseEvent(x) { return M.parseEvent(x); }
 /** Turn an untrusted value, such as a state loaded from storage, into a state, or undefined if it is not one. It must have exactly the state's shape (no other fields, whole numbers that are safe integers, sets that hold nothing twice, maps as records whose keys carry the "$" every key carries here) and satisfy every `always` rule. The result is a fresh copy, so nothing the caller keeps can change it afterwards. @throws {never} */
 export function parseState(x) { return M.parseState(x); }
-/** A Machine never shares a state with its callers. @throws {never} */
-export function snapshot_notificationDispatch(value) { return structuredClone(value); }
+/** @throws {never} */
+export function snapshot_notificationDispatch(value) {
+    if (value === null || typeof value !== "object" || Object.isFrozen(value))
+        return value;
+    Object.freeze(value);
+    if (Array.isArray(value)) {
+        for (let i = 0; i < value.length; i++)
+            snapshot_notificationDispatch(value[i]);
+    }
+    else {
+        for (const key of Object.keys(value))
+            snapshot_notificationDispatch(value[key]);
+    }
+    return value;
+}
+/** @throws {never} */
+export function snapshot_in_notificationDispatch(value) {
+    if (value === null || typeof value !== "object" || Object.isFrozen(value))
+        return value;
+    if (Array.isArray(value)) {
+        const copy = new Array(value.length);
+        for (let i = 0; i < value.length; i++)
+            copy[i] = snapshot_in_notificationDispatch(value[i]);
+        return Object.freeze(copy);
+    }
+    const copy = {};
+    for (const key of Object.keys(value))
+        copy[key] = snapshot_in_notificationDispatch(value[key]);
+    return Object.freeze(copy);
+}

@@ -29,6 +29,8 @@ export type Event = {
     type: "recordReplacement";
 };
 /** Story: Stay signed in to the app where I proved my phone / A session has an absolute limit from sign-in (spec/webSession.md) */
+export declare const sessionTtlMs: number;
+/** Story: Stay signed in to the app where I proved my phone / A session has an absolute limit from sign-in (spec/webSession.md) */
 export declare const sessionRotateMs: number;
 /** Story: Stay signed in to the app where I proved my phone / A session has an absolute limit from sign-in (spec/webSession.md) */
 export declare const sessionMaxMs: number;
@@ -36,8 +38,6 @@ export declare const sessionMaxMs: number;
 export declare const sessionGraceMs: number;
 /** Story: Stay signed in to the app where I proved my phone / A session has an absolute limit from sign-in (spec/webSession.md) */
 export declare const sessionStepUpMs: number;
-/** Story: Stay signed in to the app where I proved my phone / A session has an absolute limit from sign-in (spec/webSession.md) */
-export declare const sessionTtlMs: number;
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md) */
 export declare const initial: SessionFlow;
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -47,8 +47,6 @@ export declare function sessionDeadline(createdAt: number, startedAt: number, tt
 /** Story: Stay signed in to the app where I proved my phone / A session has an absolute limit from sign-in (spec/webSession.md) */
 export declare function lawCloudDeadlineCapsSession(createdAt: number, startedAt: number, ttl: number, maxAge: number, expiresBefore: number): boolean;
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md) */
-export declare function sessionRowLive(sameApp: boolean, expiresAt: number, revoked: boolean, revokedAt: number, now: number): boolean;
-/** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md) */
 export declare function canReadToken(flow: SessionFlow): boolean;
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md) */
 export declare function readToken(flow: SessionFlow, tokenPresent: boolean, tokenLength: number): SessionFlow;
@@ -56,6 +54,8 @@ export declare function readToken(flow: SessionFlow, tokenPresent: boolean, toke
 export declare function canReadRow(flow: SessionFlow): boolean;
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md) */
 export declare function readRow(flow: SessionFlow, sameAppRow: boolean, expired: boolean, hasRevocation: boolean, revocationDue: boolean, banned: boolean, rotationRequested: boolean, oldEnough: boolean, at: number): SessionFlow;
+/** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md) */
+export declare function sessionRowLive(sameApp: boolean, expiresAt: number, revoked: boolean, revokedAt: number, now: number): boolean;
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md) */
 export declare function canRecordRevocation(flow: SessionFlow): boolean;
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md) */

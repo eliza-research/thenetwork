@@ -38,11 +38,12 @@ The spec format, naming rules and everything the tools accept are in
 ## Loading skills
 
 The canonical skill files are committed in `.agents/skills/`, including
-`sync`, `shell`, `prove`, `design`, `architect` and the [principles](#principles).
-Edit them there. `pnpm install` and `spec init` create project-relative skill
-links for Claude, Cursor, Muse, Grokbot and the other supported agents, and
-`CLAUDE.md` links to `AGENTS.md`. These generated paths are ignored by Git;
-`.claude/` contains no committed files.
+`sync`, `shell`, `prove`, `design`, `architect`, `bug-review` and the [principles](#principles).
+Edit them there. `pnpm install` (via `vibestack link`) and `vibestack init`
+create project-relative skill links for Claude, Cursor, Muse, Grokbot and the
+other supported agents, and `CLAUDE.md` links to `AGENTS.md`. Use
+`vibestack upgrade` to refresh managed skills and docs when upgrading Vibestack.
+These generated paths are ignored by Git; `.claude/` contains no committed files.
 
 A skill's name and description are only its discovery metadata. Before
 the work listed in [Where the rest is](#where-the-rest-is), read the matching
@@ -114,8 +115,9 @@ installed the tools has `README.md` in `node_modules/vibestack/`.
 | [`shell` skill](.agents/skills/shell/SKILL.md) | writing `src/` or a test: VibeLang, the Effect adapter, the React interface, building and running |
 | [`prove` skill](.agents/skills/prove/SKILL.md) | a `proof` stage `✗`, writing a `.proof.dfy`, or a `//@` file |
 | [`design` skill](.agents/skills/design/SKILL.md) | anything a person looks at: layout, components, stories and tokens |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | generated files, tests, caching and CI; adding a package or task, or changing the tools under `vibestack/` |
-| [README.md](README.md#commands) | the commands, Studio, and [using the tools from another package](README.md#using-it-from-another-package) |
+| [`bug-review` skill](.agents/skills/bug-review/SKILL.md) | finishing an app, feature or PR: parallel review for bugs, leaks, state/rendering issues, inefficiencies and smells past `pnpm check` |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | generated files, tests, caching and CI; adding a package or task, or changing the tools under `packages/vibestack/`, `packages/studio/` or `packages/create-vibestack/` |
+| [README.md](README.md#commands) | the commands, Studio, configuration, and [adding Vibestack to an existing project](README.md#add-to-an-existing-project) |
 
 ## Hard rules
 
@@ -167,13 +169,20 @@ Check each point before you write, and again after.
   `//@` contracts, spec citations and Vitest environment directives, and a doc
   comment only where a generator reads it: on a `@repo/ui` component and its
   props. This holds for the project's own code, tests, scripts and proof files;
-  `vibestack/` and vendored checkouts are upstream's. In `apps/` and
+  `packages/vibestack/`, `packages/studio/` and vendored checkouts are upstream's. In `apps/` and
   `packages/`, `pnpm lint:js` enforces it, with no effect hooks, timers or
   `console`. An `eslint-disable` there names its rules, never `code/*`,
   `barrel/*` or `no-console`, and says why; any other inline config fails the
   lint.
-- **Scripts and tests.** Extend existing ones before adding; no new scripts.
-  Delete code that becomes unused. Tests follow "Tests" below.
+- **Scripts, project CLI and tests.** Put operational, verification, seeding,
+  inspection, validation, and migration levers in the project CLI
+  (`packages/cli`, run with `pnpm cli <command>`) as typed subcommands with
+  `--json` output rather than ad-hoc files under `scripts/` or extra
+  `package.json` scripts. `packages/cli` is a project tool (Node 26 TypeScript
+  by default for fast startup across all modes; subcommands that drive
+  VibeLang/Effect services can invoke or import them when needed). Extend
+  existing commands and tests before adding; delete code that becomes unused.
+  Tests follow "Tests" below.
 - **Speed.** Keep checks and CI fast: a small change reruns only what it
   touches; a full run is as quick as it can be.
 - **Passes.** The first version is a draft. Review it two or three times
@@ -210,8 +219,9 @@ its name.
   with no precedent. Build 2-3 competing prototypes and compare before
   committing.
 - **Build the Lever.** Any non-trivial work. Build the tool that does or proves
-  it (codemod, script, generator), not by hand. The tool is the artifact a
-  reviewer reruns.
+  it — as a subcommand in the project CLI (`pnpm cli <command>`, under
+  `packages/cli`) with `--json` output when it belongs to the project, not as a
+  scattered script. The tool is the artifact a reviewer reruns.
 - **Model the Domain.** Writing stateful logic, or code that branches a lot or
   repeats a shape assumption across files. Encode the domain in a structure
   (state machine, typed model, table or registry, reducer, boundary, the right
@@ -257,7 +267,7 @@ its name.
 
 Read the [`typescript-best-practices` skill](.agents/skills/typescript-best-practices/SKILL.md)
 before reading or editing `.ts` or `.tsx` files. Adapt the
-[TypeScript type reference](vibestack/reference/typereferences.md)
+[TypeScript type reference](.agents/skills/typescript-best-practices/references/typereferences.md)
 to the repository's schema library. Validate that a duration is nonnegative
 when it represents an ordered range.
 
@@ -347,8 +357,8 @@ How `pnpm check` runs them, in its `tests` stage:
   reuse the same result. Filtered or failed runs supply no receipt; acceptance
   and nightly checks always run afresh.
 - **One configuration.** The `test` script is `vitest run`, on
-  `project({ root: import.meta.dirname })` from `vibestack/testing/vitest.ts`, as
-  `spec init` writes it; a package with `test/` and no `test` script gets
+  `project({ root: import.meta.dirname })` from `vibestack/testing/vitest`, as
+  `vibestack init` writes it; a package with `test/` and no `test` script gets
   both from `check`. It runs `test/**/*.test.{ts,tsx,vibe}` in Node (a test
   that needs a DOM says `// @vitest-environment happy-dom`), and
   `*.browser.test.*` in Chromium, by `vitest run --project browser` (the
@@ -391,7 +401,14 @@ How `pnpm check` runs them, in its `tests` stage:
 
 - `pnpm check` is where step 3 of the sync skill's loop stops: what is
   left waits on the user.
-- In the vibestack repository, if you changed `vibestack/`, `pnpm selftest`
+- Before declaring an application, feature or non-trivial change done, run
+  the [`bug-review` skill](.agents/skills/bug-review/SKILL.md) (full pass
+  when finishing an app, diff-scoped pass for incremental changes), resolve
+  all discovered `P0`/`P1` bugs and errors (and any `P2`s worth fixing),
+  and confirm `pnpm check`, `pnpm lint`, and `pnpm analyze` (where defined)
+  are green after the final fix.
+- In the vibestack repository, if you changed `packages/vibestack/`,
+  `packages/studio/` or `packages/create-vibestack/`, `pnpm selftest`
   passes, with a new case for each new kind of mistake the change catches,
   and each new kind of `✗` has its row in the sync skill.
 - What you wrote has had its passes under "Writing code".

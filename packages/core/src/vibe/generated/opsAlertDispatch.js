@@ -4,6 +4,8 @@
 import { publicEventRefreshMs as publicEventCatalog_publicEventRefreshMs, publicEventRetryMs as publicEventCatalog_publicEventRetryMs } from "./publicEventCatalog.js";
 /** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) */
 export const alertPostWindowMs = 3600000;
+/** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) */
+export const initial = { phase: "AwaitingNotices" };
 /** Story: Report the result of each operations round / Collect scheduled rounds and reuse fresh metrics (spec/opsAlertDispatch.md) */
 export const metricsFreshMs = 15000;
 /** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) */
@@ -12,16 +14,14 @@ export const turnWatchComplianceAfterMs = 120000;
 export const turnWatchReplyAfterMs = 900000;
 /** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) */
 export const turnWatchWindowMs = 86400000;
+/** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) */
+export const catalogStaleAfterMs = exact_opsAlertDispatch(publicEventCatalog_publicEventRefreshMs + publicEventCatalog_publicEventRetryMs);
 /** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) */
 export const judgeCannotRunAlertAbove = 10;
 /** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) */
 export const judgeRateMinDecisions = 20;
 /** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) */
 export const judgeRateMarginBp = 1000;
-/** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) */
-export const initial = { phase: "AwaitingNotices" };
-/** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) */
-export const catalogStaleAfterMs = exact_opsAlertDispatch(publicEventCatalog_publicEventRefreshMs + publicEventCatalog_publicEventRetryMs);
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current) {
@@ -29,13 +29,13 @@ export function inv(current) {
 }
 /** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) */
 //@ pure
-export function reportedSmsTotal(exactTotalAvailable, exactTotal, legacyTotal) {
-    return exactTotalAvailable ? exactTotal : legacyTotal;
+export function countSendOutcome(waiting) {
+    return !waiting;
 }
 /** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) */
 //@ pure
-export function countSendOutcome(waiting) {
-    return !waiting;
+export function reportedSmsTotal(exactTotalAvailable, exactTotal, legacyTotal) {
+    return exactTotalAvailable ? exactTotal : legacyTotal;
 }
 /** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) */
 //@ pure
@@ -104,11 +104,6 @@ export function batchWasHeld(s) {
 }
 /** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) */
 //@ pure
-export function sometimesRejected(s) {
-    return s.phase === "PostRejected";
-}
-/** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) */
-//@ pure
 export function stepResultFollowsAttempt(before, after) {
     return !(batchWasAttempted(after) && !batchWasAttempted(before)) || before.phase === "PostingNotices";
 }
@@ -121,6 +116,11 @@ export function sometimesHeld(s) {
 //@ pure
 export function sometimesAccepted(s) {
     return batchWasAccepted(s);
+}
+/** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) */
+//@ pure
+export function sometimesRejected(s) {
+    return s.phase === "PostRejected";
 }
 /** Story: Report the result of each operations round / Collect scheduled rounds and reuse fresh metrics (spec/opsAlertDispatch.md) */
 //@ pure
@@ -139,18 +139,8 @@ export function roundReport(hasNotices, postAttempted, delivered, heldNotices, h
 }
 /** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) */
 //@ pure
-export function turnWatchAfterMs(possibleCompliance) {
-    return possibleCompliance ? turnWatchComplianceAfterMs : turnWatchReplyAfterMs;
-}
-/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) */
-//@ pure
 export function turnWatchUnconfirmed(receipt, complianceReply) {
     return receipt === "NoReceipt" || receipt === "ReceiptUnknown" || (receipt === "ReceiptRejected" && complianceReply);
-}
-/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) */
-//@ pure
-export function turnWatchPossibleCompliance(condition, complianceReply) {
-    return condition === "TurnUnresolved" || complianceReply;
 }
 /** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) */
 //@ pure
@@ -163,6 +153,16 @@ export function lawAcceptedReceiptConfirms(complianceReply) {
 export function lawRejectedComplianceIsWatched(receipt) {
     //@ ensures \result === true
     return !turnWatchUnconfirmed(receipt, false) || turnWatchUnconfirmed(receipt, true);
+}
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) */
+//@ pure
+export function turnWatchPossibleCompliance(condition, complianceReply) {
+    return condition === "TurnUnresolved" || complianceReply;
+}
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) */
+//@ pure
+export function turnWatchAfterMs(possibleCompliance) {
+    return possibleCompliance ? turnWatchComplianceAfterMs : turnWatchReplyAfterMs;
 }
 /** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) */
 //@ pure
@@ -189,6 +189,11 @@ export function lawUnresolvedTurnStaysWatched(complianceReply, ageMs) {
 }
 /** Story: Hear when a shared-line turn may have reached nobody / Each condition is one alert, and a possible STOP makes it bad and first (spec/opsAlertDispatch.md) */
 //@ pure
+export function turnWatchAlertKey(condition) {
+    return condition === "RepliesUnconfirmed" ? "turn_unconfirmed" : (condition === "TurnUnresolved" ? "turn_unresolved" : "deliver_unknown");
+}
+/** Story: Hear when a shared-line turn may have reached nobody / Each condition is one alert, and a possible STOP makes it bad and first (spec/opsAlertDispatch.md) */
+//@ pure
 export function turnWatchRaises(overdueCount) {
     return overdueCount > 0;
 }
@@ -201,11 +206,6 @@ export function turnWatchLevel(complianceCount) {
 //@ pure
 export function turnWatchLeads(complianceCount) {
     return complianceCount > 0;
-}
-/** Story: Hear when a shared-line turn may have reached nobody / Each condition is one alert, and a possible STOP makes it bad and first (spec/opsAlertDispatch.md) */
-//@ pure
-export function turnWatchAlertKey(condition) {
-    return condition === "RepliesUnconfirmed" ? "turn_unconfirmed" : (condition === "TurnUnresolved" ? "turn_unresolved" : "deliver_unknown");
 }
 /** Story: Hear when a shared-line turn may have reached nobody / Each condition is one alert, and a possible STOP makes it bad and first (spec/opsAlertDispatch.md) */
 //@ pure

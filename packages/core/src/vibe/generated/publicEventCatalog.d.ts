@@ -1,16 +1,16 @@
 // Generated from spec/publicEventCatalog.md via Vibestack and VibeLang. Run pnpm run spec:sync.
 /** Story: Find a current public event / Use only an upcoming event from the allowed in-person supply (spec/publicEventCatalog.md) */
 export declare const publicEventHorizonDays: number;
-/** Story: Keep the deployed catalog current / The backend scans once a day, at most one process at a time, and waits after a failed attempt (spec/publicEventCatalog.md) */
-export declare const publicEventRefreshMs: number;
-/** Story: Keep the deployed catalog current / The backend scans once a day, at most one process at a time, and waits after a failed attempt (spec/publicEventCatalog.md) */
-export declare const publicEventRetryMs: number;
 /** Story: Find a current public event / A successful complete scan replaces the previous source and expires if refresh stops (spec/publicEventCatalog.md) */
 export declare const publicEventFreshDays: number;
 /** Story: Find a current public event / A successful complete scan replaces the previous source and expires if refresh stops (spec/publicEventCatalog.md) */
 export declare const publicEventScanMaxBytes: number;
 /** Story: Find a current public event / A successful complete scan replaces the previous source and expires if refresh stops (spec/publicEventCatalog.md) */
 export declare const publicEventScanRowLimit: number;
+/** Story: Keep the deployed catalog current / The backend scans once a day, at most one process at a time, and waits after a failed attempt (spec/publicEventCatalog.md) */
+export declare const publicEventRefreshMs: number;
+/** Story: Keep the deployed catalog current / The backend scans once a day, at most one process at a time, and waits after a failed attempt (spec/publicEventCatalog.md) */
+export declare const publicEventRetryMs: number;
 /** Story: Find a current public event / Use only an upcoming event from the allowed in-person supply (spec/publicEventCatalog.md) */
 export declare function publicEventWindowUsable(asOf: number, startsAt: number, endsAt: number): boolean;
 /** Story: Find a current public event / Use only an upcoming event from the allowed in-person supply (spec/publicEventCatalog.md) */
@@ -20,11 +20,11 @@ export declare function publicEventScanResponseAllowed(responseStatus: number, r
 /** Story: Find a current public event / A successful complete scan replaces the previous source and expires if refresh stops (spec/publicEventCatalog.md) */
 export declare function publicEventScanComplete(bytesRead: number, rowsRead: number, allRowsRecognizable: boolean): boolean;
 /** Story: Find a current public event / A successful complete scan replaces the previous source and expires if refresh stops (spec/publicEventCatalog.md) */
+export declare function lawPartialEventScanCannotPublish(redirected: boolean): boolean;
+/** Story: Find a current public event / A successful complete scan replaces the previous source and expires if refresh stops (spec/publicEventCatalog.md) */
 export declare function publicEventPublicationNewer(seen: boolean, checkedAt: number, incomingAt: number): boolean;
 /** Story: Find a current public event / A successful complete scan replaces the previous source and expires if refresh stops (spec/publicEventCatalog.md) */
 export declare function publicEventCatalogFresh(checkedAt: number, asOf: number): boolean;
-/** Story: Find a current public event / A successful complete scan replaces the previous source and expires if refresh stops (spec/publicEventCatalog.md) */
-export declare function lawPartialEventScanCannotPublish(redirected: boolean): boolean;
 /** Story: Find a current public event / A successful complete scan replaces the previous source and expires if refresh stops (spec/publicEventCatalog.md) */
 export declare function lawCatalogExpiresAtLimit(checkedAt: number): boolean;
 /** Story: Find a current public event / A source id identifies a single normalized listing in each scan (spec/publicEventCatalog.md) */

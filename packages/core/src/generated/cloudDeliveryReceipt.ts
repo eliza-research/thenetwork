@@ -17,16 +17,16 @@ export function cloudLookupConfirmsAbsence(receiptLookup: boolean, failed: boole
 
 /** Story: Recover a delivery through the canonical Cloud transport / Transient refusal has a different response from unknown acceptance (spec/cloudDeliveryReceipt.md) */
 //@ pure
-export function lawCloudTemporaryLookupDoesNotProveAbsence(failed: boolean, retryable: boolean, status: number): boolean {
+export function lawCloudLookupNeverUsesDispatchRetry(failed: boolean, retryable: boolean, status: number, code: string): boolean {
   //@ ensures \result === true
-  return !cloudLookupConfirmsAbsence(true, failed, retryable, status, "unavailable");
+  return !cloudDispatchMayRetry(true, failed, retryable, status, code);
 }
 
 /** Story: Recover a delivery through the canonical Cloud transport / Transient refusal has a different response from unknown acceptance (spec/cloudDeliveryReceipt.md) */
 //@ pure
-export function lawCloudLookupNeverUsesDispatchRetry(failed: boolean, retryable: boolean, status: number, code: string): boolean {
+export function lawCloudTemporaryLookupDoesNotProveAbsence(failed: boolean, retryable: boolean, status: number): boolean {
   //@ ensures \result === true
-  return !cloudDispatchMayRetry(true, failed, retryable, status, code);
+  return !cloudLookupConfirmsAbsence(true, failed, retryable, status, "unavailable");
 }
 
 /** Story: Recover a delivery through the canonical Cloud transport / The queued adapter requires a current canonical receipt (spec/cloudDeliveryReceipt.md) */

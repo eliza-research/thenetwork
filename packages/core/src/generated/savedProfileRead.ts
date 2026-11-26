@@ -2,9 +2,9 @@
 //@ backend dafny
 
 /** Story: Read my saved profile / An ordinary turn starts without a profile read (spec/savedProfileRead.md) */
-export type ReadPhase = "Unclassified" | "AwaitingAuthority" | "UseConversation" | "StaySilent" | "AskWhichApp" | "RefuseOtherProfile" | "DifferentAppLine" | "ShowOwnProfile";
-/** Story: Read my saved profile / An ordinary turn starts without a profile read (spec/savedProfileRead.md) */
 export type ReadIntent = "OrdinaryTurn" | "OwnRead" | "NamedRead" | "UnclearRead" | "OtherProfile";
+/** Story: Read my saved profile / An ordinary turn starts without a profile read (spec/savedProfileRead.md) */
+export type ReadPhase = "Unclassified" | "AwaitingAuthority" | "UseConversation" | "StaySilent" | "AskWhichApp" | "RefuseOtherProfile" | "DifferentAppLine" | "ShowOwnProfile";
 /** Story: Read my saved profile / An ordinary turn starts without a profile read (spec/savedProfileRead.md) */
 export interface ReadFacts { readForm: boolean; namesProfile: boolean; asksChange: boolean; ownSubject: boolean; endsWithProfile: boolean; hasAppName: boolean; appKnown: boolean }
 /** Story: Read my saved profile / An ordinary turn starts without a profile read (spec/savedProfileRead.md) */
@@ -15,10 +15,10 @@ export type Event =
   | { type: "classifyRead"; facts: ReadFacts }
   | { type: "resolveRead"; sameMember: boolean; optedOut: boolean; requestedAppMatches: boolean };
 
-/** Story: Read my saved profile / Simulation covers the distinct read forms (spec/savedProfileRead.md) */
-export const ownProfileFacts: ReadFacts = { readForm: true, namesProfile: true, asksChange: false, ownSubject: true, endsWithProfile: true, hasAppName: false, appKnown: false };
 /** Story: Read my saved profile / An ordinary turn starts without a profile read (spec/savedProfileRead.md) */
 export const initial: ProfileRead = { phase: "Unclassified", intent: "OrdinaryTurn", sameMember: false, optedOut: false, requestedAppMatches: false };
+/** Story: Read my saved profile / Simulation covers the distinct read forms (spec/savedProfileRead.md) */
+export const ownProfileFacts: ReadFacts = { readForm: true, namesProfile: true, asksChange: false, ownSubject: true, endsWithProfile: true, hasAppName: false, appKnown: false };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
@@ -40,18 +40,18 @@ export function canClassifyRead(request: ProfileRead): boolean {
 
 /** Story: Read my saved profile / Only explicit read requests enter the read path (spec/savedProfileRead.md) */
 //@ pure
-export function lawAChangeIsAnOrdinaryTurn(facts: ReadFacts): boolean {
-  //@ ensures \result === true
-  return !facts.asksChange || readIntent(facts) === "OrdinaryTurn";
-}
-
-/** Story: Read my saved profile / Only explicit read requests enter the read path (spec/savedProfileRead.md) */
-//@ pure
 export function classifyRead(request: ProfileRead, facts: ReadFacts): ProfileRead {
   //@ ensures (inv(request) && canClassifyRead(request)) ==> alwaysOnlyOwnProfileShown(\result)
   //@ ensures (inv(request) && canClassifyRead(request)) ==> alwaysNoReadReplyWithoutAuthority(\result)
   const local_0: ReadIntent = readIntent(facts);
   return { ...request, intent: local_0, phase: local_0 === "OrdinaryTurn" ? "UseConversation" : "AwaitingAuthority" };
+}
+
+/** Story: Read my saved profile / Only explicit read requests enter the read path (spec/savedProfileRead.md) */
+//@ pure
+export function lawAChangeIsAnOrdinaryTurn(facts: ReadFacts): boolean {
+  //@ ensures \result === true
+  return !facts.asksChange || readIntent(facts) === "OrdinaryTurn";
 }
 
 /** Story: Read my saved profile / Current membership and consent authorize a reply (spec/savedProfileRead.md) */

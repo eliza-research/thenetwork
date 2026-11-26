@@ -1,18 +1,18 @@
 // GENERATED from spec/friendIntroAge.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type FractionalAgeEvidence as memberAge_FractionalAgeEvidence, type BirthReadings as memberAge_BirthReadings, minMemberAge as memberAge_minMemberAge, minLooseHeightAge as memberAge_minLooseHeightAge, maxAge as memberAge_maxAge, minLooseTeamAge as memberAge_minLooseTeamAge, adultAge as memberAge_adultAge, dayKeyYear as memberAge_dayKeyYear, earliestBirthKey as memberAge_earliestBirthKey, ownAgeEvidenceAllowed as memberAge_ownAgeEvidenceAllowed, signupAgeAt as memberAge_signupAgeAt, signupAgeCapNeeded as memberAge_signupAgeCapNeeded, mayClearMaturedSignupMinor as memberAge_mayClearMaturedSignupMinor, ownYouthCueAllowed as memberAge_ownYouthCueAllowed, keepLaterEligibilityDate as memberAge_keepLaterEligibilityDate, ageInRange as memberAge_ageInRange, precedingBirthdayAge as memberAge_precedingBirthdayAge, ageQualifierFollows as memberAge_ageQualifierFollows, ageConjunctionAllowed as memberAge_ageConjunctionAllowed, lowerAge as memberAge_lowerAge, ageOnDay as memberAge_ageOnDay, statedAgeLower as memberAge_statedAgeLower, statedAgeUpper as memberAge_statedAgeUpper, birthDateLower as memberAge_birthDateLower, laterBirthKey as memberAge_laterBirthKey, readingsConflict as memberAge_readingsConflict, recordedChatAge as memberAge_recordedChatAge, lawDeclineKeepsStatedAge as memberAge_lawDeclineKeepsStatedAge, lawQuotedWordsDoNotSetSenderAge as memberAge_lawQuotedWordsDoNotSetSenderAge, lawMatchingSignupBirthKeepsBirthdays as memberAge_lawMatchingSignupBirthKeepsBirthdays, lawOtherBirthCannotAdvanceSignupMinor as memberAge_lawOtherBirthCannotAdvanceSignupMinor, lawSignupAgeDoesNotAdvanceEarly as memberAge_lawSignupAgeDoesNotAdvanceEarly, lawSignupAgeAdvancesAtEligibility as memberAge_lawSignupAgeAdvancesAtEligibility, lawSignupAgeKeepsAnIndependentFloor as memberAge_lawSignupAgeKeepsAnIndependentFloor, lawOtherYouthEvidenceKeepsMinorRestricted as memberAge_lawOtherYouthEvidenceKeepsMinorRestricted, lawAnotherSignupCannotAdvanceEligibility as memberAge_lawAnotherSignupCannotAdvanceEligibility, lawAnotherSpeakersYouthCueCannotRestrictSender as memberAge_lawAnotherSpeakersYouthCueCannotRestrictSender, lawDistantBirthdayQualifiesTheAge as memberAge_lawDistantBirthdayQualifiesTheAge, joinableAge as memberAge_joinableAge, lawSmallSportsRecordsDoNotSupplyAge as memberAge_lawSmallSportsRecordsDoNotSupplyAge, lawSmallTeamResultsDoNotSupplyAge as memberAge_lawSmallTeamResultsDoNotSupplyAge, lawStatedBirthdaySurvivesSportsContext as memberAge_lawStatedBirthdaySurvivesSportsContext, lawEffectiveAgeCannotRise as memberAge_lawEffectiveAgeCannotRise, birthKeyUsable as memberAge_birthKeyUsable, matchableAge as memberAge_matchableAge, lawBirthdayAddsOneYear as memberAge_lawBirthdayAddsOneYear, lawLeapDayBirthdayCountsFromMarchFirst as memberAge_lawLeapDayBirthdayCountsFromMarchFirst, statedAgeBeforeBirthDates as memberAge_statedAgeBeforeBirthDates, lawStatedAgeReadsBack as memberAge_lawStatedAgeReadsBack, mergeReading as memberAge_mergeReading, effectiveBirthKey as memberAge_effectiveBirthKey, birthDateExact as memberAge_birthDateExact, confirmedUnderage as memberAge_confirmedUnderage, lawAgreeingAgeKeepsTheBirthDateExact as memberAge_lawAgreeingAgeKeepsTheBirthDateExact, lawConflictIsPermanent as memberAge_lawConflictIsPermanent, lawOlderClaimNeverUnlocksAdult as memberAge_lawOlderClaimNeverUnlocksAdult, lawFloorTwelveRefusesAdultBirthDate as memberAge_lawFloorTwelveRefusesAdultBirthDate, verifiedBrowserBirthMayBeKept as memberAge_verifiedBrowserBirthMayBeKept, lawBeforeAnEighteenthBirthdayIsNotAdult as memberAge_lawBeforeAnEighteenthBirthdayIsNotAdult, fractionalAgeEvidence as memberAge_fractionalAgeEvidence, lawJoiningNeedsUsableAge as memberAge_lawJoiningNeedsUsableAge, lawBirthKeyUsableIsHuman as memberAge_lawBirthKeyUsableIsHuman, lawMatchingNeedsAdultAge as memberAge_lawMatchingNeedsAdultAge, effectiveAge as memberAge_effectiveAge, lawLaterBirthDateWins as memberAge_lawLaterBirthDateWins, lawMergeKeepsYoungest as memberAge_lawMergeKeepsYoungest, lawMergeKeepsWellFormed as memberAge_lawMergeKeepsWellFormed, lawMinorBeforeBirthDatesKeepsMinorAge as memberAge_lawMinorBeforeBirthDatesKeepsMinorAge, lawBrowserBirthNeedsEligibleVerifiedEnrollment as memberAge_lawBrowserBirthNeedsEligibleVerifiedEnrollment, underageCleanupRequired as memberAge_underageCleanupRequired, textUseAllowedAtAge as memberAge_textUseAllowedAtAge, lawAnUpcomingFractionalAgeSuppliesNoCurrentAge as memberAge_lawAnUpcomingFractionalAgeSuppliesNoCurrentAge, lawAFractionalAgeNeedsAgeWordsToBeExplicit as memberAge_lawAFractionalAgeNeedsAgeWordsToBeExplicit, lawPossibleHeightRequiresAgeWords as memberAge_lawPossibleHeightRequiresAgeWords, lawExplicitCurrentFractionalAgeIsAccepted as memberAge_lawExplicitCurrentFractionalAgeIsAccepted, lawUnderageMonthOrQuarterNeedsAgeWords as memberAge_lawUnderageMonthOrQuarterNeedsAgeWords, lawLowerStatedAgeWins as memberAge_lawLowerStatedAgeWins, lawUnderageCleanupNeedsAConfirmedAge as memberAge_lawUnderageCleanupNeedsAConfirmedAge, lawConfirmedUnderageCannotRestart as memberAge_lawConfirmedUnderageCannotRestart } from "./memberAge.ts";
+import { type FractionalAgeEvidence as memberAge_FractionalAgeEvidence, type BirthReadings as memberAge_BirthReadings, maxAge as memberAge_maxAge, ageInRange as memberAge_ageInRange, minMemberAge as memberAge_minMemberAge, joinableAge as memberAge_joinableAge, lawJoiningNeedsUsableAge as memberAge_lawJoiningNeedsUsableAge, adultAge as memberAge_adultAge, matchableAge as memberAge_matchableAge, lawMatchingNeedsAdultAge as memberAge_lawMatchingNeedsAdultAge, recordedChatAge as memberAge_recordedChatAge, confirmedUnderage as memberAge_confirmedUnderage, lawDeclineKeepsStatedAge as memberAge_lawDeclineKeepsStatedAge, ownAgeEvidenceAllowed as memberAge_ownAgeEvidenceAllowed, lawQuotedWordsDoNotSetSenderAge as memberAge_lawQuotedWordsDoNotSetSenderAge, ownYouthCueAllowed as memberAge_ownYouthCueAllowed, lawAnotherSpeakersYouthCueCannotRestrictSender as memberAge_lawAnotherSpeakersYouthCueCannotRestrictSender, underageCleanupRequired as memberAge_underageCleanupRequired, lawUnderageCleanupNeedsAConfirmedAge as memberAge_lawUnderageCleanupNeedsAConfirmedAge, textUseAllowedAtAge as memberAge_textUseAllowedAtAge, lawConfirmedUnderageCannotRestart as memberAge_lawConfirmedUnderageCannotRestart, precedingBirthdayAge as memberAge_precedingBirthdayAge, ageQualifierFollows as memberAge_ageQualifierFollows, lawDistantBirthdayQualifiesTheAge as memberAge_lawDistantBirthdayQualifiesTheAge, lawBeforeAnEighteenthBirthdayIsNotAdult as memberAge_lawBeforeAnEighteenthBirthdayIsNotAdult, minLooseHeightAge as memberAge_minLooseHeightAge, fractionalAgeEvidence as memberAge_fractionalAgeEvidence, minLooseTeamAge as memberAge_minLooseTeamAge, ageConjunctionAllowed as memberAge_ageConjunctionAllowed, lawAnUpcomingFractionalAgeSuppliesNoCurrentAge as memberAge_lawAnUpcomingFractionalAgeSuppliesNoCurrentAge, lawAFractionalAgeNeedsAgeWordsToBeExplicit as memberAge_lawAFractionalAgeNeedsAgeWordsToBeExplicit, lawPossibleHeightRequiresAgeWords as memberAge_lawPossibleHeightRequiresAgeWords, lawExplicitCurrentFractionalAgeIsAccepted as memberAge_lawExplicitCurrentFractionalAgeIsAccepted, lawUnderageMonthOrQuarterNeedsAgeWords as memberAge_lawUnderageMonthOrQuarterNeedsAgeWords, lawSmallSportsRecordsDoNotSupplyAge as memberAge_lawSmallSportsRecordsDoNotSupplyAge, lawSmallTeamResultsDoNotSupplyAge as memberAge_lawSmallTeamResultsDoNotSupplyAge, lawStatedBirthdaySurvivesSportsContext as memberAge_lawStatedBirthdaySurvivesSportsContext, lowerAge as memberAge_lowerAge, lawEffectiveAgeCannotRise as memberAge_lawEffectiveAgeCannotRise, dayKeyYear as memberAge_dayKeyYear, earliestBirthKey as memberAge_earliestBirthKey, ageOnDay as memberAge_ageOnDay, birthKeyUsable as memberAge_birthKeyUsable, lawBirthdayAddsOneYear as memberAge_lawBirthdayAddsOneYear, lawLeapDayBirthdayCountsFromMarchFirst as memberAge_lawLeapDayBirthdayCountsFromMarchFirst, lawBirthKeyUsableIsHuman as memberAge_lawBirthKeyUsableIsHuman, statedAgeLower as memberAge_statedAgeLower, statedAgeUpper as memberAge_statedAgeUpper, birthDateLower as memberAge_birthDateLower, statedAgeBeforeBirthDates as memberAge_statedAgeBeforeBirthDates, lawStatedAgeReadsBack as memberAge_lawStatedAgeReadsBack, laterBirthKey as memberAge_laterBirthKey, mergeReading as memberAge_mergeReading, readingsConflict as memberAge_readingsConflict, effectiveBirthKey as memberAge_effectiveBirthKey, birthDateExact as memberAge_birthDateExact, effectiveAge as memberAge_effectiveAge, lawLowerStatedAgeWins as memberAge_lawLowerStatedAgeWins, lawLaterBirthDateWins as memberAge_lawLaterBirthDateWins, lawAgreeingAgeKeepsTheBirthDateExact as memberAge_lawAgreeingAgeKeepsTheBirthDateExact, lawConflictIsPermanent as memberAge_lawConflictIsPermanent, lawMergeKeepsYoungest as memberAge_lawMergeKeepsYoungest, lawMergeKeepsWellFormed as memberAge_lawMergeKeepsWellFormed, lawOlderClaimNeverUnlocksAdult as memberAge_lawOlderClaimNeverUnlocksAdult, lawMinorBeforeBirthDatesKeepsMinorAge as memberAge_lawMinorBeforeBirthDatesKeepsMinorAge, lawFloorTwelveRefusesAdultBirthDate as memberAge_lawFloorTwelveRefusesAdultBirthDate, verifiedBrowserBirthMayBeKept as memberAge_verifiedBrowserBirthMayBeKept, lawBrowserBirthNeedsEligibleVerifiedEnrollment as memberAge_lawBrowserBirthNeedsEligibleVerifiedEnrollment, signupAgeAt as memberAge_signupAgeAt, signupAgeCapNeeded as memberAge_signupAgeCapNeeded, lawMatchingSignupBirthKeepsBirthdays as memberAge_lawMatchingSignupBirthKeepsBirthdays, lawOtherBirthCannotAdvanceSignupMinor as memberAge_lawOtherBirthCannotAdvanceSignupMinor, lawSignupAgeDoesNotAdvanceEarly as memberAge_lawSignupAgeDoesNotAdvanceEarly, lawSignupAgeAdvancesAtEligibility as memberAge_lawSignupAgeAdvancesAtEligibility, lawSignupAgeKeepsAnIndependentFloor as memberAge_lawSignupAgeKeepsAnIndependentFloor, mayClearMaturedSignupMinor as memberAge_mayClearMaturedSignupMinor, lawOtherYouthEvidenceKeepsMinorRestricted as memberAge_lawOtherYouthEvidenceKeepsMinorRestricted, keepLaterEligibilityDate as memberAge_keepLaterEligibilityDate, lawAnotherSignupCannotAdvanceEligibility as memberAge_lawAnotherSignupCannotAdvanceEligibility } from "./memberAge.ts";
 
 /** Story: Introduce a minor for friendship only to people close in age / A pair with a minor needs teen introductions not stopped, a friendship lane and the age rule (spec/friendIntroAge.md) */
 export interface AgeSide { adult: boolean; ready: boolean; birthKey: number }
 
-/** Story: Introduce a minor for friendship only to people close in age / A group with a minor is small (spec/friendIntroAge.md) */
-export const teenRosterMaximum: number = 6;
 /** Story: Introduce a minor for friendship only to people close in age / A teen partner is 13 to 18 on every day of the introduction (spec/friendIntroAge.md) */
 export const teenFriendMinAge: number = 13;
-/** Story: Introduce a minor for friendship only to people close in age / Two teen birth dates are at most 2 calendar years apart (spec/friendIntroAge.md) */
-export const teenBirthGap: number = 20000;
 /** Story: Introduce a minor for friendship only to people close in age / A teen partner is 13 to 18 on every day of the introduction (spec/friendIntroAge.md) */
 export const teenFriendMaxAge: number = 18;
+/** Story: Introduce a minor for friendship only to people close in age / Two teen birth dates are at most 2 calendar years apart (spec/friendIntroAge.md) */
+export const teenBirthGap: number = 20000;
+/** Story: Introduce a minor for friendship only to people close in age / A group with a minor is small (spec/friendIntroAge.md) */
+export const teenRosterMaximum: number = 6;
 
 /** Story: Introduce a minor for friendship only to people close in age / A teen partner is 13 to 18 on every day of the introduction (spec/friendIntroAge.md) */
 //@ pure
@@ -100,20 +100,6 @@ export function pairAgeAllowed(teenIntros: boolean, friendshipLane: boolean, min
 
 /** Story: Introduce a minor for friendship only to people close in age / A pair with a minor needs teen introductions not stopped, a friendship lane and the age rule (spec/friendIntroAge.md) */
 //@ pure
-export function lawTeenPairWitness(teenIntros: boolean): boolean {
-  //@ ensures \result === true
-  return !teenIntros || teenPairAllowed(teenIntros, true, 20261122, 20261122, true, 20100315, true, 20120315);
-}
-
-/** Story: Introduce a minor for friendship only to people close in age / A pair with a minor needs teen introductions not stopped, a friendship lane and the age rule (spec/friendIntroAge.md) */
-//@ pure
-export function lawNineteenEdgeRefused(friendshipLane: boolean): boolean {
-  //@ ensures \result === true
-  return !teenPairAllowed(true, friendshipLane, 20261121, 20261122, true, 20071122, true, 20091122);
-}
-
-/** Story: Introduce a minor for friendship only to people close in age / A pair with a minor needs teen introductions not stopped, a friendship lane and the age rule (spec/friendIntroAge.md) */
-//@ pure
 export function sidesAllowed(teenIntros: boolean, friendshipLane: boolean, minDay: number, maxDay: number, first: AgeSide, second: AgeSide): boolean {
   return pairAgeAllowed(teenIntros, friendshipLane, minDay, maxDay, first.adult, first.ready, first.birthKey, second.adult, second.ready, second.birthKey);
 }
@@ -174,23 +160,18 @@ export function lawPairAgeSymmetric(teenIntros: boolean, friendshipLane: boolean
   return pairAgeAllowed(teenIntros, friendshipLane, minDay, maxDay, firstAdult, firstReady, firstKey, secondAdult, secondReady, secondKey) === pairAgeAllowed(teenIntros, friendshipLane, minDay, maxDay, secondAdult, secondReady, secondKey, firstAdult, firstReady, firstKey);
 }
 
-/** Story: Introduce a minor for friendship only to people close in age / A group with a minor holds only people who pass the pair rule with every member (spec/friendIntroAge.md) */
+/** Story: Introduce a minor for friendship only to people close in age / A pair with a minor needs teen introductions not stopped, a friendship lane and the age rule (spec/friendIntroAge.md) */
 //@ pure
-export function rosterHasMinor(members: AgeSide[]): boolean {
-  return members.some((side: AgeSide) => !side.adult);
-}
-
-/** Story: Introduce a minor for friendship only to people close in age / A group with a minor holds only people who pass the pair rule with every member (spec/friendIntroAge.md) */
-//@ pure
-export function viaAllowedForRoster(members: AgeSide[]): boolean {
-  return !rosterHasMinor(members);
-}
-
-/** Story: Introduce a minor for friendship only to people close in age / A group with a minor holds only people who pass the pair rule with every member (spec/friendIntroAge.md) */
-//@ pure
-export function lawViaNeverWithAMinor(roster: AgeSide[]): boolean {
+export function lawTeenPairWitness(teenIntros: boolean): boolean {
   //@ ensures \result === true
-  return !rosterHasMinor(roster) || !viaAllowedForRoster(roster);
+  return !teenIntros || teenPairAllowed(teenIntros, true, 20261122, 20261122, true, 20100315, true, 20120315);
+}
+
+/** Story: Introduce a minor for friendship only to people close in age / A pair with a minor needs teen introductions not stopped, a friendship lane and the age rule (spec/friendIntroAge.md) */
+//@ pure
+export function lawNineteenEdgeRefused(friendshipLane: boolean): boolean {
+  //@ ensures \result === true
+  return !teenPairAllowed(true, friendshipLane, 20261121, 20261122, true, 20071122, true, 20091122);
 }
 
 /** Story: Introduce a minor for friendship only to people close in age / A group with a minor holds only people who pass the pair rule with every member (spec/friendIntroAge.md) */
@@ -207,6 +188,18 @@ export function groupAgeAllowed(teenIntros: boolean, friendshipLane: boolean, mi
 
 /** Story: Introduce a minor for friendship only to people close in age / A group with a minor holds only people who pass the pair rule with every member (spec/friendIntroAge.md) */
 //@ pure
+export function rosterHasMinor(members: AgeSide[]): boolean {
+  return members.some((side: AgeSide) => !side.adult);
+}
+
+/** Story: Introduce a minor for friendship only to people close in age / A group with a minor holds only people who pass the pair rule with every member (spec/friendIntroAge.md) */
+//@ pure
+export function viaAllowedForRoster(members: AgeSide[]): boolean {
+  return !rosterHasMinor(members);
+}
+
+/** Story: Introduce a minor for friendship only to people close in age / A group with a minor holds only people who pass the pair rule with every member (spec/friendIntroAge.md) */
+//@ pure
 export function lawGroupWithMinorHoldsOnlyTeenAges(teenIntros: boolean, friendshipLane: boolean, minDay: number, maxDay: number, roster: AgeSide[]): boolean {
   //@ ensures \result === true
   return !(groupAgeAllowed(teenIntros, friendshipLane, minDay, maxDay, roster) && rosterHasMinor(roster)) || !roster.some((side: AgeSide) => !(side.ready && teenPartnerAge(side.birthKey, minDay, maxDay)));
@@ -217,6 +210,13 @@ export function lawGroupWithMinorHoldsOnlyTeenAges(teenIntros: boolean, friendsh
 export function lawGroupStoppedAdultsOnly(friendshipLane: boolean, minDay: number, maxDay: number, roster: AgeSide[]): boolean {
   //@ ensures \result === true
   return groupAgeAllowed(false, friendshipLane, minDay, maxDay, roster) === !roster.some((side: AgeSide) => !side.adult);
+}
+
+/** Story: Introduce a minor for friendship only to people close in age / A group with a minor holds only people who pass the pair rule with every member (spec/friendIntroAge.md) */
+//@ pure
+export function lawViaNeverWithAMinor(roster: AgeSide[]): boolean {
+  //@ ensures \result === true
+  return !rosterHasMinor(roster) || !viaAllowedForRoster(roster);
 }
 
 /** Story: Introduce a minor for friendship only to people close in age / A group with a minor holds nobody aged 19 or more and keeps every minor within 2 years of everyone (spec/friendIntroAge.md) */
@@ -266,13 +266,6 @@ export function teenIntroShape(friendshipLane: boolean, format: string, everyRol
 
 /** Story: Introduce a minor for friendship only to people close in age / A teen introduction has the shape of a friendship meeting (spec/friendIntroAge.md) */
 //@ pure
-export function lawContributorRolesAreNotTeenRoles(role: string): boolean {
-  //@ ensures \result === true
-  return !(role === "host" || role === "helper" || role === "provider" || role === "connector" || role === "newcomer" || role === "attendee" || role === "seeker" || role === "initiator") || !teenFriendRole(role);
-}
-
-/** Story: Introduce a minor for friendship only to people close in age / A teen introduction has the shape of a friendship meeting (spec/friendIntroAge.md) */
-//@ pure
 export function lawTeenShapeNeedsFriendshipLane(format: string, everyRoleTeen: boolean, hasVia: boolean, eventAnchored: boolean): boolean {
   //@ ensures \result === true
   return !teenIntroShape(false, format, everyRoleTeen, hasVia, eventAnchored);
@@ -290,6 +283,13 @@ export function lawTeenShapeNeverAnEvent(friendshipLane: boolean, everyRoleTeen:
 export function lawTeenShapeNeverVia(friendshipLane: boolean, format: string, everyRoleTeen: boolean, eventAnchored: boolean): boolean {
   //@ ensures \result === true
   return !teenIntroShape(friendshipLane, format, everyRoleTeen, true, eventAnchored);
+}
+
+/** Story: Introduce a minor for friendship only to people close in age / A teen introduction has the shape of a friendship meeting (spec/friendIntroAge.md) */
+//@ pure
+export function lawContributorRolesAreNotTeenRoles(role: string): boolean {
+  //@ ensures \result === true
+  return !(role === "host" || role === "helper" || role === "provider" || role === "connector" || role === "newcomer" || role === "attendee" || role === "seeker" || role === "initiator") || !teenFriendRole(role);
 }
 
 /** Story: Introduce a minor for friendship only to people close in age / A group with a minor is small (spec/friendIntroAge.md) */
@@ -394,21 +394,14 @@ export function lawAdultRelayUnchanged(textItem: boolean, teenPair: boolean): bo
 
 /** Story: Introduce a minor for friendship only to people close in age / A minor stays single-player unless a teen introduction is open to them (spec/friendIntroAge.md) */
 //@ pure
-export function singlePlayerMember(adult: boolean, teenCandidate: boolean): boolean {
-  return !adult && !teenCandidate;
-}
-
-/** Story: Introduce a minor for friendship only to people close in age / A minor stays single-player unless a teen introduction is open to them (spec/friendIntroAge.md) */
-//@ pure
-export function lawAdultIsNeverSinglePlayerByAge(teenCandidate: boolean): boolean {
-  //@ ensures \result === true
-  return !singlePlayerMember(true, teenCandidate);
-}
-
-/** Story: Introduce a minor for friendship only to people close in age / A minor stays single-player unless a teen introduction is open to them (spec/friendIntroAge.md) */
-//@ pure
 export function teenFriendCandidate(adult: boolean, ready: boolean, birthKey: number, minDay: number, maxDay: number, teenIntros: boolean, teenApp: boolean): boolean {
   return !adult && teenIntros && teenApp && ready && teenPartnerAge(birthKey, minDay, maxDay) && memberAge_ageOnDay(birthKey, minDay) < memberAge_adultAge;
+}
+
+/** Story: Introduce a minor for friendship only to people close in age / A minor stays single-player unless a teen introduction is open to them (spec/friendIntroAge.md) */
+//@ pure
+export function singlePlayerMember(adult: boolean, teenCandidate: boolean): boolean {
+  return !adult && !teenCandidate;
 }
 
 /** Story: Introduce a minor for friendship only to people close in age / A minor stays single-player unless a teen introduction is open to them (spec/friendIntroAge.md) */
@@ -423,6 +416,13 @@ export function lawStoppedMinorIsSinglePlayer(adult: boolean, ready: boolean, bi
 export function lawUnreadyMinorIsSinglePlayer(adult: boolean, birthKey: number, minDay: number, maxDay: number, teenIntros: boolean, teenApp: boolean): boolean {
   //@ ensures \result === true
   return !(!adult) || singlePlayerMember(adult, teenFriendCandidate(adult, false, birthKey, minDay, maxDay, teenIntros, teenApp));
+}
+
+/** Story: Introduce a minor for friendship only to people close in age / A minor stays single-player unless a teen introduction is open to them (spec/friendIntroAge.md) */
+//@ pure
+export function lawAdultIsNeverSinglePlayerByAge(teenCandidate: boolean): boolean {
+  //@ ensures \result === true
+  return !singlePlayerMember(true, teenCandidate);
 }
 
 /** Story: Introduce a minor for friendship only to people close in age / A statement opens a minor signal only on new evidence (spec/friendIntroAge.md) */

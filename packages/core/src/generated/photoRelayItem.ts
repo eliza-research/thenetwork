@@ -33,18 +33,6 @@ export type Event =
   | { type: "endOffer" }
   | { type: "reportOffer"; byReceiver: boolean };
 
-/** Story: Send my photo to my match / A photo offer goes to one adult match who has room for it (spec/photoRelayItem.md) */
-export const photoOfferCooldownMs: number = 259200000;
-/** Story: Send my photo to my match / A photo offer goes to one adult match who has room for it (spec/photoRelayItem.md) */
-export const photoOfferUnopenedMax: number = 2;
-/** Story: Send my photo to my match / A photo offer goes to one adult match who has room for it (spec/photoRelayItem.md) */
-export const photoOffersDaily: number = 6;
-/** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
-export const offerAnswerMs: number = 86400000;
-/** Story: Send my photo to my match / A photo link only serves its own page (spec/photoRelayItem.md) */
-export const photoPagePurposeHeader: string = "x-photo-page-purpose";
-/** Story: Send my photo to my match / A page opens only from its own fresh link, and a view only for the receiver's bound browser until the photo is taken back (spec/photoRelayItem.md) */
-export const photoPageLinkTtlMs: number = 900000;
 /** Story: Send my photo to my match / A reference names only the sender's own photos and never guesses between two (spec/photoRelayItem.md) */
 export const photoSlotsMax: number = 6;
 /** Story: Send my photo to my match / A reference names only the sender's own photos and never guesses between two (spec/photoRelayItem.md) */
@@ -53,8 +41,20 @@ export const photoSetMax: number = 3;
 export const maskAll: number = 63;
 /** Story: Send my photo to my match / A yes counts only for the proposal the member was just shown (spec/photoRelayItem.md) */
 export const photoDraftTtlMs: number = 900000;
+/** Story: Send my photo to my match / A photo offer goes to one adult match who has room for it (spec/photoRelayItem.md) */
+export const photoOfferCooldownMs: number = 259200000;
+/** Story: Send my photo to my match / A photo offer goes to one adult match who has room for it (spec/photoRelayItem.md) */
+export const photoOfferUnopenedMax: number = 2;
+/** Story: Send my photo to my match / A photo offer goes to one adult match who has room for it (spec/photoRelayItem.md) */
+export const photoOffersDaily: number = 6;
+/** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
+export const offerAnswerMs: number = 86400000;
 /** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
 export const initial: PhotoOffer = { phase: "Asking", answerBy: 0 };
+/** Story: Send my photo to my match / A photo link only serves its own page (spec/photoRelayItem.md) */
+export const photoPagePurposeHeader: string = "x-photo-page-purpose";
+/** Story: Send my photo to my match / A page opens only from its own fresh link, and a view only for the receiver's bound browser until the photo is taken back (spec/photoRelayItem.md) */
+export const photoPageLinkTtlMs: number = 900000;
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
@@ -66,12 +66,6 @@ export function inv(current: PhotoOffer): boolean {
 //@ pure
 export function cleanMask(m: number): number {
   return m < 0 || m > maskAll ? 0 : m;
-}
-
-/** Story: Send my photo to my match / A reference names only the sender's own photos and never guesses between two (spec/photoRelayItem.md) */
-//@ pure
-export function ownSlots(count: number): number {
-  return count <= 0 ? 0 : (count === 1 ? 1 : (count === 2 ? 3 : (count === 3 ? 7 : (count === 4 ? 15 : (count === 5 ? 31 : maskAll)))));
 }
 
 /** Story: Send my photo to my match / A reference names only the sender's own photos and never guesses between two (spec/photoRelayItem.md) */
@@ -96,6 +90,12 @@ export function bothMasks(a: number, b: number): number {
 //@ pure
 export function withoutMask(m: number, x: number): number {
   return exact_photoRelayItem(cleanMask(m) - bothMasks(m, x));
+}
+
+/** Story: Send my photo to my match / A reference names only the sender's own photos and never guesses between two (spec/photoRelayItem.md) */
+//@ pure
+export function ownSlots(count: number): number {
+  return count <= 0 ? 0 : (count === 1 ? 1 : (count === 2 ? 3 : (count === 3 ? 7 : (count === 4 ? 15 : (count === 5 ? 31 : maskAll)))));
 }
 
 /** Story: Send my photo to my match / A reference names only the sender's own photos and never guesses between two (spec/photoRelayItem.md) */
@@ -221,23 +221,17 @@ export function lawNeverMeansNeverAsked(partiesOk: boolean, openToPair: number, 
 
 /** Story: Send my photo to my match / A photo offer goes to one adult match who has room for it (spec/photoRelayItem.md) */
 //@ pure
-export function lawPhotosOffAfterTwoUnopened(openToPair: number, lastUnopenedEndAt: number, at: number, photosLastDay: number, count: number, receiverNever: boolean): boolean {
-  //@ ensures \result === true
-  return !(count >= 1 && count <= photoSetMax) || photoOfferAdmissionFor(true, openToPair, photoOfferUnopenedMax, lastUnopenedEndAt, at, photosLastDay, count, receiverNever) === "OfferPhotosOff";
-}
-
-/** Story: Send my photo to my match / A photo offer goes to one adult match who has room for it (spec/photoRelayItem.md) */
-//@ pure
 export function lawOneOpenOfferPerPair(partiesOk: boolean, unopenedEnds: number, lastUnopenedEndAt: number, at: number, photosLastDay: number, count: number, receiverNever: boolean): boolean {
   //@ ensures \result === true
   const local_12: OfferAdmission = photoOfferAdmissionFor(partiesOk, 1, unopenedEnds, lastUnopenedEndAt, at, photosLastDay, count, receiverNever);
   return local_12 !== "OfferAsk" && local_12 !== "OfferSilentDecline";
 }
 
-/** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
+/** Story: Send my photo to my match / A photo offer goes to one adult match who has room for it (spec/photoRelayItem.md) */
 //@ pure
-export function photoPageReportConfirmed(closed: boolean, filed: boolean): boolean {
-  return closed && filed;
+export function lawPhotosOffAfterTwoUnopened(openToPair: number, lastUnopenedEndAt: number, at: number, photosLastDay: number, count: number, receiverNever: boolean): boolean {
+  //@ ensures \result === true
+  return !(count >= 1 && count <= photoSetMax) || photoOfferAdmissionFor(true, openToPair, photoOfferUnopenedMax, lastUnopenedEndAt, at, photosLastDay, count, receiverNever) === "OfferPhotosOff";
 }
 
 /** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
@@ -255,10 +249,10 @@ export function canAskReceiver(o: PhotoOffer): boolean {
 /** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
 //@ pure
 export function askReceiver(o: PhotoOffer, at: number): PhotoOffer {
+  //@ ensures (inv(o) && canAskReceiver(o)) ==> stepEndsAreFinal(o, \result)
   //@ ensures (inv(o) && canAskReceiver(o)) ==> stepOnlyReviewMakesReady(o, "askReceiver", \result)
   //@ ensures (inv(o) && canAskReceiver(o)) ==> stepOnlyTheReceiverStartsTheCheck(o, "askReceiver", \result)
   //@ ensures (inv(o) && canAskReceiver(o)) ==> stepNoClockEndsAReadyOffer(o, "askReceiver", \result)
-  //@ ensures (inv(o) && canAskReceiver(o)) ==> stepEndsAreFinal(o, \result)
   return { ...o, answerBy: exact_photoRelayItem(at + offerAnswerMs) };
 }
 
@@ -271,10 +265,10 @@ export function canAnswerYes(o: PhotoOffer, at: number): boolean {
 /** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
 //@ pure
 export function answerYes(o: PhotoOffer, at: number): PhotoOffer {
+  //@ ensures (inv(o) && canAnswerYes(o, at)) ==> stepEndsAreFinal(o, \result)
   //@ ensures (inv(o) && canAnswerYes(o, at)) ==> stepOnlyReviewMakesReady(o, "answerYes", \result)
   //@ ensures (inv(o) && canAnswerYes(o, at)) ==> stepOnlyTheReceiverStartsTheCheck(o, "answerYes", \result)
   //@ ensures (inv(o) && canAnswerYes(o, at)) ==> stepNoClockEndsAReadyOffer(o, "answerYes", \result)
-  //@ ensures (inv(o) && canAnswerYes(o, at)) ==> stepEndsAreFinal(o, \result)
   return { ...o, phase: "Reviewing" };
 }
 
@@ -287,10 +281,10 @@ export function canAnswerNo(o: PhotoOffer): boolean {
 /** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
 //@ pure
 export function answerNo(o: PhotoOffer): PhotoOffer {
+  //@ ensures (inv(o) && canAnswerNo(o)) ==> stepEndsAreFinal(o, \result)
   //@ ensures (inv(o) && canAnswerNo(o)) ==> stepOnlyReviewMakesReady(o, "answerNo", \result)
   //@ ensures (inv(o) && canAnswerNo(o)) ==> stepOnlyTheReceiverStartsTheCheck(o, "answerNo", \result)
   //@ ensures (inv(o) && canAnswerNo(o)) ==> stepNoClockEndsAReadyOffer(o, "answerNo", \result)
-  //@ ensures (inv(o) && canAnswerNo(o)) ==> stepEndsAreFinal(o, \result)
   return { ...o, phase: "Declined" };
 }
 
@@ -303,10 +297,10 @@ export function canLapseAnswer(o: PhotoOffer, at: number): boolean {
 /** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
 //@ pure
 export function lapseAnswer(o: PhotoOffer, at: number): PhotoOffer {
+  //@ ensures (inv(o) && canLapseAnswer(o, at)) ==> stepEndsAreFinal(o, \result)
   //@ ensures (inv(o) && canLapseAnswer(o, at)) ==> stepOnlyReviewMakesReady(o, "lapseAnswer", \result)
   //@ ensures (inv(o) && canLapseAnswer(o, at)) ==> stepOnlyTheReceiverStartsTheCheck(o, "lapseAnswer", \result)
   //@ ensures (inv(o) && canLapseAnswer(o, at)) ==> stepNoClockEndsAReadyOffer(o, "lapseAnswer", \result)
-  //@ ensures (inv(o) && canLapseAnswer(o, at)) ==> stepEndsAreFinal(o, \result)
   return { ...o, phase: "Lapsed" };
 }
 
@@ -319,30 +313,42 @@ export function canSettleReview(o: PhotoOffer, approved: number, rejected: numbe
 /** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
 //@ pure
 export function settleReview(o: PhotoOffer, approved: number, rejected: number, timedOut: number, total: number): PhotoOffer {
+  //@ ensures (inv(o) && canSettleReview(o, approved, rejected, timedOut, total)) ==> stepEndsAreFinal(o, \result)
   //@ ensures (inv(o) && canSettleReview(o, approved, rejected, timedOut, total)) ==> stepOnlyReviewMakesReady(o, "settleReview", \result)
   //@ ensures (inv(o) && canSettleReview(o, approved, rejected, timedOut, total)) ==> stepOnlyTheReceiverStartsTheCheck(o, "settleReview", \result)
   //@ ensures (inv(o) && canSettleReview(o, approved, rejected, timedOut, total)) ==> stepNoClockEndsAReadyOffer(o, "settleReview", \result)
-  //@ ensures (inv(o) && canSettleReview(o, approved, rejected, timedOut, total)) ==> stepEndsAreFinal(o, \result)
   return approved > 0 ? ({ ...o, phase: "Ready" } as PhotoOffer) : (rejected > 0 ? ({ ...o, phase: "Rejected" } as PhotoOffer) : ({ ...o, phase: "CheckTimedOut" } as PhotoOffer));
 }
 
 /** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
 //@ pure
+export function canRevokeOffer(o: PhotoOffer, ownerMatches: boolean): boolean {
+  return ownerMatches && offerOpen(o);
+}
+
+/** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
+//@ pure
 export function revokeOffer(o: PhotoOffer, ownerMatches: boolean): PhotoOffer {
+  //@ ensures (inv(o) && canRevokeOffer(o, ownerMatches)) ==> stepEndsAreFinal(o, \result)
   //@ ensures (inv(o) && canRevokeOffer(o, ownerMatches)) ==> stepOnlyReviewMakesReady(o, "revokeOffer", \result)
   //@ ensures (inv(o) && canRevokeOffer(o, ownerMatches)) ==> stepOnlyTheReceiverStartsTheCheck(o, "revokeOffer", \result)
   //@ ensures (inv(o) && canRevokeOffer(o, ownerMatches)) ==> stepNoClockEndsAReadyOffer(o, "revokeOffer", \result)
-  //@ ensures (inv(o) && canRevokeOffer(o, ownerMatches)) ==> stepEndsAreFinal(o, \result)
   return { ...o, phase: "Revoked" };
 }
 
 /** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
 //@ pure
+export function canEndOffer(o: PhotoOffer): boolean {
+  return offerOpen(o);
+}
+
+/** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
+//@ pure
 export function endOffer(o: PhotoOffer): PhotoOffer {
+  //@ ensures (inv(o) && canEndOffer(o)) ==> stepEndsAreFinal(o, \result)
   //@ ensures (inv(o) && canEndOffer(o)) ==> stepOnlyReviewMakesReady(o, "endOffer", \result)
   //@ ensures (inv(o) && canEndOffer(o)) ==> stepOnlyTheReceiverStartsTheCheck(o, "endOffer", \result)
   //@ ensures (inv(o) && canEndOffer(o)) ==> stepNoClockEndsAReadyOffer(o, "endOffer", \result)
-  //@ ensures (inv(o) && canEndOffer(o)) ==> stepEndsAreFinal(o, \result)
   return { ...o, phase: "Ended" };
 }
 
@@ -355,11 +361,17 @@ export function canReportOffer(o: PhotoOffer, byReceiver: boolean): boolean {
 /** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
 //@ pure
 export function reportOffer(o: PhotoOffer, byReceiver: boolean): PhotoOffer {
+  //@ ensures (inv(o) && canReportOffer(o, byReceiver)) ==> stepEndsAreFinal(o, \result)
   //@ ensures (inv(o) && canReportOffer(o, byReceiver)) ==> stepOnlyReviewMakesReady(o, "reportOffer", \result)
   //@ ensures (inv(o) && canReportOffer(o, byReceiver)) ==> stepOnlyTheReceiverStartsTheCheck(o, "reportOffer", \result)
   //@ ensures (inv(o) && canReportOffer(o, byReceiver)) ==> stepNoClockEndsAReadyOffer(o, "reportOffer", \result)
-  //@ ensures (inv(o) && canReportOffer(o, byReceiver)) ==> stepEndsAreFinal(o, \result)
   return { ...o, phase: "Reported" };
+}
+
+/** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
+//@ pure
+export function photoPageReportConfirmed(closed: boolean, filed: boolean): boolean {
+  return closed && filed;
 }
 
 /** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
@@ -367,6 +379,12 @@ export function reportOffer(o: PhotoOffer, byReceiver: boolean): PhotoOffer {
 export function lawPhotoPageReportNeedsFiling(closed: boolean, filed: boolean): boolean {
   //@ ensures \result === true
   return photoPageReportConfirmed(closed, filed) === (closed && filed);
+}
+
+/** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
+//@ pure
+export function stepEndsAreFinal(before: PhotoOffer, after: PhotoOffer): boolean {
+  return !(!offerOpen(before)) || equal_photoRelayItem(after, before);
 }
 
 /** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
@@ -411,24 +429,6 @@ export function sometimesLapsed(o: PhotoOffer): boolean {
   return o.phase === "Lapsed";
 }
 
-/** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
-//@ pure
-export function canRevokeOffer(o: PhotoOffer, ownerMatches: boolean): boolean {
-  return ownerMatches && offerOpen(o);
-}
-
-/** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
-//@ pure
-export function canEndOffer(o: PhotoOffer): boolean {
-  return offerOpen(o);
-}
-
-/** Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back (spec/photoRelayItem.md) */
-//@ pure
-export function stepEndsAreFinal(before: PhotoOffer, after: PhotoOffer): boolean {
-  return !(!offerOpen(before)) || equal_photoRelayItem(after, before);
-}
-
 /** Story: Send my photo to my match / The sender learns only sent, not taken, not approved or timed out (spec/photoRelayItem.md) */
 //@ pure
 export function senderNoticeFor(phase: OfferPhase, endedBySender: boolean, wasReady: boolean): OfferNotice {
@@ -439,24 +439,6 @@ export function senderNoticeFor(phase: OfferPhase, endedBySender: boolean, wasRe
 //@ pure
 export function senderNoticeDueAt(notice: OfferNotice, at: number, answerBy: number): number {
   return notice === "TellNotTaken" && at < answerBy ? answerBy : at;
-}
-
-/** Story: Send my photo to my match / The sender learns only sent, not taken, not approved or timed out (spec/photoRelayItem.md) */
-//@ pure
-export function unsentNoticeKept(notice: OfferNotice, phase: OfferPhase): boolean {
-  return notice !== "TellSent" || phase === "Ready";
-}
-
-/** Story: Send my photo to my match / The sender learns only sent, not taken, not approved or timed out (spec/photoRelayItem.md) */
-//@ pure
-export function photoSenderViewFor(phase: OfferPhase, wasReady: boolean, endedBySender: boolean, noticeLater: boolean): PhotoSenderView {
-  return phase === "Asking" ? "SeesAsked" : (phase === "Reviewing" ? "SeesChecking" : (phase === "Ready" ? "SeesSent" : (phase === "Revoked" || endedBySender ? "SeesTakenBack" : (wasReady && (phase === "Ended" || phase === "Reported") ? "SeesSent" : ((phase === "Declined" || phase === "Lapsed" || phase === "Ended") && noticeLater ? "SeesAsked" : "SeesNothing")))));
-}
-
-/** Story: Send my photo to my match / The sender learns only sent, not taken, not approved or timed out (spec/photoRelayItem.md) */
-//@ pure
-export function photoListedAs(seen: PhotoSenderView, photoTakenBack: boolean): PhotoSenderView {
-  return photoTakenBack ? "SeesTakenBack" : seen;
 }
 
 /** Story: Send my photo to my match / The sender learns only sent, not taken, not approved or timed out (spec/photoRelayItem.md) */
@@ -482,6 +464,31 @@ export function lawNoReadReceipt(phase: OfferPhase): boolean {
 
 /** Story: Send my photo to my match / The sender learns only sent, not taken, not approved or timed out (spec/photoRelayItem.md) */
 //@ pure
+export function unsentNoticeKept(notice: OfferNotice, phase: OfferPhase): boolean {
+  return notice !== "TellSent" || phase === "Ready";
+}
+
+/** Story: Send my photo to my match / The sender learns only sent, not taken, not approved or timed out (spec/photoRelayItem.md) */
+//@ pure
+export function photoSenderViewFor(phase: OfferPhase, wasReady: boolean, endedBySender: boolean, noticeLater: boolean): PhotoSenderView {
+  return phase === "Asking" ? "SeesAsked" : (phase === "Reviewing" ? "SeesChecking" : (phase === "Ready" ? "SeesSent" : (phase === "Revoked" || endedBySender ? "SeesTakenBack" : (wasReady && (phase === "Ended" || phase === "Reported") ? "SeesSent" : ((phase === "Declined" || phase === "Lapsed" || phase === "Ended") && noticeLater ? "SeesAsked" : "SeesNothing")))));
+}
+
+/** Story: Send my photo to my match / The sender learns only sent, not taken, not approved or timed out (spec/photoRelayItem.md) */
+//@ pure
+export function photoListedAs(seen: PhotoSenderView, photoTakenBack: boolean): PhotoSenderView {
+  return photoTakenBack ? "SeesTakenBack" : seen;
+}
+
+/** Story: Send my photo to my match / The sender learns only sent, not taken, not approved or timed out (spec/photoRelayItem.md) */
+//@ pure
+export function photoTakeBackFor(phase: OfferPhase, wasReady: boolean, endedBySender: boolean, noticeLater: boolean): PhotoTakeBack {
+  const local_13: PhotoSenderView = photoSenderViewFor(phase, wasReady, endedBySender, noticeLater);
+  return local_13 === "SeesNothing" || local_13 === "SeesTakenBack" ? "TakeBackNothing" : (phase === "Asking" || phase === "Reviewing" || phase === "Ready" ? "TakeBackOffer" : (local_13 === "SeesAsked" ? "TakeBackQuietly" : "TakeBackSeen"));
+}
+
+/** Story: Send my photo to my match / The sender learns only sent, not taken, not approved or timed out (spec/photoRelayItem.md) */
+//@ pure
 export function lawSentIsNotToldAfterTheEnd(phase: OfferPhase): boolean {
   //@ ensures \result === true
   return !(phase !== "Ready") || !unsentNoticeKept("TellSent", phase);
@@ -503,27 +510,6 @@ export function lawTheListIsNoReadReceipt(noticeLater: boolean): boolean {
 
 /** Story: Send my photo to my match / The sender learns only sent, not taken, not approved or timed out (spec/photoRelayItem.md) */
 //@ pure
-export function lawTakenBackShowsAsTakenBack(wasReady: boolean, noticeLater: boolean): boolean {
-  //@ ensures \result === true
-  return photoSenderViewFor("Revoked", wasReady, true, noticeLater) === "SeesTakenBack" && photoSenderViewFor("Declined", wasReady, true, noticeLater) === "SeesTakenBack";
-}
-
-/** Story: Send my photo to my match / The sender learns only sent, not taken, not approved or timed out (spec/photoRelayItem.md) */
-//@ pure
-export function lawATakenBackPhotoListsAsTakenBack(seen: PhotoSenderView): boolean {
-  //@ ensures \result === true
-  return photoListedAs(seen, true) === "SeesTakenBack";
-}
-
-/** Story: Send my photo to my match / The sender learns only sent, not taken, not approved or timed out (spec/photoRelayItem.md) */
-//@ pure
-export function photoTakeBackFor(phase: OfferPhase, wasReady: boolean, endedBySender: boolean, noticeLater: boolean): PhotoTakeBack {
-  const local_13: PhotoSenderView = photoSenderViewFor(phase, wasReady, endedBySender, noticeLater);
-  return local_13 === "SeesNothing" || local_13 === "SeesTakenBack" ? "TakeBackNothing" : (phase === "Asking" || phase === "Reviewing" || phase === "Ready" ? "TakeBackOffer" : (local_13 === "SeesAsked" ? "TakeBackQuietly" : "TakeBackSeen"));
-}
-
-/** Story: Send my photo to my match / The sender learns only sent, not taken, not approved or timed out (spec/photoRelayItem.md) */
-//@ pure
 export function lawTakeBackIsNoReadReceipt(noticeLater: boolean): boolean {
   //@ ensures \result === true
   return photoTakeBackFor("Ended", true, false, noticeLater) === photoTakeBackFor("Reported", true, false, noticeLater);
@@ -534,6 +520,20 @@ export function lawTakeBackIsNoReadReceipt(noticeLater: boolean): boolean {
 export function lawTakeBackHidesADecline(noticeLater: boolean): boolean {
   //@ ensures \result === true
   return !noticeLater || (photoTakeBackFor("Declined", false, false, noticeLater) === "TakeBackQuietly" && photoTakeBackFor("Ended", false, false, noticeLater) === "TakeBackQuietly");
+}
+
+/** Story: Send my photo to my match / The sender learns only sent, not taken, not approved or timed out (spec/photoRelayItem.md) */
+//@ pure
+export function lawTakenBackShowsAsTakenBack(wasReady: boolean, noticeLater: boolean): boolean {
+  //@ ensures \result === true
+  return photoSenderViewFor("Revoked", wasReady, true, noticeLater) === "SeesTakenBack" && photoSenderViewFor("Declined", wasReady, true, noticeLater) === "SeesTakenBack";
+}
+
+/** Story: Send my photo to my match / The sender learns only sent, not taken, not approved or timed out (spec/photoRelayItem.md) */
+//@ pure
+export function lawATakenBackPhotoListsAsTakenBack(seen: PhotoSenderView): boolean {
+  //@ ensures \result === true
+  return photoListedAs(seen, true) === "SeesTakenBack";
 }
 
 /** Story: Send my photo to my match / The sender learns only sent, not taken, not approved or timed out (spec/photoRelayItem.md) */

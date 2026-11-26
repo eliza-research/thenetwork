@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Alert, Button, EmptyState, Skeleton, cn } from "@repo/ui";
 import {
   S, can, connect, current, dirtySpecs, doneEditing, focusLater, focusRow, graphOf, publish, redraw, setCmdOpen,
-  setDrawer, undo, useStudio,
+  setDrawer, toggleRail, undo, useStudio,
 } from "./studio.ts";
 import { Ask, BuildDrawer, CommandPalette, PublishDialog, TopBar } from "./Build.tsx";
 import { Rail } from "./Rail.tsx";
@@ -24,6 +24,7 @@ export function App() {
       const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? "");
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") { e.preventDefault(); openPublish(); }
       else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setCmdOpen(!S.cmdOpen); }
+      else if ((e.metaKey || e.ctrlKey) && e.key === "\\") { e.preventDefault(); toggleRail(); }
       else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !typing && S.history.length) { e.preventDefault(); undo(); }
       else if (e.key === "Escape" && !document.querySelector("[role=dialog]")) {
         if (typing && S.editing.size) {
@@ -48,7 +49,7 @@ export function App() {
       <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground max-sm:h-auto max-sm:min-h-screen">
         <TopBar onPublish={openPublish} />
         <div className="flex min-h-0 flex-1 overflow-hidden max-sm:flex-col">
-          <Rail />
+          {!S.railCollapsed && <Rail />}
           <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
             {(S.offline || S.snap?.problem) && (
               <div className="flex flex-none flex-col gap-2 px-6 pt-4">

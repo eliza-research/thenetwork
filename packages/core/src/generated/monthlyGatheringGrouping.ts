@@ -35,14 +35,14 @@ export function lawGatheringGroupingCannotSeatTwice(eligible: boolean, compatibl
 
 /** Story: Review suggested conversation groupings for the monthly gathering / Human approval binds the exact current nonempty suggestion for one gathering revision (spec/monthlyGatheringGrouping.md) */
 //@ pure
-export function gatheringGroupingApprovalCurrent(recorded: boolean, exactFingerprint: boolean, complete: boolean): boolean {
-  return recorded && exactFingerprint && complete;
+export function gatheringGroupingReviewAllowed(currentGathering: boolean, beforeStart: boolean, exactFingerprint: boolean, nonempty: boolean): boolean {
+  return currentGathering && beforeStart && exactFingerprint && nonempty;
 }
 
 /** Story: Review suggested conversation groupings for the monthly gathering / Human approval binds the exact current nonempty suggestion for one gathering revision (spec/monthlyGatheringGrouping.md) */
 //@ pure
-export function gatheringGroupingReviewAllowed(currentGathering: boolean, beforeStart: boolean, exactFingerprint: boolean, nonempty: boolean): boolean {
-  return currentGathering && beforeStart && exactFingerprint && nonempty;
+export function gatheringGroupingApprovalCurrent(recorded: boolean, exactFingerprint: boolean, complete: boolean): boolean {
+  return recorded && exactFingerprint && complete;
 }
 
 /** Story: Review suggested conversation groupings for the monthly gathering / Human approval binds the exact current nonempty suggestion for one gathering revision (spec/monthlyGatheringGrouping.md) */

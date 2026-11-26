@@ -26,6 +26,8 @@ export const S = {
   sel: "",
   /** Which stories and rules are open, or being edited. */
   open: new Set<string>(),
+  /** Rules whose Quint/body the user explicitly collapsed while in Quint density mode. */
+  collapsedRules: new Set<string>(),
   editing: new Set<string>(),
   /** The prose and Quint blocks of each rule being edited, while it is edited. */
   items: new Map<string, Item[]>(),
@@ -38,6 +40,7 @@ export const S = {
   components: undefined as ComponentIndex | undefined,
   view: "specs" as StudioView,
   density: "quint" as "prose" | "quint",
+  railCollapsed: false,
   drawer: false,
   cmdOpen: false,
   theme: "system" as "system" | "dark" | "light",
@@ -80,6 +83,34 @@ export function setView(v: StudioView) {
 
 export function setDensity(density: "prose" | "quint") {
   S.density = density;
+  S.collapsedRules.clear();
+  redraw();
+}
+
+export function toggleRail() {
+  S.railCollapsed = !S.railCollapsed;
+  redraw();
+}
+
+export function ruleBodyVisible(id: string): boolean {
+  return S.density === "quint" ? !S.collapsedRules.has(id) : S.open.has(id);
+}
+
+export function toggleRuleBody(id: string) {
+  if (S.density === "quint") {
+    if (!S.collapsedRules.delete(id)) S.collapsedRules.add(id);
+  } else {
+    if (!S.open.delete(id)) S.open.add(id);
+  }
+  redraw();
+}
+
+export function setAllStoriesOpen(spec: Working, open: boolean) {
+  for (const story of spec.outline.stories) {
+    const id = ui(spec.file, story.id);
+    if (open) S.open.add(id);
+    else S.open.delete(id);
+  }
   redraw();
 }
 
@@ -213,6 +244,7 @@ function merge(snap: Snapshot, mine: Working[]): Working[] {
     return key ? after.get(key) : id;
   };
   S.open = new Set([...S.open].flatMap((id) => remap(id) ?? []));
+  S.collapsedRules = new Set([...S.collapsedRules].flatMap((id) => remap(id) ?? []));
   S.editing = new Set([...S.editing].flatMap((id) => remap(id) ?? []));
   S.items = new Map([...S.items].flatMap(([id, v]) => { const to = remap(id); return to ? [[to, v] as const] : []; }));
   for (const f of [...S.draftGraphs.keys()]) if (!out.some((w) => w.file === f && isDirty(w))) S.draftGraphs.delete(f);
@@ -328,6 +360,7 @@ export function reveal(file: string, key?: string) {
   const id = ui(file, (node.rule ?? node.story).id);
   S.open.add(ui(file, node.story.id));
   S.open.add(id);
+  S.collapsedRules.delete(id);
   redraw();
   setTimeout(() => document.querySelector(`[data-uid="${id}"]`)?.scrollIntoView({ block: "center" }), 0);
 }
