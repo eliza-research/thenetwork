@@ -2,6 +2,31 @@ import { expect, test } from "vitest";
 import { DAY, HOUR, MINUTE } from "@thenetwork/core";
 import { Mini } from "./mini.ts";
 
+test("a day-before reminder uses quiet hours in the member home city", async () => {
+  // spec/outboundAdmission.md, "Replies, quiet hours and unanswered messages limit when a send can go out"
+  // spec/quietHours.md, "A quiet window includes its start and excludes its end"
+  const w = new Mini(["a", "b"].map((id, i) => ({
+    id, name: i ? "Ben Ito" : "Ana Diaz", age: 30, area: "Greenpoint",
+    interests: ["climbing", "hiking"], skills: ["belaying"],
+  })), { plans: false, growth: false });
+  await w.onboard("a", "b");
+  const id = w.propose(["a", "b"]);
+  await w.answerProbes(["a", "b"]);
+  w.members.find(m => m.id === "b")!.homeCity = "sf";
+  // 10:30 in New York is 07:30 in San Francisco. Quiet hours run from 21:00 to 09:00.
+  const now = Date.UTC(2026, 9, 10, 14, 30);
+  const state = w.net.exportState();
+  state.opps.find(o => o.id === id)!.meetingAt = now + 20 * HOUR;
+  w.net.importState(state);
+  const reminders = () => w.sent.filter(s => s.meta.type === "reminder" && s.meta.proposalId === id).map(s => s.to);
+  w.clock.set(now);
+  await w.net.tick(now);
+  expect(reminders()).toEqual(["a"]);
+  w.clock.set(Date.UTC(2026, 9, 10, 16));
+  await w.net.tick(w.clock.now());
+  expect(reminders()).toEqual(["a", "b"]);
+});
+
 test("day-before reminders wait for fractional quiet hours on both sides of midnight", async () => {
   // spec/quietHours.md, "A quiet window includes its start and excludes its end"
   // spec/meetingSettlement.md, "A day-before reminder has its own send window"
