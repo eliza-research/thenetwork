@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 import { DAY, HOUR } from "@thenetwork/core";
 import { Mini } from "./mini.ts";
 import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
+import { feedbackOf } from "../src/classify.ts";
 
 async function feedbackWorld(reply: string) {
   const w = new Mini([
@@ -27,7 +28,6 @@ async function feedbackWorld(reply: string) {
   };
 }
 
-// spec/meetingSettlement.md, "A worthwhile answer records the member's own experience during the open attendance period"
 test("feedback that declines meeting again records no would-meet-again and no worthwhile", async () => {
   const { feedback, post } = await feedbackWorld("It was fine, but I don't want to meet again");
   expect(feedback?.wouldMeetAgain).toBe(false);
@@ -38,4 +38,32 @@ test("feedback that asks to meet again still records would-meet-again", async ()
   const { feedback, post } = await feedbackWorld("I'd meet again");
   expect(feedback?.wouldMeetAgain).toBe(true);
   expect(post?.worthwhile).toBe(true);
+});
+
+test("feedback with a contraction about another clause still records would-meet-again", async () => {
+  const { feedback, post } = await feedbackWorld("I can't make Saturday but would meet again");
+  expect(feedback?.wouldMeetAgain).toBe(true);
+  expect(post?.worthwhile).toBe(true);
+});
+
+test("contracted declines of meeting again read as no and contracted yes answers read as yes", () => {
+  for (const reply of [
+    "It was fine, but I don't want to meet again",
+    "I didn't want to meet again",
+    "I can't see myself meeting again",
+    "I cannot see myself meeting again",
+    "I have no interest in meeting again",
+  ]) expect(feedbackOf(reply).again, reply).toBe(false);
+  for (const reply of [
+    "cannot wait to meet again",
+    "can't hardly wait to meet again",
+    "can't  wait to meet again",
+    "I didn't mind, would meet again",
+    "don't mind meeting again",
+    "can't believe how well it went, let's do it again",
+    "I can't make Saturday but would meet again",
+    "didn't want it to end, let's meet again",
+    "I didn't expect much but would meet again",
+    "why don't we meet again",
+  ]) expect(feedbackOf(reply).again, reply).toBe(true);
 });

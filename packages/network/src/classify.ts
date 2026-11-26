@@ -827,7 +827,7 @@ export function feedbackOf(body: string): { sentiment: "positive" | "neutral" | 
   const negative = otherNoShow || NEGATIVE_FEEDBACK.test(t);
   const positive = /great|clicked|loved|amazing|nice|easy to talk/.test(t) || /^we hit it off[.!]*$/.test(t.trim());
   const sentiment = negative ? "negative" : positive ? "positive" : "neutral";
-  const again = !negative && /again|clicked/.test(t) && !/\b(wouldn'?t|won'?t|don'?t|didn'?t|can'?t(?! wait)|cannot|not|never|no interest)\b[^.!?]*\bagain\b/.test(t);
+  const again = !negative && /again|clicked/.test(t) && !/\b(wouldn'?t|won'?t|not|never)\b[^.!?]*\bagain\b/.test(t) && !/\b(?:don'?t|didn'?t|can'?t|cannot)\s+(?:really\s+|quite\s+|ever\s+)?(?:want|think|see|feel like|plan|meet|do|go|text|call)\b(?:(?!\bbut\b)[^.!?,;])*?\bagain\b/.test(t) && !/\bno interest\b(?:(?!\bbut\b)[^.!?,;])*?\bagain\b/.test(t);
   return { sentiment, selfNoShow, otherNoShow, again };
 }
 const NEGATIVE_FEEDBACK = /\b((was|is|it's|that's)?\s*(not|n't|wasn't|isn't)\s+(that |very |really |so |too |super )?(great|good|fun|nice|amazing)|not much in common|nothing in common|didn't (really |quite )?(click|connect|enjoy)|didn't have much|not (really )?for me|not my (thing|type)|awkward|terrible|rude|creepy|bummer|uncomfortable)/;
