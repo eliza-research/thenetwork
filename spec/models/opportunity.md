@@ -31,7 +31,8 @@ A refusal of a named time keeps the opportunity open. A separate
 affirmative clause can select another offered time, and a separate
 direct refusal can decline the opportunity. A condition stays attached to its
 time refusal and leaves the consequence unresolved. A quoted or reported
-refusal does not decline the opportunity. A broad yes with “both” in the refused
+refusal does not decline the opportunity. A day named only in a quotation or a
+report is not a pick. A broad yes with “both” in the refused
 list leaves the time choice open when the member chooses no other
 time. Fallback selection keeps any stated time-of-day limit before
 calling the modeled answer action. The signed booking test checks the

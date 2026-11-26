@@ -326,3 +326,5 @@
 {"text":"I'm married with two kids","desire":null}
 {"text":"good morning","desire":null}
 {"text":"the event last week was fun","desire":null}
+{"text":"I play football but I want to meet founders","desire":"meet_founders"}
+{"text":"I'm open to anything but I'd love to meet founders","desire":"meet_founders"}

@@ -165,6 +165,13 @@ export async function evalsBlock(b: Block): Promise<void> {
   const neg = await jsonl<{ text: string }>("network/negations.jsonl");
   const negBad = neg.filter(l => { const x = extractProfile(l.text); return x.desireIds.length || x.interests.length || classify(l.text).kind === "people_request"; }).map(l => l.text);
   b.gate(`negated wants (n ${neg.length}): 0 read as a want, interest or request`, neg.length >= 100 && negBad.length === 0, negBad.slice(0, 5).join(" | "));
+  await b.run("negated wants: contrast clauses after 'anything but' keep positive wants", () => {
+    expect(extractProfile("open to anything but would love to meet founders").desireIds).toContain("meet_founders");
+    expect(extractProfile("down for anything, but mostly looking for founders").desireIds).toContain("meet_founders");
+    expect(extractProfile("I'm open to anything but I'd love to meet founders").desireIds).toContain("meet_founders");
+    expect(extractProfile("I don't want anything but dating").notWanted).not.toContain("dating");
+    expect(extractProfile("anything but dating").notWanted).toContain("dating");
+  });
 
   const again = await jsonl<{ text: string; label: "yes" | "no" | "unclear" }>("network/plan-again.jsonl");
   const againMiss = again.filter(l => planAgainOf(l.text) !== l.label).map(l => `${JSON.stringify(l.text)} -> ${planAgainOf(l.text)} (want ${l.label})`);

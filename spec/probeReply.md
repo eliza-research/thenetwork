@@ -64,6 +64,18 @@ pure def lawDirectWithdrawalKeepsTheRefusal(modelConsent: str): bool =
     probeReplyReading(false, false, modelConsent) == KeepOffline
 ```
 
+### A qualifier or adverb after neither still refuses the named time
+
+A "neither" after a named time refuses that time even when a qualifier such as "for me", an adverb such as "really", or "at all" follows it, with or without a word such as "does" or "works" after it. The refusal also applies to each time joined to that time. A separate affirmative choice can still select another offered time. The refusal only applies when the member states it directly: a "neither" inside a report of what someone else said, or inside a condition, does not refuse the time.
+
+```quint
+pure def neitherQualifierRefusal(neitherAfterTime: bool, qualifierAfterNeither: bool, directStatement: bool): bool =
+  (neitherAfterTime or qualifierAfterNeither) and directStatement
+
+pure def lawNeitherQualifierRefusesNamedTime(neitherAfterTime: bool): bool =
+  neitherQualifierRefusal(neitherAfterTime, true, true)
+```
+
 ### A clear yes uses the chosen times when the member names them
 
 If a model reads a clear yes, use the offered times the person chose. If they gave no preference, keep all offered times. The caller validates model-supplied keys against the offered times first.
@@ -71,6 +83,21 @@ If a model reads a clear yes, use the offered times the person chose. If they ga
 ```quint
 pure def pickedTimes(chosen: List[str], offered: List[str]): List[str] =
   if (chosen.length() > 0) chosen else offered
+```
+
+### A yes that refuses the remainder as well does not book it
+
+A yes that refuses named times still books the times that were not refused ("yes, not Sunday though" picks the other two). But when the reply also refuses the remainder itself ("the rest don't work", "the rest are busy"), the refused remainder is never booked: the probe stays open and the member is asked again. A phrase that affirms the remainder ("the rest work", "everything else is fine", "I'm free") still books the times that were not refused.
+
+```quint
+pure def yesBooksRefusedRemainder(refusedRemainder: bool, affirmedRemainder: bool): bool =
+  not(refusedRemainder) or affirmedRemainder
+
+pure def lawAYesThatRefusesTheRemainderBooksNothing(refusedRemainder: bool): bool =
+  refusedRemainder implies not(yesBooksRefusedRemainder(refusedRemainder, false))
+
+pure def lawAnAffirmedRemainderBooksTheRest(refusedRemainder: bool): bool =
+  refusedRemainder implies yesBooksRefusedRemainder(refusedRemainder, true)
 ```
 
 ### A direct ordinal selects that position in the offer

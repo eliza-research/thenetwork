@@ -264,3 +264,93 @@
 {"text":"sat sun busy, thu works","answer":"yes","keys":["a"]}
 {"text":"sat sun don't work, thu works","answer":"yes","keys":["a"]}
 {"text":"sat sun are out, thu works","answer":"yes","keys":["a"]}
+{"text":"the weekend ones work","answer":"yes","keys":["b","c"]}
+{"text":"the weekday ones work","answer":"yes","keys":["a"]}
+{"text":"the weeknight ones work","answer":"yes","keys":["a"]}
+{"text":"the weekend days work","answer":"yes","keys":["b","c"]}
+{"text":"the weekend slots work","answer":"yes","keys":["b","c"]}
+{"text":"the evening ones work","answer":"yes","keys":["a"]}
+{"text":"the morning ones work","answer":"yes","keys":["b"]}
+{"text":"Saturday ones work","answer":"yes","keys":["b"]}
+{"text":"Thursday works, the weekend ones don't","answer":"yes","keys":["a"]}
+{"text":"Thursday works, the weekend days don't","answer":"yes","keys":["a"]}
+{"text":"the weekend ones don't work","answer":"unclear","keys":[]}
+{"text":"the weekend ones are good","answer":"yes","keys":["b","c"]}
+{"text":"the weekend one works","answer":"yes","keys":["b","c"]}
+{"text":"Saturday or Sunday, whichever is easier","answer":"yes","keys":["b","c"]}
+{"text":"either Saturday or Sunday, whichever is easier","answer":"yes","keys":["b","c"]}
+{"text":"Saturday or Sunday, whichever","answer":"yes","keys":["b","c"]}
+{"text":"Saturday or Sunday, whichever one","answer":"yes","keys":["b","c"]}
+{"text":"whichever works","answer":"yes","keys":["a","b","c"]}
+{"text":"Saturday or Sunday, any of them works","answer":"yes","keys":["b","c"]}
+{"text":"whichever of Saturday or Sunday works","answer":"yes","keys":["b","c"]}
+{"text":"Saturday or Sunday, all three","answer":"yes","keys":["a","b","c"]}
+{"text":"Saturday or Sunday, all of them","answer":"yes","keys":["a","b","c"]}
+{"text":"Saturday or Sunday, whichever, but not Saturday","answer":"yes","keys":["c"]}
+{"text":"I'm at a wedding Saturday and my sister visits Sunday, so whichever","answer":"yes","keys":["a","b","c"]}
+{"text":"wedding Saturday and family Sunday, so whichever","answer":"yes","keys":["a","b","c"]}
+{"text":"Saturday and Sunday, whichever","answer":"yes","keys":["a","b","c"]}
+{"text":"Sat or Sun whichever","answer":"yes","keys":["a","b","c"]}
+{"text":"Saturday works when Ana is free","answer":"unclear","keys":[]}
+{"text":"When Ana is free, Saturday works","answer":"unclear","keys":[]}
+{"text":"Saturday works when Ana can make it","answer":"unclear","keys":[]}
+{"text":"Saturday works whenever Ana is free","answer":"unclear","keys":[]}
+{"text":"Saturday works. Sunday works when Ana is free","answer":"yes","keys":["b"]}
+{"text":"Saturday works when I'm free","answer":"unclear","keys":[]}
+{"text":"The later option works","answer":"yes","keys":["c"]}
+{"text":"The later time works","answer":"yes","keys":["c"]}
+{"text":"The later slot works","answer":"yes","keys":["c"]}
+{"text":"The first and later option work","answer":"yes","keys":["a","c"]}
+{"text":"The later one works","answer":"yes","keys":["c"]}
+{"text":"Later works","answer":"unclear","keys":[]}
+{"text":"Yes, Saturday and Sunday don't work, the rest don't work","answer":"unclear","keys":[]}
+{"text":"Yes, Saturday and Sunday don't work, the rest are busy","answer":"unclear","keys":[]}
+{"text":"Yes, Saturday and Sunday don't work, the rest work","answer":"yes","keys":["a"]}
+{"text":"Yes, Saturday and Sunday don't work, everything else works","answer":"yes","keys":["a"]}
+{"text":"Yes, Saturday and Sunday don't work, I'm free","answer":"yes","keys":["a"]}
+{"text":"Yes, Saturday and Sunday don't work, Thursday works","answer":"yes","keys":["a"]}
+{"text":"Yes, Saturday and Sunday don't work, the rest do not work","answer":"unclear","keys":[]}
+{"text":"Yes, I'm open to meeting, Saturday and Sunday don't work, the rest don't work","answer":"unclear","keys":[]}
+{"text":"Yes, I'm free, Saturday and Sunday don't work, the rest don't work","answer":"unclear","keys":[]}
+{"text":"Yes, Saturday and Sunday don't work, the rest are bad","answer":"unclear","keys":[]}
+{"text":"Yes, Saturday and Sunday don't work, the rest are tough","answer":"unclear","keys":[]}
+{"text":"Yes, Saturday and Sunday don't work, the rest are rough","answer":"unclear","keys":[]}
+{"text":"Yes, Saturday and Sunday don't work, the rest are packed","answer":"unclear","keys":[]}
+{"text":"Yes, Saturday and Sunday don't work, the rest are full","answer":"unclear","keys":[]}
+{"text":"Saturday works. Ana said, Sunday.","answer":"yes","keys":["b"]}
+{"text":"Saturday works. Ana said, sat sun.","answer":"yes","keys":["b"]}
+{"text":"Ana said Sunday works.","answer":"unclear","keys":[]}
+{"text":"Ana said Sunday works, but Saturday works for me.","answer":"yes","keys":["b"]}
+{"text":"Saturday works. Ana said Sunday and Thursday work.","answer":"yes","keys":["b"]}
+{"text":"Ana said the second works.","answer":"unclear","keys":[]}
+{"text":"Ana said any of them works.","answer":"unclear","keys":[]}
+{"text":"Saturday works. Ana said, Sat Sun both.","answer":"yes","keys":["b"]}
+{"text":"\"Sunday works,\" Ana said. Saturday works.","answer":"yes","keys":["b"]}
+{"text":"\"Saturday works\"","answer":"unclear","keys":[]}
+{"text":"I said \"Saturday works\"","answer":"unclear","keys":[]}
+{"text":"ok \"Saturday\" works","answer":"unclear","keys":[]}
+{"text":"yes, Ana said hi","answer":"yes","keys":["a","b","c"]}
+{"text":"Yes, I've always wanted to try this","answer":"yes","keys":["a","b","c"]}
+{"text":"Yes, the app says it's nearby","answer":"yes","keys":["a","b","c"]}
+{"text":"my sister wants to come, Saturday works","answer":"unclear","keys":[]}
+{"text":"I've wanted to go there forever, Saturday works","answer":"yes","keys":["b"]}
+{"text":"Thursday works, Sunday neither for me","answer":"yes","keys":["a"]}
+{"text":"Thursday works, Sunday neither really works","answer":"yes","keys":["a"]}
+{"text":"Thursday works, Sunday neither at all","answer":"yes","keys":["a"]}
+{"text":"Thursday works, Sunday neither really does","answer":"yes","keys":["a"]}
+{"text":"Saturday doesn't work, Sunday neither for me","answer":"yes","keys":[]}
+{"text":"Saturday and Sunday neither really works","answer":"yes","keys":[]}
+{"text":"Thursday works, Sunday neither for us","answer":"yes","keys":["a"]}
+{"text":"Sunday for me neither works, Thursday works","answer":"yes","keys":["a"]}
+{"text":"Saturday and Sunday neither for me","answer":"yes","keys":[]}
+{"text":"Thursday works, Sunday neither for me too","answer":"yes","keys":["a"]}
+{"text":"He said Sunday neither works for me","answer":"unclear","keys":[]}
+{"text":"If Sunday neither works for me, Thursday works","answer":"unclear","keys":[]}
+{"text":"He said Sunday neither works for me. Sunday works for me.","answer":"yes","keys":["c"]}
+{"text":"Saturday at times","answer":"unclear","keys":[]}
+{"text":"Saturday 2 days","answer":"unclear","keys":[]}
+{"text":"my sister visits Saturday or Sunday, so whichever","answer":"yes","keys":["a","b","c"]}
+{"text":"Saturday, whichever is easier","answer":"yes","keys":["a","b","c"]}
+{"text":"Saturday works whenever","answer":"yes","keys":["b"]}
+{"text":"Saturday works when it suits you","answer":"yes","keys":["b"]}
+{"text":"Last time was great, Saturday works","answer":"yes","keys":["b"]}

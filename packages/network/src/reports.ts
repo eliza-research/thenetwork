@@ -22,15 +22,19 @@ const FIRST_PERSON_ABSENCE = /\b(?:i|we)(?:\s+(?:[a-z]+ly|just|still|even|also|b
 const IMPLIED_FIRST_PERSON = /^\s*(?:sorry|sadly|unfortunately)?\s*$/i;
 
 const NON_COUNTERPART_SUBJECT = /^(?:i|we|it|you|that|this|there|which|what|who|son|daughter|kid|kids|child|baby|brother|sister|nephew|niece|cousin|dog|cat|puppy|car|lease|apartment|building|startup|company|record|streak|bike|laptop|phone|team|group|band|club|class|cohort|batch|dinner|coffee|parking|uber|lyft|bill|weather|food|drinks?|meal|lunch|breakfast|table|ticket|cab|taxi|venue|place|restaurant|bar|cafe|hotel|service|film|movie|show|drive|ride|walk|flight|trip|check|order|cost|price|entry|cocktail|beer|wine|tip|admission)$/i;
+const TURN_ADVERB_SUBJECT = /^(?:just|recently|finally|already|also|actually|only)$/i;
+const BARE_TURN_VERB = /^\s*(?:turned(?!\s+out\b)|turns(?!\s+out\b)|will turn)\b/i;
 const SUBJECT_AGE_WORDS = "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen".split(" ");
-const YOUTH_MARKER = "a minor|under\\s*age|under 18|not (?:18|an adult) yet|in (?:high|middle) school|a (?:high school|hs|middle school) (?:student|freshman|sophomore|junior|senior)|a (?:freshman|sophomore|junior|senior) in (?:high school|hs)|a kid|a child|a teen(?:ager)?";
+const GRADE_WORDS = "first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth";
+const YOUTH_MARKER = "a minor|under\\s*age|under 18|not (?:18|an adult) yet|in (?:high|middle) school|a (?:high school|hs|middle school) (?:student|freshman|sophomore|junior|senior)|a (?:freshman|sophomore|junior|senior) in (?:high school|hs)|a kid|a child|a teen(?:ager)?"
+  + `|in (?:the )?(?:\\d{1,2}(?:st|nd|rd|th)|${GRADE_WORDS}) grade|a (?:\\d{1,2}(?:st|nd|rd|th)|${GRADE_WORDS}) grader`;
 const AGE_REPORT = new RegExp(
   "\\b(?<subject>my (?:date|match)|(?:the|this) (?:guy|girl|person(?: i met)?|dude|man|woman)|[a-z][a-z'-]+?)"
-  + "(?:'s|'re| is| was| are| were| turned out to be| turns out to be)[ \\t]+"
+  + "(?:'s|'re| is| was| are| were| turned out to be| turns out to be|(?: (?:just|recently|finally|already|also|actually|only))? (?:turned|turns|will turn)|'s turning|'s just turned)[ \\t]+"
   + "(?:(?:only|just|actually|literally|barely|like|still)[ \\t]+){0,2}"
   + "(?:(?:an?[ \\t]+)?(?<age>\\d{1,2}(?!\\d)|(?:" + SUBJECT_AGE_WORDS.join("|") + ")\\b)"
   + "(?:[ \\t-]*(?:years?[ \\t-]+old|yrs?[ \\t-]+old|y/?o)\\b)?"
-  + "(?=[ \\t]*(?:$|\\.(?!\\d)|[,!?;)\n]|(?:and|but|from|here|tbh|apparently)\\b))"
+  + "(?=[ \\t]*(?:$|\\.(?!\\d)|[,!?;)\n]|(?:and|but|from|here|tbh|apparently)\\b|(?:last|next|this) (?:week|month|year)\\b|yesterday\\b|tomorrow\\b|today\\b|recently\\b|in (?:january|february|march|april|may|june|july|august|september|october|november|december)\\b))"
   + "|(?<youth>" + YOUTH_MARKER + ")\\b(?![ \\t]+(?:teacher|counselor|coach|principal|nurse|staff|at heart|of a)\\b))",
   "gi",
 );
@@ -43,8 +47,18 @@ export function otherAgeStated(body: string): number | undefined {
   let lowest: number | undefined;
   for (const match of t.matchAll(AGE_REPORT)) {
     const { subject, age, youth } = match.groups!;
-    const value = youth ? ADULT_AGE - 1 : age && /^\d/.test(age) ? Number(age) : SUBJECT_AGE_WORDS.indexOf(age?.toLowerCase() ?? "");
-    const eligibleSubject = !!subject && !NON_COUNTERPART_SUBJECT.test(subject);
+    let value = youth ? ADULT_AGE - 1 : age && /^\d/.test(age) ? Number(age) : SUBJECT_AGE_WORDS.indexOf(age?.toLowerCase() ?? "");
+    if (!youth && age) {
+      const after = t.slice(match.index + match[0].length);
+      if (/\bturned\b/i.test(match[0]) && /^\s*last year\b/i.test(after)) {
+        value += 1;
+      } else if (/(?:\bturns\b(?!\s+out\b)|\bwill turn\b|'s turning\b)/i.test(match[0])
+        && /^\s*(?:tomorrow\b|next (?:week|month|year)\b|in (?:january|february|march|april|may|june|july|august|september|october|november|december)\b)/i.test(after)) {
+        value -= 1;
+      }
+    }
+    const adverbTurnSubject = !!subject && TURN_ADVERB_SUBJECT.test(subject) && BARE_TURN_VERB.test(match[0].slice(subject.length));
+    const eligibleSubject = !!subject && !NON_COUNTERPART_SUBJECT.test(subject) && !adverbTurnSubject;
     const prefix = reportClauseBefore(t, match.index);
     const affirmative = !quoteStillOpen(t.slice(0, match.index)) && !ACTIVE_DENIAL.test(prefix)
       && !AGE_REPORT_CONDITION.test(prefix) && !t.slice(match.index + match[0].length).trimStart().startsWith("?");
@@ -62,7 +76,17 @@ const KINDS: [ReportKind, RegExp][] = [
   ["lying", /\b(lied|lying|liar|fake|catfish(ed)?|not (who|what) (they|he|she) said|(didn'?t|doesn'?t) look like (their|his|her) (photos?|pics?|pictures?)|old photos?|(lied|lying) about (their|his|her) age|older than|younger than (they|he|she) said|married|has a (girlfriend|boyfriend|wife|husband|partner))\b/i],
 ];
 
-const ACTIVE_DENIAL = /\b(?:not(?! only\b)|never|nothing|without|no(?! way\b)|(?:is|are|was|were|did|do|would)n't|(?:no|don't|do not) need to)\s+(?:(?:at all|really|very|even|remotely|a bit|make me feel|an?|be) +)*(?:[a-z]+ (?:or|nor) +)?$/i;
+const ACTIVE_DENIAL = /\b(?:not(?! only\b)|neither|never|nothing|without|no(?! way\b)|(?:is|are|was|were|did|do|would)n't|(?:no|don't|do not) need to)\s+(?:(?:at all|really|very|even|remotely|a bit|make me feel|feel|an?|be) +)*(?:[a-z]+ (?:or|nor) +)?$/i;
+const DENIED_HARM_TERM = "(?:rude|creep(?:y)?|pushy|aggressive|hostile|abusive|insult(?:ed|ing)?|inappropriate|harass(?:ed|ing|ment)?|unsafe|not safe|scared|afraid|terrified|violent|fake|liar|lying|scam(?:mer)?|sexual comments?)";
+const DENIED_HARM_LIST = new RegExp(
+  `\\b(?:not(?! only\\b)|neither|never|nothing|without|no(?! way\\b)|(?:is|are|was|were|did|do|would)n't|(?:no|don't|do not) need to)\\s+`
+  + `(?:(?:at all|really|very|even|remotely|a bit|make me feel|feel|an?|be)\\s+)*`
+  + `${DENIED_HARM_TERM}(?:(?:\\s*,\\s*|\\s+(?:or|nor)\\s+)${DENIED_HARM_TERM})*\\s*(?:,\\s*)?(?:or|nor)\\s+${DENIED_HARM_TERM}\\b(?!\\s+(?:though|tho|actually|instead)\\b)`,
+  "gi",
+);
+const POLITE_AFRAID_AFTER = /^\s*(?:(?:not|so)\b|(?:that\s+)?(?:we\s+(?:didn'?t|did not|don'?t|do not|weren'?t|were not|had no|have no|just didn'?t)\b|it\s+(?:wasn'?t|was not|isn'?t|is not|didn'?t|did not)\b|there\s+(?:was|is)\s+no\b|i\s+(?:can'?t|cannot|couldn'?t|could not|won'?t|will not|don'?t|do not|didn'?t|did not|have to|had to|need to)\b))/i;
+const AFRAID_SAFETY_CONCERN = /\b(?:safe(?:ty)?|danger|get away|escape|leave|police|911|emergency|help|report|hurt|harm|follow(?:ing|ed)?|threat(?:en)?|stalk|attack|alone|cornered|trapped)\b/i;
+const NON_PERSON_FEAR_AFTER = /^\s+of\s+(?:heights|dogs|cats|spiders|bugs|insects|snakes|flying|planes|needles|water|the\s+dark|roller\s*coasters|(?:scary|horror)\s+movies?)\b/i;
 const CORRECTED_MARRIAGE = /\b(?:not married|isn't married|wasn't married)\s*[,;]?\s*but\s+(?:he|she|they)\s+(?:is|was|are|were)\s*(?:$|[.!?,;])/i;
 const CURRENT_DANGER = /^(?:(?:i am|i'm|we are|we're) (?:in (?:immediate )?danger(?: (?:right now|now))?|(?:not safe|being threatened) (?:right now|now))|(?:i |we )?need emergency help(?: (?:right now|now))?|(?:(?:he|she|they|someone) (?:is|are)|he's|she's|they're) (?:following|threatening|attacking) (?:me|us)(?: (?:right now|now))?)$/i;
 const COUNTERPART_SUBJECT = /^(?:he|she|they|my date|the person i met)\b/i;
@@ -90,10 +114,32 @@ export function emergencyCheckInReportKind(text: string): ReportKind | undefined
 const reportClauseBefore = (text: string, at: number) =>
   text.slice(0, at).split(/[,.!?:;]|\b(?:but|however|although)\b/i).at(-1) ?? "";
 
+function deniedHarmRanges(text: string): [number, number][] {
+  return [...text.matchAll(DENIED_HARM_LIST)].map(hit => [hit.index, hit.index + hit[0].length]);
+}
+
+function casualFearIdiom(text: string, at: number, matched: string): boolean {
+  const lower = matched.toLowerCase();
+  const after = text.slice(at + matched.length);
+  if ((lower === "scared" || lower === "afraid" || lower === "terrified") && NON_PERSON_FEAR_AFTER.test(after)) return true;
+  if (lower !== "afraid") return false;
+  const before = reportClauseBefore(text, at);
+  if (/^\s*$/.test(before) && /^\s*(?:not|so)\b/i.test(after)) return true;
+  if (/\b(?:i'?m|i\s+am)\s+$/i.test(before) && POLITE_AFRAID_AFTER.test(after)) {
+    const afterClause = after.split(/[,.!?;:\n]/, 1)[0] ?? "";
+    return !AFRAID_SAFETY_CONCERN.test(afterClause);
+  }
+  return /\b(?:i\s+was|i'?m|i\s+am)\s+$/i.test(before) && /^\s+(?:i'?d|i\s+would)\s+be\s+late\b/i.test(after);
+}
+
 function reportsHarm(text: string, marker: RegExp): boolean {
+  const denied = deniedHarmRanges(text);
   for (const m of text.matchAll(new RegExp(marker.source, "gi"))) {
-    const affirmative = !ACTIVE_DENIAL.test(reportClauseBefore(text, m.index));
-    if (acceptsReportEvidence(affirmative, m.groups?.casualContact !== undefined)) return true;
+    const end = m.index + m[0].length;
+    const inDeniedList = denied.some(([from, to]) => m.index >= from && end <= to);
+    const affirmative = !ACTIVE_DENIAL.test(reportClauseBefore(text, m.index)) && !inDeniedList;
+    const casual = m.groups?.casualContact !== undefined || casualFearIdiom(text, m.index, m[0]);
+    if (acceptsReportEvidence(affirmative, casual)) return true;
   }
   return false;
 }
