@@ -12,6 +12,10 @@ const links = landingLinks(ntwrkBrand.app, { skillVersion: "1.0.0", textLine: "+
 const opens = (agent: AgentId) => async ({ args, canvasElement }: Context) => {
   clearAllMocks();
   const link = within(canvasElement).getByRole("link", { name: `Open in ${agentName(agent)}` });
+  const svg = link.querySelector("svg");
+  await expect(svg?.getAttribute("aria-hidden")).toBe("true");
+  await expect(svg?.getAttribute("role")).toBeNull();
+  await expect(svg?.getAttribute("aria-label")).toBeNull();
   const href = link.getAttribute("href") ?? "";
   await expect(href).toBe(agentHref(agent, links));
   await expect(href.startsWith(agentLinkTemplate(agent).split("{")[0])).toBe(true);

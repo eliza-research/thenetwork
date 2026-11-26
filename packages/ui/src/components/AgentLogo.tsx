@@ -15,13 +15,14 @@ export type AgentLogoProps = Omit<ComponentProps<"svg">, "children"> & {
  */
 export function AgentLogo({ agent, className, ...props }: AgentLogoProps) {
   const drawing = agentLogoDrawings[agent];
+  const hidden = props["aria-hidden"] === true || props["aria-hidden"] === "true";
   return (
     <svg
       viewBox={drawing.viewBox}
       fill="currentColor"
       fillRule={drawing.evenOdd ? "evenodd" : undefined}
-      role="img"
-      aria-label={agentName(agent)}
+      role={hidden ? undefined : "img"}
+      aria-label={hidden ? undefined : agentName(agent)}
       className={cn("size-5 shrink-0", className)}
       {...props}
     >
