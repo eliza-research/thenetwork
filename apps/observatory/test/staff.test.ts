@@ -670,7 +670,7 @@ describe("live sockets are authorized again (OBS-04, OBS-05)", () => {
   test("OBS-05: a WS ticket issued before expiry does not open a socket after the sign-in expires", async () => {
     const k = await accessKeys();
     const now = Math.floor(Date.now() / 1000);
-    const jwt = (exp: number) => k.sign({ aud: [AUD], iss: ISS, email: "ana@example.org", iat: now - 30, exp, type: "app" });
+    const jwt = (exp: number) => k.sign({ aud: [AUD], iss: ISS, email: "ana@example.org", iat: now - 30, exp, type: "app", amr: ["mfa"] });
     const srv = await createServer({ port: 0, development: false, trustCfAccess: true, roles: "ana@example.org:admin", cfAccess: { team: "ntwrk", aud: AUD, fetch: k.fetch }, audit: { dir: join(dir, "audit-ws4") }, lab: { dir: join(dir, "lab-ws4") }, game: { seed: 1, pushMs: 50, tickMs: 3_600_000 }, socketCheckMs: 60_000 });
     try {
       const exp = Math.floor(Date.now() / 1000) + 6;
@@ -694,7 +694,7 @@ describe("live sockets are authorized again (OBS-04, OBS-05)", () => {
     await sql`insert into platform.staff_roles (email, role, app_id, granted_by) values ('rev@example.org', 'reviewer', null, 'test')`;
     const srv = await createServer({ port: 0, development: false, trustCfAccess: true, roles: "", cfAccess: { team: "ntwrk", aud: AUD, fetch: k.fetch }, staffRolesUrl: url, staffRolesEveryMs: 100, socketCheckMs: 60_000, audit: { dir: join(dir, "audit-ws5") }, lab: { dir: join(dir, "lab-ws5") }, game: { seed: 1, pushMs: 50, tickMs: 3_600_000 } });
     try {
-      const jwt = await k.sign({ aud: [AUD], iss: ISS, email: "rev@example.org", iat: now - 30, exp: now + 3600 });
+      const jwt = await k.sign({ aud: [AUD], iss: ISS, email: "rev@example.org", iat: now - 30, exp: now + 3600, amr: ["mfa"] });
       const ticket = await wsTicket(srv.url, jwt);
       expect(await upgradeStatus(`${srv.url}/ws?ticket=${await wsTicket(srv.url, jwt)}`)).toBe(101);
       await sql`delete from platform.staff_roles where email = 'rev@example.org'`;

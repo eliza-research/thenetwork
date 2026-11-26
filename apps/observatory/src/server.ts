@@ -969,7 +969,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
             // The ticket holds who asked up to 30 s ago: the sign-in may have expired, or a role may
             // have been taken away since. Check both again, as identify and recheck do.
             if (u.expiresAt !== undefined && u.expiresAt <= Date.now()) return json({ error: "sign-in expired" }, 401);
-            if (u.via === "sso") u = { ...staffUser(u.id, ssoGrants(u.id, auth), "sso"), ...(u.expiresAt !== undefined ? { expiresAt: u.expiresAt } : {}) };
+            if (u.via === "sso") u = { ...staffUser(u.id, ssoGrants(u.id, auth), "sso"), ...(u.expiresAt !== undefined ? { expiresAt: u.expiresAt } : {}), secondFactor: u.secondFactor === true };
           }
         } else u = await identify(req);
         if (u instanceof Response) return u;
