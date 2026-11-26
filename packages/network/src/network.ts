@@ -7153,6 +7153,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     return !!x && x.first.length >= 2 && t.includes(` ${x.first.toLowerCase()} `);
   }
 
+  /** Members with no blocked or avoided pair among them: a crew never puts such a pair together. */
+  private crewApart(ids: readonly MemberId[]): MemberId[] {
+    return ids.filter(id => ids.every(other => other === id || this.pairAllowed(id, other)));
+  }
+
   private crewCheck(m: MemberState, o: Opp, going: MemberId[]): string | undefined {
     if (!this.pcfg.crews.enabled || !o.plan || o.plan.crewId) return undefined;
     const post = o.post ?? {};
@@ -7161,6 +7166,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // spec/opportunityLifecycle.md, "A minor signal ends the recurring plans that the minor knows"
     if (!this.recurrenceOk(o, [m.id])) return undefined;
     if (open) {
+      if (open.crew.members.some(id => !this.pairAllowed(m.id, id))) return undefined;
       const before = crewOfferState(open);
       const next = stepCrewOffer(before, { type: "extendOffer", memberId: m.id, enjoyedPlan: !!post[m.id]?.again });
       if (next === before) return undefined;
@@ -7170,7 +7176,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     const w = this.planWorld(this.now());
     const attended = going.filter(id => post[id]?.came);
-    const positive = attended.filter(id => post[id]?.again);
+    const positive = this.crewApart(attended.filter(id => post[id]?.again));
     const rec: plans.PlanOutcomeRecord = {
       planId: o.id, activityId: o.plan.activityId, ...(o.plan.venueId ? { venueId: o.plan.venueId } : {}), city: o.plan.city, at: o.plan.window.start,
       attended, positive,
@@ -7215,12 +7221,13 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   private resolveCrew(offer: CrewOffer) {
     offer.resolved = true;
+    const yes = this.crewApart(offer.yes);
     // spec/opportunityLifecycle.md, "A minor signal ends the recurring plans that the minor knows"
-    const formed = this.recurrenceOk(this.opps.get(offer.planId), offer.crew.members) ? plans.crewOptIn(offer.crew, offer.yes, this.pcfg) : undefined;
+    const formed = this.recurrenceOk(this.opps.get(offer.planId), offer.crew.members) ? plans.crewOptIn(offer.crew, yes, this.pcfg) : undefined;
     const a = plans.activityById.get(offer.crew.activityId)!;
-    this.ctx.log(formed ? "crew_formed" : "crew_not_formed", { crewId: offer.crew.id, yes: offer.yes.length, offered: offer.offered.length });
+    this.ctx.log(formed ? "crew_formed" : "crew_not_formed", { crewId: offer.crew.id, yes: yes.length, offered: offer.offered.length });
     if (formed) { this.crews.push(formed); this.plansCounters.crewsFormed++; }
-    for (const id of offer.yes) {
+    for (const id of yes) {
       const m = this.members.get(id);
       if (m && !this.knownMinor(id)) this.send(m, formed ? copy.crewFormed(a.label) : copy.crewNotFormed, { type: "info" }, "info");
     }
