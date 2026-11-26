@@ -831,30 +831,42 @@ export function feedbackOf(body: string): { sentiment: "positive" | "neutral" | 
   return { sentiment, selfNoShow, otherNoShow, again };
 }
 const NEGATIVE_FEEDBACK = /\b((was|is|it's|that's)?\s*(not|n't|wasn't|isn't)\s+(that |very |really |so |too |super )?(great|good|fun|nice|amazing)|not much in common|nothing in common|didn't (really |quite )?(click|connect|enjoy)|didn't have much|not (really )?for me|not my (thing|type)|awkward|terrible|rude|creepy|bummer|uncomfortable)/;
-function reversedByLaterClause(t: string, from: number): boolean {
-  const later = /\bbut\b([\s\S]*)$/.exec(t.slice(from))?.[1];
-  if (later === undefined || NEGATIVE_FEEDBACK.test(later)) return false;
-  if (/\b(?:did not|didn't|never|hardly|barely|not)\b[^.!?]*\b(?:click|clicked|connect|connected|easy|great)\b|n't\s+(?:really\s+|very\s+)?(?:easy|great)\b/.test(later)) return false;
-  return /\b(?:clicked|connected|great|amazing|nice|loved|easy|good|fun)\b/.test(later) || /\bwe did\b/.test(later);
+function reversedByLaterPositive(t: string, from: number): boolean {
+  const later = t.slice(from);
+  if (/\bwe did\b(?!\s+(?:not|n't)\b)|\bhit it off\b/.test(later)) return true;
+  for (const m of later.matchAll(/\b(?:clicked|connected|great|amazing|nice|loved|love|easy|good|fun|wonderful|enjoyed|enjoy)\b/g)) {
+    const before = later.slice(0, m.index).trim().split(/\s+/).slice(-3);
+    if (before.some(w => w === "not" || w === "never" || w === "no" || w === "hardly" || w === "barely" || w.endsWith("n't"))) continue;
+    return true;
+  }
+  return false;
 }
 function negatedPositiveFeedback(t: string): boolean {
   for (const m of t.matchAll(/\bdid not\s+(?:(?:really|quite)\s+)?(?:click|connect|enjoy)\b|\bdid not have much\b/g)) {
-    if (!reversedByLaterClause(t, m.index + m[0].length)) return true;
+    if (!reversedByLaterPositive(t, m.index + m[0].length)) return true;
   }
   for (const m of t.matchAll(/\b(?:never|hardly|barely)\s+(?:really\s+)?(?:clicked|connected)\b/g)) {
     const end = m.index + m[0].length;
-    const clauseRest = t.slice(end).split(/[.!?,;]/)[0] ?? "";
-    if (/\b(?:so|this|that)\s+(?:fast|quickly|easily|well|soon)\b/.test(clauseRest)) continue;
-    if (!reversedByLaterClause(t, end)) return true;
+    const clauseRest = t.slice(end).split(/[.!?;]/)[0] ?? "";
+    if (/\bwith (?:anyone|someone|anybody|somebody)\b/.test(clauseRest)) continue;
+    if (/\b(?:so|this|that)\s+(?:\w+ly|fast|hard|well|soon|much)\b/.test(clauseRest)) continue;
+    if (!reversedByLaterPositive(t, end)) return true;
   }
   for (const m of t.matchAll(/(?:\bnot|\bnever|n't)\s+(?:really\s+|very\s+)?easy to talk\b/g)) {
-    if (!reversedByLaterClause(t, m.index + m[0].length)) return true;
+    const end = m.index + m[0].length;
+    if (/^\s+to\s+(?:new people|strangers|people|anyone|anybody|others)\b/.test(t.slice(end))) continue;
+    if (!reversedByLaterPositive(t, end)) return true;
   }
   for (const m of t.matchAll(/\bdisappoint(?:ed|ing)\b/g)) {
+    const end = m.index + m[0].length;
     const sentenceStart = Math.max(t.lastIndexOf(".", m.index), t.lastIndexOf("!", m.index), t.lastIndexOf("?", m.index), t.lastIndexOf(";", m.index)) + 1;
-    const before = t.slice(sentenceStart, m.index).trim().split(/\s+/).slice(-3);
-    if (before.some(w => w === "not" || w === "nothing" || w === "never" || w === "no" || w.endsWith("n't"))) continue;
-    if (!reversedByLaterClause(t, m.index + m[0].length)) return true;
+    const beforeSeg = t.slice(sentenceStart, m.index);
+    const before = beforeSeg.trim().split(/\s+/).slice(-4);
+    if (before.some(w => w === "not" || w === "nothing" || w === "never" || w === "no" || w === "nobody" || w === "none" || w.endsWith("n't"))) continue;
+    if (/\bwould\b|'d\s+be$/.test(beforeSeg.trim())) continue;
+    const afterWords = (t.slice(end).split(/[.!?,;]/)[0] ?? "").trim().split(/\s+/).slice(0, 6).join(" ");
+    if (/\b(?:ended|end|ending|over|leave|left|leaving|early|finished)\b|\bran out\b/.test(afterWords)) continue;
+    if (!reversedByLaterPositive(t, end)) return true;
   }
   return false;
 }

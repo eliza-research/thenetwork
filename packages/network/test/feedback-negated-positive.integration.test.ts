@@ -78,3 +78,29 @@ test("feedback that says the pair clicked still records positive sentiment and w
   expect(feedback?.wouldMeetAgain).toBe(true);
   expect(post?.worthwhile).toBe(true);
 });
+
+test("feedback that compares the click with anyone else still records positive sentiment and worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("I've never clicked with anyone better");
+  expect(feedback?.sentiment).toBe("positive");
+  expect(feedback?.wouldMeetAgain).toBe(true);
+  expect(post?.worthwhile).toBe(true);
+});
+
+test("feedback that says the pair clicked after a slow start still records positive sentiment and worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("Hardly clicked at first, then we really clicked");
+  expect(feedback?.sentiment).toBe("positive");
+  expect(feedback?.wouldMeetAgain).toBe(true);
+  expect(post?.worthwhile).toBe(true);
+});
+
+test("feedback that is disappointed the meeting ended still records positive sentiment and worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("I was disappointed it ended so soon, loved it");
+  expect(feedback?.sentiment).toBe("positive");
+  expect(post?.worthwhile).toBe(true);
+});
+
+test("feedback that says talking got easy after a though clause still records positive sentiment and worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("Not easy to talk to new people though she made it easy");
+  expect(feedback?.sentiment).toBe("positive");
+  expect(post?.worthwhile).toBe(true);
+});
