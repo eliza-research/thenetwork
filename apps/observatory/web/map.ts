@@ -152,8 +152,9 @@ export class MapView {
       for (const e of store.edges.values()) {
         if (!ui.edgeTypes[e.type]) continue;
         const a = store.members.get(e.from), b = store.members.get(e.to);
-        if (!a || !b || !store.inBorough(a) || !store.inBorough(b)) continue;
-        if (sel && e.from !== sel && e.to !== sel) continue;
+        if (!a || !b) continue;
+        // Member focus deliberately keeps its relationship neighbors' pins visible across boroughs.
+        if (sel ? e.from !== sel && e.to !== sel : !store.inBorough(a) || !store.inBorough(b)) continue;
         if (area && (a.area !== area || b.area !== area)) continue;
         const st = EDGE_STYLE[e.type as keyof typeof EDGE_STYLE];
         if (!st) continue;
