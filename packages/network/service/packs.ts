@@ -163,6 +163,12 @@ const EVENING_VENUES: HookVenue[] = [
   { id: "time-out-market", name: "Time Out Market", neighborhood: "DUMBO", lat: 40.7033, lng: -73.9903 },
   { id: "dekalb-market-hall", name: "DeKalb Market Hall", neighborhood: "Fort Greene", lat: 40.6905, lng: -73.9835 },
   { id: "industry-city", name: "Industry City food hall", neighborhood: "Sunset Park", lat: 40.6553, lng: -74.0076 },
+  { id: "herald-square", name: "Herald Square", neighborhood: "Midtown", lat: 40.7495, lng: -73.988 },
+  { id: "rockefeller-plaza", name: "Rockefeller Plaza", neighborhood: "Midtown", lat: 40.7588, lng: -73.9786 },
+  { id: "south-street-seaport", name: "South Street Seaport", neighborhood: "Financial District", lat: 40.7058, lng: -74.0029 },
+  { id: "hudson-yards", name: "Hudson Yards", neighborhood: "Chelsea", lat: 40.7559, lng: -74.0005 },
+  { id: "westfield-wtc", name: "Westfield World Trade Center", neighborhood: "Financial District", lat: 40.7109, lng: -74.0116 },
+  { id: "columbus-circle-shops", name: "The Shops at Columbus Circle", neighborhood: "Midtown", lat: 40.7684, lng: -73.9828 },
 ];
 /** When each slot of the dating week starts, New York time. */
 const SLOT_TIME: Record<string, { day: string; hour: number }> = {

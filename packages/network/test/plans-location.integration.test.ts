@@ -13,7 +13,7 @@ test.each([
   ["williamsburg", "McCarren Park"], ["WILLIAMSBURG", "McCarren Park"], ["Wburg", "McCarren Park"],
   ["the Slope", "Prospect Park, Long Meadow"], ["LES", "Seward Park"], ["LIC", "Gantry Plaza State Park"],
   ["Long-Island-City", "Gantry Plaza State Park"], ["Long  Island  City", "Gantry Plaza State Park"],
-  ["St.George", "Snug Harbor"], ["Bed Stuy", "Maria Hernandez Park"], ["Chelsea", "Chelsea Market"],
+  ["St.George", "Snug Harbor"], ["Bed Stuy", "Herbert Von King Park"], ["Chelsea", "Chelsea Market"],
   ["the battery", "The Battery"], ["Bryant Park", "Bryant Park"], ["Prospect Park", "Prospect Park, Long Meadow"],
 ])("uses the named public location (%s)", async (requested, expected) => {
   expect((await ideas(`Any plans near ${requested} this weekend?`)).find(reply => reply.meta.type === "concierge")?.body).toContain(expected);
