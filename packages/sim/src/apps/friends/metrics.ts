@@ -16,7 +16,11 @@ import { UNKNOWN_AGE_SIDE } from "../../teen.ts";
 export interface FriendsMetrics {
   matcher: string; seed: number; weeks: number; members: number; real: number;
   proposals: number; probes: number; probeYesRate: number; quorumRate: number; capDrops: number;
+  /** Proposals counted for quorum: the base of quorumRate. 0 when nothing was probed, so quorumRate is 0/0, not a measured 0%. */
+  quorumBase: number;
   meetups: number; meetupsByKind: Record<string, number>; attendance: number; meanGroupSize: number;
+  /** Booked seats: the base of attendance. 0 when nothing was booked, so attendance is 0/0, not a measured 0%. */
+  attendanceBase: number;
   goodRate: number; meanEnjoy: number;
   /** Meetups (held by day D-30) where >= 2 of the attendees met again (any app meetup) within 30 days. */
   repeatRate: number;
@@ -51,7 +55,8 @@ export interface FriendsMetrics {
   boroughRatioMin: number; boroughRatioMin30: number;
   /** V14 counting only meetups the Network arranged (excludes handed-off crews meeting on their own). */
   v14Arranged: number;
-  travel: { medianGroupMax: number; meanSeat: number; overTolerance: number };
+  /** seats: attended seats, the base of overTolerance. 0 when no meetup was held, so overTolerance is 0/0, not a measured 0%. */
+  travel: { medianGroupMax: number; meanSeat: number; overTolerance: number; seats: number };
   giniMeetups: number; zeroMeetupShare: number;
   expected: { perProposal: number; perMember: number };
   safety: {
@@ -290,8 +295,8 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
   return {
     matcher: res.matcher, seed: world.seed, weeks: world.weeks, members: world.personas.length, real: real.length,
     proposals: proposals.length, probes: proposals.reduce((s, f) => s + f.probed, 0), probeYesRate: div(proposals.reduce((s, f) => s + f.yes, 0), proposals.reduce((s, f) => s + f.probed, 0)),
-    quorumRate: div(probedProposals.filter(f => f.going.length > 0).length, probedProposals.length), capDrops: proposals.reduce((s, f) => s + f.capDrops, 0),
-    meetups: held.length, meetupsByKind: byKind, attendance: div(attended, booked), meanGroupSize: div(held.reduce((s, m) => s + m.attendees.length, 0), held.length),
+    quorumRate: div(probedProposals.filter(f => f.going.length > 0).length, probedProposals.length), quorumBase: probedProposals.length, capDrops: proposals.reduce((s, f) => s + f.capDrops, 0),
+    meetups: held.length, meetupsByKind: byKind, attendance: div(attended, booked), attendanceBase: booked, meanGroupSize: div(held.reduce((s, m) => s + m.attendees.length, 0), held.length),
     goodRate: div(held.filter(m => m.good).length, held.length), meanEnjoy: div(realE.reduce((s, x) => s + x, 0), realE.length),
     repeatRate: div(rep, base), repeatGroupRate: div(repG, base), repeatRateWithHandoff: div(repH, base), repeatBase: base,
     crewsFormed: world.state.crews.length, crewSessions: meetups.filter(m => m.crewId && m.kind !== "crew_self").length, crewsHandedOff: world.state.crews.filter(c => c.handedOff).length,
@@ -299,7 +304,7 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
     casualFriendPairs: casualPairs, friendPairs, friendshipTrackShare: div(real.filter(p => track.has(p.id)).length, real.length), hallPaceShare: div(real.filter(p => pace.has(p.id)).length, real.length), casualFriendShare: div(real.filter(p => casual.has(p.id)).length, real.length),
     timeToFirstMeetup: { medianDays: median(firsts), shareWithMeetup: div(firsts.length, real.length) },
     v14, v14ByBorough: byB, boroughRatioMin: ratios.length ? Math.min(...ratios) : NaN, boroughRatioMin30: ratios30.length ? Math.min(...ratios30) : NaN, v14Arranged: v14Of(real.map(p => p.id), arranged, days),
-    travel: { medianGroupMax: median(groupMax) ?? NaN, meanSeat: div(seats.reduce((s, x) => s + x.t, 0), seats.length), overTolerance: div(seats.filter(x => x.t > x.tol).length, seats.length) },
+    travel: { medianGroupMax: median(groupMax) ?? NaN, meanSeat: div(seats.reduce((s, x) => s + x.t, 0), seats.length), overTolerance: div(seats.filter(x => x.t > x.tol).length, seats.length), seats: seats.length },
     giniMeetups: gini(meetCount), zeroMeetupShare: div(meetCount.filter(x => x === 0).length, real.length),
     expected: {
       perProposal: div(proposals.reduce((s, f) => s + f.expected, 0), proposals.length),

@@ -26,7 +26,7 @@ async function main() {
       const t = performance.now();
       const m = friendsMetrics(await runFriendsWorldAsync({ seed, n, weeks, planCap, ...teen, matcher: ARMS[name]! }));
       all[name]!.push(m);
-      console.error(`${name} seed ${seed}: meetups ${m.meetups}, repeat ${(m.repeatRate * 100).toFixed(0)}%, V14 ${Number.isFinite(m.v14) ? (m.v14 * 100).toFixed(0) + "%" : "n/a"}, track ${(m.friendshipTrackShare * 100).toFixed(1)}%, travel ${m.travel.medianGroupMax.toFixed(0)}m, boroughMin ${m.boroughRatioMin.toFixed(2)}, adv ${m.safety.adversaryContacts}/${m.safety.knownAdversaryContacts}, minor ${m.safety.declaredMinorContacts}/${m.safety.hiddenMinorContacts} (${((performance.now() - t) / 1000).toFixed(1)}s)`);
+      console.error(`${name} seed ${seed}: meetups ${m.meetups}, repeat ${m.repeatBase > 0 ? (m.repeatRate * 100).toFixed(0) + "%" : "n/a"}, V14 ${Number.isFinite(m.v14) ? (m.v14 * 100).toFixed(0) + "%" : "n/a"}, track ${(m.friendshipTrackShare * 100).toFixed(1)}%, travel ${m.travel.medianGroupMax.toFixed(0)}m, boroughMin ${m.boroughRatioMin.toFixed(2)}, adv ${m.safety.adversaryContacts}/${m.safety.knownAdversaryContacts}, minor ${m.safety.declaredMinorContacts}/${m.safety.hiddenMinorContacts} (${((performance.now() - t) / 1000).toFixed(1)}s)`);
     }
   }
   const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
@@ -35,13 +35,13 @@ async function main() {
   const rows: [string, (m: FriendsMetrics) => number, boolean, number?, ((m: FriendsMetrics) => number)?][] = [
     ["Proposals / seed", m => m.proposals, false, 0],
     ["Probes / seed", m => m.probes, false, 0],
-    ["Probe yes rate", m => m.probeYesRate, true],
-    ["Quorum rate (reached / probed)", m => m.quorumRate, true],
+    ["Probe yes rate", m => m.probeYesRate, true, undefined, m => m.probes],
+    ["Quorum rate (reached / probed)", m => m.quorumRate, true, undefined, m => m.quorumBase],
     ["Meetups held / seed", m => m.meetups, false, 1],
     ["  of which crew sessions", m => m.crewSessions, false, 1],
-    ["Attendance (came / booked)", m => m.attendance, true],
+    ["Attendance (came / booked)", m => m.attendance, true, undefined, m => m.attendanceBase],
     ["Mean group size", m => m.meanGroupSize, false, 2],
-    ["Good meetups (least misery >= 0.45)", m => m.goodRate, true],
+    ["Good meetups (least misery >= 0.45)", m => m.goodRate, true, undefined, m => m.meetups],
     ["Mean enjoyment (real attendees)", m => m.meanEnjoy, false, 3],
     ["**Repeat-meetup rate (>= 2 again within 30 d)**", m => m.repeatRate, true, undefined, m => m.repeatBase],
     ["Repeat, same group (>= 3 again)", m => m.repeatGroupRate, true, undefined, m => m.repeatBase],
@@ -63,7 +63,7 @@ async function main() {
     ["Borough fairness, boroughs with >= 30 real members", m => m.boroughRatioMin30, false, 2],
     ["**Median group max travel (min)**", m => m.travel.medianGroupMax, false, 1],
     ["Mean seat travel (min)", m => m.travel.meanSeat, false, 1],
-    ["Seats over the member's tolerance", m => m.travel.overTolerance, true],
+    ["Seats over the member's tolerance", m => m.travel.overTolerance, true, undefined, m => m.travel.seats],
     ["Gini of meetups (real members)", m => m.giniMeetups, false, 3],
     ["Real members with no meetup", m => m.zeroMeetupShare, true],
     ["**Declared-minor contacts (must be 0)**", m => m.safety.declaredMinorContacts, false, 1],
