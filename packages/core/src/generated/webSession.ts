@@ -14,6 +14,8 @@ export type Event =
   | { type: "recordReplacement" };
 
 /** Story: Stay signed in to the app where I proved my phone / A session has an absolute limit from sign-in (spec/webSession.md) */
+export const sessionTtlMs: number = exact_webSession(exact_webSession(30 * 24) * 3600000);
+/** Story: Stay signed in to the app where I proved my phone / A session has an absolute limit from sign-in (spec/webSession.md) */
 export const sessionRotateMs: number = exact_webSession(24 * 3600000);
 /** Story: Stay signed in to the app where I proved my phone / A session has an absolute limit from sign-in (spec/webSession.md) */
 export const sessionMaxMs: number = exact_webSession(exact_webSession(90 * 24) * 3600000);
@@ -21,8 +23,6 @@ export const sessionMaxMs: number = exact_webSession(exact_webSession(90 * 24) *
 export const sessionGraceMs: number = 60000;
 /** Story: Stay signed in to the app where I proved my phone / A session has an absolute limit from sign-in (spec/webSession.md) */
 export const sessionStepUpMs: number = exact_webSession(10 * 60000);
-/** Story: Stay signed in to the app where I proved my phone / A session has an absolute limit from sign-in (spec/webSession.md) */
-export const sessionTtlMs: number = exact_webSession(exact_webSession(30 * 24) * 3600000);
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md) */
 export const initial: SessionFlow = { phase: "Beginning", revokeAt: 0 };
 
@@ -50,12 +50,6 @@ export function lawCloudDeadlineCapsSession(createdAt: number, startedAt: number
 
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md) */
 //@ pure
-export function sessionRowLive(sameApp: boolean, expiresAt: number, revoked: boolean, revokedAt: number, now: number): boolean {
-  return sameApp && expiresAt > now && !(revoked && revokedAt <= now);
-}
-
-/** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md) */
-//@ pure
 export function canReadToken(flow: SessionFlow): boolean {
   return flow.phase === "Beginning";
 }
@@ -78,6 +72,12 @@ export function canReadRow(flow: SessionFlow): boolean {
 export function readRow(flow: SessionFlow, sameAppRow: boolean, expired: boolean, hasRevocation: boolean, revocationDue: boolean, banned: boolean, rotationRequested: boolean, oldEnough: boolean, at: number): SessionFlow {
   //@ ensures (inv(flow) && canReadRow(flow)) ==> stepRotationRequiresAReplacement(flow, "readRow", \result)
   return !sameAppRow || expired || revocationDue || banned ? ({ ...flow, phase: "Refused" } as SessionFlow) : (!rotationRequested || hasRevocation || !oldEnough ? ({ ...flow, phase: "Usable" } as SessionFlow) : ({ phase: "RevokingOld", revokeAt: exact_webSession(at + sessionGraceMs) } as SessionFlow));
+}
+
+/** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md) */
+//@ pure
+export function sessionRowLive(sameApp: boolean, expiresAt: number, revoked: boolean, revokedAt: number, now: number): boolean {
+  return sameApp && expiresAt > now && !(revoked && revokedAt <= now);
 }
 
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md) */

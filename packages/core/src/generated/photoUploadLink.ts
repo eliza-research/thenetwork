@@ -1,13 +1,13 @@
 // GENERATED from spec/photoUploadLink.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { uploadMaxBytes as photoPolicy_uploadMaxBytes, uploadMaxPerPerson as photoPolicy_uploadMaxPerPerson, ratingMaxPhotos as photoPolicy_ratingMaxPhotos, ratingMaxBytes as photoPolicy_ratingMaxBytes, photoMaxPerMessage as photoPolicy_photoMaxPerMessage, textPhotoLineAllowed as photoPolicy_textPhotoLineAllowed, photoSubjectAllowed as photoPolicy_photoSubjectAllowed, photoSlotsFull as photoPolicy_photoSlotsFull, lawDedicatedOtherLineCannotTakeSlopPhoto as photoPolicy_lawDedicatedOtherLineCannotTakeSlopPhoto, lawRatingRequiresAdult as photoPolicy_lawRatingRequiresAdult } from "./photoPolicy.ts";
+import { textPhotoLineAllowed as photoPolicy_textPhotoLineAllowed, lawDedicatedOtherLineCannotTakeSlopPhoto as photoPolicy_lawDedicatedOtherLineCannotTakeSlopPhoto, photoSubjectAllowed as photoPolicy_photoSubjectAllowed, lawRatingRequiresAdult as photoPolicy_lawRatingRequiresAdult, uploadMaxBytes as photoPolicy_uploadMaxBytes, uploadMaxPerPerson as photoPolicy_uploadMaxPerPerson, ratingMaxPhotos as photoPolicy_ratingMaxPhotos, ratingMaxBytes as photoPolicy_ratingMaxBytes, photoMaxPerMessage as photoPolicy_photoMaxPerMessage, photoSlotsFull as photoPolicy_photoSlotsFull } from "./photoPolicy.ts";
 
-/** Story: Add my photos with a private one-time link / A link is issued only to an adult live member of a photo app who is not banned or held (spec/photoUploadLink.md) */
-export interface UploadLinkHolder { takesPhotos: boolean; adult: boolean; banned: boolean; held: boolean; liveMember: boolean }
 /** Story: Add my photos with a private one-time link / A link is issued only to an adult live member of a photo app who is not banned or held (spec/photoUploadLink.md) */
 export type UploadLinkPhase = "UploadLinkNone" | "UploadLinkOpen" | "UploadLinkSpent" | "UploadLinkRefused";
 /** Story: Add my photos with a private one-time link / A link is issued only to an adult live member of a photo app who is not banned or held (spec/photoUploadLink.md) */
 export interface PhotoUploadLink { phase: UploadLinkPhase; issuedAt: number; expiresAt: number }
+/** Story: Add my photos with a private one-time link / A link is issued only to an adult live member of a photo app who is not banned or held (spec/photoUploadLink.md) */
+export interface UploadLinkHolder { takesPhotos: boolean; adult: boolean; banned: boolean; held: boolean; liveMember: boolean }
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -15,13 +15,13 @@ export type Event =
   | { type: "redeemUploadLink"; holder: UploadLinkHolder; sameApp: boolean; at: number };
 
 /** Story: Add my photos with a private one-time link / A link is issued only to an adult live member of a photo app who is not banned or held (spec/photoUploadLink.md) */
-export const photoUploadLinksPerDay: number = 6;
-/** Story: Add my photos with a private one-time link / A link is issued only to an adult live member of a photo app who is not banned or held (spec/photoUploadLink.md) */
 export const photoUploadLinkTtlMs: number = 900000;
+/** Story: Add my photos with a private one-time link / A link is issued only to an adult live member of a photo app who is not banned or held (spec/photoUploadLink.md) */
+export const initial: PhotoUploadLink = { phase: "UploadLinkNone", issuedAt: 0, expiresAt: 0 };
 /** Story: Add my photos with a private one-time link / A link is issued only to an adult live member of a photo app who is not banned or held (spec/photoUploadLink.md) */
 export const allowedUploadHolder: UploadLinkHolder = { takesPhotos: true, adult: true, banned: false, held: false, liveMember: true };
 /** Story: Add my photos with a private one-time link / A link is issued only to an adult live member of a photo app who is not banned or held (spec/photoUploadLink.md) */
-export const initial: PhotoUploadLink = { phase: "UploadLinkNone", issuedAt: 0, expiresAt: 0 };
+export const photoUploadLinksPerDay: number = 6;
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
@@ -63,6 +63,13 @@ export function alwaysIssuedLinkLastsFifteenMinutes(link: PhotoUploadLink): bool
 
 /** Story: Add my photos with a private one-time link / A link is issued only to an adult live member of a photo app who is not banned or held (spec/photoUploadLink.md) */
 //@ pure
+export function lawMinorGetsNoLink(holder: UploadLinkHolder, at: number): boolean {
+  //@ ensures \result === true
+  return !(!holder.adult) || issueUploadLink(initial, holder, at).phase === "UploadLinkRefused";
+}
+
+/** Story: Add my photos with a private one-time link / A link is issued only to an adult live member of a photo app who is not banned or held (spec/photoUploadLink.md) */
+//@ pure
 export function sometimesLinkOpen(link: PhotoUploadLink): boolean {
   return link.phase === "UploadLinkOpen";
 }
@@ -71,13 +78,6 @@ export function sometimesLinkOpen(link: PhotoUploadLink): boolean {
 //@ pure
 export function sometimesLinkRefused(link: PhotoUploadLink): boolean {
   return link.phase === "UploadLinkRefused";
-}
-
-/** Story: Add my photos with a private one-time link / A link is issued only to an adult live member of a photo app who is not banned or held (spec/photoUploadLink.md) */
-//@ pure
-export function lawMinorGetsNoLink(holder: UploadLinkHolder, at: number): boolean {
-  //@ ensures \result === true
-  return !(!holder.adult) || issueUploadLink(initial, holder, at).phase === "UploadLinkRefused";
 }
 
 /** Story: Add my photos with a private one-time link / A link uploads once, before it expires, on its own app, for a holder who is still eligible (spec/photoUploadLink.md) */
@@ -94,22 +94,24 @@ export function canRedeemUploadLink(link: PhotoUploadLink): boolean {
 
 /** Story: Add my photos with a private one-time link / A link uploads once, before it expires, on its own app, for a holder who is still eligible (spec/photoUploadLink.md) */
 //@ pure
+export function redeemUploadLink(link: PhotoUploadLink, holder: UploadLinkHolder, sameApp: boolean, at: number): PhotoUploadLink {
+  //@ ensures (inv(link) && canRedeemUploadLink(link)) ==> alwaysIssuedLinkLastsFifteenMinutes(\result)
+  //@ ensures (inv(link) && canRedeemUploadLink(link)) ==> stepClosedLinkStaysClosed(link, \result)
+  return { ...link, phase: uploadLinkUsable(link, holder, sameApp, at) ? "UploadLinkSpent" : "UploadLinkRefused" };
+}
+
+/** Story: Add my photos with a private one-time link / A link uploads once, before it expires, on its own app, for a holder who is still eligible (spec/photoUploadLink.md) */
+//@ pure
 export function stepClosedLinkStaysClosed(before: PhotoUploadLink, after: PhotoUploadLink): boolean {
   return !(before.phase === "UploadLinkSpent" || before.phase === "UploadLinkRefused") || after.phase === before.phase;
 }
 
 /** Story: Add my photos with a private one-time link / A link uploads once, before it expires, on its own app, for a holder who is still eligible (spec/photoUploadLink.md) */
 //@ pure
-export function sometimesLinkSpent(link: PhotoUploadLink): boolean {
-  return link.phase === "UploadLinkSpent";
-}
-
-/** Story: Add my photos with a private one-time link / A link uploads once, before it expires, on its own app, for a holder who is still eligible (spec/photoUploadLink.md) */
-//@ pure
-export function redeemUploadLink(link: PhotoUploadLink, holder: UploadLinkHolder, sameApp: boolean, at: number): PhotoUploadLink {
-  //@ ensures (inv(link) && canRedeemUploadLink(link)) ==> alwaysIssuedLinkLastsFifteenMinutes(\result)
-  //@ ensures (inv(link) && canRedeemUploadLink(link)) ==> stepClosedLinkStaysClosed(link, \result)
-  return { ...link, phase: uploadLinkUsable(link, holder, sameApp, at) ? "UploadLinkSpent" : "UploadLinkRefused" };
+export function lawExpiredLinkNeverUploads(holder: UploadLinkHolder, sameApp: boolean, at: number): boolean {
+  //@ ensures \result === true
+  const local_0: PhotoUploadLink = issueUploadLink(initial, holder, at);
+  return redeemUploadLink(local_0, holder, sameApp, exact_photoUploadLink(at + photoUploadLinkTtlMs)).phase !== "UploadLinkSpent";
 }
 
 /** Story: Add my photos with a private one-time link / A link uploads once, before it expires, on its own app, for a holder who is still eligible (spec/photoUploadLink.md) */
@@ -121,10 +123,8 @@ export function lawMinorNeverUploads(link: PhotoUploadLink, holder: UploadLinkHo
 
 /** Story: Add my photos with a private one-time link / A link uploads once, before it expires, on its own app, for a holder who is still eligible (spec/photoUploadLink.md) */
 //@ pure
-export function lawExpiredLinkNeverUploads(holder: UploadLinkHolder, sameApp: boolean, at: number): boolean {
-  //@ ensures \result === true
-  const local_0: PhotoUploadLink = issueUploadLink(initial, holder, at);
-  return redeemUploadLink(local_0, holder, sameApp, exact_photoUploadLink(at + photoUploadLinkTtlMs)).phase !== "UploadLinkSpent";
+export function sometimesLinkSpent(link: PhotoUploadLink): boolean {
+  return link.phase === "UploadLinkSpent";
 }
 
 /** Story: Add my photos with a private one-time link / A status check says whether a link can still upload, and does not use it (spec/photoUploadLink.md) */

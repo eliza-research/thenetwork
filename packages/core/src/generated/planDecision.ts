@@ -2,9 +2,9 @@
 //@ backend dafny
 
 /** Story: Confirm a plan after enough members accept / Only a pending member can change an open plan (spec/planDecision.md) */
-export type ReplyChoice = "IgnoreReply" | "ExpireProbe" | "AddMember" | "RecordLate" | "BookPlan" | "AskPartner" | "RecordAnswer" | "ClosePlan" | "AskAlternate";
-/** Story: Confirm a plan after enough members accept / Only a pending member can change an open plan (spec/planDecision.md) */
 export type PlanStage = "Probing" | "Booked" | "Closed";
+/** Story: Confirm a plan after enough members accept / Only a pending member can change an open plan (spec/planDecision.md) */
+export type ReplyChoice = "IgnoreReply" | "ExpireProbe" | "AddMember" | "RecordLate" | "BookPlan" | "AskPartner" | "RecordAnswer" | "ClosePlan" | "AskAlternate";
 /** Story: Confirm a plan after enough members accept / Only a pending member can change an open plan (spec/planDecision.md) */
 export interface ReplyFacts { phase: PlanStage; pendingMember: boolean; accepted: boolean; yesAfter: number; needed: number; partnerPlan: boolean; firstMember: boolean; beforeDeadline: boolean; lateJoinOpen: boolean }
 /** Story: Choose a fallback for a plan that cannot proceed / Two acceptances for a group require new partner consent (spec/planDecision.md) */

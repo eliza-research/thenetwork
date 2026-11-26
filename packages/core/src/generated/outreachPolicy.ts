@@ -1,8 +1,12 @@
 // GENERATED from spec/outreachPolicy.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { maxOpenings as postingPolicy_maxOpenings, payRangeAllowed as postingPolicy_payRangeAllowed, confirmPosting as postingPolicy_confirmPosting, postingDraftCurrent as postingPolicy_postingDraftCurrent, missingPostingFields as postingPolicy_missingPostingFields, postingNeedsArea as postingPolicy_postingNeedsArea, inboundMayCommand as postingPolicy_inboundMayCommand, openingsInRange as postingPolicy_openingsInRange, openingCountNeedsCorrection as postingPolicy_openingCountNeedsCorrection, lawPayRangeIsOrdered as postingPolicy_lawPayRangeIsOrdered, lawAssistantProfileNeverCommands as postingPolicy_lawAssistantProfileNeverCommands, lawEditedPostingNeedsReadback as postingPolicy_lawEditedPostingNeedsReadback, lawStalePostingCannotBeConfirmed as postingPolicy_lawStalePostingCannotBeConfirmed, lawClosedPostingIsNeverCurrent as postingPolicy_lawClosedPostingIsNeverCurrent, lawChangedPostingIsNeverCurrent as postingPolicy_lawChangedPostingIsNeverCurrent, lawNewDraftNeverOverwrites as postingPolicy_lawNewDraftNeverOverwrites, lawOnsiteDraftWithoutAreaNeedsAnswer as postingPolicy_lawOnsiteDraftWithoutAreaNeedsAnswer, lawOmittedCountUsesDefault as postingPolicy_lawOmittedCountUsesDefault, lawInvalidStatedCountNeedsCorrection as postingPolicy_lawInvalidStatedCountNeedsCorrection } from "./postingPolicy.ts";
+import { inboundMayCommand as postingPolicy_inboundMayCommand, lawAssistantProfileNeverCommands as postingPolicy_lawAssistantProfileNeverCommands, missingPostingFields as postingPolicy_missingPostingFields, postingNeedsArea as postingPolicy_postingNeedsArea, lawOnsiteDraftWithoutAreaNeedsAnswer as postingPolicy_lawOnsiteDraftWithoutAreaNeedsAnswer, maxOpenings as postingPolicy_maxOpenings, openingsInRange as postingPolicy_openingsInRange, openingCountNeedsCorrection as postingPolicy_openingCountNeedsCorrection, lawOmittedCountUsesDefault as postingPolicy_lawOmittedCountUsesDefault, lawInvalidStatedCountNeedsCorrection as postingPolicy_lawInvalidStatedCountNeedsCorrection, payRangeAllowed as postingPolicy_payRangeAllowed, lawPayRangeIsOrdered as postingPolicy_lawPayRangeIsOrdered, confirmPosting as postingPolicy_confirmPosting, lawEditedPostingNeedsReadback as postingPolicy_lawEditedPostingNeedsReadback, lawStalePostingCannotBeConfirmed as postingPolicy_lawStalePostingCannotBeConfirmed, postingDraftCurrent as postingPolicy_postingDraftCurrent, lawClosedPostingIsNeverCurrent as postingPolicy_lawClosedPostingIsNeverCurrent, lawChangedPostingIsNeverCurrent as postingPolicy_lawChangedPostingIsNeverCurrent, lawNewDraftNeverOverwrites as postingPolicy_lawNewDraftNeverOverwrites } from "./postingPolicy.ts";
 
 
+/** Story: Limit unsolicited messages across apps / The default daily proactive limit is three across all apps (spec/outreachPolicy.md) */
+export const personDailyCap: number = 3;
+/** Story: Limit unsolicited messages across apps / An initial invitation fits the member's participation state budget (spec/outreachPolicy.md) */
+export const inviteBudgetDayMs: number = 86400000;
 /** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
 export const unansweredInviteWaitMs: number = exact_outreachPolicy(72 * 3600000);
 /** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
@@ -13,12 +17,8 @@ export const reengagementSilenceMs: number = exact_outreachPolicy(30 * 86400000)
 export const reengagementHighValueMs: number = exact_outreachPolicy(7 * 86400000);
 /** Story: Pause new offers after two unanswered invitations / Re-engagement requires current evidence of silence (spec/outreachPolicy.md) */
 export const reengagementDeliveryPrefix: string = "reengagement:";
-/** Story: Limit unsolicited messages across apps / The default daily proactive limit is three across all apps (spec/outreachPolicy.md) */
-export const personDailyCap: number = 3;
 /** Story: Hear when someone I invited joins / An eligible join receipt can ride on a current reply (spec/outreachPolicy.md) */
 export const inviteJoinNoticeLifetimeMs: number = 2592000000;
-/** Story: Limit unsolicited messages across apps / An initial invitation fits the member's participation state budget (spec/outreachPolicy.md) */
-export const inviteBudgetDayMs: number = 86400000;
 
 /** Story: Limit unsolicited messages across apps / An initial invitation fits the member's participation state budget (spec/outreachPolicy.md) */
 //@ pure
@@ -30,13 +30,6 @@ export function initialInviteInBudgetWindow(sentAt: number, now: number, budgetW
 //@ pure
 export function initialInviteBudgetSpent(sentInBudgetWindow: number, budgetLimit: number): boolean {
   return sentInBudgetWindow >= budgetLimit;
-}
-
-/** Story: Limit unsolicited messages across apps / An initial invitation fits the member's participation state budget (spec/outreachPolicy.md) */
-//@ pure
-export function lawInvitationJustSentCounts(sentAt: number, budgetWindowDays: number): boolean {
-  //@ ensures \result === true
-  return !(budgetWindowDays > 0) || initialInviteInBudgetWindow(sentAt, sentAt, budgetWindowDays);
 }
 
 /** Story: Limit unsolicited messages across apps / An initial invitation fits the member's participation state budget (spec/outreachPolicy.md) */
@@ -60,6 +53,13 @@ export function lawInvitationAtWindowEdgeLeavesTheWindow(sentAt: number, budgetW
   return !initialInviteInBudgetWindow(sentAt, exact_outreachPolicy(sentAt + exact_outreachPolicy(budgetWindowDays * inviteBudgetDayMs)), budgetWindowDays);
 }
 
+/** Story: Limit unsolicited messages across apps / An initial invitation fits the member's participation state budget (spec/outreachPolicy.md) */
+//@ pure
+export function lawInvitationJustSentCounts(sentAt: number, budgetWindowDays: number): boolean {
+  //@ ensures \result === true
+  return !(budgetWindowDays > 0) || initialInviteInBudgetWindow(sentAt, sentAt, budgetWindowDays);
+}
+
 /** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
 //@ pure
 export function unansweredInviteCounts(accepted: boolean, acceptedAt: number, expired: boolean, expiredAt: number, now: number): boolean {
@@ -70,12 +70,6 @@ export function unansweredInviteCounts(accepted: boolean, acceptedAt: number, ex
 //@ pure
 export function unansweredInvitePause(count: number): boolean {
   return count >= unansweredInviteLimit;
-}
-
-/** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
-//@ pure
-export function unansweredInviteCountAfterInbound(count: number, inbound: boolean): number {
-  return inbound ? 0 : count;
 }
 
 /** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
@@ -104,6 +98,12 @@ export function lawInvitationCountsAtWait(acceptedAt: number): boolean {
 export function lawTooFewInvitationsDoNotPause(count: number): boolean {
   //@ ensures \result === true
   return !(count < unansweredInviteLimit) || !unansweredInvitePause(count);
+}
+
+/** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
+//@ pure
+export function unansweredInviteCountAfterInbound(count: number, inbound: boolean): number {
+  return inbound ? 0 : count;
 }
 
 /** Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours (spec/outreachPolicy.md) */
@@ -185,15 +185,15 @@ export function inviteJoinNoticeConflictsWithRole(sameMember: boolean, sameFirst
 
 /** Story: Hear when someone I invited joins / An eligible join receipt can ride on a current reply (spec/outreachPolicy.md) */
 //@ pure
-export function inviteJoinNoticeMayRideReply(directMemberTurn: boolean, reply: boolean, carriesMemberText: boolean, inviteeHasRole: boolean): boolean {
-  return directMemberTurn && reply && !carriesMemberText && !inviteeHasRole;
+export function lawInviteJoinNoticeWaitsForNamesake(sameMember: boolean): boolean {
+  //@ ensures \result === true
+  return inviteJoinNoticeConflictsWithRole(sameMember, true);
 }
 
 /** Story: Hear when someone I invited joins / An eligible join receipt can ride on a current reply (spec/outreachPolicy.md) */
 //@ pure
-export function lawInviteJoinNoticeWaitsForNamesake(sameMember: boolean): boolean {
-  //@ ensures \result === true
-  return inviteJoinNoticeConflictsWithRole(sameMember, true);
+export function inviteJoinNoticeMayRideReply(directMemberTurn: boolean, reply: boolean, carriesMemberText: boolean, inviteeHasRole: boolean): boolean {
+  return directMemberTurn && reply && !carriesMemberText && !inviteeHasRole;
 }
 
 /** Story: Hear when someone I invited joins / An eligible join receipt can ride on a current reply (spec/outreachPolicy.md) */

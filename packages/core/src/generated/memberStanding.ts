@@ -1,7 +1,7 @@
 // GENERATED from spec/memberStanding.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type LaneShape as matchLane_LaneShape, type LaneSide as matchLane_LaneSide, type LaneWeights as matchLane_LaneWeights, type MatchLane as matchLane_MatchLane, type LaneLimits as matchLane_LaneLimits, standingCeiling as matchLane_standingCeiling, standingUncertaintyCeiling as matchLane_standingUncertaintyCeiling, teenFriendApp as matchLane_teenFriendApp, teenFriendCategory as matchLane_teenFriendCategory, teenGroupPlanApp as matchLane_teenGroupPlanApp, teenGenerator as matchLane_teenGenerator, laneWeights as matchLane_laneWeights, laneOffered as matchLane_laneOffered, lawEveryAppHasALane as matchLane_lawEveryAppHasALane, laneShape as matchLane_laneShape, teenFriendLane as matchLane_teenFriendLane, lawNtwrkTeenCategoryIsSocial as matchLane_lawNtwrkTeenCategoryIsSocial, lawTeenPlansOnlyOnFriends as matchLane_lawTeenPlansOnlyOnFriends, lawTeenGeneratorOnlyInFriendApps as matchLane_lawTeenGeneratorOnlyInFriendApps, lawNtwrkHasNoTeenPlans as matchLane_lawNtwrkHasNoTeenPlans, lawRepeatsAndContributorsNeverTeen as matchLane_lawRepeatsAndContributorsNeverTeen, lawTeenLanesOnlyInFriendApps as matchLane_lawTeenLanesOnlyInFriendApps, lawNoTeenOnSlopOrPeon as matchLane_lawNoTeenOnSlopOrPeon, lawTeenFriendLaneSameOnBothApps as matchLane_lawTeenFriendLaneSameOnBothApps, lawTeenFriendLaneIsOffered as matchLane_lawTeenFriendLaneIsOffered, lawNoTeenDateOrWork as matchLane_lawNoTeenDateOrWork, laneSidesCompatible as matchLane_laneSidesCompatible, laneLimits as matchLane_laneLimits, lawLaneWeightsWellFormed as matchLane_lawLaneWeightsWellFormed, lawLaneSidesSymmetric as matchLane_lawLaneSidesSymmetric, laneOffset as matchLane_laneOffset, lawLaneLimitsWellFormed as matchLane_lawLaneLimitsWellFormed, lawLaneOffsetAntisymmetric as matchLane_lawLaneOffsetAntisymmetric, lanePairValue as matchLane_lanePairValue, lawLanePairValueSymmetric as matchLane_lawLanePairValueSymmetric } from "./matchLane.ts";
-import { type PairSide as pairValue_PairSide, type PairRules as pairValue_PairRules, type UtilityTerm as pairValue_UtilityTerm } from "./pairValue.ts";
+import { type MatchLane as matchLane_MatchLane, type LaneShape as matchLane_LaneShape, type LaneSide as matchLane_LaneSide, type LaneLimits as matchLane_LaneLimits, type LaneWeights as matchLane_LaneWeights, laneShape as matchLane_laneShape, laneSidesCompatible as matchLane_laneSidesCompatible, lawLaneSidesSymmetric as matchLane_lawLaneSidesSymmetric, standingCeiling as matchLane_standingCeiling, standingUncertaintyCeiling as matchLane_standingUncertaintyCeiling, laneLimits as matchLane_laneLimits, lawLaneLimitsWellFormed as matchLane_lawLaneLimitsWellFormed, laneWeights as matchLane_laneWeights, lawLaneWeightsWellFormed as matchLane_lawLaneWeightsWellFormed, laneOffset as matchLane_laneOffset, lawLaneOffsetAntisymmetric as matchLane_lawLaneOffsetAntisymmetric, lanePairValue as matchLane_lanePairValue, lawLanePairValueSymmetric as matchLane_lawLanePairValueSymmetric, laneOffered as matchLane_laneOffered, lawEveryAppHasALane as matchLane_lawEveryAppHasALane, teenFriendApp as matchLane_teenFriendApp, teenFriendLane as matchLane_teenFriendLane, teenFriendCategory as matchLane_teenFriendCategory, teenGroupPlanApp as matchLane_teenGroupPlanApp, lawTeenLanesOnlyInFriendApps as matchLane_lawTeenLanesOnlyInFriendApps, lawNoTeenOnSlopOrPeon as matchLane_lawNoTeenOnSlopOrPeon, lawTeenFriendLaneSameOnBothApps as matchLane_lawTeenFriendLaneSameOnBothApps, lawNtwrkTeenCategoryIsSocial as matchLane_lawNtwrkTeenCategoryIsSocial, lawTeenFriendLaneIsOffered as matchLane_lawTeenFriendLaneIsOffered, lawTeenPlansOnlyOnFriends as matchLane_lawTeenPlansOnlyOnFriends, lawNoTeenDateOrWork as matchLane_lawNoTeenDateOrWork, teenGenerator as matchLane_teenGenerator, lawTeenGeneratorOnlyInFriendApps as matchLane_lawTeenGeneratorOnlyInFriendApps, lawNtwrkHasNoTeenPlans as matchLane_lawNtwrkHasNoTeenPlans, lawRepeatsAndContributorsNeverTeen as matchLane_lawRepeatsAndContributorsNeverTeen } from "./matchLane.ts";
+import { type UtilityTerm as pairValue_UtilityTerm, type PairSide as pairValue_PairSide, type PairRules as pairValue_PairRules } from "./pairValue.ts";
 
 /** Story: Estimate standing from facts, never from popularity / Standing adds reviewed facts in full and unreviewed facts at half (spec/memberStanding.md) */
 export interface StandingEvidence { points: number; reviewed: boolean }
@@ -15,6 +15,8 @@ export const standingFacetProvenances: string[] = ["said", "vouched", "connected
 /** Story: Estimate standing from facts, never from popularity / Standing adds reviewed facts in full and unreviewed facts at half (spec/memberStanding.md) */
 export const standingUnreviewedPercent: number = 50;
 /** Story: Estimate standing from facts, never from popularity / A private photo rating gives a percentile among rated adults of the same market and pool (spec/memberStanding.md) */
+export const standingMiddle: number = quotient_memberStanding(matchLane_standingCeiling, 2);
+/** Story: Estimate standing from facts, never from popularity / A private photo rating gives a percentile among rated adults of the same market and pool (spec/memberStanding.md) */
 export const standingPoolMinimum: number = 20;
 /** Story: Treat a new member with wide uncertainty / A member with no reviewed facts gets the widest uncertainty (spec/memberStanding.md) */
 export const standingUncertaintyFloor: number = 3;
@@ -24,8 +26,6 @@ export const standingUncertaintyStep: number = 2;
 export const standingWeeklyStep: number = 5;
 /** Story: Move standing slowly / The first observation initializes standing and a due observation advances it once (spec/memberStanding.md) */
 export const standingObservationWeekMs: number = 604800000;
-/** Story: Estimate standing from facts, never from popularity / A private photo rating gives a percentile among rated adults of the same market and pool (spec/memberStanding.md) */
-export const standingMiddle: number = quotient_memberStanding(matchLane_standingCeiling, 2);
 
 /** Story: Estimate standing from facts, never from popularity / Standing exists only for an adult who consented to the lane (spec/memberStanding.md) */
 //@ pure
@@ -35,14 +35,14 @@ export function standingReadable(ageEligible: boolean, consented: boolean): bool
 
 /** Story: Estimate standing from facts, never from popularity / Standing history requires current account and lane authority (spec/memberStanding.md) */
 //@ pure
-export function standingHistoryUsable(hasHistory: boolean, evidenceStillPermits: boolean): boolean {
-  return hasHistory && evidenceStillPermits;
+export function standingMayRetain(ageEligible: boolean, activeAccount: boolean, lanePermitted: boolean): boolean {
+  return standingReadable(ageEligible, lanePermitted) && activeAccount;
 }
 
 /** Story: Estimate standing from facts, never from popularity / Standing history requires current account and lane authority (spec/memberStanding.md) */
 //@ pure
-export function standingMayRetain(ageEligible: boolean, activeAccount: boolean, lanePermitted: boolean): boolean {
-  return standingReadable(ageEligible, lanePermitted) && activeAccount;
+export function standingHistoryUsable(hasHistory: boolean, evidenceStillPermits: boolean): boolean {
+  return hasHistory && evidenceStillPermits;
 }
 
 /** Story: Estimate standing from facts, never from popularity / Standing history requires current account and lane authority (spec/memberStanding.md) */
@@ -112,18 +112,18 @@ export function standingPercentile(below: number, equal: number, rated: number):
 
 /** Story: Estimate standing from facts, never from popularity / A private photo rating gives a percentile among rated adults of the same market and pool (spec/memberStanding.md) */
 //@ pure
-export function lawStandingPercentileRisesWithRank(below: number, equal: number, rated: number): boolean {
-  //@ ensures \result === true
-  return !(below >= 0 && equal >= 0) || standingPercentile(exact_memberStanding(below + 1), equal, rated) >= standingPercentile(below, equal, rated);
-}
-
-/** Story: Estimate standing from facts, never from popularity / A private photo rating gives a percentile among rated adults of the same market and pool (spec/memberStanding.md) */
-//@ pure
 export function lawStandingBounded(evidence: StandingEvidence[], below: number, equal: number, rated: number): boolean {
   //@ ensures \result === true
   const local_1 = standingFromEvidence(evidence);
   const local_2 = standingPercentile(below, equal, rated);
   return local_1 >= 0 && local_1 <= matchLane_standingCeiling && local_2 >= 0 && local_2 <= matchLane_standingCeiling;
+}
+
+/** Story: Estimate standing from facts, never from popularity / A private photo rating gives a percentile among rated adults of the same market and pool (spec/memberStanding.md) */
+//@ pure
+export function lawStandingPercentileRisesWithRank(below: number, equal: number, rated: number): boolean {
+  //@ ensures \result === true
+  return !(below >= 0 && equal >= 0) || standingPercentile(exact_memberStanding(below + 1), equal, rated) >= standingPercentile(below, equal, rated);
 }
 
 /** Story: Estimate standing from facts, never from popularity / One rated adult who joins a pool moves another member's percentile by at most the weekly step (spec/memberStanding.md) */
@@ -178,6 +178,14 @@ export function ratingUncertainty(photos: number, spreadLow: number, spreadHigh:
 
 /** Story: Treat a new member with wide uncertainty / A photo rating's uncertainty narrows with rated photos and widens with their disagreement (spec/memberStanding.md) */
 //@ pure
+export function lawRatingUncertaintyBounded(photos: number, spreadLow: number, spreadHigh: number): boolean {
+  //@ ensures \result === true
+  const local_8 = ratingUncertainty(photos, spreadLow, spreadHigh);
+  return local_8 >= standingUncertaintyFloor && local_8 <= matchLane_standingUncertaintyCeiling && (!(photos < 2) || local_8 === matchLane_standingUncertaintyCeiling);
+}
+
+/** Story: Treat a new member with wide uncertainty / A photo rating's uncertainty narrows with rated photos and widens with their disagreement (spec/memberStanding.md) */
+//@ pure
 export function lawRatingUncertaintyShrinksWithPhotos(photos: number, spreadLow: number, spreadHigh: number): boolean {
   //@ ensures \result === true
   return ratingUncertainty(exact_memberStanding(photos + 1), spreadLow, spreadHigh) <= ratingUncertainty(photos, spreadLow, spreadHigh);
@@ -188,14 +196,6 @@ export function lawRatingUncertaintyShrinksWithPhotos(photos: number, spreadLow:
 export function lawRatingUncertaintyGrowsWithSpread(photos: number, spreadLow: number, spreadHigh: number, wider: number, lower: number): boolean {
   //@ ensures \result === true
   return (!(wider >= spreadHigh) || ratingUncertainty(photos, spreadLow, wider) >= ratingUncertainty(photos, spreadLow, spreadHigh)) && (!(lower <= spreadLow) || ratingUncertainty(photos, lower, spreadHigh) >= ratingUncertainty(photos, spreadLow, spreadHigh));
-}
-
-/** Story: Treat a new member with wide uncertainty / A photo rating's uncertainty narrows with rated photos and widens with their disagreement (spec/memberStanding.md) */
-//@ pure
-export function lawRatingUncertaintyBounded(photos: number, spreadLow: number, spreadHigh: number): boolean {
-  //@ ensures \result === true
-  const local_8 = ratingUncertainty(photos, spreadLow, spreadHigh);
-  return local_8 >= standingUncertaintyFloor && local_8 <= matchLane_standingUncertaintyCeiling && (!(photos < 2) || local_8 === matchLane_standingUncertaintyCeiling);
 }
 
 /** Story: Treat a new member with wide uncertainty / A standing that staff reviewed as a property of the offer has the floor uncertainty (spec/memberStanding.md) */
@@ -242,6 +242,14 @@ export function observeStanding(value: number, observedAt: number, target: numbe
 
 /** Story: Move standing slowly / The first observation initializes standing and a due observation advances it once (spec/memberStanding.md) */
 //@ pure
+export function lawStandingObservationInRange(value: number, observedAt: number, target: number, now: number, initialized: boolean): boolean {
+  //@ ensures \result === true
+  const local_12: StandingObservation = observeStanding(value, observedAt, target, now, initialized);
+  return 0 <= local_12.standing && local_12.standing <= matchLane_standingCeiling && local_12.updatedAt >= -1;
+}
+
+/** Story: Move standing slowly / The first observation initializes standing and a due observation advances it once (spec/memberStanding.md) */
+//@ pure
 export function lawFirstStandingObservationUsesTarget(value: number, observedAt: number, target: number, now: number, initialized: boolean): boolean {
   //@ ensures \result === true
   return !((!initialized || observedAt < 0) && now >= 0) || equal_memberStanding(observeStanding(value, observedAt, target, now, initialized), ({ standing: standingClamp(target), updatedAt: now } as StandingObservation));
@@ -263,26 +271,18 @@ export function lawStandingObservationHoldsUntilDue(value: number, observedAt: n
 
 /** Story: Move standing slowly / The first observation initializes standing and a due observation advances it once (spec/memberStanding.md) */
 //@ pure
-export function lawStandingObservationNeverMovesTimeBackward(value: number, observedAt: number, target: number, now: number): boolean {
-  //@ ensures \result === true
-  return !(observedAt >= 0) || observeStanding(value, observedAt, target, now, true).updatedAt >= observedAt;
-}
-
-/** Story: Move standing slowly / The first observation initializes standing and a due observation advances it once (spec/memberStanding.md) */
-//@ pure
-export function lawStandingObservationInRange(value: number, observedAt: number, target: number, now: number, initialized: boolean): boolean {
-  //@ ensures \result === true
-  const local_12: StandingObservation = observeStanding(value, observedAt, target, now, initialized);
-  return 0 <= local_12.standing && local_12.standing <= matchLane_standingCeiling && local_12.updatedAt >= -1;
-}
-
-/** Story: Move standing slowly / The first observation initializes standing and a due observation advances it once (spec/memberStanding.md) */
-//@ pure
 export function lawStandingDueObservationStepsOnce(value: number, observedAt: number, target: number, now: number): boolean {
   //@ ensures \result === true
   const local_13: StandingObservation = observeStanding(value, observedAt, target, now, true);
   const local_14 = standingClamp(value);
   return !(observedAt >= 0 && now >= observedAt && exact_memberStanding(now - observedAt) >= standingObservationWeekMs) || (local_13.updatedAt === now && local_13.standing === nextStanding(value, target) && exact_memberStanding(local_13.standing - local_14) <= standingWeeklyStep && exact_memberStanding(local_14 - local_13.standing) <= standingWeeklyStep);
+}
+
+/** Story: Move standing slowly / The first observation initializes standing and a due observation advances it once (spec/memberStanding.md) */
+//@ pure
+export function lawStandingObservationNeverMovesTimeBackward(value: number, observedAt: number, target: number, now: number): boolean {
+  //@ ensures \result === true
+  return !(observedAt >= 0) || observeStanding(value, observedAt, target, now, true).updatedAt >= observedAt;
 }
 
 /** Story: Move standing slowly / The first observation initializes standing and a due observation advances it once (spec/memberStanding.md) */

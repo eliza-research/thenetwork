@@ -36,13 +36,13 @@ export declare function checkAdmission(s: BackendHealth, serving: boolean): Back
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
 export declare function canCheckDatabase(s: BackendHealth): boolean;
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
-export declare function canCheckTicks(s: BackendHealth): boolean;
-/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
-export declare function stepReportIsFinal(before: BackendHealth, after: BackendHealth): boolean;
-/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
 export declare function checkDatabase(s: BackendHealth, reachable: boolean): BackendHealth;
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
+export declare function canCheckTicks(s: BackendHealth): boolean;
+/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
 export declare function checkTicks(s: BackendHealth, late: boolean): BackendHealth;
+/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
+export declare function stepReportIsFinal(before: BackendHealth, after: BackendHealth): boolean;
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
 export declare function sometimesReportsReady(s: BackendHealth): boolean;
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */

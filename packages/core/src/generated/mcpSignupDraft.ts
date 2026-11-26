@@ -20,9 +20,9 @@ export type Event =
   | { type: "observeAgeAfterWrite"; allowed: boolean };
 
 /** Story: Prepare an editable Join form after authorization / A live connection prepares one draft under the age guard (spec/mcpSignupDraft.md) */
-export const signupDraftLifetimeMs: number = 600000;
-/** Story: Prepare an editable Join form after authorization / A live connection prepares one draft under the age guard (spec/mcpSignupDraft.md) */
 export const initial: DraftPreparation = { phase: "ReadConnection" };
+/** Story: Prepare an editable Join form after authorization / A live connection prepares one draft under the age guard (spec/mcpSignupDraft.md) */
+export const signupDraftLifetimeMs: number = 600000;
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
@@ -152,12 +152,6 @@ export function signupDraftClaimRoute(status: string, ageAllowed: boolean, banne
 
 /** Story: Drop the draft when I can no longer use it / The Finish signup step keeps the draft only for a person who can still join (spec/mcpSignupDraft.md) */
 //@ pure
-export function signupDraftRefusedRoute(banned: boolean): DraftClaimRoute {
-  return banned ? "DiscardDraft" : "RefuseClaim";
-}
-
-/** Story: Drop the draft when I can no longer use it / The Finish signup step keeps the draft only for a person who can still join (spec/mcpSignupDraft.md) */
-//@ pure
 export function lawBannedNumberNeverReadsDraft(status: string, ageAllowed: boolean): boolean {
   //@ ensures \result === true
   return signupDraftClaimRoute(status, ageAllowed, true) === "DiscardDraft";
@@ -168,6 +162,12 @@ export function lawBannedNumberNeverReadsDraft(status: string, ageAllowed: boole
 export function lawDraftReadNeedsJoinableAge(status: string, ageAllowed: boolean, banned: boolean): boolean {
   //@ ensures \result === true
   return !(signupDraftClaimRoute(status, ageAllowed, banned) === "ReadDraft") || (ageAllowed && !banned && signupMembershipCanDraft(status));
+}
+
+/** Story: Drop the draft when I can no longer use it / The Finish signup step keeps the draft only for a person who can still join (spec/mcpSignupDraft.md) */
+//@ pure
+export function signupDraftRefusedRoute(banned: boolean): DraftClaimRoute {
+  return banned ? "DiscardDraft" : "RefuseClaim";
 }
 
 /** Story: Drop the draft when I can no longer use it / The Finish signup step keeps the draft only for a person who can still join (spec/mcpSignupDraft.md) */
@@ -198,6 +198,13 @@ export function signupDraftCanPrepare(alreadyPrepared: boolean): boolean {
 
 /** Story: Drop the draft when I can no longer use it / A draft is written only under the grant that saves it, and only the signup prefill reads it (spec/mcpSignupDraft.md) */
 //@ pure
+export function lawOneDraftPerGrant(alreadyPrepared: boolean): boolean {
+  //@ ensures \result === true
+  return !alreadyPrepared || !signupDraftCanPrepare(alreadyPrepared);
+}
+
+/** Story: Drop the draft when I can no longer use it / A draft is written only under the grant that saves it, and only the signup prefill reads it (spec/mcpSignupDraft.md) */
+//@ pure
 export function signupDraftUnique(matches: number): boolean {
   return matches === 1;
 }
@@ -206,13 +213,6 @@ export function signupDraftUnique(matches: number): boolean {
 //@ pure
 export function signupDraftExpired(expiresAt: number, asOf: number): boolean {
   return expiresAt <= asOf;
-}
-
-/** Story: Drop the draft when I can no longer use it / A draft is written only under the grant that saves it, and only the signup prefill reads it (spec/mcpSignupDraft.md) */
-//@ pure
-export function lawOneDraftPerGrant(alreadyPrepared: boolean): boolean {
-  //@ ensures \result === true
-  return !alreadyPrepared || !signupDraftCanPrepare(alreadyPrepared);
 }
 
 /** Story: Drop the draft when I can no longer use it / The signup result settles the draft (spec/mcpSignupDraft.md) */

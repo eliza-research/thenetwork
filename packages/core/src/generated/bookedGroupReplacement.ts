@@ -53,15 +53,15 @@ export function replacementAnswerAllowed(ownAnswer: boolean, probeDelivered: boo
 
 /** Story: Get a fresh invitation after an underfilled booking closes / The next plan needs fresh review and all three separate acceptances (spec/bookedGroupReplacement.md) */
 //@ pure
-export function bookReplacementPlan(approved: boolean, freshAcceptances: number, seated: number): boolean {
-  return approved && freshAcceptances === 3 && seated === 3;
+export function lawAnswerNeedsItsDeliveredReplacement(ownAnswer: boolean, answerAt: number, sentAt: number): boolean {
+  //@ ensures \result === true
+  return !replacementAnswerAllowed(ownAnswer, false, answerAt, sentAt);
 }
 
 /** Story: Get a fresh invitation after an underfilled booking closes / The next plan needs fresh review and all three separate acceptances (spec/bookedGroupReplacement.md) */
 //@ pure
-export function lawAnswerNeedsItsDeliveredReplacement(ownAnswer: boolean, answerAt: number, sentAt: number): boolean {
-  //@ ensures \result === true
-  return !replacementAnswerAllowed(ownAnswer, false, answerAt, sentAt);
+export function bookReplacementPlan(approved: boolean, freshAcceptances: number, seated: number): boolean {
+  return approved && freshAcceptances === 3 && seated === 3;
 }
 
 /** Story: Get a fresh invitation after an underfilled booking closes / The next plan needs fresh review and all three separate acceptances (spec/bookedGroupReplacement.md) */

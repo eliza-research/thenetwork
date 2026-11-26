@@ -2,11 +2,11 @@
 //@ backend dafny
 
 /** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md) */
+export type AppKey = "Ntwrk" | "Slop" | "Peon" | "Friends";
+/** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md) */
 export type JoinMode = "InviteOnly" | "OpenJoin";
 /** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md) */
 export type Accent = "Black" | "Chartreuse" | "Orange" | "Green";
-/** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md) */
-export type AppKey = "Ntwrk" | "Slop" | "Peon" | "Friends";
 /** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md) */
 export type LogoMark = "GraphMark" | "HeartMark" | "NecktieMark" | "TwoCirclesMark";
 /** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md) */
@@ -24,18 +24,8 @@ export type MarkFill = "PrimaryFill" | "BackgroundFill";
 /** Story: One component set for every brand / The logo and the favicon take only tokens, and the favicon has one variant for each color scheme (spec/brandIdentity.md) */
 export type ColorScheme = "LightScheme" | "DarkScheme";
 
-/** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */
-export const supportEmail: string = "help@ntwrk.party";
-/** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */
-export const agentAccessPage: string = "https://ntwrk.party/oauth/consents";
-/** Story: One component set for every brand / The focus ring, the hover fill, the state colors and the inverse surface obey fixed color rules (spec/brandIdentity.md) */
-export const nearColorFloorPermille: number = 100;
-/** Story: One component set for every brand / The focus ring, the hover fill, the state colors and the inverse surface obey fixed color rules (spec/brandIdentity.md) */
-export const inverseTextContrastFloorTenths: number = 45;
-/** Story: One component set for every brand / The focus ring, the hover fill, the state colors and the inverse surface obey fixed color rules (spec/brandIdentity.md) */
-export const inverseEdgeContrastFloorTenths: number = 30;
-/** Story: One component set for every brand / The logo and the favicon take only tokens, and the favicon has one variant for each color scheme (spec/brandIdentity.md) */
-export const colorSchemes: ColorScheme[] = ["LightScheme", "DarkScheme"];
+/** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md) */
+export const appKeys: AppKey[] = ["Ntwrk", "Slop", "Peon", "Friends"];
 /** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md) */
 export const joinModes: JoinMode[] = ["InviteOnly", "OpenJoin"];
 /** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md) */
@@ -50,10 +40,20 @@ export const slopBrand: Brand = { app: "Slop", name: "slop.date", domain: "slop.
 export const peonBrand: Brand = { app: "Peon", name: "peon.biz", domain: "peon.biz", keyword: "peon", joinMode: "OpenJoin", accent: "Orange", logo: "NecktieMark", headlineLead: "Let your agent find you the perfect ", headlineMark: "job", headlineTail: ".", skillName: "peon-biz" };
 /** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md) */
 export const friendsBrand: Brand = { app: "Friends", name: "friends.help", domain: "friends.help", keyword: "friends", joinMode: "OpenJoin", accent: "Green", logo: "TwoCirclesMark", headlineLead: "Let your agent find your best ", headlineMark: "friends", headlineTail: ".", skillName: "friends-help" };
+/** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */
+export const supportEmail: string = "help@ntwrk.party";
+/** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */
+export const agentAccessPage: string = "https://ntwrk.party/oauth/consents";
 /** Story: One component set for every brand / The focus ring, the hover fill, the state colors and the inverse surface obey fixed color rules (spec/brandIdentity.md) */
 export const stateColors: StateColor[] = ["OkColor", "WarnColor", "InfoColor", "DestructiveColor"];
-/** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md) */
-export const appKeys: AppKey[] = ["Ntwrk", "Slop", "Peon", "Friends"];
+/** Story: One component set for every brand / The focus ring, the hover fill, the state colors and the inverse surface obey fixed color rules (spec/brandIdentity.md) */
+export const nearColorFloorPermille: number = 100;
+/** Story: One component set for every brand / The focus ring, the hover fill, the state colors and the inverse surface obey fixed color rules (spec/brandIdentity.md) */
+export const inverseTextContrastFloorTenths: number = 45;
+/** Story: One component set for every brand / The focus ring, the hover fill, the state colors and the inverse surface obey fixed color rules (spec/brandIdentity.md) */
+export const inverseEdgeContrastFloorTenths: number = 30;
+/** Story: One component set for every brand / The logo and the favicon take only tokens, and the favicon has one variant for each color scheme (spec/brandIdentity.md) */
+export const colorSchemes: ColorScheme[] = ["LightScheme", "DarkScheme"];
 
 /** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md) */
 //@ pure
@@ -125,12 +125,6 @@ export function openaiConnectorEndpoint(app: AppKey): string {
 
 /** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */
 //@ pure
-export function mayName(site: AppKey, named: AppKey, surface: Surface): boolean {
-  return site === named || (site === "Ntwrk" && (surface === "LegalSurface" || surface === "CatalogSurface"));
-}
-
-/** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */
-//@ pure
 export function hubTextsOnAppSurface(site: AppKey, surface: Surface): string[] {
   return surface === "SkillSurface" ? ([supportEmail, agentAccessPage, openaiConnectorEndpoint(site), connectorEndpoint(site)] as string[]) : ([supportEmail] as string[]);
 }
@@ -140,6 +134,19 @@ export function hubTextsOnAppSurface(site: AppKey, surface: Surface): string[] {
 export function lawAppEndpointsAreDistinct(a: AppKey, b: AppKey): boolean {
   //@ ensures \result === true
   return !(a !== b) || (connectorEndpoint(a) !== connectorEndpoint(b) && openaiConnectorEndpoint(a) !== openaiConnectorEndpoint(b) && connectorEndpoint(a) !== openaiConnectorEndpoint(b));
+}
+
+/** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */
+//@ pure
+export function lawOnlyTheSkillNamesTheEndpoint(site: AppKey, surface: Surface): boolean {
+  //@ ensures \result === true
+  return !(surface !== "SkillSurface") || equal_brandIdentity(hubTextsOnAppSurface(site, surface), ([supportEmail] as string[]));
+}
+
+/** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */
+//@ pure
+export function mayName(site: AppKey, named: AppKey, surface: Surface): boolean {
+  return site === named || (site === "Ntwrk" && (surface === "LegalSurface" || surface === "CatalogSurface"));
 }
 
 /** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */
@@ -154,13 +161,6 @@ export function lawAppSiteNeverNamesTheNetwork(site: AppKey, surface: Surface): 
 export function lawAppSiteNamesNoOtherApp(site: AppKey, named: AppKey, surface: Surface): boolean {
   //@ ensures \result === true
   return !(site !== "Ntwrk" && named !== site) || !mayName(site, named, surface);
-}
-
-/** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md) */
-//@ pure
-export function lawOnlyTheSkillNamesTheEndpoint(site: AppKey, surface: Surface): boolean {
-  //@ ensures \result === true
-  return !(surface !== "SkillSurface") || equal_brandIdentity(hubTextsOnAppSurface(site, surface), ([supportEmail] as string[]));
 }
 
 /** Story: Each site keeps its own brand / ntwrk.party names no app on its landing page, its not-found page or its own skill (spec/brandIdentity.md) */
@@ -198,6 +198,12 @@ export function lawPartsTakeTheBrandTokens(app: AppKey, part: SharedPart, other:
 
 /** Story: One component set for every brand / The focus ring, the hover fill, the state colors and the inverse surface obey fixed color rules (spec/brandIdentity.md) */
 //@ pure
+export function stateToken(color: StateColor): string {
+  return color === "OkColor" ? "ok" : (color === "WarnColor" ? "warn" : (color === "InfoColor" ? "info" : "destructive"));
+}
+
+/** Story: One component set for every brand / The focus ring, the hover fill, the state colors and the inverse surface obey fixed color rules (spec/brandIdentity.md) */
+//@ pure
 export function ringIsTheAccent(ring: string, primary: string): boolean {
   return ring === primary;
 }
@@ -210,20 +216,14 @@ export function colorIsClearOfAccent(distancePermille: number): boolean {
 
 /** Story: One component set for every brand / The focus ring, the hover fill, the state colors and the inverse surface obey fixed color rules (spec/brandIdentity.md) */
 //@ pure
-export function inverseIsReadable(textContrastTenths: number, edgeContrastTenths: number): boolean {
-  return textContrastTenths >= inverseTextContrastFloorTenths && edgeContrastTenths >= inverseEdgeContrastFloorTenths;
-}
-
-/** Story: One component set for every brand / The focus ring, the hover fill, the state colors and the inverse surface obey fixed color rules (spec/brandIdentity.md) */
-//@ pure
-export function stateToken(color: StateColor): string {
-  return color === "OkColor" ? "ok" : (color === "WarnColor" ? "warn" : (color === "InfoColor" ? "info" : "destructive"));
-}
-
-/** Story: One component set for every brand / The focus ring, the hover fill, the state colors and the inverse surface obey fixed color rules (spec/brandIdentity.md) */
-//@ pure
 export function hoverFillIsClear(distancePermille: number, sameHue: boolean): boolean {
   return sameHue && colorIsClearOfAccent(distancePermille);
+}
+
+/** Story: One component set for every brand / The focus ring, the hover fill, the state colors and the inverse surface obey fixed color rules (spec/brandIdentity.md) */
+//@ pure
+export function inverseIsReadable(textContrastTenths: number, edgeContrastTenths: number): boolean {
+  return textContrastTenths >= inverseTextContrastFloorTenths && edgeContrastTenths >= inverseEdgeContrastFloorTenths;
 }
 
 /** Story: One component set for every brand / The focus ring, the hover fill, the state colors and the inverse surface obey fixed color rules (spec/brandIdentity.md) */
@@ -231,13 +231,6 @@ export function hoverFillIsClear(distancePermille: number, sameHue: boolean): bo
 export function lawRingEqualsTheAccent(color: string): boolean {
   //@ ensures \result === true
   return ringIsTheAccent(color, color);
-}
-
-/** Story: One component set for every brand / The focus ring, the hover fill, the state colors and the inverse surface obey fixed color rules (spec/brandIdentity.md) */
-//@ pure
-export function lawInverseNeedsBothContrasts(textContrastTenths: number, edgeContrastTenths: number): boolean {
-  //@ ensures \result === true
-  return !inverseIsReadable(textContrastTenths, edgeContrastTenths) || (textContrastTenths >= 45 && edgeContrastTenths >= 30);
 }
 
 /** Story: One component set for every brand / The focus ring, the hover fill, the state colors and the inverse surface obey fixed color rules (spec/brandIdentity.md) */
@@ -252,6 +245,13 @@ export function lawTheAccentIsNeverClearOfItself(sameHue: boolean): boolean {
 export function lawStateTokensAreDistinct(a: StateColor, b: StateColor): boolean {
   //@ ensures \result === true
   return !(a !== b) || stateToken(a) !== stateToken(b);
+}
+
+/** Story: One component set for every brand / The focus ring, the hover fill, the state colors and the inverse surface obey fixed color rules (spec/brandIdentity.md) */
+//@ pure
+export function lawInverseNeedsBothContrasts(textContrastTenths: number, edgeContrastTenths: number): boolean {
+  //@ ensures \result === true
+  return !inverseIsReadable(textContrastTenths, edgeContrastTenths) || (textContrastTenths >= 45 && edgeContrastTenths >= 30);
 }
 
 /** Story: One component set for every brand / The logo and the favicon take only tokens, and the favicon has one variant for each color scheme (spec/brandIdentity.md) */

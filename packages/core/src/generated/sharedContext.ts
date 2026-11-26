@@ -2,11 +2,11 @@
 //@ backend dafny
 
 /** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md) */
-export type ContextMode = "ModeOpen" | "ModeBusy" | "ModeTraveling" | "ModePaused" | "ModeUnavailable";
-/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md) */
 export type ContextPhase = "CheckingAccount" | "CheckingMembership" | "CheckingMember" | "CheckingLabels" | "CheckingFacets" | "ContextReady" | "Withheld";
 /** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md) */
 export interface SharedContext { phase: ContextPhase }
+/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md) */
+export type ContextMode = "ModeOpen" | "ModeBusy" | "ModeTraveling" | "ModePaused" | "ModeUnavailable";
 /** Story: Let my agent read the safe context for my current account / Active item summaries are distinct (spec/sharedContext.md) */
 export type ContextItemLabel = "ItemLabelName" | "ItemLabelNameAndDay" | "ItemLabelLeftOut";
 /** Story: Let my agent read the safe context for my current account / A member whose context is unavailable still gets an answer (spec/sharedContext.md) */
@@ -20,14 +20,14 @@ export type Event =
   | { type: "checkLabels"; labelsSafe: boolean }
   | { type: "checkFacets"; facetCount: number; oversized: boolean };
 
+/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md) */
+export const initial: SharedContext = { phase: "CheckingAccount" };
 /** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md) */
 export const contextFacetLimit: number = 50;
 /** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md) */
 export const contextFacetSizeLimit: number = 300;
 /** Story: Let my agent read the safe context for my current account / Active items list only the member's live matches with a safe summary (spec/sharedContext.md) */
 export const contextActiveItemLimit: number = 20;
-/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md) */
-export const initial: SharedContext = { phase: "CheckingAccount" };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
@@ -82,18 +82,6 @@ export function checkMember(context: SharedContext, memberAndModeExist: boolean)
 
 /** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md) */
 //@ pure
-export function contextFacetEligible(own: boolean, shareable: boolean, confirmed: boolean, sensitive: boolean, withinValidity: boolean): boolean {
-  return own && shareable && confirmed && !sensitive && withinValidity;
-}
-
-/** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md) */
-//@ pure
-export function contextFacetKept(rank: number, textSize: number): boolean {
-  return rank >= 0 && rank < contextFacetLimit && textSize <= contextFacetSizeLimit;
-}
-
-/** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md) */
-//@ pure
 export function canCheckLabels(context: SharedContext): boolean {
   return context.phase === "CheckingLabels";
 }
@@ -103,6 +91,18 @@ export function canCheckLabels(context: SharedContext): boolean {
 export function checkLabels(context: SharedContext, labelsSafe: boolean): SharedContext {
   //@ ensures (inv(context) && canCheckLabels(context)) ==> stepContextRequiresFacetChecks(context, "checkLabels", \result)
   return { phase: labelsSafe ? "CheckingFacets" : "Withheld" };
+}
+
+/** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md) */
+//@ pure
+export function contextFacetEligible(own: boolean, shareable: boolean, confirmed: boolean, sensitive: boolean, withinValidity: boolean): boolean {
+  return own && shareable && confirmed && !sensitive && withinValidity;
+}
+
+/** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md) */
+//@ pure
+export function contextFacetKept(rank: number, textSize: number): boolean {
+  return rank >= 0 && rank < contextFacetLimit && textSize <= contextFacetSizeLimit;
 }
 
 /** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md) */
@@ -198,14 +198,21 @@ export function lawDayLabelOnlyWhenNameAndDayAreUnique(sameName: number, sameNam
 
 /** Story: Let my agent read the safe context for my current account / A member whose context is unavailable still gets an answer (spec/sharedContext.md) */
 //@ pure
-export function unavailableReplySent(numberAdmitted: boolean, underJoinAge: boolean): boolean {
-  return numberAdmitted && !underJoinAge;
+export function openTurnAnswer(contextAvailable: boolean): OpenTurnAnswer {
+  return contextAvailable ? "AnswerOpen" : "AnswerUnavailable";
 }
 
 /** Story: Let my agent read the safe context for my current account / A member whose context is unavailable still gets an answer (spec/sharedContext.md) */
 //@ pure
-export function openTurnAnswer(contextAvailable: boolean): OpenTurnAnswer {
-  return contextAvailable ? "AnswerOpen" : "AnswerUnavailable";
+export function lawUnavailableContextStillAnswers(contextAvailable: boolean): boolean {
+  //@ ensures \result === true
+  return openTurnAnswer(contextAvailable) === "AnswerUnavailable" === !contextAvailable;
+}
+
+/** Story: Let my agent read the safe context for my current account / A member whose context is unavailable still gets an answer (spec/sharedContext.md) */
+//@ pure
+export function unavailableReplySent(numberAdmitted: boolean, underJoinAge: boolean): boolean {
+  return numberAdmitted && !underJoinAge;
 }
 
 /** Story: Let my agent read the safe context for my current account / A member whose context is unavailable still gets an answer (spec/sharedContext.md) */
@@ -227,13 +234,6 @@ export function lawUnderJoinAgeStaysSilent(numberAdmitted: boolean): boolean {
 export function lawAdmittedNumberGetsTheFixedReply(numberAdmitted: boolean): boolean {
   //@ ensures \result === true
   return !numberAdmitted || unavailableReplySent(numberAdmitted, false);
-}
-
-/** Story: Let my agent read the safe context for my current account / A member whose context is unavailable still gets an answer (spec/sharedContext.md) */
-//@ pure
-export function lawUnavailableContextStillAnswers(contextAvailable: boolean): boolean {
-  //@ ensures \result === true
-  return openTurnAnswer(contextAvailable) === "AnswerUnavailable" === !contextAvailable;
 }
 
 /** Do the rules allow this event in this state? */

@@ -2,18 +2,18 @@
 /** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
 export type SignInPhase = "AwaitingHandoff" | "AwaitingExchange" | "AwaitingIdentity" | "AwaitingPhone" | "AwaitingSession" | "SignedIn" | "RejectCallback" | "DenySignIn" | "CloudUnavailable";
 /** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
-export interface HandoffFacts {
-    bindingValid: boolean;
-    pendingLive: boolean;
-    codeWellFormed: boolean;
-}
-/** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
 export interface SignIn {
     phase: SignInPhase;
     handoffAccepted: boolean;
     exchangeAccepted: boolean;
     identityAccepted: boolean;
     phoneAllowed: boolean;
+}
+/** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
+export interface HandoffFacts {
+    bindingValid: boolean;
+    pendingLive: boolean;
+    codeWellFormed: boolean;
 }
 /** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) */
 export type CallbackPage = "JoinReturn" | "PhoneReturn" | "HomeHelpReturn" | "ConnectorReturn" | "NoReturn";
@@ -34,14 +34,14 @@ export type Event = {
 } | {
     type: "recordSession";
 };
+/** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
+export declare const initial: SignIn;
+/** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
+export declare const validHandoff: HandoffFacts;
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 export declare const cloudClockSkewMs: number;
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 export declare const cloudProofLifeMs: number;
-/** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
-export declare const validHandoff: HandoffFacts;
-/** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
-export declare const initial: SignIn;
 /** Every `always` rule at once. Holds initially and after every transition. */
 export declare function inv(current: SignIn): boolean;
 /** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
@@ -57,9 +57,17 @@ export declare function cloudIssuedAtWithinSkew(issuedAtMs: number, asOf: number
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 export declare function cloudProofLifeValid(issuedAtMs: number, expiresAtMs: number): boolean;
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
-export declare function cloudSessionStartedAt(issuedAtMs: number, asOf: number): number;
-/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 export declare function cloudIdentityTimesValid(issuedAtMs: number, expiresAtMs: number, asOf: number): boolean;
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
+export declare function lawCloudProofLivesAtMostOneHour(issuedAtMs: number, asOf: number): boolean;
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
+export declare function lawOneHourProofIsAcceptedWhenIssued(issuedAtMs: number): boolean;
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
+export declare function lawCloudIdentityNeedsFutureExpiry(issuedAtMs: number, asOf: number): boolean;
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
+export declare function lawCloudIdentityNeedsPositiveIssueTime(expiresAtMs: number, asOf: number): boolean;
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
+export declare function cloudSessionStartedAt(issuedAtMs: number, asOf: number): number;
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 export declare function lawSessionStartIsNeverFuture(issuedAtMs: number, asOf: number): boolean;
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
@@ -70,14 +78,6 @@ export declare function recordExchange(signIn: SignIn, exchangeAccepted: boolean
 export declare function canCheckIdentity(signIn: SignIn): boolean;
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 export declare function checkIdentity(signIn: SignIn, identityAvailable: boolean, identityValid: boolean): SignIn;
-/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
-export declare function lawCloudProofLivesAtMostOneHour(issuedAtMs: number, asOf: number): boolean;
-/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
-export declare function lawOneHourProofIsAcceptedWhenIssued(issuedAtMs: number): boolean;
-/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
-export declare function lawCloudIdentityNeedsFutureExpiry(issuedAtMs: number, asOf: number): boolean;
-/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
-export declare function lawCloudIdentityNeedsPositiveIssueTime(expiresAtMs: number, asOf: number): boolean;
 /** Story: Use my Cloud identity to sign in to this app / The site checks phone eligibility before issuing a session (spec/cloudSignIn.md) */
 export declare function lawStoredSessionEndsByIdentityExpiry(createdAt: number, startedAt: number, ttl: number, maxAge: number, identityExpiry: number): boolean;
 /** Story: Use my Cloud identity to sign in to this app / The site checks phone eligibility before issuing a session (spec/cloudSignIn.md) */
@@ -99,13 +99,13 @@ export declare function sometimesDeniesSignIn(signIn: SignIn): boolean;
 /** Story: Use my Cloud identity to sign in to this app / A completed callback passed each issuance check (spec/cloudSignIn.md) */
 export declare function sometimesCloudUnavailable(signIn: SignIn): boolean;
 /** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) */
-export declare function callbackFailureCode(failureStatus: number): string;
-/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) */
 export declare function failedCallbackReturnsToPage(page: CallbackPage): boolean;
 /** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) */
-export declare function lawFailureCodeIsOneOfThree(failureStatus: number): boolean;
+export declare function callbackFailureCode(failureStatus: number): string;
 /** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) */
 export declare function lawJoinAndConnectorFailuresStayJson(page: CallbackPage): boolean;
+/** Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code (spec/cloudSignIn.md) */
+export declare function lawFailureCodeIsOneOfThree(failureStatus: number): boolean;
 /** Do the rules allow this event in this state? */
 export declare function enabled(current: SignIn, event: Event): boolean;
 /** Apply an event. An event the rules do not allow leaves the state unchanged. */

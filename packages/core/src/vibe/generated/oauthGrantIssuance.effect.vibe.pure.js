@@ -1,9 +1,9 @@
 // Generated from spec/oauthGrantIssuance.md via Vibestack and VibeLang. Run pnpm run spec:sync.
 import * as M from "./oauthGrantIssuance.js";
-/** Story: Connect my agent after I approve access / Locked approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md) @throws {never} */
-export const eligibleApproval = M.eligibleApproval;
 /** Story: Connect my agent after I approve access / An expired request cannot begin issuance (spec/oauthGrantIssuance.md) @throws {never} */
 export const initial = M.initial;
+/** Story: Connect my agent after I approve access / Locked approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md) @throws {never} */
+export const eligibleApproval = M.eligibleApproval;
 /** Every `always` rule at once. Holds initially and after every transition. @throws {never} */
 export function inv(current) { return M.inv(current); }
 /** Story: Connect my agent after I approve access / An expired request cannot begin issuance (spec/oauthGrantIssuance.md) @throws {never} */
@@ -52,5 +52,33 @@ export function step(current, event) { return M.step(current, event); }
 export function parseEvent(x) { return M.parseEvent(x); }
 /** Turn an untrusted value, such as a state loaded from storage, into a state, or undefined if it is not one. It must have exactly the state's shape (no other fields, whole numbers that are safe integers, sets that hold nothing twice, maps as records whose keys carry the "$" every key carries here) and satisfy every `always` rule. The result is a fresh copy, so nothing the caller keeps can change it afterwards. @throws {never} */
 export function parseState(x) { return M.parseState(x); }
-/** A Machine never shares a state with its callers. @throws {never} */
-export function snapshot_oauthGrantIssuance(value) { return structuredClone(value); }
+/** @throws {never} */
+export function snapshot_oauthGrantIssuance(value) {
+    if (value === null || typeof value !== "object" || Object.isFrozen(value))
+        return value;
+    Object.freeze(value);
+    if (Array.isArray(value)) {
+        for (let i = 0; i < value.length; i++)
+            snapshot_oauthGrantIssuance(value[i]);
+    }
+    else {
+        for (const key of Object.keys(value))
+            snapshot_oauthGrantIssuance(value[key]);
+    }
+    return value;
+}
+/** @throws {never} */
+export function snapshot_in_oauthGrantIssuance(value) {
+    if (value === null || typeof value !== "object" || Object.isFrozen(value))
+        return value;
+    if (Array.isArray(value)) {
+        const copy = new Array(value.length);
+        for (let i = 0; i < value.length; i++)
+            copy[i] = snapshot_in_oauthGrantIssuance(value[i]);
+        return Object.freeze(copy);
+    }
+    const copy = {};
+    for (const key of Object.keys(value))
+        copy[key] = snapshot_in_oauthGrantIssuance(value[key]);
+    return Object.freeze(copy);
+}

@@ -15,12 +15,6 @@ export const noPairValue: number = -1;
 
 /** Story: Value both members get from a match / Each member's utility is a weighted mean of bounded terms (spec/pairValue.md) */
 //@ pure
-export function utilityTermWeight(term: UtilityTerm): number {
-  return term.weight > 0 ? term.weight : 0;
-}
-
-/** Story: Value both members get from a match / Each member's utility is a weighted mean of bounded terms (spec/pairValue.md) */
-//@ pure
 export function boundedValue(value: number): number {
   return value < 0 ? 0 : (value > pairValueScale ? pairValueScale : value);
 }
@@ -34,19 +28,25 @@ export function coverageValue(hits: number, wanted: number): number {
 
 /** Story: Value both members get from a match / Each member's utility is a weighted mean of bounded terms (spec/pairValue.md) */
 //@ pure
-export function directedUtility(terms: UtilityTerm[]): number {
-  const local_1 = terms.reduce((total: number, term: UtilityTerm) => exact_pairValue(total + utilityTermWeight(term)), 0);
-  const local_2 = terms.reduce((total: number, term: UtilityTerm) => exact_pairValue(total + exact_pairValue(utilityTermWeight(term) * boundedValue(term.value))), 0);
-  return local_1 > 0 ? quotient_pairValue(local_2, local_1) : 0;
+export function closenessValue(distance: number, costPerUnit: number): number {
+  const local_1 = costPerUnit > 0 ? costPerUnit : 0;
+  const local_2 = distance < 0 ? exact_pairValue(0 - distance) : distance;
+  const local_3 = exact_pairValue(local_1 * local_2);
+  return local_3 < pairValueScale ? exact_pairValue(pairValueScale - local_3) : 0;
 }
 
 /** Story: Value both members get from a match / Each member's utility is a weighted mean of bounded terms (spec/pairValue.md) */
 //@ pure
-export function closenessValue(distance: number, costPerUnit: number): number {
-  const local_3 = costPerUnit > 0 ? costPerUnit : 0;
-  const local_4 = distance < 0 ? exact_pairValue(0 - distance) : distance;
-  const local_5 = exact_pairValue(local_3 * local_4);
-  return local_5 < pairValueScale ? exact_pairValue(pairValueScale - local_5) : 0;
+export function utilityTermWeight(term: UtilityTerm): number {
+  return term.weight > 0 ? term.weight : 0;
+}
+
+/** Story: Value both members get from a match / Each member's utility is a weighted mean of bounded terms (spec/pairValue.md) */
+//@ pure
+export function directedUtility(terms: UtilityTerm[]): number {
+  const local_4 = terms.reduce((total: number, term: UtilityTerm) => exact_pairValue(total + utilityTermWeight(term)), 0);
+  const local_5 = terms.reduce((total: number, term: UtilityTerm) => exact_pairValue(total + exact_pairValue(utilityTermWeight(term) * boundedValue(term.value))), 0);
+  return local_4 > 0 ? quotient_pairValue(local_5, local_4) : 0;
 }
 
 /** Story: Value both members get from a match / Each member's utility is a weighted mean of bounded terms (spec/pairValue.md) */
@@ -74,19 +74,19 @@ export function harmonicValue(left: number, right: number): number {
 
 /** Story: Value both members get from a match / The two utilities combine as an integer harmonic mean (spec/pairValue.md) */
 //@ pure
-export function lawHarmonicMonotone(left: number, raised: number, right: number): boolean {
-  //@ ensures \result === true
-  return !(left <= raised) || harmonicValue(left, right) <= harmonicValue(raised, right);
-}
-
-/** Story: Value both members get from a match / The two utilities combine as an integer harmonic mean (spec/pairValue.md) */
-//@ pure
 export function lawHarmonicBetweenSides(left: number, right: number): boolean {
   //@ ensures \result === true
   const local_9 = left < right ? left : right;
   const local_10 = left < right ? right : left;
   const local_11 = harmonicValue(left, right);
   return !(left > 0 && right > 0) || (local_9 <= local_11 && local_11 <= local_10);
+}
+
+/** Story: Value both members get from a match / The two utilities combine as an integer harmonic mean (spec/pairValue.md) */
+//@ pure
+export function lawHarmonicMonotone(left: number, raised: number, right: number): boolean {
+  //@ ensures \result === true
+  return !(left <= raised) || harmonicValue(left, right) <= harmonicValue(raised, right);
 }
 
 /** Story: Value both members get from a match / A pair has a value only when both utilities reach the lane floor (spec/pairValue.md) */

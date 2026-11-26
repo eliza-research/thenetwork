@@ -23,10 +23,10 @@ export type Event =
   | { type: "recordRemovedBytes" }
   | { type: "recordRemovedRow" };
 
-/** Story: Add and remove photos for private matching / The retention tick finishes unfinished photo changes (spec/photoRetention.md) */
-export const photoChangeStaleMs: number = 900000;
 /** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md) */
 export const initial: PhotoChange = { phase: "ChoosingChange", rerateAfterRemoval: false };
+/** Story: Add and remove photos for private matching / The retention tick finishes unfinished photo changes (spec/photoRetention.md) */
+export const photoChangeStaleMs: number = 900000;
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure

@@ -1,6 +1,6 @@
 // GENERATED from spec/staffReview.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { reviewLate as reviewDeadline_reviewLate, reviewRevisionCurrent as reviewDeadline_reviewRevisionCurrent, lawReviewDeadlineIsExclusive as reviewDeadline_lawReviewDeadlineIsExclusive, lawSeenReviewRevisionIsCurrent as reviewDeadline_lawSeenReviewRevisionIsCurrent, lawRerolledReviewIsStale as reviewDeadline_lawRerolledReviewIsStale } from "./reviewDeadline.ts";
+import { reviewLate as reviewDeadline_reviewLate, lawReviewDeadlineIsExclusive as reviewDeadline_lawReviewDeadlineIsExclusive, reviewRevisionCurrent as reviewDeadline_reviewRevisionCurrent, lawSeenReviewRevisionIsCurrent as reviewDeadline_lawSeenReviewRevisionIsCurrent, lawRerolledReviewIsStale as reviewDeadline_lawRerolledReviewIsStale } from "./reviewDeadline.ts";
 
 /** Story: Review the opportunity I selected / A changed card or revision starts a fresh draft (spec/staffReview.md) */
 export type ReviewMode = "IdleReview" | "RejectReview" | "EditReview" | "RerollReview";
@@ -31,16 +31,16 @@ export function selectedReviewCard(pendingCards: string[], focusedCard: string, 
 
 /** Story: Review the opportunity I selected / A changed card or revision starts a fresh draft (spec/staffReview.md) */
 //@ pure
-export function bindCard(ctl: ReviewCtl, cardKey: string): ReviewCtl {
-  //@ ensures (inv(ctl) && canBindCard(ctl, cardKey)) ==> alwaysRequiredNoteBelongsToRejection(\result)
-  //@ ensures (inv(ctl) && canBindCard(ctl, cardKey)) ==> stepRevisionNeverFalls(ctl, \result)
-  return { cardKey: cardKey, revision: exact_staffReview(ctl.revision + 1), mode: "IdleReview", noteNeeded: false };
+export function canBindCard(ctl: ReviewCtl, cardKey: string): boolean {
+  return cardKey !== ctl.cardKey;
 }
 
 /** Story: Review the opportunity I selected / A changed card or revision starts a fresh draft (spec/staffReview.md) */
 //@ pure
-export function canBindCard(ctl: ReviewCtl, cardKey: string): boolean {
-  return cardKey !== ctl.cardKey;
+export function bindCard(ctl: ReviewCtl, cardKey: string): ReviewCtl {
+  //@ ensures (inv(ctl) && canBindCard(ctl, cardKey)) ==> alwaysRequiredNoteBelongsToRejection(\result)
+  //@ ensures (inv(ctl) && canBindCard(ctl, cardKey)) ==> stepRevisionNeverFalls(ctl, \result)
+  return { cardKey: cardKey, revision: exact_staffReview(ctl.revision + 1), mode: "IdleReview", noteNeeded: false };
 }
 
 /** Story: Review the opportunity I selected / A mode change applies only to a bound card (spec/staffReview.md) */
@@ -85,6 +85,12 @@ export function ownsReviewResponse(ctl: ReviewCtl, cardKey: string, revision: nu
 
 /** Story: Review the opportunity I selected / An old response cannot clear or move a newer selection (spec/staffReview.md) */
 //@ pure
+export function canSettleReview(ctl: ReviewCtl, cardKey: string, revision: number): boolean {
+  return ownsReviewResponse(ctl, cardKey, revision);
+}
+
+/** Story: Review the opportunity I selected / An old response cannot clear or move a newer selection (spec/staffReview.md) */
+//@ pure
 export function settleReview(ctl: ReviewCtl, cardKey: string, revision: number): ReviewCtl {
   //@ ensures (inv(ctl) && canSettleReview(ctl, cardKey, revision)) ==> alwaysRequiredNoteBelongsToRejection(\result)
   //@ ensures (inv(ctl) && canSettleReview(ctl, cardKey, revision)) ==> stepRevisionNeverFalls(ctl, \result)
@@ -101,12 +107,6 @@ export function stepRevisionNeverFalls(before: ReviewCtl, after: ReviewCtl): boo
 //@ pure
 export function sometimesReviewDraftOpens(ctl: ReviewCtl): boolean {
   return ctl.mode === "EditReview";
-}
-
-/** Story: Review the opportunity I selected / An old response cannot clear or move a newer selection (spec/staffReview.md) */
-//@ pure
-export function canSettleReview(ctl: ReviewCtl, cardKey: string, revision: number): boolean {
-  return ownsReviewResponse(ctl, cardKey, revision);
 }
 
 /** Story: Review the opportunity I selected / A plan preview belongs to the open revision under review (spec/staffReview.md) */

@@ -1,13 +1,13 @@
 // GENERATED from spec/matchLane.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type PairSide as pairValue_PairSide, type PairRules as pairValue_PairRules, type UtilityTerm as pairValue_UtilityTerm, pairValueScale as pairValue_pairValueScale, noPairValue as pairValue_noPairValue, utilityTermWeight as pairValue_utilityTermWeight, boundedValue as pairValue_boundedValue, harmonicValue as pairValue_harmonicValue, parityAllowed as pairValue_parityAllowed, lawHarmonicMonotone as pairValue_lawHarmonicMonotone, coverageValue as pairValue_coverageValue, standingGap as pairValue_standingGap, parityPenalty as pairValue_parityPenalty, exchangeBalanced as pairValue_exchangeBalanced, directedUtility as pairValue_directedUtility, lawHarmonicBetweenSides as pairValue_lawHarmonicBetweenSides, closenessValue as pairValue_closenessValue, pairAdmissible as pairValue_pairAdmissible, lawUtilityTermsBounded as pairValue_lawUtilityTermsBounded, lawDirectedUtilityBounded as pairValue_lawDirectedUtilityBounded, pairValue as pairValue_pairValue, lawNoOneSidedPair as pairValue_lawNoOneSidedPair, lawPairValueSymmetric as pairValue_lawPairValueSymmetric, lawParityHolds as pairValue_lawParityHolds, lawSmallerGapNeverWorse as pairValue_lawSmallerGapNeverWorse, lawBalancedExchange as pairValue_lawBalancedExchange, lawPairValueBounded as pairValue_lawPairValueBounded } from "./pairValue.ts";
+import { type UtilityTerm as pairValue_UtilityTerm, type PairSide as pairValue_PairSide, type PairRules as pairValue_PairRules, pairValueScale as pairValue_pairValueScale, boundedValue as pairValue_boundedValue, coverageValue as pairValue_coverageValue, closenessValue as pairValue_closenessValue, utilityTermWeight as pairValue_utilityTermWeight, directedUtility as pairValue_directedUtility, lawUtilityTermsBounded as pairValue_lawUtilityTermsBounded, lawDirectedUtilityBounded as pairValue_lawDirectedUtilityBounded, harmonicValue as pairValue_harmonicValue, lawHarmonicBetweenSides as pairValue_lawHarmonicBetweenSides, lawHarmonicMonotone as pairValue_lawHarmonicMonotone, noPairValue as pairValue_noPairValue, pairAdmissible as pairValue_pairAdmissible, pairValue as pairValue_pairValue, lawNoOneSidedPair as pairValue_lawNoOneSidedPair, lawPairValueSymmetric as pairValue_lawPairValueSymmetric, lawPairValueBounded as pairValue_lawPairValueBounded, standingGap as pairValue_standingGap, parityAllowed as pairValue_parityAllowed, lawParityHolds as pairValue_lawParityHolds, parityPenalty as pairValue_parityPenalty, lawSmallerGapNeverWorse as pairValue_lawSmallerGapNeverWorse, exchangeBalanced as pairValue_exchangeBalanced, lawBalancedExchange as pairValue_lawBalancedExchange } from "./pairValue.ts";
 
+/** Story: Peers meet as equals / Each lane is a peer lane or a two-sided lane (spec/matchLane.md) */
+export type MatchLane = "Friend" | "Date" | "Cofounder" | "Intro" | "Hire" | "Mentor" | "Invest";
 /** Story: Peers meet as equals / Each lane is a peer lane or a two-sided lane (spec/matchLane.md) */
 export type LaneShape = "Peers" | "TwoSided";
 /** Story: Peers meet as equals / Each lane is a peer lane or a two-sided lane (spec/matchLane.md) */
 export type LaneSide = "Peer" | "Offering" | "Seeking";
-/** Story: Peers meet as equals / Each lane is a peer lane or a two-sided lane (spec/matchLane.md) */
-export type MatchLane = "Friend" | "Date" | "Cofounder" | "Intro" | "Hire" | "Mentor" | "Invest";
 /** Story: Peers meet as equals / Every lane keeps its rules and bounds in one table (spec/matchLane.md) */
 export interface LaneLimits { rules: pairValue_PairRules; standingOffset: number; weeklyCapacity: number; searchLimit: number; searchBudget: number; circleMinimum: number; circleMaximum: number; circlePairFloor: number }
 /** Story: Peers meet as equals / Each lane weighs the four utility terms (spec/matchLane.md) */
@@ -114,6 +114,12 @@ export function teenFriendApp(app: string): boolean {
 
 /** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
 //@ pure
+export function teenFriendLane(app: string, lane: MatchLane): boolean {
+  return teenFriendApp(app) && lane === "Friend";
+}
+
+/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
+//@ pure
 export function teenFriendCategory(app: string, category: string): boolean {
   return (app === "friends" && (category === "social" || category === "hobby")) || (app === "ntwrk" && category === "social");
 }
@@ -122,26 +128,6 @@ export function teenFriendCategory(app: string, category: string): boolean {
 //@ pure
 export function teenGroupPlanApp(app: string): boolean {
   return app === "friends";
-}
-
-/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
-//@ pure
-export function teenFriendLane(app: string, lane: MatchLane): boolean {
-  return teenFriendApp(app) && lane === "Friend";
-}
-
-/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
-//@ pure
-export function lawNtwrkTeenCategoryIsSocial(category: string): boolean {
-  //@ ensures \result === true
-  return !teenFriendCategory("ntwrk", category) || category === "social";
-}
-
-/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
-//@ pure
-export function lawTeenPlansOnlyOnFriends(app: string): boolean {
-  //@ ensures \result === true
-  return !teenGroupPlanApp(app) || app === "friends";
 }
 
 /** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
@@ -167,9 +153,23 @@ export function lawTeenFriendLaneSameOnBothApps(lane: MatchLane): boolean {
 
 /** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
 //@ pure
+export function lawNtwrkTeenCategoryIsSocial(category: string): boolean {
+  //@ ensures \result === true
+  return !teenFriendCategory("ntwrk", category) || category === "social";
+}
+
+/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
+//@ pure
 export function lawTeenFriendLaneIsOffered(app: string, lane: MatchLane): boolean {
   //@ ensures \result === true
   return !teenFriendLane(app, lane) || laneOffered(app, lane);
+}
+
+/** Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction (spec/matchLane.md) */
+//@ pure
+export function lawTeenPlansOnlyOnFriends(app: string): boolean {
+  //@ ensures \result === true
+  return !teenGroupPlanApp(app) || app === "friends";
 }
 
 /** Story: Friendship lanes offer teen introductions / A teen is never in a date or work lane (spec/matchLane.md) */

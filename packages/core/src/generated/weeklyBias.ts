@@ -2,6 +2,12 @@
 //@ backend dafny
 
 
+/** Story: Detect differences in outcomes without exposing individual ratings / The weekly run waits until the stored report is one week old (spec/weeklyBias.md) */
+export const biasEveryMs: number = 604800000;
+/** Story: Detect differences in outcomes without exposing individual ratings / Adult members need at least one day of exposure in the window (spec/weeklyBias.md) */
+export const biasWindowMs: number = 2419200000;
+/** Story: Detect differences in outcomes without exposing individual ratings / Adult members need at least one day of exposure in the window (spec/weeklyBias.md) */
+export const biasMinimumExposureMs: number = 86400000;
 /** Story: Detect differences in outcomes without exposing individual ratings / Report rates and alert only below the configured ratio (spec/weeklyBias.md) */
 export const biasProductionGroupMinimum: number = 8;
 /** Story: Detect differences in outcomes without exposing individual ratings / Report rates and alert only below the configured ratio (spec/weeklyBias.md) */
@@ -14,12 +20,6 @@ export const biasThresholdDenominator: number = 5;
 export const standingValidityMinimum: number = 30;
 /** Story: Stop using photo standing when it predicts nothing / The Date lane uses photo standing only while the standing gap predicts mutual interest (spec/weeklyBias.md) */
 export const standingValidityMarginPermille: number = 50;
-/** Story: Detect differences in outcomes without exposing individual ratings / The weekly run waits until the stored report is one week old (spec/weeklyBias.md) */
-export const biasEveryMs: number = 604800000;
-/** Story: Detect differences in outcomes without exposing individual ratings / Adult members need at least one day of exposure in the window (spec/weeklyBias.md) */
-export const biasWindowMs: number = 2419200000;
-/** Story: Detect differences in outcomes without exposing individual ratings / Adult members need at least one day of exposure in the window (spec/weeklyBias.md) */
-export const biasMinimumExposureMs: number = 86400000;
 
 /** Story: Detect differences in outcomes without exposing individual ratings / The weekly run waits until the stored report is one week old (spec/weeklyBias.md) */
 //@ pure
@@ -48,6 +48,12 @@ export function biasRatingQuintile(rank: number, population: number): number {
 
 /** Story: Detect differences in outcomes without exposing individual ratings / Outcomes count only the opportunities in the observation window (spec/weeklyBias.md) */
 //@ pure
+export function biasOpportunityInWindow(createdAt: number, from: number, asOf: number): boolean {
+  return createdAt >= from && createdAt <= asOf;
+}
+
+/** Story: Detect differences in outcomes without exposing individual ratings / Outcomes count only the opportunities in the observation window (spec/weeklyBias.md) */
+//@ pure
 export function biasOpportunityReached(stage: string, closedFrom: string): boolean {
   return stage !== "review" && !(stage === "closed" && (closedFrom === "review" || closedFrom === ""));
 }
@@ -60,6 +66,13 @@ export function biasDateHeld(stage: string, hasMeeting: boolean, meetingAt: numb
 
 /** Story: Detect differences in outcomes without exposing individual ratings / Outcomes count only the opportunities in the observation window (spec/weeklyBias.md) */
 //@ pure
+export function lawBiasDateCountsByMeetingTime(meetingAt: number, from: number, asOf: number): boolean {
+  //@ ensures \result === true
+  return biasDateHeld("done", true, meetingAt, from, asOf) === biasOpportunityInWindow(meetingAt, from, asOf);
+}
+
+/** Story: Detect differences in outcomes without exposing individual ratings / Outcomes count only the opportunities in the observation window (spec/weeklyBias.md) */
+//@ pure
 export function biasSinglePair(participants: number): boolean {
   return participants === 2;
 }
@@ -68,19 +81,6 @@ export function biasSinglePair(participants: number): boolean {
 //@ pure
 export function biasPairMetAgain(dates: number): boolean {
   return dates >= 2;
-}
-
-/** Story: Detect differences in outcomes without exposing individual ratings / Outcomes count only the opportunities in the observation window (spec/weeklyBias.md) */
-//@ pure
-export function biasOpportunityInWindow(createdAt: number, from: number, asOf: number): boolean {
-  return createdAt >= from && createdAt <= asOf;
-}
-
-/** Story: Detect differences in outcomes without exposing individual ratings / Outcomes count only the opportunities in the observation window (spec/weeklyBias.md) */
-//@ pure
-export function lawBiasDateCountsByMeetingTime(meetingAt: number, from: number, asOf: number): boolean {
-  //@ ensures \result === true
-  return biasDateHeld("done", true, meetingAt, from, asOf) === biasOpportunityInWindow(meetingAt, from, asOf);
 }
 
 /** Story: Detect differences in outcomes without exposing individual ratings / Report rates and alert only below the configured ratio (spec/weeklyBias.md) */
@@ -128,15 +128,15 @@ export function standingOutcomeNegative(ending: string): boolean {
 
 /** Story: Stop using photo standing when it predicts nothing / The Date lane uses photo standing only while the standing gap predicts mutual interest (spec/weeklyBias.md) */
 //@ pure
-export function standingGapPredicts(positives: number, negatives: number, concordantTwice: number): boolean {
-  return positives < standingValidityMinimum || negatives < standingValidityMinimum ? true : exact_weeklyBias(concordantTwice * 1000) >= exact_weeklyBias(exact_weeklyBias(exact_weeklyBias(1000 + exact_weeklyBias(2 * standingValidityMarginPermille)) * positives) * negatives);
+export function lawStandingOutcomeHasOneSide(ending: string): boolean {
+  //@ ensures \result === true
+  return !(standingOutcomePositive(ending) && standingOutcomeNegative(ending));
 }
 
 /** Story: Stop using photo standing when it predicts nothing / The Date lane uses photo standing only while the standing gap predicts mutual interest (spec/weeklyBias.md) */
 //@ pure
-export function lawStandingOutcomeHasOneSide(ending: string): boolean {
-  //@ ensures \result === true
-  return !(standingOutcomePositive(ending) && standingOutcomeNegative(ending));
+export function standingGapPredicts(positives: number, negatives: number, concordantTwice: number): boolean {
+  return positives < standingValidityMinimum || negatives < standingValidityMinimum ? true : exact_weeklyBias(concordantTwice * 1000) >= exact_weeklyBias(exact_weeklyBias(exact_weeklyBias(1000 + exact_weeklyBias(2 * standingValidityMarginPermille)) * positives) * negatives);
 }
 
 /** Story: Stop using photo standing when it predicts nothing / The Date lane uses photo standing only while the standing gap predicts mutual interest (spec/weeklyBias.md) */

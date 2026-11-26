@@ -1,17 +1,17 @@
 // GENERATED from spec/photoUploadPage.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { uploadMaxBytes as photoPolicy_uploadMaxBytes, uploadMaxPerPerson as photoPolicy_uploadMaxPerPerson, ratingMaxPhotos as photoPolicy_ratingMaxPhotos, ratingMaxBytes as photoPolicy_ratingMaxBytes, photoMaxPerMessage as photoPolicy_photoMaxPerMessage, textPhotoLineAllowed as photoPolicy_textPhotoLineAllowed, photoSubjectAllowed as photoPolicy_photoSubjectAllowed, photoSlotsFull as photoPolicy_photoSlotsFull, lawDedicatedOtherLineCannotTakeSlopPhoto as photoPolicy_lawDedicatedOtherLineCannotTakeSlopPhoto, lawRatingRequiresAdult as photoPolicy_lawRatingRequiresAdult } from "./photoPolicy.ts";
+import { textPhotoLineAllowed as photoPolicy_textPhotoLineAllowed, lawDedicatedOtherLineCannotTakeSlopPhoto as photoPolicy_lawDedicatedOtherLineCannotTakeSlopPhoto, photoSubjectAllowed as photoPolicy_photoSubjectAllowed, lawRatingRequiresAdult as photoPolicy_lawRatingRequiresAdult, uploadMaxBytes as photoPolicy_uploadMaxBytes, uploadMaxPerPerson as photoPolicy_uploadMaxPerPerson, ratingMaxPhotos as photoPolicy_ratingMaxPhotos, ratingMaxBytes as photoPolicy_ratingMaxBytes, photoMaxPerMessage as photoPolicy_photoMaxPerMessage, photoSlotsFull as photoPolicy_photoSlotsFull } from "./photoPolicy.ts";
 
 /** Story: Add my photos from the link in my conversation / The page reads the token from the fragment once and opens the picker only for a well-formed token (spec/photoUploadPage.md) */
-export type PhotoLinkStatusKind = "LinkStatusOpen" | "LinkStatusClosed" | "LinkStatusUnreachable" | "LinkStatusFailed";
+export type PhotoScreen = "PhotoOpening" | "PhotoBadLink" | "PhotoChecking" | "PhotoPick" | "PhotoDone" | "PhotoAllRefused" | "PhotoLinkClosed";
 /** Story: Add my photos from the link in my conversation / The page reads the token from the fragment once and opens the picker only for a well-formed token (spec/photoUploadPage.md) */
 export type PhotoPending = "PhotoIdle" | "PhotoReading" | "PhotoUploading";
 /** Story: Add my photos from the link in my conversation / The page reads the token from the fragment once and opens the picker only for a well-formed token (spec/photoUploadPage.md) */
 export type PhotoError = "PhotoNoError" | "PhotoPickCount" | "PhotoPickTooLarge" | "PhotoPickType" | "PhotoConsentNeeded" | "PhotoTooLarge" | "PhotoUnreachable" | "PhotoRequestFailed";
 /** Story: Add my photos from the link in my conversation / The page reads the token from the fragment once and opens the picker only for a well-formed token (spec/photoUploadPage.md) */
-export type PhotoScreen = "PhotoOpening" | "PhotoBadLink" | "PhotoChecking" | "PhotoPick" | "PhotoDone" | "PhotoAllRefused" | "PhotoLinkClosed";
-/** Story: Add my photos from the link in my conversation / The page reads the token from the fragment once and opens the picker only for a well-formed token (spec/photoUploadPage.md) */
 export interface PhotoUploadPage { screen: PhotoScreen; pending: PhotoPending; error: PhotoError; linkOpen: boolean; consentAsked: boolean; consentTicked: boolean; chosen: number; savedCount: number; someRefused: boolean }
+/** Story: Add my photos from the link in my conversation / The page reads the token from the fragment once and opens the picker only for a well-formed token (spec/photoUploadPage.md) */
+export type PhotoLinkStatusKind = "LinkStatusOpen" | "LinkStatusClosed" | "LinkStatusUnreachable" | "LinkStatusFailed";
 /** Story: Add my photos from the link in my conversation / The page reads the token from the fragment once and opens the picker only for a well-formed token (spec/photoUploadPage.md) */
 export interface PhotoLinkStatus { kind: PhotoLinkStatusKind; consentRequired: boolean }
 /** Story: Add my photos from the link in my conversation / The page checks the chosen photos against the upload limits before it sends them (spec/photoUploadPage.md) */
@@ -26,8 +26,8 @@ export interface PhotoAnswer { kind: PhotoAnswerKind; savedCount: number; someRe
 /** One variant per transition in the spec. */
 export type Event =
   | { type: "openPhotoPage"; tokenWellFormed: boolean }
-  | { type: "retryLinkStatus" }
   | { type: "answerLinkStatus"; linkStatus: PhotoLinkStatus }
+  | { type: "retryLinkStatus" }
   | { type: "choosePhotos"; batch: PhotoBatch }
   | { type: "tickConsent"; ticked: boolean }
   | { type: "uploadPhotos"; batch: PhotoBatch }
@@ -77,6 +77,28 @@ export function canAnswerLinkStatus(page: PhotoUploadPage): boolean {
 
 /** Story: Add my photos from the link in my conversation / The page reads the token from the fragment once and opens the picker only for a well-formed token (spec/photoUploadPage.md) */
 //@ pure
+export function answerLinkStatus(page: PhotoUploadPage, linkStatus: PhotoLinkStatus): PhotoUploadPage {
+  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> alwaysCheckingSendsNoPhotos(\result)
+  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> alwaysClosedScreensCloseTheLink(\result)
+  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> alwaysPickHasAnOpenLink(\result)
+  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> alwaysTickOnlyWhenAsked(\result)
+  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> alwaysConsentNeededWhileUnticked(\result)
+  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> alwaysUploadOnlyWhileLinkOpen(\result)
+  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> alwaysUploadBelongsToThePicker(\result)
+  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> alwaysSavedOnlyWhenDone(\result)
+  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> alwaysSavedNoMoreThanChosen(\result)
+  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> alwaysRefusalsOnlyAfterUse(\result)
+  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> stepConsentOnlyByThePerson(page, "answerLinkStatus", \result)
+  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> stepOneUploadAtATime(page, "answerLinkStatus", \result)
+  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> stepSavedOnlyFromTheAnswer(page, "answerLinkStatus", \result)
+  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> stepLinkNeverReopens(page, \result)
+  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> stepPickerOnlyFromAnOpenStatus(page, "answerLinkStatus", \result)
+  const local_0: PhotoUploadPage = { ...page, pending: "PhotoIdle" };
+  return linkStatus.kind === "LinkStatusOpen" ? ({ ...local_0, screen: "PhotoPick", linkOpen: true, consentAsked: linkStatus.consentRequired, consentTicked: false, error: "PhotoNoError" } as PhotoUploadPage) : (linkStatus.kind === "LinkStatusClosed" ? ({ ...local_0, screen: "PhotoLinkClosed", linkOpen: false, error: "PhotoNoError" } as PhotoUploadPage) : (linkStatus.kind === "LinkStatusUnreachable" ? ({ ...local_0, error: "PhotoUnreachable" } as PhotoUploadPage) : ({ ...local_0, error: "PhotoRequestFailed" } as PhotoUploadPage)));
+}
+
+/** Story: Add my photos from the link in my conversation / The page reads the token from the fragment once and opens the picker only for a well-formed token (spec/photoUploadPage.md) */
+//@ pure
 export function canRetryLinkStatus(page: PhotoUploadPage): boolean {
   return page.screen === "PhotoChecking" && page.pending === "PhotoIdle" && page.error !== "PhotoNoError";
 }
@@ -110,6 +132,13 @@ export function photoLinkHeld(page: PhotoUploadPage): boolean {
 
 /** Story: Add my photos from the link in my conversation / The page reads the token from the fragment once and opens the picker only for a well-formed token (spec/photoUploadPage.md) */
 //@ pure
+export function lawOnlyAnOpenStatusOpensThePicker(page: PhotoUploadPage, linkStatus: PhotoLinkStatus): boolean {
+  //@ ensures \result === true
+  return !(canAnswerLinkStatus(page) && answerLinkStatus(page, linkStatus).screen === "PhotoPick") || linkStatus.kind === "LinkStatusOpen";
+}
+
+/** Story: Add my photos from the link in my conversation / The page reads the token from the fragment once and opens the picker only for a well-formed token (spec/photoUploadPage.md) */
+//@ pure
 export function alwaysCheckingSendsNoPhotos(page: PhotoUploadPage): boolean {
   return !(page.screen === "PhotoChecking") || (!page.linkOpen && page.pending !== "PhotoUploading" && page.chosen === 0);
 }
@@ -124,35 +153,6 @@ export function alwaysClosedScreensCloseTheLink(page: PhotoUploadPage): boolean 
 //@ pure
 export function alwaysPickHasAnOpenLink(page: PhotoUploadPage): boolean {
   return !(page.screen === "PhotoPick") || page.linkOpen;
-}
-
-/** Story: Add my photos from the link in my conversation / The page reads the token from the fragment once and opens the picker only for a well-formed token (spec/photoUploadPage.md) */
-//@ pure
-export function answerLinkStatus(page: PhotoUploadPage, linkStatus: PhotoLinkStatus): PhotoUploadPage {
-  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> alwaysCheckingSendsNoPhotos(\result)
-  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> alwaysClosedScreensCloseTheLink(\result)
-  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> alwaysPickHasAnOpenLink(\result)
-  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> alwaysTickOnlyWhenAsked(\result)
-  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> alwaysConsentNeededWhileUnticked(\result)
-  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> alwaysUploadOnlyWhileLinkOpen(\result)
-  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> alwaysUploadBelongsToThePicker(\result)
-  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> alwaysSavedOnlyWhenDone(\result)
-  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> alwaysSavedNoMoreThanChosen(\result)
-  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> alwaysRefusalsOnlyAfterUse(\result)
-  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> stepConsentOnlyByThePerson(page, "answerLinkStatus", \result)
-  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> stepOneUploadAtATime(page, "answerLinkStatus", \result)
-  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> stepSavedOnlyFromTheAnswer(page, "answerLinkStatus", \result)
-  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> stepLinkNeverReopens(page, \result)
-  //@ ensures (inv(page) && canAnswerLinkStatus(page)) ==> stepPickerOnlyFromAnOpenStatus(page, "answerLinkStatus", \result)
-  const local_0: PhotoUploadPage = { ...page, pending: "PhotoIdle" };
-  return linkStatus.kind === "LinkStatusOpen" ? ({ ...local_0, screen: "PhotoPick", linkOpen: true, consentAsked: linkStatus.consentRequired, consentTicked: false, error: "PhotoNoError" } as PhotoUploadPage) : (linkStatus.kind === "LinkStatusClosed" ? ({ ...local_0, screen: "PhotoLinkClosed", linkOpen: false, error: "PhotoNoError" } as PhotoUploadPage) : (linkStatus.kind === "LinkStatusUnreachable" ? ({ ...local_0, error: "PhotoUnreachable" } as PhotoUploadPage) : ({ ...local_0, error: "PhotoRequestFailed" } as PhotoUploadPage)));
-}
-
-/** Story: Add my photos from the link in my conversation / The page reads the token from the fragment once and opens the picker only for a well-formed token (spec/photoUploadPage.md) */
-//@ pure
-export function lawOnlyAnOpenStatusOpensThePicker(page: PhotoUploadPage, linkStatus: PhotoLinkStatus): boolean {
-  //@ ensures \result === true
-  return !(canAnswerLinkStatus(page) && answerLinkStatus(page, linkStatus).screen === "PhotoPick") || linkStatus.kind === "LinkStatusOpen";
 }
 
 /** Story: Add my photos from the link in my conversation / The page checks the chosen photos against the upload limits before it sends them (spec/photoUploadPage.md) */
@@ -171,6 +171,28 @@ export function batchError(check: PhotoBatchCheck): PhotoError {
 //@ pure
 export function canChoosePhotos(page: PhotoUploadPage): boolean {
   return page.screen === "PhotoPick" && page.pending === "PhotoIdle";
+}
+
+/** Story: Add my photos from the link in my conversation / The page checks the chosen photos against the upload limits before it sends them (spec/photoUploadPage.md) */
+//@ pure
+export function choosePhotos(page: PhotoUploadPage, batch: PhotoBatch): PhotoUploadPage {
+  //@ ensures (inv(page) && canChoosePhotos(page)) ==> alwaysCheckingSendsNoPhotos(\result)
+  //@ ensures (inv(page) && canChoosePhotos(page)) ==> alwaysClosedScreensCloseTheLink(\result)
+  //@ ensures (inv(page) && canChoosePhotos(page)) ==> alwaysPickHasAnOpenLink(\result)
+  //@ ensures (inv(page) && canChoosePhotos(page)) ==> alwaysTickOnlyWhenAsked(\result)
+  //@ ensures (inv(page) && canChoosePhotos(page)) ==> alwaysConsentNeededWhileUnticked(\result)
+  //@ ensures (inv(page) && canChoosePhotos(page)) ==> alwaysUploadOnlyWhileLinkOpen(\result)
+  //@ ensures (inv(page) && canChoosePhotos(page)) ==> alwaysUploadBelongsToThePicker(\result)
+  //@ ensures (inv(page) && canChoosePhotos(page)) ==> alwaysSavedOnlyWhenDone(\result)
+  //@ ensures (inv(page) && canChoosePhotos(page)) ==> alwaysSavedNoMoreThanChosen(\result)
+  //@ ensures (inv(page) && canChoosePhotos(page)) ==> alwaysRefusalsOnlyAfterUse(\result)
+  //@ ensures (inv(page) && canChoosePhotos(page)) ==> stepConsentOnlyByThePerson(page, "choosePhotos", \result)
+  //@ ensures (inv(page) && canChoosePhotos(page)) ==> stepOneUploadAtATime(page, "choosePhotos", \result)
+  //@ ensures (inv(page) && canChoosePhotos(page)) ==> stepSavedOnlyFromTheAnswer(page, "choosePhotos", \result)
+  //@ ensures (inv(page) && canChoosePhotos(page)) ==> stepLinkNeverReopens(page, \result)
+  //@ ensures (inv(page) && canChoosePhotos(page)) ==> stepPickerOnlyFromAnOpenStatus(page, "choosePhotos", \result)
+  const local_1: PhotoError = batchError(photoBatchCheck(batch));
+  return { ...page, chosen: batch.count, error: local_1 === "PhotoNoError" && page.error === "PhotoConsentNeeded" ? "PhotoConsentNeeded" : local_1 };
 }
 
 /** Story: Add my photos from the link in my conversation / The page checks the chosen photos against the upload limits before it sends them (spec/photoUploadPage.md) */
@@ -206,28 +228,6 @@ export function lawTotalOverEightMiBIsRefused(batch: PhotoBatch): boolean {
 export function lawAcceptedBatchFitsTheLimits(batch: PhotoBatch): boolean {
   //@ ensures \result === true
   return !(photoBatchCheck(batch) === "BatchOk") || (batch.count >= 1 && batch.count <= photoPolicy_ratingMaxPhotos && batch.typesOk && batch.largestBytes <= photoPolicy_ratingMaxBytes && batch.totalBytes <= photoPolicy_uploadMaxBytes);
-}
-
-/** Story: Add my photos from the link in my conversation / The page checks the chosen photos against the upload limits before it sends them (spec/photoUploadPage.md) */
-//@ pure
-export function choosePhotos(page: PhotoUploadPage, batch: PhotoBatch): PhotoUploadPage {
-  //@ ensures (inv(page) && canChoosePhotos(page)) ==> alwaysCheckingSendsNoPhotos(\result)
-  //@ ensures (inv(page) && canChoosePhotos(page)) ==> alwaysClosedScreensCloseTheLink(\result)
-  //@ ensures (inv(page) && canChoosePhotos(page)) ==> alwaysPickHasAnOpenLink(\result)
-  //@ ensures (inv(page) && canChoosePhotos(page)) ==> alwaysTickOnlyWhenAsked(\result)
-  //@ ensures (inv(page) && canChoosePhotos(page)) ==> alwaysConsentNeededWhileUnticked(\result)
-  //@ ensures (inv(page) && canChoosePhotos(page)) ==> alwaysUploadOnlyWhileLinkOpen(\result)
-  //@ ensures (inv(page) && canChoosePhotos(page)) ==> alwaysUploadBelongsToThePicker(\result)
-  //@ ensures (inv(page) && canChoosePhotos(page)) ==> alwaysSavedOnlyWhenDone(\result)
-  //@ ensures (inv(page) && canChoosePhotos(page)) ==> alwaysSavedNoMoreThanChosen(\result)
-  //@ ensures (inv(page) && canChoosePhotos(page)) ==> alwaysRefusalsOnlyAfterUse(\result)
-  //@ ensures (inv(page) && canChoosePhotos(page)) ==> stepConsentOnlyByThePerson(page, "choosePhotos", \result)
-  //@ ensures (inv(page) && canChoosePhotos(page)) ==> stepOneUploadAtATime(page, "choosePhotos", \result)
-  //@ ensures (inv(page) && canChoosePhotos(page)) ==> stepSavedOnlyFromTheAnswer(page, "choosePhotos", \result)
-  //@ ensures (inv(page) && canChoosePhotos(page)) ==> stepLinkNeverReopens(page, \result)
-  //@ ensures (inv(page) && canChoosePhotos(page)) ==> stepPickerOnlyFromAnOpenStatus(page, "choosePhotos", \result)
-  const local_1: PhotoError = batchError(photoBatchCheck(batch));
-  return { ...page, chosen: batch.count, error: local_1 === "PhotoNoError" && page.error === "PhotoConsentNeeded" ? "PhotoConsentNeeded" : local_1 };
 }
 
 /** Story: Add my photos from the link in my conversation / The photo consent goes with the upload only when the person ticks it (spec/photoUploadPage.md) */
@@ -283,26 +283,8 @@ export function stepConsentOnlyByThePerson(before: PhotoUploadPage, via: string,
 
 /** Story: Add my photos from the link in my conversation / The page sends one batch while the link is open and waits for the answer (spec/photoUploadPage.md) */
 //@ pure
-export function stepOneUploadAtATime(before: PhotoUploadPage, via: string, after: PhotoUploadPage): boolean {
-  return !(after.pending === "PhotoUploading" && before.pending !== "PhotoUploading") || (via === "uploadPhotos" && before.pending === "PhotoIdle");
-}
-
-/** Story: Add my photos from the link in my conversation / The page sends one batch while the link is open and waits for the answer (spec/photoUploadPage.md) */
-//@ pure
 export function canUploadPhotos(page: PhotoUploadPage): boolean {
   return page.screen === "PhotoPick" && page.pending === "PhotoIdle" && page.linkOpen;
-}
-
-/** Story: Add my photos from the link in my conversation / The page sends one batch while the link is open and waits for the answer (spec/photoUploadPage.md) */
-//@ pure
-export function alwaysUploadOnlyWhileLinkOpen(page: PhotoUploadPage): boolean {
-  return !(page.pending === "PhotoUploading") || page.linkOpen;
-}
-
-/** Story: Add my photos from the link in my conversation / The page sends one batch while the link is open and waits for the answer (spec/photoUploadPage.md) */
-//@ pure
-export function alwaysUploadBelongsToThePicker(page: PhotoUploadPage): boolean {
-  return !(page.pending === "PhotoUploading") || (page.screen === "PhotoPick" && page.chosen >= 1 && page.chosen <= photoPolicy_ratingMaxPhotos);
 }
 
 /** Story: Add my photos from the link in my conversation / The page sends one batch while the link is open and waits for the answer (spec/photoUploadPage.md) */
@@ -341,6 +323,24 @@ export function lawRefusedConsentIsNotSentAgainUnticked(page: PhotoUploadPage, b
   return !(page.error === "PhotoConsentNeeded" && !page.consentTicked) || uploadPhotos(page, batch).pending === page.pending;
 }
 
+/** Story: Add my photos from the link in my conversation / The page sends one batch while the link is open and waits for the answer (spec/photoUploadPage.md) */
+//@ pure
+export function alwaysUploadOnlyWhileLinkOpen(page: PhotoUploadPage): boolean {
+  return !(page.pending === "PhotoUploading") || page.linkOpen;
+}
+
+/** Story: Add my photos from the link in my conversation / The page sends one batch while the link is open and waits for the answer (spec/photoUploadPage.md) */
+//@ pure
+export function alwaysUploadBelongsToThePicker(page: PhotoUploadPage): boolean {
+  return !(page.pending === "PhotoUploading") || (page.screen === "PhotoPick" && page.chosen >= 1 && page.chosen <= photoPolicy_ratingMaxPhotos);
+}
+
+/** Story: Add my photos from the link in my conversation / The page sends one batch while the link is open and waits for the answer (spec/photoUploadPage.md) */
+//@ pure
+export function stepOneUploadAtATime(before: PhotoUploadPage, via: string, after: PhotoUploadPage): boolean {
+  return !(after.pending === "PhotoUploading" && before.pending !== "PhotoUploading") || (via === "uploadPhotos" && before.pending === "PhotoIdle");
+}
+
 /** Story: Add my photos from the link in my conversation / The server answer decides between saved, refused, closed and a retry (spec/photoUploadPage.md) */
 //@ pure
 export function savedShown(answer: PhotoAnswer, chosen: number): number {
@@ -367,6 +367,43 @@ export function canAnswerUpload(page: PhotoUploadPage): boolean {
 
 /** Story: Add my photos from the link in my conversation / The server answer decides between saved, refused, closed and a retry (spec/photoUploadPage.md) */
 //@ pure
+export function answerUpload(page: PhotoUploadPage, answer: PhotoAnswer): PhotoUploadPage {
+  //@ ensures (inv(page) && canAnswerUpload(page)) ==> alwaysCheckingSendsNoPhotos(\result)
+  //@ ensures (inv(page) && canAnswerUpload(page)) ==> alwaysClosedScreensCloseTheLink(\result)
+  //@ ensures (inv(page) && canAnswerUpload(page)) ==> alwaysPickHasAnOpenLink(\result)
+  //@ ensures (inv(page) && canAnswerUpload(page)) ==> alwaysTickOnlyWhenAsked(\result)
+  //@ ensures (inv(page) && canAnswerUpload(page)) ==> alwaysConsentNeededWhileUnticked(\result)
+  //@ ensures (inv(page) && canAnswerUpload(page)) ==> alwaysUploadOnlyWhileLinkOpen(\result)
+  //@ ensures (inv(page) && canAnswerUpload(page)) ==> alwaysUploadBelongsToThePicker(\result)
+  //@ ensures (inv(page) && canAnswerUpload(page)) ==> alwaysSavedOnlyWhenDone(\result)
+  //@ ensures (inv(page) && canAnswerUpload(page)) ==> alwaysSavedNoMoreThanChosen(\result)
+  //@ ensures (inv(page) && canAnswerUpload(page)) ==> alwaysRefusalsOnlyAfterUse(\result)
+  //@ ensures (inv(page) && canAnswerUpload(page)) ==> stepConsentOnlyByThePerson(page, "answerUpload", \result)
+  //@ ensures (inv(page) && canAnswerUpload(page)) ==> stepOneUploadAtATime(page, "answerUpload", \result)
+  //@ ensures (inv(page) && canAnswerUpload(page)) ==> stepSavedOnlyFromTheAnswer(page, "answerUpload", \result)
+  //@ ensures (inv(page) && canAnswerUpload(page)) ==> stepLinkNeverReopens(page, \result)
+  //@ ensures (inv(page) && canAnswerUpload(page)) ==> stepPickerOnlyFromAnOpenStatus(page, "answerUpload", \result)
+  const local_3: PhotoUploadPage = { ...page, pending: "PhotoIdle" };
+  const local_4 = savedShown(answer, page.chosen);
+  return answer.kind === "UploadStored" && local_4 >= 1 ? ({ ...local_3, screen: "PhotoDone", linkOpen: false, savedCount: local_4, someRefused: answer.someRefused, error: "PhotoNoError" } as PhotoUploadPage) : (answer.kind === "UploadStored" || answer.kind === "UploadAllRefused" ? ({ ...local_3, screen: "PhotoAllRefused", linkOpen: false, savedCount: 0, someRefused: answer.someRefused, error: "PhotoNoError" } as PhotoUploadPage) : (answer.kind === "UploadLinkClosed" ? ({ ...local_3, screen: "PhotoLinkClosed", linkOpen: false, savedCount: 0, someRefused: false, error: "PhotoNoError" } as PhotoUploadPage) : (answer.kind === "UploadConsentRequired" ? ({ ...local_3, consentAsked: true, consentTicked: false, error: "PhotoConsentNeeded" } as PhotoUploadPage) : ({ ...local_3, error: retryError(answer.kind) } as PhotoUploadPage))));
+}
+
+/** Story: Add my photos from the link in my conversation / The server answer decides between saved, refused, closed and a retry (spec/photoUploadPage.md) */
+//@ pure
+export function lawRetryAnswersShowAnError(kind: PhotoAnswerKind): boolean {
+  //@ ensures \result === true
+  return !(!answerClosesTheLink(kind)) || retryError(kind) !== "PhotoNoError";
+}
+
+/** Story: Add my photos from the link in my conversation / The server answer decides between saved, refused, closed and a retry (spec/photoUploadPage.md) */
+//@ pure
+export function lawSavedNeverAboveSent(answer: PhotoAnswer, chosen: number): boolean {
+  //@ ensures \result === true
+  return !(chosen >= 0 && answer.savedCount >= 0) || savedShown(answer, chosen) <= chosen;
+}
+
+/** Story: Add my photos from the link in my conversation / The server answer decides between saved, refused, closed and a retry (spec/photoUploadPage.md) */
+//@ pure
 export function alwaysSavedOnlyWhenDone(page: PhotoUploadPage): boolean {
   return page.savedCount > 0 === (page.screen === "PhotoDone");
 }
@@ -387,43 +424,6 @@ export function alwaysRefusalsOnlyAfterUse(page: PhotoUploadPage): boolean {
 //@ pure
 export function stepSavedOnlyFromTheAnswer(before: PhotoUploadPage, via: string, after: PhotoUploadPage): boolean {
   return !(after.screen === "PhotoDone" && before.screen !== "PhotoDone") || (via === "answerUpload" && before.pending === "PhotoUploading");
-}
-
-/** Story: Add my photos from the link in my conversation / The server answer decides between saved, refused, closed and a retry (spec/photoUploadPage.md) */
-//@ pure
-export function lawRetryAnswersShowAnError(kind: PhotoAnswerKind): boolean {
-  //@ ensures \result === true
-  return !(!answerClosesTheLink(kind)) || retryError(kind) !== "PhotoNoError";
-}
-
-/** Story: Add my photos from the link in my conversation / The server answer decides between saved, refused, closed and a retry (spec/photoUploadPage.md) */
-//@ pure
-export function lawSavedNeverAboveSent(answer: PhotoAnswer, chosen: number): boolean {
-  //@ ensures \result === true
-  return !(chosen >= 0 && answer.savedCount >= 0) || savedShown(answer, chosen) <= chosen;
-}
-
-/** Story: Add my photos from the link in my conversation / The server answer decides between saved, refused, closed and a retry (spec/photoUploadPage.md) */
-//@ pure
-export function answerUpload(page: PhotoUploadPage, answer: PhotoAnswer): PhotoUploadPage {
-  //@ ensures (inv(page) && canAnswerUpload(page)) ==> alwaysCheckingSendsNoPhotos(\result)
-  //@ ensures (inv(page) && canAnswerUpload(page)) ==> alwaysClosedScreensCloseTheLink(\result)
-  //@ ensures (inv(page) && canAnswerUpload(page)) ==> alwaysPickHasAnOpenLink(\result)
-  //@ ensures (inv(page) && canAnswerUpload(page)) ==> alwaysTickOnlyWhenAsked(\result)
-  //@ ensures (inv(page) && canAnswerUpload(page)) ==> alwaysConsentNeededWhileUnticked(\result)
-  //@ ensures (inv(page) && canAnswerUpload(page)) ==> alwaysUploadOnlyWhileLinkOpen(\result)
-  //@ ensures (inv(page) && canAnswerUpload(page)) ==> alwaysUploadBelongsToThePicker(\result)
-  //@ ensures (inv(page) && canAnswerUpload(page)) ==> alwaysSavedOnlyWhenDone(\result)
-  //@ ensures (inv(page) && canAnswerUpload(page)) ==> alwaysSavedNoMoreThanChosen(\result)
-  //@ ensures (inv(page) && canAnswerUpload(page)) ==> alwaysRefusalsOnlyAfterUse(\result)
-  //@ ensures (inv(page) && canAnswerUpload(page)) ==> stepConsentOnlyByThePerson(page, "answerUpload", \result)
-  //@ ensures (inv(page) && canAnswerUpload(page)) ==> stepOneUploadAtATime(page, "answerUpload", \result)
-  //@ ensures (inv(page) && canAnswerUpload(page)) ==> stepSavedOnlyFromTheAnswer(page, "answerUpload", \result)
-  //@ ensures (inv(page) && canAnswerUpload(page)) ==> stepLinkNeverReopens(page, \result)
-  //@ ensures (inv(page) && canAnswerUpload(page)) ==> stepPickerOnlyFromAnOpenStatus(page, "answerUpload", \result)
-  const local_3: PhotoUploadPage = { ...page, pending: "PhotoIdle" };
-  const local_4 = savedShown(answer, page.chosen);
-  return answer.kind === "UploadStored" && local_4 >= 1 ? ({ ...local_3, screen: "PhotoDone", linkOpen: false, savedCount: local_4, someRefused: answer.someRefused, error: "PhotoNoError" } as PhotoUploadPage) : (answer.kind === "UploadStored" || answer.kind === "UploadAllRefused" ? ({ ...local_3, screen: "PhotoAllRefused", linkOpen: false, savedCount: 0, someRefused: answer.someRefused, error: "PhotoNoError" } as PhotoUploadPage) : (answer.kind === "UploadLinkClosed" ? ({ ...local_3, screen: "PhotoLinkClosed", linkOpen: false, savedCount: 0, someRefused: false, error: "PhotoNoError" } as PhotoUploadPage) : (answer.kind === "UploadConsentRequired" ? ({ ...local_3, consentAsked: true, consentTicked: false, error: "PhotoConsentNeeded" } as PhotoUploadPage) : ({ ...local_3, error: retryError(answer.kind) } as PhotoUploadPage))));
 }
 
 /** Story: A used or expired link stores nothing / A closed link never opens again on the page (spec/photoUploadPage.md) */
@@ -531,6 +531,12 @@ export function sometimesRequestFailed(page: PhotoUploadPage): boolean {
 
 /** Story: Reach every outcome / A person can save photos, see each refusal, find the link closed or see each error (spec/photoUploadPage.md) */
 //@ pure
+export function sometimesUnreachable(page: PhotoUploadPage): boolean {
+  return page.error === "PhotoUnreachable" && photoUploadOffered(page);
+}
+
+/** Story: Reach every outcome / A person can save photos, see each refusal, find the link closed or see each error (spec/photoUploadPage.md) */
+//@ pure
 export function sometimesCheckingLink(page: PhotoUploadPage): boolean {
   return page.screen === "PhotoChecking" && page.pending === "PhotoReading";
 }
@@ -561,12 +567,6 @@ export function sometimesClosedBeforeUpload(page: PhotoUploadPage): boolean {
 
 /** Story: Reach every outcome / A person can save photos, see each refusal, find the link closed or see each error (spec/photoUploadPage.md) */
 //@ pure
-export function sometimesUnreachable(page: PhotoUploadPage): boolean {
-  return page.error === "PhotoUnreachable" && photoUploadOffered(page);
-}
-
-/** Story: Reach every outcome / A person can save photos, see each refusal, find the link closed or see each error (spec/photoUploadPage.md) */
-//@ pure
 export function sometimesRetryAfterUnreachable(page: PhotoUploadPage): boolean {
   return page.screen === "PhotoPick" && page.error === "PhotoUnreachable" && canUploadPhotos(page);
 }
@@ -575,8 +575,8 @@ export function sometimesRetryAfterUnreachable(page: PhotoUploadPage): boolean {
 //@ pure
 export function enabled(current: PhotoUploadPage, event: Event): boolean {
   if (event.type === "openPhotoPage") return canOpenPhotoPage(current);
-  if (event.type === "retryLinkStatus") return canRetryLinkStatus(current);
   if (event.type === "answerLinkStatus") return canAnswerLinkStatus(current);
+  if (event.type === "retryLinkStatus") return canRetryLinkStatus(current);
   if (event.type === "choosePhotos") return canChoosePhotos(current);
   if (event.type === "tickConsent") return canTickConsent(current);
   if (event.type === "uploadPhotos") return canUploadPhotos(current);
@@ -590,8 +590,8 @@ export function step(current: PhotoUploadPage, event: Event): PhotoUploadPage {
   //@ requires inv(current)
   //@ ensures inv(\result)
   if (event.type === "openPhotoPage") return canOpenPhotoPage(current) ? openPhotoPage(current, event.tokenWellFormed) : current;
-  if (event.type === "retryLinkStatus") return canRetryLinkStatus(current) ? retryLinkStatus(current) : current;
   if (event.type === "answerLinkStatus") return canAnswerLinkStatus(current) ? answerLinkStatus(current, event.linkStatus) : current;
+  if (event.type === "retryLinkStatus") return canRetryLinkStatus(current) ? retryLinkStatus(current) : current;
   if (event.type === "choosePhotos") return canChoosePhotos(current) ? choosePhotos(current, event.batch) : current;
   if (event.type === "tickConsent") return canTickConsent(current) ? tickConsent(current, event.ticked) : current;
   if (event.type === "uploadPhotos") return canUploadPhotos(current) ? uploadPhotos(current, event.batch) : current;
@@ -617,8 +617,8 @@ export function parseEvent(x: unknown): Event | undefined {
   const is_PhotoAnswer = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && (v.kind === "UploadStored" || v.kind === "UploadAllRefused" || v.kind === "UploadLinkClosed" || v.kind === "UploadTooLarge" || v.kind === "UploadCount" || v.kind === "UploadConsentRequired" || v.kind === "UploadInvalid" || v.kind === "UploadUnreachable") && Number.isSafeInteger(v.savedCount) && typeof v.someRefused === "boolean";
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "openPhotoPage" && typeof raw.tokenWellFormed === "boolean") return { type: "openPhotoPage", tokenWellFormed: raw.tokenWellFormed };
-  if (raw.type === "retryLinkStatus") return { type: "retryLinkStatus" };
   if (raw.type === "answerLinkStatus" && is_PhotoLinkStatus(raw.linkStatus)) return { type: "answerLinkStatus", linkStatus: ({ kind: raw.linkStatus.kind, consentRequired: raw.linkStatus.consentRequired }) };
+  if (raw.type === "retryLinkStatus") return { type: "retryLinkStatus" };
   if (raw.type === "choosePhotos" && is_PhotoBatch(raw.batch)) return { type: "choosePhotos", batch: ({ count: raw.batch.count, largestBytes: raw.batch.largestBytes, totalBytes: raw.batch.totalBytes, typesOk: raw.batch.typesOk }) };
   if (raw.type === "tickConsent" && typeof raw.ticked === "boolean") return { type: "tickConsent", ticked: raw.ticked };
   if (raw.type === "uploadPhotos" && is_PhotoBatch(raw.batch)) return { type: "uploadPhotos", batch: ({ count: raw.batch.count, largestBytes: raw.batch.largestBytes, totalBytes: raw.batch.totalBytes, typesOk: raw.batch.typesOk }) };

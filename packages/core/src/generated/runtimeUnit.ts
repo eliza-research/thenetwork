@@ -12,26 +12,20 @@ export type StartupPlan = "RecoverDeliveryQueue" | "RepairProjection";
 
 /** One variant per transition in the spec. */
 export type Event =
-  | { type: "recordAction" }
-  | { type: "recordSave" }
   | { type: "recordLoad"; snapshotFound: boolean }
-  | { type: "recordRestore" };
+  | { type: "recordRestore" }
+  | { type: "recordAction" }
+  | { type: "recordSave" };
 
-/** Story: Work from the latest saved network state / The engine runs on a snapshot outside the store lock (spec/runtimeUnit.md) */
-export const maxEngineAttempts: number = 2;
 /** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
 export const initial: RuntimeUnit = { phase: "LoadingSnapshot" };
+/** Story: Work from the latest saved network state / The engine runs on a snapshot outside the store lock (spec/runtimeUnit.md) */
+export const maxEngineAttempts: number = 2;
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: RuntimeUnit): boolean {
   return true;
-}
-
-/** Story: Work from the latest saved network state / A tick skips a busy store while an inbound or staff action waits (spec/runtimeUnit.md) */
-//@ pure
-export function tickMayEnter(acquired: boolean): boolean {
-  return acquired;
 }
 
 /** Story: Work from the latest saved network state / A tick skips a busy store while an inbound or staff action waits (spec/runtimeUnit.md) */
@@ -42,9 +36,41 @@ export function tickMayTryLock(locallyBusy: boolean): boolean {
 
 /** Story: Work from the latest saved network state / A tick skips a busy store while an inbound or staff action waits (spec/runtimeUnit.md) */
 //@ pure
+export function tickMayEnter(acquired: boolean): boolean {
+  return acquired;
+}
+
+/** Story: Work from the latest saved network state / A tick skips a busy store while an inbound or staff action waits (spec/runtimeUnit.md) */
+//@ pure
 export function lawBusyTickSkips(locallyBusy: boolean): boolean {
   //@ ensures \result === true
   return !locallyBusy || !tickMayTryLock(locallyBusy);
+}
+
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
+//@ pure
+export function canRecordLoad(unit: RuntimeUnit): boolean {
+  return unit.phase === "LoadingSnapshot";
+}
+
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
+//@ pure
+export function recordLoad(unit: RuntimeUnit, snapshotFound: boolean): RuntimeUnit {
+  //@ ensures (inv(unit) && canRecordLoad(unit)) ==> stepSaveFollowsAction(unit, "recordLoad", \result)
+  return { phase: snapshotFound ? "RestoringSnapshot" : "RunningAction" };
+}
+
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
+//@ pure
+export function canRecordRestore(unit: RuntimeUnit): boolean {
+  return unit.phase === "RestoringSnapshot";
+}
+
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
+//@ pure
+export function recordRestore(unit: RuntimeUnit): RuntimeUnit {
+  //@ ensures (inv(unit) && canRecordRestore(unit)) ==> stepSaveFollowsAction(unit, "recordRestore", \result)
+  return { phase: "RunningAction" };
 }
 
 /** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
@@ -85,32 +111,6 @@ export function sometimesCanSave(unit: RuntimeUnit): boolean {
   return unit.phase === "StateSaved";
 }
 
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
-//@ pure
-export function canRecordLoad(unit: RuntimeUnit): boolean {
-  return unit.phase === "LoadingSnapshot";
-}
-
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
-//@ pure
-export function recordLoad(unit: RuntimeUnit, snapshotFound: boolean): RuntimeUnit {
-  //@ ensures (inv(unit) && canRecordLoad(unit)) ==> stepSaveFollowsAction(unit, "recordLoad", \result)
-  return { phase: snapshotFound ? "RestoringSnapshot" : "RunningAction" };
-}
-
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
-//@ pure
-export function canRecordRestore(unit: RuntimeUnit): boolean {
-  return unit.phase === "RestoringSnapshot";
-}
-
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
-//@ pure
-export function recordRestore(unit: RuntimeUnit): RuntimeUnit {
-  //@ ensures (inv(unit) && canRecordRestore(unit)) ==> stepSaveFollowsAction(unit, "recordRestore", \result)
-  return { phase: "RunningAction" };
-}
-
 /** Story: Work from the latest saved network state / The engine runs on a snapshot outside the store lock (spec/runtimeUnit.md) */
 //@ pure
 export function tickMayStartBesideEngine(engineInFlight: boolean): boolean {
@@ -132,6 +132,26 @@ export function lawComputingTickSkips(engineInFlight: boolean): boolean {
 
 /** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
 //@ pure
+export function evidenceOwner(publicEvent: boolean, namesMember: boolean): EvidenceOwner {
+  return publicEvent ? "EventEvidence" : (namesMember ? "MemberEvidence" : "SharedEvidence");
+}
+
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+//@ pure
+export function lawMemberEntryIsNeverShared(publicEvent: boolean, namesMember: boolean): boolean {
+  //@ ensures \result === true
+  return !namesMember || evidenceOwner(publicEvent, namesMember) !== "SharedEvidence";
+}
+
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+//@ pure
+export function lawEventEntryIsItsOwnEvidence(publicEvent: boolean, namesMember: boolean): boolean {
+  //@ ensures \result === true
+  return !publicEvent || evidenceOwner(publicEvent, namesMember) === "EventEvidence";
+}
+
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+//@ pure
 export function preparedRunUsable(sameKey: boolean, sameConfig: boolean, sameSharedEvidence: boolean): boolean {
   return sameKey && sameConfig && sameSharedEvidence;
 }
@@ -140,12 +160,6 @@ export function preparedRunUsable(sameKey: boolean, sameConfig: boolean, sameSha
 //@ pure
 export function preparedItemCommits(runUsable: boolean, named: string[], changed: string[]): boolean {
   return runUsable && !named.some((owner: string) => changed.includes(owner));
-}
-
-/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
-//@ pure
-export function evidenceOwner(publicEvent: boolean, namesMember: boolean): EvidenceOwner {
-  return publicEvent ? "EventEvidence" : (namesMember ? "MemberEvidence" : "SharedEvidence");
 }
 
 /** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
@@ -169,24 +183,16 @@ export function lawStaleRunNeverCommits(sameKey: boolean, sameConfig: boolean, s
   return !(!preparedRunUsable(sameKey, sameConfig, sameSharedEvidence)) || !preparedItemCommits(preparedRunUsable(sameKey, sameConfig, sameSharedEvidence), named, changed);
 }
 
-/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
-//@ pure
-export function lawMemberEntryIsNeverShared(publicEvent: boolean, namesMember: boolean): boolean {
-  //@ ensures \result === true
-  return !namesMember || evidenceOwner(publicEvent, namesMember) !== "SharedEvidence";
-}
-
-/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
-//@ pure
-export function lawEventEntryIsItsOwnEvidence(publicEvent: boolean, namesMember: boolean): boolean {
-  //@ ensures \result === true
-  return !publicEvent || evidenceOwner(publicEvent, namesMember) === "EventEvidence";
-}
-
 /** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) */
 //@ pure
 export function matchingDisabledByRegistry(matchingAllowed: boolean): boolean {
   return !matchingAllowed;
+}
+
+/** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) */
+//@ pure
+export function startupPlan(queuedAdapter: boolean): StartupPlan {
+  return queuedAdapter ? "RecoverDeliveryQueue" : "RepairProjection";
 }
 
 /** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) */
@@ -201,19 +207,13 @@ export function tickRunsFollowup(ran: boolean, hookConfigured: boolean): boolean
   return ran && hookConfigured;
 }
 
-/** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) */
-//@ pure
-export function startupPlan(queuedAdapter: boolean): StartupPlan {
-  return queuedAdapter ? "RecoverDeliveryQueue" : "RepairProjection";
-}
-
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: RuntimeUnit, event: Event): boolean {
-  if (event.type === "recordAction") return canRecordAction(current);
-  if (event.type === "recordSave") return canRecordSave(current);
   if (event.type === "recordLoad") return canRecordLoad(current);
   if (event.type === "recordRestore") return canRecordRestore(current);
+  if (event.type === "recordAction") return canRecordAction(current);
+  if (event.type === "recordSave") return canRecordSave(current);
   return false;
 }
 
@@ -222,10 +222,10 @@ export function enabled(current: RuntimeUnit, event: Event): boolean {
 export function step(current: RuntimeUnit, event: Event): RuntimeUnit {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "recordAction") return canRecordAction(current) ? recordAction(current) : current;
-  if (event.type === "recordSave") return canRecordSave(current) ? recordSave(current) : current;
   if (event.type === "recordLoad") return canRecordLoad(current) ? recordLoad(current, event.snapshotFound) : current;
   if (event.type === "recordRestore") return canRecordRestore(current) ? recordRestore(current) : current;
+  if (event.type === "recordAction") return canRecordAction(current) ? recordAction(current) : current;
+  if (event.type === "recordSave") return canRecordSave(current) ? recordSave(current) : current;
   return current;
 }
 
@@ -243,10 +243,10 @@ export function parseEvent(x: unknown): Event | undefined {
     return undefined;
   }
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "recordAction") return { type: "recordAction" };
-  if (raw.type === "recordSave") return { type: "recordSave" };
   if (raw.type === "recordLoad" && typeof raw.snapshotFound === "boolean") return { type: "recordLoad", snapshotFound: raw.snapshotFound };
   if (raw.type === "recordRestore") return { type: "recordRestore" };
+  if (raw.type === "recordAction") return { type: "recordAction" };
+  if (raw.type === "recordSave") return { type: "recordSave" };
   return undefined;
 }
 

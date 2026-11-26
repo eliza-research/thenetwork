@@ -1,7 +1,7 @@
 # TypeScript patterns
 
 These upstream examples illustrate TypeScript patterns. Apply the repository's
-[TypeScript best practices](../../AGENTS.md#typescript-best-practices) and use its
+[TypeScript best practices](../../../../AGENTS.md#typescript-best-practices) and use its
 existing schema library. Establish brands with verifying guards. The time
 range example uses `number`, which admits negative durations. Use a type
 created from a validated nonnegative duration when the range must be ordered.

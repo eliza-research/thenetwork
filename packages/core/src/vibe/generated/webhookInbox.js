@@ -1,12 +1,12 @@
 // Generated from spec/webhookInbox.md via Vibestack and VibeLang. Run pnpm run spec:sync.
 // GENERATED from spec/webhookInbox.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-/** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) */
-export const webhookAttemptLimit = 5;
 /** Story: Handle my pending messages in order while prioritizing consent / Dedupe a received message and choose the next pending turn (spec/webhookInbox.md) */
 export const webhookScanLimit = 50;
 /** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) */
 export const initial = { phase: "WebhookQueued", attempts: 0, stopCommand: false };
+/** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) */
+export const webhookAttemptLimit = 5;
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current) {
@@ -27,11 +27,6 @@ export function chooseWebhook(hasWaiting, complianceFound, signedTurnBlocks) {
 export function lawComplianceGoesFirst(signedTurnBlocks) {
     //@ ensures \result === true
     return chooseWebhook(true, true, signedTurnBlocks) === "RunCompliance";
-}
-/** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) */
-//@ pure
-export function earlierWebhookCancellable(selectedTurn, compliance) {
-    return !selectedTurn && !compliance;
 }
 /** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) */
 //@ pure
@@ -71,8 +66,18 @@ export function recordCompletion(turn) {
 }
 /** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) */
 //@ pure
+export function stepDoneRequiresCompletion(before, via, after) {
+    return !(after.phase === "WebhookDone") || (via === "recordCompletion" && canRecordCompletion(before));
+}
+/** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) */
+//@ pure
 export function sometimesCanCompleteWebhook(turn) {
     return turn.phase === "WebhookDone";
+}
+/** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) */
+//@ pure
+export function earlierWebhookCancellable(selectedTurn, compliance) {
+    return !selectedTurn && !compliance;
 }
 /** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) */
 //@ pure
@@ -80,10 +85,10 @@ export function lawNeverCancelCompliance(selectedTurn) {
     //@ ensures \result === true
     return !earlierWebhookCancellable(selectedTurn, true);
 }
-/** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) */
+/** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) */
 //@ pure
-export function stepDoneRequiresCompletion(before, via, after) {
-    return !(after.phase === "WebhookDone") || (via === "recordCompletion" && canRecordCompletion(before));
+export function canRecordFailure(turn) {
+    return turn.phase === "RunningWebhook" || canRecordCompletion(turn);
 }
 /** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) */
 //@ pure
@@ -99,19 +104,14 @@ export function alwaysStopNeverDropped(turn) {
 }
 /** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) */
 //@ pure
-export function sometimesCanRetryWebhook(turn) {
-    return turn.phase === "RetryWebhook";
-}
-/** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) */
-//@ pure
-export function canRecordFailure(turn) {
-    return turn.phase === "RunningWebhook" || canRecordCompletion(turn);
-}
-/** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) */
-//@ pure
 export function lawStopNeverDrops(turn) {
     //@ ensures \result === true
     return !turn.stopCommand || recordFailure(turn).phase === "RetryWebhook";
+}
+/** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) */
+//@ pure
+export function sometimesCanRetryWebhook(turn) {
+    return turn.phase === "RetryWebhook";
 }
 /** Story: Handle my pending messages in order while prioritizing consent / Report the received row's stored result after draining (spec/webhookInbox.md) */
 //@ pure

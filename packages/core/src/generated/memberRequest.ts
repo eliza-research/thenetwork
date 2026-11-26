@@ -17,6 +17,8 @@ export type Event =
   | { type: "routeScheduledRequestRetry"; eligible: boolean; busy: boolean }
   | { type: "readRequestCandidates"; anyCandidate: boolean };
 
+/** Story: Ask to meet someone and change my mind while the search is open / A repeat ask keeps the newest matching request (spec/memberRequest.md) */
+export const initial: MemberRequestFlow = { phase: "RequestStarting" };
 /** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md) */
 export const immediateRetryMs: number = 3600000;
 /** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md) */
@@ -25,8 +27,6 @@ export const scheduledRetryMs: number = 72000000;
 export const requesterConfirmCooldownMs: number = 259200000;
 /** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md) */
 export const scheduledRequestLifetimeMs: number = 604800000;
-/** Story: Ask to meet someone and change my mind while the search is open / A repeat ask keeps the newest matching request (spec/memberRequest.md) */
-export const initial: MemberRequestFlow = { phase: "RequestStarting" };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
@@ -163,6 +163,19 @@ export function immediateRequestRetryReady(attempted: boolean, attemptAge: numbe
 
 /** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md) */
 //@ pure
+export function immediateRequestSearchAllowed(waiting: boolean, eligible: boolean, busy: boolean, attempted: boolean, attemptAge: number, asked: boolean, confirmAge: number): boolean {
+  return waiting && eligible && !busy && immediateRequestRetryReady(attempted, attemptAge, asked, confirmAge);
+}
+
+/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md) */
+//@ pure
+export function lawImmediateRetryNeedsEligibleWaitingMember(waiting: boolean, eligible: boolean, busy: boolean, attempted: boolean, attemptAge: number, asked: boolean, confirmAge: number): boolean {
+  //@ ensures \result === true
+  return !immediateRequestSearchAllowed(waiting, eligible, busy, attempted, attemptAge, asked, confirmAge) || (waiting && eligible && !busy);
+}
+
+/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md) */
+//@ pure
 export function scheduledRequestRetryReady(people: boolean, waiting: boolean, age: number, attempted: boolean, attemptAge: number, asked: boolean, confirmAge: number): boolean {
   return people && waiting && !(age > scheduledRequestLifetimeMs) && !(attempted && attemptAge < scheduledRetryMs) && requesterConfirmationAllowsRetry(asked, confirmAge);
 }
@@ -204,19 +217,6 @@ export function canRouteScheduledRequestRetry(flow: MemberRequestFlow): boolean 
 export function routeScheduledRequestRetry(flow: MemberRequestFlow, eligible: boolean, busy: boolean): MemberRequestFlow {
   //@ ensures (inv(flow) && canRouteScheduledRequestRetry(flow)) ==> stepRequestReviewFollowsSearch(flow, "routeScheduledRequestRetry", \result)
   return { phase: eligible && !busy ? "RequestSearching" : "RequestDeferred" };
-}
-
-/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md) */
-//@ pure
-export function immediateRequestSearchAllowed(waiting: boolean, eligible: boolean, busy: boolean, attempted: boolean, attemptAge: number, asked: boolean, confirmAge: number): boolean {
-  return waiting && eligible && !busy && immediateRequestRetryReady(attempted, attemptAge, asked, confirmAge);
-}
-
-/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md) */
-//@ pure
-export function lawImmediateRetryNeedsEligibleWaitingMember(waiting: boolean, eligible: boolean, busy: boolean, attempted: boolean, attemptAge: number, asked: boolean, confirmAge: number): boolean {
-  //@ ensures \result === true
-  return !immediateRequestSearchAllowed(waiting, eligible, busy, attempted, attemptAge, asked, confirmAge) || (waiting && eligible && !busy);
 }
 
 /** Story: Ask to meet someone and change my mind while the search is open / A candidate proceeds to review with prior interest only when appropriate (spec/memberRequest.md) */

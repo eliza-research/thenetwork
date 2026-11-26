@@ -3,13 +3,13 @@
 
 
 /** Story: Tell the Network whether an invitation was worth a text / Sample a confirmed invitation after its own answer (spec/interruptionFeedback.md) */
-export const interruptionAskUntilMs: number = exact_interruptionFeedback(72 * 3600000);
-/** Story: Tell the Network whether an invitation was worth a text / Sample a confirmed invitation after its own answer (spec/interruptionFeedback.md) */
-export const interruptionAnswerMs: number = exact_interruptionFeedback(48 * 3600000);
-/** Story: Tell the Network whether an invitation was worth a text / Sample a confirmed invitation after its own answer (spec/interruptionFeedback.md) */
 export const interruptionSampleBuckets: number = 10;
 /** Story: Tell the Network whether an invitation was worth a text / Sample a confirmed invitation after its own answer (spec/interruptionFeedback.md) */
 export const interruptionAskWaitMs: number = exact_interruptionFeedback(24 * 3600000);
+/** Story: Tell the Network whether an invitation was worth a text / Sample a confirmed invitation after its own answer (spec/interruptionFeedback.md) */
+export const interruptionAskUntilMs: number = exact_interruptionFeedback(72 * 3600000);
+/** Story: Tell the Network whether an invitation was worth a text / Sample a confirmed invitation after its own answer (spec/interruptionFeedback.md) */
+export const interruptionAnswerMs: number = exact_interruptionFeedback(48 * 3600000);
 
 /** Story: Tell the Network whether an invitation was worth a text / Sample a confirmed invitation after its own answer (spec/interruptionFeedback.md) */
 //@ pure
@@ -25,15 +25,15 @@ export function interruptionFeedbackAskDue(ageMs: number, eligible: boolean, ope
 
 /** Story: Tell the Network whether an invitation was worth a text / Sample a confirmed invitation after its own answer (spec/interruptionFeedback.md) */
 //@ pure
-export function interruptionFeedbackUsesFollowupSlot(survey: boolean, timingFollowup: boolean): boolean {
-  return survey && timingFollowup;
+export function lawSurveyNeedsDelivery(sampleBucket: number, directReply: boolean, pendingSurvey: boolean): boolean {
+  //@ ensures \result === true
+  return !interruptionFeedbackSample(sampleBucket, false, directReply, pendingSurvey);
 }
 
 /** Story: Tell the Network whether an invitation was worth a text / Sample a confirmed invitation after its own answer (spec/interruptionFeedback.md) */
 //@ pure
-export function lawSurveyNeedsDelivery(sampleBucket: number, directReply: boolean, pendingSurvey: boolean): boolean {
-  //@ ensures \result === true
-  return !interruptionFeedbackSample(sampleBucket, false, directReply, pendingSurvey);
+export function interruptionFeedbackUsesFollowupSlot(survey: boolean, timingFollowup: boolean): boolean {
+  return survey && timingFollowup;
 }
 
 /** Story: Tell the Network whether an invitation was worth a text / Sample a confirmed invitation after its own answer (spec/interruptionFeedback.md) */

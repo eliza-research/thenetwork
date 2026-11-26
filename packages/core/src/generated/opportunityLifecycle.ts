@@ -27,18 +27,6 @@ export function inv(current: OpportunityLifecycle): boolean {
 
 /** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md) */
 //@ pure
-export function stepRerollRequiresNewApproval(before: OpportunityLifecycle, via: string, after: OpportunityLifecycle): boolean {
-  return !(via === "reroll") || (before.phase === "InReview" && !after.approved);
-}
-
-/** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md) */
-//@ pure
-export function alwaysContactStagesRequireApproval(proposal: OpportunityLifecycle): boolean {
-  return !(proposal.phase === "Probing" || proposal.phase === "Scheduled" || proposal.phase === "Done") || proposal.approved;
-}
-
-/** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md) */
-//@ pure
 export function canStartProbing(proposal: OpportunityLifecycle, approvalRecorded: boolean, eligible: boolean): boolean {
   return proposal.phase === "InReview" && approvalRecorded && eligible;
 }
@@ -67,10 +55,16 @@ export function reroll(proposal: OpportunityLifecycle, replacementFound: boolean
   return { phase: replacementFound ? "InReview" : "Closed", approved: false };
 }
 
-/** Story: Book and conclude a proposal that comes together / Only an approved proposal with enough consent can book (spec/opportunityLifecycle.md) */
+/** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md) */
 //@ pure
-export function groupCanContinue(remaining: number): boolean {
-  return remaining >= 3;
+export function stepRerollRequiresNewApproval(before: OpportunityLifecycle, via: string, after: OpportunityLifecycle): boolean {
+  return !(via === "reroll") || (before.phase === "InReview" && !after.approved);
+}
+
+/** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md) */
+//@ pure
+export function alwaysContactStagesRequireApproval(proposal: OpportunityLifecycle): boolean {
+  return !(proposal.phase === "Probing" || proposal.phase === "Scheduled" || proposal.phase === "Done") || proposal.approved;
 }
 
 /** Story: Book and conclude a proposal that comes together / Only an approved proposal with enough consent can book (spec/opportunityLifecycle.md) */
@@ -90,6 +84,12 @@ export function book(proposal: OpportunityLifecycle, hasConsent: boolean): Oppor
 
 /** Story: Book and conclude a proposal that comes together / Only an approved proposal with enough consent can book (spec/opportunityLifecycle.md) */
 //@ pure
+export function groupCanContinue(remaining: number): boolean {
+  return remaining >= 3;
+}
+
+/** Story: Book and conclude a proposal that comes together / Only an approved proposal with enough consent can book (spec/opportunityLifecycle.md) */
+//@ pure
 export function lawAGroupNeedsAtLeastThree(remaining: number): boolean {
   //@ ensures \result === true
   return !(remaining < 3) || !groupCanContinue(remaining);
@@ -104,14 +104,14 @@ export function lawPairLeftFromGroupNeedsFreshConsent(proposal: OpportunityLifec
 
 /** Story: Book and conclude a proposal that comes together / A member can withdraw probe consent before the reveal (spec/opportunityLifecycle.md) */
 //@ pure
-export function acceptedProbeWithdrawalAllowed(ownText: boolean, directRefusal: boolean, otherReplyOpen: boolean, matches: number): boolean {
-  return ownText && directRefusal && !otherReplyOpen && matches === 1;
+export function acceptedProbeCanWithdraw(proposal: OpportunityLifecycle, accepted: boolean, contacted: boolean, lastProbe: boolean): boolean {
+  return proposal.phase === "Probing" && proposal.approved && accepted && contacted && lastProbe;
 }
 
 /** Story: Book and conclude a proposal that comes together / A member can withdraw probe consent before the reveal (spec/opportunityLifecycle.md) */
 //@ pure
-export function acceptedProbeCanWithdraw(proposal: OpportunityLifecycle, accepted: boolean, contacted: boolean, lastProbe: boolean): boolean {
-  return proposal.phase === "Probing" && proposal.approved && accepted && contacted && lastProbe;
+export function acceptedProbeWithdrawalAllowed(ownText: boolean, directRefusal: boolean, otherReplyOpen: boolean, matches: number): boolean {
+  return ownText && directRefusal && !otherReplyOpen && matches === 1;
 }
 
 /** Story: Book and conclude a proposal that comes together / A member can withdraw probe consent before the reveal (spec/opportunityLifecycle.md) */
@@ -136,14 +136,14 @@ export function lawBookedReplyRequiresCurrentConsent(proposal: OpportunityLifecy
 
 /** Story: Book and conclude a proposal that comes together / An explicit cancellation selects the named upcoming meeting (spec/opportunityLifecycle.md) */
 //@ pure
-export function unlinkedCancellation(ownText: boolean, explicit: boolean, activeBookedSlot: boolean, namedStart: boolean, matching: number): UnlinkedCancellation {
-  return !ownText || !explicit || (activeBookedSlot && !namedStart) ? "NoCancellation" : (matching === 1 ? "CancelMatchingBooking" : (matching > 1 ? "AskWhichBooking" : "NoMatchingBooking"));
+export function upcomingCancellationEligible(proposal: OpportunityLifecycle, onRoster: boolean, accepted: boolean, startKnown: boolean, startAt: number, now: number): boolean {
+  return onRoster && bookedReplyCurrent(proposal, accepted) && startKnown && startAt > now;
 }
 
 /** Story: Book and conclude a proposal that comes together / An explicit cancellation selects the named upcoming meeting (spec/opportunityLifecycle.md) */
 //@ pure
-export function upcomingCancellationEligible(proposal: OpportunityLifecycle, onRoster: boolean, accepted: boolean, startKnown: boolean, startAt: number, now: number): boolean {
-  return onRoster && bookedReplyCurrent(proposal, accepted) && startKnown && startAt > now;
+export function unlinkedCancellation(ownText: boolean, explicit: boolean, activeBookedSlot: boolean, namedStart: boolean, matching: number): UnlinkedCancellation {
+  return !ownText || !explicit || (activeBookedSlot && !namedStart) ? "NoCancellation" : (matching === 1 ? "CancelMatchingBooking" : (matching > 1 ? "AskWhichBooking" : "NoMatchingBooking"));
 }
 
 /** Story: Book and conclude a proposal that comes together / An explicit cancellation selects the named upcoming meeting (spec/opportunityLifecycle.md) */
@@ -235,12 +235,6 @@ export function bookedGroupCanContinue(remaining: number, minorSignal: boolean):
 
 /** Story: Book and conclude a proposal that comes together / A new minor signal closes an opportunity involving that person (spec/opportunityLifecycle.md) */
 //@ pure
-export function minorCloseTellsAcceptor(before: OpportunityLifecycle, contacted: boolean, accepted: boolean, minor: boolean, requester: boolean): boolean {
-  return before.phase === "Probing" && contacted && accepted && !minor && !requester;
-}
-
-/** Story: Book and conclude a proposal that comes together / A new minor signal closes an opportunity involving that person (spec/opportunityLifecycle.md) */
-//@ pure
 export function lawAskedMinorClosesABookedOpportunity(proposal: OpportunityLifecycle): boolean {
   //@ ensures \result === true
   return !(proposal.phase === "Scheduled") || closesForMinor(proposal, true, false, false, true);
@@ -279,6 +273,12 @@ export function lawNoMinorCloseWithoutAMinorSignal(proposal: OpportunityLifecycl
 export function lawMinorContactClosesAnUnbookedOpportunity(proposal: OpportunityLifecycle): boolean {
   //@ ensures \result === true
   return !(proposal.phase === "InReview" || proposal.phase === "Probing") || closesForMinor(proposal, true, false, false, true);
+}
+
+/** Story: Book and conclude a proposal that comes together / A new minor signal closes an opportunity involving that person (spec/opportunityLifecycle.md) */
+//@ pure
+export function minorCloseTellsAcceptor(before: OpportunityLifecycle, contacted: boolean, accepted: boolean, minor: boolean, requester: boolean): boolean {
+  return before.phase === "Probing" && contacted && accepted && !minor && !requester;
 }
 
 /** Story: Book and conclude a proposal that comes together / A new minor signal closes an opportunity involving that person (spec/opportunityLifecycle.md) */

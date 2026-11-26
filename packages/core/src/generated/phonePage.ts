@@ -1,7 +1,7 @@
 // GENERATED from spec/phonePage.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type StepNotice as oneStepPage_StepNotice, type StepSession as oneStepPage_StepSession, type CloudReturn as oneStepPage_CloudReturn, type SignInAuth as oneStepPage_SignInAuth, type SignInStage as oneStepPage_SignInStage, type SignInPending as oneStepPage_SignInPending, type SignInCheck as oneStepPage_SignInCheck, type SignInError as oneStepPage_SignInError, type SignInLookup as oneStepPage_SignInLookup, type SignInAnswer as oneStepPage_SignInAnswer, type SignInAttemptKind as oneStepPage_SignInAttemptKind, type OneStepKind as oneStepPage_OneStepKind, type StepSignIn as oneStepPage_StepSignIn, type SignInAttempt as oneStepPage_SignInAttempt, photoPagePurposeHeader as oneStepPage_photoPagePurposeHeader, signInCodeAccepted as oneStepPage_signInCodeAccepted, retryMinutesShown as oneStepPage_retryMinutesShown, signInAttemptAllowed as oneStepPage_signInAttemptAllowed, signInBusy as oneStepPage_signInBusy, signInSpent as oneStepPage_signInSpent, signInStartError as oneStepPage_signInStartError, photoPagePurpose as oneStepPage_photoPagePurpose, lawCodeNeedsFourToEightDigits as oneStepPage_lawCodeNeedsFourToEightDigits, signInConsistent as oneStepPage_signInConsistent, oneStepLinkInFragment as oneStepPage_oneStepLinkInFragment, oneStepLinkMayBeKept as oneStepPage_oneStepLinkMayBeKept, oneStepNoticeShown as oneStepPage_oneStepNoticeShown, noticeForSession as oneStepPage_noticeForSession, noticeForCloudReturn as oneStepPage_noticeForCloudReturn, lawRetryIsAtLeastOneMinute as oneStepPage_lawRetryIsAtLeastOneMinute, lawRetryIsNeverShorterThanTheWait as oneStepPage_lawRetryIsNeverShorterThanTheWait, oneStepIsPhoto as oneStepPage_oneStepIsPhoto, signInStart as oneStepPage_signInStart, signInAttemptNone as oneStepPage_signInAttemptNone, signInAuthFor as oneStepPage_signInAuthFor, signInCheckFor as oneStepPage_signInCheckFor, signInShowsNumberForm as oneStepPage_signInShowsNumberForm, signInShowsCloudButton as oneStepPage_signInShowsCloudButton, signInWaiting as oneStepPage_signInWaiting, signInSettledError as oneStepPage_signInSettledError, signInAgain as oneStepPage_signInAgain, lawOnlyPhotoLinkPagesNameAPurpose as oneStepPage_lawOnlyPhotoLinkPagesNameAPurpose, oneStepNeedsSignIn as oneStepPage_oneStepNeedsSignIn, lawKeptLinkIsInTheFragment as oneStepPage_lawKeptLinkIsInTheFragment, lawSignedInHasNoNotice as oneStepPage_lawSignedInHasNoNotice, noticeOnOpen as oneStepPage_noticeOnOpen, lawEveryCloudErrorShowsANotice as oneStepPage_lawEveryCloudErrorShowsANotice, oneStepOnSite as oneStepPage_oneStepOnSite, lawOnlyCloudLookupUsesCloud as oneStepPage_lawOnlyCloudLookupUsesCloud, lawCheckOnlyWithTextCodes as oneStepPage_lawCheckOnlyWithTextCodes, lawPhotoStepsOnlyOnSlop as oneStepPage_lawPhotoStepsOnlyOnSlop, lawHomeHelpOnlyOnHub as oneStepPage_lawHomeHelpOnlyOnHub, lawPhoneChangeOnEverySite as oneStepPage_lawPhoneChangeOnEverySite, lawSignInAgainKeepsTheMode as oneStepPage_lawSignInAgainKeepsTheMode, lawPhotoTokenIsNeverKept as oneStepPage_lawPhotoTokenIsNeverKept, lawSignInAgainIsConsistent as oneStepPage_lawSignInAgainIsConsistent, lawSessionHidesTheCloudError as oneStepPage_lawSessionHidesTheCloudError, lawPhotoUploadOnlyOnSlop as oneStepPage_lawPhotoUploadOnlyOnSlop, signInMove as oneStepPage_signInMove, lawInvalidNumberIsNeverSent as oneStepPage_lawInvalidNumberIsNeverSent, lawEveryStartAnswerSpendsTheCheck as oneStepPage_lawEveryStartAnswerSpendsTheCheck, lawShortCodeIsNeverSent as oneStepPage_lawShortCodeIsNeverSent, lawEveryAllowedMoveStaysConsistent as oneStepPage_lawEveryAllowedMoveStaysConsistent } from "./oneStepPage.ts";
-import { type JoinMode as brandIdentity_JoinMode, type AccentTokens as brandIdentity_AccentTokens, type Accent as brandIdentity_Accent, type Surface as brandIdentity_Surface, type AppKey as brandIdentity_AppKey, type LogoMark as brandIdentity_LogoMark, type SharedPart as brandIdentity_SharedPart, type StateColor as brandIdentity_StateColor, type MarkFill as brandIdentity_MarkFill, type ColorScheme as brandIdentity_ColorScheme, type Brand as brandIdentity_Brand } from "./brandIdentity.ts";
+import { type OneStepKind as oneStepPage_OneStepKind, type StepNotice as oneStepPage_StepNotice, type StepSession as oneStepPage_StepSession, type CloudReturn as oneStepPage_CloudReturn, type SignInAuth as oneStepPage_SignInAuth, type SignInStage as oneStepPage_SignInStage, type SignInPending as oneStepPage_SignInPending, type SignInCheck as oneStepPage_SignInCheck, type SignInError as oneStepPage_SignInError, type StepSignIn as oneStepPage_StepSignIn, type SignInLookup as oneStepPage_SignInLookup, type SignInAnswer as oneStepPage_SignInAnswer, type SignInAttemptKind as oneStepPage_SignInAttemptKind, type SignInAttempt as oneStepPage_SignInAttempt, oneStepIsPhoto as oneStepPage_oneStepIsPhoto, oneStepOnSite as oneStepPage_oneStepOnSite, lawPhotoUploadOnlyOnSlop as oneStepPage_lawPhotoUploadOnlyOnSlop, lawPhotoStepsOnlyOnSlop as oneStepPage_lawPhotoStepsOnlyOnSlop, lawHomeHelpOnlyOnHub as oneStepPage_lawHomeHelpOnlyOnHub, lawPhoneChangeOnEverySite as oneStepPage_lawPhoneChangeOnEverySite, photoPagePurposeHeader as oneStepPage_photoPagePurposeHeader, photoPagePurpose as oneStepPage_photoPagePurpose, lawOnlyPhotoLinkPagesNameAPurpose as oneStepPage_lawOnlyPhotoLinkPagesNameAPurpose, oneStepNeedsSignIn as oneStepPage_oneStepNeedsSignIn, oneStepLinkInFragment as oneStepPage_oneStepLinkInFragment, oneStepLinkMayBeKept as oneStepPage_oneStepLinkMayBeKept, lawPhotoTokenIsNeverKept as oneStepPage_lawPhotoTokenIsNeverKept, lawKeptLinkIsInTheFragment as oneStepPage_lawKeptLinkIsInTheFragment, oneStepNoticeShown as oneStepPage_oneStepNoticeShown, noticeForSession as oneStepPage_noticeForSession, lawSignedInHasNoNotice as oneStepPage_lawSignedInHasNoNotice, noticeForCloudReturn as oneStepPage_noticeForCloudReturn, noticeOnOpen as oneStepPage_noticeOnOpen, lawEveryCloudErrorShowsANotice as oneStepPage_lawEveryCloudErrorShowsANotice, lawSessionHidesTheCloudError as oneStepPage_lawSessionHidesTheCloudError, retryMinutesShown as oneStepPage_retryMinutesShown, lawRetryIsAtLeastOneMinute as oneStepPage_lawRetryIsAtLeastOneMinute, lawRetryIsNeverShorterThanTheWait as oneStepPage_lawRetryIsNeverShorterThanTheWait, signInStart as oneStepPage_signInStart, signInAttemptNone as oneStepPage_signInAttemptNone, signInAuthFor as oneStepPage_signInAuthFor, signInCheckFor as oneStepPage_signInCheckFor, signInShowsNumberForm as oneStepPage_signInShowsNumberForm, signInShowsCloudButton as oneStepPage_signInShowsCloudButton, signInWaiting as oneStepPage_signInWaiting, lawOnlyCloudLookupUsesCloud as oneStepPage_lawOnlyCloudLookupUsesCloud, lawCheckOnlyWithTextCodes as oneStepPage_lawCheckOnlyWithTextCodes, signInAttemptAllowed as oneStepPage_signInAttemptAllowed, signInBusy as oneStepPage_signInBusy, signInCodeAccepted as oneStepPage_signInCodeAccepted, signInSpent as oneStepPage_signInSpent, signInStartError as oneStepPage_signInStartError, signInSettledError as oneStepPage_signInSettledError, signInMove as oneStepPage_signInMove, lawCodeNeedsFourToEightDigits as oneStepPage_lawCodeNeedsFourToEightDigits, lawInvalidNumberIsNeverSent as oneStepPage_lawInvalidNumberIsNeverSent, lawEveryStartAnswerSpendsTheCheck as oneStepPage_lawEveryStartAnswerSpendsTheCheck, lawShortCodeIsNeverSent as oneStepPage_lawShortCodeIsNeverSent, signInAgain as oneStepPage_signInAgain, lawSignInAgainKeepsTheMode as oneStepPage_lawSignInAgainKeepsTheMode, signInConsistent as oneStepPage_signInConsistent, lawEveryAllowedMoveStaysConsistent as oneStepPage_lawEveryAllowedMoveStaysConsistent, lawSignInAgainIsConsistent as oneStepPage_lawSignInAgainIsConsistent } from "./oneStepPage.ts";
+import { type AppKey as brandIdentity_AppKey, type JoinMode as brandIdentity_JoinMode, type Accent as brandIdentity_Accent, type LogoMark as brandIdentity_LogoMark, type Brand as brandIdentity_Brand, type AccentTokens as brandIdentity_AccentTokens, type Surface as brandIdentity_Surface, type SharedPart as brandIdentity_SharedPart, type StateColor as brandIdentity_StateColor, type MarkFill as brandIdentity_MarkFill, type ColorScheme as brandIdentity_ColorScheme } from "./brandIdentity.ts";
 
 /** Story: Change my number from the link in my conversation / The page reads the session when it opens (spec/phonePage.md) */
 export type PhoneScreen = "PhoneOpening" | "PhoneLoading" | "PhoneSignIn" | "PhoneChecking" | "PhoneNewNumber" | "PhoneCode" | "PhoneDone" | "PhoneHeld";
@@ -27,8 +27,8 @@ export type Event =
   | { type: "submitChangeCode"; codeDigits: number }
   | { type: "answerNumberConfirm"; confirmAnswer: PhoneConfirmAnswer }
   | { type: "resendChangeCode" }
-  | { type: "changeNewNumber" }
-  | { type: "answerChangeResend"; startAnswer: PhoneStartAnswer; retryKnown: boolean };
+  | { type: "answerChangeResend"; startAnswer: PhoneStartAnswer; retryKnown: boolean }
+  | { type: "changeNewNumber" };
 
 /** Story: Change my number from the link in my conversation / The page reads the session when it opens (spec/phonePage.md) */
 export const initial: PhonePage = { screen: "PhoneOpening", signIn: oneStepPage_signInStart, pending: "PhoneIdle", error: "PhoneNoError", notice: "NoStepNotice", changeStarted: false, moved: false, doneSignedOut: false, retryKnown: false };
@@ -129,18 +129,6 @@ export function canPhoneSessionRead(p: PhonePage): boolean {
 
 /** Story: Change my number from the link in my conversation / The sign-in step confirms the current number and then reads the session again (spec/phonePage.md) */
 //@ pure
-export function alwaysSignInConsistent(p: PhonePage): boolean {
-  return oneStepPage_signInConsistent(p.signIn);
-}
-
-/** Story: Change my number from the link in my conversation / The sign-in step confirms the current number and then reads the session again (spec/phonePage.md) */
-//@ pure
-export function alwaysSignInBusyOnlyOnSignIn(p: PhonePage): boolean {
-  return !oneStepPage_signInBusy(p.signIn) || p.screen === "PhoneSignIn";
-}
-
-/** Story: Change my number from the link in my conversation / The sign-in step confirms the current number and then reads the session again (spec/phonePage.md) */
-//@ pure
 export function phoneSessionRead(p: PhonePage, session: oneStepPage_StepSession): PhonePage {
   //@ ensures (inv(p) && canPhoneSessionRead(p)) ==> alwaysSignInConsistent(\result)
   //@ ensures (inv(p) && canPhoneSessionRead(p)) ==> alwaysSignInBusyOnlyOnSignIn(\result)
@@ -154,6 +142,18 @@ export function phoneSessionRead(p: PhonePage, session: oneStepPage_StepSession)
   //@ ensures (inv(p) && canPhoneSessionRead(p)) ==> stepMoveOnlyFromConfirm(p, "phoneSessionRead", \result)
   //@ ensures (inv(p) && canPhoneSessionRead(p)) ==> stepOneRequestAtATime(p, \result)
   return session === "SessionSignedIn" ? ({ ...p, screen: "PhoneNewNumber", notice: "NoStepNotice", error: "PhoneNoError", retryKnown: false } as PhonePage) : phoneSignInAgain(oneStepPage_noticeForSession(session), p);
+}
+
+/** Story: Change my number from the link in my conversation / The sign-in step confirms the current number and then reads the session again (spec/phonePage.md) */
+//@ pure
+export function alwaysSignInConsistent(p: PhonePage): boolean {
+  return oneStepPage_signInConsistent(p.signIn);
+}
+
+/** Story: Change my number from the link in my conversation / The sign-in step confirms the current number and then reads the session again (spec/phonePage.md) */
+//@ pure
+export function alwaysSignInBusyOnlyOnSignIn(p: PhonePage): boolean {
+  return !oneStepPage_signInBusy(p.signIn) || p.screen === "PhoneSignIn";
 }
 
 /** Story: Change my number from the link in my conversation / The new number goes to the server only when it is valid and the mode is known (spec/phonePage.md) */
@@ -187,21 +187,15 @@ export function submitNewNumber(p: PhonePage, numberValid: boolean): PhonePage {
 
 /** Story: Change my number from the link in my conversation / The new number goes to the server only when it is valid and the mode is known (spec/phonePage.md) */
 //@ pure
-export function canAnswerNumberStart(p: PhonePage): boolean {
-  return p.pending === "PhoneStarting";
-}
-
-/** Story: Change my number from the link in my conversation / The new number goes to the server only when it is valid and the mode is known (spec/phonePage.md) */
-//@ pure
-export function alwaysWaitOnlyWithTooManyTries(p: PhonePage): boolean {
-  return !p.retryKnown || p.error === "PhoneRateLimited";
-}
-
-/** Story: Change my number from the link in my conversation / The new number goes to the server only when it is valid and the mode is known (spec/phonePage.md) */
-//@ pure
 export function phoneAfterStart(startAnswer: PhoneStartAnswer, retryKnown: boolean, resend: boolean, p: PhonePage): PhonePage {
   const local_1: PhonePage = { ...p, pending: "PhoneIdle", retryKnown: false };
   return startAnswer === "PhoneStartSent" ? (resend ? ({ ...local_1, error: "PhoneNewCodeSent", notice: "NoStepNotice" } as PhonePage) : ({ ...local_1, screen: "PhoneCode", error: "PhoneNoError", notice: "NoStepNotice", changeStarted: true } as PhonePage)) : (startAnswer === "PhoneStartInvalidPhone" ? ({ ...local_1, error: "PhoneInvalidNumber", notice: "NoStepNotice" } as PhonePage) : (startAnswer === "PhoneStartSameNumber" ? ({ ...local_1, error: "PhoneSameNumber", notice: "NoStepNotice" } as PhonePage) : (startAnswer === "PhoneStartRateLimited" ? ({ ...local_1, error: "PhoneRateLimited", notice: "NoStepNotice", retryKnown: retryKnown } as PhonePage) : (startAnswer === "PhoneStartFailed" ? ({ ...local_1, error: "PhoneRequestFailed", notice: "NoStepNotice" } as PhonePage) : (startAnswer === "PhoneStartReauth" ? phoneSignInAgain("StepSignInAgain", local_1) : (startAnswer === "PhoneStartNoPerson" || startAnswer === "PhoneStartSignedOut" ? phoneSignInAgain("StepSessionEnded", local_1) : (startAnswer === "PhoneStartReview" ? ({ ...local_1, screen: "PhoneHeld", error: "PhoneNoError", notice: "NoStepNotice", changeStarted: false } as PhonePage) : ({ ...local_1, notice: "StepUnreachable" } as PhonePage))))))));
+}
+
+/** Story: Change my number from the link in my conversation / The new number goes to the server only when it is valid and the mode is known (spec/phonePage.md) */
+//@ pure
+export function canAnswerNumberStart(p: PhonePage): boolean {
+  return p.pending === "PhoneStarting";
 }
 
 /** Story: Change my number from the link in my conversation / The new number goes to the server only when it is valid and the mode is known (spec/phonePage.md) */
@@ -230,6 +224,12 @@ export function lawWaitShowsOnlyWithTooManyTries(p: PhonePage, startAnswer: Phon
 
 /** Story: Change my number from the link in my conversation / The new number goes to the server only when it is valid and the mode is known (spec/phonePage.md) */
 //@ pure
+export function alwaysWaitOnlyWithTooManyTries(p: PhonePage): boolean {
+  return !p.retryKnown || p.error === "PhoneRateLimited";
+}
+
+/** Story: Change my number from the link in my conversation / The new number goes to the server only when it is valid and the mode is known (spec/phonePage.md) */
+//@ pure
 export function lawReauthAsksForSignIn(p: PhonePage): boolean {
   //@ ensures \result === true
   const local_2: PhonePage = answerNumberStart(p, "PhoneStartReauth", false);
@@ -240,30 +240,6 @@ export function lawReauthAsksForSignIn(p: PhonePage): boolean {
 //@ pure
 export function phoneChangeCodeAccepted(codeDigits: number): boolean {
   return codeDigits >= 4 && codeDigits <= 10;
-}
-
-/** Story: Change my number from the link in my conversation / Only a well-formed change code goes to the server, and only a moved number shows the result (spec/phonePage.md) */
-//@ pure
-export function alwaysDoneOnlyAfterMove(p: PhonePage): boolean {
-  return (p.screen === "PhoneDone") === p.moved;
-}
-
-/** Story: Change my number from the link in my conversation / Only a well-formed change code goes to the server, and only a moved number shows the result (spec/phonePage.md) */
-//@ pure
-export function alwaysSignedOutDoneOnlyWithCloud(p: PhonePage): boolean {
-  return !p.doneSignedOut || (p.screen === "PhoneDone" && p.signIn.auth === "SignInCloud");
-}
-
-/** Story: Change my number from the link in my conversation / Only a well-formed change code goes to the server, and only a moved number shows the result (spec/phonePage.md) */
-//@ pure
-export function alwaysChangeNeedsKnownMode(p: PhonePage): boolean {
-  return !(p.pending !== "PhoneIdle" || p.screen === "PhoneCode" || p.screen === "PhoneDone") || p.signIn.auth !== "SignInModePending";
-}
-
-/** Story: Change my number from the link in my conversation / Only a well-formed change code goes to the server, and only a moved number shows the result (spec/phonePage.md) */
-//@ pure
-export function stepMoveOnlyFromConfirm(before: PhonePage, via: string, after: PhonePage): boolean {
-  return !(after.moved && !before.moved) || (via === "answerNumberConfirm" && before.pending === "PhoneConfirming");
 }
 
 /** Story: Change my number from the link in my conversation / Only a well-formed change code goes to the server, and only a moved number shows the result (spec/phonePage.md) */
@@ -320,6 +296,30 @@ export function lawChangeCodeNeedsFourToTenDigits(p: PhonePage, codeDigits: numb
   return !(codeDigits < 4 || codeDigits > 10) || submitChangeCode(p, codeDigits).pending === p.pending;
 }
 
+/** Story: Change my number from the link in my conversation / Only a well-formed change code goes to the server, and only a moved number shows the result (spec/phonePage.md) */
+//@ pure
+export function alwaysDoneOnlyAfterMove(p: PhonePage): boolean {
+  return (p.screen === "PhoneDone") === p.moved;
+}
+
+/** Story: Change my number from the link in my conversation / Only a well-formed change code goes to the server, and only a moved number shows the result (spec/phonePage.md) */
+//@ pure
+export function alwaysSignedOutDoneOnlyWithCloud(p: PhonePage): boolean {
+  return !p.doneSignedOut || (p.screen === "PhoneDone" && p.signIn.auth === "SignInCloud");
+}
+
+/** Story: Change my number from the link in my conversation / Only a well-formed change code goes to the server, and only a moved number shows the result (spec/phonePage.md) */
+//@ pure
+export function alwaysChangeNeedsKnownMode(p: PhonePage): boolean {
+  return !(p.pending !== "PhoneIdle" || p.screen === "PhoneCode" || p.screen === "PhoneDone") || p.signIn.auth !== "SignInModePending";
+}
+
+/** Story: Change my number from the link in my conversation / Only a well-formed change code goes to the server, and only a moved number shows the result (spec/phonePage.md) */
+//@ pure
+export function stepMoveOnlyFromConfirm(before: PhonePage, via: string, after: PhonePage): boolean {
+  return !(after.moved && !before.moved) || (via === "answerNumberConfirm" && before.pending === "PhoneConfirming");
+}
+
 /** Story: Change my number from the link in my conversation / The code step can send a new code or go back to the new number (spec/phonePage.md) */
 //@ pure
 export function canResendChangeCode(p: PhonePage): boolean {
@@ -351,6 +351,23 @@ export function canAnswerChangeResend(p: PhonePage): boolean {
 
 /** Story: Change my number from the link in my conversation / The code step can send a new code or go back to the new number (spec/phonePage.md) */
 //@ pure
+export function answerChangeResend(p: PhonePage, startAnswer: PhoneStartAnswer, retryKnown: boolean): PhonePage {
+  //@ ensures (inv(p) && canAnswerChangeResend(p)) ==> alwaysSignInConsistent(\result)
+  //@ ensures (inv(p) && canAnswerChangeResend(p)) ==> alwaysSignInBusyOnlyOnSignIn(\result)
+  //@ ensures (inv(p) && canAnswerChangeResend(p)) ==> alwaysWaitOnlyWithTooManyTries(\result)
+  //@ ensures (inv(p) && canAnswerChangeResend(p)) ==> alwaysDoneOnlyAfterMove(\result)
+  //@ ensures (inv(p) && canAnswerChangeResend(p)) ==> alwaysSignedOutDoneOnlyWithCloud(\result)
+  //@ ensures (inv(p) && canAnswerChangeResend(p)) ==> alwaysChangeNeedsKnownMode(\result)
+  //@ ensures (inv(p) && canAnswerChangeResend(p)) ==> alwaysCodeNeedsChange(\result)
+  //@ ensures (inv(p) && canAnswerChangeResend(p)) ==> alwaysSignInAgainHasNoChange(\result)
+  //@ ensures (inv(p) && canAnswerChangeResend(p)) ==> alwaysRequestBelongsToItsScreen(\result)
+  //@ ensures (inv(p) && canAnswerChangeResend(p)) ==> stepMoveOnlyFromConfirm(p, "answerChangeResend", \result)
+  //@ ensures (inv(p) && canAnswerChangeResend(p)) ==> stepOneRequestAtATime(p, \result)
+  return phoneAfterStart(startAnswer, retryKnown, true, p);
+}
+
+/** Story: Change my number from the link in my conversation / The code step can send a new code or go back to the new number (spec/phonePage.md) */
+//@ pure
 export function canChangeNewNumber(p: PhonePage): boolean {
   return p.screen === "PhoneCode" && p.pending === "PhoneIdle";
 }
@@ -376,23 +393,6 @@ export function changeNewNumber(p: PhonePage): PhonePage {
 //@ pure
 export function alwaysCodeNeedsChange(p: PhonePage): boolean {
   return !(p.screen === "PhoneCode" || p.pending === "PhoneConfirming" || p.pending === "PhoneResending") || p.changeStarted;
-}
-
-/** Story: Change my number from the link in my conversation / The code step can send a new code or go back to the new number (spec/phonePage.md) */
-//@ pure
-export function answerChangeResend(p: PhonePage, startAnswer: PhoneStartAnswer, retryKnown: boolean): PhonePage {
-  //@ ensures (inv(p) && canAnswerChangeResend(p)) ==> alwaysSignInConsistent(\result)
-  //@ ensures (inv(p) && canAnswerChangeResend(p)) ==> alwaysSignInBusyOnlyOnSignIn(\result)
-  //@ ensures (inv(p) && canAnswerChangeResend(p)) ==> alwaysWaitOnlyWithTooManyTries(\result)
-  //@ ensures (inv(p) && canAnswerChangeResend(p)) ==> alwaysDoneOnlyAfterMove(\result)
-  //@ ensures (inv(p) && canAnswerChangeResend(p)) ==> alwaysSignedOutDoneOnlyWithCloud(\result)
-  //@ ensures (inv(p) && canAnswerChangeResend(p)) ==> alwaysChangeNeedsKnownMode(\result)
-  //@ ensures (inv(p) && canAnswerChangeResend(p)) ==> alwaysCodeNeedsChange(\result)
-  //@ ensures (inv(p) && canAnswerChangeResend(p)) ==> alwaysSignInAgainHasNoChange(\result)
-  //@ ensures (inv(p) && canAnswerChangeResend(p)) ==> alwaysRequestBelongsToItsScreen(\result)
-  //@ ensures (inv(p) && canAnswerChangeResend(p)) ==> stepMoveOnlyFromConfirm(p, "answerChangeResend", \result)
-  //@ ensures (inv(p) && canAnswerChangeResend(p)) ==> stepOneRequestAtATime(p, \result)
-  return phoneAfterStart(startAnswer, retryKnown, true, p);
 }
 
 /** Story: Sign in again when my sign-in is old / A sign-in that is too old starts the sign-in again on the same page (spec/phonePage.md) */
@@ -570,8 +570,8 @@ export function enabled(current: PhonePage, event: Event): boolean {
   if (event.type === "submitChangeCode") return canSubmitChangeCode(current);
   if (event.type === "answerNumberConfirm") return canAnswerNumberConfirm(current);
   if (event.type === "resendChangeCode") return canResendChangeCode(current);
-  if (event.type === "changeNewNumber") return canChangeNewNumber(current);
   if (event.type === "answerChangeResend") return canAnswerChangeResend(current);
+  if (event.type === "changeNewNumber") return canChangeNewNumber(current);
   return false;
 }
 
@@ -589,8 +589,8 @@ export function step(current: PhonePage, event: Event): PhonePage {
   if (event.type === "submitChangeCode") return canSubmitChangeCode(current) ? submitChangeCode(current, event.codeDigits) : current;
   if (event.type === "answerNumberConfirm") return canAnswerNumberConfirm(current) ? answerNumberConfirm(current, event.confirmAnswer) : current;
   if (event.type === "resendChangeCode") return canResendChangeCode(current) ? resendChangeCode(current) : current;
-  if (event.type === "changeNewNumber") return canChangeNewNumber(current) ? changeNewNumber(current) : current;
   if (event.type === "answerChangeResend") return canAnswerChangeResend(current) ? answerChangeResend(current, event.startAnswer, event.retryKnown) : current;
+  if (event.type === "changeNewNumber") return canChangeNewNumber(current) ? changeNewNumber(current) : current;
   return current;
 }
 
@@ -618,8 +618,8 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "submitChangeCode" && Number.isSafeInteger(raw.codeDigits)) return { type: "submitChangeCode", codeDigits: raw.codeDigits };
   if (raw.type === "answerNumberConfirm" && (raw.confirmAnswer === "PhoneConfirmMoved" || raw.confirmAnswer === "PhoneConfirmInvalidCode" || raw.confirmAnswer === "PhoneConfirmNoPerson" || raw.confirmAnswer === "PhoneConfirmReview" || raw.confirmAnswer === "PhoneConfirmNoPending" || raw.confirmAnswer === "PhoneConfirmNumberInUse" || raw.confirmAnswer === "PhoneConfirmSignedOut" || raw.confirmAnswer === "PhoneConfirmFailed" || raw.confirmAnswer === "PhoneConfirmUnreachable")) return { type: "answerNumberConfirm", confirmAnswer: raw.confirmAnswer };
   if (raw.type === "resendChangeCode") return { type: "resendChangeCode" };
-  if (raw.type === "changeNewNumber") return { type: "changeNewNumber" };
   if (raw.type === "answerChangeResend" && (raw.startAnswer === "PhoneStartSent" || raw.startAnswer === "PhoneStartInvalidPhone" || raw.startAnswer === "PhoneStartSameNumber" || raw.startAnswer === "PhoneStartNoPerson" || raw.startAnswer === "PhoneStartReauth" || raw.startAnswer === "PhoneStartReview" || raw.startAnswer === "PhoneStartRateLimited" || raw.startAnswer === "PhoneStartSignedOut" || raw.startAnswer === "PhoneStartFailed" || raw.startAnswer === "PhoneStartUnreachable") && typeof raw.retryKnown === "boolean") return { type: "answerChangeResend", startAnswer: raw.startAnswer, retryKnown: raw.retryKnown };
+  if (raw.type === "changeNewNumber") return { type: "changeNewNumber" };
   return undefined;
 }
 

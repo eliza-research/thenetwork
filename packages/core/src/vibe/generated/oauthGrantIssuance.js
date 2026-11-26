@@ -1,10 +1,10 @@
 // Generated from spec/oauthGrantIssuance.md via Vibestack and VibeLang. Run pnpm run spec:sync.
 // GENERATED from spec/oauthGrantIssuance.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-/** Story: Connect my agent after I approve access / Locked approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md) */
-export const eligibleApproval = { ownerMatches: true, lockedRequestLive: true, pendingGrantLive: true };
 /** Story: Connect my agent after I approve access / An expired request cannot begin issuance (spec/oauthGrantIssuance.md) */
 export const initial = { phase: "StartApproval", authorityAccepted: false, sameOwner: false, requestLive: false, grantLive: false };
+/** Story: Connect my agent after I approve access / Locked approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md) */
+export const eligibleApproval = { ownerMatches: true, lockedRequestLive: true, pendingGrantLive: true };
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current) {

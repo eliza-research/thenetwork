@@ -5,33 +5,21 @@
 export type CalendarSignal = "CalendarUnknown" | "CalendarBusy" | "CalendarFree";
 
 /** Story: Use my authorized calendar to choose a time / Read only current anonymous intervals for the exact authorized connection (spec/calendarFreeBusy.md) */
+export const calendarSchedulingPurpose: string = "network-scheduling-free-busy-v1";
+/** Story: Use my authorized calendar to choose a time / Read only current anonymous intervals for the exact authorized connection (spec/calendarFreeBusy.md) */
+export const calendarSource: string = "google_calendar";
+/** Story: Use my authorized calendar to choose a time / Read only current anonymous intervals for the exact authorized connection (spec/calendarFreeBusy.md) */
+export const calendarObservationMaxAgeMs: number = exact_calendarFreeBusy(5 * 60000);
+/** Story: Use my authorized calendar to choose a time / Read only current anonymous intervals for the exact authorized connection (spec/calendarFreeBusy.md) */
 export const calendarCoverageMaxMs: number = exact_calendarFreeBusy(8 * 86400000);
 /** Story: Use my authorized calendar to choose a time / Read only current anonymous intervals for the exact authorized connection (spec/calendarFreeBusy.md) */
 export const calendarBusyIntervalLimit: number = 256;
-/** Story: Use my authorized calendar to choose a time / Read only current anonymous intervals for the exact authorized connection (spec/calendarFreeBusy.md) */
-export const calendarSchedulingPurpose: string = "network-scheduling-free-busy-v1";
 /** Story: Use my authorized calendar to choose a time / Exchange fresh proofs for one member of one app (spec/calendarFreeBusy.md) */
 export const calendarOwnerPath: string = "/internal/calendar-scheduling-owner";
 /** Story: Use my authorized calendar to choose a time / Exchange fresh proofs for one member of one app (spec/calendarFreeBusy.md) */
 export const calendarPreloadPath: string = "/api/internal/network/calendar-scheduling";
 /** Story: Use my authorized calendar to choose a time / Exchange fresh proofs for one member of one app (spec/calendarFreeBusy.md) */
 export const calendarAuthorityLifetimeMs: number = exact_calendarFreeBusy(30 * 1000);
-/** Story: Use my authorized calendar to choose a time / Read only current anonymous intervals for the exact authorized connection (spec/calendarFreeBusy.md) */
-export const calendarSource: string = "google_calendar";
-/** Story: Use my authorized calendar to choose a time / Read only current anonymous intervals for the exact authorized connection (spec/calendarFreeBusy.md) */
-export const calendarObservationMaxAgeMs: number = exact_calendarFreeBusy(5 * 60000);
-
-/** Story: Use my authorized calendar to choose a time / Read only current anonymous intervals for the exact authorized connection (spec/calendarFreeBusy.md) */
-//@ pure
-export function calendarCoverageAllowed(start: number, end: number, busyCount: number): boolean {
-  return start >= 0 && start < end && exact_calendarFreeBusy(end - start) <= calendarCoverageMaxMs && busyCount >= 0 && busyCount <= calendarBusyIntervalLimit;
-}
-
-/** Story: Use my authorized calendar to choose a time / Read only current anonymous intervals for the exact authorized connection (spec/calendarFreeBusy.md) */
-//@ pure
-export function calendarIntervalWithin(outerStart: number, outerEnd: number, start: number, end: number): boolean {
-  return outerStart <= start && start < end && end <= outerEnd;
-}
 
 /** Story: Use my authorized calendar to choose a time / Read only current anonymous intervals for the exact authorized connection (spec/calendarFreeBusy.md) */
 //@ pure
@@ -47,15 +35,27 @@ export function calendarObservationFresh(observedAt: number, now: number): boole
 
 /** Story: Use my authorized calendar to choose a time / Read only current anonymous intervals for the exact authorized connection (spec/calendarFreeBusy.md) */
 //@ pure
-export function lawCalendarNeedsLocalConsent(eligibleOwner: boolean, connectionCurrent: boolean, exactScope: boolean, grantedAt: number, expiresAt: number, now: number): boolean {
-  //@ ensures \result === true
-  return !calendarGrantCurrent(false, eligibleOwner, connectionCurrent, exactScope, grantedAt, expiresAt, now);
+export function calendarObservationCurrent(exactScope: boolean, anonymous: boolean, grantedAt: number, observedAt: number, now: number): boolean {
+  return exactScope && anonymous && grantedAt <= observedAt && calendarObservationFresh(observedAt, now);
 }
 
 /** Story: Use my authorized calendar to choose a time / Read only current anonymous intervals for the exact authorized connection (spec/calendarFreeBusy.md) */
 //@ pure
-export function calendarObservationCurrent(exactScope: boolean, anonymous: boolean, grantedAt: number, observedAt: number, now: number): boolean {
-  return exactScope && anonymous && grantedAt <= observedAt && calendarObservationFresh(observedAt, now);
+export function calendarCoverageAllowed(start: number, end: number, busyCount: number): boolean {
+  return start >= 0 && start < end && exact_calendarFreeBusy(end - start) <= calendarCoverageMaxMs && busyCount >= 0 && busyCount <= calendarBusyIntervalLimit;
+}
+
+/** Story: Use my authorized calendar to choose a time / Read only current anonymous intervals for the exact authorized connection (spec/calendarFreeBusy.md) */
+//@ pure
+export function calendarIntervalWithin(outerStart: number, outerEnd: number, start: number, end: number): boolean {
+  return outerStart <= start && start < end && end <= outerEnd;
+}
+
+/** Story: Use my authorized calendar to choose a time / Read only current anonymous intervals for the exact authorized connection (spec/calendarFreeBusy.md) */
+//@ pure
+export function lawCalendarNeedsLocalConsent(eligibleOwner: boolean, connectionCurrent: boolean, exactScope: boolean, grantedAt: number, expiresAt: number, now: number): boolean {
+  //@ ensures \result === true
+  return !calendarGrantCurrent(false, eligibleOwner, connectionCurrent, exactScope, grantedAt, expiresAt, now);
 }
 
 /** Story: Use my authorized calendar to choose a time / A known busy interval excludes the slot and incomplete coverage cannot make it free (spec/calendarFreeBusy.md) */
@@ -110,14 +110,21 @@ export function calendarPreloadSeatAllowed(status: string, booked: boolean, pend
 
 /** Story: Use my authorized calendar to choose a time / A scheduling read uses only the seats still involved in that work (spec/calendarFreeBusy.md) */
 //@ pure
-export function calendarReschedulePreloadAllowed(matching: number): boolean {
-  return matching === 1;
+export function calendarDirectTurnReadsBooked(status: string, askerPending: boolean, rescheduling: boolean): boolean {
+  return rescheduling ? status === "yes" : askerPending && status !== "yes" && calendarPreloadSeatAllowed(status, true, true);
 }
 
 /** Story: Use my authorized calendar to choose a time / A scheduling read uses only the seats still involved in that work (spec/calendarFreeBusy.md) */
 //@ pure
-export function calendarDirectTurnReadsBooked(status: string, askerPending: boolean, rescheduling: boolean): boolean {
-  return rescheduling ? status === "yes" : askerPending && status !== "yes" && calendarPreloadSeatAllowed(status, true, true);
+export function lawCalendarDirectTurnNeedsOwnSeat(status: string, askerPending: boolean, rescheduling: boolean): boolean {
+  //@ ensures \result === true
+  return !calendarDirectTurnReadsBooked(status, askerPending, rescheduling) || ((rescheduling && status === "yes") || (!rescheduling && askerPending && status !== "yes"));
+}
+
+/** Story: Use my authorized calendar to choose a time / A scheduling read uses only the seats still involved in that work (spec/calendarFreeBusy.md) */
+//@ pure
+export function calendarReschedulePreloadAllowed(matching: number): boolean {
+  return matching === 1;
 }
 
 /** Story: Use my authorized calendar to choose a time / A scheduling read uses only the seats still involved in that work (spec/calendarFreeBusy.md) */
@@ -132,13 +139,6 @@ export function lawAmbiguousCalendarRescheduleCannotRead(matching: number): bool
 export function lawCalendarDoesNotReadRetiredSeat(booked: boolean, pendingLateSeat: boolean): boolean {
   //@ ensures \result === true
   return !calendarPreloadSeatAllowed("dropped", booked, pendingLateSeat);
-}
-
-/** Story: Use my authorized calendar to choose a time / A scheduling read uses only the seats still involved in that work (spec/calendarFreeBusy.md) */
-//@ pure
-export function lawCalendarDirectTurnNeedsOwnSeat(status: string, askerPending: boolean, rescheduling: boolean): boolean {
-  //@ ensures \result === true
-  return !calendarDirectTurnReadsBooked(status, askerPending, rescheduling) || ((rescheduling && status === "yes") || (!rescheduling && askerPending && status !== "yes"));
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */

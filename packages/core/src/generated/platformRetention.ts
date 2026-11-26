@@ -29,16 +29,16 @@ export function phoneChangePastRetention(confirmed: boolean, requestedAt: number
 
 /** Story: Remove expired account data and retain necessary send history / Platform rows and inbox payloads have separate cutoffs (spec/platformRetention.md) */
 //@ pure
-export function lawRowsAtCutoffStay(cutoff: number): boolean {
+export function lawConfirmedChangeStays(requestedAt: number, cutoff: number): boolean {
   //@ ensures \result === true
-  return !rowBeforeCutoff(cutoff, cutoff);
+  return !phoneChangePastRetention(true, requestedAt, cutoff);
 }
 
 /** Story: Remove expired account data and retain necessary send history / Platform rows and inbox payloads have separate cutoffs (spec/platformRetention.md) */
 //@ pure
-export function lawConfirmedChangeStays(requestedAt: number, cutoff: number): boolean {
+export function lawRowsAtCutoffStay(cutoff: number): boolean {
   //@ ensures \result === true
-  return !phoneChangePastRetention(true, requestedAt, cutoff);
+  return !rowBeforeCutoff(cutoff, cutoff);
 }
 
 /** Story: Remove expired account data and retain necessary send history / Retain the STOP hint count for its full window (spec/platformRetention.md) */
@@ -49,15 +49,15 @@ export function rateCounterCutoff(platformCutoff: number, extraKeepMs: number): 
 
 /** Story: Remove expired account data and retain necessary send history / Retain the STOP hint count for its full window (spec/platformRetention.md) */
 //@ pure
-export function lawOrdinaryCounterFollowsPlatformCutoff(lastAt: number, platformCutoff: number): boolean {
-  //@ ensures \result === true
-  return rowBeforeCutoff(lastAt, rateCounterCutoff(platformCutoff, 0)) === rowBeforeCutoff(lastAt, platformCutoff);
+export function stopHintCounterPastRetention(lastAt: number, platformCutoff: number): boolean {
+  return rowBeforeCutoff(lastAt, rateCounterCutoff(platformCutoff, stopHintWindowMs));
 }
 
 /** Story: Remove expired account data and retain necessary send history / Retain the STOP hint count for its full window (spec/platformRetention.md) */
 //@ pure
-export function stopHintCounterPastRetention(lastAt: number, platformCutoff: number): boolean {
-  return rowBeforeCutoff(lastAt, rateCounterCutoff(platformCutoff, stopHintWindowMs));
+export function lawOrdinaryCounterFollowsPlatformCutoff(lastAt: number, platformCutoff: number): boolean {
+  //@ ensures \result === true
+  return rowBeforeCutoff(lastAt, rateCounterCutoff(platformCutoff, 0)) === rowBeforeCutoff(lastAt, platformCutoff);
 }
 
 /** Story: Remove expired account data and retain necessary send history / Retain the STOP hint count for its full window (spec/platformRetention.md) */

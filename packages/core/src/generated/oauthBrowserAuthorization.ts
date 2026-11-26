@@ -99,18 +99,6 @@ export function browserFormOf(form: string): BrowserForm {
 
 /** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md) */
 //@ pure
-export function canReadBrowserForm(flow: BrowserFlow): boolean {
-  return flow.phase === "BrowserBound";
-}
-
-/** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md) */
-//@ pure
-export function browserEntryMayResume(flow: BrowserFlow, page: StoredPage, hasPhone: boolean): boolean {
-  return flow.phase === "BrowserBound" && page === "PhonePage" && !hasPhone;
-}
-
-/** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md) */
-//@ pure
 export function lawOnlyThePhoneStepCanResume(stepWord: string): boolean {
   //@ ensures \result === true
   return (storedPageOf(stepWord) === "PhonePage") === (stepWord === "phone");
@@ -128,6 +116,18 @@ export function lawUnknownStepExpiresEveryForm(stepWord: string): boolean {
 export function lawPostedRouteIsNeverACloudReturn(form: string): boolean {
   //@ ensures \result === true
   return browserFormOf(form) !== "CloudReturn";
+}
+
+/** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md) */
+//@ pure
+export function canReadBrowserForm(flow: BrowserFlow): boolean {
+  return flow.phase === "BrowserBound";
+}
+
+/** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md) */
+//@ pure
+export function browserEntryMayResume(flow: BrowserFlow, page: StoredPage, hasPhone: boolean): boolean {
+  return flow.phase === "BrowserBound" && page === "PhonePage" && !hasPhone;
 }
 
 /** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md) */
@@ -195,20 +195,14 @@ export function browserSignupAppAllowed(app: string, surfaceOffered: boolean, ca
 
 /** Story: Approve access in the browser after proving my phone / Optional signup stays inside the verified authorization request (spec/oauthBrowserAuthorization.md) */
 //@ pure
-export function browserSignupJoinAllowed(openAllowed: boolean, exactForm: boolean, smsAccepted: boolean, currentConsent: boolean): boolean {
-  return openAllowed && exactForm && smsAccepted && currentConsent;
-}
-
-/** Story: Approve access in the browser after proving my phone / Optional signup stays inside the verified authorization request (spec/oauthBrowserAuthorization.md) */
-//@ pure
-export function browserSignupMemberAllowed(memberState: string): boolean {
-  return memberState === "active" || memberState === "onboarding";
-}
-
-/** Story: Approve access in the browser after proving my phone / Optional signup stays inside the verified authorization request (spec/oauthBrowserAuthorization.md) */
-//@ pure
 export function browserSignupOpenAllowed(flow: BrowserFlow, page: StoredPage, hasPhone: boolean, sameSession: boolean, appAllowed: boolean): boolean {
   return flow.phase === "BrowserBound" && page === "ConsentPage" && hasPhone && sameSession && appAllowed;
+}
+
+/** Story: Approve access in the browser after proving my phone / Optional signup stays inside the verified authorization request (spec/oauthBrowserAuthorization.md) */
+//@ pure
+export function browserSignupJoinAllowed(openAllowed: boolean, exactForm: boolean, smsAccepted: boolean, currentConsent: boolean): boolean {
+  return openAllowed && exactForm && smsAccepted && currentConsent;
 }
 
 /** Story: Approve access in the browser after proving my phone / Optional signup stays inside the verified authorization request (spec/oauthBrowserAuthorization.md) */
@@ -221,6 +215,12 @@ export function browserSignupOwnerBindingAllowed(page: StoredPage, createdMember
 //@ pure
 export function browserSignupConsentAllowed(page: StoredPage, exactApproval: boolean): boolean {
   return page !== "SignupEnrollmentPending" && (page !== "EnrolledConsentPage" || exactApproval);
+}
+
+/** Story: Approve access in the browser after proving my phone / Optional signup stays inside the verified authorization request (spec/oauthBrowserAuthorization.md) */
+//@ pure
+export function browserSignupMemberAllowed(memberState: string): boolean {
+  return memberState === "active" || memberState === "onboarding";
 }
 
 /** Story: Approve access in the browser after proving my phone / Optional signup stays inside the verified authorization request (spec/oauthBrowserAuthorization.md) */

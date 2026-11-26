@@ -1,20 +1,20 @@
 // GENERATED from spec/homeHelpPage.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type StepNotice as oneStepPage_StepNotice, type StepSession as oneStepPage_StepSession, type CloudReturn as oneStepPage_CloudReturn, type SignInAuth as oneStepPage_SignInAuth, type SignInStage as oneStepPage_SignInStage, type SignInPending as oneStepPage_SignInPending, type SignInCheck as oneStepPage_SignInCheck, type SignInError as oneStepPage_SignInError, type SignInLookup as oneStepPage_SignInLookup, type SignInAnswer as oneStepPage_SignInAnswer, type SignInAttemptKind as oneStepPage_SignInAttemptKind, type OneStepKind as oneStepPage_OneStepKind, type StepSignIn as oneStepPage_StepSignIn, type SignInAttempt as oneStepPage_SignInAttempt, photoPagePurposeHeader as oneStepPage_photoPagePurposeHeader, signInCodeAccepted as oneStepPage_signInCodeAccepted, retryMinutesShown as oneStepPage_retryMinutesShown, signInAttemptAllowed as oneStepPage_signInAttemptAllowed, signInBusy as oneStepPage_signInBusy, signInSpent as oneStepPage_signInSpent, signInStartError as oneStepPage_signInStartError, photoPagePurpose as oneStepPage_photoPagePurpose, lawCodeNeedsFourToEightDigits as oneStepPage_lawCodeNeedsFourToEightDigits, signInConsistent as oneStepPage_signInConsistent, oneStepLinkInFragment as oneStepPage_oneStepLinkInFragment, oneStepLinkMayBeKept as oneStepPage_oneStepLinkMayBeKept, oneStepNoticeShown as oneStepPage_oneStepNoticeShown, noticeForSession as oneStepPage_noticeForSession, noticeForCloudReturn as oneStepPage_noticeForCloudReturn, lawRetryIsAtLeastOneMinute as oneStepPage_lawRetryIsAtLeastOneMinute, lawRetryIsNeverShorterThanTheWait as oneStepPage_lawRetryIsNeverShorterThanTheWait, oneStepIsPhoto as oneStepPage_oneStepIsPhoto, signInStart as oneStepPage_signInStart, signInAttemptNone as oneStepPage_signInAttemptNone, signInAuthFor as oneStepPage_signInAuthFor, signInCheckFor as oneStepPage_signInCheckFor, signInShowsNumberForm as oneStepPage_signInShowsNumberForm, signInShowsCloudButton as oneStepPage_signInShowsCloudButton, signInWaiting as oneStepPage_signInWaiting, signInSettledError as oneStepPage_signInSettledError, signInAgain as oneStepPage_signInAgain, lawOnlyPhotoLinkPagesNameAPurpose as oneStepPage_lawOnlyPhotoLinkPagesNameAPurpose, oneStepNeedsSignIn as oneStepPage_oneStepNeedsSignIn, lawKeptLinkIsInTheFragment as oneStepPage_lawKeptLinkIsInTheFragment, lawSignedInHasNoNotice as oneStepPage_lawSignedInHasNoNotice, noticeOnOpen as oneStepPage_noticeOnOpen, lawEveryCloudErrorShowsANotice as oneStepPage_lawEveryCloudErrorShowsANotice, oneStepOnSite as oneStepPage_oneStepOnSite, lawOnlyCloudLookupUsesCloud as oneStepPage_lawOnlyCloudLookupUsesCloud, lawCheckOnlyWithTextCodes as oneStepPage_lawCheckOnlyWithTextCodes, lawPhotoStepsOnlyOnSlop as oneStepPage_lawPhotoStepsOnlyOnSlop, lawHomeHelpOnlyOnHub as oneStepPage_lawHomeHelpOnlyOnHub, lawPhoneChangeOnEverySite as oneStepPage_lawPhoneChangeOnEverySite, lawSignInAgainKeepsTheMode as oneStepPage_lawSignInAgainKeepsTheMode, lawPhotoTokenIsNeverKept as oneStepPage_lawPhotoTokenIsNeverKept, lawSignInAgainIsConsistent as oneStepPage_lawSignInAgainIsConsistent, lawSessionHidesTheCloudError as oneStepPage_lawSessionHidesTheCloudError, lawPhotoUploadOnlyOnSlop as oneStepPage_lawPhotoUploadOnlyOnSlop, signInMove as oneStepPage_signInMove, lawInvalidNumberIsNeverSent as oneStepPage_lawInvalidNumberIsNeverSent, lawEveryStartAnswerSpendsTheCheck as oneStepPage_lawEveryStartAnswerSpendsTheCheck, lawShortCodeIsNeverSent as oneStepPage_lawShortCodeIsNeverSent, lawEveryAllowedMoveStaysConsistent as oneStepPage_lawEveryAllowedMoveStaysConsistent } from "./oneStepPage.ts";
-import { type JoinMode as brandIdentity_JoinMode, type AccentTokens as brandIdentity_AccentTokens, type Accent as brandIdentity_Accent, type Surface as brandIdentity_Surface, type AppKey as brandIdentity_AppKey, type LogoMark as brandIdentity_LogoMark, type SharedPart as brandIdentity_SharedPart, type StateColor as brandIdentity_StateColor, type MarkFill as brandIdentity_MarkFill, type ColorScheme as brandIdentity_ColorScheme, type Brand as brandIdentity_Brand } from "./brandIdentity.ts";
+import { type OneStepKind as oneStepPage_OneStepKind, type StepNotice as oneStepPage_StepNotice, type StepSession as oneStepPage_StepSession, type CloudReturn as oneStepPage_CloudReturn, type SignInAuth as oneStepPage_SignInAuth, type SignInStage as oneStepPage_SignInStage, type SignInPending as oneStepPage_SignInPending, type SignInCheck as oneStepPage_SignInCheck, type SignInError as oneStepPage_SignInError, type StepSignIn as oneStepPage_StepSignIn, type SignInLookup as oneStepPage_SignInLookup, type SignInAnswer as oneStepPage_SignInAnswer, type SignInAttemptKind as oneStepPage_SignInAttemptKind, type SignInAttempt as oneStepPage_SignInAttempt, oneStepIsPhoto as oneStepPage_oneStepIsPhoto, oneStepOnSite as oneStepPage_oneStepOnSite, lawPhotoUploadOnlyOnSlop as oneStepPage_lawPhotoUploadOnlyOnSlop, lawPhotoStepsOnlyOnSlop as oneStepPage_lawPhotoStepsOnlyOnSlop, lawHomeHelpOnlyOnHub as oneStepPage_lawHomeHelpOnlyOnHub, lawPhoneChangeOnEverySite as oneStepPage_lawPhoneChangeOnEverySite, photoPagePurposeHeader as oneStepPage_photoPagePurposeHeader, photoPagePurpose as oneStepPage_photoPagePurpose, lawOnlyPhotoLinkPagesNameAPurpose as oneStepPage_lawOnlyPhotoLinkPagesNameAPurpose, oneStepNeedsSignIn as oneStepPage_oneStepNeedsSignIn, oneStepLinkInFragment as oneStepPage_oneStepLinkInFragment, oneStepLinkMayBeKept as oneStepPage_oneStepLinkMayBeKept, lawPhotoTokenIsNeverKept as oneStepPage_lawPhotoTokenIsNeverKept, lawKeptLinkIsInTheFragment as oneStepPage_lawKeptLinkIsInTheFragment, oneStepNoticeShown as oneStepPage_oneStepNoticeShown, noticeForSession as oneStepPage_noticeForSession, lawSignedInHasNoNotice as oneStepPage_lawSignedInHasNoNotice, noticeForCloudReturn as oneStepPage_noticeForCloudReturn, noticeOnOpen as oneStepPage_noticeOnOpen, lawEveryCloudErrorShowsANotice as oneStepPage_lawEveryCloudErrorShowsANotice, lawSessionHidesTheCloudError as oneStepPage_lawSessionHidesTheCloudError, retryMinutesShown as oneStepPage_retryMinutesShown, lawRetryIsAtLeastOneMinute as oneStepPage_lawRetryIsAtLeastOneMinute, lawRetryIsNeverShorterThanTheWait as oneStepPage_lawRetryIsNeverShorterThanTheWait, signInStart as oneStepPage_signInStart, signInAttemptNone as oneStepPage_signInAttemptNone, signInAuthFor as oneStepPage_signInAuthFor, signInCheckFor as oneStepPage_signInCheckFor, signInShowsNumberForm as oneStepPage_signInShowsNumberForm, signInShowsCloudButton as oneStepPage_signInShowsCloudButton, signInWaiting as oneStepPage_signInWaiting, lawOnlyCloudLookupUsesCloud as oneStepPage_lawOnlyCloudLookupUsesCloud, lawCheckOnlyWithTextCodes as oneStepPage_lawCheckOnlyWithTextCodes, signInAttemptAllowed as oneStepPage_signInAttemptAllowed, signInBusy as oneStepPage_signInBusy, signInCodeAccepted as oneStepPage_signInCodeAccepted, signInSpent as oneStepPage_signInSpent, signInStartError as oneStepPage_signInStartError, signInSettledError as oneStepPage_signInSettledError, signInMove as oneStepPage_signInMove, lawCodeNeedsFourToEightDigits as oneStepPage_lawCodeNeedsFourToEightDigits, lawInvalidNumberIsNeverSent as oneStepPage_lawInvalidNumberIsNeverSent, lawEveryStartAnswerSpendsTheCheck as oneStepPage_lawEveryStartAnswerSpendsTheCheck, lawShortCodeIsNeverSent as oneStepPage_lawShortCodeIsNeverSent, signInAgain as oneStepPage_signInAgain, lawSignInAgainKeepsTheMode as oneStepPage_lawSignInAgainKeepsTheMode, signInConsistent as oneStepPage_signInConsistent, lawEveryAllowedMoveStaysConsistent as oneStepPage_lawEveryAllowedMoveStaysConsistent, lawSignInAgainIsConsistent as oneStepPage_lawSignInAgainIsConsistent } from "./oneStepPage.ts";
+import { type AppKey as brandIdentity_AppKey, type JoinMode as brandIdentity_JoinMode, type Accent as brandIdentity_Accent, type LogoMark as brandIdentity_LogoMark, type Brand as brandIdentity_Brand, type AccentTokens as brandIdentity_AccentTokens, type Surface as brandIdentity_Surface, type SharedPart as brandIdentity_SharedPart, type StateColor as brandIdentity_StateColor, type MarkFill as brandIdentity_MarkFill, type ColorScheme as brandIdentity_ColorScheme } from "./brandIdentity.ts";
 
+/** Story: Open the home-help step from my link / The page reads the plan code and the revision from the fragment, and a bad link stops the page (spec/homeHelpPage.md) */
+export type HelpScreen = "HelpOpening" | "HelpBadLink" | "HelpLoading" | "HelpSignIn" | "HelpChecking" | "HelpChoose" | "HelpAddress" | "HelpSaved" | "HelpRevealed" | "HelpRemoved" | "HelpClosed" | "HelpUnavailable";
+/** Story: Open the home-help step from my link / The page reads the plan code and the revision from the fragment, and a bad link stops the page (spec/homeHelpPage.md) */
+export type HelpPending = "HelpIdle" | "HelpSubmitting" | "HelpRevealing" | "HelpRevoking";
+/** Story: Open the home-help step from my link / The page reads the plan code and the revision from the fragment, and a bad link stops the page (spec/homeHelpPage.md) */
+export type HelpError = "HelpNoError" | "HelpAddressEmpty" | "HelpAddressTooLong" | "HelpAddressBadChars" | "HelpTryLater" | "HelpRequestFailed";
 /** Story: Open the home-help step from my link / The page reads the plan code and the revision from the fragment, and a bad link stops the page (spec/homeHelpPage.md) */
 export type HelpRole = "HelpRoleUnknown" | "HelpRoleRequester" | "HelpRoleHelper";
 /** Story: Open the home-help step from my link / The page reads the plan code and the revision from the fragment, and a bad link stops the page (spec/homeHelpPage.md) */
 export type HelpLinkSource = "LinkFromAddress" | "LinkFromKept" | "LinkMissing";
 /** Story: Open the home-help step from my link / The page reads the plan code and the revision from the fragment, and a bad link stops the page (spec/homeHelpPage.md) */
-export type HelpScreen = "HelpOpening" | "HelpBadLink" | "HelpLoading" | "HelpSignIn" | "HelpChecking" | "HelpChoose" | "HelpAddress" | "HelpSaved" | "HelpRevealed" | "HelpRemoved" | "HelpClosed" | "HelpUnavailable";
-/** Story: Open the home-help step from my link / The page reads the plan code and the revision from the fragment, and a bad link stops the page (spec/homeHelpPage.md) */
 export type HelpPlanCode = "PlanCodeShort" | "PlanCodeUuid" | "PlanCodeBad";
-/** Story: Open the home-help step from my link / The page reads the plan code and the revision from the fragment, and a bad link stops the page (spec/homeHelpPage.md) */
-export type HelpPending = "HelpIdle" | "HelpSubmitting" | "HelpRevealing" | "HelpRevoking";
-/** Story: Open the home-help step from my link / The page reads the plan code and the revision from the fragment, and a bad link stops the page (spec/homeHelpPage.md) */
-export type HelpError = "HelpNoError" | "HelpAddressEmpty" | "HelpAddressTooLong" | "HelpAddressBadChars" | "HelpTryLater" | "HelpRequestFailed";
 /** Story: Open the home-help step from my link / The page reads the plan code and the revision from the fragment, and a bad link stops the page (spec/homeHelpPage.md) */
 export interface HomeHelpPage { screen: HelpScreen; signIn: oneStepPage_StepSignIn; pending: HelpPending; error: HelpError; notice: oneStepPage_StepNotice; role: HelpRole; linkKept: boolean; addressHeld: boolean }
 /** Story: Open the home-help step from my link / The page reads the session and shows the choice step or the sign-in step (spec/homeHelpPage.md) */
@@ -38,13 +38,13 @@ export type Event =
   | { type: "answerVenue"; venueAnswer: HelpVenueAnswer };
 
 /** Story: Open the home-help step from my link / The page reads the plan code and the revision from the fragment, and a bad link stops the page (spec/homeHelpPage.md) */
+export const initial: HomeHelpPage = { screen: "HelpOpening", signIn: oneStepPage_signInStart, pending: "HelpIdle", error: "HelpNoError", notice: "NoStepNotice", role: "HelpRoleUnknown", linkKept: false, addressHeld: false };
+/** Story: Open the home-help step from my link / The page reads the plan code and the revision from the fragment, and a bad link stops the page (spec/homeHelpPage.md) */
 export const homeHelpRevisionMax: number = 2147483647;
 /** Story: Open the home-help step from my link / The page reads the plan code and the revision from the fragment, and a bad link stops the page (spec/homeHelpPage.md) */
 export const homeHelpRevisionDigitsMax: number = 10;
 /** Story: Add or remove my address as the requester / Only an address that passes the check goes to the server (spec/homeHelpPage.md) */
 export const homeHelpAddressMax: number = 300;
-/** Story: Open the home-help step from my link / The page reads the plan code and the revision from the fragment, and a bad link stops the page (spec/homeHelpPage.md) */
-export const initial: HomeHelpPage = { screen: "HelpOpening", signIn: oneStepPage_signInStart, pending: "HelpIdle", error: "HelpNoError", notice: "NoStepNotice", role: "HelpRoleUnknown", linkKept: false, addressHeld: false };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
@@ -62,13 +62,6 @@ export function homeHelpRevisionAccepted(digitsOnly: boolean, digitCount: number
 //@ pure
 export function homeHelpLinkWellFormed(code: HelpPlanCode, revisionOk: boolean): boolean {
   return code !== "PlanCodeBad" && revisionOk;
-}
-
-/** Story: Open the home-help step from my link / The page reads the plan code and the revision from the fragment, and a bad link stops the page (spec/homeHelpPage.md) */
-//@ pure
-export function lawRevisionWithinRange(digitsOnly: boolean, digitCount: number, revision: number): boolean {
-  //@ ensures \result === true
-  return !homeHelpRevisionAccepted(digitsOnly, digitCount, revision) || (revision >= 1 && revision <= homeHelpRevisionMax && digitCount <= homeHelpRevisionDigitsMax);
 }
 
 /** Story: Open the home-help step from my link / The page reads the plan code and the revision from the fragment, and a bad link stops the page (spec/homeHelpPage.md) */
@@ -96,9 +89,9 @@ export function openHomeHelpPage(p: HomeHelpPage, source: HelpLinkSource, wellFo
 
 /** Story: Open the home-help step from my link / The page reads the plan code and the revision from the fragment, and a bad link stops the page (spec/homeHelpPage.md) */
 //@ pure
-export function lawBadPlanCodeIsNeverWellFormed(revisionOk: boolean): boolean {
+export function lawRevisionWithinRange(digitsOnly: boolean, digitCount: number, revision: number): boolean {
   //@ ensures \result === true
-  return !homeHelpLinkWellFormed("PlanCodeBad", revisionOk);
+  return !homeHelpRevisionAccepted(digitsOnly, digitCount, revision) || (revision >= 1 && revision <= homeHelpRevisionMax && digitCount <= homeHelpRevisionDigitsMax);
 }
 
 /** Story: Open the home-help step from my link / The page reads the plan code and the revision from the fragment, and a bad link stops the page (spec/homeHelpPage.md) */
@@ -106,6 +99,13 @@ export function lawBadPlanCodeIsNeverWellFormed(revisionOk: boolean): boolean {
 export function lawBadLinkNeverLoads(source: HelpLinkSource, wellFormed: boolean): boolean {
   //@ ensures \result === true
   return !(source === "LinkMissing" || !wellFormed) || openHomeHelpPage(initial, source, wellFormed).screen === "HelpBadLink";
+}
+
+/** Story: Open the home-help step from my link / The page reads the plan code and the revision from the fragment, and a bad link stops the page (spec/homeHelpPage.md) */
+//@ pure
+export function lawBadPlanCodeIsNeverWellFormed(revisionOk: boolean): boolean {
+  //@ ensures \result === true
+  return !homeHelpLinkWellFormed("PlanCodeBad", revisionOk);
 }
 
 /** Story: Open the home-help step from my link / A page with a bad link sends no request and starts no sign-in (spec/homeHelpPage.md) */
@@ -337,27 +337,27 @@ export function backToChoices(p: HomeHelpPage): HomeHelpPage {
 
 /** Story: Add or remove my address as the requester / The choice step offers only the actions that the role allows (spec/homeHelpPage.md) */
 //@ pure
-export function alwaysAddressFormOnlyForAdder(p: HomeHelpPage): boolean {
-  return !(p.screen === "HelpAddress") || mayAdd(p.role);
-}
-
-/** Story: Add or remove my address as the requester / The choice step offers only the actions that the role allows (spec/homeHelpPage.md) */
-//@ pure
 export function lawHelperCannotAdd(p: HomeHelpPage): boolean {
   //@ ensures \result === true
   return !(p.role === "HelpRoleHelper") || !canChooseAdd(p);
 }
 
-/** Story: Add or remove my address as the requester / Only an address that passes the check goes to the server (spec/homeHelpPage.md) */
+/** Story: Add or remove my address as the requester / The choice step offers only the actions that the role allows (spec/homeHelpPage.md) */
 //@ pure
-export function addressError(addressCheck: HelpAddressCheck): HelpError {
-  return addressCheck === "AddressEmpty" ? "HelpAddressEmpty" : (addressCheck === "AddressTooLong" ? "HelpAddressTooLong" : (addressCheck === "AddressBadChars" ? "HelpAddressBadChars" : "HelpNoError"));
+export function alwaysAddressFormOnlyForAdder(p: HomeHelpPage): boolean {
+  return !(p.screen === "HelpAddress") || mayAdd(p.role);
 }
 
 /** Story: Add or remove my address as the requester / Only an address that passes the check goes to the server (spec/homeHelpPage.md) */
 //@ pure
 export function homeHelpAddressCheck(trimmedEmpty: boolean, charCount: number, byteCount: number, badChars: boolean): HelpAddressCheck {
   return trimmedEmpty ? "AddressEmpty" : (badChars ? "AddressBadChars" : (charCount > homeHelpAddressMax || byteCount > homeHelpAddressMax ? "AddressTooLong" : "AddressOk"));
+}
+
+/** Story: Add or remove my address as the requester / Only an address that passes the check goes to the server (spec/homeHelpPage.md) */
+//@ pure
+export function addressError(addressCheck: HelpAddressCheck): HelpError {
+  return addressCheck === "AddressEmpty" ? "HelpAddressEmpty" : (addressCheck === "AddressTooLong" ? "HelpAddressTooLong" : (addressCheck === "AddressBadChars" ? "HelpAddressBadChars" : "HelpNoError"));
 }
 
 /** Story: Add or remove my address as the requester / Only an address that passes the check goes to the server (spec/homeHelpPage.md) */
@@ -385,6 +385,13 @@ export function submitAddress(p: HomeHelpPage, addressCheck: HelpAddressCheck): 
 
 /** Story: Add or remove my address as the requester / Only an address that passes the check goes to the server (spec/homeHelpPage.md) */
 //@ pure
+export function lawBadAddressIsNeverSent(p: HomeHelpPage, addressCheck: HelpAddressCheck): boolean {
+  //@ ensures \result === true
+  return !(addressCheck !== "AddressOk") || submitAddress(p, addressCheck).pending === p.pending;
+}
+
+/** Story: Add or remove my address as the requester / Only an address that passes the check goes to the server (spec/homeHelpPage.md) */
+//@ pure
 export function lawAddressOverLimitIsRefused(charCount: number, byteCount: number, badChars: boolean): boolean {
   //@ ensures \result === true
   return !(charCount > homeHelpAddressMax || byteCount > homeHelpAddressMax) || homeHelpAddressCheck(false, charCount, byteCount, badChars) !== "AddressOk";
@@ -395,13 +402,6 @@ export function lawAddressOverLimitIsRefused(charCount: number, byteCount: numbe
 export function lawEmptyAddressIsRefused(charCount: number, byteCount: number, badChars: boolean): boolean {
   //@ ensures \result === true
   return homeHelpAddressCheck(true, charCount, byteCount, badChars) === "AddressEmpty";
-}
-
-/** Story: Add or remove my address as the requester / Only an address that passes the check goes to the server (spec/homeHelpPage.md) */
-//@ pure
-export function lawBadAddressIsNeverSent(p: HomeHelpPage, addressCheck: HelpAddressCheck): boolean {
-  //@ ensures \result === true
-  return !(addressCheck !== "AddressOk") || submitAddress(p, addressCheck).pending === p.pending;
 }
 
 /** Story: Add or remove my address as the requester / The requester can remove the address from the choice step or the saved step (spec/homeHelpPage.md) */

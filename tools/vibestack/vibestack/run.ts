@@ -2,7 +2,7 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { addAbortListener } from "node:events";
 import fs from "node:fs";
-import { availableParallelism } from "node:os";
+import os, { availableParallelism } from "node:os";
 import path from "node:path";
 
 // --- running tools -------------------------------------------------------------
@@ -24,6 +24,27 @@ export const onPath = (name: string) => (process.env.PATH ?? "").split(path.deli
   .flatMap((dir) => (WINDOWS ? [".exe", ".cmd", ""] : [""]).map((ext) => path.join(dir, name + ext))).find((file) => {
     try { fs.accessSync(file, fs.constants.X_OK); return fs.statSync(file).isFile(); } catch { return false; }
   });
+
+/** The managed Dafny 4.11 cache directory (`~/.cache/vibestack/dafny/4.11`). */
+export const cachedDafnyDir = () => path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "vibestack", "dafny", "4.11");
+
+/** Locate Dafny on PATH first, then in the managed vibestack cache (`~/.cache/vibestack/dafny/4.11/dafny`). */
+export function findDafny(): string | undefined {
+  const fromPath = onPath("dafny");
+  if (fromPath) return fromPath;
+  const binName = WINDOWS ? "dafny.exe" : "dafny";
+  const candidates = [
+    path.join(cachedDafnyDir(), binName),
+    path.join(os.homedir(), ".cache", "vibestack", "dafny", "4.11", binName),
+  ];
+  for (const candidate of candidates) {
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      if (fs.statSync(candidate).isFile()) return candidate;
+    } catch { /* not cached */ }
+  }
+  return undefined;
+}
 
 /** Write a file whole or not at all: to a file of its own beside it, then renamed into place. */
 export function writeWhole(file: string, text: string | Uint8Array) {
@@ -411,11 +432,11 @@ export function startGroup(command: string, cwd: string, env?: NodeJS.ProcessEnv
 }
 
 /** What the proof stage needs installed. */
-export const NEEDS_DAFNY = "the proof stage needs Dafny 4.11 on the PATH: https://github.com/dafny-lang/dafny/releases";
+export const NEEDS_DAFNY = "the proof stage needs Dafny 4.11 on PATH or installed via `vibestack doctor --install-dafny`: https://github.com/dafny-lang/dafny/releases";
 
 /** Run a tool from the toolchain, or Dafny, and return whether it succeeded and all it wrote. */
 export async function run(cmd: string, args: string[], cwd: string, input?: string): Promise<{ ok: boolean; out: string; status: number; stderr: string }> {
-  const exe = cmd === "dafny" ? cmd : bin(cmd, cwd);
+  const exe = cmd === "dafny" ? (findDafny() ?? cmd) : bin(cmd, cwd);
   const r = await exec(exe, args, cwd, undefined, input).catch((e: Error) => {
     throw new Error(`${cmd} could not be run (${exe}): ${e.message}${cmd === "dafny" ? `; ${NEEDS_DAFNY}` : "; run pnpm install"}`);
   });

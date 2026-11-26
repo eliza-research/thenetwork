@@ -33,14 +33,14 @@ export function lawGatheringRepeatStagesOnce(currentSource: boolean, pairPermitt
 
 /** Story: Offer a private reviewed follow-up after mutual gathering interest / Review and each new reply are separate from the earlier mutual choice (spec/gatheringRepeat.md) */
 //@ pure
-export function gatheringRepeatMayBook(currentSource: boolean, approved: boolean, firstNewYes: boolean, secondNewYes: boolean): boolean {
-  return currentSource && approved && firstNewYes && secondNewYes;
+export function gatheringRepeatMayAnswer(currentSource: boolean, directMember: boolean, delivered: boolean, answerAt: number, deliveredAt: number): boolean {
+  return currentSource && directMember && delivered && deliveredAt <= answerAt;
 }
 
 /** Story: Offer a private reviewed follow-up after mutual gathering interest / Review and each new reply are separate from the earlier mutual choice (spec/gatheringRepeat.md) */
 //@ pure
-export function gatheringRepeatMayAnswer(currentSource: boolean, directMember: boolean, delivered: boolean, answerAt: number, deliveredAt: number): boolean {
-  return currentSource && directMember && delivered && deliveredAt <= answerAt;
+export function gatheringRepeatMayBook(currentSource: boolean, approved: boolean, firstNewYes: boolean, secondNewYes: boolean): boolean {
+  return currentSource && approved && firstNewYes && secondNewYes;
 }
 
 /** Story: Offer a private reviewed follow-up after mutual gathering interest / Review and each new reply are separate from the earlier mutual choice (spec/gatheringRepeat.md) */

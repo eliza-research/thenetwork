@@ -1,7 +1,9 @@
 // GENERATED from spec/landingEntry.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type JoinMode as brandIdentity_JoinMode, type AccentTokens as brandIdentity_AccentTokens, type Accent as brandIdentity_Accent, type Surface as brandIdentity_Surface, type AppKey as brandIdentity_AppKey, type LogoMark as brandIdentity_LogoMark, type SharedPart as brandIdentity_SharedPart, type StateColor as brandIdentity_StateColor, type MarkFill as brandIdentity_MarkFill, type ColorScheme as brandIdentity_ColorScheme, type Brand as brandIdentity_Brand, supportEmail as brandIdentity_supportEmail, agentAccessPage as brandIdentity_agentAccessPage, nearColorFloorPermille as brandIdentity_nearColorFloorPermille, inverseTextContrastFloorTenths as brandIdentity_inverseTextContrastFloorTenths, inverseEdgeContrastFloorTenths as brandIdentity_inverseEdgeContrastFloorTenths, ringIsTheAccent as brandIdentity_ringIsTheAccent, colorIsClearOfAccent as brandIdentity_colorIsClearOfAccent, inverseIsReadable as brandIdentity_inverseIsReadable, colorSchemes as brandIdentity_colorSchemes, markTileFill as brandIdentity_markTileFill, faviconMedia as brandIdentity_faviconMedia, joinModes as brandIdentity_joinModes, accents as brandIdentity_accents, logoMarks as brandIdentity_logoMarks, ntwrkBrand as brandIdentity_ntwrkBrand, slopBrand as brandIdentity_slopBrand, peonBrand as brandIdentity_peonBrand, friendsBrand as brandIdentity_friendsBrand, designBrandId as brandIdentity_designBrandId, accentTokens as brandIdentity_accentTokens, connectorEndpoint as brandIdentity_connectorEndpoint, openaiConnectorEndpoint as brandIdentity_openaiConnectorEndpoint, mayName as brandIdentity_mayName, siteUsesPart as brandIdentity_siteUsesPart, stateColors as brandIdentity_stateColors, stateToken as brandIdentity_stateToken, hoverFillIsClear as brandIdentity_hoverFillIsClear, lawRingEqualsTheAccent as brandIdentity_lawRingEqualsTheAccent, lawInverseNeedsBothContrasts as brandIdentity_lawInverseNeedsBothContrasts, appKeys as brandIdentity_appKeys, lawOnlyTheTwoCirclesTileTakesThePageColor as brandIdentity_lawOnlyTheTwoCirclesTileTakesThePageColor, lawLightFaviconHasNoCondition as brandIdentity_lawLightFaviconHasNoCondition, brandFor as brandIdentity_brandFor, lawDesignBrandIdsAreDistinct as brandIdentity_lawDesignBrandIdsAreDistinct, hubTextsOnAppSurface as brandIdentity_hubTextsOnAppSurface, lawAppEndpointsAreDistinct as brandIdentity_lawAppEndpointsAreDistinct, lawAppSiteNeverNamesTheNetwork as brandIdentity_lawAppSiteNeverNamesTheNetwork, lawAppSiteNamesNoOtherApp as brandIdentity_lawAppSiteNamesNoOtherApp, lawHubLandingNamesNoApp as brandIdentity_lawHubLandingNamesNoApp, lawSitesShareParts as brandIdentity_lawSitesShareParts, lawTheAccentIsNeverClearOfItself as brandIdentity_lawTheAccentIsNeverClearOfItself, lawStateTokensAreDistinct as brandIdentity_lawStateTokensAreDistinct, lawBrandNamesItsApp as brandIdentity_lawBrandNamesItsApp, lawOnlyTheNetworkIsInviteOnly as brandIdentity_lawOnlyTheNetworkIsInviteOnly, lawAccentInkDiffersFromAccent as brandIdentity_lawAccentInkDiffersFromAccent, lawOnlyTheSkillNamesTheEndpoint as brandIdentity_lawOnlyTheSkillNamesTheEndpoint, partTokens as brandIdentity_partTokens, lawBrandsAreDistinct as brandIdentity_lawBrandsAreDistinct, lawPartsTakeTheBrandTokens as brandIdentity_lawPartsTakeTheBrandTokens } from "./brandIdentity.ts";
+import { type AppKey as brandIdentity_AppKey, type JoinMode as brandIdentity_JoinMode, type Accent as brandIdentity_Accent, type LogoMark as brandIdentity_LogoMark, type Brand as brandIdentity_Brand, type AccentTokens as brandIdentity_AccentTokens, type Surface as brandIdentity_Surface, type SharedPart as brandIdentity_SharedPart, type StateColor as brandIdentity_StateColor, type MarkFill as brandIdentity_MarkFill, type ColorScheme as brandIdentity_ColorScheme, appKeys as brandIdentity_appKeys, joinModes as brandIdentity_joinModes, accents as brandIdentity_accents, logoMarks as brandIdentity_logoMarks, ntwrkBrand as brandIdentity_ntwrkBrand, slopBrand as brandIdentity_slopBrand, peonBrand as brandIdentity_peonBrand, friendsBrand as brandIdentity_friendsBrand, brandFor as brandIdentity_brandFor, lawBrandNamesItsApp as brandIdentity_lawBrandNamesItsApp, lawBrandsAreDistinct as brandIdentity_lawBrandsAreDistinct, designBrandId as brandIdentity_designBrandId, lawDesignBrandIdsAreDistinct as brandIdentity_lawDesignBrandIdsAreDistinct, lawOnlyTheNetworkIsInviteOnly as brandIdentity_lawOnlyTheNetworkIsInviteOnly, accentTokens as brandIdentity_accentTokens, lawAccentInkDiffersFromAccent as brandIdentity_lawAccentInkDiffersFromAccent, supportEmail as brandIdentity_supportEmail, agentAccessPage as brandIdentity_agentAccessPage, connectorEndpoint as brandIdentity_connectorEndpoint, openaiConnectorEndpoint as brandIdentity_openaiConnectorEndpoint, hubTextsOnAppSurface as brandIdentity_hubTextsOnAppSurface, lawAppEndpointsAreDistinct as brandIdentity_lawAppEndpointsAreDistinct, lawOnlyTheSkillNamesTheEndpoint as brandIdentity_lawOnlyTheSkillNamesTheEndpoint, mayName as brandIdentity_mayName, lawAppSiteNeverNamesTheNetwork as brandIdentity_lawAppSiteNeverNamesTheNetwork, lawAppSiteNamesNoOtherApp as brandIdentity_lawAppSiteNamesNoOtherApp, lawHubLandingNamesNoApp as brandIdentity_lawHubLandingNamesNoApp, siteUsesPart as brandIdentity_siteUsesPart, lawSitesShareParts as brandIdentity_lawSitesShareParts, partTokens as brandIdentity_partTokens, lawPartsTakeTheBrandTokens as brandIdentity_lawPartsTakeTheBrandTokens, stateColors as brandIdentity_stateColors, stateToken as brandIdentity_stateToken, nearColorFloorPermille as brandIdentity_nearColorFloorPermille, inverseTextContrastFloorTenths as brandIdentity_inverseTextContrastFloorTenths, inverseEdgeContrastFloorTenths as brandIdentity_inverseEdgeContrastFloorTenths, ringIsTheAccent as brandIdentity_ringIsTheAccent, colorIsClearOfAccent as brandIdentity_colorIsClearOfAccent, hoverFillIsClear as brandIdentity_hoverFillIsClear, inverseIsReadable as brandIdentity_inverseIsReadable, lawRingEqualsTheAccent as brandIdentity_lawRingEqualsTheAccent, lawTheAccentIsNeverClearOfItself as brandIdentity_lawTheAccentIsNeverClearOfItself, lawStateTokensAreDistinct as brandIdentity_lawStateTokensAreDistinct, lawInverseNeedsBothContrasts as brandIdentity_lawInverseNeedsBothContrasts, colorSchemes as brandIdentity_colorSchemes, markTileFill as brandIdentity_markTileFill, faviconMedia as brandIdentity_faviconMedia, lawOnlyTheTwoCirclesTileTakesThePageColor as brandIdentity_lawOnlyTheTwoCirclesTileTakesThePageColor, lawLightFaviconHasNoCondition as brandIdentity_lawLightFaviconHasNoCondition } from "./brandIdentity.ts";
 
+/** Story: Take the signup prompt to my agent / The Copy button shows only when the page script runs (spec/landingEntry.md) */
+export type DeviceKind = "NotDetected" | "Phone" | "MacDesktop" | "OtherDesktop";
 /** Story: Take the signup prompt to my agent / The Copy button shows only when the page script runs (spec/landingEntry.md) */
 export type CopyState = "CopyHidden" | "CopyReady" | "CopyCopied" | "CopySelected";
 /** Story: Take the signup prompt to my agent / The Copy button shows only when the page script runs (spec/landingEntry.md) */
@@ -10,8 +12,6 @@ export type StatusLine = "StatusEmpty" | "AgentOpening" | "PasteInAgent" | "Send
 export type MessagesState = "MessagesIdle" | "MessagesLinkFollowed" | "MessagesWaiting" | "MessagesOpened" | "MessagesFallback";
 /** Story: Take the signup prompt to my agent / The Copy button shows only when the page script runs (spec/landingEntry.md) */
 export type AgentId = "ChatGpt" | "Claude" | "Grok" | "Muse" | "Gemini" | "Perplexity" | "Cursor" | "OpenClaw" | "Hermes";
-/** Story: Take the signup prompt to my agent / The Copy button shows only when the page script runs (spec/landingEntry.md) */
-export type DeviceKind = "NotDetected" | "Phone" | "MacDesktop" | "OtherDesktop";
 /** Story: Take the signup prompt to my agent / The Copy button shows only when the page script runs (spec/landingEntry.md) */
 export interface Landing { mounted: boolean; device: DeviceKind; copy: CopyState; status: StatusLine; messages: MessagesState; messageCopied: boolean; agentFollowed: boolean; lastAgent: AgentId; statusAgent: AgentId }
 /** Story: Open my agent from its tile / The agent row lists nine agents in a fixed order, each with a kind, a name, a logo and a link (spec/landingEntry.md) */
@@ -29,6 +29,24 @@ export type Event =
   | { type: "chooseMessages"; copied: boolean }
   | { type: "settleMessages"; pageLeft: boolean };
 
+/** Story: Take the signup prompt to my agent / The prompt tells the agent to read the site's skill and follow it (spec/landingEntry.md) */
+export const promptLead: string = "Read https://";
+/** Story: Take the signup prompt to my agent / The prompt tells the agent to read the site's skill and follow it (spec/landingEntry.md) */
+export const promptSkillPath: string = "/SKILL.md";
+/** Story: Take the signup prompt to my agent / The prompt tells the agent to read the site's skill and follow it (spec/landingEntry.md) */
+export const promptVersionQuery: string = "?version=";
+/** Story: Take the signup prompt to my agent / The prompt tells the agent to read the site's skill and follow it (spec/landingEntry.md) */
+export const promptTail: string = " and follow it.";
+/** Story: Take the signup prompt to my agent / The Copy button shows only when the page script runs (spec/landingEntry.md) */
+export const initial: Landing = { mounted: false, device: "NotDetected", copy: "CopyHidden", status: "StatusEmpty", messages: "MessagesIdle", messageCopied: false, agentFollowed: false, lastAgent: "ChatGpt", statusAgent: "ChatGpt" };
+/** Story: Open my agent from its tile / The agent row lists nine agents in a fixed order, each with a kind, a name, a logo and a link (spec/landingEntry.md) */
+export const agentOrder: AgentId[] = ["ChatGpt", "Claude", "Grok", "Muse", "Gemini", "Perplexity", "Cursor", "OpenClaw", "Hermes"];
+/** Story: Open my agent from its tile / The agent row lists nine agents in a fixed order, each with a kind, a name, a logo and a link (spec/landingEntry.md) */
+export const openTileLabelLead: string = "Open in ";
+/** Story: Open my agent from its tile / The agent row lists nine agents in a fixed order, each with a kind, a name, a logo and a link (spec/landingEntry.md) */
+export const copyTileLabelLead: string = "Copy the prompt for ";
+/** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
+export const copyByHandText: string = "Copy the prompt, then paste it into your agent.";
 /** Story: Start in Messages instead / The Messages entry writes `join <keyword>` to the shared line (spec/landingEntry.md) */
 export const messagesEntryLabel: string = "Use in iMessage";
 /** Story: Start in Messages instead / The Messages entry writes `join <keyword>` to the shared line (spec/landingEntry.md) */
@@ -43,33 +61,15 @@ export const messagesWaitMs: number = 1500;
 export const landingWordLimit: number = 45;
 /** Story: See only what I need to start / The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links (spec/landingEntry.md) */
 export const landingHeadingCount: number = 1;
-/** Story: Take the signup prompt to my agent / The prompt tells the agent to read the site's skill and follow it (spec/landingEntry.md) */
-export const promptLead: string = "Read https://";
-/** Story: Take the signup prompt to my agent / The prompt tells the agent to read the site's skill and follow it (spec/landingEntry.md) */
-export const promptSkillPath: string = "/SKILL.md";
-/** Story: Open my agent from its tile / The agent row lists nine agents in a fixed order, each with a kind, a name, a logo and a link (spec/landingEntry.md) */
-export const openTileLabelLead: string = "Open in ";
-/** Story: Open my agent from its tile / The agent row lists nine agents in a fixed order, each with a kind, a name, a logo and a link (spec/landingEntry.md) */
-export const copyTileLabelLead: string = "Copy the prompt for ";
-/** Story: Take the signup prompt to my agent / The prompt tells the agent to read the site's skill and follow it (spec/landingEntry.md) */
-export const promptVersionQuery: string = "?version=";
-/** Story: Take the signup prompt to my agent / The prompt tells the agent to read the site's skill and follow it (spec/landingEntry.md) */
-export const promptTail: string = " and follow it.";
-/** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
-export const copyByHandText: string = "Copy the prompt, then paste it into your agent.";
 /** Story: See only what I need to start / The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links (spec/landingEntry.md) */
 export const landingItems: LandingItem[] = ["BrandMarkItem", "HeadlineItem", "PromptItem", "CopyButtonItem", "AgentRowItem", "MessagesItem", "StatusItem", "PrivacyLinkItem", "TermsLinkItem"];
 /** Story: See only what I need to start / The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links (spec/landingEntry.md) */
 export const neverOnLanding: LandingItem[] = (["SignInItem", "SettingsItem", "DashboardItem", "SafetyNoticeItem", "ComplianceItem", "ExplainerItem"] as LandingItem[]);
-/** Story: Take the signup prompt to my agent / The Copy button shows only when the page script runs (spec/landingEntry.md) */
-export const initial: Landing = { mounted: false, device: "NotDetected", copy: "CopyHidden", status: "StatusEmpty", messages: "MessagesIdle", messageCopied: false, agentFollowed: false, lastAgent: "ChatGpt", statusAgent: "ChatGpt" };
-/** Story: Open my agent from its tile / The agent row lists nine agents in a fixed order, each with a kind, a name, a logo and a link (spec/landingEntry.md) */
-export const agentOrder: AgentId[] = ["ChatGpt", "Claude", "Grok", "Muse", "Gemini", "Perplexity", "Cursor", "OpenClaw", "Hermes"];
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: Landing): boolean {
-  return alwaysCopyButtonNeedsScript(current) && alwaysDeviceKnownOnlyWithScript(current) && alwaysFollowedAgentHasLink(current) && alwaysNoDesktopAgentOnPhone(current) && alwaysAgentStatusNamesPressedAgent(current) && alwaysLinkFollowedOnlyWithoutScript(current) && alwaysFallbackNeedsScript(current) && alwaysWaitOnlyWhereMessagesOpens(current) && alwaysStatusNeedsScript(current);
+  return alwaysCopyButtonNeedsScript(current) && alwaysDeviceKnownOnlyWithScript(current) && alwaysFollowedAgentHasLink(current) && alwaysNoDesktopAgentOnPhone(current) && alwaysAgentStatusNamesPressedAgent(current) && alwaysWaitOnlyWhereMessagesOpens(current) && alwaysLinkFollowedOnlyWithoutScript(current) && alwaysFallbackNeedsScript(current) && alwaysStatusNeedsScript(current);
 }
 
 /** Story: Take the signup prompt to my agent / The prompt tells the agent to read the site's skill and follow it (spec/landingEntry.md) */
@@ -125,9 +125,9 @@ export function mount(s: Landing, device: DeviceKind): Landing {
   //@ ensures (inv(s) && canMount(s, device)) ==> alwaysFollowedAgentHasLink(\result)
   //@ ensures (inv(s) && canMount(s, device)) ==> alwaysNoDesktopAgentOnPhone(\result)
   //@ ensures (inv(s) && canMount(s, device)) ==> alwaysAgentStatusNamesPressedAgent(\result)
+  //@ ensures (inv(s) && canMount(s, device)) ==> alwaysWaitOnlyWhereMessagesOpens(\result)
   //@ ensures (inv(s) && canMount(s, device)) ==> alwaysLinkFollowedOnlyWithoutScript(\result)
   //@ ensures (inv(s) && canMount(s, device)) ==> alwaysFallbackNeedsScript(\result)
-  //@ ensures (inv(s) && canMount(s, device)) ==> alwaysWaitOnlyWhereMessagesOpens(\result)
   //@ ensures (inv(s) && canMount(s, device)) ==> alwaysStatusNeedsScript(\result)
   //@ ensures (inv(s) && canMount(s, device)) ==> stepCopyLabelChangesOnlyByCopy(s, "mount", \result)
   //@ ensures (inv(s) && canMount(s, device)) ==> stepMessagesFallbackShowsNumber(s, "mount", \result)
@@ -180,9 +180,9 @@ export function pressCopy(s: Landing, copied: boolean): Landing {
   //@ ensures (inv(s) && canPressCopy(s)) ==> alwaysFollowedAgentHasLink(\result)
   //@ ensures (inv(s) && canPressCopy(s)) ==> alwaysNoDesktopAgentOnPhone(\result)
   //@ ensures (inv(s) && canPressCopy(s)) ==> alwaysAgentStatusNamesPressedAgent(\result)
+  //@ ensures (inv(s) && canPressCopy(s)) ==> alwaysWaitOnlyWhereMessagesOpens(\result)
   //@ ensures (inv(s) && canPressCopy(s)) ==> alwaysLinkFollowedOnlyWithoutScript(\result)
   //@ ensures (inv(s) && canPressCopy(s)) ==> alwaysFallbackNeedsScript(\result)
-  //@ ensures (inv(s) && canPressCopy(s)) ==> alwaysWaitOnlyWhereMessagesOpens(\result)
   //@ ensures (inv(s) && canPressCopy(s)) ==> alwaysStatusNeedsScript(\result)
   //@ ensures (inv(s) && canPressCopy(s)) ==> stepCopyLabelChangesOnlyByCopy(s, "pressCopy", \result)
   //@ ensures (inv(s) && canPressCopy(s)) ==> stepMessagesFallbackShowsNumber(s, "pressCopy", \result)
@@ -310,6 +310,61 @@ export function lawCopyOnlyTileNeedsScript(agent: AgentId, device: DeviceKind): 
 
 /** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
 //@ pure
+export function toastFor(agent: AgentId): StatusLine {
+  const local_0: TileKind = tileKindFor(agent);
+  return local_0 === "OpensWithPrompt" ? "AgentOpening" : (local_0 === "OpensInstalledApp" ? "SendToAgentApp" : "PasteInAgent");
+}
+
+/** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
+//@ pure
+export function agentToastText(agent: AgentId): string {
+  return agent === "ChatGpt" ? "Opening ChatGPT. The prompt is copied too." : (agent === "Claude" ? "Opening Claude. The prompt is copied too." : (agent === "Grok" ? "Opening Grok. The prompt is copied too." : (agent === "Muse" ? "Copied. Paste it into Muse." : (agent === "Gemini" ? "Copied. Paste it into Gemini." : (agent === "Perplexity" ? "Opening Perplexity. The prompt is copied too." : (agent === "Cursor" ? "Opening Cursor. The prompt is copied too." : (agent === "OpenClaw" ? "Copied. If OpenClaw did not open, send it the prompt." : "Copied. If Hermes did not open, send it the prompt.")))))));
+}
+
+/** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
+//@ pure
+export function canChooseAgent(s: Landing, agent: AgentId): boolean {
+  return tileShown(agent, s.mounted, s.device);
+}
+
+/** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
+//@ pure
+export function chooseAgent(s: Landing, agent: AgentId, copied: boolean): Landing {
+  //@ ensures (inv(s) && canChooseAgent(s, agent)) ==> alwaysCopyButtonNeedsScript(\result)
+  //@ ensures (inv(s) && canChooseAgent(s, agent)) ==> alwaysDeviceKnownOnlyWithScript(\result)
+  //@ ensures (inv(s) && canChooseAgent(s, agent)) ==> alwaysFollowedAgentHasLink(\result)
+  //@ ensures (inv(s) && canChooseAgent(s, agent)) ==> alwaysNoDesktopAgentOnPhone(\result)
+  //@ ensures (inv(s) && canChooseAgent(s, agent)) ==> alwaysAgentStatusNamesPressedAgent(\result)
+  //@ ensures (inv(s) && canChooseAgent(s, agent)) ==> alwaysWaitOnlyWhereMessagesOpens(\result)
+  //@ ensures (inv(s) && canChooseAgent(s, agent)) ==> alwaysLinkFollowedOnlyWithoutScript(\result)
+  //@ ensures (inv(s) && canChooseAgent(s, agent)) ==> alwaysFallbackNeedsScript(\result)
+  //@ ensures (inv(s) && canChooseAgent(s, agent)) ==> alwaysStatusNeedsScript(\result)
+  //@ ensures (inv(s) && canChooseAgent(s, agent)) ==> stepCopyLabelChangesOnlyByCopy(s, "chooseAgent", \result)
+  //@ ensures (inv(s) && canChooseAgent(s, agent)) ==> stepMessagesFallbackShowsNumber(s, "chooseAgent", \result)
+  const local_1 = tileKindFor(agent) !== "CopyOnly";
+  return { ...s, agentFollowed: s.agentFollowed || local_1, lastAgent: local_1 ? agent : s.lastAgent, statusAgent: s.mounted ? agent : s.statusAgent, status: !s.mounted ? s.status : (copied ? toastFor(agent) : "CopyByHand") };
+}
+
+/** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
+//@ pure
+export function alwaysFollowedAgentHasLink(s: Landing): boolean {
+  return !s.agentFollowed || tileKindFor(s.lastAgent) !== "CopyOnly";
+}
+
+/** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
+//@ pure
+export function alwaysNoDesktopAgentOnPhone(s: Landing): boolean {
+  return !(s.agentFollowed && s.device === "Phone") || !desktopOnlyAgent(s.lastAgent);
+}
+
+/** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
+//@ pure
+export function alwaysAgentStatusNamesPressedAgent(s: Landing): boolean {
+  return !(s.status === "AgentOpening" || s.status === "PasteInAgent" || s.status === "SendToAgentApp") || toastFor(s.statusAgent) === s.status;
+}
+
+/** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
+//@ pure
 export function sometimesAgentOpening(s: Landing): boolean {
   return s.agentFollowed && s.status === "AgentOpening";
 }
@@ -338,61 +393,6 @@ export function sometimesAgentWithoutScript(s: Landing): boolean {
   return !s.mounted && s.agentFollowed;
 }
 
-/** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
-//@ pure
-export function agentToastText(agent: AgentId): string {
-  return agent === "ChatGpt" ? "Opening ChatGPT. The prompt is copied too." : (agent === "Claude" ? "Opening Claude. The prompt is copied too." : (agent === "Grok" ? "Opening Grok. The prompt is copied too." : (agent === "Muse" ? "Copied. Paste it into Muse." : (agent === "Gemini" ? "Copied. Paste it into Gemini." : (agent === "Perplexity" ? "Opening Perplexity. The prompt is copied too." : (agent === "Cursor" ? "Opening Cursor. The prompt is copied too." : (agent === "OpenClaw" ? "Copied. If OpenClaw did not open, send it the prompt." : "Copied. If Hermes did not open, send it the prompt.")))))));
-}
-
-/** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
-//@ pure
-export function alwaysFollowedAgentHasLink(s: Landing): boolean {
-  return !s.agentFollowed || tileKindFor(s.lastAgent) !== "CopyOnly";
-}
-
-/** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
-//@ pure
-export function alwaysNoDesktopAgentOnPhone(s: Landing): boolean {
-  return !(s.agentFollowed && s.device === "Phone") || !desktopOnlyAgent(s.lastAgent);
-}
-
-/** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
-//@ pure
-export function toastFor(agent: AgentId): StatusLine {
-  const local_0: TileKind = tileKindFor(agent);
-  return local_0 === "OpensWithPrompt" ? "AgentOpening" : (local_0 === "OpensInstalledApp" ? "SendToAgentApp" : "PasteInAgent");
-}
-
-/** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
-//@ pure
-export function canChooseAgent(s: Landing, agent: AgentId): boolean {
-  return tileShown(agent, s.mounted, s.device);
-}
-
-/** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
-//@ pure
-export function chooseAgent(s: Landing, agent: AgentId, copied: boolean): Landing {
-  //@ ensures (inv(s) && canChooseAgent(s, agent)) ==> alwaysCopyButtonNeedsScript(\result)
-  //@ ensures (inv(s) && canChooseAgent(s, agent)) ==> alwaysDeviceKnownOnlyWithScript(\result)
-  //@ ensures (inv(s) && canChooseAgent(s, agent)) ==> alwaysFollowedAgentHasLink(\result)
-  //@ ensures (inv(s) && canChooseAgent(s, agent)) ==> alwaysNoDesktopAgentOnPhone(\result)
-  //@ ensures (inv(s) && canChooseAgent(s, agent)) ==> alwaysAgentStatusNamesPressedAgent(\result)
-  //@ ensures (inv(s) && canChooseAgent(s, agent)) ==> alwaysLinkFollowedOnlyWithoutScript(\result)
-  //@ ensures (inv(s) && canChooseAgent(s, agent)) ==> alwaysFallbackNeedsScript(\result)
-  //@ ensures (inv(s) && canChooseAgent(s, agent)) ==> alwaysWaitOnlyWhereMessagesOpens(\result)
-  //@ ensures (inv(s) && canChooseAgent(s, agent)) ==> alwaysStatusNeedsScript(\result)
-  //@ ensures (inv(s) && canChooseAgent(s, agent)) ==> stepCopyLabelChangesOnlyByCopy(s, "chooseAgent", \result)
-  //@ ensures (inv(s) && canChooseAgent(s, agent)) ==> stepMessagesFallbackShowsNumber(s, "chooseAgent", \result)
-  const local_1 = tileKindFor(agent) !== "CopyOnly";
-  return { ...s, agentFollowed: s.agentFollowed || local_1, lastAgent: local_1 ? agent : s.lastAgent, statusAgent: s.mounted ? agent : s.statusAgent, status: !s.mounted ? s.status : (copied ? toastFor(agent) : "CopyByHand") };
-}
-
-/** Story: Open my agent from its tile / A tile copies the prompt, opens its link, and the status line says what to do next (spec/landingEntry.md) */
-//@ pure
-export function alwaysAgentStatusNamesPressedAgent(s: Landing): boolean {
-  return !(s.status === "AgentOpening" || s.status === "PasteInAgent" || s.status === "SendToAgentApp") || toastFor(s.statusAgent) === s.status;
-}
-
 /** Story: Start in Messages instead / The Messages entry writes `join <keyword>` to the shared line (spec/landingEntry.md) */
 //@ pure
 export function joinKeyword(app: brandIdentity_AppKey): string {
@@ -413,8 +413,37 @@ export function messagesFallbackStatus(copied: boolean): StatusLine {
 
 /** Story: Start in Messages instead / The device decides whether the entry opens Messages or shows the number (spec/landingEntry.md) */
 //@ pure
+export function messagesFallbackTemplate(copied: boolean): string {
+  return messagesFallbackStatus(copied) === "MessageCopied" ? messageCopiedTemplate : textTheNumberTemplate;
+}
+
+/** Story: Start in Messages instead / The device decides whether the entry opens Messages or shows the number (spec/landingEntry.md) */
+//@ pure
 export function canChooseMessages(s: Landing): boolean {
   return s.messages !== "MessagesWaiting";
+}
+
+/** Story: Start in Messages instead / The device decides whether the entry opens Messages or shows the number (spec/landingEntry.md) */
+//@ pure
+export function chooseMessages(s: Landing, copied: boolean): Landing {
+  //@ ensures (inv(s) && canChooseMessages(s)) ==> alwaysCopyButtonNeedsScript(\result)
+  //@ ensures (inv(s) && canChooseMessages(s)) ==> alwaysDeviceKnownOnlyWithScript(\result)
+  //@ ensures (inv(s) && canChooseMessages(s)) ==> alwaysFollowedAgentHasLink(\result)
+  //@ ensures (inv(s) && canChooseMessages(s)) ==> alwaysNoDesktopAgentOnPhone(\result)
+  //@ ensures (inv(s) && canChooseMessages(s)) ==> alwaysAgentStatusNamesPressedAgent(\result)
+  //@ ensures (inv(s) && canChooseMessages(s)) ==> alwaysWaitOnlyWhereMessagesOpens(\result)
+  //@ ensures (inv(s) && canChooseMessages(s)) ==> alwaysLinkFollowedOnlyWithoutScript(\result)
+  //@ ensures (inv(s) && canChooseMessages(s)) ==> alwaysFallbackNeedsScript(\result)
+  //@ ensures (inv(s) && canChooseMessages(s)) ==> alwaysStatusNeedsScript(\result)
+  //@ ensures (inv(s) && canChooseMessages(s)) ==> stepCopyLabelChangesOnlyByCopy(s, "chooseMessages", \result)
+  //@ ensures (inv(s) && canChooseMessages(s)) ==> stepMessagesFallbackShowsNumber(s, "chooseMessages", \result)
+  return !s.mounted ? ({ ...s, messages: "MessagesLinkFollowed" } as Landing) : (!messagesOpensHere(s.device) ? ({ ...s, messages: "MessagesFallback", messageCopied: copied, status: messagesFallbackStatus(copied) } as Landing) : ({ ...s, messages: "MessagesWaiting", messageCopied: copied } as Landing));
+}
+
+/** Story: Start in Messages instead / The device decides whether the entry opens Messages or shows the number (spec/landingEntry.md) */
+//@ pure
+export function alwaysWaitOnlyWhereMessagesOpens(s: Landing): boolean {
+  return !(s.messages === "MessagesWaiting" || s.messages === "MessagesOpened") || (s.mounted && messagesOpensHere(s.device));
 }
 
 /** Story: Start in Messages instead / The device decides whether the entry opens Messages or shows the number (spec/landingEntry.md) */
@@ -429,39 +458,27 @@ export function alwaysFallbackNeedsScript(s: Landing): boolean {
   return !(s.messages === "MessagesFallback") || s.mounted;
 }
 
-/** Story: Start in Messages instead / The device decides whether the entry opens Messages or shows the number (spec/landingEntry.md) */
-//@ pure
-export function messagesFallbackTemplate(copied: boolean): string {
-  return messagesFallbackStatus(copied) === "MessageCopied" ? messageCopiedTemplate : textTheNumberTemplate;
-}
-
-/** Story: Start in Messages instead / The device decides whether the entry opens Messages or shows the number (spec/landingEntry.md) */
-//@ pure
-export function chooseMessages(s: Landing, copied: boolean): Landing {
-  //@ ensures (inv(s) && canChooseMessages(s)) ==> alwaysCopyButtonNeedsScript(\result)
-  //@ ensures (inv(s) && canChooseMessages(s)) ==> alwaysDeviceKnownOnlyWithScript(\result)
-  //@ ensures (inv(s) && canChooseMessages(s)) ==> alwaysFollowedAgentHasLink(\result)
-  //@ ensures (inv(s) && canChooseMessages(s)) ==> alwaysNoDesktopAgentOnPhone(\result)
-  //@ ensures (inv(s) && canChooseMessages(s)) ==> alwaysAgentStatusNamesPressedAgent(\result)
-  //@ ensures (inv(s) && canChooseMessages(s)) ==> alwaysLinkFollowedOnlyWithoutScript(\result)
-  //@ ensures (inv(s) && canChooseMessages(s)) ==> alwaysFallbackNeedsScript(\result)
-  //@ ensures (inv(s) && canChooseMessages(s)) ==> alwaysWaitOnlyWhereMessagesOpens(\result)
-  //@ ensures (inv(s) && canChooseMessages(s)) ==> alwaysStatusNeedsScript(\result)
-  //@ ensures (inv(s) && canChooseMessages(s)) ==> stepCopyLabelChangesOnlyByCopy(s, "chooseMessages", \result)
-  //@ ensures (inv(s) && canChooseMessages(s)) ==> stepMessagesFallbackShowsNumber(s, "chooseMessages", \result)
-  return !s.mounted ? ({ ...s, messages: "MessagesLinkFollowed" } as Landing) : (!messagesOpensHere(s.device) ? ({ ...s, messages: "MessagesFallback", messageCopied: copied, status: messagesFallbackStatus(copied) } as Landing) : ({ ...s, messages: "MessagesWaiting", messageCopied: copied } as Landing));
-}
-
-/** Story: Start in Messages instead / The device decides whether the entry opens Messages or shows the number (spec/landingEntry.md) */
-//@ pure
-export function alwaysWaitOnlyWhereMessagesOpens(s: Landing): boolean {
-  return !(s.messages === "MessagesWaiting" || s.messages === "MessagesOpened") || (s.mounted && messagesOpensHere(s.device));
-}
-
 /** Story: Start in Messages instead / When Messages does not open in 1.5 seconds, the status line shows the number and the message (spec/landingEntry.md) */
 //@ pure
 export function canSettleMessages(s: Landing): boolean {
   return s.messages === "MessagesWaiting";
+}
+
+/** Story: Start in Messages instead / When Messages does not open in 1.5 seconds, the status line shows the number and the message (spec/landingEntry.md) */
+//@ pure
+export function settleMessages(s: Landing, pageLeft: boolean): Landing {
+  //@ ensures (inv(s) && canSettleMessages(s)) ==> alwaysCopyButtonNeedsScript(\result)
+  //@ ensures (inv(s) && canSettleMessages(s)) ==> alwaysDeviceKnownOnlyWithScript(\result)
+  //@ ensures (inv(s) && canSettleMessages(s)) ==> alwaysFollowedAgentHasLink(\result)
+  //@ ensures (inv(s) && canSettleMessages(s)) ==> alwaysNoDesktopAgentOnPhone(\result)
+  //@ ensures (inv(s) && canSettleMessages(s)) ==> alwaysAgentStatusNamesPressedAgent(\result)
+  //@ ensures (inv(s) && canSettleMessages(s)) ==> alwaysWaitOnlyWhereMessagesOpens(\result)
+  //@ ensures (inv(s) && canSettleMessages(s)) ==> alwaysLinkFollowedOnlyWithoutScript(\result)
+  //@ ensures (inv(s) && canSettleMessages(s)) ==> alwaysFallbackNeedsScript(\result)
+  //@ ensures (inv(s) && canSettleMessages(s)) ==> alwaysStatusNeedsScript(\result)
+  //@ ensures (inv(s) && canSettleMessages(s)) ==> stepCopyLabelChangesOnlyByCopy(s, "settleMessages", \result)
+  //@ ensures (inv(s) && canSettleMessages(s)) ==> stepMessagesFallbackShowsNumber(s, "settleMessages", \result)
+  return pageLeft ? ({ ...s, messages: "MessagesOpened" } as Landing) : ({ ...s, messages: "MessagesFallback", status: messagesFallbackStatus(s.messageCopied) } as Landing);
 }
 
 /** Story: Start in Messages instead / When Messages does not open in 1.5 seconds, the status line shows the number and the message (spec/landingEntry.md) */
@@ -506,23 +523,6 @@ export function sometimesDesktopShowsNumberAtOnce(s: Landing): boolean {
   return s.messages === "MessagesFallback" && s.device === "OtherDesktop";
 }
 
-/** Story: Start in Messages instead / When Messages does not open in 1.5 seconds, the status line shows the number and the message (spec/landingEntry.md) */
-//@ pure
-export function settleMessages(s: Landing, pageLeft: boolean): Landing {
-  //@ ensures (inv(s) && canSettleMessages(s)) ==> alwaysCopyButtonNeedsScript(\result)
-  //@ ensures (inv(s) && canSettleMessages(s)) ==> alwaysDeviceKnownOnlyWithScript(\result)
-  //@ ensures (inv(s) && canSettleMessages(s)) ==> alwaysFollowedAgentHasLink(\result)
-  //@ ensures (inv(s) && canSettleMessages(s)) ==> alwaysNoDesktopAgentOnPhone(\result)
-  //@ ensures (inv(s) && canSettleMessages(s)) ==> alwaysAgentStatusNamesPressedAgent(\result)
-  //@ ensures (inv(s) && canSettleMessages(s)) ==> alwaysLinkFollowedOnlyWithoutScript(\result)
-  //@ ensures (inv(s) && canSettleMessages(s)) ==> alwaysFallbackNeedsScript(\result)
-  //@ ensures (inv(s) && canSettleMessages(s)) ==> alwaysWaitOnlyWhereMessagesOpens(\result)
-  //@ ensures (inv(s) && canSettleMessages(s)) ==> alwaysStatusNeedsScript(\result)
-  //@ ensures (inv(s) && canSettleMessages(s)) ==> stepCopyLabelChangesOnlyByCopy(s, "settleMessages", \result)
-  //@ ensures (inv(s) && canSettleMessages(s)) ==> stepMessagesFallbackShowsNumber(s, "settleMessages", \result)
-  return pageLeft ? ({ ...s, messages: "MessagesOpened" } as Landing) : ({ ...s, messages: "MessagesFallback", status: messagesFallbackStatus(s.messageCopied) } as Landing);
-}
-
 /** Story: See only what I need to start / The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links (spec/landingEntry.md) */
 //@ pure
 export function landingWordsAllowed(words: number): boolean {
@@ -533,12 +533,6 @@ export function landingWordsAllowed(words: number): boolean {
 //@ pure
 export function landingHeadingsAllowed(headings: number): boolean {
   return headings === landingHeadingCount;
-}
-
-/** Story: See only what I need to start / The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links (spec/landingEntry.md) */
-//@ pure
-export function alwaysStatusNeedsScript(s: Landing): boolean {
-  return !(!s.mounted) || s.status === "StatusEmpty";
 }
 
 /** Story: See only what I need to start / The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links (spec/landingEntry.md) */
@@ -566,6 +560,12 @@ export function lawLandingHasNoSafetyOrComplianceText(landingItem: LandingItem):
 export function lawLandingShowsEveryOtherItem(landingItem: LandingItem): boolean {
   //@ ensures \result === true
   return landingShows(landingItem) === !neverOnLanding.includes(landingItem);
+}
+
+/** Story: See only what I need to start / The landing page shows the brand, the prompt, the agents, the Messages entry, the status line and two legal links (spec/landingEntry.md) */
+//@ pure
+export function alwaysStatusNeedsScript(s: Landing): boolean {
+  return !(!s.mounted) || s.status === "StatusEmpty";
 }
 
 /** Do the rules allow this event in this state? */

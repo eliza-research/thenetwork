@@ -28,9 +28,9 @@ export type Event =
   | { type: "recordPrivacyReplay" };
 
 /** Story: Check a backup by restoring it into a new database / The target must be a valid scratch database name (spec/databaseRestore.md) */
-export const liveNames: string[] = ["railway", "network", "postgres", "template0", "template1"];
-/** Story: Check a backup by restoring it into a new database / The target must be a valid scratch database name (spec/databaseRestore.md) */
 export const initial: Restore = { phase: "Starting", reason: "NoneYet", runRoles: false, keepPrivileges: false, countsAgree: false, replayPrivacy: false, privacyReplayed: false };
+/** Story: Check a backup by restoring it into a new database / The target must be a valid scratch database name (spec/databaseRestore.md) */
+export const liveNames: string[] = ["railway", "network", "postgres", "template0", "template1"];
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure

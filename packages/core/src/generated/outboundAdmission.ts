@@ -19,6 +19,12 @@ export const peerContactSeatStatuses: string[] = ["pending", "checking", "availa
 
 /** Story: Recheck a queued message at send time / A current row needs a delivering line and the recipient's eligibility (spec/outboundAdmission.md) */
 //@ pure
+export function duePolicy(stale: boolean): Admission {
+  return stale ? "Expired" : "Proceed";
+}
+
+/** Story: Recheck a queued message at send time / A current row needs a delivering line and the recipient's eligibility (spec/outboundAdmission.md) */
+//@ pure
 export function closedOpportunityRowStale(closed: boolean, terminalNotice: boolean): boolean {
   return closed && !terminalNotice;
 }
@@ -39,12 +45,6 @@ export function consentPolicy(compliance: boolean, optedOut: boolean): Admission
 //@ pure
 export function recipientPolicy(compliance: boolean, eligible: boolean): Admission {
   return !compliance && !eligible ? "RecipientIneligible" : "Proceed";
-}
-
-/** Story: Recheck a queued message at send time / A current row needs a delivering line and the recipient's eligibility (spec/outboundAdmission.md) */
-//@ pure
-export function duePolicy(stale: boolean): Admission {
-  return stale ? "Expired" : "Proceed";
 }
 
 /** Story: Recheck a queued message at send time / A current row needs a delivering line and the recipient's eligibility (spec/outboundAdmission.md) */

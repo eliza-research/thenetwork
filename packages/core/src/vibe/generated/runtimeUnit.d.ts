@@ -11,27 +11,35 @@ export type EvidenceOwner = "SharedEvidence" | "MemberEvidence" | "EventEvidence
 export type StartupPlan = "RecoverDeliveryQueue" | "RepairProjection";
 /** One variant per transition in the spec. */
 export type Event = {
-    type: "recordAction";
-} | {
-    type: "recordSave";
-} | {
     type: "recordLoad";
     snapshotFound: boolean;
 } | {
     type: "recordRestore";
+} | {
+    type: "recordAction";
+} | {
+    type: "recordSave";
 };
-/** Story: Work from the latest saved network state / The engine runs on a snapshot outside the store lock (spec/runtimeUnit.md) */
-export declare const maxEngineAttempts: number;
 /** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
 export declare const initial: RuntimeUnit;
+/** Story: Work from the latest saved network state / The engine runs on a snapshot outside the store lock (spec/runtimeUnit.md) */
+export declare const maxEngineAttempts: number;
 /** Every `always` rule at once. Holds initially and after every transition. */
 export declare function inv(current: RuntimeUnit): boolean;
 /** Story: Work from the latest saved network state / A tick skips a busy store while an inbound or staff action waits (spec/runtimeUnit.md) */
-export declare function tickMayEnter(acquired: boolean): boolean;
-/** Story: Work from the latest saved network state / A tick skips a busy store while an inbound or staff action waits (spec/runtimeUnit.md) */
 export declare function tickMayTryLock(locallyBusy: boolean): boolean;
 /** Story: Work from the latest saved network state / A tick skips a busy store while an inbound or staff action waits (spec/runtimeUnit.md) */
+export declare function tickMayEnter(acquired: boolean): boolean;
+/** Story: Work from the latest saved network state / A tick skips a busy store while an inbound or staff action waits (spec/runtimeUnit.md) */
 export declare function lawBusyTickSkips(locallyBusy: boolean): boolean;
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
+export declare function canRecordLoad(unit: RuntimeUnit): boolean;
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
+export declare function recordLoad(unit: RuntimeUnit, snapshotFound: boolean): RuntimeUnit;
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
+export declare function canRecordRestore(unit: RuntimeUnit): boolean;
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
+export declare function recordRestore(unit: RuntimeUnit): RuntimeUnit;
 /** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
 export declare function canRecordAction(unit: RuntimeUnit): boolean;
 /** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
@@ -44,14 +52,6 @@ export declare function recordSave(unit: RuntimeUnit): RuntimeUnit;
 export declare function stepSaveFollowsAction(before: RuntimeUnit, via: string, after: RuntimeUnit): boolean;
 /** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
 export declare function sometimesCanSave(unit: RuntimeUnit): boolean;
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
-export declare function canRecordLoad(unit: RuntimeUnit): boolean;
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
-export declare function recordLoad(unit: RuntimeUnit, snapshotFound: boolean): RuntimeUnit;
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
-export declare function canRecordRestore(unit: RuntimeUnit): boolean;
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
-export declare function recordRestore(unit: RuntimeUnit): RuntimeUnit;
 /** Story: Work from the latest saved network state / The engine runs on a snapshot outside the store lock (spec/runtimeUnit.md) */
 export declare function tickMayStartBesideEngine(engineInFlight: boolean): boolean;
 /** Story: Work from the latest saved network state / The engine runs on a snapshot outside the store lock (spec/runtimeUnit.md) */
@@ -59,29 +59,29 @@ export declare function engineAttemptAllowed(attempt: number): boolean;
 /** Story: Work from the latest saved network state / The engine runs on a snapshot outside the store lock (spec/runtimeUnit.md) */
 export declare function lawComputingTickSkips(engineInFlight: boolean): boolean;
 /** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+export declare function evidenceOwner(publicEvent: boolean, namesMember: boolean): EvidenceOwner;
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+export declare function lawMemberEntryIsNeverShared(publicEvent: boolean, namesMember: boolean): boolean;
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
+export declare function lawEventEntryIsItsOwnEvidence(publicEvent: boolean, namesMember: boolean): boolean;
+/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
 export declare function preparedRunUsable(sameKey: boolean, sameConfig: boolean, sameSharedEvidence: boolean): boolean;
 /** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
 export declare function preparedItemCommits(runUsable: boolean, named: string[], changed: string[]): boolean;
-/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
-export declare function evidenceOwner(publicEvent: boolean, namesMember: boolean): EvidenceOwner;
 /** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
 export declare function lawChangedOwnerNeverCommits(runUsable: boolean, named: string[], changed: string[], owner: string): boolean;
 /** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
 export declare function lawUnchangedItemOfUsableRunCommits(named: string[], changed: string[]): boolean;
 /** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
 export declare function lawStaleRunNeverCommits(sameKey: boolean, sameConfig: boolean, sameSharedEvidence: boolean, named: string[], changed: string[]): boolean;
-/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
-export declare function lawMemberEntryIsNeverShared(publicEvent: boolean, namesMember: boolean): boolean;
-/** Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change (spec/runtimeUnit.md) */
-export declare function lawEventEntryIsItsOwnEvidence(publicEvent: boolean, namesMember: boolean): boolean;
 /** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) */
 export declare function matchingDisabledByRegistry(matchingAllowed: boolean): boolean;
+/** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) */
+export declare function startupPlan(queuedAdapter: boolean): StartupPlan;
 /** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) */
 export declare function tickRepairsProjection(ran: boolean, queuedAdapter: boolean): boolean;
 /** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) */
 export declare function tickRunsFollowup(ran: boolean, hookConfigured: boolean): boolean;
-/** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) */
-export declare function startupPlan(queuedAdapter: boolean): StartupPlan;
 /** Do the rules allow this event in this state? */
 export declare function enabled(current: RuntimeUnit, event: Event): boolean;
 /** Apply an event. An event the rules do not allow leaves the state unchanged. */

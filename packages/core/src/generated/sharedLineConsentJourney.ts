@@ -1,11 +1,11 @@
 // GENERATED from spec/sharedLineConsentJourney.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type StopConjunct as carrierConsent_StopConjunct, type CoordinatedStop as carrierConsent_CoordinatedStop, appOptInBeatsStop as carrierConsent_appOptInBeatsStop, matchesSpokenAppDomain as carrierConsent_matchesSpokenAppDomain, stopWordAllowsCourtesy as carrierConsent_stopWordAllowsCourtesy, textRefusalStops as carrierConsent_textRefusalStops, sharedLineStopStatementStops as carrierConsent_sharedLineStopStatementStops, lawAnIndirectStopStatementCannotStop as carrierConsent_lawAnIndirectStopStatementCannotStop, lawARecognizedDirectStopStatementStops as carrierConsent_lawARecognizedDirectStopStatementStops, coordinatedStopClause as carrierConsent_coordinatedStopClause, lawStopWinsATie as carrierConsent_lawStopWinsATie, appMayText as carrierConsent_appMayText, lawArticleDoesNotTurnSpacedLabelIntoDomain as carrierConsent_lawArticleDoesNotTurnSpacedLabelIntoDomain, lawCourtesyCannotTurnAmbiguousCommandsIntoStop as carrierConsent_lawCourtesyCannotTurnAmbiguousCommandsIntoStop, lawBareTextRefusalNeedsPermanence as carrierConsent_lawBareTextRefusalNeedsPermanence, lawIncompleteNegationDoesNotMakeASeparateStop as carrierConsent_lawIncompleteNegationDoesNotMakeASeparateStop, lawNoAppOptInMeansNoPermission as carrierConsent_lawNoAppOptInMeansNoPermission } from "./carrierConsent.ts";
+import { type StopConjunct as carrierConsent_StopConjunct, type CoordinatedStop as carrierConsent_CoordinatedStop, stopWordAllowsCourtesy as carrierConsent_stopWordAllowsCourtesy, lawCourtesyCannotTurnAmbiguousCommandsIntoStop as carrierConsent_lawCourtesyCannotTurnAmbiguousCommandsIntoStop, textRefusalStops as carrierConsent_textRefusalStops, lawBareTextRefusalNeedsPermanence as carrierConsent_lawBareTextRefusalNeedsPermanence, sharedLineStopStatementStops as carrierConsent_sharedLineStopStatementStops, lawAnIndirectStopStatementCannotStop as carrierConsent_lawAnIndirectStopStatementCannotStop, lawARecognizedDirectStopStatementStops as carrierConsent_lawARecognizedDirectStopStatementStops, coordinatedStopClause as carrierConsent_coordinatedStopClause, lawIncompleteNegationDoesNotMakeASeparateStop as carrierConsent_lawIncompleteNegationDoesNotMakeASeparateStop, appOptInBeatsStop as carrierConsent_appOptInBeatsStop, lawStopWinsATie as carrierConsent_lawStopWinsATie, appMayText as carrierConsent_appMayText, lawNoAppOptInMeansNoPermission as carrierConsent_lawNoAppOptInMeansNoPermission, matchesSpokenAppDomain as carrierConsent_matchesSpokenAppDomain, lawArticleDoesNotTurnSpacedLabelIntoDomain as carrierConsent_lawArticleDoesNotTurnSpacedLabelIntoDomain } from "./carrierConsent.ts";
 
 /** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
-export type StopWording = "StopKeyword" | "StopTextsKeepCalls" | "QuitNow" | "EndPlease" | "StopTextsAnymore" | "SpanishCourtesyStop";
-/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
 export type AppUnderObservation = "Slop" | "Friends";
+/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
+export type StopWording = "StopKeyword" | "StopTextsKeepCalls" | "QuitNow" | "EndPlease" | "StopTextsAnymore" | "SpanishCourtesyStop";
 /** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
 export type ConsentUpdate = "AllOptedOut" | "SlopOptedIn" | "FriendsOptedIn";
 /** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
@@ -32,12 +32,6 @@ export function inv(current: LineConsent): boolean {
 
 /** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
 //@ pure
-export function sometimesBothAppsStop(s: LineConsent): boolean {
-  return !s.slopMayText && !s.friendsMayText;
-}
-
-/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
-//@ pure
 export function canTextStop(s: LineConsent, wording: StopWording): boolean {
   return true;
 }
@@ -49,6 +43,12 @@ export function textStop(s: LineConsent, wording: StopWording): Turn {
   return { state: ({ slopMayText: false, friendsMayText: false } as LineConsent), out: (["AllOptedOut"] as ConsentUpdate[]) };
 }
 
+/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
+//@ pure
+export function sometimesBothAppsStop(s: LineConsent): boolean {
+  return !s.slopMayText && !s.friendsMayText;
+}
+
 /** Story: Stop the shared line and resume one app / An ambiguous message leaves shared-line consent unchanged (spec/sharedLineConsentJourney.md) */
 //@ pure
 export function textOther(s: LineConsent, other: OtherWording): Turn {
@@ -58,8 +58,22 @@ export function textOther(s: LineConsent, other: OtherWording): Turn {
 
 /** Story: Stop the shared line and resume one app / A new START permits texts in the chosen app only (spec/sharedLineConsentJourney.md) */
 //@ pure
+export function mayTextAfterStart(alreadyAllowed: boolean, sentWithLastStop: boolean): boolean {
+  return alreadyAllowed || carrierConsent_appMayText(true, true, sentWithLastStop ? 0 : 1, 0);
+}
+
+/** Story: Stop the shared line and resume one app / A new START permits texts in the chosen app only (spec/sharedLineConsentJourney.md) */
+//@ pure
 export function canTextStart(s: LineConsent, app: AppUnderObservation, sentWithLastStop: boolean): boolean {
   return true;
+}
+
+/** Story: Stop the shared line and resume one app / A new START permits texts in the chosen app only (spec/sharedLineConsentJourney.md) */
+//@ pure
+export function textStart(s: LineConsent, app: AppUnderObservation, sentWithLastStop: boolean): Turn {
+  //@ ensures (inv(s) && canTextStart(s, app, sentWithLastStop)) ==> stepOneTextCannotRestoreBoth(s, \result.state)
+  const local_0 = mayTextAfterStart(app === "Slop" ? s.slopMayText : s.friendsMayText, sentWithLastStop);
+  return { state: app === "Slop" ? ({ ...s, slopMayText: local_0 } as LineConsent) : ({ ...s, friendsMayText: local_0 } as LineConsent), out: local_0 ? ([app === "Slop" ? "SlopOptedIn" : "FriendsOptedIn"] as ConsentUpdate[]) : ([] as ConsentUpdate[]) };
 }
 
 /** Story: Stop the shared line and resume one app / A new START permits texts in the chosen app only (spec/sharedLineConsentJourney.md) */
@@ -78,20 +92,6 @@ export function sometimesOnlyFriendsResumes(s: LineConsent): boolean {
 //@ pure
 export function stepOneTextCannotRestoreBoth(before: LineConsent, after: LineConsent): boolean {
   return !(!before.slopMayText && !before.friendsMayText) || !(after.slopMayText && after.friendsMayText);
-}
-
-/** Story: Stop the shared line and resume one app / A new START permits texts in the chosen app only (spec/sharedLineConsentJourney.md) */
-//@ pure
-export function mayTextAfterStart(alreadyAllowed: boolean, sentWithLastStop: boolean): boolean {
-  return alreadyAllowed || carrierConsent_appMayText(true, true, sentWithLastStop ? 0 : 1, 0);
-}
-
-/** Story: Stop the shared line and resume one app / A new START permits texts in the chosen app only (spec/sharedLineConsentJourney.md) */
-//@ pure
-export function textStart(s: LineConsent, app: AppUnderObservation, sentWithLastStop: boolean): Turn {
-  //@ ensures (inv(s) && canTextStart(s, app, sentWithLastStop)) ==> stepOneTextCannotRestoreBoth(s, \result.state)
-  const local_0 = mayTextAfterStart(app === "Slop" ? s.slopMayText : s.friendsMayText, sentWithLastStop);
-  return { state: app === "Slop" ? ({ ...s, slopMayText: local_0 } as LineConsent) : ({ ...s, friendsMayText: local_0 } as LineConsent), out: local_0 ? ([app === "Slop" ? "SlopOptedIn" : "FriendsOptedIn"] as ConsentUpdate[]) : ([] as ConsentUpdate[]) };
 }
 
 /** Do the rules allow this event in this state? */

@@ -35,36 +35,36 @@ export type Event =
   | { type: "requestFeedback"; unsent: boolean; asOf: number; feedbackAt: number }
   | { type: "resolveAttendance"; timedOut: boolean; everyoneResponded: boolean };
 
+/** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md) */
+export const confirmationWindowHours: number = 48;
+/** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md) */
+export const confirmationWindowMs: number = exact_meetingSettlement(confirmationWindowHours * 3600000);
 /** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
 export const dayBeforeReminderStartMs: number = exact_meetingSettlement(24 * 3600000);
 /** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
 export const dayBeforeReminderEndMs: number = exact_meetingSettlement(12 * 3600000);
 /** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
 export const nearMeetingReminderLeadMs: number = exact_meetingSettlement(3 * 3600000);
-/** Story: Ask for feedback and close attendance once / A settled Friends plan teaches the actual booked time (spec/meetingSettlement.md) */
-export const availabilityHistoryLimit: number = 40;
-/** Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes (spec/meetingSettlement.md) */
-export const checkInSafetyAnswerMs: number = exact_meetingSettlement(24 * 3600000);
-/** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md) */
-export const confirmationWindowHours: number = 48;
 /** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
 export const bookingNoticeRetryMs: number = exact_meetingSettlement(5 * 60000);
+/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
+export const initial: MeetingSettlement = { phase: "BeforeFeedback" };
 /** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
 export const feedbackDelayHours: number = 3;
 /** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
 export const settlementDelayDays: number = 4;
 /** Story: Ask for feedback and close attendance once / Send feedback requests during the open attendance period (spec/meetingSettlement.md) */
 export const meetingFeedbackPrefix: string = "meeting-feedback:";
-/** Story: Ask for feedback and close attendance once / A feedback reply needs receipt of its exact prompt (spec/meetingSettlement.md) */
-export const meetingFeedbackReplyMs: number = exact_meetingSettlement(7 * 86400000);
-/** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md) */
-export const confirmationWindowMs: number = exact_meetingSettlement(confirmationWindowHours * 3600000);
 /** Story: Ask for feedback and close attendance once / Send feedback requests during the open attendance period (spec/meetingSettlement.md) */
 export const feedbackDelayMs: number = exact_meetingSettlement(feedbackDelayHours * 3600000);
 /** Story: Ask for feedback and close attendance once / Send feedback requests during the open attendance period (spec/meetingSettlement.md) */
 export const settlementDelayMs: number = exact_meetingSettlement(settlementDelayDays * 86400000);
-/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
-export const initial: MeetingSettlement = { phase: "BeforeFeedback" };
+/** Story: Ask for feedback and close attendance once / A feedback reply needs receipt of its exact prompt (spec/meetingSettlement.md) */
+export const meetingFeedbackReplyMs: number = exact_meetingSettlement(7 * 86400000);
+/** Story: Ask for feedback and close attendance once / A settled Friends plan teaches the actual booked time (spec/meetingSettlement.md) */
+export const availabilityHistoryLimit: number = 40;
+/** Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes (spec/meetingSettlement.md) */
+export const checkInSafetyAnswerMs: number = exact_meetingSettlement(24 * 3600000);
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
@@ -157,29 +157,16 @@ export function bookingNoticePending(receiptStatus: string, gatewayReply: boolea
 
 /** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
 //@ pure
-export function lawExpiredGatewayNoticeMayGetReceipt(receiptStatus: string): boolean {
-  //@ ensures \result === true
-  return !(receiptStatus === "failed_unknown") || bookingNoticeReceiptMayArrive(receiptStatus, true);
-}
-
-/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
-//@ pure
-export function queuedReminderClaim(bookingCurrent: boolean, noticeAccepted: boolean, noticePending: boolean): ReminderClaim {
-  return !bookingCurrent ? "RefuseReminder" : (noticeAccepted ? "SendReminder" : (noticePending ? "WaitForBookingNotice" : "RefuseReminder"));
-}
-
-/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
-//@ pure
-export function lawFutureBookingReceiptIsNotEvidence(receiptStatus: string, sentAt: number, checkedAt: number): boolean {
-  //@ ensures \result === true
-  return !(sentAt > checkedAt) || !bookingNoticeReceived(receiptStatus, sentAt, checkedAt);
-}
-
-/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
-//@ pure
 export function lawExpiredProviderNoticeGetsNoReceipt(receiptStatus: string): boolean {
   //@ ensures \result === true
   return !(receiptStatus === "failed_unknown") || !bookingNoticePending(receiptStatus, false);
+}
+
+/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
+//@ pure
+export function lawExpiredGatewayNoticeMayGetReceipt(receiptStatus: string): boolean {
+  //@ ensures \result === true
+  return !(receiptStatus === "failed_unknown") || bookingNoticeReceiptMayArrive(receiptStatus, true);
 }
 
 /** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
@@ -198,6 +185,12 @@ export function lawReceivedNoticeIsNotPending(receiptStatus: string, gatewayRepl
 
 /** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
 //@ pure
+export function queuedReminderClaim(bookingCurrent: boolean, noticeAccepted: boolean, noticePending: boolean): ReminderClaim {
+  return !bookingCurrent ? "RefuseReminder" : (noticeAccepted ? "SendReminder" : (noticePending ? "WaitForBookingNotice" : "RefuseReminder"));
+}
+
+/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
+//@ pure
 export function lawReminderClaimNeedsNotice(bookingCurrent: boolean, noticePending: boolean): boolean {
   //@ ensures \result === true
   return queuedReminderClaim(bookingCurrent, false, noticePending) !== "SendReminder";
@@ -208,6 +201,13 @@ export function lawReminderClaimNeedsNotice(bookingCurrent: boolean, noticePendi
 export function lawReminderCannotWaitOnExpiredBooking(noticeAccepted: boolean, noticePending: boolean): boolean {
   //@ ensures \result === true
   return queuedReminderClaim(false, noticeAccepted, noticePending) === "RefuseReminder";
+}
+
+/** Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice (spec/meetingSettlement.md) */
+//@ pure
+export function lawFutureBookingReceiptIsNotEvidence(receiptStatus: string, sentAt: number, checkedAt: number): boolean {
+  //@ ensures \result === true
+  return !(sentAt > checkedAt) || !bookingNoticeReceived(receiptStatus, sentAt, checkedAt);
 }
 
 /** Story: Hear about a booked meeting the day before / Claim a cancellation only for a member who received booking details (spec/meetingSettlement.md) */
@@ -232,28 +232,8 @@ export function lawStaleCancellationCannotWait(noticeAccepted: boolean, receiptM
 
 /** Story: Check whether a booked participant is still coming / The day-of check-in uses one near-meeting message (spec/meetingSettlement.md) */
 //@ pure
-export function dayOfCheckInAnswerCurrent(exactReceipt: boolean, acceptedAt: number, receivedAt: number, handledAt: number): boolean {
-  return exactReceipt && 0 <= acceptedAt && acceptedAt <= receivedAt && receivedAt <= handledAt;
-}
-
-/** Story: Check whether a booked participant is still coming / The day-of check-in uses one near-meeting message (spec/meetingSettlement.md) */
-//@ pure
 export function dayOfCheckInWindow(sameLocalDay: boolean, remainingMs: number): boolean {
   return sameLocalDay && nearMeetingReminderWindow(remainingMs);
-}
-
-/** Story: Check whether a booked participant is still coming / The day-of check-in uses one near-meeting message (spec/meetingSettlement.md) */
-//@ pure
-export function lawPendingCheckInCannotAuthorizeAnswer(acceptedAt: number, receivedAt: number, handledAt: number): boolean {
-  //@ ensures \result === true
-  return !dayOfCheckInAnswerCurrent(false, acceptedAt, receivedAt, handledAt);
-}
-
-/** Story: Check whether a booked participant is still coming / The day-of check-in uses one near-meeting message (spec/meetingSettlement.md) */
-//@ pure
-export function lawEarlyCheckInAnswerCannotChangeBooking(acceptedAt: number, receivedAt: number, handledAt: number): boolean {
-  //@ ensures \result === true
-  return !(receivedAt < acceptedAt) || !dayOfCheckInAnswerCurrent(true, acceptedAt, receivedAt, handledAt);
 }
 
 /** Story: Check whether a booked participant is still coming / The day-of check-in uses one near-meeting message (spec/meetingSettlement.md) */
@@ -273,6 +253,26 @@ export function dayOfReplyAccepted(currentSchedule: boolean, sameLocalDay: boole
 export function lawDayOfReplyNeedsCurrentScheduleBeforeStart(currentSchedule: boolean, sameLocalDay: boolean, remainingMs: number): boolean {
   //@ ensures \result === true
   return !dayOfReplyAccepted(currentSchedule, sameLocalDay, remainingMs) || (currentSchedule && remainingMs > 0);
+}
+
+/** Story: Check whether a booked participant is still coming / The day-of check-in uses one near-meeting message (spec/meetingSettlement.md) */
+//@ pure
+export function dayOfCheckInAnswerCurrent(exactReceipt: boolean, acceptedAt: number, receivedAt: number, handledAt: number): boolean {
+  return exactReceipt && 0 <= acceptedAt && acceptedAt <= receivedAt && receivedAt <= handledAt;
+}
+
+/** Story: Check whether a booked participant is still coming / The day-of check-in uses one near-meeting message (spec/meetingSettlement.md) */
+//@ pure
+export function lawPendingCheckInCannotAuthorizeAnswer(acceptedAt: number, receivedAt: number, handledAt: number): boolean {
+  //@ ensures \result === true
+  return !dayOfCheckInAnswerCurrent(false, acceptedAt, receivedAt, handledAt);
+}
+
+/** Story: Check whether a booked participant is still coming / The day-of check-in uses one near-meeting message (spec/meetingSettlement.md) */
+//@ pure
+export function lawEarlyCheckInAnswerCannotChangeBooking(acceptedAt: number, receivedAt: number, handledAt: number): boolean {
+  //@ ensures \result === true
+  return !(receivedAt < acceptedAt) || !dayOfCheckInAnswerCurrent(true, acceptedAt, receivedAt, handledAt);
 }
 
 /** Story: Check whether a booked participant is still coming / The day-of check-in uses one near-meeting message (spec/meetingSettlement.md) */
@@ -490,21 +490,8 @@ export function deliveredInvitee(accepted: boolean, bookingDelivered: boolean): 
 
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 //@ pure
-export function reportedAbsenceIdentifiesMember(pairMeeting: boolean, identifiedInGroup: boolean): boolean {
-  return pairMeeting || identifiedInGroup;
-}
-
-/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
-//@ pure
 export function attendanceBookingReceived(accepted: boolean, exactReceipt: boolean, receiptAt: number, settledAt: number): boolean {
   return deliveredInvitee(accepted, exactReceipt && receiptAt >= 0 && receiptAt <= settledAt);
-}
-
-/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
-//@ pure
-export function lawUnnamedGroupReportDoesNotIdentifyAnyone(pairMeeting: boolean): boolean {
-  //@ ensures \result === true
-  return !(!pairMeeting) || !reportedAbsenceIdentifiesMember(pairMeeting, false);
 }
 
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
@@ -512,6 +499,19 @@ export function lawUnnamedGroupReportDoesNotIdentifyAnyone(pairMeeting: boolean)
 export function lawAttendanceNeedsExactBookingReceipt(accepted: boolean, receiptAt: number, settledAt: number): boolean {
   //@ ensures \result === true
   return !attendanceBookingReceived(accepted, false, receiptAt, settledAt);
+}
+
+/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
+//@ pure
+export function reportedAbsenceIdentifiesMember(pairMeeting: boolean, identifiedInGroup: boolean): boolean {
+  return pairMeeting || identifiedInGroup;
+}
+
+/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
+//@ pure
+export function lawUnnamedGroupReportDoesNotIdentifyAnyone(pairMeeting: boolean): boolean {
+  //@ ensures \result === true
+  return !(!pairMeeting) || !reportedAbsenceIdentifiesMember(pairMeeting, false);
 }
 
 /** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
@@ -544,6 +544,12 @@ export function organizerCanVerify(booked: boolean, came: boolean): boolean {
 
 /** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md) */
 //@ pure
+export function chooseCheckIn(hostResponded: boolean, hostReportsMissing: boolean, hasNames: boolean): CheckInSource {
+  return !hostResponded ? "NoCheckIn" : (hostReportsMissing ? "MissingNames" : (hasNames ? "PresentNames" : "BookedParticipants"));
+}
+
+/** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md) */
+//@ pure
 export function counterpartConfirmsAttendance(came: boolean, reportsMissing: boolean): boolean {
   return came && !reportsMissing;
 }
@@ -552,12 +558,6 @@ export function counterpartConfirmsAttendance(came: boolean, reportsMissing: boo
 //@ pure
 export function requestAttendanceSatisfied(requesterAttended: boolean, anotherAttended: boolean): boolean {
   return requesterAttended && anotherAttended;
-}
-
-/** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md) */
-//@ pure
-export function chooseCheckIn(hostResponded: boolean, hostReportsMissing: boolean, hasNames: boolean): CheckInSource {
-  return !hostResponded ? "NoCheckIn" : (hostReportsMissing ? "MissingNames" : (hasNames ? "PresentNames" : "BookedParticipants"));
 }
 
 /** Story: Ask for feedback and close attendance once / Verified value needs an independent attendance confirmation (spec/meetingSettlement.md) */
@@ -668,27 +668,6 @@ export function checkInSafetyAnswer(wantsReport: boolean, wantsBlock: boolean, d
 
 /** Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes (spec/meetingSettlement.md) */
 //@ pure
-export function lawBareAnswerWaitsForTheOtherQuestion(otherQuestionOpen: boolean): boolean {
-  //@ ensures \result === true
-  return checkInSafetyAnswerApplies(false, otherQuestionOpen) === !otherQuestionOpen;
-}
-
-/** Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes (spec/meetingSettlement.md) */
-//@ pure
-export function lawLateAnswerLapses(questionAt: number, answerAt: number): boolean {
-  //@ ensures \result === true
-  return !checkInSafetyAnswerCurrent(questionAt, answerAt, exact_meetingSettlement(exact_meetingSettlement(questionAt + checkInSafetyAnswerMs) + 1));
-}
-
-/** Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes (spec/meetingSettlement.md) */
-//@ pure
-export function lawEarlyAnswerIsNotTheAnswer(questionAt: number, answerHandledAt: number): boolean {
-  //@ ensures \result === true
-  return !checkInSafetyAnswerCurrent(questionAt, exact_meetingSettlement(questionAt - 1), answerHandledAt);
-}
-
-/** Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes (spec/meetingSettlement.md) */
-//@ pure
 export function lawReportAndBlockFilesTheReport(otherQuestionOpen: boolean): boolean {
   //@ ensures \result === true
   return checkInSafetyAnswerApplies(true, otherQuestionOpen) && checkInSafetyAnswer(true, true, false) === "AnswerReport";
@@ -703,9 +682,30 @@ export function lawRefusalWithAChoiceActsOnNobody(wantsReport: boolean, wantsBlo
 
 /** Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes (spec/meetingSettlement.md) */
 //@ pure
+export function lawBareAnswerWaitsForTheOtherQuestion(otherQuestionOpen: boolean): boolean {
+  //@ ensures \result === true
+  return checkInSafetyAnswerApplies(false, otherQuestionOpen) === !otherQuestionOpen;
+}
+
+/** Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes (spec/meetingSettlement.md) */
+//@ pure
 export function lawUnclearAnswerActsOnNobody(declines: boolean): boolean {
   //@ ensures \result === true
   return checkInSafetyAnswer(false, false, declines) !== "AnswerReport" && checkInSafetyAnswer(false, false, declines) !== "AnswerBlock";
+}
+
+/** Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes (spec/meetingSettlement.md) */
+//@ pure
+export function lawLateAnswerLapses(questionAt: number, answerAt: number): boolean {
+  //@ ensures \result === true
+  return !checkInSafetyAnswerCurrent(questionAt, answerAt, exact_meetingSettlement(exact_meetingSettlement(questionAt + checkInSafetyAnswerMs) + 1));
+}
+
+/** Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes (spec/meetingSettlement.md) */
+//@ pure
+export function lawEarlyAnswerIsNotTheAnswer(questionAt: number, answerHandledAt: number): boolean {
+  //@ ensures \result === true
+  return !checkInSafetyAnswerCurrent(questionAt, exact_meetingSettlement(questionAt - 1), answerHandledAt);
 }
 
 /** Do the rules allow this event in this state? */

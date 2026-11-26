@@ -2,23 +2,23 @@
 //@ backend dafny
 
 /** Story: Contact a member only after a recorded approval / An approval names its approver (spec/automatedReview.md) */
-export type JudgeCall = "PacketSuspect" | "PriorFlag" | "NoProvider" | "BudgetReached" | "RequestLimitReached" | "DeadlineTooClose" | "CallJudge";
-/** Story: Contact a member only after a recorded approval / An approval names its approver (spec/automatedReview.md) */
-export type JudgeClaim = "ClaimFirst" | "ClaimAgain" | "UseStored" | "WaitForLease" | "ClaimsSpent";
-/** Story: Contact a member only after a recorded approval / An approval names its approver (spec/automatedReview.md) */
-export type SimStaffAction = "SimStaffApproves" | "SimStaffRejects" | "SimStaffWaits";
+export type JudgeVerdict = "JudgeApproves" | "JudgeFlags" | "JudgeUndecided" | "JudgeCannotRun";
 /** Story: Contact a member only after a recorded approval / An approval names its approver (spec/automatedReview.md) */
 export type VerdictWord = "SaidApprove" | "SaidFlag" | "SaidCannotDecide" | "SaidOther";
 /** Story: Contact a member only after a recorded approval / An approval names its approver (spec/automatedReview.md) */
 export type Rubric = "AdultRubric" | "MinorRubric";
-/** Story: Contact a member only after a recorded approval / An approval names its approver (spec/automatedReview.md) */
-export type JudgeVerdict = "JudgeApproves" | "JudgeFlags" | "JudgeUndecided" | "JudgeCannotRun";
 /** Story: Contact a member only after a recorded approval / An approval names its approver (spec/automatedReview.md) */
 export type Approver = "NoApprover" | "JudgeApprover" | "StaffApprover";
 /** Story: Contact a member only after a recorded approval / An approval names its approver (spec/automatedReview.md) */
 export type ReviewPhase = "AwaitingJudge" | "HeldForStaff" | "ReviewApproved" | "ReviewStopped" | "ReviewRejected" | "ReviewExpired" | "ReviewInvalidated";
 /** Story: Contact a member only after a recorded approval / An approval names its approver (spec/automatedReview.md) */
 export interface AutomatedReview { phase: ReviewPhase; revision: number; approver: Approver }
+/** Story: Contact a member only after a recorded approval / An approval names its approver (spec/automatedReview.md) */
+export type JudgeCall = "PacketSuspect" | "PriorFlag" | "NoProvider" | "BudgetReached" | "RequestLimitReached" | "DeadlineTooClose" | "CallJudge";
+/** Story: Contact a member only after a recorded approval / An approval names its approver (spec/automatedReview.md) */
+export type JudgeClaim = "ClaimFirst" | "ClaimAgain" | "UseStored" | "WaitForLease" | "ClaimsSpent";
+/** Story: Contact a member only after a recorded approval / An approval names its approver (spec/automatedReview.md) */
+export type SimStaffAction = "SimStaffApproves" | "SimStaffRejects" | "SimStaffWaits";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -30,6 +30,8 @@ export type Event =
   | { type: "expireReview"; late: boolean }
   | { type: "closeReview" };
 
+/** Story: Contact a member only after a recorded approval / An approval names its approver (spec/automatedReview.md) */
+export const initial: AutomatedReview = { phase: "AwaitingJudge", revision: 0, approver: "NoApprover" };
 /** Story: Contact a member only after a recorded approval / An approval names its approver (spec/automatedReview.md) */
 export const maxJudgeClaims: number = 2;
 /** Story: Contact a member only after a recorded approval / An approval names its approver (spec/automatedReview.md) */
@@ -48,8 +50,6 @@ export const judgeWaitLimitMs: number = 1800000;
 export const reviewJudgmentRetentionMs: number = 7776000000;
 /** Story: Contact a member only after a recorded approval / An approval names its approver (spec/automatedReview.md) */
 export const flaggedPairRetentionMs: number = 7776000000;
-/** Story: Contact a member only after a recorded approval / An approval names its approver (spec/automatedReview.md) */
-export const initial: AutomatedReview = { phase: "AwaitingJudge", revision: 0, approver: "NoApprover" };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
@@ -146,6 +146,12 @@ export function lawPausedMatchingHoldsNothing(waitedMs: number): boolean {
 
 /** Story: Contact a member only after a recorded approval / Staff approve only a held item and may reject any open item (spec/automatedReview.md) */
 //@ pure
+export function canStaffDecide(r: AutomatedReview, revision: number, approve: boolean): boolean {
+  return revision === r.revision && (approve ? r.phase === "HeldForStaff" : reviewOpen(r));
+}
+
+/** Story: Contact a member only after a recorded approval / Staff approve only a held item and may reject any open item (spec/automatedReview.md) */
+//@ pure
 export function staffDecide(r: AutomatedReview, revision: number, approve: boolean, gatesPass: boolean, late: boolean): AutomatedReview {
   //@ ensures (inv(r) && canStaffDecide(r, revision, approve)) ==> alwaysApprovalNamesApprover(\result)
   //@ ensures (inv(r) && canStaffDecide(r, revision, approve)) ==> stepHeldItemNeedsStaff(r, "staffDecide", \result)
@@ -174,6 +180,13 @@ export function staffReroll(r: AutomatedReview, revision: number, late: boolean,
 
 /** Story: Contact a member only after a recorded approval / Staff approve only a held item and may reject any open item (spec/automatedReview.md) */
 //@ pure
+export function lawAwaitingItemNeedsTheJudge(revision: number): boolean {
+  //@ ensures \result === true
+  return !canStaffDecide(({ ...initial, revision: revision } as AutomatedReview), revision, true);
+}
+
+/** Story: Contact a member only after a recorded approval / Staff approve only a held item and may reject any open item (spec/automatedReview.md) */
+//@ pure
 export function stepHeldItemNeedsStaff(before: AutomatedReview, via: string, after: AutomatedReview): boolean {
   return !(before.phase === "HeldForStaff" && after.phase === "ReviewApproved") || (after.approver === "StaffApprover" && via === "staffDecide");
 }
@@ -184,17 +197,10 @@ export function stepRerollStartsNewRevision(before: AutomatedReview, via: string
   return !(via === "staffReroll" && after.phase === "AwaitingJudge") || after.revision === exact_automatedReview(before.revision + 1);
 }
 
-/** Story: Contact a member only after a recorded approval / Staff approve only a held item and may reject any open item (spec/automatedReview.md) */
+/** Story: Contact a member only after a recorded approval / Staff can stop an approved item before its reveal (spec/automatedReview.md) */
 //@ pure
-export function canStaffDecide(r: AutomatedReview, revision: number, approve: boolean): boolean {
-  return revision === r.revision && (approve ? r.phase === "HeldForStaff" : reviewOpen(r));
-}
-
-/** Story: Contact a member only after a recorded approval / Staff approve only a held item and may reject any open item (spec/automatedReview.md) */
-//@ pure
-export function lawAwaitingItemNeedsTheJudge(revision: number): boolean {
-  //@ ensures \result === true
-  return !canStaffDecide(({ ...initial, revision: revision } as AutomatedReview), revision, true);
+export function canStopApproved(r: AutomatedReview, revealed: boolean): boolean {
+  return contactApproved(r) && !revealed;
 }
 
 /** Story: Contact a member only after a recorded approval / Staff can stop an approved item before its reveal (spec/automatedReview.md) */
@@ -210,21 +216,21 @@ export function stopApproved(r: AutomatedReview, revealed: boolean): AutomatedRe
 
 /** Story: Contact a member only after a recorded approval / Staff can stop an approved item before its reveal (spec/automatedReview.md) */
 //@ pure
+export function lawRevealedItemCannotBeStopped(revision: number): boolean {
+  //@ ensures \result === true
+  return !canStopApproved(({ phase: "ReviewApproved", revision: revision, approver: "JudgeApprover" } as AutomatedReview), true);
+}
+
+/** Story: Contact a member only after a recorded approval / Staff can stop an approved item before its reveal (spec/automatedReview.md) */
+//@ pure
 export function stepStopEndsOnlyAnApproval(before: AutomatedReview, via: string, after: AutomatedReview): boolean {
   return !(via === "stopApproved") || (before.phase === "ReviewApproved" && after.phase === "ReviewStopped");
 }
 
-/** Story: Contact a member only after a recorded approval / Staff can stop an approved item before its reveal (spec/automatedReview.md) */
+/** Story: Contact a member only after a recorded approval / An open review closes unsent (spec/automatedReview.md) */
 //@ pure
-export function canStopApproved(r: AutomatedReview, revealed: boolean): boolean {
-  return contactApproved(r) && !revealed;
-}
-
-/** Story: Contact a member only after a recorded approval / Staff can stop an approved item before its reveal (spec/automatedReview.md) */
-//@ pure
-export function lawRevealedItemCannotBeStopped(revision: number): boolean {
-  //@ ensures \result === true
-  return !canStopApproved(({ phase: "ReviewApproved", revision: revision, approver: "JudgeApprover" } as AutomatedReview), true);
+export function canExpireReview(r: AutomatedReview, late: boolean): boolean {
+  return reviewOpen(r) && late;
 }
 
 /** Story: Contact a member only after a recorded approval / An open review closes unsent (spec/automatedReview.md) */
@@ -240,6 +246,12 @@ export function expireReview(r: AutomatedReview, late: boolean): AutomatedReview
 
 /** Story: Contact a member only after a recorded approval / An open review closes unsent (spec/automatedReview.md) */
 //@ pure
+export function canCloseReview(r: AutomatedReview): boolean {
+  return reviewOpen(r);
+}
+
+/** Story: Contact a member only after a recorded approval / An open review closes unsent (spec/automatedReview.md) */
+//@ pure
 export function closeReview(r: AutomatedReview): AutomatedReview {
   //@ ensures (inv(r) && canCloseReview(r)) ==> alwaysApprovalNamesApprover(\result)
   //@ ensures (inv(r) && canCloseReview(r)) ==> stepHeldItemNeedsStaff(r, "closeReview", \result)
@@ -247,6 +259,12 @@ export function closeReview(r: AutomatedReview): AutomatedReview {
   //@ ensures (inv(r) && canCloseReview(r)) ==> stepStopEndsOnlyAnApproval(r, "closeReview", \result)
   //@ ensures (inv(r) && canCloseReview(r)) ==> stepDecidedReviewStaysDecided(r, "closeReview", \result)
   return { ...r, phase: "ReviewInvalidated" };
+}
+
+/** Story: Contact a member only after a recorded approval / An open review closes unsent (spec/automatedReview.md) */
+//@ pure
+export function stepDecidedReviewStaysDecided(before: AutomatedReview, via: string, after: AutomatedReview): boolean {
+  return !(!reviewOpen(before) && !(before.phase === "ReviewApproved" && via === "stopApproved")) || equal_automatedReview(after, before);
 }
 
 /** Story: Contact a member only after a recorded approval / An open review closes unsent (spec/automatedReview.md) */
@@ -277,24 +295,6 @@ export function sometimesExpires(r: AutomatedReview): boolean {
 //@ pure
 export function sometimesStopped(r: AutomatedReview): boolean {
   return r.phase === "ReviewStopped";
-}
-
-/** Story: Contact a member only after a recorded approval / An open review closes unsent (spec/automatedReview.md) */
-//@ pure
-export function canExpireReview(r: AutomatedReview, late: boolean): boolean {
-  return reviewOpen(r) && late;
-}
-
-/** Story: Contact a member only after a recorded approval / An open review closes unsent (spec/automatedReview.md) */
-//@ pure
-export function canCloseReview(r: AutomatedReview): boolean {
-  return reviewOpen(r);
-}
-
-/** Story: Contact a member only after a recorded approval / An open review closes unsent (spec/automatedReview.md) */
-//@ pure
-export function stepDecidedReviewStaysDecided(before: AutomatedReview, via: string, after: AutomatedReview): boolean {
-  return !(!reviewOpen(before) && !(before.phase === "ReviewApproved" && via === "stopApproved")) || equal_automatedReview(after, before);
 }
 
 /** Story: Contact a member only after a recorded approval / A reply approves only when it is complete and consistent (spec/automatedReview.md) */
@@ -392,25 +392,6 @@ export function lawCallHasLeadTime(packetClean: boolean, priorFlag: boolean, pro
 
 /** Story: Contact a member only after a recorded approval / One judgment per packet for every replica (spec/automatedReview.md) */
 //@ pure
-export function lawLeaseOutlastsCall(callMs: number): boolean {
-  //@ ensures \result === true
-  return !(callMs <= judgeCallDeadlineMs) || exact_automatedReview(callMs + judgeLeaseMarginMs) <= judgeLeaseMs;
-}
-
-/** Story: Contact a member only after a recorded approval / One judgment per packet for every replica (spec/automatedReview.md) */
-//@ pure
-export function judgmentRetained(ageMs: number, openSafetyCase: boolean): boolean {
-  return openSafetyCase || ageMs < reviewJudgmentRetentionMs;
-}
-
-/** Story: Contact a member only after a recorded approval / One judgment per packet for every replica (spec/automatedReview.md) */
-//@ pure
-export function flaggedPairActive(ageMs: number): boolean {
-  return ageMs < flaggedPairRetentionMs;
-}
-
-/** Story: Contact a member only after a recorded approval / One judgment per packet for every replica (spec/automatedReview.md) */
-//@ pure
 export function judgeClaimDecision(rowExists: boolean, decided: boolean, claims: number, leaseExpired: boolean): JudgeClaim {
   return !rowExists ? "ClaimFirst" : (decided ? "UseStored" : (!leaseExpired ? "WaitForLease" : (claims < maxJudgeClaims ? "ClaimAgain" : "ClaimsSpent")));
 }
@@ -427,6 +408,25 @@ export function lawDecidedRowIsReused(claims: number, leaseExpired: boolean): bo
 export function lawClaimsAreBounded(claims: number): boolean {
   //@ ensures \result === true
   return !(claims >= maxJudgeClaims) || judgeClaimDecision(true, false, claims, true) === "ClaimsSpent";
+}
+
+/** Story: Contact a member only after a recorded approval / One judgment per packet for every replica (spec/automatedReview.md) */
+//@ pure
+export function lawLeaseOutlastsCall(callMs: number): boolean {
+  //@ ensures \result === true
+  return !(callMs <= judgeCallDeadlineMs) || exact_automatedReview(callMs + judgeLeaseMarginMs) <= judgeLeaseMs;
+}
+
+/** Story: Contact a member only after a recorded approval / One judgment per packet for every replica (spec/automatedReview.md) */
+//@ pure
+export function judgmentRetained(ageMs: number, openSafetyCase: boolean): boolean {
+  return openSafetyCase || ageMs < reviewJudgmentRetentionMs;
+}
+
+/** Story: Contact a member only after a recorded approval / One judgment per packet for every replica (spec/automatedReview.md) */
+//@ pure
+export function flaggedPairActive(ageMs: number): boolean {
+  return ageMs < flaggedPairRetentionMs;
 }
 
 /** Story: Contact a member only after a recorded approval / The simulator uses a deterministic stand-in judge (spec/automatedReview.md) */
@@ -449,13 +449,6 @@ export function simulatedStaffAction(ticket: number): SimStaffAction {
 
 /** Story: Contact a member only after a recorded approval / The simulator uses a deterministic stand-in judge (spec/automatedReview.md) */
 //@ pure
-export function lawStandInIsSilentSometimes(withExceptions: boolean): boolean {
-  //@ ensures \result === true
-  return !withExceptions || !simulatedJudgeAnswers(7, withExceptions);
-}
-
-/** Story: Contact a member only after a recorded approval / The simulator uses a deterministic stand-in judge (spec/automatedReview.md) */
-//@ pure
 export function lawStandInApprovesWithoutExceptions(ticket: number): boolean {
   //@ ensures \result === true
   return simulatedJudgeAnswers(ticket, false) && simulatedJudgeVerdict(ticket, false) === "JudgeApproves";
@@ -466,6 +459,13 @@ export function lawStandInApprovesWithoutExceptions(ticket: number): boolean {
 export function lawStandInHoldsSomeItems(withExceptions: boolean): boolean {
   //@ ensures \result === true
   return !withExceptions || simulatedJudgeVerdict(0, withExceptions) === "JudgeFlags";
+}
+
+/** Story: Contact a member only after a recorded approval / The simulator uses a deterministic stand-in judge (spec/automatedReview.md) */
+//@ pure
+export function lawStandInIsSilentSometimes(withExceptions: boolean): boolean {
+  //@ ensures \result === true
+  return !withExceptions || !simulatedJudgeAnswers(7, withExceptions);
 }
 
 /** Do the rules allow this event in this state? */

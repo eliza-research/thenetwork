@@ -2,9 +2,9 @@
 //@ backend dafny
 
 /** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
-export type PrivacyPhase = "AwaitingOperation" | "AwaitingLeaveConsent" | "AwaitingAppForget" | "AwaitingAccountOwner" | "AwaitingAccountCleanup" | "AwaitingAccountErasure" | "AwaitingAppExport" | "AwaitingConsentExport" | "CompletePrivacyRequest" | "RefusedPrivacyRequest";
-/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
 export type PrivacyOperation = "LeaveApp" | "DeleteAccount" | "ExportApp";
+/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
+export type PrivacyPhase = "AwaitingOperation" | "AwaitingLeaveConsent" | "AwaitingAppForget" | "AwaitingAccountOwner" | "AwaitingAccountCleanup" | "AwaitingAccountErasure" | "AwaitingAppExport" | "AwaitingConsentExport" | "CompletePrivacyRequest" | "RefusedPrivacyRequest";
 /** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
 export interface PrivacyRequest { phase: PrivacyPhase; operation: PrivacyOperation; optedOut: boolean; ownerChecked: boolean; cleanupDone: boolean; includeMembership: boolean; membershipBound: boolean }
 /** Story: Staff carry out an export or erasure request sent to support / A support export covers one app or every app, and an erasure covers every app (spec/accountPrivacy.md) */
@@ -16,40 +16,28 @@ export type PrivacySupportDecision = "SupportProceeds" | "SupportAlreadyDone" | 
 
 /** One variant per transition in the spec. */
 export type Event =
+  | { type: "beginPrivacyRequest"; operation: PrivacyOperation }
   | { type: "recordLeaveConsent"; recorded: boolean; membershipBound: boolean }
   | { type: "recordAppForget" }
-  | { type: "beginPrivacyRequest"; operation: PrivacyOperation }
   | { type: "checkErasureOwner"; authorityCurrent: boolean }
   | { type: "recordAccountCleanup" }
   | { type: "recordAccountErasure"; committed: boolean }
   | { type: "checkAppExport"; membershipBound: boolean }
   | { type: "recordConsentExport" };
 
+/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
+export const initial: PrivacyRequest = { phase: "AwaitingOperation", operation: "LeaveApp", optedOut: false, ownerChecked: false, cleanupDone: false, includeMembership: false, membershipBound: false };
 /** Story: Staff carry out an export or erasure request sent to support / Only a global admin with a stated reason opens or confirms a support request (spec/accountPrivacy.md) */
 export const privacySupportReasonMin: number = 5;
 /** Story: Staff carry out an export or erasure request sent to support / Only a global admin with a stated reason opens or confirms a support request (spec/accountPrivacy.md) */
 export const privacySupportReasonMax: number = 500;
 /** Story: Staff carry out an export or erasure request sent to support / Staff act only on the confirmed person after a fresh code from the number (spec/accountPrivacy.md) */
 export const privacySupportWindowMs: number = 1800000;
-/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
-export const initial: PrivacyRequest = { phase: "AwaitingOperation", operation: "LeaveApp", optedOut: false, ownerChecked: false, cleanupDone: false, includeMembership: false, membershipBound: false };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: PrivacyRequest): boolean {
   return alwaysLeaveRecordsConsent(current) && alwaysErasureRequiresCleanup(current) && alwaysExportNeedsMembership(current);
-}
-
-/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
-//@ pure
-export function hasScopedMembership(hasPerson: boolean, hasMembership: boolean, removed: boolean): boolean {
-  return hasPerson && hasMembership && !removed;
-}
-
-/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
-//@ pure
-export function appLeaveMemberCurrent(expectedMember: string, currentMember: string, joinedAt: number, requestedAt: number): boolean {
-  return expectedMember === "" || (expectedMember === currentMember && joinedAt <= requestedAt);
 }
 
 /** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
@@ -60,8 +48,29 @@ export function canBeginPrivacyRequest(privacy: PrivacyRequest): boolean {
 
 /** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
 //@ pure
+export function beginPrivacyRequest(privacy: PrivacyRequest, operation: PrivacyOperation): PrivacyRequest {
+  //@ ensures (inv(privacy) && canBeginPrivacyRequest(privacy)) ==> alwaysLeaveRecordsConsent(\result)
+  //@ ensures (inv(privacy) && canBeginPrivacyRequest(privacy)) ==> alwaysErasureRequiresCleanup(\result)
+  //@ ensures (inv(privacy) && canBeginPrivacyRequest(privacy)) ==> alwaysExportNeedsMembership(\result)
+  return { ...initial, operation: operation, phase: operation === "LeaveApp" ? "AwaitingLeaveConsent" : (operation === "DeleteAccount" ? "AwaitingAccountOwner" : "AwaitingAppExport") };
+}
+
+/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
+//@ pure
+export function hasScopedMembership(hasPerson: boolean, hasMembership: boolean, removed: boolean): boolean {
+  return hasPerson && hasMembership && !removed;
+}
+
+/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
+//@ pure
 export function appLeaveBindingCurrent(verifiedOwner: string, currentOwner: string, held: boolean, verifiedAt: number, requestedAt: number): boolean {
   return verifiedPrivacyOwnerMatches(verifiedOwner, currentOwner, held) && verifiedAt <= requestedAt;
+}
+
+/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
+//@ pure
+export function appLeaveMemberCurrent(expectedMember: string, currentMember: string, joinedAt: number, requestedAt: number): boolean {
+  return expectedMember === "" || (expectedMember === currentMember && joinedAt <= requestedAt);
 }
 
 /** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
@@ -81,6 +90,13 @@ export function recordLeaveConsent(privacy: PrivacyRequest, recorded: boolean, m
 
 /** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
 //@ pure
+export function lawLeaveNeverPredatesPhoneBinding(owner: string, verifiedAt: number, requestedAt: number): boolean {
+  //@ ensures \result === true
+  return !(requestedAt < verifiedAt) || !appLeaveBindingCurrent(owner, owner, false, verifiedAt, requestedAt);
+}
+
+/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
+//@ pure
 export function canRecordAppForget(privacy: PrivacyRequest): boolean {
   return privacy.phase === "AwaitingAppForget" && privacy.operation === "LeaveApp" && privacy.optedOut && privacy.membershipBound;
 }
@@ -92,22 +108,6 @@ export function recordAppForget(privacy: PrivacyRequest): PrivacyRequest {
   //@ ensures (inv(privacy) && canRecordAppForget(privacy)) ==> alwaysErasureRequiresCleanup(\result)
   //@ ensures (inv(privacy) && canRecordAppForget(privacy)) ==> alwaysExportNeedsMembership(\result)
   return { ...privacy, phase: "CompletePrivacyRequest" };
-}
-
-/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
-//@ pure
-export function beginPrivacyRequest(privacy: PrivacyRequest, operation: PrivacyOperation): PrivacyRequest {
-  //@ ensures (inv(privacy) && canBeginPrivacyRequest(privacy)) ==> alwaysLeaveRecordsConsent(\result)
-  //@ ensures (inv(privacy) && canBeginPrivacyRequest(privacy)) ==> alwaysErasureRequiresCleanup(\result)
-  //@ ensures (inv(privacy) && canBeginPrivacyRequest(privacy)) ==> alwaysExportNeedsMembership(\result)
-  return { ...initial, operation: operation, phase: operation === "LeaveApp" ? "AwaitingLeaveConsent" : (operation === "DeleteAccount" ? "AwaitingAccountOwner" : "AwaitingAppExport") };
-}
-
-/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
-//@ pure
-export function lawLeaveNeverPredatesPhoneBinding(owner: string, verifiedAt: number, requestedAt: number): boolean {
-  //@ ensures \result === true
-  return !(requestedAt < verifiedAt) || !appLeaveBindingCurrent(owner, owner, false, verifiedAt, requestedAt);
 }
 
 /** Story: Erase my account / Erasure follows the authorized person across a number change (spec/accountPrivacy.md) */
@@ -381,9 +381,9 @@ export function lawSupportUsesMemberOperation(operation: PrivacySupportOperation
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: PrivacyRequest, event: Event): boolean {
+  if (event.type === "beginPrivacyRequest") return canBeginPrivacyRequest(current);
   if (event.type === "recordLeaveConsent") return canRecordLeaveConsent(current);
   if (event.type === "recordAppForget") return canRecordAppForget(current);
-  if (event.type === "beginPrivacyRequest") return canBeginPrivacyRequest(current);
   if (event.type === "checkErasureOwner") return canCheckErasureOwner(current);
   if (event.type === "recordAccountCleanup") return canRecordAccountCleanup(current);
   if (event.type === "recordAccountErasure") return canRecordAccountErasure(current);
@@ -397,9 +397,9 @@ export function enabled(current: PrivacyRequest, event: Event): boolean {
 export function step(current: PrivacyRequest, event: Event): PrivacyRequest {
   //@ requires inv(current)
   //@ ensures inv(\result)
+  if (event.type === "beginPrivacyRequest") return canBeginPrivacyRequest(current) ? beginPrivacyRequest(current, event.operation) : current;
   if (event.type === "recordLeaveConsent") return canRecordLeaveConsent(current) ? recordLeaveConsent(current, event.recorded, event.membershipBound) : current;
   if (event.type === "recordAppForget") return canRecordAppForget(current) ? recordAppForget(current) : current;
-  if (event.type === "beginPrivacyRequest") return canBeginPrivacyRequest(current) ? beginPrivacyRequest(current, event.operation) : current;
   if (event.type === "checkErasureOwner") return canCheckErasureOwner(current) ? checkErasureOwner(current, event.authorityCurrent) : current;
   if (event.type === "recordAccountCleanup") return canRecordAccountCleanup(current) ? recordAccountCleanup(current) : current;
   if (event.type === "recordAccountErasure") return canRecordAccountErasure(current) ? recordAccountErasure(current, event.committed) : current;
@@ -422,9 +422,9 @@ export function parseEvent(x: unknown): Event | undefined {
     return undefined;
   }
   if (typeof raw !== "object" || raw === null) return undefined;
+  if (raw.type === "beginPrivacyRequest" && (raw.operation === "LeaveApp" || raw.operation === "DeleteAccount" || raw.operation === "ExportApp")) return { type: "beginPrivacyRequest", operation: raw.operation };
   if (raw.type === "recordLeaveConsent" && typeof raw.recorded === "boolean" && typeof raw.membershipBound === "boolean") return { type: "recordLeaveConsent", recorded: raw.recorded, membershipBound: raw.membershipBound };
   if (raw.type === "recordAppForget") return { type: "recordAppForget" };
-  if (raw.type === "beginPrivacyRequest" && (raw.operation === "LeaveApp" || raw.operation === "DeleteAccount" || raw.operation === "ExportApp")) return { type: "beginPrivacyRequest", operation: raw.operation };
   if (raw.type === "checkErasureOwner" && typeof raw.authorityCurrent === "boolean") return { type: "checkErasureOwner", authorityCurrent: raw.authorityCurrent };
   if (raw.type === "recordAccountCleanup") return { type: "recordAccountCleanup" };
   if (raw.type === "recordAccountErasure" && typeof raw.committed === "boolean") return { type: "recordAccountErasure", committed: raw.committed };

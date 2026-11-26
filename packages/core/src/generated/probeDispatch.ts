@@ -1,7 +1,7 @@
 // GENERATED from spec/probeDispatch.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { reviewLate as reviewDeadline_reviewLate, reviewRevisionCurrent as reviewDeadline_reviewRevisionCurrent, lawReviewDeadlineIsExclusive as reviewDeadline_lawReviewDeadlineIsExclusive, lawSeenReviewRevisionIsCurrent as reviewDeadline_lawSeenReviewRevisionIsCurrent, lawRerolledReviewIsStale as reviewDeadline_lawRerolledReviewIsStale } from "./reviewDeadline.ts";
-import { type UnlinkedCancellation as opportunityLifecycle_UnlinkedCancellation, type OpportunityPhase as opportunityLifecycle_OpportunityPhase, type OpportunityLifecycle as opportunityLifecycle_OpportunityLifecycle, groupCanContinue as opportunityLifecycle_groupCanContinue, acceptedProbeWithdrawalAllowed as opportunityLifecycle_acceptedProbeWithdrawalAllowed, bookedReplyDeclines as opportunityLifecycle_bookedReplyDeclines, playerBookingConfirmationAllowed as opportunityLifecycle_playerBookingConfirmationAllowed, recurrenceAllowed as opportunityLifecycle_recurrenceAllowed, canComplete as opportunityLifecycle_canComplete, complete as opportunityLifecycle_complete, canClose as opportunityLifecycle_canClose, close as opportunityLifecycle_close, stepTerminalOpportunityCannotReopen as opportunityLifecycle_stepTerminalOpportunityCannotReopen, sometimesCanBook as opportunityLifecycle_sometimesCanBook, sometimesCanComplete as opportunityLifecycle_sometimesCanComplete, sometimesCanCloseBeforeContact as opportunityLifecycle_sometimesCanCloseBeforeContact, releasesPartialAcceptance as opportunityLifecycle_releasesPartialAcceptance, stepRerollRequiresNewApproval as opportunityLifecycle_stepRerollRequiresNewApproval, releasesOnRequesterClose as opportunityLifecycle_releasesOnRequesterClose, alwaysContactStagesRequireApproval as opportunityLifecycle_alwaysContactStagesRequireApproval, canBook as opportunityLifecycle_canBook, book as opportunityLifecycle_book, lawAGroupNeedsAtLeastThree as opportunityLifecycle_lawAGroupNeedsAtLeastThree, acceptedProbeCanWithdraw as opportunityLifecycle_acceptedProbeCanWithdraw, lawAcceptedProbeWithdrawalNeedsExactMatch as opportunityLifecycle_lawAcceptedProbeWithdrawalNeedsExactMatch, bookedReplyCurrent as opportunityLifecycle_bookedReplyCurrent, initial as opportunityLifecycle_initial, unlinkedCancellation as opportunityLifecycle_unlinkedCancellation, lawSwapWithdrawalAloneDoesNotCancel as opportunityLifecycle_lawSwapWithdrawalAloneDoesNotCancel, lawKeepingTheBookingVetoesABookedDecline as opportunityLifecycle_lawKeepingTheBookingVetoesABookedDecline, canStartProbing as opportunityLifecycle_canStartProbing, lawPlayerCannotConfirmAStartedBooking as opportunityLifecycle_lawPlayerCannotConfirmAStartedBooking, lawPlayerCanConfirmOnlyThePromptBooking as opportunityLifecycle_lawPlayerCanConfirmOnlyThePromptBooking, lawCancellationRequestCannotConfirmPlayerAttendance as opportunityLifecycle_lawCancellationRequestCannotConfirmPlayerAttendance, lawPlayerAttendanceConfirmationNeedsAClearYes as opportunityLifecycle_lawPlayerAttendanceConfirmationNeedsAClearYes, closesForMinor as opportunityLifecycle_closesForMinor, bookedGroupCanContinue as opportunityLifecycle_bookedGroupCanContinue, startProbing as opportunityLifecycle_startProbing, canReroll as opportunityLifecycle_canReroll, minorCloseTellsAcceptor as opportunityLifecycle_minorCloseTellsAcceptor, reroll as opportunityLifecycle_reroll, lawNoRecurrenceThatAMinorKnows as opportunityLifecycle_lawNoRecurrenceThatAMinorKnows, lawReleaseNeedsAContactedAcceptor as opportunityLifecycle_lawReleaseNeedsAContactedAcceptor, lawRequesterCloseNeverReleasesTheRequester as opportunityLifecycle_lawRequesterCloseNeverReleasesTheRequester, lawRequesterCloseReleasesOnlyAContactedAcceptor as opportunityLifecycle_lawRequesterCloseReleasesOnlyAContactedAcceptor, lawPairLeftFromGroupNeedsFreshConsent as opportunityLifecycle_lawPairLeftFromGroupNeedsFreshConsent, lawBookedReplyRequiresCurrentConsent as opportunityLifecycle_lawBookedReplyRequiresCurrentConsent, upcomingCancellationEligible as opportunityLifecycle_upcomingCancellationEligible, lawUnlinkedCancellationNeedsOneMatch as opportunityLifecycle_lawUnlinkedCancellationNeedsOneMatch, lawNamedCancellationCanSelectWithPendingReply as opportunityLifecycle_lawNamedCancellationCanSelectWithPendingReply, lawAskedMinorClosesABookedOpportunity as opportunityLifecycle_lawAskedMinorClosesABookedOpportunity, lawMinorOnTheRosterClosesABookedOpportunity as opportunityLifecycle_lawMinorOnTheRosterClosesABookedOpportunity, lawAMinorNeverLeavesABookedGroupRunning as opportunityLifecycle_lawAMinorNeverLeavesABookedGroupRunning, lawOtherDropsKeepTheGroupRule as opportunityLifecycle_lawOtherDropsKeepTheGroupRule, lawNoMinorCloseWithoutAMinorSignal as opportunityLifecycle_lawNoMinorCloseWithoutAMinorSignal, lawMinorContactClosesAnUnbookedOpportunity as opportunityLifecycle_lawMinorContactClosesAnUnbookedOpportunity, lawMinorCloseNeverTellsTheMinor as opportunityLifecycle_lawMinorCloseNeverTellsTheMinor, closesForBlock as opportunityLifecycle_closesForBlock, lawStartedBookingCannotBeSelected as opportunityLifecycle_lawStartedBookingCannotBeSelected, lawBlockClosesOnlyAnActivePair as opportunityLifecycle_lawBlockClosesOnlyAnActivePair } from "./opportunityLifecycle.ts";
+import { type OpportunityPhase as opportunityLifecycle_OpportunityPhase, type OpportunityLifecycle as opportunityLifecycle_OpportunityLifecycle, type UnlinkedCancellation as opportunityLifecycle_UnlinkedCancellation, initial as opportunityLifecycle_initial, canStartProbing as opportunityLifecycle_canStartProbing, startProbing as opportunityLifecycle_startProbing, canReroll as opportunityLifecycle_canReroll, reroll as opportunityLifecycle_reroll, stepRerollRequiresNewApproval as opportunityLifecycle_stepRerollRequiresNewApproval, alwaysContactStagesRequireApproval as opportunityLifecycle_alwaysContactStagesRequireApproval, canBook as opportunityLifecycle_canBook, book as opportunityLifecycle_book, groupCanContinue as opportunityLifecycle_groupCanContinue, lawAGroupNeedsAtLeastThree as opportunityLifecycle_lawAGroupNeedsAtLeastThree, lawPairLeftFromGroupNeedsFreshConsent as opportunityLifecycle_lawPairLeftFromGroupNeedsFreshConsent, acceptedProbeCanWithdraw as opportunityLifecycle_acceptedProbeCanWithdraw, acceptedProbeWithdrawalAllowed as opportunityLifecycle_acceptedProbeWithdrawalAllowed, lawAcceptedProbeWithdrawalNeedsExactMatch as opportunityLifecycle_lawAcceptedProbeWithdrawalNeedsExactMatch, bookedReplyCurrent as opportunityLifecycle_bookedReplyCurrent, lawBookedReplyRequiresCurrentConsent as opportunityLifecycle_lawBookedReplyRequiresCurrentConsent, upcomingCancellationEligible as opportunityLifecycle_upcomingCancellationEligible, unlinkedCancellation as opportunityLifecycle_unlinkedCancellation, lawUnlinkedCancellationNeedsOneMatch as opportunityLifecycle_lawUnlinkedCancellationNeedsOneMatch, lawNamedCancellationCanSelectWithPendingReply as opportunityLifecycle_lawNamedCancellationCanSelectWithPendingReply, lawStartedBookingCannotBeSelected as opportunityLifecycle_lawStartedBookingCannotBeSelected, bookedReplyDeclines as opportunityLifecycle_bookedReplyDeclines, lawSwapWithdrawalAloneDoesNotCancel as opportunityLifecycle_lawSwapWithdrawalAloneDoesNotCancel, lawKeepingTheBookingVetoesABookedDecline as opportunityLifecycle_lawKeepingTheBookingVetoesABookedDecline, playerBookingConfirmationAllowed as opportunityLifecycle_playerBookingConfirmationAllowed, lawPlayerCannotConfirmAStartedBooking as opportunityLifecycle_lawPlayerCannotConfirmAStartedBooking, lawPlayerCanConfirmOnlyThePromptBooking as opportunityLifecycle_lawPlayerCanConfirmOnlyThePromptBooking, lawCancellationRequestCannotConfirmPlayerAttendance as opportunityLifecycle_lawCancellationRequestCannotConfirmPlayerAttendance, lawPlayerAttendanceConfirmationNeedsAClearYes as opportunityLifecycle_lawPlayerAttendanceConfirmationNeedsAClearYes, closesForMinor as opportunityLifecycle_closesForMinor, bookedGroupCanContinue as opportunityLifecycle_bookedGroupCanContinue, lawAskedMinorClosesABookedOpportunity as opportunityLifecycle_lawAskedMinorClosesABookedOpportunity, lawMinorOnTheRosterClosesABookedOpportunity as opportunityLifecycle_lawMinorOnTheRosterClosesABookedOpportunity, lawAMinorNeverLeavesABookedGroupRunning as opportunityLifecycle_lawAMinorNeverLeavesABookedGroupRunning, lawOtherDropsKeepTheGroupRule as opportunityLifecycle_lawOtherDropsKeepTheGroupRule, lawNoMinorCloseWithoutAMinorSignal as opportunityLifecycle_lawNoMinorCloseWithoutAMinorSignal, lawMinorContactClosesAnUnbookedOpportunity as opportunityLifecycle_lawMinorContactClosesAnUnbookedOpportunity, minorCloseTellsAcceptor as opportunityLifecycle_minorCloseTellsAcceptor, lawMinorCloseNeverTellsTheMinor as opportunityLifecycle_lawMinorCloseNeverTellsTheMinor, recurrenceAllowed as opportunityLifecycle_recurrenceAllowed, lawNoRecurrenceThatAMinorKnows as opportunityLifecycle_lawNoRecurrenceThatAMinorKnows, closesForBlock as opportunityLifecycle_closesForBlock, lawBlockClosesOnlyAnActivePair as opportunityLifecycle_lawBlockClosesOnlyAnActivePair, canComplete as opportunityLifecycle_canComplete, complete as opportunityLifecycle_complete, canClose as opportunityLifecycle_canClose, close as opportunityLifecycle_close, stepTerminalOpportunityCannotReopen as opportunityLifecycle_stepTerminalOpportunityCannotReopen, sometimesCanBook as opportunityLifecycle_sometimesCanBook, sometimesCanComplete as opportunityLifecycle_sometimesCanComplete, sometimesCanCloseBeforeContact as opportunityLifecycle_sometimesCanCloseBeforeContact, releasesPartialAcceptance as opportunityLifecycle_releasesPartialAcceptance, lawReleaseNeedsAContactedAcceptor as opportunityLifecycle_lawReleaseNeedsAContactedAcceptor, releasesOnRequesterClose as opportunityLifecycle_releasesOnRequesterClose, lawRequesterCloseNeverReleasesTheRequester as opportunityLifecycle_lawRequesterCloseNeverReleasesTheRequester, lawRequesterCloseReleasesOnlyAContactedAcceptor as opportunityLifecycle_lawRequesterCloseReleasesOnlyAContactedAcceptor } from "./opportunityLifecycle.ts";
+import { reviewLate as reviewDeadline_reviewLate, lawReviewDeadlineIsExclusive as reviewDeadline_lawReviewDeadlineIsExclusive, reviewRevisionCurrent as reviewDeadline_reviewRevisionCurrent, lawSeenReviewRevisionIsCurrent as reviewDeadline_lawSeenReviewRevisionIsCurrent, lawRerolledReviewIsStale as reviewDeadline_lawRerolledReviewIsStale } from "./reviewDeadline.ts";
 
 /** Story: Hear about one reviewed opportunity at a time / The first participant opens the later turns (spec/probeDispatch.md) */
 export type ProbePhase = "Queued" | "AwaitingReply" | "Available" | "Unavailable" | "OutsideProbe";
@@ -27,50 +27,22 @@ export type Event =
   | { type: "recordReply"; agreed: boolean }
   | { type: "offerOtherTimes"; hasFreshTimes: boolean }
   | { type: "expireProbe"; expired: boolean; timeQuestion: boolean }
-  | { type: "joinRoster"; roster: number }
-  | { type: "changeRoster"; requester: boolean };
+  | { type: "changeRoster"; requester: boolean }
+  | { type: "joinRoster"; roster: number };
 
+/** Story: Hear about one reviewed opportunity at a time / The first participant opens the later turns (spec/probeDispatch.md) */
+export const initial: ParticipantProbe = { phase: "Queued", roster: 0, about: 0, told: false };
 /** Story: Hear about one reviewed opportunity at a time / Wait for the member's send window and current availability (spec/probeDispatch.md) */
 export const questionHoldMs: number = exact_probeDispatch(24 * 3600000);
 /** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md) */
 export const genericProbeResponseMs: number = exact_probeDispatch(48 * 3600000);
 /** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md) */
 export const shortProbeResponseMs: number = exact_probeDispatch(24 * 3600000);
-/** Story: Hear about one reviewed opportunity at a time / The first participant opens the later turns (spec/probeDispatch.md) */
-export const initial: ParticipantProbe = { phase: "Queued", roster: 0, about: 0, told: false };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: ParticipantProbe): boolean {
   return alwaysAnOpenTurnIsAboutTheCurrentRoster(current) && alwaysAQueuedTurnHasNoProbe(current) && alwaysTheAnswerIsNotAheadOfTheRoster(current);
-}
-
-/** Story: Hear about one reviewed opportunity at a time / The first participant opens the later turns (spec/probeDispatch.md) */
-//@ pure
-export function usePriorIntent(participant: ParticipantProbe, primed: boolean, contacted: boolean, needsTimes: boolean): ParticipantProbe {
-  //@ ensures (inv(participant) && canUsePriorIntent(participant, primed, contacted, needsTimes)) ==> alwaysAnOpenTurnIsAboutTheCurrentRoster(\result)
-  //@ ensures (inv(participant) && canUsePriorIntent(participant, primed, contacted, needsTimes)) ==> alwaysAQueuedTurnHasNoProbe(\result)
-  //@ ensures (inv(participant) && canUsePriorIntent(participant, primed, contacted, needsTimes)) ==> alwaysTheAnswerIsNotAheadOfTheRoster(\result)
-  //@ ensures (inv(participant) && canUsePriorIntent(participant, primed, contacted, needsTimes)) ==> stepUnavailableNeverReopens(participant, \result)
-  //@ ensures (inv(participant) && canUsePriorIntent(participant, primed, contacted, needsTimes)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "usePriorIntent", \result)
-  //@ ensures (inv(participant) && canUsePriorIntent(participant, primed, contacted, needsTimes)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "usePriorIntent", \result)
-  //@ ensures (inv(participant) && canUsePriorIntent(participant, primed, contacted, needsTimes)) ==> stepARosterChangeVoidsEveryEarlierProbe(participant, "usePriorIntent", \result)
-  //@ ensures (inv(participant) && canUsePriorIntent(participant, primed, contacted, needsTimes)) ==> stepARosterChangeVoidsOrCarriesEveryEarlierYes(participant, "usePriorIntent", \result)
-  return { ...participant, phase: "Available", about: participant.roster, told: false };
-}
-
-/** Story: Hear about one reviewed opportunity at a time / The first participant opens the later turns (spec/probeDispatch.md) */
-//@ pure
-export function openTurn(participant: ParticipantProbe, first: boolean, firstAvailable: boolean): ParticipantProbe {
-  //@ ensures (inv(participant) && canOpenTurn(participant, first, firstAvailable)) ==> alwaysAnOpenTurnIsAboutTheCurrentRoster(\result)
-  //@ ensures (inv(participant) && canOpenTurn(participant, first, firstAvailable)) ==> alwaysAQueuedTurnHasNoProbe(\result)
-  //@ ensures (inv(participant) && canOpenTurn(participant, first, firstAvailable)) ==> alwaysTheAnswerIsNotAheadOfTheRoster(\result)
-  //@ ensures (inv(participant) && canOpenTurn(participant, first, firstAvailable)) ==> stepUnavailableNeverReopens(participant, \result)
-  //@ ensures (inv(participant) && canOpenTurn(participant, first, firstAvailable)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "openTurn", \result)
-  //@ ensures (inv(participant) && canOpenTurn(participant, first, firstAvailable)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "openTurn", \result)
-  //@ ensures (inv(participant) && canOpenTurn(participant, first, firstAvailable)) ==> stepARosterChangeVoidsEveryEarlierProbe(participant, "openTurn", \result)
-  //@ ensures (inv(participant) && canOpenTurn(participant, first, firstAvailable)) ==> stepARosterChangeVoidsOrCarriesEveryEarlierYes(participant, "openTurn", \result)
-  return { ...participant, phase: "AwaitingReply", about: participant.roster, told: false };
 }
 
 /** Story: Hear about one reviewed opportunity at a time / The first participant opens the later turns (spec/probeDispatch.md) */
@@ -81,14 +53,34 @@ export function probePending(participant: ParticipantProbe): boolean {
 
 /** Story: Hear about one reviewed opportunity at a time / The first participant opens the later turns (spec/probeDispatch.md) */
 //@ pure
-export function turnReached(participant: ParticipantProbe, first: boolean, firstAvailable: boolean): boolean {
-  return probePending(participant) && (first || firstAvailable);
+export function mayUsePriorIntent(participant: ParticipantProbe, primed: boolean, contacted: boolean): boolean {
+  return probePending(participant) && !participant.told && primed && !contacted;
 }
 
 /** Story: Hear about one reviewed opportunity at a time / The first participant opens the later turns (spec/probeDispatch.md) */
 //@ pure
-export function mayUsePriorIntent(participant: ParticipantProbe, primed: boolean, contacted: boolean): boolean {
-  return probePending(participant) && !participant.told && primed && !contacted;
+export function canUsePriorIntent(participant: ParticipantProbe, primed: boolean, contacted: boolean, needsTimes: boolean): boolean {
+  return mayUsePriorIntent(participant, primed, contacted) && !needsTimes;
+}
+
+/** Story: Hear about one reviewed opportunity at a time / The first participant opens the later turns (spec/probeDispatch.md) */
+//@ pure
+export function usePriorIntent(participant: ParticipantProbe, primed: boolean, contacted: boolean, needsTimes: boolean): ParticipantProbe {
+  //@ ensures (inv(participant) && canUsePriorIntent(participant, primed, contacted, needsTimes)) ==> alwaysAnOpenTurnIsAboutTheCurrentRoster(\result)
+  //@ ensures (inv(participant) && canUsePriorIntent(participant, primed, contacted, needsTimes)) ==> alwaysAQueuedTurnHasNoProbe(\result)
+  //@ ensures (inv(participant) && canUsePriorIntent(participant, primed, contacted, needsTimes)) ==> alwaysTheAnswerIsNotAheadOfTheRoster(\result)
+  //@ ensures (inv(participant) && canUsePriorIntent(participant, primed, contacted, needsTimes)) ==> stepUnavailableNeverReopens(participant, \result)
+  //@ ensures (inv(participant) && canUsePriorIntent(participant, primed, contacted, needsTimes)) ==> stepARosterChangeVoidsEveryEarlierProbe(participant, "usePriorIntent", \result)
+  //@ ensures (inv(participant) && canUsePriorIntent(participant, primed, contacted, needsTimes)) ==> stepARosterChangeVoidsOrCarriesEveryEarlierYes(participant, "usePriorIntent", \result)
+  //@ ensures (inv(participant) && canUsePriorIntent(participant, primed, contacted, needsTimes)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "usePriorIntent", \result)
+  //@ ensures (inv(participant) && canUsePriorIntent(participant, primed, contacted, needsTimes)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "usePriorIntent", \result)
+  return { ...participant, phase: "Available", about: participant.roster, told: false };
+}
+
+/** Story: Hear about one reviewed opportunity at a time / The first participant opens the later turns (spec/probeDispatch.md) */
+//@ pure
+export function turnReached(participant: ParticipantProbe, first: boolean, firstAvailable: boolean): boolean {
+  return probePending(participant) && (first || firstAvailable);
 }
 
 /** Story: Hear about one reviewed opportunity at a time / The first participant opens the later turns (spec/probeDispatch.md) */
@@ -99,15 +91,49 @@ export function canOpenTurn(participant: ParticipantProbe, first: boolean, first
 
 /** Story: Hear about one reviewed opportunity at a time / The first participant opens the later turns (spec/probeDispatch.md) */
 //@ pure
+export function openTurn(participant: ParticipantProbe, first: boolean, firstAvailable: boolean): ParticipantProbe {
+  //@ ensures (inv(participant) && canOpenTurn(participant, first, firstAvailable)) ==> alwaysAnOpenTurnIsAboutTheCurrentRoster(\result)
+  //@ ensures (inv(participant) && canOpenTurn(participant, first, firstAvailable)) ==> alwaysAQueuedTurnHasNoProbe(\result)
+  //@ ensures (inv(participant) && canOpenTurn(participant, first, firstAvailable)) ==> alwaysTheAnswerIsNotAheadOfTheRoster(\result)
+  //@ ensures (inv(participant) && canOpenTurn(participant, first, firstAvailable)) ==> stepUnavailableNeverReopens(participant, \result)
+  //@ ensures (inv(participant) && canOpenTurn(participant, first, firstAvailable)) ==> stepARosterChangeVoidsEveryEarlierProbe(participant, "openTurn", \result)
+  //@ ensures (inv(participant) && canOpenTurn(participant, first, firstAvailable)) ==> stepARosterChangeVoidsOrCarriesEveryEarlierYes(participant, "openTurn", \result)
+  //@ ensures (inv(participant) && canOpenTurn(participant, first, firstAvailable)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "openTurn", \result)
+  //@ ensures (inv(participant) && canOpenTurn(participant, first, firstAvailable)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "openTurn", \result)
+  return { ...participant, phase: "AwaitingReply", about: participant.roster, told: false };
+}
+
+/** Story: Hear about one reviewed opportunity at a time / The first participant opens the later turns (spec/probeDispatch.md) */
+//@ pure
 export function lawLaterTurnRequiresFirst(participant: ParticipantProbe): boolean {
   //@ ensures \result === true
   return !turnReached(participant, false, false);
 }
 
-/** Story: Hear about one reviewed opportunity at a time / The first participant opens the later turns (spec/probeDispatch.md) */
+/** Story: Hear about one reviewed opportunity at a time / Wait for the member's send window and current availability (spec/probeDispatch.md) */
 //@ pure
-export function canUsePriorIntent(participant: ParticipantProbe, primed: boolean, contacted: boolean, needsTimes: boolean): boolean {
-  return mayUsePriorIntent(participant, primed, contacted) && !needsTimes;
+export function needsProbeSend(participant: ParticipantProbe): boolean {
+  return participant.phase === "AwaitingReply" && !participant.told;
+}
+
+/** Story: Hear about one reviewed opportunity at a time / Wait for the member's send window and current availability (spec/probeDispatch.md) */
+//@ pure
+export function canRecordProbeSent(participant: ParticipantProbe): boolean {
+  return needsProbeSend(participant);
+}
+
+/** Story: Hear about one reviewed opportunity at a time / Wait for the member's send window and current availability (spec/probeDispatch.md) */
+//@ pure
+export function recordProbeSent(participant: ParticipantProbe): ParticipantProbe {
+  //@ ensures (inv(participant) && canRecordProbeSent(participant)) ==> alwaysAnOpenTurnIsAboutTheCurrentRoster(\result)
+  //@ ensures (inv(participant) && canRecordProbeSent(participant)) ==> alwaysAQueuedTurnHasNoProbe(\result)
+  //@ ensures (inv(participant) && canRecordProbeSent(participant)) ==> alwaysTheAnswerIsNotAheadOfTheRoster(\result)
+  //@ ensures (inv(participant) && canRecordProbeSent(participant)) ==> stepUnavailableNeverReopens(participant, \result)
+  //@ ensures (inv(participant) && canRecordProbeSent(participant)) ==> stepARosterChangeVoidsEveryEarlierProbe(participant, "recordProbeSent", \result)
+  //@ ensures (inv(participant) && canRecordProbeSent(participant)) ==> stepARosterChangeVoidsOrCarriesEveryEarlierYes(participant, "recordProbeSent", \result)
+  //@ ensures (inv(participant) && canRecordProbeSent(participant)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "recordProbeSent", \result)
+  //@ ensures (inv(participant) && canRecordProbeSent(participant)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "recordProbeSent", \result)
+  return { ...participant, told: true };
 }
 
 /** Story: Hear about one reviewed opportunity at a time / Wait for the member's send window and current availability (spec/probeDispatch.md) */
@@ -124,28 +150,15 @@ export function probeQuestionHoldUntil(askedAt: number): number {
 
 /** Story: Hear about one reviewed opportunity at a time / Wait for the member's send window and current availability (spec/probeDispatch.md) */
 //@ pure
-export function needsProbeSend(participant: ParticipantProbe): boolean {
-  return participant.phase === "AwaitingReply" && !participant.told;
-}
-
-/** Story: Hear about one reviewed opportunity at a time / Wait for the member's send window and current availability (spec/probeDispatch.md) */
-//@ pure
-export function recordProbeSent(participant: ParticipantProbe): ParticipantProbe {
-  //@ ensures (inv(participant) && canRecordProbeSent(participant)) ==> alwaysAnOpenTurnIsAboutTheCurrentRoster(\result)
-  //@ ensures (inv(participant) && canRecordProbeSent(participant)) ==> alwaysAQueuedTurnHasNoProbe(\result)
-  //@ ensures (inv(participant) && canRecordProbeSent(participant)) ==> alwaysTheAnswerIsNotAheadOfTheRoster(\result)
-  //@ ensures (inv(participant) && canRecordProbeSent(participant)) ==> stepUnavailableNeverReopens(participant, \result)
-  //@ ensures (inv(participant) && canRecordProbeSent(participant)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "recordProbeSent", \result)
-  //@ ensures (inv(participant) && canRecordProbeSent(participant)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "recordProbeSent", \result)
-  //@ ensures (inv(participant) && canRecordProbeSent(participant)) ==> stepARosterChangeVoidsEveryEarlierProbe(participant, "recordProbeSent", \result)
-  //@ ensures (inv(participant) && canRecordProbeSent(participant)) ==> stepARosterChangeVoidsOrCarriesEveryEarlierYes(participant, "recordProbeSent", \result)
-  return { ...participant, told: true };
-}
-
-/** Story: Hear about one reviewed opportunity at a time / Wait for the member's send window and current availability (spec/probeDispatch.md) */
-//@ pure
 export function probeTiming(questionOpen: boolean, windowOpen: boolean): ProbeTiming {
   return questionOpen ? "WaitForQuestion" : (!windowOpen ? "WaitForWindow" : "CheckAvailability");
+}
+
+/** Story: Hear about one reviewed opportunity at a time / Wait for the member's send window and current availability (spec/probeDispatch.md) */
+//@ pure
+export function lawProbeWaitsForOpenQuestion(windowOpen: boolean): boolean {
+  //@ ensures \result === true
+  return probeTiming(true, windowOpen) === "WaitForQuestion";
 }
 
 /** Story: Hear about one reviewed opportunity at a time / Wait for the member's send window and current availability (spec/probeDispatch.md) */
@@ -167,48 +180,17 @@ export function markUnavailable(participant: ParticipantProbe): ParticipantProbe
   //@ ensures (inv(participant) && canMarkUnavailable(participant)) ==> alwaysAQueuedTurnHasNoProbe(\result)
   //@ ensures (inv(participant) && canMarkUnavailable(participant)) ==> alwaysTheAnswerIsNotAheadOfTheRoster(\result)
   //@ ensures (inv(participant) && canMarkUnavailable(participant)) ==> stepUnavailableNeverReopens(participant, \result)
-  //@ ensures (inv(participant) && canMarkUnavailable(participant)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "markUnavailable", \result)
-  //@ ensures (inv(participant) && canMarkUnavailable(participant)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "markUnavailable", \result)
   //@ ensures (inv(participant) && canMarkUnavailable(participant)) ==> stepARosterChangeVoidsEveryEarlierProbe(participant, "markUnavailable", \result)
   //@ ensures (inv(participant) && canMarkUnavailable(participant)) ==> stepARosterChangeVoidsOrCarriesEveryEarlierYes(participant, "markUnavailable", \result)
+  //@ ensures (inv(participant) && canMarkUnavailable(participant)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "markUnavailable", \result)
+  //@ ensures (inv(participant) && canMarkUnavailable(participant)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "markUnavailable", \result)
   return { ...participant, phase: "Unavailable" };
-}
-
-/** Story: Hear about one reviewed opportunity at a time / Wait for the member's send window and current availability (spec/probeDispatch.md) */
-//@ pure
-export function canRecordProbeSent(participant: ParticipantProbe): boolean {
-  return needsProbeSend(participant);
-}
-
-/** Story: Hear about one reviewed opportunity at a time / Wait for the member's send window and current availability (spec/probeDispatch.md) */
-//@ pure
-export function lawProbeWaitsForOpenQuestion(windowOpen: boolean): boolean {
-  //@ ensures \result === true
-  return probeTiming(true, windowOpen) === "WaitForQuestion";
 }
 
 /** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md) */
 //@ pure
 export function probeResponseMs(slop: boolean, timeQuestion: boolean): number {
   return slop || timeQuestion ? shortProbeResponseMs : genericProbeResponseMs;
-}
-
-/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md) */
-//@ pure
-export function needsOtherTimes(offeredTimes: boolean, pickedTimes: boolean): boolean {
-  return offeredTimes && !pickedTimes;
-}
-
-/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md) */
-//@ pure
-export function probeExpiryDeadline(sent: boolean, responseDeadline: number, sendDeadline: number): number {
-  return sent ? responseDeadline : sendDeadline;
-}
-
-/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md) */
-//@ pure
-export function probeExpired(asOf: number, deadline: number): boolean {
-  return asOf >= deadline;
 }
 
 /** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md) */
@@ -245,11 +227,17 @@ export function recordReply(participant: ParticipantProbe, agreed: boolean): Par
   //@ ensures (inv(participant) && canRecordReply(participant)) ==> alwaysAQueuedTurnHasNoProbe(\result)
   //@ ensures (inv(participant) && canRecordReply(participant)) ==> alwaysTheAnswerIsNotAheadOfTheRoster(\result)
   //@ ensures (inv(participant) && canRecordReply(participant)) ==> stepUnavailableNeverReopens(participant, \result)
-  //@ ensures (inv(participant) && canRecordReply(participant)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "recordReply", \result)
-  //@ ensures (inv(participant) && canRecordReply(participant)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "recordReply", \result)
   //@ ensures (inv(participant) && canRecordReply(participant)) ==> stepARosterChangeVoidsEveryEarlierProbe(participant, "recordReply", \result)
   //@ ensures (inv(participant) && canRecordReply(participant)) ==> stepARosterChangeVoidsOrCarriesEveryEarlierYes(participant, "recordReply", \result)
+  //@ ensures (inv(participant) && canRecordReply(participant)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "recordReply", \result)
+  //@ ensures (inv(participant) && canRecordReply(participant)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "recordReply", \result)
   return { ...participant, phase: agreed ? "Available" : "Unavailable" };
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md) */
+//@ pure
+export function needsOtherTimes(offeredTimes: boolean, pickedTimes: boolean): boolean {
+  return offeredTimes && !pickedTimes;
 }
 
 /** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md) */
@@ -271,11 +259,23 @@ export function offerOtherTimes(participant: ParticipantProbe, hasFreshTimes: bo
   //@ ensures (inv(participant) && canOfferOtherTimes(participant, hasFreshTimes)) ==> alwaysAQueuedTurnHasNoProbe(\result)
   //@ ensures (inv(participant) && canOfferOtherTimes(participant, hasFreshTimes)) ==> alwaysTheAnswerIsNotAheadOfTheRoster(\result)
   //@ ensures (inv(participant) && canOfferOtherTimes(participant, hasFreshTimes)) ==> stepUnavailableNeverReopens(participant, \result)
-  //@ ensures (inv(participant) && canOfferOtherTimes(participant, hasFreshTimes)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "offerOtherTimes", \result)
-  //@ ensures (inv(participant) && canOfferOtherTimes(participant, hasFreshTimes)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "offerOtherTimes", \result)
   //@ ensures (inv(participant) && canOfferOtherTimes(participant, hasFreshTimes)) ==> stepARosterChangeVoidsEveryEarlierProbe(participant, "offerOtherTimes", \result)
   //@ ensures (inv(participant) && canOfferOtherTimes(participant, hasFreshTimes)) ==> stepARosterChangeVoidsOrCarriesEveryEarlierYes(participant, "offerOtherTimes", \result)
+  //@ ensures (inv(participant) && canOfferOtherTimes(participant, hasFreshTimes)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "offerOtherTimes", \result)
+  //@ ensures (inv(participant) && canOfferOtherTimes(participant, hasFreshTimes)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "offerOtherTimes", \result)
   return { ...participant, phase: "AwaitingReply" };
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md) */
+//@ pure
+export function probeExpiryDeadline(sent: boolean, responseDeadline: number, sendDeadline: number): number {
+  return sent ? responseDeadline : sendDeadline;
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md) */
+//@ pure
+export function probeExpired(asOf: number, deadline: number): boolean {
+  return asOf >= deadline;
 }
 
 /** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md) */
@@ -291,10 +291,10 @@ export function expireProbe(participant: ParticipantProbe, expired: boolean, tim
   //@ ensures (inv(participant) && canExpireProbe(participant, expired)) ==> alwaysAQueuedTurnHasNoProbe(\result)
   //@ ensures (inv(participant) && canExpireProbe(participant, expired)) ==> alwaysTheAnswerIsNotAheadOfTheRoster(\result)
   //@ ensures (inv(participant) && canExpireProbe(participant, expired)) ==> stepUnavailableNeverReopens(participant, \result)
-  //@ ensures (inv(participant) && canExpireProbe(participant, expired)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "expireProbe", \result)
-  //@ ensures (inv(participant) && canExpireProbe(participant, expired)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "expireProbe", \result)
   //@ ensures (inv(participant) && canExpireProbe(participant, expired)) ==> stepARosterChangeVoidsEveryEarlierProbe(participant, "expireProbe", \result)
   //@ ensures (inv(participant) && canExpireProbe(participant, expired)) ==> stepARosterChangeVoidsOrCarriesEveryEarlierYes(participant, "expireProbe", \result)
+  //@ ensures (inv(participant) && canExpireProbe(participant, expired)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "expireProbe", \result)
+  //@ ensures (inv(participant) && canExpireProbe(participant, expired)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "expireProbe", \result)
   return { ...participant, phase: timeQuestion ? "Available" : "Unavailable" };
 }
 
@@ -331,6 +331,12 @@ export function lawSlopProbeNeedsAcceptance(direct: boolean, receivedAt: number,
 
 /** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
 //@ pure
+export function replacementRoute(probing: boolean, requesterOut: boolean, managerOut: boolean): ReplacementRoute {
+  return !probing ? "IgnoreReplacement" : (requesterOut ? "CloseRequester" : (managerOut ? "CloseManager" : "FindAlternate"));
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
+//@ pure
 export function mayTryAlternate(alternatesRemain: boolean, replaced: number): boolean {
   return alternatesRemain && replaced < 3;
 }
@@ -343,33 +349,8 @@ export function alternateAllowed(eligible: boolean, sameFirstName: boolean, conf
 
 /** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
 //@ pure
-export function replacementJudged(rosterListed: boolean): boolean {
-  return rosterListed;
-}
-
-/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
-//@ pure
-export function replacementRoute(probing: boolean, requesterOut: boolean, managerOut: boolean): ReplacementRoute {
-  return !probing ? "IgnoreReplacement" : (requesterOut ? "CloseRequester" : (managerOut ? "CloseManager" : "FindAlternate"));
-}
-
-/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
-//@ pure
 export function groupMayRemainWithoutAlternate(group: boolean, remaining: number): boolean {
   return group && opportunityLifecycle_groupCanContinue(remaining);
-}
-
-/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
-//@ pure
-export function noAlternateRoute(group: boolean, remaining: number): NoAlternateRoute {
-  return group && remaining >= 3 ? "ContinueGroup" : "CloseWithoutAlternate";
-}
-
-/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
-//@ pure
-export function lawUnjudgedRosterNeverProbes(rosterListed: boolean): boolean {
-  //@ ensures \result === true
-  return !(!rosterListed) || !replacementJudged(rosterListed);
 }
 
 /** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
@@ -388,6 +369,12 @@ export function lawRequiredParticipantCannotBeReplaced(probing: boolean, request
 
 /** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
 //@ pure
+export function noAlternateRoute(group: boolean, remaining: number): NoAlternateRoute {
+  return group && remaining >= 3 ? "ContinueGroup" : "CloseWithoutAlternate";
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
+//@ pure
 export function lawPairClosesWithoutAlternate(remaining: number): boolean {
   //@ ensures \result === true
   return noAlternateRoute(false, remaining) === "CloseWithoutAlternate";
@@ -400,42 +387,17 @@ export function lawGroupBelowThreeCloses(remaining: number): boolean {
   return !(remaining < 3) || noAlternateRoute(true, remaining) === "CloseWithoutAlternate";
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster (spec/probeDispatch.md) */
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
 //@ pure
-export function stepOnlyARosterChangeMovesTheRoster(before: ParticipantProbe, via: string, after: ParticipantProbe): boolean {
-  return (!(via !== "changeRoster" && via !== "joinRoster") || after.roster === before.roster) && (!(via === "changeRoster") || after.roster === exact_probeDispatch(before.roster + 1));
+export function replacementJudged(rosterListed: boolean): boolean {
+  return rosterListed;
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster (spec/probeDispatch.md) */
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md) */
 //@ pure
-export function canJoinRoster(participant: ParticipantProbe, roster: number): boolean {
-  return participant.phase === "Queued" && !participant.told && participant.roster === 0 && participant.about === 0 && roster >= 0;
-}
-
-/** Story: Hear about one reviewed opportunity at a time / A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster (spec/probeDispatch.md) */
-//@ pure
-export function joinRoster(participant: ParticipantProbe, roster: number): ParticipantProbe {
-  //@ ensures (inv(participant) && canJoinRoster(participant, roster)) ==> alwaysAnOpenTurnIsAboutTheCurrentRoster(\result)
-  //@ ensures (inv(participant) && canJoinRoster(participant, roster)) ==> alwaysAQueuedTurnHasNoProbe(\result)
-  //@ ensures (inv(participant) && canJoinRoster(participant, roster)) ==> alwaysTheAnswerIsNotAheadOfTheRoster(\result)
-  //@ ensures (inv(participant) && canJoinRoster(participant, roster)) ==> stepUnavailableNeverReopens(participant, \result)
-  //@ ensures (inv(participant) && canJoinRoster(participant, roster)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "joinRoster", \result)
-  //@ ensures (inv(participant) && canJoinRoster(participant, roster)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "joinRoster", \result)
-  //@ ensures (inv(participant) && canJoinRoster(participant, roster)) ==> stepARosterChangeVoidsEveryEarlierProbe(participant, "joinRoster", \result)
-  //@ ensures (inv(participant) && canJoinRoster(participant, roster)) ==> stepARosterChangeVoidsOrCarriesEveryEarlierYes(participant, "joinRoster", \result)
-  return { phase: "Queued", roster: roster, about: roster, told: false };
-}
-
-/** Story: Hear about one reviewed opportunity at a time / A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster (spec/probeDispatch.md) */
-//@ pure
-export function stepAnAlternateJoinsQueuedForTheCurrentRoster(before: ParticipantProbe, via: string, after: ParticipantProbe): boolean {
-  return !(via === "joinRoster") || (after.phase === "Queued" && !after.told && after.about === after.roster);
-}
-
-/** Story: Hear about one reviewed opportunity at a time / A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster (spec/probeDispatch.md) */
-//@ pure
-export function sometimesAgreedAgainAfterARosterChange(participant: ParticipantProbe): boolean {
-  return participant.phase === "Available" && participant.told && participant.roster > 0;
+export function lawUnjudgedRosterNeverProbes(rosterListed: boolean): boolean {
+  //@ ensures \result === true
+  return !(!rosterListed) || !replacementJudged(rosterListed);
 }
 
 /** Story: Hear about one reviewed opportunity at a time / A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster (spec/probeDispatch.md) */
@@ -451,10 +413,10 @@ export function changeRoster(participant: ParticipantProbe, requester: boolean):
   //@ ensures (inv(participant) && canChangeRoster(participant)) ==> alwaysAQueuedTurnHasNoProbe(\result)
   //@ ensures (inv(participant) && canChangeRoster(participant)) ==> alwaysTheAnswerIsNotAheadOfTheRoster(\result)
   //@ ensures (inv(participant) && canChangeRoster(participant)) ==> stepUnavailableNeverReopens(participant, \result)
-  //@ ensures (inv(participant) && canChangeRoster(participant)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "changeRoster", \result)
-  //@ ensures (inv(participant) && canChangeRoster(participant)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "changeRoster", \result)
   //@ ensures (inv(participant) && canChangeRoster(participant)) ==> stepARosterChangeVoidsEveryEarlierProbe(participant, "changeRoster", \result)
   //@ ensures (inv(participant) && canChangeRoster(participant)) ==> stepARosterChangeVoidsOrCarriesEveryEarlierYes(participant, "changeRoster", \result)
+  //@ ensures (inv(participant) && canChangeRoster(participant)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "changeRoster", \result)
+  //@ ensures (inv(participant) && canChangeRoster(participant)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "changeRoster", \result)
   const local_0 = exact_probeDispatch(participant.roster + 1);
   return participant.phase === "Unavailable" || participant.phase === "OutsideProbe" ? ({ ...participant, roster: local_0 } as ParticipantProbe) : (requester && participant.phase === "Available" ? ({ ...participant, roster: local_0, about: local_0 } as ParticipantProbe) : (participant.told || participant.phase === "AwaitingReply" ? ({ phase: "Queued", roster: local_0, about: local_0, told: false } as ParticipantProbe) : ({ ...participant, roster: local_0, about: local_0 } as ParticipantProbe)));
 }
@@ -473,6 +435,12 @@ export function stepARosterChangeVoidsOrCarriesEveryEarlierYes(before: Participa
 
 /** Story: Hear about one reviewed opportunity at a time / A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster (spec/probeDispatch.md) */
 //@ pure
+export function stepOnlyARosterChangeMovesTheRoster(before: ParticipantProbe, via: string, after: ParticipantProbe): boolean {
+  return (!(via !== "changeRoster" && via !== "joinRoster") || after.roster === before.roster) && (!(via === "changeRoster") || after.roster === exact_probeDispatch(before.roster + 1));
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster (spec/probeDispatch.md) */
+//@ pure
 export function lawNoMemberWhoHeardTheEarlierRosterHasAgreedToTheNewOne(participant: ParticipantProbe, requester: boolean): boolean {
   //@ ensures \result === true
   return !(participant.phase === "AwaitingReply" || (participant.told && !requester)) || !agreedToRoster(changeRoster(participant, requester), exact_probeDispatch(participant.roster + 1));
@@ -485,10 +453,49 @@ export function lawARequesterYesCarriesOverToTheNewRoster(participant: Participa
   return !(requester && participant.phase === "Available") || agreedToRoster(changeRoster(participant, requester), exact_probeDispatch(participant.roster + 1));
 }
 
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster (spec/probeDispatch.md) */
+//@ pure
+export function canJoinRoster(participant: ParticipantProbe, roster: number): boolean {
+  return participant.phase === "Queued" && !participant.told && participant.roster === 0 && participant.about === 0 && roster >= 0;
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster (spec/probeDispatch.md) */
+//@ pure
+export function joinRoster(participant: ParticipantProbe, roster: number): ParticipantProbe {
+  //@ ensures (inv(participant) && canJoinRoster(participant, roster)) ==> alwaysAnOpenTurnIsAboutTheCurrentRoster(\result)
+  //@ ensures (inv(participant) && canJoinRoster(participant, roster)) ==> alwaysAQueuedTurnHasNoProbe(\result)
+  //@ ensures (inv(participant) && canJoinRoster(participant, roster)) ==> alwaysTheAnswerIsNotAheadOfTheRoster(\result)
+  //@ ensures (inv(participant) && canJoinRoster(participant, roster)) ==> stepUnavailableNeverReopens(participant, \result)
+  //@ ensures (inv(participant) && canJoinRoster(participant, roster)) ==> stepARosterChangeVoidsEveryEarlierProbe(participant, "joinRoster", \result)
+  //@ ensures (inv(participant) && canJoinRoster(participant, roster)) ==> stepARosterChangeVoidsOrCarriesEveryEarlierYes(participant, "joinRoster", \result)
+  //@ ensures (inv(participant) && canJoinRoster(participant, roster)) ==> stepOnlyARosterChangeMovesTheRoster(participant, "joinRoster", \result)
+  //@ ensures (inv(participant) && canJoinRoster(participant, roster)) ==> stepAnAlternateJoinsQueuedForTheCurrentRoster(participant, "joinRoster", \result)
+  return { phase: "Queued", roster: roster, about: roster, told: false };
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster (spec/probeDispatch.md) */
+//@ pure
+export function stepAnAlternateJoinsQueuedForTheCurrentRoster(before: ParticipantProbe, via: string, after: ParticipantProbe): boolean {
+  return !(via === "joinRoster") || (after.phase === "Queued" && !after.told && after.about === after.roster);
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster (spec/probeDispatch.md) */
+//@ pure
+export function sometimesAgreedAgainAfterARosterChange(participant: ParticipantProbe): boolean {
+  return participant.phase === "Available" && participant.told && participant.roster > 0;
+}
+
 /** Story: Hear about one reviewed opportunity at a time / Nobody is introduced without a yes to the current roster (spec/probeDispatch.md) */
 //@ pure
 export function agreedToRoster(participant: ParticipantProbe, roster: number): boolean {
   return participant.phase === "Available" && participant.roster === roster && participant.about === roster;
+}
+
+/** Story: Hear about one reviewed opportunity at a time / Nobody is introduced without a yes to the current roster (spec/probeDispatch.md) */
+//@ pure
+export function lawAYesAboutAnEarlierRosterDoesNotCount(participant: ParticipantProbe, roster: number): boolean {
+  //@ ensures \result === true
+  return !(participant.about !== roster) || !agreedToRoster(participant, roster);
 }
 
 /** Story: Hear about one reviewed opportunity at a time / Nobody is introduced without a yes to the current roster (spec/probeDispatch.md) */
@@ -507,13 +514,6 @@ export function alwaysAQueuedTurnHasNoProbe(participant: ParticipantProbe): bool
 //@ pure
 export function alwaysTheAnswerIsNotAheadOfTheRoster(participant: ParticipantProbe): boolean {
   return participant.about <= participant.roster;
-}
-
-/** Story: Hear about one reviewed opportunity at a time / Nobody is introduced without a yes to the current roster (spec/probeDispatch.md) */
-//@ pure
-export function lawAYesAboutAnEarlierRosterDoesNotCount(participant: ParticipantProbe, roster: number): boolean {
-  //@ ensures \result === true
-  return !(participant.about !== roster) || !agreedToRoster(participant, roster);
 }
 
 /** Story: Hear about one reviewed opportunity at a time / A queued probe goes out only for the roster that it describes (spec/probeDispatch.md) */
@@ -592,8 +592,8 @@ export function enabled(current: ParticipantProbe, event: Event): boolean {
   if (event.type === "recordReply") return canRecordReply(current);
   if (event.type === "offerOtherTimes") return canOfferOtherTimes(current, event.hasFreshTimes);
   if (event.type === "expireProbe") return canExpireProbe(current, event.expired);
-  if (event.type === "joinRoster") return canJoinRoster(current, event.roster);
   if (event.type === "changeRoster") return canChangeRoster(current);
+  if (event.type === "joinRoster") return canJoinRoster(current, event.roster);
   return false;
 }
 
@@ -609,8 +609,8 @@ export function step(current: ParticipantProbe, event: Event): ParticipantProbe 
   if (event.type === "recordReply") return canRecordReply(current) ? recordReply(current, event.agreed) : current;
   if (event.type === "offerOtherTimes") return canOfferOtherTimes(current, event.hasFreshTimes) ? offerOtherTimes(current, event.hasFreshTimes) : current;
   if (event.type === "expireProbe") return canExpireProbe(current, event.expired) ? expireProbe(current, event.expired, event.timeQuestion) : current;
-  if (event.type === "joinRoster") return canJoinRoster(current, event.roster) ? joinRoster(current, event.roster) : current;
   if (event.type === "changeRoster") return canChangeRoster(current) ? changeRoster(current, event.requester) : current;
+  if (event.type === "joinRoster") return canJoinRoster(current, event.roster) ? joinRoster(current, event.roster) : current;
   return current;
 }
 
@@ -635,8 +635,8 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "recordReply" && typeof raw.agreed === "boolean") return { type: "recordReply", agreed: raw.agreed };
   if (raw.type === "offerOtherTimes" && typeof raw.hasFreshTimes === "boolean") return { type: "offerOtherTimes", hasFreshTimes: raw.hasFreshTimes };
   if (raw.type === "expireProbe" && typeof raw.expired === "boolean" && typeof raw.timeQuestion === "boolean") return { type: "expireProbe", expired: raw.expired, timeQuestion: raw.timeQuestion };
-  if (raw.type === "joinRoster" && Number.isSafeInteger(raw.roster)) return { type: "joinRoster", roster: raw.roster };
   if (raw.type === "changeRoster" && typeof raw.requester === "boolean") return { type: "changeRoster", requester: raw.requester };
+  if (raw.type === "joinRoster" && Number.isSafeInteger(raw.roster)) return { type: "joinRoster", roster: raw.roster };
   return undefined;
 }
 

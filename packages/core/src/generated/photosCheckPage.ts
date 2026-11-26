@@ -21,26 +21,26 @@ export interface CheckAnswer { kind: CheckAnswerKind; proposedCount: number }
 /** One variant per transition in the spec. */
 export type Event =
   | { type: "readCheckLink"; tokenWellFormed: boolean }
-  | { type: "retryOpen" }
   | { type: "answerOpen"; opened: CheckOpenAnswer }
+  | { type: "retryOpen" }
   | { type: "seeProposal"; loaded: boolean }
   | { type: "sendProposal" }
+  | { type: "showOthers" }
   | { type: "pickPhotos"; picked: number }
   | { type: "choosePicked" }
-  | { type: "showOthers" }
   | { type: "answerCheck"; answer: CheckAnswer };
 
+/** Story: Check my photo before it goes to my match / The page reads the token from the fragment once and opens the link only for a well-formed token (spec/photosCheckPage.md) */
+export const initial: PhotoCheck = { screen: "ProposalOpening", pending: "ProposalIdle", error: "ProposalNoError", linkOpen: false, photoCount: 0, proposedCount: 0, picked: 0, seen: false };
 /** Story: Check my photo before it goes to my match / The page reads the token from the fragment once and opens the link only for a well-formed token (spec/photosCheckPage.md) */
 export const checkSlotsMax: number = 6;
 /** Story: Check my photo before it goes to my match / The page reads the token from the fragment once and opens the link only for a well-formed token (spec/photosCheckPage.md) */
 export const checkSetMax: number = 3;
-/** Story: Check my photo before it goes to my match / The page reads the token from the fragment once and opens the link only for a well-formed token (spec/photosCheckPage.md) */
-export const initial: PhotoCheck = { screen: "ProposalOpening", pending: "ProposalIdle", error: "ProposalNoError", linkOpen: false, photoCount: 0, proposedCount: 0, picked: 0, seen: false };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: PhotoCheck): boolean {
-  return alwaysLoadingOnlyWhileOpening(current) && alwaysEndedScreensCloseTheLink(current) && alwaysPhotosOnlyOnTheStep(current) && alwaysShownHoldsOneToThree(current) && alwaysSeenOnlyOnTheProposal(current) && alwaysSendingNeedsASeenProposal(current) && alwaysChoosingNeedsAFittingPick(current) && alwaysPickedWithinThePhotos(current) && alwaysSendOnlyOnAnOpenLink(current);
+  return alwaysEndedScreensCloseTheLink(current) && alwaysLoadingOnlyWhileOpening(current) && alwaysShownHoldsOneToThree(current) && alwaysPhotosOnlyOnTheStep(current) && alwaysSeenOnlyOnTheProposal(current) && alwaysSendingNeedsASeenProposal(current) && alwaysChoosingNeedsAFittingPick(current) && alwaysPickedWithinThePhotos(current) && alwaysSendOnlyOnAnOpenLink(current);
 }
 
 /** Story: Check my photo before it goes to my match / The page reads the token from the fragment once and opens the link only for a well-formed token (spec/photosCheckPage.md) */
@@ -58,10 +58,10 @@ export function canReadCheckLink(page: PhotoCheck): boolean {
 /** Story: Check my photo before it goes to my match / The page reads the token from the fragment once and opens the link only for a well-formed token (spec/photosCheckPage.md) */
 //@ pure
 export function readCheckLink(page: PhotoCheck, tokenWellFormed: boolean): PhotoCheck {
-  //@ ensures (inv(page) && canReadCheckLink(page)) ==> alwaysLoadingOnlyWhileOpening(\result)
   //@ ensures (inv(page) && canReadCheckLink(page)) ==> alwaysEndedScreensCloseTheLink(\result)
-  //@ ensures (inv(page) && canReadCheckLink(page)) ==> alwaysPhotosOnlyOnTheStep(\result)
+  //@ ensures (inv(page) && canReadCheckLink(page)) ==> alwaysLoadingOnlyWhileOpening(\result)
   //@ ensures (inv(page) && canReadCheckLink(page)) ==> alwaysShownHoldsOneToThree(\result)
+  //@ ensures (inv(page) && canReadCheckLink(page)) ==> alwaysPhotosOnlyOnTheStep(\result)
   //@ ensures (inv(page) && canReadCheckLink(page)) ==> alwaysSeenOnlyOnTheProposal(\result)
   //@ ensures (inv(page) && canReadCheckLink(page)) ==> alwaysSendingNeedsASeenProposal(\result)
   //@ ensures (inv(page) && canReadCheckLink(page)) ==> alwaysChoosingNeedsAFittingPick(\result)
@@ -78,14 +78,14 @@ export function readCheckLink(page: PhotoCheck, tokenWellFormed: boolean): Photo
 
 /** Story: Check my photo before it goes to my match / The page reads the token from the fragment once and opens the link only for a well-formed token (spec/photosCheckPage.md) */
 //@ pure
-export function alwaysLoadingOnlyWhileOpening(page: PhotoCheck): boolean {
-  return !(page.pending === "ProposalLoading") || (page.screen === "ProposalOpening" && page.linkOpen);
+export function alwaysEndedScreensCloseTheLink(page: PhotoCheck): boolean {
+  return !proposalEnded(page.screen) || !page.linkOpen;
 }
 
 /** Story: Check my photo before it goes to my match / The page reads the token from the fragment once and opens the link only for a well-formed token (spec/photosCheckPage.md) */
 //@ pure
-export function alwaysEndedScreensCloseTheLink(page: PhotoCheck): boolean {
-  return !proposalEnded(page.screen) || !page.linkOpen;
+export function alwaysLoadingOnlyWhileOpening(page: PhotoCheck): boolean {
+  return !(page.pending === "ProposalLoading") || (page.screen === "ProposalOpening" && page.linkOpen);
 }
 
 /** Story: Check my photo before it goes to my match / The open answer shows the proposal, the photos to choose from, or why the link does not work (spec/photosCheckPage.md) */
@@ -102,8 +102,43 @@ export function proposalFits(photoCount: number, proposedCount: number): boolean
 
 /** Story: Check my photo before it goes to my match / The open answer shows the proposal, the photos to choose from, or why the link does not work (spec/photosCheckPage.md) */
 //@ pure
+export function screenForOpen(kind: CheckOpenAnswerKind, photoCount: number, proposedCount: number): ProposalScreen {
+  return kind === "CheckOpenShown" ? (proposalFits(photoCount, proposedCount) ? "ProposalShown" : (photosFit(photoCount) && proposedCount === 0 ? "ProposalPicking" : "ProposalOpenFailed")) : (kind === "CheckOpenGone" ? "ProposalClosed" : (kind === "CheckOpenExpired" ? "ProposalLapsed" : (kind === "CheckOpenOtherDevice" ? "ProposalOtherDevice" : "ProposalOpenFailed")));
+}
+
+/** Story: Check my photo before it goes to my match / The open answer shows the proposal, the photos to choose from, or why the link does not work (spec/photosCheckPage.md) */
+//@ pure
+export function openErrorFor(kind: CheckOpenAnswerKind, photoCount: number, proposedCount: number): ProposalError {
+  return screenForOpen(kind, photoCount, proposedCount) !== "ProposalOpenFailed" ? "ProposalNoError" : (kind === "CheckOpenUnreachable" ? "ProposalUnreachable" : "ProposalRequestFailed");
+}
+
+/** Story: Check my photo before it goes to my match / The open answer shows the proposal, the photos to choose from, or why the link does not work (spec/photosCheckPage.md) */
+//@ pure
 export function canAnswerOpen(page: PhotoCheck): boolean {
   return page.pending === "ProposalLoading";
+}
+
+/** Story: Check my photo before it goes to my match / The open answer shows the proposal, the photos to choose from, or why the link does not work (spec/photosCheckPage.md) */
+//@ pure
+export function answerOpen(page: PhotoCheck, opened: CheckOpenAnswer): PhotoCheck {
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysEndedScreensCloseTheLink(\result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysLoadingOnlyWhileOpening(\result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysShownHoldsOneToThree(\result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysPhotosOnlyOnTheStep(\result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysSeenOnlyOnTheProposal(\result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysSendingNeedsASeenProposal(\result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysChoosingNeedsAFittingPick(\result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysPickedWithinThePhotos(\result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysSendOnlyOnAnOpenLink(\result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> stepOnlyTheSendTapSends(page, "answerOpen", \result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> stepANewProposalIsSeenAgain(page, \result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> stepOneRequestAtATime(page, \result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> stepSentOnlyAfterTheSendTap(page, "answerOpen", \result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> stepEndedStepNeverChanges(page, \result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> stepLinkNeverReopens(page, \result)
+  const local_0: ProposalScreen = screenForOpen(opened.kind, opened.photoCount, opened.proposedCount);
+  const local_1 = local_0 === "ProposalShown" || local_0 === "ProposalPicking";
+  return { ...page, screen: local_0, pending: "ProposalIdle", error: openErrorFor(opened.kind, opened.photoCount, opened.proposedCount), linkOpen: !proposalEnded(local_0), photoCount: local_1 ? opened.photoCount : 0, proposedCount: local_0 === "ProposalShown" ? opened.proposedCount : 0, picked: 0, seen: false };
 }
 
 /** Story: Check my photo before it goes to my match / The open answer shows the proposal, the photos to choose from, or why the link does not work (spec/photosCheckPage.md) */
@@ -115,10 +150,10 @@ export function canRetryOpen(page: PhotoCheck): boolean {
 /** Story: Check my photo before it goes to my match / The open answer shows the proposal, the photos to choose from, or why the link does not work (spec/photosCheckPage.md) */
 //@ pure
 export function retryOpen(page: PhotoCheck): PhotoCheck {
-  //@ ensures (inv(page) && canRetryOpen(page)) ==> alwaysLoadingOnlyWhileOpening(\result)
   //@ ensures (inv(page) && canRetryOpen(page)) ==> alwaysEndedScreensCloseTheLink(\result)
-  //@ ensures (inv(page) && canRetryOpen(page)) ==> alwaysPhotosOnlyOnTheStep(\result)
+  //@ ensures (inv(page) && canRetryOpen(page)) ==> alwaysLoadingOnlyWhileOpening(\result)
   //@ ensures (inv(page) && canRetryOpen(page)) ==> alwaysShownHoldsOneToThree(\result)
+  //@ ensures (inv(page) && canRetryOpen(page)) ==> alwaysPhotosOnlyOnTheStep(\result)
   //@ ensures (inv(page) && canRetryOpen(page)) ==> alwaysSeenOnlyOnTheProposal(\result)
   //@ ensures (inv(page) && canRetryOpen(page)) ==> alwaysSendingNeedsASeenProposal(\result)
   //@ ensures (inv(page) && canRetryOpen(page)) ==> alwaysChoosingNeedsAFittingPick(\result)
@@ -131,30 +166,6 @@ export function retryOpen(page: PhotoCheck): PhotoCheck {
   //@ ensures (inv(page) && canRetryOpen(page)) ==> stepEndedStepNeverChanges(page, \result)
   //@ ensures (inv(page) && canRetryOpen(page)) ==> stepLinkNeverReopens(page, \result)
   return { ...page, screen: "ProposalOpening", pending: "ProposalLoading", error: "ProposalNoError" };
-}
-
-/** Story: Check my photo before it goes to my match / The open answer shows the proposal, the photos to choose from, or why the link does not work (spec/photosCheckPage.md) */
-//@ pure
-export function alwaysPhotosOnlyOnTheStep(page: PhotoCheck): boolean {
-  return !(page.photoCount > 0) || (page.screen === "ProposalShown" || page.screen === "ProposalPicking");
-}
-
-/** Story: Check my photo before it goes to my match / The open answer shows the proposal, the photos to choose from, or why the link does not work (spec/photosCheckPage.md) */
-//@ pure
-export function screenForOpen(kind: CheckOpenAnswerKind, photoCount: number, proposedCount: number): ProposalScreen {
-  return kind === "CheckOpenShown" ? (proposalFits(photoCount, proposedCount) ? "ProposalShown" : (photosFit(photoCount) && proposedCount === 0 ? "ProposalPicking" : "ProposalOpenFailed")) : (kind === "CheckOpenGone" ? "ProposalClosed" : (kind === "CheckOpenExpired" ? "ProposalLapsed" : (kind === "CheckOpenOtherDevice" ? "ProposalOtherDevice" : "ProposalOpenFailed")));
-}
-
-/** Story: Check my photo before it goes to my match / The open answer shows the proposal, the photos to choose from, or why the link does not work (spec/photosCheckPage.md) */
-//@ pure
-export function alwaysShownHoldsOneToThree(page: PhotoCheck): boolean {
-  return !(page.screen === "ProposalShown") || proposalFits(page.photoCount, page.proposedCount);
-}
-
-/** Story: Check my photo before it goes to my match / The open answer shows the proposal, the photos to choose from, or why the link does not work (spec/photosCheckPage.md) */
-//@ pure
-export function openErrorFor(kind: CheckOpenAnswerKind, photoCount: number, proposedCount: number): ProposalError {
-  return screenForOpen(kind, photoCount, proposedCount) !== "ProposalOpenFailed" ? "ProposalNoError" : (kind === "CheckOpenUnreachable" ? "ProposalUnreachable" : "ProposalRequestFailed");
 }
 
 /** Story: Check my photo before it goes to my match / The open answer shows the proposal, the photos to choose from, or why the link does not work (spec/photosCheckPage.md) */
@@ -187,25 +198,14 @@ export function lawOpenFailureShowsAnError(kind: CheckOpenAnswerKind, photoCount
 
 /** Story: Check my photo before it goes to my match / The open answer shows the proposal, the photos to choose from, or why the link does not work (spec/photosCheckPage.md) */
 //@ pure
-export function answerOpen(page: PhotoCheck, opened: CheckOpenAnswer): PhotoCheck {
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysLoadingOnlyWhileOpening(\result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysEndedScreensCloseTheLink(\result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysPhotosOnlyOnTheStep(\result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysShownHoldsOneToThree(\result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysSeenOnlyOnTheProposal(\result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysSendingNeedsASeenProposal(\result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysChoosingNeedsAFittingPick(\result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysPickedWithinThePhotos(\result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysSendOnlyOnAnOpenLink(\result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> stepOnlyTheSendTapSends(page, "answerOpen", \result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> stepANewProposalIsSeenAgain(page, \result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> stepOneRequestAtATime(page, \result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> stepSentOnlyAfterTheSendTap(page, "answerOpen", \result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> stepEndedStepNeverChanges(page, \result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> stepLinkNeverReopens(page, \result)
-  const local_0: ProposalScreen = screenForOpen(opened.kind, opened.photoCount, opened.proposedCount);
-  const local_1 = local_0 === "ProposalShown" || local_0 === "ProposalPicking";
-  return { ...page, screen: local_0, pending: "ProposalIdle", error: openErrorFor(opened.kind, opened.photoCount, opened.proposedCount), linkOpen: !proposalEnded(local_0), photoCount: local_1 ? opened.photoCount : 0, proposedCount: local_0 === "ProposalShown" ? opened.proposedCount : 0, picked: 0, seen: false };
+export function alwaysShownHoldsOneToThree(page: PhotoCheck): boolean {
+  return !(page.screen === "ProposalShown") || proposalFits(page.photoCount, page.proposedCount);
+}
+
+/** Story: Check my photo before it goes to my match / The open answer shows the proposal, the photos to choose from, or why the link does not work (spec/photosCheckPage.md) */
+//@ pure
+export function alwaysPhotosOnlyOnTheStep(page: PhotoCheck): boolean {
+  return !(page.photoCount > 0) || (page.screen === "ProposalShown" || page.screen === "ProposalPicking");
 }
 
 /** Story: Check my photo before it goes to my match / The page sends only the proposal that the person saw, and only when the person taps "Send" (spec/photosCheckPage.md) */
@@ -217,10 +217,10 @@ export function canSeeProposal(page: PhotoCheck): boolean {
 /** Story: Check my photo before it goes to my match / The page sends only the proposal that the person saw, and only when the person taps "Send" (spec/photosCheckPage.md) */
 //@ pure
 export function seeProposal(page: PhotoCheck, loaded: boolean): PhotoCheck {
-  //@ ensures (inv(page) && canSeeProposal(page)) ==> alwaysLoadingOnlyWhileOpening(\result)
   //@ ensures (inv(page) && canSeeProposal(page)) ==> alwaysEndedScreensCloseTheLink(\result)
-  //@ ensures (inv(page) && canSeeProposal(page)) ==> alwaysPhotosOnlyOnTheStep(\result)
+  //@ ensures (inv(page) && canSeeProposal(page)) ==> alwaysLoadingOnlyWhileOpening(\result)
   //@ ensures (inv(page) && canSeeProposal(page)) ==> alwaysShownHoldsOneToThree(\result)
+  //@ ensures (inv(page) && canSeeProposal(page)) ==> alwaysPhotosOnlyOnTheStep(\result)
   //@ ensures (inv(page) && canSeeProposal(page)) ==> alwaysSeenOnlyOnTheProposal(\result)
   //@ ensures (inv(page) && canSeeProposal(page)) ==> alwaysSendingNeedsASeenProposal(\result)
   //@ ensures (inv(page) && canSeeProposal(page)) ==> alwaysChoosingNeedsAFittingPick(\result)
@@ -237,11 +237,17 @@ export function seeProposal(page: PhotoCheck, loaded: boolean): PhotoCheck {
 
 /** Story: Check my photo before it goes to my match / The page sends only the proposal that the person saw, and only when the person taps "Send" (spec/photosCheckPage.md) */
 //@ pure
+export function canSendProposal(page: PhotoCheck): boolean {
+  return page.screen === "ProposalShown" && page.pending === "ProposalIdle" && page.linkOpen && page.seen && proposalFits(page.photoCount, page.proposedCount);
+}
+
+/** Story: Check my photo before it goes to my match / The page sends only the proposal that the person saw, and only when the person taps "Send" (spec/photosCheckPage.md) */
+//@ pure
 export function sendProposal(page: PhotoCheck): PhotoCheck {
-  //@ ensures (inv(page) && canSendProposal(page)) ==> alwaysLoadingOnlyWhileOpening(\result)
   //@ ensures (inv(page) && canSendProposal(page)) ==> alwaysEndedScreensCloseTheLink(\result)
-  //@ ensures (inv(page) && canSendProposal(page)) ==> alwaysPhotosOnlyOnTheStep(\result)
+  //@ ensures (inv(page) && canSendProposal(page)) ==> alwaysLoadingOnlyWhileOpening(\result)
   //@ ensures (inv(page) && canSendProposal(page)) ==> alwaysShownHoldsOneToThree(\result)
+  //@ ensures (inv(page) && canSendProposal(page)) ==> alwaysPhotosOnlyOnTheStep(\result)
   //@ ensures (inv(page) && canSendProposal(page)) ==> alwaysSeenOnlyOnTheProposal(\result)
   //@ ensures (inv(page) && canSendProposal(page)) ==> alwaysSendingNeedsASeenProposal(\result)
   //@ ensures (inv(page) && canSendProposal(page)) ==> alwaysChoosingNeedsAFittingPick(\result)
@@ -264,6 +270,12 @@ export function alwaysSeenOnlyOnTheProposal(page: PhotoCheck): boolean {
 
 /** Story: Check my photo before it goes to my match / The page sends only the proposal that the person saw, and only when the person taps "Send" (spec/photosCheckPage.md) */
 //@ pure
+export function alwaysSendingNeedsASeenProposal(page: PhotoCheck): boolean {
+  return !(page.pending === "ProposalSending") || (page.screen === "ProposalShown" && page.seen && page.linkOpen && proposalFits(page.photoCount, page.proposedCount));
+}
+
+/** Story: Check my photo before it goes to my match / The page sends only the proposal that the person saw, and only when the person taps "Send" (spec/photosCheckPage.md) */
+//@ pure
 export function stepOnlyTheSendTapSends(before: PhotoCheck, via: string, after: PhotoCheck): boolean {
   return !(after.pending === "ProposalSending" && before.pending !== "ProposalSending") || (via === "sendProposal" && before.seen);
 }
@@ -274,22 +286,37 @@ export function stepANewProposalIsSeenAgain(before: PhotoCheck, after: PhotoChec
   return !(after.screen === "ProposalShown" && before.screen !== "ProposalShown") || !after.seen;
 }
 
-/** Story: Check my photo before it goes to my match / The page sends only the proposal that the person saw, and only when the person taps "Send" (spec/photosCheckPage.md) */
-//@ pure
-export function canSendProposal(page: PhotoCheck): boolean {
-  return page.screen === "ProposalShown" && page.pending === "ProposalIdle" && page.linkOpen && page.seen && proposalFits(page.photoCount, page.proposedCount);
-}
-
-/** Story: Check my photo before it goes to my match / The page sends only the proposal that the person saw, and only when the person taps "Send" (spec/photosCheckPage.md) */
-//@ pure
-export function alwaysSendingNeedsASeenProposal(page: PhotoCheck): boolean {
-  return !(page.pending === "ProposalSending") || (page.screen === "ProposalShown" && page.seen && page.linkOpen && proposalFits(page.photoCount, page.proposedCount));
-}
-
 /** Story: Check my photo before it goes to my match / "Not this one" lets the person choose 1 to 3 other photos, and the page shows the new proposal before any send (spec/photosCheckPage.md) */
 //@ pure
 export function pickFits(photoCount: number, picked: number): boolean {
   return picked >= 1 && picked <= checkSetMax && picked <= photoCount;
+}
+
+/** Story: Check my photo before it goes to my match / "Not this one" lets the person choose 1 to 3 other photos, and the page shows the new proposal before any send (spec/photosCheckPage.md) */
+//@ pure
+export function canShowOthers(page: PhotoCheck): boolean {
+  return page.screen === "ProposalShown" && page.pending === "ProposalIdle";
+}
+
+/** Story: Check my photo before it goes to my match / "Not this one" lets the person choose 1 to 3 other photos, and the page shows the new proposal before any send (spec/photosCheckPage.md) */
+//@ pure
+export function showOthers(page: PhotoCheck): PhotoCheck {
+  //@ ensures (inv(page) && canShowOthers(page)) ==> alwaysEndedScreensCloseTheLink(\result)
+  //@ ensures (inv(page) && canShowOthers(page)) ==> alwaysLoadingOnlyWhileOpening(\result)
+  //@ ensures (inv(page) && canShowOthers(page)) ==> alwaysShownHoldsOneToThree(\result)
+  //@ ensures (inv(page) && canShowOthers(page)) ==> alwaysPhotosOnlyOnTheStep(\result)
+  //@ ensures (inv(page) && canShowOthers(page)) ==> alwaysSeenOnlyOnTheProposal(\result)
+  //@ ensures (inv(page) && canShowOthers(page)) ==> alwaysSendingNeedsASeenProposal(\result)
+  //@ ensures (inv(page) && canShowOthers(page)) ==> alwaysChoosingNeedsAFittingPick(\result)
+  //@ ensures (inv(page) && canShowOthers(page)) ==> alwaysPickedWithinThePhotos(\result)
+  //@ ensures (inv(page) && canShowOthers(page)) ==> alwaysSendOnlyOnAnOpenLink(\result)
+  //@ ensures (inv(page) && canShowOthers(page)) ==> stepOnlyTheSendTapSends(page, "showOthers", \result)
+  //@ ensures (inv(page) && canShowOthers(page)) ==> stepANewProposalIsSeenAgain(page, \result)
+  //@ ensures (inv(page) && canShowOthers(page)) ==> stepOneRequestAtATime(page, \result)
+  //@ ensures (inv(page) && canShowOthers(page)) ==> stepSentOnlyAfterTheSendTap(page, "showOthers", \result)
+  //@ ensures (inv(page) && canShowOthers(page)) ==> stepEndedStepNeverChanges(page, \result)
+  //@ ensures (inv(page) && canShowOthers(page)) ==> stepLinkNeverReopens(page, \result)
+  return { ...page, screen: "ProposalPicking", picked: 0, seen: false, error: "ProposalNoError" };
 }
 
 /** Story: Check my photo before it goes to my match / "Not this one" lets the person choose 1 to 3 other photos, and the page shows the new proposal before any send (spec/photosCheckPage.md) */
@@ -301,10 +328,10 @@ export function canPickPhotos(page: PhotoCheck, picked: number): boolean {
 /** Story: Check my photo before it goes to my match / "Not this one" lets the person choose 1 to 3 other photos, and the page shows the new proposal before any send (spec/photosCheckPage.md) */
 //@ pure
 export function pickPhotos(page: PhotoCheck, picked: number): PhotoCheck {
-  //@ ensures (inv(page) && canPickPhotos(page, picked)) ==> alwaysLoadingOnlyWhileOpening(\result)
   //@ ensures (inv(page) && canPickPhotos(page, picked)) ==> alwaysEndedScreensCloseTheLink(\result)
-  //@ ensures (inv(page) && canPickPhotos(page, picked)) ==> alwaysPhotosOnlyOnTheStep(\result)
+  //@ ensures (inv(page) && canPickPhotos(page, picked)) ==> alwaysLoadingOnlyWhileOpening(\result)
   //@ ensures (inv(page) && canPickPhotos(page, picked)) ==> alwaysShownHoldsOneToThree(\result)
+  //@ ensures (inv(page) && canPickPhotos(page, picked)) ==> alwaysPhotosOnlyOnTheStep(\result)
   //@ ensures (inv(page) && canPickPhotos(page, picked)) ==> alwaysSeenOnlyOnTheProposal(\result)
   //@ ensures (inv(page) && canPickPhotos(page, picked)) ==> alwaysSendingNeedsASeenProposal(\result)
   //@ ensures (inv(page) && canPickPhotos(page, picked)) ==> alwaysChoosingNeedsAFittingPick(\result)
@@ -328,10 +355,10 @@ export function canChoosePicked(page: PhotoCheck): boolean {
 /** Story: Check my photo before it goes to my match / "Not this one" lets the person choose 1 to 3 other photos, and the page shows the new proposal before any send (spec/photosCheckPage.md) */
 //@ pure
 export function choosePicked(page: PhotoCheck): PhotoCheck {
-  //@ ensures (inv(page) && canChoosePicked(page)) ==> alwaysLoadingOnlyWhileOpening(\result)
   //@ ensures (inv(page) && canChoosePicked(page)) ==> alwaysEndedScreensCloseTheLink(\result)
-  //@ ensures (inv(page) && canChoosePicked(page)) ==> alwaysPhotosOnlyOnTheStep(\result)
+  //@ ensures (inv(page) && canChoosePicked(page)) ==> alwaysLoadingOnlyWhileOpening(\result)
   //@ ensures (inv(page) && canChoosePicked(page)) ==> alwaysShownHoldsOneToThree(\result)
+  //@ ensures (inv(page) && canChoosePicked(page)) ==> alwaysPhotosOnlyOnTheStep(\result)
   //@ ensures (inv(page) && canChoosePicked(page)) ==> alwaysSeenOnlyOnTheProposal(\result)
   //@ ensures (inv(page) && canChoosePicked(page)) ==> alwaysSendingNeedsASeenProposal(\result)
   //@ ensures (inv(page) && canChoosePicked(page)) ==> alwaysChoosingNeedsAFittingPick(\result)
@@ -371,49 +398,10 @@ export function stepOneRequestAtATime(before: PhotoCheck, after: PhotoCheck): bo
   return !(after.pending !== "ProposalIdle" && after.pending !== before.pending) || before.pending === "ProposalIdle";
 }
 
-/** Story: Check my photo before it goes to my match / "Not this one" lets the person choose 1 to 3 other photos, and the page shows the new proposal before any send (spec/photosCheckPage.md) */
-//@ pure
-export function canShowOthers(page: PhotoCheck): boolean {
-  return page.screen === "ProposalShown" && page.pending === "ProposalIdle";
-}
-
-/** Story: Check my photo before it goes to my match / "Not this one" lets the person choose 1 to 3 other photos, and the page shows the new proposal before any send (spec/photosCheckPage.md) */
-//@ pure
-export function showOthers(page: PhotoCheck): PhotoCheck {
-  //@ ensures (inv(page) && canShowOthers(page)) ==> alwaysLoadingOnlyWhileOpening(\result)
-  //@ ensures (inv(page) && canShowOthers(page)) ==> alwaysEndedScreensCloseTheLink(\result)
-  //@ ensures (inv(page) && canShowOthers(page)) ==> alwaysPhotosOnlyOnTheStep(\result)
-  //@ ensures (inv(page) && canShowOthers(page)) ==> alwaysShownHoldsOneToThree(\result)
-  //@ ensures (inv(page) && canShowOthers(page)) ==> alwaysSeenOnlyOnTheProposal(\result)
-  //@ ensures (inv(page) && canShowOthers(page)) ==> alwaysSendingNeedsASeenProposal(\result)
-  //@ ensures (inv(page) && canShowOthers(page)) ==> alwaysChoosingNeedsAFittingPick(\result)
-  //@ ensures (inv(page) && canShowOthers(page)) ==> alwaysPickedWithinThePhotos(\result)
-  //@ ensures (inv(page) && canShowOthers(page)) ==> alwaysSendOnlyOnAnOpenLink(\result)
-  //@ ensures (inv(page) && canShowOthers(page)) ==> stepOnlyTheSendTapSends(page, "showOthers", \result)
-  //@ ensures (inv(page) && canShowOthers(page)) ==> stepANewProposalIsSeenAgain(page, \result)
-  //@ ensures (inv(page) && canShowOthers(page)) ==> stepOneRequestAtATime(page, \result)
-  //@ ensures (inv(page) && canShowOthers(page)) ==> stepSentOnlyAfterTheSendTap(page, "showOthers", \result)
-  //@ ensures (inv(page) && canShowOthers(page)) ==> stepEndedStepNeverChanges(page, \result)
-  //@ ensures (inv(page) && canShowOthers(page)) ==> stepLinkNeverReopens(page, \result)
-  return { ...page, screen: "ProposalPicking", picked: 0, seen: false, error: "ProposalNoError" };
-}
-
 /** Story: Check my photo before it goes to my match / The answer to "Send" or "Choose these" decides between sent, a new proposal, changed, timed out, refused and closed (spec/photosCheckPage.md) */
 //@ pure
 export function endedScreenFor(answerKind: CheckAnswerKind): ProposalScreen {
   return answerKind === "CheckChanged" ? "ProposalChanged" : (answerKind === "CheckLapsed" ? "ProposalLapsed" : (answerKind === "CheckRefused" ? "ProposalRefused" : (answerKind === "CheckClosed" ? "ProposalClosed" : (answerKind === "CheckOtherDevice" ? "ProposalOtherDevice" : "ProposalOpening"))));
-}
-
-/** Story: Check my photo before it goes to my match / The answer to "Send" or "Choose these" decides between sent, a new proposal, changed, timed out, refused and closed (spec/photosCheckPage.md) */
-//@ pure
-export function canAnswerCheck(page: PhotoCheck): boolean {
-  return page.pending === "ProposalSending" || page.pending === "ProposalChoosing";
-}
-
-/** Story: Check my photo before it goes to my match / The answer to "Send" or "Choose these" decides between sent, a new proposal, changed, timed out, refused and closed (spec/photosCheckPage.md) */
-//@ pure
-export function stepSentOnlyAfterTheSendTap(before: PhotoCheck, via: string, after: PhotoCheck): boolean {
-  return !(after.screen === "ProposalSent" && before.screen !== "ProposalSent") || (via === "answerCheck" && before.pending === "ProposalSending" && before.seen);
 }
 
 /** Story: Check my photo before it goes to my match / The answer to "Send" or "Choose these" decides between sent, a new proposal, changed, timed out, refused and closed (spec/photosCheckPage.md) */
@@ -424,17 +412,17 @@ export function answerEndsTheStep(answerKind: CheckAnswerKind): boolean {
 
 /** Story: Check my photo before it goes to my match / The answer to "Send" or "Choose these" decides between sent, a new proposal, changed, timed out, refused and closed (spec/photosCheckPage.md) */
 //@ pure
-export function stepEndedStepNeverChanges(before: PhotoCheck, after: PhotoCheck): boolean {
-  return !proposalEnded(before.screen) || equal_photosCheckPage(after, before);
+export function canAnswerCheck(page: PhotoCheck): boolean {
+  return page.pending === "ProposalSending" || page.pending === "ProposalChoosing";
 }
 
 /** Story: Check my photo before it goes to my match / The answer to "Send" or "Choose these" decides between sent, a new proposal, changed, timed out, refused and closed (spec/photosCheckPage.md) */
 //@ pure
 export function answerCheck(page: PhotoCheck, answer: CheckAnswer): PhotoCheck {
-  //@ ensures (inv(page) && canAnswerCheck(page)) ==> alwaysLoadingOnlyWhileOpening(\result)
   //@ ensures (inv(page) && canAnswerCheck(page)) ==> alwaysEndedScreensCloseTheLink(\result)
-  //@ ensures (inv(page) && canAnswerCheck(page)) ==> alwaysPhotosOnlyOnTheStep(\result)
+  //@ ensures (inv(page) && canAnswerCheck(page)) ==> alwaysLoadingOnlyWhileOpening(\result)
   //@ ensures (inv(page) && canAnswerCheck(page)) ==> alwaysShownHoldsOneToThree(\result)
+  //@ ensures (inv(page) && canAnswerCheck(page)) ==> alwaysPhotosOnlyOnTheStep(\result)
   //@ ensures (inv(page) && canAnswerCheck(page)) ==> alwaysSeenOnlyOnTheProposal(\result)
   //@ ensures (inv(page) && canAnswerCheck(page)) ==> alwaysSendingNeedsASeenProposal(\result)
   //@ ensures (inv(page) && canAnswerCheck(page)) ==> alwaysChoosingNeedsAFittingPick(\result)
@@ -465,10 +453,16 @@ export function lawRetryAnswersKeepTheStep(answerKind: CheckAnswerKind): boolean
   return !(answerKind === "CheckUnreachable" || answerKind === "CheckInvalid") || !answerEndsTheStep(answerKind);
 }
 
-/** Story: A closed proposal sends nothing / An ended step never opens again (spec/photosCheckPage.md) */
+/** Story: Check my photo before it goes to my match / The answer to "Send" or "Choose these" decides between sent, a new proposal, changed, timed out, refused and closed (spec/photosCheckPage.md) */
 //@ pure
-export function stepLinkNeverReopens(before: PhotoCheck, after: PhotoCheck): boolean {
-  return !(!before.linkOpen && before.screen !== "ProposalOpening") || !after.linkOpen;
+export function stepSentOnlyAfterTheSendTap(before: PhotoCheck, via: string, after: PhotoCheck): boolean {
+  return !(after.screen === "ProposalSent" && before.screen !== "ProposalSent") || (via === "answerCheck" && before.pending === "ProposalSending" && before.seen);
+}
+
+/** Story: Check my photo before it goes to my match / The answer to "Send" or "Choose these" decides between sent, a new proposal, changed, timed out, refused and closed (spec/photosCheckPage.md) */
+//@ pure
+export function stepEndedStepNeverChanges(before: PhotoCheck, after: PhotoCheck): boolean {
+  return !proposalEnded(before.screen) || equal_photosCheckPage(after, before);
 }
 
 /** Story: A closed proposal sends nothing / An ended step never opens again (spec/photosCheckPage.md) */
@@ -483,10 +477,22 @@ export function alwaysSendOnlyOnAnOpenLink(page: PhotoCheck): boolean {
   return !photoCheckOffersSend(page) || page.linkOpen;
 }
 
+/** Story: A closed proposal sends nothing / An ended step never opens again (spec/photosCheckPage.md) */
+//@ pure
+export function stepLinkNeverReopens(before: PhotoCheck, after: PhotoCheck): boolean {
+  return !(!before.linkOpen && before.screen !== "ProposalOpening") || !after.linkOpen;
+}
+
 /** Story: Reach every outcome / A person can send, choose other photos, and see each closed step and each error (spec/photosCheckPage.md) */
 //@ pure
 export function sometimesWaitingForThePhotos(page: PhotoCheck): boolean {
   return page.screen === "ProposalShown" && !page.seen;
+}
+
+/** Story: Reach every outcome / A person can send, choose other photos, and see each closed step and each error (spec/photosCheckPage.md) */
+//@ pure
+export function sometimesReadyToSend(page: PhotoCheck): boolean {
+  return canSendProposal(page);
 }
 
 /** Story: Reach every outcome / A person can send, choose other photos, and see each closed step and each error (spec/photosCheckPage.md) */
@@ -579,23 +585,17 @@ export function sometimesRequestFailed(page: PhotoCheck): boolean {
   return page.error === "ProposalRequestFailed" && page.linkOpen;
 }
 
-/** Story: Reach every outcome / A person can send, choose other photos, and see each closed step and each error (spec/photosCheckPage.md) */
-//@ pure
-export function sometimesReadyToSend(page: PhotoCheck): boolean {
-  return canSendProposal(page);
-}
-
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: PhotoCheck, event: Event): boolean {
   if (event.type === "readCheckLink") return canReadCheckLink(current);
-  if (event.type === "retryOpen") return canRetryOpen(current);
   if (event.type === "answerOpen") return canAnswerOpen(current);
+  if (event.type === "retryOpen") return canRetryOpen(current);
   if (event.type === "seeProposal") return canSeeProposal(current);
   if (event.type === "sendProposal") return canSendProposal(current);
+  if (event.type === "showOthers") return canShowOthers(current);
   if (event.type === "pickPhotos") return canPickPhotos(current, event.picked);
   if (event.type === "choosePicked") return canChoosePicked(current);
-  if (event.type === "showOthers") return canShowOthers(current);
   if (event.type === "answerCheck") return canAnswerCheck(current);
   return false;
 }
@@ -606,13 +606,13 @@ export function step(current: PhotoCheck, event: Event): PhotoCheck {
   //@ requires inv(current)
   //@ ensures inv(\result)
   if (event.type === "readCheckLink") return canReadCheckLink(current) ? readCheckLink(current, event.tokenWellFormed) : current;
-  if (event.type === "retryOpen") return canRetryOpen(current) ? retryOpen(current) : current;
   if (event.type === "answerOpen") return canAnswerOpen(current) ? answerOpen(current, event.opened) : current;
+  if (event.type === "retryOpen") return canRetryOpen(current) ? retryOpen(current) : current;
   if (event.type === "seeProposal") return canSeeProposal(current) ? seeProposal(current, event.loaded) : current;
   if (event.type === "sendProposal") return canSendProposal(current) ? sendProposal(current) : current;
+  if (event.type === "showOthers") return canShowOthers(current) ? showOthers(current) : current;
   if (event.type === "pickPhotos") return canPickPhotos(current, event.picked) ? pickPhotos(current, event.picked) : current;
   if (event.type === "choosePicked") return canChoosePicked(current) ? choosePicked(current) : current;
-  if (event.type === "showOthers") return canShowOthers(current) ? showOthers(current) : current;
   if (event.type === "answerCheck") return canAnswerCheck(current) ? answerCheck(current, event.answer) : current;
   return current;
 }
@@ -634,13 +634,13 @@ export function parseEvent(x: unknown): Event | undefined {
   const is_CheckAnswer = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && (v.kind === "CheckOffered" || v.kind === "CheckProposed" || v.kind === "CheckChanged" || v.kind === "CheckLapsed" || v.kind === "CheckRefused" || v.kind === "CheckClosed" || v.kind === "CheckOtherDevice" || v.kind === "CheckInvalid" || v.kind === "CheckUnreachable") && Number.isSafeInteger(v.proposedCount);
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "readCheckLink" && typeof raw.tokenWellFormed === "boolean") return { type: "readCheckLink", tokenWellFormed: raw.tokenWellFormed };
-  if (raw.type === "retryOpen") return { type: "retryOpen" };
   if (raw.type === "answerOpen" && is_CheckOpenAnswer(raw.opened)) return { type: "answerOpen", opened: ({ kind: raw.opened.kind, photoCount: raw.opened.photoCount, proposedCount: raw.opened.proposedCount }) };
+  if (raw.type === "retryOpen") return { type: "retryOpen" };
   if (raw.type === "seeProposal" && typeof raw.loaded === "boolean") return { type: "seeProposal", loaded: raw.loaded };
   if (raw.type === "sendProposal") return { type: "sendProposal" };
+  if (raw.type === "showOthers") return { type: "showOthers" };
   if (raw.type === "pickPhotos" && Number.isSafeInteger(raw.picked)) return { type: "pickPhotos", picked: raw.picked };
   if (raw.type === "choosePicked") return { type: "choosePicked" };
-  if (raw.type === "showOthers") return { type: "showOthers" };
   if (raw.type === "answerCheck" && is_CheckAnswer(raw.answer)) return { type: "answerCheck", answer: ({ kind: raw.answer.kind, proposedCount: raw.answer.proposedCount }) };
   return undefined;
 }

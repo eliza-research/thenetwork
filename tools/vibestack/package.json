@@ -125,8 +125,11 @@
     "./stories": "./vibestack/stories/meta.ts",
     "./stories/storybook": "./vibestack/stories/storybook.ts",
     "./design/eslint": "./vibestack/design/eslint.ts",
+    "./design/tokens": "./vibestack/design/tokens.ts",
     "./design/project": "./vibestack/design/project.ts",
     "./eslint": "./vibestack/eslint.ts",
+    "./chromium": "./vibestack/chromium.ts",
+    "./config": "./vibestack/config.ts",
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -138,8 +141,11 @@
       "./stories": "./dist/stories/meta.js",
       "./stories/storybook": "./dist/stories/storybook.js",
       "./design/eslint": "./dist/design/eslint.js",
+      "./design/tokens": "./dist/design/tokens.js",
       "./design/project": "./dist/design/project.js",
       "./eslint": "./dist/eslint.js",
+      "./chromium": "./dist/chromium.js",
+      "./config": "./dist/config.js",
       "./package.json": "./package.json"
     }
   }

@@ -11,9 +11,9 @@ export type DeltaAction = "BufferDelta" | "ReloadSnapshot" | "DropDelta" | "Refr
 /** One variant per transition in the spec. */
 export type Event =
   | { type: "changeView"; appName: string; viewMode: string }
+  | { type: "startLoad" }
   | { type: "publishSnapshot"; generation: number; appName: string; viewMode: string; version: number }
   | { type: "failLoad"; generation: number }
-  | { type: "startLoad" }
   | { type: "acceptDelta"; version: number };
 
 /** Story: See the selected app and mode / Changing the view invalidates the old snapshot and pending reads (spec/observatorySync.md) */
@@ -41,8 +41,22 @@ export function changeView(s: ObservatorySync, appName: string, viewMode: string
 
 /** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md) */
 //@ pure
+export function startLoad(s: ObservatorySync): ObservatorySync {
+  //@ ensures (inv(s)) ==> stepReadGenerationNeverFalls(s, \result)
+  //@ ensures (inv(s)) ==> stepDeltasAdvanceOneVersion(s, "startLoad", \result)
+  return { ...s, generation: exact_observatorySync(s.generation + 1), phase: "Loading" };
+}
+
+/** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md) */
+//@ pure
 export function ownsLoad(s: ObservatorySync, generation: number): boolean {
   return s.phase === "Loading" && s.generation === generation;
+}
+
+/** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md) */
+//@ pure
+export function canPublishSnapshot(s: ObservatorySync, generation: number, appName: string, viewMode: string): boolean {
+  return ownsLoad(s, generation) && s.appName === appName && s.viewMode === viewMode;
 }
 
 /** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md) */
@@ -51,6 +65,12 @@ export function publishSnapshot(s: ObservatorySync, generation: number, appName:
   //@ ensures (inv(s) && canPublishSnapshot(s, generation, appName, viewMode)) ==> stepReadGenerationNeverFalls(s, \result)
   //@ ensures (inv(s) && canPublishSnapshot(s, generation, appName, viewMode)) ==> stepDeltasAdvanceOneVersion(s, "publishSnapshot", \result)
   return { ...s, phase: "Live", version: version };
+}
+
+/** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md) */
+//@ pure
+export function canFailLoad(s: ObservatorySync, generation: number): boolean {
+  return ownsLoad(s, generation);
 }
 
 /** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md) */
@@ -73,30 +93,16 @@ export function sometimesSnapshotIsLive(s: ObservatorySync): boolean {
   return s.phase === "Live";
 }
 
-/** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md) */
-//@ pure
-export function startLoad(s: ObservatorySync): ObservatorySync {
-  //@ ensures (inv(s)) ==> stepReadGenerationNeverFalls(s, \result)
-  //@ ensures (inv(s)) ==> stepDeltasAdvanceOneVersion(s, "startLoad", \result)
-  return { ...s, generation: exact_observatorySync(s.generation + 1), phase: "Loading" };
-}
-
-/** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md) */
-//@ pure
-export function canPublishSnapshot(s: ObservatorySync, generation: number, appName: string, viewMode: string): boolean {
-  return ownsLoad(s, generation) && s.appName === appName && s.viewMode === viewMode;
-}
-
-/** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md) */
-//@ pure
-export function canFailLoad(s: ObservatorySync, generation: number): boolean {
-  return ownsLoad(s, generation);
-}
-
 /** Story: Follow live updates without replaying changes / Only the next data version can change the view (spec/observatorySync.md) */
 //@ pure
 export function deltaAction(s: ObservatorySync, version: number, resetSignal: boolean): DeltaAction {
   return resetSignal ? "ReloadSnapshot" : (s.phase === "Loading" ? "BufferDelta" : (s.phase === "Unsynced" ? "ReloadSnapshot" : (version < s.version ? "DropDelta" : (version === s.version ? "RefreshMetadata" : (version > exact_observatorySync(s.version + 1) ? "ReloadSnapshot" : "ApplyData")))));
+}
+
+/** Story: Follow live updates without replaying changes / Only the next data version can change the view (spec/observatorySync.md) */
+//@ pure
+export function canAcceptDelta(s: ObservatorySync, version: number): boolean {
+  return deltaAction(s, version, false) === "ApplyData";
 }
 
 /** Story: Follow live updates without replaying changes / Only the next data version can change the view (spec/observatorySync.md) */
@@ -113,12 +119,6 @@ export function stepDeltasAdvanceOneVersion(before: ObservatorySync, via: string
   return !(via === "acceptDelta") || (before.phase === "Live" && after.version === exact_observatorySync(before.version + 1));
 }
 
-/** Story: Follow live updates without replaying changes / Only the next data version can change the view (spec/observatorySync.md) */
-//@ pure
-export function canAcceptDelta(s: ObservatorySync, version: number): boolean {
-  return deltaAction(s, version, false) === "ApplyData";
-}
-
 /** Story: Follow live updates without replaying changes / The activity feed adds each new sequence once (spec/observatorySync.md) */
 //@ pure
 export function acceptsFeedItem(hasTail: boolean, tailSeq: number, itemSeq: number): boolean {
@@ -129,9 +129,9 @@ export function acceptsFeedItem(hasTail: boolean, tailSeq: number, itemSeq: numb
 //@ pure
 export function enabled(current: ObservatorySync, event: Event): boolean {
   if (event.type === "changeView") return canChangeView(current, event.appName, event.viewMode);
+  if (event.type === "startLoad") return true;
   if (event.type === "publishSnapshot") return canPublishSnapshot(current, event.generation, event.appName, event.viewMode);
   if (event.type === "failLoad") return canFailLoad(current, event.generation);
-  if (event.type === "startLoad") return true;
   if (event.type === "acceptDelta") return canAcceptDelta(current, event.version);
   return false;
 }
@@ -142,9 +142,9 @@ export function step(current: ObservatorySync, event: Event): ObservatorySync {
   //@ requires inv(current)
   //@ ensures inv(\result)
   if (event.type === "changeView") return canChangeView(current, event.appName, event.viewMode) ? changeView(current, event.appName, event.viewMode) : current;
+  if (event.type === "startLoad") return startLoad(current);
   if (event.type === "publishSnapshot") return canPublishSnapshot(current, event.generation, event.appName, event.viewMode) ? publishSnapshot(current, event.generation, event.appName, event.viewMode, event.version) : current;
   if (event.type === "failLoad") return canFailLoad(current, event.generation) ? failLoad(current, event.generation) : current;
-  if (event.type === "startLoad") return startLoad(current);
   if (event.type === "acceptDelta") return canAcceptDelta(current, event.version) ? acceptDelta(current, event.version) : current;
   return current;
 }
@@ -164,9 +164,9 @@ export function parseEvent(x: unknown): Event | undefined {
   }
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "changeView" && typeof raw.appName === "string" && typeof raw.viewMode === "string") return { type: "changeView", appName: raw.appName, viewMode: raw.viewMode };
+  if (raw.type === "startLoad") return { type: "startLoad" };
   if (raw.type === "publishSnapshot" && Number.isSafeInteger(raw.generation) && typeof raw.appName === "string" && typeof raw.viewMode === "string" && Number.isSafeInteger(raw.version)) return { type: "publishSnapshot", generation: raw.generation, appName: raw.appName, viewMode: raw.viewMode, version: raw.version };
   if (raw.type === "failLoad" && Number.isSafeInteger(raw.generation)) return { type: "failLoad", generation: raw.generation };
-  if (raw.type === "startLoad") return { type: "startLoad" };
   if (raw.type === "acceptDelta" && Number.isSafeInteger(raw.version)) return { type: "acceptDelta", version: raw.version };
   return undefined;
 }

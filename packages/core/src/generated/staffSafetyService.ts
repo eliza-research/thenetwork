@@ -1,6 +1,6 @@
 // GENERATED from spec/staffSafetyService.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { quietHoursOffHour as participationControls_quietHoursOffHour, participationControlAllowed as participationControls_participationControlAllowed, participationCategoryAllowed as participationControls_participationCategoryAllowed, changeParticipationCategory as participationControls_changeParticipationCategory, controlRomanceOptIn as participationControls_controlRomanceOptIn, participationControlState as participationControls_participationControlState, controlQuietHoursValid as participationControls_controlQuietHoursValid, quietHoursEmpty as participationControls_quietHoursEmpty, lawQuietHoursOffIsEmpty as participationControls_lawQuietHoursOffIsEmpty, lawNonDatingCategoryLeavesDatingPermission as participationControls_lawNonDatingCategoryLeavesDatingPermission, quietHoursCommandComplete as participationControls_quietHoursCommandComplete, lawMissingEndpointNeedsClarification as participationControls_lawMissingEndpointNeedsClarification } from "./participationControls.ts";
+import { participationControlAllowed as participationControls_participationControlAllowed, controlQuietHoursValid as participationControls_controlQuietHoursValid, quietHoursCommandComplete as participationControls_quietHoursCommandComplete, quietHoursOffHour as participationControls_quietHoursOffHour, quietHoursEmpty as participationControls_quietHoursEmpty, lawMissingEndpointNeedsClarification as participationControls_lawMissingEndpointNeedsClarification, lawQuietHoursOffIsEmpty as participationControls_lawQuietHoursOffIsEmpty, participationCategoryAllowed as participationControls_participationCategoryAllowed, changeParticipationCategory as participationControls_changeParticipationCategory, controlRomanceOptIn as participationControls_controlRomanceOptIn, lawNonDatingCategoryLeavesDatingPermission as participationControls_lawNonDatingCategoryLeavesDatingPermission, participationControlState as participationControls_participationControlState } from "./participationControls.ts";
 
 /** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md) */
 export type ServiceSafetyPhase = "ServiceSafetyStarting" | "HoldRemainingTargets" | "HoldDidNotApply" | "BanNeedsCrossApp" | "BanNoPerson" | "ReadingBanPhones" | "BanNoPhone" | "ReadingExistingBan" | "BanAlreadyExists" | "ApplyingPhoneBan" | "ApplyingPersonBan" | "ResumingBanProjection" | "PerformingAuditedAction" | "RecordingAuditResult";
@@ -73,12 +73,6 @@ export function lawLocalStaffTargetStaysInScope(requestedRuntime: boolean): bool
 
 /** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md) */
 //@ pure
-export function staffSafetyReportFor(ownsReport: boolean, reportId: string): string {
-  return ownsReport ? reportId : "";
-}
-
-/** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md) */
-//@ pure
 export function canReadPrimaryHold(flow: ServiceSafetyFlow): boolean {
   return flow.phase === "ServiceSafetyStarting";
 }
@@ -88,6 +82,12 @@ export function canReadPrimaryHold(flow: ServiceSafetyFlow): boolean {
 export function readPrimaryHold(flow: ServiceSafetyFlow, applied: boolean): ServiceSafetyFlow {
   //@ ensures (inv(flow) && canReadPrimaryHold(flow)) ==> stepSafetyResultFollowsAction(flow, "readPrimaryHold", \result)
   return { ...flow, phase: applied ? "HoldRemainingTargets" : "HoldDidNotApply" };
+}
+
+/** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md) */
+//@ pure
+export function staffSafetyReportFor(ownsReport: boolean, reportId: string): string {
+  return ownsReport ? reportId : "";
 }
 
 /** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md) */
@@ -415,26 +415,6 @@ export function lawOnlyAPauseIsConfirmed(kind: string, pauseApplied: boolean, te
 
 /** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
 //@ pure
-export function agentSignalEvidenceShown(safetyRole: boolean, ageInDoubt: boolean): boolean {
-  return safetyRole || !ageInDoubt;
-}
-
-/** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
-//@ pure
-export function lawReviewerNeverReadsMinorEvidence(ageInDoubt: boolean): boolean {
-  //@ ensures \result === true
-  return !ageInDoubt || !agentSignalEvidenceShown(false, ageInDoubt);
-}
-
-/** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
-//@ pure
-export function lawAdultEvidenceShownToReviewers(safetyRole: boolean): boolean {
-  //@ ensures \result === true
-  return agentSignalEvidenceShown(safetyRole, false);
-}
-
-/** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
-//@ pure
 export function agentSignalDecisionAllowed(safetyRole: boolean, phase: AgentSignalPhase): boolean {
   return safetyRole && phase === "SignalWaiting";
 }
@@ -457,6 +437,26 @@ export function lawDecidedAgentSignalStaysDecided(phase: AgentSignalPhase, safet
 export function lawOnlySafetyStaffDecideAgentSignals(phase: AgentSignalPhase, dismiss: boolean): boolean {
   //@ ensures \result === true
   return agentSignalAfterDecision(phase, false, dismiss) === phase;
+}
+
+/** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
+//@ pure
+export function agentSignalEvidenceShown(safetyRole: boolean, ageInDoubt: boolean): boolean {
+  return safetyRole || !ageInDoubt;
+}
+
+/** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
+//@ pure
+export function lawReviewerNeverReadsMinorEvidence(ageInDoubt: boolean): boolean {
+  //@ ensures \result === true
+  return !ageInDoubt || !agentSignalEvidenceShown(false, ageInDoubt);
+}
+
+/** Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once (spec/staffSafetyService.md) */
+//@ pure
+export function lawAdultEvidenceShownToReviewers(safetyRole: boolean): boolean {
+  //@ ensures \result === true
+  return agentSignalEvidenceShown(safetyRole, false);
 }
 
 /** Do the rules allow this event in this state? */

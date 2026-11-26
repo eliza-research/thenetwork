@@ -2,13 +2,13 @@
 //@ backend dafny
 
 /** Story: Value a first date from stated answers / Each stated answer gives a factor from a fixed table (spec/datePackValue.md) */
+export type DateGoal = "DateGoalCasual" | "DateGoalLongTerm" | "DateGoalUnsure" | "DateGoalUnstated";
+/** Story: Value a first date from stated answers / Each stated answer gives a factor from a fixed table (spec/datePackValue.md) */
 export type DateHabit = "DateHabitNever" | "DateHabitOccasional" | "DateHabitRegular" | "DateHabitUnstated";
 /** Story: Value a first date from stated answers / Each stated answer gives a factor from a fixed table (spec/datePackValue.md) */
 export type DateKids = "DateKidsYes" | "DateKidsNo" | "DateKidsOpen" | "DateKidsUnstated";
 /** Story: Value a first date from stated answers / Each stated answer gives a factor from a fixed table (spec/datePackValue.md) */
 export type DatePolitics = "DatePoliticsLeft" | "DatePoliticsRight" | "DatePoliticsMiddle" | "DatePoliticsUnstated";
-/** Story: Value a first date from stated answers / Each stated answer gives a factor from a fixed table (spec/datePackValue.md) */
-export type DateGoal = "DateGoalCasual" | "DateGoalLongTerm" | "DateGoalUnsure" | "DateGoalUnstated";
 /** Story: Value a first date from stated answers / Each stated answer gives a factor from a fixed table (spec/datePackValue.md) */
 export interface DatePackAnswers { goal: DateGoal; smoking: DateHabit; drinking: DateHabit; religionImportance: number; politics: DatePolitics; hasKids: DateKids; wantsKids: DateKids }
 /** Story: Value a first date from stated answers / Shared interests, the planned activity, logistics and body type give factors from fixed tables (spec/datePackValue.md) */
@@ -26,8 +26,6 @@ export interface DatePackPair { cheap: DatePackCheap; activityMiss: boolean; tas
 /** Story: Skip partners whose pack value cannot reach the floor / A partner class has a cap that is at least the pair bound of every partner in it (spec/datePackValue.md) */
 export interface DatePackClass { goal: DateGoal; unstated: number }
 
-/** Story: Skip partners whose pack value cannot reach the floor / A partner class has a cap that is at least the pair bound of every partner in it (spec/datePackValue.md) */
-export const datePackClassUnstatedMost: number = 3;
 /** Story: Value a first date from stated answers / Each stated answer gives a factor from a fixed table (spec/datePackValue.md) */
 export const datePackScale: number = 1000;
 /** Story: Value a first date from stated answers / A measured factor counts only up to the seeker's ceiling (spec/datePackValue.md) */
@@ -36,12 +34,8 @@ export const datePackBoostMost: number = 3000;
 export const dateTypeCeiling: number = 1222;
 /** Story: Value a first date from stated answers / The factors multiply in a fixed order with a fixed rounding rule (spec/datePackValue.md) */
 export const datePackMicro: number = 1000000;
-
-/** Story: Value a first date from stated answers / Each stated answer gives a factor from a fixed table (spec/datePackValue.md) */
-//@ pure
-export function dateUnstatedFactor(count: number): number {
-  return count <= 0 ? 1000 : (count === 1 ? 970 : (count === 2 ? 941 : (count === 3 ? 913 : (count === 4 ? 885 : 859))));
-}
+/** Story: Skip partners whose pack value cannot reach the floor / A partner class has a cap that is at least the pair bound of every partner in it (spec/datePackValue.md) */
+export const datePackClassUnstatedMost: number = 3;
 
 /** Story: Value a first date from stated answers / Each stated answer gives a factor from a fixed table (spec/datePackValue.md) */
 //@ pure
@@ -84,6 +78,12 @@ export function dateKidsClash(ownAnswers: DatePackAnswers, partner: DatePackAnsw
 //@ pure
 export function dateUnstatedCount(ownAnswers: DatePackAnswers, partner: DatePackAnswers): number {
   return exact_datePackValue(exact_datePackValue(exact_datePackValue(exact_datePackValue((ownAnswers.smoking === "DateHabitUnstated" || partner.smoking === "DateHabitUnstated" ? 1 : 0) + (ownAnswers.drinking === "DateHabitUnstated" || partner.drinking === "DateHabitUnstated" ? 1 : 0)) + (ownAnswers.religionImportance < 0 || partner.religionImportance < 0 ? 1 : 0)) + (ownAnswers.politics === "DatePoliticsUnstated" || partner.politics === "DatePoliticsUnstated" ? 1 : 0)) + (dateKidsCounted(ownAnswers) && (ownAnswers.wantsKids === "DateKidsUnstated" || partner.wantsKids === "DateKidsUnstated") ? 1 : 0));
+}
+
+/** Story: Value a first date from stated answers / Each stated answer gives a factor from a fixed table (spec/datePackValue.md) */
+//@ pure
+export function dateUnstatedFactor(count: number): number {
+  return count <= 0 ? 1000 : (count === 1 ? 970 : (count === 2 ? 941 : (count === 3 ? 913 : (count === 4 ? 885 : 859))));
 }
 
 /** Story: Value a first date from stated answers / A partner's answer that is often a dealbreaker counts when the seeker stated no dealbreakers (spec/datePackValue.md) */
@@ -179,12 +179,6 @@ export function dateBodyLearnedFactor(seeker: DatePackSeeker, bodyLearned: numbe
 
 /** Story: Value a first date from stated answers / The factors multiply in a fixed order with a fixed rounding rule (spec/datePackValue.md) */
 //@ pure
-export function datePackFactorsAtMost(lower: DatePackFactors, upper: DatePackFactors): boolean {
-  return lower.goal <= upper.goal && lower.smoking <= upper.smoking && lower.drinking <= upper.drinking && lower.religion <= upper.religion && lower.politics <= upper.politics && lower.kids <= upper.kids && lower.unstated <= upper.unstated && lower.hiddenSmoking <= upper.hiddenSmoking && lower.hiddenDrinking <= upper.hiddenDrinking && lower.hiddenHasKids <= upper.hiddenHasKids && lower.hiddenWantsKids <= upper.hiddenWantsKids && lower.hiddenReligion <= upper.hiddenReligion && lower.hiddenPolitics <= upper.hiddenPolitics && lower.interests <= upper.interests && lower.activity <= upper.activity && lower.typeFit <= upper.typeFit && lower.taste <= upper.taste && lower.slots <= upper.slots && lower.body <= upper.body && lower.bodyLearned <= upper.bodyLearned;
-}
-
-/** Story: Value a first date from stated answers / The factors multiply in a fixed order with a fixed rounding rule (spec/datePackValue.md) */
-//@ pure
 export function datePackTimes(running: number, factor: number): number {
   const local_2 = factor > 0 ? factor : 0;
   return quotient_datePackValue(exact_datePackValue(running * local_2), datePackScale);
@@ -220,9 +214,8 @@ export function datePackProduct(factors: DatePackFactors): number {
 
 /** Story: Value a first date from stated answers / The factors multiply in a fixed order with a fixed rounding rule (spec/datePackValue.md) */
 //@ pure
-export function lawDatePackProductMonotone(lower: DatePackFactors, upper: DatePackFactors): boolean {
-  //@ ensures \result === true
-  return !datePackFactorsAtMost(lower, upper) || datePackProduct(lower) <= datePackProduct(upper);
+export function datePackFactorsAtMost(lower: DatePackFactors, upper: DatePackFactors): boolean {
+  return lower.goal <= upper.goal && lower.smoking <= upper.smoking && lower.drinking <= upper.drinking && lower.religion <= upper.religion && lower.politics <= upper.politics && lower.kids <= upper.kids && lower.unstated <= upper.unstated && lower.hiddenSmoking <= upper.hiddenSmoking && lower.hiddenDrinking <= upper.hiddenDrinking && lower.hiddenHasKids <= upper.hiddenHasKids && lower.hiddenWantsKids <= upper.hiddenWantsKids && lower.hiddenReligion <= upper.hiddenReligion && lower.hiddenPolitics <= upper.hiddenPolitics && lower.interests <= upper.interests && lower.activity <= upper.activity && lower.typeFit <= upper.typeFit && lower.taste <= upper.taste && lower.slots <= upper.slots && lower.body <= upper.body && lower.bodyLearned <= upper.bodyLearned;
 }
 
 /** Story: Value a first date from stated answers / The factors multiply in a fixed order with a fixed rounding rule (spec/datePackValue.md) */
@@ -231,6 +224,13 @@ export function lawDatePackProductBounded(lower: DatePackFactors): boolean {
   //@ ensures \result === true
   const local_25 = datePackProduct(lower);
   return 0 <= local_25 && local_25 <= datePackScale;
+}
+
+/** Story: Value a first date from stated answers / The factors multiply in a fixed order with a fixed rounding rule (spec/datePackValue.md) */
+//@ pure
+export function lawDatePackProductMonotone(lower: DatePackFactors, upper: DatePackFactors): boolean {
+  //@ ensures \result === true
+  return !datePackFactorsAtMost(lower, upper) || datePackProduct(lower) <= datePackProduct(upper);
 }
 
 /** Story: Value a first date from stated answers / The directed pack value is the product of the factors of one pair (spec/datePackValue.md) */
@@ -283,15 +283,15 @@ export function datePackPartnerUnstated(partner: DatePackAnswers): number {
 
 /** Story: Skip partners whose pack value cannot reach the floor / A partner class has a cap that is at least the pair bound of every partner in it (spec/datePackValue.md) */
 //@ pure
-export function dateSeekerUnstated(ownAnswers: DatePackAnswers): number {
-  return exact_datePackValue(exact_datePackValue(exact_datePackValue(exact_datePackValue((ownAnswers.smoking === "DateHabitUnstated" ? 1 : 0) + (ownAnswers.drinking === "DateHabitUnstated" ? 1 : 0)) + (ownAnswers.religionImportance < 0 ? 1 : 0)) + (ownAnswers.politics === "DatePoliticsUnstated" ? 1 : 0)) + (dateKidsCounted(ownAnswers) && ownAnswers.wantsKids === "DateKidsUnstated" ? 1 : 0));
+export function datePackClassOf(partner: DatePackAnswers): DatePackClass {
+  const local_30 = datePackPartnerUnstated(partner);
+  return { goal: partner.goal, unstated: local_30 > datePackClassUnstatedMost ? datePackClassUnstatedMost : local_30 };
 }
 
 /** Story: Skip partners whose pack value cannot reach the floor / A partner class has a cap that is at least the pair bound of every partner in it (spec/datePackValue.md) */
 //@ pure
-export function datePackClassOf(partner: DatePackAnswers): DatePackClass {
-  const local_30 = datePackPartnerUnstated(partner);
-  return { goal: partner.goal, unstated: local_30 > datePackClassUnstatedMost ? datePackClassUnstatedMost : local_30 };
+export function dateSeekerUnstated(ownAnswers: DatePackAnswers): number {
+  return exact_datePackValue(exact_datePackValue(exact_datePackValue(exact_datePackValue((ownAnswers.smoking === "DateHabitUnstated" ? 1 : 0) + (ownAnswers.drinking === "DateHabitUnstated" ? 1 : 0)) + (ownAnswers.religionImportance < 0 ? 1 : 0)) + (ownAnswers.politics === "DatePoliticsUnstated" ? 1 : 0)) + (dateKidsCounted(ownAnswers) && ownAnswers.wantsKids === "DateKidsUnstated" ? 1 : 0));
 }
 
 /** Story: Skip partners whose pack value cannot reach the floor / A partner class has a cap that is at least the pair bound of every partner in it (spec/datePackValue.md) */

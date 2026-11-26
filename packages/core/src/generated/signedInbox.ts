@@ -21,17 +21,23 @@ export type Event =
 export const processingLeaseMs: number = 120000;
 /** Story: Handle each signed message once without delaying consent / A worker runs only a committed claim (spec/signedInbox.md) */
 export const leaseRenewMs: number = 30000;
-/** Story: Handle each signed message once without delaying consent / A completed signed row is later scrubbed and then removed (spec/signedInbox.md) */
-export const turnTombstoneKeepMs: number = exact_signedInbox(exact_signedInbox(exact_signedInbox(30 * 24) * 60) * 60000);
 /** Story: Handle each signed message once without delaying consent / A worker runs only a committed claim (spec/signedInbox.md) */
 export const unresolvedBlockMs: number = 600000;
 /** Story: Handle each signed message once without delaying consent / A worker runs only a committed claim (spec/signedInbox.md) */
 export const initial: SignedInbox = { phase: "Claiming" };
+/** Story: Handle each signed message once without delaying consent / A completed signed row is later scrubbed and then removed (spec/signedInbox.md) */
+export const turnTombstoneKeepMs: number = exact_signedInbox(exact_signedInbox(exact_signedInbox(30 * 24) * 60) * 60000);
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: SignedInbox): boolean {
   return true;
+}
+
+/** Story: Handle each signed message once without delaying consent / A worker runs only a committed claim (spec/signedInbox.md) */
+//@ pure
+export function signedAdmissionOpen(deadlineSet: boolean, at: number, deadline: number): boolean {
+  return !deadlineSet || at < deadline;
 }
 
 /** Story: Handle each signed message once without delaying consent / A worker runs only a committed claim (spec/signedInbox.md) */
@@ -44,12 +50,6 @@ export function mayStartClaimWrite(senderLock: boolean, admissionOpen: boolean):
 //@ pure
 export function ordinaryTurnMustWait(compliance: boolean): boolean {
   return !compliance;
-}
-
-/** Story: Handle each signed message once without delaying consent / A worker runs only a committed claim (spec/signedInbox.md) */
-//@ pure
-export function signedAdmissionOpen(deadlineSet: boolean, at: number, deadline: number): boolean {
-  return !deadlineSet || at < deadline;
 }
 
 /** Story: Handle each signed message once without delaying consent / A worker runs only a committed claim (spec/signedInbox.md) */
@@ -94,12 +94,6 @@ export function lawChangedRequestConflicts(responseAvailable: boolean, processin
 
 /** Story: Handle each signed message once without delaying consent / Completion and compliance recovery depend on the stored row (spec/signedInbox.md) */
 //@ pure
-export function firstContactNoticeInResponse(exactReplyIncluded: boolean, underageDecline: boolean): boolean {
-  return exactReplyIncluded && !underageDecline;
-}
-
-/** Story: Handle each signed message once without delaying consent / Completion and compliance recovery depend on the stored row (spec/signedInbox.md) */
-//@ pure
 export function canRecordCompletion(turn: SignedInbox): boolean {
   return turn.phase === "RunningTurn";
 }
@@ -109,6 +103,12 @@ export function canRecordCompletion(turn: SignedInbox): boolean {
 export function recordCompletion(turn: SignedInbox, saved: boolean): SignedInbox {
   //@ ensures (inv(turn) && canRecordCompletion(turn)) ==> stepRetryNeedsReleasedClaim(turn, "recordCompletion", \result)
   return saved ? ({ phase: "Finished" } as SignedInbox) : turn;
+}
+
+/** Story: Handle each signed message once without delaying consent / Completion and compliance recovery depend on the stored row (spec/signedInbox.md) */
+//@ pure
+export function firstContactNoticeInResponse(exactReplyIncluded: boolean, underageDecline: boolean): boolean {
+  return exactReplyIncluded && !underageDecline;
 }
 
 /** Story: Handle each signed message once without delaying consent / Completion and compliance recovery depend on the stored row (spec/signedInbox.md) */

@@ -1,11 +1,11 @@
 // GENERATED from spec/agentEntry.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type JoinMode as brandIdentity_JoinMode, type AccentTokens as brandIdentity_AccentTokens, type Accent as brandIdentity_Accent, type Surface as brandIdentity_Surface, type AppKey as brandIdentity_AppKey, type LogoMark as brandIdentity_LogoMark, type SharedPart as brandIdentity_SharedPart, type StateColor as brandIdentity_StateColor, type MarkFill as brandIdentity_MarkFill, type ColorScheme as brandIdentity_ColorScheme, type Brand as brandIdentity_Brand, supportEmail as brandIdentity_supportEmail, agentAccessPage as brandIdentity_agentAccessPage, nearColorFloorPermille as brandIdentity_nearColorFloorPermille, inverseTextContrastFloorTenths as brandIdentity_inverseTextContrastFloorTenths, inverseEdgeContrastFloorTenths as brandIdentity_inverseEdgeContrastFloorTenths, ringIsTheAccent as brandIdentity_ringIsTheAccent, colorIsClearOfAccent as brandIdentity_colorIsClearOfAccent, inverseIsReadable as brandIdentity_inverseIsReadable, colorSchemes as brandIdentity_colorSchemes, markTileFill as brandIdentity_markTileFill, faviconMedia as brandIdentity_faviconMedia, joinModes as brandIdentity_joinModes, accents as brandIdentity_accents, logoMarks as brandIdentity_logoMarks, ntwrkBrand as brandIdentity_ntwrkBrand, slopBrand as brandIdentity_slopBrand, peonBrand as brandIdentity_peonBrand, friendsBrand as brandIdentity_friendsBrand, designBrandId as brandIdentity_designBrandId, accentTokens as brandIdentity_accentTokens, connectorEndpoint as brandIdentity_connectorEndpoint, openaiConnectorEndpoint as brandIdentity_openaiConnectorEndpoint, mayName as brandIdentity_mayName, siteUsesPart as brandIdentity_siteUsesPart, stateColors as brandIdentity_stateColors, stateToken as brandIdentity_stateToken, hoverFillIsClear as brandIdentity_hoverFillIsClear, lawRingEqualsTheAccent as brandIdentity_lawRingEqualsTheAccent, lawInverseNeedsBothContrasts as brandIdentity_lawInverseNeedsBothContrasts, appKeys as brandIdentity_appKeys, lawOnlyTheTwoCirclesTileTakesThePageColor as brandIdentity_lawOnlyTheTwoCirclesTileTakesThePageColor, lawLightFaviconHasNoCondition as brandIdentity_lawLightFaviconHasNoCondition, brandFor as brandIdentity_brandFor, lawDesignBrandIdsAreDistinct as brandIdentity_lawDesignBrandIdsAreDistinct, hubTextsOnAppSurface as brandIdentity_hubTextsOnAppSurface, lawAppEndpointsAreDistinct as brandIdentity_lawAppEndpointsAreDistinct, lawAppSiteNeverNamesTheNetwork as brandIdentity_lawAppSiteNeverNamesTheNetwork, lawAppSiteNamesNoOtherApp as brandIdentity_lawAppSiteNamesNoOtherApp, lawHubLandingNamesNoApp as brandIdentity_lawHubLandingNamesNoApp, lawSitesShareParts as brandIdentity_lawSitesShareParts, lawTheAccentIsNeverClearOfItself as brandIdentity_lawTheAccentIsNeverClearOfItself, lawStateTokensAreDistinct as brandIdentity_lawStateTokensAreDistinct, lawBrandNamesItsApp as brandIdentity_lawBrandNamesItsApp, lawOnlyTheNetworkIsInviteOnly as brandIdentity_lawOnlyTheNetworkIsInviteOnly, lawAccentInkDiffersFromAccent as brandIdentity_lawAccentInkDiffersFromAccent, lawOnlyTheSkillNamesTheEndpoint as brandIdentity_lawOnlyTheSkillNamesTheEndpoint, partTokens as brandIdentity_partTokens, lawBrandsAreDistinct as brandIdentity_lawBrandsAreDistinct, lawPartsTakeTheBrandTokens as brandIdentity_lawPartsTakeTheBrandTokens } from "./brandIdentity.ts";
+import { type AppKey as brandIdentity_AppKey, type JoinMode as brandIdentity_JoinMode, type Accent as brandIdentity_Accent, type LogoMark as brandIdentity_LogoMark, type Brand as brandIdentity_Brand, type AccentTokens as brandIdentity_AccentTokens, type Surface as brandIdentity_Surface, type SharedPart as brandIdentity_SharedPart, type StateColor as brandIdentity_StateColor, type MarkFill as brandIdentity_MarkFill, type ColorScheme as brandIdentity_ColorScheme, appKeys as brandIdentity_appKeys, joinModes as brandIdentity_joinModes, accents as brandIdentity_accents, logoMarks as brandIdentity_logoMarks, ntwrkBrand as brandIdentity_ntwrkBrand, slopBrand as brandIdentity_slopBrand, peonBrand as brandIdentity_peonBrand, friendsBrand as brandIdentity_friendsBrand, brandFor as brandIdentity_brandFor, lawBrandNamesItsApp as brandIdentity_lawBrandNamesItsApp, lawBrandsAreDistinct as brandIdentity_lawBrandsAreDistinct, designBrandId as brandIdentity_designBrandId, lawDesignBrandIdsAreDistinct as brandIdentity_lawDesignBrandIdsAreDistinct, lawOnlyTheNetworkIsInviteOnly as brandIdentity_lawOnlyTheNetworkIsInviteOnly, accentTokens as brandIdentity_accentTokens, lawAccentInkDiffersFromAccent as brandIdentity_lawAccentInkDiffersFromAccent, supportEmail as brandIdentity_supportEmail, agentAccessPage as brandIdentity_agentAccessPage, connectorEndpoint as brandIdentity_connectorEndpoint, openaiConnectorEndpoint as brandIdentity_openaiConnectorEndpoint, hubTextsOnAppSurface as brandIdentity_hubTextsOnAppSurface, lawAppEndpointsAreDistinct as brandIdentity_lawAppEndpointsAreDistinct, lawOnlyTheSkillNamesTheEndpoint as brandIdentity_lawOnlyTheSkillNamesTheEndpoint, mayName as brandIdentity_mayName, lawAppSiteNeverNamesTheNetwork as brandIdentity_lawAppSiteNeverNamesTheNetwork, lawAppSiteNamesNoOtherApp as brandIdentity_lawAppSiteNamesNoOtherApp, lawHubLandingNamesNoApp as brandIdentity_lawHubLandingNamesNoApp, siteUsesPart as brandIdentity_siteUsesPart, lawSitesShareParts as brandIdentity_lawSitesShareParts, partTokens as brandIdentity_partTokens, lawPartsTakeTheBrandTokens as brandIdentity_lawPartsTakeTheBrandTokens, stateColors as brandIdentity_stateColors, stateToken as brandIdentity_stateToken, nearColorFloorPermille as brandIdentity_nearColorFloorPermille, inverseTextContrastFloorTenths as brandIdentity_inverseTextContrastFloorTenths, inverseEdgeContrastFloorTenths as brandIdentity_inverseEdgeContrastFloorTenths, ringIsTheAccent as brandIdentity_ringIsTheAccent, colorIsClearOfAccent as brandIdentity_colorIsClearOfAccent, hoverFillIsClear as brandIdentity_hoverFillIsClear, inverseIsReadable as brandIdentity_inverseIsReadable, lawRingEqualsTheAccent as brandIdentity_lawRingEqualsTheAccent, lawTheAccentIsNeverClearOfItself as brandIdentity_lawTheAccentIsNeverClearOfItself, lawStateTokensAreDistinct as brandIdentity_lawStateTokensAreDistinct, lawInverseNeedsBothContrasts as brandIdentity_lawInverseNeedsBothContrasts, colorSchemes as brandIdentity_colorSchemes, markTileFill as brandIdentity_markTileFill, faviconMedia as brandIdentity_faviconMedia, lawOnlyTheTwoCirclesTileTakesThePageColor as brandIdentity_lawOnlyTheTwoCirclesTileTakesThePageColor, lawLightFaviconHasNoCondition as brandIdentity_lawLightFaviconHasNoCondition } from "./brandIdentity.ts";
 
 /** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
-export type McpEndpoint = "NoEndpoint" | "SiteEndpoint" | "OpenAiEndpoint";
-/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
 export type Plugin = "ClaudePlugin" | "OpenAiPlugin";
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
+export type McpEndpoint = "NoEndpoint" | "SiteEndpoint" | "OpenAiEndpoint";
 /** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
 export type EntryKind = "NoEntry" | "FromSite" | "FromClaudePlugin" | "FromOpenAiPlugin" | "FromSkillCatalog" | "FromUpdateLink";
 /** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
@@ -27,31 +27,25 @@ export type Event =
   | { type: "resolveSkill"; wantsSignup: boolean }
   | { type: "resolveUpdate"; connected: boolean; referenceOwn: boolean };
 
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
+export const endpointHost: brandIdentity_AppKey = "Ntwrk";
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
+export const openAiManifestApp: brandIdentity_AppKey = "Ntwrk";
 /** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
 export const noSkill: string = "";
+/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
+export const initial: Entry = { phase: "NotArrived", entry: "NoEntry", app: "Ntwrk", skill: noSkill };
 /** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md) */
 export const updatePromptLead: string = "Ask The Network for update ";
 /** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md) */
 export const updateHandoffPrefix: string = "/t/";
-/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
-export const openAiManifestApp: brandIdentity_AppKey = "Ntwrk";
-/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
-export const endpointHost: brandIdentity_AppKey = "Ntwrk";
 /** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md) */
 export const linkedAssistants: LinkedAssistant[] = ["ChatGptAssistant", "ClaudeAssistant", "GrokAssistant"];
-/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
-export const initial: Entry = { phase: "NotArrived", entry: "NoEntry", app: "Ntwrk", skill: noSkill };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: Entry): boolean {
   return alwaysStartHasNoEntry(current) && alwaysSkillOnlyAfterResolution(current) && alwaysSkillMatchesApp(current) && alwaysOpenAiPluginNeverReachesSlop(current) && alwaysSitePromptStartsSignup(current) && alwaysUpdatesOnlyFromReference(current);
-}
-
-/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
-//@ pure
-export function appOpenAiEndpointPath(app: brandIdentity_AppKey): string {
-  return app === "Ntwrk" ? "/mcp/openai" : (app === "Slop" ? "/mcp/slop/openai" : (app === "Peon" ? "/mcp/peon/openai" : "/mcp/friends/openai"));
 }
 
 /** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
@@ -74,8 +68,21 @@ export function appEndpointPath(app: brandIdentity_AppKey): string {
 
 /** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
 //@ pure
+export function appOpenAiEndpointPath(app: brandIdentity_AppKey): string {
+  return app === "Ntwrk" ? "/mcp/openai" : (app === "Slop" ? "/mcp/slop/openai" : (app === "Peon" ? "/mcp/peon/openai" : "/mcp/friends/openai"));
+}
+
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
+//@ pure
 export function endpointPath(endpoint: McpEndpoint, app: brandIdentity_AppKey): string {
   return endpoint === "SiteEndpoint" ? appEndpointPath(app) : (endpoint === "OpenAiEndpoint" ? appOpenAiEndpointPath(app) : "");
+}
+
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
+//@ pure
+export function lawEveryListedSkillHasAnEndpoint(plugin: Plugin, app: brandIdentity_AppKey): boolean {
+  //@ ensures \result === true
+  return pluginListsSkill(plugin, app) === (endpointPath(pluginEndpoint(plugin, app), app) !== "");
 }
 
 /** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
@@ -101,23 +108,16 @@ export function lawClaudePluginListsEverySkill(app: brandIdentity_AppKey): boole
 
 /** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
 //@ pure
-export function lawOpenAiPluginOmitsSlop(app: brandIdentity_AppKey): boolean {
-  //@ ensures \result === true
-  return pluginListsSkill("OpenAiPlugin", app) === (app !== "Slop") && (pluginEndpoint("OpenAiPlugin", app) === "NoEndpoint") === (app === "Slop");
-}
-
-/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
-//@ pure
-export function lawEveryListedSkillHasAnEndpoint(plugin: Plugin, app: brandIdentity_AppKey): boolean {
-  //@ ensures \result === true
-  return pluginListsSkill(plugin, app) === (endpointPath(pluginEndpoint(plugin, app), app) !== "");
-}
-
-/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
-//@ pure
 export function lawOpenAiPluginNeverUsesTheSlopEndpoint(app: brandIdentity_AppKey): boolean {
   //@ ensures \result === true
   return endpointPath(pluginEndpoint("OpenAiPlugin", app), app) !== appOpenAiEndpointPath("Slop");
+}
+
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, and every skill uses the ntwrk.party endpoint of its app (spec/agentEntry.md) */
+//@ pure
+export function lawOpenAiPluginOmitsSlop(app: brandIdentity_AppKey): boolean {
+  //@ ensures \result === true
+  return pluginListsSkill("OpenAiPlugin", app) === (app !== "Slop") && (pluginEndpoint("OpenAiPlugin", app) === "NoEndpoint") === (app === "Slop");
 }
 
 /** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
