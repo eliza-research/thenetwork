@@ -21,8 +21,14 @@
 //  - Network capital. Every NC ledger event goes to one typed emitter (onLedger); the levers are read
 //    through an optional reader (capital.ts); gaming flags wait in the review queue as "fraud" items.
 import {
-  ADULT_AGE, canBeMatched, canJoin, CITY_TZ, DAY, directAgreementIdiom, HOUR, isMinor, localParts, LeakGuard, MINUTE, quoteStillOpen, UNDER_MIN_AGE_DECLINE, validAge,
-  type Category, type Facet, type Intent, type LeakOptions, type LLM, type MemberId, type NetworkEvent, type ParticipationState, type Preferences, type Presence, type Proposal, type ScoreComponents, type WorldSnapshot,
+  ADULT_AGE, ALL_SEED_VENUES, canBeMatched, canJoin, checkExternalEventT24Quorum, checkPublishExternalEvent, CITY_TZ, DAY,
+  directAgreementIdiom, evaluateArrivalRelaySafe, evaluateBackupPivotV2, evaluateDensityTier, evaluateExternalSourcingTrigger,
+  evaluateVenueQuarantine, evaluateVenueRedLines, HOUR, isLaunchCity, isMinor, localParts, LeakGuard, MINUTE,
+  pickPrimaryAndBackupVenue, quoteStillOpen, seedVenuesForCity, UNDER_MIN_AGE_DECLINE, validAge,
+  type Category, type DensityTier, type ExternalEventDraft, type ExternalQuorumDecision, type Facet, type Intent,
+  type LaunchCity, type LeakOptions, type LLM, type MemberId, type MemberVenuePrefs, type NetworkEvent,
+  type ParticipationState, type Preferences, type Presence, type PrimaryBackupVenuePick, type Proposal, type ScoreComponents,
+  type VenueNoiseLevel, type VenueRecord, type WorldSnapshot,
 } from "@thenetwork/core";
 import {
   attention, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, existingFriendPlanPairValues, friendsKit, JudgeCache, localEmbed, networkPack, plans, resolveConfig, resolvePlans, seatFills,
@@ -856,7 +862,7 @@ interface Opp {
   scheduleRevision?: number;
   reschedule?: RescheduleDraft;
   fixedVenue?: Venue;
-  venueId?: string; venue?: string; venueArea?: string; meetingAt?: number; feedbackSent?: boolean; recorded?: boolean;
+  venueId?: string; venue?: string; venueArea?: string; backupVenueId?: string; backupPivoted?: boolean; meetingAt?: number; feedbackSent?: boolean; recorded?: boolean;
   /** A booked venue outside the Network's default meeting zone. */
   meetingTimeZone?: string;
   tags: string[]; replacements: number; runId?: string;
@@ -5132,10 +5138,23 @@ export class ConsentNetwork implements NetworkUnderTest {
       const packVenue = published?.listing ? {
         id: published.id, name: published.listing.venue, neighborhood: published.area ?? "New York City", lat: published.listing.lat, lng: published.listing.lng,
       } : fixedVenue || o.teenRuleAt !== undefined ? undefined : this.opts.hooks?.venue?.({ ...this.hookOpp(o), meetingAt: at }, this.inputOnce());
+      const teenFriendAllowed = o.teenRuleAt !== undefined;
+      const redLinePick = !packVenue && !fixedVenue && this.hasVenueRedLines(o.participants)
+        ? this.pickVenueWithRedLines(o.participants, at, {
+          mode: o.participants.length >= 3 ? "group" : "date",
+          targetHobbies: o.tags,
+          teenFriendAllowed,
+        })
+        : undefined;
+      const redLinePrimary = redLinePick?.primary && (!teenFriendAllowed || redLinePick.primary.venue.allAges === true)
+        ? redLinePick.primary
+        : undefined;
       const spot: { venue: Pick<Venue, "id" | "name" | "neighborhood" | "lat" | "lng">; worst: number } = packVenue ? { venue: packVenue, worst: -1 }
         : fixedVenue ? { venue: fixedVenue, worst: Math.max(0, ...areas.filter((a): a is string => !!a).map(a => travelMinutes(neighborhood(a), neighborhood(fixedVenue.neighborhood)))) }
-        : meetingSpot(areas, o.category, o.tags, o.teenRuleAt !== undefined);
-      return { packVenue, spot };
+        : redLinePrimary ? { venue: { id: redLinePrimary.venue.id, name: redLinePrimary.venue.name, neighborhood: redLinePrimary.venue.neighborhood, lat: redLinePrimary.venue.lat, lng: redLinePrimary.venue.lng }, worst: redLinePrimary.maxTravelMinutes }
+        : meetingSpot(areas, o.category, o.tags, teenFriendAllowed);
+      const backupVenueId = redLinePrimary ? redLinePick?.backup?.venue.id : undefined;
+      return { packVenue, spot, backupVenueId };
     };
     const skipped = new Set<number>();
     let chosen = t ? place(t.at) : undefined;
@@ -5152,11 +5171,12 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.replaceOrClose(o, clash);
       return this.maybeReveal(o);
     }
-    const { packVenue, spot } = chosen;
+    const { packVenue, spot, backupVenueId } = chosen;
     if (o.teenRuleAt !== undefined && (!this.teenSlotAllowed(o, { start: t.at, end: t.at + teenMeetingMs }, spot.venue.id, !!packVenue || !!fixedVenue)
       || !this.teenOppAllowed(o, t.at + teenMeetingMs))) return this.closeNoCommonTime(o, o.participants[0]!);
     if (o.teenRuleAt === undefined && this.teenSessionNearby(spot.venue.id, t.at, o.id)) return this.closeNoCommonTime(o, o.participants[0]!);
     o.venueId = spot.venue.id; o.venue = spot.venue.name; o.venueArea = spot.venue.neighborhood;
+    if (backupVenueId) o.backupVenueId = backupVenueId;
     if (packVenue && "timeZone" in packVenue) o.meetingTimeZone = packVenue.timeZone;
     o.meetingAt = t.at;
     this.ctx.log("venue", { oppId: o.id, venueId: spot.venue.id, venue: spot.venue.name, lat: spot.venue.lat, lng: spot.venue.lng, meetingAt: o.meetingAt, worstMinutes: spot.worst, time: t.how });
@@ -9864,6 +9884,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         const o = this.opps.get(matchId);
         return !!o && o.participants.length === 2 && this.teenRoster(o) && this.teenItemOk(o);
       },
+      onPanicExit: (id, matchIds) => this.handleRelayPanicExit(id, matchIds),
       severeBlock: id => {
         if (!this.members.has(id) || this.declinedIds.has(id)) return;
         this.dirty = true;
@@ -9916,6 +9937,264 @@ export class ConsentNetwork implements NetworkUnderTest {
   relayLog(): RelayRecord[] { return this.relayDesk.records(); }
   relayContactShareFrom(outboundId: string): MemberId | undefined { return this.relayDesk.contactShareFrom(outboundId); }
   relaySenderOf(outboundId: string): MemberId | undefined { return this.relayDesk.senderOf(outboundId); }
+
+  private handleRelayPanicExit(id: MemberId, matchIds: string[]) {
+    this.dirty = true;
+    this.ctx.log("relay_panic_exit", { memberId: id, matchIds });
+    this.caseEvent(id, { at: this.now(), kind: "panic_exit", points: 0 });
+  }
+
+  relayPanicExit(memberId: MemberId, matchId?: string): { haltedMatches: string[]; cancelledSwaps: number; notice: string } {
+    return this.relayDesk.triggerPanicExit(memberId, matchId);
+  }
+
+  canRelayArrivalForMeetup(
+    oppId: string,
+    senderId: MemberId,
+    recipientId: MemberId,
+    passedSafetyAndLeakCheck: boolean
+  ): boolean {
+    const opp = this.opps.get(oppId);
+    if (!opp || opp.stage !== "scheduled" || opp.meetingAt === undefined) return false;
+    const sender = this.members.get(senderId);
+    const recipient = this.members.get(recipientId);
+    if (!sender || !recipient) return false;
+    const ageOfMember = (m: MemberState) =>
+      m.minor || m.minorSignal || m.minorReported ? 13 : validAge(m.age) ? m.age : validAge(m.statedAge) ? m.statedAge : 0;
+    const anyMinorInEvent = opp.teenRuleAt !== undefined || opp.participants.some(pid => {
+      const pm = this.members.get(pid);
+      return !pm || isMinor(ageOfMember(pm));
+    });
+    const panicTriggered =
+      this.relayDesk.isPanicTriggered(senderId, oppId) ||
+      this.relayDesk.isPanicTriggered(recipientId, oppId);
+    return evaluateArrivalRelaySafe({
+      senderAge: ageOfMember(sender),
+      recipientAge: ageOfMember(recipient),
+      anyMinorInEvent,
+      senderConfirmed: opp.status.get(senderId) === "yes",
+      recipientConfirmed: opp.status.get(recipientId) === "yes",
+      blocked: this.blocked(senderId, recipientId),
+      panicTriggered,
+      senderOptedOut: sender.optedOut || !!sender.account || !this.trust.ok(senderId),
+      recipientOptedOut: recipient.optedOut || !!recipient.account || !this.trust.ok(recipientId),
+      nowMs: this.now(),
+      startMs: opp.meetingAt,
+      alreadyMet: false,
+      passedSafetyAndLeakCheck,
+    });
+  }
+
+  checkBackupPivot(
+    oppId: string,
+    trigger: { closed?: boolean; full?: boolean }
+  ): { shouldPivot: boolean; shouldQuarantine: boolean; backupVenue?: VenueRecord } {
+    const opp = this.opps.get(oppId);
+    if (!opp || opp.meetingAt === undefined) return { shouldPivot: false, shouldQuarantine: false };
+    const reportedClosed = Boolean(trigger.closed);
+    const reportedFull = Boolean(trigger.full);
+    const backup = opp.backupVenueId ? ALL_SEED_VENUES.find(v => v.id === opp.backupVenueId) : undefined;
+    const hasVerifiedBackup = Boolean(backup && backup.status === "active");
+    const shouldPivot = evaluateBackupPivotV2(
+      reportedClosed,
+      reportedFull,
+      hasVerifiedBackup,
+      this.now(),
+      opp.meetingAt,
+      Boolean(opp.backupPivoted)
+    );
+    const shouldQuarantine = evaluateVenueQuarantine(reportedClosed, reportedFull);
+    return { shouldPivot, shouldQuarantine, ...(shouldPivot && backup ? { backupVenue: backup } : {}) };
+  }
+
+  private memberVenuePrefsOf(id: MemberId): { prefs: MemberVenuePrefs; hasRedLines: boolean } {
+    const m = this.member(id);
+    const snapFacets = this.snapshotCached().facets.filter(f => f.memberId === id);
+    const allTags = new Set<string>();
+    for (const f of snapFacets) {
+      for (const t of f.tags) allTags.add(t.trim().toLowerCase());
+      const v = f.value.trim().toLowerCase();
+      if (v) allTags.add(v);
+    }
+    const hasTag = (needles: readonly string[]) => needles.some(n => {
+      if (allTags.has(n)) return true;
+      for (const t of allTags) if (t.endsWith(`:${n}`) || t === n) return true;
+      return false;
+    });
+    const strictSober = hasTag(["strict_sober", "sober", "no_alcohol", "alcohol_free", "alcohol_boundary"]);
+    const nonDrinker = strictSober || hasTag(["non_drinker", "nondrinker", "slop:drinking:never", "heavy_drinker"]);
+    const vegetarian = hasTag(["vegetarian"]);
+    const vegan = hasTag(["vegan"]);
+    const halal = hasTag(["halal"]);
+    const kosher = hasTag(["kosher"]);
+    const glutenFree = hasTag(["gluten_free", "celiac"]);
+    const severeAllergen = hasTag(["severe_allergen", "nut_allergy", "peanut_allergy", "shellfish_allergy"]);
+    const wheelchairNeeded = hasTag(["wheelchair", "wheelchair_accessible"]);
+    const lowWalking = wheelchairNeeded || hasTag(["low_walking", "no_hiking"]);
+    const smokeFree = hasTag(["smoke_free", "non_smoker", "slop:dealbreaker:smoker"]);
+    const lowNoiseRequired = hasTag(["low_noise", "quiet_only", "hearing_accessible"]);
+    const daytimeOnly = hasTag(["daytime_only", "no_after_dark"]);
+    const hobbies = [...new Set(snapFacets.filter(f => f.kind === "interest").flatMap(f => f.tags))];
+    const age = m.minor || m.minorSignal || m.minorReported ? 13 : validAge(m.age) ? m.age : validAge(m.statedAge) ? m.statedAge : 25;
+    const hasRedLines = strictSober || nonDrinker || vegetarian || vegan || halal || kosher || glutenFree || severeAllergen || wheelchairNeeded || lowWalking || smokeFree || lowNoiseRequired || daytimeOnly;
+    return {
+      hasRedLines,
+      prefs: {
+        memberId: id,
+        age,
+        drinksAlcohol: !nonDrinker,
+        strictSober,
+        vegetarian,
+        vegan,
+        halal,
+        kosher,
+        glutenFree,
+        severeAllergen,
+        wheelchairNeeded,
+        lowWalking,
+        smokeFree,
+        lowNoiseRequired,
+        daytimeOnly,
+        maxBudgetTier: 2,
+        visitedVenueIds: [],
+        rejectedVenueIds: [],
+        hobbies,
+      },
+    };
+  }
+
+  private hasVenueRedLines(participantIds: readonly MemberId[]): boolean {
+    return participantIds.some(id => this.memberVenuePrefsOf(id).hasRedLines);
+  }
+
+  venuePassesRedLines(venue: VenueRecord, participantIds: readonly MemberId[], startMs: number, tz = CITY_TZ.nyc): boolean {
+    const prefs = participantIds.map(id => this.memberVenuePrefsOf(id).prefs);
+    const parts = localParts(startMs, tz);
+    const isAfterDark = parts.hour >= 19 || parts.hour < 7;
+    const noiseTierMap: Record<VenueNoiseLevel, number> = { quiet: 0, conversational: 1, lively: 2, loud: 3 };
+    const isAlcoholCentric = venue.isAlcoholCentric ?? (venue.isBarOnly || ["brewery", "brewery_garden", "wine_bar", "cocktail_bar", "cocktail_lounge", "wine_beer_patio"].includes(venue.category));
+    return evaluateVenueRedLines({
+      anyStrictSober: prefs.some(p => p.strictSober === true),
+      anyNonDrinker: prefs.some(p => !p.drinksAlcohol),
+      isAlcoholCentric,
+      isBarOnly: venue.isBarOnly,
+      alcoholOptional: venue.alcoholOptional,
+      anyHalal: prefs.some(p => p.halal === true),
+      halalFriendly: venue.halalFriendly === true,
+      anyKosher: prefs.some(p => p.kosher === true),
+      kosherFriendly: venue.kosherFriendly === true,
+      anyGlutenFree: prefs.some(p => p.glutenFree === true),
+      glutenFreeFriendly: venue.glutenFreeFriendly === true,
+      anySevereAllergen: prefs.some(p => p.severeAllergen === true),
+      severeAllergenSafe: venue.severeAllergenSafe === true,
+      anySmokeFree: prefs.some(p => p.smokeFree === true),
+      isSmokeFree: venue.isSmokeFree === true,
+      anyLowNoise: prefs.some(p => p.lowNoiseRequired === true),
+      noiseTier: noiseTierMap[venue.noiseLevel],
+      anyDaytimeOnly: prefs.some(p => p.daytimeOnly === true),
+      isAfterDark,
+      isFirstMeet: participantIds.length === 2,
+      safetyScore: venue.safetyScore ?? 8,
+      transitScore: venue.transitScore ?? 4,
+      startLocalHour: parts.hour,
+      groupSize: Math.max(1, participantIds.length),
+      hasReservation: false,
+      openEventEligible: participantIds.length > 6 ? venue.openEventEligible === true : false,
+      concurrentHeadcount: 0,
+      walkInCapacity: venue.walkInGroupCapacity,
+    });
+  }
+
+  pickVenueWithRedLines(
+    participantIds: readonly MemberId[],
+    startMs: number,
+    opts: {
+      city?: LaunchCity;
+      venues?: readonly VenueRecord[];
+      mode?: "date" | "group" | "solo";
+      teenFriendAllowed?: boolean;
+      concurrentHeadcountByVenue?: Record<string, number>;
+      targetHobbies?: string[];
+      openEvent?: boolean;
+      hasReservation?: boolean;
+      memberOverrides?: Partial<Record<MemberId, Partial<MemberVenuePrefs>>>;
+    } = {}
+  ): PrimaryBackupVenuePick {
+    const city: LaunchCity = opts.city ?? (isLaunchCity(this.opts.city) ? this.opts.city : "nyc");
+    const areas = participantIds.map(id => this.member(id).area).filter((a): a is string => Boolean(a));
+    const members = participantIds.map(id => {
+      const base = this.memberVenuePrefsOf(id).prefs;
+      const ov = opts.memberOverrides?.[id];
+      return ov ? { ...base, ...ov } : base;
+    });
+    const mode = opts.mode ?? (participantIds.length >= 3 ? "group" : participantIds.length === 2 ? "date" : "solo");
+    const app = this.app.id === "friends" ? "friends" : this.app.id === "slop" ? "slop" : "ntwrk";
+    const pool = opts.venues ? [...opts.venues] : seedVenuesForCity(city);
+    return pickPrimaryAndBackupVenue(
+      pool,
+      {
+        city,
+        memberAreas: areas,
+        members,
+        startMs,
+        mode,
+        app,
+        ...(opts.teenFriendAllowed !== undefined ? { teenFriendAllowed: opts.teenFriendAllowed } : {}),
+        ...(opts.concurrentHeadcountByVenue ? { concurrentHeadcountByVenue: opts.concurrentHeadcountByVenue } : {}),
+        ...(opts.targetHobbies ? { targetHobbies: opts.targetHobbies } : {}),
+        ...(opts.openEvent !== undefined ? { openEvent: opts.openEvent } : {}),
+        ...(opts.hasReservation !== undefined ? { hasReservation: opts.hasReservation } : {}),
+      },
+      this.now()
+    );
+  }
+
+  densityTierFor(qualifiedLocalCount: number): DensityTier {
+    const appKind = this.app.id === "slop" ? "slop" : this.app.id === "friends" ? "friends" : "ntwrk";
+    return evaluateDensityTier(appKind, qualifiedLocalCount);
+  }
+
+  canTriggerExternalSourcingFor(
+    memberId: MemberId,
+    opts: {
+      eligibleLocalPairs: number;
+      topScoreScaled: number;
+      strongThresholdScaled: number;
+      externalScoutOptIn: boolean;
+      activeSourcingTickets: number;
+    }
+  ): boolean {
+    const m = this.members.get(memberId);
+    if (!m || this.declinedIds.has(memberId)) return false;
+    const snap = this.record(memberId);
+    const age = m.minor || m.minorSignal || m.minorReported ? 13 : validAge(m.age) ? m.age : validAge(m.statedAge) ? m.statedAge : 0;
+    return evaluateExternalSourcingTrigger({
+      eligibleLocalPairs: opts.eligibleLocalPairs,
+      topScoreScaled: opts.topScoreScaled,
+      strongThresholdScaled: opts.strongThresholdScaled,
+      memberAge: age,
+      memberOptedInRomance: Boolean(snap?.prefs.romanceOptIn && snap?.prefs.categoriesOptIn.includes("romance")),
+      memberPaused: snap?.state === "paused" || !!m.account,
+      memberOptedOut: m.optedOut,
+      memberTrustOk: this.trust.ok(memberId),
+      memberStageReady: m.stage === "active",
+      memberExternalScoutOptIn: opts.externalScoutOptIn,
+      activeSourcingTickets: opts.activeSourcingTickets,
+    });
+  }
+
+  evaluateExternalEventPublish(draft: ExternalEventDraft): { allowed: boolean; approvedExternalCap: number; plannedTotal: number } {
+    return checkPublishExternalEvent(draft);
+  }
+
+  evaluateExternalEventQuorum(
+    confirmedNetworkAnchors: number,
+    confirmedNetworkTotal: number,
+    approvedExternalRsvps: number,
+    hoursToStart: number
+  ): ExternalQuorumDecision {
+    return checkExternalEventT24Quorum(confirmedNetworkAnchors, confirmedNetworkTotal, approvedExternalRsvps, hoursToStart);
+  }
 
   forgetMember(id: MemberId) { if (!this.declinedIds.has(id)) this.forget(id); }
 
