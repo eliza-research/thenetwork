@@ -8,6 +8,11 @@
 {"text": "pass my number to my match", "want": "contact_share"}
 {"text": "yeah, send them my phone number", "want": "contact_share"}
 {"text": "They can have my number.", "want": "contact_share"}
+{"text": "She can have my email.", "want": "contact_share"}
+{"text": "He can have my phone.", "want": "contact_share"}
+{"text": "They can have my cell.", "want": "contact_share"}
+{"text": "She can have my contact info.", "want": "contact_share"}
+{"text": "She can have my email if she asks.", "want": "none"}
 {"text": "send my number to Jordan", "want": "contact_share"}
 {"text": "sure, share my contact info with them", "want": "contact_share"}
 {"text": "go ahead and send him my email", "want": "contact_share"}
