@@ -766,6 +766,7 @@ export class PgPeopleStore implements PeopleStore {
       await tx`delete from platform.phone_identities where e164 = ${m.oldE164}`;
       await attachPersonIn(tx, m.newE164, m.personId, null, at);
       // The ledger is never updated in place: its rows are copied to the new number, then the old number's rows go.
+      await tx`delete from platform.consent_events where e164 = ${m.newE164} and state = 'opted_in'`;
       await tx`insert into platform.consent_events (e164, app_id, line, state, source, wording, wording_version, ref, named_app, at)
         select ${m.newE164}, app_id, line, state, source, wording, wording_version, ref, named_app, at from platform.consent_events where e164 = ${m.oldE164} order by at, id
         on conflict (e164, ref) where ref is not null do nothing`;

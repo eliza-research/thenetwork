@@ -570,6 +570,7 @@ export class MemoryPeopleStore implements PeopleStore {
       this.phones.delete(m.oldE164);
       this.phones.set(m.newE164, { e164: m.newE164, personId: m.personId, verifiedAt: at, method: "otp_sms", lastSeenAt: at, hold: null });
       await this.attachPerson(m.newE164, m.personId, null, at);
+      for (let i = this.consent.length - 1; i >= 0; i--) if (this.consent[i]!.e164 === m.newE164 && this.consent[i]!.state === "opted_in") this.consent.splice(i, 1);
       for (const e of this.consent) if (e.e164 === m.oldE164) e.e164 = m.newE164;
       this.personHash.set(m.personId, m.newHash);
       this.suppression.delete(m.newHash);
