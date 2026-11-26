@@ -12,7 +12,7 @@ import { serveHttp } from "../../../packages/core/src/runtime/http.ts";
 import { setTimeout as sleep } from "node:timers/promises";
 import { expect, test } from "vitest";
 import { Window, type HTMLInputElement as TestInput } from "happy-dom";
-import { act } from "react";
+import { act, createElement } from "react";
 import type { ClockInfo, ObsMember, ObsState, ObsStats } from "../src/types.ts";
 import { installDom } from "./dom.ts";
 
@@ -91,16 +91,21 @@ test("typing the exact place name Harlem offers Harlem first and Enter opens it"
     apply: () => undefined,
   });
   window.HTMLCanvasElement.prototype.getContext = (function () { return makeCtx() as unknown as CanvasRenderingContext2D; }) as unknown as typeof window.HTMLCanvasElement.prototype.getContext;
-  const root = window.document.createElement("div");
-  root.id = "root";
-  window.document.body.append(root);
+  const box = window.document.createElement("div");
+  window.document.body.append(box);
   const wait = async (check: () => boolean, label: string) => {
     for (let i = 0; i < 250; i++) { if (check()) return; await act(async () => { await sleep(5); }); }
     throw Error(`timed out waiting for ${label}: ${window.document.body.textContent?.slice(0, 400)}`);
   };
+  let appRoot: ReturnType<(typeof import("react-dom/client"))["createRoot"]> | undefined;
+  let disconnectStore: (() => void) | undefined;
   try {
+    const { createRoot } = await import("react-dom/client");
     const { store } = await import("../web/store.ts");
-    await import("../web/main.tsx");
+    disconnectStore = () => store.disconnect();
+    const { App } = await import("../web/main.tsx");
+    appRoot = createRoot(box as unknown as HTMLElement);
+    await act(async () => { appRoot!.render(createElement(App)); });
     await wait(() => !!window.document.getElementById("obs-search"), "the search box");
     const input = window.document.getElementById("obs-search") as unknown as TestInput;
     await act(async () => {
@@ -126,11 +131,13 @@ test("typing the exact place name Harlem offers Harlem first and Enter opens it"
       .map(el => (el.textContent ?? "").replace(/\s+/g, " ").trim());
     expect(memberOptions[0]).toEqual("Maya · Greenwich Village");
   } finally {
-    for (const socket of sockets) { socket.onclose = null; socket.close(); }
+    await act(async () => { appRoot?.unmount(); });
+    disconnectStore?.();
+    for (const socket of sockets) { socket.onclose = null; try { socket.close(); } catch { /* already closed */ } }
     globalThis.fetch = nativeFetch;
-    await act(async () => { await sleep(40); });
-    restoreDom();
     await api.stop(true);
     await window.happyDOM.close();
+    restoreDom();
   }
+  await sleep(50);
 });

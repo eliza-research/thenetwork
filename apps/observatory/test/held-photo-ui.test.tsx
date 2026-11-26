@@ -34,8 +34,9 @@ test("photo review waits for successful image load and acknowledgment, keeps Rej
   const box=window.document.createElement("div");window.document.body.append(box);const root=createRoot(box as unknown as HTMLElement);
   const wait=async(check:()=>boolean)=>{for(let i=0;i<100;i++){if(check())return;await act(async()=>{await sleep(5);});}throw Error(box.textContent??"render timed out");};
   const button=(label:string)=>[...box.querySelectorAll("button")].find(b=>b.textContent===label)!;
+  let disconnectStore: (() => void) | undefined;
   try{
-    const {store}=await import("../web/store.ts"),{SafetyCases}=await import("../web/admin.tsx");
+    const {store}=await import("../web/store.ts"),{SafetyCases}=await import("../web/admin.tsx");disconnectStore=()=>store.disconnect();
     store.mode="real";store.app="slop";store.setToken("fixture-safety-token");store.me={id:"fixture",roles:["safety"],grants:[{role:"safety",app:"*"}],via:"token"};
     await act(async()=>{root.render(createElement(SafetyCases));});await wait(()=>!!button("Held relay"));
     await act(async()=>{button("Held relay").click();});await wait(()=>!!button("Load selected photo"));
@@ -63,7 +64,7 @@ test("photo review waits for successful image load and acknowledgment, keeps Rej
     await act(async()=>{store.app="friends";store.notify();await sleep(35);});expect(box.querySelector("img")).toBeNull();
     expect(requests.some(r=>r.body?.decision==="release")).toBe(false);
   }finally{
-    await act(async()=>{root.unmount();});globalThis.fetch=nativeFetch;await api.stop(true);await window.happyDOM.close();
+    await act(async()=>{root.unmount();});disconnectStore?.();globalThis.fetch=nativeFetch;await api.stop(true);await window.happyDOM.close();
     restoreDom();
   }
 },30_000);
