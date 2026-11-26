@@ -1,7 +1,7 @@
 // The Components & Layout Viewer: zero-config embedded preview (with Storybook and structured fallback),
 // adaptive Layout Stage + Element Inspector for model-bound/composite components, and a consolidated
 // headered Props & Controls table for isolated primitives.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { Effect, ManagedRuntime } from "effect";
 import { Button, Checkbox, EmptyState, Input, cn, focusRing } from "@repo/ui";
 import { Machine, machine } from "../../gen/components.effect.vibe";
@@ -12,7 +12,7 @@ import type { Component, ComponentIndex, Prop, Story } from "../../../stories/em
 import {
   S, fetchPreview, graphOf, isDarkTheme, openComponent, openStateFocus, postSim, reveal, select, useStudio,
 } from "./studio.ts";
-import { Dot, Icon, InlineMarkdown } from "./text.tsx";
+import { CollapsibleSection, Dot, Icon, IconButton, InlineMarkdown, InspectorToggle, Tooltip } from "./text.tsx";
 
 type Arg = string | number | boolean;
 interface PreviewInfo { url: string | null; mode: "embedded" | "storybook" | "none" }
@@ -445,6 +445,8 @@ export function LivePreviewStage({
     }
   }, [target.source.file, target.name, args, propNames, allChildren, inspect, theme]);
 
+  const selectComponent = useEffectEvent((name: string) => onSelectComponent?.(name));
+  const sendAction = useEffectEvent((prop: string, actionArgs: unknown[]) => onAction?.(prop, actionArgs));
   useEffect(() => {
     if (preview.mode !== "embedded" || !preview.url) return;
     const onMsg = (ev: MessageEvent) => {
@@ -455,9 +457,9 @@ export function LivePreviewStage({
         readyRef.current = true;
         iframeRef.current?.contentWindow?.postMessage({ type: "studio:preview", ...payloadRef.current }, "*");
       } else if (data.type === "studio:select" && typeof data.componentName === "string") {
-        onSelectComponent?.(data.componentName);
+        selectComponent(data.componentName);
       } else if (data.type === "studio:action" && typeof data.prop === "string") {
-        onAction?.(data.prop, Array.isArray(data.args) ? data.args : []);
+        sendAction(data.prop, Array.isArray(data.args) ? data.args : []);
       }
     };
     window.addEventListener("message", onMsg);
@@ -465,7 +467,7 @@ export function LivePreviewStage({
       readyRef.current = false;
       window.removeEventListener("message", onMsg);
     };
-  }, [preview.mode, preview.url, onSelectComponent, onAction]);
+  }, [preview.mode, preview.url]);
 
   const frameClass = cn(
     "w-full rounded-lg border border-border bg-card transition-all duration-fast",
@@ -574,9 +576,7 @@ export function SimStateBar({
               ▶ {ev.name}
             </Button>
           ))}
-          <Button variant="ghost" size="sm" disabled={busy} className="h-7 px-2 text-xs" onClick={onReset}>
-            Reset
-          </Button>
+          <IconButton name="undo" label="Reset simulation" side="top" align="right" disabled={busy} onClick={onReset} />
         </div>
       )}
     </div>
@@ -755,13 +755,9 @@ function ElementInspector({
         <div className="flex items-center justify-between gap-2">
           <h2 className="truncate text-base font-semibold text-foreground">{component.name}</h2>
           {component.model && (
-            <div className="flex items-center gap-1">
-              <Button variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => select(component.model!.spec)}>
-                Spec ↗
-              </Button>
-              <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => openStateFocus(component.model!.spec)}>
-                States
-              </Button>
+            <div className="flex items-center gap-0.5">
+              <IconButton name="stories" label="Open spec" onClick={() => select(component.model!.spec)} />
+              <IconButton name="graph" label="Open state graph" align="right" onClick={() => openStateFocus(component.model!.spec)} />
             </div>
           )}
         </div>
@@ -794,11 +790,7 @@ function ElementInspector({
       {component.diagnostics.map((d) => <p key={d} role="alert" className="text-xs text-destructive">{d}</p>)}
 
       {component.model && (
-        <section className="flex flex-col gap-2">
-          <div className="flex items-center justify-between text-xs font-medium text-muted-foreground">
-            <span>Model State & Live Guards</span>
-            <span className="font-mono">{component.model.state}</span>
-          </div>
+        <CollapsibleSection label="Model State & Guards" meta={component.model.state} gap="gap-2">
           <div className="flex flex-col divide-y divide-border rounded-md border border-border bg-background text-xs">
             {fields.map((f) => (
               <div key={f.key} className="flex items-center justify-between gap-2 px-2.5 py-1.5 font-mono">
@@ -827,12 +819,11 @@ function ElementInspector({
               <div className="px-2.5 py-2 font-mono text-muted-foreground">{component.model.events.join(" · ")}</div>
             )}
           </div>
-        </section>
+        </CollapsibleSection>
       )}
 
       {(rules.length > 0 || (component.citations?.length ?? 0) > 0) && (
-        <section className="flex flex-col gap-2">
-          <div className="text-xs font-medium text-muted-foreground">Linked Stories & Rules</div>
+        <CollapsibleSection label="Linked Rules" meta={rules.length || component.citations?.length || 0} gap="gap-2">
           <div className="flex flex-col gap-1">
             {rules.length > 0 ? rules.map((rule) => (
               <button
@@ -856,13 +847,12 @@ function ElementInspector({
               </button>
             ))}
           </div>
-        </section>
+        </CollapsibleSection>
       )}
 
-      <section className="flex flex-col gap-2">
-        <div className="text-xs font-medium text-muted-foreground">Props</div>
+      <CollapsibleSection label="Props" meta={component.props.length} gap="gap-2">
         <PropsTable component={component} story={story} edits={edits} onEdit={onEdit} compact />
-      </section>
+      </CollapsibleSection>
     </aside>
   );
 }
@@ -939,19 +929,21 @@ function ViewportToggle({
   return (
     <div role="group" aria-label="Viewport" className="flex items-center rounded-md border border-border bg-background p-0.5">
       {(["desktop", "mobile"] as const).map((vp) => (
-        <button
-          key={vp}
-          type="button"
-          aria-pressed={viewport === vp}
-          onClick={() => onChange(vp)}
-          className={cn(
-            focusRing,
-            "rounded-sm px-2 py-0.5 text-xs capitalize transition-colors duration-fast",
-            viewport === vp ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:text-foreground",
-          )}
-        >
-          {vp}
-        </button>
+        <Tooltip key={vp} label={vp === "desktop" ? "Desktop viewport" : "Mobile viewport"} align="right">
+          <button
+            type="button"
+            aria-label={vp === "desktop" ? "Desktop viewport" : "Mobile viewport"}
+            aria-pressed={viewport === vp}
+            onClick={() => onChange(vp)}
+            className={cn(
+              focusRing,
+              "grid size-6 place-items-center rounded-sm transition-colors duration-fast",
+              viewport === vp ? "bg-accent text-primary" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Icon name={vp} className="size-3.5" />
+          </button>
+        </Tooltip>
       ))}
     </div>
   );
@@ -971,6 +963,7 @@ function LayoutViewer({
   const [inspect, setInspect] = useState(true);
   const [viewport, setViewport] = useState<"desktop" | "mobile">("desktop");
   const [isolate, setIsolate] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(true);
   const [lastAction, setLastAction] = useState<string>();
 
   const crumb = breadcrumbOf(component, hierarchy);
@@ -990,27 +983,28 @@ function LayoutViewer({
   };
 
   return (
-    <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_348px] max-xl:grid-cols-1">
+    <div className={cn("grid min-h-0 flex-1 max-xl:grid-cols-1", inspectorOpen ? "grid-cols-[minmax(0,1fr)_348px]" : "grid-cols-1")}>
       <div className="flex min-h-0 flex-col bg-background">
-        <div className="flex flex-none flex-wrap items-center justify-between gap-2 border-b border-border bg-card px-4 py-2">
+        <div className="flex flex-none flex-wrap items-center justify-between gap-2 border-b border-border bg-card px-4 py-1.5">
           <StoryButtons stories={component.stories} activeStory={story} canChoose={canChooseStory} onChoose={onChooseStory} />
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1">
             {root !== component && (
-              <Button variant="ghost" size="sm" className="h-7 px-2 font-mono text-xs" onClick={() => setIsolate((v) => !v)}>
-                {isolate ? `Show in ${root.name}` : `Isolate ${component.name}`}
-              </Button>
+              <IconButton
+                name="isolate"
+                label={isolate ? `Show inside ${root.name}` : `Isolate ${component.name}`}
+                active={isolate}
+                onClick={() => setIsolate((v) => !v)}
+              />
             )}
-            <Button
-              variant={inspect ? "primary" : "outline"}
-              size="sm"
-              aria-pressed={inspect}
-              className="h-7 px-2.5 text-xs"
+            <IconButton
+              name="inspect"
+              label={inspect ? "Disable element inspector" : "Enable element inspector"}
+              active={inspect}
               onClick={() => setInspect((v) => !v)}
-            >
-              Inspect {inspect ? "ON" : "OFF"}
-            </Button>
+            />
             <ViewportToggle viewport={viewport} onChange={setViewport} />
+            <InspectorToggle open={inspectorOpen} onToggle={() => setInspectorOpen((v) => !v)} />
           </div>
         </div>
 
@@ -1044,16 +1038,18 @@ function LayoutViewer({
         )}
       </div>
 
-      <ElementInspector
-        component={component}
-        story={story}
-        hierarchy={hierarchy}
-        graph={graph}
-        sim={sim}
-        edits={edits}
-        onEdit={onEdit}
-        onSelectComponent={onSelectComponent}
-      />
+      {inspectorOpen && (
+        <ElementInspector
+          component={component}
+          story={story}
+          hierarchy={hierarchy}
+          graph={graph}
+          sim={sim}
+          edits={edits}
+          onEdit={onEdit}
+          onSelectComponent={onSelectComponent}
+        />
+      )}
     </div>
   );
 }
@@ -1078,13 +1074,14 @@ function PrimitiveViewer({
     <div className="min-h-0 flex-1 overflow-auto">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-5 px-6 py-5 max-sm:px-4">
         <div className="flex flex-col gap-1.5">
-          <div className="flex flex-wrap items-baseline justify-between gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-baseline gap-2">
               <h2 className="text-xl font-semibold text-foreground">{component.name}</h2>
               <span className="font-mono text-xs text-muted-foreground">{component.package}</span>
             </div>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <div className="flex flex-wrap items-center gap-3">
               {fileLinks.map((path) => <FileLink key={path} path={path} />)}
+              <ViewportToggle viewport={viewport} onChange={setViewport} />
             </div>
           </div>
           {component.description && (
@@ -1094,7 +1091,7 @@ function PrimitiveViewer({
           )}
           {parts.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5 pt-1 text-xs">
-              <span className="text-muted-foreground">Parts:</span>
+              <span className="text-muted-foreground">Parts</span>
               {parts.map((part) => (
                 <button
                   key={part.id}
@@ -1111,16 +1108,6 @@ function PrimitiveViewer({
         </div>
 
         <div className="overflow-hidden rounded-lg border border-border bg-card">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2 text-xs">
-            <span className="font-mono text-foreground">Story: {story?.name ?? "None"}</span>
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground">
-                {preview.mode === "embedded" ? "Embedded preview" : preview.mode === "storybook" ? "Storybook" : "Structured preview"}
-              </span>
-              <ViewportToggle viewport={viewport} onChange={setViewport} />
-            </div>
-          </div>
-
           <div className="p-4">
             <LivePreviewStage
               target={component}
@@ -1142,7 +1129,7 @@ function PrimitiveViewer({
               activeStory={story}
               canChoose={canChooseStory}
               onChoose={onChooseStory}
-              className="gap-1.5 border-t border-border bg-background/60 px-4 py-2"
+              className="gap-1 border-t border-border bg-background/60 px-3 py-2"
             />
           )}
         </div>
@@ -1228,43 +1215,45 @@ export function Components({ index }: { index: ComponentIndex }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <nav aria-label="Component switcher" className="flex flex-none flex-wrap items-center justify-between gap-2 border-b border-border bg-card px-4 py-2">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
-          {topComponents.map((c) => {
-            const at = index.components.indexOf(c);
-            const isCurrent = c === component || component?.part === c.name || (component ? breadcrumbOf(component, hierarchy)[0] === c : false);
-            return (
-              <button
-                key={c.id}
-                type="button"
-                aria-current={isCurrent || undefined}
-                disabled={!can({ type: "chooseComponent", at })}
-                onClick={() => choose({ type: "chooseComponent", at })}
-                className={cn(
-                  focusRing,
-                  "rounded-md px-2.5 py-1 text-xs transition-colors duration-fast hover:bg-accent",
-                  isCurrent ? "bg-accent font-medium text-primary" : "text-foreground",
-                )}
-              >
-                {c.name}
-              </button>
-            );
-          })}
-        </div>
-        {index.components.length > 6 && (
-          <div className="flex items-center gap-1.5">
-            <Icon name="search" className="size-3.5 text-muted-foreground" />
-            <Input
-              type="search"
-              placeholder="Filter components…"
-              aria-label="Search components"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              className="h-7 w-44 text-xs"
-            />
+      {S.railCollapsed && (
+        <nav aria-label="Component switcher" className="flex flex-none flex-wrap items-center justify-between gap-2 border-b border-border bg-card px-4 py-1.5">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+            {topComponents.map((c) => {
+              const at = index.components.indexOf(c);
+              const isCurrent = c === component || component?.part === c.name || (component ? breadcrumbOf(component, hierarchy)[0] === c : false);
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  aria-current={isCurrent || undefined}
+                  disabled={!can({ type: "chooseComponent", at })}
+                  onClick={() => choose({ type: "chooseComponent", at })}
+                  className={cn(
+                    focusRing,
+                    "rounded-md px-2.5 py-1 text-xs transition-colors duration-fast hover:bg-accent",
+                    isCurrent ? "bg-accent font-medium text-primary" : "text-foreground",
+                  )}
+                >
+                  {c.name}
+                </button>
+              );
+            })}
           </div>
-        )}
-      </nav>
+          {index.components.length > 6 && (
+            <div className="flex items-center gap-1.5">
+              <Icon name="search" className="size-3.5 text-muted-foreground" />
+              <Input
+                type="search"
+                placeholder="Filter…"
+                aria-label="Search components"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                className="h-7 w-40 text-xs"
+              />
+            </div>
+          )}
+        </nav>
+      )}
 
       {viewerProps ? (
         isLayoutComponent(viewerProps.component, hierarchy) ? <LayoutViewer {...viewerProps} /> : <PrimitiveViewer {...viewerProps} />

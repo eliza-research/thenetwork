@@ -1,10 +1,8 @@
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import tailwindcss from "@tailwindcss/vite";
-import react from "@vitejs/plugin-react";
-import vibelang from "vibelang-vite";
-import { createServer, type Plugin, type ViteDevServer } from "vite";
+import { pathToFileURL } from "node:url";
 import { themeCss, tokensCss } from "../../design/generate.ts";
 import { parseTokens } from "../../design/tokens.ts";
 import type { ComponentIndex } from "../../stories/emit.ts";
@@ -15,9 +13,36 @@ export interface PreviewInfo {
   mode: "embedded" | "storybook" | "none";
 }
 
+interface PreviewServer {
+  httpServer?: { address(): { port: number } | string | null } | null;
+  middlewares: {
+    use(
+      fn: (
+        req: { url?: string },
+        res: { statusCode: number; setHeader(name: string, value: string): void; end(body: string): void },
+        next: (err?: unknown) => void,
+      ) => void,
+    ): void;
+  };
+  transformIndexHtml(url: string, html: string): Promise<string>;
+  listen(): Promise<unknown>;
+  close(): Promise<void>;
+}
+
+interface PreviewPlugin {
+  name: string;
+  enforce?: "pre" | "post";
+  configureServer?(server: PreviewServer): void;
+  resolveId?(id: string): string | undefined;
+  load?(id: string): string | undefined;
+}
+
+type CreateViteServer = (config: Record<string, unknown>) => Promise<PreviewServer>;
+type PluginFactory = () => unknown;
+
 interface PreviewEntry {
   ready: Promise<PreviewInfo>;
-  server?: ViteDevServer;
+  server?: PreviewServer;
 }
 
 const VIRTUAL_ENTRY = "/@studio-preview/main.tsx";
@@ -54,11 +79,31 @@ function hasRunnableComponents(root: string, components?: ComponentIndex): boole
   return components.components.some((c) => /\.[jt]sx$/.test(c.source.file) && fs.existsSync(path.join(root, c.source.file)));
 }
 
+function configuredTokenPaths(root: string): string[] {
+  const configFile = path.join(root, "vibestack.json");
+  if (!fs.existsSync(configFile)) return [];
+  try {
+    const raw: unknown = JSON.parse(fs.readFileSync(configFile, "utf8"));
+    if (!raw || typeof raw !== "object") return [];
+    const record = raw as Record<string, unknown>;
+    const found: string[] = [];
+    if (typeof record.tokens === "string") found.push(path.resolve(root, record.tokens));
+    if (record.design && typeof record.design === "object") {
+      const design = record.design as Record<string, unknown>;
+      if (typeof design.tokens === "string") found.push(path.resolve(root, design.tokens));
+    }
+    return found;
+  } catch {
+    return [];
+  }
+}
+
 function readProjectTokens(root: string) {
   const candidates = [
+    ...configuredTokenPaths(root),
     path.join(root, "tokens.json"),
     path.join(root, "packages", "design-system", "tokens.json"),
-    path.join(import.meta.dirname, "..", "..", "..", "packages", "design-system", "tokens.json"),
+    path.join(root, "template", "packages", "design-system", "tokens.json"),
   ];
   const tokenFile = candidates.find((file) => fs.existsSync(file));
   if (!tokenFile) return undefined;
@@ -69,28 +114,112 @@ function readProjectTokens(root: string) {
   }
 }
 
-function resolveDepBase(root: string, studioRoot: string, dep: string): string | undefined {
-  const dirs = [
-    root,
-    ...["packages", "apps"].flatMap((group) => {
-      const dir = path.join(root, group);
-      return fs.existsSync(dir) ? fs.readdirSync(dir).map((name) => path.join(dir, name)) : [];
-    }),
-    studioRoot,
-  ];
+function searchDirs(root: string, studioRoot: string): string[] {
+  const workspaceChildren = ["apps", "packages"].flatMap((group) => {
+    const dir = path.join(root, group);
+    if (!fs.existsSync(dir)) return [];
+    try {
+      return fs.readdirSync(dir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => path.join(dir, entry.name));
+    } catch {
+      return [];
+    }
+  });
+  const repoRoot = path.resolve(studioRoot, "..", "..");
+  return [...new Set([root, ...workspaceChildren, studioRoot, repoRoot])];
+}
+
+function esmEntryFromExports(exp: unknown): string | undefined {
+  if (typeof exp === "string") return exp;
+  if (!exp || typeof exp !== "object") return undefined;
+  const record = exp as Record<string, unknown>;
+  if ("." in record) return esmEntryFromExports(record["."]);
+  for (const key of ["import", "node", "default"]) {
+    if (key in record) {
+      const found = esmEntryFromExports(record[key]);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
+
+function resolvePackageFromDir(dir: string, specifier: string): string | undefined {
+  const pkgJson = path.join(dir, "package.json");
+  if (fs.existsSync(pkgJson)) {
+    try {
+      return createRequire(pkgJson).resolve(specifier);
+    } catch {
+      // Fall through to ESM entry inspection for packages without a require export condition.
+    }
+  }
+  const depDir = path.join(dir, "node_modules", ...specifier.split("/"));
+  const depPkgFile = path.join(depDir, "package.json");
+  if (!fs.existsSync(depPkgFile)) return undefined;
+  try {
+    const depPkg = JSON.parse(fs.readFileSync(depPkgFile, "utf8")) as Record<string, unknown>;
+    const entry = esmEntryFromExports(depPkg.exports)
+      ?? (typeof depPkg.module === "string" ? depPkg.module : undefined)
+      ?? (typeof depPkg.main === "string" ? depPkg.main : undefined)
+      ?? "index.js";
+    const resolved = path.resolve(depDir, entry);
+    return fs.existsSync(resolved) ? resolved : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function loadFromDirs(dirs: string[], specifier: string): Promise<unknown> {
+  for (const dir of dirs) {
+    const resolved = resolvePackageFromDir(dir, specifier);
+    if (!resolved) continue;
+    try {
+      return await import(pathToFileURL(resolved).href);
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
+function extractCreateServer(mod: unknown): CreateViteServer | undefined {
+  if (mod && typeof mod === "object" && "createServer" in mod) {
+    const fn = (mod as { createServer: unknown }).createServer;
+    if (typeof fn === "function") return fn as CreateViteServer;
+  }
+  return undefined;
+}
+
+function extractPluginFactory(mod: unknown): PluginFactory | undefined {
+  if (typeof mod === "function") return mod as PluginFactory;
+  if (mod && typeof mod === "object" && "default" in mod) {
+    const def = (mod as { default: unknown }).default;
+    if (typeof def === "function") return def as PluginFactory;
+    if (def && typeof def === "object" && "default" in def) {
+      const inner = (def as { default: unknown }).default;
+      if (typeof inner === "function") return inner as PluginFactory;
+    }
+  }
+  return undefined;
+}
+
+function resolveDepBase(dirs: string[], dep: string): string | undefined {
   return dirs.find((dir) => fs.existsSync(path.join(dir, "node_modules", dep)));
 }
 
-function loadThemeCss(root: string, studioRoot: string): string {
+function loadThemeCss(root: string, dirs: string[], useTailwind: boolean): string {
+  const tokens = readProjectTokens(root);
+  if (!useTailwind) {
+    return tokens ? `${tokensCss(tokens)}\n` : "";
+  }
   const sources = ["src", "packages", "apps"]
     .filter((dir) => fs.existsSync(path.join(root, dir)))
     .map((dir) => `@source "${path.join(root, dir).replaceAll("\\", "/")}";`)
     .join("\n");
-  const twBase = resolveDepBase(root, studioRoot, "tailwindcss");
+  const twBase = resolveDepBase(dirs, "tailwindcss");
   const twImport = twBase
     ? `@import "${path.join(twBase, "node_modules", "tailwindcss", "index.css").replaceAll("\\", "/")}";`
     : '@import "tailwindcss";';
-  const tokens = readProjectTokens(root);
   if (!tokens) return `${twImport}\n${sources}\n`;
   const body = themeCss(tokens)
     .replace('@import "tailwindcss";', twImport)
@@ -307,7 +436,7 @@ mountRoot(document.getElementById("root")).render(React.createElement(PreviewApp
 `;
 }
 
-function previewPlugin(root: string, studioRoot: string): Plugin {
+function previewPlugin(root: string, dirs: string[], useTailwind: boolean): PreviewPlugin {
   const themeFile = path.join(root, "__studio_preview_theme.css");
   const entryId = `\0${VIRTUAL_ENTRY}`;
   return {
@@ -342,7 +471,7 @@ function previewPlugin(root: string, studioRoot: string): Plugin {
     },
     load(id) {
       if (id === entryId) return previewEntryCode();
-      if (id === themeFile) return loadThemeCss(root, studioRoot);
+      if (id === themeFile) return loadThemeCss(root, dirs, useTailwind);
       if (id === VIRTUAL_SB_TEST) return STORYBOOK_TEST_SHIM;
       return undefined;
     },
@@ -357,9 +486,9 @@ function hookProcessExit() {
   });
 }
 
-function reactAliases(root: string, studioRoot: string): Record<string, string> | undefined {
+function reactAliases(root: string, dirs: string[]): Record<string, string> | undefined {
   if (fs.existsSync(path.join(root, "node_modules", "react"))) return undefined;
-  const base = resolveDepBase(root, studioRoot, "react-dom");
+  const base = resolveDepBase(dirs, "react-dom");
   if (!base || !fs.existsSync(path.join(base, "node_modules", "react"))) return undefined;
   return {
     "react/jsx-dev-runtime": path.join(base, "node_modules", "react", "jsx-dev-runtime.js"),
@@ -370,6 +499,66 @@ function reactAliases(root: string, studioRoot: string): Record<string, string> 
   };
 }
 
+async function startEmbeddedPreview(root: string, entry: PreviewEntry): Promise<PreviewInfo> {
+  const studioRoot = path.resolve(import.meta.dirname, "..");
+  const dirs = searchDirs(root, studioRoot);
+  const [viteMod, reactMod, tailwindMod, vibelangMod] = await Promise.all([
+    loadFromDirs(dirs, "vite"),
+    loadFromDirs(dirs, "@vitejs/plugin-react"),
+    loadFromDirs(dirs, "@tailwindcss/vite"),
+    loadFromDirs(dirs, "vibelang-vite"),
+  ]);
+  const createViteServer = extractCreateServer(viteMod);
+  const reactPlugin = extractPluginFactory(reactMod);
+  if (!createViteServer || !reactPlugin) {
+    servers.delete(root);
+    return { url: null, mode: "none" };
+  }
+  const tailwindPlugin = extractPluginFactory(tailwindMod);
+  const vibelangPlugin = extractPluginFactory(vibelangMod);
+  const plugins: unknown[] = [previewPlugin(root, dirs, Boolean(tailwindPlugin))];
+  if (vibelangPlugin) plugins.push(vibelangPlugin());
+  plugins.push(reactPlugin());
+  if (tailwindPlugin) plugins.push(tailwindPlugin());
+
+  const alias = reactAliases(root, dirs);
+  const allow = [...new Set(dirs.filter((dir) => fs.existsSync(dir)))];
+  try {
+    const server = await createViteServer({
+      root,
+      configFile: false,
+      cacheDir: path.join(os.tmpdir(), "vibestack-studio-preview", short(root)),
+      logLevel: "silent",
+      appType: "custom",
+      plugins,
+      resolve: { dedupe: ["react", "react-dom"], ...(alias ? { alias } : {}) },
+      server: {
+        host: "127.0.0.1",
+        port: 0,
+        strictPort: false,
+        hmr: false,
+        fs: { allow },
+      },
+      optimizeDeps: {
+        include: ["react", "react-dom", "react-dom/client", "react/jsx-runtime", "react/jsx-dev-runtime"],
+      },
+    });
+    entry.server = server;
+    await server.listen();
+    const addr = server.httpServer?.address();
+    if (!addr || typeof addr === "string") {
+      await server.close();
+      servers.delete(root);
+      return { url: null, mode: "none" };
+    }
+    return { url: `http://127.0.0.1:${addr.port}/`, mode: "embedded" };
+  } catch {
+    if (entry.server) await entry.server.close().catch(() => undefined);
+    servers.delete(root);
+    return { url: null, mode: "none" };
+  }
+}
+
 /** Lazily start an embedded Vite/React preview server for `root`, or return `{ url: null, mode: "none" }`. */
 export function ensurePreview(root: string, components?: ComponentIndex): Promise<PreviewInfo> {
   if (!hasRunnableComponents(root, components)) return Promise.resolve({ url: null, mode: "none" });
@@ -377,42 +566,7 @@ export function ensurePreview(root: string, components?: ComponentIndex): Promis
   if (existing) return existing.ready;
   hookProcessExit();
   const entry: PreviewEntry = { ready: Promise.resolve({ url: null, mode: "none" }) };
-  const studioRoot = path.join(import.meta.dirname, "..");
-  const repoRoot = path.join(studioRoot, "..", "..");
-  const alias = reactAliases(root, studioRoot);
-  entry.ready = createServer({
-    root,
-    configFile: false,
-    cacheDir: path.join(os.tmpdir(), "vibestack-studio-preview", short(root)),
-    logLevel: "silent",
-    appType: "custom",
-    plugins: [previewPlugin(root, studioRoot), vibelang(), react(), tailwindcss()],
-    resolve: { dedupe: ["react", "react-dom"], ...(alias ? { alias } : {}) },
-    server: {
-      host: "127.0.0.1",
-      port: 0,
-      strictPort: false,
-      hmr: false,
-      fs: { allow: [root, studioRoot, repoRoot] },
-    },
-    optimizeDeps: {
-      include: ["react", "react-dom", "react-dom/client", "react/jsx-runtime", "react/jsx-dev-runtime"],
-    },
-  }).then(async (server) => {
-    entry.server = server;
-    await server.listen();
-    const addr = server.httpServer?.address();
-    if (!addr || typeof addr === "string") {
-      await server.close();
-      servers.delete(root);
-      return { url: null, mode: "none" as const };
-    }
-    return { url: `http://127.0.0.1:${addr.port}/`, mode: "embedded" as const };
-  }).catch(async () => {
-    if (entry.server) await entry.server.close().catch(() => undefined);
-    servers.delete(root);
-    return { url: null, mode: "none" as const };
-  });
+  entry.ready = startEmbeddedPreview(root, entry);
   servers.set(root, entry);
   return entry.ready;
 }
