@@ -590,14 +590,14 @@
     },
     "spec/browserJoin.md": {
       "@document": [
-        "b1a6869848e0"
+        "7327d3c53ff8"
       ],
       "## Story: Open the join page from my agent's link": [
-        "9541a28dcf16"
+        "407c27503c80"
       ],
-      "Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment": [
-        "52ba5dea3136",
-        "8102db068f5c"
+      "Story: Open the join page from my agent's link / The page takes the approved name from the fragment and then removes the fragment": [
+        "21b8bae0a45d",
+        "f90e54a379de"
       ],
       "## Story: See where I stand before I do anything": [
         "56dde15e720b"
@@ -605,12 +605,12 @@
       "Story: See where I stand before I do anything / The page shows the step that the current session allows": [
         "43dd6c952038",
         "ed07cb53aa54",
-        "b71de35d3abe"
+        "0bdfbddf5056"
       ],
       "Story: See where I stand before I do anything / Only a signed-out page asks for a phone, and only a signed-in page shows a profile": [
         "eb92de2c5f12",
         "a5751e068f6c",
-        "b71de35d3abe"
+        "0bdfbddf5056"
       ],
       "## Story: Confirm my own phone": [
         "24183b299240"
@@ -618,7 +618,7 @@
       "Story: Confirm my own phone / The page asks the server which sign-in to use and uses text codes when it cannot tell": [
         "82e31f12ed99",
         "61240e1748af",
-        "b71de35d3abe"
+        "0bdfbddf5056"
       ],
       "Story: Confirm my own phone / The phone step shows its parts from the sign-in mode": [
         "3980df7c2b4b",
@@ -627,60 +627,60 @@
       "Story: Confirm my own phone / The page sends a number only when it is valid and the security check passed": [
         "480142ba0de2",
         "838b2d4771ad",
-        "b71de35d3abe"
+        "0bdfbddf5056"
       ],
       "Story: Confirm my own phone / A sent code opens the code step, and each answer uses up the security check": [
         "f185c71275be",
         "96ad450e312c",
-        "b71de35d3abe"
+        "0bdfbddf5056"
       ],
       "Story: Confirm my own phone / Only a well-formed code goes to the server, and only a verified code signs the person in": [
         "f8435199a174",
         "690f3d3c4cae",
-        "b71de35d3abe"
+        "0bdfbddf5056"
       ],
       "Story: Confirm my own phone / A new code needs a new security check when the check is on": [
         "0d02b90d077f",
         "b7df61370b04",
-        "1c379ca592f3"
+        "f80f95d5ec04"
       ],
       "Story: Confirm my own phone / Cloud sign-in leaves the page to confirm the phone": [
         "6c69741b16c2",
         "1987c14dd3cb",
-        "b71de35d3abe"
+        "0bdfbddf5056"
       ],
       "Story: Confirm my own phone / After sign-in the page reads the session again and shows its step": [
         "5f70fa7c66e3",
         "3a6ee8adf668",
-        "0934b8b85418"
+        "796c83c78765"
       ],
       "## Story: Confirm my details and join": [
-        "a516927d5f1a"
+        "6c7867f6dde6"
       ],
-      "Story: Confirm my details and join / The page sends the profile only with a name, an age from 1 to 120 and the text consent ticked": [
-        "0c57d7de087e",
-        "cf530fbf8e1b",
-        "b71de35d3abe"
+      "Story: Confirm my details and join / The page sends the profile only with a name, a real birthday that is not after today and the text consent ticked": [
+        "14be7b8b54da",
+        "ba663469a33d",
+        "090abc6e32c6"
       ],
       "Story: Confirm my details and join / The server answer decides between done, blocked and a new sign-in": [
-        "8c156c32d8b2",
-        "16ba5728fb7b",
-        "cd74df7caaff"
+        "131951927256",
+        "204dc9fc90d6",
+        "4a699fb5182e"
       ],
       "Story: Confirm my details and join / A Peon invitation stays in memory until the verified account agrees to join": [
-        "52d4a3307ce8",
-        "4d9366b45947",
-        "da1c13f07b5a"
+        "e4e79ce86e54",
+        "bf10be8d7b93",
+        "3e691054a4fe"
       ],
       "Story: Confirm my details and join / Profile values never pass from one account to another": [
-        "2fe5689ffc1d",
-        "626f3815a93d",
-        "0934b8b85418"
+        "b8c4b60138c2",
+        "15d7f311615b",
+        "796c83c78765"
       ],
       "Story: Confirm my details and join / The done step comes only from a saved profile with consent": [
         "448d630f0665",
         "cd0baa26d603",
-        "b71de35d3abe"
+        "0bdfbddf5056"
       ],
       "## Story: Send each form only once": [
         "f97b666a6f9f"
@@ -688,15 +688,15 @@
       "Story: Send each form only once / A form that waits for an answer refuses a second submit": [
         "ae118bd9cdfa",
         "5e73d1e711ee",
-        "cd74df7caaff"
+        "4a699fb5182e"
       ],
       "## Story: Reach every outcome": [
         "d9a174af9497"
       ],
       "Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error": [
         "ee7c66ebbf40",
-        "133a739be424",
-        "a679151263a3"
+        "6248c590c8b1",
+        "7ba7fcb2c1e6"
       ]
     },
     "spec/calendarFreeBusy.md": {
@@ -2679,6 +2679,155 @@
         "56f2f743ce4f"
       ]
     },
+    "spec/oneStepPage.md": {
+      "@document": [
+        "0867fc6d8a21"
+      ],
+      "## Story: Do one step from a link": [
+        "920d57d889b7"
+      ],
+      "Story: Do one step from a link / Each step page is on the sites that can do the step": [
+        "535ff3eefc72",
+        "5314ca2a6d10",
+        "8f579f74bb62"
+      ],
+      "Story: Do one step from a link / A photo link page names its own purpose in each call": [
+        "344fc9166474",
+        "4e4286368aed",
+        "6144671cd443"
+      ],
+      "Story: Do one step from a link / The link stays in the fragment, and only the home-help link is kept across Cloud sign-in": [
+        "6aaa3ac9f864",
+        "6feba6ffed64",
+        "6144671cd443"
+      ],
+      "Story: Do one step from a link / A step page shows one shared notice above the step": [
+        "d959c6e3b48c",
+        "09e72ec66ccf"
+      ],
+      "Story: Do one step from a link / A Cloud sign-in that fails comes back to the page with one error": [
+        "a6bc097dc58a",
+        "1a97d05482e5",
+        "e1263e866c86"
+      ],
+      "Story: Do one step from a link / A refused request says when to try again": [
+        "5aaffa42faf6",
+        "d75809dbb314"
+      ],
+      "## Story: Sign in on the step page": [
+        "0e32acf8b442"
+      ],
+      "Story: Sign in on the step page / The page asks the server which sign-in to use and uses text codes when it cannot tell": [
+        "b459fca584e2",
+        "a9a54a1de961"
+      ],
+      "Story: Sign in on the step page / Each sign-in event is allowed only in the stage that offers it": [
+        "865f685c2417",
+        "a0e4500d74c1",
+        "7d9424f7cc4e"
+      ],
+      "Story: Sign in on the step page / The sign-in moves as the browser join sign-in does": [
+        "0e9f7e389766",
+        "3502d0455d2a",
+        "7d9424f7cc4e"
+      ],
+      "Story: Sign in on the step page / A page that loses its session starts the sign-in again with the same mode": [
+        "8ba9ed1ab28e",
+        "6942c5201a22",
+        "10bb3b1b5f7d"
+      ],
+      "Story: Sign in on the step page / Each sign-in request belongs to its stage, and the check belongs to text codes": [
+        "f325ea22d93c",
+        "4df457dc081f",
+        "56dd4d8bb394"
+      ]
+    },
+    "spec/homeHelpPage.md": {
+      "@document": [
+        "23469394db0a"
+      ],
+      "## Story: Open the home-help step from my link": [
+        "6ba7d53ebc2f"
+      ],
+      "Story: Open the home-help step from my link / The page reads the plan code and the revision from the fragment, and a bad link stops the page": [
+        "1a7641975a8a",
+        "dcae78c34c04",
+        "9c08642347ea"
+      ],
+      "Story: Open the home-help step from my link / A page with a bad link sends no request and starts no sign-in": [
+        "1f5d65dfe268",
+        "1a761acde2e6",
+        "e9e8026823d7"
+      ],
+      "Story: Open the home-help step from my link / The page reads the session and shows the choice step or the sign-in step": [
+        "67a1a2441b11",
+        "60d6b831d062",
+        "4eab14d30a74"
+      ],
+      "## Story: Confirm my number on the home-help page": [
+        "725b18b93da0"
+      ],
+      "Story: Confirm my number on the home-help page / The page signs the person in with the shared sign-in steps and keeps the link for Cloud sign-in": [
+        "a3b99db00753",
+        "67c2a9b90f46",
+        "9f6ce4b01bdc"
+      ],
+      "Story: Confirm my number on the home-help page / After sign-in the page reads the session again": [
+        "03e2c26f7684",
+        "3790aec018e8",
+        "b85f7cb2b3e0"
+      ],
+      "## Story: Add or remove my address as the requester": [
+        "864a02a7bc38"
+      ],
+      "Story: Add or remove my address as the requester / The choice step offers only the actions that the role allows": [
+        "98c6e33d515c",
+        "5b89e486748a",
+        "e9e8026823d7"
+      ],
+      "Story: Add or remove my address as the requester / Only an address that passes the check goes to the server": [
+        "14f5558d930b",
+        "775a39bcf158",
+        "e9e8026823d7"
+      ],
+      "Story: Add or remove my address as the requester / The requester can remove the address from the choice step or the saved step": [
+        "5e4636c08811",
+        "173dbe63881f",
+        "8c9ad181b4d9"
+      ],
+      "## Story: Read the address as a helper": [
+        "ea484a381d08"
+      ],
+      "Story: Read the address as a helper / The helper asks for the address, and only the answer to that request shows it": [
+        "88295a036c8a",
+        "c7689c40f0a4",
+        "5f5f697a1802"
+      ],
+      "## Story: See the result of each action": [
+        "61b64cf22d20"
+      ],
+      "Story: See the result of each action / The server answer decides the result step": [
+        "d88b24abb4d6",
+        "3f91ed4527a0",
+        "5ea93e7baa1a"
+      ],
+      "## Story: Send each action only once": [
+        "3e9f4785e612"
+      ],
+      "Story: Send each action only once / A request that waits for an answer refuses a second action": [
+        "c623eadbb6fd",
+        "64a37db26425",
+        "8c9ad181b4d9"
+      ],
+      "## Story: Reach every outcome": [
+        "465b89b12fb3"
+      ],
+      "Story: Reach every outcome / A person can save, read or remove the address, find the step closed, or see each error": [
+        "2353e2469bab",
+        "e8fb46117fa9",
+        "e9e8026823d7"
+      ]
+    },
     "spec/interruptionFeedback.md": {
       "@document": [
         "0beb5427446f"
@@ -4283,6 +4432,63 @@
         "cf404ad2b4aa"
       ]
     },
+    "spec/phonePage.md": {
+      "@document": [
+        "976c539293d0"
+      ],
+      "## Story: Change my number from the link in my conversation": [
+        "9652e8cbe223"
+      ],
+      "Story: Change my number from the link in my conversation / The page reads the session when it opens": [
+        "ba847542cb0b",
+        "0a6b604b0b73",
+        "d7483cb04318"
+      ],
+      "Story: Change my number from the link in my conversation / The sign-in step confirms the current number and then reads the session again": [
+        "8355bba80db3",
+        "150372fecbb4",
+        "0e0551b41601"
+      ],
+      "Story: Change my number from the link in my conversation / The new number goes to the server only when it is valid and the mode is known": [
+        "44d5fbafd2d7",
+        "f4e18c8e6fcb",
+        "c146d5388656"
+      ],
+      "Story: Change my number from the link in my conversation / Only a well-formed change code goes to the server, and only a moved number shows the result": [
+        "66dd65b56387",
+        "f7075d2cd092",
+        "c146d5388656"
+      ],
+      "Story: Change my number from the link in my conversation / The code step can send a new code or go back to the new number": [
+        "10c104ae882c",
+        "1e2d4978c9cf",
+        "af8a6ffc2fa4"
+      ],
+      "## Story: Sign in again when my sign-in is old": [
+        "30057ec9315a"
+      ],
+      "Story: Sign in again when my sign-in is old / A sign-in that is too old starts the sign-in again on the same page": [
+        "793985d090a0",
+        "c143b0bef7fa",
+        "af8a6ffc2fa4"
+      ],
+      "## Story: Send each request only once": [
+        "011e693304ed"
+      ],
+      "Story: Send each request only once / A form that waits for an answer refuses a second submit": [
+        "9cde7f4865e1",
+        "4279fe076401",
+        "085b4a297211"
+      ],
+      "## Story: Reach every outcome": [
+        "d5f085bd59cc"
+      ],
+      "Story: Reach every outcome / A person can change the number, be held, sign in again or see each error": [
+        "184c23f83644",
+        "274f5853c5a5",
+        "085b4a297211"
+      ]
+    },
     "spec/photoPolicy.md": {
       "@document": [
         "cfc7dfe0614b"
@@ -4359,7 +4565,7 @@
         "ff52b2b9678d"
       ],
       "Story: Send my photo to my match / The check page serves only photos from its proposal": [
-        "6aeba5cc6851",
+        "a224d35abc84",
         "98d5dd67b4e8"
       ],
       "Story: Send my photo to my match / A page opens only from its own fresh link, and a view only for the receiver's bound browser until the photo is taken back": [
@@ -4442,6 +4648,152 @@
         "4fa087d8ff6e"
       ]
     },
+    "spec/photosCheckPage.md": {
+      "@document": [
+        "81f38d71aaf5"
+      ],
+      "## Story: Check my photo before it goes to my match": [
+        "0f3b75c47e87"
+      ],
+      "Story: Check my photo before it goes to my match / The page reads the token from the fragment once and opens the link only for a well-formed token": [
+        "7b329457d447",
+        "6ca27fdd8ad0"
+      ],
+      "Story: Check my photo before it goes to my match / The open answer shows the proposal, the photos to choose from, or why the link does not work": [
+        "11e8c8a1f081",
+        "1173e1b90db7",
+        "be8e4a0d9c27"
+      ],
+      "Story: Check my photo before it goes to my match / The page sends only the proposal that the person saw, and only when the person taps \"Send\"": [
+        "2b9732322289",
+        "00257e52f178",
+        "db2599e1777b"
+      ],
+      "Story: Check my photo before it goes to my match / \"Not this one\" lets the person choose 1 to 3 other photos, and the page shows the new proposal before any send": [
+        "be68c0ceb7de",
+        "af43c8d367eb",
+        "be8e4a0d9c27"
+      ],
+      "Story: Check my photo before it goes to my match / The answer to \"Send\" or \"Choose these\" decides between sent, a new proposal, changed, timed out, refused and closed": [
+        "14ddf19b21cb",
+        "77365a21e998",
+        "db2599e1777b"
+      ],
+      "## Story: A closed proposal sends nothing": [
+        "902af997f1c0"
+      ],
+      "Story: A closed proposal sends nothing / An ended step never opens again": [
+        "bbeb18cbab8f",
+        "1fec24dccb76",
+        "7ca742bd1730"
+      ],
+      "## Story: Reach every outcome": [
+        "33c504651277"
+      ],
+      "Story: Reach every outcome / A person can send, choose other photos, and see each closed step and each error": [
+        "d5e7a3b75c42",
+        "cce6c4c21604",
+        "7ca742bd1730"
+      ]
+    },
+    "spec/photosMinePage.md": {
+      "@document": [
+        "d3b747aa23fd"
+      ],
+      "## Story: See which matches have my photos and take one back": [
+        "ea113ecbdb57"
+      ],
+      "Story: See which matches have my photos and take one back / The page reads the token from the fragment once and asks for the list only for a well-formed token": [
+        "cd5e77199e81",
+        "2cc3f5e890ef"
+      ],
+      "Story: See which matches have my photos and take one back / The open answer decides between the list, the empty list, a closed link and a retry": [
+        "7120a280b5a7",
+        "7143680ca5a3",
+        "8d17f92a4692"
+      ],
+      "Story: See which matches have my photos and take one back / Each share shows who has the photo and how far the offer is, and never whether it was opened": [
+        "cd033cab3cdb",
+        "aac2024eb755"
+      ],
+      "Story: See which matches have my photos and take one back / Each photo shows its image only from its own answer": [
+        "45baafc95f91",
+        "c99c5b8b1957",
+        "8d17f92a4692"
+      ],
+      "Story: See which matches have my photos and take one back / The person takes back one share at a time, and only the server's answer marks it taken back": [
+        "1afc10e66a8a",
+        "698adbb6d30e",
+        "4578fdadd118"
+      ],
+      "## Story: A timed-out or moved link shows nothing": [
+        "ac36c4247115"
+      ],
+      "Story: A timed-out or moved link shows nothing / A closed link never opens again on the page": [
+        "7521f12731c6",
+        "57a46446285a",
+        "9901b341ea9e"
+      ],
+      "## Story: Reach every outcome": [
+        "6523bd2dacef"
+      ],
+      "Story: Reach every outcome / A person can see the list, the empty list, each closed link and each retry, and take back a share or fail to": [
+        "e3b0c44298fc",
+        "c29dfcd01f4b",
+        "db70c21173bd"
+      ]
+    },
+    "spec/photosViewPage.md": {
+      "@document": [
+        "6a3f17456062"
+      ],
+      "## Story: See the photo my match chose to send me": [
+        "54ec9adfd877"
+      ],
+      "Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token": [
+        "8a514be6ce87",
+        "4c55a77deb74"
+      ],
+      "Story: See the photo my match chose to send me / The page loads each photo of the offer once and shows only what the server gives": [
+        "46e16bcebe5d",
+        "fcb6c9e31209",
+        "52786c6d7877"
+      ],
+      "Story: See the photo my match chose to send me / The page offers no way to save the photo, and says what it cannot stop": [
+        "be0d3c7af2b3",
+        "9e2ecc8d5d55",
+        "52786c6d7877"
+      ],
+      "Story: See the photo my match chose to send me / No clock closes the photos": [
+        "8e92805345eb",
+        "30d022bda4b0",
+        "00e111e05c63"
+      ],
+      "## Story: Report a photo that is not okay": [
+        "dff1e372bae7"
+      ],
+      "Story: Report a photo that is not okay / A report needs a confirm, goes once, and only the server's answer says it is done": [
+        "040ff825ed6d",
+        "7bbc47abee03",
+        "52786c6d7877"
+      ],
+      "## Story: A link on another phone, an ended offer or a report shows nothing": [
+        "efcbc0d5a0b3"
+      ],
+      "Story: A link on another phone, an ended offer or a report shows nothing / A closed step never opens again, and a withdrawn photo looks like an expired one": [
+        "b43eb5bc88f9",
+        "0835df1b11bb",
+        "52786c6d7877"
+      ],
+      "## Story: Reach every outcome": [
+        "6ab8fbda4efa"
+      ],
+      "Story: Reach every outcome / A person can see one or three photos, see part of an offer, report, and find each closed step and error": [
+        "e3b0c44298fc",
+        "a80b0303590d",
+        "8059b74e8839"
+      ]
+    },
     "spec/photoUploadLink.md": {
       "@document": [
         "84fa79c39480"
@@ -4467,6 +4819,54 @@
         "b49a9e1c2b67",
         "6fc00f0578cd",
         "3472c54b292f"
+      ]
+    },
+    "spec/photoUploadPage.md": {
+      "@document": [
+        "8dcf1836e6e7"
+      ],
+      "## Story: Add my photos from the link in my conversation": [
+        "638761807af0"
+      ],
+      "Story: Add my photos from the link in my conversation / The page reads the token from the fragment once and opens the picker only for a well-formed token": [
+        "35a520af230a",
+        "bd88ea24c9b0"
+      ],
+      "Story: Add my photos from the link in my conversation / The page checks the chosen photos against the upload limits before it sends them": [
+        "552a238be370",
+        "d3c07df7f9ac",
+        "922d0eaaf5bd"
+      ],
+      "Story: Add my photos from the link in my conversation / The photo consent goes with the upload only when the person ticks it": [
+        "50f6a3a51916",
+        "d4a64e84074f",
+        "f57e384d5032"
+      ],
+      "Story: Add my photos from the link in my conversation / The page sends one batch while the link is open and waits for the answer": [
+        "07a56c4bee63",
+        "79dede4e7dfc",
+        "d92b2569dc8e"
+      ],
+      "Story: Add my photos from the link in my conversation / The server answer decides between saved, refused, closed and a retry": [
+        "ab326314b2a6",
+        "90d28e00f7e0",
+        "f57e384d5032"
+      ],
+      "## Story: A used or expired link stores nothing": [
+        "955fa592e905"
+      ],
+      "Story: A used or expired link stores nothing / A closed link never opens again on the page": [
+        "2750b91e1fff",
+        "d9a59abc080b",
+        "bac10c1ba7b9"
+      ],
+      "## Story: Reach every outcome": [
+        "fdad3e308cda"
+      ],
+      "Story: Reach every outcome / A person can save photos, see each refusal, find the link closed or see each error": [
+        "a63d905e8b4c",
+        "ca1c9d1e3cfc",
+        "4933368d44b6"
       ]
     },
     "spec/planDecision.md": {
@@ -5498,13 +5898,18 @@
       ],
       "Story: Read the pages of the site / Every site serves public pages and each special page has one site": [
         "da75b8ed118d",
-        "c7f3e2f74c63",
-        "1e9039d7e8b1"
+        "3a7a4b5c8436",
+        "917b7157e51c"
+      ],
+      "Story: Read the pages of the site / Each one-step page is on the sites that can do its step": [
+        "9098f46cf59d",
+        "ba982b0fd410",
+        "aa6d9d2b63f0"
       ],
       "Story: Read the pages of the site / Every page links the privacy policy and the terms in its footer": [
         "bb1b97eadac3",
         "f5cff7c1b82f",
-        "404f89c31f97"
+        "aa6d9d2b63f0"
       ],
       "Story: Read the pages of the site / The terms page has a text messaging section that a link can open": [
         "b97f321d22e8",
@@ -5515,23 +5920,23 @@
       ],
       "Story: Old links never open a retired page / A request routes by its path kind, the site and the method": [
         "fd61042bff15",
-        "2472b12465e6",
-        "404f89c31f97"
+        "0e93f6f7de9c",
+        "aa6d9d2b63f0"
       ],
       "Story: Old links never open a retired page / A retired path answers with no page and is never cached": [
         "baaa9c5f7629",
         "0e1bdcd83fe2",
-        "7d63246498ce"
+        "4f0397e5ff25"
       ],
       "Story: Old links never open a retired page / The terms name the join page as a way to opt in only where the site serves it": [
         "c13309ae912d",
         "7ea6a08df137",
-        "4f38e43e18bb"
+        "f16e569697c5"
       ],
       "Story: Old links never open a retired page / An unknown path shows the not-found page and every served page exists": [
-        "b638e330d725",
-        "01f77a5716cb",
-        "7d63246498ce"
+        "a4c812fe2e0d",
+        "c7eba5874c9d",
+        "8c40dc16d90b"
       ],
       "## Story: Open an update text in my assistant": [
         "555a8f575e27"
@@ -5539,7 +5944,7 @@
       "Story: Open an update text in my assistant / The update handoff accepts only a canonical reference on the hub": [
         "2a167a930c95",
         "36e6d4bfe649",
-        "4f38e43e18bb"
+        "f16e569697c5"
       ],
       "## Story: Let my agent read the signup skill from the site": [
         "9d6cb2f43be7"
@@ -5547,7 +5952,7 @@
       "Story: Let my agent read the signup skill from the site / Each site serves its own skill at /SKILL.md and lists it in its catalog": [
         "aa5c006b8136",
         "45c39e0f31e8",
-        "6b45c3b43465"
+        "432692919457"
       ],
       "Story: Let my agent read the signup skill from the site / Skill files are plain text that any origin can read": [
         "29e2e979a695",
@@ -5556,7 +5961,7 @@
       "Story: Let my agent read the signup skill from the site / Backend paths go to the shared backend": [
         "c3e2b35fb3f9",
         "8f7ed7d49543",
-        "7d63246498ce"
+        "4f0397e5ff25"
       ]
     },
     "spec/slopAssignment.md": {

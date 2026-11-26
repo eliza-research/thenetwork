@@ -1,17 +1,18 @@
 // GENERATED from spec/sitePages.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 import { type JoinMode as brandIdentity_JoinMode, type AccentTokens as brandIdentity_AccentTokens, type Accent as brandIdentity_Accent, type Surface as brandIdentity_Surface, type AppKey as brandIdentity_AppKey, type LogoMark as brandIdentity_LogoMark, type SharedPart as brandIdentity_SharedPart, type StateColor as brandIdentity_StateColor, type MarkFill as brandIdentity_MarkFill, type ColorScheme as brandIdentity_ColorScheme, type Brand as brandIdentity_Brand, supportEmail as brandIdentity_supportEmail, agentAccessPage as brandIdentity_agentAccessPage, nearColorFloorPermille as brandIdentity_nearColorFloorPermille, inverseTextContrastFloorTenths as brandIdentity_inverseTextContrastFloorTenths, inverseEdgeContrastFloorTenths as brandIdentity_inverseEdgeContrastFloorTenths, ringIsTheAccent as brandIdentity_ringIsTheAccent, colorIsClearOfAccent as brandIdentity_colorIsClearOfAccent, inverseIsReadable as brandIdentity_inverseIsReadable, colorSchemes as brandIdentity_colorSchemes, markTileFill as brandIdentity_markTileFill, faviconMedia as brandIdentity_faviconMedia, joinModes as brandIdentity_joinModes, accents as brandIdentity_accents, logoMarks as brandIdentity_logoMarks, ntwrkBrand as brandIdentity_ntwrkBrand, slopBrand as brandIdentity_slopBrand, peonBrand as brandIdentity_peonBrand, friendsBrand as brandIdentity_friendsBrand, designBrandId as brandIdentity_designBrandId, accentTokens as brandIdentity_accentTokens, connectorEndpoint as brandIdentity_connectorEndpoint, openaiConnectorEndpoint as brandIdentity_openaiConnectorEndpoint, mayName as brandIdentity_mayName, siteUsesPart as brandIdentity_siteUsesPart, stateColors as brandIdentity_stateColors, stateToken as brandIdentity_stateToken, hoverFillIsClear as brandIdentity_hoverFillIsClear, lawRingEqualsTheAccent as brandIdentity_lawRingEqualsTheAccent, lawInverseNeedsBothContrasts as brandIdentity_lawInverseNeedsBothContrasts, appKeys as brandIdentity_appKeys, lawOnlyTheTwoCirclesTileTakesThePageColor as brandIdentity_lawOnlyTheTwoCirclesTileTakesThePageColor, lawLightFaviconHasNoCondition as brandIdentity_lawLightFaviconHasNoCondition, brandFor as brandIdentity_brandFor, lawDesignBrandIdsAreDistinct as brandIdentity_lawDesignBrandIdsAreDistinct, hubTextsOnAppSurface as brandIdentity_hubTextsOnAppSurface, lawAppEndpointsAreDistinct as brandIdentity_lawAppEndpointsAreDistinct, lawAppSiteNeverNamesTheNetwork as brandIdentity_lawAppSiteNeverNamesTheNetwork, lawAppSiteNamesNoOtherApp as brandIdentity_lawAppSiteNamesNoOtherApp, lawHubLandingNamesNoApp as brandIdentity_lawHubLandingNamesNoApp, lawSitesShareParts as brandIdentity_lawSitesShareParts, lawTheAccentIsNeverClearOfItself as brandIdentity_lawTheAccentIsNeverClearOfItself, lawStateTokensAreDistinct as brandIdentity_lawStateTokensAreDistinct, lawBrandNamesItsApp as brandIdentity_lawBrandNamesItsApp, lawOnlyTheNetworkIsInviteOnly as brandIdentity_lawOnlyTheNetworkIsInviteOnly, lawAccentInkDiffersFromAccent as brandIdentity_lawAccentInkDiffersFromAccent, lawOnlyTheSkillNamesTheEndpoint as brandIdentity_lawOnlyTheSkillNamesTheEndpoint, partTokens as brandIdentity_partTokens, lawBrandsAreDistinct as brandIdentity_lawBrandsAreDistinct, lawPartsTakeTheBrandTokens as brandIdentity_lawPartsTakeTheBrandTokens } from "./brandIdentity.ts";
+import { type StepNotice as oneStepPage_StepNotice, type StepSession as oneStepPage_StepSession, type CloudReturn as oneStepPage_CloudReturn, type SignInAuth as oneStepPage_SignInAuth, type SignInStage as oneStepPage_SignInStage, type SignInPending as oneStepPage_SignInPending, type SignInCheck as oneStepPage_SignInCheck, type SignInError as oneStepPage_SignInError, type SignInLookup as oneStepPage_SignInLookup, type SignInAnswer as oneStepPage_SignInAnswer, type SignInAttemptKind as oneStepPage_SignInAttemptKind, type OneStepKind as oneStepPage_OneStepKind, type StepSignIn as oneStepPage_StepSignIn, type SignInAttempt as oneStepPage_SignInAttempt, photoPagePurposeHeader as oneStepPage_photoPagePurposeHeader, signInCodeAccepted as oneStepPage_signInCodeAccepted, retryMinutesShown as oneStepPage_retryMinutesShown, signInAttemptAllowed as oneStepPage_signInAttemptAllowed, signInBusy as oneStepPage_signInBusy, signInSpent as oneStepPage_signInSpent, signInStartError as oneStepPage_signInStartError, photoPagePurpose as oneStepPage_photoPagePurpose, lawCodeNeedsFourToEightDigits as oneStepPage_lawCodeNeedsFourToEightDigits, signInConsistent as oneStepPage_signInConsistent, oneStepLinkInFragment as oneStepPage_oneStepLinkInFragment, oneStepLinkMayBeKept as oneStepPage_oneStepLinkMayBeKept, oneStepNoticeShown as oneStepPage_oneStepNoticeShown, noticeForSession as oneStepPage_noticeForSession, noticeForCloudReturn as oneStepPage_noticeForCloudReturn, lawRetryIsAtLeastOneMinute as oneStepPage_lawRetryIsAtLeastOneMinute, lawRetryIsNeverShorterThanTheWait as oneStepPage_lawRetryIsNeverShorterThanTheWait, oneStepIsPhoto as oneStepPage_oneStepIsPhoto, signInStart as oneStepPage_signInStart, signInAttemptNone as oneStepPage_signInAttemptNone, signInAuthFor as oneStepPage_signInAuthFor, signInCheckFor as oneStepPage_signInCheckFor, signInShowsNumberForm as oneStepPage_signInShowsNumberForm, signInShowsCloudButton as oneStepPage_signInShowsCloudButton, signInWaiting as oneStepPage_signInWaiting, signInSettledError as oneStepPage_signInSettledError, signInAgain as oneStepPage_signInAgain, lawOnlyPhotoLinkPagesNameAPurpose as oneStepPage_lawOnlyPhotoLinkPagesNameAPurpose, oneStepNeedsSignIn as oneStepPage_oneStepNeedsSignIn, lawKeptLinkIsInTheFragment as oneStepPage_lawKeptLinkIsInTheFragment, lawSignedInHasNoNotice as oneStepPage_lawSignedInHasNoNotice, noticeOnOpen as oneStepPage_noticeOnOpen, lawEveryCloudErrorShowsANotice as oneStepPage_lawEveryCloudErrorShowsANotice, oneStepOnSite as oneStepPage_oneStepOnSite, lawOnlyCloudLookupUsesCloud as oneStepPage_lawOnlyCloudLookupUsesCloud, lawCheckOnlyWithTextCodes as oneStepPage_lawCheckOnlyWithTextCodes, lawPhotoStepsOnlyOnSlop as oneStepPage_lawPhotoStepsOnlyOnSlop, lawHomeHelpOnlyOnHub as oneStepPage_lawHomeHelpOnlyOnHub, lawPhoneChangeOnEverySite as oneStepPage_lawPhoneChangeOnEverySite, lawSignInAgainKeepsTheMode as oneStepPage_lawSignInAgainKeepsTheMode, lawPhotoTokenIsNeverKept as oneStepPage_lawPhotoTokenIsNeverKept, lawSignInAgainIsConsistent as oneStepPage_lawSignInAgainIsConsistent, lawSessionHidesTheCloudError as oneStepPage_lawSessionHidesTheCloudError, lawPhotoUploadOnlyOnSlop as oneStepPage_lawPhotoUploadOnlyOnSlop, signInMove as oneStepPage_signInMove, lawInvalidNumberIsNeverSent as oneStepPage_lawInvalidNumberIsNeverSent, lawEveryStartAnswerSpendsTheCheck as oneStepPage_lawEveryStartAnswerSpendsTheCheck, lawShortCodeIsNeverSent as oneStepPage_lawShortCodeIsNeverSent, lawEveryAllowedMoveStaysConsistent as oneStepPage_lawEveryAllowedMoveStaysConsistent } from "./oneStepPage.ts";
 
 /** Story: Read the pages of the site / Every site serves public pages and each special page has one site (spec/sitePages.md) */
-export type SitePage = "LandingPage" | "PrivacyPage" | "TermsPage" | "NotFoundPage" | "JoinPage" | "UpdateHandoffPage";
+export type SitePage = "LandingPage" | "PrivacyPage" | "TermsPage" | "NotFoundPage" | "JoinPage" | "UpdateHandoffPage" | "PhonePage" | "HomeHelpPage" | "PhotosAddPage" | "PhotosCheckPage" | "PhotosMinePage" | "PhotosViewPage";
 /** Story: Read the pages of the site / The terms page has a text messaging section that a link can open (spec/sitePages.md) */
 export type SmsTermsItem = "SmsProgram" | "SmsOptIn" | "SmsFrequency" | "SmsStopEverything" | "SmsLeaveOne" | "SmsStartAgain" | "SmsHelp" | "SmsCosts" | "SmsNoMarketingShare";
 /** Story: Old links never open a retired page / A request routes by its path kind, the site and the method (spec/sitePages.md) */
-export type PathKind = "RootPath" | "PrivacyPath" | "TermsPath" | "JoinPath" | "SettingsPath" | "SkillPath" | "CatalogIndexPath" | "OwnCatalogSkillPath" | "OtherCatalogSkillPath" | "BackendPath" | "RobotsPath" | "UpdateHandoffPath" | "MalformedUpdateHandoffPath" | "UnknownPath";
+export type PathKind = "RootPath" | "PrivacyPath" | "TermsPath" | "JoinPath" | "SettingsPath" | "SkillPath" | "CatalogIndexPath" | "OwnCatalogSkillPath" | "OtherCatalogSkillPath" | "BackendPath" | "RobotsPath" | "UpdateHandoffPath" | "MalformedUpdateHandoffPath" | "PhonePath" | "HomeHelpPath" | "PhotosAddPath" | "PhotosCheckPath" | "PhotosMinePath" | "PhotosViewPath" | "UnknownPath";
 /** Story: Old links never open a retired page / A request routes by its path kind, the site and the method (spec/sitePages.md) */
 export type RequestMethod = "GetMethod" | "HeadMethod" | "OtherMethod";
 /** Story: Old links never open a retired page / A request routes by its path kind, the site and the method (spec/sitePages.md) */
-export type SiteRoute = "ServeLanding" | "ServePrivacy" | "ServeTerms" | "ServeJoin" | "ServeSkill" | "ServeCatalog" | "ServeRobots" | "ServeUpdateHandoff" | "RefuseUpdateHandoff" | "RefuseUpdateMethod" | "ForwardToBackend" | "ServeNotFound" | "RefuseRetired" | "RedirectToLanding" | "RefuseMethod";
+export type SiteRoute = "ServeLanding" | "ServePrivacy" | "ServeTerms" | "ServeJoin" | "ServeSkill" | "ServeCatalog" | "ServeRobots" | "ServeUpdateHandoff" | "RefuseUpdateHandoff" | "RefuseUpdateMethod" | "ForwardToBackend" | "ServeNotFound" | "RefuseRetired" | "RedirectToLanding" | "RefuseMethod" | "ServePhone" | "ServeHomeHelp" | "ServePhotosAdd" | "ServePhotosCheck" | "ServePhotosMine" | "ServePhotosView";
 /** Story: Old links never open a retired page / A retired path answers with no page and is never cached (spec/sitePages.md) */
 export interface SiteAnswer { status: number; noStore: boolean; hasBody: boolean; toLanding: boolean; allowHeader: string }
 /** Story: Old links never open a retired page / The terms name the join page as a way to opt in only where the site serves it (spec/sitePages.md) */
@@ -33,12 +34,12 @@ export const retiredJoinPaths: string[] = ["/join", "/join/", "/join.html"];
 export const updateHandoffAssetPath: string = "/_update-handoff";
 /** Story: Old links never open a retired page / A retired path answers with no page and is never cached (spec/sitePages.md) */
 export const siteReadOnlyMethods: string = "GET, HEAD";
+/** Story: Read the pages of the site / Every page links the privacy policy and the terms in its footer (spec/sitePages.md) */
+export const footerLinks: SitePage[] = ["PrivacyPage", "TermsPage"];
 /** Story: Read the pages of the site / The terms page has a text messaging section that a link can open (spec/sitePages.md) */
 export const smsTermsItems: SmsTermsItem[] = ["SmsProgram", "SmsOptIn", "SmsFrequency", "SmsStopEverything", "SmsLeaveOne", "SmsStartAgain", "SmsHelp", "SmsCosts", "SmsNoMarketingShare"];
 /** Story: Read the pages of the site / Every site serves public pages and each special page has one site (spec/sitePages.md) */
-export const sitePageList: SitePage[] = ["LandingPage", "PrivacyPage", "TermsPage", "NotFoundPage", "JoinPage", "UpdateHandoffPage"];
-/** Story: Read the pages of the site / Every page links the privacy policy and the terms in its footer (spec/sitePages.md) */
-export const footerLinks: SitePage[] = ["PrivacyPage", "TermsPage"];
+export const sitePageList: SitePage[] = ["LandingPage", "PrivacyPage", "TermsPage", "NotFoundPage", "JoinPage", "UpdateHandoffPage", "PhonePage", "HomeHelpPage", "PhotosAddPage", "PhotosCheckPage", "PhotosMinePage", "PhotosViewPage"];
 
 /** Story: Read the pages of the site / Every site serves public pages and each special page has one site (spec/sitePages.md) */
 //@ pure
@@ -49,7 +50,7 @@ export function keepsBrowserJoin(app: brandIdentity_AppKey): boolean {
 /** Story: Read the pages of the site / Every site serves public pages and each special page has one site (spec/sitePages.md) */
 //@ pure
 export function siteHasPage(app: brandIdentity_AppKey, page: SitePage): boolean {
-  return page === "JoinPage" ? keepsBrowserJoin(app) : (page === "UpdateHandoffPage" ? app === "Ntwrk" : true);
+  return page === "JoinPage" ? keepsBrowserJoin(app) : (page === "UpdateHandoffPage" ? app === "Ntwrk" : (page === "PhonePage" ? oneStepPage_oneStepOnSite("StepPhone", app) : (page === "HomeHelpPage" ? oneStepPage_oneStepOnSite("StepHomeHelp", app) : (page === "PhotosAddPage" ? oneStepPage_oneStepOnSite("StepPhotoUpload", app) : (page === "PhotosCheckPage" ? oneStepPage_oneStepOnSite("StepPhotoCheck", app) : (page === "PhotosMinePage" ? oneStepPage_oneStepOnSite("StepPhotoMine", app) : (page === "PhotosViewPage" ? oneStepPage_oneStepOnSite("StepPhotoView", app) : true)))))));
 }
 
 /** Story: Read the pages of the site / Every site serves public pages and each special page has one site (spec/sitePages.md) */
@@ -57,6 +58,39 @@ export function siteHasPage(app: brandIdentity_AppKey, page: SitePage): boolean 
 export function lawJoinPageOnlyOnPeon(app: brandIdentity_AppKey): boolean {
   //@ ensures \result === true
   return siteHasPage(app, "JoinPage") === (app === "Peon");
+}
+
+/** Story: Read the pages of the site / Each one-step page is on the sites that can do its step (spec/sitePages.md) */
+//@ pure
+export function oneStepKindOf(page: SitePage): oneStepPage_OneStepKind {
+  return page === "HomeHelpPage" ? "StepHomeHelp" : (page === "PhotosAddPage" ? "StepPhotoUpload" : (page === "PhotosCheckPage" ? "StepPhotoCheck" : (page === "PhotosMinePage" ? "StepPhotoMine" : (page === "PhotosViewPage" ? "StepPhotoView" : "StepPhone"))));
+}
+
+/** Story: Read the pages of the site / Each one-step page is on the sites that can do its step (spec/sitePages.md) */
+//@ pure
+export function isOneStepPage(page: SitePage): boolean {
+  return page === "PhonePage" || page === "HomeHelpPage" || page === "PhotosAddPage" || page === "PhotosCheckPage" || page === "PhotosMinePage" || page === "PhotosViewPage";
+}
+
+/** Story: Read the pages of the site / Each one-step page is on the sites that can do its step (spec/sitePages.md) */
+//@ pure
+export function lawPhotoPagesOnlyOnSlop(app: brandIdentity_AppKey, page: SitePage): boolean {
+  //@ ensures \result === true
+  return !(isOneStepPage(page) && oneStepPage_oneStepIsPhoto(oneStepKindOf(page))) || siteHasPage(app, page) === (app === "Slop");
+}
+
+/** Story: Read the pages of the site / Each one-step page is on the sites that can do its step (spec/sitePages.md) */
+//@ pure
+export function lawOneStepPagesFollowTheirStep(app: brandIdentity_AppKey, page: SitePage): boolean {
+  //@ ensures \result === true
+  return !isOneStepPage(page) || siteHasPage(app, page) === oneStepPage_oneStepOnSite(oneStepKindOf(page), app);
+}
+
+/** Story: Read the pages of the site / Each one-step page is on the sites that can do its step (spec/sitePages.md) */
+//@ pure
+export function lawPhonePageOnEverySite(app: brandIdentity_AppKey): boolean {
+  //@ ensures \result === true
+  return siteHasPage(app, "PhonePage");
 }
 
 /** Story: Read the pages of the site / Every page links the privacy policy and the terms in its footer (spec/sitePages.md) */
@@ -96,7 +130,7 @@ export function lawSmsTermsCoverStopAndLeave(termsItem: SmsTermsItem): boolean {
 /** Story: Old links never open a retired page / A request routes by its path kind, the site and the method (spec/sitePages.md) */
 //@ pure
 export function routeFor(app: brandIdentity_AppKey, path: PathKind, method: RequestMethod): SiteRoute {
-  return path === "SettingsPath" ? "RefuseRetired" : (path === "JoinPath" && !keepsBrowserJoin(app) && method === "OtherMethod" ? "RefuseMethod" : (path === "JoinPath" && !keepsBrowserJoin(app) ? "RedirectToLanding" : (path === "MalformedUpdateHandoffPath" || (path === "UpdateHandoffPath" && !siteHasPage(app, "UpdateHandoffPage")) ? "RefuseUpdateHandoff" : (path === "UpdateHandoffPath" && method === "OtherMethod" ? "RefuseUpdateMethod" : (path === "UpdateHandoffPath" ? "ServeUpdateHandoff" : (path === "BackendPath" ? "ForwardToBackend" : (path === "RootPath" ? "ServeLanding" : (path === "PrivacyPath" ? "ServePrivacy" : (path === "TermsPath" ? "ServeTerms" : (path === "JoinPath" ? "ServeJoin" : (path === "SkillPath" || path === "OwnCatalogSkillPath" ? "ServeSkill" : (path === "OtherCatalogSkillPath" && app === "Ntwrk" ? "ServeSkill" : (path === "CatalogIndexPath" ? "ServeCatalog" : (path === "RobotsPath" ? "ServeRobots" : "ServeNotFound"))))))))))))));
+  return path === "SettingsPath" ? "RefuseRetired" : (path === "JoinPath" && !keepsBrowserJoin(app) && method === "OtherMethod" ? "RefuseMethod" : (path === "JoinPath" && !keepsBrowserJoin(app) ? "RedirectToLanding" : (path === "MalformedUpdateHandoffPath" || (path === "UpdateHandoffPath" && !siteHasPage(app, "UpdateHandoffPage")) ? "RefuseUpdateHandoff" : (path === "UpdateHandoffPath" && method === "OtherMethod" ? "RefuseUpdateMethod" : (path === "UpdateHandoffPath" ? "ServeUpdateHandoff" : (path === "BackendPath" ? "ForwardToBackend" : (path === "RootPath" ? "ServeLanding" : (path === "PrivacyPath" ? "ServePrivacy" : (path === "TermsPath" ? "ServeTerms" : (path === "JoinPath" ? "ServeJoin" : (path === "SkillPath" || path === "OwnCatalogSkillPath" ? "ServeSkill" : (path === "OtherCatalogSkillPath" && app === "Ntwrk" ? "ServeSkill" : (path === "CatalogIndexPath" ? "ServeCatalog" : (path === "RobotsPath" ? "ServeRobots" : (path === "PhonePath" && siteHasPage(app, "PhonePage") ? "ServePhone" : (path === "HomeHelpPath" && siteHasPage(app, "HomeHelpPage") ? "ServeHomeHelp" : (path === "PhotosAddPath" && siteHasPage(app, "PhotosAddPage") ? "ServePhotosAdd" : (path === "PhotosCheckPath" && siteHasPage(app, "PhotosCheckPage") ? "ServePhotosCheck" : (path === "PhotosMinePath" && siteHasPage(app, "PhotosMinePage") ? "ServePhotosMine" : (path === "PhotosViewPath" && siteHasPage(app, "PhotosViewPage") ? "ServePhotosView" : "ServeNotFound"))))))))))))))))))));
 }
 
 /** Story: Old links never open a retired page / A request routes by its path kind, the site and the method (spec/sitePages.md) */
@@ -122,14 +156,14 @@ export function lawRetiredJoinReadsGoToLanding(app: brandIdentity_AppKey, method
 
 /** Story: Old links never open a retired page / A retired path answers with no page and is never cached (spec/sitePages.md) */
 //@ pure
-export function isRetiredRoute(route: SiteRoute): boolean {
-  return route === "RefuseRetired" || route === "RedirectToLanding" || route === "RefuseMethod";
+export function answerFor(route: SiteRoute, method: RequestMethod): SiteAnswer {
+  return route === "RefuseRetired" || route === "RefuseUpdateHandoff" ? ({ status: 404, noStore: true, hasBody: method !== "HeadMethod", toLanding: false, allowHeader: "" } as SiteAnswer) : (route === "RedirectToLanding" ? ({ status: 302, noStore: true, hasBody: false, toLanding: true, allowHeader: "" } as SiteAnswer) : (route === "RefuseMethod" || route === "RefuseUpdateMethod" ? ({ status: 405, noStore: true, hasBody: false, toLanding: false, allowHeader: siteReadOnlyMethods } as SiteAnswer) : (route === "ServeUpdateHandoff" ? ({ status: 200, noStore: true, hasBody: method !== "HeadMethod", toLanding: false, allowHeader: "" } as SiteAnswer) : (route === "ForwardToBackend" ? ({ status: 0, noStore: false, hasBody: false, toLanding: false, allowHeader: "" } as SiteAnswer) : (route === "ServeNotFound" ? ({ status: 404, noStore: false, hasBody: method !== "HeadMethod", toLanding: false, allowHeader: "" } as SiteAnswer) : ({ status: 200, noStore: false, hasBody: method !== "HeadMethod", toLanding: false, allowHeader: "" } as SiteAnswer))))));
 }
 
 /** Story: Old links never open a retired page / A retired path answers with no page and is never cached (spec/sitePages.md) */
 //@ pure
-export function answerFor(route: SiteRoute, method: RequestMethod): SiteAnswer {
-  return route === "RefuseRetired" || route === "RefuseUpdateHandoff" ? ({ status: 404, noStore: true, hasBody: method !== "HeadMethod", toLanding: false, allowHeader: "" } as SiteAnswer) : (route === "RedirectToLanding" ? ({ status: 302, noStore: true, hasBody: false, toLanding: true, allowHeader: "" } as SiteAnswer) : (route === "RefuseMethod" || route === "RefuseUpdateMethod" ? ({ status: 405, noStore: true, hasBody: false, toLanding: false, allowHeader: siteReadOnlyMethods } as SiteAnswer) : (route === "ServeUpdateHandoff" ? ({ status: 200, noStore: true, hasBody: method !== "HeadMethod", toLanding: false, allowHeader: "" } as SiteAnswer) : (route === "ForwardToBackend" ? ({ status: 0, noStore: false, hasBody: false, toLanding: false, allowHeader: "" } as SiteAnswer) : (route === "ServeNotFound" ? ({ status: 404, noStore: false, hasBody: method !== "HeadMethod", toLanding: false, allowHeader: "" } as SiteAnswer) : ({ status: 200, noStore: false, hasBody: method !== "HeadMethod", toLanding: false, allowHeader: "" } as SiteAnswer))))));
+export function isRetiredRoute(route: SiteRoute): boolean {
+  return route === "RefuseRetired" || route === "RedirectToLanding" || route === "RefuseMethod";
 }
 
 /** Story: Old links never open a retired page / A retired path answers with no page and is never cached (spec/sitePages.md) */
@@ -189,13 +223,20 @@ export function lawTermsNameOnlyAServedJoinPage(app: brandIdentity_AppKey, way: 
 /** Story: Old links never open a retired page / An unknown path shows the not-found page and every served page exists (spec/sitePages.md) */
 //@ pure
 export function servesPage(route: SiteRoute): boolean {
-  return route === "ServeLanding" || route === "ServePrivacy" || route === "ServeTerms" || route === "ServeJoin" || route === "ServeUpdateHandoff" || route === "ServeNotFound";
+  return route === "ServeLanding" || route === "ServePrivacy" || route === "ServeTerms" || route === "ServeJoin" || route === "ServeUpdateHandoff" || route === "ServeNotFound" || route === "ServePhone" || route === "ServeHomeHelp" || route === "ServePhotosAdd" || route === "ServePhotosCheck" || route === "ServePhotosMine" || route === "ServePhotosView";
 }
 
 /** Story: Old links never open a retired page / An unknown path shows the not-found page and every served page exists (spec/sitePages.md) */
 //@ pure
 export function pageOfRoute(route: SiteRoute): SitePage {
-  return route === "ServeLanding" ? "LandingPage" : (route === "ServePrivacy" ? "PrivacyPage" : (route === "ServeTerms" ? "TermsPage" : (route === "ServeJoin" ? "JoinPage" : (route === "ServeUpdateHandoff" ? "UpdateHandoffPage" : "NotFoundPage"))));
+  return route === "ServeLanding" ? "LandingPage" : (route === "ServePrivacy" ? "PrivacyPage" : (route === "ServeTerms" ? "TermsPage" : (route === "ServeJoin" ? "JoinPage" : (route === "ServeUpdateHandoff" ? "UpdateHandoffPage" : (route === "ServePhone" ? "PhonePage" : (route === "ServeHomeHelp" ? "HomeHelpPage" : (route === "ServePhotosAdd" ? "PhotosAddPage" : (route === "ServePhotosCheck" ? "PhotosCheckPage" : (route === "ServePhotosMine" ? "PhotosMinePage" : (route === "ServePhotosView" ? "PhotosViewPage" : "NotFoundPage"))))))))));
+}
+
+/** Story: Old links never open a retired page / An unknown path shows the not-found page and every served page exists (spec/sitePages.md) */
+//@ pure
+export function lawStepPagesAreNeverLinked(page: SitePage): boolean {
+  //@ ensures \result === true
+  return !isOneStepPage(page) || !footerLinks.includes(page);
 }
 
 /** Story: Old links never open a retired page / An unknown path shows the not-found page and every served page exists (spec/sitePages.md) */
@@ -203,6 +244,13 @@ export function pageOfRoute(route: SiteRoute): SitePage {
 export function lawUnknownPathsShowNotFound(app: brandIdentity_AppKey, method: RequestMethod): boolean {
   //@ ensures \result === true
   return routeFor(app, "UnknownPath", method) === "ServeNotFound";
+}
+
+/** Story: Old links never open a retired page / An unknown path shows the not-found page and every served page exists (spec/sitePages.md) */
+//@ pure
+export function lawStepPagesOnlyWhereTheStepIs(app: brandIdentity_AppKey, method: RequestMethod): boolean {
+  //@ ensures \result === true
+  return (routeFor(app, "PhonePath", method) === "ServePhone") === siteHasPage(app, "PhonePage") && (routeFor(app, "HomeHelpPath", method) === "ServeHomeHelp") === siteHasPage(app, "HomeHelpPage") && (routeFor(app, "PhotosAddPath", method) === "ServePhotosAdd") === siteHasPage(app, "PhotosAddPage") && (routeFor(app, "PhotosCheckPath", method) === "ServePhotosCheck") === siteHasPage(app, "PhotosCheckPage") && (routeFor(app, "PhotosMinePath", method) === "ServePhotosMine") === siteHasPage(app, "PhotosMinePage") && (routeFor(app, "PhotosViewPath", method) === "ServePhotosView") === siteHasPage(app, "PhotosViewPage");
 }
 
 /** Story: Old links never open a retired page / An unknown path shows the not-found page and every served page exists (spec/sitePages.md) */

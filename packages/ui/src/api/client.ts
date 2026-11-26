@@ -59,7 +59,7 @@ export const apiMessages: Readonly<Record<ApiError, string>> = {
   server: "Something went wrong on our side. Please try again in a minute.",
   invalid_phone: "Enter a 10-digit US mobile number.",
   invalid_invitation: "That invitation is unavailable.",
-  invalid_birthdate: "That birth date is not a real date. Enter it as year, month and day.",
+  invalid_birthdate: "Enter your birthday. It must be a real date, not after today.",
   turnstile: "We could not check that you are a person. Please try again.",
   review: "We need to check this number before it can be used here. Please try again later, or email us for help.",
   rate_limited: "Too many tries for now. Please wait an hour, then try again.",

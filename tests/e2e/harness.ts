@@ -99,6 +99,7 @@ export async function startStack(o: {
   simulatedOutbound?: { provider: ChannelAdapter & { kind: "sim" }; line: string };
   reviewJudge?: ReviewJudge;
   staffTokens?: string;
+  slopPhotoReviewer?: boolean;
 } = {}): Promise<Stack> {
   const url = await migratedDb(`e2e_${++stackSequence}`);
   if (o.slopCity || o.extraNetwork) {

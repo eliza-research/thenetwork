@@ -1,4 +1,4 @@
-// spec/browserJoin.md, "The page sends the profile only with a name, an age from 1 to 120 and the text consent ticked"
+// spec/browserJoin.md, "The page sends the profile only with a name, a real birthday that is not after today and the text consent ticked"
 import { type ComponentProps, type FormEvent, useId } from "react";
 import { Button } from "./Button.tsx";
 import { Checkbox } from "./Checkbox.tsx";
@@ -12,7 +12,7 @@ import { StepFrame } from "./StepFrame.tsx";
 /** The fields of the profile form, as the person typed them. */
 export interface ProfileValues {
   firstName: string;
-  age: string;
+  birthdate: string;
   consent: boolean;
 }
 
@@ -27,14 +27,15 @@ export type ProfileStepProps = Omit<ComponentProps<"section">, "children" | "tit
   loading?: boolean;
   /** Why the page did not send the profile, or why the server refused it. */
   error?: string;
+  birthdateError?: string;
   onSubmitProfile: () => void;
 };
 
 /**
- * The join step where a person checks their first name and age and agrees to the texts.
+ * The join step where a person checks their first name, types their birthday and agrees to the texts.
  * @model spec/browserJoin.md
  */
-export function ProfileStep({ values, onValuesChange, minJoinAge, consentText, loading = false, error, onSubmitProfile, ...props }: ProfileStepProps) {
+export function ProfileStep({ values, onValuesChange, minJoinAge, consentText, loading = false, error, birthdateError, onSubmitProfile, ...props }: ProfileStepProps) {
   const consentId = useId();
   const errorId = useId();
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -47,8 +48,8 @@ export function ProfileStep({ values, onValuesChange, minJoinAge, consentText, l
         <Field label="First name">
           <Input name="firstName" type="text" autoComplete="given-name" required data-focus readOnly={loading} value={values.firstName} onChange={(event) => onValuesChange({ firstName: event.target.value })} />
         </Field>
-        <Field label="Age" description={`Join at ${minJoinAge}+. Matching is 18+ only.`}>
-          <Input name="age" type="number" inputMode="numeric" min={1} max={120} required readOnly={loading} value={values.age} onChange={(event) => onValuesChange({ age: event.target.value })} />
+        <Field label="Birthday" description={`Join at ${minJoinAge}+. Matching is 18+ only.`} error={birthdateError}>
+          <Input name="birthdate" type="date" autoComplete="off" required readOnly={loading} value={values.birthdate} onChange={(event) => onValuesChange({ birthdate: event.target.value })} />
         </Field>
         <div className="flex items-start gap-3">
           <Checkbox

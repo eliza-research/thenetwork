@@ -82,7 +82,7 @@ describe("the member endpoints through the typed client", () => {
     expect(await verifyCode(phone, "000000")).toEqual({ result: "WrongCode" });
     expect(await verifyCode(phone, otp.codes.get(phone)!)).toEqual({ result: "Verified" });
     expect((await readSession()).result).toBe("MayJoin");
-    const joined = await call("POST", "/api/join", { firstName: "Ana", age: 30, zip: "11201", consent: { sms: true, wording: APPS[APP].consent.text } });
+    const joined = await call("POST", "/api/join", { firstName: "Ana", birthdate: "1996-03-14", zip: "11201", consent: { sms: true, wording: APPS[APP].consent.text } });
     expect(joined.ok, JSON.stringify(joined)).toBe(true);
     expect((await call("GET", "/api/me/export")).ok).toBe(true);
   });
@@ -107,7 +107,7 @@ describe("the member endpoints through the typed client", () => {
     const other = "+12125550143";
     expect(await startCode(other)).toEqual({ result: "CodeSent" });
     expect(await verifyCode(other, otp.codes.get(other)!)).toEqual({ result: "Verified" });
-    expect(await joinApp({ firstName: "Bo", age: 31, consent: { sms: true, wording: APPS[APP].consent.text } })).toMatchObject({ result: "JoinedOk", firstName: "Bo" });
+    expect(await joinApp({ firstName: "Bo", birthdate: "1995-03-14", consent: { sms: true, wording: APPS[APP].consent.text } })).toMatchObject({ result: "JoinedOk", firstName: "Bo" });
     expect(await call("POST", "/api/me/delete", { scope: "app" })).toMatchObject({ ok: true });
     expect(await call("POST", "/api/me/delete", { scope: "all" })).toMatchObject({ ok: true });
   });
@@ -133,9 +133,30 @@ describe("the join page client (packages/ui/src/api) against createPublicApi", (
     // spec/siteEnrollment.md, "A submitted account marker must match the authenticated account"
     expect(session.signupView).toMatch(/^[a-f0-9]{64}$/);
     expect(session.account).toBe(session.signupView);
-    const joined = await joinApp({ ...(session.signupView ? { signupView: session.signupView } : {}), firstName: "Cy", age: 29, consent: { sms: true, wording: APPS[APP].consent.text } });
+    const marker = session.signupView ? { signupView: session.signupView } : {};
+    const wording = { sms: true as const, wording: APPS[APP].consent.text };
+    for (const birthdate of ["1997-02-30", "2999-01-01", "1899-12-31"]) {
+      expect(await joinApp({ ...marker, firstName: "Cy", birthdate, consent: wording }), birthdate).toEqual({ result: "JoinInvalidBirthdate" });
+      expect(sent.at(-1)?.body).not.toContain('"age"');
+    }
+    expect((await readSession()).result).toBe("MayJoin");
+    const joined = await joinApp({ ...marker, firstName: "Cy", birthdate: "1997-03-14", consent: wording });
+    expect(JSON.parse(sent.at(-1)!.body)).not.toHaveProperty("age");
     expect(joined, JSON.stringify(joined)).toMatchObject({ result: "JoinedOk", firstName: "Cy" });
     expect((await readSession()).result).toBe("AlreadyIn");
+  });
+
+  test("a birthday under the join age shows the blocked step, and no age goes in the body", async () => {
+    jar = "";
+    const child = "+12125550145";
+    expect(await startCode(child)).toEqual({ result: "CodeSent" });
+    expect(await verifyCode(child, otp.codes.get(child)!)).toEqual({ result: "Verified" });
+    const session = await readSession();
+    const birthdate = `${new Date().getUTCFullYear() - 8}-01-01`;
+    const answer = await joinApp({ ...(session.signupView ? { signupView: session.signupView } : {}), firstName: "Di", birthdate, consent: { sms: true, wording: APPS[APP].consent.text } });
+    expect(answer).toEqual({ result: "JoinUnderAge" });
+    expect(JSON.parse(sent.at(-1)!.body)).toMatchObject({ birthdate });
+    expect(JSON.parse(sent.at(-1)!.body)).not.toHaveProperty("age");
   });
 
   test("a bad phone maps to its own message", async () => {

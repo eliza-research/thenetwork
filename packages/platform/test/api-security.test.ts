@@ -282,7 +282,7 @@ test("the join flow sends no code and opens no cloud sign-in during mode discove
         if (path === "/api/auth/cloud/start") return Response.json({ url: "https://cloud-staging.eliza.app/network/sign-in" });
         return Response.json({ ok: false, error: "not_found" }, { status: 404 });
       }) as typeof fetch;
-      let page = send(machine.initial, { type: "openPage", viaAgent: false, fragmentName: false, ageDigitsOnly: false, ageDigitCount: 0, fragmentAge: 0 });
+      let page = send(machine.initial, { type: "openPage", viaAgent: false, fragmentName: false });
       page = send(page, { type: "loaded", view: { result: "SignedOut", account: 0, reason: "NoBlock" }, appUnreachable: false, inviteOnly: false });
       expect(machine.phoneFormWaiting(page)).toBe(true);
       expect(machine.enabled(page, { type: "submitPhone", phoneValid: true })).toBe(false);
