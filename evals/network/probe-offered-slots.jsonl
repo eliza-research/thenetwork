@@ -354,3 +354,23 @@
 {"text":"Saturday works whenever","answer":"yes","keys":["b"]}
 {"text":"Saturday works when it suits you","answer":"yes","keys":["b"]}
 {"text":"Last time was great, Saturday works","answer":"yes","keys":["b"]}
+{"text": "I'm busy Thursday, Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "I'm busy Thursday, but Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "I'm busy Thursday. Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "I'm busy on Thursday, Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "I'm busy Thursday and Sunday, Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "I'm not free Thursday, Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "I'm unavailable Thursday, Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "I'm out Thursday, Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "I'm away Thursday, Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "I'm working Thursday, Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "I have plans Thursday, Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "Thursday I'm busy, Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "I'm busy Thursday, the weekend works", "answer": "yes", "keys": ["b", "c"]}
+{"text": "Saturday works, I'm busy Thursday", "answer": "yes", "keys": ["b"]}
+{"text": "I'm not free Thursday", "answer": "unclear", "keys": []}
+{"text": "I'm out Thursday", "answer": "unclear", "keys": []}
+{"text": "I'm busy Thursday", "answer": "unclear", "keys": []}
+{"text": "We're busy Thursday, Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "If I'm busy Thursday, Saturday works", "answer": "unclear", "keys": []}
+{"text": "I'm free Thursday", "answer": "yes", "keys": ["a"]}
