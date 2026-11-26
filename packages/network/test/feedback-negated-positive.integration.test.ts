@@ -173,3 +173,49 @@ test("feedback that says the pair never clicked but the food was great records n
   expect(feedback?.wouldMeetAgain).not.toBe(true);
   expect(post?.worthwhile).not.toBe(true);
 });
+
+test("feedback that never clicked with his texts before the meeting still records positive sentiment and worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("Never clicked with his texts before we met, in person he was fantastic");
+  expect(feedback?.sentiment).toBe("positive");
+  expect(feedback?.wouldMeetAgain).toBe(true);
+  expect(post?.worthwhile).toBe(true);
+});
+
+test("feedback that says talking at a noisy table was hard still records positive sentiment and worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("Not easy to talk to her at the noisy table, she was brilliant");
+  expect(feedback?.sentiment).toBe("positive");
+  expect(post?.worthwhile).toBe(true);
+});
+
+test("feedback that is disappointed by a phone check for work records neutral sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("Disappointed he checked his phone once for work, otherwise brilliant company");
+  expect(feedback?.sentiment).toBe("neutral");
+  expect(feedback?.wouldMeetAgain).not.toBe(true);
+  expect(post?.worthwhile).not.toBe(true);
+});
+
+test("feedback that is disappointed with a restaurant pick records neutral sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("Disappointed with his restaurant pick, he was fantastic");
+  expect(feedback?.sentiment).toBe("neutral");
+  expect(feedback?.wouldMeetAgain).not.toBe(true);
+  expect(post?.worthwhile).not.toBe(true);
+});
+
+test("feedback that calls the evening weather disappointing records neutral sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("Disappointing evening weather, but she was brilliant");
+  expect(feedback?.sentiment).toBe("neutral");
+  expect(feedback?.wouldMeetAgain).not.toBe(true);
+  expect(post?.worthwhile).not.toBe(true);
+});
+
+test("feedback that says he was not easy to talk to and there was no spark records negative sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("He wasn't easy to talk to. Nice guy, but no spark");
+  expect(feedback?.sentiment).toBe("negative");
+  expect(post?.worthwhile).not.toBe(true);
+});
+
+test("feedback that is disappointed she kept checking her phone records negative sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("Disappointed she kept checking her phone");
+  expect(feedback?.sentiment).toBe("negative");
+  expect(post?.worthwhile).not.toBe(true);
+});
