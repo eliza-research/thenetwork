@@ -18,8 +18,9 @@ import {
 } from "../../core/src/generated/notificationAcknowledgement.ts";
 import { assistantDigestCanLink, digestUsesProactiveSlot, inboxDueAt, primaryDigestAssistantIndex, weeklyDigest } from "../../core/src/generated/notificationDelivery.ts";
 import { inboxItemAllowedForRecipient, inboxItemExpired, queuedDigestClaimAllowed } from "../../core/src/generated/notificationDispatch.ts";
+import { controlQuietHoursValid } from "../../core/src/generated/participationControls.ts";
 import { dispatchInboxDigest, queuedInboxDigestCurrent } from "../../core/src/vibe/notificationDigestShell.js";
-import { isQuietAt } from "../../blooio/src/quiet-hours.ts";
+import { isQuietAt, type QuietWindow } from "../../blooio/src/quiet-hours.ts";
 import { composeText, composeThreadText } from "./compose.ts";
 import { assistantLink, buttonPageLink, updatePrompt } from "./links.ts";
 import { TOKEN_PATTERN } from "./reference.ts";
@@ -33,6 +34,8 @@ export interface Recipient {
   /** E.164 number or channel address. */
   to: string;
   timeZone: string;
+  /** The member's saved whole-hour quiet window; absent or invalid uses the queue default. */
+  quietHours?: readonly [number, number] | null;
   prefs: SurfacePrefs;
   /** Paused, safety hold, or no proactive outreach (two unanswered): only requested items go out. */
   proactiveAllowed: boolean;
@@ -59,7 +62,7 @@ export interface SchedulerConfig {
   outcomeWindowMs: number;
   tokenTtlMs: number;
   pageBase?: string;
-  isQuiet: (ms: number, tz: string) => boolean;
+  isQuiet: (ms: number, tz: string, quiet?: QuietWindow) => boolean;
   rand: (max: number) => number;
 }
 
@@ -69,12 +72,19 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
   weeklyCap: 2,
   outcomeWindowMs: 72 * 3600_000,
   tokenTtlMs: TOKEN_TTL_MS,
-  isQuiet: (ms, tz) => isQuietAt(ms, tz),
+  isQuiet: (ms, tz, quiet) => isQuietAt(ms, tz, quiet),
   rand: randomInt,
 };
 
 function requireSummary(input: InboxItemInput): void {
   if (!input.summary.trim()) throw new Error("inbox item needs a summary");
+}
+
+function quietWindowOf(r: Recipient): QuietWindow | undefined {
+  const q = r.quietHours;
+  if (!q || q.length !== 2) return undefined;
+  const [startHour, endHour] = q;
+  return controlQuietHoursValid(startHour, endHour) ? { startHour, endHour } : undefined;
 }
 
 export interface SendPlan {
@@ -146,7 +156,7 @@ export class Notifier {
       }
       const firstDue = Math.min(...items.map(i => this.dueAt(i)));
       if (firstDue > now) { holds.push({ personId, reason: "not_due", until: firstDue }); continue; }
-      if (this.cfg.isQuiet(now, r.timeZone)) { holds.push({ personId, reason: "quiet_hours" }); continue; }
+      if (this.cfg.isQuiet(now, r.timeZone, quietWindowOf(r))) { holds.push({ personId, reason: "quiet_hours" }); continue; }
 
       const recent = await this.store.capSendsSince(personId, now - WEEK_MS + 1);
       const requested = items.filter(i => i.urgency === "requested");

@@ -336,6 +336,9 @@ const JOIN_FILLER = new Set(["hi", "hey", "hello", "yo", "im", "i'm", "i", "am",
 const joinMembershipOf = (state: Membership["state"] | undefined): JoinMembership =>
   state === undefined ? "NoMembership" : state === "removed" ? "RemovedMembership" : state === "invited" ? "InvitedMembership" : "LiveMembership";
 
+const savedQuietHours = (value: unknown): readonly [number, number] | undefined =>
+  Array.isArray(value) && value.length === 2 && typeof value[0] === "number" && typeof value[1] === "number" ? [value[0], value[1]] : undefined;
+
 const bareJoinAge = (text: string, appWords: readonly string[]): number | undefined => {
   const nums = [...text.matchAll(/(?:^|[\s,.;:(])(\d{1,3})(?=$|[\s,.;:!)])/g)];
   const others = text.replace(/\d+/g, " ").replace(/[^\p{L}' ]+/gu, " ").split(/\s+/).filter(Boolean).map(lower)
@@ -1290,14 +1293,14 @@ export class NetworkService implements RuntimeHost {
   private async notifyRecipient(personId: string): Promise<Recipient | undefined> {
     const rts = [...this.runtimes.values()].sort((a, b) => Number(b.app.id === "ntwrk") - Number(a.app.id === "ntwrk"));
     for (const rt of rts) {
-      const rows = await rt.scoped(tx => tx<{ id: MemberId; time_zone: string | null }[]>`select member.id,city.tz as time_zone
+      const rows = await rt.scoped(tx => tx<{ id: MemberId; time_zone: string | null; quiet_hours: unknown }[]>`select member.id,city.tz as time_zone,member.prefs->'quietHours' as quiet_hours
         from network.members member left join platform.cities city on city.id=member.home_city
         where member.app_id=${rt.app.id} and member.person_id=${personId} and not member.opted_out`);
       for (const r of rows) {
         const to = rt.addressOf(r.id);
         if (!to) continue;
         this.notifyTargets.set(normalizeAddress(to), { rt, memberId: r.id });
-        return { personId, to, timeZone: resolveTimeZone(r.time_zone ?? undefined, rt.city) ?? "America/New_York", prefs: { channel: "imessage" }, proactiveAllowed: true };
+        return { personId, to, timeZone: resolveTimeZone(r.time_zone ?? undefined, rt.city) ?? "America/New_York", quietHours: savedQuietHours(r.quiet_hours), prefs: { channel: "imessage" }, proactiveAllowed: true };
       }
     }
     return undefined;
