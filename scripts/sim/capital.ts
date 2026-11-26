@@ -143,16 +143,13 @@ export async function needAnsweredAfterAgeGate(b: Block): Promise<void> {
     const L = new CapitalLedger();
     L.record({ id: "join-a", t: at(0, 0), type: "member_joined", member: "a", age: 16 });
     L.record({ id: "join-b", t: at(0, 1), type: "member_joined", member: "b", age: 30 });
-    // "a" is a minor, so this answer earns nothing, but it must not mark the need credited.
     L.record({ id: "need-1a", t: at(0, 2), type: "need_answered", member: "a", needId: "need-1", confirmedBy: "b" });
     expect(L.balance("a")).toBe(0);
     expect(L.all().filter((e) => e.member === "a" && e.category === "needs_answered").length).toBe(0);
-    // Turns 18: the same need, answered again under a new event id, must now earn.
     L.record({ id: "age-a", t: at(0, 3), type: "age_updated", member: "a", age: 30 });
     L.record({ id: "need-1b", t: at(0, 4), type: "need_answered", member: "a", needId: "need-1", confirmedBy: "b" });
     expect(L.balance("a")).toBe(3);
     expect(L.all().filter((e) => e.member === "a" && e.category === "needs_answered").length).toBe(1);
-    // The dedup still holds: a third answer for the same need earns nothing more.
     L.record({ id: "need-1c", t: at(0, 5), type: "need_answered", member: "a", needId: "need-1", confirmedBy: "b" });
     expect(L.balance("a")).toBe(3);
     expect(L.all().filter((e) => e.member === "a" && e.category === "needs_answered").length).toBe(1);
