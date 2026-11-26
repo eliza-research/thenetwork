@@ -13,6 +13,13 @@
 {"text": "They can have my cell.", "want": "contact_share"}
 {"text": "She can have my contact info.", "want": "contact_share"}
 {"text": "She can have my email if she asks.", "want": "none"}
+{"text": "She can have my phone charger.", "want": "none"}
+{"text": "She can have my cell phone.", "want": "none"}
+{"text": "She can have my contact list.", "want": "none"}
+{"text": "She can have my email password.", "want": "none"}
+{"text": "She can have my email address book.", "want": "none"}
+{"text": "She can have my email address.", "want": "contact_share"}
+{"text": "She can have my cell number.", "want": "contact_share"}
 {"text": "send my number to Jordan", "want": "contact_share"}
 {"text": "sure, share my contact info with them", "want": "contact_share"}
 {"text": "go ahead and send him my email", "want": "contact_share"}
