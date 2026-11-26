@@ -41,7 +41,7 @@ export type RunRecord =
     tracksReplyReceipt?: true }
   | { t: number; type: "judgment"; memberId: MemberId; messageId: string; worthwhile: boolean; source: "policy" | "llm" }
   | { t: number; type: "proposal"; source: "network" | "engine" | "scenario" | "player"; proposal: Proposal; oracle: OracleSummary }
-  | { t: number; type: "meeting_scheduled"; meetingId: string; proposalId: string; participants: MemberId[]; at: number; city: City }
+  | { t: number; type: "meeting_scheduled"; meetingId: string; proposalId: string; participants: MemberId[]; at: number; city: City; previousAt?: number }
   | { t: number; type: "outcome"; meetingId: string; proposalId: string; at: number; attendance: Record<MemberId, {
       showed: boolean; cancelledWithNotice: boolean; cancelledByNetwork?: true; enjoyment: number;
     }> }
