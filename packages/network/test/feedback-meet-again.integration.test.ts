@@ -65,5 +65,17 @@ test("contracted declines of meeting again read as no and contracted yes answers
     "didn't want it to end, let's meet again",
     "I didn't expect much but would meet again",
     "why don't we meet again",
+    "I don't want to wait to meet again",
+    "don't want to wait long to meet again",
+    "don't want it to end so let's meet again",
+    "didn't want to leave and want to meet again",
+    "I didn't think I'd like it so much and want to meet again",
+    "I didn't think we'd click and now I want to go again",
+    "can't do Saturday and would go again",
+    "can't meet Saturday though would meet again",
+    "don't do this often and I'd meet again",
+    "I don't see any reason we shouldn't meet again",
+    "I don't think I'd say no to meeting again",
+    "I don't think so but would meet again",
   ]) expect(feedbackOf(reply).again, reply).toBe(true);
 });
