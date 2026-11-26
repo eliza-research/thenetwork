@@ -59,11 +59,12 @@ export function migrations(): Migration[] {
     // The single inbox (packages/notify/db/schema.sql): repeatable and idempotent, grants to network_service.
     { id: "9002_notify_schema", file: join(REPO, "packages", "notify", "db", "schema.sql"), repeatable: true },
     { id: "9003_notify_retention", file: join(REPO, "packages", "notify", "db", "retention.sql"), repeatable: false },
+    { id: "9004_marketing_schema", file: join(REPO, "apps", "marketing", "db", "schema.sql"), repeatable: true },
   ];
 }
 
 /** Reserved numbers: the baselines and the repeatable schemas outside migrations/. */
-const RESERVED = new Set(["0001", "0002", "9001", "9002", "9003"]);
+const RESERVED = new Set(["0001", "0002", "9001", "9002", "9003", "9004"]);
 
 /**
  * Refuse two numbered migrations with the same NNNN prefix (two branches that each took the next
@@ -130,7 +131,7 @@ export async function migrate(url: string, opts: { reset?: boolean; lockTimeout?
       // Fail fast instead of waiting forever when another process holds a lock on the schema.
       if (opts.lockTimeout) await tx.unsafe(`set local lock_timeout = '${opts.lockTimeout.replace(/[^0-9a-z]/gi, "")}'`);
       await tx`select pg_advisory_xact_lock(hashtext('thenetwork-migrate'))`;
-      if (opts.reset) await tx.unsafe("drop schema if exists network cascade; drop schema if exists platform cascade; drop schema if exists notify cascade; drop table if exists public.__migrations");
+      if (opts.reset) await tx.unsafe("drop schema if exists network cascade; drop schema if exists platform cascade; drop schema if exists notify cascade; drop schema if exists marketing cascade; drop table if exists public.__migrations");
       await tx.unsafe(`create table if not exists public.__migrations (
         id text primary key, checksum text not null, repeatable boolean not null default false, applied_at timestamptz not null default now())`);
       for (const [from, to] of RENUMBERED.slice().reverse()) {

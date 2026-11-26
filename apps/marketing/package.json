@@ -1,0 +1,15 @@
+{
+  "name": "@thenetwork/marketing",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "node --import tsx --env-file-if-exists=../../.env src/server.ts",
+    "cli": "node --import tsx --env-file-if-exists=../../.env src/cli.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@thenetwork/core": "workspace:*"
+  }
+}
