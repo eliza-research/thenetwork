@@ -3,15 +3,20 @@
 // one id space and compared in another).
 import { MatchRun } from "./match/run.ts";
 import type { Category, City, Edge, EdgeType, Facet, FacetKind, Intent, Member, MemberId, Presence } from "@thenetwork/core";
-import { canBeMatched, DAY, earliestDayKeyOf, latestDayKeyOf } from "@thenetwork/core";
+import { ADULT_AGE, canBeMatched, DAY, earliestDayKeyOf, latestDayKeyOf } from "@thenetwork/core";
 import { mayFollowMemberAlias } from "../../core/src/generated/datingRadius.ts";
 import { matchingExpiryCooldown, matchingPairHistory } from "../../core/src/generated/matchingHistory.ts";
 import { standingIntentLive } from "../../core/src/standing-intent.ts";
 import type { EngineConfig } from "./config.ts";
 import { centroid, cosine, tokenize, type EmbedFn } from "./embed.ts";
 import { sha256, stableStringify } from "./hash.ts";
+import {
+  buildAdultCsrGraph, computeAdamicAdar, computeBurtBrokerage, detectLeidenCommunities,
+  type AdultGraphMemberInput, type CsrAdultGraph, type LeidenPartition,
+} from "./leiden.ts";
 import type { AppPack } from "./pack.ts";
 import { networkPack } from "./packs/network/index.ts";
+import { SpatialIndex, type SpatialMemberInput } from "./spatialIndex.ts";
 import type { EngineInput, FeedbackRecord, InteractionRecord, NetworkEvent, RecentProposal, ReliabilityEvidence, Role } from "./types.ts";
 
 import type { Interval } from "./interval.ts";
@@ -66,6 +71,28 @@ export interface MemberIndex {
   inOpenOpportunity: boolean;
   /** v1.2: estimated P(this member says yes to an invite), engine-visible data only (acceptanceOf). */
   acceptance: number;
+  leidenMicroId?: number;
+  leidenMesoId?: number;
+}
+
+class LazyVectorMap extends Map<string, number[]> {
+  private readonly sources = new Map<string, () => number[]>();
+  registerLazy(id: string, compute: () => number[]): void {
+    this.sources.set(id, compute);
+  }
+  override get(key: string): number[] | undefined {
+    const existing = super.get(key);
+    if (existing !== undefined) return existing;
+    const fn = this.sources.get(key);
+    if (!fn) return undefined;
+    const val = fn();
+    super.set(key, val);
+    this.sources.delete(key);
+    return val;
+  }
+  override has(key: string): boolean {
+    return super.has(key) || this.sources.has(key);
+  }
 }
 
 export class World {
@@ -78,6 +105,7 @@ export class World {
   readonly holds = new Set<MemberId>();
   readonly minors = new Set<MemberId>();
   readonly negativeFeedback = new Map<string, number>();
+  readonly feedbackByPair = new Map<string, FeedbackRecord[]>();
   readonly feedback: FeedbackRecord[];
   readonly pairInteractions = new Map<string, InteractionRecord[]>();
   readonly interactions: InteractionRecord[];
@@ -85,9 +113,11 @@ export class World {
   readonly activePairs = new Set<string>();
   readonly recentPairs = new Map<string, number>();
   readonly events: NetworkEvent[];
-  readonly eventEmb = new Map<string, number[]>();
-  readonly intentEmb = new Map<string, number[]>();
+  readonly eventEmb: Map<string, number[]> = new LazyVectorMap();
+  readonly intentEmb: Map<string, number[]> = new LazyVectorMap();
+  readonly intentTokens = new Map<string, ReadonlySet<string>>();
   readonly intentById = new Map<string, Intent>();
+  readonly presenceByMember = new Map<MemberId, Presence[]>();
   readonly reliability: Record<MemberId, ReliabilityEvidence>;
   readonly quotas: NonNullable<EngineInput["categoryQuotas"]>;
   readonly embed: EmbedFn;
@@ -99,6 +129,101 @@ export class World {
 
   /** The app pack (default networkPack). Identity travels beside the config, never inside it (byte-identity rule 1). */
   readonly pack: AppPack;
+
+  private readonly adultGraphInputs: AdultGraphMemberInput[] = [];
+  private readonly pausedAdultIds = new Set<MemberId>();
+  private readonly allFacetsByMember = new Map<MemberId, Facet[]>();
+  private cachedAdultGraph: CsrAdultGraph | undefined;
+  private cachedLeidenMicro: LeidenPartition | undefined;
+  private cachedLeidenMeso: LeidenPartition | undefined;
+  private cachedBrokerage: Map<MemberId, number> | undefined;
+  private cachedAdamicAdar: Map<MemberId, Map<MemberId, number>> | undefined;
+  private cachedSpatialIndex: SpatialIndex | undefined;
+
+  get adultGraph(): CsrAdultGraph {
+    return this.cachedAdultGraph ??= buildAdultCsrGraph(this.adultGraphInputs, this.positive, this.blocked, this.minors);
+  }
+
+  get leidenMicro(): LeidenPartition {
+    if (!this.cachedLeidenMicro) {
+      this.cachedLeidenMicro = detectLeidenCommunities(this.adultGraph, 2.5);
+      for (const id of this.adultGraph.ids) {
+        const mi = this.members.get(id);
+        if (mi) mi.leidenMicroId = this.cachedLeidenMicro.communityOf.get(id);
+      }
+    }
+    return this.cachedLeidenMicro;
+  }
+
+  get leidenMeso(): LeidenPartition {
+    if (!this.cachedLeidenMeso) {
+      this.cachedLeidenMeso = detectLeidenCommunities(this.adultGraph, 1.0);
+      for (const id of this.adultGraph.ids) {
+        const mi = this.members.get(id);
+        if (mi) mi.leidenMesoId = this.cachedLeidenMeso.communityOf.get(id);
+      }
+    }
+    return this.cachedLeidenMeso;
+  }
+
+  get brokerage(): ReadonlyMap<MemberId, number> {
+    return this.cachedBrokerage ??= computeBurtBrokerage(
+      this.adultGraphInputs.map(a => a.id), this.positive, this.minors,
+    );
+  }
+
+  get adamicAdar(): ReadonlyMap<MemberId, ReadonlyMap<MemberId, number>> {
+    return this.cachedAdamicAdar ??= computeAdamicAdar(
+      this.adultGraphInputs.map(a => a.id), this.positive, this.holds, this.pausedAdultIds, this.minors, this.blocked,
+    );
+  }
+
+  get spatialIndex(): SpatialIndex {
+    if (this.cachedSpatialIndex) return this.cachedSpatialIndex;
+    const adultIds = this.adultGraphInputs.map(a => a.id);
+    const brokerage = this.brokerage;
+    const adultRanked = [...adultIds].sort((a, b) => {
+      const ma = this.members.get(a)!, mb = this.members.get(b)!;
+      const sa = 0.5 * ma.acceptance + 0.3 * Math.min(1, ma.degree / 8) + 0.2 * (brokerage.get(a) ?? 0);
+      const sb = 0.5 * mb.acceptance + 0.3 * Math.min(1, mb.degree / 8) + 0.2 * (brokerage.get(b) ?? 0);
+      return (sa - sb) || (a < b ? -1 : 1);
+    });
+    const pctById = new Map<MemberId, number>();
+    const denom = Math.max(1, adultRanked.length - 1);
+    for (let i = 0; i < adultRanked.length; i++) {
+      pctById.set(adultRanked[i]!, adultRanked.length <= 1 ? 0.5 : i / denom);
+    }
+    const spatialInputs: SpatialMemberInput[] = [];
+    for (const id of this.ids) {
+      const mi = this.members.get(id)!;
+      const isAdult = !this.minors.has(id) && canBeMatched(mi.m.age);
+      const emptyVec: readonly number[] = [];
+      spatialInputs.push({
+        m: mi.m,
+        held: this.holds.has(id),
+        tags: mi.tags,
+        profileEmb: isAdult ? mi.profileEmb : emptyVec,
+        capEmb: isAdult ? mi.capEmb : emptyVec,
+        desireEmb: isAdult ? mi.desireEmb : emptyVec,
+        capFacetEmbs: isAdult ? mi.caps.map(f => mi.facetEmb.get(f.id)).filter((v): v is number[] => !!v) : undefined,
+        desireFacetEmbs: isAdult ? mi.desires.map(f => mi.facetEmb.get(f.id)).filter((v): v is number[] => !!v) : undefined,
+        matchFacetEmbs: isAdult ? mi.match.map(f => mi.facetEmb.get(f.id)).filter((v): v is number[] => !!v) : undefined,
+        presence: mi.presence,
+        allFacets: this.allFacetsByMember.get(id) ?? [],
+        lowExposureOrNew: mi.lowExposure || mi.lowData || mi.newcomer,
+        romance: mi.romance,
+        statusPercentile: pctById.get(id) ?? 0.5,
+      });
+    }
+    this.cachedSpatialIndex = new SpatialIndex(spatialInputs, {
+      now: this.now,
+      windowDays: this.cfg.windowDays,
+      adultMin: Math.max(ADULT_AGE, this.cfg.ageMin),
+      dim: this.dim,
+      seed: this.cfg.seed,
+    });
+    return this.cachedSpatialIndex;
+  }
 
   private matchRun: MatchRun | undefined;
   /** The run's generic matching handle, built on first use (profiles, index, searches, edges, circles). */
@@ -170,6 +295,12 @@ export class World {
     // --- feedback (cooldowns persist whether or not processed) ---------------------------
     this.feedback = (input.feedback ?? []).map(f => ({ ...f, from: C(f.from), about: C(f.about) }));
     for (const f of this.feedback) {
+      if (f.from !== f.about) {
+        const pk = pairKey(f.from, f.about);
+        let list = this.feedbackByPair.get(pk);
+        if (!list) { list = []; this.feedbackByPair.set(pk, list); }
+        list.push(f);
+      }
       if (f.sentiment === "negative" || (f.wouldMeetAgain === false && f.sentiment !== "positive")) {
         const k = pairKey(f.from, f.about);
         this.negativeFeedback.set(k, Math.max(this.negativeFeedback.get(k) ?? -Infinity, f.at));
@@ -258,13 +389,14 @@ export class World {
 
     // --- events ------------------------------------------------------------------------------
     this.events = [...(input.events ?? [])].filter(e => e.end > now).sort((a, b) => (a.start - b.start) || (a.id < b.id ? -1 : 1));
-    for (const e of this.events) this.eventEmb.set(e.id, embed(`${e.title} ${e.description ?? ""} ${e.tags.join(" ")}`));
+    const lazyEvents = this.eventEmb as LazyVectorMap;
+    for (const e of this.events) lazyEvents.registerLazy(e.id, () => embed(`${e.title} ${e.description ?? ""} ${e.tags.join(" ")}`));
 
     this.reliability = Object.fromEntries(Object.entries(input.reliability ?? {}).map(([k, v]) => [C(k), v]));
     this.quotas = Object.fromEntries(Object.entries(input.categoryQuotas ?? {}).map(([k, v]) => [C(k), v]));
 
     // --- members -------------------------------------------------------------------------------
-    const facetsBy = new Map<MemberId, Facet[]>();
+    const facetsBy = this.allFacetsByMember;
     for (const f of input.facets) {
       const id = C(f.memberId);
       if (f.validTo !== undefined && f.validTo < now) continue;
@@ -276,6 +408,7 @@ export class World {
     // v1.2: personal-growth wants are matched as hobby; stating one opts the member in to hobby
     // (networkPack.ontology.relabelIntent). Member -> lanes the member is opted in to by relabelling.
     const growthAsHobby = new Map<MemberId, Category[]>();
+    const lazyIntents = this.intentEmb as LazyVectorMap;
     for (const it of input.intents) {
       if (!standingIntentLive(it, now)) continue;
       const id = C(it.memberId);
@@ -285,9 +418,11 @@ export class World {
       if (!intentsBy.has(id)) intentsBy.set(id, []);
       intentsBy.get(id)!.push(intent);
       this.intentById.set(intent.id, intent);
-      this.intentEmb.set(intent.id, intent.embedding ?? embed(intentText(intent)));
+      const text = intentText(intent);
+      if (intent.embedding) this.intentEmb.set(intent.id, intent.embedding);
+      else lazyIntents.registerLazy(intent.id, () => embed(text));
     }
-    const presenceBy = new Map<MemberId, Presence[]>();
+    const presenceBy = this.presenceByMember;
     for (const p of input.presence) {
       const id = C(p.memberId);
       if (!presenceBy.has(id)) presenceBy.set(id, []);
@@ -333,34 +468,70 @@ export class World {
       const match = all.filter(f => (f.scope === "matchable" || f.scope === "shareable") && MATCH_KINDS.has(f.kind));
       const share = all.filter(f => f.scope === "shareable");
       const privateValues = all.filter(f => f.scope !== "shareable").map(f => f.value);
-      const facetEmb = new Map<string, number[]>();
-      for (const f of match) facetEmb.set(f.id, f.embedding ?? embed(`${f.value} ${f.tags.join(" ")}`));
       const caps = match.filter(f => CAP_KINDS.has(f.kind));
       const desires = match.filter(f => DESIRE_KINDS.has(f.kind));
-      const vecs = (fs: Facet[]) => fs.map(f => facetEmb.get(f.id)!);
       const tags = new Set<string>();
       for (const f of match) for (const t of f.tags) tags.add(t.toLowerCase());
-      // Cluster = dominant interest tag (deterministic tie-break); used for diversity & expansion.
       const tc = new Map<string, number>();
-      for (const f of desires) for (const t of f.tags) tc.set(t.toLowerCase(), (tc.get(t.toLowerCase()) ?? 0) + 1);
+      const desireTagList: string[] = [];
+      for (const f of desires) for (const t of f.tags) {
+        const lt = t.toLowerCase();
+        tc.set(lt, (tc.get(lt) ?? 0) + 1);
+        desireTagList.push(lt);
+      }
       const cluster = [...tc.entries()].sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : 1))[0]?.[0] ?? "none";
       for (const t of tags) tagCount.set(t, (tagCount.get(t) ?? 0) + 1);
       const boundaries = all.filter(f => f.kind === "boundary" || f.kind === "preference");
       const { dealbreakers, romance } = pack.ontology.constraints(boundaries);
-      const revision = sha256(stableStringify({
-        f: all.map(f => [f.id, f.value, f.scope, f.tags, f.confidence]).sort(),
-        i: (intentsBy.get(m.id) ?? []).map(i => [i.id, i.objective, i.details ?? "", i.status]).sort(),
-        p: m.prefs, s: m.state,
-      })).slice(0, 12);
+      const memberIntents = (intentsBy.get(m.id) ?? []).sort((a, b) => (a.id < b.id ? -1 : 1));
       const exp30 = exposure30.get(m.id) ?? 0;
       const newcomer = now - m.joinedAt < cfg.newcomerDays * DAY;
+      const dim = this.dim;
+      let cachedFacetEmb: Map<string, number[]> | undefined;
+      let cachedProfileEmb: number[] | undefined;
+      let cachedCapEmb: number[] | undefined;
+      let cachedDesireEmb: number[] | undefined;
+      let cachedRevision: string | undefined;
+      const ensureFacetEmb = (): Map<string, number[]> => {
+        if (!cachedFacetEmb) {
+          cachedFacetEmb = new Map<string, number[]>();
+          for (const f of match) cachedFacetEmb.set(f.id, f.embedding ?? embed(`${f.value} ${f.tags.join(" ")}`));
+        }
+        return cachedFacetEmb;
+      };
       this.members.set(m.id, {
-        m, match, share, privateValues, caps, desires, facetEmb,
-        profileEmb: match.length ? centroid(vecs(match), this.dim) : new Array(this.dim).fill(0),
-        capEmb: caps.length ? centroid(vecs(caps), this.dim) : new Array(this.dim).fill(0),
-        desireEmb: desires.length ? centroid(vecs(desires), this.dim) : new Array(this.dim).fill(0),
-        intents: (intentsBy.get(m.id) ?? []).sort((a, b) => (a.id < b.id ? -1 : 1)),
-        tags, cluster, revision,
+        m, match, share, privateValues, caps, desires,
+        get facetEmb() { return ensureFacetEmb(); },
+        get profileEmb() {
+          if (!cachedProfileEmb) {
+            const fe = ensureFacetEmb();
+            cachedProfileEmb = match.length ? centroid(match.map(f => fe.get(f.id)!), dim) : new Array(dim).fill(0);
+          }
+          return cachedProfileEmb;
+        },
+        get capEmb() {
+          if (!cachedCapEmb) {
+            const fe = ensureFacetEmb();
+            cachedCapEmb = caps.length ? centroid(caps.map(f => fe.get(f.id)!), dim) : new Array(dim).fill(0);
+          }
+          return cachedCapEmb;
+        },
+        get desireEmb() {
+          if (!cachedDesireEmb) {
+            const fe = ensureFacetEmb();
+            cachedDesireEmb = desires.length ? centroid(desires.map(f => fe.get(f.id)!), dim) : new Array(dim).fill(0);
+          }
+          return cachedDesireEmb;
+        },
+        intents: memberIntents,
+        tags, cluster,
+        get revision() {
+          return cachedRevision ??= sha256(stableStringify({
+            f: all.map(f => [f.id, f.value, f.scope, f.tags, f.confidence]).sort(),
+            i: memberIntents.map(i => [i.id, i.objective, i.details ?? "", i.status]).sort(),
+            p: m.prefs, s: m.state,
+          })).slice(0, 12);
+        },
         recentProactive: proactive.get(m.id) ?? 0,
         recentContribution: contrib.get(m.id) ?? 0,
         recentExposure30: exp30,
@@ -375,6 +546,10 @@ export class World {
         inOpenOpportunity: openMembers.has(m.id),
         acceptance: acceptanceOf(cfg, response.get(m.id)),
       });
+      if (!this.minors.has(m.id) && canBeMatched(m.age)) {
+        if (m.state === "paused") this.pausedAdultIds.add(m.id);
+        this.adultGraphInputs.push({ id: m.id, age: m.age, city: m.homeCity, desireTags: desireTagList });
+      }
     }
     this.ids = [...this.members.keys()].sort();
     // Inviter cluster (fairness cohort, PRD 33.8): follow invitedBy to the root.
@@ -448,12 +623,21 @@ export class World {
     return { sim: best, facet: bf };
   }
 
+  intentTokenSet(intent: Intent): ReadonlySet<string> {
+    let cached = this.intentTokens.get(intent.id);
+    if (!cached) {
+      cached = new Set(tokenize(intentText(intent)));
+      if (this.intentById.has(intent.id)) this.intentTokens.set(intent.id, cached);
+    }
+    return cached;
+  }
+
   /** Fit of a free-text intent to a member: best facet similarity plus a tag bonus. */
   intentFit(intent: Intent, member: MemberIndex, facets: "caps" | "desires" | "match" = "caps"): { sim: number; facet?: Facet } {
-    const q = this.intentEmb.get(intent.id)!;
+    const q = this.intentEmb.get(intent.id) ?? this.embed(intentText(intent));
     const r = this.bestFacet(member, q, facets);
     if (r.facet) {
-      const toks = new Set(tokenize(intentText(intent)));
+      const toks = this.intentTokenSet(intent);
       if (r.facet.tags.some(t => toks.has(t.toLowerCase()))) r.sim = Math.min(1, r.sim + 0.15);
     }
     return r;
