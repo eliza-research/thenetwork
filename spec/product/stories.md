@@ -733,6 +733,86 @@ Acceptance:
 
 Spec: [console analysis panels](../consolePanels.md).
 
+## Story F53 — Match and travel fairly across five launch cities
+
+> As a member in San Francisco, New York, Los Angeles, Chicago, or Miami, I want matching, scheduling, quiet hours, and meeting places to use my city's neighborhoods, transit barriers, and local time zone, so that I never receive an unfair cross-city commute or a nighttime message.
+
+### One city registry drives travel limits, fair midpoints, and local time
+
+One shared registry (`packages/core/src/cities.ts`) holds each launch city (`sf`, `nyc`, `la`, `chicago`, `miami`), its IANA time zone (`CITY_TZ`), travel limits, zone barrier penalties, neighborhoods, and seed venues. Matching stays gated per `<app>:<city>` by the `platform.networks` registry row and the admin switch.
+
+Acceptance:
+
+- Signup, profile home-city selection, MCP tools, Postgres (`platform.cities`, `platform.networks`), the matching engine, and the staff console support all five cities without NYC-only branches.
+- Quiet hours, scheduling windows, and post-encounter follow-ups run in each city's local time zone from `Clock` time.
+- Midpoint selection uses discrete neighborhood minimax plus supply weighting, not a raw geographic centroid. Every attendee stays within the city's one-way travel limit (25–35 min for 1-on-1 dates; 35–45 min for groups), with relaxation capped at `+10` minutes in `+5` minute steps.
+- When city barriers (rivers, the 405, Bay Bridge, Miami causeways, Chicago L diagonals) push any attendee past the relaxed cap, the system declines to form an unfair meetup.
+- Adding a sixth city requires only a city spec entry and a database migration, with zero engine or pack rewrites.
+
+Spec: [city travel and fair midpoints](../cityTravel.md). Design: [five-city venues and matching](../../docs/design/2026-11-26-five-city-venues-and-matching.md).
+
+## Story F54 — Choose verified open venues from a growing catalog
+
+> As a member meeting someone in person, I want the agent to pick an open public venue that fits our constraints, budget, and past visits without burning external search calls once my neighborhood has enough local options.
+
+### Every recommended venue is public, freshly verified open, safe for every attendee, and never closed or repeated
+
+Acceptance:
+
+- Only active public venues (`is_public = true`) are ever eligible. Private homes are refused at the generated rule layer and by database constraints.
+- Hard member exclusions run before ranking: minors (`13`–`17`) on `friends.help` or the `ntwrk` Friend lane receive only all-ages public venues (`ageMin <= 13`, not bar-only, alcohol-optional, not alcohol-centric) while teen introductions are not stopped; non-drinkers never get bar-only venues; strict sober members never get alcohol-centric venues; vegan, vegetarian, halal, kosher, allergen, and wheelchair constraints fail closed; price tier never exceeds the minimum attendee budget; and previously visited or rejected venues are excluded.
+- When at least 10 qualified local venues match the query, the service makes zero external venue search calls. Below 10, it runs selective discovery within budget and obeys provider caching limits (Google `lat`/`lng` expires at 30 days; Yelp responses expire within 24 hours; Google reviews and photos are never persisted).
+- Before proposing a primary or backup venue, the service verifies open status and opening-hour buffer (`>= 90` minutes for pairs, `>= 120` minutes for groups) whenever the last check is older than 24 hours on weekdays or 6 hours on weekends and holidays.
+- Any user closure report immediately quarantines the venue to `suspect_closed` in the same transaction so no other member receives it; two independent user reports or provider confirmation moves it to `closed_permanent`.
+
+Spec: [venue selection and quarantine](../venueSelection.md). Model: [venue lifecycle](../models/venue_lifecycle.md).
+
+## Story F55 — Host impromptu group meetups and coordinate arrival on site
+
+> As a member joining a walk-in group hangout or arriving at a meetup, I want a venue that handles walk-ins cleanly and safe on-site arrival updates with backup venue recovery if the spot is closed or full.
+
+### Walk-in groups use a 100-point rubric, and on-site arrival relay stays strictly adult, timed, and leak-checked
+
+Acceptance:
+
+- Impromptu group venues (`groupSize >= 3`) require counter ordering or separate checks, no mandatory reservation, sufficient walk-in capacity for concurrent bookings, weather and after-dark safety compliance, and scoring across the 8-dimension 100-point rubric. Teen groups remain capped at 2 to 6 people on all-ages public venues.
+- At `T-75m` (`PreBrief`), confirmed attendees receive one pre-arrival brief with the venue address, arrival landmark, quiet safety exit line, and a pre-verified nearby backup venue. Before `PreBrief`, a `friends` group checks cutoff quorum and promotes a confirmed adult co-anchor if the anchor drops (or cancels cleanly if fewer than 3 remain).
+- Inside `ActiveArrival` (`T-30m` to `T+45m`), confirmed adult (`>= 18`) attendees can exchange self-described arrival cues (`arrived`, `late`, clothing/landmark cue) through `LeakGuard`, `RELAY_RULES`, and Clef (fail-closed in production). Group updates batch every 60 to 90 seconds. Minors (`< 18`) never send or receive arrival relays (`teen_relay_contact = 0`).
+- A surprise `venue_closed` report immediately quarantines the primary venue and broadcasts the verified backup venue; a `venue_full` report pivots to the verified backup venue and logs crowding without marking the primary venue closed.
+- A panic safety exit or block immediately closes the arrival window and halts all relays. If one attendee arrives and a partner is silent, the no-show guard pings the late partner at `T+12m` and updates the waiting attendee at `T+18m`. The relay closes automatically when attendees mark `met` or at `T+45m`.
+
+Spec: [meetup arrival coordination](../meetupArrival.md). Model: [meetup coordination](../models/meetup_coordination.md).
+
+## Story F56 — Follow up after encounters and learn venue taste
+
+> As a member who finished a date or hangout, I want one timely, quiet-hours-safe follow-up that checks how the encounter and the venue went, so future recommendations match my taste without spamming me.
+
+### One local-time follow-up captures match and venue signals within daily caps and quiet hours
+
+Acceptance:
+
+- Encounters ending at or before `16:00` local time schedule one follow-up the same day (`endLocalHour + 2`, strictly before `20:00` local). Encounters ending after `16:00` local defer the follow-up to the next morning (`09:00`–`09:30` local in `CITY_TZ`).
+- Proactive follow-ups never send during local quiet hours (`20:30`–`09:00`), never exceed the person-level proactive daily cap (`<= 3` across all apps), send at most one gentle nudge (`remindersSent < 2`), and stop immediately on `STOP` or per-app `leave`.
+- A single combined reply records attendance, interest in seeing the person or group again, venue vibe feedback (updating first-party Bayesian archetype priors in `platform.venues`), and any venue closure report (triggering immediate quarantine).
+
+Spec: [encounter follow-ups](../encounterFollowup.md). Model: [meetup coordination](../models/meetup_coordination.md).
+
+## Story F57 — Deliver non-in-person work introductions on peon.biz
+
+> As an adult candidate or verified hiring manager on peon.biz, I want double-opt-in work introductions delivered by warm email, a mutually confirmed video slot, or mediated relay instead of a physical venue or an unsolicited group text.
+
+### Work introductions require adult candidate-first double opt-in and never assign an in-person venue
+
+Acceptance:
+
+- Only adults (`>= 18`) are probed or introduced on `peon.biz`. Minors stay single-player.
+- Candidate-first sequential double opt-in is enforced: the hiring manager is never probed until the candidate gives an explicit `yes` to the blind role summary, and no introduction is delivered until both parties opt in.
+- `peon.biz` work introductions never book or assign a physical venue, never create an unsolicited group SMS, and never place a cold three-way call.
+- Channel priority selects `WarmEmail` by default when both opted-in adults have email addresses on file, `ScheduledVideo` only after explicit mutual slot confirmation (never an unsolicited calendar invite), and `RelayShare` (leak-checked relay with explicit bilateral `SHARE` contact swap) when email and a confirmed video slot are unavailable.
+- Work follow-ups send a lightweight `T+72h` nudge only on email bounce or non-response, followed by one `T+7d` outcome check-in during local business hours (`10:00` local).
+
+Spec: [work introduction channel](../workIntroChannel.md). Model: [work introduction](../models/work_intro.md).
+
 ## Later stories
 
 Original later IDs stay attached to their prerequisites. They do not enter launch scope merely because a shared state machine supports them.
