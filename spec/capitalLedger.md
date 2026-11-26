@@ -1,6 +1,6 @@
 # Network Capital ledger
 
-The Network projects its own events into the private Capital ledger. This module governs which events reach the ledger and which credits count. The shell validates event shape, loads prior records, persists source events, and computes decimals and entries with the existing category multipliers and rounding. The shell marks a member and need pair as used on a qualifying confirmation, before it checks whether an entry can be earned.
+The Network projects its own events into the private Capital ledger. This module governs which events reach the ledger and which credits count. The shell validates event shape, loads prior records, persists source events, and computes decimals and entries with the existing category multipliers and rounding. The shell marks a member and need pair as used only when an entry is earned for that pair.
 
 ## Story: Count what I contributed once and preserve its history
 
@@ -62,7 +62,7 @@ pure def mayEarnCapital(eligible: bool, removed: bool, positiveBase: bool): bool
 
 ### Organizing and needs use their original contribution source
 
-Organizing credit requires a public venue and the configured number of eligible attendees other than the organizer. An organizer and plan pair becomes used when it earns an entry. A need answer needs staff confirmation or an eligible confirmer other than the member, and a member and need pair that is not used yet.
+Organizing credit requires a public venue and the configured number of eligible attendees other than the organizer. An organizer and plan pair becomes used when it earns an entry. A need answer needs staff confirmation or an eligible confirmer other than the member, and a member and need pair that is not used yet. A member and need pair likewise becomes used only when it earns an entry.
 
 ```quint
 pure def organizingCapitalSourceOpen(publicVenue: bool, alreadyCredited: bool): bool =
