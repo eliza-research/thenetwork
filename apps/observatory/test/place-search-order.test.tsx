@@ -10,7 +10,7 @@
 // East Harlem instead of Harlem.
 import { serveHttp } from "../../../packages/core/src/runtime/http.ts";
 import { setTimeout as sleep } from "node:timers/promises";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { Window, type HTMLInputElement as TestInput } from "happy-dom";
 import { act, createElement } from "react";
 import type { ClockInfo, ObsMember, ObsState, ObsStats } from "../src/types.ts";
@@ -33,7 +33,7 @@ test("typing the exact place name Harlem offers it first and Enter only picks a 
   const state: ObsState = {
     env: {
       mode: "game", app: "ntwrk", label: "SIMULATION seed 1 · synthetic v1", dataset: "synthetic v1",
-      capabilities: { canStep: false, canIntervene: false, hiddenTruth: false, readOnly: false },
+      capabilities: { canStep: true, canIntervene: true, hiddenTruth: false, readOnly: false },
     },
     clock: clock(10), version: 10,
     members: [member("m1", "Maya Rao", "East Village"), member("m2", "Ava Chen", "Chelsea"), member("m3", "Maya", "Greenwich Village"), member("m4", "Ana Mayer", "Chelsea")],
@@ -107,6 +107,18 @@ test("typing the exact place name Harlem offers it first and Enter only picks a 
     appRoot = createRoot(box as unknown as HTMLElement);
     await act(async () => { appRoot!.render(createElement(App)); });
     await wait(() => !!window.document.getElementById("obs-search"), "the search box");
+    await wait(() => !!window.document.querySelector('button[aria-label="Play"]'), "simulation controls");
+    const control = vi.spyOn(store, "control").mockResolvedValue({ ok: true });
+    const members = window.document.querySelector('[role="combobox"][aria-label="Members"]')!;
+    const sendN = (el: typeof members) => el.dispatchEvent(new window.KeyboardEvent("keydown", { key: "n", bubbles: true, cancelable: true }));
+    try {
+      await act(async () => { sendN(members); });
+      expect(control).not.toHaveBeenCalled();
+      await act(async () => { sendN(window.document.body); });
+      expect(control).toHaveBeenCalledExactlyOnceWith({ type: "step", ms: 3_600_000 });
+    } finally {
+      control.mockRestore();
+    }
     const input = window.document.getElementById("obs-search") as unknown as TestInput;
     await act(async () => {
       Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, "harlem");

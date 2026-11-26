@@ -45,9 +45,11 @@ export function App() {
   }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const field = (e.target as Element | null)?.closest?.("input, textarea, select");
+      const target = e.target as Element | null;
+      const field = target?.closest?.("input, textarea, select");
       if (e.key === "Escape") { store.escape(); if (field && !store.ui.query) (field as HTMLElement).blur(); return; }
-      if (field || e.metaKey || e.ctrlKey || e.altKey) return;
+      // The filter comboboxes handle letter keys for typeahead, even when closed.
+      if (field || target?.closest?.('[role="combobox"], [role="listbox"]') || e.metaKey || e.ctrlKey || e.altKey) return;
       const canStep = !!store.env?.capabilities.canStep && store.canSim();
       if (e.key === "/") { e.preventDefault(); document.getElementById("obs-search")?.focus(); }
       else if (e.key === "?") store.toggleHelp();
