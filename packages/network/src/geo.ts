@@ -136,7 +136,7 @@ export const VENUES: Venue[] = [
   V("jefferson-market-library", "Jefferson Market Library", "West Village", "library", 40.7346, -73.9992, ["books", "quiet", "writing", "study"]),
   V("dewitt-clinton-park", "DeWitt Clinton Park", "Hell's Kitchen", "park", 40.7682, -73.9943, ["outdoors", "sports", "social", "walk"]),
   V("stuyvesant-square", "Stuyvesant Square Park", "Gramercy", "park", 40.7338, -73.9844, ["outdoors", "walk", "quiet", "dogs"]),
-  V("tudor-city-greens", "Tudor City Greens", "Murray Hill", "park", 40.7488, -73.9709, ["outdoors", "quiet", "walk", "gardens"]),
+  V("tudor-city-greens", "Tudor City Greens", "Murray Hill", "park", 40.7488, -73.9709, ["outdoors", "quiet", "walk"]),
   V("thomas-jefferson-park", "Thomas Jefferson Park", "East Harlem", "park", 40.7932, -73.9355, ["outdoors", "sports", "running", "social"]),
   V("museum-city-ny", "Museum of the City of New York", "East Harlem", "museum", 40.7925, -73.9518, ["arts", "museums", "photography"]),
   V("morningside-park", "Morningside Park", "Harlem", "park", 40.806, -73.9587, ["outdoors", "walk", "running", "social"]),
