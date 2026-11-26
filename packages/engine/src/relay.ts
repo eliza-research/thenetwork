@@ -479,7 +479,7 @@ const CONTACT_REQ = new RegExp(
   String.raw`\b(?:send|give|share|pass|forward|text)\s+(?<leadingRecipient>${PRIVATE_RELAY_RECIPIENT})\s+my\s+(?:${CONTACT_SWAP_NAME}|email)\b`
   + String.raw`|\b(?:share|send|give|pass|forward|text)\s+my\s+(?:${CONTACT_SWAP_NAME}|email)\s+(?:with|to)\s+(?<trailingRecipient>${PRIVATE_RELAY_RECIPIENT})`
   + String.raw`|${RELAY_AFFIRMED_SEND}(?:it|my number|them my number)\b(?:${RELAY_DESTINATION}\s+(?<affirmedRecipient>${PRIVATE_RELAY_RECIPIENT})|(?!${RELAY_DESTINATION}))`
-  + String.raw`|\b(?:they|she|he) can have my (?:${CONTACT_SWAP_NAME}|email)\b`,
+  + String.raw`|\b(?:they|she|he) can have my (?:${CONTACT_SWAP_NAME}|email)(?:\s+(?:number|address|details?|info|phone\s+number))?(?=(?:[.!?…;:]|$|[\s,;:–—-]*\b(?:if|when|once|until|unless|after|before|and|but|or|so|then|please|thanks|thank\s+you)\b))`,
   "giu",
 );
 const PHOTO_REQ = new RegExp(
