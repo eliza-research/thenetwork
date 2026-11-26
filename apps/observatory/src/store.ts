@@ -59,6 +59,7 @@ export class Store {
   version = 0;
   private feedSeq = 0;
   private dirtyMembers = new Set<MemberId>();
+  private membersRemoved = false;
   private dirtyEdges = new Set<string>();
   private edgesRemoved = false;
   private dirtyOpps = new Set<string>();
@@ -72,6 +73,7 @@ export class Store {
   setEnv(env: EnvInfo) { this.env = env; this.envDirty = true; }
 
   upsertMember(m: ObsMember) { this.members.set(m.id, m); this.dirtyMembers.add(m.id); }
+  removeMember(id: MemberId) { if (this.members.delete(id)) { this.dirtyMembers.delete(id); this.membersRemoved = true; } }
   touchMember(id: MemberId) { if (this.members.has(id)) this.dirtyMembers.add(id); }
   member(id: MemberId) { return this.members.get(id); }
 
@@ -171,7 +173,7 @@ export class Store {
   }
 
   hasChanges() {
-    return this.edgesRemoved || this.dirtyMembers.size + this.dirtyEdges.size + this.dirtyOpps.size + this.removedOpps.size + this.newFeed.length > 0 || this.runsDirty || this.envDirty || this.requestsDirty || this.healthDirty;
+    return this.edgesRemoved || this.membersRemoved || this.dirtyMembers.size + this.dirtyEdges.size + this.dirtyOpps.size + this.removedOpps.size + this.newFeed.length > 0 || this.runsDirty || this.envDirty || this.requestsDirty || this.healthDirty;
   }
 
   /** Everything that changed since the last call (and bump the version). */
@@ -181,7 +183,7 @@ export class Store {
     const d: ObsDelta = { version: this.version, clock: this.clock, game };
     if (this.envDirty) d.env = this.env;
     if (this.dirtyMembers.size) d.members = [...this.dirtyMembers].map(id => this.members.get(id)!).filter(Boolean);
-    if (this.edgesRemoved) d.reset = true;
+    if (this.edgesRemoved || this.membersRemoved) d.reset = true;
     if (this.dirtyEdges.size) d.edges = [...this.dirtyEdges].map(id => this.edges.get(id)!).filter(Boolean);
     if (this.dirtyOpps.size) d.opportunities = [...this.dirtyOpps].map(id => this.opps.get(id)!).filter(Boolean).map(o => withAge(o, this.clock.now));
     if (this.removedOpps.size) d.removedOpportunities = [...this.removedOpps];
@@ -190,6 +192,7 @@ export class Store {
     if (this.requestsDirty) d.requests = this.requests;
     if (changed) d.stats = this.stats();
     this.edgesRemoved = false;
+    this.membersRemoved = false;
     this.dirtyMembers.clear(); this.dirtyEdges.clear(); this.dirtyOpps.clear(); this.removedOpps.clear(); this.newFeed = [];
     this.runsDirty = false; this.envDirty = false; this.requestsDirty = false; this.healthDirty = false;
     return d;

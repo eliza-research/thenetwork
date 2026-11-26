@@ -201,14 +201,21 @@ export const appsFor = (u: StaffUser, mode: Mode): AppId[] => APP_IDS.filter(a =
 
 /**
  * platform.staff_roles (real mode): loaded at start and every minute through the given connection. A
- * failed load keeps the last good list (and logs once); a database without the table gives none.
+ * failed reload keeps the last good list for up to `staleMs` (default 5 min) and logs once, then
+ * clears it (fail closed); recovery resets the warning. A database without the table gives none.
  */
 export class PgStaffRoles implements StaffRoleSource {
   private byEmail = new Map<string, RoleGrant[]>();
   private timer?: ReturnType<typeof setInterval>;
   private warned = false;
-  constructor(private sql: SQL, private everyMs = 60_000) {}
-  async start() { await this.load(); this.timer = setInterval(() => { this.load(); }, this.everyMs); }
+  private loadedAt = -Infinity;
+  private failed = false;
+  constructor(private sql: SQL, private everyMs = 60_000, private staleMs = 5 * 60_000, private now: () => number = () => Date.now()) {}
+  async start() {
+    await this.load();
+    this.timer = setInterval(() => { void this.load(); }, this.everyMs);
+    this.timer.unref?.();
+  }
   async load() {
     try {
       const rows = await this.sql`select email, role, app_id from platform.staff_roles`;
@@ -217,12 +224,27 @@ export class PgStaffRoles implements StaffRoleSource {
         try { addGrant(next, r.email.trim().toLowerCase(), parseGrant(`${r.role}@${r.app_id ?? "*"}`, "platform.staff_roles")); } catch { /* a row the console does not know: no grant */ }
       }
       this.byEmail = next;
+      this.loadedAt = this.now();
+      this.failed = false;
+      this.warned = false;
     } catch (e) {
-      this.byEmail.clear();
-      if (!this.warned) { this.warned = true; console.warn(`Observatory: platform.staff_roles not read (${(e as Error).message}); OBSERVATORY_ROLES only`); }
+      const code = typeof e === "object" && e !== null && "code" in e ? String((e as { code?: unknown }).code) : "";
+      const missingTable = code === "42P01";
+      const age = this.now() - this.loadedAt;
+      const stale = missingTable || this.loadedAt === -Infinity || age > this.staleMs;
+      this.failed = true;
+      if (stale) this.byEmail.clear();
+      if (!this.warned) {
+        this.warned = true;
+        const tail = stale ? "OBSERVATORY_ROLES only" : `keeping last good roles for up to ${Math.round(this.staleMs / 60_000)} min`;
+        console.warn(`Observatory: platform.staff_roles not read (${(e as Error).message}); ${tail}`);
+      }
     }
   }
-  grants(email: string) { return this.byEmail.get(email) ?? []; }
+  grants(email: string) {
+    if (this.failed && this.now() - this.loadedAt > this.staleMs) this.byEmail.clear();
+    return this.byEmail.get(email) ?? [];
+  }
   stop() { if (this.timer) clearInterval(this.timer); }
 }
 
