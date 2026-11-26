@@ -551,6 +551,9 @@ export class MemoryPeopleStore implements PeopleStore {
       if (this.phones.has(m.newE164)) return "number_in_use";
       this.phones.delete(m.oldE164);
       this.phones.set(m.newE164, { e164: m.newE164, personId: m.personId, verifiedAt: at, method: "otp_sms", lastSeenAt: at, hold: null });
+      // Rows already at the new number are a prior holder's, not this person's: they go first, so the
+      // person's own consent state (a recorded opt-out included) is the one that carries.
+      for (let i = this.consent.length - 1; i >= 0; i--) if (this.consent[i]!.e164 === m.newE164) this.consent.splice(i, 1);
       for (const e of this.consent) if (e.e164 === m.oldE164) e.e164 = m.newE164;
       this.personHash.set(m.personId, m.newHash);
       this.suppression.delete(m.newHash);

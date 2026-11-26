@@ -112,6 +112,27 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
     expect((await b.call("POST", "/api/me/phone/confirm", { code: t.codes.get(B) })).status).toBe(409);
   }, T);
 
+  // spec/accountPrivacy.md, "A phone move after consent carries the recorded opt-out with the person"
+  test("a recorded opt-out still holds after a move to a number with an earlier stranger opt-in", async () => {
+    const t = setup();
+    const [A, B] = ["+12125550275", "+12125550276"];
+    const b = t.browser();
+    await b.login(A);
+    expect((await t.join(b)).status).toBe(200);
+    // The member STOPs every app on the old number.
+    await store.addConsent({ e164: A, app: null, state: "opted_out", source: "keyword:stop", at: t.now() });
+    expect(await t.api.accounts.optedIn("slop", A)).toBe(false);
+    // Before the move, the new number (no identity yet) records a stranger's START for the app.
+    t.tick(MIN);
+    await store.addConsent({ e164: B, app: "slop", state: "opted_in", source: "keyword:start", at: t.now() });
+    t.tick(MIN);
+    expect((await b.call("POST", "/api/me/phone/start", { phone: B })).status).toBe(200);
+    expect((await b.call("POST", "/api/me/phone/confirm", { code: t.codes.get(B) })).status).toBe(200);
+    // The member's own history moved; the stranger's opt-in did not become the member's consent.
+    expect(await t.api.accounts.optedIn("slop", B)).toBe(false);
+    expect((await store.consentEvents(B, "slop")).map((e: { state: string }) => e.state)).toEqual(["opted_in"]);
+  }, T);
+
   test("a login older than 10 minutes cannot start a change; a change not confirmed in 15 minutes is gone", async () => {
     const t = setup();
     const [A, B] = ["+12125550183", "+12125550184"];
