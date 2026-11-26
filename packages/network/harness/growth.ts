@@ -2,8 +2,8 @@
 // Friends resemble their inviter (same or nearby neighborhood, a couple of shared interests,
 // a known friendship) and are newcomers the Network knows little about (minimal/light profiles).
 // Not every invitee joins, and a small share are bad actors, so vouch accountability is exercised.
-import { DAY, HOUR } from "@thenetwork/core";
-import { generatePersonas, hash32, Rng, type Persona } from "@thenetwork/sim";
+import { DAY, HOUR, canBeMatched } from "@thenetwork/core";
+import { computeStrataSignals, generatePersonas, hash32, Rng, type Persona } from "@thenetwork/sim";
 import { NEIGHBORHOODS, travelMinutes, neighborhood } from "../src/geo.ts";
 
 export interface FriendFactoryOptions {
@@ -46,6 +46,8 @@ export function friendFactory(o: FriendFactoryOptions = {}) {
     if (r.bool(o.badActorRate ?? 0.04)) {
       p.hidden.adversarial = r.pick(["spammer", "scammer"] as const);
     }
+    Object.assign(p.hidden, computeStrataSignals(p, new Rng(hash32("friend-strata", seed, inviter.id, seq))));
+    if (!canBeMatched(p.hidden.trueAge)) p.hidden.trueAttractiveness = undefined;
     const [d0, d1] = o.joinDays ?? [1, 4];
     return { persona: p, joinDelayMs: Math.round(r.range(d0, d1) * DAY + r.int(0, 8) * HOUR) };
   };

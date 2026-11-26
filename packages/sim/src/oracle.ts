@@ -2,12 +2,15 @@
 // proposal, returns what would REALLY happen: would each participant accept, show up,
 // and how much they'd enjoy it, computed from hidden traits plus seeded noise. The Network
 // under test never sees this; metrics compare its proposals against it.
-import { DAY, type City, type MemberId, type OpportunityKind } from "@thenetwork/core";
+import { DAY, canBeMatched, type City, type MemberId, type OpportunityKind } from "@thenetwork/core";
 import type { Category } from "@thenetwork/core";
 import { Rng, clamp01, hash32 } from "@thenetwork/core";
 import { Coins, signature } from "./coins.ts";
 import { desireById } from "./taxonomy.ts";
-import { desireLive, withLiveDesires, type Persona } from "./persona.ts";
+import {
+  desireLive, domainOfTag, ensurePersonaStrata, SPEND_TIERS, withLiveDesires,
+  type Persona, type StrataSignals,
+} from "./persona.ts";
 import { inHourWindow, localParts } from "./time.ts";
 
 export interface OracleProposal {
@@ -17,7 +20,9 @@ export interface OracleProposal {
 
 export type OracleFlag =
   | "minor_included" | "romance_mismatch" | "ex_partners" | "adversarial_participant"
-  | "city_mismatch" | "boundary_conflict" | "unknown_member";
+  | "city_mismatch" | "boundary_conflict" | "unknown_member"
+  | "status_mismatch" | "grift_risk" | "step_ahead_hit" | "mentorship_gap_fail"
+  | "cross_class_guild" | "spend_mismatch" | "anxious_avoidant_trap" | "dunbar_saturated";
 
 export interface ParticipantOutcome {
   acceptProb: number; wouldAccept: boolean;
@@ -76,10 +81,11 @@ export class Oracle {
   private byId: Map<MemberId, Persona>;
   readonly coins = new Coins();
   constructor(personas: Persona[], private seed: number | string, private worldStart: number, readonly options: OracleOptions = {}) {
+    for (const p of personas) ensurePersonaStrata(p, seed);
     this.byId = new Map(personas.map(p => [p.id, p]));
   }
   persona(id: MemberId) { return this.byId.get(id); }
-  addPersona(p: Persona) { this.byId.set(p.id, p); }
+  addPersona(p: Persona) { ensurePersonaStrata(p, this.seed); this.byId.set(p.id, p); }
 
   /** Where is this persona physically able to meet at time t? */
   presentIn(p: Persona, city: City, t: number): boolean {
@@ -102,7 +108,12 @@ export class Oracle {
    * Hidden-truth enjoyment that `a` gets from meeting `b` in this context, before noise.
    * Asymmetric: a's desires matter for a.
    */
-  pairEnjoyment(a: Persona, b: Persona, category?: Category): { e: number; flags: OracleFlag[] } {
+  pairEnjoyment(
+    a: Persona,
+    b: Persona,
+    category?: Category,
+    ctx: { groupSize?: number; sharedGuild?: boolean; objective?: string } = {},
+  ): { e: number; flags: OracleFlag[]; effGap?: number; complementA?: number; spendClash?: boolean } {
     const flags: OracleFlag[] = [];
     const A = a.hidden, B = b.hidden;
     const shared = A.interests.filter(t => B.interests.includes(t)).length;
@@ -146,7 +157,105 @@ export class Oracle {
     }
     const ageGap = Math.abs(A.trueAge - B.trueAge);
     if (ageGap > 15) e -= 0.05;
-    return { e, flags };
+    if (!canBeMatched(A.trueAge) || !canBeMatched(B.trueAge) || A.scripted || B.scripted) {
+      return { e, flags, effGap: 0, complementA, spendClash: false };
+    }
+
+    const SA = ensurePersonaStrata(a, this.seed);
+    const SB = ensurePersonaStrata(b, this.seed);
+
+    let stepAheadSweetSpot = false;
+    const mentorCheck = evaluateMentorshipRungs(a, SA, b, SB, category, ctx.objective);
+    if (mentorCheck === "hit_seeker") {
+      stepAheadSweetSpot = true;
+      e += 0.10;
+      flags.push("step_ahead_hit");
+    } else if (mentorCheck === "hit_mentor") {
+      stepAheadSweetSpot = true;
+      e += 0.08 * (0.4 + 0.6 * A.capacity);
+      flags.push("step_ahead_hit");
+    } else if (mentorCheck === "gap_too_wide_mentor") {
+      e -= 0.24;
+      flags.push("mentorship_gap_fail");
+    } else if (mentorCheck === "gap_too_wide_seeker" || mentorCheck === "reverse_gap") {
+      e -= 0.09;
+      flags.push("mentorship_gap_fail");
+    }
+
+    const crossCapitalOk = isCrossCapitalEquilibrium(SA, SB);
+    if (crossCapitalOk) e += 0.10;
+    if (hasComplementaryCoCreation(SA, SB)) e += 0.08;
+
+    const highTargetA = isHighStatusTarget(SA);
+    const extractiveB = SB.extractionPropensity >= 0.45 || SB.discretionScore < 0.52;
+    if (highTargetA && extractiveB) {
+      e = Math.min(e, 0.08) - 0.25;
+      flags.push("grift_risk");
+    } else if (SA.extractionPropensity < 0.35 && SB.extractionPropensity >= 0.58) {
+      e -= 0.22 * SB.extractionPropensity;
+      if (isHighStatusTarget(SB)) flags.push("grift_risk");
+    }
+
+    const spendA = SPEND_TIERS.indexOf(SA.spendComfortTier);
+    const spendB = SPEND_TIERS.indexOf(SB.spendComfortTier);
+    const obj = (ctx.objective ?? "").toLowerCase();
+    const highCostVenue = /\b(sailing|wine|tasting|steakhouse|yacht|fine dining|omakase|cocktails)\b/.test(obj)
+      || (/\bdinner\b/.test(obj) && (spendB >= 3 || category === "professional"));
+    const paidOuting = highCostVenue || /\b(dinner|drinks|bar|theater|concert|show)\b/.test(obj);
+    const spendClash = !crossCapitalOk && (!rel || rel.type === "ex") && (
+      (SA.spendComfortTier === "free" && (highCostVenue || (paidOuting && spendB >= 3))) ||
+      (SA.spendComfortTier === "low" && highCostVenue && spendB >= 3)
+    );
+    if (spendClash) {
+      e -= 0.18;
+      flags.push("spend_mismatch");
+    } else if (category !== "romance" && Math.abs(spendA - spendB) <= 1) {
+      e += 0.02;
+    }
+    if (ctx.sharedGuild && !spendClash) {
+      e += category === "romance" ? 0.05 : 0.06;
+    }
+
+    const tierA = verticalTier(SA, category);
+    const tierB = verticalTier(SB, category);
+    const rawGap = tierA - tierB;
+    const gapScale = rel && rel.type !== "ex" ? 0
+      : crossCapitalOk || stepAheadSweetSpot ? 0.15
+      : ctx.sharedGuild && !spendClash ? 0.25
+      : (category === "social" || category === "hobby") && !highTargetA ? 0.75
+      : 1;
+    const effGap = rawGap * gapScale;
+    if (Math.abs(effGap) > (category === "romance" ? 0.30 : 0.36)) flags.push("status_mismatch");
+    const cliffStart = category === "romance"
+      ? (highTargetA ? 0.16 : 0.20)
+      : category === "professional" || highTargetA ? 0.26 : 0.34;
+    if (effGap > cliffStart) {
+      e -= (category === "romance" ? 0.42 : 0.36) * (effGap - cliffStart);
+    }
+
+    if (category === "romance") {
+      if ((SA.attachmentStyle === "anxious" && SB.attachmentStyle === "avoidant")
+          || (SA.attachmentStyle === "avoidant" && SB.attachmentStyle === "anxious")) {
+        e -= 0.16;
+        flags.push("anxious_avoidant_trap");
+      } else if (SA.attachmentStyle !== "secure" && SB.attachmentStyle !== "secure") {
+        e -= 0.03;
+      }
+      e += SA.humorRegister.some(h => SB.humorRegister.includes(h)) ? 0.012 : -0.010;
+      if (SA.activeTransitions.some(t => SB.activeTransitions.includes(t))) e += 0.02;
+      if ((ctx.groupSize ?? 2) === 2) {
+        const dGap = Math.abs(SA.depthPreference - SB.depthPreference);
+        if (dGap > 0.55) e -= 0.035;
+        else if (dGap <= 0.18) e += 0.008;
+      }
+    } else {
+      if (SA.humorRegister.some(h => SB.humorRegister.includes(h))) e += 0.03;
+      if (SA.activeTransitions.some(t => SB.activeTransitions.includes(t))) e += 0.04;
+      if ((ctx.groupSize ?? 2) === 2 && Math.abs(SA.depthPreference - SB.depthPreference) > 0.68) e -= 0.04;
+    }
+    if (A.flakiness <= 0.08 && B.flakiness >= 0.28) e -= 0.06;
+
+    return { e, flags, effGap, complementA, spendClash };
   }
 
   /**
@@ -184,21 +293,41 @@ export class Oracle {
     if (people.some(p => p.hidden.trueAge < 18)) flags.add("minor_included");
     const category = this.categoryOf(prop);
     const groupSize = people.length;
+    const allAdults = people.every(p => canBeMatched(p.hidden.trueAge)) && !people.some(p => p.hidden.scripted);
+    const strataMap = new Map<MemberId, StrataSignals>(people.map(p => [p.id, ensurePersonaStrata(p, this.seed)]));
+    const sharedGuild = allAdults && isSharedPurposeGuild(people, strataMap, category, prop.objective);
 
     const out: Record<MemberId, ParticipantOutcome> = {};
     const perceivedBy: Record<MemberId, number> = {};
     for (const a of people) {
+      const SA = strataMap.get(a.id)!;
       const others = people.filter(o => o.id !== a.id);
-      let e = 0, chemSum = 0;
+      let e = 0, chemSum = 0, gapSum = 0, maxComp = 0, minPairSys = Infinity, anySpendClash = false, maxOtherExtract = 0;
       for (const b of others) {
-        const pe = this.pairEnjoyment(a, b, category);
+        const SB = strataMap.get(b.id)!;
+        const pe = this.pairEnjoyment(a, b, category, { groupSize, sharedGuild, objective: prop.objective });
         pe.flags.forEach(f => flags.add(f));
         // Pair noise is stable for the pair (true chemistry), not per proposal.
         const chem = new Rng(hash32(this.seed, "chem", ...[a.id, b.id].sort())).normal(0, PAIR_CHEMISTRY_SD);
         e += pe.e + chem; chemSum += chem;
+        gapSum += pe.effGap ?? 0;
+        maxComp = Math.max(maxComp, pe.complementA ?? 0);
+        minPairSys = Math.min(minPairSys, pe.e);
+        if (pe.spendClash) anySpendClash = true;
+        maxOtherExtract = Math.max(maxOtherExtract, SB.extractionPropensity);
       }
       e = others.length ? e / others.length : 0;
       const chemMean = others.length ? chemSum / others.length : 0;
+      const meanEffGap = others.length ? gapSum / others.length : 0;
+      if (allAdults && groupSize >= 3 && others.length >= 2) {
+        if (maxOtherExtract >= 0.62 && SA.extractionPropensity < 0.40) {
+          e -= 0.22;
+          if (people.some(x => isHighStatusTarget(strataMap.get(x.id)!))) flags.add("grift_risk");
+        }
+        if (minPairSys < 0.20) {
+          e -= 0.28 * (0.20 - minPairSys);
+        }
+      }
       // Group-size fit: introverts dislike big groups; extroverts are fine either way.
       const sizeDiff = Math.max(0, groupSize - a.hidden.preferredGroupSize);
       e -= 0.06 * sizeDiff * (1 - a.hidden.socialEnergy);
@@ -213,9 +342,29 @@ export class Oracle {
       const perceived = perceivedBy[a.id] = enjoyment - chemMean + r.normal(0, 0.1);
       const fatigue = Math.pow(0.85, Math.max(0, (ctx.recentAsks?.[a.id] ?? 0) - 1));
       const sameArea = others.some(o => o.routine.homeArea === a.routine.homeArea) ? 1.05 : 1;
-      let acceptProb = sigmoid((perceived - 0.5) * 7) * (0.3 + 0.7 * a.hidden.capacity) * fatigue * sameArea;
+      const acceptCliff = category === "romance"
+        ? (isHighStatusTarget(SA) ? 0.16 : 0.20)
+        : category === "professional" || isHighStatusTarget(SA) ? 0.26 : 0.34;
+      const statusAcceptMult = !allAdults ? 1
+        : meanEffGap > acceptCliff
+          ? (category === "romance"
+              ? Math.exp(-2.8 * (meanEffGap - acceptCliff))
+              : Math.exp(-3.2 * Math.pow(meanEffGap - acceptCliff, 2)))
+          : category === "professional" && meanEffGap < -0.10 && meanEffGap >= -0.42 ? 1.10 : 1;
+      const griftAcceptMult = allAdults && isHighStatusTarget(SA) && maxOtherExtract >= 0.50 ? 0.45 : 1;
+      const spendAcceptMult = allAdults && anySpendClash ? 0.72 : 1;
+      const dunbarSaturated = allAdults && !SA.dunbarOpenSlots.sympathy15 && !SA.dunbarOpenSlots.affinity50
+        && (category === "social" || !category) && maxComp < 0.55;
+      if (dunbarSaturated) flags.add("dunbar_saturated");
+      const dunbarAcceptMult = dunbarSaturated ? 0.75 : 1;
+
+      let acceptProb = sigmoid((perceived - 0.5) * 7) * (0.3 + 0.7 * a.hidden.capacity) * fatigue * sameArea
+        * statusAcceptMult * griftAcceptMult * spendAcceptMult * dunbarAcceptMult;
       if (!present) acceptProb *= 0.15;
       if (a.hidden.adversarial && ["spammer", "scammer", "harasser"].includes(a.hidden.adversarial)) acceptProb = 0.95;
+      if (allAdults && category !== "romance" && (SA.adversarySubkind === "grifter_pitcher" || SA.adversarySubkind === "clout_chaser")) {
+        acceptProb = others.some(o => isHighStatusTarget(strataMap.get(o.id)!)) ? Math.max(acceptProb, 0.90) : acceptProb * 0.85;
+      }
       acceptProb = clamp01(acceptProb);
       const wouldAccept = r.next() < acceptProb;
       const logistics = this.options.logistics ? this.logistics(a, others, prop) : 1;
@@ -234,6 +383,10 @@ export class Oracle {
     const compatible = !unsafe && !hard.some(f => flags.has(f)) && people.length >= 2 && (people.length === 2
       ? minEnjoyment >= GOOD_PAIR
       : quality >= GOOD_GROUP_MEAN && minEnjoyment >= GOOD_GROUP_MIN);
+    if (sharedGuild && people.length >= 3) {
+      const econs = people.map(p => strataMap.get(p.id)!.economicCapital);
+      if (Math.max(...econs) - Math.min(...econs) >= 0.35 && !flags.has("spend_mismatch")) flags.add("cross_class_guild");
+    }
     return { verdict: { proposalId: prop.id, participants: out, compatible, unsafe, quality: round3(quality), minEnjoyment: round3(minEnjoyment), flags: [...flags] }, perceived: perceivedBy };
   }
 
@@ -403,5 +556,101 @@ function romanceCompatible(a: Persona, b: Persona): boolean {
   return A.romance.optIn && A.trueAge >= 18 && b.hidden.trueAge >= 18 && A.romance.seeking.includes(b.gender)
     && b.hidden.trueAge >= A.romance.ageRange[0] && b.hidden.trueAge <= A.romance.ageRange[1];
 }
+
+function verticalTier(s: StrataSignals, category?: Category): number {
+  if (category === "romance") {
+    const att01 = clamp01(0.5 + (s.trueAttractiveness?.overall ?? 0) * 0.22);
+    return 0.45 * att01 + 0.20 * s.culturalEmbodied + 0.15 * s.economicCapital + 0.12 * s.symbolicPublicity + 0.08 * s.socialCapital;
+  }
+  if (category === "professional") {
+    return 0.35 * s.peerPrestige + 0.30 * s.economicCapital + 0.20 * s.socialCapital + 0.15 * s.culturalInstitutional;
+  }
+  return s.compositeTier;
+}
+
+function isHighStatusTarget(s: StrataSignals): boolean {
+  return s.symbolicPublicity >= 0.68 || s.economicCapital >= 0.85
+    || s.stratumArchetype === "uhnw_mogul" || s.stratumArchetype === "famous_creator";
+}
+
+function isCrossCapitalEquilibrium(sa: StrataSignals, sb: StrataSignals): boolean {
+  if (sa.extractionPropensity > 0.25 || sb.extractionPropensity > 0.25) return false;
+  if (sa.discretionScore < 0.70 || sb.discretionScore < 0.70) return false;
+  return (sa.economicCapital >= 0.78 && (sb.peerPrestige >= 0.74 || sb.culturalEmbodied >= 0.80))
+    || (sb.economicCapital >= 0.78 && (sa.peerPrestige >= 0.74 || sa.culturalEmbodied >= 0.80));
+}
+
+function hasComplementaryCoCreation(sa: StrataSignals, sb: StrataSignals): boolean {
+  for (const ga of sa.exchangeGoals) {
+    if (ga.connectionType !== "creative_cocreation") continue;
+    for (const gb of sb.exchangeGoals) {
+      if (gb.connectionType === "creative_cocreation" && gb.domain === ga.domain && ga.complementaryRoles.includes(gb.role)) return true;
+    }
+  }
+  return false;
+}
+
+type MentorshipOutcome = "none" | "hit_seeker" | "hit_mentor" | "gap_too_wide_seeker" | "gap_too_wide_mentor" | "reverse_gap";
+
+function evaluateMentorshipRungs(
+  a: Persona,
+  sa: StrataSignals,
+  b: Persona,
+  sb: StrataSignals,
+  category?: Category,
+  objective?: string,
+): MentorshipOutcome {
+  const mentorDesireIds = new Set(["ai_mentor", "pitch_feedback", "learn_sailing"]);
+  const objMentorship = /\b(mentor|advice|feedback|learn to sail)\b/i.test(objective ?? "");
+  const checkOneWay = (seeker: Persona, ss: StrataSignals, mentor: Persona, sm: StrataSignals): { delta: number } | undefined => {
+    const d = seeker.hidden.desires.find(x => mentorDesireIds.has(x.id));
+    const goal = ss.exchangeGoals.find(g => g.connectionType === "step_ahead_mentorship" && g.direction === "seeks");
+    if (!d && !goal) return undefined;
+    if (category && category !== "professional" && category !== "growth" && category !== "help" && !objMentorship) return undefined;
+    const dom = d ? domainOfTag(d.id) : goal!.domain;
+    const mRung = sm.domainRungs[dom] ?? (mentor.hidden.skills.some(sk => domainOfTag(sk) === dom) ? 6.0 : undefined);
+    if (mRung === undefined) return undefined;
+    const sRung = ss.domainRungs[dom] ?? 2.5;
+    return { delta: mRung - sRung };
+  };
+  const aSeeks = checkOneWay(a, sa, b, sb);
+  if (aSeeks) {
+    if (aSeeks.delta >= 1.0 && aSeeks.delta <= 2.8) return "hit_seeker";
+    if (aSeeks.delta >= 4.8) return "gap_too_wide_seeker";
+    if (aSeeks.delta <= 0 && objMentorship) return "reverse_gap";
+  }
+  const bSeeks = checkOneWay(b, sb, a, sa);
+  if (bSeeks) {
+    if (bSeeks.delta >= 1.0 && bSeeks.delta <= 2.8) return "hit_mentor";
+    if (bSeeks.delta >= 4.8) return "gap_too_wide_mentor";
+  }
+  return "none";
+}
+
+const GUILD_TAGS = new Set([
+  "climbing", "running", "hiking", "cycling", "tennis", "pickleball", "basketball",
+  "ceramics", "painting", "photography", "writing", "rock_music", "jazz", "board_games",
+  "chess", "volunteering", "urbanism", "gardening", "yoga", "cooking",
+]);
+
+function isSharedPurposeGuild(
+  people: Persona[],
+  strataMap: Map<MemberId, StrataSignals>,
+  category?: Category,
+  objective?: string,
+): boolean {
+  if (people.length < 3 || people.length > 6) return false;
+  if (category === "romance" || category === "professional") return false;
+  if (people.some(p => !canBeMatched(p.hidden.trueAge) || (strataMap.get(p.id)?.extractionPropensity ?? 0) >= 0.55)) return false;
+  const need = Math.ceil(people.length * 0.6);
+  const tagCounts = new Map<string, number>();
+  for (const p of people) {
+    for (const t of p.hidden.interests) if (GUILD_TAGS.has(t)) tagCounts.set(t, (tagCounts.get(t) ?? 0) + 1);
+  }
+  if ([...tagCounts.values()].some(c => c >= need)) return true;
+  const o = (objective ?? "").toLowerCase();
+  return [...GUILD_TAGS].some(t => o.includes(t.replace(/_/g, " ")));
+}
+
 const sigmoid = (x: number) => 1 / (1 + Math.exp(-x));
 const round3 = (x: number) => Math.round(x * 1000) / 1000;
