@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 // attention and plans invariants on the consent arms; and the shared conformance rules for networkPack.
 import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { spawnProcessSync } from "../../packages/core/src/runtime/process.ts";
-import { readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { canBeMatched, classifyYesNo, DAY, earliestDayKeyOf, hash32, HOUR, latestDayKeyOf, MINUTE, Rng as SimRng, SimClock, type MemberId, type NetworkContext, type NetworkUnderTest, type SimMessage, type SimMeta } from "../../packages/core/src/index.ts";
 import { bookedCancellationPrefix } from "../../packages/core/src/generated/outboundAdmission.ts";
 import { resolveConfig } from "../../packages/engine/src/config.ts";
@@ -650,8 +650,24 @@ export async function probeDeclineReceiptGate(b: Block): Promise<void> {
   });
 }
 
+export async function engineReportMinorsGate(b: Block): Promise<void> {
+  await b.run("synthetic load --engine: minorsInAnyProposal counts true minors, not claimed age", () => {
+    const root = `${import.meta.dirname}/../..`;
+    const result = spawnProcessSync([
+      process.execPath, "--import", "tsx", "scripts/synthetic/load.ts", "--engine", "--no-write",
+    ], { cwd: root, stdout: "pipe", stderr: "pipe" });
+    expect(result.exitCode).toBe(0);
+    const report = JSON.parse(result.stdout.toString()).engine;
+    const hidden = readFileSync(`${DATA_DIR}/hidden_truth.jsonl`, "utf8").split("\n").filter(Boolean).map(l => JSON.parse(l));
+    const claimedAdults = hidden.filter(h => h.hidden.trueAge < 18 && h.personaPublic.claimedAge >= 18).length;
+    expect(claimedAdults).toBeGreaterThan(0);
+    expect(report.checks.minorsInAnyProposal).toBeGreaterThan(0);
+  });
+}
+
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
   await scenarioRepetitionGate(b);
+  await engineReportMinorsGate(b);
   await scenarioAttendanceEvidenceGates(b);
   await scenarioContactEvidenceGates(b);
   await inviteRootGate(b);
