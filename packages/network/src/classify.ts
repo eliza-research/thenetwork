@@ -840,12 +840,12 @@ function clauseBefore(t: string, at: number): string {
 }
 function positivePredicate(pred: string): boolean {
   const p = pred.replace(/^(?:a|an|the)\s+/, "").trim();
-  if (!p || /^(?:in|at|on|over|there|here|tall|short|young|old)\b/.test(p)) return false;
-  if (/\b(?:late|rude|creepy|awkward|terrible|uncomfortable|quiet|shy|reserved|boring|dull|tired|distracted|phone|ex|left|ignored|stood|nice|lovely|pleasant|okay|ok|fine|whole|entire|all|same|other|first|last|no|not)\b/.test(p)) return false;
-  return /^[a-z][a-z' -]*$/.test(p);
+  if (!p || /^(?:the|this|that|our|my|his|her|their|in|at|on|over|there|here|tall|short|young|old|whole|entire|all|same|other|first|last|no|not)\b/.test(p)) return false;
+  if (/\b(?:arrogant|awkward|boring|creepy|distracted|dull|forced|ignored|late|married|narcissist|pointless|rude|self-absorbed|stilted|terrible|tired|uncomfortable|waste|ex|phone|left|stood)\b/.test(p)) return false;
+  return /\b(?:amazing|awesome|brilliant|catch|charming|delight|delightful|dream|engaging|excellent|fab|fabulous|fantastic|fun|funny|gem|generous|genuine|great|hilarious|keeper|kind|legend|peach|perfect|riot|star|stellar|superb|sweet|sweetheart|thoughtful|warm|witty|wonderful)\b/.test(p);
 }
 function personEvaluation(c: string): boolean {
-  const m = c.match(/\b(?:he|she|they)(?:'s|\s+is|\s+was|\s+seems|\s+seemed)\s+(.+)$/);
+  const m = c.match(/\b(?:(?:he|she|they)(?:'s|\s+is|\s+was|\s+seems|\s+seemed)|(?:the\s+real\s+)?(?:him|her|them)\s+is)\s+(.+)$/);
   return !!m && positivePredicate(m[1] ?? "");
 }
 function meetingEvaluation(c: string): boolean {
@@ -858,7 +858,7 @@ function meetingEvaluation(c: string): boolean {
 function reversedByMeetingPositive(t: string, from: number): boolean {
   const later = t.slice(from);
   if (/\b(?:no spark|no connection|no chemistry|nothing in common|not much in common|didn't click|did not click|didn't connect|did not connect|never clicked|never connected|not easy to talk|n't easy to talk)\b/.test(later)) return false;
-  if (/\bwe did\b(?!\s+(?:not|n't)\b)|\bhit it off\b|\bgot on\b|\bgot along\b|\bbest friends\b|\bwon me over\b|\bhad me in stitches\b|\bbreath of fresh air\b/.test(later)) return true;
+  if (/\bwe did\b(?!\s+(?:not|n't)\b)|\bhit it off\b|\bgot on\b|\bgot along\b|\bbest friends\b|\bthick as thieves\b|\bwon me over\b|\bhad me in stitches\b|\bbreath of fresh air\b|\bended up\b[^.!?;,]*\btogether\b/.test(later)) return true;
   for (const clause of later.split(/[.!?;,]/)) {
     const c = clause.trim();
     if (!c) continue;
@@ -872,7 +872,7 @@ function reversedByMeetingPositive(t: string, from: number): boolean {
     if (/\b(?:he|she|they)\s+put\s+me\s+at\s+ease\b/.test(c)) return true;
     if (/\b(?:he|she|they)\s+made\s+up\s+for\s+it\b/.test(c)) return true;
     if (personEvaluation(c) || meetingEvaluation(c)) return true;
-    if (/\b(?:great|wonderful|amazing|kind|funny|charming|sweet)\s+(?:guy|girl|man|woman|person|member|date)\b/.test(c)) return true;
+    if (/\b(?:great|wonderful|amazing|awesome|brilliant|delightful|excellent|fab|fabulous|fantastic|generous|genuine|kind|funny|charming|stellar|superb|sweet|thoughtful|warm|witty|engaging)\s+(?:guy|girl|man|woman|person|member|date)\b/.test(c)) return true;
     if (/\b(?:this|that)\s+(?:guy|girl|man|woman|person|member)\s+is\s+(?:a\s+)?(?:gem|dream|delight|sweetheart|keeper|great|wonderful|amazing|kind|funny|charming|sweet)\b/.test(c)) return true;
     if (/\b(?:loved|enjoyed)\s+(?:it|that|the\s+(?:night|evening|meeting|date|time|chat|conversation)|(?:her|his|their)\s+company|talking)\b/.test(c)) return true;
     if (/\b(?:food|cafe|coffee|venue|restaurant|bar|drinks?|view|weather|table|music)\b/.test(c)) continue;
@@ -903,7 +903,7 @@ function objectKind(comp: string): "member" | "meeting" | "other" | "unknown" | 
   return "unknown";
 }
 function clickCounts(rest: string): boolean {
-  if (/\b(?:online|on the app|over the phone|on the phone|beforehand|before we met|in messages|by text|on linkedin|on the profile)\b/.test(rest)) return false;
+  if (/\b(?:online|on the app|over the phone|on the phone|beforehand|before we met|in messages|by message|by text|by email|over email|via email|in an email|on linkedin|on the profile)\b/.test(rest)) return false;
   if (!rest || /^(?:at first|at all|really|very much)\b/.test(rest)) return true;
   const comp = rest.match(/^(?:with|to)\s+(.+)$/);
   if (!comp) return false;
@@ -920,7 +920,7 @@ function talkCounts(rest: string, personSubject: boolean): boolean {
 }
 function disappointedClauseCounts(clause: string): boolean {
   const c = clause.trim();
-  if (/\b(?:lives|lived|moving away|move away|rush off to work|had to\b[^.!?;,]*\bwork\b|seated us|by the kitchen|venue|weather|traffic|went by so fast|ended so soon|didn't ask|did not ask|i forgot|my fault|because|due to|to catch|for work|strike|train)\b/.test(c)) return false;
+  if (/\b(?:lives|lived|moving away|move away|rush off to work|had to\b[^.!?;,]*\bwork\b|seated us|by the kitchen|venue|weather|traffic|went by so fast|ended so soon|didn't ask|did not ask|i forgot|my fault|because|due to|to catch|for work|strike|train|emergency|understandable|not (?:his|her|their) fault|can't blame|cannot blame)\b/.test(c)) return false;
   if (/\b(?:spent|kept checking|checked|stayed on|was on)\b[^.!?;,]*\bphone\b/.test(c)) return true;
   if (/\btalked about (?:his|her|their) ex\b/.test(c)) return true;
   return /\b(?:left early|was late|showed up late|arrived late|was rude|was creepy|was awkward|was terrible|was uncomfortable|didn't click|did not click|never clicked|never connected|wasn't easy to talk|was not easy to talk|nothing in common|barely asked|talked over me|ignored me|stood me up|didn't show|did not show)\b/.test(c);
