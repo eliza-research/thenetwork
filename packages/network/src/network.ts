@@ -7153,7 +7153,6 @@ export class ConsentNetwork implements NetworkUnderTest {
     return !!x && x.first.length >= 2 && t.includes(` ${x.first.toLowerCase()} `);
   }
 
-  /** Members with no blocked or avoided pair among them: a crew never puts such a pair together. */
   private crewApart(ids: readonly MemberId[]): MemberId[] {
     return ids.filter(id => ids.every(other => other === id || this.pairAllowed(id, other)));
   }
