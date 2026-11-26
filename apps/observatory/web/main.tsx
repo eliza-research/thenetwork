@@ -205,10 +205,10 @@ function searchHits(query: string, groups: HitGroups): Hit[] {
   for (const m of members) hits.push({ key: `m${m.id}`, label: m.name, meta: m.area ?? "", go: () => store.pickHit({ kind: "member", id: m.id }) });
   for (const n of NEIGHBORHOODS.filter(n => n.name.toLowerCase().includes(q)).sort((a, b) => matchRank(a.name, q) - matchRank(b.name, q)).slice(0, 3)) hits.push({ key: `n${n.name}`, label: n.name, meta: n.borough, go: () => store.pickHit({ kind: "neighborhood", id: n.name }) });
   if (groups === "NamesPlacesAndIds") {
-    let k = 0;
-    for (const o of store.opps.values()) {
-      if (k >= 3) break;
-      if (o.id.toLowerCase().includes(q)) { k++; hits.push({ key: `o${o.id}`, label: store.oppTitle(o), meta: o.id.slice(0, 12), go: () => store.pickHit({ kind: "opportunity", id: o.id }) }); }
+    const matching = [...store.opps.values()].filter(o => o.id.toLowerCase().includes(q))
+      .sort((a, b) => matchRank(a.id, q) - matchRank(b.id, q)).slice(0, 3);
+    for (const o of matching) {
+      hits.push({ key: `o${o.id}`, label: store.oppTitle(o), meta: o.id.slice(0, 12), go: () => store.pickHit({ kind: "opportunity", id: o.id }) });
     }
   }
   return hits;
