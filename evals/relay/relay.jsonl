@@ -164,3 +164,9 @@
 {"text": "I need a couple hundred dollars", "class": "scam", "want": "stop"}
 {"text": "I owe a hundred bucks for the repair", "class": "scam", "want": "stop"}
 {"text": "We are short thirty dollars for groceries", "class": "scam", "want": "stop"}
+{"text": "I need 50.00 dollars for rent", "class": "scam", "want": "stop"}
+{"text": "I am short 50.25 dollars until payday", "class": "scam", "want": "stop"}
+{"text": "We owe 50.00 dollars for the taxi", "class": "scam", "want": "stop"}
+{"text": "Need 50.00 dollars by Friday", "class": "scam", "want": "stop"}
+{"text": "I need 50.00 bucks for rent", "class": "scam", "want": "stop"}
+{"text": "I need 50.00 USD for rent", "class": "scam", "want": "stop"}
