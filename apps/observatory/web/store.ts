@@ -254,6 +254,7 @@ class ObsStore {
   /** Review decisions sent and not answered yet, by opportunity (a second press is not sent). */
   private deciding = new Set<string>();
   focusHistory: Focus[] = [];
+  private appBackTarget?: NonNullable<Focus>;
   ui: UIState = {
     focus: parseHash(), picks: [], filters: { ...DEFAULT_FILTERS }, colorBy: "community",
     edgeTypes: Object.fromEntries(EDGE_TYPES.map(t => [t, t !== "invited_by" && t !== "vouched_for"])), showOpps: true, legendOpen: false,
@@ -820,7 +821,12 @@ class ObsStore {
     const prev = this.focusHistory.at(-1) ?? null;
     const nav = this.nav();
     if (!prev || !canGoBack(nav, subjectOf(prev))) return;
-    if (((history.state as { obsDepth?: number } | null)?.obsDepth ?? 0) > 0) { history.back(); return; }
+    if (((history.state as { obsDepth?: number } | null)?.obsDepth ?? 0) > 0) {
+      if (this.appBackTarget) return;
+      this.appBackTarget = prev;
+      history.back();
+      return;
+    }
     this.commitNav(goBack(nav, subjectOf(prev)), { focus: prev, history: this.focusHistory.slice(0, -1) });
     try { history.replaceState({ obsDepth: 0 }, "", location.pathname + location.search + hashOf(prev, this.app)); } catch { return; }
   }
@@ -838,11 +844,23 @@ class ObsStore {
     } catch { return; }
   }
   private onPopState() {
+    const appBackTarget = this.appBackTarget;
+    this.appBackTarget = undefined;
     const page = parsePage(), app = parseApp();
+    const popped = parseHash();
+    // The snapshot can prune a subject from the inspector history without removing
+    // its browser entry. Follow the console's Back through those stale entries.
+    if (appBackTarget && page.kind === "app" && this.page.kind === "app" && this.app === app &&
+        popped && !this.focusExists(popped) && this.focusExists(appBackTarget) &&
+        sameFocus(appBackTarget, this.focusHistory.at(-1) ?? null) &&
+        ((history.state as { obsDepth?: number } | null)?.obsDepth ?? 0) > 0) {
+      this.appBackTarget = appBackTarget;
+      history.back();
+      return;
+    }
     if (page.kind === "all") { if (this.page.kind !== "all") this.setApp("all"); return; }
     if (page.kind === "person") { if (this.page.kind !== "person" || this.page.id !== page.id) this.openPerson(page.id); return; }
     if (this.page.kind !== "app" || app !== this.app) {
-      const popped = parseHash();
       this.setApp(app, { keepHash: popped?.kind === "neighborhood" });
     }
     const f = parseHash();
