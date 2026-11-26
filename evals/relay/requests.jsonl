@@ -34,6 +34,21 @@
 {"text": "She can have my contact info?", "want": "none"}
 {"text": "She can have my email address?", "want": "none"}
 {"text": "They can have my number?", "want": "none"}
+{"text": "She can have my phone, please send her my charger.", "want": "none"}
+{"text": "She can have my email, please give her my password.", "want": "none"}
+{"text": "She can have my cell, thanks, she can have my laptop too.", "want": "none"}
+{"text": "She can have my phone; send her my charger.", "want": "none"}
+{"text": "She can have my email: send her my password.", "want": "none"}
+{"text": "She can have my cell. Send her my laptop.", "want": "none"}
+{"text": "They can have my number; she can have my keys too.", "want": "none"}
+{"text": "She can have my phone before she takes my charger.", "want": "none"}
+{"text": "She can have my email before she asks for my password.", "want": "none"}
+{"text": "She can have my email…?", "want": "none"}
+{"text": "He can have my phone!?", "want": "none"}
+{"text": "She can have my email, please?", "want": "none"}
+{"text": "They can have my number, thanks?", "want": "none"}
+{"text": "They can have my number and my email.", "want": "none"}
+{"text": "She can have my phone number and my email address.", "want": "none"}
 {"text": "send my number to Jordan", "want": "contact_share"}
 {"text": "sure, share my contact info with them", "want": "contact_share"}
 {"text": "go ahead and send him my email", "want": "contact_share"}
