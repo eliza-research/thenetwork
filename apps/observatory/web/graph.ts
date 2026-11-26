@@ -201,6 +201,11 @@ export class GraphView {
 
   private bind() {
     const c = this.canvas;
+    const clearHover = () => {
+      this.hover = null;
+      c.style.cursor = "grab";
+      this.onHover?.(null, 0, 0);
+    };
     c.addEventListener("pointerdown", e => {
       if (this.drag) return;
       c.setPointerCapture(e.pointerId);
@@ -210,7 +215,10 @@ export class GraphView {
       if (this.drag) {
         if (e.pointerId !== this.drag.pointerId) return;
         const dx = e.offsetX - this.drag.sx, dy = e.offsetY - this.drag.sy;
-        if (Math.abs(dx) + Math.abs(dy) > 3) this.drag.moved = true;
+        if (!this.drag.moved && Math.abs(dx) + Math.abs(dy) > 3) {
+          this.drag.moved = true;
+          if (this.hover) clearHover();
+        }
         if (this.drag.moved) { this.view.x = this.drag.vx + dx; this.view.y = this.drag.vy + dy; }
         return;
       }
@@ -233,7 +241,7 @@ export class GraphView {
     };
     c.addEventListener("pointercancel", stopDrag);
     c.addEventListener("lostpointercapture", stopDrag);
-    c.addEventListener("pointerleave", () => { this.hover = null; this.onHover?.(null, 0, 0); });
+    c.addEventListener("pointerleave", clearHover);
     c.addEventListener("wheel", e => {
       e.preventDefault();
       const f = Math.exp(-e.deltaY * 0.0015);

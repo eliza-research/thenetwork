@@ -19,6 +19,45 @@ function installCanvasShim(window: Window) {
   }) as unknown as typeof window.HTMLCanvasElement.prototype.getContext;
 }
 
+test("GraphView clears its old member hover when panning starts", async () => {
+  const window = new Window({ url: "http://127.0.0.1/" });
+  const restoreDom = installDom(window, {
+    window, document: window.document, navigator: window.navigator,
+    location: window.location, history: window.history,
+    localStorage: window.localStorage, sessionStorage: window.sessionStorage,
+    requestAnimationFrame: () => 1, cancelAnimationFrame: () => {},
+    ResizeObserver: class { observe() {} disconnect() {} },
+  });
+  installCanvasShim(window);
+  const canvas = window.document.createElement("canvas") as unknown as HTMLCanvasElement;
+  canvas.setPointerCapture = vi.fn<(_pointerId: number) => void>();
+  const { GraphView } = await import("../web/graph.ts");
+  const graph = new GraphView(canvas);
+  const pick = vi.spyOn(graph as unknown as { pick(x: number, y: number): string | null }, "pick").mockReturnValue("fixture-member");
+  const hover = vi.fn();
+  graph.onHover = hover;
+  const fire = (type: string, x: number, y: number) =>
+    canvas.dispatchEvent(Object.assign(new window.Event(type), { pointerId: 1, offsetX: x, offsetY: y }) as unknown as Event);
+  try {
+    fire("pointermove", 100, 100);
+    expect(hover).toHaveBeenLastCalledWith("fixture-member", 100, 100);
+    fire("pointerdown", 100, 100);
+    fire("pointermove", 101, 101);
+    expect(hover).toHaveBeenCalledTimes(1); // small movement has not started a pan
+    fire("pointermove", 180, 140);
+    expect(hover).toHaveBeenLastCalledWith(null, 0, 0);
+    expect(canvas.style.cursor).toBe("grab");
+    fire("pointerup", 180, 140);
+    fire("pointermove", 181, 140);
+    expect(hover).toHaveBeenLastCalledWith("fixture-member", 181, 140);
+  } finally {
+    pick.mockRestore();
+    graph.destroy();
+    await window.happyDOM.close();
+    restoreDom();
+  }
+});
+
 test.each(["pointercancel", "lostpointercapture"])("GraphView stops panning on %s and ignores other pointers", async (canceledBy) => {
   const window = new Window({ url: "http://127.0.0.1/" });
   const restoreDom = installDom(window, {
