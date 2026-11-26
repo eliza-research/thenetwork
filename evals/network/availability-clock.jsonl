@@ -9,6 +9,14 @@
 {"text":"Saturday at 10am","tags":["morning:Sat"]}
 {"text":"Friday afternoon at 2pm","tags":["afternoon:Fri"]}
 {"text":"Friday at 9am, Saturday at 2pm","tags":["morning:Fri","afternoon:Sat"]}
+{"text":"Weekends except Sunday at 9am","tags":["morning:Sat","afternoon:Sat","evening:Sat"]}
+{"text":"Weekends except Sunday at 2pm","tags":["morning:Sat","afternoon:Sat","evening:Sat"]}
+{"text":"Except Sunday at 9am, weekends work","tags":["morning:Sat","afternoon:Sat","evening:Sat"]}
+{"text":"Not Sunday at 9am, Saturday works","tags":["morning:Sat","afternoon:Sat","evening:Sat"]}
+{"text":"Free weekdays after 4pm","tags":["evening:Mon","evening:Tue","evening:Wed","evening:Thu","evening:Fri"]}
+{"text":"Free Saturday after 12pm","tags":["morning:Sat","afternoon:Sat","evening:Sat"]}
+{"text":"My shift ends at 11am, free Friday","tags":["evening:Fri"]}
+{"text":"Work ends at 4pm, free Friday","tags":["evening:Fri"]}
 {"text":"Friday","tags":["evening:Fri"]}
 {"text":"Saturday","tags":["morning:Sat","afternoon:Sat","evening:Sat"]}
 {"text":"Weeknights","tags":["evening:Mon","evening:Tue","evening:Wed","evening:Thu","evening:Fri"]}

@@ -48,11 +48,12 @@ wrong window.
 
 `packages/network/src/classify.ts`: `availabilityTags` now takes a clock time
 as its own part-of-day token, through the existing `clockMinute`/`partOf` pair,
-with the same negation check the word tokens use. Three lines, no new parsing.
+with the same negation check the word tokens use. A clock time is skipped in the two places where it describes something other than availability, reusing the guards the module already had: an `INCIDENTAL_CLOCK` before it ("after 4pm", "my shift ends at 11am"), the same filter `extractTimeMentions` applies; and a clock that only qualifies a named-day exclusion ("weekends except Sunday at 9am"), which the day-part loop above already treats as part of the exception.
 
-`evals/network/availability-clock.jsonl` (new, 14 rows) and one gate in
+`evals/network/availability-clock.jsonl` (new, 22 rows) and one gate in
 `scripts/sim/evals.ts` pin the behavior: a stated clock time names its part of
-day, and a day with no part still takes the default.
+day, a day with no part still takes the default, and the named-day exclusion
+and incidental cases keep the reading they had before this change.
 
 ## Test results
 
