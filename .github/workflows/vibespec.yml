@@ -200,9 +200,11 @@ jobs:
           ARTIFACT: cold-formal-actions-${{ github.run_attempt }}
         shell: bash
         run: |
-          # The lighter generation shard normally finishes during local precompute.
+          # The lighter generation shard normally finishes during local precompute,
+          # though cold PR runs that also run spec:check-generated can trail Shard 1
+          # by 1-2 minutes. Wait up to 180s so we do not discard a nearly-complete shard.
           api="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          until=$(( $(date +%s) + 45 ))
+          until=$(( $(date +%s) + 180 ))
           while (( $(date +%s) < until )); do
             if [[ -n "$(timeout 5s gh api --method GET "$api/artifacts" -f name="$ARTIFACT" --jq '.artifacts[] | select(.expired == false) | .id' || true)" ]]; then
               echo 'ready=true' >> "$GITHUB_OUTPUT"

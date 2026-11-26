@@ -9,7 +9,7 @@
         "324d28b0bc73"
       ],
       "Story: Leave one app and keep my other memberships / A leave records app consent before cleanup": [
-        "4e3f05d28af3",
+        "434163bfe3bc",
         "768f91fe6107",
         "fa03ea7c9305"
       ],
@@ -41,6 +41,26 @@
         "565826b9a688",
         "11859510c7e5",
         "3d4283f83a02"
+      ],
+      "## Story: Staff carry out an export or erasure request sent to support": [
+        "37f43ff6c523"
+      ],
+      "Story: Staff carry out an export or erasure request sent to support / Only a global admin with a stated reason opens or confirms a support request": [
+        "780202be37bb",
+        "3ad5e40f65c5"
+      ],
+      "Story: Staff carry out an export or erasure request sent to support / A support export covers one app or every app, and an erasure covers every app": [
+        "b9e88eff3686",
+        "89be706fed83"
+      ],
+      "Story: Staff carry out an export or erasure request sent to support / Staff act only on the confirmed person after a fresh code from the number": [
+        "cabf0d8f5dc0",
+        "955657c6cbfc"
+      ],
+      "Story: Staff carry out an export or erasure request sent to support / A support request runs the member's own export or account erasure": [
+        "b164a1ad2d24",
+        "78045402243b",
+        "c45226bfaf99"
       ]
     },
     "spec/brandIdentity.md": {
@@ -145,11 +165,11 @@
         "4bf343b8a17b"
       ],
       "Story: Confirm my own phone during signup / Offer one app-bound confirmation after the person approves the draft": [
-        "f0597d9fa74b",
+        "a7ca0b21b913",
         "ab917b1a34bf"
       ],
       "Story: Confirm my own phone during signup / Only the browser and the authorized connector complete the handoff": [
-        "fd786a9d9f07",
+        "4ff5536befbe",
         "7a66c33d7244",
         "c35d560b9e0d"
       ],
@@ -161,7 +181,7 @@
     },
     "spec/agentSignup.md": {
       "@document": [
-        "43a8611acb91"
+        "4ecfb18907c1"
       ],
       "## Story: Join through my agent and confirm my own phone": [
         "d982022c0243"
@@ -177,7 +197,7 @@
         "6e393ad60847"
       ],
       "Story: Join through my agent and confirm my own phone / The person approves the exact draft and current text consent": [
-        "c14798e2e249",
+        "80342365818c",
         "0463e9364e86",
         "b5967cfd0c23"
       ],
@@ -294,12 +314,12 @@
         "56b0a63fa84d"
       ],
       "Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date": [
-        "e1e008fbdaf2",
+        "9a2acb3fbbcf",
         "eb1f67c7cd2d"
       ],
       "Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name": [
-        "59e494fbf1fc",
-        "d13631881949"
+        "fcbc4021bf78",
+        "a65de0411dc7"
       ],
       "Story: Decide what my assistant can do / Only Allow on a consent page returns a code to the assistant": [
         "589b549013ef",
@@ -330,6 +350,68 @@
         "7a82a517ea12"
       ]
     },
+    "spec/automatedReview.md": {
+      "@document": [
+        "fb38556bb981"
+      ],
+      "## Story: Contact a member only after a recorded approval": [
+        "e9479b0e756c"
+      ],
+      "Story: Contact a member only after a recorded approval / An approval names its approver": [
+        "d323936e8659",
+        "7fa5b1506a33"
+      ],
+      "Story: Contact a member only after a recorded approval / The judge decides an awaiting revision once, for the packet it read": [
+        "b54d620f8ec7",
+        "a77a5562753a",
+        "dfe1d21e46e9"
+      ],
+      "Story: Contact a member only after a recorded approval / A judgment that does not come in time is held for staff": [
+        "4d7281c4cd1a",
+        "6c6fd4b9cd87",
+        "dfe1d21e46e9"
+      ],
+      "Story: Contact a member only after a recorded approval / Staff approve only a held item and may reject any open item": [
+        "ba2559da5e42",
+        "a2120835f8d2",
+        "dfe1d21e46e9"
+      ],
+      "Story: Contact a member only after a recorded approval / Staff can stop an approved item before its reveal": [
+        "1fa2e2243d91",
+        "02d5a37034b6",
+        "dfe1d21e46e9"
+      ],
+      "Story: Contact a member only after a recorded approval / An open review closes unsent": [
+        "64f864e9efa5",
+        "21ffbe0c04bb",
+        "dfe1d21e46e9"
+      ],
+      "Story: Contact a member only after a recorded approval / A reply approves only when it is complete and consistent": [
+        "80209d2fb932",
+        "07fe60259308",
+        "dfe1d21e46e9"
+      ],
+      "Story: Contact a member only after a recorded approval / A roster with a minor gets the strict rubric": [
+        "72cb379cddc5",
+        "c097bf0c1de0",
+        "dfe1d21e46e9"
+      ],
+      "Story: Contact a member only after a recorded approval / A judge call runs only for a clean packet with no earlier flag, with a provider, inside the limits, before the deadline": [
+        "acf8ddef9d14",
+        "72359daefd58",
+        "dfe1d21e46e9"
+      ],
+      "Story: Contact a member only after a recorded approval / One judgment per packet for every replica": [
+        "2f0f55157279",
+        "d883d1d927a7",
+        "dfe1d21e46e9"
+      ],
+      "Story: Contact a member only after a recorded approval / The simulator uses a deterministic stand-in judge": [
+        "7a247e0b398d",
+        "2e9486b41f04",
+        "dfe1d21e46e9"
+      ]
+    },
     "spec/backendHealth.md": {
       "@document": [
         "faa123e59066"
@@ -342,20 +424,20 @@
         "a51d4b755566"
       ],
       "Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping": [
-        "4252ef1ff66e",
+        "b1e87b359735",
         "094b06e35b0e",
         "b1f1fb68fa5a"
       ]
     },
     "spec/backendLifecycle.md": {
       "@document": [
-        "967566e6e66e"
+        "4bdebdb2d143"
       ],
       "## Story: Run one tick per worker at a time": [
         "07d07291d533"
       ],
       "Story: Run one tick per worker at a time / Reserve each tick worker before starting its work": [
-        "245cce450d57",
+        "8c9e6d8f8cf7",
         "af6bbf5ad673"
       ],
       "Story: Run one tick per worker at a time / A timer start records when tick monitoring began": [
@@ -372,6 +454,30 @@
         "18dbbe048aa8"
       ]
     },
+    "spec/baseProfileShare.md": {
+      "@document": [
+        "8d3b8f6b5973"
+      ],
+      "## Story: Reuse my approved basics in a second app": [
+        "e044cbf8cf6a"
+      ],
+      "Story: Reuse my approved basics in a second app / A grant is usable only while it is current and both memberships are live": [
+        "a7f4c6cba7b2",
+        "ea14013ea730"
+      ],
+      "Story: Reuse my approved basics in a second app / UNSHARE revokes every live grant to or from this app": [
+        "f873781d7b8f",
+        "2b8ecc0170a8"
+      ],
+      "Story: Reuse my approved basics in a second app / An interest is shared only when the member confirmed it and it is not private": [
+        "c6ffd99bd675",
+        "1f0b1a28c2f7"
+      ],
+      "Story: Reuse my approved basics in a second app / A shared value never replaces what the person told this app": [
+        "6584ca46ca65",
+        "176bf141b717"
+      ]
+    },
     "spec/bookedGroupReplacement.md": {
       "@document": [
         "74a1626e039a"
@@ -384,7 +490,7 @@
         "5b698566077d"
       ],
       "Story: Get a fresh invitation after an underfilled booking closes / A replacement uses a current reviewed alternate and a viable slot": [
-        "6e8d67490f8b",
+        "151d68e1e672",
         "45be13266d21"
       ],
       "Story: Get a fresh invitation after an underfilled booking closes / The next plan needs fresh review and all three separate acceptances": [
@@ -394,7 +500,7 @@
     },
     "spec/bootPolicy.md": {
       "@document": [
-        "60efbdb6f993"
+        "bf001765b409"
       ],
       "## Story: Start the service with its declared configuration": [
         "7774bbb12af0"
@@ -403,15 +509,42 @@
         "a3b679c26414",
         "d7c88f51f7ba"
       ],
-      "Story: Start the service with its declared configuration / The network service entry checks provider, review, storage and secret configuration": [
-        "89fd2274fb37",
-        "17a04a331c34",
+      "Story: Start the service with its declared configuration / Both entries apply one rule to the session secret, the model provider and the dev-only switches": [
+        "ef2c8dbf052b",
+        "4d655f9c3fbd",
         "90acdf4efa64"
       ],
+      "Story: Start the service with its declared configuration / The network service entry checks provider, model provider, storage and secret configuration": [
+        "bd3d1d8bd491",
+        "3c0bc24ce352",
+        "eae296f9740d"
+      ],
+      "Story: Start the service with its declared configuration / Both entries refuse a deployment whose shared line or staff API could not work": [
+        "5eb7482a6347",
+        "e338dd2b0a51",
+        "eae296f9740d"
+      ],
       "Story: Start the service with its declared configuration / The combined backend entry checks its own database, provider and secret configuration": [
-        "9159ce0e6d81",
-        "9dc7156ab6a2",
-        "538ec43430fd"
+        "ba084fb4220c",
+        "dd1f9bdac8bc",
+        "a1b9cd216e1f"
+      ],
+      "Story: Start the service with its declared configuration / A deployed backend keeps photos in private storage": [
+        "e07ec9de10d9",
+        "178fd6d66f99"
+      ],
+      "Story: Start the service with its declared configuration / Exactly one system answers the carrier's inbound messages": [
+        "30717f856684",
+        "22dd074bf56d"
+      ],
+      "Story: Start the service with its declared configuration / The configured channel alone decides whether a send is real": [
+        "ff384a0121b3",
+        "b9fb248b8a3e",
+        "9fbc62b6f96c"
+      ],
+      "Story: Start the service with its declared configuration / A deployed entry refuses a partial Workers AI setup, and production needs Workers AI": [
+        "33e6fc9a1343",
+        "310bb8ccbb1e"
       ],
       "Story: Start the service with its declared configuration / A deployed service login must be a restricted database role": [
         "86ba05496f37",
@@ -614,7 +747,7 @@
         "26b191d882c8"
       ],
       "Story: Refuse an ineligible match before scoring it / Hard checks run in a fixed order": [
-        "baca6f7a90ae",
+        "8e36974bcb78",
         "c7673c9ab902"
       ],
       "Story: Refuse an ineligible match before scoring it / The first refusal ends screening": [
@@ -689,14 +822,22 @@
         "dd49889c2edc",
         "b8b890cfe37b"
       ],
+      "Story: Search only where a pair can have a value / Mutual acceptance masks never drop a pair the pack rules admit": [
+        "3d97a6accda2",
+        "99224d4d494f"
+      ],
       "Story: Search only where a pair can have a value / A bound is never below the value of the pair it covers": [
-        "6bff1565332b",
-        "f276843d6ba8",
+        "471e175326d4",
+        "c522107e8ee7",
         "4c7acafbccca"
       ],
       "Story: Search only where a pair can have a value / The posting walk covers or bounds every partner in the window": [
-        "88859cc5d5cb",
+        "37e0574cd390",
         "ee5b68b985b8"
+      ],
+      "Story: Search only where a pair can have a value / A pack class cap bounds the pack term of every partner the walk did not touch": [
+        "094a8a49dc1e",
+        "3ba528ca6051"
       ],
       "## Story: Keep the best candidates within a fixed number of pair checks": [
         "504bf9885935"
@@ -717,8 +858,8 @@
         "a6742b048c5a"
       ],
       "Story: Keep the best candidates within a fixed number of pair checks / A search that spends its budget or its posting walk before it is exact reports the value it may have missed": [
-        "13fd453f05cd",
-        "11a891feb151",
+        "44f586db0f9c",
+        "9b94b8a1edae",
         "e10bf1b8d553"
       ]
     },
@@ -730,7 +871,7 @@
         "36b0cd56d457"
       ],
       "Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it": [
-        "48cc4c71c123",
+        "d1746b73a84b",
         "8cacb8dad485"
       ],
       "Story: Count what I contributed once and preserve its history / Participation credit needs eligible members and verified outcomes": [
@@ -770,7 +911,7 @@
         "72ece6cf3d0f"
       ],
       "Story: Use my past contributions without changing who can match with me / Earned organizing reach reserves the extra slots for low exposure": [
-        "4f2b93d670db",
+        "ddba821269c4",
         "f7271f6a3d1b"
       ],
       "Story: Use my past contributions without changing who can match with me / Capital never makes an incompatible candidate eligible": [
@@ -903,14 +1044,21 @@
         "f6af17b2d2de"
       ],
       "Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate": [
-        "f5f3c99e8355",
-        "036e6b7bf0d2",
+        "1f29987304a1",
+        "ec293af2db68",
         "30bb3330d70f"
       ],
       "Story: Stay signed in to the app where I proved my phone / Sensitive account changes require a fresh sign-in": [
         "9ecb3a95f1c7",
         "71638ecd35f5",
         "30bb3330d70f"
+      ],
+      "## Story: Keep an earlier holder's sign-in away from my new account": [
+        "7e4587424d9c"
+      ],
+      "Story: Keep an earlier holder's sign-in away from my new account / A session without a person never outlives its number getting a person": [
+        "079d033fa3ba",
+        "6c056c2d1873"
       ]
     },
     "spec/cloudSignIn.md": {
@@ -921,12 +1069,12 @@
         "cb9ea4a54571"
       ],
       "Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app": [
-        "deb781836c33",
+        "d4a4028a8203",
         "fa5fd52a0610"
       ],
       "Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity": [
-        "03943b6f7360",
-        "73668ba4e416",
+        "04e6ef3c0ba0",
+        "576462a0a3e3",
         "ce0170aff16d"
       ],
       "Story: Use my Cloud identity to sign in to this app / The site checks phone eligibility before issuing a session": [
@@ -938,11 +1086,15 @@
         "a77063a18dcd",
         "a4b9fbfa85ac",
         "ce0170aff16d"
+      ],
+      "Story: Use my Cloud identity to sign in to this app / A failed callback returns to the phone page or the home-help page with an error code": [
+        "96dc8d2a17d5",
+        "146d4ad538aa"
       ]
     },
     "spec/matchLane.md": {
       "@document": [
-        "cc7442c86563"
+        "7764087d4ea3"
       ],
       "## Story: Peers meet as equals": [
         "3199709554ba"
@@ -958,8 +1110,8 @@
         "9b3b5fb385a8"
       ],
       "Story: Peers meet as equals / Every lane keeps its rules and bounds in one table": [
-        "db84392b42ac",
-        "2a79f64c3cab",
+        "2a82ab428dbc",
+        "d29615139869",
         "9b3b5fb385a8"
       ],
       "Story: Peers meet as equals / Each lane weighs the four utility terms": [
@@ -973,12 +1125,12 @@
       "Story: Two sides meet across a role / The offering side sits above the seeking side by the lane's offset": [
         "af55e4d2d532",
         "0735318438ef",
-        "f7e7c9154cef"
+        "38daf4a85faa"
       ],
       "Story: Two sides meet across a role / A lane pair value is the same from both sides": [
         "a96d49e9db3b",
         "19471100c901",
-        "1f5252bb9516"
+        "2d22a0994d3c"
       ],
       "## Story: Each app offers its own lanes": [
         "46fba212438f"
@@ -987,11 +1139,29 @@
         "1ea6a72fe130",
         "1efecbddbac1",
         "9b3b5fb385a8"
+      ],
+      "## Story: Friendship lanes offer teen introductions": [
+        "8b6b2bf20ae4"
+      ],
+      "Story: Friendship lanes offer teen introductions / Only the friendship lanes of friends.help and ntwrk admit a teen introduction": [
+        "77880d7cc861",
+        "ac1ce2ca28ab",
+        "b0b7f1c42d50"
+      ],
+      "Story: Friendship lanes offer teen introductions / A teen is never in a date or work lane": [
+        "8a1590212989",
+        "72b650140375",
+        "df3a72af781b"
+      ],
+      "Story: Friendship lanes offer teen introductions / Only a known friendship generator makes a teen item": [
+        "09f17a0ca7ab",
+        "3ddabf2db592",
+        "df3a72af781b"
       ]
     },
     "spec/standingIntent.md": {
       "@document": [
-        "8ac820439755"
+        "bb3251c3a725"
       ],
       "## Story: Match only on a current standing intent": [
         "66ee0286f082"
@@ -1016,6 +1186,10 @@
       "Story: Match only on a current standing intent / Another search can queue only opportunities that serve a live intent": [
         "5b2e6e79eff0",
         "de5738f4eb00"
+      ],
+      "Story: Match only on a current standing intent / One renewal question before a searched want lapses": [
+        "60fbecb98e60",
+        "025509d67824"
       ]
     },
     "spec/cofounderIntent.md": {
@@ -1034,6 +1208,13 @@
         "9964651e6cad",
         "a8590c734c57",
         "820157100741"
+      ],
+      "## Story: Meet a cofounder as an equal": [
+        "7b6a8a0f6c8a"
+      ],
+      "Story: Meet a cofounder as an equal / A stated must-have is a hard rule for both cofounders": [
+        "db5989a86e05",
+        "c731d9024d78"
       ]
     },
     "spec/cofounderDispatch.md": {
@@ -1094,74 +1275,97 @@
     },
     "spec/connectorTools.md": {
       "@document": [
-        "8d07dccada5e"
+        "3345188d3744"
       ],
       "## Story: Use my app's connector from my agent": [
         "0104578008dd"
       ],
       "Story: Use my app's connector from my agent / Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date": [
-        "a5fe38f5a408",
-        "7dd9f8fdd9fa"
+        "d12e9c3d3d7c",
+        "efdfabc7e229"
       ],
       "Story: Use my app's connector from my agent / The ntwrk.party host serves every app at its own path, and a grant covers only its own app": [
-        "55d599fd98ef",
+        "c64e578fc7e7",
         "e875d7a5d26b",
-        "72ee35d6317e"
+        "4262fdb437d4"
       ],
       "Story: Use my app's connector from my agent / The member tools name the site where the person signs in": [
         "734846e1213a",
         "20a34eb2d232",
-        "f8fa1c603a89"
+        "2c3522601923"
       ],
       "Story: Use my app's connector from my agent / Public tools need no sign-in, and member tools need the person's own grant": [
-        "971d0a938b8b",
-        "ba5a7b66c6c0",
-        "72ee35d6317e"
+        "5d6b3dfe72df",
+        "879f08714d4a",
+        "4262fdb437d4"
       ],
       "Story: Use my app's connector from my agent / The member status decides which member tool can act": [
-        "d89bf23efec0",
-        "d8c3643b2f5a",
-        "72ee35d6317e"
+        "5f9b429dfafc",
+        "a46939a34d29",
+        "4262fdb437d4"
       ],
       "Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser": [
-        "cc6b447ee869",
-        "776321674f55",
-        "0c34c8d4acbf"
+        "5eb9c25a1be9",
+        "824d907dbb47",
+        "0336cb018225"
       ],
       "Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection": [
         "b0801439f632",
-        "e5b0ea72ff69",
-        "08fd54cf431d"
+        "278dd2d4a53d",
+        "d31da5c22e20"
       ],
       "Story: Use my app's connector from my agent / Check status shows only the person's own status in this one app": [
         "346f6e3e4be6",
         "8b6958cb81ad",
-        "08fd54cf431d"
+        "d31da5c22e20"
       ],
       "Story: Use my app's connector from my agent / Read saved profile fields only for this app's active member": [
         "b1425c6d69a5",
         "52c67877037d",
-        "08fd54cf431d"
+        "d31da5c22e20"
+      ],
+      "Story: Use my app's connector from my agent / The agent can list the person's standing things and pause or resume one, but never close one": [
+        "8220525b39c8",
+        "f5ca59762cd5",
+        "d31da5c22e20"
+      ],
+      "Story: Use my app's connector from my agent / The agent sees the person's photo list and asks to send a photo, but never sees a photo and never confirms a send": [
+        "40f7dab87d84",
+        "e72df23e0736",
+        "d31da5c22e20"
       ],
       "Story: Use my app's connector from my agent / The agent sends an approved profile once, only for a live member, within the daily limit": [
-        "71b37b69b9cc",
+        "5a88fac9832c",
         "f1799557bec3",
-        "08fd54cf431d"
+        "d31da5c22e20"
       ],
       "Story: Use my app's connector from my agent / A Join draft holds only an approved first name and home city, once per grant": [
-        "3d28049db0ff",
+        "f499ab1f2233",
         "bcd4a9015444",
-        "345580f7671a"
+        "3226bedae55e"
       ],
       "Story: Use my app's connector from my agent / Reading updates shows the person's own new updates and marks them seen": [
         "42f7341cd93f",
         "7328a8618cb3",
-        "08fd54cf431d"
+        "d31da5c22e20"
+      ],
+      "Story: Use my app's connector from my agent / A reader who cannot be matched never reads an update about another member": [
+        "3c9cbd726ed7",
+        "f3adc2b6e1c7"
+      ],
+      "Story: Use my app's connector from my agent / A withheld update stays unseen": [
+        "d3b863951eb2",
+        "2481d641b12b",
+        "d14380348257"
+      ],
+      "Story: Use my app's connector from my agent / Request limits count each person's grant, and the client address has only a coarse ceiling": [
+        "f054b0c41016",
+        "5d95d7825fcc"
       ],
       "Story: Use my app's connector from my agent / A connection can reach every tool result": [
         "8747849d6943",
         "9499a2b38dad",
-        "08fd54cf431d"
+        "d31da5c22e20"
       ]
     },
     "spec/consoleMemberView.md": {
@@ -1204,27 +1408,27 @@
       ],
       "Story: Know which page I am on / The viewer answer selects a page that the roles cover": [
         "92f1faff1fe4",
-        "174663ebd8d4"
+        "bbf97bc06891"
       ],
       "Story: Know which page I am on / The app switcher opens one app or the all-apps page": [
         "4001c931a156",
         "badb51ac24f8",
-        "d4347fcefd18"
+        "32813669d231"
       ],
       "Story: Know which page I am on / Only a cross-app viewer in real mode opens one person across apps": [
         "6fcc2cd4740f",
         "fc8da67e4ba8",
-        "d4347fcefd18"
+        "32813669d231"
       ],
       "Story: Know which page I am on / A mode change clears the subject and the picks": [
         "037f261c6ee0",
         "76273dba2dba",
-        "d4347fcefd18"
+        "32813669d231"
       ],
       "Story: Know which page I am on / The console view follows the page": [
         "0807eb410c63",
         "75ecabd89472",
-        "d4347fcefd18"
+        "32813669d231"
       ],
       "## Story: Follow one subject": [
         "ee1a236b4342"
@@ -1232,27 +1436,27 @@
       "Story: Follow one subject / Focus on a new subject keeps the last one in a short history": [
         "550dd16b62a4",
         "19ab07322b97",
-        "751d3a8e3a33"
+        "6ab16df0c84d"
       ],
       "Story: Follow one subject / Back returns to the last subject and clear returns to the overview": [
         "66dfa31d4dfe",
         "2e04c3149c99",
-        "751d3a8e3a33"
+        "6ab16df0c84d"
       ],
       "Story: Follow one subject / Escape closes one thing at a time": [
         "c0036f6bd3b3",
         "5afb2e0e841e",
-        "d4347fcefd18"
+        "32813669d231"
       ],
       "Story: Follow one subject / Search offers names and places from two characters and ids from three": [
         "097bc56b34cc",
         "b5a7a7026366",
-        "a0c655caf050"
+        "acdb22a856ec"
       ],
       "Story: Follow one subject / Picks exist only for a viewer who plays the simulated world": [
         "7b1a93fc6891",
         "9723edecc374",
-        "751d3a8e3a33"
+        "6ab16df0c84d"
       ],
       "## Story: Use the stage and the drawer": [
         "28297447b7d8"
@@ -1260,22 +1464,174 @@
       "Story: Use the stage and the drawer / The stage shows the map or the graph": [
         "98097ef9b950",
         "60c09145b14a",
-        "751d3a8e3a33"
+        "6ab16df0c84d"
       ],
       "Story: Use the stage and the drawer / Each drawer tab shows only where it applies": [
-        "8f13944cacaf",
-        "e8df6be53976",
-        "d4347fcefd18"
+        "04f70658d1b5",
+        "7e58db732037",
+        "32813669d231"
       ],
       "Story: Use the stage and the drawer / A tab choice opens the drawer, and the open tab collapses it": [
         "9468f7e728eb",
         "d4d53b50d903",
-        "5b9423ce38cf"
+        "654d70fe5d1e"
       ],
       "Story: Use the stage and the drawer / The filter bar dims the filters that do not apply to the open tab": [
         "d08edf8f0df3",
         "3b79195a09e1",
-        "d4347fcefd18"
+        "32813669d231"
+      ]
+    },
+    "spec/memberAge.md": {
+      "@document": [
+        "a1d7a180e6b4"
+      ],
+      "## Story: Join at the eligible age": [
+        "a0c00034411f"
+      ],
+      "Story: Join at the eligible age / Age data outside the human range is unusable": [
+        "d018c1b9222c",
+        "9033ba7da1a3"
+      ],
+      "Story: Join at the eligible age / Joining requires a usable age of at least 13": [
+        "5b9d9ed8b494",
+        "c39adc344bb0",
+        "7e20bef47fb3"
+      ],
+      "## Story: Take part in adult matching": [
+        "4ee2f940883b"
+      ],
+      "Story: Take part in adult matching / Matching requires a usable age of at least 18": [
+        "59f0801d8d6b",
+        "b49ca11940d5",
+        "5ce71ae12e9d"
+      ],
+      "Story: Take part in adult matching / Commit a stated age before projecting it across apps": [
+        "77e8075e91af",
+        "b63c3a9cbbe1",
+        "5ce71ae12e9d"
+      ],
+      "Story: Take part in adult matching / Quoted age evidence does not change the sender": [
+        "0004b0c7acf6",
+        "c4ec5a5c752e"
+      ],
+      "Story: Take part in adult matching / Resume a confirmed refusal from the durable age": [
+        "63fe4c8325d9",
+        "303e62f24cfa",
+        "77952298c8b1"
+      ],
+      "Story: Take part in adult matching / A confirmed refusal applies before every app finishes cleanup": [
+        "4657390f93e7",
+        "e5b3f0de559d",
+        "77952298c8b1"
+      ],
+      "Story: Take part in adult matching / A near birthday gives an estimate for the present age": [
+        "cec79f26dd12",
+        "e250f4b4bdf9",
+        "7c89a67a7dd8"
+      ],
+      "Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal": [
+        "bc8962a085f1",
+        "eb3381a26d48",
+        "5ce71ae12e9d"
+      ],
+      "Story: Take part in adult matching / An older age cannot raise the effective age": [
+        "2b2c9f15150b",
+        "9714416e6acb"
+      ],
+      "## Story: Track age from a birth date": [
+        "e8692e5983e0"
+      ],
+      "Story: Track age from a birth date / A birth date gives an age on each day": [
+        "067282bc4ada",
+        "2eaa6d23b89d",
+        "7e20bef47fb3"
+      ],
+      "Story: Track age from a birth date / Each age statement is a range of possible birth dates": [
+        "f82695c2974b",
+        "4e118e4a2a3e",
+        "f899ccc761d9"
+      ],
+      "Story: Track age from a birth date / The youngest reading wins and an older claim never unlocks more": [
+        "2bd095685fff",
+        "0f70005e63e6",
+        "419143571566"
+      ],
+      "## Story: Move from private signup eligibility to adult access": [
+        "2f7ab87d5bbf"
+      ],
+      "Story: Move from private signup eligibility to adult access / A private signup date can end a birthday-only minor restriction": [
+        "4adda377c6cb",
+        "13aeb53b7dd5",
+        "6267e4795d27"
+      ]
+    },
+    "spec/friendIntroAge.md": {
+      "@document": [
+        "aac41b98abc0"
+      ],
+      "## Story: Introduce a minor for friendship only to people close in age": [
+        "8c6bfcaca290"
+      ],
+      "Story: Introduce a minor for friendship only to people close in age / A teen partner is 13 to 18 on every day of the introduction": [
+        "a6d771e6ed1c",
+        "f414d51d1f97",
+        "f899ccc761d9"
+      ],
+      "Story: Introduce a minor for friendship only to people close in age / Two teen birth dates are at most 2 calendar years apart": [
+        "4caec58e5a34",
+        "2323d9f00ae5"
+      ],
+      "Story: Introduce a minor for friendship only to people close in age / Only a teen-ready person enters a teen introduction": [
+        "68326fc7086e",
+        "409a130c1a7d",
+        "3597f5350b25"
+      ],
+      "Story: Introduce a minor for friendship only to people close in age / A teen-ready person in a roster with a minor needs no staff verification on friends.help": [
+        "cd968d6dc91c",
+        "96f13c28ee6c",
+        "2a174c8935ae"
+      ],
+      "Story: Introduce a minor for friendship only to people close in age / A pair with a minor needs teen introductions not stopped, a friendship lane and the age rule": [
+        "8356f31a691f",
+        "c53890749e28",
+        "4ed7a8719102"
+      ],
+      "Story: Introduce a minor for friendship only to people close in age / A group with a minor holds only people who pass the pair rule with every member": [
+        "a1b4562148da",
+        "2c25181cfe62",
+        "f0c1ef589aaf"
+      ],
+      "Story: Introduce a minor for friendship only to people close in age / A group with a minor holds nobody aged 19 or more and keeps every minor within 2 years of everyone": [
+        "dd5c3961cbf3",
+        "7654b61313b1",
+        "1f61b17e075b"
+      ],
+      "Story: Introduce a minor for friendship only to people close in age / A teen introduction has the shape of a friendship meeting": [
+        "0bc0efe5d699",
+        "01d936b8a49e"
+      ],
+      "Story: Introduce a minor for friendship only to people close in age / A group with a minor is small": [
+        "cf7488df6eaf",
+        "0608238fa784"
+      ],
+      "Story: Introduce a minor for friendship only to people close in age / A group with a minor meets at an all-ages place": [
+        "8f6a713348da",
+        "eab8f72ba2cf",
+        "3597f5350b25"
+      ],
+      "Story: Introduce a minor for friendship only to people close in age / A minor gets moderated text relay only": [
+        "8d3bd48bc05c",
+        "4ccd520b15ec"
+      ],
+      "Story: Introduce a minor for friendship only to people close in age / A minor stays single-player unless a teen introduction is open to them": [
+        "11fc9dccb90f",
+        "b91e8d7aecaa",
+        "86ab43938502"
+      ],
+      "Story: Introduce a minor for friendship only to people close in age / A statement opens a minor signal only on new evidence": [
+        "7d94411e9fa3",
+        "a812effb6f02"
       ]
     },
     "spec/safetyCase.md": {
@@ -1296,7 +1652,7 @@
       ],
       "Story: Review a safety case without removing a hold by accident / A staff action requires an actor and an applicable record": [
         "948dbc342fb7",
-        "052035b5e797",
+        "a9fa88783066",
         "62376e09501b"
       ],
       "## Story: Get immediate safety guidance in a member conversation": [
@@ -1318,7 +1674,7 @@
         "19f3f177ce37"
       ],
       "Story: Block or report a person directly / A minor report needs affirmative attributable evidence": [
-        "0e6471bddcfb",
+        "372a8e0fa73b",
         "c9a8464f04cc"
       ],
       "## Story: Resolve a report with its own disposition": [
@@ -1355,7 +1711,20 @@
       "Story: Clear a mistaken minor signal after checking ages / A clear requires a known adult record and no stated minor age": [
         "7202196588d8",
         "f92da0ab01e1",
-        "4503f1870458"
+        "a156aa24948a"
+      ],
+      "Story: Clear a mistaken minor signal after checking ages / Staff clear doubt about a teen's age only for a clean teen birth date": [
+        "e19d65b74928",
+        "21cf0aa0868a",
+        "4e7e20ada768"
+      ],
+      "Story: Clear a mistaken minor signal after checking ages / A minor signal on one app holds the person on every app until a later clear": [
+        "d732b5704baf",
+        "7ebbf9ce1f43"
+      ],
+      "Story: Clear a mistaken minor signal after checking ages / A block or a report about a person closes every open opportunity of the pair": [
+        "502adc20b271",
+        "1a1bed7636e1"
       ]
     },
     "spec/consoleWorkspace.md": {
@@ -1594,73 +1963,6 @@
         "c20b71cb75bd"
       ]
     },
-    "spec/memberAge.md": {
-      "@document": [
-        "a1d7a180e6b4"
-      ],
-      "## Story: Join at the eligible age": [
-        "a0c00034411f"
-      ],
-      "Story: Join at the eligible age / Age data outside the human range is unusable": [
-        "d018c1b9222c",
-        "9033ba7da1a3"
-      ],
-      "Story: Join at the eligible age / Joining requires a usable age of at least 13": [
-        "5b9d9ed8b494",
-        "c39adc344bb0",
-        "7e20bef47fb3"
-      ],
-      "## Story: Take part in adult matching": [
-        "e8ef7aa7405b"
-      ],
-      "Story: Take part in adult matching / Matching requires a usable age of at least 18": [
-        "ad7a13181b30",
-        "b49ca11940d5",
-        "5ce71ae12e9d"
-      ],
-      "Story: Take part in adult matching / Commit a stated age before projecting it across apps": [
-        "38e56eeba9e9",
-        "b63c3a9cbbe1",
-        "5ce71ae12e9d"
-      ],
-      "Story: Take part in adult matching / Quoted age evidence does not change the sender": [
-        "0004b0c7acf6",
-        "c4ec5a5c752e"
-      ],
-      "Story: Take part in adult matching / Project a committed age using its original owner": [
-        "08a44e16b9eb",
-        "3df0bac58565"
-      ],
-      "Story: Take part in adult matching / Resume a confirmed refusal from the durable age": [
-        "63fe4c8325d9",
-        "303e62f24cfa",
-        "77952298c8b1"
-      ],
-      "Story: Take part in adult matching / A confirmed refusal applies before every app finishes cleanup": [
-        "4657390f93e7",
-        "e5b3f0de559d",
-        "77952298c8b1"
-      ],
-      "Story: Take part in adult matching / A near birthday gives an estimate for the present age": [
-        "cec79f26dd12",
-        "e250f4b4bdf9",
-        "7c89a67a7dd8"
-      ],
-      "Story: Take part in adult matching / A half age needs age wording to confirm an under-13 refusal": [
-        "bc8962a085f1",
-        "eb3381a26d48",
-        "5ce71ae12e9d"
-      ],
-      "Story: Take part in adult matching / An older age cannot raise the effective age": [
-        "2b2c9f15150b",
-        "9714416e6acb"
-      ],
-      "Story: Take part in adult matching / A private signup date can end a birthday-only minor restriction": [
-        "393c2283fcdc",
-        "f056f980d0c2",
-        "6267e4795d27"
-      ]
-    },
     "spec/contributionHistory.md": {
       "@document": [
         "b4ba193f92c1"
@@ -1769,24 +2071,107 @@
     },
     "spec/databaseRestore.md": {
       "@document": [
-        "b3c48e14fa0f"
+        "f02581147946"
       ],
       "## Story: Check a backup by restoring it into a new database": [
         "357a0767dbea"
       ],
       "Story: Check a backup by restoring it into a new database / The target must be a valid scratch database name": [
         "cbb3969aca50",
-        "226fd743ebab"
+        "fb8300729ca1"
       ],
       "Story: Check a backup by restoring it into a new database / Manifest admission refuses source writes and unavailable dump files": [
-        "40787e714b06",
-        "9d36ad6ca87d",
-        "e8e16f41215e"
+        "5e0ff7a12b2d",
+        "cc91a8b3a929",
+        "d1c60fea1a58"
       ],
       "Story: Check a backup by restoring it into a new database / Create the database before restoring and compare counts after the dump": [
-        "27618718e59b",
-        "9a357393fe52",
-        "e8e16f41215e"
+        "832d545f95b8",
+        "1044bdae894f",
+        "d1c60fea1a58"
+      ],
+      "## Story: Carry privacy changes made after the backup into the restored database": [
+        "9e0028fe0023"
+      ],
+      "Story: Carry privacy changes made after the backup into the restored database / A source row that the restored database lacks is replayed": [
+        "9e647ec4d46f",
+        "5fb67b26eb56"
+      ],
+      "Story: Carry privacy changes made after the backup into the restored database / An erasure after the backup is replayed": [
+        "44517b841154",
+        "4416fefa6b95"
+      ],
+      "Story: Carry privacy changes made after the backup into the restored database / A leave after the backup is replayed": [
+        "a0af32b6b472",
+        "236355eacab8"
+      ],
+      "Story: Carry privacy changes made after the backup into the restored database / A STOP after the backup is replayed on each membership it still covers": [
+        "4e7431b63946",
+        "a3f700fb4e78"
+      ],
+      "Story: Carry privacy changes made after the backup into the restored database / The backend runs a queued erasure or leave only after the connector hooks are registered": [
+        "89f7761bff5e",
+        "1c7c905f85d2"
+      ],
+      "Story: Carry privacy changes made after the backup into the restored database / The backend runs the queued replay at start, and each item by one runner until it holds": [
+        "b192801ae4f6",
+        "d3d589788ac1"
+      ],
+      "## Story: Do not send a text again after a restore": [
+        "07b8cd814d1b"
+      ],
+      "Story: Do not send a text again after a restore / A restored text that is not settled takes the source's outcome, or ends": [
+        "e3054cbbc7f4",
+        "4fedb9003eb1"
+      ]
+    },
+    "spec/datePackValue.md": {
+      "@document": [
+        "79573ab6cc74"
+      ],
+      "## Story: Value a first date from stated answers": [
+        "7e47a927755c"
+      ],
+      "Story: Value a first date from stated answers / Each stated answer gives a factor from a fixed table": [
+        "2e5be891f8d9",
+        "06b61c6dd19a"
+      ],
+      "Story: Value a first date from stated answers / A partner's answer that is often a dealbreaker counts when the seeker stated no dealbreakers": [
+        "3c5139d97dd6",
+        "6ca76fc5eea0",
+        "a668c71358f5"
+      ],
+      "Story: Value a first date from stated answers / Shared interests, the planned activity, logistics and body type give factors from fixed tables": [
+        "ce9437561449",
+        "a2680fc58e70"
+      ],
+      "Story: Value a first date from stated answers / A measured factor counts only up to the seeker's ceiling": [
+        "e40e6b710337",
+        "47640b83826f",
+        "a668c71358f5"
+      ],
+      "Story: Value a first date from stated answers / The factors multiply in a fixed order with a fixed rounding rule": [
+        "148520eaa80f",
+        "23093193cba0",
+        "a668c71358f5"
+      ],
+      "Story: Value a first date from stated answers / The directed pack value is the product of the factors of one pair": [
+        "538d52dfb9f1",
+        "aef4398c97be",
+        "96789b8cb47c"
+      ],
+      "## Story: Skip partners whose pack value cannot reach the floor": [
+        "9672a1b4252f"
+      ],
+      "Story: Skip partners whose pack value cannot reach the floor / The pair bound needs only the cheap pair inputs and is at least the pack value": [
+        "97a68ee3c5de",
+        "5d3fb0380090",
+        "fca239495305"
+      ],
+      "Story: Skip partners whose pack value cannot reach the floor / A partner class has a cap that is at least the pair bound of every partner in it": [
+        "b2557dc983bc",
+        "dd808d3344ca",
+        "a86a84f2b233"
       ]
     },
     "spec/datingRadius.md": {
@@ -1854,10 +2239,10 @@
         "8ef0a1650c91"
       ],
       "## Story: Review a proposal before contacting anyone": [
-        "59f300717df4"
+        "5011d39f85ab"
       ],
       "Story: Review a proposal before contacting anyone / An opportunity starts in review": [
-        "49fdce08721e",
+        "df7eb573e52a",
         "75040cc11bfe"
       ],
       "## Story: Book and conclude a proposal that comes together": [
@@ -1891,10 +2276,14 @@
         "7adbfcf58a5a",
         "28f0bab98bb9"
       ],
-      "Story: Book and conclude a proposal that comes together / A new minor signal closes an unbooked opportunity involving that person": [
-        "2cd521162665",
-        "b63170e51aa6",
-        "9724ae412cf3"
+      "Story: Book and conclude a proposal that comes together / A new minor signal closes an opportunity involving that person": [
+        "14e0599629be",
+        "239d1055d05b",
+        "d90224af7a8d"
+      ],
+      "Story: Book and conclude a proposal that comes together / A minor signal ends the recurring plans that the minor knows": [
+        "10a95a4385f1",
+        "bd6305af343a"
       ],
       "Story: Book and conclude a proposal that comes together / A block closes an open opportunity for the active pair": [
         "4f146764adf9",
@@ -1910,6 +2299,27 @@
         "e6a1381205af",
         "0623f8ead781",
         "9724ae412cf3"
+      ],
+      "Story: Book and conclude a proposal that comes together / Closing by the requester releases each contacted person who said yes": [
+        "2e3093d2ffe7",
+        "eb7064e908f4",
+        "9724ae412cf3"
+      ]
+    },
+    "spec/reviewDeadline.md": {
+      "@document": [
+        "9604240cbb9b"
+      ],
+      "## Story: Act on a proposal while review is open": [
+        "a14f7fc28b52"
+      ],
+      "Story: Act on a proposal while review is open / An opportunity expires at its review deadline": [
+        "7e2a23865dbd",
+        "dc0b88a6ce06"
+      ],
+      "Story: Act on a proposal while review is open / A decision applies only to the revision the reviewer saw": [
+        "5d96af842ab4",
+        "35aca63bef80"
       ]
     },
     "spec/probeDispatch.md": {
@@ -1920,27 +2330,54 @@
         "508214b09583"
       ],
       "Story: Hear about one reviewed opportunity at a time / The first participant opens the later turns": [
-        "7ee9c77ef4cc",
-        "042730ae50ac"
+        "88add51f0168",
+        "1f30c106dc43"
       ],
       "Story: Hear about one reviewed opportunity at a time / Wait for the member's send window and current availability": [
-        "c78964ec13f1",
-        "abed5fb2c140",
-        "a0c2f8a0c604"
+        "1c60c9663429",
+        "4c462ed5803f",
+        "ef63ccc41057"
       ],
       "Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe": [
-        "a954856e2893",
-        "3795b15d18cc",
-        "a0c2f8a0c604"
+        "59d6a2d67960",
+        "b53c84fbf9c9",
+        "ef63ccc41057"
       ],
       "Story: Hear about one reviewed opportunity at a time / A Slop answer follows acceptance of the exact question": [
         "5146e68e68df",
         "7abf91015c3d"
       ],
       "Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members": [
-        "e04aefa87d13",
-        "4867f5643913",
+        "706025e40914",
+        "00f34845def8",
         "d90224af7a8d"
+      ],
+      "Story: Hear about one reviewed opportunity at a time / A replacement keeps a requester's yes and asks again every other member who heard about the earlier roster": [
+        "9b88dbb78c41",
+        "ad3960348464",
+        "0ddc4a0da705"
+      ],
+      "Story: Hear about one reviewed opportunity at a time / Nobody is introduced without a yes to the current roster": [
+        "5c481cc5f4d3",
+        "a300ae05c880",
+        "ef63ccc41057"
+      ],
+      "Story: Hear about one reviewed opportunity at a time / A queued probe goes out only for the roster that it describes": [
+        "45420db2c171",
+        "a545955e5ec9"
+      ],
+      "Story: Hear about one reviewed opportunity at a time / A group plan backfill keeps the words that each member heard": [
+        "150efd07350d",
+        "393813ea3363"
+      ],
+      "Story: Hear about one reviewed opportunity at a time / An activity-partner plan asks the member who agreed again before its alternate": [
+        "b7be37dbc9f7",
+        "f241ff0e45a4"
+      ],
+      "Story: Hear about one reviewed opportunity at a time / A reviewer can read each first probe of the open revision": [
+        "ab02c3cab81f",
+        "2122c92bbd40",
+        "744acb742fe2"
       ]
     },
     "spec/engineAsks.md": {
@@ -1965,7 +2402,7 @@
       "Story: Ask for the information needed to find a match / A queued question still belongs to the member's open turn": [
         "d3be45a462d3",
         "85b21619dd42",
-        "4627c447d289"
+        "8a255607d9b5"
       ]
     },
     "spec/memberInvitation.md": {
@@ -1992,7 +2429,7 @@
         "aef4842a2d14"
       ],
       "Story: Forward an invitation for someone I know / A new verified acceptance can be attributed": [
-        "67c9f9700aef",
+        "776c9cfa4eea",
         "cdf0505606c9"
       ]
     },
@@ -2004,41 +2441,24 @@
         "d8e282fa3d6e"
       ],
       "Story: Send an invitation that the recipient expects / Only a confirmed expected invitation can enter the shared line queue": [
-        "a3d7e1353a20",
-        "e4cd1720703a",
+        "b504a3ee7bba",
+        "7159c36fc440",
         "35563c1a52b6"
       ],
       "Story: Send an invitation that the recipient expects / One durably claimed dispatch may contact the recipient": [
         "e9f1ce9a852f",
         "81f5c3741726",
-        "9bc254b0b8cd"
+        "eda60d8a5188"
       ],
       "Story: Send an invitation that the recipient expects / Only the intended verified recipient can accept": [
         "9ae6748e08bf",
         "78362dab4017",
-        "9bc254b0b8cd"
+        "eda60d8a5188"
       ],
       "Story: Send an invitation that the recipient expects / Decline, suppression and expiry end the invitation": [
         "89d2a0da6624",
         "d9bca68f978a",
-        "9bc254b0b8cd"
-      ]
-    },
-    "spec/exposureFloor.md": {
-      "@document": [
-        "35766eeebf70"
-      ],
-      "## Story: Reserve exposure for eligible candidates with little history": [
-        "6b2eaa27bf26"
-      ],
-      "Story: Reserve exposure for eligible candidates with little history / Retrieval starts with a fixed allocation of slots": [
-        "637cab5dc3fd",
-        "6bea1da2947e"
-      ],
-      "Story: Reserve exposure for eligible candidates with little history / A slot goes to an eligible candidate outside the prior results": [
-        "66127d85f3fa",
-        "c5735fac2583",
-        "8b5e60f5717b"
+        "eda60d8a5188"
       ]
     },
     "spec/friendsPlanningSeats.md": {
@@ -2138,15 +2558,15 @@
         "934b71fe76de"
       ],
       "## Story: Offer a private reviewed follow-up after mutual gathering interest": [
-        "c500373443d6"
+        "c27077c5ecc8"
       ],
       "Story: Offer a private reviewed follow-up after mutual gathering interest / A current exact mutual choice can enter review once per gathering pair": [
-        "d621d9098217",
-        "4f475ec79af8"
+        "5ff93603b55d",
+        "b207fd008e93"
       ],
       "Story: Offer a private reviewed follow-up after mutual gathering interest / Review and each new reply are separate from the earlier mutual choice": [
-        "bbac04b98ae5",
-        "90a763942c6e"
+        "58003fbee4c5",
+        "a7324a4314d0"
       ]
     },
     "spec/gatheringRepeatDelivery.md": {
@@ -2157,8 +2577,8 @@
         "86bba9294a8e"
       ],
       "Story: Receive a reviewed second-encounter proposal safely / A probe or initial reveal must match the reviewed opportunity and current source": [
-        "144a192823ce",
-        "28a0c0f6d6ca"
+        "38d5cc18b5eb",
+        "cea77a954ece"
       ]
     },
     "spec/groupFormation.md": {
@@ -2169,19 +2589,19 @@
         "d792921e858b"
       ],
       "Story: Form a compatible group and keep eligible backups / Only eligible adults enter the group search": [
-        "bc8895dc4133",
-        "8a480ac6b03b",
+        "482dff9bbd0a",
+        "937d06b78dc4",
         "04efe10542e7"
       ],
       "Story: Form a compatible group and keep eligible backups / A primary group has a common place and meets its requirements": [
-        "1cd313b03d7a",
-        "94d732d07d4c",
-        "18bcda887ab8"
+        "87d76804be3e",
+        "71846cf775b2",
+        "f1a8513a2758"
       ],
       "Story: Form a compatible group and keep eligible backups / A primary circle values every pair and keeps a narrow standing spread": [
         "f6b6f1422853",
         "9931a3cd8c06",
-        "2ef40524262e"
+        "de4dd5aa0e1a"
       ],
       "Story: Form a compatible group and keep eligible backups / A member's share of a circle is highest when the circle is a clique": [
         "5b6859c79503",
@@ -2190,7 +2610,18 @@
       "Story: Form a compatible group and keep eligible backups / An alternate can join the primary group in its city": [
         "542273de05fc",
         "01bc7f2b3b1d",
-        "18bcda887ab8"
+        "f1a8513a2758"
+      ],
+      "## Story: Grow circles that fit and keep crews together": [
+        "b63d8a3d5134"
+      ],
+      "Story: Grow circles that fit and keep crews together / An earlier circle is tried before new triangles": [
+        "ba984f9a576a",
+        "567f0c18577e"
+      ],
+      "Story: Grow circles that fit and keep crews together / A swap between two circles raises the lower of their lowest pair values": [
+        "b0706a579dc5",
+        "ca8f1a9fa49d"
       ]
     },
     "spec/groupHost.md": {
@@ -2408,6 +2839,51 @@
         "57659fb5fe8d"
       ]
     },
+    "spec/lineRouting.md": {
+      "@document": [
+        "10bd0560dd69"
+      ],
+      "## Story: Keep carrier commands, bans and age ahead of every other reading": [
+        "654aecd5c3a5"
+      ],
+      "Story: Keep carrier commands, bans and age ahead of every other reading / STOP ends the message before any other check": [
+        "ad37083c1a26",
+        "8087bf1acbda"
+      ],
+      "Story: Keep carrier commands, bans and age ahead of every other reading / A banned number gets only HELP and app leave": [
+        "544c9896d0ea",
+        "09e7ef9a4e01",
+        "66be5853f089"
+      ],
+      "Story: Keep carrier commands, bans and age ahead of every other reading / A confirmed age under 13 gets only HELP and app leave": [
+        "dc9e20aa2006",
+        "8b24106769f0",
+        "d5dc580716ed"
+      ],
+      "Story: Keep carrier commands, bans and age ahead of every other reading / An invitation decline and a held number come before any flow": [
+        "6519f778735b",
+        "2282cf280499",
+        "35ed51293386"
+      ],
+      "Story: Keep carrier commands, bans and age ahead of every other reading / Every app leave gets one honest reply": [
+        "a1f690ec4ee3",
+        "8bdad41ff7a2"
+      ],
+      "## Story: Join the apps I asked for from The Network": [
+        "6bf66e5f64dd"
+      ],
+      "Story: Join the apps I asked for from The Network / A refused app is never enrolled, even with \"all of them\"": [
+        "438d5f6ac70e",
+        "872f75e74a68"
+      ],
+      "## Story: Report a person in the app where I met them": [
+        "ed5cdf3d7285"
+      ],
+      "Story: Report a person in the app where I met them / A block, a report and the answer to \"Who do you mean?\" go to the app where they belong": [
+        "9f36b34b699f",
+        "d7cf9e9a5efa"
+      ]
+    },
     "spec/matchingBudgets.md": {
       "@document": [
         "de306100fea4"
@@ -2463,34 +2939,47 @@
         "e85327e5856c",
         "e0493add8bdb",
         "8c7a06664450"
+      ],
+      "Story: Recover an agent profile submission without sending it again / The Network keeps no copy of the agent's profile text": [
+        "8aa8a52712a8",
+        "7b5d55293be7"
       ]
     },
     "spec/mcpSignupDraft.md": {
       "@document": [
-        "7ea40e9ebeb5"
+        "bbdab5025dee"
       ],
       "## Story: Prepare an editable Join form after authorization": [
-        "80381ce97128"
+        "bd0bc1ae0721"
       ],
       "Story: Prepare an editable Join form after authorization / The draft belongs to the app on the connection": [
         "d0595e36db4e",
         "c97b2ad46e67"
       ],
       "Story: Prepare an editable Join form after authorization / A live connection prepares one draft under the age guard": [
-        "eff0b5ba6653",
-        "918851b32c7d"
+        "d8b2ef4ffae3",
+        "67da75c988dd"
       ],
-      "## Story: Recover the same draft until Join or expiry": [
-        "cd185fcd4866"
+      "## Story: Drop the draft when I can no longer use it": [
+        "a8ae21d65c77"
       ],
-      "Story: Recover the same draft until Join or expiry / The site checks the session and membership before asking for the draft": [
-        "64f915d390b1",
-        "c29ed84962ec",
-        "1f2d1579e4b9"
+      "Story: Drop the draft when I can no longer use it / The Finish signup step keeps the draft only for a person who can still join": [
+        "ff1e4212d261",
+        "146932699b57",
+        "a69ca184a377"
       ],
-      "Story: Recover the same draft until Join or expiry / A compatible grant and exactly one draft are needed for a read": [
-        "8218fff1977b",
-        "2b3b6cf4bb96"
+      "Story: Drop the draft when I can no longer use it / A draft is written only under the grant that saves it, and only the signup prefill reads it": [
+        "09f9a4d75fd7",
+        "3080ef7ecc68"
+      ],
+      "Story: Drop the draft when I can no longer use it / The signup result settles the draft": [
+        "8860a20ef93d",
+        "fff31284afc8"
+      ],
+      "Story: Drop the draft when I can no longer use it / A recorded age that the app does not allow deletes the draft at once": [
+        "eacee81b5409",
+        "b612212f70e1",
+        "a5e54d3db5e0"
       ]
     },
     "spec/meetingReschedule.md": {
@@ -2541,12 +3030,12 @@
         "8533722a6a18"
       ],
       "Story: Hear about a booked meeting the day before / Claim a reminder only after the member received the current booking notice": [
-        "69f75e745f1b",
-        "9b5dbbb99f6f"
+        "74b87dd91933",
+        "8eb5afadd6e6"
       ],
       "Story: Hear about a booked meeting the day before / Claim a cancellation only for a member who received booking details": [
-        "c97aa43d7fb7",
-        "f8f15e0a5f98"
+        "3b24c74856b1",
+        "9da160a3905d"
       ],
       "## Story: Check whether a booked participant is still coming": [
         "c441eaf6c81e"
@@ -2582,7 +3071,7 @@
         "8b18776d431d"
       ],
       "Story: Ask for feedback and close attendance once / Learn a dating availability slot from the booked time": [
-        "b1ab87f7b9a6",
+        "986edf375022",
         "443efcb921a5"
       ],
       "Story: Ask for feedback and close attendance once / Count one attendance outcome per person and booked date": [
@@ -2613,6 +3102,17 @@
       "Story: Ask for feedback and close attendance once / Verified value needs an independent attendance confirmation": [
         "ea4e7937b7cf",
         "4feb132489b3"
+      ],
+      "## Story: Choose a report or a block after a meeting that went wrong": [
+        "52965bf8cd04"
+      ],
+      "Story: Choose a report or a block after a meeting that went wrong / A check-in answer that describes a problem asks once whether to report or block": [
+        "54b82a7c7211",
+        "ff114ea26171"
+      ],
+      "Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes": [
+        "f1272a7020ad",
+        "6eb2d3f85bda"
       ]
     },
     "spec/memberRequest.md": {
@@ -2631,8 +3131,8 @@
         "988690c1a5f3"
       ],
       "Story: Ask to meet someone and change my mind while the search is open / Only the member's pending request for a withdrawn desire closes": [
-        "6e98f786c21d",
-        "83e114274a0a",
+        "75b08b9a994d",
+        "1890e731806a",
         "f9d5e59c28d5"
       ],
       "Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window": [
@@ -2641,31 +3141,31 @@
         "f9d5e59c28d5"
       ],
       "Story: Ask to meet someone and change my mind while the search is open / A candidate proceeds to review with prior interest only when appropriate": [
-        "d39b97f3e362",
+        "1671b5046abb",
         "45cf869b13c3",
         "f9d5e59c28d5"
       ]
     },
     "spec/memberRequestJourney.md": {
       "@document": [
-        "f1c15693b850"
+        "8d7f4cd5b1fe"
       ],
       "## Story: Keep control of my request for an introduction": [
         "ecf7154e92fb"
       ],
       "Story: Keep control of my request for an introduction / A repeat ask keeps the current request": [
-        "72783ea755d1",
-        "bf216c7e1c59"
+        "0d485e932d1e",
+        "ef474cccd2aa"
       ],
       "Story: Keep control of my request for an introduction / A newly available candidate can take the waiting search to review": [
         "06d77d941cdc",
-        "0079d5adf1d8",
-        "5b5571d29a08"
+        "ab309fca6c41",
+        "962a44f7e3e3"
       ],
       "Story: Keep control of my request for an introduction / Withdrawal clears a waiting review and remains closed after restart": [
         "a566e167228e",
-        "f3e9d235323c",
-        "5531b4701956"
+        "871f55714d10",
+        "5f68fc622f6c"
       ]
     },
     "spec/memberStanding.md": {
@@ -2676,13 +3176,13 @@
         "50756da53078"
       ],
       "Story: Estimate standing from facts, never from popularity / Standing exists only for an adult who consented to the lane": [
-        "355df35bcdba",
-        "aa546c1bdd63"
+        "bd1c3f175fe9",
+        "52aac0b58e43"
       ],
       "Story: Estimate standing from facts, never from popularity / Standing history requires current account and lane authority": [
-        "61221a4219b7",
-        "995a7ddce62a",
-        "8075e784c305"
+        "bb0141036242",
+        "aa6682b2a1c8",
+        "a48fee7ed99f"
       ],
       "Story: Estimate standing from facts, never from popularity / Ordinary standing evidence uses the member's current matching scope": [
         "aa43b0000b9a",
@@ -2691,12 +3191,17 @@
       "Story: Estimate standing from facts, never from popularity / Standing adds reviewed facts in full and unreviewed facts at half": [
         "58f70dd01364",
         "4db130ca49d6",
-        "5a4744d6cc8f"
+        "93aa8f5f35af"
       ],
-      "Story: Estimate standing from facts, never from popularity / A private photo rating maps onto the standing scale for dating": [
-        "012b87c73930",
-        "3b9d12ea7d0a",
-        "5cee63501c31"
+      "Story: Estimate standing from facts, never from popularity / A private photo rating gives a percentile among rated adults of the same market and pool": [
+        "722c49a1b770",
+        "543345022637",
+        "0870abdaac1c"
+      ],
+      "Story: Estimate standing from facts, never from popularity / One rated adult who joins a pool moves another member's percentile by at most the weekly step": [
+        "f661d7cd7392",
+        "04334c6f8a88",
+        "b35318814c8d"
       ],
       "## Story: Treat a new member with wide uncertainty": [
         "9243556de6ed"
@@ -2704,12 +3209,22 @@
       "Story: Treat a new member with wide uncertainty / A member with no reviewed facts gets the widest uncertainty": [
         "320ee44f981b",
         "5e3e82bd9b3c",
-        "5a4744d6cc8f"
+        "93aa8f5f35af"
       ],
       "Story: Treat a new member with wide uncertainty / Another reviewed fact never widens the uncertainty": [
         "e3b0c44298fc",
         "fa61503eec9f",
-        "fca27be31faa"
+        "fd7817915b98"
+      ],
+      "Story: Treat a new member with wide uncertainty / A photo rating's uncertainty narrows with rated photos and widens with their disagreement": [
+        "483e55cfffeb",
+        "b6a48e856388",
+        "fd7817915b98"
+      ],
+      "Story: Treat a new member with wide uncertainty / A standing that staff reviewed as a property of the offer has the floor uncertainty": [
+        "9d9989f18753",
+        "2ceaa091b37c",
+        "fd7817915b98"
       ],
       "## Story: Move standing slowly": [
         "076920ecd1d9"
@@ -2717,17 +3232,17 @@
       "Story: Move standing slowly / Standing moves toward its target by at most five points a week": [
         "efd05f930544",
         "9fcffae12a10",
-        "5cee63501c31"
+        "0870abdaac1c"
       ],
       "Story: Move standing slowly / Standing reaches a target that is within one step": [
         "e3b0c44298fc",
         "14a449ba5bae",
-        "6f51202d973a"
+        "be0e2bf7a413"
       ],
       "Story: Move standing slowly / The first observation initializes standing and a due observation advances it once": [
         "9a8b4928ca1f",
         "55aac4396db0",
-        "6f51202d973a"
+        "be0e2bf7a413"
       ]
     },
     "spec/monthlyGathering.md": {
@@ -2776,7 +3291,7 @@
         "f3144ab6bc81"
       ],
       "Story: Receive an invitation to the reviewed gathering / One approved text goes through the usual outbound controls": [
-        "e5d295af30e3",
+        "d4a520e73a35",
         "0904e04dc231"
       ]
     },
@@ -2874,7 +3389,7 @@
     },
     "spec/mutualConsentJourney.md": {
       "@document": [
-        "c62c1f0fff9f"
+        "c9d858d1c053"
       ],
       "## Story: Book the introduction only after both members agree": [
         "8923c2679475"
@@ -2882,22 +3397,67 @@
       "Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant": [
         "29384c5bcc97",
         "5eeab7234197",
-        "a120af7a25d9"
+        "84cadb62c4f8"
       ],
       "Story: Book the introduction only after both members agree / The partner probe waits for their send window": [
         "8a0f2950b1d7",
         "514d1d5521a4",
-        "641c497b1a69"
+        "a12ce7dad50d"
       ],
       "Story: Book the introduction only after both members agree / Collection and gateway acceptance remain distinct": [
         "f35b66970716",
         "05d2f6557b31",
-        "641c497b1a69"
+        "a12ce7dad50d"
+      ]
+    },
+    "spec/mutualOpenness.md": {
+      "@document": [
+        "1475dfc13a42"
+      ],
+      "## Story: Meet only people who are open to me": [
+        "a7831816d036"
+      ],
+      "Story: Meet only people who are open to me / A dating pair is admissible only when each member is inside the other's openness": [
+        "694c64e75311",
+        "499bb1c04de6"
+      ],
+      "Story: Meet only people who are open to me / A gender outside the other's seeking set is refused": [
+        "ab75e0c19601",
+        "799a8c08c6c3",
+        "fe5a181fd20f"
+      ],
+      "Story: Meet only people who are open to me / A member whose gender is not stated is not admissible in Date": [
+        "e3b0c44298fc",
+        "dfe25a0530f9",
+        "fe5a181fd20f"
+      ],
+      "Story: Meet only people who are open to me / A member who stated trans meets only members who said they are open": [
+        "047e0a0f963c",
+        "5bd0392daf7e",
+        "fe5a181fd20f"
+      ],
+      "Story: Meet only people who are open to me / Only trans partners is available only to a member who stated trans": [
+        "e3b0c44298fc",
+        "1a12ff869add",
+        "fe5a181fd20f"
+      ],
+      "Story: Meet only people who are open to me / The Date segment never refuses an admissible pair": [
+        "0c6060aaaa49",
+        "8a446ff4c4ef",
+        "fe5a181fd20f"
+      ],
+      "## Story: Choose who I make friends with": [
+        "e6bb8fd4e735"
+      ],
+      "Story: Choose who I make friends with / A friend pair is admissible only when each member is inside the other's friendship openness": [
+        "baa65a82f430",
+        "8bfa2ad4dfde",
+        "fe5a181fd20f"
       ]
     },
     "spec/networkIntentLane.md": {
       "@document": [
-        "34e178b87a85"
+        "e5e1168d44dd"
       ],
       "## Story: Use my request as the purpose of the introduction": [
         "af5a9e1b434f"
@@ -2952,7 +3512,7 @@
         "ff382065f581"
       ],
       "Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current": [
-        "b3ddb075fa2d",
+        "d48285095b90",
         "3e81441563ca"
       ],
       "Story: See my own updates on the surface I am using / Only a live update token of this member can resolve items": [
@@ -3015,21 +3575,21 @@
         "66b1ef1d82b1"
       ],
       "Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest": [
-        "1d41862d9b76",
-        "206b41175d5b"
+        "b5e6ab89f8cd",
+        "a586d5db7c2d"
       ],
       "Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest": [
-        "a4b789ac8686",
-        "3e2ac1f5f195",
-        "e17b012319af"
+        "343d8fdb57d2",
+        "6caad6308fbb",
+        "c2fef2724fab"
       ],
       "Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part": [
         "3c830f28841c",
         "9af6e881582f",
-        "e17b012319af"
+        "c2fef2724fab"
       ],
       "Story: Get a pending inbox update only while it is relevant / Recheck assistant access before claiming an immutable queued text": [
-        "5a0b89b01a9b",
+        "8c27c1150937",
         "da3f8ef0bb45"
       ]
     },
@@ -3114,8 +3674,8 @@
         "5990c5683939"
       ],
       "Story: Use and renew an approved connector grant / The request needs current grant authority and must stay within its consent": [
-        "391cdbe44c34",
-        "8c853937ef50",
+        "e6758708cedd",
+        "23939104ac4c",
         "a266881afd06"
       ],
       "Story: Use and renew an approved connector grant / Token issuance requires consumption or rotation in storage": [
@@ -3197,22 +3757,6 @@
         "084943d5fd7e"
       ]
     },
-    "spec/reviewDeadline.md": {
-      "@document": [
-        "9604240cbb9b"
-      ],
-      "## Story: Act on a proposal while review is open": [
-        "a14f7fc28b52"
-      ],
-      "Story: Act on a proposal while review is open / An opportunity expires at its review deadline": [
-        "c39fcfd83356",
-        "dc0b88a6ce06"
-      ],
-      "Story: Act on a proposal while review is open / A decision applies only to the revision the reviewer saw": [
-        "5d96af842ab4",
-        "35aca63bef80"
-      ]
-    },
     "spec/operationsTiming.md": {
       "@document": [
         "6af6654bec63"
@@ -3236,9 +3780,53 @@
         "2dafdc62477a"
       ]
     },
+    "spec/publicEventCatalog.md": {
+      "@document": [
+        "656f76e23c43"
+      ],
+      "## Story: Find a current public event": [
+        "f35d926d953e"
+      ],
+      "Story: Find a current public event / Use only an upcoming event from the allowed in-person supply": [
+        "ed00a7e1c40d",
+        "e22a91f02556"
+      ],
+      "Story: Find a current public event / A successful complete scan replaces the previous source and expires if refresh stops": [
+        "41759472442a",
+        "db2630778a24"
+      ],
+      "Story: Find a current public event / A source id identifies a single normalized listing in each scan": [
+        "a8e15929d4ec",
+        "86ea96abf116"
+      ],
+      "Story: Find a current public event / A contact or booking uses the same current listing that entered review": [
+        "a417fef33107",
+        "f9f617c45f07"
+      ],
+      "Story: Find a current public event / A queued event contact still needs the reviewed listing at final claim": [
+        "14055bb67e08",
+        "74c9fafb26b7"
+      ],
+      "Story: Find a current public event / A closed event opportunity without contact does not use a matching slot": [
+        "e95d7a1b8470",
+        "225432992638"
+      ],
+      "Story: Find a current public event / The send guard allows the exact official link in a booked confirmation": [
+        "4746322d3016",
+        "5101b2d2e329"
+      ],
+      "## Story: Keep the deployed catalog current": [
+        "e4d20fc38830"
+      ],
+      "Story: Keep the deployed catalog current / The backend scans once a day, at most one process at a time, and waits after a failed attempt": [
+        "3eda944f0130",
+        "d1b9143d65a8",
+        "37e4c784d13d"
+      ]
+    },
     "spec/opsAlertDispatch.md": {
       "@document": [
-        "062ef79870e2"
+        "cc4b26a06705"
       ],
       "## Story: Receive useful operations alerts without duplicate notices": [
         "f71dd9bffada"
@@ -3269,6 +3857,33 @@
       "Story: Report the result of each operations round / A completed round reports the post separately from its heartbeat": [
         "9a4ca043cd9b",
         "d924c83037bd"
+      ],
+      "## Story: Hear when a shared-line turn may have reached nobody": [
+        "5b6bae5fc904"
+      ],
+      "Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold": [
+        "ed0ecbc5ae0f",
+        "3fc381e09d65"
+      ],
+      "Story: Hear when a shared-line turn may have reached nobody / Each condition is one alert, and a possible STOP makes it bad and first": [
+        "d6c73604d34a",
+        "3d81082880e4",
+        "6c3c9b719327"
+      ],
+      "## Story: Hear when the public event catalog stops refreshing": [
+        "5c38138e9824"
+      ],
+      "Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry": [
+        "6f39e9d27e0c",
+        "b83dec09a0be",
+        "62f3f9a3d516"
+      ],
+      "## Story: Hear when the review judge stops working or approves too much": [
+        "09da65953e0d"
+      ],
+      "Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate": [
+        "346e0ced5c10",
+        "a4a6630ea3be"
       ]
     },
     "spec/otpLimits.md": {
@@ -3283,22 +3898,22 @@
         "cb0ce52f72b1"
       ],
       "Story: Prove ownership of my phone / Code sends have limits shared across apps": [
-        "bf03d00ff667",
-        "8e75e2b30de6"
+        "d70c989cbd59",
+        "7b4d5c741864"
       ],
       "Story: Prove ownership of my phone / Code checks also have limits shared across apps": [
-        "a9ed32454f74",
+        "583b3242a223",
         "de8a4256c9ff"
       ],
       "Story: Prove ownership of my phone / Start keeps its public response private": [
-        "3ca8a4447e3a",
-        "62d16e7cc6f0",
-        "5dae7d01b40a"
+        "d64cbf8c96fe",
+        "987c3b4e22dd",
+        "da36198db24a"
       ],
       "Story: Prove ownership of my phone / Verification needs a claimed attempt, the right code, and a successful consume": [
         "737b39f0209a",
         "56fe370c881a",
-        "5dae7d01b40a"
+        "da36198db24a"
       ]
     },
     "spec/outboundAdmission.md": {
@@ -3308,9 +3923,9 @@
       "## Story: Recheck a queued message at send time": [
         "71ae3fdcca92"
       ],
-      "Story: Recheck a queued message at send time / A current row needs live approval and the recipient's eligibility": [
-        "07a4b2c63beb",
-        "d078281c618c"
+      "Story: Recheck a queued message at send time / A current row needs a delivering line and the recipient's eligibility": [
+        "656aae568efd",
+        "c80484164ad8"
       ],
       "Story: Recheck a queued message at send time / A cancelled booking can notify a participant who received the booked plan": [
         "cf7c3d59525a",
@@ -3319,17 +3934,30 @@
       "Story: Recheck a queued message at send time / A queued match invitation still needs the member's current settings": [
         "e8014a996b04",
         "824bfc7bcd8c",
-        "97b92b593b81"
+        "ed53fc44f5d0"
       ],
       "Story: Recheck a queued message at send time / Recheck blocks between the participants before contact": [
-        "6493b145256d",
+        "ec3a9b895ebd",
         "f5152428f1fd",
-        "97b92b593b81"
+        "ed53fc44f5d0"
       ],
       "Story: Recheck a queued message at send time / Replies, quiet hours and unanswered messages limit when a send can go out": [
-        "9387740e30e4",
+        "553fc40f4dd8",
         "39c349199847",
-        "97b92b593b81"
+        "ed53fc44f5d0"
+      ],
+      "Story: Recheck a queued message at send time / A row does not wait for an answer that the person already gave": [
+        "7e11e077038a",
+        "36c60bdaa6bb",
+        "ed53fc44f5d0"
+      ],
+      "Story: Recheck a queued message at send time / A check that cannot answer delays the row and never sends it": [
+        "db141214a45b",
+        "308fd517e4c4"
+      ],
+      "Story: Recheck a queued message at send time / A claim needs the Network state that its checks read": [
+        "85702c0d6c87",
+        "b78299615a9e"
       ],
       "Story: Recheck a queued message at send time / A STOP or an app leave does not release a text held for an answer": [
         "324f27103fc5",
@@ -3338,7 +3966,7 @@
       "Story: Recheck a queued message at send time / Apply line controls and sending caps before checking the text": [
         "121a37135325",
         "7c3236cbdff4",
-        "97b92b593b81"
+        "ed53fc44f5d0"
       ]
     },
     "spec/outboundReceipt.md": {
@@ -3349,23 +3977,77 @@
         "a6054067db5e"
       ],
       "Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read": [
-        "20fc73fb3409",
-        "343b5f699154"
+        "e7acf096a398",
+        "7110e2174efa"
       ],
       "Story: Know whether a queued message reached the provider / A terminal receipt preserves the recipient cap after payload erasure": [
         "d3f9b354a5d4",
         "55816413b9d0",
-        "8025eec13db3"
+        "910f2b2bcfe5"
       ],
       "Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again": [
         "bec16bda5279",
         "78d885ebf9e8",
-        "8025eec13db3"
+        "910f2b2bcfe5"
       ],
       "Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send": [
         "0e73bc750ac8",
         "5f901f5cedca",
-        "8025eec13db3"
+        "910f2b2bcfe5"
+      ],
+      "Story: Know whether a queued message reached the provider / A send that may have reached the person keeps its person-cap slot": [
+        "0b2381865192",
+        "ed0bccee7b6a",
+        "910f2b2bcfe5"
+      ],
+      "Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out": [
+        "c0cb7efd0057",
+        "fd20d6925aca",
+        "ee079c39b6ff"
+      ],
+      "Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline": [
+        "6f4f7a894b64",
+        "eab6f8b8b701",
+        "600b5ac2f1df"
+      ]
+    },
+    "spec/postingPolicy.md": {
+      "@document": [
+        "f6f48cd437ec"
+      ],
+      "## Story: Only the manager's own text controls a job posting": [
+        "01404a1f4e29"
+      ],
+      "Story: Only the manager's own text controls a job posting / Only the member's own text in the thread issues a command": [
+        "efd6a070212f",
+        "6fc6e318cdcf"
+      ],
+      "## Story: Publish a job with a clear pay range": [
+        "c0f54cc83e28"
+      ],
+      "Story: Publish a job with a clear pay range / Job drafts need a title and pay range before read-back": [
+        "9438b34acdcf",
+        "25db0b01bf43"
+      ],
+      "Story: Publish a job with a clear pay range / A post with a workplace needs a supported area": [
+        "5cbda4f8793f",
+        "12dae5e9c7b1"
+      ],
+      "Story: Publish a job with a clear pay range / A posting has between one and fifty openings": [
+        "74012fe60a5c",
+        "3959745c4314"
+      ],
+      "Story: Publish a job with a clear pay range / The low end of the pay range comes first": [
+        "580132da8462",
+        "197756db686f"
+      ],
+      "Story: Publish a job with a clear pay range / Confirm only the posting shown in the read-back": [
+        "24b2b36ef51d",
+        "e755bdb8eed3"
+      ],
+      "Story: Publish a job with a clear pay range / A stale yes never reopens or overwrites a posting that staff changed or closed": [
+        "866439b723ab",
+        "c38b097ec925"
       ]
     },
     "spec/outreachPolicy.md": {
@@ -3379,12 +4061,17 @@
         "7ff530331d1c",
         "0100f651dcb3"
       ],
+      "Story: Limit unsolicited messages across apps / An initial invitation fits the member's participation state budget": [
+        "4c9a5757c193",
+        "8f6b2a9ca187"
+      ],
       "## Story: Pause new offers after two unanswered invitations": [
         "d90d9897f883"
       ],
       "Story: Pause new offers after two unanswered invitations / Count a sent invitation at terminal expiry or after 72 hours": [
-        "6824b7fdf32a",
-        "5852f1232785"
+        "e10b032f1883",
+        "e8dca7c8b2f5",
+        "700b8e6408a3"
       ],
       "Story: Pause new offers after two unanswered invitations / Re-engagement requires current evidence of silence": [
         "5283404f3a29",
@@ -3394,8 +4081,8 @@
         "cd25d4a5a445"
       ],
       "Story: Keep minors out of introductions and recruiting / Recruiting is an adult-only message at the time it is sent": [
-        "635342d30240",
-        "5c2fdf67aa08"
+        "ba403c373d45",
+        "839ecf9e69c3"
       ],
       "## Story: Hear when someone I invited joins": [
         "0c4cfb508535"
@@ -3532,7 +4219,7 @@
         "35d7f21617f7"
       ],
       "Story: Meet another member who wants a cofounder / Two eligible peers must share a home market": [
-        "71432cb29640",
+        "5a756ef8cb6a",
         "f961911e38f7"
       ]
     },
@@ -3544,7 +4231,7 @@
         "ff8a7a7195da"
       ],
       "Story: Stay in charge of a Peon job search / A review covers this candidate search and these posting terms": [
-        "3cd52d095251",
+        "6b6454e8f902",
         "98e1d41abf2a"
       ],
       "Story: Stay in charge of a Peon job search / An employer hears only after the candidate accepts": [
@@ -3562,34 +4249,38 @@
     },
     "spec/phoneChange.md": {
       "@document": [
-        "6af23c733bdb"
+        "4b3b3accca37"
       ],
       "## Story: Keep my account when my phone changes": [
         "bfeaaed217bd"
       ],
       "Story: Keep my account when my phone changes / The request uses the existing account": [
-        "98ad48a0320e",
-        "cd924311e665"
+        "ab15007285fe",
+        "2494796e734c"
       ],
       "Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request": [
-        "46c0d70a408b",
-        "740f74ad386d",
-        "d47ed7170e55"
+        "632a2d13b7a8",
+        "3d5db8ef3eec",
+        "2ffd80aa60bc"
       ],
       "Story: Keep my account when my phone changes / A live pending request needs a valid code": [
         "4729d79a3f6d",
         "705ad0ff33db",
-        "d47ed7170e55"
+        "2ffd80aa60bc"
       ],
       "Story: Keep my account when my phone changes / The verified request can move only when both numbers allow it": [
         "20975a184faa",
         "abc2c0f2afd7",
-        "d47ed7170e55"
+        "2ffd80aa60bc"
       ],
       "Story: Keep my account when my phone changes / Reporting a move requires both the new code and current move authority": [
         "4ab7705795d7",
         "52d557c1837f",
-        "d47ed7170e55"
+        "2ffd80aa60bc"
+      ],
+      "Story: Keep my account when my phone changes / After a move the browser signs in on the new number in its own sign-in mode": [
+        "ea017aaa5171",
+        "cf404ad2b4aa"
       ]
     },
     "spec/photoPolicy.md": {
@@ -3620,7 +4311,7 @@
         "15e925e05b03"
       ],
       "Story: Keep a private rating only while its photos and authority are current / Only an eligible member with available photo bytes reaches the rater": [
-        "37a256642e70",
+        "af6a35454666",
         "b8801c3da641"
       ],
       "Story: Keep a private rating only while its photos and authority are current / Write only after the returned score passes a fresh authority check": [
@@ -3636,46 +4327,89 @@
     },
     "spec/photoRelayItem.md": {
       "@document": [
-        "3e9bb09b38bd"
+        "169a5ad8bff9"
       ],
-      "## Story: Deliver only the approved selected photo": [
-        "942679577eba"
+      "## Story: Send my photo to my match": [
+        "96c80375c5a0"
       ],
-      "Story: Deliver only the approved selected photo / A current approved item binds to one action": [
-        "d87395da9857",
-        "c0a664af4c32"
+      "Story: Send my photo to my match / A reference names only the sender's own photos and never guesses between two": [
+        "2fde58bb989e",
+        "bcf557e5b6ac"
       ],
-      "Story: Deliver only the approved selected photo / Issuing a capability fixes the intent and deadline": [
-        "474b158afa44",
-        "fdeab9672978",
-        "25d6fbcaabae"
+      "Story: Send my photo to my match / A yes counts only for the proposal the member was just shown": [
+        "1a96ec48a3d2",
+        "58aff05fc060"
       ],
-      "Story: Deliver only the approved selected photo / Fetches require the approved item and its exact live capability": [
-        "c40497310131",
-        "b242b6481bd5",
-        "25d6fbcaabae"
+      "Story: Send my photo to my match / A photo offer goes to one adult match who has room for it": [
+        "0ceed8041943",
+        "5891f6e038c1",
+        "5da3e1c16586"
+      ],
+      "Story: Send my photo to my match / The receiver answers, an automatic check clears each photo, and the view stays open until the photo is taken back": [
+        "753d6ca9b108",
+        "ac96973e3ec2"
+      ],
+      "Story: Send my photo to my match / The sender learns only sent, not taken, not approved or timed out": [
+        "e8441416afbd",
+        "e6d15c8093ad",
+        "a1dde1373335"
+      ],
+      "Story: Send my photo to my match / A photo link only serves its own page": [
+        "71e7acc15380",
+        "ff52b2b9678d"
+      ],
+      "Story: Send my photo to my match / The check page serves only photos from its proposal": [
+        "6aeba5cc6851",
+        "98d5dd67b4e8"
+      ],
+      "Story: Send my photo to my match / A page opens only from its own fresh link, and a view only for the receiver's bound browser until the photo is taken back": [
+        "54eb4ab22945",
+        "33288c549358",
+        "a1dde1373335"
+      ],
+      "Story: Send my photo to my match / Only a yes or no to the newest ask answers it": [
+        "0b14812b906b",
+        "9c42ac75fbf8"
+      ],
+      "Story: Send my photo to my match / A take-back revokes the member's open photo items for the match": [
+        "bb4f37924ccc",
+        "9575748488de"
+      ],
+      "Story: Send my photo to my match / The photo page takes back exactly one listed share": [
+        "49ff10715c1b",
+        "21187c1966a0"
       ]
     },
     "spec/photoRelayReview.md": {
       "@document": [
-        "4d18d05f2a97"
+        "d1061ad5daed"
       ],
-      "## Story: Choose one photo and allow a designated reviewer to decide": [
-        "cbb7157004e9"
+      "## Story: Let an automatic check clear each photo of my offer": [
+        "c622f2b47d73"
       ],
-      "Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice": [
-        "b37f2c58fdf6",
-        "059dfd3c23a3"
+      "Story: Let an automatic check clear each photo of my offer / Store one item for each photo of an accepted offer": [
+        "d0f5942009bf",
+        "a43c82843e49"
       ],
-      "Story: Choose one photo and allow a designated reviewer to decide / A designated reviewer can approve a current pending item": [
-        "6408cae040ca",
-        "9afce5f9ebfc",
-        "d9d001dc68a8"
+      "Story: Let an automatic check clear each photo of my offer / An automatic check screens each photo, and only a photo it does not clear goes to staff": [
+        "9082d5e6257c",
+        "e3d04334cedb",
+        "7033e659019c"
       ],
-      "Story: Choose one photo and allow a designated reviewer to decide / Held visibility is separate from delivery and owner cancellation": [
-        "ebc39fe3318b",
-        "736bc2af6172",
-        "0cc8deb90ea3"
+      "Story: Let an automatic check clear each photo of my offer / A safety staff member can approve a current pending item": [
+        "24d293d001a6",
+        "374e5f94a7c4",
+        "7033e659019c"
+      ],
+      "Story: Let an automatic check clear each photo of my offer / Held visibility is separate from delivery and owner cancellation": [
+        "7e107b38f9d4",
+        "8e546b8a8375",
+        "f33bebd4f5e1"
+      ],
+      "Story: Let an automatic check clear each photo of my offer / A photo that is not cleared by its deadline expires, and its offer settles": [
+        "7506ee0a0a18",
+        "80d8321c9958",
+        "7033e659019c"
       ]
     },
     "spec/photoRetention.md": {
@@ -3686,18 +4420,53 @@
         "0ac2fc7e79bc"
       ],
       "Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage": [
-        "c00c4e15f6cb",
-        "08173779ac43"
+        "51fdc6323078",
+        "79ce4407cc80"
       ],
-      "Story: Add and remove photos for private matching / Store private bytes before the photo row": [
-        "de6682c1621f",
-        "5967fb4a7f99",
-        "b6b13e4aa36b"
+      "Story: Add and remove photos for private matching / Reserve the photo row under the person lock before the bytes": [
+        "f0bb280c8a07",
+        "6aa8d60bbf6c",
+        "c4995be4ef09"
       ],
-      "Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating": [
-        "f763a2451cf3",
-        "e7d262e7b9de",
-        "b6b13e4aa36b"
+      "Story: Add and remove photos for private matching / Drop the old rating before erasing bytes and metadata": [
+        "13e6683ed534",
+        "31c2246adfa6",
+        "c4995be4ef09"
+      ],
+      "Story: Add and remove photos for private matching / The retention tick finishes unfinished photo changes": [
+        "c4c027c0e7bd",
+        "ec8c5d5cc858"
+      ],
+      "Story: Add and remove photos for private matching / Only a live adult member keeps photos and a rating": [
+        "198157e0f999",
+        "4fa087d8ff6e"
+      ]
+    },
+    "spec/photoUploadLink.md": {
+      "@document": [
+        "84fa79c39480"
+      ],
+      "## Story: Add my photos with a private one-time link": [
+        "a05062bfe282"
+      ],
+      "Story: Add my photos with a private one-time link / A link is issued only to an adult live member of a photo app who is not banned or held": [
+        "0d923b1771a2",
+        "ddb9ec0f24f7"
+      ],
+      "Story: Add my photos with a private one-time link / A link uploads once, before it expires, on its own app, for a holder who is still eligible": [
+        "06d9341d99e7",
+        "5ed70c65495f",
+        "9da4b82b99d0"
+      ],
+      "Story: Add my photos with a private one-time link / A status check says whether a link can still upload, and does not use it": [
+        "a0a63a368917",
+        "456166512309",
+        "60cfcf06f27e"
+      ],
+      "Story: Add my photos with a private one-time link / One link use carries one to four photos of at most four MiB each and eight MiB in all": [
+        "b49a9e1c2b67",
+        "6fc00f0578cd",
+        "3472c54b292f"
       ]
     },
     "spec/planDecision.md": {
@@ -3830,8 +4599,8 @@
         "3a4a88030710"
       ],
       "Story: Find a public activity that fits the group / Alternates must fit the entire offered group": [
-        "84a45f04f608",
-        "d8dc52adbcbf"
+        "c2b839f03379",
+        "f1524678ad1c"
       ],
       "## Story: Give each invited member one plan per city run": [
         "8eeadd9b69b9"
@@ -3888,38 +4657,11 @@
         "1c7276234ad3",
         "f1ea1af63f6f",
         "2e8163792b98"
-      ]
-    },
-    "spec/postingPolicy.md": {
-      "@document": [
-        "f6f48cd437ec"
       ],
-      "## Story: Publish a job with a clear pay range": [
-        "c0f54cc83e28"
-      ],
-      "Story: Publish a job with a clear pay range / Job drafts need a title and pay range before read-back": [
-        "9438b34acdcf",
-        "25db0b01bf43"
-      ],
-      "Story: Publish a job with a clear pay range / A post with a workplace needs a supported area": [
-        "5cbda4f8793f",
-        "12dae5e9c7b1"
-      ],
-      "Story: Publish a job with a clear pay range / A posting has between one and fifty openings": [
-        "74012fe60a5c",
-        "3959745c4314"
-      ],
-      "Story: Publish a job with a clear pay range / The low end of the pay range comes first": [
-        "580132da8462",
-        "197756db686f"
-      ],
-      "Story: Publish a job with a clear pay range / Confirm only the posting shown in the read-back": [
-        "24b2b36ef51d",
-        "e755bdb8eed3"
-      ],
-      "Story: Publish a job with a clear pay range / A stale yes never reopens or overwrites a posting that staff changed or closed": [
-        "866439b723ab",
-        "c38b097ec925"
+      "Story: Remove expired account data and retain necessary send history / Finished profile suggestions leave after the platform cutoff": [
+        "dad81b56eac5",
+        "64035fe7e971",
+        "2e8163792b98"
       ]
     },
     "spec/privateHomeHelpVenue.md": {
@@ -3942,6 +4684,11 @@
         "09d323c5e6c2",
         "3dee053d0a63",
         "c871b2d45b81"
+      ],
+      "Story: Control who can read my home-help address / The conversation points each participant to the private page": [
+        "5e1a4a357585",
+        "078ad19a077f",
+        "be834fcf28eb"
       ]
     },
     "spec/probeReply.md": {
@@ -4001,6 +4748,10 @@
       "Story: Make a choice about a proposed opportunity / A short acknowledgement must immediately follow its own probe": [
         "39feca580753",
         "8809784b689d"
+      ],
+      "Story: Make a choice about a proposed opportunity / A late answer to an expired probe hears once that the invitation ended": [
+        "da9c8bb96277",
+        "96843d86f582"
       ]
     },
     "spec/profileFactEdit.md": {
@@ -4058,13 +4809,13 @@
         "35988501dd93"
       ],
       "Story: Review suggestions before they change my profile / Only a current batch for the same person, app and chat enters review": [
-        "3f95c8b915db",
+        "9113abcabbe8",
         "caac36a19158",
         "cd9ad7da9176"
       ],
       "Story: Review suggestions before they change my profile / Only a bounded batch of distinct, valid suggestions can be shown": [
-        "da5cf5b373c6",
-        "2eac6132ce8e",
+        "c8f9b3b641a8",
+        "be08a58eed4d",
         "cd9ad7da9176"
       ],
       "Story: Review suggestions before they change my profile / A command targets this batch revision and one existing item": [
@@ -4076,6 +4827,10 @@
         "225209a63af0",
         "d46493bb88f3",
         "cd9ad7da9176"
+      ],
+      "Story: Review suggestions before they change my profile / A retried review command returns its stored result": [
+        "14b409a1a4c6",
+        "3bc1eb96dafb"
       ],
       "Story: Review suggestions before they change my profile / A member can reach review, accept, reject and edit": [
         "fa8612d30f69",
@@ -4091,66 +4846,30 @@
         "94d999583fd4"
       ],
       "Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources": [
-        "969ea2417742",
-        "4eb66a008382"
+        "11e1ee37cc83",
+        "fcb7eac47839"
       ],
       "Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch": [
         "b532f47279c8",
         "6abaeabb7597",
-        "3c91c2f70a2a"
+        "2ded467639e1"
       ],
       "## Story: Stop collection or remove data from one connector": [
         "8562f490b9d5"
       ],
       "Story: Stop collection or remove data from one connector / Cleanup uses current owner authority and any required stored withdrawal turn": [
-        "7359f1e36009",
-        "53a7a0a72595",
-        "3c91c2f70a2a"
+        "069eeaa9e7e3",
+        "bc0b38f3912c",
+        "2ded467639e1"
       ],
       "Story: Stop collection or remove data from one connector / Replay returns stored results without mutating the suggestions": [
         "cf0b2f5b42f2",
         "70ce4f7967c9",
-        "3c91c2f70a2a"
+        "2ded467639e1"
       ],
       "Story: Stop collection or remove data from one connector / Cleanup changes only rows selected by the member's operation": [
         "40b2d61d32c4",
         "a3aeb0c732a7"
-      ]
-    },
-    "spec/publicEventCatalog.md": {
-      "@document": [
-        "656f76e23c43"
-      ],
-      "## Story: Find a current public event": [
-        "f35d926d953e"
-      ],
-      "Story: Find a current public event / Use only an upcoming event from the allowed in-person supply": [
-        "ed00a7e1c40d",
-        "e22a91f02556"
-      ],
-      "Story: Find a current public event / A successful complete scan replaces the previous source and expires if refresh stops": [
-        "41759472442a",
-        "db2630778a24"
-      ],
-      "Story: Find a current public event / A source id identifies a single normalized listing in each scan": [
-        "a8e15929d4ec",
-        "86ea96abf116"
-      ],
-      "Story: Find a current public event / A contact or booking uses the same current listing that entered review": [
-        "a417fef33107",
-        "f9f617c45f07"
-      ],
-      "Story: Find a current public event / A queued event contact still needs the reviewed listing at final claim": [
-        "14055bb67e08",
-        "74c9fafb26b7"
-      ],
-      "Story: Find a current public event / A closed event opportunity without contact does not use a matching slot": [
-        "e95d7a1b8470",
-        "225432992638"
-      ],
-      "Story: Find a current public event / The send guard allows the exact official link in a booked confirmation": [
-        "4746322d3016",
-        "5101b2d2e329"
       ]
     },
     "spec/quietHours.md": {
@@ -4170,9 +4889,36 @@
         "25eb7a3848a3"
       ]
     },
+    "spec/recipientEligibility.md": {
+      "@document": [
+        "b20e572c1ffd"
+      ],
+      "## Story: Contact only a member who can get this message now": [
+        "438594d32408"
+      ],
+      "Story: Contact only a member who can get this message now / Check the recipient's own state in a fixed order": [
+        "cf304e2a366c",
+        "1329f60e4a3a",
+        "621f50ac68ef"
+      ],
+      "Story: Contact only a member who can get this message now / A message about another member needs two adults with no block between them": [
+        "397ba72f1751",
+        "116b1b8bd6fe",
+        "80ad7f3f19a4"
+      ],
+      "Story: Contact only a member who can get this message now / The refusal reason names the failed check": [
+        "a9dd9e9fcec1",
+        "d852beba7fdd",
+        "969d0145b294"
+      ],
+      "Story: Contact only a member who can get this message now / Quiet hours hold every send that can wait": [
+        "3a748e09d347",
+        "fe9fcf219d1f"
+      ]
+    },
     "spec/relayDecision.md": {
       "@document": [
-        "decc972a0877"
+        "c9f34d44d295"
       ],
       "## Story: Share only the item I approved": [
         "b00d694b1d50"
@@ -4182,23 +4928,71 @@
         "6b5bf0b3dbba"
       ],
       "Story: Share only the item I approved / A refusal or uncertainty cannot authorize a private item": [
-        "9b4b1b499edc",
+        "71ac5073eeb4",
         "eac2d30e3cd5"
+      ],
+      "Story: Share only the item I approved / Only the member's own direct request authorizes a private item": [
+        "4c15d882c58d",
+        "91da938590b0"
       ],
       "Story: Share only the item I approved / A member can take back a pending number swap": [
         "b1182bd82be6",
         "fcbfdcb10af3"
       ],
       "Story: Share only the item I approved / A phone exchange must still have consent at dispatch": [
-        "0fa7c65f49fa",
+        "a89c7addf11a",
         "1d23b48509f5"
       ],
       "## Story: Keep unsafe items from reaching a match": [
-        "049db9dba356"
+        "bd4c4652d61e"
       ],
-      "Story: Keep unsafe items from reaching a match / A blocking reason takes precedence over a hold": [
-        "f2694d85a6a1",
-        "3ff1b4de1b82"
+      "Story: Keep unsafe items from reaching a match / Any reason from the relay checks blocks the item": [
+        "775a33c7ccc1",
+        "6aafca993a05"
+      ],
+      "Story: Keep unsafe items from reaching a match / The classifier reads a text that the rules leave to it": [
+        "028f24af77ea",
+        "9694aacbb497"
+      ],
+      "Story: Keep unsafe items from reaching a match / A classifier that cannot run blocks the text": [
+        "914053c66e51",
+        "a8729d569248"
+      ],
+      "Story: Keep unsafe items from reaching a match / A blocked sender learns only what is safe to say": [
+        "5b93e9c8496a",
+        "d49523a058c9"
+      ],
+      "Story: Keep unsafe items from reaching a match / A relay text that says the sender is under 18 starts the minors policy": [
+        "29dd6224db1a",
+        "c8d3264006b3"
+      ],
+      "Story: Keep unsafe items from reaching a match / The desk reads the sender's stated age before the engine reads the text": [
+        "1657d4477a28",
+        "78f2e4158358"
+      ],
+      "Story: Keep unsafe items from reaching a match / A block for the sender's severe words reaches the sender's safety case": [
+        "24a0580305d3",
+        "b5fb4b56877e",
+        "686bcc38900e"
+      ],
+      "## Story: Relay only to the match I named": [
+        "bab0b77a64b0"
+      ],
+      "Story: Relay only to the match I named / A relay names its match when the member has more than one live match": [
+        "c30efdff0582",
+        "1663117a7dfb"
+      ],
+      "Story: Relay only to the match I named / A number ask with several live matches is never scored as abuse": [
+        "bd2679b50c38",
+        "cd62868c038d"
+      ],
+      "## Story: End the thread after a bad meeting": [
+        "fe5fe977a9e8"
+      ],
+      "Story: End the thread after a bad meeting / Negative feedback after a meeting ends the relay thread": [
+        "020a0ad041de",
+        "b463003f0f66",
+        "8637e15a7e60"
       ]
     },
     "spec/relayLifecycle.md": {
@@ -4206,24 +5000,16 @@
         "517b6947216e"
       ],
       "## Story: Decide and deliver a selected relay item": [
-        "fba508bb543b"
+        "6f89dd67b483"
       ],
-      "Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item": [
-        "2a91428174a5",
-        "d2cfe2fe0eb8"
+      "Story: Decide and deliver a selected relay item / A first decision blocks or admits an item": [
+        "d939bf444fb3",
+        "eb02d6773575"
       ],
       "Story: Decide and deliver a selected relay item / The send path determines the result of an admitted item": [
-        "9bc2e4eb7026",
-        "167dd4ea662a",
-        "f7c0d9176339"
-      ],
-      "## Story: Resolve a held item": [
-        "ea4ab420798f"
-      ],
-      "Story: Resolve a held item / Staff review clears the held text": [
-        "147d3ab47801",
-        "cbdaa88430a8",
-        "f7c0d9176339"
+        "06476d7c99c5",
+        "0dc49a6f184b",
+        "61a35a37596e"
       ]
     },
     "spec/relayRequestAddress.md": {
@@ -4238,7 +5024,7 @@
         "44a9a15a867e"
       ],
       "Story: Ask the agent to relay my own words / A name identifies one recipient on an unselected relay": [
-        "aa9eb5af9313",
+        "ec4aaac08e97",
         "c707027b5803"
       ],
       "Story: Ask the agent to relay my own words / Polite wording still needs a direct request to send a private item": [
@@ -4292,46 +5078,51 @@
     },
     "spec/reviewContactJourney.md": {
       "@document": [
-        "fb65bf545e61"
+        "983fa63cbea9"
       ],
-      "## Story: Ask about an introduction only after a person approves": [
-        "5d54f6cc0f29"
+      "## Story: Ask about an introduction only after a recorded approval": [
+        "a7ac204fbd50"
       ],
-      "Story: Ask about an introduction only after a person approves / A pending proposal sends no probe": [
-        "adc74d497952",
-        "48d9f4e35797"
+      "Story: Ask about an introduction only after a recorded approval / A pending proposal sends no probe": [
+        "20e3646d527e",
+        "5af0030b2650"
       ],
-      "Story: Ask about an introduction only after a person approves / Timely approval permits one anonymous probe to the requester": [
-        "e7fa3734946a",
-        "bb9bfdc280e3",
-        "63ce880572c5"
+      "Story: Ask about an introduction only after a recorded approval / A timely judge approval permits one anonymous probe to the requester": [
+        "8a1cc6fa0139",
+        "bd7ec25778ce",
+        "aff5a9b90262"
       ],
-      "Story: Ask about an introduction only after a person approves / Rejected and expired items stay unsent": [
-        "6c776eef123e",
-        "82d3dc4f20d0",
-        "c4794a60b3c7"
+      "Story: Ask about an introduction only after a recorded approval / Staff approve only an item that the judge held": [
+        "5aad8fcd86c1",
+        "4273e2474c02",
+        "aff5a9b90262"
+      ],
+      "Story: Ask about an introduction only after a recorded approval / Rejected and expired items stay unsent": [
+        "7c06eac0d7ee",
+        "852d5b437996",
+        "74ea24fbb269"
       ]
     },
     "spec/reviewedGroupJourney.md": {
       "@document": [
-        "756d044ecf96"
+        "07ca87e9e530"
       ],
       "## Story: Join a reviewed public hike only after the group agrees": [
         "85581797b2d7"
       ],
       "Story: Join a reviewed public hike only after the group agrees / Review comes before anonymous contact": [
-        "1c8f9ba5bd2b",
-        "7ceabfb3a1ab"
+        "fb29072f3bba",
+        "e12d7af9dac7"
       ],
       "Story: Join a reviewed public hike only after the group agrees / Booking requires an independent yes from all three invitees": [
         "3869580cdc32",
         "dc926d5cfc5c",
-        "2ba9f993da00"
+        "992737082931"
       ],
       "Story: Join a reviewed public hike only after the group agrees / A withdrawal below minimum closes a booked group privately": [
         "3f6e8bb5d318",
         "730f198ac26f",
-        "0f5d458a7ae2"
+        "f1fcd8a11d73"
       ]
     },
     "spec/runtimeUnit.md": {
@@ -4349,8 +5140,16 @@
         "8a004ae8108e",
         "ace1e0b7dd37"
       ],
+      "Story: Work from the latest saved network state / The engine runs on a snapshot outside the store lock": [
+        "3700aabfc88b",
+        "84dceab645e3"
+      ],
+      "Story: Work from the latest saved network state / A prepared engine result commits only for members whose evidence did not change": [
+        "c5c6496132b8",
+        "2221c1eef77b"
+      ],
       "Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran": [
-        "da19337a7b74",
+        "55134ad2b4d2",
         "8f8f3155365d"
       ]
     },
@@ -4387,7 +5186,7 @@
         "620534170988"
       ],
       "Story: Read my saved profile / Only explicit read requests enter the read path": [
-        "5e4aba3b66f7",
+        "08ad872ddd03",
         "bf185aae820f",
         "5ba405248eb2"
       ],
@@ -4487,13 +5286,25 @@
         "7e84fb9b1187"
       ],
       "Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact": [
-        "5348bb2785a8",
-        "c953ebfa4c12",
+        "c9f9af8d6889",
+        "5e9d6ae5bb3a",
         "38fb4c0679a4"
       ],
       "Story: Let my agent read the safe context for my current account / Matching context requires local presence and eligible age": [
         "f425e76e68a0",
         "b10d1ee41169"
+      ],
+      "Story: Let my agent read the safe context for my current account / Active items list only the member's live matches with a safe summary": [
+        "0557558542b5",
+        "b03878968b63"
+      ],
+      "Story: Let my agent read the safe context for my current account / Active item summaries are distinct": [
+        "5feb6ea927ed",
+        "46081d5d2a70"
+      ],
+      "Story: Let my agent read the safe context for my current account / A member whose context is unavailable still gets an answer": [
+        "7ae7731fd471",
+        "52680108c03e"
       ]
     },
     "spec/sharedLineConsentJourney.md": {
@@ -4504,18 +5315,18 @@
         "0095b436f896"
       ],
       "Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission": [
-        "b8ee734baf56",
-        "453b5ce09765"
+        "fee2dd6b9658",
+        "380ed46f186f"
       ],
       "Story: Stop the shared line and resume one app / An ambiguous message leaves shared-line consent unchanged": [
         "886e617c128e",
         "6ec67edca4cf",
-        "01ab384474c9"
+        "6f8b6e01ac58"
       ],
       "Story: Stop the shared line and resume one app / A new START permits texts in the chosen app only": [
         "0f7a403c87df",
         "3d1585d75e36",
-        "bffafe34ca90"
+        "b48d759be528"
       ]
     },
     "spec/signedInbox.md": {
@@ -4543,8 +5354,24 @@
         "254e3b73d244",
         "8a3b56b79bae"
       ],
+      "Story: Handle each signed message once without delaying consent / A stored ordinary reply goes out only while the number stays admitted": [
+        "8dba8c9fb42b",
+        "82de1ccd2aa0"
+      ],
+      "Story: Handle each signed message once without delaying consent / A direct reply in a turn is collected only when consent allows it": [
+        "f36f0589c49b",
+        "7539f58f8d70"
+      ],
+      "Story: Handle each signed message once without delaying consent / A replayed open turn answers with the current context": [
+        "0a07c8f60761",
+        "cc7e60f47273"
+      ],
+      "Story: Handle each signed message once without delaying consent / Every collected reply passes the line's leak guard": [
+        "dc8c098cd0cb",
+        "9f372d7cc16f"
+      ],
       "Story: Handle each signed message once without delaying consent / A completed signed row is later scrubbed and then removed": [
-        "e4d44bc36458",
+        "f10ac3289f3c",
         "01b0dbb58a15"
       ]
     },
@@ -4588,32 +5415,37 @@
       ],
       "Story: Save my approved profile in the app I asked for / A submitted account marker must match the authenticated account": [
         "dc7de6c2223e",
-        "235ef5809607"
+        "e4069007458c"
       ],
       "Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account": [
-        "72e1f35d428e",
-        "d40c2ac58d78",
-        "6f99033bf55c"
+        "09a98820b56d",
+        "b745410c0e15",
+        "f821a380c98f"
       ],
       "Story: Save my approved profile in the app I asked for / A hold or ban prevents enrollment": [
         "cf28c7ef3ec6",
         "794c7acd2141",
-        "6f99033bf55c"
+        "f821a380c98f"
       ],
       "Story: Save my approved profile in the app I asked for / The current membership determines whether a join needs an invite": [
         "8808bd986e91",
         "3315df2e21ab",
-        "6f99033bf55c"
+        "f821a380c98f"
       ],
       "Story: Save my approved profile in the app I asked for / The effective age controls the result of a new or repeated join": [
-        "34273ec34d5b",
-        "4be59152bf86",
-        "6f99033bf55c"
+        "cca072f2bfb1",
+        "0edd264cf7e6",
+        "f821a380c98f"
+      ],
+      "Story: Save my approved profile in the app I asked for / A decline below the join age ends the number's unbound access": [
+        "5bc4747fee42",
+        "339c86c1c0a0",
+        "77952298c8b1"
       ],
       "Story: Save my approved profile in the app I asked for / Success for a new membership follows the join hook": [
-        "60e30649cc8e",
-        "d4aa6d322854",
-        "6f99033bf55c"
+        "f5e947684714",
+        "913487801f78",
+        "f821a380c98f"
       ],
       "Story: Save my approved profile in the app I asked for / The approved profile reaches onboarding and its stated age counts": [
         "1fff3f2e1299",
@@ -4622,12 +5454,39 @@
       "Story: Save my approved profile in the app I asked for / Success requires an eligible profile with current consent": [
         "592fbfe497fb",
         "57371a14ea16",
-        "eda3c130884f"
+        "6657ac9bc719"
       ],
       "Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal": [
         "e928a0c10308",
-        "5bc81cd1a64f",
-        "6f99033bf55c"
+        "a51fdff5c0f0",
+        "f821a380c98f"
+      ],
+      "## Story: Keep the age readings of a person and a phone": [
+        "6833c3346a9d"
+      ],
+      "Story: Keep the age readings of a person and a phone / Readings of two records merge without a new date": [
+        "d7ce4d387bf9",
+        "09a9a6276f62",
+        "f3ac4f2ba3a2"
+      ],
+      "Story: Keep the age readings of a person and a phone / A verified browser join can keep a private teen birth reading": [
+        "37d1d72ddc7b",
+        "fbb6c1d02c30",
+        "9644df80a2a6"
+      ],
+      "Story: Keep the age readings of a person and a phone / A birth date below the join age is kept only as a typed age": [
+        "2176c564de8b",
+        "53f93150cce7",
+        "5ce71ae12e9d"
+      ],
+      "Story: Keep the age readings of a person and a phone / The phone floor keeps the lowest age that a statement gives": [
+        "bf139109f41e",
+        "9222efe63610",
+        "46053a5b1896"
+      ],
+      "Story: Keep the age readings of a person and a phone / The review of a teen item learns whether the first age reading was a birth date": [
+        "2ed05e0613f6",
+        "4a9b39e35f22"
       ]
     },
     "spec/sitePages.md": {
@@ -4760,8 +5619,8 @@
         "ed202e18fbf9"
       ],
       "Story: Review the information used for dating / Ask the first missing field that can still be requested": [
-        "9daf3c25c594",
-        "d7a353a9b573",
+        "f0a12a76cf2a",
+        "5760fabb60ce",
         "db6d2baa3bd0"
       ],
       "Story: Review the information used for dating / A correction needs another confirmation": [
@@ -4859,6 +5718,23 @@
         "1adb43b295db",
         "f6e639d95955",
         "c113bc100b65"
+      ],
+      "Story: See only the detail my role permits / The server grants a reveal for 5, 10 or 15 minutes only": [
+        "ef35e29fadc2",
+        "6bdc091adbe0"
+      ],
+      "## Story: Take a gate or safety step in the console as myself": [
+        "75fae02f4d82"
+      ],
+      "Story: Take a gate or safety step in the console as myself / Each console staff step needs the role that its staff route needs": [
+        "eefe8d8521bd",
+        "140b571735ab",
+        "c113bc100b65"
+      ],
+      "Story: Take a gate or safety step in the console as myself / The staff API takes a step that needs a person only from a named person": [
+        "a923e4c907e8",
+        "08d53c7f0236",
+        "d4657ad3a28b"
       ]
     },
     "spec/staffReview.md": {
@@ -4892,7 +5768,7 @@
         "744acb742fe2"
       ],
       "Story: Review the opportunity I selected / Plan approval in the console waits for the selected preview": [
-        "114b88f6c676",
+        "c87fc200befd",
         "d49bf31ac29e",
         "9768babfc2ee"
       ]
@@ -4905,23 +5781,23 @@
         "3dafec4552e0"
       ],
       "Story: Hold a member without exposing their other memberships / Staff act within their resolved scope": [
-        "f36323ffd2f9",
-        "827a0a446f2b"
+        "ffb9bdaa04ad",
+        "3cbb21c0919f"
       ],
       "Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first": [
         "f279d5699dad",
         "d9d3f3a478ce"
       ],
       "Story: Hold a member without exposing their other memberships / A staff hold survives ordinary app membership changes": [
-        "32047fcbb860",
-        "3d3508791d35"
+        "b1356efb6989",
+        "43d3062cb683"
       ],
       "Story: Hold a member without exposing their other memberships / A committed trust hold follows the person through ordinary app leave": [
         "1e7f440c3ed6",
         "fb5fc28c85be"
       ],
       "Story: Hold a member without exposing their other memberships / Keep the requested and result audits in order": [
-        "d301592752b8",
+        "14a0f8c01c81",
         "71dd7312f3a0",
         "e271147a7c34"
       ],
@@ -4945,13 +5821,30 @@
         "a619fc9ac9a0"
       ],
       "Story: Apply a confirmed phone or person ban / An interrupted ban resumes from its saved authority": [
-        "bc42ff1188c9",
+        "0e5028875ed2",
         "19b8e59bd6f8",
         "1bf6d8bd6035"
       ],
       "Story: Apply a confirmed phone or person ban / Live enrollment and ban projection use the current person": [
         "0c892c8ef8ed",
         "1ec2ac6e2ded"
+      ],
+      "## Story: Route an agent signal to an accountable decision": [
+        "1ffb1a7dfaff"
+      ],
+      "Story: Route an agent signal to an accountable decision / An agent signal goes to the decision that owns it": [
+        "764982940ea4",
+        "f3bce34909d4",
+        "dd8d1315ab32"
+      ],
+      "Story: Route an agent signal to an accountable decision / An applied agent pause gives the member one confirmation": [
+        "0e2d9bc25739",
+        "4b099a051cea",
+        "9e1d1a1a20df"
+      ],
+      "Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once": [
+        "ab002f71b5a9",
+        "e2cce826028a"
       ]
     },
     "spec/staffSearch.md": {
@@ -4997,6 +5890,15 @@
         "20c702636e69",
         "f868ad7cf8c5"
       ],
+      "Story: Sign in as myself / The server serves data only to a single sign-on identity with a second factor": [
+        "b53d1ba3e642",
+        "078a503b89d0",
+        "b9b0e7910381"
+      ],
+      "Story: Sign in as myself / A second factor is the multi-factor method or two distinct methods": [
+        "919a8d95f049",
+        "174422f29d3f"
+      ],
       "## Story: Keep my session bound to my roles": [
         "d6205b800904"
       ],
@@ -5016,37 +5918,105 @@
       "Story: Start a console that holds real data only behind single sign-on / Real data outside a local development setup needs Cloudflare Access": [
         "a218bea894b8",
         "1891be80c23d"
+      ],
+      "Story: Start a console that holds real data only behind single sign-on / A deployed console with real data needs a durable audit log": [
+        "91948a929e05",
+        "a87778006e56",
+        "fa73903273c0"
       ]
     },
     "spec/standingIntentManagement.md": {
       "@document": [
-        "4650312a4503"
+        "64d6e57d114f"
       ],
       "## Story: See and manage the things the Network is looking for": [
-        "973df257583c"
+        "2900fa636e62"
       ],
       "Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents": [
-        "811109e0aebf",
-        "b50b2614a51b"
+        "c38dac9199a2",
+        "14b4d39e3bd2"
       ],
-      "Story: See and manage the things the Network is looking for / Change only the single matching reference the member supplied": [
-        "762173fc6bfa",
-        "4cfc7d164f42",
-        "fce768137516"
+      "Story: See and manage the things the Network is looking for / Change only the single thing the member named": [
+        "e99f77d9dd3e",
+        "1869634974e7",
+        "99e757159faa"
       ],
       "Story: See and manage the things the Network is looking for / Commit a stored intent change with its acknowledgment": [
-        "32124e0438a7",
-        "f2cc12d595bc",
-        "fce768137516"
+        "b282f77dabe7",
+        "e70401756836",
+        "99e757159faa"
+      ],
+      "Story: See and manage the things the Network is looking for / Only the member's own words close a standing thing": [
+        "9ac3f839d2a7",
+        "e6bee3005600"
+      ],
+      "Story: See and manage the things the Network is looking for / Saying a want again changes nothing that the member paused or closed": [
+        "8ac17ea3818a",
+        "e2ced920bf56",
+        "44b98bf1877a"
       ],
       "Story: See and manage the things the Network is looking for / Reconcile older saved controls during the first normal save": [
         "52e1c4a3c161",
         "05249e47fd2c",
-        "72156a45f935"
+        "8f0effcbd63a"
       ],
-      "Story: See and manage the things the Network is looking for / A pause or close stops only the work linked to that intent": [
-        "5eff6a2d482d",
-        "1a4acabbf546"
+      "Story: See and manage the things the Network is looking for / A pause or close stops only the work linked to that thing": [
+        "a60831cd9a35",
+        "b015bb74504c",
+        "f7f1cb2e087d"
+      ],
+      "Story: See and manage the things the Network is looking for / A bare reply answers only the newest open standing question": [
+        "0a730e1db30c",
+        "41b31b242722"
+      ],
+      "Story: See and manage the things the Network is looking for / A list number names a thing for one day": [
+        "888e6dc581fc",
+        "6d9b0748363e"
+      ]
+    },
+    "spec/teenIntroSwitch.md": {
+      "@document": [
+        "1f8d6012a057"
+      ],
+      "## Story: Stop teen introductions at once": [
+        "37fa304678f5"
+      ],
+      "Story: Stop teen introductions at once / Teen introductions are on unless a stop is recorded": [
+        "1de4ace51c9d",
+        "d5bd71883642"
+      ],
+      "Story: Stop teen introductions at once / The switch turns on only in an app that offers teen friendship": [
+        "cc0271eedc7c",
+        "8b12ac1d85f5"
+      ],
+      "## Story: Stop each teen item that no longer passes the rule": [
+        "ce5f8024b589"
+      ],
+      "Story: Stop each teen item that no longer passes the rule / A teen item continues only while the switch is on and the rule holds": [
+        "92aa08e90784",
+        "52e3aae7468b"
+      ],
+      "## Story: Judge each teen introduction with the strict rubric": [
+        "dc8a02350fb3"
+      ],
+      "Story: Judge each teen introduction with the strict rubric / A teen item is approved by the judge with the strict rubric or by staff": [
+        "ad8486cfb849",
+        "078b5fc85095",
+        "e1093cf191d6"
+      ],
+      "## Story: Meet only in public in the daytime": [
+        "48dcfd3f6535"
+      ],
+      "Story: Meet only in public in the daytime / A teen meeting is at a meeting spot between 10:00 and 19:00": [
+        "38d9d615be66",
+        "00d737113fd7"
+      ],
+      "## Story: Share only interests in a teen introduction": [
+        "f7015ed73a25"
+      ],
+      "Story: Share only interests in a teen introduction / A teen roster uses interest and boundary facets only": [
+        "130e4d60c16e",
+        "1668ea673e7d"
       ]
     },
     "spec/textEnrollment.md": {
@@ -5057,42 +6027,96 @@
         "afa133e7b088"
       ],
       "Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority": [
-        "05ac5f722bac",
-        "e0113baba4ca"
+        "25f80d40b826",
+        "cef869b4baa0"
       ],
       "Story: Text the Network to join an app / A prepared Peon signup names its app on a separate first line": [
         "f9d3e23affe7",
         "45201b9fe179"
       ],
       "Story: Text the Network to join an app / A pending join routes only a possible join answer": [
-        "ed55732dec85",
-        "a9f3206fe32b",
-        "b06f66891881"
+        "e99eb7a6f8ce",
+        "52f46c0633e0",
+        "4824f8464361"
+      ],
+      "Story: Text the Network to join an app / A safety claim routes before every other fallback": [
+        "36db941e9769",
+        "684f11f1b942",
+        "3527ecda0afd"
       ],
       "Story: Text the Network to join an app / A join needs permission to enter this app": [
-        "24c7a1a8258f",
-        "f118cdd36f1f"
+        "433544d82527",
+        "c65be01aab3b"
       ],
       "Story: Text the Network to join an app / Confirm age before creating a member": [
-        "78bae0dbc598",
-        "54c6115bf058",
-        "9886f407a8ca"
+        "ac3cfb5b2d9c",
+        "9babc5987023",
+        "21ffbcc63f90"
+      ],
+      "Story: Text the Network to join an app / A text join keeps the member id of a membership that is not removed": [
+        "80ad104c6be9",
+        "7e4926c6820e"
+      ],
+      "Story: Text the Network to join an app / A recorded-age decline without a stated age is sent at most once a day": [
+        "832d0b6f1998",
+        "21f4bb925baf"
       ],
       "Story: Text the Network to join an app / An active membership gets its welcome and at most one follow-up": [
-        "b73f8a23e75f",
-        "c2a135aeebe3",
-        "9886f407a8ca"
+        "49298df67997",
+        "5bf8c6c0e218",
+        "b9e29d271a6a"
       ],
       "## Story: Choose other apps from The Network": [
         "edba0d82e523"
       ],
       "Story: Choose other apps from The Network / A current Network member's answer controls other-app enrollment": [
-        "485e4460f38c",
-        "7ee54a1b77d8"
+        "c6f5a1bad89f",
+        "46ab157aaebf"
       ],
       "Story: Choose other apps from The Network / A first-contact notice cannot substitute for enrollment": [
         "893131e51751",
         "06790c76bda9"
+      ],
+      "## Story: Tell a teen what the text line does with their age": [
+        "d997dee0c86f"
+      ],
+      "Story: Tell a teen what the text line does with their age / A birthday is kept only for a person who can join": [
+        "830a93ae040a",
+        "e5eeb2ca3838",
+        "67748850b3a2"
+      ],
+      "Story: Tell a teen what the text line does with their age / A typed age rises only on the anniversary of the day it was stated": [
+        "dd8bcf55bb39",
+        "ac4d3dbfd0a9",
+        "34a3ac0e09db"
+      ],
+      "Story: Tell a teen what the text line does with their age / A numeric birthday is read only when its month is clear": [
+        "af51378c62f7",
+        "b5251e20ef61"
+      ],
+      "Story: Tell a teen what the text line does with their age / A join answer keeps its birthday only when nothing else in it contradicts it": [
+        "40be7acc56c4",
+        "ed2be2909745"
+      ],
+      "Story: Tell a teen what the text line does with their age / A join answer keeps a contradicted typed age only when it is under 13": [
+        "5eedf33f48a9",
+        "51f96b445cf0",
+        "63807e6f2fc4"
+      ],
+      "Story: Tell a teen what the text line does with their age / An older age from a teen with a birth date is a contradiction": [
+        "72683c49668f",
+        "f318f57ce5a0",
+        "3597f5350b25"
+      ],
+      "Story: Tell a teen what the text line does with their age / A minor hears which introductions the app makes": [
+        "74d1b5613530",
+        "555cbf93d8e7",
+        "df3a72af781b"
+      ],
+      "Story: Tell a teen what the text line does with their age / A minor on slop.date or peon.biz hears once what they get": [
+        "e8a3a3fdb113",
+        "c0961a1d511a",
+        "df3a72af781b"
       ]
     },
     "spec/travelPresence.md": {
@@ -5195,7 +6219,7 @@
         "26694e70684f"
       ],
       "Story: Record the gateway's delivery result once / Update the turn and the reply history together": [
-        "3579de3a81b9",
+        "cc3219b632de",
         "752ecd39c0ac",
         "26694e70684f"
       ]
@@ -5246,16 +6270,17 @@
         "9686981ba349"
       ],
       "Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write": [
-        "a3ff544385f0",
-        "b48b107c1b76"
+        "46e42a775d6d",
+        "3f5235d71b5e",
+        "201098a81b05"
       ],
       "Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts": [
-        "e2e562641dae",
-        "80898b8e346f",
-        "644866a5becc"
+        "29e602d94401",
+        "60c2a69f0bda",
+        "f61bdaab906d"
       ],
       "Story: Handle my pending messages in order while prioritizing consent / Report the received row's stored result after draining": [
-        "b84d5d3eb317",
+        "1852234145c4",
         "7325db18f5fd"
       ]
     },
@@ -5281,6 +6306,13 @@
       "Story: Detect differences in outcomes without exposing individual ratings / Report rates and alert only below the configured ratio": [
         "335bdf012838",
         "035b26c9be9f"
+      ],
+      "## Story: Stop using photo standing when it predicts nothing": [
+        "966b8bc5b27d"
+      ],
+      "Story: Stop using photo standing when it predicts nothing / The Date lane uses photo standing only while the standing gap predicts mutual interest": [
+        "f35ca5723399",
+        "8b89fa2e6407"
       ]
     }
   },
