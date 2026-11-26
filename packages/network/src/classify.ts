@@ -840,8 +840,16 @@ function clauseBefore(t: string, at: number): string {
   const start = Math.max(t.lastIndexOf(".", at - 1), t.lastIndexOf("!", at - 1), t.lastIndexOf("?", at - 1), t.lastIndexOf(";", at - 1), t.lastIndexOf(",", at - 1)) + 1;
   return t.slice(start, at);
 }
+const COMPLAINT_WORDS = "arrogant|awkward|bored|boring|brusque|condescending|creepy|distracted|dull|forced|ignored|late|married|narcissist|pointless|rude|self-absorbed|silence|stilted|terrible|tired|uncomfortable|waste|ex|phone|left|stood";
 function complaintPredicate(pred: string): boolean {
-  return /\b(?:arrogant|awkward|boring|creepy|distracted|dull|forced|ignored|late|married|narcissist|pointless|rude|self-absorbed|stilted|terrible|tired|uncomfortable|waste|ex|phone|left|stood)\b/.test(pred);
+  return new RegExp(`\\b(?:${COMPLAINT_WORDS})\\b`).test(pred);
+}
+function hasComplaintWord(clause: string): boolean {
+  for (const m of clause.matchAll(new RegExp(`\\b(?:${COMPLAINT_WORDS})\\b`, "g"))) {
+    const before = (clause.slice(0, m.index).match(/[a-z']+/g) ?? []).slice(-3);
+    if (!before.some(w => w === "not" || w === "never" || w === "no" || w.endsWith("n't"))) return true;
+  }
+  return false;
 }
 function positivePredicate(pred: string): boolean {
   const p = pred.replace(/^(?:a|an|the)\s+/, "").trim();
@@ -860,6 +868,7 @@ function laterClauseKind(c: string): "complaint" | "unclassified" | null {
   const clause = c.trim();
   if (!clause) return null;
   if (/\b(?:no spark|no connection|no chemistry|nothing in common|not much in common|nothing to talk about|no conversation)\b/.test(clause) || NEGATIVE_FEEDBACK.test(clause)) return "complaint";
+  if (hasComplaintWord(clause)) return "complaint";
   const person = clause.match(/\b(?:(?:he|she|they)(?:'s|\s+is|\s+was|\s+seems|\s+seemed)|(?:the\s+real\s+)?(?:him|her|them)\s+is|(?:this|that)\s+(?:guy|girl|man|woman|person|member)\s+is)\s+(.+)$/);
   if (person) {
     const kind = predicateKind(person[1] ?? "");
@@ -879,6 +888,13 @@ function laterClauseKind(c: string): "complaint" | "unclassified" | null {
     return /\b(?:barely|hardly|nothing|awkward|forced|stilted|silence|quiet)\b/.test(clause) ? "complaint" : "unclassified";
   }
   if (/\b(?:food|cafe|coffee|venue|restaurant|bar|drinks?|view|weather|table|music)\b/.test(clause)) return null;
+  const copula = clause.match(/^(?:then\s+)?(.+?)\s+(?:was|is|seemed|felt|were|are)\s+(.+)$/);
+  if (copula) {
+    const kind = predicateKind(copula[2] ?? "");
+    if (kind === "complaint") return "complaint";
+    if (kind === "unclassified" || kind === "positive") return "unclassified";
+    if (/^(?:not|no)\b/.test((copula[2] ?? "").trim())) return "unclassified";
+  }
   const meeting = clause.match(/\b(?:date|night|evening|meeting|time|chat|conversation|rest|company|session)(?:\s+itself)?\s+(?:was|is|seemed|felt)\s+(.+)$/);
   if (meeting) {
     const kind = predicateKind(meeting[1] ?? "");
@@ -892,11 +908,24 @@ function laterClauseKind(c: string): "complaint" | "unclassified" | null {
   }
   return null;
 }
+function hasFiniteLexicalVerb(clause: string): boolean {
+  const irregular = new Set("became began bled bent blew bought bound bred broke brought built burnt came caught chose crept cut dealt did drew drank drove dwelt fell felt fought found flew forgot gave got grew had heard held hit hurt kept knew laid lay led left lent lit lost made meant met paid put ran rang read rode rose sang sat saw sent set shook shut slept sold sought spoke spent stood stole stuck struck swam swung taught told thought threw tore took understood went woke won wore wrote".split(" "));
+  const present = new Set("becomes begins breaks brings builds comes dances ends falls feels flies flows giggles gives goes grows hurts keeps lands lasts laughs leaves meets makes opens passes rings runs sees shares shines sings sits smiles speaks spends stands stays takes talks tells turns works".split(" "));
+  const words = clause.match(/[a-z']+/g) ?? [];
+  for (let i = 1; i < words.length; i++) {
+    const w = words[i] ?? "";
+    const prev = words[i - 1] ?? "";
+    if (prev === "to" || prev === "be" || prev === "been" || prev === "being") continue;
+    if (/(?:ed|ing)$/.test(w) || irregular.has(w) || present.has(w)) return true;
+  }
+  return false;
+}
 function unclassifiedLaterClause(c: string): boolean {
   const clause = c.trim();
   if (!clause || reversedByMeetingPositive(clause, 0)) return false;
   if (/\b(?:food|cafe|coffee|venue|restaurant|bar|drinks?|view|weather|table|music)\b/.test(clause) && !/\b(?:we|i)\b/.test(clause)) return false;
-  return clause.split(/\s+/).filter(Boolean).length >= 2;
+  if (hasComplaintWord(clause)) return false;
+  return clause.split(/\s+/).filter(Boolean).length >= 2 && hasFiniteLexicalVerb(clause);
 }
 function negatedFormVerdict(t: string, from: number): "negative" | "neutral" {
   let last: "complaint" | "unclassified" | null = null;

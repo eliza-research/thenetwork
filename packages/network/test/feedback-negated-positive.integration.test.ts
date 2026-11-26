@@ -430,3 +430,52 @@ test("feedback that never connected at first and felt a spark later records neut
   expect(feedback?.wouldMeetAgain).not.toBe(true);
   expect(post?.worthwhile).not.toBe(true);
 });
+
+test("feedback that never clicked with a short filler records negative sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("We never clicked, not once");
+  expect(feedback?.sentiment).toBe("negative");
+  expect(feedback?.wouldMeetAgain).not.toBe(true);
+  expect(post?.worthwhile).not.toBe(true);
+});
+
+test("feedback that was not easy to talk to with a polite filler records negative sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("She wasn't easy to talk to, to be fair");
+  expect(feedback?.sentiment).toBe("negative");
+  expect(feedback?.wouldMeetAgain).not.toBe(true);
+  expect(post?.worthwhile).not.toBe(true);
+});
+
+test("feedback that never clicked with a closing filler records negative sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("Never clicked, full stop");
+  expect(feedback?.sentiment).toBe("negative");
+  expect(feedback?.wouldMeetAgain).not.toBe(true);
+  expect(post?.worthwhile).not.toBe(true);
+});
+
+test("feedback that barely connected with an honesty filler records negative sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("Barely connected, if I'm honest");
+  expect(feedback?.sentiment).toBe("negative");
+  expect(feedback?.wouldMeetAgain).not.toBe(true);
+  expect(post?.worthwhile).not.toBe(true);
+});
+
+test("feedback that was not easy to talk to with much silence records negative sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("She was not easy to talk to, lots of silence");
+  expect(feedback?.sentiment).toBe("negative");
+  expect(feedback?.wouldMeetAgain).not.toBe(true);
+  expect(post?.worthwhile).not.toBe(true);
+});
+
+test("feedback that was not easy to talk to and dull records negative sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("He wasn't easy to talk to, good-looking but dull");
+  expect(feedback?.sentiment).toBe("negative");
+  expect(feedback?.wouldMeetAgain).not.toBe(true);
+  expect(post?.worthwhile).not.toBe(true);
+});
+
+test("feedback that was not easy to talk to with a brusque manner records negative sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("He wasn't easy to talk to, his manner was brusque");
+  expect(feedback?.sentiment).toBe("negative");
+  expect(feedback?.wouldMeetAgain).not.toBe(true);
+  expect(post?.worthwhile).not.toBe(true);
+});
