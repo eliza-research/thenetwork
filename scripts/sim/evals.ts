@@ -141,8 +141,6 @@ export async function evalsBlock(b: Block): Promise<void> {
   b.gate(`the age question accepts spelled-out answers (n ${ageAnswers.length})`, wrongAgeAnswers.length === 0,
     wrongAgeAnswers.slice(0, 5).map(row => row.text).join("; "));
 
-  // spec/planFormation.md, "A stated weekday and part of day": the part is read from the words the
-  // member used, so an explicit clock time must name its own part and not fall through to the default.
   const clockTags = await jsonl<{ text: string; tags: string[] }>("network/availability-clock.jsonl");
   const wrongTags = clockTags.filter(row => JSON.stringify(availabilityTags(row.text)) !== JSON.stringify(row.tags));
   b.gate(`a stated clock time names its part of day (n ${clockTags.length})`, clockTags.length >= 12 && wrongTags.length === 0,
