@@ -483,7 +483,7 @@ export function Requests() {
   const byCat = new Map<string, { open: number; fulfilled: number; total: number }>();
   for (const r of scoped) {
     const c = byCat.get(r.category) ?? { open: 0, fulfilled: 0, total: 0 };
-    c.total++; if (isOpen(r)) c.open++; if (r.outcome === "fulfilled") c.fulfilled++;
+    c.total++; if (isOpen(r)) c.open++; if (requestShown(OUTCOME[r.outcome], "FulfilledSegment")) c.fulfilled++;
     byCat.set(r.category, c);
   }
   return (
