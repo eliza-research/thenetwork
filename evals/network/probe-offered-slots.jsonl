@@ -354,3 +354,27 @@
 {"text":"Saturday works whenever","answer":"yes","keys":["b"]}
 {"text":"Saturday works when it suits you","answer":"yes","keys":["b"]}
 {"text":"Last time was great, Saturday works","answer":"yes","keys":["b"]}
+{"text": "anything but the weekend works", "answer": "yes", "keys": ["a"]}
+{"text": "any day but the weekend works", "answer": "yes", "keys": ["a"]}
+{"text": "every day but the weekend works", "answer": "yes", "keys": ["a"]}
+{"text": "any time but the weekend works", "answer": "yes", "keys": ["a"]}
+{"text": "everything except the weekend works", "answer": "yes", "keys": ["a"]}
+{"text": "everything works except the weekend", "answer": "yes", "keys": ["a"]}
+{"text": "anything but the weekend", "answer": "yes", "keys": ["a"]}
+{"text": "anything except the weekend", "answer": "yes", "keys": ["a"]}
+{"text": "any day works except Sunday", "answer": "yes", "keys": ["a", "b"]}
+{"text": "every day works except Sunday", "answer": "yes", "keys": ["a", "b"]}
+{"text": "anything works except Sunday", "answer": "yes", "keys": ["a", "b"]}
+{"text": "any day works except Thursday", "answer": "yes", "keys": ["b", "c"]}
+{"text": "any day works but Sunday", "answer": "yes", "keys": ["a", "b"]}
+{"text": "anything except weekdays works", "answer": "yes", "keys": ["b", "c"]}
+{"text": "everything but weekdays works", "answer": "yes", "keys": ["b", "c"]}
+{"text": "all of them work except Sunday", "answer": "yes", "keys": ["a", "b"]}
+{"text": "any day but Thursday works", "answer": "yes", "keys": ["b", "c"]}
+{"text": "every day works except the weekend", "answer": "yes", "keys": ["a"]}
+{"text": "anything works but the weekend", "answer": "yes", "keys": ["a"]}
+{"text": "any day works except the weekend", "answer": "yes", "keys": ["a"]}
+{"text": "anything but the morning works", "answer": "yes", "keys": ["a", "c"]}
+{"text": "the weekend works", "answer": "yes", "keys": ["b", "c"]}
+{"text": "nothing but the weekend works", "answer": "yes", "keys": ["b", "c"]}
+{"text": "anything except the 2pm slot works", "answer": "yes", "keys": ["a", "b"]}

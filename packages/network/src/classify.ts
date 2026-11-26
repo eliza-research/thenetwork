@@ -992,7 +992,7 @@ const DAY_WORDS: [RegExp, string][] = DAY_NAMES.map(([label, abbreviation]) => [
   new RegExp(String.raw`\b${label.toLowerCase()}s?\b|(?<!')\b(?:${abbreviation})\b${DAY_ABBR_CONTEXT}`, "g"), label,
 ]);
 const EXCEPT_SPAN_TOKEN = new RegExp(
-  `(?:${DAY_WORDS.map(([re]) => re.source).join("|")}|\\b\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?\\b|\\b(?:morning|afternoon|evening|night|weekend|weekday)s?\\b|\\b(?:and|or)\\b|,)`, "g");
+  `(?:${DAY_WORDS.map(([re]) => re.source).join("|")}|\\b\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?\\b|\\b(?:morning|afternoon|evening|night|weekend|weekday)s?\\b|\\b(?:and|or)\\b|\\bthe\\b|,)`, "g");
 const exceptSpanIsOnlyExcludedTimes = (span: string) =>
   span.replace(EXCEPT_SPAN_TOKEN, "").trim() === "";
 const DAY_TOKEN = DAY_NAMES.map(([label, abbreviation]) => `${label.toLowerCase()}s?|${abbreviation}`).join("|");
@@ -1089,7 +1089,7 @@ const RELATIVE_DAY_GROUP = /\b(?:next|last|following)\s+weekends?\b/;
 const DAYPART_MENTION = /\b(mornings?|afternoons?|lunch|evenings?|nights?|after work)\b/g;
 const NAMED_EXCLUSION_RANGE = "(?:any(?: other)? (?:day(?: of the week)?|time)|anytime|(?:any|every)thing(?: else)?|(?:all|every|each) (?:days?|times?)|all|whichever|whatever)";
 const DAYPART_EXCLUSION = /\b(?:any|every|each)\s+(morning|afternoon|evening|night)s?\s+but\s+(?:(?:on|this|that)\s+)*/;
-const NAMED_EXCLUSION = new RegExp(String.raw`\b(?:${NAMED_EXCLUSION_RANGE} but|${NAMED_TIME_EXCLUSION})\s+(?:(?:on|this|that)\s+)*$`);
+const NAMED_EXCLUSION = new RegExp(String.raw`\b(?:${NAMED_EXCLUSION_RANGE} but|${NAMED_TIME_EXCLUSION}|${NAMED_EXCLUSION_RANGE}\s+(?:works?|will work)\s+(?:but|${NAMED_TIME_EXCLUSION}))\s+(?:(?:on|this|that|the)\s+)*$`);
 const INCIDENTAL_CLOCK = /\b(?:after|before|until|till|by|around)\s*$|\b(?:work|shift)\s+(?:at\s+|(?:starts?|ends?)\s+at\s+)$/;
 const CONNECTS_TIME = /^\s*(?:(?:at|on|in the)\s+)?$/;
 type ProbeSpan = { at: number; end: number };
@@ -1772,7 +1772,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     ...(explicitTimesOnly ? { explicitTimeSelection: true as const } : {}) });
   // Refusal first. A pick after a refusal ("no, Saturday works") is mixed: ask again.
   if (c.why === "refusal") return all.some(k => strong.has(k)) || conditionalUnresolved.size ? { ...unclear, why: "mixed" } : { answer: "no", keys: [], why: c.why };
-  const exceptSpan = /^\s*(?:any\s?(?:thing|day|time)|every\s?(?:thing|day)|all|whichever)\s+except\s+(.+?)\s+works?[.!\s]*$/.exec(t)?.[1];
+  const exceptSpan = /^\s*(?:any\s?(?:thing|day|time)|every\s?(?:thing|day)|all|whichever)\s+except\s+(.+?)\s+works?[.!\s]*$/.exec(t)?.[1]
+    ?? /^\s*(?:any\s?(?:thing|day|time)|every\s?(?:thing|day)|all|whichever)\s+works?\s+except\s+(.+?)[.!\s]*$/.exec(t)?.[1];
   if (c.why === "mixed" && !explicitTimesOnly && namedExclusion && !contradictedExclusion
     && open.length && !unresolved.length && exceptSpan !== undefined
     && exceptSpanIsOnlyExcludedTimes(exceptSpan)) return explicitYes(open);
