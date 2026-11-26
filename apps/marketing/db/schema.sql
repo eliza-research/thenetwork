@@ -303,7 +303,7 @@ create table if not exists marketing.attribution_events (
   occurred_at          timestamptz not null default now(),
   created_at           timestamptz not null default now(),
   constraint chk_attribution_verified_adult check (
-    event_type <> 'signup_verified_18plus'
+    event_type not in ('signup_verified_18plus', 'signup_verified_adult')
     or is_adult_verified = true
   )
 );
@@ -311,6 +311,8 @@ create index if not exists marketing_attribution_batch_type_idx
   on marketing.attribution_events (qr_batch_code, event_type, occurred_at desc);
 create index if not exists marketing_attribution_campaign_idx
   on marketing.attribution_events (campaign_id, occurred_at desc);
+create index if not exists idx_attribution_campaign_created
+  on marketing.attribution_events (campaign_id, event_type, created_at desc);
 
 -- 10. Append-only budget & spend circuit-breaker ledger (isolated from packages/capital)
 create table if not exists marketing.budget_ledger (
@@ -323,6 +325,7 @@ create table if not exists marketing.budget_ledger (
   track                text check (track is null or track in ('street_fliering', 'creator_video', 'event_activation', 'print_qr', 'agency_reserve', 'tier3_api', 'oss_dev_bounty')),
   amount_cents         integer not null check (amount_cents > 0),
   entry_type           text not null check (entry_type in ('dry_run', 'reserve', 'commit', 'release', 'refund')),
+  from_reserve         boolean not null default false,
   payout_rail          text not null default 'none'
                        check (payout_rail in ('none', 'fiat_stripe', 'fiat_tremendous', 'usdc_direct', 'agency_invoice', 'platform_escrow', 'card_api', 'slop_cash')),
   idempotency_key      text not null unique check (length(btrim(idempotency_key)) > 0),
@@ -330,8 +333,12 @@ create table if not exists marketing.budget_ledger (
   notes                text,
   created_at           timestamptz not null default now()
 );
+alter table marketing.budget_ledger
+  add column if not exists from_reserve boolean not null default false;
 create index if not exists marketing_budget_campaign_created_idx
   on marketing.budget_ledger (campaign_id, created_at desc);
+create index if not exists idx_budget_ledger_campaign_day
+  on marketing.budget_ledger (campaign_id, entry_type, created_at desc);
 create index if not exists marketing_budget_task_idx
   on marketing.budget_ledger (task_id) where task_id is not null;
 
@@ -356,6 +363,159 @@ create table if not exists marketing.slop_cash_hooks (
 );
 create index if not exists marketing_slop_cash_state_idx
   on marketing.slop_cash_hooks (hook_state);
+
+-- 12. Contextual Thompson-Sampling Bandit arms (Pass 2)
+create table if not exists marketing.bandit_arms (
+  id                   text primary key default gen_random_uuid()::text,
+  campaign_id          text not null references marketing.campaigns (id) on delete cascade,
+  arm_key              text not null check (length(btrim(arm_key)) > 0),
+  label                text not null check (length(btrim(label)) > 0),
+  track                text not null check (length(btrim(track)) > 0),
+  alpha                double precision not null default 1.0 check (alpha > 0),
+  beta                 double precision not null default 1.0 check (beta > 0),
+  weight               double precision not null default 0.0 check (weight >= 0 and weight <= 1),
+  spend_cents          integer not null default 0 check (spend_cents >= 0),
+  signups              integer not null default 0 check (signups >= 0),
+  stop_events          integer not null default 0 check (stop_events >= 0),
+  total_contacts       integer not null default 0 check (total_contacts >= 0),
+  status               text not null default 'active'
+                       check (status in ('active', 'killed', 'paused')),
+  updated_at           timestamptz not null default now(),
+  unique (campaign_id, arm_key)
+);
+create index if not exists idx_bandit_arms_campaign_status
+  on marketing.bandit_arms (campaign_id, status);
+
+-- 13. Zero-Human BD Venue & Event-Host Deals (Pass 2)
+create table if not exists marketing.bd_deals (
+  id                       text primary key default gen_random_uuid()::text,
+  campaign_id              text not null references marketing.campaigns (id) on delete cascade,
+  city                     text not null default 'nyc',
+  venue_name               text not null check (length(btrim(venue_name)) > 0),
+  vertical                 text not null check (vertical in ('slop', 'peon', 'friends', 'ntwrk', 'all')),
+  contact_email            text,
+  business_phone           text,
+  stage                    text not null default 'prospect'
+                           check (stage in ('prospect', 'enriched', 'pitched', 'negotiating', 'contracted', 'kit_shipped', 'live', 'audited', 'closed_lost')),
+  offered_cents            integer not null default 0 check (offered_cents >= 0),
+  phone_callback_verified  boolean not null default false,
+  contract_hash            text,
+  qr_batch_id              text,
+  notes                    text,
+  created_at               timestamptz not null default now(),
+  updated_at               timestamptz not null default now()
+);
+create index if not exists idx_bd_deals_campaign_stage
+  on marketing.bd_deals (campaign_id, stage, updated_at desc);
+
+-- 14. Serialized QR Batches (Pass 2)
+create table if not exists marketing.qr_batches (
+  id                   text primary key default gen_random_uuid()::text,
+  campaign_id          text not null references marketing.campaigns (id) on delete cascade,
+  city                 text not null default 'nyc',
+  batch_code           text not null unique check (length(btrim(batch_code)) > 0),
+  destination_url      text not null check (length(btrim(destination_url)) > 0),
+  dub_link_id          text,
+  print_qty            integer not null default 0 check (print_qty >= 0),
+  assigned_to_type     text check (assigned_to_type is null or assigned_to_type in ('human', 'bd_deal')),
+  assigned_to_id       text,
+  scans                integer not null default 0 check (scans >= 0),
+  verified_signups     integer not null default 0 check (verified_signups >= 0),
+  created_at           timestamptz not null default now()
+);
+create index if not exists idx_qr_batches_campaign_code
+  on marketing.qr_batches (campaign_id, batch_code);
+
+-- 15. 18-Archetype High-Status VIP Prospects (Pass 2)
+create table if not exists marketing.vip_prospects (
+  id                   text primary key default gen_random_uuid()::text,
+  campaign_id          text not null references marketing.campaigns (id) on delete cascade,
+  city                 text not null default 'nyc',
+  name                 text not null check (length(btrim(name)) > 0),
+  archetype            text not null check (length(btrim(archetype)) > 0),
+  organization         text,
+  public_source        text not null check (length(btrim(public_source)) > 0),
+  source_url           text,
+  prestige_score       smallint not null default 0 check (prestige_score between 0 and 100),
+  contact_email        text,
+  invite_draft         text,
+  status               text not null default 'discovered'
+                       check (status in ('discovered', 'scored', 'drafted', 'invited', 'replied', 'onboarded', 'declined')),
+  created_at           timestamptz not null default now(),
+  updated_at           timestamptz not null default now()
+);
+create index if not exists idx_vip_prospects_campaign_status
+  on marketing.vip_prospects (campaign_id, status, prestige_score desc);
+
+-- 16. 5-Agent Short-Form Funny Video Factory Assets (Pass 2)
+create table if not exists marketing.video_assets (
+  id                   text primary key default gen_random_uuid()::text,
+  campaign_id          text not null references marketing.campaigns (id) on delete cascade,
+  agent_id             text references marketing.agents (id) on delete set null,
+  title                text not null check (length(btrim(title)) > 0),
+  hook                 text not null check (length(btrim(hook)) > 0),
+  script               text not null check (length(btrim(script)) > 0),
+  stage                text not null default 'trend'
+                       check (stage in ('trend', 'script', 'voice_render', 'qa', 'published', 'measured', 'killed')),
+  video_url            text,
+  platform             text,
+  views                integer not null default 0 check (views >= 0),
+  retention_3s_pct     numeric(5, 2) not null default 0 check (retention_3s_pct >= 0 and retention_3s_pct <= 100),
+  signups              integer not null default 0 check (signups >= 0),
+  ftc_disclosed        boolean not null default false,
+  created_at           timestamptz not null default now(),
+  updated_at           timestamptz not null default now()
+);
+create index if not exists idx_video_assets_campaign_stage
+  on marketing.video_assets (campaign_id, stage, updated_at desc);
+
+-- 17. Anti-Fraud & Vesting Claims Ledger (Pass 2)
+create table if not exists marketing.antifraud_claims (
+  id                   text primary key default gen_random_uuid()::text,
+  campaign_id          text not null references marketing.campaigns (id) on delete cascade,
+  person_key           text not null check (length(btrim(person_key)) > 0),
+  worker_id            text references marketing.humans (id) on delete set null,
+  task_id              text references marketing.tasks (id) on delete set null,
+  phone_line_type      text not null default 'unknown'
+                       check (phone_line_type in ('postpaid', 'prepaid', 'mvno', 'voip', 'landline', 'unknown')),
+  media_hash           text,
+  cluster_id           text,
+  vesting_tier         smallint not null default 1 check (vesting_tier between 0 and 4),
+  amount_cents         integer not null default 0 check (amount_cents >= 0),
+  status               text not null default 'vesting'
+                       check (status in ('vesting', 'approved', 'quarantined', 'rejected')),
+  reason               text,
+  created_at           timestamptz not null default now()
+);
+create index if not exists idx_antifraud_claims_campaign_status
+  on marketing.antifraud_claims (campaign_id, status, created_at desc);
+create index if not exists idx_antifraud_claims_person_key
+  on marketing.antifraud_claims (person_key);
+create index if not exists idx_antifraud_claims_media_hash
+  on marketing.antifraud_claims (media_hash) where media_hash is not null;
+
+-- Additional composite operational indexes (Pass 2)
+create index if not exists idx_tasks_campaign_status
+  on marketing.tasks (campaign_id, status, created_at desc);
+create index if not exists idx_proofs_task_verdict
+  on marketing.proofs (task_id, verifier_verdict, verified_at desc);
+create index if not exists idx_outreach_status_created
+  on marketing.outreach_messages (campaign_id, status, created_at desc);
+
+-- Idempotent constraint upgrade for existing databases (chk_attribution_verified_adult)
+do $$
+begin
+  if exists (
+    select 1 from pg_constraint where conname = 'chk_attribution_verified_adult'
+  ) then
+    alter table marketing.attribution_events drop constraint chk_attribution_verified_adult;
+  end if;
+  alter table marketing.attribution_events
+    add constraint chk_attribution_verified_adult check (
+      event_type not in ('signup_verified_18plus', 'signup_verified_adult')
+      or is_adult_verified = true
+    );
+end $$;
 
 -- Least privilege: only the service login reads or writes marketing data.
 revoke all on schema marketing from public;

@@ -40,9 +40,9 @@ pure def lawWarmupCapMonotone(dayA: int, dayB: int): bool =
   (dayA <= dayB) implies (warmupDailyCap(dayA) <= warmupDailyCap(dayB))
 ```
 
-### Device execution requires online status, exclusive lease, safe envelope, remaining warm-up quota, and no lockdown or STOP
+### Device execution requires online status, exclusive lease, safe envelope, remaining warm-up quota, and no lockdown, STOP, or human takeover challenge
 
-A physical device may execute an action only when it is online, not leased by another worker, inside the safe battery and temperature envelope, within its non-negative daily warm-up action cap, outside lockdown mode, and targeting a contact who has not sent STOP.
+A physical device may execute an action only when it is online, not leased by another worker, inside the safe battery and temperature envelope, within its non-negative daily warm-up action cap, outside lockdown mode, and targeting a contact who has not sent STOP. Dispatching a device step also fails closed whenever `needsTakeover` is true (CAPTCHA, login challenge, or 2FA requires human intervention).
 
 ```quint
 pure def canExecuteDeviceAction(
@@ -62,6 +62,22 @@ pure def canExecuteDeviceAction(
     and actionsToday < warmupDailyCap(warmupDay)
     and not(lockdown)
     and not(targetStopped)
+
+pure def canDispatchDeviceStep(
+  deviceOnline: bool,
+  leasedByOther: bool,
+  needsTakeover: bool,
+  batteryPct: int,
+  tempC: int,
+  actionsToday: int,
+  warmupDay: int,
+  lockdown: bool,
+  targetStopped: bool
+): bool =
+  not(needsTakeover)
+    and canExecuteDeviceAction(
+      deviceOnline, leasedByOther, batteryPct, tempC, actionsToday, warmupDay, lockdown, targetStopped
+    )
 
 pure def lawHotOrLowBatteryBlocked(
   deviceOnline: bool,
@@ -88,6 +104,20 @@ pure def lawLeasedOrStoppedDeviceBlocked(
 ): bool =
   (not(deviceOnline) or leasedByOther or lockdown or targetStopped) implies
     not(canExecuteDeviceAction(deviceOnline, leasedByOther, batteryPct, tempC, actionsToday, warmupDay, lockdown, targetStopped))
+
+pure def lawTakeoverBlocksDeviceStep(
+  deviceOnline: bool,
+  leasedByOther: bool,
+  batteryPct: int,
+  tempC: int,
+  actionsToday: int,
+  warmupDay: int,
+  lockdown: bool,
+  targetStopped: bool
+): bool =
+  not(canDispatchDeviceStep(
+    deviceOnline, leasedByOther, true, batteryPct, tempC, actionsToday, warmupDay, lockdown, targetStopped
+  ))
 
 pure val batteryPctValues = Set(20, 34, 35, 55, 80, 81, 92)
 pure val tempCValues = Set(-1, 0, 32, 41, 42, 45)

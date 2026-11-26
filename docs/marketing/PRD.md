@@ -1,305 +1,320 @@
 # Technical Product Requirements Document (PRD): `@thenetwork/marketing`
 
 - **Application Path:** `apps/marketing` (`@thenetwork/marketing`)
-- **Database Schema:** Isolated PostgreSQL schema `marketing.*` (`apps/marketing/db/schema.sql`, applied via `packages/db/migrate.ts` as repeatable `9004_marketing_schema`)
-- **Formal Verification:** Vibestack specs `spec/marketingPolicy.md` & `spec/marketingDevice.md` -> generated TypeScript in `packages/core/src/generated/marketingPolicy.ts` & `packages/core/src/generated/marketingDevice.ts`, plus whole-flow Quint model `spec/models/marketing_campaign.md`
-- **Runtime Stack:** Node 26 + `tsx` + `pnpm` + Vitest (`@thenetwork/core/runtime/postgres.ts` `SQL`, `@thenetwork/core/runtime/process.ts` `spawnProcess`, `@thenetwork/core/runtime/http.ts` `serve`)
-- **Runtime Entrypoints:** `pnpm run marketing` (HTTP Command Center + REST API + orchestrator on `127.0.0.1:4949`) and `pnpm run marketing:cli` (CLI controller)
+- **Database Schema:** Isolated PostgreSQL schema `marketing.*` (**17 tables**, **5 composite indexes**, `apps/marketing/db/schema.sql`, applied via `packages/db/migrate.ts` as repeatable `9004_marketing_schema`)
+- **Formal Verification:** Vibestack/Dafny specs `spec/marketingPolicy.md` (**15 proved obligations**) & `spec/marketingDevice.md` (**4 proved obligations**) -> generated TypeScript in `packages/core/src/generated/marketingPolicy.ts` & `packages/core/src/generated/marketingDevice.ts`, plus whole-flow Quint model `spec/models/marketing_campaign.md` (**9 safety invariants**, **11 reachability witnesses**, **9 deterministic `run` tests**)
+- **Runtime Stack:** Node 26 + `tsx` + `pnpm` + Vitest (`@thenetwork/core/runtime/postgres.ts` `SQL`, `@thenetwork/core/runtime/process.ts` `spawnProcess`, `@thenetwork/core/runtime/http.ts` `serveHttp`)
+- **Runtime Entrypoints:** `pnpm run marketing` (Observatory-sibling HTTP Command Center + JSON REST API + live SSE hub on `127.0.0.1:4949`) and `pnpm run marketing:cli` (CLI controller)
 - **Companion Docs:** [README.md](README.md) · [STRATEGY.md](STRATEGY.md) · [NYC-STREET-TEAMS-AND-AGENCIES.md](NYC-STREET-TEAMS-AND-AGENCIES.md) · [SLOP-CASH-INTEGRATION.md](SLOP-CASH-INTEGRATION.md)
 
 ---
 
 ## 1. Purpose, Boundaries & Non-Goals
 
-`apps/marketing` is a runnable, formally verified marketing orchestration application inside The Network monorepo (`eliza-research/thenetwork`). It coordinates our five branded agents (`Chadwick`, `Sloane`, `Peon`, `Venn`, `The Operator / Eliza`), manages local physical phones attached to a single MacBook, discovers NYC opportunities from free open-web sources, hires and pays real NYC street teams, event activators, agencies, and street-interview YouTubers/creators with zero internal human labor, and enforces strict spend, age, consent, and proof invariants.
+`apps/marketing` is a runnable, formally verified marketing orchestration application inside The Network monorepo (`eliza-research/thenetwork`). It coordinates our five branded agents (`Chadwick`, `Sloane`, `Peon`, `Venn`, `The Operator / Eliza`), manages local physical phones attached to a single MacBook, discovers opportunities across seven metros from free open-web sources, hires and pays real NYC/multi-city street teams, event activators, agencies, and street-interview YouTubers/creators with zero internal human labor, runs continuous Contextual Bandit rebalancing, Anti-Fraud vesting & Sybil detection, Zero-Human 8-stage BD + serialized QR batching, 18-archetype VIP salon curation, and a 5-agent Short-Form Video Factory—while enforcing proved spend, age, consent, device, and proof invariants.
 
 ### 1.1 Hard System Boundaries
 
-1. **Zero edits to the four public landing sites (2026-10-19 rule):** `apps/site` (`ntwrk.party`, `slop.date`, `peon.biz`, `friends.help`) remains untouched. The Marketing Command Center serves strictly on loopback (`127.0.0.1:4949`) or behind staff Zero-Trust access.
+1. **Zero edits to the four public landing sites (2026-10-19 rule):** `apps/site` (`ntwrk.party`, `slop.date`, `peon.biz`, `friends.help`) remains untouched. The Marketing Command Center serves strictly on loopback (`127.0.0.1:4949`) or behind staff Zero-Trust access with Bearer authentication (`timingSafeEqual`, empty-token fallback to 48-char random hex) and strict CSP headers.
 2. **Zero-cash `packages/capital` wall (2026-11-23 rule):** `apps/marketing` never reads or mutates `packages/capital` balances to issue cash or crypto. All marketing budgets, contractor escrow, and spend tracking live in `marketing.*`.
-3. **`slop.cash` disabled in code (`MARKETING_SLOP_CASH_ENABLED=0`):** `apps/marketing` includes the `marketing.slop_cash_hooks` schema table and the typed `SlopCashBridge` stub, hard-blocked by `inv_slop_cash_disabled` and `canAuthorizeSpend` until future founder approval. See [SLOP-CASH-INTEGRATION.md](SLOP-CASH-INTEGRATION.md).
-4. **Zero gimmicky hardware:** Street operations use real humans, serialized printed fliers with unique batch QR codes, in-person event activators, and creator street-interview videos only. No novelty wearables or portable print gadgets exist anywhere in `apps/marketing`.
-5. **Deterministic time and formal safety:** All pure policy and device decisions live in `spec/marketingPolicy.md` and `spec/marketingDevice.md`, published by `pnpm run spec:sync` into `packages/core/src/generated/marketingPolicy.ts` and `packages/core/src/generated/marketingDevice.ts`. Application code reads time only via injected `Clock` (`packages/core/src/clock.ts`) — never bare `Date.now()` or `Math.random()`.
+3. **`slop.cash` disabled in code (`MARKETING_SLOP_CASH_ENABLED=0`):** `apps/marketing` includes the `marketing.slop_cash_hooks` schema table and the typed `SlopCashBridge` stub, hard-blocked by `inv_slop_cash_disabled`, `canAuthorizeTaskSpend`, and `lawConsumerTaskNeverUsesSlopCash` until explicit written founder approval. See [SLOP-CASH-INTEGRATION.md](SLOP-CASH-INTEGRATION.md).
+4. **Zero gimmicky hardware:** Street operations use real humans, serialized printed fliers with unique batch QR codes, in-person event activators, and creator street-interview videos only.
+5. **Deterministic time, single-source constants, and formal safety:** All pure policy and device decisions live in `spec/marketingPolicy.md` and `spec/marketingDevice.md`, published by `pnpm run spec:sync` into `packages/core/src/generated/marketingPolicy.ts` and `packages/core/src/generated/marketingDevice.ts`, and wrapped once in `apps/marketing/src/policy.ts` and `apps/marketing/src/constants.ts`. Application code reads time only via injected `Clock` (`packages/core/src/clock.ts`) — never bare `Date.now()`, bare `new Date()`, or `Math.random()`.
 
 ---
 
 ## 2. 4-Tier Phased Implementation Architecture
 
-`apps/marketing` is engineered in four cleanly layered tiers so the full app boots and runs at **$0** today, controls real local phones on a single MacBook today, and activates credit-card APIs and paid NYC human hiring simply by adding env keys and arming billing.
-
 ```mermaid
 flowchart TD
-    subgraph T1["Tier 1: Zero-Cost Core (Implemented Now)"]
-        CORE["Vibestack Generated Cores: marketingPolicy.ts + marketingDevice.ts"]
-        PG["Postgres marketing.* Schema (Local PG :54339 or In-Memory Dev)"]
-        AGENTS["5-Agent Subscription Coordinator (ChatGPT / Claude / Gemini / Surplus)"]
-        DISC["Open-Web NYC Discovery (DOHMH / SLA / HN / GitHub / arXiv / Reddit / YT RSS / Luma / Eventbrite)"]
-        HIRE["Automated Hiring, Email & Proof-Verification Engine"]
-        UI["Local HTTP Command Center (:4949) + REST API + CLI"]
+    subgraph T1["Tier 1: Zero-Cost Core & Pass-2 Autonomous Engines"]
+        CORE["Vibestack/Dafny Cores: marketingPolicy.ts (15) + marketingDevice.ts (4) -> policy.ts + constants.ts"]
+        PG["Postgres marketing.* Schema (17 Tables, 5 Composite Indexes, Row-Locked Transactions)"]
+        AGENTS["5-Agent Subscription Coordinator (ChatGPT / Claude / Gemini / Surplus + Sanitized Env)"]
+        ENGINES["Pass-2 Engines: Bandit + Daemon + Anti-Fraud + 8-Stage BD/QR + 18-Archetype VIP + Video Factory + 7-Metro Cities"]
+        HIRE["Automated Hiring, Screening & Proof Engine + Parallel Open-Web Discovery"]
+        UI["Observatory-Sibling Command Center (:4949, OKLCH, SVG Charts, SSE /api/events) + REST API + CLI"]
     end
 
-    subgraph T2["Tier 2: Single MacBook + 1 Android + 1 iPhone (Implemented Now)"]
-        ADB["Android Bridge (adb / uiautomator2 / scrcpy via spawnProcess)"]
-        IOS["iOS Bridge (pymobiledevice3 / xcrun devicectl / WebDriverAgent)"]
+    subgraph T2["Tier 2: Single MacBook + 1 Android + 1 iPhone"]
+        ADB["Android Bridge (adb / uiautomator2 / scrcpy via spawnProcess + Injection Guards)"]
+        IOS["iOS Bridge (pymobiledevice3 / xcrun devicectl / Loopback WebDriverAgent)"]
     end
 
-    subgraph T3["Tier 3: Credit-Card APIs (Adapters Implemented & Gated Now)"]
-        API_EMAIL["Resend / AgentMail / SMTP"]
-        API_COMMS["Twilio Lookup v2 / Blooio / Eliza Deliver"]
+    subgraph T3["Tier 3: Credit-Card APIs (Hardened Adapters + C-03 Spend Binding)"]
+        API_EMAIL["Resend / AgentMail / Fail-Closed SMTP Relay"]
+        API_COMMS["Twilio SMS + /Calls.json Voice + Lookup v2 / Blooio"]
         API_PRINT["Printful v2 / 4over / Lob"]
-        API_GIG["RentAHuman MCP / Dub.co Batch QR / Luma Plus"]
+        API_GIG["RentAHuman MCP (create_bounty) / Dub.co Batch QR (POST+PATCH) / Luma Plus"]
         API_MEDIA["ElevenLabs / Hedra / Kling"]
         API_PAY["Stripe Connect Express / Tremendous"]
         API_SC["SlopCashBridge Stub (LOCKED OFF)"]
     end
 
-    subgraph T4["Tier 4: External Humans & Agencies (Automated Pipeline)"]
-        HUMANS["NYC Street Flierers, Event Activators, Street-Interview Creators & Agencies"]
+    subgraph T4["Tier 4: External Humans, Street Teams, Venues & Creators"]
+        HUMANS["NYC & Multi-City Street Flierers, Event Activators, Creators, Venues & W-2 Agencies"]
     end
 
     UI <--> PG
-    AGENTS --> CORE
-    HIRE --> CORE
+    AGENTS & ENGINES & HIRE --> CORE
     ADB & IOS --> CORE
-    CORE -->|"Gated on billingArmed & RiskDial & Caps"| T3
+    CORE -->|"Gated on billingArmed & RiskDial & Caps & Anti-Fraud"| T3
     T3 --> T4
     T4 -->|"QR Scans, Check-In Photos, Video URLs, FTC Flags, NY §§ 50-51 Releases"| HIRE
 ```
 
-### 2.1 Tier 1 — Zero-Cost Runnable Core (Implemented Now)
+### 2.1 Tier 1 — Zero-Cost Core & Pass-2 Autonomous Engines (Implemented Now)
 
-Runs completely free on a developer MacBook using local Postgres (`:54339`, `pnpm run db:migrate`) or an ephemeral in-memory dev store for instant testing:
-- **Generated Policy & Device Cores (`packages/core/src/generated/`):** Pure TypeScript generated from `spec/marketingPolicy.md` and `spec/marketingDevice.md` via `pnpm run spec:sync`, paired with whole-flow verification in `spec/models/marketing_campaign.md`.
-- **5-Agent Subscription Coordinator (`apps/marketing/src/agent-lifecycle.ts`):** Drives `Chadwick`, `Sloane`, `Peon`, `Venn`, and `The Operator / Eliza` using existing ChatGPT, Claude, Gemini, or Surplus subscriptions.
-- **Zero-Cost Open-Web NYC Discovery (`apps/marketing/src/discovery.ts`):** Queries free unauthenticated public feeds (NYC Open Data DOHMH venues, NYS SLA liquor licenses, HN Algolia, GitHub NYC builders, arXiv Atom API, Reddit NYC feeds, YouTube channel RSS feeds, Luma & Eventbrite NYC listings) to build normalized `DiscoveredLead` queues at `$0` API cost.
-- **Automated Hiring & Proof Engine (`apps/marketing/src/crowdsourcing.ts`):** Generates Craigslist NYC gig copy, RentAHuman task briefs, vetted NYC agency RFP emails, and YouTuber/creator outreach drafts; parses applicant replies against a strict 18+ screening rubric; generates NYLL § 191-d clickwrap agreements; and verifies submitted proofs before queuing payouts.
-- **HTTP Command Center + REST API + CLI (`apps/marketing/src/server.ts`, `apps/marketing/src/cli.ts`):** Full local observability and control plane built on `@thenetwork/core/runtime/http.ts` (`serve`).
+Runs completely free on a developer MacBook using local Postgres (`:54339`, `pnpm run db:migrate`) or `MemoryMarketingStore`:
+- **Canonical Foundation (`types.ts`, `constants.ts`, `policy.ts`, `validation.ts`, `sse.ts`):** Single-source operational defaults, canonical 5-agent roster, compliance clauses, 5 email templates, thin policy wrappers delegating 100% to generated cores, streaming 1 MiB JSON parser (`413` oversize, strict typed fields, prototype-pollution block, `validatePublicHttpsUrl` SSRF defense), and bounded 64-client `MarketingEventHub` SSE broadcaster.
+- **5-Agent Subscription Coordinator (`agent-lifecycle.ts`):** Drives `Chadwick`, `Sloane`, `Peon`, `Venn`, and `The Operator` across `ChatGPT`, `Claude`, `Gemini`, and `Surplus` with allowlisted non-secret CLI env (`sanitizeCliEnv`), 30s `SIGTERM->SIGKILL` timeouts, 1 MiB bounded stream reads, non-bouncing failover (`triedProviders`), and contact-checking `LeakGuard`.
+- **7-Metro Legal & Parallel Discovery Engine (`cities.ts`, `discovery.ts`):** Supports `nyc`, `sf`, `la`, `chicago`, `miami`, `austin`, and `london` with code-enforced CA AB5 W-2 hiring gates, London EPA 1990 Schedule 3A borough flier licence checks, city transit/locality matching, and free unauthenticated open-web feeds (DOHMH, NYS SLA, HN Algolia, GitHub, arXiv, Reddit, YouTube RSS, Luma, Eventbrite).
+- **Contextual Thompson-Sampling Bandit (`bandit.ts`):** Deterministic seeded Beta-distribution weight allocation across campaign tracks with proved auto-kill bounds (`> 2.5x` CPA ceiling `$21.25` or `> 5%` STOP rate `500 bps`).
+- **Continuous Autopilot Daemon (`daemon.ts`):** Non-overlapping `setTimeout` + mutex loop on injected `Clock`, automatic UTC midnight `resetDailyCounters()`, expired device lease sweeper, automatic `riskDial -> "lockdown"` + `billingArmed -> false` circuit breaker on STOP-rate spike (`> 500 bps`), scheduled Bandit rebalancing, and SSE event publication.
+- **Anti-Fraud 4-Tier Vesting & Sybil Scanner (`antifraud.ts`):** Enforces 4-tier vesting (`$0` instant -> D7/D14 -> Organic-Anchor + 48h), VoIP block, `$2` prepaid/MVNO cap, `$20` lifetime consumer bonus cap, `$500/yr` W-9 gate, SHA-256 media-hash dedup, connected-component Sybil cluster quarantine, `https:` SSRF video validation, and `<= 15d` NY-FIFA / `<= 14d` OP-Q SLAs.
+- **Zero-Human 8-Stage BD & Serialized QR Batch Engine (`bd-engine.ts`):** Manages `prospect -> enriched -> pitched -> negotiating -> contracted -> kit_shipped -> live -> audited` (plus `closed_lost`), DTMF business-phone callback challenges, SHA-256 6-year clickwrap contracts, Dub.co `PATCH` QR batch binding, and Day-14 RentAHuman mystery audits.
+- **18-Archetype VIP Salon Engine (`vip-engine.ts`):** `ntwrk.party` prestige scoring, `< 75`-word plain-text invite validation (zero URLs/HTML/Calendly/spam words, `LeakGuard` clean), Table-Anchor matching, and Day-3/Day-7 follow-ups.
+- **5-Agent Short-Form Video Factory (`video-factory.ts`):** 5 persona video bibles, 10 starter comedy scripts (`STARTER_COMEDY_SCRIPTS`), pre-render safety/FTC/brand-isolation linter, and 72h retention scorer (`scale` / `hold` / `kill_rewrite`).
+- **Automated Hiring & Proof Engine (`crowdsourcing.ts`):** Generates city-compliant Craigslist gig copy, RentAHuman `create_bounty` MCP payloads, vetted agency RFPs, and creator briefs; screens replies (`>= 75` auto-hire, `>= 50` standby bench, youngest-age-wins `minAgeReading`, fixed `18+` regex); verifies proofs (`canApproveCreatorProof`) and dispatches email/payouts via `PaidAdapterRegistry`.
 
-### 2.2 Tier 2 — Single MacBook + 1 Dedicated Android + 1 Dedicated iPhone (Implemented Now)
+### 2.2 Tier 2 — Single MacBook + 1 Dedicated Android + 1 Dedicated iPhone (`devices/bridge.ts`)
 
-Physical mobile publishing avoids emulator bans (`MEETS_STRONG_INTEGRITY` and Apple App Attest) without requiring an expensive multi-Mac rack on Day 1:
-- **Starter Hardware:** 1 existing MacBook + 1 unlocked retail Android (e.g., Google Pixel 6a/7a, bootloader locked, USB debugging enabled) + 1 unlocked retail iPhone (e.g., iPhone SE 3 / 13 mini, iOS 18+, prebuilt `WebDriverAgent`). Both phones run with **Wi-Fi OFF** on separate cellular carrier SIMs (`~$15/mo` each).
-- **Device Bridge (`apps/marketing/src/devices/bridge.ts`):** Executes local USB diagnostics and UI automation via `@thenetwork/core/runtime/process.ts` (`spawnProcess`) for Android (`adb devices -l`, `adb shell dumpsys battery`, `uiautomator2`, `scrcpy`) and iOS (`xcrun devicectl list devices`, `pymobiledevice3`, prebuilt `WebDriverAgent` at `http://127.0.0.1:8100/status`).
+- **Starter Hardware:** 1 MacBook host + 1 unlocked retail Android (locked bootloader, USB debugging ON, Wi-Fi OFF, prepaid cellular SIM) + 1 unlocked retail iPhone (iOS 18+, prebuilt loopback `WebDriverAgent`, Wi-Fi OFF, prepaid cellular SIM).
 - **Proved Safety Envelope (`spec/marketingDevice.md`, `inv_device_safety_envelope`):**
-  - Battery must be within **`35% <= batteryPct <= 80%`** before dispatching an active session.
-  - Device temperature must be **`0°C <= tempC <= 41°C`** (actions abort and enter cooldown above `41°C`).
-  - Monotone daily warm-up cap (`warmupDailyCap(warmupDay)`): day `< 1` -> `0`, `<= 3` -> `5`, `<= 7` -> `12`, `<= 14` -> `25`, `<= 30` -> `50`, else `80`.
-  - Mutual-exclusion lease: at most one `leaseHolder` may control a phone at any time (`!leasedByOther`).
-  - **Zero CAPTCHA bypass:** Any login challenge, CAPTCHA, or 2FA prompt immediately sets device status to `needs_takeover` and alerts the Command Center for human intervention.
+  - Battery within **`35% <= batteryPct <= 80%`** and temperature **`0°C <= tempC <= 41°C`**.
+  - Monotone daily warm-up cap (`warmupDailyCap`): `< 1` -> `0`, `<= 3` -> `5`, `<= 7` -> `12`, `<= 14` -> `25`, `<= 30` -> `50`, else `80`.
+  - Expiring single-owner lease (`isDeviceLeaseHeldByOther` checks `leaseExpiresAt > nowMs`).
+  - **Proved CAPTCHA / 2FA Halt (`canDispatchDeviceStep`, `lawTakeoverBlocksDeviceStep`):** Whenever `needsTakeover` is true, dispatch fails closed with `status: "needs_takeover"` for human intervention—never bypassed.
+  - **Subprocess & SSRF Hardening:** Validates serials, Android `packageName`/`activity`, `scrcpy` allowlisted flags, output paths, and loopback-only WDA URLs; enforces 15s `SIGTERM->SIGKILL` timeout, 1 MiB bounded output reads, and ephemeral WDA session `DELETE`.
 
-### 2.3 Tier 3 — Paid Credit-Card APIs & Purchases (Adapters Implemented & Gated Now)
+### 2.3 Tier 3 — Paid Credit-Card APIs (`adapters/paid.ts`)
 
-Every billable external service sits behind a uniform `PaidAdapter` interface in `apps/marketing/src/adapters/paid.ts`:
-
-```ts
-export interface PaidAdapter<TInput, TResult> {
-  readonly id: string;
-  readonly tier: 3 | 4;
-  readonly requiredEnv: readonly string[];
-  readiness(env: Record<string, string | undefined>): "ready" | "dry_run" | "missing_credentials";
-  estimateCostCents(input: TInput): number;
-  dryRun(input: TInput): Promise<AdapterReceipt<TResult>>;
-  execute(input: TInput, leaseId: string): Promise<AdapterReceipt<TResult>>;
-}
-```
-
-**Fail-Closed Dispatch Gate:** Before any adapter calls `execute()`, the registry calls generated `canAuthorizeSpend(...)` from `packages/core/src/generated/marketingPolicy.ts` (`inv_tier_billing_gate`, `inv_budget_never_exceeded`, `inv_slop_cash_disabled`):
-1. Required env keys AND `MARKETING_LIVE_BILLING === "1"` must be present (otherwise safely returns a dry-run receipt).
-2. Campaign `billingArmed === true` AND `riskDial !== "lockdown"`.
-3. `amountCents > 0`, `amountCents <= perTaskCapCents`, `dailySpentCents + amountCents <= dailyCapCents`, AND `monthlySpentCents + amountCents <= monthlyCapCents`.
-4. Atomic reservation row written to `marketing.budget_ledger` with a unique `idempotency_key`.
+Every billable external service sits behind `PaidAdapterRegistry` in `apps/marketing/src/adapters/paid.ts` with strict **C-03 spend binding** (rejects any call where explicit input charge mismatches `context.spend.amountCents`), `AbortSignal.timeout(15_000)` on all HTTP fetches, ledger recording hooks, and fail-closed `canAuthorizeSpend` checks:
 
 | Adapter ID | Service / Provider | Required Env Keys | Role in `apps/marketing` |
 | :--- | :--- | :--- | :--- |
-| `email` | Resend / AgentMail / SMTP | `RESEND_API_KEY` or `AGENTMAIL_API_KEY` | Transactional notifications, two-way applicant/creator/agency threads, clickwrap delivery |
-| `sms_voice` | Twilio Lookup v2 / Blooio | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` or `BLOOIO_API_KEY` | Carrier-type check (blocks VoIP/burner fraud); opted-in member updates only (never cold SMS) |
-| `rentahuman` | RentAHuman.ai MCP | `RENTAHUMAN_API_KEY` | Books, tracks, approves, or disputes NYC street-team & courier tasks (`https://rentahuman.ai/api/mcp`) |
-| `print_fliers` | Printful v2 / 4over / Lob | `PRINTFUL_API_KEY` or `FOUROVER_API_KEY` or `LOB_API_KEY` | Prints per-shift unique-QR fliers and partner venue coaster/tabletop kits |
-| `qr_links` | Dub.co | `DUB_API_KEY` | Mints unique `go.<brand>/<batch>` short links and QR targets per shift/creator/venue |
-| `events` | Luma Plus | `LUMA_API_KEY` | Publishes curated NYC event pages and anti-flake deposit RSVPs |
-| `media_video` | ElevenLabs / Hedra / Kling | `ELEVENLABS_API_KEY` / `HEDRA_API_KEY` / `KLING_API_KEY` | Optional AI voiceovers and short-form video cutdowns for branded social channels |
-| `payouts` | Stripe Connect Express / Tremendous | `STRIPE_SECRET_KEY` or `TREMENDOUS_API_KEY` | Direct USD bank or gift-card payouts for NYC street workers, creators, and agencies (`$500/yr` W-9 gate) |
-| `slop_cash` | `SlopCashBridge` Stub | `MARKETING_SLOP_CASH_ENABLED` (default `0`) | **Hard-disabled stub** (`inv_slop_cash_disabled`). Always fails closed with `SlopCashDisabledError`. |
+| `email` | Resend / AgentMail / SMTP Relay | `RESEND_API_KEY`, `AGENTMAIL_API_KEY`, or `SMTP_RELAY_URL` | Transactional notifications, two-way applicant/creator/agency threads, clickwrap delivery (fail-closed if no `SMTP_RELAY_URL`) |
+| `sms_voice` | Twilio SMS + Voice + Lookup v2 / Blooio | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, or `BLOOIO_API_KEY` | Carrier-type & `sms_pumping_risk` lookup, DTMF BD callbacks (`/Calls.json`), opted-in updates only (never cold SMS) |
+| `rentahuman` | RentAHuman.ai MCP | `RENTAHUMAN_API_KEY` | Dispatches `create_bounty` tasks (`https://rentahuman.ai/api/mcp`) with HTTP-200 JSON-RPC error checking |
+| `print_fliers` | Printful v2 / 4over / Lob | `PRINTFUL_API_KEY`, `FOUROVER_API_KEY`, or `LOB_API_KEY` | Prints serialized QR fliers, postcards (`variant_id` / Lob `size`+`use_type`), and venue coaster kits |
+| `qr_links` | Dub.co | `DUB_API_KEY` | Mints (`POST`) and updates (`PATCH` via `linkId`) serialized `go.<brand>/<batch>` short links and QRs |
+| `events` | Luma Plus | `LUMA_API_KEY` | Publishes curated city event pages and anti-flake deposit RSVPs |
+| `media_video` | ElevenLabs / Hedra / Kling | `ELEVENLABS_API_KEY`, `HEDRA_API_KEY`, `KLING_API_KEY` | AI voiceovers (base64 MP3 artifacts) and short-form video renders for the 5-agent Video Factory |
+| `payouts` | Stripe Connect Express / Tremendous | `STRIPE_SECRET_KEY` or `TREMENDOUS_API_KEY` | Direct USD bank or gift-card payouts (`input.rail` strict routing, Tremendous `payment.funding_source_id` & `reward.products`) |
+| `slop_cash` | `SlopCashBridge` Stub | `MARKETING_SLOP_CASH_ENABLED` (default `0`) | **Hard-disabled stub** (`inv_slop_cash_disabled`). Fails closed with `SlopCashDisabledError`. |
 
 ### 2.4 Tier 4 — Automated External Human, Street-Team, Creator & Agency Pipeline
 
-Tier 4 orchestrates real NYC humans from initial job posting to verified fiat payout with zero internal staff handling day-to-day recruiting:
-
 ```mermaid
 stateDiagram-v2
-    [*] --> drafted: "Campaign creates NYC shift / creator brief / agency RFP"
-    drafted --> posted_or_emailed: "Craigslist copy, RentAHuman MCP, or agency/creator email sent"
-    posted_or_emailed --> applicant_screened: "Inbound reply scored (18+ confirmed, NYC availability, portfolio)"
-    applicant_screened --> contract_sent: "Auto-generated NYLL 191-d clickwrap + brief + unique QR batch"
+    [*] --> drafted: "Campaign creates city shift / creator brief / agency RFP"
+    drafted --> posted_or_emailed: "City compliance passed; Craigslist / RentAHuman / email sent"
+    posted_or_emailed --> applicant_screened: "Reply scored (>=75 auto_hire, >=50 standby_bench, minAgeReading >= 18)"
+    applicant_screened --> contract_sent: "SHA-256 6-year NYLL 191-d clickwrap + brief + serialized QR batch"
     contract_sent --> hired: "Worker accepts terms + payout rail verified"
-    hired --> shift_active: "Start-of-shift timestamped check-in received"
-    shift_active --> proof_submitted: "End-of-shift photos, video URL, FTC flag, NY 50-51 releases uploaded"
-    proof_submitted --> proof_verified: "Automated verifier calls canApproveProof (QR + media + FTC + 18+)"
-    proof_submitted --> disputed: "Missing proof, missing FTC tag, or zero check-in match"
-    proof_verified --> payout_queued: "canAuthorizeSpend passes (adult + budget + proof + armed)"
-    payout_queued --> paid: "Stripe Connect / Tremendous settlement confirmed"
-    disputed --> cancelled: "Resolved unpaid after 14-day review SLA"
+    hired --> shift_active: "Start-of-shift timestamped GPS check-in received"
+    shift_active --> proof_submitted: "End-of-shift photos, https:// video URL, FTC flag, NY 50-51 releases"
+    proof_submitted --> proof_verified: "canApproveCreatorProof + AntiFraudEngine pass"
+    proof_submitted --> disputed: "Missing proof, missing FTC/release, underage, or duplicate media hash"
+    proof_verified --> payout_queued: "Row-locked FOR UPDATE canAuthorizeTaskSpend passes"
+    payout_queued --> paid: "Stripe Connect / Tremendous settlement + single atomic ledger commit"
+    disputed --> cancelled: "Resolved unpaid within 14-day OP-Q SLA"
     disputed --> proof_verified: "Corrected proof verified within SLA"
 ```
 
-Full vendor lists, NYC street-team agency contacts, hourly/shift pricing, YouTuber outreach scripts, and copy-paste email templates live in [NYC-STREET-TEAMS-AND-AGENCIES.md](NYC-STREET-TEAMS-AND-AGENCIES.md).
-
 ---
 
-## 3. Subscription-Connected 5-Agent Lifecycle Manager
+## 3. PostgreSQL Schema (`marketing.*` — 17 Tables & 5 Composite Indexes)
 
-`apps/marketing/src/agent-lifecycle.ts` manages the complete lifecycle of **Chadwick**, **Sloane**, **Peon**, **Venn**, and **The Operator / Eliza** without locking the system to a single API billing account.
+Defined idempotently in `apps/marketing/db/schema.sql` (applied by `packages/db/migrate.ts` as repeatable `9004_marketing_schema`), with `REVOKE ... FROM PUBLIC`, `GRANT ... TO network_service`, row-level `SELECT ... FOR UPDATE` transaction locking in `PgMarketingStore`, `budget_ledger.from_reserve` accounting, `chk_attribution_verified_adult`, and native `'macbook'` device platform support.
 
-### 3.1 Supported Subscription Providers & Connection Modes
-
-Each agent record binds to a primary subscription provider and an ordered failover provider across **ChatGPT**, **Claude**, **Gemini**, and **Surplus**:
-
-| Provider | Subscription Tier | Supported Connection Modes (`auth_mode`) | Typical Use |
-| :--- | :--- | :--- | :--- |
-| **`claude`** | Claude Pro / Max | `cli` (`claude` CLI), `mcp` (Connector), `oauth`, `browser`, `api` | Long-form BD negotiation, agency RFPs, nuanced creator briefs |
-| **`chatgpt`** | ChatGPT Plus / Pro / Team | `cli` (`codex` CLI), `mcp` (Connector), `oauth`, `browser`, `api` | Fast campaign drafting, Craigslist reply screening, social hooks |
-| **`gemini`** | Gemini AI Pro / Ultra | `cli` (`gemini` CLI), `mcp`, `oauth`, `browser`, `api` | Multimodal proof review assistance (image/video metadata checks), NYC local research |
-| **`surplus`** | Surplus Intelligence (`gpt-6-luna`) | `api` (`packages/core/src/llm.ts`) | Repo-standard LLM fallback when personal subscriptions are unavailable or rate-limited |
-
-### 3.2 Lifecycle State Machine & Failover Rules
-
-1. **Session & Quota Tracking:** Every agent has a `daily_turn_cap` (e.g., `60` turns/day) and `turns_used_today`, reset daily. Generated `canDispatchAgentTurn(...)` enforces `inv_agent_subscription_cap`: no turn dispatches if `turnsToday >= dailyTurnCap`, if `agentPaused`, `rateLimited`, or `!sessionHealthy`, or if `lockdown`.
-2. **Automatic Provider Failover:** If an agent's primary subscription returns a quota/rate-limit window, the lifecycle coordinator transitions the primary slot to `cooldown`, switches to `failover_provider`, preserves the persona prompt and campaign context, and resumes without dropping tasks.
-3. **Mandatory Safety Middleware:** Every agent output passes through `@thenetwork/core`'s `LeakGuard` before storage or external dispatch. Any turn targeting a contact with `stopped === true` is blocked by `inv_stop_fence_respected`.
-
----
-
-## 4. PostgreSQL Schema (`marketing.*`)
-
-The schema lives in `apps/marketing/db/schema.sql` (idempotent, applied by `packages/db/migrate.ts` as repeatable `9004_marketing_schema` after `9003_notify_retention`, keeping `platform.*`, `network.*`, and `capital` tables untouched). It defines 11 tables with DB-level check constraints mirroring our Vibestack and Quint safety invariants, plus least-privilege `REVOKE ... FROM PUBLIC` and `GRANT ... TO network_service` matching `packages/notify/db/schema.sql`:
+### 3.1 Core Operational Tables (1–11)
 
 | # | Table | Purpose & Key Invariant Constraints |
 | :-: | :--- | :--- |
-| 1 | `marketing.campaigns` | NYC-first (`$10,000` = `1_000_000` cents) and multi-city campaigns; enforces `reserved_cents + spent_cents <= monthly_budget_cents`, `billing_armed = false` default, `slop_cash_enabled = false` default. |
-| 2 | `marketing.agents` | 5 subscription-connected branded agents (`chadwick`, `sloane`, `peon`, `venn`, `operator`) across `chatgpt | claude | gemini | surplus`, daily turn caps, and failover providers. |
-| 3 | `marketing.devices` | Tier 2 local hardware slots (`macbook`, `android`, `ios`) with battery %, temperature °C, warm-up stage/day, action caps, and single-owner leases. |
+| 1 | `marketing.campaigns` | Multi-city campaigns (NYC `$10,000` default); enforces `reserved_cents + spent_cents <= monthly_budget_cents`, `billing_armed = false` & `slop_cash_enabled = false` defaults; immutable budget fields on `PATCH`. |
+| 2 | `marketing.agents` | 5 subscription-connected branded agents (`chadwick`, `sloane`, `peon`, `venn`, `operator`) across `chatgpt | claude | gemini | surplus`, daily turn caps, cooldowns, and failover providers. |
+| 3 | `marketing.devices` | Tier 2 local hardware slots (`macbook`, `android`, `ios`) with battery %, temp °C, warm-up stage/day, action caps, and single-owner expiring leases. |
 | 4 | `marketing.channels_and_accounts` | Social, email, gig-platform, QR, and print accounts mapped to agents/devices with warm-up caps. |
-| 5 | `marketing.humans` | External humans, applicants, street workers, event activators, creators, agencies, printers, venues, VIPs, age verification, NYLL § 191-d contract flag, and global `STOP` / `banned` fence. |
-| 6 | `marketing.tasks` | Street shifts, event activations, creator videos, agency bookings, print orders, and future `oss_dev_bounty`. Enforces `worker_age_years >= 18` when hired/paid for Tier 4, `proof_verified = true` before `paid`, positive paid amounts, and `payout_rail = 'slop_cash'` restricted to `oss_dev_bounty`. |
-| 7 | `marketing.proofs` | Submitted proofs (GPS check-in hashes, public video URL, QR scans, verified signups, FTC `#Ad` disclosure, NY Civil Rights Law §§ 50-51 signed release counts). |
-| 8 | `marketing.outreach_messages` | Outbound/inbound emails, Craigslist relays, agency RFPs, creator briefs, and proof reminders with `leak_check_pass` and STOP-blocked status audit. |
-| 9 | `marketing.attribution_events` | Serialized QR scans, shortlink clicks, verified 18+ signups, and release signatures linked to `qr_batch_code` and `campaign_id`. |
-| 10 | `marketing.budget_ledger` | Append-only spend circuit-breaker ledger (`dry_run`, `reserve`, `commit`, `release`, `refund`) with positive `amount_cents` and unique `idempotency_key`. |
+| 5 | `marketing.humans` | External humans, applicants, workers, creators, agencies, venues, and VIPs with youngest-age-wins `lowest_age` and sticky global `STOP` / `banned` fence. |
+| 6 | `marketing.tasks` | Street shifts, event activations, creator videos, agency bookings, print orders, and `oss_dev_bounty`. Enforces `assignee_age_years >= 18` when hired/paid, `proof_verified = true` before `paid`, single-payout lock (`TASK_ALREADY_PAID`), and `payout_rail = 'slop_cash'` restricted to `oss_dev_bounty`. |
+| 7 | `marketing.proofs` | Submitted proofs (GPS check-in hashes, public `https://` video URL, QR scans, verified signups, FTC `#Ad` flag, NY §§ 50–51 `likeness_release_ok`, verified-first ordering). |
+| 8 | `marketing.outreach_messages` | Outbound/inbound outreach with `tier`, `leak_check_pass`, and `blocked_stop` / `blocked_policy` audit. |
+| 9 | `marketing.attribution_events` | Serialized QR scans, visits, video views, and verified 18+ signups (`count > 0`, `chk_attribution_verified_adult`). |
+| 10 | `marketing.budget_ledger` | Append-only spend circuit-breaker ledger (`dry_run`, `reserve`, `commit`, `release`, `refund`), `from_reserve` flag (prevents double-counting `dailySpentCents`), and unique `idempotency_key`. |
 | 11 | `marketing.slop_cash_hooks` | Disabled-by-default integration metadata enforcing `enabled = true or hook_state = 'disabled_stub'`. |
+
+### 3.2 Pass-2 Engine Tables (12–17)
+
+| # | Table | Purpose & Key Invariant Constraints |
+| :-: | :--- | :--- |
+| 12 | `marketing.bandit_arms` | Contextual Thompson-Sampling arm state (`arm_key`, `track`, `alpha`, `beta`, `weight`, `spend_cents`, `signups`, `stop_events`, `total_contacts`, `status = active | killed | paused`). |
+| 13 | `marketing.bd_deals` | Zero-human 8-stage BD venue/event deals (`stage`, `offered_cents`, `phone_callback_verified`, `contract_hash`, `qr_batch_id`). |
+| 14 | `marketing.qr_batches` | Serialized QR print/link batches (`batch_code`, `destination_url`, `dub_link_id`, `print_qty`, `assigned_to_type`, `scans`, `verified_signups`). |
+| 15 | `marketing.vip_prospects` | 18-archetype `ntwrk.party` VIP salon pipeline (`archetype`, `prestige_score`, `invite_draft`, `status`). |
+| 16 | `marketing.video_assets` | 5-agent Short-Form Video Factory assets (`title`, `hook`, `script`, `stage`, `video_url`, `platform`, `views`, `retention_3s_pct`, `signups`, `ftc_disclosed`). |
+| 17 | `marketing.antifraud_claims` | 4-tier vesting & Sybil defense claims (`person_key`, `phone_line_type`, `media_hash`, `cluster_id`, `vesting_tier`, `amount_cents`, `status`). |
+
+### 3.3 Composite Query Indexes (5 Hot-Path Indexes)
+
+1. `idx_budget_ledger_campaign_day` on `marketing.budget_ledger (campaign_id, created_at desc)` — powers daily spend CTEs and `from_reserve` reconciliation.
+2. `idx_tasks_campaign_status` on `marketing.tasks (campaign_id, status)` — powers campaign overview and open-task autopilot ticks.
+3. `idx_proofs_task_verdict` on `marketing.proofs (task_id, verifier_verdict, created_at desc)` — powers verified-first payout checks.
+4. `idx_outreach_status_created` on `marketing.outreach_messages (status, created_at asc)` — powers pending outreach dispatch queues.
+5. `idx_attribution_campaign_created` on `marketing.attribution_events (campaign_id, created_at desc)` — powers funnel KPIs and Bandit CPA calculations.
 
 ---
 
-## 5. Package Layout, REST API, Command Center & CLI
+## 4. Package Layout, REST API, Observatory-Sibling UI & CLI
 
-### 5.1 Workspace Layout (`apps/marketing/` + `spec/`)
+### 4.1 Workspace Layout (`apps/marketing/` + `spec/`)
 
 ```text
 spec/
-├── marketingPolicy.md                       # Vibestack pure policy & budget rules
-├── marketingDevice.md                       # Vibestack pure device safety envelope rules
+├── marketingPolicy.md                       # Vibestack/Dafny policy spec (15 proved obligations)
+├── marketingDevice.md                       # Vibestack/Dafny device spec (4 proved obligations)
 └── models/
-    └── marketing_campaign.md                # Whole-flow Quint model (8 safety invariants)
+    └── marketing_campaign.md                # Whole-flow Quint model (9 invariants, 11 witnesses, 9 runs)
 
 packages/core/src/generated/
-├── marketingPolicy.ts                       # Generated by `pnpm run spec:sync` (do not hand-edit)
-└── marketingDevice.ts                       # Generated by `pnpm run spec:sync` (do not hand-edit)
+├── marketingPolicy.ts                       # Published by `pnpm run spec:sync` (do not hand-edit)
+└── marketingDevice.ts                       # Published by `pnpm run spec:sync` (do not hand-edit)
 
 apps/marketing/
 ├── package.json                             # @thenetwork/marketing
 ├── db/
-│   └── schema.sql                           # Repeatable 9004_marketing_schema DDL (packages/db/migrate.ts)
+│   └── schema.sql                           # Repeatable 9004_marketing_schema DDL (17 tables, 5 composite indexes)
 ├── src/
-│   ├── index.ts                             # Public exports
-│   ├── types.ts                             # Shared domain types
-│   ├── store.ts                             # MemoryMarketingStore + PgMarketingStore (@thenetwork/core/runtime/postgres.ts)
-│   ├── agent-lifecycle.ts                   # ChatGPT/Claude/Gemini/Surplus 5-agent coordinator & failover
-│   ├── discovery.ts                         # Tier-1 $0 open-web NYC discovery (DOHMH, SLA, HN, GitHub, arXiv, Reddit, YT RSS, Luma, Eventbrite)
-│   ├── nyc-seed.ts                          # Ready-to-run NYC Month-1 seed ($10,000 split, 5 agents, Tier-2 slots, agencies, printers, 5 email templates)
-│   ├── crowdsourcing.ts                     # Automated Craigslist / RentAHuman / agency / creator screening, NYLL § 191-d & proof engine
+│   ├── index.ts                             # Clean public barrel exports
+│   ├── types.ts                             # Shared domain types (re-exports Clock, 6 Pass-2 types, FetchFn)
+│   ├── constants.ts                         # Single-source defaults, proved constants, 5-agent roster, legal clauses, 5 templates
+│   ├── policy.ts                            # Canonical thin policy/device wrappers delegating to generated cores
+│   ├── validation.ts                        # Streaming 1 MiB JSON parser, strict typed validators, SSRF HTTPS URL guard
+│   ├── sse.ts                               # Bounded 64-client MarketingEventHub SSE broadcaster
+│   ├── store.ts                             # MemoryMarketingStore + row-locked PgMarketingStore (all 17 tables, CTE overview)
+│   ├── agent-lifecycle.ts                   # 5-agent coordinator, sanitized CLI env, non-bouncing failover, LeakGuard
+│   ├── cities.ts                            # 7-metro configs, CA AB5 W-2 & London Schedule 3A hiring compliance
+│   ├── discovery.ts                         # Parallel $0 open-web multi-city discovery
+│   ├── nyc-seed.ts                          # NYC Month-1 seed (campaign, 5 agents, devices, tasks, bandit, BD, VIPs, videos)
+│   ├── crowdsourcing.ts                     # Automated hiring, screening, proof verification & paid adapter dispatch
+│   ├── bandit.ts                            # Contextual Thompson-Sampling Bandit with auto-kill bounds
+│   ├── antifraud.ts                         # 4-tier vesting, carrier/lifetime/W-9 checks, media dedup & Sybil cluster scan
+│   ├── bd-engine.ts                         # 8-stage BD FSM, DTMF callbacks, SHA-256 clickwrap, Dub.co QR batches & audits
+│   ├── vip-engine.ts                        # 18-archetype VIP salon scorer & <75-word plain-text invite validator
+│   ├── video-factory.ts                     # 5-agent video bibles, 10 comedy scripts, safety linter & 72h retention scorer
+│   ├── daemon.ts                            # Continuous Autopilot Daemon (UTC day reset, STOP lockdown breaker, lease sweep)
 │   ├── slop-cash-bridge.ts                  # Disabled slop.cash stub (MARKETING_SLOP_CASH_ENABLED=0)
 │   ├── devices/
-│   │   └── bridge.ts                        # Local MacBook Android (adb/scrcpy) & iOS (devicectl/pymobiledevice3/WDA) bridge via spawnProcess
+│   │   └── bridge.ts                        # Local MacBook Android & iOS bridge (injection/SSRF hardened, needsTakeover)
 │   ├── adapters/
-│   │   └── paid.ts                          # Tier-3 credit-card plug-and-play paid adapter registry + dry-run fallback
-│   ├── server.ts                            # Local HTTP Command Center + JSON REST API (:4949) via @thenetwork/core/runtime/http.ts
+│   │   └── paid.ts                          # 8 Tier-3/4 credit-card adapters + C-03 spend binding + dry-run fallback
+│   ├── ui/                                  # Observatory-sibling Command Center (OKLCH tokens, Host Grotesk, SVG charts, SSE)
+│   ├── server.ts                            # Loopback HTTP Command Center + REST API + graceful shutdown (:4949)
 │   └── cli.ts                               # pnpm run marketing:cli
 └── test/
-    └── marketing.integration.pg.test.ts     # Vitest + Postgres integration tests covering all 8 invariants
+    └── marketing.integration.test.ts        # Comprehensive Postgres (:54339) + HTTP Vitest integration suite
 ```
 
-### 5.2 JSON REST API (`http://127.0.0.1:4949`)
+### 4.2 HTTP Command Center UI & JSON REST API (`http://127.0.0.1:4949`)
 
-| Method & Path | Purpose | Generated Core Guard Called |
+- **Command Center Assets (Public UI Shell + Strict CSP):**
+  - `GET /health` — public service health check (`{ ok: true, service: "marketing", ... }`)
+  - `GET /`, `GET /assets/app.css`, `GET /assets/app.js`, `GET /fonts/host-grotesk.woff2` — Observatory-sibling Command Center styled with shared `packages/design-system` OKLCH tokens, inline SVG charts (budget burn, funnel, bandit weights, device telemetry), and live SSE updates.
+- **Authenticated Streaming & REST Endpoints (`Authorization: Bearer <token>`):**
+
+| Route Group | Endpoints | Core Guard / Engine |
 | :--- | :--- | :--- |
-| `GET /api/health` | Service health, DB mode, `riskDial`, `billingArmed`, `slopCashEnabled` | — |
-| `GET /api/campaigns` / `POST /api/campaigns` | List or create city campaigns (default NYC `$10,000` cap) | `canAuthorizeSpend` |
-| `POST /api/campaigns/:id/risk-dial` | Set `conservative`, `balanced`, `blitz`, or `lockdown`; arm/disarm billing | `inv_tier_billing_gate` |
-| `GET /api/agents` / `POST /api/agents/:id/dispatch` | Inspect 5 branded agents; dispatch turn with automatic subscription failover | `canDispatchAgentTurn` |
-| `GET /api/devices` / `POST /api/devices/scan` | Probe USB-attached Android & iPhone battery, temp, and serial/UDID | `deviceBatterySafe`, `warmupDailyCap` |
-| `POST /api/devices/:id/dispatch` | Lease device and execute safe UI action or pause on CAPTCHA | `canExecuteDeviceAction` |
-| `POST /api/discover/nyc` | Run zero-cost open-web NYC discovery (bars, Luma/Eventbrite, HN/GitHub/arXiv, Reddit, YT RSS) | Public unauthenticated endpoints only |
-| `GET /api/tasks` / `POST /api/tasks` | List or create Tier 1-4 tasks (street shifts, event activations, creators, agencies) | `canAuthorizeSpend` |
-| `POST /api/tasks/:id/screen` | Screen applicant reply (enforces 18+ age check) and generate NYLL § 191-d clickwrap | `adultParticipantAge` |
-| `POST /api/tasks/:id/proof` | Submit and automatically verify shift photos, video URL, QR scans, FTC flag, NY §§ 50-51 releases | `canApproveProof` |
-| `POST /api/tasks/:id/payout` | Execute or dry-run verified fiat payout (`Stripe` / `Tremendous`) | `adultParticipantAge`, `canApproveProof`, `canAuthorizeSpend` |
-| `POST /api/contacts/stop` | Mark human/contact `STOP` across all agents and outreach adapters immediately | `canSendOutreach`, `canDispatchAgentTurn` |
-| `GET /api/spend` | Ledger summary, remaining monthly budget, per-tier breakdown, breaker state | `inv_budget_never_exceeded` |
-| `GET /api/slop-cash/status` | Reports `enabled: false`, stub hook count, and activation prerequisites | `inv_slop_cash_disabled` |
+| **Live Stream & Overview** | `GET /api/events` (SSE), `GET /api/overview`, `POST /api/seed/nyc` | `MarketingEventHub`, single-CTE `getOverview()`, idempotent 17-table NYC seed |
+| **Campaigns & Risk Dial** | `GET/POST /api/campaigns`, `PATCH /api/campaigns/:id`, `POST /api/campaigns/:id/risk-dial` | `evaluateSpendAuth`, immutable budget fields on `PATCH`, `inv_tier_billing_gate` |
+| **5-Agent Fleet** | `GET/POST /api/agents`, `POST /api/agents/:id/tick`, `POST /api/agents/:id/pause`, `POST /api/agents/:id/resume`, `POST /api/agents/:id/provider` | `evaluateAgentTurnPolicy` (`canDispatchAgentTurn`), `sanitizeCliEnv`, `LeakGuard` |
+| **Tier-2 Device Bridge** | `GET/POST /api/devices`, `POST /api/devices/scan`, `POST /api/devices/:id/action` | `evaluateDeviceActionPolicy` (`canDispatchDeviceStep`), `preserveCounters`, `recordDeviceAction` |
+| **Humans & Hiring** | `GET/POST /api/humans`, `POST /api/humans/:id/stop`, `POST /api/hiring-packet` | `minAgeReading`, `checkCityHiringCompliance` (CA AB5 / London Schedule 3A), global STOP |
+| **Tasks, Proofs & Anti-Fraud** | `GET/POST /api/tasks`, `GET/POST /api/proofs`, `GET/POST /api/antifraud`, `POST /api/antifraud/scan-sybil` | `canApproveCreatorProof`, `antiFraudPayoutAllowed`, `validatePublicHttpsUrl`, `FOR UPDATE` single-payout lock |
+| **Contextual Bandit** | `GET/POST /api/bandit`, `POST /api/bandit/rebalance` | `banditArmEligible` (`<= $21.25` CPA & `<= 500 bps` STOP), seeded Thompson Sampling |
+| **Zero-Human BD & QRs** | `GET/POST /api/bd`, `POST /api/bd/:id/stage`, `POST /api/bd/:id/callback`, `POST /api/bd/:id/contract`, `GET/POST /api/qr-batches` | `bdDealWithinBounds`, DTMF verification, SHA-256 clickwrap, Dub.co batch QRs |
+| **VIP Salon & Video Factory** | `GET/POST /api/vips`, `POST /api/vips/:id/invite`, `GET/POST /api/videos`, `POST /api/videos/:id/stage`, `POST /api/videos/lint` | `< 75`-word plain-text VIP gate, 5-agent video safety/FTC/brand-isolation linter |
+| **Outreach, Discovery & Info** | `GET/POST /api/outreach`, `POST /api/outreach/dispatch`, `POST /api/discovery/nyc`, `GET/POST /api/attribution`, `GET /api/adapters`, `GET /api/cities`, `GET /api/directory` | `evaluateOutreachPolicy`, multi-city discovery, attribution funnel |
+| **`slop.cash` Stub** | `GET /api/slop-cash/status`, `POST /api/slop-cash/preview`, `POST /api/slop-cash/settle` | `inv_slop_cash_disabled` (`403 SLOP_CASH_DISABLED` by default) |
+| **Autopilot Daemon** | `GET /api/daemon/status`, `POST /api/daemon/start`, `POST /api/daemon/stop`, `POST /api/autopilot/tick` | `MarketingAutopilotDaemon` UTC day reset, lease sweep, STOP-spike `lockdown` breaker |
 
-### 5.3 Local Command Center UI & CLI
+### 4.3 CLI (`pnpm run marketing:cli -- <command> [options]`)
 
-- **Command Center (`http://127.0.0.1:4949`):** Single-page operator dashboard served directly by `apps/marketing/src/server.ts` showing (1) active city campaign & `$10,000` budget gauge, (2) global `RiskDial` + `Billing Armed` toggle, (3) 5-agent ChatGPT/Claude/Gemini/Surplus quota & failover strip, (4) local MacBook + Android + iPhone battery/temp/lease cards, (5) live NYC street-team & creator hiring/proof queue, and (6) `slop.cash` disabled-stub indicator.
-- **CLI (`pnpm run marketing:cli`):**
-  - `status` — prints campaigns, budget used, `RiskDial`, agent quotas, device health, and `slop.cash` status (`DISABLED`).
-  - `campaign create --city nyc --app slop --budget 10000` — creates a bounded city campaign.
-  - `agent list | dispatch <persona> --prompt "..."` — runs or tests subscription failover.
-  - `device scan | status | release <id>` — inspects MacBook USB-connected Android/iPhone state.
-  - `discover nyc` — fetches zero-cost NYC open-web leads into `marketing.humans`.
-  - `hire create --kind street_fliering|creator_video|event_activation|agency_booking --amount <usd>` — creates and drafts a Tier 4 task.
-  - `proof submit <taskId> --url <videoUrl> --ftc --scans <n>` — runs automated proof verification.
-  - `payout <taskId>` — executes dry-run or live fiat payout if all proved invariants pass.
-  - `stop <handleOrEmail>` — immediately writes contact into the global `STOP` fence.
-  - `risk-dial <conservative|balanced|blitz|lockdown>` — changes operational mode atomically.
-
----
-
-## 6. Formal Verification Specification (Vibestack + Quint)
-
-Compliant with [AGENTS.md](../../AGENTS.md) and [SPEC.md](../../SPEC.md), every safety-critical decision in `apps/marketing` is verified at two levels using the **exact same 8 invariant names**:
-
-| # | Shared Invariant Name | Quint Model (`spec/models/marketing_campaign.md`) | Vibestack Spec -> Generated TS (`packages/core/src/generated/`) | Meaning |
-| :-: | :--- | :--- | :--- | :--- |
-| 1 | **`inv_adult_only_paid`** | Checked in `val safety` | `spec/marketingPolicy.md` (`adultParticipantAge`, `canApproveProof`, `lawUnderageNeverPaid`) | No person under age 18 (or unknown age) is ever hired or paid in any marketing task. |
-| 2 | **`inv_budget_never_exceeded`** | Checked in `val safety` | `spec/marketingPolicy.md` (`canAuthorizeSpend`, `lawSpendRespectsCaps`) | `dailySpent + amount <= dailyCap`, `monthlySpent + amount <= monthlyCap`, and `amount <= perTaskCap`. |
-| 3 | **`inv_slop_cash_disabled`** | Checked in `val safety` | `spec/marketingPolicy.md` (`canAuthorizeSpend`, `lawSlopCashBlockedWhenDisabled`) | No task ever settles via `slop_cash` while `slopCashEnabled == false`. |
-| 4 | **`inv_proof_required_before_payout`** | Checked in `val safety` | `spec/marketingPolicy.md` (`canApproveProof`, `lawProofRequiresEvidenceAndAdult`) | No human/street-team/creator task transitions to `paid` without verified proof (evidence URL, FTC disclosure, geo/time check, shift/signup evidence, adult non-banned worker). |
-| 5 | **`inv_tier_billing_gate`** | Checked in `val safety` | `spec/marketingPolicy.md` (`canAuthorizeSpend`, `lawLockdownBlocksTier3And4`) | Tier 3 (paid API) and Tier 4 (paid human) executions never dispatch unless `billingArmed == true` and `!lockdown`. |
-| 6 | **`inv_agent_subscription_cap`** | Checked in `val safety` | `spec/marketingPolicy.md` (`canDispatchAgentTurn`) | No ChatGPT/Claude/Gemini/Surplus agent dispatches past its daily turn cap or while paused, rate-limited, or unhealthy. |
-| 7 | **`inv_device_safety_envelope`** | Checked in `val safety` | `spec/marketingDevice.md` (`deviceBatterySafe`, `warmupDailyCap`, `canExecuteDeviceAction`, `lawHotOrLowBatteryBlocked`, `lawWarmupCapMonotone`, `lawLeasedOrStoppedDeviceBlocked`) | No Android/iPhone executes an action outside `35 <= batteryPct <= 80`, `0 <= tempC <= 41`, or daily warm-up cap, and never under two concurrent leases. |
-| 8 | **`inv_stop_fence_respected`** | Checked in `val safety` | `spec/marketingPolicy.md` (`canSendOutreach`, `canDispatchAgentTurn`, `lawStopFenceBlocksAgentAndOutreach`) | No outreach message, device action, or agent turn targets a contact marked `stopped == true`. |
-
-### 6.1 What Stays Outside the Formal Model & How It Is Tested
-
-- **Outside Vibestack/Quint:** Postgres SQL queries (`store.ts`), HTTP routing (`server.ts`), local USB subprocess execution (`adb`, `scrcpy`, `pymobiledevice3`, `xcrun devicectl`), subscription CLI/browser subprocesses, and third-party REST calls (`adapters/paid.ts`).
-- **Coverage:** Every thin shell imports and calls `packages/core/src/generated/marketingPolicy.ts` or `marketingDevice.ts` without recomputing decisions. Vitest + Postgres integration tests (`apps/marketing/test/marketing.integration.pg.test.ts`, run via `pnpm run test:integration`) prove that database constraints, API endpoints, and concurrent reservations enforce all 8 invariants end-to-end. Run `pnpm run spec:sync`, `pnpm run spec:check-generated`, `pnpm run quint:check marketing_campaign`, and `pnpm run check` after any spec edit.
+Supports `--db <postgres-url>` and `--city <nyc|sf|la|chicago|miami|austin|london>`:
+- `seed-nyc` — idempotently seeds the `$10,000` NYC campaign, 5 agents, Tier-2 devices, agencies, 5 Bandit arms, 4 BD deals, 4 VIPs, and 10 Video assets.
+- `status` — prints campaign overview, budget burn, `RiskDial`, agent quotas, devices, adapters, daemon state, and `slop.cash` (`DISABLED`).
+- `scan-devices` — probes USB-attached Android & iPhone devices on this MacBook.
+- `discover` — runs Tier-1 `$0` open-web discovery for `--city`.
+- `tick` — executes one autonomous agent orchestration tick.
+- `bandit` — runs a deterministic Thompson-Sampling Bandit rebalance report.
+- `hire-batch` — generates a city-compliant Tier-4 hiring packet (`--role`, `--city`, `--budget`).
+- `bd-list` — inspects BD venue/event deal pipeline and QR batches.
+- `vip-invite` — scores and validates a `< 75`-word plain-text VIP invite draft.
+- `video-lint` — runs the 5-agent short-form video safety/FTC linter across starter or custom scripts.
+- `slop-cash-preview` — previews the disabled `slop.cash` manifest schema without settling.
+- `serve` — starts the local HTTP Command Center, REST API, and SSE hub (`--port 4949`).
 
 ---
 
-## 7. Budget Circuit Breakers & 4-Tier Cost Model
+## 5. Formal Verification Specification (19 Dafny Obligations + 9 Quint Invariants)
 
-### 7.1 Deterministic Spend Breakers
+Compliant with [AGENTS.md](../../AGENTS.md) and [SPEC.md](../../SPEC.md), safety-critical decisions are formally proved at two levels:
 
-Generated `marketingPolicy.ts` and `marketing.budget_ledger` enforce four hard ceilings fail-closed:
-1. **Campaign Monthly Hard Cap:** Default `$10,000` (`1_000_000` cents) for Month-1 NYC. Any reservation pushing `reserved + spent` over the cap fails immediately.
-2. **Single-Task Ceiling:** Default `$1,500` (`150_000` cents) max per single task/booking; larger agency contracts require explicit cap elevation.
-3. **Daily Outflow Cap:** Default `$1,000/day` (`100_000` cents) across Tier 3 + Tier 4 combined to prevent runaway automation loops.
+### 5.1 Vibestack / Dafny Proved Obligations (19 Total — `pnpm run spec:sync`)
+
+- **`spec/marketingPolicy.md` (15 Dafny-Proved Laws -> `packages/core/src/generated/marketingPolicy.ts`):**
+  1. `lawSpendRespectsCaps` (`canAuthorizeSpend`)
+  2. `lawSlopCashBlockedWhenDisabled` (`canAuthorizeSpend`)
+  3. `lawLockdownBlocksTier3And4` (`canAuthorizeSpend`)
+  4. `lawConsumerTaskNeverUsesSlopCash` (`isOssDevBounty`, `canAuthorizeTaskSpend`)
+  5. `lawUnderageNeverPaid` (`adultParticipantAge`, `canApproveProof`)
+  6. `lawProofRequiresEvidenceAndAdult` (`canApproveProof`)
+  7. `lawCreatorProofRequiresLikenessRelease` (`likenessReleaseOk`, `canApproveCreatorProof`)
+  8. `lawVoipNeverPaid` (`antiFraudPayoutAllowed`)
+  9. `lawMvnoBonusCappedAt200` (`mvnoBonusCapCents = 200`, `antiFraudPayoutAllowed`)
+  10. `lawConsumerLifetimeCapNeverExceeded` (`consumerLifetimeBonusCapCents = 2000`, `antiFraudPayoutAllowed`)
+  11. `lawW9RequiredOver500Usd` (`w9AnnualThresholdCents = 50000`, `antiFraudPayoutAllowed`)
+  12. `lawDuplicateOrQuarantinedBlocked` (`antiFraudPayoutAllowed`)
+  13. `lawBdDealRequiresBoundsCallbackAndContract` (`bdDealWithinBounds`)
+  14. `lawBanditKillsHighCpaOrStopRate` (`banditMaxStopRateBps = 500`, `banditArmEligible`)
+  15. `lawStopFenceBlocksAgentAndOutreach` (`canDispatchAgentTurn`, `canSendOutreach`)
+- **`spec/marketingDevice.md` (4 Dafny-Proved Laws -> `packages/core/src/generated/marketingDevice.ts`):**
+  16. `lawWarmupCapMonotone` (`warmupDailyCap`)
+  17. `lawHotOrLowBatteryBlocked` (`deviceBatterySafe`, `canExecuteDeviceAction`)
+  18. `lawLeasedOrStoppedDeviceBlocked` (`canExecuteDeviceAction`)
+  19. `lawTakeoverBlocksDeviceStep` (`canDispatchDeviceStep`)
+
+### 5.2 Whole-Flow Quint Model (`spec/models/marketing_campaign.md`)
+
+Verified with `pnpm run quint:check marketing_campaign` across **9 safety invariants**, **11 non-vacuity reachability witnesses**, and **9 deterministic `run` trace tests**:
+
+| # | Invariant in `val safety` | Meaning |
+| :-: | :--- | :--- |
+| 1 | **`inv_adult_only_paid`** | No person under age 18 (or unknown age) is ever hired or paid in any marketing task. |
+| 2 | **`inv_budget_never_exceeded`** | Per-task (`<= $1,500`), daily (`<= $1,000`), and monthly (`<= $10,000`) spend ceilings never overrun. |
+| 3 | **`inv_slop_cash_disabled`** | No task ever settles via `slop_cash` while `slopCashEnabled == false`. |
+| 4 | **`inv_proof_required_before_payout`** | No Tier-4 human/creator task transitions to `paid` without verified media URL, FTC disclosure, shift/scan evidence, and commercial likeness release. |
+| 5 | **`inv_tier_billing_gate`** | Tier 3 and Tier 4 dispatches require `billingArmed == true` and `riskDial != "lockdown"`. |
+| 6 | **`inv_agent_subscription_cap`** | No agent dispatches past its daily turn cap or while paused, rate-limited, unhealthy, or in `lockdown`. |
+| 7 | **`inv_device_safety_envelope`** | No phone executes outside `35..80%` battery, `0..41°C`, daily warm-up cap, exclusive lease (`<= 1`), `!needsTakeover`, and `!lockdown`. |
+| 8 | **`inv_stop_fence_respected`** | No outreach message or agent turn targets a contact with `stopped == true`. |
+| 9 | **`inv_antifraud_caps_respected`** | No consumer bonus pays VoIP, exceeds `$2` on MVNO/prepaid, exceeds `$20` lifetime cap, or passes duplicate media / quarantined Sybil clusters. |
+
+### 5.3 End-to-End Integration Proof
+
+`apps/marketing/test/marketing.integration.test.ts` runs against a real migrated Postgres `:54339` instance and real loopback `createMarketingServer` proving all 17 tables, concurrency `FOR UPDATE` double-payout locking, `from_reserve` accounting, input/SSRF/injection hardening, Bandit rebalancing, Anti-Fraud & Sybil quarantine, BD/QR flows, VIP `< 75`-word gate, Video linter, Autopilot Daemon + live SSE `/api/events`, multi-city legal gates, `slop.cash` `403`, and live HTTP paid adapters.
+
+---
+
+## 6. Budget Circuit Breakers & 4-Tier Cost Model
+
+1. **Campaign Monthly Hard Cap:** Default `$10,000` (`1_000_000` cents) for Month-1 NYC.
+2. **Single-Task Ceiling:** Default `$1,500` (`150_000` cents) max per single task/booking.
+3. **Daily Outflow Cap:** Default `$1,000/day` (`100_000` cents) across Tier 3 + Tier 4 combined (`from_reserve` commits do not double-count daily outflow).
 4. **Master Billing Arm & `RiskDial` Kill Switch:** `billingArmed = false` or `riskDial = "lockdown"` drops all paid execution to `$0` instantaneously.
-
-### 7.2 Incremental Cost Model Across the 4 Tiers
 
 | Tier | One-Time Hardware / Setup | Monthly Recurring Cost | Variable Spend Ceiling | Notes |
 | :--- | ---: | ---: | ---: | :--- |
-| **Tier 1 (Zero-Cost Core)** | `$0` | `$0` | `$0` | Uses existing dev machine, local Postgres `:54339`, free public data feeds, and existing ChatGPT/Claude/Gemini/Surplus subscriptions. |
-| **Tier 2 (MacBook + 1 Android + 1 iPhone)** | `$0` *(existing devices)* or `~$300` *(used Pixel 6a + iPhone SE3)* | `~$30 / mo` | `$0` | 2 dedicated prepaid cellular SIMs (`Tello` / `US Mobile` @ `$15/mo` each, Wi-Fi OFF). |
-| **Tier 3 (Paid Credit-Card APIs)** | `$0` | `$90–$250 / mo` *(optional SaaS: Dub.co, Resend/AgentMail)* | Metered inside monthly cap | Every adapter stays in dry-run until env keys + `MARKETING_LIVE_BILLING=1` + `billingArmed = true`. |
-| **Tier 4 (NYC Street Teams, Creators, Activators & Print)** | `$0` | `$0` fixed | **`$10,000` Month-1 NYC cap** | `$3,200` street fliering + `$3,300` street-interview creators + `$1,700` event activators + `$800` serialized flier/rush print + `$1,000` W-2 agency surge reserve (`NYC-STREET-TEAMS-AND-AGENCIES.md`). |
+| **Tier 1 (Zero-Cost Core + Pass-2 Engines)** | `$0` | `$0` | `$0` | Uses existing dev machine, local Postgres `:54339`, free public data feeds, and existing ChatGPT/Claude/Gemini/Surplus subscriptions. |
+| **Tier 2 (MacBook + 1 Android + 1 iPhone)** | `$0` *(existing)* or `~$300` *(used Pixel + iPhone SE3)* | `~$30 / mo` | `$0` | 2 dedicated prepaid cellular SIMs (`Tello` / `US Mobile` @ `$15/mo` each, Wi-Fi OFF). |
+| **Tier 3 (Paid Credit-Card APIs)** | `$0` | `$90–$250 / mo` *(optional SaaS)* | Metered inside monthly cap | Every adapter stays dry-run until env keys + `MARKETING_LIVE_BILLING=1` + `billingArmed = true`. |
+| **Tier 4 (NYC Street Teams, Creators, Activators & Print)** | `$0` | `$0` fixed | **`$10,000` Month-1 NYC cap** | `$3,200` street fliering + `$3,300` street-interview creators + `$1,700` event activators + `$800` serialized flier/rush print + `$1,000` W-2 agency surge reserve ([NYC-STREET-TEAMS-AND-AGENCIES.md](NYC-STREET-TEAMS-AND-AGENCIES.md)). |

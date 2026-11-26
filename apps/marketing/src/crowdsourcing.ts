@@ -1,18 +1,41 @@
 // Tier-4 zero-human-intervention hiring, agency booking, creator recruitment,
 // outbound outreach gating, and deterministic proof-of-work verification engine (Node 26).
-// All outreach is gated by proved marketingPolicy.canSendOutreach, all proof approvals
-// by marketingPolicy.canApproveProof, and all payouts by marketingPolicy.canAuthorizeSpend.
+// All outreach, proof approvals, spend authorization, and city labor/flier compliance
+// delegate to canonical ./policy.ts, ./constants.ts, and ./cities.ts.
 
 import { RealClock } from "../../../packages/core/src/clock.ts";
-import {
-  adultParticipantAge,
-  canApproveProof,
-  canAuthorizeSpend,
-  canSendOutreach,
-} from "../../../packages/core/src/generated/marketingPolicy.ts";
 import { LeakGuard } from "../../../packages/core/src/guard.ts";
 import { parseOptOut } from "../../../packages/core/src/replies.ts";
-import { PolicyViolationError, type MarketingStore } from "./store.ts";
+import {
+  spendAuthFromCampaign,
+  type PaidAdapterRegistry,
+} from "./adapters/paid.ts";
+import {
+  checkCityHiringCompliance,
+  getCityConfig,
+  matchesCityTransitOrLocality,
+} from "./cities.ts";
+import {
+  ANTI_POSTING_NOTICE,
+  DEFAULT_DAILY_OUTREACH_CAP,
+  FTC_DISCLOSURE_CLAUSE,
+  marketingAdultAge,
+  MTA_EXCLUSION_NOTICE,
+  NY_RELEASE_CLAUSE,
+  RENTAHUMAN_BUYER_FEE_RATE,
+  RENTAHUMAN_MCP_ENDPOINT,
+  renderMarketingEmailTemplate,
+} from "./constants.ts";
+import { VETTED_NYC_AGENCIES } from "./nyc-seed.ts";
+import {
+  evaluateOutreachPolicy,
+  evaluateProofPolicy,
+  evaluateSpendAuth,
+  isAdultReading,
+  minAgeReading,
+  PolicyViolationError,
+} from "./policy.ts";
+import type { MarketingStore } from "./store.ts";
 import type {
   BudgetEntry,
   Campaign,
@@ -43,6 +66,8 @@ export interface HiringPacketOptions {
   releaseFormUrl?: string;
   contractUrl?: string;
   targetBrand?: string;
+  contractorMode?: "1099_direct" | "w2_agency" | "creator_direct";
+  boroughLicenceRef?: string | null;
 }
 
 export interface HiringPacket {
@@ -57,7 +82,7 @@ export interface HiringPacket {
     estimatedPostFeeCents: number;
   };
   rentAHumanPayload: {
-    endpoint: "https://rentahuman.ai/api/mcp";
+    endpoint: typeof RENTAHUMAN_MCP_ENDPOINT;
     tool: "create_bounty";
     params: {
       title: string;
@@ -177,50 +202,43 @@ export interface CrowdsourcingEngineOptions {
   clock?: Clock;
   env?: Record<string, string | undefined>;
   transport?: OutreachTransport;
+  paidAdapters?: PaidAdapterRegistry;
   leakGuard?: LeakGuard;
 }
 
-const NYC_VETTED_AGENCIES: readonly string[] = [
-  "Kinetic Events Staffing (info@kineticevents.com)",
-  "Street Teams Co (hello@streetteamsco.com)",
-  "Broadway Crew (info@broadwaycrew.com)",
-  "Victory Agency (info@victory-agency.com)",
-  "Oppizi NYC (contact@oppizi.com)",
-  "The PUSH Agency (sales@yourpush.com)",
-  "Mustard Lane (kristal@mustardlane.com)",
+const DEFAULT_OUTREACH_LEAK_ALLOW: readonly string[] = [
+  "ops-nyc@ntwrk.party",
+  "ntwrk.party",
+  "slop.date",
+  "peon.biz",
+  "friends.help",
+  "go.ntwrk.party",
+  "go.slop.date",
+  "go.peon.biz",
+  "go.friends.help",
 ];
 
-const FTC_DISCLOSURE_CLAUSE =
-  'FTC 16 CFR Part 255 (Mandatory): Include BOTH a clear spoken disclosure ("Sponsored by The Network") AND prominent on-screen text ("#Ad" or "Paid Partnership with The Network") in the first 3 seconds, plus enable the native platform Paid Partnership / Commercial Content toggle.';
-
-const NY_RELEASE_CLAUSE =
-  "NY Civil Rights Law §§ 50–51 (Mandatory Commercial Release): Every recognizable featured interviewee must be 18+ and complete our written/mobile commercial likeness release before publication; blur or cut any unsigned person.";
-
-const ANTI_POSTING_NOTICE =
-  "NYC Administrative Code § 10-119 (Zero Tolerance): Hand-to-hand sidewalk distribution only (keep >= 8 ft sidewalk clearance). NEVER paste, tape, glue, or post fliers on lampposts, utility poles, trees, mailboxes, or car windshields.";
-
-const MTA_EXCLUSION_NOTICE =
-  "21 NYCRR § 1050.6: Commercial flyers are strictly prohibited inside MTA subway stations, mezzanines, and platforms. Stay on outdoor public sidewalks at least 20 ft outside entrances.";
-
-function localLaborRuleForCity(city: string): string {
-  const c = city.trim().toLowerCase();
-  if (c === "sf" || c === "la") {
-    return "California AB5 & CA Civ Code § 3344: Use W-2 agency/platform staffing for hourly street teams and written commercial likeness releases for all filmed participants.";
-  }
-  if (c === "london") {
-    return "UK Schedule 3A Environmental Protection Act 1990: Obtain borough Free Printed Matter Distribution Licences before any hand-to-hand fliering; ASA/CAP #Ad disclosure required.";
-  }
-  if (c === "chicago") {
-    return "IL Freelance Worker Protection Act & 765 ILCS 1075: Written contract with <=30d payout SLA and written commercial publicity releases required.";
-  }
-  if (c === "miami") {
-    return "Miami Beach Code Ch. 46 & FL Stat. § 540.08: Avoid restricted commercial handbill resort zones; written commercial likeness releases required.";
-  }
-  return "NYLL § 191-d (Freelance Isn't Free Act): Written itemized clickwrap terms retained 6 years; payout within 48 hours of approved proof (hard SLA <= 15 days, statutory ceiling 30 days).";
-}
+const NYC_DIRECT_BOOKING_AGENCIES: readonly string[] = VETTED_NYC_AGENCIES.filter(
+  (agency) => agency.zeroTouchBookingReadiness !== "low_m1",
+)
+  .slice(0, 7)
+  .map((agency) => `${agency.name} (${agency.contactEmailOrIntake})`);
 
 function formatUsd(cents: number): string {
   return (cents / 100).toFixed(2);
+}
+
+function defaultContractorMode(role: HiringRole): "1099_direct" | "w2_agency" | "creator_direct" {
+  if (role === "agency_booking") return "w2_agency";
+  if (role === "creator_video") return "creator_direct";
+  return "1099_direct";
+}
+
+function isPolicyViolationLike(err: unknown): err is PolicyViolationError {
+  return (
+    err instanceof PolicyViolationError ||
+    (err instanceof Error && err.name === "PolicyViolationError" && "code" in err)
+  );
 }
 
 export class CrowdsourcingEngine {
@@ -228,6 +246,7 @@ export class CrowdsourcingEngine {
   private readonly clock: Clock;
   private readonly env: Record<string, string | undefined>;
   private readonly transport?: OutreachTransport;
+  private readonly paidAdapters?: PaidAdapterRegistry;
   private readonly leakGuard: LeakGuard;
 
   constructor(opts: CrowdsourcingEngineOptions) {
@@ -235,7 +254,14 @@ export class CrowdsourcingEngine {
     this.clock = opts.clock ?? opts.store.clock ?? new RealClock();
     this.env = opts.env ?? process.env;
     this.transport = opts.transport;
-    this.leakGuard = opts.leakGuard ?? new LeakGuard({ contacts: false });
+    this.paidAdapters = opts.paidAdapters;
+    this.leakGuard =
+      opts.leakGuard ??
+      new LeakGuard({
+        contacts: true,
+        canaryShapes: true,
+        allow: [...DEFAULT_OUTREACH_LEAK_ALLOW],
+      });
   }
 
   buildHiringPacket(
@@ -244,11 +270,11 @@ export class CrowdsourcingEngine {
     budgetCents: number,
     opts: HiringPacketOptions = {},
   ): HiringPacket {
-    if (budgetCents <= 0) {
+    if (!Number.isSafeInteger(budgetCents) || budgetCents <= 0) {
       throw new PolicyViolationError(
         "INVALID_BUDGET",
         "inv_budget_never_exceeded",
-        "Hiring packet budgetCents must be positive.",
+        "Hiring packet budgetCents must be a positive safe integer.",
       );
     }
 
@@ -260,27 +286,52 @@ export class CrowdsourcingEngine {
         ? role
         : "street_fliering";
 
-    const cityCode = city.trim().toLowerCase() || "nyc";
-    const cityLabel = cityCode === "nyc" ? "New York City" : city.toUpperCase();
-    const neighborhood = opts.neighborhood ?? (cityCode === "nyc" ? "Union Square / West Village" : "Downtown Core");
-    const shiftDate = opts.shiftDate ?? new Date(this.clock.now() + 48 * 3_600_000).toISOString().slice(0, 10);
+    const cityConfig = getCityConfig(city);
+    const cityCode = cityConfig.code;
+    const cityLabel = cityConfig.label;
+    const contractorMode = opts.contractorMode ?? defaultContractorMode(normalizedRole);
+
+    const cityCompliance = checkCityHiringCompliance({
+      city: cityCode,
+      role: normalizedRole,
+      contractorMode,
+      boroughLicenceRef: opts.boroughLicenceRef,
+    });
+    if (!cityCompliance.allowed) {
+      throw new PolicyViolationError(
+        "CITY_COMPLIANCE_BLOCKED",
+        "inv_city_labor_and_flier_law",
+        cityCompliance.reasons.join(" "),
+      );
+    }
+
+    const defaultNeighborhood =
+      cityConfig.corridors[0]?.neighborhood ?? "Downtown Core";
+    const neighborhood = opts.neighborhood ?? defaultNeighborhood;
+    const shiftDate =
+      opts.shiftDate ?? new Date(this.clock.now() + 48 * 3_600_000).toISOString().slice(0, 10);
     const shiftHours = opts.shiftHours ?? "1:00 PM – 5:00 PM (4 hours)";
     const qrBatchCode = opts.qrBatchCode ?? `${cityCode.toUpperCase()}-001`;
     const shortLink = opts.shortLink ?? `https://ntwrk.party/?b=${qrBatchCode}`;
     const releaseFormUrl = opts.releaseFormUrl ?? `https://ntwrk.party/release?batch=${qrBatchCode}`;
     const contractUrl = opts.contractUrl ?? `https://ntwrk.party/contractor-terms?batch=${qrBatchCode}`;
-    const targetBrand = opts.targetBrand ?? "The Network (ntwrk.party / slop.date / peon.biz / friends.help)";
+    const targetBrand =
+      opts.targetBrand ?? "The Network (ntwrk.party / slop.date / peon.biz / friends.help)";
     const budgetUsd = formatUsd(budgetCents);
 
-    const filterToken = `${cityCode.toUpperCase()} 18+ CONFIRMED`;
-    const localLaborNote = localLaborRuleForCity(cityCode);
+    const filterToken = `${cityCode.toUpperCase()} ${marketingAdultAge}+ CONFIRMED`;
+    const localLaborNote = cityConfig.legal.freelanceStatute;
+    const antiPostingNotice =
+      cityCode === "nyc" ? ANTI_POSTING_NOTICE : cityConfig.legal.antiPostingRule;
+    const mtaExclusionNotice =
+      cityCode === "nyc" ? MTA_EXCLUSION_NOTICE : cityConfig.legal.transitExclusionRule;
 
     const nyll191dTerms = [
-      `NYLL § 191-d Written Clickwrap Terms (${cityLabel}):`,
-      `- Itemized Role: ${normalizedRole} (${neighborhood}, Batch ${qrBatchCode})`,
-      `- Guaranteed Base Compensation: $${budgetUsd} USD (fiat via Stripe Connect Express or Tremendous; $0 upfront worker fee)`,
-      `- Payment Due Date: Within 48 hours of approved proof-of-work (hard SLA <= 15 days, well within the 30-day statutory cap)`,
-      `- Mandatory Age Floor: Contractor confirms age 18+ with valid US payout eligibility (1099 / W-9).`,
+      `Written Contractor Terms (${cityLabel} — ${cityConfig.legal.freelanceStatute}):`,
+      `- Itemized Role: ${normalizedRole} (${neighborhood}, Batch ${qrBatchCode}, Mode=${contractorMode})`,
+      `- Guaranteed Base Compensation: $${budgetUsd} ${cityConfig.currency} (fiat via Stripe Connect Express or Tremendous; $0 upfront worker fee)`,
+      `- Payment Due Date: Within 48 hours of approved proof-of-work (hard SLA <= ${cityConfig.legal.payoutSlaDays} days)`,
+      `- Mandatory Age Floor: Contractor confirms age ${marketingAdultAge}+ with valid payout eligibility.`,
       `- Record Retention: Clickwrap acceptance stored for 6 years (${contractUrl}).`,
     ].join("\n");
 
@@ -293,39 +344,42 @@ export class CrowdsourcingEngine {
 
     const craigslistTitle =
       normalizedRole === "creator_video"
-        ? `$${budgetUsd} Flat + Bonus — ${cityLabel} Street-Interview Video Creator (18+, ${neighborhood})`
+        ? `$${budgetUsd} Flat + Bonus — ${cityLabel} Street-Interview Video Creator (${marketingAdultAge}+, ${neighborhood})`
         : normalizedRole === "event_activation"
-          ? `$30/hr + Bonus — ${cityLabel} Live Event Activator (${neighborhood}, 18+)`
-          : `$22/hr + Bonus — ${cityLabel} Hand-to-Hand Flier Street Team (${neighborhood}, 18+)`;
+          ? `$30/hr + Bonus — ${cityLabel} Live Event Activator (${neighborhood}, ${marketingAdultAge}+)`
+          : `$22/hr + Bonus — ${cityLabel} Hand-to-Hand Flier Street Team (${neighborhood}, ${marketingAdultAge}+)`;
+
+    const renderedCl = renderMarketingEmailTemplate("craigslist_gig_post", {
+      NEIGHBORHOOD: neighborhood,
+      SHIFT_DATE: shiftDate,
+      START_TIME: shiftHours,
+      END_TIME: "end of shift",
+      LANDMARK_AND_NEIGHBORHOOD: `${neighborhood} (${cityLabel})`,
+    });
 
     const craigslistBody = [
-      `We are hiring reliable 18+ ${cityLabel} locals for a paid ${normalizedRole.replaceAll("_", " ")} engagement promoting ${targetBrand}.`,
+      renderedCl.body,
       "",
-      `DETAILS:`,
-      `- Date & Time: ${shiftDate}, ${shiftHours}`,
-      `- Location: Public sidewalks near ${neighborhood}`,
-      `- Budget / Pay: $${budgetUsd} total engagement cap (paid in USD via Stripe / Tremendous within 48 hours of verified proof).`,
-      `- Tracking: Serialized QR Batch ${qrBatchCode} (${shortLink})`,
-      "",
-      `COMPLIANCE & PROOF RULES:`,
-      `- ${ANTI_POSTING_NOTICE}`,
-      `- ${MTA_EXCLUSION_NOTICE}`,
-      `- ${localLaborNote}`,
-      `- Must submit timestamped GPS check-in photos (Start, Midpoint, End) and maintain 18+ age verification.`,
-      normalizedRole === "creator_video" ? `- ${FTC_DISCLOSURE_CLAUSE}` : "",
-      normalizedRole === "creator_video" ? `- ${NY_RELEASE_CLAUSE}` : "",
-      "",
-      `HOW TO APPLY (REQUIRED):`,
-      `Start your first line with your closest transit stop + "${filterToken}". Replies missing this line are skipped automatically.`,
-    ]
-      .filter((line) => line !== "")
-      .join("\n");
+      `ENGAGEMENT OVERRIDES (${cityLabel}):`,
+      `- Brand: ${targetBrand}`,
+      `- Budget Cap: $${budgetUsd} ${cityConfig.currency} | Serialized QR Batch ${qrBatchCode} (${shortLink})`,
+      `- Local Labor & Anti-Posting: ${antiPostingNotice}`,
+      `- Local Transit Exclusion: ${mtaExclusionNotice}`,
+      `- Statutory Terms: ${localLaborNote}`,
+      ...(normalizedRole === "creator_video"
+        ? [`- ${FTC_DISCLOSURE_CLAUSE}`, `- ${NY_RELEASE_CLAUSE}`]
+        : []),
+      `- Required First-Line Filter Token: "${filterToken}"`,
+    ].join("\n");
 
-    const rahPayoutCents = Math.max(100, Math.floor(budgetCents / 1.18));
+    const rahPayoutCents = Math.max(
+      100,
+      Math.floor(budgetCents / (1 + RENTAHUMAN_BUYER_FEE_RATE)),
+    );
     const rahFeeCents = Math.max(0, budgetCents - rahPayoutCents);
-    const rentAHumanPayload = {
-      endpoint: "https://rentahuman.ai/api/mcp" as const,
-      tool: "create_bounty" as const,
+    const rentAHumanPayload: HiringPacket["rentAHumanPayload"] = {
+      endpoint: RENTAHUMAN_MCP_ENDPOINT,
+      tool: "create_bounty",
       params: {
         title: `${cityLabel} ${normalizedRole.replaceAll("_", " ")} (${neighborhood} — ${qrBatchCode})`,
         city: cityLabel,
@@ -338,7 +392,7 @@ export class CrowdsourcingEngine {
             ? [
                 "Live public video URL (YouTube/TikTok/IG)",
                 "FTC #Ad spoken + on-screen disclosure in first 3 seconds",
-                `Signed 18+ NY Civil Rights Law §§ 50-51 releases (${releaseFormUrl})`,
+                `Signed ${marketingAdultAge}+ commercial likeness releases (${releaseFormUrl})`,
                 `Unique batch QR ${qrBatchCode} shown on screen and pinned`,
               ]
             : [
@@ -349,50 +403,49 @@ export class CrowdsourcingEngine {
       },
     };
 
+    const renderedAgency = renderMarketingEmailTemplate("agency_rfp", {
+      AGENCY_NAME: `${cityLabel} Staffing Partner`,
+      TARGET_DATES: shiftDate,
+      HEADCOUNT: "2",
+      NEIGHBORHOODS: `${neighborhood} (${cityLabel})`,
+      SHIFT_HOURS: shiftHours,
+      BUDGET_CAP: budgetUsd,
+    });
+    const targetAgencies =
+      cityCode === "nyc"
+        ? NYC_DIRECT_BOOKING_AGENCIES
+        : cityConfig.vendors.recommendedAgencies;
+
     const agencyRfpEmail = {
-      subject: `${cityLabel} Street-Team Quote & Direct Booking Request — ${shiftDate} (Budget Cap $${budgetUsd})`,
-      body: [
-        `Hello Agency Team,`,
-        "",
-        `We are booking a compliant, insured W-2 street-team activation in ${cityLabel} and would like to confirm availability and book directly over email.`,
-        "",
-        `ACTIVATION BRIEF:`,
-        `- Brand: ${targetBrand} (18+ social, dating, and work network)`,
-        `- Zone & Schedule: ${neighborhood}, ${shiftDate}, ${shiftHours}`,
-        `- Hard Budget Cap: $${budgetUsd} USD all-in (credit card / Stripe / ACH invoice)`,
-        `- Collateral: Pre-printed 4x6" postcards with serialized QR Batch ${qrBatchCode}`,
-        `- Compliance: ${ANTI_POSTING_NOTICE} ${MTA_EXCLUSION_NOTICE}`,
-        `- Required Proof: GPS clock-in/out logs + start/mid/end timestamped photos + remaining count.`,
-        "",
-        `Please reply with your all-in W-2 hourly rate (CGL + Workers' Comp included) and total itemized quote.`,
-      ].join("\n"),
-      targetAgencies: NYC_VETTED_AGENCIES,
+      subject: renderedAgency.subject,
+      body: `${renderedAgency.body}\n\nLocal Compliance Notice: ${cityCompliance.requiredNotice}`,
+      targetAgencies,
     };
 
     const creatorDeliverables: readonly string[] = [
-      "1 main edited street-interview video (60-90s) published publicly on YouTube/TikTok/IG featuring 3+ verified 18+ interviewees",
+      `1 main edited street-interview video (60-90s) published publicly on YouTube/TikTok/IG featuring 3+ verified ${marketingAdultAge}+ interviewees`,
       "2 vertical cutdowns (20-35s) + raw unedited clips uploaded with commercial usage rights",
       `Serialized QR card (${qrBatchCode}) shown on screen + pinned link (${shortLink}) for 30 days`,
       "Mandatory FTC #Ad spoken and on-screen disclosure within first 3 seconds + Paid Partnership toggle",
-      `Signed 18+ NY Civil Rights Law §§ 50-51 mobile commercial releases (${releaseFormUrl}) for every recognizable interviewee`,
+      `Signed ${marketingAdultAge}+ commercial likeness releases (${releaseFormUrl}) for every recognizable interviewee`,
     ];
 
+    const renderedCreator = renderMarketingEmailTemplate("creator_street_interview_brief", {
+      CREATOR_NAME: "Creator",
+      RECENT_VIDEO_TITLE: `your recent ${cityLabel} street video`,
+      NEIGHBORHOOD: neighborhood,
+      PRIMARY_PLATFORM: "YouTube Shorts / TikTok / Instagram Reels",
+      CREATOR_SHORTLINK: shortLink,
+      FLAT_FEE: budgetUsd,
+      BONUS_CAP: formatUsd(Math.min(15_000, budgetCents)),
+      RELEASE_FORM_URL: releaseFormUrl,
+      CREATOR_CONTRACT_URL: contractUrl,
+      TARGET_PUBLISH_DATE: shiftDate,
+    });
+
     const creatorBrief = {
-      subject: `Paid ${cityLabel} Street-Interview Collab ($${budgetUsd} Cap) — ${targetBrand}`,
-      body: [
-        `Hi Creator,`,
-        "",
-        `We want to sponsor an authentic handheld ${cityLabel} street-interview video in ${neighborhood} for ${targetBrand}.`,
-        `Handheld camera + clip-on/shotgun mic only on public sidewalks (no ground stands/lights, >= 8 ft clearance).`,
-        "",
-        `DELIVERABLES:`,
-        ...creatorDeliverables.map((d, i) => `${i + 1}. ${d}`),
-        "",
-        FTC_DISCLOSURE_CLAUSE,
-        NY_RELEASE_CLAUSE,
-        "",
-        nyll191dTerms,
-      ].join("\n"),
+      subject: renderedCreator.subject,
+      body: `${renderedCreator.body}\n\n${nyll191dTerms}`,
       deliverables: creatorDeliverables,
       ftcClause: FTC_DISCLOSURE_CLAUSE,
       releaseClause: NY_RELEASE_CLAUSE,
@@ -408,19 +461,19 @@ export class CrowdsourcingEngine {
         title: craigslistTitle,
         body: craigslistBody,
         filterToken,
-        estimatedPostFeeCents: cityCode === "nyc" || cityCode === "sf" || cityCode === "la" ? 1_000 : 700,
+        estimatedPostFeeCents: cityConfig.vendors.craigslistPostFeeCents,
       },
       rentAHumanPayload,
       agencyRfpEmail,
       creatorBrief,
       compliance: {
-        adultAgeFloor: 18,
+        adultAgeFloor: marketingAdultAge as 18,
         ftcDisclosureRequired: true,
         nyCivilRightsReleaseRequired: normalizedRole === "creator_video",
         nyll191dClickwrapIncluded: true,
         localLaborNote,
-        antiPostingNotice: ANTI_POSTING_NOTICE,
-        mtaExclusionNotice: MTA_EXCLUSION_NOTICE,
+        antiPostingNotice,
+        mtaExclusionNotice,
       },
     };
   }
@@ -440,11 +493,16 @@ export class CrowdsourcingEngine {
       };
     }
 
-    if (input.humanId && input.statedAge !== null) {
-      await this.store.recordHumanAge(input.humanId, input.statedAge);
+    let persistedHuman: HumanPartner | null = null;
+    if (input.humanId) {
+      persistedHuman =
+        input.statedAge !== null
+          ? await this.store.recordHumanAge(input.humanId, input.statedAge)
+          : await this.store.getHuman(input.humanId);
     }
 
-    if (input.statedAge === null || !adultParticipantAge(input.statedAge)) {
+    const effectiveAge = minAgeReading(input.statedAge, persistedHuman?.lowestAge);
+    if (!isAdultReading(effectiveAge)) {
       return {
         passed: false,
         optedOut: false,
@@ -458,16 +516,16 @@ export class CrowdsourcingEngine {
     const reasons: string[] = [];
     let score = 0;
 
-    if (lower.includes(input.filterToken.toLowerCase()) || /\b18\+\b/.test(lower)) {
+    if (
+      lower.includes(input.filterToken.toLowerCase()) ||
+      /(?:^|\W)18\+(?:\W|$)/.test(lower)
+    ) {
       score += 25;
     } else {
       reasons.push("missing_filter_token");
     }
 
-    if (
-      lower.includes(input.city.toLowerCase()) ||
-      /\b(nyc|manhattan|brooklyn|queens|bronx|subway|train)\b/i.test(lower)
-    ) {
+    if (matchesCityTransitOrLocality(input.city, input.replyText)) {
       score += 25;
     } else {
       reasons.push("missing_local_transit_confirmation");
@@ -475,7 +533,9 @@ export class CrowdsourcingEngine {
 
     if (
       input.hasPriorExperience ||
-      /\b(promo|street team|ambassador|hospitality|sales|filming|youtube|tiktok|interview|events?)\b/i.test(lower)
+      /\b(promo|street team|ambassador|hospitality|sales|filming|youtube|tiktok|interview|events?)\b/i.test(
+        lower,
+      )
     ) {
       score += 25;
     } else {
@@ -491,7 +551,7 @@ export class CrowdsourcingEngine {
     if (score >= 75) {
       return { passed: true, optedOut: false, score, decision: "auto_hire", reasons };
     }
-    if (score >= 60) {
+    if (score >= 50) {
       return { passed: true, optedOut: false, score, decision: "standby_bench", reasons };
     }
     return { passed: false, optedOut: false, score, decision: "rejected_low_score", reasons };
@@ -522,9 +582,11 @@ export class CrowdsourcingEngine {
     if (!campaign) throw new Error(`Campaign not found: ${campaignId}`);
 
     const queued = await this.store.listOutreachMessages({ campaignId, status: "queued" });
+    const hasLiveChannel =
+      Boolean(this.transport) || Boolean(this.paidAdapters?.isLiveBillingEnabled());
     const liveMode =
-      !opts.dryRun && Boolean(this.transport) && this.env.MARKETING_LIVE_SEND === "1";
-    const dailyCap = opts.dailyOutreachCap ?? 50;
+      !opts.dryRun && hasLiveChannel && this.env.MARKETING_LIVE_SEND === "1";
+    const dailyCap = opts.dailyOutreachCap ?? DEFAULT_DAILY_OUTREACH_CAP;
 
     let sent = 0;
     let dryRun = 0;
@@ -542,29 +604,23 @@ export class CrowdsourcingEngine {
         continue;
       }
 
-      const allowed = canSendOutreach(
-        human.stopped,
-        human.banned,
-        campaign.riskDial === "lockdown",
-        human.dailySendsToday,
-        dailyCap,
-      );
+      const policyDecision = evaluateOutreachPolicy({
+        human,
+        lockdown: campaign.riskDial === "lockdown",
+        leakCheckPass: msg.leakCheckPass,
+        dailyOutreachCap: dailyCap,
+      });
 
-      if (human.stopped) {
-        const updated = await this.store.updateOutreachStatus(msg.id, "blocked_stop");
-        blockedStop += 1;
+      if (!policyDecision.allowed) {
+        const blockedStatus = policyDecision.blockedStatus ?? "blocked_policy";
+        const updated = await this.store.updateOutreachStatus(msg.id, blockedStatus);
+        if (blockedStatus === "blocked_stop") blockedStop += 1;
+        else blockedPolicy += 1;
         processed.push(updated);
         continue;
       }
 
-      if (!allowed || !msg.leakCheckPass) {
-        const updated = await this.store.updateOutreachStatus(msg.id, "blocked_policy");
-        blockedPolicy += 1;
-        processed.push(updated);
-        continue;
-      }
-
-      if (!liveMode || !this.transport) {
+      if (!liveMode) {
         const updated = await this.store.updateOutreachStatus(
           msg.id,
           "sent",
@@ -576,20 +632,66 @@ export class CrowdsourcingEngine {
       }
 
       try {
-        const res = await this.transport.send({ message: msg, human, campaign });
-        if (res.ok) {
-          const updated = await this.store.updateOutreachStatus(
-            msg.id,
-            "sent",
-            res.externalRef ?? `live:${msg.id}`,
-          );
-          sent += 1;
-          processed.push(updated);
-        } else {
-          const updated = await this.store.updateOutreachStatus(msg.id, "failed");
-          failed += 1;
-          processed.push(updated);
+        if (this.transport) {
+          const res = await this.transport.send({ message: msg, human, campaign });
+          if (res.ok) {
+            const updated = await this.store.updateOutreachStatus(
+              msg.id,
+              "sent",
+              res.externalRef ?? `live:${msg.id}`,
+            );
+            sent += 1;
+            processed.push(updated);
+          } else {
+            const updated = await this.store.updateOutreachStatus(msg.id, "failed");
+            failed += 1;
+            processed.push(updated);
+          }
+          continue;
         }
+
+        if (this.paidAdapters && msg.channel === "email") {
+          const receipt = await this.paidAdapters.execute(
+            "email",
+            {
+              to: human.displayLabel,
+              subject: msg.subject ?? "The Network NYC Opportunity",
+              text: msg.bodySummary,
+            },
+            {
+              spend: spendAuthFromCampaign(campaign, 1, {
+                tier: msg.tier === 4 ? 4 : 3,
+                useSlopCash: false,
+                env: this.env,
+              }),
+              idempotencyKey: `outreach:${msg.id}`,
+              targetStopped: human.stopped,
+            },
+          );
+          if (receipt.ok) {
+            const updated = await this.store.updateOutreachStatus(
+              msg.id,
+              "sent",
+              receipt.externalRef ?? `adapter:${msg.id}`,
+            );
+            if (receipt.mode === "live") sent += 1;
+            else dryRun += 1;
+            processed.push(updated);
+          } else {
+            const updated = await this.store.updateOutreachStatus(msg.id, "failed");
+            failed += 1;
+            processed.push(updated);
+          }
+          continue;
+        }
+
+        const updated = await this.store.updateOutreachStatus(
+          msg.id,
+          "sent",
+          `dry-run:${msg.id}`,
+        );
+        dryRun += 1;
+        processed.push(updated);
       } catch {
         const updated = await this.store.updateOutreachStatus(msg.id, "failed");
         failed += 1;
@@ -616,7 +718,8 @@ export class CrowdsourcingEngine {
     if (!campaign) throw new Error(`Campaign not found: ${task.campaignId}`);
     const human = task.assigneeHumanId ? await this.store.getHuman(task.assigneeHumanId) : null;
 
-    const workerAge = input.workerAge ?? task.assigneeAgeYears ?? human?.lowestAge ?? -1;
+    const workerAge =
+      minAgeReading(input.workerAge, task.assigneeAgeYears, human?.lowestAge) ?? -1;
     const workerBanned = human?.banned ?? false;
 
     const evidenceUrl = input.evidenceUrl?.trim() || null;
@@ -642,15 +745,13 @@ export class CrowdsourcingEngine {
       verifierNotes: input.verifierNotes ?? null,
     });
 
-    const preApprove =
-      canApproveProof(
-        hasEvidenceUrl,
-        input.ftcDisclosed,
-        input.geoTimeValid,
-        verifiedSignupsOrShiftDone,
-        workerAge,
-        workerBanned,
-      ) && (input.proofKind !== "creator_video" || Boolean(input.likenessReleaseOk));
+    const preApproveDecision = evaluateProofPolicy({
+      proof,
+      workerAge,
+      workerBanned,
+      shiftDone: verifiedSignupsOrShiftDone,
+      requireHttpEvidenceUrl: true,
+    });
 
     const evaluation = await this.store.evaluateProof(proof.id, {
       workerAge,
@@ -659,13 +760,13 @@ export class CrowdsourcingEngine {
       verifierNotes: input.verifierNotes ?? undefined,
     });
 
-    const approved = preApprove && evaluation.approved;
+    const approved = preApproveDecision.approved && evaluation.approved;
     if (!approved) {
       return {
         proof: evaluation.proof,
         task: evaluation.task,
         approved: false,
-        rejectionReason: evaluation.reason ?? "proof_rejected",
+        rejectionReason: preApproveDecision.reason ?? evaluation.reason ?? "proof_rejected",
         payoutAuthorized: false,
       };
     }
@@ -682,28 +783,26 @@ export class CrowdsourcingEngine {
     const slopCashEnvEnabled =
       input.slopCashEnvEnabled ?? this.env.MARKETING_SLOP_CASH_ENABLED === "1";
     const useSlopCash = evaluation.task.payoutRail === "slop_cash";
-    const spendPrecheck = canAuthorizeSpend(
-      evaluation.task.tier,
-      evaluation.task.amountCents,
-      campaign.maxTaskCents,
-      campaign.dailySpentCents,
-      campaign.dailyCapCents,
-      campaign.spentCents + campaign.reservedCents,
-      campaign.monthlyBudgetCents,
-      campaign.billingArmed,
-      campaign.riskDial === "lockdown",
+
+    const spendDecision = evaluateSpendAuth({
+      campaign,
+      tier: evaluation.task.tier,
+      amountCents: evaluation.task.amountCents,
       useSlopCash,
-      campaign.slopCashEnabled && slopCashEnvEnabled,
-    );
-    if (!spendPrecheck) {
+      slopCashEnvEnabled,
+      taskKind: evaluation.task.taskKind,
+    });
+    if (!spendDecision.allowed) {
+      const payoutError =
+        spendDecision.code === "SLOP_CASH_DISABLED" || spendDecision.code === "SLOP_CASH_OSS_ONLY"
+          ? `${spendDecision.code}: ${spendDecision.reason ?? "slop.cash settlement is disabled."}`
+          : `SPEND_NOT_AUTHORIZED (${spendDecision.code ?? "POLICY_BLOCKED"}): ${spendDecision.reason ?? "payout rejected by proved marketingPolicy."}`;
       return {
         proof: evaluation.proof,
         task: evaluation.task,
         approved: true,
         payoutAuthorized: false,
-        payoutError: useSlopCash && !(campaign.slopCashEnabled && slopCashEnvEnabled)
-          ? "SLOP_CASH_DISABLED: slop.cash settlement is disabled."
-          : "SPEND_NOT_AUTHORIZED: payout rejected by proved marketingPolicy.canAuthorizeSpend.",
+        payoutError,
       };
     }
 
@@ -717,10 +816,50 @@ export class CrowdsourcingEngine {
           ? "payout_tremendous"
           : "payout_stripe");
 
+    let externalRef: string | null = null;
+    if (
+      this.paidAdapters &&
+      !useSlopCash &&
+      this.paidAdapters.isLiveBillingEnabled() &&
+      this.env.MARKETING_LIVE_BILLING === "1"
+    ) {
+      const payoutRail =
+        evaluation.task.payoutRail === "fiat_tremendous" ? "tremendous" : "stripe_connect";
+      const receipt = await this.paidAdapters.execute(
+        "payouts",
+        {
+          recipientId: evaluation.task.assigneeHumanId ?? evaluation.task.id,
+          recipientName: human?.displayLabel ?? "Verified Contractor",
+          amountCents: evaluation.task.amountCents,
+          memo: `Verified proof payout for ${evaluation.task.title}`,
+          rail: payoutRail,
+        },
+        {
+          spend: spendAuthFromCampaign(campaign, evaluation.task.amountCents, {
+            tier: evaluation.task.tier === 4 ? 4 : 3,
+            useSlopCash: false,
+            env: this.env,
+          }),
+          idempotencyKey,
+        },
+      );
+      if (!receipt.ok) {
+        return {
+          proof: evaluation.proof,
+          task: evaluation.task,
+          approved: true,
+          payoutAuthorized: false,
+          payoutError: `PAYOUT_ADAPTER_FAILED: ${receipt.reason}`,
+        };
+      }
+      externalRef = receipt.externalRef;
+    }
+
     try {
       const paid = await this.store.markTaskPaid(evaluation.task.id, {
         adapterId,
         idempotencyKey,
+        externalRef,
         slopCashEnvEnabled,
       });
       return {
@@ -732,12 +871,11 @@ export class CrowdsourcingEngine {
         campaign: paid.campaign,
       };
     } catch (err) {
-      const msg =
-        err instanceof PolicyViolationError
-          ? `${err.code}: ${err.message}`
-          : err instanceof Error
-            ? err.message
-            : String(err);
+      const msg = isPolicyViolationLike(err)
+        ? `${err.code}: ${err.message}`
+        : err instanceof Error
+          ? err.message
+          : String(err);
       return {
         proof: evaluation.proof,
         task: evaluation.task,
