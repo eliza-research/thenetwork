@@ -27,7 +27,7 @@ import { Store } from "../../apps/observatory/src/store.ts";
 import { styleViolations } from "../../packages/network/src/copy.ts";
 import { Mini, START } from "../../packages/network/test/mini.ts";
 import { DATA_DIR } from "../synthetic/common.ts";
-import { feedbackAfterFraudGate, fraudReversalEligibilityGate, vouchPeriodGate, vouchStakeEligibilityGate } from "./capital.ts";
+import { feedbackAfterFraudGate, fraudReversalEligibilityGate, needAnsweredAfterAgeGate, vouchPeriodGate, vouchStakeEligibilityGate } from "./capital.ts";
 import { conformance, teenConformance } from "./conformance.ts";
 import { teenJudgeGates } from "./teen-judge.ts";
 import { birthKeyForAgeOn, generatePersonas, TEEN_WORLD } from "../../packages/sim/src/generator.ts";
@@ -657,6 +657,7 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
   await inviteRootGate(b);
   await vouchPeriodGate(b);
   await fraudReversalEligibilityGate(b);
+    await needAnsweredAfterAgeGate(b);
   await feedbackAfterFraudGate(b);
   await vouchStakeEligibilityGate(b);
   await probeDeclineReceiptGate(b);
