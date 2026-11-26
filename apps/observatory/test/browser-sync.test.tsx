@@ -73,9 +73,11 @@ test("the console keeps the current view, live feed, and review draft", async ()
   };
   const publish = (d: ObsDelta) => api.publish("updates", JSON.stringify({ type: "delta", app: "slop", mode: "game", delta: d }));
 
+  let isolatedStore: (typeof import("../web/store.ts"))["store"] | undefined;
   try {
     const isolatedStorePath = "../web/store.ts?browser-sync";
     const { store } = await import(/* @vite-ignore */ isolatedStorePath) as typeof import("../web/store.ts");
+    isolatedStore = store;
     const olderLoad = store.load();
     await waiting.promise;
     store.setApp("slop");
@@ -141,11 +143,12 @@ test("the console keeps the current view, live feed, and review draft", async ()
   } finally {
     release.resolve();
     decisionRelease.resolve();
+    isolatedStore?.disconnect();
     for (const socket of sockets) { socket.onclose = null; socket.close(); }
     globalThis.fetch = nativeFetch;
-    restoreDom();
     await api.stop(true);
     await window.happyDOM.close();
+    restoreDom();
   }
 });
 

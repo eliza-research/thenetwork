@@ -270,18 +270,42 @@ class ObsStore {
   private ws?: WebSocket;
   private wsGen = 0;
   private notifyQueued = false;
+  private notifyTimer?: ReturnType<typeof setTimeout>;
+  private reconnectTimer?: ReturnType<typeof setTimeout>;
 
   constructor() {
     if (typeof window !== "undefined") window.addEventListener("popstate", () => this.onPopState());
   }
 
-  subscribe = (fn: () => void) => { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; };
+  subscribe = (fn: () => void) => {
+    this.listeners.add(fn);
+    return () => {
+      this.listeners.delete(fn);
+      if (this.listeners.size === 0 && this.notifyTimer !== undefined) {
+        clearTimeout(this.notifyTimer);
+        this.notifyTimer = undefined;
+        this.notifyQueued = false;
+        this.tick++;
+      }
+    };
+  };
   getTick = () => this.tick;
   /** Tells the subscribers after a short timer. The timer is not requestAnimationFrame, because that pauses in hidden or throttled tabs and would freeze the state of the UI, clicks included. */
   notify() {
+    if (this.listeners.size === 0) {
+      if (this.notifyTimer !== undefined) { clearTimeout(this.notifyTimer); this.notifyTimer = undefined; }
+      this.notifyQueued = false;
+      this.tick++;
+      return;
+    }
     if (this.notifyQueued) return;
     this.notifyQueued = true;
-    setTimeout(() => { this.notifyQueued = false; this.tick++; for (const l of this.listeners) l(); }, 30);
+    this.notifyTimer = setTimeout(() => {
+      this.notifyTimer = undefined;
+      this.notifyQueued = false;
+      this.tick++;
+      for (const l of this.listeners) l();
+    }, 30);
   }
 
   setUI(patch: Partial<UIState>) {
@@ -487,18 +511,48 @@ class ObsStore {
     if (graph) this.graphTick++;
   }
 
+  /** Stop live socket traffic, pending reconnects, and queued subscriber notifications. */
+  disconnect() {
+    this.wsGen++;
+    if (this.reconnectTimer !== undefined) { clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined; }
+    if (this.notifyTimer !== undefined) { clearTimeout(this.notifyTimer); this.notifyTimer = undefined; }
+    this.notifyQueued = false;
+    const ws = this.ws;
+    this.ws = undefined;
+    if (ws) {
+      ws.onopen = null;
+      ws.onclose = null;
+      ws.onmessage = null;
+      try { ws.close(); } catch { /* already closed */ }
+    }
+    this.connected = false;
+  }
+
   /**
    * Open the live socket. A browser WebSocket cannot send the token header, so the page first asks for
    * a one-use ticket (POST /api/ws-ticket, 30 s) and opens /ws?ticket=. The token never goes in a URL.
    */
   async connect() {
     const gen = ++this.wsGen;
-    this.ws?.close();
+    if (this.reconnectTimer !== undefined) { clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined; }
+    const prev = this.ws;
+    this.ws = undefined;
+    if (prev) {
+      prev.onopen = null;
+      prev.onclose = null;
+      prev.onmessage = null;
+      try { prev.close(); } catch { /* already closed */ }
+    }
     if (this.connected) { this.connected = false; this.notify(); }
     const t = await this.fetch<{ ticket: string }>("/api/ws-ticket", {});
     if (gen !== this.wsGen) return;
     if (!t.data) {
-      if (t.status !== 401 && t.status !== 403) setTimeout(() => { if (gen === this.wsGen && !this.authNeeded) this.connect(); }, 3000);
+      if (t.status !== 401 && t.status !== 403) {
+        this.reconnectTimer = setTimeout(() => {
+          this.reconnectTimer = undefined;
+          if (gen === this.wsGen && !this.authNeeded) this.connect();
+        }, 3000);
+      }
       return;
     }
     const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -509,7 +563,10 @@ class ObsStore {
       if (gen !== this.wsGen) return;
       this.connected = false; this.notify();
       if (ev.code === 4401 || ev.code === 4403) { this.toast(ev.code === 4401 ? "Signed out: sign in again" : `No role for ${this.app} any more`, "bad"); this.load(); return; }
-      setTimeout(() => { if (gen === this.wsGen && !this.authNeeded) { this.connect(); this.load(); } }, 1500);
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = undefined;
+        if (gen === this.wsGen && !this.authNeeded) { this.connect(); this.load(); }
+      }, 1500);
     };
     ws.onmessage = ev => {
       if (gen !== this.wsGen) return;

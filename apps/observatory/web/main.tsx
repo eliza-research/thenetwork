@@ -35,10 +35,14 @@ const SPEEDS: [string, number][] = [["1h/s", HOUR], ["6h/s", 6 * HOUR], ["1d/s",
 const CATEGORIES: Category[] = ["social", "professional", "hobby", "help", "romance", "growth", "events"];
 const TOAST_VARIANT = { info: "info", good: "ok", bad: "destructive" } as const;
 
-function App() {
+export function App() {
   const s = useStore();
   const [token, setToken] = useState("");
-  useEffect(() => { store.load(); store.connect(); }, []);
+  useEffect(() => {
+    store.load();
+    store.connect();
+    return () => { store.disconnect(); };
+  }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const field = (e.target as Element | null)?.closest?.("input, textarea, select");
@@ -498,4 +502,5 @@ function Toasts() {
   );
 }
 
-createRoot(document.getElementById("root")!).render(<App />);
+const rootElement = typeof document !== "undefined" ? document.getElementById("root") : null;
+if (rootElement) createRoot(rootElement).render(<App />);
