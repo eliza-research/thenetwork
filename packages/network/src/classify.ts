@@ -844,12 +844,104 @@ const COMPLAINT_WORDS = "arrogant|awkward|bored|boring|brusque|condescending|cre
 function complaintPredicate(pred: string): boolean {
   return new RegExp(`\\b(?:${COMPLAINT_WORDS})\\b`).test(pred);
 }
-function hasComplaintWord(clause: string): boolean {
-  for (const m of clause.matchAll(new RegExp(`\\b(?:${COMPLAINT_WORDS})\\b`, "g"))) {
-    const before = (clause.slice(0, m.index).match(/[a-z']+/g) ?? []).slice(-3);
-    if (!before.some(w => w === "not" || w === "never" || w === "no" || w.endsWith("n't"))) return true;
+function wordsOf(clause: string): string[] {
+  return clause.match(/[a-z]+(?:'[a-z]+)?/g) ?? [];
+}
+function isFiniteAux(w: string): boolean {
+  return /^(?:am|is|are|was|were|have|has|had|do|does|did|can|could|will|would|shall|should|may|might|must)$/.test(w)
+    || w.endsWith("n't") || /'(?:d|ll|re|ve|m)$/.test(w) || /^(?:he|she|it|that|there|what)'s$/.test(w);
+}
+function isAdverbWord(w: string): boolean {
+  return w.endsWith("ly") || /^(?:just|still|even|now|then|so|well|really|honestly|actually)$/.test(w);
+}
+function isSubordinator(w: string): boolean {
+  return /^(?:if|when|while|though|although|because|since|unless|until|as|before|after|whenever|whereas|once)$/.test(w);
+}
+function isPreposition(w: string): boolean {
+  return /^(?:in|on|at|over|under|with|without|for|to|from|by|of|about|after|before|into|through|during|against|between|behind|beside|near|off|out|up|down|around|along|across|per|via)$/.test(w);
+}
+type SubjectScope = "member" | "meeting" | "self" | "other";
+interface ClauseSubject { scope: SubjectScope; end: number; aux: boolean; subordinate: boolean }
+function subjectScopeForHead(head: string, det: string): SubjectScope {
+  if (head === "us" || head === "we") return "meeting";
+  if (det === "his" || det === "her" || det === "their") return "member";
+  if (/^(?:night|evening|meeting|date|chat|conversation|time|session|company|rest|laughter|silence|chemistry|spark|connection|talk|vibe|energy|mood|atmosphere|moment|hour)$/.test(head)) return "meeting";
+  if (/^(?:guy|girl|man|woman|person|member|manner|attitude|behavior|behaviour|voice|face|eyes|smile)$/.test(head)) return "member";
+  if (det === "our") return "meeting";
+  return "other";
+}
+function subjectOf(words: string[]): ClauseSubject | null {
+  let i = 0;
+  while (i < words.length && /^(?:then|so|well)$/.test(words[i] ?? "")) i++;
+  let subordinate = false;
+  if (isSubordinator(words[i] ?? "")) { subordinate = true; i++; }
+  while (i < words.length && isAdverbWord(words[i] ?? "")) i++;
+  const w = words[i] ?? "";
+  if (!w) return null;
+  const contraction = w.match(/^(i|we|he|she|they|you|it|that|there)'(?:d|ll|re|ve|m|s)$/);
+  if (contraction) {
+    const base = contraction[1] ?? "";
+    const scope: SubjectScope = base === "i" ? "self" : base === "we" ? "meeting" : /^(?:he|she|they)$/.test(base) ? "member" : base === "you" ? "other" : "meeting";
+    return { scope, end: i + 1, aux: true, subordinate };
   }
-  return false;
+  if (/^(?:i|we|he|she|they|him|her|them|it|this|that|you)$/.test(w)) {
+    const scope: SubjectScope = w === "i" ? "self" : w === "we" ? "meeting" : /^(?:he|she|they|him|her|them)$/.test(w) ? "member" : w === "you" ? "other" : "meeting";
+    return { scope, end: i + 1, aux: false, subordinate };
+  }
+  if (/^(?:the|a|an|this|that|my|his|her|their|our|your)$/.test(w)) {
+    let auxAt = -1;
+    for (let j = i + 1; j < words.length; j++) if (isFiniteAux(words[j] ?? "")) { auxAt = j; break; }
+    if (auxAt > i + 1) return { scope: subjectScopeForHead(words[auxAt - 1] ?? "", w), end: auxAt, aux: false, subordinate };
+    for (let j = i + 2; j < words.length; j++) {
+      if (/(?:ed)$/.test(words[j] ?? "")) return { scope: subjectScopeForHead(words[j - 1] ?? "", w), end: j, aux: false, subordinate };
+    }
+    if (i + 1 >= words.length) return null;
+    return { scope: subjectScopeForHead(words[i + 1] ?? "", w), end: i + 2, aux: false, subordinate };
+  }
+  const next = words[i + 1] ?? "";
+  if (next && !isPreposition(w) && !/^(?:and|but|or|not|never|no)$/.test(w) && (isFiniteAux(next) || /(?:ed)$/.test(next))) {
+    return { scope: subjectScopeForHead(w, ""), end: i + 1, aux: false, subordinate };
+  }
+  return null;
+}
+function hasPredicateAfter(words: string[], subject: ClauseSubject): boolean {
+  if (subject.aux) return subject.end < words.length;
+  let i = subject.end;
+  while (i < words.length && (isAdverbWord(words[i] ?? "") || /^(?:not|never|no)$/.test(words[i] ?? ""))) i++;
+  const pred = words[i] ?? "";
+  if (!pred) return false;
+  if (isFiniteAux(pred)) return i + 1 < words.length;
+  if (/(?:ed)$/.test(pred)) return true;
+  if (/(?:ing)$/.test(pred)) return false;
+  if (isPreposition(pred) || /^(?:the|a|an|this|that|my|his|her|their|our|your|and|but|or)$/.test(pred)) return false;
+  if (/s$/.test(pred) && !/ss$/.test(pred) && pred.length > 2 && subject.scope !== "other") return true;
+  return i + 1 < words.length;
+}
+function hasIndependentClause(clause: string): boolean {
+  const words = wordsOf(clause);
+  if (words.length < 2) return false;
+  let i = 0;
+  while (i < words.length && /^(?:then|so|well)$/.test(words[i] ?? "")) i++;
+  if (isSubordinator(words[i] ?? "")) return false;
+  const subject = subjectOf(words);
+  if (subject) return !subject.subordinate && hasPredicateAfter(words, subject);
+  while (i < words.length && isAdverbWord(words[i] ?? "")) i++;
+  const first = words[i] ?? "";
+  if (isFiniteAux(first)) return i + 1 < words.length;
+  return /(?:ed)$/.test(first);
+}
+function complaintAboutMeeting(clause: string): boolean {
+  let found = false;
+  for (const m of clause.matchAll(new RegExp(`\\b(?:${COMPLAINT_WORDS})\\b`, "g"))) {
+    if (clause[m.index + m[0].length] === "-" && !m[0].includes("-")) continue;
+    const before = (clause.slice(0, m.index).match(/[a-z']+/g) ?? []).slice(-3);
+    if (!before.some(w => w === "not" || w === "never" || w === "no" || w.endsWith("n't"))) { found = true; break; }
+  }
+  if (!found) return false;
+  const words = wordsOf(clause);
+  const subject = subjectOf(words);
+  if (subject && hasPredicateAfter(words, subject)) return subject.scope !== "other";
+  return true;
 }
 function positivePredicate(pred: string): boolean {
   const p = pred.replace(/^(?:a|an|the)\s+/, "").trim();
@@ -868,7 +960,7 @@ function laterClauseKind(c: string): "complaint" | "unclassified" | null {
   const clause = c.trim();
   if (!clause) return null;
   if (/\b(?:no spark|no connection|no chemistry|nothing in common|not much in common|nothing to talk about|no conversation)\b/.test(clause) || NEGATIVE_FEEDBACK.test(clause)) return "complaint";
-  if (hasComplaintWord(clause)) return "complaint";
+  if (complaintAboutMeeting(clause)) return "complaint";
   const person = clause.match(/\b(?:(?:he|she|they)(?:'s|\s+is|\s+was|\s+seems|\s+seemed)|(?:the\s+real\s+)?(?:him|her|them)\s+is|(?:this|that)\s+(?:guy|girl|man|woman|person|member)\s+is)\s+(.+)$/);
   if (person) {
     const kind = predicateKind(person[1] ?? "");
@@ -890,10 +982,10 @@ function laterClauseKind(c: string): "complaint" | "unclassified" | null {
   if (/\b(?:food|cafe|coffee|venue|restaurant|bar|drinks?|view|weather|table|music)\b/.test(clause)) return null;
   const copula = clause.match(/^(?:then\s+)?(.+?)\s+(?:was|is|seemed|felt|were|are)\s+(.+)$/);
   if (copula) {
+    if (subjectOf(wordsOf(clause))?.scope === "other") return "unclassified";
     const kind = predicateKind(copula[2] ?? "");
     if (kind === "complaint") return "complaint";
-    if (kind === "unclassified" || kind === "positive") return "unclassified";
-    if (/^(?:not|no)\b/.test((copula[2] ?? "").trim())) return "unclassified";
+    return "unclassified";
   }
   const meeting = clause.match(/\b(?:date|night|evening|meeting|time|chat|conversation|rest|company|session)(?:\s+itself)?\s+(?:was|is|seemed|felt)\s+(.+)$/);
   if (meeting) {
@@ -908,24 +1000,12 @@ function laterClauseKind(c: string): "complaint" | "unclassified" | null {
   }
   return null;
 }
-function hasFiniteLexicalVerb(clause: string): boolean {
-  const irregular = new Set("became began bled bent blew bought bound bred broke brought built burnt came caught chose crept cut dealt did drew drank drove dwelt fell felt fought found flew forgot gave got grew had heard held hit hurt kept knew laid lay led left lent lit lost made meant met paid put ran rang read rode rose sang sat saw sent set shook shut slept sold sought spoke spent stood stole stuck struck swam swung taught told thought threw tore took understood went woke won wore wrote".split(" "));
-  const present = new Set("becomes begins breaks brings builds comes dances ends falls feels flies flows giggles gives goes grows hurts keeps lands lasts laughs leaves meets makes opens passes rings runs sees shares shines sings sits smiles speaks spends stands stays takes talks tells turns works".split(" "));
-  const words = clause.match(/[a-z']+/g) ?? [];
-  for (let i = 1; i < words.length; i++) {
-    const w = words[i] ?? "";
-    const prev = words[i - 1] ?? "";
-    if (prev === "to" || prev === "be" || prev === "been" || prev === "being") continue;
-    if (/(?:ed|ing)$/.test(w) || irregular.has(w) || present.has(w)) return true;
-  }
-  return false;
-}
 function unclassifiedLaterClause(c: string): boolean {
   const clause = c.trim();
   if (!clause || reversedByMeetingPositive(clause, 0)) return false;
   if (/\b(?:food|cafe|coffee|venue|restaurant|bar|drinks?|view|weather|table|music)\b/.test(clause) && !/\b(?:we|i)\b/.test(clause)) return false;
-  if (hasComplaintWord(clause)) return false;
-  return clause.split(/\s+/).filter(Boolean).length >= 2 && hasFiniteLexicalVerb(clause);
+  if (complaintAboutMeeting(clause)) return false;
+  return hasIndependentClause(clause);
 }
 function negatedFormVerdict(t: string, from: number): "negative" | "neutral" {
   let last: "complaint" | "unclassified" | null = null;
