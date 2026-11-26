@@ -1043,7 +1043,10 @@ const PROBE_DURATION = String.raw`(?:\d+|a|an|one|two|three|four|a few|a couple(
 const RELATIVE_PROBE_DURATION = new RegExp(String.raw`\b(?:in|within)\s+${PROBE_DURATION}|\b${PROBE_DURATION}\s+from\b`);
 const UNBOUND_PROBE_WINDOW = /\bthis\s+(?:morning|afternoon|evening|night)\b|\b(?:next|following)\s+(?:week|month|year)\b|\bafter next\b/;
 const PROBE_DURATION_ONLY = new RegExp(String.raw`^\s*(?:(?:for\s+)?${PROBE_DURATION}\s+(?:works?|(?:will|would) work|is (?:fine|good|ok(?:ay)?|perfect))\b|(?:i )?can do\s+${PROBE_DURATION}\s*$)`);
-const UNBOUND_OFFER_CLOCK = /\bat\s+\d{1,2}(?::[0-5]\d)?(?![\d:]|\s*[ap]m)\b/;
+const BARE_CLOCK_UNIT = String.raw`(?:[ap]m|minutes?|mins?|hours?|hrs?|seconds?|secs?|days?|weeks?|months?|years?|blocks?|miles?|stops?|people|person|friends?|more|of)\b`;
+const BARE_CLOCK_VALUE = String.raw`(?:[01]?\d|2[0-3])(?::[0-5]\d)?(?![\d:]|\s*${BARE_CLOCK_UNIT})\b`;
+const UNBOUND_OFFER_CLOCK = new RegExp(String.raw`\b(?:at|around)\s+${BARE_CLOCK_VALUE}`);
+const UNBOUND_CLOCK_BOUNDARY = new RegExp(String.raw`\b(?:after|before|until|till|by|past|from)\s+${BARE_CLOCK_VALUE}`);
 /**
  * A negation cue earlier in the same clause ("can't do Thursday or Saturday", "not Sunday", "busy
  * Thursday"). "No plans", "no problem", "not sure", "can't wait" and "don't mind" are not refusals.
@@ -1326,10 +1329,11 @@ function joinedProbeRefusals(text: string, mentions: readonly ProbeSpan[], membe
 }
 
 const probeOrdinal = (w: string) => new RegExp(`\\bthe (?:${w})\\b|\\b(?:${w}) (?:one|option|time|slot)\\b|^\\W*(?:${w})\\W*$`, "g");
+const BARE_CLOCK_LEAD = String.raw`(?:at|around|after|before|until|till|by|past|from)`;
 const PROBE_ORDINALS: [RegExp, number][] = [
-  [probeOrdinal("first|1st|earlier|earliest"), 0], [/(?<![\d:]|\bat\s)\b1\b(?!\s*(am|pm|:|\d|of|more|person|hour|min))/g, 0],
-  [probeOrdinal("second|2nd|middle"), 1], [/(?<![\d:]|\bat\s)\b2\b(?!\s*(am|pm|:|\d|of|more|people|person|hours?|mins?))/g, 1],
-  [probeOrdinal("third|3rd"), 2], [/(?<![\d:]|\bat\s)\b3\b(?!\s*(am|pm|:|\d|of|more|people|hours?|mins?))/g, 2], [/\b(?:(?:later|latest)\s+(?:one|option|time|slot)|last\s+(?:one|option|slot))\b/g, -1],
+  [probeOrdinal("first|1st|earlier|earliest"), 0], [new RegExp(String.raw`(?<![\d:]|\b${BARE_CLOCK_LEAD}\s+)\b1\b(?!\s*(am|pm|:|\d|of|more|person|hour|min))`, "g"), 0],
+  [probeOrdinal("second|2nd|middle"), 1], [new RegExp(String.raw`(?<![\d:]|\b${BARE_CLOCK_LEAD}\s+)\b2\b(?!\s*(am|pm|:|\d|of|more|people|person|hours?|mins?))`, "g"), 1],
+  [probeOrdinal("third|3rd"), 2], [new RegExp(String.raw`(?<![\d:]|\b${BARE_CLOCK_LEAD}\s+)\b3\b(?!\s*(am|pm|:|\d|of|more|people|hours?|mins?))`, "g"), 2], [/\b(?:(?:later|latest)\s+(?:one|option|time|slot)|last\s+(?:one|option|slot))\b/g, -1],
 ];
 
 const ORDINAL_POSITION: Readonly<Record<string, number>> = {
@@ -1779,10 +1783,11 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   if (c.why === "mixed" || c.why === "conditional" || c.why === "hedged") return unclear;
   if (explicitTimesOnly) {
     if (EXPLICIT_NO_OFFERED_TIMES.test(t)) return { answer: "no", keys: [], why: "refusal" };
-    if (t.includes("?") || unresolved.length || [...pos].some(key => !all.includes(key)) || UNBOUND_OFFER_DATE.test(t) || UNBOUND_OFFER_CLOCK.test(t)) return { ...unclear, why: "slot" };
+    if (t.includes("?") || unresolved.length || [...pos].some(key => !all.includes(key)) || UNBOUND_OFFER_DATE.test(t) || UNBOUND_OFFER_CLOCK.test(t) || UNBOUND_CLOCK_BOUNDARY.test(t)) return { ...unclear, why: "slot" };
   }
-  const bareClocks = [...t.matchAll(new RegExp(UNBOUND_OFFER_CLOCK.source, "g"))].map(m => { const [h, mm] = m[0].replace(/^at\s+/, "").split(":"); return (Number(h) % 12) * 60 + Number(mm ?? 0); });
+  const bareClocks = [...t.matchAll(new RegExp(UNBOUND_OFFER_CLOCK.source, "g"))].map(m => { const [h, mm] = m[0].replace(/^(?:at|around)\s+/, "").split(":"); return (Number(h) % 12) * 60 + Number(mm ?? 0); });
   if (bareClocks.length && (!picked.length || picked.some(k => { const o = offered.find(s => s.key === k); return o?.minute === undefined || !bareClocks.includes(o.minute % 720); }))) return { ...unclear, why: "slot" };
+  if (!picked.length && UNBOUND_CLOCK_BOUNDARY.test(t)) return { ...unclear, why: "slot" };
   if (ordinalMissing) return { ...unclear, why: "slot" };
   if (unbound) {
     const current = picked.filter(key => strong.has(key));
