@@ -467,7 +467,8 @@ const OUTCOME: Record<ObsRequest["outcome"], RequestOutcome> = { probing: "Probi
 /** Member requests: what was asked for (never the member's words), the outcome, tries and age. */
 export function Requests() {
   const s = useStore();
-  const seg = s.ui.requestSegment;
+  const [seg, setSeg] = useState<RequestSegment>(s.ui.requestSegment);
+  useEffect(() => { setSeg(s.ui.requestSegment); }, [s.ui.requestSegment]);
   const f = s.ui.focus;
   const isOpen = (r: ObsRequest) => requestShown(OUTCOME[r.outcome], "OpenSegment");
   const scoped = s.requests.filter(r => {
@@ -489,7 +490,7 @@ export function Requests() {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-3">
-        <Segments aria-label="Outcome" value={seg} onValueChange={v => store.setUI({ requestSegment: chooseRequestSegment(initial, v as RequestSegment).requestSegment })} options={requestSegmentOptions} />
+        <Segments aria-label="Outcome" value={seg} onValueChange={v => { const next = chooseRequestSegment(initial, v as RequestSegment).requestSegment; setSeg(next); store.setUI({ requestSegment: next }); }} options={requestSegmentOptions} />
         <span className={quiet}>{[...byCat].sort((a, b) => b[1].total - a[1].total).map(([k, c]) => `${k} ${c.open} open / ${c.fulfilled} fulfilled`).join(" · ")}</span>
       </div>
       <StatusRow view={panelView("RequestsPanel", "AnswerRows", rows.length)} empty={s.requests.length ? s.nothing() : "No requests yet."}>
