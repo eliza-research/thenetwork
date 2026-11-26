@@ -83,7 +83,11 @@ export function opsConfigFromEnv(e: Env, base: { env: string; build: string; dep
     if (base.deployed && u.protocol !== "https:") throw new Error("ALERT_WEBHOOK_URL must be https when deployed");
   }
   const heartbeatUrl = e.OPS_HEARTBEAT_URL?.trim() || undefined;
-  if (heartbeatUrl && base.deployed && !heartbeatUrl.startsWith("https://")) throw new Error("OPS_HEARTBEAT_URL must be https when deployed");
+  if (heartbeatUrl) {
+    let u: URL;
+    try { u = new URL(heartbeatUrl); } catch { throw new Error("OPS_HEARTBEAT_URL is not a URL"); }
+    if (base.deployed && u.protocol !== "https:") throw new Error("OPS_HEARTBEAT_URL must be https when deployed");
+  }
   const metricsToken = e.OPS_METRICS_TOKEN?.trim() || undefined;
   if (metricsToken && metricsToken.length < TOKEN_MIN) throw new Error(`OPS_METRICS_TOKEN must be at least ${TOKEN_MIN} characters`);
   const format = (e.ALERT_WEBHOOK_FORMAT?.trim() || "json").toLowerCase();

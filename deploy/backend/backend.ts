@@ -248,22 +248,59 @@ export function redact(s: string): string {
 export type LogFields = Record<string, unknown>;
 export interface Logger { info(msg: string, f?: LogFields): void; warn(msg: string, f?: LogFields): void; error(msg: string, f?: LogFields): void }
 
+function sanitizeLogValue(v: unknown, seen = new WeakSet<object>()): unknown {
+  if (typeof v === "string") return redact(v);
+  if (typeof v === "bigint") return v.toString();
+  if (v instanceof Error) return redact(v.message);
+  if (!v || typeof v !== "object") return v;
+  if (seen.has(v)) return "[circular]";
+  seen.add(v);
+  try {
+    if (Array.isArray(v)) return v.map(x => sanitizeLogValue(x, seen));
+    if (v instanceof Date) return v.toISOString();
+    const out: LogFields = {};
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      if (DROP_KEYS.has(k.toLowerCase())) continue;
+      out[k] = sanitizeLogValue(val, seen);
+    }
+    return out;
+  } finally {
+    seen.delete(v);
+  }
+}
+
+function formatConsoleArg(a: unknown): string {
+  if (a instanceof Error) return a.message;
+  if (typeof a === "string") return a;
+  if (typeof a === "bigint") return a.toString();
+  try {
+    return JSON.stringify(sanitizeLogValue(a)) ?? String(a);
+  } catch {
+    return String(a);
+  }
+}
+
 /** One JSON object per line: t, level, msg and fields. Phone numbers are masked; text and secrets are dropped. */
 export function jsonLogger(write: (line: string) => void = s => process.stdout.write(`${s}\n`), base: LogFields = {}): Logger {
+  const cleanBase = sanitizeLogValue(base) as LogFields;
   const line = (level: string, msg: string, f: LogFields = {}) => {
-    const out: LogFields = { t: new Date().toISOString(), level, msg: redact(String(msg)), ...base };
+    const out: LogFields = { t: new Date().toISOString(), level, msg: redact(String(msg)), ...cleanBase };
     for (const [k, v] of Object.entries(f)) {
       if (DROP_KEYS.has(k.toLowerCase())) continue;
-      out[k] = typeof v === "string" ? redact(v) : v;
+      out[k] = sanitizeLogValue(v);
     }
-    write(JSON.stringify(out));
+    try {
+      write(JSON.stringify(out));
+    } catch {
+      write(JSON.stringify({ t: out.t, level, msg: out.msg, logError: "unserializable" }));
+    }
   };
   return { info: (m, f) => line("info", m, f), warn: (m, f) => line("warn", m, f), error: (m, f) => line("error", m, f) };
 }
 
 /** Routes console.* through the logger, so that library lines are structured and redacted too. */
 export function captureConsole(log: Logger) {
-  const fmt = (args: unknown[]) => args.map(a => (a instanceof Error ? a.message : typeof a === "string" ? a : JSON.stringify(a))).join(" ");
+  const fmt = (args: unknown[]) => args.map(formatConsoleArg).join(" ");
   console.log = (...a: unknown[]) => log.info(fmt(a));
   console.info = (...a: unknown[]) => log.info(fmt(a));
   console.warn = (...a: unknown[]) => log.warn(fmt(a));
@@ -353,7 +390,9 @@ export function routeLabel(path: string): string {
 
 /** The bearer token matches (constant time). */
 function bearerIs(req: Request, token: string): boolean {
-  const given = Buffer.from(req.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "");
+  const match = /^Bearer\s+(.+)$/i.exec(req.headers.get("authorization") ?? "");
+  if (!match) return false;
+  const given = Buffer.from(match[1]!.trim());
   const want = Buffer.from(token);
   return given.length === want.length && timingSafeEqual(given, want);
 }
@@ -433,7 +472,13 @@ export function createBackend(d: BackendDeps) {
   const staffFetch = async (req: Request): Promise<Response> => {
     const t0 = performance.now();
     const path = new URL(req.url).pathname;
-    const res = backendAcceptsWork(lifecycle) ? await track(svc.fetch(req)) : json(503, { ok: false, error: "shutting_down" });
+    let res: Response;
+    try {
+      res = backendAcceptsWork(lifecycle) ? await track(svc.fetch(req)) : json(503, { ok: false, error: "shutting_down" });
+    } catch (e) {
+      log.error("request failed", { port: "staff", route: routeLabel(path), error: (e as Error).message });
+      res = json(500, { ok: false, error: "internal_error" });
+    }
     log.info("http", { port: "staff", method: req.method, route: routeLabel(path), status: res.status, ms: Math.round(performance.now() - t0) });
     return stamp(res);
   };

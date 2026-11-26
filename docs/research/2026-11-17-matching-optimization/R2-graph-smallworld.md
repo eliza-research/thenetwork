@@ -293,7 +293,7 @@ Put the decision logic (cap soundness, bucket bounds) in the LemmaScript core. K
 
 ## 10. Benchmarks: so that we never have an n² problem and can see quality move
 
-**Harness ("matching scale bench", offline, not part of `bun run sim`'s default blocks; nightly at most).**
+**Harness ("matching scale bench", offline, not part of `pnpm run sim`'s default blocks; nightly at most).**
 
 - **Worlds:**
   - the planted generator (`packages/sim/src/planted.ts`) and each pack's world generator, at N = 1k, 10k, 100k (and 300k once, to fit an exponent);

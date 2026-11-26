@@ -5,6 +5,7 @@ import { fileAt } from "../../core/src/runtime/files.ts";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { migrate, migrations, withDevMigrationLock } from "../../db/migrate.ts";
+import { PgPeopleStore } from "../src/pg-store.ts";
 import { dropDb, emptyDb, migratedDb, pgAvailable } from "./pg.ts";
 
 const T = 120_000;
@@ -116,9 +117,10 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
 
   describe("guards", () => {
     let sql: SQL;
+    let dbUrl = "";
     beforeAll(async () => {
-      const url = await migratedDb("guards"); urls.push(url);
-      sql = new SQL({ url, max: 2 });
+      dbUrl = await migratedDb("guards"); urls.push(dbUrl);
+      sql = new SQL({ url: dbUrl, max: 2 });
       await member(sql, "ntwrk", "n1"); await member(sql, "ntwrk", "n2");
       await member(sql, "slop", "s1"); await member(sql, "peon", "p1");
     }, T);
@@ -277,6 +279,45 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
     test("platform.audit is append-only", async () => {
       await sql`insert into platform.audit (app_id, actor, action) values ('slop', 'staff@x', 'reveal')`;
       expect(await sql`delete from platform.audit`.then(() => "ok", e => String(e.message))).toContain("append-only");
+    });
+
+    test("PgPeopleStore.withLock runs distinct keys concurrently while serializing the same key", async () => {
+      const store = new PgPeopleStore(dbUrl);
+      try {
+        let releaseA!: () => void;
+        let enteredA!: () => void;
+        const aEntered = new Promise<void>(r => { enteredA = r; });
+        const aHold = new Promise<void>(r => { releaseA = r; });
+        const events: string[] = [];
+
+        const firstA = store.withLock("phone-a", async () => {
+          events.push("a1-start");
+          enteredA();
+          await aHold;
+          events.push("a1-end");
+          return "a1";
+        });
+        await aEntered;
+
+        const secondA = store.withLock("phone-a", async () => {
+          events.push("a2");
+          return "a2";
+        });
+
+        // A distinct key must complete while phone-a is still held.
+        const bDone = await store.withLock("phone-b", async () => {
+          events.push("b");
+          return "b";
+        });
+        expect(bDone).toBe("b");
+        expect(events).toEqual(["a1-start", "b"]);
+
+        releaseA();
+        expect(await Promise.all([firstA, secondA])).toEqual(["a1", "a2"]);
+        expect(events).toEqual(["a1-start", "b", "a1-end", "a2"]);
+      } finally {
+        await store.close();
+      }
     });
   });
 });

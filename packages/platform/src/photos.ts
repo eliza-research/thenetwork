@@ -52,7 +52,7 @@ import {
 import { canBeMatched } from "../../core/src/policy.ts";
 import { PgPeopleStore } from "./pg-store.ts";
 import type { AppId } from "./apps.ts";
-import { readCapped } from "./body.ts";
+import { readCapped, readCappedText } from "./body.ts";
 import type { MembershipState, PeopleStore } from "./store.ts";
 import type { AppearanceRater, AppearanceScore, RatingSubject } from "../../engine/src/packs/slop/appearance.ts";
 import { makeClefRaterFromEnv, type ClefRaterOptions } from "../../engine/src/packs/slop/clef.ts";
@@ -796,8 +796,10 @@ export class PhotoService {
       return r.ok ? json(200, { ok: true, id: r.value.id }) : refuse(r.reason);
     }
     if (req.method === "POST" && path === "/api/photos/delete") {
+      const raw = await readCappedText(req, 16 * 1024);
+      if (raw === "too_large") return refuse("too_large");
       let id: unknown;
-      try { id = ((await req.json()) as Record<string, unknown>)?.id; } catch { /* not JSON */ }
+      try { id = (JSON.parse(raw) as Record<string, unknown>)?.id; } catch { /* not JSON */ }
       if (typeof id !== "string" || !/^ph_[a-f0-9]{24}$/.test(id)) return json(400, { ok: false, error: "invalid" });
       return (await this.remove(person, app, id)) ? json(200, { ok: true }) : refuse("not_found");
     }

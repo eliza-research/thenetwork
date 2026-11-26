@@ -119,8 +119,10 @@ export async function serveHttp<Data = unknown>(options: Options<Data>): Promise
     });
   });
   const idleTimeoutMs = (options.idleTimeout ?? 10) * 1000;
-  http.setTimeout(idleTimeoutMs);
+  // Bound idle keep-alive sockets without killing active in-flight async handlers.
+  http.setTimeout(0);
   http.keepAliveTimeout = idleTimeoutMs;
+  if (http.headersTimeout <= idleTimeoutMs) http.headersTimeout = idleTimeoutMs + 1000;
   http.on("upgrade", (incoming, socket, head) => {
     if (!sockets) { socket.destroy(); return; }
     socket.on("error", () => socket.destroy());

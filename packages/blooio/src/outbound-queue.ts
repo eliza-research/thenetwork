@@ -339,7 +339,7 @@ export class OutboundQueue {
       const key = `blooio-line:${this.line}`;
       try {
         await conn`select pg_advisory_lock(hashtext(${key}))`;
-        try { return await fn(); } finally { await conn`select pg_advisory_unlock(hashtext(${key}))`; }
+        try { return await fn(); } finally { await conn`select pg_advisory_unlock(hashtext(${key}))`.catch(() => {}); }
       } finally { conn.release(); }
     });
     chains.set(this.line, run);

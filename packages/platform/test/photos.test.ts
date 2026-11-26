@@ -504,4 +504,24 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     now += 16 * 60_000; expect(await relay.approved(selected.itemId)).toBeUndefined();
   }, T);
 
+  test("/api/photos/delete rejects an oversized chunked body with 413", async () => {
+    const t = setup();
+    const adult = await t.person(28);
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(`{"id":"${"a".repeat(20 * 1024)}"}`));
+        controller.close();
+      },
+    });
+    const req = new Request("https://slop.date/api/photos/delete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: stream,
+      duplex: "half",
+    } as RequestInit);
+    const res = await t.svc.route(req, "/api/photos/delete", "slop", async () => adult);
+    expect(res?.status).toBe(413);
+    expect(await res?.json()).toEqual({ ok: false, error: "too_large" });
+  }, T);
+
 });

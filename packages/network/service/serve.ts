@@ -138,15 +138,17 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
 }
 
 const TICK_MS = 60_000;
+/** Largest body the public API server reads: an 8 MB photo upload plus headroom (JSON routes enforce 16 KB). */
+const MAX_PUBLIC_BODY_BYTES = 9 * 1024 * 1024;
 
 /** The staff and webhook server (default 127.0.0.1:4848) and the public API the sites call (default 127.0.0.1:8790). */
 export async function serveService(svc: NetworkService, o: { host: string; port: number; apiPort: number; log?: (s: string) => void }) {
   const log = o.log ?? console.log;
-  // Bodies are checked before they are read (audit network-service-17): webhooks 256 KB, the public API 16 KB.
+  // Bodies are checked before they are read (audit network-service-17): webhooks 256 KB, the public API 9 MB for photos.
   const server = await serveHttp({ hostname: o.host, port: o.port, fetch: svc.fetch, maxRequestBodySize: 256 * 1024 });
   log(`listening on http://${o.host}:${server.port} (POST /webhooks/blooio[/:app], GET /health, GET /review, POST /review/:oppId, POST /safety/lift, POST /safety/close, POST /matching; ?app= or /apps/:app/...)`);
   // The server is passed on: the client IP for the rate limits is the socket address unless a trusted proxy header is configured.
-  const api = await serveHttp({ hostname: o.host, port: o.apiPort, fetch: (req, server) => svc.publicFetch(req, server), maxRequestBodySize: 16 * 1024 });
+  const api = await serveHttp({ hostname: o.host, port: o.apiPort, fetch: (req, server) => svc.publicFetch(req, server), maxRequestBodySize: MAX_PUBLIC_BODY_BYTES });
   log(`public API on http://${o.host}:${api.port}/api/* (the app comes from the Host header)`);
   return { server, api, stop: () => { server.stop(); api.stop(); } };
 }
@@ -154,22 +156,32 @@ export async function serveService(svc: NetworkService, o: { host: string; port:
 /** Every network ticks once a minute on its own: a slow network never holds back another one. */
 export function startTicks(svc: NetworkService, log: (s: string) => void = console.log) {
   const busy = new Set<string>();
-  const loop = async () => {
-    // Inbound messages a crash or an error left waiting go first, in order per sender.
-    await svc.inboxTick();
-    await Promise.all([...svc.runtimes.values()].map(async rt => {
-      if (busy.has(rt.id)) return;
-      busy.add(rt.id);
-      try { if (!(await rt.tick())) log(`${rt.id}: tick skipped: another instance holds the lock`); }
-      catch (e) { log(`${rt.id}: tick failed: ${(e as Error).message}`); }
-      finally { busy.delete(rt.id); }
-    }));
-    await svc.purge();
-    try { await svc.notifyTick(); } catch (e) { log(`notify: tick failed: ${(e as Error).message}`); }
+  const inFlight = new Set<Promise<void>>();
+  const runGuarded = async (key: string, work: () => Promise<unknown>) => {
+    if (busy.has(key)) return;
+    busy.add(key);
+    try { await work(); }
+    catch (e) { log(`${key}: tick failed: ${(e as Error).message}`); }
+    finally { busy.delete(key); }
   };
-  let running: Promise<void> = loop();
-  const first = running;
-  const timer = setInterval(() => { running = loop(); }, TICK_MS);
-  // stop() waits for the tick in flight, so a shutdown commits and delivers before the pool closes.
-  return { first, stop: async () => { clearInterval(timer); await running.catch(() => {}); } };
+  const loop = () => {
+    const run = (async () => {
+      // Inbound messages a crash or an error left waiting go first, in order per sender.
+      await runGuarded("inbox", () => svc.inboxTick());
+      await Promise.all([...svc.runtimes.values()].map(rt =>
+        runGuarded(rt.id, async () => {
+          if (!(await rt.tick())) log(`${rt.id}: tick skipped: another instance holds the lock`);
+        }),
+      ));
+      await runGuarded("retention", () => svc.purge());
+      await runGuarded("notify", () => svc.notifyTick());
+    })().catch(e => { log(`tick failed: ${(e as Error).message}`); });
+    inFlight.add(run);
+    run.finally(() => inFlight.delete(run)).catch(() => {});
+    return run;
+  };
+  const first = loop();
+  const timer = setInterval(() => { void loop(); }, TICK_MS);
+  // stop() waits for every tick in flight, so a shutdown commits and delivers before the pool closes.
+  return { first, stop: async () => { clearInterval(timer); await Promise.allSettled([...inFlight]); } };
 }

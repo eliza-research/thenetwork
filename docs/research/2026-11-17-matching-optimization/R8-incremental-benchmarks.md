@@ -440,7 +440,7 @@ Gates for each world: every safety invariant 0, the certificate sound, and check
   - Per PR, `--quick`: N ≤ 10k, counts only, the differential runbook at 2k. A few seconds to a minute.
   - Nightly: up to 100k, both arms, worst-case worlds, the 100k incremental benchmark.
   - Weekly: memory slopes and the full runbook.
-- The repository rule allows only one full `bun run sim` per agent, so the 100k rows belong in the nightly job, not in `bun run sim`.
+- The repository rule allows only one full `pnpm run sim` per agent, so the 100k rows belong in the nightly job, not in `pnpm run sim`.
 
 ---
 

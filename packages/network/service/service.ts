@@ -110,7 +110,7 @@ import { BoundedHomeHelpVenue } from "../src/bounded-home-help-venue.ts";
 import { networkRoutePolicy, routeEnvelopeAllowed, sameNetworkAuthority, type NetworkRoutePolicy } from "./route-authority.ts";
 import { TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH, RELAY_PHOTO_RESOLVE_PATH, parseApprovedRelayPhotos, type SetStateRequest, type TurnReceiptRequest, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
 import { SVC_MIN_SECRET, svcVerify } from "../../core/src/svc/svc-auth.ts";
-import { readCapped } from "../../platform/src/body.ts";
+import { readCapped, readCappedText } from "../../platform/src/body.ts";
 import { ADULT_AGE, canBeMatched, canJoin } from "../../core/src/policy.ts";
 import { CostLedger, costRatesFromEnv, PgCostSink } from "./cost.ts";
 import { BlooioAdapter, originalBookingNoticeStale, type ChannelAdapter, type DirectKind, type Outbound } from "./channel.ts";
@@ -4314,9 +4314,9 @@ export class NetworkService implements RuntimeHost {
   /** POST /webhooks/blooio[/:app]: verify the signature on the raw body (the prototype's rules), parse, handle. 401 never retries; 500 asks Blooio to retry. */
   private async webhook(req: Request, secret: string | undefined, app?: AppId): Promise<Response> {
     if (!secret) return json({ ok: false, error: "webhook_secret_missing" }, 503);
-    if (Number(req.headers.get("content-length") ?? "0") > MAX_BODY_BYTES) return json({ ok: false, error: "payload_too_large" }, 413);
-    const raw = await req.text();
-    if (raw.length > MAX_BODY_BYTES) return json({ ok: false, error: "payload_too_large" }, 413);
+    const bytes = await readCapped(req, MAX_BODY_BYTES);
+    if (bytes === "too_large") return json({ ok: false, error: "payload_too_large" }, 413);
+    const raw = new TextDecoder().decode(bytes);
     const sig = verifyBlooioSignature(secret, req.headers.get(SIGNATURE_HEADER), raw, Math.floor(this.clock.now() / 1000));
     if (!sig.ok) return json({ ok: false, error: `signature_${sig.reason}` }, 401);
     let ev: ChannelEvent;
@@ -4347,7 +4347,9 @@ export class NetworkService implements RuntimeHost {
 export function reviewerOfRecord(req: Request, user: StaffUser, consoleToken: string | undefined): StaffUser {
   const named = req.headers.get("x-network-staff-id")?.trim();
   if (!named || !consoleToken) return user;
-  const given = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "";
+  const match = /^Bearer\s+(.+)$/i.exec(req.headers.get("authorization") ?? "");
+  if (!match) return user;
+  const given = match[1]!.trim();
   const a = Buffer.from(given), b = Buffer.from(consoleToken);
   if (a.length !== b.length || !timingSafeEqual(a, b)) return user;
   if (named.length > 200 || !/^([^\s@]+@[^\s@]+\.[^\s@]+|token:[a-z_+]+#[0-9a-f]{8})$/i.test(named)) return user;
@@ -4382,5 +4384,10 @@ export function webhookSecretsFromEnv(env: Env = process.env): Partial<Record<Ap
 const json = (data: unknown, status = 200) => Response.json(data, {status,headers:{"cache-control":"no-store"}});
 const result = (r: ActionResult) => json(r, r.ok ? 200 : 409);
 async function body(req: Request): Promise<unknown> {
-  try { const b = await req.json(); return b && typeof b === "object" ? b : undefined; } catch { return undefined; }
+  try {
+    const raw = await readCappedText(req, MAX_BODY_BYTES);
+    if (raw === "too_large") return undefined;
+    const b = JSON.parse(raw);
+    return b && typeof b === "object" ? b : undefined;
+  } catch { return undefined; }
 }

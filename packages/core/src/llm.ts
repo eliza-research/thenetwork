@@ -173,7 +173,7 @@ export function usageOf(data: any, requestedModel?: string): Pick<ResponseInfo, 
   const reported = u.buyer_cost_micro ?? (typeof u.cost === "number" ? u.cost * 1e6 : undefined);
   const p = priceFor(data?.model) ?? priceFor(requestedModel);
   const cached = u.prompt_tokens_details?.cached_tokens ?? 0, writes = u.prompt_tokens_details?.cache_write_tokens ?? 0;
-  const priced = p ? (promptTokens - cached - writes) * p.input + cached * p.cachedInput + writes * p.cacheWrite + completionTokens * p.output : 0;
+  const priced = p ? Math.max(0, promptTokens - cached - writes) * p.input + cached * p.cachedInput + writes * p.cacheWrite + completionTokens * p.output : 0;
   return {
     usage: { promptTokens, completionTokens, reasoningTokens: u.completion_tokens_details?.reasoning_tokens ?? 0 },
     costMicro: Number(reported ?? priced) || 0,
