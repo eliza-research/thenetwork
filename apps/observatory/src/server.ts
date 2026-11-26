@@ -33,6 +33,7 @@ import { initial as initialRoute, staffMemberAccess, step as stepStaffRoute } fr
 import { staffRevealMayDisclose } from "../../../packages/core/src/generated/consoleMemberView.ts";
 import { monthlyGatheringConsoleAllowed } from "../../../packages/core/src/generated/monthlyGathering.ts";
 import { readCappedText } from "../../../packages/platform/src/body.ts";
+import { maskPii } from "../../../packages/core/src/pii.ts";
 import { Lab, LAB_LIMITS, LabQueueFullError, validateLab, type LabOptions } from "./lab.ts";
 import { runDiff } from "./runDiff.ts";
 import { SQL } from "../../../packages/core/src/runtime/postgres.ts";
@@ -133,6 +134,20 @@ export const SECURITY_HEADERS: Record<string, string> = {
 };
 /** WebSocket close codes: the sign-in ended (4401) or the person has no role for the app any more (4403). */
 export const WS_EXPIRED = 4401, WS_FORBIDDEN = 4403;
+/** Transport-level cap for all Observatory HTTP bodies (256 KiB) and per-route JSON cap (64 KiB). */
+export const MAX_API_BODY_BYTES = 256 * 1024;
+export const MAX_JSON_BODY_BYTES = 64 * 1024;
+/** Largest signed 32-bit setTimeout delay in Node.js (~24.8 days). */
+const MAX_TIMEOUT_MS = 2_147_483_647;
+/** Redact credentials, tokens, URLs, phones and other PII before writing an error to stderr. */
+export function redactLogError(e: unknown): string {
+  const raw = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+  const stripped = raw
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)([^@\s/]+)@/gi, "$1[redacted]@")
+    .replace(/\b(Bearer\s+)\S+/gi, "$1[redacted]")
+    .replace(/([?&](?:token|ticket|key|secret|password|auth)=)[^&\s]+/gi, "$1[redacted]");
+  return maskPii(stripped);
+}
 /** The client says which mode it acts in; a command for a mode that is no longer on is refused (audit observatory-21). */
 export const MODE_HEADER = "x-observatory-mode";
 
@@ -205,12 +220,49 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
 
   /** Open sockets, each with who opened it (deltas are shaped per person; audit observatory-6). */
   const sockets = new Set<ServerWebSocket<WsData>>();
-  /** Every member of each (mode, app) as the source last sent them: the analyst view takes their names out of feed lines. */
+  /** Per-socket SSO expiry timers, cleared on close and server stop. */
+  const expiryTimers = new Map<ServerWebSocket<WsData>, ReturnType<typeof setTimeout>>();
+  const clearExpiryTimer = (ws: ServerWebSocket<WsData>) => {
+    const t = expiryTimers.get(ws);
+    if (t) { clearTimeout(t); expiryTimers.delete(ws); }
+  };
+  const scheduleExpiry = (ws: ServerWebSocket<WsData>) => {
+    clearExpiryTimer(ws);
+    const exp = ws.data.user.expiresAt;
+    if (exp === undefined) return;
+    const delay = Math.min(Math.max(0, exp - Date.now()) + 50, MAX_TIMEOUT_MS);
+    const timer = setTimeout(() => {
+      expiryTimers.delete(ws);
+      if (!sockets.has(ws)) return;
+      if (recheck(ws) && ws.data.user.expiresAt !== undefined && ws.data.user.expiresAt > Date.now()) {
+        scheduleExpiry(ws);
+      }
+    }, delay);
+    timer.unref?.();
+    expiryTimers.set(ws, timer);
+  };
+  /** Every active named member of each (mode, app) as the source last sent them: the analyst view takes their names out of feed lines. */
   const known = new Map<string, Map<string, ObsMember>>();
+  const keepKnown = (x: ObsMember) => !x.declined && !!x.name;
+  const syncKnown = (k: string, members: readonly ObsMember[]) => {
+    const next = new Map<string, ObsMember>();
+    for (const x of members) if (keepKnown(x)) next.set(x.id, x);
+    known.set(k, next);
+    return next;
+  };
   const broadcast = (m: Mode, app: AppId, d: ObsDelta) => {
-    const names = known.get(key(m, app)) ?? new Map<string, ObsMember>();
-    known.set(key(m, app), names);
-    for (const x of d.members ?? []) names.set(x.id, x);
+    const k = key(m, app);
+    let names = known.get(k);
+    if (d.reset) {
+      const src = sources.get(k);
+      names = src ? syncKnown(k, src.state().members) : syncKnown(k, d.members ?? []);
+    } else {
+      if (!names) { names = new Map<string, ObsMember>(); known.set(k, names); }
+      for (const x of d.members ?? []) {
+        if (keepKnown(x)) names.set(x.id, x);
+        else names.delete(x.id);
+      }
+    }
     if (m !== mode || !server) return;
     if (!d.reset && !d.members && !d.edges && !d.opportunities && !d.feed && !d.stats && !d.engineRuns && !d.env && !d.removedOpportunities && !d.game && !d.requests && !d.network) {
       server.publish(appTopic(app), JSON.stringify({ type: "clock", app, clock: d.clock, version: d.version }));
@@ -221,9 +273,9 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
     for (const ws of sockets) {
       const w = ws.data;
       if (w.app !== app) continue;
-      const k = `${w.cls}|${w.truth}`;
-      let msg = made.get(k);
-      if (!msg) { msg = JSON.stringify({ type: "delta", mode: m, app, delta: withAuth(shapeDelta(d, w.cls, w.truth, () => names.values())) }); made.set(k, msg); }
+      const viewKey = `${w.cls}|${w.truth}`;
+      let msg = made.get(viewKey);
+      if (!msg) { msg = JSON.stringify({ type: "delta", mode: m, app, delta: withAuth(shapeDelta(d, w.cls, w.truth, () => names.values())) }); made.set(viewKey, msg); }
       ws.send(msg);
     }
   };
@@ -239,7 +291,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           ? new (await import("./sources/game.ts")).GameSource({ ...opts.game, app })
           : new RealSource({ ...opts.real, app, ...(opts.real?.appUrls?.[app] ? { appUrl: opts.real.appUrls[app] } : {}) });
         await s.init();
-        known.set(k, new Map(s.state().members.map(x => [x.id, x])));
+        syncKnown(k, s.state().members);
         sources.set(k, s);
         unsub.set(k, s.subscribe(d => broadcast(m, app, d)));
         return s;
@@ -266,10 +318,21 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
   }
 
   const json = (data: unknown, status = 200, extra?: Record<string, string>) => Response.json(data, { status, headers: { ...SECURITY_HEADERS, ...extra } });
+  /** Read a JSON request body with a hard byte cap; oversized bodies return 413 with security headers. */
+  async function readJsonBody<T>(req: Request, fallback: T, max = MAX_JSON_BODY_BYTES): Promise<{ body: T } | Response> {
+    const raw = await readCappedText(req, max);
+    if (raw === "too_large") return json({ ok: false, error: "request body too large", code: "body_too_large" }, 413);
+    if (!raw.trim()) return { body: fallback };
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (fallback !== null && typeof fallback === "object" && (parsed === null || typeof parsed !== "object")) return { body: fallback };
+      return { body: parsed as T };
+    } catch { return { body: fallback }; }
+  }
   /** A failure inside a route: logged with a reference, never sent to the browser as is (audit observatory-13). */
   const fail = (e: unknown) => {
     const ref = randomBytes(4).toString("hex");
-    console.error(`Observatory: request failed (ref ${ref})`, e);
+    console.error(`Observatory: request failed (ref ${ref}): ${redactLogError(e)}`);
     return json({ error: `internal error (ref ${ref})`, code: "internal" }, 500);
   };
 
@@ -359,10 +422,10 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
    */
   function recheck(ws: ServerWebSocket<WsData>): boolean {
     const w = ws.data;
-    if (w.user.expiresAt !== undefined && w.user.expiresAt <= Date.now()) { ws.close(WS_EXPIRED, "sign-in expired"); sockets.delete(ws); return false; }
+    if (w.user.expiresAt !== undefined && w.user.expiresAt <= Date.now()) { clearExpiryTimer(ws); ws.close(WS_EXPIRED, "sign-in expired"); sockets.delete(ws); return false; }
     if (w.user.via === "sso") w.user = { ...staffUser(w.user.id, ssoGrants(w.user.id, auth), "sso"), ...(w.user.expiresAt !== undefined ? { expiresAt: w.user.expiresAt } : {}) };
     const roles = rolesFor(w.user, w.app, mode);
-    if (!roles.size) { ws.close(WS_FORBIDDEN, `no role for ${w.app}`); sockets.delete(ws); return false; }
+    if (!roles.size) { clearExpiryTimer(ws); ws.close(WS_FORBIDDEN, `no role for ${w.app}`); sockets.delete(ws); return false; }
     w.cls = viewClass(roles);
     w.truth = truthFor(w.user, w.app);
     return true;
@@ -433,7 +496,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
       }
       return undefined;
     } catch (err) {
-      console.error("Observatory: audit write failed", err);
+      console.error(`Observatory: audit write failed: ${redactLogError(err)}`);
       return json({ error: "audit log unavailable: request refused" }, 503);
     }
   }
@@ -525,6 +588,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
     port: opts.port ?? 4747,
     hostname,
     development,
+    maxRequestBodySize: MAX_API_BODY_BYTES,
     routes: {
       ...webRoutes,
       // Liveness for Railway's health check and an uptime monitor: no auth, no data, no Host check (Access guards the domain).
@@ -546,7 +610,9 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
       "/api/mode": {
         GET: global(() => json({ mode, realOnly, realConfigured: !!(opts.real?.url ?? process.env.NETWORK_DATABASE_URL ?? process.env.DATABASE_URL) })),
         POST: global(async (req, u) => {
-          const body = await req.json().catch(() => ({})) as { mode?: Mode };
+          const parsed = await readJsonBody<{ mode?: Mode }>(req, {});
+          if (parsed instanceof Response) return parsed;
+          const body = parsed.body;
           if (body.mode === "game" && realOnly) return json({ ok: false, error: "game mode is off on this server (OBSERVATORY_REAL_ONLY=1)", code: "real_only" }, 403);
           if (body.mode !== "game" && body.mode !== "real") return json({ ok: false, error: `unknown mode ${body.mode}` }, 400);
           // Audited before the switch: no row, no switch (fail closed).
@@ -612,7 +678,9 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         // slop photos: admin or safety, a typed reason, verified adults only (never a member under 18). Audited before the read.
         POST: guard(async (req, u, app) => {
           const id = decodeURIComponent(req.params.id!);
-          const b = await req.json().catch(() => ({})) as { reason?: string };
+          const parsed = await readJsonBody<{ reason?: string }>(req, {});
+          if (parsed instanceof Response) return parsed;
+          const b = parsed.body;
           const reason = String(b.reason ?? "").trim();
           if (app !== "slop") return json({ ok: false, error: "photos exist only on slop", code: "no_photos" }, 404);
           if (reason.length < PERSON_REASON_MIN) return json({ ok: false, error: `a reason (at least ${PERSON_REASON_MIN} characters) is required`, code: "reason_required" }, 400);
@@ -687,7 +755,9 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         }),
         POST: guard(async (req, u, app) => {
           const readMode = mode, revision = modeRevision;
-          const b = await req.json().catch(() => ({})) as { memberId?: string; reason?: string; minutes?: number };
+          const parsed = await readJsonBody<{ memberId?: string; reason?: string; minutes?: number }>(req, {});
+          if (parsed instanceof Response) return parsed;
+          const b = parsed.body;
           const memberId = String(b.memberId ?? ""), reason = String(b.reason ?? "").trim();
           if (!memberId || reason.length < 5) return json({ ok: false, error: "a member and a reason (at least 5 characters) are required" }, 400);
           const s = await source(readMode, app);
@@ -704,6 +774,8 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           if (no) return no;
           if (revision !== modeRevision) return modeChanged();
           if (!revealCurrent(u, app, readMode, grant.until)) return forbidden("the reveal is no longer active");
+          const now = Date.now();
+          for (const [k, v] of reveals) if (v.until <= now) reveals.delete(k);
           reveals.set(revealKey(u, app, memberId, readMode), grant);
           return json({ ok: true, ...grant });
         }, ["safety"]),
@@ -719,7 +791,9 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
       },
       "/api/control": {
         POST: guard(async (req, u, app, seen) => {
-          let cmd = await req.json().catch(() => null) as ControlCommand | null;
+          const parsed = await readJsonBody<ControlCommand | null>(req, null);
+          if (parsed instanceof Response) return parsed;
+          let cmd = parsed.body;
           if (!cmd || typeof cmd.type !== "string") return json({ ok: false, error: "bad command" }, 400);
           // Own keys only: "constructor" or "__proto__" is not a command (audit observatory-13).
           const need = Object.hasOwn(CONTROL_ROLES, cmd.type) ? CONTROL_ROLES[cmd.type] : undefined;
@@ -759,7 +833,9 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           return revision === modeRevision ? json(safety) : modeChanged();
         }, ["safety"]),
         POST: guard(async (req, u, app, seen) => {
-          const a = await req.json().catch(() => null) as SafetyAction | null;
+          const parsed = await readJsonBody<SafetyAction | null>(req, null);
+          if (parsed instanceof Response) return parsed;
+          const a = parsed.body;
           const v = checkSafety(a);
           if (typeof v === "string") return json({ ok: false, error: v, code: "bad_action" }, 400);
           const target = v.action === "close" ? { targetType: "case" as const, targetId: v.caseId } : v.action === "dismiss" ? { targetType: "report" as const, targetId: v.reportId } : { targetType: "member" as const, targetId: v.memberId };
@@ -781,14 +857,18 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         const no=await record(u,app,{action:"read_relay_photo",targetType:"case",targetId:id,reason,ok:true});if(no)return no;
         const key=revealKey(u,app,`relay-photo:${id}`);photoPreviews.delete(key);
         const response=await src.heldPhoto(id,u.id,reason),token=response.headers.get("x-network-photo-review-token"),until=Number(token?.split(".")[0]);
-        if(!response.ok)return response;
+        if(!response.ok){
+          const headers=new Headers(response.headers);headers.delete("x-network-photo-review-token");
+          for(const [k,v]of Object.entries(SECURITY_HEADERS))headers.set(k,v);
+          return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
+        }
         if(!token||!Number.isSafeInteger(until)||until<=Date.now()){await response.body?.cancel();return json({error:"This photo preview expired. Load it again."},409);}
         for(const [k,v]of photoPreviews)if(v.until<=Date.now())photoPreviews.delete(k);
         if(photoPreviews.size>=1000){await response.body?.cancel();return json({error:"Too many active previews. Retry shortly."},429);}
         // The service sets until on its own clock: the console keeps the preview at most 5 minutes on its clock.
         photoPreviews.set(key,{token,until:Math.min(until,Date.now()+5*60_000)});
         const headers=new Headers(response.headers);headers.delete("x-network-photo-review-token");
-        headers.set("cache-control","no-store");headers.set("referrer-policy","no-referrer");
+        for(const [k,v]of Object.entries(SECURITY_HEADERS))headers.set(k,v);
         return new Response(response.body,{status:200,headers});
       },["safety"])},
       "/api/held": {
@@ -803,7 +883,9 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           return json(r, r.ok ? 200 : r.code === "not_available" ? 404 : 502);
         }, ["safety"]),
         POST: guard(async (req, u, app, seen) => {
-          const b = await req.json().catch(() => null) as { queue?: unknown; id?: unknown; decision?: unknown; reason?: unknown; photoReviewed?:unknown } | null;
+          const parsed = await readJsonBody<{ queue?: unknown; id?: unknown; decision?: unknown; reason?: unknown; photoReviewed?: unknown } | null>(req, null);
+          if (parsed instanceof Response) return parsed;
+          const b = parsed.body;
           const reason = typeof b?.reason === "string" ? b.reason.trim().slice(0, 500) : "";
           if (!b || (b.queue !== "leak" && b.queue !== "relay") || typeof b.id !== "string" || !b.id || b.id.length > 300 || (b.decision !== "release" && b.decision !== "reject")) {
             return json({ ok: false, error: "queue (leak or relay), id and decision (release or reject) are required", code: "bad_action" }, 400);
@@ -870,7 +952,9 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
       "/api/lab/run": {
         POST: guard(async (req, u, app) => {
           if (realOnly) return json({ ok: false, error: "the simulation lab is off on this server (OBSERVATORY_REAL_ONLY=1)", code: "real_only" }, 403);
-          const body = await req.json().catch(() => null) as { app?: string } | null;
+          const parsed = await readJsonBody<{ app?: string } | null>(req, null);
+          if (parsed instanceof Response) return parsed;
+          const body = parsed.body;
           if (body?.app !== undefined && body.app !== app) return json({ ok: false, error: `the run's app (${body.app}) is not the request's app (${app})`, code: "app_mismatch" }, 400);
           const v = validateLab({ ...body, app });
           if (typeof v === "string") return json({ ok: false, error: v }, 400);
@@ -918,7 +1002,9 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           const pv = peopleView();
           if (pv instanceof Response) return pv;
           const id = decodeURIComponent(req.params.id!);
-          const b = await req.json().catch(() => ({})) as { app?: string; reason?: string };
+          const parsed = await readJsonBody<{ app?: string; reason?: string }>(req, {});
+          if (parsed instanceof Response) return parsed;
+          const b = parsed.body;
           const reason = String(b.reason ?? "").trim();
           if (!isAppId(b.app)) return json({ ok: false, error: `app must be one of ${APP_IDS.join(", ")}`, code: "unknown_app" }, 400);
           if (reason.length < PERSON_REASON_MIN) return json({ ok: false, error: `a reason (at least ${PERSON_REASON_MIN} characters) is required`, code: "reason_required" }, 400);
@@ -958,10 +1044,11 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         sockets.add(ws);
         ws.subscribe(TOPIC); ws.subscribe(appTopic(ws.data.app));
         ws.send(JSON.stringify({ type: "hello", mode, app: ws.data.app }));
-        if (ws.data.user.expiresAt !== undefined) setTimeout(() => { if (sockets.has(ws)) recheck(ws); }, Math.max(0, ws.data.user.expiresAt - Date.now()) + 50);
+        scheduleExpiry(ws);
       },
       message() { /* the client sends commands over REST */ },
       close(ws: ServerWebSocket<WsData>) {
+        clearExpiryTimer(ws);
         sockets.delete(ws);
         ws.unsubscribe(TOPIC); ws.unsubscribe(appTopic(ws.data.app));
       },
@@ -969,12 +1056,20 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
   });
 
   const checkTimer = setInterval(() => { for (const ws of sockets) recheck(ws); }, opts.socketCheckMs ?? 15_000);
+  checkTimer.unref?.();
   if (!LOOPBACK.has(hostname)) console.warn(`Observatory: listening on ${hostname}, not only on this machine. Anyone with a token can use the API.`);
   const url = `http://${ANY_INTERFACE.has(hostname) ? "127.0.0.1" : hostname.includes(":") && !hostname.startsWith("[") ? `[${hostname}]` : hostname}:${server.port}`;
   return {
     server, url, token: adminToken, openUrl: adminToken ? `${url}/#token=${encodeURIComponent(adminToken)}` : `${url}/`, mode: () => mode, source, setMode, audit, lab,
     async stop() {
       clearInterval(checkTimer);
+      for (const timer of expiryTimers.values()) clearTimeout(timer);
+      expiryTimers.clear();
+      known.clear();
+      reveals.clear();
+      tickets.clear();
+      photoPreviews.clear();
+      lastRead.clear();
       try { await lab.dispose(); }
       finally {
         stored?.stop();

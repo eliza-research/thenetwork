@@ -427,7 +427,9 @@ export class RealSource implements DataSource {
       }
     }
     this.recordAges = new Map((members as any[]).map(r => [r.id as string, r.age as number | null]));
+    const liveMembers = new Set<string>();
     for (const r of members as any[]) {
+      liveMembers.add(r.id as string);
       const mm = msgBy.get(r.id) as any, pp = partBy.get(r.id) as any;
       const state: MemberStatus = r.opted_out ? "opted_out" : r.account_status === "invited" ? "not_joined" : r.participation_state;
       // A member declined at join (under 13) is stored as the id and 'removed' only: no name or city.
@@ -449,6 +451,7 @@ export class RealSource implements DataSource {
       };
       upsertIfChanged(s.members, m, x => s.upsertMember(x));
     }
+    for (const id of [...s.members.keys()]) if (!liveMembers.has(id)) s.removeMember(id);
     const currentEdges = new Map<string, ObsEdge>();
     for (const r of edges as any[]) {
       if (!s.members.has(r.from_id) || !s.members.has(r.to_id)) continue;
