@@ -31,7 +31,7 @@ test("the curated venue list covers the P6 range of 50 to 100 public places", ()
 
 test.each([
   ["Ridgewood", "Grover Cleveland Park"],
-  ["Sunnyside", "Sunnyside Gardens Park"],
+  ["Sunnyside", "Lou Lodati Park"],
   ["Bed-Stuy", "Herbert Von King Park"],
   ["Carroll Gardens", "Carroll Park"],
   ["Tribeca", "Washington Market Park"],
