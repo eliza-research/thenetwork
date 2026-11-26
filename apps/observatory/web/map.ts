@@ -22,6 +22,7 @@ export class MapView {
   private map: L.Map;
   private renderer = L.canvas({ padding: 0.3 });
   private members = new Map<string, L.CircleMarker>();
+  private memberPinLocation = new WeakMap<L.CircleMarker, Pick<ObsMember, "area" | "city">>();
   private edgeLayer = L.layerGroup();
   private oppLayer = L.layerGroup();
   private venueLayer = L.layerGroup();
@@ -112,16 +113,25 @@ export class MapView {
       const pts = [...store.members.values()].filter(m => store.inBorough(m)).map(m => this.point(m));
       if (!f && pts.length > 1) this.map.flyToBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 14, duration: 0.6 });
     }
+    let pinsMoved = false;
     for (const m of store.members.values()) {
       let mk = this.members.get(m.id);
       const shown = store.inBorough(m) || !!bright?.has(m.id);
-      if (!shown) { if (mk) { mk.remove(); this.members.delete(m.id); } continue; }
+      if (!shown) { if (mk) { mk.remove(); this.members.delete(m.id); pinsMoved = true; } continue; }
       if (!mk) {
         mk = L.circleMarker(this.point(m), { renderer: this.renderer, radius: 4 });
         mk.on("click", e => { if ((e.originalEvent as MouseEvent).shiftKey) pickMember(m.id); else store.focus({ kind: "member", id: m.id }); });
         mk.bindTooltip(() => textNode(memberTooltipText(store.members.get(m.id) ?? m)), { direction: "top" });
         mk.addTo(this.map);
         this.members.set(m.id, mk);
+        this.memberPinLocation.set(mk, { area: m.area, city: m.city });
+      } else {
+        const location = this.memberPinLocation.get(mk);
+        if (location?.area !== m.area || location?.city !== m.city) {
+          mk.setLatLng(this.point(m));
+          this.memberPinLocation.set(mk, { area: m.area, city: m.city });
+          pinsMoved = true;
+        }
       }
       const picked = ui.picks.includes(m.id);
       const dim = (bright && !bright.has(m.id)) || !store.matchMemberFilter(m);
@@ -136,7 +146,7 @@ export class MapView {
       mk.setRadius(3 + Math.min(5, Math.sqrt(m.counters.meetings * 2 + m.counters.accepted)));
     }
     const edgeKey = `${store.graphTick}|${JSON.stringify(ui.edgeTypes)}|${ui.filters.borough}|${focusKey(f)}|${this.venueInk}`;
-    if (edgeKey !== this.edgeKey) {
+    if (pinsMoved || edgeKey !== this.edgeKey) {
       this.edgeKey = edgeKey;
       this.edgeLayer.clearLayers();
       for (const e of store.edges.values()) {

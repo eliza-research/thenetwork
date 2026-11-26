@@ -89,7 +89,24 @@ test("MapView focuses SF members in San Francisco, Bay Area zips near their cent
     }
     expect(memberPoint("ny-0001", "Mott Haven", "nyc")).toEqual({ lat: 40.80566646388137, lng: -73.92623919714757 });
     expect(memberPoint("ny-0001", "Mott Haven")).toEqual({ lat: 40.80566646388137, lng: -73.92623919714757 });
+    // Keep the same map mounted while a member's home area changes in a newer snapshot.
+    const moving = makeMember("moving-member", "Maya Rao", "nyc", "Harlem");
+    store.members.set(moving.id, moving);
+    store.edges.set("moving-edge", { id: "moving-edge", from: moving.id, to: "ny-0005", type: "met", strength: 1, createdAt: 1, origin: "learned" });
+    const edgeStart = () => (mapView["edgeLayer"].getLayers()[0] as L.Polyline).getLatLngs()[0];
+    mapView["sync"]();
+    const marker = mapView["members"].get(moving.id)!;
+    expect(marker.getLatLng()).toMatchObject(memberPoint(moving.id, "Harlem", "nyc"));
+    expect(edgeStart()).toMatchObject(marker.getLatLng());
+
+    store.members.set(moving.id, { ...moving, area: "Astoria" });
+    mapView["sync"]();
+    expect(mapView["members"].get(moving.id)).toBe(marker);
+    expect(marker.getLatLng()).toMatchObject(memberPoint(moving.id, "Astoria", "nyc"));
+    expect(edgeStart()).toMatchObject(marker.getLatLng());
+
   } finally {
+    store.edges.delete("moving-edge");
     mapView.destroy();
     flySpy.mockRestore();
     await window.happyDOM.close();
