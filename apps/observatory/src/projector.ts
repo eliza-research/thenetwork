@@ -50,8 +50,11 @@ export class Projector {
   constructor(private store: Store, private opts: ProjectorOptions = {}) {}
 
   private name(id: MemberId) { return this.store.member(id)?.name.split(" ")[0] ?? id; }
-  private names(ids: MemberId[]) {
-    const n = ids.map(id => this.name(id));
+  private names(ids: MemberId[], distinguish = false) {
+    const first = ids.map(id => this.name(id));
+    const n = distinguish ? first.map((name, i) =>
+      first.indexOf(name) === first.lastIndexOf(name) ? name : this.store.member(ids[i]!)?.name ?? name
+    ) : first;
     return n.length <= 2 ? n.join(" & ") : `${n.slice(0, -1).join(", ")} & ${n[n.length - 1]}`;
   }
   private counters(id: MemberId) {
@@ -190,7 +193,7 @@ export class Projector {
         }
         for (const [id, st] of Object.entries(o.status)) if (st === "pending" || st === "invited" || st === "ignored") o.status[id] = "dropped";
         this.changed(o, r);
-        s.pushFeed({ t: r.t, kind: "meeting", text: `Meeting set: ${this.names(r.participants)}`, members: r.participants, opportunityId: o.id, severity: "good" });
+        s.pushFeed({ t: r.t, kind: "meeting", text: `Meeting set: ${this.names(r.participants, true)}`, members: r.participants, opportunityId: o.id, severity: "good" });
         return;
       }
       case "outcome": {

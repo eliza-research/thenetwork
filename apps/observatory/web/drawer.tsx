@@ -108,8 +108,15 @@ const severityText: Record<NonNullable<ObsFeedItem["severity"]>, string> = { inf
 function Linked({ x }: { x: ObsFeedItem }) {
   const ids = (x.members ?? []).filter(id => store.members.has(id)).slice(0, 8);
   if (!ids.length) return <>{x.text}</>;
-  const byName = new Map<string, string>();
-  for (const id of ids) { const n = store.members.get(id)!.name; byName.set(n, id); if (!byName.has(n.split(" ")[0]!)) byName.set(n.split(" ")[0]!, id); }
+  // An ambiguous label stays plain text rather than opening the wrong member.
+  const byName = new Map<string, string | null>();
+  for (const id of ids) {
+    const name = store.members.get(id)!.name;
+    for (const label of [name, name.split(" ")[0]!]) {
+      if (label) byName.set(label, !byName.has(label) || byName.get(label) === id ? id : null);
+    }
+  }
+  if (!byName.size) return <>{x.text}</>;
   const re = new RegExp(`(${[...byName.keys()].sort((a, b) => b.length - a.length).map(n => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "g");
   const parts = x.text.split(re);
   const out: ReactNode[] = parts.map((p, i) => {
