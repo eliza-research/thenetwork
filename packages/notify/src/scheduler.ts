@@ -84,7 +84,7 @@ function quietWindowOf(r: Recipient): QuietWindow | undefined {
   const q = r.quietHours;
   if (!q || q.length !== 2) return undefined;
   const [startHour, endHour] = q;
-  return controlQuietHoursValid(startHour, endHour) ? { startHour, endHour } : undefined;
+  return Number.isInteger(startHour) && Number.isInteger(endHour) && controlQuietHoursValid(startHour, endHour) ? { startHour, endHour } : undefined;
 }
 
 export interface SendPlan {

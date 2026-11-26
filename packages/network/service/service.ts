@@ -337,7 +337,7 @@ const joinMembershipOf = (state: Membership["state"] | undefined): JoinMembershi
   state === undefined ? "NoMembership" : state === "removed" ? "RemovedMembership" : state === "invited" ? "InvitedMembership" : "LiveMembership";
 
 const savedQuietHours = (value: unknown): readonly [number, number] | undefined =>
-  Array.isArray(value) && value.length === 2 && typeof value[0] === "number" && typeof value[1] === "number" ? [value[0], value[1]] : undefined;
+  Array.isArray(value) && value.length === 2 && Number.isInteger(value[0]) && Number.isInteger(value[1]) ? [value[0], value[1]] : undefined;
 
 const bareJoinAge = (text: string, appWords: readonly string[]): number | undefined => {
   const nums = [...text.matchAll(/(?:^|[\s,.;:(])(\d{1,3})(?=$|[\s,.;:!)])/g)];

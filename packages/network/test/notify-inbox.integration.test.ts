@@ -35,7 +35,7 @@ test.skipIf(!pgAvailable)("the notification planner follows each recipient's hom
         personId, app: app.id, eventType: "information", subjectId: "home-city",
         urgency: "requested", summary: "Your requested update is ready.", expiresAt: clock.now() + 2 * DAY,
       }, clock.now());
-      members.push({ personId, phone });
+      members.push({ personId, memberId, phone });
     }
     const [ny, sf] = members;
     const planAt = async (at: number) => {
@@ -51,10 +51,24 @@ test.skipIf(!pgAvailable)("the notification planner follows each recipient's hom
     expect(await planAt(Date.UTC(2026, 9, 20, 14, 30))).toEqual({
       sends: [[ny!.phone, "America/New_York"]], holds: [{ personId: sf!.personId, reason: "quiet_hours" }],
     });
+    const midday = await planAt(Date.UTC(2026, 9, 20, 18, 0));
+    expect(midday.holds).toEqual([]);
+    expect(midday.sends).toHaveLength(2);
+    expect(midday.sends).toEqual(expect.arrayContaining([[ny!.phone, "America/New_York"], [sf!.phone, "America/Los_Angeles"]]));
     // 22:30 in New York is before Ari's saved window; 19:30 in San Francisco is inside Mira's saved 18:00-10:00 window.
     expect(await planAt(Date.UTC(2026, 9, 21, 2, 30))).toEqual({
       sends: [[ny!.phone, "America/New_York"]], holds: [{ personId: sf!.personId, reason: "quiet_hours" }],
     });
+    await sql`update network.members set prefs=prefs - 'quietHours' where app_id=${app.id} and id=${ny!.memberId}`;
+    const absent = await planAt(Date.UTC(2026, 9, 21, 2, 30));
+    expect(absent.sends).toEqual([]);
+    expect(absent.holds.map(hold => hold.personId).sort()).toEqual([ny!.personId, sf!.personId].sort());
+    expect(absent.holds.every(hold => hold.reason === "quiet_hours")).toBe(true);
+    await sql`update network.members set prefs=prefs || ${{ quietHours: [21.5, 9] }}::jsonb where app_id=${app.id} and id=${sf!.memberId}`;
+    const fractional = await planAt(Date.UTC(2026, 9, 21, 4, 15));
+    expect(fractional.sends).toEqual([]);
+    expect(fractional.holds.map(hold => hold.personId).sort()).toEqual([ny!.personId, sf!.personId].sort());
+    expect(fractional.holds.every(hold => hold.reason === "quiet_hours")).toBe(true);
   } finally {
     await service.close();
     await sql.close();
