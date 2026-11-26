@@ -190,6 +190,32 @@ export function lawCapitalPeriodRoomIsNonnegative(remaining: number): boolean {
   return capitalPeriodRoom(remaining) >= 0;
 }
 
+/** Story: Count what I contributed once and preserve its history / A vouch stake waits when the voucher is ineligible at removal (spec/capitalLedger.md) */
+//@ pure
+export function vouchStakeMayDefer(seriousAbuse: boolean, vouched: boolean, stakeTaken: boolean, withinWindow: boolean, voucherEligible: boolean): boolean {
+  return seriousAbuse && vouched && !stakeTaken && withinWindow && !voucherEligible;
+}
+
+/** Story: Count what I contributed once and preserve its history / A vouch stake waits when the voucher is ineligible at removal (spec/capitalLedger.md) */
+//@ pure
+export function vouchStakeMayTake(pending: boolean, stakeTaken: boolean, voucherEligible: boolean): boolean {
+  return pending && !stakeTaken && voucherEligible;
+}
+
+/** Story: Count what I contributed once and preserve its history / A vouch stake waits when the voucher is ineligible at removal (spec/capitalLedger.md) */
+//@ pure
+export function lawVouchStakeTakenAtMostOnce(seriousAbuse: boolean, vouched: boolean, withinWindow: boolean, pending: boolean, voucherEligible: boolean): boolean {
+  //@ ensures \result === true
+  return !vouchStakeMayDefer(seriousAbuse, vouched, true, withinWindow, voucherEligible) && !vouchStakeMayTake(pending, true, voucherEligible);
+}
+
+/** Story: Count what I contributed once and preserve its history / A vouch stake waits when the voucher is ineligible at removal (spec/capitalLedger.md) */
+//@ pure
+export function lawVouchStakeNotDeferredAndTaken(seriousAbuse: boolean, vouched: boolean, stakeTaken: boolean, withinWindow: boolean, pending: boolean, voucherEligible: boolean): boolean {
+  //@ ensures \result === true
+  return !(vouchStakeMayDefer(seriousAbuse, vouched, stakeTaken, withinWindow, voucherEligible) && vouchStakeMayTake(pending, stakeTaken, voucherEligible));
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: CapitalEventFlow, event: Event): boolean {

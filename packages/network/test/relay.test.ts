@@ -581,6 +581,140 @@ test.each([
   expect(await sharesQueued()).toBe(before + 2);
 }, 60_000);
 
+test("a reported delegation beside a direct sentence can finish a signed number swap", async () => {
+  const id = "reported-delegation-number-" + randomUUID();
+  const before = await sharesQueued();
+  await startNumberSwap(id, "ari");
+  const text = "Tell them I asked Ana to send him my number. Please send Ari my number.";
+  expect(await (await post(await ask("bo", id + "-direct", text))).json()).toMatchObject({ decision: "pass" });
+  expect(await sharesQueued()).toBe(before + 2);
+}, 60_000);
+
+test.each([
+  { text: "Tell Ari this exact text:\nSend Ari my number.", body: "this exact text:\nSend Ari my number.", decision: "pass" },
+  { text: "Tell Ari what Ana said:\nI am at dinner.\nSend Ari my number.", body: "what Ana said:\nI am at dinner.\nSend Ari my number.", decision: "pass" },
+  { text: "Tell Ari:\nSend Ari my number.", body: "Send Ari my number.", decision: "pass" },
+  { text: "Let Ari know:\nSend Ari my number.", body: "Send Ari my number.", decision: "pass" },
+  { text: "Tell Ari: “I am running late.” Please send Ari my number.", body: null, decision: "pass", shares: true },
+  { text: "Tell Ari: “I am running late.” Please send Sam my number.", body: null, decision: "block" },
+  { text: "Tell Sam:\nSend Ari my number.", body: null, decision: "block" },
+  { text: "Tell Ari Casey:\nSend Ari my number.", body: null, decision: "none" },
+  { text: "Tell Ari I am running late. Please send my number to Ari9.", body: null, decision: "none" },
+  { text: "Tell Ari I will be there tomorrow. Please send my number to Ari9.", body: null, decision: "none" },
+  { text: "Tell Ari I will be there tomorrow. Please send Ari my number.", body: null, decision: "pass", shares: true },
+  { text: "Tell Ari I will be there tomorrow at seven. Please send Ari my number.", body: null, decision: "pass", shares: true },
+  { text: "Let Ari:\nSend Ari my number.", body: null, decision: "none" },
+  { text: "Tell Ari: The contact number is 212-555-0182.", body: null, decision: "hold" },
+  { text: "Tell Ari I am running late. Please send Ari my number if he asks.", body: "I am running late.", decision: "pass" },
+  { text: "Tell Ari I will be there tomorrow. Please send Ari my number tomorrow.", body: "I will be there tomorrow.", decision: "pass" },
+  { text: "Tell Ari to send it. Please send Ari my number if he asks.", body: null, decision: "none" },
+  { text: "Tell Ari “Send it.” Please send Ari my number if he asks.", body: "“Send it.”", decision: "pass" },
+  { text: "Tell Ari I am running late. If he asks, send Ari my number.", body: "I am running late.", decision: "pass" },
+  { text: "Tell Ari I am running late. If you can, send Ari my number.", body: "I am running late.", decision: "pass" },
+  { text: "If he asks, send Ari my number.", body: null, decision: "none" },
+  { text: "Tell Ari I am running late. Wait for Ari to agree. Share my number with Ari.", body: null, decision: "none" },
+  { text: "Tell Ari I will be there tomorrow. Wait for Ari to agree. Share my number with Ari.", body: null, decision: "none" },
+  { text: "Tell him he can have it if he asks. Send him my number.", body: "he can have it if he asks.", decision: "pass" },
+  { text: "Tell him I'll send it when he asks. Send him my number.", body: null, decision: "none" },
+  { text: "Tell him only if he asks. Send him my number.", body: "only if he asks.", decision: "pass" },
+  { text: "Tell him he has to ask first. Send him my number.", body: "he has to ask first.", decision: "pass" },
+  { text: "Tell him to wait until I say so. Send him my number.", body: "to wait until I say so.", decision: "pass" },
+  { text: "Tell him I'm not ready. Send him my number.", body: "I'm not ready.", decision: "pass" },
+  { text: "Tell him no. Send him my number.", body: "no.", decision: "pass" },
+  { text: "Tell him only if Ari asks. Taylor agreed. Send him my number.", body: "only if Ari asks. Taylor agreed.", decision: "pass" },
+  { text: "Tell him no. Ari agreed? Send him my number.", body: "no. Ari agreed?", decision: "pass" },
+  { text: "Tell him I'm not ready. Ari agreed. Send him my number.", body: "I'm not ready. Ari agreed.", decision: "pass" },
+  { text: "Tell him only after Ari agrees. Ari agreed? Send him my number.", body: "only after Ari agrees. Ari agreed?", decision: "pass" },
+  { text: "Tell him only after Ari agrees. Ari agreed. Send him my number.", body: null, decision: "pass", shares: true },
+  { text: "Tell him “If it rains, bring a jacket.” Send him my number.", body: null, decision: "pass", shares: true },
+  { text: "Tell Ari I am running late. Wait for Ari to agree. Ari has already agreed. Share my number with Ari.", body: null, decision: "pass", shares: true },
+  { text: "Tell Ari: “I am running late.” Please send Sam my number if he asks.", body: "“I am running late.”", decision: "pass" },
+  { text: "Tell Sam I am running late. Please send Ari my number if he asks.", body: null, decision: "block" },
+])("a signed relay envelope separates ordinary words from phone consent: $text", async ({ text, body, decision, shares }) => {
+  const id = "relay-envelope-boundary-" + randomUUID();
+  await startNumberSwap(id, "ari");
+  const original = (await pendingNumberSwaps()).find(swap => swap.matchId === id);
+  expect(original).toBeDefined();
+  const before = await sharesQueued();
+  const after = new Date(clock.now());
+
+  const response = await post(await ask("bo", id + "-envelope", text));
+  expect(response.status).toBe(200);
+  const messages = await sql<{ body: string }[]>`select body from network.messages
+    where app_id='friends' and direction='outbound' and member_id=${ari} and ts>${after} and body like 'Bo says:%'`;
+  expect({ response: await response.json(), bodies: messages.map(row => row.body), shares: await sharesQueued() - before,
+    pending: (await pendingNumberSwaps()).find(swap => swap.matchId === id) }).toMatchObject({
+    response: { decision, delivered: false }, bodies: body === null ? [] : [`Bo says: "${body}"`],
+    shares: shares ? 2 : 0, pending: shares ? undefined : original,
+  });
+}, 60_000);
+
+let envelopeWithdrawalPair = 0;
+test.each([
+  { text: "Tell Ari I am running late. Don't send my number.", body: "I am running late.", decision: "pass", withdraws: true },
+  { text: "Tell Ari: “I am running late.” Don't send my number.", body: "“I am running late.”", decision: "pass", withdraws: true },
+  { text: "Tell Ari: “I am running late.” Don't send my number because I changed my mind.", body: "“I am running late.”", decision: "pass", withdraws: true },
+  { text: "Tell Ari: I am running late. Don't send my number.", body: "I am running late. Don't send my number.", decision: "pass" },
+  { text: "Tell Ari I am running late. Please send Ari my number. Don't send my number.", body: "I am running late.", decision: "pass", withdraws: true },
+  { text: "Tell Ari: “I am running late.” Please send Ari my number. Don't send my number.", body: "“I am running late.”", decision: "pass", withdraws: true },
+  { text: "Tell Sam I am running late. Please send Ari my number. Don't send my number.", body: null, decision: "block", withdraws: true },
+  { text: "Tell Ari: “The contact number is 212-555-0182.” Please send Ari my number. Don't send my number.", body: null, decision: "hold", withdraws: true },
+  { text: "Tell Ari I asked Ana to share my number. Please send Ari my number. Don't send my number.", body: null, decision: "none", withdraws: true },
+  { text: "Tell Ari I am running late. Please send Ari my number. Never mind.", body: null, decision: "none" },
+  { text: "Tell Ari I am running late. Don't send it. Please send Ari my number.", body: null, decision: "none", withdraws: true },
+  { text: "Tell Ari I am running late. Show him this. Please send Ari my number. Don't send my number.", body: null, decision: "none", withdraws: true },
+  { text: "Tell Ari:\nDon't send my number.", body: "Don't send my number.", decision: "pass" },
+  { text: "Tell Ari this exact text:\nDon't send my number.", body: "this exact text:\nDon't send my number.", decision: "pass" },
+])("a signed relay envelope applies only an authored withdrawal: $text", async ({ text, body, decision, withdraws }) => {
+  const id = "relay-envelope-withdrawal-" + randomUUID();
+  const pair = ++envelopeWithdrawalPair;
+  const senderPhone = "+16465550" + (150 + 2 * pair);
+  const recipientPhone = "+16465550" + (151 + 2 * pair);
+  async function enroll(phone: string, name: string) {
+    for (const [index, line] of ["friends.help", name + ", 29", "I enjoy hiking and cooking",
+      "Saturday afternoons work for me", "Small groups are good"].entries()) {
+      clock.advance(MINUTE);
+      const messageId = id + "-" + name + "-" + index;
+      expect((await signed(TURN_PATH, messageId, JSON.stringify(turn(phone, messageId, line)))).status).toBe(200);
+    }
+    return open(phone, id + "-" + name + "-open");
+  }
+  const sender = await enroll(senderPhone, "Bo");
+  const recipient = await enroll(recipientPhone, "Ari");
+  await service.runtimeFor("friends")!.unitOfWork(net => {
+    const state = net.exportState();
+    swapMatchTemplate ??= state.opps.find(opp => opp.id === "relay-op")!;
+    const now = clock.now();
+    state.opps.push({ ...swapMatchTemplate, id, createdAt: now, meetingAt: now + DAY, deadline: now + DAY,
+      participants: [sender, recipient], status: [[sender, "yes"], [recipient, "yes"]], contacted: [sender, recipient] });
+    net.importState(state);
+  });
+
+  async function action(messageId: string, ownText: string): Promise<RelaySendRequest> {
+    expect(await open(senderPhone, messageId, ownText)).toBe(sender);
+    return { channel: "blooio", messageId, app: "friends", memberId: sender, itemId: null, text: ownText };
+  }
+  const before = await sharesQueued();
+  expect(await (await post(await action(id + "-pending", "Please send Ari my number."))).json()).toMatchObject({ decision: "hold" });
+  const original = (await pendingNumberSwaps()).find(swap => swap.matchId === id);
+  expect(original).toBeDefined();
+  const request = await action(id + "-response", text);
+  const expectedSwap = withdraws ? undefined : original;
+  expect((await pendingNumberSwaps()).find(swap => swap.matchId === id)).toEqual(expectedSwap);
+
+  const response = await post(request);
+  expect(response.status).toBe(200);
+  const result = await response.json();
+  expect(result).toMatchObject({ decision, delivered: false, replayed: false });
+  expect(await (await post(request)).json()).toEqual({ ...result, replayed: true });
+  expect((await pendingNumberSwaps()).find(swap => swap.matchId === id)).toEqual(expectedSwap);
+  expect(await sharesQueued()).toBe(before);
+  const messages = await sql<{ body: string }[]>`select body from network.messages
+    where app_id='friends' and direction='outbound' and member_id=${recipient} and opportunity_id=${id}
+      and body like 'Bo says:%'`;
+  expect(messages.map(row => row.body)).toEqual(body === null ? [] : [`Bo says: "${body}"`]);
+}, 60_000);
+
 test("an independent direct sentence can finish a signed number swap", async () => {
   const id = "independent-number-" + randomUUID();
   const before = await sharesQueued();

@@ -748,6 +748,10 @@
       "Story: Count what I contributed once and preserve its history / A reversal restores room only for a credit in the same rolling period": [
         "a3f5491aebf1",
         "1d3700430619"
+      ],
+      "Story: Count what I contributed once and preserve its history / A vouch stake waits when the voucher is ineligible at removal": [
+        "cde11aa15d4b",
+        "3e566fe2e01e"
       ]
     },
     "spec/capitalLevers.md": {
@@ -3960,9 +3964,17 @@
         "5c5891db30ea",
         "fd9bd55cf3d2"
       ],
+      "Story: Make a choice about a proposed opportunity / A qualifier or adverb after neither still refuses the named time": [
+        "b04093ff43d1",
+        "fa65a966bc6c"
+      ],
       "Story: Make a choice about a proposed opportunity / A clear yes uses the chosen times when the member names them": [
         "c34bd690bc5b",
         "391e9309520c"
+      ],
+      "Story: Make a choice about a proposed opportunity / A yes that refuses the remainder as well does not book it": [
+        "014d9a65ddf8",
+        "62d7dac5e32f"
       ],
       "Story: Make a choice about a proposed opportunity / A direct ordinal selects that position in the offer": [
         "9dc4cf1bb9e7",
@@ -4244,6 +4256,10 @@
       "Story: Ask the agent to relay my own words / Polite wording still needs a direct request to send a private item": [
         "87b6afe90e7d",
         "47021c6c1a22"
+      ],
+      "Story: Ask the agent to relay my own words / A separate direct phone request can take the place of a text envelope": [
+        "fbdab81e9600",
+        "d83fa2a235a6"
       ]
     },
     "spec/repeatEncounter.md": {

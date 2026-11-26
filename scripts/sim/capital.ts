@@ -113,3 +113,26 @@ export async function feedbackAfterFraudGate(b: Block): Promise<void> {
   });
 }
 
+export async function vouchStakeEligibilityGate(b: Block): Promise<void> {
+  await b.run("ledger: a removal while the voucher is ineligible does not spend the stake", () => {
+    const T0 = Date.UTC(2026, 0, 1);
+    const at = (d: number, n = 0) => T0 + d * DAY + n;
+    const L = new CapitalLedger();
+    for (const [i, who] of ["v", "x"].entries()) L.record({ id: `join-${who}`, t: at(0, i), type: "member_joined", member: who, age: 30 });
+    L.record({ id: "join-i", t: at(1), type: "member_joined", member: "i", age: 30, vouchedBy: "v" });
+    L.record({ id: "act-i", t: at(2), type: "member_activated", member: "i" });
+    L.record({ id: "value-i", t: at(3), type: "value_received", member: "i", with: ["x"], confirmedBy: ["x"] });
+    L.record({ id: "age-v-minor", t: at(9), type: "age_updated", member: "v", age: 16 });
+    L.record({ id: "remove-i-1", t: at(10), type: "member_removed", member: "i", reason: "serious_abuse" });
+    expect(L.all().filter(e => e.t === at(10) && e.member === "v")).toEqual([]);
+    L.record({ id: "age-v-adult", t: at(11), type: "age_updated", member: "v", age: 30 });
+    expect(L.all().filter(e => e.category === "vouch_stake" && e.member === "v").map(e => e.t)).toEqual([at(11)]);
+    expect(L.all().filter(e => e.category === "clawback" && e.member === "v").length).toBe(1);
+    L.record({ id: "remove-i-2", t: at(12), type: "member_removed", member: "i", reason: "serious_abuse" });
+    L.record({ id: "remove-i-3", t: at(13), type: "member_removed", member: "i", reason: "serious_abuse" });
+    expect(L.all().filter(e => e.category === "vouch_stake" && e.member === "v").length).toBe(1);
+    const capacity = (m: string, d: number) => vouchCapacity(L.internalEntries(m), at(d));
+    expect(capacity("v", 20)).toBe(0);
+    expect(capacity("v", 45)).toBe(2);
+  });
+}
