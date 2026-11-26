@@ -317,8 +317,7 @@ export class CapitalLedger {
         const by = ev.confirmedBy === "staff" ? [] : [ev.confirmedBy];
         const source = `need|${ev.member}|${ev.needId}`;
         if (!needCapitalSourceOpen(this.credited.has(source), by[0] === ev.member, !by.length || this.isEligible(by[0]!))) break;
-        this.credited.add(source);
-        this.credit(ev.member, "needs_answered", c.credit.needs_answered, ev, by, by, "answered a Network need", out, { label: ev.label });
+        if (this.credit(ev.member, "needs_answered", c.credit.needs_answered, ev, by, by, "answered a Network need", out, { label: ev.label })) this.credited.add(source);
         break;
       }
       case "review_completed": {
