@@ -5,7 +5,8 @@ import { isDeepStrictEqual } from "node:util";
 // attention and plans invariants on the consent arms; and the shared conformance rules for networkPack.
 import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { spawnProcessSync } from "../../packages/core/src/runtime/process.ts";
-import { readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { canBeMatched, classifyYesNo, DAY, earliestDayKeyOf, hash32, HOUR, latestDayKeyOf, MINUTE, Rng as SimRng, SimClock, type MemberId, type NetworkContext, type NetworkUnderTest, type SimMessage, type SimMeta } from "../../packages/core/src/index.ts";
 import { bookedCancellationPrefix } from "../../packages/core/src/generated/outboundAdmission.ts";
 import { resolveConfig } from "../../packages/engine/src/config.ts";
@@ -650,8 +651,26 @@ export async function probeDeclineReceiptGate(b: Block): Promise<void> {
   });
 }
 
+export async function generatorDryRunGate(b: Block): Promise<void> {
+  await b.run("synthetic generator: --dry-run with --no-llm writes nothing", () => {
+    const root = `${import.meta.dirname}/../..`;
+    const dir = mkdtempSync(`${tmpdir()}/generator-dry-run-`);
+    const out = `${dir}/out`;
+    try {
+      const result = spawnProcessSync([
+        process.execPath, "--import", "tsx", "scripts/synthetic/generate.ts", "--no-llm", "--dry-run", "--out", out,
+      ], { cwd: root, stdout: "pipe", stderr: "pipe" });
+      expect(result.exitCode).toBe(0);
+      expect(existsSync(out)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
   await scenarioRepetitionGate(b);
+  await generatorDryRunGate(b);
   await scenarioAttendanceEvidenceGates(b);
   await scenarioContactEvidenceGates(b);
   await inviteRootGate(b);
