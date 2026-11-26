@@ -1920,6 +1920,9 @@ export function availabilityTags(body: string): string[] {
       toks.push({ at: m.index!, part, refused: !namedException && negatedAt(t, m.index!, m[0].length) });
     }
   }
+  // A clock time names its own part: "Friday at 9am" offers a morning, not the weekday default of
+  // evening. Read it through the same clockMinute/partOf pair the offered labels use below.
+  for (const m of t.matchAll(CLOCK_MENTION)) toks.push({ at: m.index!, part: partOf(clockMinute(m)), refused: negatedAt(t, m.index!, m[0].length) });
   toks.sort((a, b) => a.at - b.at || (a.days ? -1 : 1));
   const out = new Map<number, Set<string>>();
   const refused = new Map<number, Set<string>>(), refusedLead = new Set<string>();

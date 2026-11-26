@@ -1,0 +1,14 @@
+{"text":"Friday at 9am","tags":["morning:Fri"]}
+{"text":"Friday 9 am","tags":["morning:Fri"]}
+{"text":"9am Friday","tags":["morning:Fri"]}
+{"text":"Friday at 2pm","tags":["afternoon:Fri"]}
+{"text":"Friday at noon","tags":["afternoon:Fri"]}
+{"text":"Friday at 8pm","tags":["evening:Fri"]}
+{"text":"Wed at 7:30pm","tags":["evening:Wed"]}
+{"text":"Thu 6-8pm","tags":["evening:Thu"]}
+{"text":"Saturday at 10am","tags":["morning:Sat"]}
+{"text":"Friday afternoon at 2pm","tags":["afternoon:Fri"]}
+{"text":"Friday at 9am, Saturday at 2pm","tags":["morning:Fri","afternoon:Sat"]}
+{"text":"Friday","tags":["evening:Fri"]}
+{"text":"Saturday","tags":["morning:Sat","afternoon:Sat","evening:Sat"]}
+{"text":"Weeknights","tags":["evening:Mon","evening:Tue","evening:Wed","evening:Thu","evening:Fri"]}

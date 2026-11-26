@@ -7,7 +7,7 @@
 //   guard/         the shared leak guard (contacts in disguise, private facts, homoglyphs, benign text)
 import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { classifyYesNo, findLeaks, maskPii, parseOptOut, parseReply, type ReplyAnswer } from "../../packages/core/src/index.ts";
-import { ageAnswer, birthDateAnswer, birthDateStated, classify, extractProfile, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
+import { ageAnswer, availabilityTags, birthDateAnswer, birthDateStated, classify, extractProfile, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
 import { mergeConsent } from "../../packages/network/src/extract.ts";
 import { detectKeyword, leaveTarget, optOutPhrase } from "../../packages/platform/src/consent.ts";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
@@ -140,6 +140,13 @@ export async function evalsBlock(b: Block): Promise<void> {
   const wrongAgeAnswers = ageAnswers.filter(row => (ageAnswer(row.text) ?? null) !== row.age);
   b.gate(`the age question accepts spelled-out answers (n ${ageAnswers.length})`, wrongAgeAnswers.length === 0,
     wrongAgeAnswers.slice(0, 5).map(row => row.text).join("; "));
+
+  // spec/planFormation.md, "A stated weekday and part of day": the part is read from the words the
+  // member used, so an explicit clock time must name its own part and not fall through to the default.
+  const clockTags = await jsonl<{ text: string; tags: string[] }>("network/availability-clock.jsonl");
+  const wrongTags = clockTags.filter(row => JSON.stringify(availabilityTags(row.text)) !== JSON.stringify(row.tags));
+  b.gate(`a stated clock time names its part of day (n ${clockTags.length})`, clockTags.length >= 12 && wrongTags.length === 0,
+    wrongTags.slice(0, 5).map(row => `${row.text} -> ${JSON.stringify(availabilityTags(row.text))} want ${JSON.stringify(row.tags)}`).join("; "));
 
   const para = await jsonl<{ text: string; desire: string | null }>("network/paraphrases.jsonl");
   const ids = [...new Set(para.map(l => l.desire).filter((x): x is string => !!x))];
