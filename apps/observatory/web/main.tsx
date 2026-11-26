@@ -203,7 +203,16 @@ function searchHits(query: string, groups: HitGroups): Hit[] {
     .sort((a, b) => memberRank(a) - memberRank(b))
     .slice(0, 5);
   for (const m of members) hits.push({ key: `m${m.id}`, label: m.name, meta: m.area ?? "", go: () => store.pickHit({ kind: "member", id: m.id }) });
-  for (const n of NEIGHBORHOODS.filter(n => n.name.toLowerCase().includes(q)).sort((a, b) => matchRank(a.name, q) - matchRank(b.name, q)).slice(0, 3)) hits.push({ key: `n${n.name}`, label: n.name, meta: n.borough, go: () => store.pickHit({ kind: "neighborhood", id: n.name }) });
+  const places = new Map<string, { name: string; meta: string }>();
+  for (const n of NEIGHBORHOODS) places.set(n.name.toLowerCase(), { name: n.name, meta: n.borough });
+  // The catalog is NYC-only; the current snapshot can also contain other member areas.
+  for (const { area } of store.members.values()) {
+    const key = area?.toLowerCase();
+    if (area && key?.includes(q) && !places.has(key)) places.set(key, { name: area, meta: "Member area" });
+  }
+  const placeHits = [...places.values()].filter(n => n.name.toLowerCase().includes(q))
+    .sort((a, b) => matchRank(a.name, q) - matchRank(b.name, q)).slice(0, 3);
+  for (const { name, meta } of placeHits) hits.push({ key: `n${name}`, label: name, meta, go: () => store.pickHit({ kind: "neighborhood", id: name }) });
   if (groups === "NamesPlacesAndIds") {
     let k = 0;
     for (const o of store.opps.values()) {

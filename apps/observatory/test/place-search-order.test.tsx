@@ -22,21 +22,24 @@ const member = (id: string, name: string, area: string): ObsMember => ({
   id, name, city: "nyc", area, state: "normal", joined: true, joinedAt: 1, minor: false, age: 30, counters: counters(),
 });
 const stats = (): ObsStats => ({
-  members: 4, joined: 4, byCity: { nyc: 4 }, byState: { joined: 4 }, messages: 0, inbound: 0, outbound: 0,
+  members: 6, joined: 6, byCity: { nyc: 4, sf: 2 }, byState: { joined: 6 }, messages: 0, inbound: 0, outbound: 0,
   proactive: 0, proposals: 0, proposalsBySource: {}, oppsByState: {}, invites: 0, accepts: 0, declines: 0,
   meetingsScheduled: 0, meetingsHeld: 0, attended: 0, noShows: 0, cancelledWithNotice: 0,
   enjoymentSum: 0, enjoymentN: 0, blocks: 0, optOuts: 0, adversarialAttempts: 0, invariantViolations: 0,
   errors: 0, compatible: 0, unsafe: 0, oracleJudged: 0, edgesByType: {},
 });
 
-test("typing the exact place name Harlem offers it first and Enter only picks a visible hit", async () => {
+test("place search ranks Harlem first, preserves dismissal, and opens places from the snapshot", async () => {
   const state: ObsState = {
     env: {
       mode: "game", app: "ntwrk", label: "SIMULATION seed 1 · synthetic v1", dataset: "synthetic v1",
       capabilities: { canStep: false, canIntervene: false, hiddenTruth: false, readOnly: false },
     },
     clock: clock(10), version: 10,
-    members: [member("m1", "Maya Rao", "East Village"), member("m2", "Ava Chen", "Chelsea"), member("m3", "Maya", "Greenwich Village"), member("m4", "Ana Mayer", "Chelsea")],
+    members: [member("m1", "Maya Rao", "East Village"), member("m2", "Ava Chen", "Chelsea"), member("m3", "Maya", "Greenwich Village"), member("m4", "Ana Mayer", "Chelsea"),
+      { ...member("sf1", "Jamie Ellis", "Dogpatch"), city: "sf" },
+      { ...member("sf2", "Ari Chen", "Dogpatch"), city: "sf" },
+    ],
     edges: [], opportunities: [], feed: [], stats: stats(), engineRuns: [],
   };
   const api = await serveHttp({
@@ -140,6 +143,18 @@ test("typing the exact place name Harlem offers it first and Enter only picks a 
     const memberOptions = [...window.document.querySelectorAll('[role="option"]')]
       .map(el => (el.textContent ?? "").replace(/\s+/g, " ").trim());
     expect(memberOptions[0]).toEqual("Maya · Greenwich Village");
+
+    // This neighborhood is present in the snapshot but not the static NYC catalog.
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, "dogpatch");
+      input.dispatchEvent(new window.Event("input", { bubbles: true }));
+    });
+    await wait(() => [...window.document.querySelectorAll('[role="option"]')].some(el => el.textContent?.includes("dogpatch")), "updated Dogpatch results");
+    const placeHits = [...window.document.querySelectorAll('[role="option"]')]
+      .filter(el => el.textContent?.startsWith("Dogpatch"));
+    expect(placeHits.map(el => el.textContent)).toEqual(["Dogpatch · Member area"]);
+    await press("Enter");
+    expect(store.ui.focus).toEqual({ kind: "neighborhood", id: "Dogpatch" });
   } finally {
     await act(async () => { appRoot?.unmount(); });
     disconnectStore?.();
