@@ -469,7 +469,12 @@ function Metrics() {
   const byOrigin: Record<string, number> = {};
   for (const o of s.opps.values()) if (o.source !== "shadow" && s.inRange(o.createdAt) && s.matchOpp(o, { range: true, members: true, stateGroup: true })) { const k = originLabel(originOf(o)); byOrigin[k] = (byOrigin[k] ?? 0) + 1; }
   const byState: Record<string, number> = {};
-  for (const m of s.members.values()) if (s.inBorough(m)) byState[m.state] = (byState[m.state] ?? 0) + 1;
+  let metSomeone = 0;
+  for (const m of s.members.values()) {
+    if (!s.inBorough(m)) continue;
+    byState[m.state] = (byState[m.state] ?? 0) + 1;
+    if (m.counters.meetings > 0) metSomeone++;
+  }
   return (
     <div className="flex flex-col gap-4">
       <KpiGrid className="lg:grid-cols-4">
@@ -478,7 +483,7 @@ function Metrics() {
         <Kpi label="invite yes rate" value={pct(inviteYes)} title={n?.kind === "consent" ? "Yes answers to revealed invitations" : "Accepts per invite sent"} />
         <Kpi label={`show rate · ${st.noShows} no-shows · ${st.cancelledWithNotice} with notice`} value={pct(showDen ? st.attended / showDen : 0)} />
         <Kpi label="mean enjoyment" value={st.enjoymentN ? pct(st.enjoymentSum / st.enjoymentN) : "–"} />
-        <Kpi label="members who met someone" value={num([...s.members.values()].filter(m => m.counters.meetings > 0).length)} />
+        <Kpi label="members who met someone" value={num(metSomeone)} title="Members in the selected borough with at least one held meeting, all time" />
         {game && <Kpi label="precision (truth)" value={pct(st.oracleJudged ? st.compatible / st.oracleJudged : 0)} title="Proposals the hidden truth says were truly compatible" />}
         {game && <Kpi label="unsafe" value={num(st.unsafe)} tone={st.unsafe ? "destructive" : "ok"} title="Proposals the hidden truth says were unsafe" />}
         <Kpi label="opt-outs" value={num(st.optOuts)} tone={st.optOuts ? "warn" : undefined} />
