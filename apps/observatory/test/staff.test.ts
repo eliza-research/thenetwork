@@ -612,6 +612,25 @@ function openSocket(url: string, headers: Record<string, string>) {
 }
 const within = <X>(p: Promise<X>, ms: number) => Promise.race([p, sleep(ms, undefined, { ref: false }).then(() => "timeout" as const)]);
 
+/** The HTTP status of a raw WebSocket upgrade to this URL with these headers (101 when accepted). */
+function upgradeStatus(url: string, headers: Record<string, string> = {}): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const finish = (status: number | undefined) => status === undefined ? reject(new Error("upgrade returned no HTTP status")) : resolve(status);
+    import("node:http").then(({ get }) => {
+      get(url, { agent: false, signal: AbortSignal.timeout(15_000), headers: { ...headers, upgrade: "websocket", connection: "Upgrade", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==", "sec-websocket-version": "13" } },
+        res => { res.resume(); finish(res.statusCode); })
+        .once("upgrade", (res, socket) => { socket.destroy(); finish(res.statusCode); })
+        .once("error", reject);
+    }, reject);
+  });
+}
+/** A one-use WS ticket from POST /api/ws-ticket with this Access assertion. */
+async function wsTicket(base: string, jwt: string): Promise<string> {
+  const r = await fetch(`${base}/api/ws-ticket`, { method: "POST", headers: { "cf-access-jwt-assertion": jwt, "content-type": "application/json" }, body: "{}" });
+  expect(r.status).toBe(200);
+  return ((await r.json()) as { ticket: string }).ticket;
+}
+
 describe("live sockets are authorized again (OBS-04, OBS-05)", () => {
   test("OBS-04: after a switch to real mode an engineer's socket is closed (4403) and gets no member; an admin's stays", async () => {
     const eng = long("eng-socket"), adm = long("adm-socket");
@@ -646,6 +665,43 @@ describe("live sockets are authorized again (OBS-04, OBS-05)", () => {
       await s.open;
       expect(await within(s.done, 5000)).toBe(WS_EXPIRED);
     } finally { await srv.stop(); }
+  }, T);
+
+  test("OBS-05: a WS ticket issued before expiry does not open a socket after the sign-in expires", async () => {
+    const k = await accessKeys();
+    const now = Math.floor(Date.now() / 1000);
+    const jwt = (exp: number) => k.sign({ aud: [AUD], iss: ISS, email: "ana@example.org", iat: now - 30, exp, type: "app" });
+    const srv = await createServer({ port: 0, development: false, trustCfAccess: true, roles: "ana@example.org:admin", cfAccess: { team: "ntwrk", aud: AUD, fetch: k.fetch }, audit: { dir: join(dir, "audit-ws4") }, lab: { dir: join(dir, "lab-ws4") }, game: { seed: 1, pushMs: 50, tickMs: 3_600_000 }, socketCheckMs: 60_000 });
+    try {
+      const exp = Math.floor(Date.now() / 1000) + 6;
+      const short = await jwt(exp);
+      const ticket = await wsTicket(srv.url, short);
+      // A live ticket opens a socket while the sign-in holds (control: a second ticket).
+      expect(await upgradeStatus(`${srv.url}/ws?ticket=${await wsTicket(srv.url, short)}`)).toBe(101);
+      await sleep(exp * 1000 - Date.now() + 600);
+      // The ticket is still inside its 30 s, but the sign-in has expired: the upgrade is refused,
+      // as the header upgrade is.
+      expect(await upgradeStatus(`${srv.url}/ws?ticket=${ticket}`)).toBe(401);
+      expect(await upgradeStatus(`${srv.url}/ws`, { "cf-access-jwt-assertion": short })).toBe(401);
+    } finally { await srv.stop(); }
+  }, T);
+
+  test.skipIf(!pgAvailable)("OBS-05: a WS ticket issued before a role is taken away does not open a socket after it", async () => {
+    const url = await testDb();
+    const sql = new SQL(url);
+    const k = await accessKeys();
+    const now = Math.floor(Date.now() / 1000);
+    await sql`insert into platform.staff_roles (email, role, app_id, granted_by) values ('rev@example.org', 'reviewer', null, 'test')`;
+    const srv = await createServer({ port: 0, development: false, trustCfAccess: true, roles: "", cfAccess: { team: "ntwrk", aud: AUD, fetch: k.fetch }, staffRolesUrl: url, staffRolesEveryMs: 100, socketCheckMs: 60_000, audit: { dir: join(dir, "audit-ws5") }, lab: { dir: join(dir, "lab-ws5") }, game: { seed: 1, pushMs: 50, tickMs: 3_600_000 } });
+    try {
+      const jwt = await k.sign({ aud: [AUD], iss: ISS, email: "rev@example.org", iat: now - 30, exp: now + 3600 });
+      const ticket = await wsTicket(srv.url, jwt);
+      expect(await upgradeStatus(`${srv.url}/ws?ticket=${await wsTicket(srv.url, jwt)}`)).toBe(101);
+      await sql`delete from platform.staff_roles where email = 'rev@example.org'`;
+      await sleep(600);
+      expect(await upgradeStatus(`${srv.url}/ws?ticket=${ticket}`)).toBe(403);
+      expect(await upgradeStatus(`${srv.url}/ws`, { "cf-access-jwt-assertion": jwt })).toBe(403);
+    } finally { await srv.stop(); await sql.close(); await dropTestDb(); }
   }, T);
 
   test.skipIf(!pgAvailable)("OBS-05: an SSO socket closes when its role is taken away in platform.staff_roles (4403)", async () => {
