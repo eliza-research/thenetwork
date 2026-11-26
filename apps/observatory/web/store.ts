@@ -1,3 +1,4 @@
+import { initial as initialWorkspace, type RequestSegment } from "../../../packages/core/src/generated/consoleWorkspace.ts";
 import { useSyncExternalStore } from "react";
 import { acceptsFeedItem, deltaAction, initial as initialSync, ownsLoad, step as stepSync } from "../../../packages/core/src/generated/observatorySync.ts";
 import {
@@ -53,6 +54,7 @@ export interface UIState {
   /** The one open popover or menu ("help", "god"), closed first by Esc. */
   popover: string | null;
   reviewView: "pending" | "decided";
+  requestSegment: RequestSegment;
   toast?: { text: string; tone: "info" | "good" | "bad"; at: number };
 }
 
@@ -258,7 +260,7 @@ class ObsStore {
   ui: UIState = {
     focus: parseHash(), picks: [], filters: { ...DEFAULT_FILTERS }, colorBy: "community",
     edgeTypes: Object.fromEntries(EDGE_TYPES.map(t => [t, t !== "invited_by" && t !== "vouched_for"])), showOpps: true, legendOpen: false,
-    drawer: "feed", drawerOpen: true, view: "map", query: "", popover: null, reviewView: "pending",
+    drawer: "feed", drawerOpen: true, view: "map", query: "", popover: null, reviewView: "pending", requestSegment: initialWorkspace.requestSegment,
     ...loadUIPrefs(),
   };
   /** Bumped on every change; React re-renders off it. */
