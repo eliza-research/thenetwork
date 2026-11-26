@@ -831,42 +831,93 @@ export function feedbackOf(body: string): { sentiment: "positive" | "neutral" | 
   return { sentiment, selfNoShow, otherNoShow, again };
 }
 const NEGATIVE_FEEDBACK = /\b((was|is|it's|that's)?\s*(not|n't|wasn't|isn't)\s+(that |very |really |so |too |super )?(great|good|fun|nice|amazing)|not much in common|nothing in common|didn't (really |quite )?(click|connect|enjoy)|didn't have much|not (really )?for me|not my (thing|type)|awkward|terrible|rude|creepy|bummer|uncomfortable)/;
-function reversedByLaterPositive(t: string, from: number): boolean {
+function clauseAfter(t: string, from: number): string {
+  return (t.slice(from).split(/[.!?;,]/)[0] ?? "").trim();
+}
+function clauseBefore(t: string, at: number): string {
+  const start = Math.max(t.lastIndexOf(".", at - 1), t.lastIndexOf("!", at - 1), t.lastIndexOf("?", at - 1), t.lastIndexOf(";", at - 1), t.lastIndexOf(",", at - 1)) + 1;
+  return t.slice(start, at);
+}
+function reversedByMeetingPositive(t: string, from: number): boolean {
   const later = t.slice(from);
   if (/\bwe did\b(?!\s+(?:not|n't)\b)|\bhit it off\b/.test(later)) return true;
-  for (const m of later.matchAll(/\b(?:clicked|connected|great|amazing|nice|loved|love|easy|good|fun|wonderful|enjoyed|enjoy)\b/g)) {
-    const before = later.slice(0, m.index).trim().split(/\s+/).slice(-3);
-    if (before.some(w => w === "not" || w === "never" || w === "no" || w === "hardly" || w === "barely" || w.endsWith("n't"))) continue;
-    return true;
+  for (const clause of later.split(/[.!?;,]/)) {
+    const c = clause.trim();
+    if (!c) continue;
+    const clickAt = c.search(/\b(?:clicked|connected)\b/);
+    if (clickAt >= 0 && !/\b(?:not|never|hardly|barely|no)\b|n't/.test(c.slice(0, clickAt))) return true;
+    if (/\b(?:easy|effortless)\b/.test(c) && !/\b(?:not|never|no)\b|n't/.test(c.slice(0, c.search(/\b(?:easy|effortless)\b/)))) return true;
+    if (/\b(?:great|amazing|wonderful|lovely|nice|good|fun|enjoyable)\s+(?:night|evening|meeting|date|time|chat|conversation|session)\b/.test(c)) return true;
+    if (/\b(?:night|evening|meeting|date|time|chat|conversation)\s+was\s+(?:great|amazing|wonderful|lovely|nice|good|fun)\b/.test(c)) return true;
+    if (/\b(?:it|this|that)\s+was\s+(?:great|amazing|wonderful|lovely|fun)\b/.test(c)) return true;
+    if (/\b(?:loved|enjoyed)\s+(?:it|that|the\s+(?:night|evening|meeting|date|time|chat|conversation)|(?:her|his|their)\s+company|talking)\b/.test(c)) return true;
   }
   return false;
 }
+function genericObject(comp: string): boolean {
+  const words = comp.trim().split(/\s+/).filter(Boolean);
+  const first = words[0] ?? "";
+  if (first === "him" || first === "her" || first === "them" || first === "each") return false;
+  if (first === "a" || first === "an" || first === "any" || first === "some" || first === "anyone" || first === "someone" || first === "anybody" || first === "somebody" || first === "everyone" || first === "everybody") return true;
+  if (first === "the" || first === "my" || first === "his" || first === "their" || first === "this" || first === "that") {
+    return words.slice(0, 4).some(w => w === "last" || w === "previous" || w === "past" || w === "earlier" || w === "former");
+  }
+  return true;
+}
 function negatedPositiveFeedback(t: string): boolean {
   for (const m of t.matchAll(/\bdid not\s+(?:(?:really|quite)\s+)?(?:click|connect|enjoy)\b|\bdid not have much\b/g)) {
-    if (!reversedByLaterPositive(t, m.index + m[0].length)) return true;
+    if (!reversedByMeetingPositive(t, m.index + m[0].length)) return true;
   }
   for (const m of t.matchAll(/\b(?:never|hardly|barely)\s+(?:really\s+)?(?:clicked|connected)\b/g)) {
     const end = m.index + m[0].length;
-    const clauseRest = t.slice(end).split(/[.!?;]/)[0] ?? "";
-    if (/\bwith (?:anyone|someone|anybody|somebody)\b/.test(clauseRest)) continue;
-    if (/\b(?:so|this|that)\s+(?:\w+ly|fast|hard|well|soon|much)\b/.test(clauseRest)) continue;
-    if (!reversedByLaterPositive(t, end)) return true;
+    const rest = clauseAfter(t, end);
+    if (/\bbefore\b|\bpreviously\b|\bsince\b|\buntil now\b|\bin the past\b/.test(rest)) continue;
+    if (/\b(?:so|this|that)\s+(?:\w+ly|fast|hard|well|soon|much)\b|\b(?:faster|quicker|better|sooner|more)\b|\blike (?:that|this)\b/.test(rest)) continue;
+    const comp = rest.match(/^(?:with|to)\s+(.+)$/);
+    if (comp && genericObject(comp[1] ?? "")) continue;
+    if (!reversedByMeetingPositive(t, end)) return true;
   }
   for (const m of t.matchAll(/(?:\bnot|\bnever|n't)\s+(?:really\s+|very\s+)?easy to talk\b/g)) {
     const end = m.index + m[0].length;
-    if (/^\s+to\s+(?:new people|strangers|people|anyone|anybody|others)\b/.test(t.slice(end))) continue;
-    if (!reversedByLaterPositive(t, end)) return true;
+    const rest = clauseAfter(t, end);
+    const personSubject = /\b(?:he|she|they)\b/.test(clauseBefore(t, m.index));
+    const comp = rest.match(/^(?:to|with)\s+(.+)$/);
+    if (comp) {
+      if (genericObject(comp[1] ?? "")) continue;
+    } else if (!personSubject) continue;
+    if (!reversedByMeetingPositive(t, end)) return true;
   }
   for (const m of t.matchAll(/\bdisappoint(?:ed|ing)\b/g)) {
     const end = m.index + m[0].length;
     const sentenceStart = Math.max(t.lastIndexOf(".", m.index), t.lastIndexOf("!", m.index), t.lastIndexOf("?", m.index), t.lastIndexOf(";", m.index)) + 1;
     const beforeSeg = t.slice(sentenceStart, m.index);
     const before = beforeSeg.trim().split(/\s+/).slice(-4);
-    if (before.some(w => w === "not" || w === "nothing" || w === "never" || w === "no" || w === "nobody" || w === "none" || w.endsWith("n't"))) continue;
+    if (before.some(w => w === "not" || w === "nothing" || w === "never" || w === "no" || w === "nobody" || w === "none" || w === "zero" || w.endsWith("n't"))) continue;
     if (/\bwould\b|'d\s+be$/.test(beforeSeg.trim())) continue;
-    const afterWords = (t.slice(end).split(/[.!?,;]/)[0] ?? "").trim().split(/\s+/).slice(0, 6).join(" ");
-    if (/\b(?:ended|end|ending|over|leave|left|leaving|early|finished)\b|\bran out\b/.test(afterWords)) continue;
-    if (!reversedByLaterPositive(t, end)) return true;
+    if (/^\s*[.!?]*\s*(?:not at all|not really|not in the slightest|nope|no)\b/.test(t.slice(end))) continue;
+    const rest = clauseAfter(t, end);
+    if (m[0] === "disappointing") {
+      if (/^(?:evening|night|meeting|date|time|experience|chat|conversation|session)\b/.test(rest)) {
+        if (!reversedByMeetingPositive(t, end)) return true;
+      } else if (!rest && /\bit\b|\b(?:night|evening|meeting|date|time|chat|conversation)\b/.test(beforeSeg)) {
+        if (!reversedByMeetingPositive(t, end)) return true;
+      }
+      continue;
+    }
+    if (!rest || /^(?:greatly|really|very|so|quite|pretty|deeply|truly|a lot|a bit)$/.test(rest)) {
+      if (!reversedByMeetingPositive(t, end)) return true;
+      continue;
+    }
+    const prep = rest.match(/^(?:in|with|by|at)\s+(.+)$/);
+    if (prep) {
+      const comp = prep[1] ?? "";
+      if (/^(?:him|her|them)\b/.test(comp) || /^(?:the|my|this|that)\s+(?:night|evening|meeting|date|time|chat|conversation|session)\b/.test(comp)) {
+        if (!reversedByMeetingPositive(t, end)) return true;
+      }
+      continue;
+    }
+    const clause = rest.replace(/^(?:that|when|because)\s+/, "");
+    if (/^(?:he|she|they)\b/.test(clause) && !reversedByMeetingPositive(t, end)) return true;
   }
   return false;
 }

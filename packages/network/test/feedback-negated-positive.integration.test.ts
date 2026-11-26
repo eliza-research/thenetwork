@@ -104,3 +104,27 @@ test("feedback that says talking got easy after a though clause still records po
   expect(feedback?.sentiment).toBe("positive");
   expect(post?.worthwhile).toBe(true);
 });
+
+test("feedback that says talking to a stranger is hard but she made it effortless still records positive sentiment and worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("It's not easy to talk to a stranger, she made it effortless");
+  expect(feedback?.sentiment).toBe("positive");
+  expect(post?.worthwhile).toBe(true);
+});
+
+test("feedback that answers not disappointed at all records neutral sentiment", async () => {
+  const { feedback } = await feedbackWorld("Disappointed? Not at all.");
+  expect(feedback?.sentiment).toBe("neutral");
+  expect(feedback?.wouldMeetAgain).not.toBe(true);
+});
+
+test("feedback that says the pair never clicked though the cafe was nice records negative sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("We never clicked, though the cafe was nice");
+  expect(feedback?.sentiment).toBe("negative");
+  expect(post?.worthwhile).not.toBe(true);
+});
+
+test("feedback that says the member was disappointed he left early records negative sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("Disappointed he left early");
+  expect(feedback?.sentiment).toBe("negative");
+  expect(post?.worthwhile).not.toBe(true);
+});
