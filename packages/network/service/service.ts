@@ -2241,7 +2241,6 @@ export class NetworkService implements RuntimeHost {
       }
       if (legacyEngagement) await this.lineAdapter()?.engaged?.(ev.from);
       if (turn) turn.consent = { state: "opted_in", scope: "app", app: app.id, at };
-      if (memberId) await this.endPause(rt, memberId);
     }
 
     if (route.reportReply === "ambiguous") return "handled";
@@ -2923,17 +2922,6 @@ export class NetworkService implements RuntimeHost {
     for (const id of scope === "global" ? Object.keys(this.apps) as AppId[] : [app.id])
       for (const e of await this.people.consentEvents(e164, id)) if (e.state === "opted_in" && !e.ref && e.at > at) at = e.at;
     return at;
-  }
-
-  private async endPause(rt: NetworkRuntime, memberId: MemberId): Promise<void> {
-    await rt.scoped(async tx => {
-      const ended = await tx`update network.members set participation_window = case when participation_window->>'state' = 'paused' then null else participation_window end,
-        participation_state = case when participation_state = 'paused' then 'normal' else participation_state end
-        where app_id = ${rt.app.id} and id = ${memberId} and (participation_state = 'paused' or participation_window->>'state' = 'paused') returning id`;
-      if (!ended.length) return;
-      await tx`insert into network.events(app_id, at, actor_type, actor_id, type, object_type, object_id, payload)
-        values (${rt.app.id}, ${new Date(this.clock.now())}, 'member', ${memberId}, 'member_state_requested', 'member', ${memberId}, ${{ state: "open", from: null, until: null, source: "text" }}::jsonb)`;
-    });
   }
 
   /**
