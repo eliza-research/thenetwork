@@ -657,7 +657,7 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
   await inviteRootGate(b);
   await vouchPeriodGate(b);
   await fraudReversalEligibilityGate(b);
-    await needAnsweredAfterAgeGate(b);
+  await needAnsweredAfterAgeGate(b);
   await feedbackAfterFraudGate(b);
   await vouchStakeEligibilityGate(b);
   await probeDeclineReceiptGate(b);
