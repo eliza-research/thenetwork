@@ -2,7 +2,10 @@
 // the reveal IS the booked plan, "You're both in: meet Sam, Thu 7pm. Reply if you can't make it").
 // Activity from the date ideas both stated, 2-3 time options from the slots both said they are
 // usually free (then either, then the rest), a PUBLIC venue type only, short by default.
-import { canBeMatched, type City, type MemberId } from "@thenetwork/core";
+import {
+  canBeMatched, pickPrimaryAndBackupVenue, seedVenuesForCity,
+  type City, type MemberId, type MemberVenuePrefs, type VenueRecord,
+} from "@thenetwork/core";
 import { slopDatePairAllowed, slopDateProfilesAllowed } from "../../../../core/src/generated/slopDatePlan.ts";
 import { isOpaquePhotoId } from "../../relay.ts";
 import type { EngineInput } from "../../types.ts";
@@ -10,7 +13,7 @@ import { memberIdResolver } from "../../world.ts";
 import { mutualMarkets } from "./geo.ts";
 import { SLOP_DEFAULT_OPTIONS, type SlopPackOptions } from "./options.ts";
 import { SLOTS, slopProfiles, type SlopProfile, type Slot } from "./profile.ts";
-import { dateActivity } from "./score.ts";
+import { dateActivity, isNonDrinkerProfile } from "./score.ts";
 import { distanceBand, type DistanceBand } from "./zips.ts";
 
 /** Public venue types per activity. There is no private or home option (safety basics). */
@@ -21,12 +24,23 @@ export const PUBLIC_VENUE: Record<string, { venue: string; minutes: number }> = 
   hike: { venue: "a popular trailhead (daytime)", minutes: 120 },
 };
 
+export interface PlanVenueContext {
+  venues?: readonly VenueRecord[];
+  memberAreas?: [string | undefined, string | undefined];
+  memberPrefs?: [Partial<MemberVenuePrefs>, Partial<MemberVenuePrefs>];
+  startMs?: number;
+  nowMs?: number;
+  badWeatherOrAfterDark?: boolean;
+}
+
 export interface DatePlan {
   first: MemberId; partner: MemberId; market: City; activity: string; venue: string; public: true; minutes: number;
   /** Slot indices into SLOTS, best first (2-3). */
   options: number[]; slots: Slot[];
   /** What both are told about distance. */
   distance: DistanceBand;
+  venueRecord?: VenueRecord;
+  backupVenue?: VenueRecord;
 }
 
 /** P(a member is free in a slot): stated usual slots and slots they attended a date at, else a daypart prior. */
@@ -36,25 +50,92 @@ function freeScore(p: SlopProfile, s: number): number {
   return s <= 4 ? 0.4 : 0.55;
 }
 
-export function planFirstDate(first: SlopProfile, partner: SlopProfile, markets: readonly City[], o: SlopPackOptions = SLOP_DEFAULT_OPTIONS): DatePlan | null {
+function buildVenuePrefs(p: SlopProfile, override: Partial<MemberVenuePrefs> | undefined): MemberVenuePrefs {
+  const nonDrinker = isNonDrinkerProfile(p);
+  return {
+    memberId: p.id,
+    age: p.age,
+    drinksAlcohol: override?.drinksAlcohol !== undefined ? override.drinksAlcohol && !nonDrinker : !nonDrinker,
+    vegetarian: override?.vegetarian ?? false,
+    vegan: override?.vegan ?? false,
+    wheelchairNeeded: override?.wheelchairNeeded ?? false,
+    maxBudgetTier: override?.maxBudgetTier ?? 2,
+    ...(override?.maxTravelMinutes !== undefined ? { maxTravelMinutes: override.maxTravelMinutes } : {}),
+    visitedVenueIds: override?.visitedVenueIds ?? [],
+    rejectedVenueIds: override?.rejectedVenueIds ?? [],
+    ...(override?.archetype ? { archetype: override.archetype } : {}),
+    hobbies: override?.hobbies ?? p.interests,
+    ...(override?.cuisinePrefs ? { cuisinePrefs: override.cuisinePrefs } : {}),
+  };
+}
+
+export function planFirstDate(
+  first: SlopProfile,
+  partner: SlopProfile,
+  markets: readonly City[],
+  o: SlopPackOptions = SLOP_DEFAULT_OPTIONS,
+  venueCtx?: PlanVenueContext,
+): DatePlan | null {
   const adults = first.adult && partner.adult && canBeMatched(first.age) && canBeMatched(partner.age);
   if (!slopDateProfilesAllowed(first.id !== partner.id, adults, first.optedIn && partner.optedIn, first.paused || partner.paused)) return null;
   const mm = mutualMarkets(first, partner, o, markets);
   if (!mm.length) return null;
-  const activity = dateActivity(first, partner);
-  const v = PUBLIC_VENUE[activity] ?? PUBLIC_VENUE.coffee!;
+  const prefA = venueCtx?.memberPrefs?.[0];
+  const prefB = venueCtx?.memberPrefs?.[1];
+  const anyNonDrinker = isNonDrinkerProfile(first) || isNonDrinkerProfile(partner) || prefA?.drinksAlcohol === false || prefB?.drinksAlcohol === false;
+  const activity = dateActivity(first, partner, anyNonDrinker);
+  let v = PUBLIC_VENUE[activity] ?? PUBLIC_VENUE.coffee!;
+  if (anyNonDrinker && v.venue === "a bar") v = PUBLIC_VENUE.coffee!;
   const ranked = SLOTS.map((_, s) => ({ s, p: freeScore(first, s) * freeScore(partner, s) }))
     .filter(({ s }) => activity !== "hike" || SLOTS[s]!.endsWith("_day"))
     .sort((x, y) => (y.p - x.p) || (x.s - y.s));
   const options = ranked.slice(0, 3).map(x => x.s);
+  const market = mm[0]!.market;
+  let venueLabel = v.venue;
+  let venueRecord: VenueRecord | undefined;
+  let backupVenue: VenueRecord | undefined;
+  if (venueCtx) {
+    const pool = venueCtx.venues ? [...venueCtx.venues] : seedVenuesForCity(market);
+    if (pool.length > 0) {
+      const areas = (venueCtx.memberAreas ?? []).filter((a): a is string => typeof a === "string" && a.trim().length > 0);
+      const nowMs = venueCtx.nowMs ?? venueCtx.startMs ?? Date.UTC(2026, 9, 15, 19, 0);
+      const startMs = venueCtx.startMs ?? nowMs;
+      const pick = pickPrimaryAndBackupVenue(
+        pool,
+        {
+          city: market,
+          memberAreas: areas.filter((a): a is string => !!a),
+          members: [buildVenuePrefs(first, prefA), buildVenuePrefs(partner, prefB)],
+          startMs,
+          mode: "date",
+          ...(venueCtx.badWeatherOrAfterDark !== undefined ? { badWeatherOrAfterDark: venueCtx.badWeatherOrAfterDark } : {}),
+        },
+        nowMs,
+      );
+      if (pick.primary) {
+        venueRecord = pick.primary.venue;
+        venueLabel = pick.primary.venue.name;
+        backupVenue = pick.backup?.venue;
+      }
+    }
+  }
   return {
-    first: first.id, partner: partner.id, market: mm[0]!.market, activity, venue: v.venue, public: true, minutes: v.minutes,
+    first: first.id, partner: partner.id, market, activity, venue: venueLabel, public: true, minutes: v.minutes,
     options, slots: options.map(s => SLOTS[s]!), distance: distanceBand(mm[0]!.miles),
+    ...(venueRecord ? { venueRecord } : {}),
+    ...(backupVenue ? { backupVenue } : {}),
   };
 }
 
 /** Plan from an engine input (the platform and the simulator call this after the mutual yes, or to fill probe time options). */
-export function planFromInput(input: EngineInput, first: MemberId, partner: MemberId, markets: readonly City[], o: SlopPackOptions = SLOP_DEFAULT_OPTIONS): DatePlan | null {
+export function planFromInput(
+  input: EngineInput,
+  first: MemberId,
+  partner: MemberId,
+  markets: readonly City[],
+  o: SlopPackOptions = SLOP_DEFAULT_OPTIONS,
+  venueCtx?: PlanVenueContext,
+): DatePlan | null {
   const canonical = memberIdResolver(input);
   const aId = canonical(first), bId = canonical(partner);
   const blocked = input.edges.some(edge => {
@@ -69,7 +150,7 @@ export function planFromInput(input: EngineInput, first: MemberId, partner: Memb
   if (!slopDatePairAllowed(blocked, held)) return null;
   const profiles = slopProfiles(input);
   const a = profiles.get(aId), b = profiles.get(bId);
-  return a && b ? planFirstDate(a, b, markets, o) : null;
+  return a && b ? planFirstDate(a, b, markets, o, venueCtx) : null;
 }
 
 // ------------------------------------------------------------------------------- photo in the probe

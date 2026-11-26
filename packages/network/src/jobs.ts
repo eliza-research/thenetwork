@@ -15,8 +15,7 @@
 //   seat copy     the candidate-first probe, the manager's blind review of a candidate who said yes
 //                 (must-have checkmarks, never a score, never a name), the intro after both yeses, and
 //                 the check-in. Every text still goes through the Network's leak guard.
-import { parseReply } from "@thenetwork/core";
-import type { Category, Facet, Intent, MemberId, WorldSnapshot } from "@thenetwork/core";
+import { CITIES, isCity, parseReply, resolveCity, type Category, type City, type Facet, type Intent, type MemberId, type WorldSnapshot } from "@thenetwork/core";
 import { maxOpenings, missingPostingFields, openingCountNeedsCorrection, openingsInRange, payRangeAllowed, postingNeedsArea } from "../../core/src/generated/postingPolicy.ts";
 import { isSeatId, postingIdOf, seatIdOf, seatOwnerOf } from "@thenetwork/engine";
 import type { EngineInput } from "@thenetwork/engine";
@@ -29,7 +28,7 @@ export interface JobPosting {
   /** Role family (a lower-case id, e.g. data_analyst); default: the title as an id. */
   family: string; seniority?: number;
   openings: number; payMin: number; payMax: number;
-  mode: PeonMode; area?: string;
+  mode: PeonMode; area?: string; city?: City;
   must: { skill: string; level: number }[]; nice: string[];
   sponsors?: boolean;
   status: "active" | "closed";
@@ -47,7 +46,7 @@ export interface PostingDraft {
   /** The exact saved posting shown in an update or close read-back (postingRevision). */
   revision?: string;
   title?: string; family?: string; seniority?: number; openings?: number; payMin?: number; payMax?: number;
-  mode?: PeonMode; area?: string; must?: { skill: string; level: number }[]; nice?: string[]; sponsors?: boolean;
+  mode?: PeonMode; area?: string; city?: City; must?: { skill: string; level: number }[]; nice?: string[]; sponsors?: boolean;
   /** Questions asked for this draft (at most 2 before it is dropped). */
   asks?: number;
   /** The field the last question asked for; only a reply to "What's the job title?" can be a bare title. */
@@ -99,7 +98,13 @@ function payRange(text: string): [number, number] | undefined {
   return undefined;
 }
 
-const AREAS = [...BOROUGHS, ...NEIGHBORHOODS.map(n => n.name.toLowerCase())].sort((a, b) => b.length - a.length);
+const CORE_AREAS = Object.values(CITIES).flatMap(c => [
+  c.name.toLowerCase(),
+  ...c.neighborhoods.flatMap(n => [n.name.toLowerCase(), ...n.aliases.map(a => a.toLowerCase())]),
+]);
+const AREAS = [...new Set([...BOROUGHS, ...NEIGHBORHOODS.map(n => n.name.toLowerCase()), ...CORE_AREAS])]
+  .filter(a => a.length >= 3)
+  .sort((a, b) => b.length - a.length);
 const AREA_IDS = new Set(AREAS.map(slug));
 
 const START_POSTING = /^\s*(?:(?:we(?:'| a)?re|i(?:'| a)?m|we are|i am|now)\s+hiring\b|hiring\s*:|post(?:ing)?\s+(?:a\s+)?(?:new\s+)?job\b|new\s+job\s+post|job\s+post(?:ing)?\s*:)/i;
@@ -146,12 +151,24 @@ export function parsePosting(body: string): PostingDraft {
   const lower = ` ${t.toLowerCase().replace(/[^a-z0-9' -]+/g, " ")} `;
   const site = POSTING_SITE.exec(modeText);
   if (site) {
-    const area = exactPostingArea((site[1] ?? site[2]!).split(SITE_CLAUSE_END, 1)[0]!);
+    const rawSite = (site[1] ?? site[2]!).split(SITE_CLAUSE_END, 1)[0]!;
+    const area = exactPostingArea(rawSite);
     // Keep an unreadable correction distinct from an omitted field when merging a stored draft.
     d.area = area ? slug(area) : "";
+    if (area) {
+      const resolved = resolveCity(area);
+      if (resolved) d.city = resolved;
+    }
   } else {
     const area = AREAS.find(a => lower.includes(` ${a} `));
-    if (area) d.area = slug(area);
+    if (area) {
+      d.area = slug(area);
+      const resolved = resolveCity(area);
+      if (resolved) d.city = resolved;
+    } else {
+      const resolved = resolveCity(t);
+      if (resolved) d.city = resolved;
+    }
   }
   const list = (s: string) => s.split(/,|\band\b|\/|;/i).map(x => x.trim().toLowerCase()).filter(x => x && x.length <= 40 && !/^(?:a|an|the|some)$/.test(x));
   const must = /\bmust(?:[- ]haves?|\s+have|\s+know)?\s*:?\s*([^.;]+?)(?=\.|;|\bnice[- ]to[- ]haves?\b|$)/i.exec(t);
@@ -375,8 +392,8 @@ export function readPostingText(body: string, ctx: {
       text: POSTING_COPY.whichToClose(open.map(p => p.title)).replace("close", "update"),
       ready: false,
     };
-    const { title, family, seniority, openings, payMin, payMax, mode, area, must, nice, sponsors } = stored;
-    base = { id: pick.id, revision: postingRevision(stored), title, family, seniority, openings, payMin, payMax, mode, area, must, nice, sponsors, ...(asks !== undefined ? { asks } : {}) };
+    const { title, family, seniority, openings, payMin, payMax, mode, area, city, must, nice, sponsors } = stored;
+    base = { id: pick.id, revision: postingRevision(stored), title, family, seniority, openings, payMin, payMax, mode, area, ...(city ? { city } : {}), must, nice, sponsors, ...(asks !== undefined ? { asks } : {}) };
     read = { ...savedEdits, ...read };
   } else if (!newPost && pending && pending.asked === "title" && !pending.title && !read.title
     && Object.keys(read).every(field => field === "seniority") && parseReply(t).reason === "no_signal" && looksLikeTitle(t)) {
@@ -421,7 +438,7 @@ export function postingFromDraft(d: PostingDraft, managerId: MemberId, now: numb
   if (postingNeedsArea(false, mode === "remote", AREA_IDS.has(area ?? ""))) return undefined;
   return {
     id: d.id, managerId, title, family: d.family ?? prev?.family ?? slug(title), ...(d.seniority ?? prev?.seniority ? { seniority: d.seniority ?? prev?.seniority } : {}),
-    openings: d.openings ?? prev?.openings ?? 1, payMin, payMax, mode, ...(area ? { area } : {}),
+    openings: d.openings ?? prev?.openings ?? 1, payMin, payMax, mode, ...(area ? { area } : {}), ...(d.city ?? prev?.city ? { city: d.city ?? prev?.city } : {}),
     must: d.must ?? prev?.must ?? [], nice: d.nice ?? prev?.nice ?? [], ...((d.sponsors ?? prev?.sponsors) !== undefined ? { sponsors: (d.sponsors ?? prev?.sponsors)! } : {}),
     status: "active", createdAt: prev?.createdAt ?? now, updatedAt: now,
   };
@@ -452,6 +469,7 @@ export function postingFacts(p: JobPosting): { intent: Intent; facets: Facet[] }
   const mustLevels = new Map<string, number>();
   for (const { skill, level } of p.must) mustLevels.set(skill, Math.max(level, mustLevels.get(skill) ?? level));
   // The posted headcount stays on a closed row; the seat projection (engine peonSeats) gives a closed posting no openings.
+  const market: City = p.city ?? "nyc";
   const facets: Facet[] = [
     f("revision", "fact", "Posting revision", [
       `${T.postingUpdatedAt}${p.updatedAt}`,
@@ -459,7 +477,7 @@ export function postingFacts(p: JobPosting): { intent: Intent; facets: Facet[] }
     ], "agent_private"),
     f("role", "fact", `${p.title} role`, [`${T.family}${p.family}`, ...(p.seniority ? [`${T.seniority}${p.seniority}`] : [])]),
     f("pay", "fact", `Pay $${p.payMin}k-$${p.payMax}k`, [`${T.pay}${p.payMin}-${p.payMax}`]),
-    f("mode", "fact", where(p.mode, p.area), [`${T.mode}${p.mode}`, `${T.market}nyc`, ...(p.area ? [`${T.area}${p.area}`] : [])]),
+    f("mode", "fact", where(p.mode, p.area), [`${T.mode}${p.mode}`, `${T.market}${market}`, ...(p.area ? [`${T.area}${p.area}`] : [])]),
     ...[...mustLevels].map(([skill, level]) => f(`must-${skill}`, "skill", `Must have ${human(skill)}`, [`${T.must}${skill}:${level}`])),
     ...[...new Set(p.nice)].map(n => f(`nice-${n}`, "skill", `Nice to have ${human(n)}`, [`${T.nice}${n}`])),
     f("open", "fact", "Openings", [`${T.openings}${p.openings}`, `${T.urgency}2`, `${T.sponsors}${p.sponsors ? "yes" : "no"}`], "matchable"),
@@ -477,10 +495,14 @@ export function postingFromFacts(intent: Intent, facets: readonly Facet[]): JobP
   const seniority = one(T.seniority);
   const updatedAt = Number(one(T.postingUpdatedAt));
   const closedReason = one(T.postingClosedReason);
+  const marketRaw = one(T.market);
+  const city = marketRaw && isCity(marketRaw) ? marketRaw : undefined;
   return {
     id: intent.id, managerId: intent.memberId, title: intent.objective.replace(/^Hire:\s*/i, ""), family: one(T.family) ?? slug(intent.objective),
     ...(seniority ? { seniority: Number(seniority) } : {}),
-    openings: Number.isFinite(openings) ? openings : 1, payMin, payMax, mode: (one(T.mode) ?? "onsite") as PeonMode, ...(one(T.area) ? { area: one(T.area)! } : {}),
+    openings: Number.isFinite(openings) ? openings : 1, payMin, payMax, mode: (one(T.mode) ?? "onsite") as PeonMode,
+    ...(one(T.area) ? { area: one(T.area)! } : {}),
+    ...(city ? { city } : {}),
     must: tags.filter(t => t.startsWith(T.must)).map(t => { const [s, l] = t.slice(T.must.length).split(":"); return { skill: s!, level: Number(l ?? 2) }; }),
     nice: tags.filter(t => t.startsWith(T.nice)).map(t => t.slice(T.nice.length)),
     ...(one(T.sponsors) ? { sponsors: one(T.sponsors) === "yes" } : {}),
@@ -528,6 +550,22 @@ export const SEAT_COPY = {
   },
   candidateIntro: (j: SeatJob, manager: string) => `Good news: ${manager}, who is hiring for ${j.title}, said yes too. Write here and I'll pass it on, or ask me to share your number. ${NEVER_ASKS}`,
   managerIntro: (j: SeatJob, candidate: string) => `Intro: ${candidate} said yes to your ${j.title} post. Write here and I'll pass it on, or ask me to share your number.`,
+  warmEmailCandidateIntro: (j: SeatJob, manager: string) =>
+    `Good news: ${manager}, who is hiring for ${j.title}, said yes too. I sent a warm email intro so ${manager} can propose a chat. ${NEVER_ASKS}`,
+  warmEmailManagerIntro: (j: SeatJob, candidate: string) =>
+    `Warm intro sent: ${candidate} said yes to your ${j.title} post. Check your email; you have the ball to reply and propose an intro call.`,
+  videoSlotIntro: (j: SeatJob, other: string, when: string) =>
+    `Confirmed: you and ${other} are set for a video intro about ${j.title} on ${when}. Reply here if you need to reschedule.`,
+  cofounderWarmEmailIntro: (other: string) =>
+    `Good news: you and ${other} both said yes to a cofounder intro. I sent a warm email intro so you can take it from there.`,
+  cofounderVideoSlotIntro: (other: string, when: string) =>
+    `Confirmed: you and ${other} are set for a cofounder video intro on ${when}. Reply here if you need to reschedule.`,
+  cofounderRelayIntro: (other: string) =>
+    `Good news: you and ${other} both said yes to a cofounder intro. Write here and I'll pass it on, or ask me to share your number.`,
+  workBounceCheck: (j: SeatJob, other: string) =>
+    `Quick check: did the intro with ${other} about ${j.title} come through cleanly?`,
+  workOutcomeCheckIn: (j: SeatJob, other: string) =>
+    `Quick check-in: did you and ${other} connect about ${j.title}, and how did it go? Tell me if anything felt off.`,
   checkIn: (j: SeatJob, other: string) => `Did you and ${other} talk about the ${j.title} role? Tell me how it went, and tell me if anything felt off.`,
   postingClosed: "That job is no longer open, so I've stopped that intro. I'll keep looking for you.",
 };

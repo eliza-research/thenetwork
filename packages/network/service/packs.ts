@@ -14,7 +14,7 @@
 //            reviews a blind summary, and the intro goes out only after both yeses (peonHooks below,
 //            src/jobs.ts). Managers post, update and close jobs by text (read back, saved on a yes).
 //   friends  friendsPack with its plans config (FRIENDS_PLANS).
-import { canBeMatched, CITY_TZ, DAY, HOUR, type MemberId } from "@thenetwork/core";
+import { canBeMatched, CITY_TZ, DAY, HOUR, seedVenuesForCity, type City, type MemberId, type VenuePriceTier, type VenueRecord } from "@thenetwork/core";
 import {
   friendsPack, FRIENDS_PLANS, makeSlopPack, peonPack, PEON_ENGINE_CONFIG, peonSeatCapacity, planFromInput, SLOP_ENGINE_CONFIG, slopProfiles,
   type AppPack, type EngineConfigInput, type EngineInput, type PlansConfigInput, type World,
@@ -28,11 +28,12 @@ import { finalize } from "@thenetwork/engine/src/packs/slop/extract.ts";
 import { DateStandings, type DateStandingValidity } from "@thenetwork/engine/src/packs/slop/standing.ts";
 import { nextOnboardingPrompt, SLOP_READBACK } from "@thenetwork/engine/src/packs/slop/onboard.ts";
 import { slopHardPairCurrent } from "@thenetwork/engine/src/packs/slop/rules.ts";
+import { isNonDrinkerProfile } from "@thenetwork/engine/src/packs/slop/score.ts";
 import { ZIPS } from "@thenetwork/engine/src/packs/slop/zips.ts";
 import type { AppHooks, AppOnboarding, HookOpp, HookVenue } from "../src/apphooks.ts";
 import { mustMarks, seatJob, SEAT_COPY } from "../src/jobs.ts";
-import { km, NEIGHBORHOOD, VENUES } from "../src/geo.ts";
-import { nextAt } from "../src/outreach.ts";
+import { findCityNeighborhood, km, NEIGHBORHOOD, VENUES } from "../src/geo.ts";
+import { nextAt, tzForCity } from "../src/outreach.ts";
 import type { AppId } from "../../platform/src/apps.ts";
 
 /** What one app's network gets: its pack, the engine config the pack was tuned with, plans config and hooks. */
@@ -50,39 +51,39 @@ export interface AppWiring {
 
 const NTWRK_CATEGORIES = ["social", "hobby", "professional", "events", "growth", "help"];
 
-/** The wiring for one app. A new instance each time (packs hold no state, but options are per network). */
-export function appWiring(app: AppId): AppWiring {
+/** The wiring for one app and city. A new instance each time (packs hold no state, but options are per network). */
+export function appWiring(app: AppId, city: City = "nyc"): AppWiring {
   switch (app) {
     case "slop": {
       // Founder decision 9: no ID check (phone login is the identity check; a stated age is enough).
       const pack = makeSlopPack({ verification: { required: false } });
       return {
-        pack, engine: { ...SLOP_ENGINE_CONFIG, cities: ["nyc"] }, hooks: slopHooks(pack.options), plans: false,
+        pack, engine: { ...SLOP_ENGINE_CONFIG, cities: [city] }, hooks: slopHooks(pack.options, city), plans: false,
         dateStanding: w => new DateStandings(w, pack.options).validity,
         prefs: age => ({ categoriesOptIn: canBeMatched(age) ? ["romance"] : [], romanceOptIn: canBeMatched(age) }),
       };
     }
     case "peon":
       return {
-        pack: peonPack, engine: { ...PEON_ENGINE_CONFIG, cities: ["nyc"] }, plans: false, hooks: peonHooks(),
+        pack: peonPack, engine: { ...PEON_ENGINE_CONFIG, cities: [city] }, plans: false, hooks: peonHooks(),
         prefs: () => ({ categoriesOptIn: ["professional"], romanceOptIn: false }),
       };
     case "friends":
-      return { pack: friendsPack, plansConfig: FRIENDS_PLANS, prefs: () => ({ categoriesOptIn: ["social", "hobby"], romanceOptIn: false }) };
+      return { pack: friendsPack, engine: { cities: [city] }, plansConfig: FRIENDS_PLANS, prefs: () => ({ categoriesOptIn: ["social", "hobby"], romanceOptIn: false }) };
     default:
       return { prefs: () => ({ categoriesOptIn: NTWRK_CATEGORIES, romanceOptIn: false }) };
   }
 }
 
 // ==================================================================================== slop
-const NYC_ZIPS = ZIPS.filter(z => z.market === "nyc");
+const zipsForCity = (city: City) => ZIPS.filter(z => z.market === city);
 
 /** The nearest zip in the pack's table to a neighborhood the member named (a coarse cell, never an address). */
-export function zipForArea(area: string | undefined): string | undefined {
-  const n = area ? NEIGHBORHOOD.get(area) : undefined;
+export function zipForArea(area: string | undefined, city: City = "nyc"): string | undefined {
+  const n = city === "nyc" ? (area ? NEIGHBORHOOD.get(area) : undefined) : findCityNeighborhood(area, city)?.neighborhood;
   if (!n) return undefined;
   let best: { zip: string; d: number } | undefined;
-  for (const z of NYC_ZIPS) { const d = km(n, { lat: z.lat, lng: z.lon }); if (!best || d < best.d) best = { zip: z.zip, d }; }
+  for (const z of zipsForCity(city)) { const d = km(n, { lat: z.lat, lng: z.lon }); if (!best || d < best.d) best = { zip: z.zip, d }; }
   return best?.zip;
 }
 
@@ -106,27 +107,32 @@ function stateOf(s: unknown, age: number | undefined): SlopOnboarding {
 /** What is stored keeps values and spans, never the member's words. */
 const withoutWords = (p: SlopOnboarding): SlopOnboarding => JSON.parse(JSON.stringify(p), (k, v) => (k === "evidence" && v ? { ...v, text: "" } : v));
 
-/** The slop onboarding loop (AppHooks.onboarding; exported for the sims). */
-export const slopOnboarding: AppOnboarding = {
-  read(state, body, reasons, { now, age }) {
-    let p = stateOf(state, age);
-    if (reasons.includes(SLOP_READBACK)) p = applyCorrection(p, body, { market: "nyc" });
-    else {
-      const before = JSON.stringify(p.distance?.value);
-      p = extractSlopProfile([{ text: body, asked: reasons.map(r => ASKED[r]).find(Boolean) }], p, { market: "nyc" });
-      // "Would you consider people up to 25 miles away?" "Sure": the radius widens to 25.
-      if (reasons.includes("slop_widen") && JSON.stringify(p.distance?.value) === before && classifyYesNo(body) === "yes") {
-        p = finalize({ ...p, distance: { value: { mode: "radius", miles: 25 }, confidence: 0.9, evidence: { turn: p.turns - 1, start: 0, end: body.length, text: body }, source: "rules" } }, true);
+/** The slop onboarding loop for one market (AppHooks.onboarding). */
+export function slopOnboardingForCity(city: City = "nyc"): AppOnboarding {
+  return {
+    read(state, body, reasons, { now, age }) {
+      let p = stateOf(state, age);
+      if (reasons.includes(SLOP_READBACK)) p = applyCorrection(p, body, { market: city });
+      else {
+        const before = JSON.stringify(p.distance?.value);
+        p = extractSlopProfile([{ text: body, asked: reasons.map(r => ASKED[r]).find(Boolean) }], p, { market: city });
+        // "Would you consider people up to 25 miles away?" "Sure": the radius widens to 25.
+        if (reasons.includes("slop_widen") && JSON.stringify(p.distance?.value) === before && classifyYesNo(body) === "yes") {
+          p = finalize({ ...p, distance: { value: { mode: "radius", miles: 25 }, confidence: 0.9, evidence: { turn: p.turns - 1, start: 0, end: body.length, text: body }, source: "rules" } }, true);
+        }
       }
-    }
-    // A minor or a declined person keeps no dating tags at all.
-    if (p.minor || p.declined) return { state: withoutWords(p), tags: [], replaces: ["romance:", "slop:"] };
-    const r = slopOnboardTags(p);
-    return { state: withoutWords(p), tags: r.tags.map(t => ({ tag: t.tag, kind: t.kind, scope: t.scope, at: now })), replaces: r.replaces };
-  },
-  next: (state, { age, skip }) => nextOnboardingPrompt(stateOf(state, age), skip),
-  asked: (state, reasons, { age }) => reasons.reduce((p, r) => markAsked(p, r), stateOf(state, age)),
-};
+      // A minor or a declined person keeps no dating tags at all.
+      if (p.minor || p.declined) return { state: withoutWords(p), tags: [], replaces: ["romance:", "slop:"] };
+      const r = slopOnboardTags(p);
+      return { state: withoutWords(p), tags: r.tags.map(t => ({ tag: t.tag, kind: t.kind, scope: t.scope, at: now })), replaces: r.replaces };
+    },
+    next: (state, { age, skip }) => nextOnboardingPrompt(stateOf(state, age), skip),
+    asked: (state, reasons, { age }) => reasons.reduce((p, r) => markAsked(p, r), stateOf(state, age)),
+  };
+}
+
+/** The slop onboarding loop (AppHooks.onboarding; exported for the sims). */
+export const slopOnboarding: AppOnboarding = slopOnboardingForCity("nyc");
 
 const ACTIVITY_PHRASE: Record<string, string> = {
   coffee: "coffee", drinks: "drinks", walk: "a walk", museum: "a museum visit", dinner: "dinner", live_music: "live music",
@@ -165,25 +171,55 @@ const SLOT_TIME: Record<string, { day: string; hour: number }> = {
 };
 
 /** The concrete time of a dating-week slot: its next start at least a day away. */
-export function slotStart(slot: string, now: number): number | undefined {
+export function slotStart(slot: string, now: number, city: City = "nyc"): number | undefined {
   const s = SLOT_TIME[slot];
-  return s ? nextAt(now + DAY, s.hour, wd => wd === s.day) : undefined;
+  return s ? nextAt(now + DAY, s.hour, wd => wd === s.day, tzForCity(city)) : undefined;
+}
+
+export interface SlopVenueOptions {
+  excludeIds?: ReadonlySet<string>;
+  nonDrinker?: boolean;
+  maxBudgetTier?: VenuePriceTier;
+  venues?: readonly VenueRecord[];
 }
 
 /** A public place near the midpoint of two members' cells that suits the activity. Never a home. */
-export function slopVenue(cells: { lat: number; lon: number }[], activity: string, at?: number): HookVenue | undefined {
+export function slopVenue(
+  cells: { lat: number; lon: number }[],
+  activity: string,
+  at?: number,
+  city: City = "nyc",
+  opts?: SlopVenueOptions,
+): HookVenue | undefined {
   if (!cells.length) return undefined;
-  const timeZone = CITY_TZ.nyc;
+  const timeZone = CITY_TZ[city] ?? CITY_TZ.nyc;
   const want = new Set(ACTIVITY_TAGS[activity] ?? ["social"]);
-  // After dark, a busy, lit public place (EVENING_VENUES), never a park or a waterfront.
   const hour = at === undefined ? 12 : Number(new Intl.DateTimeFormat("en-US", { timeZone, hourCycle: "h23", hour: "2-digit" }).format(at));
   const dark = hour >= 17 || hour < 9;
-  const pool: (HookVenue & { tags: string[] })[] = dark
-    ? EVENING_VENUES.map(v => ({ ...v, tags: ["social", "food"] }))
-    : VENUES.filter(v => v.adultPlans).map(v => ({ id: v.id, name: v.name, neighborhood: v.neighborhood, lat: v.lat, lng: v.lng, tags: v.tags }));
+  const rawPool: (HookVenue & { tags: string[] })[] = city === "nyc" && !opts?.venues
+    ? (dark
+      ? EVENING_VENUES.map(v => ({ ...v, tags: ["social", "food"] }))
+      : VENUES.filter(v => v.adultPlans).map(v => ({ id: v.id, name: v.name, neighborhood: v.neighborhood, lat: v.lat, lng: v.lng, tags: v.tags })))
+    : (opts?.venues ? opts.venues.filter(v => v.city === city) : seedVenuesForCity(city))
+      .filter(v => {
+        if (v.status !== "Active" || !v.public) return false;
+        if (dark && !v.indoor) return false;
+        if (opts?.nonDrinker && (v.isBarOnly || !v.alcoholOptional)) return false;
+        if (opts?.maxBudgetTier !== undefined && v.priceTier > opts.maxBudgetTier) return false;
+        return true;
+      })
+      .map(v => ({
+        id: v.id,
+        name: v.name,
+        neighborhood: v.neighborhood,
+        lat: v.lat,
+        lng: v.lng,
+        tags: v.category === "park" || v.category === "waterfront_park" ? ["walk", "outdoors"] : ["social", "food"],
+      }));
+  const filtered = opts?.excludeIds?.size ? rawPool.filter(v => !opts.excludeIds!.has(v.id)) : rawPool;
+  const pool = filtered.length ? filtered : rawPool;
   let best: { v: (typeof pool)[number]; cost: number } | undefined;
   for (const v of pool) {
-    // The longest of the two trips (km), less a bonus for a place that suits the activity.
     const worst = Math.max(...cells.map(c => km({ lat: c.lat, lng: c.lon }, v)));
     const cost = worst - 1.2 * Math.min(2, v.tags.filter(t => want.has(t)).length);
     if (!best || cost < best.cost || (cost === best.cost && v.id < best.v.id)) best = { v, cost };
@@ -192,11 +228,11 @@ export function slopVenue(cells: { lat: number; lon: number }[], activity: strin
 }
 
 /** The slop hooks (exported for tests). */
-export function slopHooks(options: Parameters<typeof planFromInput>[4]): AppHooks {
+export function slopHooks(options: Parameters<typeof planFromInput>[4], city: City = "nyc"): AppHooks {
   const plan = (o: HookOpp, input: EngineInput) => {
     const [a, b] = o.participants as [MemberId, MemberId];
     const first = o.first && o.participants.includes(o.first) ? o.first : a;
-    return planFromInput(input, first, first === a ? b : a, ["nyc"], options);
+    return planFromInput(input, first, first === a ? b : a, [city], options);
   };
   return {
     engineInput(input) {
@@ -209,8 +245,11 @@ export function slopHooks(options: Parameters<typeof planFromInput>[4]): AppHook
         // A zip the member gave, else the nearest table zip to the neighborhood they named.
         let zip = mine.find(t => t.startsWith("slop:zip:"))?.slice(9);
         if (!zip) {
-          const area = presence.find(p => p.memberId === m.id && p.type === "home")?.areas.find(x => NEIGHBORHOOD.has(x));
-          zip = zipForArea(area);
+          const homeAreas = presence.find(p => p.memberId === m.id && p.type === "home")?.areas ?? [];
+          const area = city === "nyc"
+            ? homeAreas.find(x => NEIGHBORHOOD.has(x))
+            : homeAreas.find(x => !!findCityNeighborhood(x, city));
+          zip = zipForArea(area, city);
           if (zip) facets.push({ id: `${m.id}:slop:area-zip`, memberId: m.id, kind: "fact", value: zip, tags: [`slop:zip:${zip}`], scope: "agent_private", provenance: "inferred", confidence: 0.6, validFrom: now, source: "chat", observedAt: now, inferred: true, confirmedByMember: false });
         }
         const home = presence.find(p => p.memberId === m.id && p.type === "home");
@@ -222,12 +261,12 @@ export function slopHooks(options: Parameters<typeof planFromInput>[4]): AppHook
       }
       return { ...input, facets, presence, intents };
     },
-    hardDatingPairCurrent: (input, participants) => slopHardPairCurrent(input, participants, "nyc", options),
-    onboarding: slopOnboarding,
+    hardDatingPairCurrent: (input, participants) => slopHardPairCurrent(input, participants, city, options),
+    onboarding: city === "nyc" ? slopOnboarding : slopOnboardingForCity(city),
     timeOptions(o, now, input) {
       const p = plan(o, input());
       if (!p) return undefined;
-      return p.slots.map(s => slotStart(s, now)).filter((t): t is number => t !== undefined).map(t => ({ start: t, end: t + 2 * HOUR }));
+      return p.slots.map(s => slotStart(s, now, city)).filter((t): t is number => t !== undefined).map(t => ({ start: t, end: t + 2 * HOUR }));
     },
     probe(o, id, ctx) {
       if (o.category !== "romance" || o.participants.length !== 2) return undefined;
@@ -245,8 +284,12 @@ export function slopHooks(options: Parameters<typeof planFromInput>[4]): AppHook
       const inp = input();
       const P = slopProfiles(inp);
       const cells = o.participants.map(id => P.get(id)?.cell).filter((c): c is NonNullable<typeof c> => !!c);
+      const nonDrinker = o.participants.some(id => {
+        const prof = P.get(id);
+        return !!prof && isNonDrinkerProfile(prof);
+      });
       const p = plan(o, inp);
-      return slopVenue(cells, p?.activity ?? "coffee", o.meetingAt);
+      return slopVenue(cells, p?.activity ?? "coffee", o.meetingAt, city, nonDrinker ? { nonDrinker: true } : undefined);
     },
     booked(o, _id, ctx) {
       if (o.category !== "romance") return undefined;

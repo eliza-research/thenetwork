@@ -8,7 +8,8 @@ import {
   AreaLink as AreaLinkView, Countdown, Disclosure, FactLine, MemberLink as MemberLinkView, MeterBars, OpportunityLink, ReviewActions as ReviewActionsView,
   ReviewCard, ReviewPerson, Segments, StatusMark, VenueLink as VenueLinkView, type MeterRow, type ReviewFlag, type StatusTone,
 } from "@thenetwork/ui";
-import type { ScoreComponents } from "@thenetwork/core";
+import type { ScoreComponents, WorkIntroChannel } from "@thenetwork/core";
+import { ALL_SEED_VENUES } from "../../../packages/core/src/cities.ts";
 import type { ReviewReason, StaffPlanPreview } from "../src/types.ts";
 import { VENUES } from "@thenetwork/network/geo";
 import { INACTIVE_PARTICIPANT_STATUS, OPEN, originLabel, originOf, REVIEW_REASONS, stateGroupOf, store, useStore, type DecideOpts, type Opp, type StateGroup } from "./store.ts";
@@ -438,7 +439,9 @@ function QueueCard({ o, selected, onSelect, ctl, scoreOpen, setScoreOpen, onDone
         <FactLine parts={[
           <span><span className="text-muted-foreground">Plan:</span> <span className="text-foreground">{o.objective}</span></span>,
           o.venue && <VenueLink venue={o.venue} />,
-          o.meetingAt && stamp(o.meetingAt),
+          o.backupVenue && <span><span className="text-muted-foreground">Backup:</span> <VenueLink venue={o.backupVenue} /></span>,
+          o.workIntroChannel && <span><span className="text-muted-foreground">Channel:</span> {workChannelLabel(o.workIntroChannel)}</span>,
+          o.meetingAt && stamp(o.meetingAt, o.city),
         ]} />
       )}
       <PlanPreviewFacts preview={planPreview} />
@@ -466,8 +469,19 @@ export function isBusyElsewhere(o: Opp, id: string) {
   return false;
 }
 
-/** A venue name that flies the map to it, then its neighborhood as a focus link. */
-export function VenueLink({ venue }: { venue: { name: string; lat: number; lng: number } }) {
-  const area = VENUES.find(v => v.name === venue.name)?.neighborhood;
+export function workChannelLabel(channel: WorkIntroChannel): string {
+  switch (channel) {
+    case "WarmEmail": return "Warm email";
+    case "ScheduledVideo": return "Scheduled video";
+    case "RelayShare": return "Relay / number share";
+    case "NoChannel": return "No channel";
+  }
+}
+
+export function VenueLink({ venue }: { venue: { id?: string; name: string; lat: number; lng: number; neighborhood?: string } }) {
+  const area = venue.neighborhood
+    ?? store.venuesList.find(v => (venue.id && v.id === venue.id) || v.name === venue.name)?.neighborhood
+    ?? ALL_SEED_VENUES.find(v => (venue.id && v.id === venue.id) || v.name === venue.name)?.neighborhood
+    ?? VENUES.find(v => v.name === venue.name)?.neighborhood;
   return <span><VenueLinkView onShow={() => store.flyTo(venue.lat, venue.lng)}>{venue.name}</VenueLinkView>{area && <> · <AreaName area={area} /></>}</span>;
 }

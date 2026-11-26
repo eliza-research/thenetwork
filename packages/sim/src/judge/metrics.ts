@@ -112,10 +112,9 @@ const safeDiv = (a: number, b: number) => (b > 0 ? a / b : 0);
 const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-const TZ: Record<string, string> = { sf: "America/Los_Angeles", la: "America/Los_Angeles", nyc: "America/New_York" };
 const hourFmt = new Map<string, Intl.DateTimeFormat>();
 function localHour(t: number, city: string): number {
-  const tz = TZ[city] ?? "UTC";
+  const tz = (CITY_TZ as Record<string, string>)[city] ?? "UTC";
   let f = hourFmt.get(tz);
   if (!f) { f = new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", hour: "2-digit", minute: "2-digit" }); hourFmt.set(tz, f); }
   const parts = Object.fromEntries(f.formatToParts(new Date(t)).map(p => [p.type, p.value]));

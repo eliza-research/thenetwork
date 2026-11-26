@@ -6,7 +6,7 @@ import type { MemberId } from "@thenetwork/core";
 import { Rng, hash32 } from "@thenetwork/core";
 import { FIRST_NAMES, LAST_NAMES, INTERESTS } from "../../taxonomy.ts";
 import type { RichnessTier } from "../../sources.ts";
-import { CITY_ANCHOR_ZIP, SLOP_CITIES, zipInfo, zipsIn, type SlopCity } from "./geo.ts";
+import { CITY_ANCHOR_ZIP, SLOP_DEFAULT_CITIES, zipInfo, zipsIn, type SlopCity } from "./geo.ts";
 import { plantLatent, type PlantedMark, type PlantedSpec } from "../../planted.ts";
 import type { DatingStatement } from "../../../../core/src/generated/mutualOpenness.ts";
 import { datingStatementOf } from "@thenetwork/engine/src/packs/slop/profile.ts";
@@ -274,7 +274,7 @@ function drawAvailability(r: Rng): Availability {
  */
 export function generateSlopPersonas(opts: SlopGenOptions): SlopPersona[] {
   const perCity = opts.perCity ?? SLOP_DEFAULTS.perCity;
-  const cities = opts.cities ?? SLOP_CITIES;
+  const cities = opts.cities ?? SLOP_DEFAULT_CITIES;
   const weeks = opts.weeks ?? SLOP_DEFAULTS.weeks;
   const minorShare = opts.minorShare ?? SLOP_DEFAULTS.minorShare;
   const liarShare = opts.minorLiarShare ?? SLOP_DEFAULTS.minorLiarShare;

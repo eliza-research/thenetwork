@@ -18,7 +18,7 @@ const ACT_PHRASE: Record<DateActivity, string> = {
   coffee: "coffee", drinks: "drinks", dinner: "dinner", walk: "a walk", museum: "museums", live_music: "live music", comedy: "comedy", climbing: "climbing", hike: "a hike", cooking_class: "a cooking class",
 };
 const INTEREST_PHRASE: Record<string, string> = { rock_music: "rock", electronic_music: "electronic music", live_music: "live music", board_games: "board games", climate_tech: "climate tech", ai: "AI", books: "books", film: "movies" };
-const MARKET_NAME: Record<string, string> = { nyc: "NYC", sf: "SF", la: "LA" };
+const MARKET_NAME: Record<string, string> = { nyc: "NYC", sf: "SF", la: "LA", chicago: "Chicago", miami: "Miami" };
 const list = (xs: string[]) => (xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
 
 export interface ReadBackFact { field: OnboardField; text: string }

@@ -3,7 +3,8 @@ import { heldMeetingMinimum, observatoryMeetingHeld, observatoryProposalCounts }
 import { consoleBookingReceiptCurrent, consoleDeliveryEvidenceAllowed, consoleDeliveryGuard, consolePreparedBodyWithheld, type ConsoleDeliveryGuard } from "../../../../packages/core/src/generated/consoleMemberView.ts";
 import { confirmationWindowHours } from "../../../../packages/core/src/generated/meetingSettlement.ts";
 import {
-  canBeMatched, DAY, earliestDayKeyOf, isMinor, latestDayKeyOf, validAge, type AgeSide, type City, type EdgeType, type WorldSnapshot,
+  ALL_SEED_VENUES, canBeMatched, DAY, earliestDayKeyOf, getCity, groupVenueRubricScore, isCity, isMinor, latestDayKeyOf, listCities, seedVenuesForCity, validAge,
+  type AgeSide, type City, type EdgeType, type VenuePriceTier, type VenueRecord, type VenueStatus, type WorkIntroChannel, type WorldSnapshot,
 } from "@thenetwork/core";
 import { ageOnDay } from "../../../../packages/core/src/generated/memberAge.ts";
 import { groupAgeAllowed, teenReady, teenRosterSizeAllowed } from "../../../../packages/core/src/generated/friendIntroAge.ts";
@@ -22,7 +23,7 @@ import { displayName, scrubFacet, scrubText } from "../scrub.ts";
 import { edgeId, emptyCounters, Store, zeroCounts } from "../store.ts";
 import type {
   BiasReportView, HeldQueue, HeldText, BookedPlan, ConfigChange, ConfigInfo, ControlCommand, ControlResult, DeliveryReason, EngineRunSummary, EnvInfo, FeedKind, MemberDetail, MemberPhoto, MemberStatus, MemberTimeline, NetworkInfo,
-  ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsMessage, ObsOpportunity, ObsRequest, ObsState, OpportunityDetail, ParticipantStatus, ReviewInfo,
+  ObsCitySummary, ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsMessage, ObsOpportunity, ObsRequest, ObsState, ObsVenue, OpportunityDetail, ParticipantStatus, ReviewInfo,
   HealthAlert, SafetyAction, SafetyInfo, SearchHit, TimelineEntry,
 } from "../types.ts";
 import { appUrlEnv, DEFAULT_APP, slaHours, type AppId } from "../apps.ts";
@@ -401,7 +402,7 @@ export class RealSource implements DataSource {
     const sql = this.sql!;
     const s = this.store;
     const app = this.app;
-    const [members, msgAgg, partAgg, edges, opps, parts, runs, events, totals, reviews, ages, bookedMsgs, picksEv] = await Promise.all([
+    const [members, msgAgg, partAgg, edges, opps, parts, runs, events, totals, reviews, ages, bookedMsgs, picksEv, dbVenues, venueEvs] = await Promise.all([
       sql`select id, name, home_city, home_area, account_status, participation_state, opted_out, age, invited_by, community, occupation, joined_at from network.members where app_id = ${app}`,
       sql`select member_id, count(*) filter (where direction = 'inbound')::int as msgs_in, count(*) filter (where direction = 'outbound')::int as msgs_out,
             count(*) filter (where direction = 'outbound' and proactive and status in ${sql(confirmedProactiveDeliveryStatuses)})::int as proactive
@@ -421,7 +422,8 @@ export class RealSource implements DataSource {
           from network.participations p left join held h on h.id = p.opportunity_id
           where p.app_id = ${app} and p.role = 'participant' group by p.member_id`,
       sql<{ from_id: string; to_id: string; type: EdgeType; strength: number; explicit: boolean; created_at: Date | string | null }[]>`select from_id, to_id, type, strength::text::float8 as strength, explicit, created_at from network.edges where app_id = ${app} order by from_id, to_id, type`,
-      sql`select id, kind, state, source, generator, category, city, objective, score::text::float8 as score, components, explanations, exploration, meeting_at, reason, run_id, created_at, updated_at from network.opportunities where app_id = ${app}`,
+      sql`select id, kind, state, source, generator, category, city, objective, score::text::float8 as score, components, explanations, exploration, meeting_at, reason, run_id, venue_id, backup_venue_id, work_intro_channel, created_at, updated_at from network.opportunities where app_id = ${app}`
+        .catch(() => sql`select id, kind, state, source, generator, category, city, objective, score::text::float8 as score, components, explanations, exploration, meeting_at, reason, run_id, created_at, updated_at from network.opportunities where app_id = ${app}`),
       sql<ParticipationRow[]>`select p.opportunity_id,p.member_id,p.role,p.status,p.enjoyment::text::float8 as enjoyment,
         rv.opportunity_id is not null as reviewed, coalesce(rv.decision='approve',false) as approved, rv.invalidated is not null as invalidated,
         case when p.role='participant' and rv.decision='approve' and rv.invalidated is not null then exists (
@@ -461,6 +463,8 @@ export class RealSource implements DataSource {
         from network.booking_receipts_${app} where app_id=$1`, [app]),
       // The time keys each member picked (the offered labels are in the message text only).
       sql`select at, type, payload from network.events where app_id = ${app} and type in ('probe_answer', 'time_answer', 'booked_cancelled') order by at, id`,
+      sql`select id, city, neighborhood, name, lat, lon, arrival_landmark, status, category, price_tier from platform.venues`.catch(() => null),
+      sql`select object_id, payload from network.events where app_id = ${app} and type = 'venue' order by at asc, id asc`.catch(() => []),
     ]);
     this.ages = ages;
     const reviewBy = new Map((reviews as any[]).map(r => [r.opportunity_id as string, r]));
@@ -545,9 +549,48 @@ export class RealSource implements DataSource {
       if (e.type === "booked_cancelled") cancelled.set(opp, { ...cancelled.get(opp), [id]: { at: ms(e.at) ?? 0, told: !!p.told } });
       else if (Array.isArray(p.picked)) times.set(opp, { ...times.get(opp), [id]: { offered: [], picked: p.picked.map(String) } });
     }
+    const venueById = new Map<string, NonNullable<ObsOpportunity["venue"]>>();
+    for (const v of ALL_SEED_VENUES) {
+      venueById.set(v.id, {
+        id: v.id, name: v.name, lat: v.lat, lng: v.lng, neighborhood: v.neighborhood,
+        ...(v.arrivalLandmark ? { arrivalLandmark: v.arrivalLandmark } : {}),
+        status: v.status, category: v.category, priceTier: v.priceTier,
+      });
+    }
+    for (const v of (dbVenues as any[] | null) ?? []) {
+      venueById.set(String(v.id), {
+        id: String(v.id), name: String(v.name), lat: Number(v.lat), lng: Number(v.lon),
+        neighborhood: v.neighborhood ? String(v.neighborhood) : undefined,
+        ...(v.arrival_landmark ? { arrivalLandmark: String(v.arrival_landmark) } : {}),
+        status: toCoreVenueStatus(v.status), category: String(v.category), priceTier: Number(v.price_tier) as VenuePriceTier,
+      });
+    }
+    const venueEvByOpp = new Map<string, NonNullable<ObsOpportunity["venue"]>>();
+    for (const e of venueEvs as any[]) {
+      const p = e.payload ?? {};
+      const oppId = (p.oppId ?? e.object_id) as string | undefined;
+      const lat = Number(p.lat), lng = Number(p.lng ?? p.lon);
+      if (oppId && typeof p.venue === "string" && Number.isFinite(lat) && Number.isFinite(lng)) {
+        venueEvByOpp.set(oppId, {
+          ...(typeof p.venueId === "string" ? { id: p.venueId } : {}),
+          name: p.venue, lat, lng,
+          ...(typeof p.neighborhood === "string" ? { neighborhood: p.neighborhood } : {}),
+        });
+      }
+    }
     for (const r of opps as any[]) {
       const ps = partsBy.get(r.id) ?? [];
       const participants = ps.filter(p => p.role === "participant").map(p => p.member_id);
+      const primaryVenue = (r.venue_id ? venueById.get(String(r.venue_id)) : undefined) ?? venueEvByOpp.get(r.id);
+      const backupRaw = r.backup_venue_id ? venueById.get(String(r.backup_venue_id)) : undefined;
+      const backupVenue = backupRaw ? {
+        id: backupRaw.id, name: backupRaw.name, lat: backupRaw.lat, lng: backupRaw.lng,
+        ...(backupRaw.neighborhood ? { neighborhood: backupRaw.neighborhood } : {}),
+        ...(backupRaw.arrivalLandmark ? { arrivalLandmark: backupRaw.arrivalLandmark } : {}),
+        ...(backupRaw.status ? { status: backupRaw.status } : {}),
+      } : undefined;
+      const workIntroChannel = toCoreWorkIntroChannel(r.work_intro_channel);
+      const citySpec = isCity(r.city) ? getCity(r.city) : undefined;
       const o: ObsOpportunity = {
         id: r.id, kind: r.kind, source: r.source, generator: r.generator ?? r.source, category: r.category ?? undefined, city: r.city,
         objective: scrubText(r.objective, this.reveal), score: r.score ?? 0, components: r.components ?? undefined,
@@ -557,6 +600,10 @@ export class RealSource implements DataSource {
         status: Object.fromEntries(ps.filter(p => p.role === "participant").map(p => [p.member_id, p.status])),
         enjoyment: Object.fromEntries(ps.flatMap(p => p.status === "attended" && p.enjoyment !== null ? [[p.member_id, p.enjoyment] as const] : [])),
         createdAt: ms(r.created_at) ?? 0, updatedAt: ms(r.updated_at) ?? 0, meetingAt: ms(r.meeting_at), runId: r.run_id ?? undefined,
+        ...(primaryVenue ? { venue: primaryVenue } : {}),
+        ...(backupVenue ? { backupVenue } : {}),
+        ...(workIntroChannel ? { workIntroChannel } : {}),
+        ...(citySpec ? { cityInfo: { name: citySpec.name, shortName: citySpec.shortName, tz: citySpec.tz } } : {}),
       };
       const rv = reviewBy.get(r.id);
       if (rv) {
@@ -1136,6 +1183,92 @@ export class RealSource implements DataSource {
     return [...messages, ...events].sort((a, b) => b.t - a.t).slice(0, limit);
   }
 
+  async loadVenues(city?: City): Promise<ObsVenue[]> {
+    const sql = this.sql;
+    if (sql) {
+      const rows = await (city
+        ? sql`select id, city, neighborhood, name, address, lat, lon, category, price_tier, status, yelp_rating, yelp_review_count,
+                     group_score, date_score, visit_count, overall_likes, overall_dislikes, closure_reports, arrival_landmark,
+                     persona_priors, persona_stats, source, verified_open_at
+              from platform.venues where city = ${city} order by group_score desc, name asc`
+        : sql`select id, city, neighborhood, name, address, lat, lon, category, price_tier, status, yelp_rating, yelp_review_count,
+                     group_score, date_score, visit_count, overall_likes, overall_dislikes, closure_reports, arrival_landmark,
+                     persona_priors, persona_stats, source, verified_open_at
+              from platform.venues order by city asc, group_score desc, name asc`
+      ).catch(() => null);
+      if (rows) return (rows as any[]).map(obsVenueFromRow);
+    }
+    const list = city ? seedVenuesForCity(city) : ALL_SEED_VENUES;
+    return list.map(obsVenueFromSeed);
+  }
+
+  async loadCities(): Promise<ObsCitySummary[]> {
+    const sql = this.sql;
+    const memberCounts = new Map<string, number>();
+    const oppCounts = new Map<string, number>();
+    const venueCounts = new Map<string, { total: number; active: number }>();
+    let dbCities: { id: string; name: string; tz: string }[] | null = null;
+    if (sql) {
+      const [cRows, mRows, oRows, vRows] = await Promise.all([
+        sql`select id, name, tz from platform.cities order by id`.catch(() => null),
+        sql`select home_city as city, count(*)::int as n from network.members where app_id = ${this.app} and account_status <> 'removed' and home_city is not null group by home_city`.catch(() => []),
+        sql`select city, count(*)::int as n from network.opportunities where app_id = ${this.app} group by city`.catch(() => []),
+        sql`select city, count(*)::int as total, count(*) filter (where status = 'active')::int as active from platform.venues group by city`.catch(() => null),
+      ]);
+      if (cRows) dbCities = cRows as { id: string; name: string; tz: string }[];
+      for (const r of mRows as any[]) memberCounts.set(String(r.city), Number(r.n));
+      for (const r of oRows as any[]) oppCounts.set(String(r.city), Number(r.n));
+      if (vRows) for (const r of vRows as any[]) venueCounts.set(String(r.city), { total: Number(r.total), active: Number(r.active) });
+    } else {
+      for (const m of this.store.members.values()) if (!m.declined) memberCounts.set(m.city, (memberCounts.get(m.city) ?? 0) + 1);
+      for (const o of this.store.opps.values()) if (o.source !== "shadow") oppCounts.set(o.city, (oppCounts.get(o.city) ?? 0) + 1);
+    }
+    const coreSpecs = listCities();
+    const seen = new Set<string>();
+    const out: ObsCitySummary[] = [];
+    const byDb = new Map((dbCities ?? []).map(c => [c.id, c]));
+    for (const spec of coreSpecs) {
+      seen.add(spec.id);
+      const db = byDb.get(spec.id);
+      const vc = venueCounts.get(spec.id);
+      const fallbackVenues = seedVenuesForCity(spec.id);
+      out.push({
+        id: spec.id,
+        name: db?.name ?? spec.name,
+        shortName: spec.shortName,
+        tz: db?.tz ?? spec.tz,
+        center: { ...spec.center },
+        primaryMode: spec.primaryMode,
+        zones: spec.zones.map(z => ({ id: z.id, name: z.name })),
+        neighborhoodCount: spec.neighborhoods.length,
+        memberCount: memberCounts.get(spec.id) ?? 0,
+        opportunityCount: oppCounts.get(spec.id) ?? 0,
+        venueCount: vc ? vc.total : (sql ? 0 : fallbackVenues.length),
+        activeVenueCount: vc ? vc.active : (sql ? 0 : fallbackVenues.filter(v => v.status === "Active").length),
+      });
+    }
+    for (const c of dbCities ?? []) {
+      if (seen.has(c.id) || !isCity(c.id)) continue;
+      const spec = getCity(c.id);
+      const vc = venueCounts.get(c.id);
+      out.push({
+        id: c.id,
+        name: c.name,
+        shortName: spec?.shortName ?? c.id.toUpperCase(),
+        tz: c.tz,
+        center: spec ? { ...spec.center } : { lat: 0, lng: 0 },
+        primaryMode: spec?.primaryMode ?? "hybrid",
+        zones: spec?.zones.map(z => ({ id: z.id, name: z.name })) ?? [],
+        neighborhoodCount: spec?.neighborhoods.length ?? 0,
+        memberCount: memberCounts.get(c.id) ?? 0,
+        opportunityCount: oppCounts.get(c.id) ?? 0,
+        venueCount: vc?.total ?? 0,
+        activeVenueCount: vc?.active ?? 0,
+      });
+    }
+    return out;
+  }
+
   async control(cmd: ControlCommand, actor = "unknown"): Promise<ControlResult> {
     try {
       if (cmd.type === "refresh") { await this.reload(); this.push(); return { ok: true }; }
@@ -1167,7 +1300,8 @@ export class RealSource implements DataSource {
       for (const id of this.shadowIds) this.store.removeOpp(id);
       this.shadowIds.clear();
       this.shadowRuns = [];
-      const cities: City[] = city ? [city] : ["sf", "nyc"];
+      const present = [...new Set([...this.store.members.values()].map(m => m.city).filter(isCity))];
+      const cities: City[] = city ? [city] : present.length ? present : ["sf", "nyc"];
       let total = 0;
       for (const c of cities) {
         const { proposals, summary } = await runEngineSummarized(snap, { seed: 1, city: c, shadow: true });
@@ -1218,6 +1352,123 @@ export function appSnapshotSql(sql: SQL, app: string): SQL {
     return (sql as any)(rebuilt, ...values);
   };
   return new Proxy(tag, { get: (_t, k) => { const v = (sql as any)[k]; return typeof v === "function" ? v.bind(sql) : v; } }) as unknown as SQL;
+}
+
+export function toCoreVenueStatus(raw: unknown): VenueStatus {
+  switch (String(raw ?? "").toLowerCase()) {
+    case "suspect_closed":
+    case "suspectclosed":
+      return "SuspectClosed";
+    case "closed_temporary":
+    case "closedtemporary":
+      return "ClosedTemporary";
+    case "closed_permanent":
+    case "closedpermanent":
+      return "ClosedPermanent";
+    default:
+      return "Active";
+  }
+}
+
+export function toCoreWorkIntroChannel(raw: unknown): WorkIntroChannel | undefined {
+  switch (String(raw ?? "").toLowerCase()) {
+    case "warm_email":
+    case "warmemail":
+      return "WarmEmail";
+    case "scheduled_video":
+    case "scheduledvideo":
+      return "ScheduledVideo";
+    case "relay_share":
+    case "relayshare":
+      return "RelayShare";
+    case "no_channel":
+    case "nochannel":
+      return "NoChannel";
+    default:
+      return undefined;
+  }
+}
+
+function parsePersonaStats(raw: unknown, fallback?: unknown): Record<string, { alpha: number; beta: number }> {
+  const parse = (v: unknown) => (typeof v === "string" ? (() => { try { return JSON.parse(v); } catch { return {}; } })() : v);
+  const obj = parse(raw);
+  const src = obj && typeof obj === "object" && Object.keys(obj as object).length ? obj : parse(fallback);
+  if (!src || typeof src !== "object") return {};
+  const out: Record<string, { alpha: number; beta: number }> = {};
+  for (const [k, v] of Object.entries(src as Record<string, unknown>)) {
+    if (v && typeof v === "object" && typeof (v as any).alpha === "number" && typeof (v as any).beta === "number") {
+      out[k] = { alpha: (v as any).alpha, beta: (v as any).beta };
+    }
+  }
+  return out;
+}
+
+export function obsVenueFromRow(r: any): ObsVenue {
+  return {
+    id: String(r.id),
+    city: r.city as City,
+    neighborhood: String(r.neighborhood ?? ""),
+    name: String(r.name),
+    address: String(r.address ?? ""),
+    lat: Number(r.lat),
+    lng: Number(r.lon),
+    category: String(r.category),
+    priceTier: Number(r.price_tier ?? 2) as VenuePriceTier,
+    status: toCoreVenueStatus(r.status),
+    ...(r.yelp_rating != null ? { yelpRating: Number(r.yelp_rating) } : {}),
+    ...(r.yelp_review_count != null ? { yelpReviewCount: Number(r.yelp_review_count) } : {}),
+    groupScore: Number(r.group_score ?? 70),
+    dateScore: Number(r.date_score ?? 70),
+    visitCount: Number(r.visit_count ?? 0),
+    overallLikes: Number(r.overall_likes ?? 0),
+    overallDislikes: Number(r.overall_dislikes ?? 0),
+    closureReports: Number(r.closure_reports ?? 0),
+    arrivalLandmark: String(r.arrival_landmark ?? ""),
+    personaStats: parsePersonaStats(r.persona_stats, r.persona_priors),
+    ...(r.source ? { source: String(r.source) } : {}),
+    ...(r.verified_open_at ? { verifiedOpenAt: ms(r.verified_open_at) } : {}),
+  };
+}
+
+export function obsVenueFromSeed(v: VenueRecord): ObsVenue {
+  const groupScore = groupVenueRubricScore(
+    v.separateChecks,
+    v.walkInGroupCapacity,
+    v.noiseLevel,
+    v.liveMusicAtNight,
+    v.alcoholOptional,
+    v.servesVegetarian,
+    v.servesVegan,
+    v.safetyScore ?? 8,
+    v.indoor,
+    v.weatherSensitive,
+    v.arrivalLandmark.trim().length > 0,
+    v.transitScore ?? 4
+  );
+  const dateScore = Math.min(100, Math.max(40, Math.round((v.yelpRating ?? 4.3) * 18 + (v.noiseLevel === "Conversational" ? 12 : 4))));
+  return {
+    id: v.id,
+    city: v.city,
+    neighborhood: v.neighborhood,
+    name: v.name,
+    address: v.address,
+    lat: v.lat,
+    lng: v.lng,
+    category: v.category,
+    priceTier: v.priceTier,
+    status: v.status,
+    ...(v.yelpRating != null ? { yelpRating: v.yelpRating } : {}),
+    groupScore,
+    dateScore,
+    visitCount: 0,
+    overallLikes: 0,
+    overallDislikes: 0,
+    closureReports: v.closureReports,
+    arrivalLandmark: v.arrivalLandmark,
+    personaStats: parsePersonaStats(v.personaPriors),
+    source: v.source,
+    verifiedOpenAt: v.lastVerifiedAt,
+  };
 }
 
 function upsertIfChanged<T extends { id: string }>(map: Map<string, T>, next: T, upsert: (x: T) => void) {

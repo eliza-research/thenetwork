@@ -109,7 +109,9 @@ export const desireById = new Map(DESIRES.map(d => [d.id, d]));
 export const NEIGHBORHOODS: Record<City, string[]> = {
   sf: ["Mission", "Dolores Park", "SoMa", "Hayes Valley", "Noe Valley", "Sunset", "Richmond", "North Beach", "Castro", "Potrero Hill", "Bernal Heights", "Marina"],
   nyc: ["Williamsburg", "Bushwick", "East Village", "West Village", "Lower East Side", "Park Slope", "Greenpoint", "Harlem", "Astoria", "Chelsea", "Fort Greene", "Crown Heights"],
-  la: [], // the Network simulator generates sf / nyc personas only
+  la: ["Arts District", "Silver Lake", "Echo Park", "Los Feliz", "Koreatown", "West Hollywood", "Culver City", "Santa Monica", "Venice", "Highland Park"],
+  chicago: ["The Loop", "West Loop", "River North", "Wicker Park", "Logan Square", "Lincoln Park", "Lakeview", "Uptown", "Hyde Park"],
+  miami: ["Brickell", "Downtown", "Wynwood", "Design District", "Coconut Grove", "Coral Gables", "Little Havana", "South Beach", "Mid-Beach"],
 };
 
 /** A skill tag in the member's own voice. */

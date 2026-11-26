@@ -1,4 +1,4 @@
-import type { MemberId } from "@thenetwork/core";
+import type { City, MemberId } from "@thenetwork/core";
 import { laneLimits } from "../../../../core/src/generated/matchLane.ts";
 import { friendAdmits, friendOpennessUnanswered, type FriendStatement, type StatedGender } from "../../../../core/src/generated/mutualOpenness.ts";
 import { standingMiddle } from "../../../../core/src/generated/memberStanding.ts";
@@ -6,7 +6,7 @@ import { memberReason } from "../../filters.ts";
 import type { EntitySegment, MatchEntity, PackVectors } from "../../match/profile.ts";
 import type { World } from "../../world.ts";
 import { ACTIVITIES } from "../network/activities.ts";
-import { FRIENDS_CITY, FRIENDS_EXCLUDED_ACTIVITIES, NEIGHBORHOODS, transitMinutes, withinTransitTolerance, type Neighborhood } from "./geo.ts";
+import { cityNeighborhoods, FRIENDS_CITY, FRIENDS_EXCLUDED_ACTIVITIES, transitMinutesInCity, withinTransitTolerance, type Neighborhood } from "./geo.ts";
 import { friendsInfo } from "./info.ts";
 
 export const FRIENDS_ACTIVITY_TAGS: ReadonlySet<string> = new Set(ACTIVITIES.filter(a => !FRIENDS_EXCLUDED_ACTIVITIES.has(a.id)).flatMap(a => a.tags));
@@ -36,16 +36,16 @@ const homeSegment = (home: Neighborhood, k: number, gender: StatedGender): strin
 const FRIEND_GENDERS: readonly StatedGender[] = ["GenderWoman", "GenderMan", "GenderNonbinary", "GenderUnstated"];
 const reachableByRun = new WeakMap<World, Map<string, EntitySegment>>();
 
-function friendsSegment(w: World, home: Neighborhood, tolerance: number, friend: FriendStatement): EntitySegment {
+function friendsSegment(w: World, city: City, home: Neighborhood, tolerance: number, friend: FriendStatement): EntitySegment {
   let reachable = reachableByRun.get(w);
   if (!reachable) { reachable = new Map(); reachableByRun.set(w, reachable); }
-  const key = `${home.id}|${tolerance}|${friend.friendGender}|${friend.friendOpenness}`;
+  const key = `${city}|${home.id}|${tolerance}|${friend.friendGender}|${friend.friendOpenness}`;
   const known = reachable.get(key);
   if (known) return known;
   const genders = FRIEND_GENDERS.filter(g => friendAdmits(friend, { friendGender: g, friendOpenness: friendOpennessUnanswered }));
   const partners = new Set<string>();
-  for (const other of NEIGHBORHOODS) {
-    const minutes = transitMinutes(home, other);
+  for (const other of cityNeighborhoods(city)) {
+    const minutes = transitMinutesInCity(city, home, other);
     for (let k = 0; k <= TOLERANCE_CLASSES.length; k++) {
       if (withinTransitTolerance(minutes, tolerance, classBound(k))) for (const g of genders) partners.add(homeSegment(other, k, g));
     }
@@ -58,9 +58,10 @@ function friendsSegment(w: World, home: Neighborhood, tolerance: number, friend:
 export const friendsVectors: PackVectors = {
   memberships(w, memberId) {
     const mi = w.get(memberId);
-    if (!mi || !homeOf(w, memberId)) return [];
+    const info = friendsInfo(w).get(memberId);
+    if (!mi || !info?.home) return [];
     if (memberReason(w, memberId, { category: "social", role: "peer", format: "small_group", timeSensitive: false }) !== null) return [];
-    return [{ id: memberId, lane: "Friend", side: "Peer", market: FRIENDS_CITY, capacity: laneLimits("Friend").weeklyCapacity - mi.recentProactive }];
+    return [{ id: memberId, lane: "Friend", side: "Peer", market: info.city ?? FRIENDS_CITY, capacity: laneLimits("Friend").weeklyCapacity - mi.recentProactive }];
   },
   tags(w, entity: MatchEntity) {
     const match = w.get(entity.memberId)?.match ?? [];
@@ -73,7 +74,7 @@ export const friendsVectors: PackVectors = {
   },
   segment(w, entity) {
     const info = friendsInfo(w).get(entity.memberId);
-    return info?.home ? friendsSegment(w, info.home, info.tolerance, info.friend) : undefined;
+    return info?.home ? friendsSegment(w, info.city ?? FRIENDS_CITY, info.home, info.tolerance, info.friend) : undefined;
   },
   standing: () => ({ standing: standingMiddle, uncertainty: 0 }),
   traits: {

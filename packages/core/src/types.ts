@@ -1,9 +1,15 @@
-// Shared domain contract (PRD Sections 13.1, 32.4, 32.10, 33). Keep small and generic.
+import type { NoiseLevel, ProviderClosureSignal, VenueStatus } from "./generated/venueSelection.ts";
+import type { MeetupPhase, NoShowAction } from "./generated/meetupArrival.ts";
+import type { WorkIntroChannel } from "./generated/workIntroChannel.ts";
+
+export type { MeetupPhase, NoiseLevel, NoShowAction, ProviderClosureSignal, VenueStatus, WorkIntroChannel };
+
 export type MemberId = string;
-/** Market ids. "la" added for slop.date (additive: networkPack still runs on cfg.cities = ["sf", "nyc"]). */
-export type City = "sf" | "nyc" | "la";
-/** The Network's own markets (its data tables, synthetic snapshots and simulators cover these two). */
-export type NetworkCity = "sf" | "nyc";
+export const LAUNCH_CITIES = ["sf", "nyc", "la", "chicago", "miami"] as const;
+export type City = (typeof LAUNCH_CITIES)[number];
+export const isCity = (v: unknown): v is City =>
+  typeof v === "string" && (LAUNCH_CITIES as readonly string[]).includes(v);
+export type NetworkCity = City;
 export type ParticipationState = "open" | "normal" | "quiet" | "receiving" | "paused";
 /**
  * The app a membership, fact or opportunity belongs to (PRD 40.3: one person, a membership per app).
@@ -153,4 +159,181 @@ export interface WorldSnapshot {
   presence: Presence[]; edges: Edge[]; recentProposals: Proposal[];
   events?: NetworkEvent[];
   teenIntros?: boolean;
+}
+
+export type VenueCategory =
+  | "food_hall"
+  | "coffee_shop"
+  | "bakery_cafe"
+  | "brewery"
+  | "brewery_garden"
+  | "park"
+  | "waterfront_park"
+  | "bookstore_cafe"
+  | "diner"
+  | "wine_bar"
+  | "cocktail_bar"
+  | "cocktail_lounge"
+  | "cafe_tea_bar"
+  | "wine_beer_patio"
+  | "coffee_casual"
+  | "game_store"
+  | "board_game_cafe"
+  | "climbing_gym"
+  | "tea_house"
+  | "museum_gallery"
+  | "bowling_arcade"
+  | "community_space"
+  | "casual_bistro"
+  | "dessert_cafe";
+
+export type VenuePriceTier = 0 | 1 | 2 | 3 | 4;
+export type VenueNoiseLevel = NoiseLevel;
+export type VenueFeedbackOutcome =
+  | "great"
+  | "ok"
+  | "too_loud"
+  | "crowded"
+  | "closed"
+  | "bad_vibe"
+  | "too_expensive";
+
+export interface VenueHoursSlot {
+  weekday: number;
+  openMin: number;
+  closeMin: number;
+}
+
+export interface VenuePersonaPrior {
+  alpha: number;
+  beta: number;
+}
+
+export interface VenueRecord {
+  id: string;
+  name: string;
+  city: City;
+  neighborhood: string;
+  address: string;
+  lat: number;
+  lng: number;
+  category: VenueCategory;
+  public: true;
+  status: VenueStatus;
+  priceTier: VenuePriceTier;
+  ageMin: number;
+  isBarOnly: boolean;
+  alcoholOptional: boolean;
+  servesVegetarian: boolean;
+  servesVegan: boolean;
+  wheelchairAccessible: boolean;
+  separateChecks: boolean;
+  walkInGroupCapacity: number;
+  reservationRequired: boolean;
+  noiseLevel: NoiseLevel;
+  liveMusicAtNight: boolean;
+  indoor: boolean;
+  outdoor: boolean;
+  weatherSensitive: boolean;
+  arrivalLandmark: string;
+  hours: VenueHoursSlot[];
+  yelpRating?: number;
+  externalPlaceId?: string;
+  source: "curated" | "google_places" | "overture" | "listing";
+  lastVerifiedAt: number;
+  geoExpiresAt?: number;
+  closureReports: number;
+  quarantinedUntil?: number;
+  safetyScore?: number;
+  transitScore?: number;
+  isAlcoholCentric?: boolean;
+  halalFriendly?: boolean;
+  kosherFriendly?: boolean;
+  glutenFreeFriendly?: boolean;
+  severeAllergenSafe?: boolean;
+  isSmokeFree?: boolean;
+  openEventEligible?: boolean;
+  hobbies?: string[];
+  cuisineTags?: string[];
+  personaPriors: Record<string, VenuePersonaPrior>;
+}
+
+export interface VenueFeedbackReport {
+  venueId: string;
+  memberId: MemberId;
+  at: number;
+  outcome: VenueFeedbackOutcome;
+  reportedClosed: boolean;
+  providerCode?: ProviderClosureSignal;
+}
+
+export interface MemberVenuePrefs {
+  memberId: MemberId;
+  age: number;
+  drinksAlcohol: boolean;
+  vegetarian: boolean;
+  vegan: boolean;
+  wheelchairNeeded: boolean;
+  maxBudgetTier: VenuePriceTier;
+  maxTravelMinutes?: number;
+  visitedVenueIds: string[];
+  rejectedVenueIds: string[];
+  archetype?: string;
+  hobbies?: string[];
+  cuisinePrefs?: string[];
+}
+
+export interface VenueCandidateResult {
+  venue: VenueRecord;
+  score: number;
+  rubricScore: number;
+  budgetFitScore: number;
+  personaScore: number;
+  maxTravelMinutes: number;
+  meanTravelMinutes: number;
+  needsOpenCheck: boolean;
+}
+
+export type ArrivalState =
+  | "en_route"
+  | "late"
+  | "arrived"
+  | "seated"
+  | "met"
+  | "venue_closed"
+  | "venue_full"
+  | "cannot_find";
+
+export interface ArrivalUpdate {
+  meetupId: string;
+  memberId: MemberId;
+  state: ArrivalState;
+  at: number;
+  etaMinutes?: number;
+  safeOutfitCue?: string;
+  spotLandmark?: string;
+}
+
+export interface FollowupSchedule {
+  scheduledAt: number;
+  localHour: number;
+  localMinute: number;
+  nextDay: boolean;
+  reminderAt: number;
+  maxReminders: number;
+}
+
+export interface WorkIntroState {
+  introId: string;
+  app: AppId;
+  candidateId: MemberId;
+  managerId: MemberId;
+  candidateOptIn: boolean;
+  managerOptIn: boolean;
+  channel: WorkIntroChannel;
+  emailSentAt?: number;
+  videoSlotAt?: number;
+  videoUrl?: string;
+  followupDueAt?: number;
+  completedAt?: number;
 }

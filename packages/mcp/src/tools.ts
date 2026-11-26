@@ -19,6 +19,7 @@ import { appsOn, connectorApp, connectorSurface, DATING_AGE_RULE, type McpApp, t
 import type { AssistantKind, LookingForEntry, LookingForResult, LookingForView, PhotoHoldingsView, PhotoRequestStatus, PlatformHooks, PublicStatus, SavedProfileFields } from "./hooks.ts";
 import type { Grant, Scope, OAuthStore, SignupDraftFields } from "./store.ts";
 import { CONTACT_PATTERNS, contactVariants } from "../../core/src/guard.ts";
+import { isCity, LAUNCH_CITIES } from "../../core/src/types.ts";
 import { outputLeaks, passesOutputGate } from "./leaks.ts";
 
 export const TOOL_NAMES = ["app_info", "start_signup", "check_status", "read_profile", "submit_profile", "get_updates", "prepare_signup",
@@ -146,7 +147,7 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
     {
       name: "prepare_signup", title: "Save my signup draft",
       description: `After the person confirms their phone and allows access on ${signIn.domain}, saves only the first name and optional home city that the person approved for this app. To finish signup, the person connects again, chooses Finish signup on the connection page, checks the approved details, types their own birthday and ticks the text consent. Never approve text consent for the person. Never creates a person, membership or text consent. One draft per grant; no age, phone, code, gender or match preferences.`,
-      inputSchema: { type: "object", properties: { app: { type: "string", enum: [host.id] }, firstName: { type: "string", minLength: 1, maxLength: 50 }, homeCity: { type: "string", enum: ["nyc", "sf"] } }, required: ["firstName"], additionalProperties: false },
+      inputSchema: { type: "object", properties: { app: { type: "string", enum: [host.id] }, firstName: { type: "string", minLength: 1, maxLength: 50 }, homeCity: { type: "string", enum: [...LAUNCH_CITIES] } }, required: ["firstName"], additionalProperties: false },
       outputSchema: object({ prepared: { type: "boolean", const: true }, app: ownApp, next_step: text }),
       annotations: { title: "Save my signup draft", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       ...schemes("prepare_signup"),
@@ -167,7 +168,7 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
       inputSchema: { type: "object", properties: { app: { type: "string", enum: [host.id] } }, additionalProperties: false },
       outputSchema: object({ app: ownApp, profile: { anyOf: [{ type: "null" }, object({
         first_name: nullableText, about: nullableText, interests: { type: "array", items: text },
-        neighborhood: nullableText, home_region: { enum: [null, "nyc", "sf"] },
+        neighborhood: nullableText, home_region: { enum: [null, ...LAUNCH_CITIES] },
       })] } }),
       annotations: annotations(`My saved ${host.name} profile`),
       ...schemes("read_profile"),
@@ -359,8 +360,8 @@ export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host
   if (name === "prepare_signup") {
     if (!signupDraftRequestAllowed(host.id, a.app !== undefined, a.app === host.id)) return { ok: false, message: "This draft is not available for that app." };
     const firstName = typeof a.firstName === "string" ? a.firstName.trim() : "";
-    if (!/^[\p{L}][\p{L}\p{M}'’-]{0,49}$/u.test(firstName) || contactOrCode(firstName) || (a.homeCity !== undefined && a.homeCity !== "nyc" && a.homeCity !== "sf")) return { ok: false, message: "Use only the approved first name and a supported home city." };
-    return { ok: true, app: host.id, draft: { firstName, ...(a.homeCity ? { homeCity: a.homeCity as "nyc" | "sf" } : {}) } };
+    if (!/^[\p{L}][\p{L}\p{M}'’-]{0,49}$/u.test(firstName) || contactOrCode(firstName) || (a.homeCity !== undefined && !isCity(a.homeCity))) return { ok: false, message: "Use only the approved first name and a supported home city." };
+    return { ok: true, app: host.id, draft: { firstName, ...(isCity(a.homeCity) ? { homeCity: a.homeCity } : {}) } };
   }
   if (name === "submit_profile") {
     const about = typeof a.about === "string" ? a.about.trim() : "";
@@ -505,7 +506,7 @@ function savedProfileResult(fields: SavedProfileFields | undefined, forbidden: s
   const first_name = safeText(fields.firstName, 50);
   const about = safeText(fields.about, PROFILE_MAX_CHARS);
   const neighborhood = safeText(fields.neighborhood, 100);
-  const home_region = fields.homeCity === "nyc" || fields.homeCity === "sf" ? fields.homeCity : null;
+  const home_region = isCity(fields.homeCity) ? fields.homeCity : null;
   const interests = Array.isArray(fields.interests)
     ? fields.interests.slice(0, 20).flatMap(value => { const text = safeText(value, 100); return text ? [text] : []; })
     : [];

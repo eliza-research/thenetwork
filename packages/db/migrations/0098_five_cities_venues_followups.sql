@@ -183,6 +183,17 @@ declare
   t text;
   a text;
 begin
+  if exists (select 1 from pg_roles where rolname = 'network_observatory') then
+    grant usage on schema platform to network_observatory;
+    grant select on platform.cities, platform.venues to network_observatory;
+  end if;
+
+  for a in select id from platform.apps order by id loop
+    if exists (select 1 from pg_roles where rolname = 'network_observatory_' || a) then
+      execute format('grant select on platform.venues to %I', 'network_observatory_' || a);
+    end if;
+  end loop;
+
   foreach t in array array['venue_visits', 'venue_rejections', 'meetup_arrivals', 'work_intros'] loop
     execute format('revoke all on network.%I from public', t);
     execute format('alter table network.%I enable row level security', t);

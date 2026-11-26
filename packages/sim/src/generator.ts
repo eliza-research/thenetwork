@@ -3,7 +3,7 @@
 // enrich these with realistic bios and voices afterwards.
 import { requireSimulationCount, requireSimulationShare } from "./input.ts";
 import type { City } from "@thenetwork/core";
-import { Rng, clamp01, earliestDayKeyOf, hash32 } from "@thenetwork/core";
+import { Rng, clamp01, earliestDayKeyOf, getCity, hash32 } from "@thenetwork/core";
 import { teenFriendMaxAge, teenFriendMinAge } from "../../core/src/generated/friendIntroAge.ts";
 import {
   BOUNDARIES, DESIRES, FIRST_NAMES, INTERESTS, LAST_NAMES, NEIGHBORHOODS, PRIVATE_DISCLOSURES,
@@ -28,6 +28,8 @@ export const ADVERSARIAL_KINDS: AdversarialKind[] =
 export interface GeneratorOptions {
   n: number;
   seed: number | string;
+  /** Optional active city roster (e.g. all 5 launch cities). When omitted, preserves default 50/50 SF/NYC split. */
+  cities?: readonly City[];
   /** Share of personas in each city (default 50/50 SF/NYC). */
   cityWeights?: Partial<Record<City, number>>;
   archetypeMix?: Partial<Record<Archetype, number>>;
@@ -96,7 +98,20 @@ const STYLE_BY_ARCH: Partial<Record<Archetype, WritingStyle[]>> = {
   connector: ["chatty", "warm", "emoji-heavy"],
 };
 
-const otherCity = (c: City): City => (c === "sf" ? "nyc" : "sf");
+const otherCity = (c: City, activeCities: readonly City[] = ["sf", "nyc"]): City => {
+  if (activeCities.length <= 2 && activeCities.includes("sf") && activeCities.includes("nyc")) {
+    return c === "sf" ? "nyc" : "sf";
+  }
+  const idx = activeCities.indexOf(c);
+  return activeCities[(idx >= 0 ? idx + 1 : 0) % activeCities.length] ?? (c === "sf" ? "nyc" : "sf");
+};
+
+function areasFor(city: City): string[] {
+  const fromVocab = (NEIGHBORHOODS as Partial<Record<City, string[]>>)[city];
+  if (fromVocab && fromVocab.length > 0) return fromVocab;
+  const fromCore = getCity(city)?.neighborhoods.map(n => n.name);
+  return fromCore && fromCore.length > 0 ? fromCore : ["Downtown"];
+}
 
 export function generatePersonas(opts: GeneratorOptions): Persona[] {
   return generateWorld(opts).personas;
@@ -114,7 +129,12 @@ function generateWorld(opts: GeneratorOptions): { personas: Persona[]; latent?: 
   for (const field of ["adversarialRate", "minorShare", "disclosureRate"] as const) requireSimulationShare(opts[field], field);
   const root = new Rng(typeof opts.seed === "number" ? opts.seed : String(opts.seed));
   const prefix = opts.idPrefix ?? "m";
-  const cityW = { sf: 0.5, nyc: 0.5, ...opts.cityWeights };
+  const activeCities: readonly City[] = opts.cities && opts.cities.length > 0 ? opts.cities : ["sf", "nyc"];
+  const baseCityW: Partial<Record<City, number>> =
+    opts.cities && opts.cities.length > 0
+      ? Object.fromEntries(opts.cities.map(c => [c, 1 / opts.cities!.length]))
+      : { sf: 0.5, nyc: 0.5 };
+  const cityW = { ...baseCityW, ...opts.cityWeights };
   const mix = { ...ARCHETYPE_MIX, ...opts.archetypeMix };
   const advRate = opts.adversarialRate ?? 0.06;
   const disclosureRate = opts.disclosureRate ?? 0.3;
@@ -147,7 +167,7 @@ function generateWorld(opts: GeneratorOptions): { personas: Persona[]; latent?: 
     : undefined;
   const usedNames = new Set<string>();
   const personas: Persona[] = drafts.map(({ r, ...d }) =>
-    buildPersona(r, { ...d, disclosureRate, spread, usedNames, interests: latent?.marks.get(d.id)?.topics }));
+    buildPersona(r, { ...d, activeCities, disclosureRate, spread, usedNames, interests: latent?.marks.get(d.id)?.topics }));
   wireRelationships(root.fork("relationships"), personas);
   if (opts.intentLapse) {
     const o = opts.intentLapse === true ? {} : opts.intentLapse;
@@ -229,7 +249,7 @@ function canaryToken(r: Rng): string {
 }
 
 function buildPersona(r: Rng, a: {
-  id: string; archetype: Archetype; homeCity: City; adversarial?: AdversarialKind;
+  id: string; archetype: Archetype; homeCity: City; activeCities: readonly City[]; adversarial?: AdversarialKind;
   disclosureRate: number; spread: number; usedNames: Set<string>; minor?: boolean;
   /** Planted interests (planted.ts); absent = drawn from the taxonomy. */
   interests?: readonly string[];
@@ -291,10 +311,11 @@ function buildPersona(r: Rng, a: {
   const sleep = archetype === "busy_parent" ? r.int(21, 22) : r.int(22, 25) % 24;
   const busyBlocks: [number, number][] = archetype === "busy_parent"
     ? [[7, 9], [9.5, 15], [15, 19.5]] : [[9.5, 12], [13, 17.5]];
+  const cityAreas = areasFor(homeCity);
   const routine: Routine = {
     wake, sleep, busyBlocks,
     freeEvenings: r.sample([0, 1, 2, 3, 4, 5, 6], archetype === "busy_parent" ? 1 : r.int(2, 4)).sort(),
-    homeArea: r.pick(NEIGHBORHOODS[homeCity]), workArea: r.pick(NEIGHBORHOODS[homeCity]),
+    homeArea: r.pick(cityAreas), workArea: r.pick(cityAreas),
   };
 
   // --- responsiveness & behaviour ---
@@ -309,9 +330,9 @@ function buildPersona(r: Rng, a: {
   const disclosure = r.bool(a.disclosureRate) && !adversarial
     ? { fact: r.pick(PRIVATE_DISCLOSURES), canary: canaryToken(r) } : undefined;
 
-  const secondaryCity = archetype === "traveler" && r.bool(0.5) ? otherCity(homeCity) : undefined;
+  const secondaryCity = archetype === "traveler" && r.bool(0.5) ? otherCity(homeCity, a.activeCities) : undefined;
   const trips = archetype === "traveler"
-    ? (() => { const from = r.int(2, 8); return [{ city: otherCity(homeCity), fromDay: from, toDay: from + r.int(3, 6) }]; })()
+    ? (() => { const from = r.int(2, 8); return [{ city: otherCity(homeCity, a.activeCities), fromDay: from, toDay: from + r.int(3, 6) }]; })()
     : [];
 
   const hidden: HiddenTruth = {

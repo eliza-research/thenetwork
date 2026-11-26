@@ -6,7 +6,8 @@
 // spec/consoleWorkspace.md, "The propose tray sends a proposal for two to six adults with a spark left"
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import type { Category } from "@thenetwork/core";
+import type { Category, City } from "@thenetwork/core";
+import { getCity, listCities } from "../../../packages/core/src/cities.ts";
 import { NEIGHBORHOODS } from "@thenetwork/network/geo";
 import {
   Alert, AppSwitcher, BrandMark, Button, ConsoleShell, DataCell, DataTable, FilterBar, FilterBarFocus, Input, Legend, LegendItem, ModeIndicator, Popover, PopoverContent,
@@ -26,8 +27,8 @@ import { EDGE_STYLE, GraphView } from "./graph.ts";
 import { MapView } from "./map.ts";
 import { Inspector } from "./panels.tsx";
 import {
-  BOROUGHS, DAY, EDGE_TYPES, HOUR, MEMBER_FILTERS, originLabel, RANGES, STATE_GROUPS, store, useStore,
-  type ColorLens, type Filters, type MemberFilter, type RangeKey, type StateGroup,
+  DAY, EDGE_TYPES, HOUR, LAUNCH_CITY_IDS, MEMBER_FILTERS, originLabel, RANGES, STATE_GROUPS, store, useStore,
+  type ColorLens, type MemberFilter, type RangeKey, type StateGroup,
 } from "./store.ts";
 import { consoleNav, humanize, localDate, localTime, NAV_FILTER, pickMember, staffSignIn, staffView, stamp } from "./ui.tsx";
 
@@ -203,7 +204,24 @@ function searchHits(query: string, groups: HitGroups): Hit[] {
     .sort((a, b) => memberRank(a) - memberRank(b))
     .slice(0, 5);
   for (const m of members) hits.push({ key: `m${m.id}`, label: m.name, meta: m.area ?? "", go: () => store.pickHit({ kind: "member", id: m.id }) });
-  for (const n of NEIGHBORHOODS.filter(n => n.name.toLowerCase().includes(q)).sort((a, b) => matchRank(a.name, q) - matchRank(b.name, q)).slice(0, 3)) hits.push({ key: `n${n.name}`, label: n.name, meta: n.borough, go: () => store.pickHit({ kind: "neighborhood", id: n.name }) });
+  const seenPlaces = new Set<string>();
+  const allPlaces: { name: string; meta: string }[] = [];
+  for (const n of NEIGHBORHOODS) {
+    seenPlaces.add(n.name.toLowerCase());
+    allPlaces.push({ name: n.name, meta: n.borough });
+  }
+  for (const spec of listCities()) {
+    for (const n of spec.neighborhoods) {
+      const k = n.name.toLowerCase();
+      if (seenPlaces.has(k)) continue;
+      seenPlaces.add(k);
+      const zoneName = spec.zones.find(z => z.id === n.zone)?.name ?? spec.shortName;
+      allPlaces.push({ name: n.name, meta: `${spec.shortName} · ${zoneName}` });
+    }
+  }
+  for (const n of allPlaces.filter(n => n.name.toLowerCase().includes(q)).sort((a, b) => matchRank(a.name, q) - matchRank(b.name, q)).slice(0, 3)) {
+    hits.push({ key: `n${n.name}`, label: n.name, meta: n.meta, go: () => store.pickHit({ kind: "neighborhood", id: n.name }) });
+  }
   if (groups === "NamesPlacesAndIds") {
     let k = 0;
     for (const o of store.opps.values()) {
@@ -314,7 +332,15 @@ function ConsoleFilterBar({ nav }: { nav: ConsoleNav }) {
   );
   const items: FilterBarItem[] = [
     { filterKey: NAV_FILTER.range, control: <Segments aria-label="Range" value={f.range} onValueChange={v => store.setFilters({ range: v as RangeKey })} options={RANGES.map(([k, l]) => ({ value: k, label: l }))} /> },
-    { filterKey: NAV_FILTER.borough, label: "Borough", control: choose("Borough", f.borough, v => store.setFilters({ borough: v as Filters["borough"] }), [["all", "All"], ...BOROUGHS.map(b => [b, b] as [string, string])]) },
+    {
+      filterKey: NAV_FILTER.borough, label: "Area",
+      control: (
+        <div className="flex items-center gap-1.5">
+          {choose("City", s.selectedCity, v => store.setCity(v as City | "all"), [["all", "All cities"], ...LAUNCH_CITY_IDS.map(c => [c, getCity(c)?.shortName ?? c.toUpperCase()] as [string, string])])}
+          {choose("Zone", f.borough, v => store.setFilters({ borough: v }), [["all", "All zones"], ...s.zones().map(b => [b, b] as [string, string])])}
+        </div>
+      ),
+    },
     { filterKey: NAV_FILTER.members, label: "Members", control: choose("Members", f.members, v => store.setFilters({ members: v as MemberFilter }), MEMBER_FILTERS) },
     { filterKey: NAV_FILTER.origin, label: "Origin", control: choose("Origin", f.origin, v => store.setFilters({ origin: v }), [["all", "All"], ...origins.map(o => [o, originLabel(o)] as [string, string])]) },
     { filterKey: NAV_FILTER.stateGroup, label: "State", control: choose("State", f.stateGroup, v => store.setFilters({ stateGroup: v as "all" | StateGroup }), [["all", "All"], ...STATE_GROUPS.map(([k, l]) => [k, l] as [string, string])]) },
@@ -346,13 +372,14 @@ function Stage({ nav }: { nav: ConsoleNav }) {
 }
 
 function MapStage() {
+  const s = useStore();
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const m = new MapView(ref.current!);
     store.stage = m;
     return () => { m.destroy(); if (store.stage === m) store.stage = null; };
   }, []);
-  return <div ref={ref} data-map className="absolute inset-0 isolate bg-muted" aria-label="Map of members in New York" />;
+  return <div ref={ref} data-map className="absolute inset-0 isolate bg-muted" aria-label={`Map of members in ${getCity(s.activeCity())?.name ?? "New York City"}`} />;
 }
 
 function GraphCanvas() {

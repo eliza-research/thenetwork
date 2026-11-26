@@ -22,3 +22,5 @@ export {
 export { withinMutualRadius } from "./dating-radius.ts";
 export { sharedDatingMarket } from "./generated/datingRadius.ts";
 export { temporaryPresenceWindow } from "./travel-presence.ts";
+export * from "./cities.ts";
+export * from "./venues.ts";

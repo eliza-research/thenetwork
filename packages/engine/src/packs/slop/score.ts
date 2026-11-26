@@ -50,14 +50,21 @@ function preferredActivity(current: string | undefined, activity: string): strin
   return rank < 0 || (rank === 0 && activity < current) ? activity : current;
 }
 
-export function dateActivity(a: SlopProfile, b: SlopProfile): string {
+export function isNonDrinkerProfile(p: SlopProfile): boolean {
+  const drink = p.values.drinking?.trim().toLowerCase() ?? "";
+  return drink === "never" || drink === "none" || drink === "sober";
+}
+
+export function dateActivity(a: SlopProfile, b: SlopProfile, excludeDrinks = false): string {
+  const allowed = (act: string) => !excludeDrinks || act !== "drinks";
   let shared: string | undefined, first: string | undefined;
   for (const activity of a.activities) {
+    if (!allowed(activity)) continue;
     first = preferredActivity(first, activity);
     if (b.activities.includes(activity)) shared = preferredActivity(shared, activity);
   }
   if (shared !== undefined) return shared;
-  for (const activity of b.activities) first = preferredActivity(first, activity);
+  for (const activity of b.activities) if (allowed(activity)) first = preferredActivity(first, activity);
   return first ?? "coffee";
 }
 
