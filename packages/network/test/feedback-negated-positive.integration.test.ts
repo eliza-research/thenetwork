@@ -41,6 +41,37 @@ test("feedback that says the other member was not easy to talk to records no wor
   expect(post?.worthwhile).not.toBe(true);
 });
 
+test("feedback that says the pair did not click records negative sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("We did not click");
+  expect(feedback?.sentiment).toBe("negative");
+  expect(post?.worthwhile).not.toBe(true);
+});
+
+test("feedback that says the member was disappointed records negative sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("I was greatly disappointed");
+  expect(feedback?.sentiment).toBe("negative");
+  expect(post?.worthwhile).not.toBe(true);
+});
+
+test("feedback that says the member was not disappointed still records positive sentiment and worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("Not disappointed at all, it was great");
+  expect(feedback?.sentiment).toBe("positive");
+  expect(post?.worthwhile).toBe(true);
+});
+
+test("feedback that says the pair clicked faster than ever still records positive sentiment and worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("I've never clicked with someone so fast");
+  expect(feedback?.sentiment).toBe("positive");
+  expect(feedback?.wouldMeetAgain).toBe(true);
+  expect(post?.worthwhile).toBe(true);
+});
+
+test("feedback that says talking got easy still records positive sentiment and worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("It's not easy to talk to new people, but she made it easy");
+  expect(feedback?.sentiment).toBe("positive");
+  expect(post?.worthwhile).toBe(true);
+});
+
 test("feedback that says the pair clicked still records positive sentiment and worthwhile", async () => {
   const { feedback, post } = await feedbackWorld("We clicked, he was easy to talk to");
   expect(feedback?.sentiment).toBe("positive");

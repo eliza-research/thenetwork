@@ -824,13 +824,40 @@ export { explicitRepeatRequest, planAgainOf } from "@thenetwork/core";
 export function feedbackOf(body: string): { sentiment: "positive" | "neutral" | "negative"; selfNoShow: boolean; otherNoShow: boolean; again: boolean } {
   const t = body.toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'");
   const { self: selfNoShow, other: otherNoShow } = attendanceAbsences(t);
-  const negative = otherNoShow || NEGATIVE_FEEDBACK.test(t);
+  const negative = otherNoShow || NEGATIVE_FEEDBACK.test(t) || negatedPositiveFeedback(t);
   const positive = /great|clicked|loved|amazing|nice|easy to talk/.test(t) || /^we hit it off[.!]*$/.test(t.trim());
   const sentiment = negative ? "negative" : positive ? "positive" : "neutral";
   const again = !negative && /again|clicked/.test(t) && !/\b(wouldn'?t|won'?t|not|never)\b[^.!?]*\bagain\b/.test(t);
   return { sentiment, selfNoShow, otherNoShow, again };
 }
-const NEGATIVE_FEEDBACK = /\b((was|is|it's|that's)?\s*(not|n't|wasn't|isn't)\s+(that |very |really |so |too |super )?(great|good|fun|nice|amazing)|not much in common|nothing in common|(?:didn't|did not) (really |quite )?(click|connect|enjoy)|(?:didn't|did not) have much|(?:never|hardly|barely)\s+(?:really\s+)?(?:clicked|connected)|(?:not|n't|wasn't|isn't|never)\s+(?:really\s+|very\s+)?easy to talk|disappoint(?:ed|ing)|not (really )?for me|not my (thing|type)|awkward|terrible|rude|creepy|bummer|uncomfortable)/;
+const NEGATIVE_FEEDBACK = /\b((was|is|it's|that's)?\s*(not|n't|wasn't|isn't)\s+(that |very |really |so |too |super )?(great|good|fun|nice|amazing)|not much in common|nothing in common|didn't (really |quite )?(click|connect|enjoy)|didn't have much|not (really )?for me|not my (thing|type)|awkward|terrible|rude|creepy|bummer|uncomfortable)/;
+function reversedByLaterClause(t: string, from: number): boolean {
+  const later = /\bbut\b([\s\S]*)$/.exec(t.slice(from))?.[1];
+  if (later === undefined || NEGATIVE_FEEDBACK.test(later)) return false;
+  if (/\b(?:did not|didn't|never|hardly|barely|not)\b[^.!?]*\b(?:click|clicked|connect|connected|easy|great)\b|n't\s+(?:really\s+|very\s+)?(?:easy|great)\b/.test(later)) return false;
+  return /\b(?:clicked|connected|great|amazing|nice|loved|easy|good|fun)\b/.test(later) || /\bwe did\b/.test(later);
+}
+function negatedPositiveFeedback(t: string): boolean {
+  for (const m of t.matchAll(/\bdid not\s+(?:(?:really|quite)\s+)?(?:click|connect|enjoy)\b|\bdid not have much\b/g)) {
+    if (!reversedByLaterClause(t, m.index + m[0].length)) return true;
+  }
+  for (const m of t.matchAll(/\b(?:never|hardly|barely)\s+(?:really\s+)?(?:clicked|connected)\b/g)) {
+    const end = m.index + m[0].length;
+    const clauseRest = t.slice(end).split(/[.!?,;]/)[0] ?? "";
+    if (/\b(?:so|this|that)\s+(?:fast|quickly|easily|well|soon)\b/.test(clauseRest)) continue;
+    if (!reversedByLaterClause(t, end)) return true;
+  }
+  for (const m of t.matchAll(/(?:\bnot|\bnever|n't)\s+(?:really\s+|very\s+)?easy to talk\b/g)) {
+    if (!reversedByLaterClause(t, m.index + m[0].length)) return true;
+  }
+  for (const m of t.matchAll(/\bdisappoint(?:ed|ing)\b/g)) {
+    const sentenceStart = Math.max(t.lastIndexOf(".", m.index), t.lastIndexOf("!", m.index), t.lastIndexOf("?", m.index), t.lastIndexOf(";", m.index)) + 1;
+    const before = t.slice(sentenceStart, m.index).trim().split(/\s+/).slice(-3);
+    if (before.some(w => w === "not" || w === "nothing" || w === "never" || w === "no" || w.endsWith("n't"))) continue;
+    if (!reversedByLaterClause(t, m.index + m[0].length)) return true;
+  }
+  return false;
+}
 
 
 // ------------------------------------------------------------------ consent: yes, no or unclear
