@@ -395,3 +395,38 @@ test("feedback that never clicked at first and ends with no spark records negati
   expect(feedback?.wouldMeetAgain).not.toBe(true);
   expect(post?.worthwhile).not.toBe(true);
 });
+
+test("feedback that barely connected at first and shared a dessert records neutral sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("We barely connected at first, then the two of us shared a dessert and giggled");
+  expect(feedback?.sentiment).toBe("neutral");
+  expect(feedback?.wouldMeetAgain).not.toBe(true);
+  expect(post?.worthwhile).not.toBe(true);
+});
+
+test("feedback that never clicked at first and lost track of the hours records neutral sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("Never clicked at first, then the hours flew by");
+  expect(feedback?.sentiment).toBe("neutral");
+  expect(feedback?.wouldMeetAgain).not.toBe(true);
+  expect(post?.worthwhile).not.toBe(true);
+});
+
+test("feedback that never really clicked at first and stayed until closing records neutral sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("We never really clicked at first, then the waiter had to kick us out");
+  expect(feedback?.sentiment).toBe("neutral");
+  expect(feedback?.wouldMeetAgain).not.toBe(true);
+  expect(post?.worthwhile).not.toBe(true);
+});
+
+test("feedback that barely clicked at first and laughed hard records neutral sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("Barely clicked at first, then my cheeks hurt from laughing");
+  expect(feedback?.sentiment).toBe("neutral");
+  expect(feedback?.wouldMeetAgain).not.toBe(true);
+  expect(post?.worthwhile).not.toBe(true);
+});
+
+test("feedback that never connected at first and felt a spark later records neutral sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("We never connected at first, then the spark came out of nowhere");
+  expect(feedback?.sentiment).toBe("neutral");
+  expect(feedback?.wouldMeetAgain).not.toBe(true);
+  expect(post?.worthwhile).not.toBe(true);
+});
