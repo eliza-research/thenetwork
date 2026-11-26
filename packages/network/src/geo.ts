@@ -161,6 +161,7 @@ export const VENUES: Venue[] = [
   V("moving-image", "Museum of the Moving Image", "Astoria", "museum", 40.7644, -73.9235, ["museums", "arts"], TEEN_PLANS_ONLY),
   V("smith-street-cafes", "Smith Street cafes", "Carroll Gardens", "cafe_district", 40.6795, -73.9991, ["food", "coffee"], TEEN_PLANS_ONLY),
   V("bedford-avenue-cafes", "Bedford Avenue cafes", "Williamsburg", "cafe_district", 40.7173, -73.9569, ["food", "coffee"], TEEN_PLANS_ONLY),
+  V("vesuvio-playground", "Vesuvio Playground", "SoHo", "park", 40.725, -74.0026, ["sports", "outdoors", "social"], EVERYONE),
 ];
 
 export const venueAgeMin = (v: Pick<Venue, "allAges">): number => (v.allAges ? teenFriendMinAge : ADULT_AGE);
