@@ -892,10 +892,16 @@ function laterClauseKind(c: string): "complaint" | "unclassified" | null {
   }
   return null;
 }
+function unclassifiedLaterClause(c: string): boolean {
+  const clause = c.trim();
+  if (!clause || reversedByMeetingPositive(clause, 0)) return false;
+  if (/\b(?:food|cafe|coffee|venue|restaurant|bar|drinks?|view|weather|table|music)\b/.test(clause) && !/\b(?:we|i)\b/.test(clause)) return false;
+  return /\b(?:we|i|he|she|they|it|this|that|date|night|evening|meeting|time|chat|conversation|rest|company|session)\b/.test(clause) && clause.split(/\s+/).filter(Boolean).length >= 2;
+}
 function negatedFormVerdict(t: string, from: number): "negative" | "neutral" {
   let last: "complaint" | "unclassified" | null = null;
-  for (const clause of t.slice(from).split(/[.!?;,]/)) {
-    const kind = laterClauseKind(clause);
+  for (const [index, clause] of t.slice(from).split(/[.!?;,]/).entries()) {
+    const kind = laterClauseKind(clause) ?? (index > 0 && unclassifiedLaterClause(clause) ? "unclassified" : null);
     if (kind) last = kind;
   }
   return last === "unclassified" ? "neutral" : "negative";

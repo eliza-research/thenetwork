@@ -347,6 +347,41 @@ test("feedback that never clicked at first and calls the evening a slow burn rec
   expect(post?.worthwhile).not.toBe(true);
 });
 
+test("feedback that hardly connected at first and then felt familiar records neutral sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("Hardly connected at first, then it was like we'd known each other for years");
+  expect(feedback?.sentiment).toBe("neutral");
+  expect(feedback?.wouldMeetAgain).not.toBe(true);
+  expect(post?.worthwhile).not.toBe(true);
+});
+
+test("feedback that never clicked at first and then danced all night records neutral sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("We never clicked at first, then we danced all night");
+  expect(feedback?.sentiment).toBe("neutral");
+  expect(feedback?.wouldMeetAgain).not.toBe(true);
+  expect(post?.worthwhile).not.toBe(true);
+});
+
+test("feedback that hardly connected at first and ended smitten records neutral sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("Hardly connected at first, by the end I was smitten");
+  expect(feedback?.sentiment).toBe("neutral");
+  expect(feedback?.wouldMeetAgain).not.toBe(true);
+  expect(post?.worthwhile).not.toBe(true);
+});
+
+test("feedback that never really clicked at first and counts the days records neutral sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("Never really clicked at first, now I'm counting the days till Friday");
+  expect(feedback?.sentiment).toBe("neutral");
+  expect(feedback?.wouldMeetAgain).not.toBe(true);
+  expect(post?.worthwhile).not.toBe(true);
+});
+
+test("feedback that never clicked at first and swapped numbers records neutral sentiment and no worthwhile", async () => {
+  const { feedback, post } = await feedbackWorld("We never clicked at first, then we swapped numbers and texted all night");
+  expect(feedback?.sentiment).toBe("neutral");
+  expect(feedback?.wouldMeetAgain).not.toBe(true);
+  expect(post?.worthwhile).not.toBe(true);
+});
+
 test("feedback that hardly connected and calls her dull records negative sentiment and no worthwhile", async () => {
   const { feedback, post } = await feedbackWorld("Hardly connected with her, she was dull");
   expect(feedback?.sentiment).toBe("negative");
