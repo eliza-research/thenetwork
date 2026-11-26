@@ -262,7 +262,7 @@ module turn_consent {
           // An older START than the last STOP: handled, no consent, no reply.
           { wd: wd, gh: gh, wk: { ...wk, phase: 9 } }
         } else {
-          // turn.consent, membership paused -> active, member opted in (memberUnit START), endPause, welcome back.
+          // turn.consent, membership paused -> active, member opted in (memberUnit START), welcome back. A pause stays until the member resumes it.
           // Only the routed app (SD-024, skipped: founder decision).
           { wd: { ...wd, member: if (wd.member.get(a) == "paused") wd.member.set(a, "active") else wd.member, optOut: wd.optOut.set(a, false) },
             gh: gh,

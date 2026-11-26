@@ -8,8 +8,6 @@ import { DryRunAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
 
-// spec/participationWindow.md, "A window starts inclusively and ends exclusively";
-// spec/carrierConsent.md: START restores the app's text permission only.
 test.skipIf(!pgAvailable)("START restores texts without ending a scheduled pause", async () => {
   const url = await migratedDb("start_participation_window");
   const sql = new SQL(url);
@@ -48,8 +46,14 @@ test.skipIf(!pgAvailable)("START restores texts without ending a scheduled pause
     expect((await member()).participation_window).toMatchObject({ state: "paused", from, until });
     expect(await stateAt(Date.parse(from))).toBe("paused");
     expect(await stateAt(Date.parse(until))).toBe("normal");
+
+    expect((await say("Pause matching")).status).toBe(200);
+    expect((await member()).participation_state).toBe("paused");
+    expect((await say("START")).status).toBe(200);
+    expect((await member()).participation_state).toBe("paused");
+    expect(await stateAt(clock.now())).toBe("paused");
   } finally {
-    await service.stop().catch(() => {});
+    await service.close().catch(() => {});
     await sql.close().catch(() => {});
     await dropDb(url);
   }
