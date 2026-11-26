@@ -326,7 +326,18 @@ export class PhotoRelayService {
   }
 
   async slots(personId: string, app: AppId, tx?: SQL): Promise<PhotoSlot[]> {
+    return this.photoSlots(personId, app, await this.o.photos.rows(personId, app, tx), tx);
+  }
+
+  async lockCheckSlots(tx: SQL, personId: string, app: AppId, expectedSetSha: string): Promise<PhotoSlot[] | undefined> {
+    const [owner] = await tx`select id from platform.people where id = ${personId}::uuid and deleted_at is null for update`;
+    if (!owner) return;
     const rows = await this.o.photos.rows(personId, app, tx);
+    if (!photoCheckSetMatches(expectedSetSha, photoSetSha(rows))) return;
+    return this.photoSlots(personId, app, rows, tx);
+  }
+
+  private async photoSlots(personId: string, app: AppId, rows: PhotoRow[], tx?: SQL): Promise<PhotoSlot[]> {
     const shared = (await this.sharedPhotos(await this.senderOffers(personId, app, tx), tx)).filter(s => s.state !== "taken_back");
     return rows.map((r, i) => ({
       n: i + 1, id: r.id, addedAt: r.createdAt, batch: r.batchId ?? r.id, label: r.label,

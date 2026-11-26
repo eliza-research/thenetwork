@@ -1140,8 +1140,6 @@ export class NetworkService implements RuntimeHost {
 
   async updatesFor(personId: string, app: AppId, surface: Surface, token: string | undefined, passesLeakGate: (summary: string) => boolean): Promise<Array<{ summary: string; at: string; kind: string }>> {
     if (!this.notify) return [];
-    const age = effectiveAgeAt(await this.people.ageStanding(personId, null), this.clock.now());
-    if (age != null && isMinor(age) && !teenFriendApp(app)) return [];
     const items = await this.notify.readUpdates(personId, surface, this.clock.now(), token, {
       app,
       ...this.gatedUpdateRead(items => this.sql.begin(async tx => {

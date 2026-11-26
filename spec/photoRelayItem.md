@@ -394,7 +394,7 @@ pure def lawWrongPhotoPagePurposeIsRefused(requestedPurpose: str, storedPurpose:
 
 ### The check page serves only photos from its proposal
 
-The check page reads the photo number from the same ordered set that the proposal showed. Before it reads the numbered photo, the service compares the current set hash with the hash in the draft. A changed set cannot make a number show another photo. The service checks the proposal revision again after it reads the bytes.
+The check page reads the photo number from the same ordered set that the proposal showed. Before it reads the numbered photo, the service compares the current set hash with the hash in the draft. A changed set cannot make a number show another photo. The service checks the proposal revision again after it reads the bytes. A pick compares the same set under the photo owner lock and updates only the current draft revision. A change to that set leaves the draft untouched.
 
 ```quint
 pure def photoCheckSetMatches(proposalSetHash: str, currentSetHash: str): bool =

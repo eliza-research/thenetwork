@@ -240,7 +240,7 @@ export const VERIFIER = "e2e-verifier-" + "A1b2C3d4e5F6g7H8i9J0k-._~".repeat(2);
 export const REDIRECT = "https://client.example/callback";
 
 /** An MCP client's OAuth dance on one site, through the site router: register, authorize, sign in, approve, token. */
-export async function connectMcp(st: Stack, app: AppId, phone: string, o: { browser?: Browser; path?: "/mcp" | "/mcp/openai"; redirect?: string; scope?: string } = {}) {
+export async function connectMcp(st: Stack, app: AppId, phone: string, o: { browser?: Browser; path?: string; redirect?: string; scope?: string } = {}) {
   const b = o.browser ?? new Browser();
   const redirect = o.redirect ?? REDIRECT;
   const reg = await st.site(app, "/oauth/register", { json: { client_name: "E2E Assistant", redirect_uris: [redirect], token_endpoint_auth_method: "none" } });

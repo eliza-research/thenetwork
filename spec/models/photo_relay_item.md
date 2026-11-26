@@ -392,6 +392,13 @@ module photo_relay_item {
     w' = w, now' = now, g' = g,
   }
 
+  action pickOnCheckPage(proposed: Set[int], boundBrowser: bool, currentRevision: bool): bool = all {
+    boundBrowser, currentRevision, w.draft.live, now < w.draft.shownAt + DRAFT_TTL,
+    proposed.size() >= 1, proposed.size() <= 3, proposed.subseteq(w.draft.snapshot),
+    photoCheckSetMatches(w.draft.snapshot, w.photos),
+    w' = { ...w, draft: { ...w.draft, proposed: proposed } }, now' = now, g' = g,
+  }
+
   // The view page open on a browser that the link is not yet bound to (photoViewAllowed): binds the link to it.
   // The offer stays ready; no window opens.
   action openView: bool = {
@@ -634,6 +641,11 @@ module photo_relay_item {
     init.then(propose(Set(1))).then(readCheckImage(1, true, true)).then(photoDeleted(1))
       .expect(lawChangedPhotoSetCannotSupplyCheckImage(w.draft.snapshot, w.photos))
       .then(readCheckImage(1, true, true)).fail()
+
+  run photosChangedCheckPickTest =
+    init.then(propose(Set(1))).then(pickOnCheckPage(Set(2), true, true))
+      .expect(w.draft.proposed == Set(2))
+      .then(photoDeleted(2)).then(pickOnCheckPage(Set(1), true, true)).fail()
 
   run staleRevisionCheckImageTest = init.then(propose(Set(1))).then(readCheckImage(1, true, false)).fail()
 

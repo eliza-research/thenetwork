@@ -594,9 +594,9 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         expect((await webJoin(pilot, "slop", phone, { age: 30, browser })).res.status).toBe(200);
         const person = (await pilot.svc.publicApi.accounts.personFor(phone))!;
         const member = (await db`select id from network.members where person_id=${person.id} and app_id='slop'`)[0]!;
-        const c = await connectMcp(pilot, "slop", phone, { browser, redirect: "https://chatgpt.com/connector_platform_oauth_redirect" });
+        const c = await connectMcp(pilot, "ntwrk", phone, { browser, path: "/mcp/slop/openai", redirect: "https://chatgpt.com/connector_platform_oauth_redirect" });
         expect(c.token?.access_token, c.html).toEqual(expect.any(String));
-        const submit = (about: string) => rpc(pilot, "slop", "/mcp", "tools/call", { name: "submit_profile", arguments: { app: "slop", about } }, c.token!.access_token);
+        const submit = (about: string) => rpc(pilot, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "submit_profile", arguments: { app: "slop", about } }, c.token!.access_token);
         for (const about of ["My phone number is 11211 12345.", "My phone is 41555 50102.", "My verification code is 12 34 56.", "Please keep this private: 41555 50102.", "Please keep this private: 12 34 56.", "Please keep this private: 12-34 56.", "Reach me at cell2125550142."]) {
           expect(toolData(await submit(about)).error).toMatch(/phone numbers, codes and email/);
           expect((await db`select id from network.messages where body=${about}`).length).toBe(0);
@@ -614,16 +614,16 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         }
         expect((await db`select id from network.members where person_id=${person.id} and app_id='slop'`)[0]!.id).toBe(member.id);
         expect((await pilot.svc.publicApi.accounts.personFor(phone))?.id).toBe(person.id);
-        expect(toolData(await rpc(pilot, "slop", "/mcp", "tools/call", { name: "check_status", arguments: { app: "slop" } }, c.token!.access_token))).toMatchObject({ app: "slop", status: "active" });
+        expect(toolData(await rpc(pilot, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "check_status", arguments: { app: "slop" } }, c.token!.access_token))).toMatchObject({ app: "slop", status: "active" });
       } finally { await db.close(); await pilot.close(); }
     }, T);
 
-    test("the slop.date ChatGPT connector is open to every person: registration needs no setting", async () => {
+    test("the slop.date ChatGPT connector is open to every person at ntwrk.party/mcp/slop/openai; slop.date refuses ChatGPT registration", async () => {
       const redirect = "https://chatgpt.com/connector_platform_oauth_redirect";
-      const registered = await st.site("slop", "/oauth/register", { json: { redirect_uris: [redirect], token_endpoint_auth_method: "none" } });
+      const registered = await st.site("ntwrk", "/oauth/register", { json: { redirect_uris: [redirect], token_endpoint_auth_method: "none" } });
       expect(registered.status).toBe(201);
       expect(((await registered.json()) as { redirect_uris: string[] }).redirect_uris).toEqual([redirect]);
-      for (const uris of [["https://platform.openai.com/callback"], [redirect, "https://client.example/callback"]]) {
+      for (const uris of [[redirect], ["https://platform.openai.com/callback"], [redirect, "https://client.example/callback"]]) {
         expect((await st.site("slop", "/oauth/register", { json: { redirect_uris: uris, token_endpoint_auth_method: "none" } })).status).toBe(400);
       }
     }, T);
@@ -640,20 +640,30 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
           if (kind === "review") await db`update platform.memberships set review='recycled_number' where person_id=${person.id} and app_id='slop'`;
           if (kind === "phone-hold") await pilot.svc.people.setPhoneHold(phone, "recycled_number", pilot.clock.now());
           if (kind.endsWith("ban")) await pilot.svc.people.ban({ id: crypto.randomUUID(), scope: kind === "phone-ban" ? "phone" : "person", personId: kind === "person-ban" ? person.id : null, phoneHash: kind === "phone-ban" ? pilot.svc.publicApi.accounts.phoneHash(phone) : null, reason: "owned fixture", reportId: null, bannedBy: "fixture", at: pilot.clock.now() });
-          const connection = await connectMcp(pilot, "slop", phone, { browser, redirect });
+          const connection = await connectMcp(pilot, "ntwrk", phone, { browser, path: "/mcp/slop/openai", redirect });
           if (kind === "phone-hold" || kind.endsWith("ban")) { expect(connection.token?.access_token, kind).toBeUndefined(); continue; }
-          expect(connection.token?.access_token, `${kind} ${connection.html}`).toEqual(expect.any(String));
+          let accessToken = connection.token?.access_token as string | undefined;
+          if (kind === "nonmember" && !accessToken && connection.html.includes('action="/oauth/authorize/signup"')) {
+            const rid = /name="rid" value="([^"]+)"/.exec(connection.html)![1]!;
+            const opened = await pilot.site("ntwrk", "/oauth/authorize/signup", { browser, form: { rid, decision: "open" } });
+            expect(opened.status).toBe(200);
+            const approved = await pilot.site("ntwrk", "/oauth/authorize/consent", { browser, form: { rid, decision: "approve" } });
+            const code = new URL(approved.headers.get("location")!).searchParams.get("code")!;
+            const tok = await pilot.site("ntwrk", "/oauth/token", { form: { grant_type: "authorization_code", code, redirect_uri: redirect, client_id: connection.client.client_id, code_verifier: VERIFIER, resource: `${pilot.sites.ntwrk.origin}/mcp/slop/openai` } });
+            accessToken = ((await tok.json()) as { access_token?: string }).access_token;
+          }
+          expect(accessToken, `${kind} ${connection.html}`).toEqual(expect.any(String));
           const expected = kind === "nonmember" ? "not_joined" : "on_hold";
-          expect(toolData(await rpc(pilot, "slop", "/mcp", "tools/call", { name: "check_status", arguments: {} }, connection.token!.access_token)), kind).toMatchObject({ app: "slop", status: expected });
+          expect(toolData(await rpc(pilot, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "check_status", arguments: {} }, accessToken)), kind).toMatchObject({ app: "slop", status: expected });
           const about = `A profile from a person whose slop.date status is ${expected}.`;
-          expect(toolData(await rpc(pilot, "slop", "/mcp", "tools/call", { name: "submit_profile", arguments: { about } }, connection.token!.access_token)), kind).toMatchObject({ app: "slop", submitted: false, status: expected });
+          expect(toolData(await rpc(pilot, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "submit_profile", arguments: { about } }, accessToken)), kind).toMatchObject({ app: "slop", submitted: false, status: expected });
           expect((await db`select id from network.messages where body=${about}`).length, kind).toBe(0);
           if (kind === "nonmember") expect(await pilot.svc.people.getMembership(person.id, "slop")).toBeUndefined();
         }
       } finally { await db.close(); await pilot.close(); }
     }, T);
 
-    test("the slop.date ChatGPT connector has the full slop.date tools and revocable grants; the OpenAI surface and an OpenAI CIMD client still never reach slop.date", async () => {
+    test("the slop.date ChatGPT connector serves /mcp/slop/openai with revocable grants; photo tools stay on the full surface and the public OpenAI surface still never names slop.date", async () => {
       const pilot = await startStack();
       const db = new SQL({ url: pilot.url, max: 2 });
       try {
@@ -661,26 +671,29 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         expect((await webJoin(pilot, "slop", phone, { age: 30, browser })).res.status).toBe(200);
         const person = (await pilot.svc.publicApi.accounts.personFor(phone))!;
         const redirect = "https://chatgpt.com/connector_platform_oauth_redirect";
-        const c = await connectMcp(pilot, "slop", phone, { browser, redirect });
+        const c = await connectMcp(pilot, "ntwrk", phone, { browser, path: "/mcp/slop/openai", redirect });
         expect(c.token?.access_token, c.html).toEqual(expect.any(String));
         const token = c.token!.access_token as string;
         const other = await connectMcp(pilot, "slop", phone, { browser });
         expect(other.token?.access_token, other.html).toEqual(expect.any(String));
-        expect(new URL(c.location!).searchParams.get("iss")).toBe(pilot.sites.slop.origin);
-        const status = () => rpc(pilot, "slop", "/mcp", "tools/call", { name: "check_status", arguments: {} }, token);
+        expect(new URL(c.location!).searchParams.get("iss")).toBe(pilot.sites.ntwrk.origin);
+        const status = () => rpc(pilot, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "check_status", arguments: {} }, token);
         expect(toolData(await status())).toMatchObject({ app: "slop", status: "active" });
         const about = "I'm Rae, 30, in Williamsburg. I like climbing and live music and seek a long-term relationship.";
         const member = (await db`select id from network.members where person_id=${person.id} and app_id='slop'`)[0]!;
         const agentProfiles = async () => (await db`select id from network.messages where member_id=${member.id} and direction='inbound' and type='agent_profile'`).length;
         const profilesBefore = await agentProfiles();
-        expect(toolData(await rpc(pilot, "slop", "/mcp", "tools/call", { name: "submit_profile", arguments: { about } }, token)).submitted).toBe(true);
+        expect(toolData(await rpc(pilot, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "submit_profile", arguments: { about } }, token)).submitted).toBe(true);
         expect(await agentProfiles()).toBe(profilesBefore + 1);
         expect((await db`select id from network.messages where member_id=${member.id} and body=${about}`).length).toBe(0);
-        const names = async (bearer?: string) => ((await rpc(pilot, "slop", "/mcp", "tools/list", {}, bearer)).body!.result.tools as { name: string }[]).map(t => t.name);
-        const otherTools = await names(other.token!.access_token as string);
-        expect(otherTools).toEqual(expect.arrayContaining(["app_info", "start_signup", "check_status", "submit_profile", "get_updates", "read_profile", "list_looking_for", "my_photos", "photo_request"]));
-        expect(await names(token)).toEqual(otherTools);
-        expect(await names()).toEqual(otherTools);
+        const names = async (app: AppId, path: string, bearer?: string) => ((await rpc(pilot, app, path, "tools/list", {}, bearer)).body!.result.tools as { name: string }[]).map(t => t.name);
+        const fullTools = await names("slop", "/mcp", other.token!.access_token as string);
+        expect(fullTools).toEqual(expect.arrayContaining(["app_info", "start_signup", "check_status", "submit_profile", "get_updates", "read_profile", "list_looking_for", "my_photos", "photo_request"]));
+        const openAiTools = await names("ntwrk", "/mcp/slop/openai", token);
+        expect(openAiTools).toEqual(expect.arrayContaining(["app_info", "start_signup", "check_status", "submit_profile", "get_updates", "read_profile", "list_looking_for"]));
+        expect(openAiTools).not.toContain("my_photos");
+        expect(openAiTools).not.toContain("photo_request");
+        expect(await names("ntwrk", "/mcp/slop/openai")).toEqual(openAiTools);
         const discover = (app: AppId, path: string) => rpc(pilot, app, path, "server/discover");
         const initialize = async (app: AppId, path: string) => {
           const res = await pilot.site(app, path, { json: {
@@ -692,6 +705,9 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
           const full = await ask("slop", "/mcp");
           expect(full.res.status).toBe(200);
           expect(full.body!.result.instructions).toMatch(/my_photos.*photo_request/);
+          const slopOpenAi = await ask("ntwrk", "/mcp/slop/openai");
+          expect(slopOpenAi.res.status).toBe(200);
+          expect(slopOpenAi.body!.result.instructions).not.toMatch(/my_photos|photo_request/);
           const publicSurface = await ask("ntwrk", "/mcp/openai");
           expect(publicSurface.res.status).toBe(200);
           expect(publicSurface.body!.result.instructions).not.toMatch(/slop|my_photos|photo_request/i);
@@ -699,8 +715,10 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
           expect(otherHost.res.status).toBe(200);
           expect(otherHost.body!.result.instructions).not.toMatch(/my_photos|photo_request/);
         }
-        expect((await rpc(pilot, "slop", "/mcp", "tools/call", { name: "get_updates", arguments: {} }, token)).body!.result.isError).not.toBe(true);
-        for (const app of ["ntwrk", "friends"] as const) expect((await rpc(pilot, app, "/mcp", "tools/call", { name: "check_status", arguments: {} }, token)).res.status).toBe(401);
+        expect((await rpc(pilot, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "get_updates", arguments: {} }, token)).body!.result.isError).not.toBe(true);
+        for (const [app, path] of [["ntwrk", "/mcp"], ["ntwrk", "/mcp/slop"], ["friends", "/mcp"], ["slop", "/mcp"]] as const) {
+          expect((await rpc(pilot, app, path, "tools/call", { name: "check_status", arguments: {} }, token)).res.status, `${app}${path}`).toBe(401);
+        }
         expect((await rpc(pilot, "slop", "/mcp/openai", "tools/list", {}, token)).res.status).toBe(404);
         expect((await pilot.site("slop", "/.well-known/oauth-protected-resource/mcp/openai")).status).toBe(404);
         expect(JSON.stringify(toolData(await rpc(pilot, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: {} })))).not.toMatch(/slop|dating/i);
@@ -708,21 +726,20 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         const slopOpenAiMeta = await pilot.site("ntwrk", "/.well-known/oauth-protected-resource/mcp/slop/openai");
         expect(slopOpenAiMeta.status).toBe(200);
         expect(((await slopOpenAiMeta.json()) as { resource: string }).resource).toBe(`${pilot.sites.ntwrk.origin}/mcp/slop/openai`);
-        expect((await rpc(pilot, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "check_status", arguments: {} }, token)).res.status).toBe(401);
+        expect((await rpc(pilot, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "check_status", arguments: {} }, other.token!.access_token)).res.status).toBe(401);
         const client = (await pilot.mcp.store.getClient(c.client.client_id))!;
-        const cimd = { ...client, id: "https://chatgpt.com/oauth/client.json", kind: "cimd" as const, redirectUris: ["https://client.example/callback"] };
+        const cimd = { ...client, app: "slop" as const, id: "https://chatgpt.com/oauth/client.json", kind: "cimd" as const, surface: "full" as const, redirectUris: ["https://client.example/callback"] };
         await pilot.mcp.store.putClient(cimd);
-        const query = (clientId = c.client.client_id, uri = redirect) => new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: uri, code_challenge: pkceS256(VERIFIER), code_challenge_method: "S256", resource: `${pilot.sites.slop.origin}/mcp` });
-        const wrongResource = query(); wrongResource.set("resource", `${pilot.sites.slop.origin}/mcp/openai`);
-        expect((await pilot.site("slop", `/oauth/authorize?${wrongResource}`, { browser })).status).toBe(400);
-        expect((await pilot.site("slop", `/oauth/authorize?${query(cimd.id, cimd.redirectUris[0]!)}`, { browser })).status).toBe(403);
-        const approvalPage = await pilot.site("slop", `/oauth/authorize?${query()}`, { browser });
+        const query = (clientId = c.client.client_id, uri = redirect, resource = `${pilot.sites.ntwrk.origin}/mcp/slop/openai`) => new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: uri, code_challenge: pkceS256(VERIFIER), code_challenge_method: "S256", resource });
+        expect((await pilot.site("ntwrk", `/oauth/authorize?${query(c.client.client_id, redirect, `${pilot.sites.ntwrk.origin}/mcp/slop`)}`, { browser })).status).toBe(400);
+        expect((await pilot.site("slop", `/oauth/authorize?${query(cimd.id, cimd.redirectUris[0]!, `${pilot.sites.slop.origin}/mcp`)}`, { browser })).status).toBe(403);
+        const approvalPage = await pilot.site("ntwrk", `/oauth/authorize?${query()}`, { browser });
         expect(approvalPage.status).toBe(200);
         expect(approvalPage.headers.get("location")).toBeNull();
         expect(await approvalPage.text()).toContain('action="/oauth/authorize/consent"');
-        expect((await pilot.site("slop", "/oauth/revoke", { form: { token: c.token!.refresh_token, client_id: c.client.client_id } })).status).toBe(200);
+        expect((await pilot.site("ntwrk", "/oauth/revoke", { form: { token: c.token!.refresh_token, client_id: c.client.client_id } })).status).toBe(200);
         expect((await status()).res.status).toBe(401);
-        expect((await pilot.site("slop", "/oauth/token", { form: { grant_type: "refresh_token", refresh_token: c.token!.refresh_token, client_id: c.client.client_id } })).status).toBe(400);
+        expect((await pilot.site("ntwrk", "/oauth/token", { form: { grant_type: "refresh_token", refresh_token: c.token!.refresh_token, client_id: c.client.client_id } })).status).toBe(400);
         expect((await rpc(pilot, "slop", "/mcp", "tools/call", { name: "check_status", arguments: {} }, other.token!.access_token)).res.status).toBe(200);
       } finally { await db.close(); await pilot.close(); }
     }, T);
@@ -731,25 +748,26 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       const pilot = await startStack();
       try {
         const redirect = "https://chatgpt.com/connector_platform_oauth_redirect";
+        const resource = `${pilot.sites.ntwrk.origin}/mcp/slop/openai`;
         const phone = newPhone(), browser = new Browser();
         expect((await webJoin(pilot, "slop", phone, { age: 30, browser })).res.status).toBe(200);
         const first = (await pilot.svc.publicApi.accounts.personFor(phone))!;
         const secondPhone = newPhone(), secondBrowser = new Browser();
         expect((await webJoin(pilot, "slop", secondPhone, { age: 31, browser: secondBrowser })).res.status).toBe(200);
-        const c = await connectMcp(pilot, "slop", phone, { browser, redirect });
+        const c = await connectMcp(pilot, "ntwrk", phone, { browser, path: "/mcp/slop/openai", redirect });
         expect(c.token?.access_token, c.html).toEqual(expect.any(String));
-        const q = new URLSearchParams({ response_type: "code", client_id: c.client.client_id, redirect_uri: redirect, code_challenge: pkceS256(VERIFIER), code_challenge_method: "S256" });
-        const approvalPage = await pilot.site("slop", `/oauth/authorize?${q}`, { browser });
+        const q = new URLSearchParams({ response_type: "code", client_id: c.client.client_id, redirect_uri: redirect, code_challenge: pkceS256(VERIFIER), code_challenge_method: "S256", resource });
+        const approvalPage = await pilot.site("ntwrk", `/oauth/authorize?${q}`, { browser });
         expect(approvalPage.status).toBe(200);
         expect(approvalPage.headers.get("location")).toBeNull();
         const approvalHtml = await approvalPage.text();
         expect(approvalHtml).toContain('action="/oauth/authorize/consent"');
         const rid = /name="rid" value="([^"]+)"/.exec(approvalHtml)![1]!;
-        const authorized = await pilot.site("slop", "/oauth/authorize/consent", { browser, form: { rid, decision: "approve" } });
+        const authorized = await pilot.site("ntwrk", "/oauth/authorize/consent", { browser, form: { rid, decision: "approve" } });
         expect(authorized.status).toBe(303);
         const code = new URL(authorized.headers.get("location")!).searchParams.get("code")!;
-        await signIn(pilot, "slop", secondPhone, browser);
-        const tokenResponse = await pilot.site("slop", "/oauth/token", { form: { grant_type: "authorization_code", code, client_id: c.client.client_id, redirect_uri: redirect, code_verifier: VERIFIER } });
+        await signIn(pilot, "ntwrk", secondPhone, browser);
+        const tokenResponse = await pilot.site("ntwrk", "/oauth/token", { form: { grant_type: "authorization_code", code, client_id: c.client.client_id, redirect_uri: redirect, code_verifier: VERIFIER, resource } });
         expect(tokenResponse.status).toBe(200);
         const token = (await tokenResponse.json() as {access_token: string}).access_token;
         const savedToken = await pilot.mcp.store.getToken(sha256hex(token));
@@ -766,17 +784,18 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
           expect((await webJoin(pilot, "slop", phone, { age: 30, browser })).res.status).toBe(200);
           const person = (await pilot.svc.publicApi.accounts.personFor(phone))!;
           const redirect = "https://chatgpt.com/connector_platform_oauth_redirect";
-          const chatGpt = await connectMcp(pilot, "slop", phone, { browser, redirect });
+          const resource = `${pilot.sites.ntwrk.origin}/mcp/slop/openai`;
+          const chatGpt = await connectMcp(pilot, "ntwrk", phone, { browser, path: "/mcp/slop/openai", redirect });
           const other = await connectMcp(pilot, "slop", phone, { browser });
           expect(chatGpt.token?.access_token, kind).toEqual(expect.any(String));
           expect(other.token?.access_token, kind).toEqual(expect.any(String));
-          const pendingQuery = new URLSearchParams({ response_type: "code", client_id: chatGpt.client.client_id, redirect_uri: redirect, code_challenge: pkceS256(VERIFIER), code_challenge_method: "S256" });
-          const pending = await pilot.site("slop", `/oauth/authorize?${pendingQuery}`, { browser });
+          const pendingQuery = new URLSearchParams({ response_type: "code", client_id: chatGpt.client.client_id, redirect_uri: redirect, code_challenge: pkceS256(VERIFIER), code_challenge_method: "S256", resource });
+          const pending = await pilot.site("ntwrk", `/oauth/authorize?${pendingQuery}`, { browser });
           expect(pending.status, kind).toBe(200);
           const pendingHtml = await pending.text();
           expect(pendingHtml).toContain('action="/oauth/authorize/consent"');
           const pendingRid = /name="rid" value="([^"]+)"/.exec(pendingHtml)![1]!;
-          const approved = await pilot.site("slop", "/oauth/authorize/consent", { browser, form: { rid: pendingRid, decision: "approve" } });
+          const approved = await pilot.site("ntwrk", "/oauth/authorize/consent", { browser, form: { rid: pendingRid, decision: "approve" } });
           expect(approved.status, kind).toBe(303);
           const pendingCode = new URL(approved.headers.get("location")!).searchParams.get("code")!;
           if (kind === "age") await pilot.svc.people.recordAgeReading(null, pilot.svc.publicApi.accounts.phoneHash(phone), { kind: "age", age: 17 }, pilot.clock.now());
@@ -790,12 +809,12 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
           const refused = kind !== "age";
           for (const name of ["check_status", "submit_profile"]) {
             const about = (client: string) => `A ${client} profile after the ${kind} change.`;
-            const answer = async (client: string, access: string) => {
-              const r = await rpc(pilot, "slop", "/mcp", "tools/call", { name, arguments: name === "submit_profile" ? { about: about(client) } : {} }, access);
+            const answer = async (client: string, app: AppId, path: string, access: string) => {
+              const r = await rpc(pilot, app, path, "tools/call", { name, arguments: name === "submit_profile" ? { about: about(client) } : {} }, access);
               return { status: r.res.status, stored: (await db`select id from network.messages where body=${about(client)}`).length, data: r.res.status === 200 ? toolData(r) : null };
             };
-            const chatGptAnswer = await answer("chatgpt", chatGpt.token!.access_token);
-            const otherAnswer = await answer("other", other.token!.access_token);
+            const chatGptAnswer = await answer("chatgpt", "ntwrk", "/mcp/slop/openai", chatGpt.token!.access_token);
+            const otherAnswer = await answer("other", "slop", "/mcp", other.token!.access_token);
             expect(chatGptAnswer.status, `${kind} ${name}`).toBe(refused ? 401 : 200);
             if (refused) expect(chatGptAnswer.stored, `${kind} ${name}`).toBe(0);
             if (!refused && name === "check_status") {
@@ -804,11 +823,11 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
             }
             expect(otherAnswer, `${kind} ${name}`).toEqual(chatGptAnswer);
           }
-          const refresh = async (connection: typeof chatGpt) => (await pilot.site("slop", "/oauth/token", { form: { grant_type: "refresh_token", client_id: connection.client.client_id, refresh_token: connection.token!.refresh_token } })).status;
-          const chatGptRefresh = await refresh(chatGpt);
+          const refresh = async (app: AppId, connection: typeof chatGpt) => (await pilot.site(app, "/oauth/token", { form: { grant_type: "refresh_token", client_id: connection.client.client_id, refresh_token: connection.token!.refresh_token } })).status;
+          const chatGptRefresh = await refresh("ntwrk", chatGpt);
           expect(chatGptRefresh, kind).toBe(refused ? 400 : 200);
-          expect(await refresh(other), kind).toBe(chatGptRefresh);
-          const exchange = await pilot.site("slop", "/oauth/token", { form: { grant_type: "authorization_code", code: pendingCode, client_id: chatGpt.client.client_id, redirect_uri: redirect, code_verifier: VERIFIER } });
+          expect(await refresh("slop", other), kind).toBe(chatGptRefresh);
+          const exchange = await pilot.site("ntwrk", "/oauth/token", { form: { grant_type: "authorization_code", code: pendingCode, client_id: chatGpt.client.client_id, redirect_uri: redirect, code_verifier: VERIFIER, resource } });
           expect(exchange.status, kind).toBe(refused ? 400 : 200);
         }
       } finally { await db.close(); await pilot.close(); }
@@ -816,8 +835,8 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
 
     test("MCP_PRIVATE_OPENAI_APPS is dev-only, the slop.date ChatGPT connector does not depend on it, and the public plugin stays closed", async () => {
       const redirect = "https://chatgpt.com/connector_platform_oauth_redirect";
-      const registered = await st.site("slop", "/oauth/register", { json: { redirect_uris: [redirect], token_endpoint_auth_method: "none" } });
-      expect(registered.status).toBe(201);
+      expect((await st.site("slop", "/oauth/register", { json: { redirect_uris: [redirect], token_endpoint_auth_method: "none" } })).status).toBe(400);
+      expect((await st.site("ntwrk", "/oauth/register", { json: { redirect_uris: [redirect], token_endpoint_auth_method: "none" } })).status).toBe(201);
       for (const env of [
         { PLATFORM_ENV: "production" }, { PLATFORM_ENV: "staging" }, { PLATFORM_ENV: "unknown" },
         { PLATFORM_ENV: "dev", NODE_ENV: "production" },
@@ -836,43 +855,42 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         const phone = newPhone();
         const browser = new Browser();
         expect((await webJoin(pilot, "slop", phone, { age: 30, browser })).res.status).toBe(200);
-        const connection = await connectMcp(pilot, "slop", phone, { browser, redirect });
+        const resource = `${pilot.sites.ntwrk.origin}/mcp/slop/openai`;
+        const connection = await connectMcp(pilot, "ntwrk", phone, { browser, path: "/mcp/slop/openai", redirect });
         expect(connection.token?.access_token, connection.html).toEqual(expect.any(String));
-        expect(new URL(connection.location!).searchParams.get("iss")).toBe(pilot.sites.slop.origin);
+        expect(new URL(connection.location!).searchParams.get("iss")).toBe(pilot.sites.ntwrk.origin);
         const member = (await db`select m.id from network.members m join platform.phone_identities ph on ph.person_id = m.person_id where m.app_id = 'slop' and ph.e164 = ${phone}`)[0]!;
         const about = "I'm Rae, 30, in Williamsburg, looking for a long-term relationship. I like climbing and live music. Free weekend afternoons.";
-        expect(toolData(await rpc(pilot, "slop", "/mcp", "tools/call", { name: "submit_profile", arguments: { about } }, connection.token!.access_token)).submitted).toBe(true);
+        expect(toolData(await rpc(pilot, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "submit_profile", arguments: { about } }, connection.token!.access_token)).submitted).toBe(true);
         expect((await db`select member_id from network.messages where member_id = ${member.id} and direction = 'inbound' and type = 'agent_profile' and body = 'Private profile from the member''s agent.'`).length).toBe(1);
         expect((await db`select member_id from network.messages where body = ${about}`).length).toBe(0);
-        expect(toolData(await rpc(pilot, "slop", "/mcp", "tools/call", { name: "check_status", arguments: {} }, connection.token!.access_token))).toMatchObject({ app: "slop", status: "active" });
+        expect(toolData(await rpc(pilot, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "check_status", arguments: {} }, connection.token!.access_token))).toMatchObject({ app: "slop", status: "active" });
         // A handler restart uses the SAME Postgres clients, grants and tokens; off suspends, not revokes.
-        const authorizeQuery = new URLSearchParams({ response_type: "code", client_id: connection.client.client_id, redirect_uri: redirect, code_challenge: pkceS256(VERIFIER), code_challenge_method: "S256", resource: `${pilot.sites.slop.origin}/mcp` });
-        // A pre-existing CIMD client cannot inherit the DCR pilot, even with a non-OpenAI redirect.
+        const authorizeQuery = new URLSearchParams({ response_type: "code", client_id: connection.client.client_id, redirect_uri: redirect, code_challenge: pkceS256(VERIFIER), code_challenge_method: "S256", resource });
+        // A pre-existing CIMD client cannot inherit the slop.date host, even with a non-OpenAI redirect.
         const dcrClient = (await pilot.mcp.store.getClient(connection.client.client_id))!;
         const cimdId = "https://chatgpt.com/oauth/client.json";
-        await pilot.mcp.store.putClient({ ...dcrClient, id: cimdId, kind: "cimd", surface: "full", redirectUris: ["https://client.example/callback"] });
-        const cimdQuery = new URLSearchParams(authorizeQuery);
-        cimdQuery.set("client_id", cimdId);
-        cimdQuery.set("redirect_uri", "https://client.example/callback");
+        await pilot.mcp.store.putClient({ ...dcrClient, app: "slop", id: cimdId, kind: "cimd", surface: "full", redirectUris: ["https://client.example/callback"] });
+        const cimdQuery = new URLSearchParams({ response_type: "code", client_id: cimdId, redirect_uri: "https://client.example/callback", code_challenge: pkceS256(VERIFIER), code_challenge_method: "S256", resource: `${pilot.sites.slop.origin}/mcp` });
         expect((await pilot.site("slop", `/oauth/authorize?${cimdQuery}`, { browser })).status).toBe(403);
-        expect((await pilot.site("slop", "/oauth/token", { form: { grant_type: "refresh_token", refresh_token: connection.token!.refresh_token, client_id: cimdId } })).status).toBe(401);
-        const pending = await pilot.site("slop", `/oauth/authorize?${authorizeQuery}`, { browser });
+        expect((await pilot.site("ntwrk", "/oauth/token", { form: { grant_type: "refresh_token", refresh_token: connection.token!.refresh_token, client_id: cimdId } })).status).toBe(401);
+        const pending = await pilot.site("ntwrk", `/oauth/authorize?${authorizeQuery}`, { browser });
         expect(pending.status).toBe(200);
         expect(pending.headers.get("location")).toBeNull();
         const approvalHtml = await pending.text();
         expect(approvalHtml).toContain('action="/oauth/authorize/consent"');
         const rid = /name="rid" value="([^"]+)"/.exec(approvalHtml)![1]!;
-        const approved = await pilot.site("slop", "/oauth/authorize/consent", { browser, form: { rid, decision: "approve" } });
+        const approved = await pilot.site("ntwrk", "/oauth/authorize/consent", { browser, form: { rid, decision: "approve" } });
         expect(approved.status).toBe(303);
         const pendingCode = new URL(approved.headers.get("location")!).searchParams.get("code")!;
         expect(pendingCode).toEqual(expect.any(String));
-        const refresh = () => pilot.site("slop", "/oauth/token", { form: { grant_type: "refresh_token", refresh_token: connection.token!.refresh_token, client_id: connection.client.client_id } });
+        const refresh = () => pilot.site("ntwrk", "/oauth/token", { form: { grant_type: "refresh_token", refresh_token: connection.token!.refresh_token, client_id: connection.client.client_id } });
         await pilot.setPrivateOpenAiApps([]);
-        expect((await rpc(pilot, "slop", "/mcp", "tools/call", { name: "check_status", arguments: {} }, connection.token!.access_token)).res.status).toBe(200);
-        expect((await pilot.site("slop", `/oauth/authorize?${authorizeQuery}`, { browser })).status).toBe(200);
+        expect((await rpc(pilot, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "check_status", arguments: {} }, connection.token!.access_token)).res.status).toBe(200);
+        expect((await pilot.site("ntwrk", `/oauth/authorize?${authorizeQuery}`, { browser })).status).toBe(200);
         expect((await pilot.site("slop", `/oauth/authorize?${cimdQuery}`, { browser })).status).toBe(403);
-        expect((await pilot.site("slop", "/oauth/revoke", { form: { token: connection.token!.refresh_token, client_id: connection.client.client_id } })).status).toBe(200);
-        expect((await rpc(pilot, "slop", "/mcp", "tools/call", { name: "check_status", arguments: {} }, connection.token!.access_token)).res.status).toBe(401);
+        expect((await pilot.site("ntwrk", "/oauth/revoke", { form: { token: connection.token!.refresh_token, client_id: connection.client.client_id } })).status).toBe(200);
+        expect((await rpc(pilot, "ntwrk", "/mcp/slop/openai", "tools/call", { name: "check_status", arguments: {} }, connection.token!.access_token)).res.status).toBe(401);
         expect((await refresh()).status).toBe(400);
         expect(Number((await sql`select count(*) as n from network.members`)[0]!.n)).toBe(beforeOuter);
       } finally {
