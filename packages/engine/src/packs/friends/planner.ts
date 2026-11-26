@@ -106,7 +106,7 @@ export interface FriendsPolicy {
 /** Tuned on seeds 1-4 (docs/results/2026-10-08-friends-pack.md, tuning trail; repeatWindowDays above). */
 export const DEFAULT_FRIENDS_POLICY: FriendsPolicy = {
   repeat: true, crews: true, crewOptions: false, mutualPositive: true, repeatWindowDays: 14, spreadNew: false,
-  toleranceSlack: 1.15, timeOptions: true, tableOptions: 1, openTable: true, split: false,
+  toleranceSlack: 1.15, timeOptions: true, tableOptions: 2, openTable: true, split: false,
   universal: true, universalFit: 0.75, partnerIntros: 1,
 };
 
@@ -326,9 +326,10 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     const scored = cands.map(s => ({ s, e: p.invited.reduce((sum, id) => sum + (inp.evidence.get(id) ? planFreeProb(inp.evidence.get(id)!, s, now, pcfg, att).p : 0.3), 0) }))
       .filter(x => dayKey(x.s.start) !== dayKey(p.window.start)).sort((x, y) => (y.e - x.e) || (x.s.start - y.s.start));
     const opts: TimeSlot[] = [p.window];
+    const minExpected = Math.min(1.5, p.invited.length * 0.5);
     for (const x of scored) {
       if (opts.length >= 3) break;
-      if (x.e < 1.5 || opts.some(o => dayKey(o.start) === dayKey(x.s.start))) continue;
+      if (x.e < minExpected || opts.some(o => dayKey(o.start) === dayKey(x.s.start))) continue;
       opts.push(x.s);
     }
     return opts.sort((x, y) => x.start - y.start);
