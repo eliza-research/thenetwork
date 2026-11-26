@@ -3233,8 +3233,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       const key = `request:${r.id}`;
       const control = m.intentControls?.[key];
       if (control === "CloseControl") continue;
-      const open = !r.withdrawn && !r.closed && (r.outcome === undefined || r.outcome === "none" || r.outcome === "probing" || r.outcome === "booked");
-      const paused = control === "PauseControl" && ((r.withdrawn === true && r.withdrawnBy === key) || (r.outcome === "booked" && !r.withdrawn && !r.closed));
+      const booked = r.outcome === "booked" && r.oppId !== undefined && this.opps.get(r.oppId)?.stage === "scheduled";
+      const open = !r.withdrawn && !r.closed && (r.outcome === undefined || r.outcome === "none" || r.outcome === "probing" || booked);
+      const paused = control === "PauseControl" && ((r.withdrawn === true && r.withdrawnBy === key) || (booked && !r.withdrawn && !r.closed));
       const objective = this.requestObjective(r);
       if ((!open && !paused) || covered.has(objective)) continue;
       entries.push({
@@ -5385,6 +5386,11 @@ export class ConsentNetwork implements NetworkUnderTest {
           r.outcome = "none";
           if (tell && !r.toldRetryNone && !told.has(req!.id)) { r.toldRetryNone = true; this.send(req!, copy.declinedQuiet, { type: "info" }, "info"); }
         }
+      } else if (r && r.outcome === "booked") {
+        r.outcome = "none";
+        r.oppId = undefined;
+        this.dirty = true;
+        this.ctx.log("request_result", { requestId: r.id, memberId: r.memberId, outcome: "waiting", reason });
       }
     }
     // A review rejection or expiry is not something the members did: no interaction record.
