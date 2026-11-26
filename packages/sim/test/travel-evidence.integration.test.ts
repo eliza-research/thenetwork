@@ -59,7 +59,7 @@ test("traveler availability: offered times use the meeting city's local date and
     p.id = "traveler"; p.homeCity = "sf"; p.secondaryCity = undefined;
     p.routine = { ...p.routine, wake: 8, sleep: 23, busyBlocks: [[9, 17]], freeEvenings: [1, 2, 3, 4, 5] };
     p.hidden.trips = [{ city: "nyc", fromDay: 0, toDay: 6 }];
-    const w = new World({ seed: 83, personas: [p], days: 1, network: new StubNetwork({ seed: 83, randomIntros: false }), writeLog: false });
+    const w = new World({ app: "ntwrk", seed: 83, personas: [p], days: 1, network: new StubNetwork({ seed: 83, randomIntros: false }), writeLog: false });
     await w.run();
     const options = [{ key: "evening", start: Date.UTC(2026, 9, 5, 23) }, { key: "sleeping", start: Date.UTC(2026, 9, 6, 7) }];
     expect(pickTimes(p, options, "nyc", 83, w.oracle)).toEqual(["evening"]);

@@ -2,10 +2,11 @@ import { expect, test } from "vitest";
 import { DAY, HOUR, MINUTE } from "@thenetwork/core";
 import { allowedAt } from "../src/outreach.ts";
 import { Mini } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 test("an unsolicited request-retry notice waits for the member's send window through restart", async () => {
   for (const seed of [1, 2, 3]) {
-    const x = new Mini([{ id: "a", name: "Alice Able", age: 30, state: "open", interests: ["climbing"], quietHours: [22, 8] }], { seed, review: "human", onboardingRequests: false });
+    const x = new Mini([{ id: "a", name: "Alice Able", age: 30, state: "open", interests: ["climbing"], quietHours: [22, 8] }], { seed, inlineJudge: holdEveryItem.inline, onboardingRequests: false });
     await x.onboard("a"); await x.say("a", "Find me a climbing partner.");
     await x.run(3 * DAY);
     x.add({ id: "b", name: "Boris Bell", age: 32, interests: ["climbing"], skills: ["climbing_belay"], shareable: true });

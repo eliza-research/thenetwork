@@ -6,7 +6,8 @@ import { localEmbed } from "../../engine/src/embed.ts";
 import { DEFAULT_FRIENDS_POLICY, FRIENDS_PLANS, friendsPack, planFriendsWeek } from "../../engine/src/packs/friends/index.ts";
 import { World } from "../../engine/src/world.ts";
 import { engineInputOf, evidenceOf, friendsPackMatcher } from "../src/apps/friends/packMatcher.ts";
-import { buildFriendsSnapshot, NYC_TZ } from "../src/apps/friends/snapshot.ts";
+import { NYC_TZ } from "../src/apps/friends/persona.ts";
+import { buildFriendsSnapshot } from "../src/apps/friends/snapshot.ts";
 import { runFriendsWorld, VENUES } from "../src/apps/friends/world.ts";
 
 test("Friends keeps the configured local minutes on proposed and offered windows", () => {

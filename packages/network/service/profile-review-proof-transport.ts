@@ -6,7 +6,6 @@ export interface ProfileReviewProofTransportOptions {
   origin: string; secret: string; now: () => number; development?: boolean; fetch?: typeof fetch;
 }
 
-/** One bounded, signed request and signed reply. No redirects, retries, credentials in URLs or cache. */
 export function profileReviewProofTransport(o: ProfileReviewProofTransportOptions) {
   const origin = new URL(o.origin);
   const local = o.development && origin.protocol === "http:" && ["127.0.0.1", "localhost"].includes(origin.hostname);

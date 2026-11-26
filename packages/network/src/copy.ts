@@ -2,6 +2,7 @@
 // concise, non-needy; one question at a time; an easy no; never another member's contact details
 // or private facts; opt-out language on first contact). Probes never name anyone.
 import type { Category } from "@thenetwork/core";
+import type { MinorNotice } from "../../core/src/generated/textEnrollment.ts";
 
 const ACTIVITY: Record<Category, string> = {
   social: "meeting someone new for a coffee or a walk",
@@ -24,6 +25,19 @@ export const NTWRK_BRAND: CopyBrand = { agent: "the Network's agent", name: "the
 /** The copy brand of an app in the registry: "The Network" reads "the Network" inside a sentence. */
 export const brandOf = (app: { name: string; brand: { agentName: string } }): CopyBrand => ({ agent: app.brand.agentName, name: app.name.replace(/^The /, "the ") });
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+const MINOR_BIRTHDAY_ASK = "If you tell me your birthday (month, day and year), I can look for friends close to your age.";
+const MINOR_TEEN_FRIENDS = "Since you're under 18, I only introduce you for friendship, to people aged 13 to 18 born within 2 years of you, and every introduction is checked before anyone hears about it.";
+const MINOR_SLOP = "slop.date doesn't match anyone under 18 for dates. Friendship introductions for people under 18 happen on friends.help and ntwrk.party.";
+const MINOR_PEON = "peon.biz doesn't match anyone under 18 for work. I can still help you myself. Friendship introductions for people under 18 happen on friends.help and ntwrk.party.";
+const MINOR_SINGLE_PLAYER_WELCOME = "Since you're under 18, I won't introduce you to other members, but I can suggest public places and events.";
+const MINOR_NOTICE = "Thanks for telling me. Since you're under 18, I won't introduce you to other members, but I'm happy to suggest public places and events.";
+const minorScope = (notice: MinorNotice, singlePlayer: string): string => ({
+  MinorSinglePlayerNotice: singlePlayer,
+  MinorBirthdayNotice: `${singlePlayer} ${MINOR_BIRTHDAY_ASK}`,
+  MinorTeenFriendNotice: MINOR_TEEN_FRIENDS,
+  MinorSlopNotice: MINOR_SLOP,
+  MinorPeonNotice: MINOR_PEON,
+} satisfies Record<MinorNotice, string>)[notice];
 const REPORT_SAFETY_HINT = " If you're ever in danger, call 911 first.";
 
 /** Every member-facing text for one app. No text asks a member to reply "cancel" (a bare CANCEL is STOP). */
@@ -31,11 +45,11 @@ export function copyFor(b: CopyBrand) {
   return {
   welcome: (first: string, inviter?: string) =>
     `Hi ${first}, I'm ${b.agent} (an AI)${inviter ? `; ${inviter} invited you` : ""}. Now and then I'll suggest a person or plan that seems worth your time, and you can always ask me for something. Reply STOP anytime to opt out. To start: what would you like more of in your life right now?`,
-  welcomeMinor: (first: string) =>
-    `Hi ${first}, I'm ${b.agent} (an AI). Since you're under 18, I won't introduce you to other members, but I can suggest public places and events. Reply STOP anytime to opt out. What are you into?`,
+  welcomeMinor: (first: string, notice: MinorNotice) =>
+    `Hi ${first}, I'm ${b.agent} (an AI). ${minorScope(notice, MINOR_SINGLE_PLAYER_WELCOME)} Reply STOP anytime to opt out. What are you into?`,
   /** First contact when the member record has no valid age (6.3): ask once, before anything else. */
   welcomeAskAge: (first: string) =>
-    `Hi ${first}, I'm ${b.agent} (an AI). Reply STOP anytime to opt out. One thing before we start: how old are you?`,
+    `Hi ${first}, I'm ${b.agent} (an AI). Reply STOP anytime to opt out. One thing before we start: what's your birthday (month, day and year)?`,
   /** An adult answered the age question: the usual welcome, without the greeting. */
   welcomeAfterAge: "Thanks. Now and then I'll suggest a person or plan that seems worth your time, and you can always ask me for something. To start: what would you like more of in your life right now?",
   interview: {
@@ -117,6 +131,8 @@ export function copyFor(b: CopyBrand) {
   /** The same ideas with no offer to find company: for minors, members who cannot be matched, and while matching is off. */
   plansNoOffer: (lines: string[]) => `A few ideas nearby: ${lines.join("; ")}. Happy to suggest more anytime.`,
   declinedQuiet: "That one didn't come together this time. No action needed; I'll keep an eye out.",
+  probeEnded: "That invitation has closed, so I didn't share anything about you. I'll keep an eye out for another.",
+  probeVoided: "That plan changed before you answered, so I didn't count your answer or share anything about you. If the new plan fits, I'll ask you about it.",
   reminder: (when: string, venue: string) => `Reminder: ${when} at ${venue}. Have fun! If something comes up, just tell me.`,
   dayOfCheckIn: (when: string, venue: string) => `Still good for ${when} at ${venue}? Tell me if you're running late or can't make it.`,
   /** Someone dropped out of a booked plan. Never says who: the plan's change is the news, not the person (judge decliner_exposed). */
@@ -161,8 +177,16 @@ export function copyFor(b: CopyBrand) {
     : "Who do you mean? Reply with their first name and I'll take care of it.",
   /** The answer to "Who do you mean?" still named nobody they met: nothing was applied. */
   whoUnresolved: "I couldn't tell who you mean, so nothing has changed yet. Reply block or report with their first name anytime.",
+  safetyNoAction: "Okay.",
+  checkInSafetyAsk: (first: string) => `I'm sorry it went that way. Do you want me to report ${first} to the safety team, block ${first}, or neither? Reply REPORT, BLOCK or NO. A report also blocks them.`,
   hold: "Your account is paused while our team takes a look. You'll hear from a person soon.",
-  minorNotice: "Thanks for telling me. Since you're under 18, I won't introduce you to other members, but I'm happy to suggest public places and events.",
+  minorNotice: MINOR_NOTICE,
+  minorScopeNotice: (notice: MinorNotice) => minorScope(notice, MINOR_NOTICE),
+  minorBirthdayAsk: MINOR_BIRTHDAY_ASK,
+  minorTeenFriends: MINOR_TEEN_FRIENDS,
+  minorSlop: MINOR_SLOP,
+  minorPeon: MINOR_PEON,
+  birthdayWhich: (monthFirst: string, dayFirst: string) => `Just to check: is your birthday ${monthFirst} or ${dayFirst}? Reply with the month as a word, like ${monthFirst}.`,
   minorConcierge: (topic: string, ideas: string) => `For ${topic}, ${ideas}. Happy to suggest more anytime.`,
   emptyIntentFollowup: "I haven't found a match I can offer yet. Text “Show me public events” for ideas you can try on your own.",
   stopWelcomeBack: "Welcome back. I'll only reach out when something looks worth it.",
@@ -183,16 +207,17 @@ export function copyFor(b: CopyBrand) {
   crewNotFormed: "Not enough people for a weekly crew this time. I'll keep you in mind for the next plan.",
   // Joining by text (the platform service, before a member record exists). Nothing is stored until the age check passes.
   /** First message from someone who is not a member of an open app. */
-  joinAsk: (minAge: number) => `Hi, I'm ${b.agent} (an AI). To join ${b.name}, reply with your first name and your age. You need to be ${minAge} or older. Reply STOP anytime to opt out.`,
-  /** A staff invite (invite-only apps): the person's reply with name and age is the join and the opt-in. */
-  invited: (minAge: number) => `Hi, I'm ${b.agent} (an AI). You're invited to join ${b.name}. To accept, reply with your first name and your age. You need to be ${minAge} or older. Reply STOP anytime to opt out.`,
+  joinAsk: (minAge: number) => `Hi, I'm ${b.agent} (an AI). To join ${b.name}, reply with your first name and your birthday (month, day and year). You need to be ${minAge} or older. Reply STOP anytime to opt out.`,
+  invited: (minAge: number) => `Hi, I'm ${b.agent} (an AI). You're invited to join ${b.name}. To accept, reply with your first name and your birthday (month, day and year). You need to be ${minAge} or older. Reply STOP anytime to opt out.`,
   /** An age came, but no first name. */
   joinNeedName: "Thanks. And your first name?",
   /** A person who already uses another app with this number joined this one. It never names the other app. */
-  linkNotice: "You've used this number with us before. Nothing is shared between apps unless you say so. Reply SHARE to reuse your first name, city and interests here.",
-  shareDone: "Done. I'll reuse those basics here. Nothing else is shared.",
+  linkNotice: "You've used this number with us before. Nothing is shared between apps unless you say so. Reply SHARE to reuse the interests you confirmed before.",
+  shareDone: "Done. I'll reuse the interests you confirmed before. Nothing else is shared. Reply UNSHARE to stop sharing from now on.",
+  unshareDone: "Done. Nothing is shared between this app and your other apps now. Interests I already copied stay here until you ask me to remove them.",
   /** "leave <app>": this app only; the member's data in it is deleted. */
   leftApp: `Done. You've left ${b.name} and I deleted what you shared here. Other apps you use with this number are not affected.`,
+  notInApp: `You're not in ${b.name}, so there is nothing to leave and nothing changed. Other apps you use with this number are not affected.`,
   };
 }
 export type Copy = ReturnType<typeof copyFor>;

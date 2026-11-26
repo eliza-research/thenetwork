@@ -120,8 +120,8 @@ export function lawPlanGroupReservationRequiresBothScores(coherent: boolean, min
 
 /** Story: Find a public activity that fits the group / Alternates must fit the entire offered group (spec/planFormation.md) */
 //@ pure
-export function isPlanAlternate(adult: boolean, compatibleWithEveryone: boolean): boolean {
-  return adult && compatibleWithEveryone;
+export function isPlanAlternate(ageAllowed: boolean, compatibleWithEveryone: boolean): boolean {
+  return ageAllowed && compatibleWithEveryone;
 }
 
 /** Story: Find a public activity that fits the group / Alternates must fit the entire offered group (spec/planFormation.md) */

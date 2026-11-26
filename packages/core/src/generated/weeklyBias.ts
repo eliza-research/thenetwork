@@ -10,6 +10,10 @@ export const biasAnalysisGroupMinimum: number = 15;
 export const biasThresholdNumerator: number = 4;
 /** Story: Detect differences in outcomes without exposing individual ratings / Report rates and alert only below the configured ratio (spec/weeklyBias.md) */
 export const biasThresholdDenominator: number = 5;
+/** Story: Stop using photo standing when it predicts nothing / The Date lane uses photo standing only while the standing gap predicts mutual interest (spec/weeklyBias.md) */
+export const standingValidityMinimum: number = 30;
+/** Story: Stop using photo standing when it predicts nothing / The Date lane uses photo standing only while the standing gap predicts mutual interest (spec/weeklyBias.md) */
+export const standingValidityMarginPermille: number = 50;
 /** Story: Detect differences in outcomes without exposing individual ratings / The weekly run waits until the stored report is one week old (spec/weeklyBias.md) */
 export const biasEveryMs: number = 604800000;
 /** Story: Detect differences in outcomes without exposing individual ratings / Adult members need at least one day of exposure in the window (spec/weeklyBias.md) */
@@ -108,6 +112,52 @@ export function biasRatioBelowThreshold(ratio: number, threshold: number): boole
 export function lawBiasAtThresholdIsQuiet(threshold: number): boolean {
   //@ ensures \result === true
   return !biasRatioBelowThreshold(threshold, threshold);
+}
+
+/** Story: Stop using photo standing when it predicts nothing / The Date lane uses photo standing only while the standing gap predicts mutual interest (spec/weeklyBias.md) */
+//@ pure
+export function standingOutcomePositive(ending: string): boolean {
+  return ending === "completed" || ending === "no_show";
+}
+
+/** Story: Stop using photo standing when it predicts nothing / The Date lane uses photo standing only while the standing gap predicts mutual interest (spec/weeklyBias.md) */
+//@ pure
+export function standingOutcomeNegative(ending: string): boolean {
+  return ending === "declined" || ending === "expired";
+}
+
+/** Story: Stop using photo standing when it predicts nothing / The Date lane uses photo standing only while the standing gap predicts mutual interest (spec/weeklyBias.md) */
+//@ pure
+export function standingGapPredicts(positives: number, negatives: number, concordantTwice: number): boolean {
+  return positives < standingValidityMinimum || negatives < standingValidityMinimum ? true : exact_weeklyBias(concordantTwice * 1000) >= exact_weeklyBias(exact_weeklyBias(exact_weeklyBias(1000 + exact_weeklyBias(2 * standingValidityMarginPermille)) * positives) * negatives);
+}
+
+/** Story: Stop using photo standing when it predicts nothing / The Date lane uses photo standing only while the standing gap predicts mutual interest (spec/weeklyBias.md) */
+//@ pure
+export function lawStandingOutcomeHasOneSide(ending: string): boolean {
+  //@ ensures \result === true
+  return !(standingOutcomePositive(ending) && standingOutcomeNegative(ending));
+}
+
+/** Story: Stop using photo standing when it predicts nothing / The Date lane uses photo standing only while the standing gap predicts mutual interest (spec/weeklyBias.md) */
+//@ pure
+export function lawStandingKeptWhileOutcomesAreFew(positives: number, negatives: number, concordantTwice: number): boolean {
+  //@ ensures \result === true
+  return !(positives < standingValidityMinimum || negatives < standingValidityMinimum) || standingGapPredicts(positives, negatives, concordantTwice);
+}
+
+/** Story: Stop using photo standing when it predicts nothing / The Date lane uses photo standing only while the standing gap predicts mutual interest (spec/weeklyBias.md) */
+//@ pure
+export function lawStandingOffWhenGapOrdersNoBetterThanChance(positives: number, negatives: number, concordantTwice: number): boolean {
+  //@ ensures \result === true
+  return !(positives >= standingValidityMinimum && negatives >= standingValidityMinimum && concordantTwice <= exact_weeklyBias(positives * negatives)) || !standingGapPredicts(positives, negatives, concordantTwice);
+}
+
+/** Story: Stop using photo standing when it predicts nothing / The Date lane uses photo standing only while the standing gap predicts mutual interest (spec/weeklyBias.md) */
+//@ pure
+export function lawStandingKeptWhenGapOrdersEveryPair(positives: number, negatives: number, concordantTwice: number): boolean {
+  //@ ensures \result === true
+  return !(positives >= standingValidityMinimum && negatives >= standingValidityMinimum && concordantTwice >= exact_weeklyBias(exact_weeklyBias(2 * positives) * negatives)) || standingGapPredicts(positives, negatives, concordantTwice);
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */

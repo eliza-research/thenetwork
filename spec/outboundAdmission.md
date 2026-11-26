@@ -6,18 +6,18 @@ The [queue model](models/outbound_queue.md) includes workers, leases, retry and 
 
 > As a member, I want the service to respect my consent and sending limits when a queued message is due.
 
-### A current row needs live approval and the recipient's eligibility
+### A current row needs a delivering line and the recipient's eligibility
 
-A stale or expired row ends first. An exact neutral outcome notice for an accepting member may still pass admission after its opportunity closes. Every message needs live approval. Except for compliance messages, a current opt-out or recipient restriction stops the row.
+A stale or expired row ends first. An exact neutral outcome notice for an accepting member may still pass admission after its opportunity closes. Every message needs a delivering line: the line of a dry-run service refuses every row, and the line of a configured channel always delivers ([startup configuration](bootPolicy.md#the-configured-channel-alone-decides-whether-a-send-is-real)). Except for compliance messages, a current opt-out or recipient restriction stops the row. The claim transaction reads the consent ledger again for every row except compliance, a direct text to someone who is not a member too. A booking notice that carries a venue booking link is eligible only while the current booking still approves that exact link, and this check comes before the leak check. A permanent refusal by the admission check in the claim transaction stores the check's reason with the row; the other refusals in that transaction (opted out, ineligible account, forgotten member) store only their status. Changed (audit Q-outbound_queue-1 and owner decision 2026-11-22, D6): the check read the live approvals `BLOOIO_ALLOW_SEND`, `NTWRK_LIVE_APPROVED` and `<APP>_LIVE_APPROVED`, the ledger was read again only for a row with a member, and the leak check ran before the booking link check -> the configured channel alone decides, every row reads the ledger again, and the link check comes first, because the owner removed the approvals, a STOP during the checks did not stop a direct text, and a changed venue parked an ineligible notice for staff.
 
 ```quint
-type Admission = Proceed | Expired | ApprovalMissing | OptedOut | RecipientIneligible | ReplyTooOld |
+type Admission = Proceed | Expired | DryRunLine | OptedOut | RecipientIneligible | ReplyTooOld |
   InvalidZone | QuietHours | AwaitingReply | LinePaused | RecipientCap | LineCap | NewConversationCap |
   PersonCap | LeakReview | Admit
 
 pure def duePolicy(stale: bool): Admission = if (stale) Expired else Proceed
 pure def closedOpportunityRowStale(closed: bool, terminalNotice: bool): bool = closed and not(terminalNotice)
-pure def livePolicy(live: bool): Admission = if (live) Proceed else ApprovalMissing
+pure def livePolicy(live: bool): Admission = if (live) Proceed else DryRunLine
 pure def consentPolicy(compliance: bool, optedOut: bool): Admission =
   if (not(compliance) and optedOut) OptedOut else Proceed
 pure def recipientPolicy(compliance: bool, eligible: bool): Admission =
@@ -55,7 +55,7 @@ pure def lawPausedProbeCannotProceed(categoryAllowed: bool): bool =
 
 ### Recheck blocks between the participants before contact
 
-A queued probe, plan probe, schedule, booking notice, or reminder needs a current roster with no block between its members. A block in any app applies in either direction. A canonical ban, applicable staff hold, or carried open report restriction on any member of that roster stops the contact even while the app's runtime still has the earlier state. Use the exact roster recorded on a booking notice when present. Otherwise use the recipient and the current participating seats. Declined, dropped, unavailable, and alternate seats do not join that roster. Read the current restrictions again before returning a stored signed reply that carries this contact. Neutral cancellation and safety replies keep their own admission rules.
+A queued probe, plan probe, schedule, booking notice, or reminder needs a current roster with no block between its members. When the roster holds a minor, the contact also needs a teen friendship item that is still current under the age rule of [friend introductions with a minor](friendIntroAge.md) at send time, while no stop is stored, over the stored roster with its plan host and the exact roster of the message, and only while the stored item keeps its friendship shape and the size of a small group. A block in any app applies in either direction. A canonical ban, applicable staff hold, or carried open report restriction on any member of that roster stops the contact even while the app's runtime still has the earlier state. Use the exact roster recorded on a booking notice when present. Otherwise use the recipient and the current participating seats. Declined, dropped, unavailable, and alternate seats do not join that roster. Read the current restrictions again before returning a stored signed reply that carries this contact. Neutral cancellation and safety replies keep their own admission rules. Changed (owner decision 2026-11-22, D1): the claim transaction read no ages, because the network refused every minor before it queued a contact -> it refuses a queued contact whose roster holds a minor unless the teen rule, the friendship shape and the group size hold, because teen friendship items can queue contacts for a minor.
 
 ```quint
 pure val peerContactTypes: List[str] = List("probe", "plan_probe", "scheduling", "proposal", "reminder")
@@ -73,7 +73,7 @@ pure def lawRestrictedRosterCannotProceed(rosterBlocked: bool): bool =
 
 ### Replies, quiet hours and unanswered messages limit when a send can go out
 
-A reply must follow a recent inbound. An agent-initiated message needs a valid time zone and waits through quiet hours. Read the current member's saved window and local zone, falling back to the queue's settings when absent. Equal window endpoints turn quiet hours off. Recheck under the current member lock just before claiming. If the row must wait, schedule it for the first allowed time without using a provider attempt or a person-cap slot. Replies and compliance messages are exempt from quiet hours. After the unanswered limit, an eligible agent-initiated message can use one re-engagement after its waiting period. Otherwise the row waits for an answer. Compliance skips the unanswered limit.
+A reply must follow a recent inbound. An agent-initiated message needs a valid time zone and waits through quiet hours. Read the current member's saved window and local zone, falling back to the queue's settings when absent. Equal window endpoints turn quiet hours off. Recheck under the current member lock just before claiming. If the row must wait, schedule it for the first allowed time without using a provider attempt or a person-cap slot. Replies and compliance messages are exempt from quiet hours. After the unanswered limit, an eligible agent-initiated message can use one re-engagement after its waiting period. Otherwise the row waits for an answer. Compliance skips the unanswered limit. A reply that the gateway sent in a signed turn counts in the unanswered streak as a queued send does. Changed 2026-11-18: an accepted gateway reply did not count (SD-148), so a fourth unanswered message could go.
 
 ```quint
 pure def replyPolicy(reply: bool, recentInbound: bool): Admission =
@@ -88,6 +88,44 @@ pure def conversationPolicy(compliance: bool, atCap: bool, agent: bool, reengage
   if (compliance or not(atCap)) { decision: Proceed, reengage: false }
   else if (agent and not(reengaged) and waited) { decision: Proceed, reengage: true }
   else { decision: AwaitingReply, reengage: false }
+```
+
+### A row does not wait for an answer that the person already gave
+
+A row waits for an answer only when the person did not write after the check read the conversation. When the person wrote during the check, the release of held rows may already have run, so the row is due again at once. Changed 2026-11-18: the queue held such a row although the person had written (SD-147), and it waited until the next message or its expiry.
+
+```quint
+pure def holdForReply(personWroteSinceRead: bool): Admission = if (personWroteSinceRead) Proceed else AwaitingReply
+
+pure def lawWriteDuringCheckReleasesRow(personWroteSinceRead: bool): bool =
+  holdForReply(personWroteSinceRead) == AwaitingReply implies not(personWroteSinceRead)
+```
+
+### A check that cannot answer delays the row and never sends it
+
+When a send-time check throws (the stale check of a notification, or a database error in the claim transaction), the row is not sent. It counts one attempt and waits with the provider backoff, then runs every check again with the same provider key. Only when its attempts are used up is it parked for a person. The error changes the row only while it still has the status the check read. Changed 2026-11-18: a stale check that threw read as current and the row was sent (SD-299), and any other error parked the row at once with no retry (SD-117).
+
+```quint
+type DispatchFailure = RetryDispatch | ParkDispatch
+
+pure def dispatchFailurePolicy(hasAttemptsLeft: bool): DispatchFailure = if (hasAttemptsLeft) RetryDispatch else ParkDispatch
+
+pure def lawDispatchParksOnlyWithoutAttempts(hasAttemptsLeft: bool): bool =
+  dispatchFailurePolicy(hasAttemptsLeft) == ParkDispatch iff not(hasAttemptsLeft)
+```
+
+### A claim needs the Network state that its checks read
+
+The stale check, the recipient check and the leak check read the replica's copy of the Network state. The claim transaction locks the stored state. After the checks that read the stored rows, it claims a row only when the stored version is still the version of the copy; otherwise the row waits with the same provider key and without its person-cap slot. A runtime drain whose copy is not the stored version loads the stored state before its checks, and a drain that ends with such a copy loads it and drains once more. A copy whose unit failed before its save has no known version. Another replica can commit after the reload and before the checks, so a drain can still end a row by a refusal that it decided on an old copy; that row is not sent, because the claim compares the stored version with the version of the copy. The refusal is fail-safe: it can lose one message, but it never sends one. The version is the `xmin` of the `network.network_state` row. The copy takes the loaded version only when the unit imported it unchanged or saved it; after a unit that loaded the state without a save, the version of the copy is unknown. A message that still shows a waiting status takes the status of its queue row once that row stopped waiting, because a drain whose process stopped after the queue commit lost its changes in memory. Changed (audit SD-020): a replica sent from an old copy, and a drain ran its checks on an old copy before it loaded the stored state -> the claim compares versions and the drain loads first, because a replica sent after another closed the item, and a lifted opt-out or hold ended a row for good.
+
+```quint
+type ViewCheck = ViewCurrent | ViewChanged
+
+pure def viewPolicy(storedVersion: str, viewVersion: str): ViewCheck =
+  if (viewVersion != "" and storedVersion == viewVersion) ViewCurrent else ViewChanged
+
+pure def lawClaimOnlyFromStoredVersion(storedVersion: str, viewVersion: str): bool =
+  viewPolicy(storedVersion, viewVersion) == ViewCurrent implies (viewVersion != "" and storedVersion == viewVersion)
 ```
 
 ### A STOP or an app leave does not release a text held for an answer

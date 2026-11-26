@@ -3,6 +3,7 @@ import { DAY, HOUR, MINUTE, SimClock, type MemberId } from "@thenetwork/core";
 import { slopPack } from "@thenetwork/engine";
 import { capitalWiring, consentOf, copy } from "../src/index.ts";
 import { postingFromDraft } from "../src/jobs.ts";
+import { simulatedRelayClassifier } from "../../engine/src/relay.ts";
 import { RelayDesk, type RelayHost } from "../src/relay.ts";
 import { Mini } from "./mini.ts";
 
@@ -12,24 +13,28 @@ const person = (id: string, name: string, extra: Partial<Parameters<Mini["add"]>
   wants: [{ objective: "find a regular climbing partner", category: "hobby" as const }], ...extra,
 });
 
-function makeRelayDesk(clock: SimClock, opts: { onSevere?: (id: MemberId, families: string[]) => void } = {}) {
+function makeRelayDesk(clock: SimClock, opts: { onSevere?: (id: MemberId) => void } = {}) {
   const members = {
-    a: { id: "a", firstName: "Ari", age: 30, optedOut: false, held: false },
-    b: { id: "b", firstName: "Bo", age: 31, optedOut: false, held: false },
+    a: { id: "a", firstName: "Ari", age: 30, optedOut: false, held: false, markedMinor: false },
+    b: { id: "b", firstName: "Bo", age: 31, optedOut: false, held: false, markedMinor: false },
   };
   const host: RelayHost = {
     app: "friends",
     ratesPhotos: false,
     now: () => clock.now(),
     member: id => members[id as keyof typeof members],
-    matchesOf: () => [{ id: "match-1", participants: ["a", "b"], acceptedBy: ["a", "b"], status: "mutual", at: NOW - HOUR }],
+    matchesOf: () => [{ id: "match-1", participants: ["a", "b"], acceptedBy: ["a", "b"], status: "mutual", negativeFeedback: false, at: NOW - HOUR }],
     blocked: () => false,
     privateFacts: () => ({ forbidden: [], canaries: [] }),
-    severeBlock: opts.onSevere,
+    severeBlock: id => opts.onSevere?.(id),
+    minorSignal: () => {},
+    classifierFailed: () => {},
     send: () => "sent",
   };
   return new RelayDesk(host);
 }
+
+const RELAY_OPTS = { hook: simulatedRelayClassifier };
 
 describe("QSM ported network & core fixes", () => {
   test("SD-035: consentOf vetoes hedged or conditional yes while accepting genuine affirm and slang", () => {
@@ -41,48 +46,48 @@ describe("QSM ported network & core fixes", () => {
   });
 
   test("SD-254: RelayDesk reports severeBlock on harass_severe", async () => {
-    const severeCalls: Array<{ id: MemberId; families: string[] }> = [];
+    const severeCalls: Array<{ id: MemberId }> = [];
     const desk = makeRelayDesk(new SimClock(NOW), {
-      onSevere: (id, families) => severeCalls.push({ id, families }),
+      onSevere: id => severeCalls.push({ id }),
     });
-    const threat = await desk.request({ itemId: "threat-1", from: "a", kind: "text", text: "tell Bo watch your back" });
+    const threat = await desk.request({ itemId: "threat-1", from: "a", kind: "text", text: "tell Bo watch your back" }, RELAY_OPTS);
     expect(threat.decision).toBe("refused");
-    expect(severeCalls).toEqual([{ id: "a", families: ["harass_severe"] }]);
+    expect(severeCalls).toEqual([{ id: "a" }]);
   });
 
-  test("SD-320: RelayDesk does not replay rate-only holds after the burst window clears", async () => {
+  test("SD-320: RelayDesk blocks a rate-limited text (never holds it), replays that block for the same item id, and sends a new item after the burst window clears", async () => {
     const clock = new SimClock(NOW);
     const desk = makeRelayDesk(clock);
     for (let i = 0; i < 6; i++) {
       clock.advance(MINUTE);
-      expect((await desk.request({ itemId: `burst-${i}`, from: "a", kind: "text", text: `see you at the park ${i}` })).decision).toBe("sent");
+      expect((await desk.request({ itemId: `burst-${i}`, from: "a", kind: "text", text: `see you at the park ${i}` }, RELAY_OPTS)).decision).toBe("sent");
     }
-    const rateHeld = await desk.request({ itemId: "pri_fixed", from: "a", kind: "text", text: "looking forward to Saturday" });
-    expect(rateHeld.decision).toBe("held");
+    const rateBlocked = await desk.request({ itemId: "pri_fixed", from: "a", kind: "text", text: "looking forward to Saturday" }, RELAY_OPTS);
+    expect(rateBlocked).toMatchObject({ itemId: "pri_fixed", decision: "refused" });
     clock.advance(11 * MINUTE);
-    const retried = await desk.request({ itemId: "pri_fixed", from: "a", kind: "text", text: "looking forward to Saturday" });
-    expect(retried).toMatchObject({ itemId: "pri_fixed", decision: "sent" });
-    expect(retried.replayed).toBeUndefined();
-    const replayed = await desk.request({ itemId: "pri_fixed", from: "a", kind: "text", text: "looking forward to Saturday" });
-    expect(replayed).toMatchObject({ itemId: "pri_fixed", decision: "sent", delivered: true, replayed: true });
+    const replayed = await desk.request({ itemId: "pri_fixed", from: "a", kind: "text", text: "looking forward to Saturday" }, RELAY_OPTS);
+    expect(replayed).toMatchObject({ itemId: "pri_fixed", decision: "refused", replayed: true });
+    const next = await desk.request({ itemId: "pri_next", from: "a", kind: "text", text: "looking forward to Saturday" }, RELAY_OPTS);
+    expect(next).toMatchObject({ itemId: "pri_next", decision: "sent" });
+    expect(next.replayed).toBeUndefined();
   });
 
   test("SD-111: ConsentNetwork prefixes ids with app and non-nyc city", async () => {
-    const sf = new Mini([person("a", "Ari Diaz"), person("b", "Ben Ito")], { app: "ntwrk", city: "sf", review: "human" });
+    const sf = new Mini([person("a", "Ari Diaz"), person("b", "Ben Ito")], { app: "ntwrk", city: "sf" });
     await sf.onboard("a", "b");
     await sf.say("a", "looking for a regular climbing partner");
     const stSf = sf.net.exportState();
     expect(stSf.requests[0]?.id.startsWith("ntwrk.sf.")).toBe(true);
     expect(stSf.opps[0]?.id.startsWith("ntwrk.sf.")).toBe(true);
 
-    const nyc = new Mini([person("a", "Ari Diaz"), person("b", "Ben Ito")], { app: "ntwrk", city: "nyc", review: "human" });
+    const nyc = new Mini([person("a", "Ari Diaz"), person("b", "Ben Ito")], { app: "ntwrk", city: "nyc" });
     await nyc.onboard("a", "b");
     await nyc.say("a", "looking for a regular climbing partner");
     expect(nyc.net.exportState().requests[0]?.id.startsWith("ntwrk.")).toBe(false);
   });
 
   test("SD-044: metBefore requires bookedTold on both participants", async () => {
-    const w = new Mini([person("a", "Ana Diaz"), person("b", "Ben Ito"), person("c", "Cy Moss")], { review: "auto", plans: false });
+    const w = new Mini([person("a", "Ana Diaz"), person("b", "Ben Ito"), person("c", "Cy Moss")], { plans: false });
     await w.onboard("a", "b", "c");
     const st = w.net.exportState();
     st.opps.push({
@@ -102,9 +107,7 @@ describe("QSM ported network & core fixes", () => {
   });
 
   test("SD-229 & SD-220: check-in reports enforce trust scoring and late disclosures after initial feedback file a report", async () => {
-    const w = new Mini([person("a", "Ana Diaz"), person("b", "Ben Ito"), person("c", "Cy Moss")], {
-      review: "auto", plans: false, hooks: { postDateReports: true },
-    });
+    const w = new Mini([person("a", "Ana Diaz"), person("b", "Ben Ito"), person("c", "Cy Moss")], { plans: false });
     await w.onboard("a", "b", "c");
     const opp0 = w.propose(["c", "b"]);
     await w.answerProbes(["c", "b"]);
@@ -138,7 +141,7 @@ describe("QSM ported network & core fixes", () => {
   });
 
   test("SD-328: finalize no-show and late feedback answer only increment noShows once", async () => {
-    const w = new Mini([person("a", "Ana Diaz"), person("b", "Ben Ito")], { review: "auto", plans: false });
+    const w = new Mini([person("a", "Ana Diaz"), person("b", "Ben Ito")], { plans: false });
     await w.onboard("a", "b");
     const oppId = w.propose(["a", "b"]);
     await w.answerProbes(["a", "b"]);
@@ -155,7 +158,7 @@ describe("QSM ported network & core fixes", () => {
   });
 
   test("SD-266 & SD-435: repeat ask gets replied again; member outside NYC gets open turn on plans and no NYC spots", async () => {
-    const w = new Mini([person("a", "Ana Diaz", { wants: [] })], { review: "auto", plans: false });
+    const w = new Mini([person("a", "Ana Diaz", { wants: [] })], { plans: false });
     await w.onboard("a");
     const m1 = w.mark();
     await w.say("a", "Can you find me a climbing partner?");
@@ -173,7 +176,7 @@ describe("QSM ported network & core fixes", () => {
   });
 
   test("SD-264: group probe keeps remaining members when one says neither and commonTimeGone is true", async () => {
-    const w = new Mini([person("a", "Ana Diaz"), person("b", "Ben Ito"), person("c", "Cy Moss"), person("d", "Dee Fox")], { review: "auto", plans: false });
+    const w = new Mini([person("a", "Ana Diaz"), person("b", "Ben Ito"), person("c", "Cy Moss"), person("d", "Dee Fox")], { plans: false });
     await w.onboard("a", "b", "c", "d");
     const oppId = w.propose(["a", "b", "c", "d"]);
     expect(await w.runUntil(() => w.probed("a"), 2 * DAY)).toBe(true);
@@ -189,7 +192,7 @@ describe("QSM ported network & core fixes", () => {
   });
 
   test("SD-268: reveal refuses when a participant was already booked elsewhere within 4 hours", async () => {
-    const w = new Mini([person("a", "Ana Diaz"), person("b", "Ben Ito"), person("c", "Cy Moss"), person("d", "Dee Fox")], { review: "auto", plans: false });
+    const w = new Mini([person("a", "Ana Diaz"), person("b", "Ben Ito"), person("c", "Cy Moss"), person("d", "Dee Fox")], { plans: false });
     await w.onboard("a", "b", "c", "d");
     const firstOpp = w.propose(["a", "c"]);
     await w.answerProbes(["a", "c"]);
@@ -221,7 +224,7 @@ describe("QSM ported network & core fixes", () => {
   });
 
   test("SD-048: replaceOrClose clears awaiting slot on replaced-out member", async () => {
-    const w = new Mini([person("a", "Ana Diaz"), person("b", "Ben Ito"), person("c", "Cy Moss")], { review: "auto", plans: false });
+    const w = new Mini([person("a", "Ana Diaz"), person("b", "Ben Ito"), person("c", "Cy Moss")], { plans: false });
     await w.onboard("a", "b", "c");
     const oppId = w.propose(["a", "b"], { alternates: ["c"] });
     expect(await w.runUntil(() => w.probed("a"), 2 * DAY)).toBe(true);
@@ -235,7 +238,7 @@ describe("QSM ported network & core fixes", () => {
 
   test("SD-213 & SD-049: minor signal during adult interview stops interview and emits age_updated; clearMinorSignal restores", async () => {
     const ledger: Array<{ type: string; member?: string; age?: number | null }> = [];
-    const w = new Mini([person("a", "Ana Diaz")], { review: "auto", plans: false, onLedger: e => ledger.push(e as any) });
+    const w = new Mini([person("a", "Ana Diaz")], { plans: false, onLedger: e => ledger.push(e as any) });
     await w.say("a", "hi!");
     expect(w.net.memberList().find(m => m.id === "a")?.stage).toBe("q1");
     await w.say("a", "I have homework tonight");
@@ -252,7 +255,7 @@ describe("QSM ported network & core fixes", () => {
   test("SD-042 & SD-043: mcp profile cannot post jobs, and postingTurn restores owed probe awaiting", async () => {
     const postings: unknown[] = [];
     const w = new Mini([person("mgr", "Morgan Lee"), person("c1", "Cal One")], {
-      review: "auto", plans: false, hooks: { postings: true }, onPosting: p => postings.push(p),
+      plans: false, hooks: { postings: true }, onPosting: p => postings.push(p),
     });
     await w.onboard("mgr", "c1");
     await w.net.onInbound({ id: "mcp-1", memberId: "mgr", body: "post a job: barista, $25/hr, Greenpoint", ts: w.clock.now(), channel: "sms", source: "mcp" });
@@ -282,7 +285,7 @@ describe("QSM ported network & core fixes", () => {
   });
 
   test("SD-248: nighttime forgetMember keeps drop_notice valid until meetingAt", async () => {
-    const w = new Mini([person("a", "Ana Diaz"), person("b", "Ben Ito")], { review: "auto", plans: false });
+    const w = new Mini([person("a", "Ana Diaz"), person("b", "Ben Ito")], { plans: false });
     await w.onboard("a", "b");
     w.propose(["a", "b"]);
     await w.answerProbes(["a", "b"]);
@@ -294,7 +297,7 @@ describe("QSM ported network & core fixes", () => {
   });
 
   test("SD-267: setMatchingEnabled resets retry window on waiting people requests", async () => {
-    const w = new Mini([person("a", "Ana Diaz", { wants: [] }), person("b", "Ben Ito")], { review: "auto", plans: false, matchingEnabled: false });
+    const w = new Mini([person("a", "Ana Diaz", { wants: [] }), person("b", "Ben Ito")], { plans: false, matchingEnabled: false });
     await w.onboard("a", "b");
     await w.say("a", "Can you find me a climbing partner?");
     w.clock.advance(8 * DAY);
@@ -304,7 +307,7 @@ describe("QSM ported network & core fixes", () => {
   });
 
   test("SD-296 & SD-223: packInput propagates held managers to job seats and declined slop pairs to avoid edges", () => {
-    const w = new Mini([person("mgr", "Morgan Lee"), person("cand", "Cal One")], { app: "slop", pack: slopPack, review: "auto", plans: false });
+    const w = new Mini([person("mgr", "Morgan Lee"), person("cand", "Cal One")], { app: "slop", pack: slopPack, plans: false });
     w.members.push({
       id: "job:mgr:1", name: "Cook Seat", age: 30, homeCity: "nyc", state: "open", joinedAt: NOW - DAY, unansweredProactive: 0,
       seatOwner: "mgr",

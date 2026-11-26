@@ -1,8 +1,6 @@
-// Event-sourced projection: simulator run records (packages/core/src/runlog.ts) -> observatory
-// state. Opportunities follow the PRD 32.10 state machine as far as the records reveal it; the
-// edges the Network learns follow PRD 32.13 (introduced, met, enjoyed, would_interact_again, avoid).
 import { UNDER_MIN_AGE_DECLINE, type MemberId, type Proposal } from "@thenetwork/core";
 import type { RunRecord, SimMeta } from "@thenetwork/core";
+import { JUDGE_VERDICTS } from "@thenetwork/engine/src/reviewJudge.ts";
 import { consoleBookingReceiptCurrent } from "../../../packages/core/src/generated/consoleMemberView.ts";
 import { confirmationWindowHours } from "../../../packages/core/src/generated/meetingSettlement.ts";
 import { currentConsentViewChanges } from "../../../packages/core/src/generated/observatoryMemberConsent.ts";
@@ -25,7 +23,8 @@ export function countsAsAcceptance(status: ParticipantStatus | undefined): boole
 }
 
 /** The statuses that hold a counted yes which a flake notice can take back. */
-const YES_BEFORE_FLAKE: ReadonlySet<ParticipantStatus> = new Set(["accepted", "confirmed"]);
+const YES_BEFORE_FLAKE: ReadonlySet<ParticipantStatus> = new Set<ParticipantStatus>(["accepted", "confirmed"]);
+const JUDGE_VERDICT_SET: ReadonlySet<unknown> = new Set(JUDGE_VERDICTS);
 
 export interface ProjectorOptions {
   /** State a member takes when they join (from their profile: normal, quiet...). */
@@ -34,8 +33,6 @@ export interface ProjectorOptions {
   runOf?: (proposalId: string) => string | undefined;
   /** Called after an opportunity changes (game scoring, missions). */
   onOpp?: (o: ObsOpportunity, rec: RunRecord) => void;
-  /** True when a simulated reviewer approves everything (review "auto"): no feed item per queued opportunity. */
-  quietReview?: () => boolean;
 }
 
 export class Projector {
@@ -76,6 +73,7 @@ export class Projector {
 
   /** State each opportunity was in when last seen (time in state). */
   private lastState = new Map<string, OppState>();
+  private judgedVerdict = new Map<string, NonNullable<ReviewInfo["judgeVerdict"]>>();
   private changed(o: ObsOpportunity, rec: RunRecord) {
     o.updatedAt = rec.t;
     if (this.lastState.get(o.id) !== o.state) { this.lastState.set(o.id, o.state); o.stateSince = rec.t; }
@@ -197,6 +195,16 @@ export class Projector {
       }
       case "outcome": {
         const o = s.opps.get(r.proposalId);
+        if (o && isTerminal(o.state)) {
+          const notices = Object.entries(r.attendance).filter(([id, a]) => !a.showed && a.cancelledWithNotice && id in o.status && o.status[id] !== "declined");
+          for (const [id] of notices) {
+            c.cancelledWithNotice++;
+            this.setParticipantStatus(o, id, "cancelled_with_notice");
+          }
+          if (notices.length) this.changed(o, r);
+          s.pushFeed({ t: r.t, kind: "outcome", members: Object.keys(r.attendance), opportunityId: o.id, text: `${this.names(Object.keys(r.attendance))}: outcome after the plan closed (${o.state.toLowerCase()})`, severity: "info" });
+          return;
+        }
         const showed = Object.entries(r.attendance).filter(([, a]) => a.showed).map(([id]) => id);
         const held = observatoryMeetingHeld(showed.length);
         for (const [id, a] of Object.entries(r.attendance)) {
@@ -225,8 +233,7 @@ export class Projector {
         const ids = Object.keys(r.attendance);
         s.pushFeed({
           t: r.t, kind: "outcome", members: ids, opportunityId: r.proposalId,
-          text: held ? `${this.names(showed)} met · enjoyment ${(mean * 100).toFixed(0)}%`
-            : o?.state === "CANCELLED" ? `${this.names(ids)}: meeting cancelled` : `${this.names(ids)}: meeting fell through`,
+          text: held ? `${this.names(showed)} met · enjoyment ${(mean * 100).toFixed(0)}%` : `${this.names(ids)}: meeting fell through`,
           severity: !held ? "warn" : mean >= ENJOYED ? "good" : mean < AVOID ? "bad" : "info",
         });
         return;
@@ -331,7 +338,7 @@ export class Projector {
         // Not a proposal to anyone yet: it counts when a reviewer approves it (a staff-composed one
         // counted at its "proposal" record is taken back until then).
         this.count(o, -1);
-        if (!this.opts.quietReview?.()) s.pushFeed({ t: r.t, kind: "review", text: `In review: ${originLabel(o.origin!).toLowerCase()} for ${this.names(p.participants)}`, members: p.participants, opportunityId: p.id });
+        s.pushFeed({ t: r.t, kind: "review", text: `In review: ${originLabel(o.origin!).toLowerCase()} for ${this.names(p.participants)}`, members: p.participants, opportunityId: p.id });
         return true;
       }
       case "review_decision": {
@@ -342,6 +349,7 @@ export class Projector {
         if (d.decision === "reroll") {
           // The item stays in review (a "review_queued" with rerolled follows) or closes back to the engine.
           rv.rerolls = (rv.rerolls ?? 0) + 1;
+          delete rv.exceptionReason;
           o.review = rv;
           if (d.next === "engine" && !isTerminal(o.state)) this.setState(o, "SKIPPED", "re-rolled in review (no alternate; back to the engine)");
           this.changed(o, r);
@@ -349,14 +357,19 @@ export class Projector {
           return true;
         }
         const decision = d.decision === "reject" ? "reject" : "approve";
-        Object.assign(rv, { decision, reason: (d.reason ?? undefined) as ReviewReason | undefined, note: d.note ?? undefined, reviewer: d.reviewer ?? undefined, decidedAt: r.t });
+        Object.assign(rv, { decision, reason: (d.reason ?? undefined) as ReviewReason | undefined, note: d.note ?? undefined, reviewer: d.reviewer ?? undefined, decidedAt: r.t,
+          ...(d.approver === "judge" || d.approver === "staff" ? { approver: d.approver } : {}) });
         for (const k of ["reason", "note", "reviewer"] as const) if (rv[k] === undefined) delete rv[k];
+        delete rv.exceptionReason;
+        const judged = this.judgedVerdict.get(o.id);
+        if (d.approver === "judge" && judged) rv.judgeVerdict = judged;
+        this.judgedVerdict.delete(o.id);
         if (Array.isArray(d.edited) && d.edited.length) rv.edits = [...(rv.edits ?? []), ...d.edited];
         o.review = rv;
         if (decision === "reject" && !isTerminal(o.state)) this.setState(o, "SKIPPED", `rejected in review${d.reason ? ` (${String(d.reason).replace(/_/g, " ")})` : ""}`);
         if (decision === "approve") this.count(o);
         this.changed(o, r);
-        if (!this.opts.quietReview?.() || decision === "reject") s.pushFeed({ t: r.t, kind: "review", text: `Review: ${decision === "approve" ? (rv.edits?.length ? "edited and approved" : "approved") : "rejected"} ${this.names(o.participants)}${d.reviewer ? ` (${d.reviewer})` : ""}`, members: o.participants, opportunityId: o.id, severity: decision === "approve" ? "good" : "warn" });
+        s.pushFeed({ t: r.t, kind: "review", text: `Review: ${decision === "approve" ? (rv.edits?.length ? "edited and approved" : "approved") : "rejected"} ${this.names(o.participants)}${d.reviewer ? ` (${d.reviewer})` : ""}`, members: o.participants, opportunityId: o.id, severity: decision === "approve" ? "good" : "warn" });
         return true;
       }
       case "review_invalidated": {
@@ -399,9 +412,21 @@ export class Projector {
         s.pushFeed({ t: r.t, kind: "review", text: `Review expired: ${this.names(o.participants)} (never sent)`, members: o.participants, opportunityId: o.id, severity: "warn" });
         return true;
       }
-      case "review_mode":
-        s.pushFeed({ t: r.t, kind: "review", text: `Review mode: ${d.mode}` });
+      case "review_judgment": {
+        if (d.stale !== true) this.judgedVerdict.set(String(d.oppId), JUDGE_VERDICT_SET.has(d.verdict) ? d.verdict : "undecided");
         return true;
+      }
+      case "review_exception": {
+        const o = s.opps.get(d.oppId);
+        const judged = this.judgedVerdict.get(String(d.oppId));
+        this.judgedVerdict.delete(String(d.oppId));
+        if (o?.review) {
+          o.review = { ...o.review, exceptionReason: String(d.reason), ...(judged ? { judgeVerdict: judged } : {}) };
+          this.changed(o, r);
+        }
+        s.pushFeed({ t: r.t, kind: "review", text: `Held for staff: ${String(d.verdict).replace(/_/g, " ")} (${String(d.reason).replace(/_/g, " ")})${o ? ` for ${this.names(o.participants)}` : ""}`, ...(o ? { members: o.participants, opportunityId: o.id } : {}), severity: "warn" });
+        return true;
+      }
       case "probe_started": {
         const p = d.proposal as Proposal;
         const primed = new Set<string>(d.primed ?? []);
@@ -511,7 +536,7 @@ export class Projector {
       case "minor_signal": {
         const m = s.member(d.memberId);
         if (m && !m.minor) { m.minor = true; s.touchMember(m.id); }
-        s.pushFeed({ t: r.t, kind: "trust", text: `${this.name(d.memberId)} is under 18: single-player only, never introduced`, members: [d.memberId], severity: "warn" });
+        s.pushFeed({ t: r.t, kind: "trust", text: `${this.name(d.memberId)} has a signal of under 18: single-player and out of every introduction until staff clear the signal`, members: [d.memberId], severity: "warn" });
         return true;
       }
       case "age_conflict": {

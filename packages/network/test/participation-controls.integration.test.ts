@@ -18,7 +18,7 @@ test.skipIf(!pgAvailable)("signed participation controls commit with the reply a
   const start = async () => {
     service = new NetworkService({
       url, clock, log: () => {}, photoStorage: null, adapter: () => new DryRunAdapter(() => {}),
-      env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret },
+      env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret },
       networks: [{ id: "friends:nyc", matchingEnabled: false }, { id: "peon:nyc", matchingEnabled: false }],
     });
     await service.start();

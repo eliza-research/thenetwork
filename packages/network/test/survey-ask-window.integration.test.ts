@@ -9,11 +9,12 @@ import { computeMetrics } from "../../sim/src/judge/metrics.ts";
 import { hasPausePath } from "../../sim/src/judge/rules.ts";
 import { interruptionSampleBucket } from "../src/interruption-feedback.ts";
 import { Mini } from "./mini.ts";
+import { simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";
 
 const climber = (id: string, name: string) => ({ id, name, age: 30, area: "Greenpoint", interests: ["climbing"], skills: ["belaying"] });
 
 test("an invitation survey in a member's ask window uses one of the ask's follow-ups", async () => {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
   // Every message in order, as the run log has them (the judge reads replies from the order and the times).
   const inbound: { at: number; t: number; id: MemberId; body: string }[] = [];
   const say = async (id: MemberId, body: string) => { inbound.push({ at: w.sent.length, t: w.clock.now(), id, body }); await w.say(id, body); };

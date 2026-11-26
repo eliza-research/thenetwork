@@ -16,7 +16,7 @@ test.skipIf(!pgAvailable)("monthly gathering approval enables private signed RSV
   const phone = "+12125550231";
   const service = new NetworkService({
     url, clock, log: () => {}, photoStorage: null, adapter: () => new DryRunAdapter(() => {}),
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret },
+    env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret },
     tokens: "admin@ntwrk:ntwrk-admin,reviewer@ntwrk:ntwrk-reviewer,admin@friends:friends-admin",
     networks: [{ id: "ntwrk:nyc", matchingEnabled: false }, { id: "friends:nyc", matchingEnabled: false }],
   });

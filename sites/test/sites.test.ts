@@ -92,7 +92,7 @@ const mounted = (device: DeviceKind) => landingStep(landingStart, { type: "mount
 
 /** The join page after it read the app and the session, as the generated join machine reaches it. */
 function joinAt(view: "SignedOut" | "MayJoin", checkOn: boolean): JoinPage {
-  const opened = joinStep(joinStart, { type: "openPage", viaAgent: false, fragmentName: false, ageDigitsOnly: false, ageDigitCount: 0, fragmentAge: 0 });
+  const opened = joinStep(joinStart, { type: "openPage", viaAgent: false, fragmentName: false });
   const loaded = joinStep(opened, { type: "loaded", view: { result: view, account: view === "SignedOut" ? 0 : 1, reason: "NoBlock" }, appUnreachable: false, inviteOnly: false });
   return view === "SignedOut" ? joinStep(loaded, { type: "readAuthMode", lookup: "ModeOtp", checkOn }) : loaded;
 }
@@ -109,8 +109,19 @@ afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 describe.each(SITES)("$domain", (s) => {
   test("every required page is built, and the spec's brand record is this site", () => {
     expect([brandFor(s.key).domain, brandFor(s.key).skillName]).toEqual([s.domain, s.skill]);
-    const need = ["index.html", "privacy.html", "terms.html", "404.html", ...(s.app === "peon" ? ["join.html"] : [])];
+    const need = ["index.html", "privacy.html", "terms.html", "404.html", "phone.html", ...(s.app === "peon" ? ["join.html"] : []), ...(s.app === "ntwrk" ? ["home-help.html"] : [])];
     if (s.app !== "peon") expect(htmlFiles(s)).not.toContain("join.html");
+    if (s.app !== "ntwrk") expect(htmlFiles(s)).not.toContain("home-help.html");
+    for (const page of ["add", "check", "mine", "view"]) {
+      const file = join(out(s), "photos", `${page}.html`);
+      expect(existsSync(file), `${s.domain} photos/${page}.html`).toBe(s.app === "slop");
+      if (s.app !== "slop" || page === "add") continue;
+      const html = read(s, join("photos", `${page}.html`));
+      expect(html, `photos/${page}.html`).toContain('<meta name="robots" content="noindex">');
+      expect(html, `photos/${page}.html`).not.toContain('property="og:');
+      expect(/<script\b/.test(html), `photos/${page}.html`).toBe(true);
+      expect(html, `photos/${page}.html`).not.toMatch(/href="\/(settings|join)|Sign in/);
+    }
     expect(htmlFiles(s)).not.toContain("sms-terms.html");
 
     expect(htmlFiles(s)).toEqual(expect.arrayContaining(need));
@@ -167,7 +178,16 @@ describe.each(SITES)("$domain", (s) => {
     expect(profile.screen).toBe("Profile");
     const ageText = text(s.app === "peon" ? renderJoin(profile, joinOptions(s)) : read(s, "SKILL.md"));
     expect(ageText).toMatch(/13(?: or older|\s*\+)/);
-    expect(ageText).toMatch(/18(?: and older|\s*\+)/);
+    if (s.app === "peon") {
+      expect(ageText).toMatch(/18(?: and older|\s*\+)/);
+      const html = renderJoin(profile, joinOptions(s));
+      expect(html).toMatch(/<input[^>]*name="birthdate"[^>]*>/);
+      expect(html.match(/<input[^>]*name="birthdate"[^>]*>/)?.[0]).toContain('type="date"');
+      expect(html).not.toContain('name="age"');
+    } else if (s.app === "slop") {
+      expect(ageText).toContain("Anyone 13 or older may join. slop.date doesn't match anyone under 18 for dates. Friendship introductions for people under 18 happen on friends.help and ntwrk.party.");
+      expect(ageText).not.toMatch(/18 (?:or|and) older/);
+    } else expect(ageText).toContain("Anyone 13 or older may join. Matching is for adults 18 or older, except friendship introductions between people aged 13 to 18 born at most 2 years apart, after an automatic check approves each one.");
   });
 
   test("STOP stops every app; 'leave <app>' stops one (PRD 40.3). No page says STOP ALL", () => {
@@ -189,8 +209,11 @@ describe.each(SITES)("$domain", (s) => {
         expect(body.replaceAll("help@ntwrk.party", ""), f).not.toContain("ntwrk.party");
       }
     }
+    const teenRedirect = "friendship introductions for people under 18 happen on friends.help and ntwrk.party";
     for (const f of ["SKILL.md", `.well-known/agent-skills/${s.skill}/SKILL.md`]) {
-      const skill = read(s, f).toLowerCase();
+      const whole = read(s, f).toLowerCase().replace(/\s+/g, " ");
+      if (s.app === "slop" || s.app === "peon") expect(whole, f).toContain(teenRedirect);
+      const skill = s.app === "slop" || s.app === "peon" ? whole.replaceAll(teenRedirect, "") : whole;
       for (const d of OTHER_APP_DOMAINS(s)) expect(skill.includes(d), `${f} mentions ${d}`).toBe(false);
       if (s.app !== "ntwrk") expect(hubTextsOnAppSurface(s.key, "SkillSurface").reduce((t, allowed) => t.replaceAll(allowed, ""), skill), f).not.toMatch(/the network|ntwrk\.party/);
       // Direct API instructions name region codes; discovery copy remains location-neutral.
@@ -279,6 +302,11 @@ describe.each(SITES)("$domain", (s) => {
     expect(h).toContain("script-src 'self' https://challenges.cloudflare.com;");
     expect(h).toContain("frame-src https://challenges.cloudflare.com;");
     expect(h).toContain("connect-src 'self';");
+    if (s.app === "slop") expect(h).toContain("img-src 'self' data: blob:;");
+    else {
+      expect(h).toContain("img-src 'self' data:;");
+      expect(h).not.toContain("blob:");
+    }
     expect(h).toContain("X-Frame-Options: DENY");
     expect(h).toContain("Referrer-Policy: no-referrer");
     expect(h).toContain("X-Content-Type-Options: nosniff");
@@ -488,8 +516,7 @@ test("landing pages keep agent onboarding and the Messages entry", () => {
       expect(html, `${s.domain} ${f}`).toMatch(/<link rel="icon" href="\/favicon-[a-z0-9]+\.svg" type="image\/svg\+xml">/);
       expect(html, `${s.domain} ${f}`).toContain(`<html lang="en" data-brand="${{ ntwrk: "network", slop: "slop", peon: "peon", friends: "friends" }[s.app]}">`);
     }
-    // Only the landing page and the join page ship the page script.
-    for (const f of htmlFiles(s)) expect(/<script\b/.test(read(s, f)), `${s.domain} ${f}`).toBe(f === "index.html" || f === "join.html");
+    for (const f of htmlFiles(s)) expect(/<script\b/.test(read(s, f)), `${s.domain} ${f}`).toBe(["index.html", "join.html", "phone.html", "home-help.html"].includes(f));
   }
 });
 
@@ -542,30 +569,39 @@ test("slop.date keeps its safety information off the landing page, and photos ar
   expect(text(read(slop, "privacy.html"))).toContain("never shown to you, to other members or to anyone else");
 });
 
-test("members aged 13 to 17 are told they are never matched on dates, and nothing promises them an introduction (founder 2026-11-22)", () => {
+test("members aged 13 to 17 keep their birthday out of tools, are never matched on dates, are promised no introduction, and are introduced only for friendship on friends.help and The Network (owner decisions 2026-11-22)", () => {
   for (const s of SITES) {
     for (const f of ["SKILL.md", `.well-known/agent-skills/${s.skill}/SKILL.md`]) {
       const t = read(s, f).replace(/\s+/g, " ");
       expect(t, f).toMatch(/Ask for their birthday/);
       expect(t, f).toMatch(/Never send a birthday or an age through a tool/);
       expect(t, f).toMatch(/never matche[sd] (them )?on dates/i);
-      expect(t, f).toMatch(/friendship introductions (only, )?with people within 2 years of their own age/);
       expect(t, f).toContain("Never promise them an introduction.");
       expect(t, f).not.toMatch(/introductions and matching are for adults 18 and older\./);
+      expect(t, f).not.toMatch(/Today nobody under 18 is introduced/);
+      if (s.app === "friends" || s.app === "ntwrk") {
+        expect(t, f).toContain("only for friendship, to people aged 13 to 18 born at most 2 years apart, after an automatic check approves each one.");
+      } else {
+        expect(t, f).toContain("Friendship introductions for people under 18 happen on friends.help and ntwrk.party.");
+      }
     }
-    const privacy = text(read(s, "privacy.html"));
-    expect(privacy).toContain("birth date");
-    expect(privacy).toContain("Today, no member under 18 is introduced to anyone.");
+    expect(text(read(s, "privacy.html"))).toContain("birth date");
+    for (const f of ["privacy.html", "terms.html"]) {
+      const legal = text(read(s, f)).replace(/\s+/g, " ");
+      expect(legal, `${s.domain} ${f}`).not.toContain("Today, no member under 18 is introduced");
+      expect(legal, `${s.domain} ${f}`).not.toContain("If introductions ever open to members under 18");
+      if (s.app === "friends" || s.app === "ntwrk") expect(legal, `${s.domain} ${f}`).toMatch(/friendship[^.]*(13 to 18|under 18)[^.]*2 years|friendship[^.]*2 years[^.]*(13 to 18|under 18)/i);
+    }
   }
   expect(read(SITES.find((s) => s.app === "slop")!, "SKILL.md").replace(/\s+/g, " ")).toContain("slop.date will not match them on dates");
-  expect(read(SITES.find((s) => s.app === "ntwrk")!, "SKILL.md").replace(/\s+/g, " ")).toContain("For ages 13–17, draft only friends interests and their own help; never offer dates or work, and never say that these interests lead to an introduction today.");
+  expect(read(SITES.find((s) => s.app === "ntwrk")!, "SKILL.md").replace(/\s+/g, " ")).toContain("For ages 13–17, draft only friends interests and their own help; never offer dates or work, and never promise that these interests lead to an introduction.");
 });
 
-test("peon.biz says a person reviews every introduction; no compliance gate blocks joining", () => {
+test("peon.biz says an automatic check approves every introduction and the hiring team decides; no compliance gate blocks joining", () => {
   const peon = SITES.find((s) => s.app === "peon")!;
   for (const f of ["SKILL.md"]) {
     const t = text(read(peon, f));
-    expect(t, f).toMatch(/reviews every introduction/i);
+    expect(t, f).toContain("Every introduction is checked automatically before anyone is contacted, and the team that hires makes every hiring decision.");
     expect(t, f).not.toContain("bias audit");
   }
 });

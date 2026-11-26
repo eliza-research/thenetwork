@@ -1,4 +1,4 @@
-// Staff release must re-read platform eligibility, not just the desk's stored members.
+// The relay classifier decides alone: no held text waits for staff. Eligibility is the canonical platform state.
 // Real service route and migrated Postgres; fictional adults, dry-run delivery only.
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
@@ -8,7 +8,7 @@ import { newPhone, pgAvailable, startStack, webJoin, type Stack } from "./harnes
 
 if (!pgAvailable && process.env.REQUIRE_PG === "1") throw new Error("relay release e2e requires Postgres");
 
-describe.skipIf(!pgAvailable)("staff relay release with canonical platform eligibility", () => {
+describe.skipIf(!pgAvailable)("automated relay decisions with canonical platform eligibility", () => {
   let st: Stack;
   let sql: SQL;
   beforeAll(async () => {
@@ -20,7 +20,7 @@ describe.skipIf(!pgAvailable)("staff relay release with canonical platform eligi
     await st?.close();
   }, 180_000);
 
-  test("a recipient's STOP after hold prevents release and appends no message", async () => {
+  test("an off-platform text is blocked at once and staff cannot release it; a recipient's STOP refuses a later text", async () => {
     const phones = [newPhone(), newPhone()];
     for (const [i, phone] of phones.entries()) {
       const joined = await webJoin(st, "friends", phone!, { age: 29 + i, firstName: i ? "Bo" : "Ari" });
@@ -45,31 +45,36 @@ describe.skipIf(!pgAvailable)("staff relay release with canonical platform eligi
       state.opps.push(opportunity);
       n.importState(state);
     });
-    const hold = async (itemId: string, text: string) => {
-      const outcome = await rt.unitOfWork(n => n.relayRequest({ itemId, from: ari.id, kind: "text", text }));
-      expect(outcome.decision).toBe("held");
-    };
+    const clean = async () => ({ flags: [], block: [] });
+    const ask = (itemId: string, text: string) => rt.unitOfWork(async n =>
+      n.relayRequest({ itemId, from: ari.id, kind: "text", text }, { hook: clean, canonical: await rt.relayParties([ari.id, bo.id]) }));
     const release = (id: string) => st.staff(`/staff/relay/${id}/release?app=friends`, { note: "reviewed the held text" });
-    // Positive control: the same route releases a content hold for two eligible adults.
-    await hold("release-e2e-adult", "add me on telegram, it's easier");
-    const control = await release("release-e2e-adult");
-    expect(control.status).toBe(200);
-    expect(await control.json()).toMatchObject({ ok: true });
-    expect(await sql`select id from network.messages where app_id='friends' and id='relay:release-e2e-adult'`).toHaveLength(1);
+    const relayRows = () => sql`select id from network.messages where app_id='friends'
+      and id in ('relay:release-e2e-control', 'relay:release-e2e-adult', 'relay:release-e2e-stop') order by id`;
+    const passed = await ask("release-e2e-control", "see you at the trailhead at nine");
+    expect(passed.decision).toBe("sent");
+    expect(await relayRows()).toEqual([{ id: "relay:release-e2e-control" }]);
 
     st.clock.advance(60_000);
-    await hold("release-e2e-stop", "dm me on instagram instead");
-    // Only the canonical consent ledger changes: the Network member is still opted in.
+    const blocked = await ask("release-e2e-adult", "add me on telegram, it's easier");
+    expect(blocked.decision).toBe("refused");
+    expect(await relayRows()).toEqual([{ id: "relay:release-e2e-control" }]);
+    const refusedRelease = await release("release-e2e-adult");
+    expect(refusedRelease.status).toBe(409);
+    expect(await refusedRelease.json()).toMatchObject({ ok: false, reason: "not_held" });
+    expect(await relayRows()).toEqual([{ id: "relay:release-e2e-control" }]);
+
+    st.clock.advance(60_000);
     await sql`insert into platform.consent_events (e164, app_id, state, source, at)
       values (${phones[1]}, null, 'opted_out', 'keyword:stop', ${new Date(st.clock.now())})`;
     expect((await sql`select opted_out from network.members where app_id='friends' and id=${bo.id}`)[0].opted_out).toBe(false);
-    const before = await sql`select id from network.messages where app_id='friends' order by id`;
-    const refused = await release("release-e2e-stop");
-    expect(refused.status).toBe(200);
-    expect(await refused.json()).toEqual({ ok: true, delivered: false });
-    expect(await sql`select id from network.messages where app_id='friends' order by id`).toEqual(before);
-    expect(await sql`select id from network.messages where app_id='friends' and id='relay:release-e2e-stop'`).toHaveLength(0);
-    // A repeated release cannot turn the decided item into a new delivery.
+    const toBo = () => sql`select id from network.messages where app_id='friends' and member_id=${bo.id} and direction='outbound' order by id`;
+    const before = await toBo();
+    const stopped = await ask("release-e2e-stop", "see you at the trailhead at ten");
+    expect(stopped.decision).not.toBe("sent");
+    expect(stopped.delivered).not.toBe(true);
+    expect(await toBo()).toEqual(before);
+    expect(await relayRows()).toEqual([{ id: "relay:release-e2e-control" }]);
     expect(await (await release("release-e2e-stop")).json()).toMatchObject({ ok: false, reason: "not_held" });
   }, 180_000);
 });

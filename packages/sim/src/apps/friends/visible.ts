@@ -4,7 +4,7 @@
 import type { MemberId } from "@thenetwork/core";
 import { canBeMatched } from "@thenetwork/core";
 import { DEFAULT_TOLERANCE, FT, hood } from "@thenetwork/engine/src/packs/friends/index.ts";
-import { FRIEND_ACTIVITIES, SLOTS, type FriendsSlot } from "./persona.ts";
+import { SLOTS, planActivitiesFor, type FriendsSlot } from "./persona.ts";
 import type { FriendsSnapshot } from "./snapshot.ts";
 
 export interface VisibleProfile {
@@ -30,7 +30,7 @@ export function visibleProfiles(s: FriendsSnapshot): Map<MemberId, VisibleProfil
     const v = out.get(f.memberId);
     if (!v) continue;
     for (const t of f.tags) {
-      if (f.kind === "interest") for (const a of FRIEND_ACTIVITIES) if (a.tags.includes(t) && !v.activities.includes(a.id)) v.activities.push(a.id);
+      if (f.kind === "interest") for (const a of planActivitiesFor(v.claimedAge)) if (a.tags.includes(t) && !v.activities.includes(a.id)) v.activities.push(a.id);
       if (t.startsWith(FT.free)) { const sl = t.slice(FT.free.length) as FriendsSlot; if ((SLOTS as readonly string[]).includes(sl)) v.free.push(sl); }
       if (t.startsWith(FT.maxTravel)) v.tolerance = Number(t.slice(FT.maxTravel.length)) || DEFAULT_TOLERANCE;
       if (t.startsWith(FT.energy)) v.energy = t.slice(FT.energy.length);

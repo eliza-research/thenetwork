@@ -21,6 +21,7 @@ export interface LoggedPersona {
   state?: ParticipationState;
   /** Apps the person has a membership in. Absent = ["ntwrk"] (or the apps of their join records). */
   apps?: AppId[];
+  birthKey?: number;
 }
 
 export interface OracleSummary {

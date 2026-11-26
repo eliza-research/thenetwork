@@ -25,6 +25,7 @@ COPY deploy ./deploy
 COPY tools/vibestack/vibestack/design ./tools/vibestack/vibestack/design
 # The fitted relay Clef weights (RELAY_CLEF_WEIGHTS_PATH=evals/relay/clef-relay-weights.json); the corpora stay out.
 COPY evals/relay/clef-relay-weights.json ./evals/relay/clef-relay-weights.json
+COPY evals/review/qualified.json ./evals/review/qualified.json
 # Build the CSS used in connector responses and in the staff console.
 RUN node packages/design-system/build.ts build \
     && node --import tsx packages/mcp/src/pages/build-css.ts \

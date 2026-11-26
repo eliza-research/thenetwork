@@ -270,6 +270,145 @@ describe("scopes", () => {
     expect([res.status, res.headers.get("location")]).toEqual([400, null]);
     expect(await res.text()).toContain("scope");
   });
+
+  test("a request that names only a scope the site does not offer is refused with invalid_scope and never gets a grant with no scope", async () => {
+    const env = setup();
+    const registered = await register(env, PEON, { scope: "photos:use" });
+    expect([registered.res.status, registered.body.error]).toEqual([400, "invalid_client_metadata"]);
+    const reg = await register(env, PEON);
+    const q = new URLSearchParams({ response_type: "code", client_id: reg.body.client_id, redirect_uri: "https://client.example/callback", code_challenge: CHALLENGE, code_challenge_method: "S256", scope: "photos:use" });
+    const res = await env.fetch(new Request(`${origin(PEON)}/oauth/authorize?${q}`));
+    expect([res.status, res.headers.get("location")]).toEqual([400, null]);
+    expect(await res.text()).toContain("scope");
+    const { client, token } = await connect(env, PEON, PHONE_A);
+    const narrowed = await tokenRequest(env, PEON, { grant_type: "refresh_token", refresh_token: token.refresh_token, client_id: client.client_id, scope: "photos:use" });
+    expect(narrowed.body.error).toBe("invalid_scope");
+  });
+});
+
+describe("slop.date photo tools (owner decision 2026-11-22)", () => {
+  const PHOTOS = "apps:read membership:read profile:write photos:use";
+  const holdings = (calls: string[]) => async (personId: string) => {
+    calls.push(personId);
+    return {
+      text: "You have 2 photos with me: 1 \"beach\" (Mon 2 Nov), Maya has it; 2 (Sat 14 Nov). See them: https://slop.date/photos/mine#tok",
+      photos: [
+        { number: 1, name: "beach", addedOn: "2026-11-02", sharedWith: [{ firstName: "Maya", state: "ready" as const }], id: "photo-row-1", url: "https://slop.date/photos/view#secret", sha256: "a".repeat(64) },
+        { number: 2, name: null, addedOn: "2026-11-14", sharedWith: [] },
+      ],
+    };
+  };
+
+  test("the photo tools are listed only on the slop.date app endpoints of the full surface", async () => {
+    const env = setup();
+    const names = async (url: string) => ((await rpc(env, url, "tools/list")).body!.result.tools as { name: string }[]).map(t => t.name);
+    for (const url of [`${origin(SLOP)}/mcp`, `${origin(NTWRK)}/mcp/slop`]) expect(await names(url)).toEqual(expect.arrayContaining(["my_photos", "photo_request"]));
+    for (const url of [`${origin(NTWRK)}/mcp`, `${origin(NTWRK)}/mcp/openai`, `${origin(PEON)}/mcp`, `${origin("friends.help")}/mcp`]) {
+      const listed = await names(url);
+      expect(listed).toContain("check_status");
+      expect(listed.filter(n => n === "my_photos" || n === "photo_request")).toEqual([]);
+    }
+  });
+
+  test("only slop.date offers photos:use: the other sites leave it out of their metadata and drop it from a request", async () => {
+    const env = setup();
+    const slopAs = await (await env.fetch(new Request(`${origin(SLOP)}/.well-known/oauth-authorization-server`))).json() as Record<string, any>;
+    expect(slopAs.scopes_supported).toEqual(["apps:read", "membership:read", "profile:write", "profile:read", "photos:use"]);
+    const slopPrm = await (await env.fetch(new Request(`${origin(SLOP)}/.well-known/oauth-protected-resource/mcp`))).json() as Record<string, any>;
+    expect(slopPrm.scopes_supported).toContain("photos:use");
+    for (const site of [PEON, NTWRK, "friends.help"]) {
+      const as = await (await env.fetch(new Request(`${origin(site)}/.well-known/oauth-authorization-server`))).json() as Record<string, any>;
+      expect(as.scopes_supported).toEqual(["apps:read", "membership:read", "profile:write", "profile:read"]);
+      const prm = await (await env.fetch(new Request(`${origin(site)}/.well-known/oauth-protected-resource/mcp`))).json() as Record<string, any>;
+      expect(prm.scopes_supported).not.toContain("photos:use");
+    }
+    await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
+    const { token } = await connect(env, PEON, PHONE_A, { scope: PHOTOS });
+    expect(token.scope).toBe("apps:read membership:read profile:write");
+  });
+
+  test("a default grant does not hold photos:use, so my_photos answers 403 with the photos scope and the platform is never asked", async () => {
+    const calls: string[] = [];
+    const env = setup({ photoHoldings: holdings(calls) });
+    await addMember(env, PHONE_A, [{ app: "slop", state: "active" }]);
+    const { token } = await connect(env, SLOP, PHONE_A);
+    expect(token.scope).toBe("apps:read membership:read profile:write");
+    const r = await call(env, `${origin(SLOP)}/mcp`, "my_photos", {}, { token: token.access_token });
+    expect(r.res.status).toBe(403);
+    const h = r.res.headers.get("www-authenticate")!;
+    expect(h).toContain('error="insufficient_scope"');
+    expect(h).toContain('scope="photos:use"');
+    expect(calls).toEqual([]);
+  });
+
+  test("my_photos returns numbers, names, days and first names only, never an id, a link or a hash", async () => {
+    const calls: string[] = [];
+    const env = setup({ photoHoldings: holdings(calls) });
+    const personId = await addMember(env, PHONE_A, [{ app: "slop", state: "active" }]);
+    const { token } = await connect(env, SLOP, PHONE_A, { scope: PHOTOS });
+    expect(token.scope).toBe(PHOTOS);
+    const r = await call(env, `${origin(SLOP)}/mcp`, "my_photos", {}, { token: token.access_token });
+    expect(r.res.status).toBe(200);
+    expect(r.body!.result.isError).toBe(false);
+    expect(r.body!.result.structuredContent).toEqual({
+      app: "slop",
+      text: expect.not.stringContaining("http"),
+      photos: [
+        { number: 1, name: "beach", addedOn: "2026-11-02", sharedWith: [{ firstName: "Maya", state: "ready" }] },
+        { number: 2, name: null, addedOn: "2026-11-14", sharedWith: [] },
+      ],
+    });
+    expect(JSON.stringify(r.body)).not.toMatch(/photo-row|https?:|#secret|#tok|[0-9a-f]{64}/);
+    expect(calls).toEqual([personId]);
+  });
+
+  test("a slop.date member under 18 gets no photo list, and the platform is never asked", async () => {
+    const calls: string[] = [];
+    const env = setup({ photoHoldings: holdings(calls) });
+    await addMember(env, PHONE_A, [{ app: "slop", state: "active" }], 16);
+    const { token } = await connect(env, SLOP, PHONE_A, { scope: PHOTOS });
+    const r = await call(env, `${origin(SLOP)}/mcp`, "my_photos", {}, { token: token.access_token });
+    expect(r.body!.result.structuredContent).toEqual({ app: "slop", text: "Photos are not available for this person here.", photos: [] });
+    expect(calls).toEqual([]);
+  });
+
+  test("photo_request passes the person's own words and answers without a link; it takes no photo id", async () => {
+    const asked: string[] = [];
+    const env = setup({
+      photoRequest: async (_personId, _app, _e164, words) => {
+        asked.push(words);
+        return { status: "texted", text: "Send Maya photo 1 \"beach\" (Mon 2 Nov)? See it: https://slop.date/photos/check#t Reply YES to send it." };
+      },
+    });
+    await addMember(env, PHONE_A, [{ app: "slop", state: "active" }]);
+    const { token } = await connect(env, SLOP, PHONE_A, { scope: PHOTOS });
+    const r = await call(env, `${origin(SLOP)}/mcp`, "photo_request", { words: "send Maya the beach one" }, { token: token.access_token });
+    expect(r.body!.result.structuredContent).toEqual({ app: "slop", status: "texted", text: "I texted the person the photo to check. They reply YES to that text to send it." });
+    expect(asked).toEqual(["send Maya the beach one"]);
+    const withId = await call(env, `${origin(SLOP)}/mcp`, "photo_request", { words: "send Maya photo 1", photo_id: "photo-1" }, { token: token.access_token });
+    expect(withId.body!.result.isError).toBe(true);
+    expect(asked).toEqual(["send Maya the beach one"]);
+  });
+
+  test("photo_request takes a list of photo numbers written with spaces, and still refuses a phone number written the same way", async () => {
+    const asked: string[] = [];
+    const env = setup({
+      photoRequest: async (_personId, _app, _e164, words) => {
+        asked.push(words);
+        return { status: "texted", text: "" };
+      },
+    });
+    await addMember(env, PHONE_A, [{ app: "slop", state: "active" }]);
+    const { token } = await connect(env, SLOP, PHONE_A, { scope: PHOTOS });
+    const listed = await call(env, `${origin(SLOP)}/mcp`, "photo_request", { words: "send her photos 1 3 4 5" }, { token: token.access_token });
+    expect(listed.body!.result.isError).toBe(false);
+    expect(listed.body!.result.structuredContent).toMatchObject({ app: "slop", status: "texted" });
+    for (const words of ["send her photo 5 5 5 1 2 3 4", "send her photos 1 2 3 4 5 6 7 8 9", "send her photos 1 2 3 4 then 555 0199"]) {
+      const phone = await call(env, `${origin(SLOP)}/mcp`, "photo_request", { words }, { token: token.access_token });
+      expect(phone.body!.result.isError).toBe(true);
+    }
+    expect(asked).toEqual(["send her photos 1 3 4 5"]);
+  });
 });
 
 describe("check_status isolation across apps", () => {
@@ -339,6 +478,21 @@ describe("banned numbers", () => {
     // Before the fix: a code was sent, sign-in worked, and the grant read "on_hold".
     expect(env.provider.sent.length).toBe(sends);
     expect(flow.location).toBeNull();
+  });
+
+  test("AE-2 a banned number reaches the code limit at the same start as any number, and still gets no code", async () => {
+    const pages = async (phone: string) => {
+      const env = setup();
+      await env.people.ban({ id: "ban_ae2", scope: "phone", personId: null, phoneHash: env.accounts.phoneHash(PHONE_A), reason: "staff", reportId: null, bannedBy: "staff:1", at: env.clock.t });
+      const reg = await register(env, PEON);
+      const limited: boolean[] = [];
+      for (let i = 0; i < 4; i++) limited.push((await browserFlow(env, PEON, reg.body.client_id, phone)).html.includes("Too many codes were asked for"));
+      return { limited, sent: env.provider.sent.filter(s => s.e164 === phone).length };
+    };
+    const banned = await pages(PHONE_A), plain = await pages(PHONE_B);
+    expect(banned.limited).toEqual([false, false, false, true]);
+    expect(banned.limited).toEqual(plain.limited);
+    expect([banned.sent, plain.sent]).toEqual([0, 3]);
   });
 });
 
@@ -453,6 +607,44 @@ describe("abuse limits", () => {
     expect((await register(env, PEON)).res.status).toBe(429);
     for (let i = 0; i < 3; i++) expect((await rpc(env, `${origin(PEON)}/mcp`, "tools/list")).res.status).toBe(200);
     expect((await rpc(env, `${origin(PEON)}/mcp`, "tools/list")).res.status).toBe(429);
+  });
+
+  test("spec/connectorTools.md, \"Request limits count each person's grant, and the client address has only a coarse ceiling\": people behind one assistant address keep their own MCP and token budgets", async () => {
+    const env = setup({ limits: { mcpPerIpMinute: 2, mcpPerGrantMinute: 3, tokenPerGrantMinute: 2 } });
+    await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
+    await addMember(env, PHONE_B, [{ app: "peon", state: "active" }]);
+    const a = await connect(env, PEON, PHONE_A);
+    const b = await connect(env, PEON, PHONE_B);
+    const status = (token: string) => call(env, `${origin(PEON)}/mcp`, "check_status", {}, { token });
+    for (let i = 0; i < 3; i++) expect((await status(a.token.access_token)).res.status).toBe(200);
+    expect((await status(a.token.access_token)).res.status).toBe(429);
+    for (let i = 0; i < 3; i++) expect((await status(b.token.access_token)).body!.result.structuredContent).toMatchObject({ app: "peon", status: "active" });
+    for (let i = 0; i < 2; i++) expect((await rpc(env, `${origin(PEON)}/mcp`, "tools/list")).res.status).toBe(200);
+    expect((await rpc(env, `${origin(PEON)}/mcp`, "tools/list")).res.status).toBe(429);
+    const refresh = (c: typeof a, refreshToken: string) =>
+      tokenRequest(env, PEON, { grant_type: "refresh_token", refresh_token: refreshToken, client_id: c.client.client_id });
+    env.clock.t = Math.ceil(env.clock.t / 60_000) * 60_000;
+    let aRefresh = a.token.refresh_token;
+    for (let i = 0; i < 2; i++) {
+      const refreshed = await refresh(a, aRefresh);
+      expect(refreshed.res.status).toBe(200);
+      aRefresh = refreshed.body.refresh_token;
+    }
+    expect((await refresh(a, aRefresh)).res.status).toBe(429);
+    expect((await refresh(b, b.token.refresh_token)).res.status).toBe(200);
+  });
+
+  test("assistant client registrations from one address have their own hourly limit", async () => {
+    const env = setup({ limits: { registerPerIpHour: 1, registerAssistantPerIpHour: 3 } });
+    const claude = { redirect_uris: ["https://claude.ai/api/mcp/auth_callback"] };
+    for (let i = 0; i < 3; i++) expect((await register(env, PEON, claude)).res.status).toBe(201);
+    expect((await register(env, PEON, claude)).res.status).toBe(429);
+    expect((await register(env, PEON)).res.status).toBe(201);
+    expect((await register(env, PEON)).res.status).toBe(429);
+    const mixed = setup({ limits: { registerPerIpHour: 1, registerAssistantPerIpHour: 3 } });
+    const both = { redirect_uris: ["https://claude.ai/api/mcp/auth_callback", "https://attacker.example/cb"] };
+    expect((await register(mixed, PEON, both)).res.status).toBe(201);
+    expect((await register(mixed, PEON, both)).res.status).toBe(429);
   });
 
   test("the code page says the same for any number (no enumeration)", async () => {
@@ -897,7 +1089,7 @@ describe("QSM regression fixes", () => {
     expect(await env.store.getAuthRequest(rid)).toBeUndefined();
   });
 
-  test("SD-428: a member on a staff hold reads on_hold, refuses submit_profile, hides read_profile, and fails slop eligibility", async () => {
+  test("SD-428: a member on a staff hold reads on_hold, refuses submit_profile, hides read_profile, and reads on_hold on slop.date too", async () => {
     let held = true;
     let submitted = 0;
     const env = setup({
@@ -919,12 +1111,12 @@ describe("QSM regression fixes", () => {
     const read = await call(env, `${origin(PEON)}/mcp`, "read_profile", {}, { token: c.token.access_token });
     expect(read.body!.result.structuredContent.profile).toBeNull();
     const directHooks = platformHooks({ store: env.people, otp: env.otp, accounts: env.accounts, app: id => APPS[id], memberHeld: async () => held });
-    expect(await directHooks.customChatGptSlopEligible!(personId, env.accounts.phoneHash(PHONE_A))).toBe(false);
+    expect(await directHooks.status(personId, "slop", env.accounts.phoneHash(PHONE_A))).toBe("on_hold");
 
     held = false;
     expect((await call(env, `${origin(PEON)}/mcp`, "check_status", {}, { token: c.token.access_token })).body!.result.structuredContent.status).toBe("active");
     expect((await call(env, `${origin(PEON)}/mcp`, "read_profile", {}, { token: c.token.access_token })).body!.result.structuredContent.profile).toMatchObject({ about: "Likes climbing" });
-    expect(await directHooks.customChatGptSlopEligible!(personId, env.accounts.phoneHash(PHONE_A))).toBe(true);
+    expect(await directHooks.status(personId, "slop", env.accounts.phoneHash(PHONE_A))).toBe("active");
   });
 
   test("malformed Basic auth returns 401 and a second authorize tab leaves the first tab working", async () => {

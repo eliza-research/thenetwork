@@ -39,10 +39,10 @@ browserTest("the built Peon join page keeps an invitation in the same verified a
     async findInvitation(app, token, _at, phone) {
       if (app === "peon" && tokenByPhone.get(phone) === token) return { inviterMemberId: "fixture-inviter", tokenHash: "fixture-hash" };
     },
-    async commitReferredJoin({ membership, e164, app }) {
+    async commitReferredJoin({ membership, e164, app, session }) {
       await store.putMembership(membership);
       await store.addConsent({ e164, app: app.id, state: "opted_in", source: "web_form", wording: app.consent.text, wordingVersion: app.consent.version, at: membership.joinedAt! });
-      await store.attachPerson(e164, membership.personId);
+      await store.attachPerson(e164, membership.personId, session ?? null, membership.joinedAt!);
       referredPhones.push(e164);
     },
     minStartMs: 0, minVerifyMs: 0, log: () => {},
@@ -97,7 +97,7 @@ browserTest("the built Peon join page keeps an invitation in the same verified a
   const profile = async (page: any) => {
     await step(page, "Profile");
     await page.getByLabel("First name").fill("Ari");
-    await page.getByLabel("Age", { exact: true }).fill("30");
+    await page.getByLabel("Birthday", { exact: true }).fill("1996-03-14");
   };
   const agree = (page: any) => page.getByRole("checkbox").click();
   const submit = (page: any) => page.getByRole("button", { name: "Join", exact: true }).click();
@@ -116,10 +116,17 @@ browserTest("the built Peon join page keeps an invitation in the same verified a
       await submit(page);
       expect(joins).toHaveLength(0);
       await agree(page);
+      await page.getByLabel("Birthday", { exact: true }).fill("2999-01-01");
+      await submit(page);
+      await page.getByText("Enter your birthday. It must be a real date, not after today.").waitFor();
+      expect(await page.getByLabel("Birthday", { exact: true }).getAttribute("aria-invalid")).toBe("true");
+      expect(joins).toHaveLength(0);
+      await page.getByLabel("Birthday", { exact: true }).fill("1996-03-14");
       await submit(page);
       await step(page, "Done");
       expect(page.url()).toBe(`${origin}/join`);
-      expect(joins[0]).toMatchObject({ inviteToken: directToken, firstName: "Ari", consent: { sms: true, wording: APPS.peon.consent.text } });
+      expect(joins[0]).toMatchObject({ inviteToken: directToken, firstName: "Ari", birthdate: "1996-03-14", consent: { sms: true, wording: APPS.peon.consent.text } });
+      expect(joins[0]).not.toHaveProperty("age");
       expect(await page.evaluate((token: string) => Object.values(localStorage).concat(Object.values(sessionStorage)).some(value => value.includes(token)), directToken)).toBe(false);
     });
 
@@ -211,13 +218,14 @@ browserTest("the built Peon join page keeps an invitation in the same verified a
       expect((await staleResponse).status()).toBe(409);
       await page.getByText("Your account changed. Please check your details again.").waitFor();
       expect(await page.getByLabel("First name").inputValue()).toBe("");
+      expect(await page.getByLabel("Birthday", { exact: true }).inputValue()).toBe("");
       expect(await page.getByRole("checkbox").getAttribute("aria-checked")).toBe("false");
       expect(await store.getMembership(current.id, "peon")).toBeUndefined();
       expect(await store.consentEvents(reassigned, "peon")).toHaveLength(0);
       expect((await store.getPerson(current.id))?.lowestAge).toBe(35);
 
       await page.getByLabel("First name").fill("Rae");
-      await page.getByLabel("Age", { exact: true }).fill("35");
+      await page.getByLabel("Birthday", { exact: true }).fill("1991-03-14");
       await agree(page);
       await submit(page);
       await step(page, "Done");

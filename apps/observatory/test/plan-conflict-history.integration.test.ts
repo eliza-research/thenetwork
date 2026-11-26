@@ -2,6 +2,7 @@ import { expect, test, vi } from "vitest";
 import { SQL } from "../../../packages/core/src/runtime/postgres.ts";
 import { DAY, HOUR } from "@thenetwork/core";
 import type { plans } from "@thenetwork/engine";
+import { holdEveryItem } from "../../../packages/engine/src/reviewJudge.ts";
 import { PgStore } from "@thenetwork/network";
 import { Mini } from "../../../packages/network/test/mini.ts";
 import { eventOf } from "../src/events.ts";
@@ -25,7 +26,7 @@ test.skipIf(!pgAvailable)("a booking-conflict drop shows in the opportunity Hist
       climber("c", "Carlos Example"),
       climber("d", "Dana Example"),
       climber("x", "Xavier Example"),
-    ], { review: "human" });
+    ], { inlineJudge: holdEveryItem.inline });
     await w.onboard("a", "b", "c", "d", "x");
     const now = w.clock.now();
     const plan: plans.Plan = {
@@ -35,6 +36,7 @@ test.skipIf(!pgAvailable)("a booking-conflict drop shows in the opportunity Hist
       createdAt: now, category: "hobby",
     };
     (w.net as unknown as { submitPlan(plan: plans.Plan, at: number): void }).submitPlan(plan, now);
+    await w.net.tick(now);
     const group = w.net.reviewQueue()[0]!.oppId;
     expect(w.net.review(group, "approve", { reviewer: "sim_staff" })).toBe(true);
     expect(await w.runUntil(() => ["a", "b", "c", "d"].every(id => w.probed(id)), 2 * DAY)).toBe(true);

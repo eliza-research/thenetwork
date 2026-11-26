@@ -2,6 +2,7 @@ import { expect, test, vi } from "vitest";
 import { SQL } from "../../../packages/core/src/runtime/postgres.ts";
 import { DAY, HOUR, type InitialInviteReceipt } from "@thenetwork/core";
 import type { plans } from "@thenetwork/engine";
+import { holdEveryItem } from "../../../packages/engine/src/reviewJudge.ts";
 import { PgStore } from "@thenetwork/network";
 import { probeReplyReceiptKey } from "../../../packages/network/src/network.ts";
 import { Mini } from "../../../packages/network/test/mini.ts";
@@ -25,7 +26,7 @@ test.skipIf(!pgAvailable)("an undelivered plan invitation shows in the opportuni
       climber("a", "Anton Example"),
       climber("c", "Carlos Example"),
       climber("d", "Dana Example"),
-    ], { review: "human", plans: false });
+    ], { inlineJudge: holdEveryItem.inline, plans: false });
     const receipts = new Map<string, InitialInviteReceipt>();
     let heldPlan: { id: string; at: number } | undefined;
     const context = w.ctx();
@@ -48,6 +49,7 @@ test.skipIf(!pgAvailable)("an undelivered plan invitation shows in the opportuni
       score: 0.6, u: {}, familiar: {}, createdAt: now, category: "hobby",
     };
     const item = (w.net as unknown as { submitPlan(plan: plans.Plan, at: number): { id: string } }).submitPlan(plan, now);
+    await w.net.tick(now);
     expect(w.net.review(item.id, "approve", { reviewer: "sim_staff" })).toBe(true);
     expect(await w.runUntil(() => heldPlan !== undefined, DAY)).toBe(true);
     receipts.set(heldPlan!.id, { kind: "not_sent" });

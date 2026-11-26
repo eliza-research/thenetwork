@@ -4,6 +4,7 @@ import type { plans } from "@thenetwork/engine";
 import { serveHttp } from "../../../packages/core/src/runtime/http.ts";
 import { SQL } from "../../../packages/core/src/runtime/postgres.ts";
 import { NetworkService } from "../../../packages/network/service/service.ts";
+import { holdEveryItem } from "../../../packages/engine/src/reviewJudge.ts";
 import { Mini } from "../../../packages/network/test/mini.ts";
 import { APPS } from "../../../packages/platform/src/apps.ts";
 import { createServer } from "../src/server.ts";
@@ -19,8 +20,8 @@ test.skipIf(!pgAvailable)("the real staff review card can read only the exact pe
     analyst = "fixture-friends-analyst", otherApp = "fixture-ntwrk-reviewer";
   const networkId = "friends:nyc";
   const network = new NetworkService({ url, clock, photoStorage: null, notify: false, log: () => {},
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off" }, networks: [{ id: networkId }, { id: "ntwrk:nyc", matchingEnabled: false }],
-    devMatching: [networkId], network: { plans: false, growth: false, maxNewPerDay: 0 },
+    env: { PLATFORM_ENV: "dev" }, networks: [{ id: networkId }, { id: "ntwrk:nyc", matchingEnabled: false }],
+    devMatching: [networkId], network: { plans: false, growth: false, maxNewPerDay: 0 }, reviewJudge: holdEveryItem.judge,
     tokens: `reviewer@*:${serviceToken}`, consoleToken: serviceToken,
   });
   const audit: AuditEntry[] = [];
@@ -31,6 +32,8 @@ test.skipIf(!pgAvailable)("the real staff review card can read only the exact pe
   try {
     await network.start();
     const app = APPS.friends;
+    const rt = network.runtimes.get(networkId)!;
+    const staff = { id: "fixture-staff", roles: ["safety" as const], grants: [{ role: "safety" as const, app: app.id }], via: "sso" as const };
     const names = ["Ari", "Blair", "Charlie", "Drew", "Elliot", "Frank", "Gina"];
     const members = [];
     for (const [index, firstName] of names.entries()) {
@@ -38,6 +41,9 @@ test.skipIf(!pgAvailable)("the real staff review card can read only the exact pe
         firstName, age: 32, homeCity: "nyc", neighborhood: "Inwood", interests: ["hiking"], consent: { sms: true, wording: app.consent.text },
       });
       if (!joined.ok) throw new Error(`Fixture join refused for ${firstName}`);
+      for (const check of ["age", "liveness"] as const) {
+        expect(await network.verify(staff, rt, joined.membership.memberId, check, "pass", "fixture verification")).toEqual({ ok: true });
+      }
       members.push({ id: joined.membership.memberId, name: firstName, age: 32 });
     }
     const ids = members.map(member => member.id);
@@ -52,17 +58,17 @@ test.skipIf(!pgAvailable)("the real staff review card can read only the exact pe
       invited, alternates, partner: false, size: { min: 3, target: 3, max: 4 }, quorum: 3,
       probeDeadline: now + 3 * DAY, score: 0.6, u: {}, familiar: {}, createdAt: now, category: "social",
     };
-    const rt = network.runtimes.get(networkId)!;
     const offered = [plan.window, { start: plan.window.start + DAY, end: plan.window.end + DAY }];
     const [groupId, partnerId] = await rt.unitOfWork(net => {
       net.importState({ ...net.exportState(), members: fixture.net.exportState().members });
       const group = net["submitPlan"](plan, now);
       const partner = net["submitPlan"]({ ...plan, id: "preview_partner", window: offered[1]!, reviewedOptions: offered,
         invited: ids.slice(5), alternates: [], partner: true, size: { min: 2, target: 2, max: 2 }, quorum: 2, category: "hobby" }, now);
-      return [group.id, partner.id];
+      return [group!.id, partner!.id];
     });
+    await network.reviewJudgeTick();
     const item = (await rt.reviewQueue()).find(row => row.oppId === groupId);
-    expect(item).toMatchObject({ origin: "planner", revision: 0 });
+    expect(item).toMatchObject({ origin: "planner", revision: 0, exception: { verdict: "flag", reason: "other_concern", revision: 0 } });
     const id = item!.oppId;
 
     server = await serveHttp({ hostname: "127.0.0.1", port: 0, fetch: async req => {

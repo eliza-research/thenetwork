@@ -16,11 +16,15 @@ A delayed START can carry the same receipt time as the most recent STOP.
 
 The turn returns a global opt-out for the gateway. The normal send fence
 then refuses both apps. START later can change one app's consent.
-STOP ALL covers every app on any line. Plain STOP on a dedicated line
-follows that line's configured scope. A direct request to stop texts
-alongside a separate request to keep calls has the same effect as STOP.
-The whole-message forms "QUIT NOW", "END PLEASE" and "por favor basta"
-also act as STOP. "I don't want texts anymore" is a direct STOP in the
+STOP and STOP ALL cover every app on any line, and only "leave <app>"
+stops one app. Changed (owner decision of 2026-11-22, which removed
+`PLATFORM_STOP_SCOPE`): before, plain STOP on a dedicated line followed
+that line's configured scope and could stop one app only; now no setting
+narrows STOP, so `stopCoversEveryApp` is removed and the service records
+one opt-out for every app. A direct request to stop texts alongside a
+separate request to keep calls has the same effect as STOP. The
+whole-message forms "QUIT NOW", "END PLEASE" and "por favor basta" also
+act as STOP. "I don't want texts anymore" is a direct STOP in the
 member's own words.
 
 ```quint
@@ -33,9 +37,6 @@ type LineConsent = { slopMayText: bool, friendsMayText: bool }
 type Turn = { state: LineConsent, out: List[ConsentUpdate] }
 
 pure val initial: LineConsent = { slopMayText: true, friendsMayText: true }
-
-pure def stopCoversEveryApp(explicitAll: bool, sharedLine: bool, dedicatedLineGlobal: bool): bool =
-  explicitAll or sharedLine or dedicatedLineGlobal
 
 pure def canTextStop(s: LineConsent, wording: StopWording): bool = true
 pure def textStop(s: LineConsent, wording: StopWording): Turn =

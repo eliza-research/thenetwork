@@ -9,7 +9,7 @@ import { findExecutable } from "../../core/src/runtime/process.ts";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
+import { DAY, DEFAULT_MODEL, endpointsFor, HOUR, judgeLLM, LLMBudget, MINUTE, recommenderLLM, SimClock } from "@thenetwork/core";
 import { localEmbed, SLOP_ENGINE_DEFAULTS, slopPack, slopProfiles, World } from "@thenetwork/engine";
 import { TURN_PATH, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
@@ -21,8 +21,10 @@ import { BlooioAdapter, DryRunAdapter } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
 import { copy } from "../src/copy.ts";
-import { meetingFeedbackKey } from "../src/network.ts";
+import { meetingFeedbackKey, REVEAL_PLACE_PLACEHOLDER, REVEAL_TIME_PLACEHOLDER, reviewApproved } from "../src/network.ts";
 import { Mini, START } from "./mini.ts";
+import { CostLedger, PgCostSink } from "../service/cost.ts";
+import { modelReviewJudge } from "../../engine/src/reviewJudge.ts";
 
 const T = 300_000;
 const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
@@ -35,6 +37,9 @@ async function admin(q: string) { const sql = new SQL({ url: ADMIN_URL, max: 1 }
 const SECRET = "whsec_slop_date";
 const ADMIN = "adm-tok", REVIEWER = "rev-tok", SAFETY = "saf-tok";
 const RAE = "+12125550161", SAM = "+12125550162";
+const LIVE_JUDGE = endpointsFor(process.env.JUDGE_PROVIDER || "surplus").length > 0
+  && process.env.NETWORK_REVIEW_JUDGE_MAX_REQUESTS === "20" && Number(process.env.NETWORK_REVIEW_JUDGE_BUDGET_USD) === 0.5;
+if (!LIVE_JUDGE) console.log(JSON.stringify({ scope: "slop-review-judge-live", skipped: "needs a provider key, NETWORK_REVIEW_JUDGE_BUDGET_USD=0.5 and NETWORK_REVIEW_JUDGE_MAX_REQUESTS=20" }));
 const debug = process.env.SLOP_PATH_DEBUG ? (s: string) => console.log(`  [slop-path] ${s}`) : () => {};
 
 let sql: SQL;
@@ -203,41 +208,14 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
   test("join, onboard, review approval, mutual yes, date booked, check-in, report to the safety queue, pair kept apart", async () => {
     const clock = new SimClock(START);
     const turnSecret = "synthetic-slop-safety-turn-signing-secret";
-    // Only the explicitly requested arm may use the runner's real provider.
-    // The service receives its normal opt-in settings, never a test LLM.
-    const engineJudge = process.env.NETWORK_ENGINE_JUDGE === "1";
-    const judgeEnv = engineJudge ? {
-      NETWORK_ENGINE_JUDGE: "1",
-      NETWORK_ENGINE_JUDGE_MAX_REQUESTS: process.env.NETWORK_ENGINE_JUDGE_MAX_REQUESTS,
-      NETWORK_ENGINE_JUDGE_BUDGET_USD: process.env.NETWORK_ENGINE_JUDGE_BUDGET_USD,
-    } : {};
-    if (engineJudge) {
-      expect(judgeEnv.NETWORK_ENGINE_JUDGE_MAX_REQUESTS).toBe("12");
-      expect(Number(judgeEnv.NETWORK_ENGINE_JUDGE_BUDGET_USD)).toBe(0.25);
-    }
     const s = svc = new NetworkService({
-      url: URL_, clock, instance: "slop-date", log: () => {}, env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: turnSecret, ...judgeEnv }, networks: [{ id: "ntwrk:nyc" }, { id: "slop:nyc" }],
+      url: URL_, clock, instance: "slop-date", log: () => {}, env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: turnSecret }, networks: [{ id: "ntwrk:nyc" }, { id: "slop:nyc" }],
       tokens: `admin:${ADMIN},reviewer:${REVIEWER},safety:${SAFETY}`, webhookSecret: SECRET, network: { seed: 1 }, photoStorage: null, notify: false,
       adapter: () => new DryRunAdapter(() => {}),
     });
     await s.start();
-    const judgeCost = async (phase: string) => {
-      const rows = await sql`select provider, detail->>'model' as model, count(*)::int as requests,
-        sum(cost_usd)::float8 as usd from network.cost_ledger
-        where app_id = 'slop' and kind = 'llm' and detail->>'purpose' = 'engine_judge'
-        group by provider, detail->>'model'` as { provider: string; model: string | null; requests: number; usd: number }[];
-      const requests = rows.reduce((n, row) => n + row.requests, 0);
-      const usd = rows.reduce((n, row) => n + row.usd, 0);
-      if (engineJudge) {
-        expect(requests).toBeGreaterThan(0);
-        expect(requests).toBeLessThanOrEqual(12);
-        expect(usd).toBeGreaterThan(0);
-        expect(usd).toBeLessThanOrEqual(0.25);
-        // A priced HTTP response is not proof of a valid parsed judge verdict.
-        console.log(JSON.stringify({ scope: "synthetic-slop-service-engine-judge-http", phase, requests, usd, providers: rows }));
-      } else {
-        expect(requests).toBe(0);
-      }
+    const noModelCalls = async () => {
+      expect((await sql`select count(*)::int as n from network.cost_ledger where app_id = 'slop' and kind = 'llm'`)[0].n).toBe(0);
     };
 
     // ---- Join slop by keyword on the shared line, then the onboarding asks.
@@ -267,27 +245,27 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
       item = q.items?.find((x: any) => x.proposal.participants.includes(rae) && x.proposal.participants.includes(sam));
     }
     expect(item).toBeDefined();
-    await judgeCost("before-review");
-    if (engineJudge) {
-      const runs = await sql`select r.summary->'matchingJudge' as judge from network.matching_runs r
-        join network.opportunities o on o.run_id = r.id and o.app_id = r.app_id
-        where o.app_id = 'slop' and o.id = ${item.oppId}` as {
-          judge: { model?: string; calls: number; failures: number; verdicts: number; selected: number; judged: number };
-        }[];
-      expect(runs).toHaveLength(1);
-      const judge = runs[0]!.judge;
-      expect(judge.calls).toBeGreaterThan(0);
-      expect(judge.verdicts).toBeGreaterThan(0);
-      expect(judge.selected).toBeGreaterThan(0);
-      expect(judge.failures).toBe(0);
-      expect(judge.judged).toBe(judge.selected);
-      console.log(JSON.stringify({ scope: "synthetic-slop-service-matching-judge", ...judge }));
-    }
+    expect(item.exception).toMatchObject({ verdict: "cannot_run", reason: "no_provider" });
+    await noModelCalls();
     // A reviewer's edit that talks about looks or a rating is refused on slop (photo ratings are never shown), and nothing is sent.
     for (const words of ["You're both really attractive, she's in the 73rd percentile.", "Similar looks level, good match.", "Top 10% photo rating."]) {
       const r = await (await staff(s, REVIEWER, "POST", `/apps/slop/review/${encodeURIComponent(item.oppId)}`, { decision: "edit", explanations: { [rae]: words }, secondsSpent: 5, revision: item.revision })).json() as any;
       expect([words, r.ok, r.code ?? r.error ?? r.reason]).toEqual([words, false, "edit_leak"]);
     }
+    expect((await sql`select count(*)::int as n from network.messages where app_id = 'slop' and opportunity_id = ${item.oppId}`)[0].n).toBe(0);
+    const probesPath = (revision: number) => `/apps/slop/review/${encodeURIComponent(item.oppId)}/probes?revision=${revision}`;
+    expect(await (await staff(s, REVIEWER, "GET", probesPath(item.revision + 1))).json()).toEqual({ ok: false, error: "preview_unavailable" });
+    const previewed = await (await staff(s, REVIEWER, "GET", probesPath(item.revision))).json() as
+      { ok: boolean; preview: { app: string; revision: number; probes: { memberId: string; text: string | null; fallback?: string; reveal: { text: string } }[] } };
+    expect(previewed).toMatchObject({ ok: true, preview: { app: "slop", revision: item.revision } });
+    expect(previewed.preview.probes.map(p => p.memberId).sort()).toEqual([rae, sam].sort());
+    for (const p of previewed.preview.probes) expect(p.text).toMatch(/^(?![\s\S]*\b(Rae|Sam)\b)[\s\S]*\?/);
+    for (const p of previewed.preview.probes) {
+      expect(p.reveal.text).toContain(REVEAL_PLACE_PLACEHOLDER);
+      expect(p.reveal.text).toContain(REVEAL_TIME_PLACEHOLDER);
+      expect(p.reveal.text).toContain(p.memberId === rae ? "Sam" : "Rae");
+    }
+    expect((await sql`select count(*)::int as n from network.staff_audit where action = 'read_review_probes' and target_id = ${item.oppId}`)[0].n).toBe(2);
     expect((await sql`select count(*)::int as n from network.messages where app_id = 'slop' and opportunity_id = ${item.oppId}`)[0].n).toBe(0);
     expect((await (await staff(s, REVIEWER, "POST", `/apps/slop/review/${encodeURIComponent(item.oppId)}`, { decision: "approve", secondsSpent: 20, revision: item.revision })).json() as any).ok).toBe(true);
 
@@ -324,6 +302,17 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     const [booked] = await sql`select state, meeting_at from network.opportunities where app_id = 'slop' and id = ${item.oppId}`;
     expect(booked?.state).toBe("SCHEDULED");
     for (const id of [rae, sam]) expect((await inbox(id)).some(m => /You're both in: a first date with/.test(m.body))).toBe(true);
+    const literal = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    for (const p of previewed.preview.probes) {
+      const template = p.reveal.text.split(REVEAL_PLACE_PLACEHOLDER).map(part => part.split(REVEAL_TIME_PLACEHOLDER).map(literal).join(".+?")).join(".+?");
+      const reveal = (await inbox(p.memberId)).find(m => m.opp === item.oppId && /You're both in/.test(m.body))!.body;
+      expect(reveal).toMatch(new RegExp(`(^|\\. )${template}(\\n\\S+)?$`));
+    }
+    const firstProbe = async (id: string) => (await inbox(id)).find(m => m.opp === item.oppId)?.body ?? "";
+    const withoutTimes = (t: string | null) => t?.replace(/: coffee, [^.]+\./, ": coffee, <times>.");
+    const delivered = await Promise.all(previewed.preview.probes.map(async p => ({ p, got: await firstProbe(p.memberId) })));
+    for (const { p, got } of delivered) expect(withoutTimes(got)).toBe(withoutTimes(p.text));
+    expect(delivered.filter(({ p, got }) => got === p.text).length).toBeGreaterThanOrEqual(1);
     expect(assistantTried).toBe(true);
     // The assistant's profile can't cancel the booked date or report anyone; only Rae's own texts do.
     await fromAssistant("Sorry, I can't make it anymore, cancel the date.");
@@ -398,7 +387,83 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     const byText = ((await (await staff(s, SAFETY, "GET", "/apps/slop/safety/reports")).json()) as any).reports.find((r: any) => r.subjectId === rae);
     expect(byText).toMatchObject({ kind: "unsafe", source: "message", status: "open", reporterId: sam });
     expect(net.eligible(rae as never)).toBe(false);
-    await judgeCost("after-complete-date-path");
+    await noModelCalls();
+    await s.close(); svc = undefined;
+  }, T);
+
+  test.skipIf(!LIVE_JUDGE)("join, onboard, live review judge: one decided judgment per packet, then a recorded approval or a staff exception", async () => {
+    const clock = new SimClock(START);
+    const ledger = new CostLedger({ sink: new PgCostSink(sql), clock });
+    const s = svc = new NetworkService({
+      url: URL_, clock, instance: "slop-date-live-judge", log: () => {},
+      env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: "synthetic-slop-live-judge-turn-signing-secret",
+        NETWORK_REVIEW_JUDGE_BUDGET_USD: process.env.NETWORK_REVIEW_JUDGE_BUDGET_USD, NETWORK_REVIEW_JUDGE_MAX_REQUESTS: process.env.NETWORK_REVIEW_JUDGE_MAX_REQUESTS },
+      networks: [{ id: "slop:nyc" }], tokens: `admin:${ADMIN},reviewer:${REVIEWER},safety:${SAFETY}`, webhookSecret: SECRET, network: { seed: 4 }, photoStorage: null, notify: false,
+      adapter: () => new DryRunAdapter(() => {}),
+      reviewJudge: modelReviewJudge(judgeLLM(ledger.llmHooks("slop", "review_judge")), process.env.JUDGE_MODEL ?? DEFAULT_MODEL),
+      engineJudge: recommenderLLM({ ...ledger.llmHooks("slop", "engine_judge"), budget: new LLMBudget({ maxCostMicro: 250_000, maxRequests: 12 }) }),
+    });
+    await s.start();
+    const LEE = "+12125550165", MAX = "+12125550166";
+    for (const [e164, answers] of [
+      [LEE, ["slop", "Lee, 30", "I'm a woman into men. Live in Fort Greene, love running and jazz", "I'm a woman looking for men, 27 to 38, within 5 miles of 11205", "Something serious", "Weekday evenings work best"]],
+      [MAX, ["slop", "Max, 32", "I'm a man into women. Clinton Hill, I run and go to jazz bars", "I'm a man looking for women, 25 to 35, within 5 miles of 11238", "A relationship", "Weekday evenings work best"]],
+    ] as const) for (const body of answers) await text(s, clock, e164, body);
+    const lee = (await memberId(LEE))!, max = (await memberId(MAX))!;
+    expect([lee, max]).toEqual([expect.any(String), expect.any(String)]);
+    expect((await staff(s, ADMIN, "POST", "/apps/slop/matching", { on: true })).status).toBe(200);
+    type JudgmentRow = { opportunity_id: string; revision: number; packet_hash: string; status: string; claims: number; verdict: string | null; reason: string | null; model: string | null; rubric: string };
+    const pairRows = async () => await sql`select j.opportunity_id, j.revision, j.packet_hash, j.status, j.claims, j.verdict, j.reason, j.model, j.rubric
+      from network.review_judgments j where j.app_id = 'slop' and ${lee} = any(j.member_ids) and ${max} = any(j.member_ids)
+      order by j.claimed_at` as JudgmentRow[];
+    let rows: JudgmentRow[] = [];
+    for (let i = 0; i < 12 && !rows.some(r => r.status === "decided"); i++) {
+      await run(s, clock, 2 * HOUR);
+      rows = await pairRows();
+    }
+    const decided = rows.filter(r => r.status === "decided");
+    expect(decided.length).toBeGreaterThan(0);
+    expect(new Set(rows.map(r => `${r.opportunity_id}:${r.revision}:${r.packet_hash}`)).size).toBe(rows.length);
+    for (const r of decided) {
+      expect(["approve", "flag", "undecided", "cannot_run"]).toContain(r.verdict);
+      expect(r.rubric).toBe("adult");
+      expect(r.claims).toBeLessThanOrEqual(1);
+    }
+    const first = decided[0]!;
+    await run(s, clock, HOUR);
+    const contacted = (await sql`select count(*)::int as n from network.messages where app_id = 'slop' and opportunity_id = ${first.opportunity_id} and direction = 'outbound'`)[0].n as number;
+    const queue = await (await staff(s, REVIEWER, "GET", "/apps/slop/review")).json() as { items?: { oppId: string; exception?: { verdict: string; reason: string } }[] };
+    const held = (queue.items ?? []).find(x => x.oppId === first.opportunity_id);
+    expect(first.verdict === "approve" ? contacted > 0 && !held : contacted === 0 && held?.exception?.reason === first.reason).toBe(true);
+    const audited = (await sql`select count(*)::int as n from network.staff_audit where actor = 'review_judge' and action = 'review_judgment' and target_id = ${first.opportunity_id}`)[0].n as number;
+    expect(audited).toBe(decided.filter(r => r.opportunity_id === first.opportunity_id).length);
+    const [requests] = await sql`select coalesce(sum(n), 0)::int as n from network.review_judge_requests where app_id = 'slop'` as { n: number }[];
+    expect(requests!.n).toBeLessThanOrEqual(Number(process.env.NETWORK_REVIEW_JUDGE_MAX_REQUESTS));
+    const spend = await sql`select detail->>'purpose' as purpose, count(*)::int as attempts, sum(cost_usd)::float8 as usd from network.cost_ledger
+      where app_id = 'slop' and kind = 'llm' group by detail->>'purpose' order by 1` as { purpose: string; attempts: number; usd: number }[];
+    const spendOf = (purpose: string) => spend.find(row => row.purpose === purpose) ?? { purpose, attempts: 0, usd: 0 };
+    expect(spendOf("engine_judge").attempts).toBeGreaterThan(0);
+    expect(spendOf("engine_judge").attempts).toBeLessThanOrEqual(12);
+    expect(spendOf("engine_judge").usd).toBeGreaterThan(0);
+    expect(spendOf("engine_judge").usd).toBeLessThanOrEqual(0.25);
+    expect(spendOf("review_judge").attempts).toBeGreaterThan(0);
+    expect(spendOf("review_judge").usd).toBeGreaterThan(0);
+    expect(spendOf("review_judge").usd).toBeLessThanOrEqual(Number(process.env.NETWORK_REVIEW_JUDGE_BUDGET_USD));
+    const runs = await sql`select r.summary->'matchingJudge' as judge from network.matching_runs r
+      join network.opportunities o on o.run_id = r.id and o.app_id = r.app_id
+      where o.app_id = 'slop' and o.id = ${first.opportunity_id}` as {
+        judge: { model?: string; calls: number; failures: number; verdicts: number; selected: number; judged: number };
+      }[];
+    expect(runs).toHaveLength(1);
+    const matchingJudge = runs[0]!.judge;
+    expect(matchingJudge.calls).toBeGreaterThan(0);
+    expect(matchingJudge.verdicts).toBeGreaterThan(0);
+    expect(matchingJudge.selected).toBeGreaterThan(0);
+    expect(matchingJudge.failures).toBe(0);
+    expect(matchingJudge.judged).toBe(matchingJudge.selected);
+    console.log(JSON.stringify({ scope: "slop-review-judge-live-matching-judge", ...matchingJudge }));
+    console.log(JSON.stringify({ scope: "slop-review-judge-live", model: process.env.JUDGE_MODEL ?? DEFAULT_MODEL, judgments: decided.map(r => ({ verdict: r.verdict, reason: r.reason, model: r.model })), contacted, held: !!held, requests: requests!.n, spend }));
+    await s.close(); svc = undefined;
   }, T);
 
   // spec/datingRadius.md, "A mutual named introduction stays in first-date history"
@@ -424,11 +489,10 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
       people.push({ id: result.membership.memberId, name: firstName, age: 30, e164, romance: { is, seeks: [seeks] } });
     }
     const ids = people.map(person => person.id);
-    const world = new Mini(people, { app: "slop", plans: false, growth: false, review: "human" });
+    const world = new Mini(people, { app: "slop", plans: false, growth: false });
     await world.onboard(...ids);
     const oppId = world.propose(ids, { category: "romance", objective: "a coffee date" });
-    expect(await world.runUntil(() => world.net.reviewQueue().some(item => item.oppId === oppId))).toBe(true);
-    expect(world.net.decide(oppId, "approve", { reviewer: "staff" })).toEqual({ ok: true });
+    expect(await world.runUntil(() => reviewApproved(world.net.exportState().opps.find(opp => opp.id === oppId)?.review))).toBe(true);
     await world.answerProbes(ids);
     const seed = world.net.exportState();
     const booked = seed.opps.find(opp => opp.id === oppId)!;
@@ -578,8 +642,16 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     await signedText(service, clock, secret, RAE, "absence-next-cancellation", "I can't make it anymore.");
     expect((await state()).opps.find(opp => opp.id === future.id)?.stage).toBe("closed");
 
-    await signedText(service, clock, secret, SAM, "absence-other-participant", answer);
-    const afterOther = await state();
+    const otherReplies = await signedText(service, clock, secret, SAM, "absence-other-participant", answer);
+    let afterOther = await state();
+    if (report === "no_show") {
+      expect(otherReplies).toEqual([copy.checkInSafetyAsk("Rae")]);
+      expect(afterOther.reports).toEqual([]);
+      expect(afterOther.blocks).toEqual([]);
+      expect(afterOther.members.find(member => member.id === sam)?.pendingSafety).toMatchObject({ verb: "check_in", kind: report, targets: [rae], oppId: id });
+      await signedText(service, clock, secret, SAM, "absence-other-report", "REPORT");
+      afterOther = await state();
+    }
     expect(afterOther.opps.find(opp => opp.id === id)?.post?.[sam]).toMatchObject({ came: true, otherNoShow: missing });
     expect(afterOther.reports).toMatchObject(report
       ? [{ reporterId: sam, subjectId: rae, kind: report, opportunityId: id, source: "check_in" }]
@@ -696,7 +768,7 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
   // Founder decision (2026-10-11, issue #22): a woman or a man who stays unclear about who they hope to
   // meet after the seeks question was asked its two times is read as straight. The read-back says so,
   // and the member can change it. Before this, seeks stayed empty and the member was never matchable.
-  test("an unclear seeks answer after both asks defaults to straight, shown in the read-back", async () => {
+  test("an unclear seeks answer after both asks defaults to straight, shown in the read-back, and never for a member who stated an orientation", async () => {
     const clock = new SimClock(START);
     const s = svc = new NetworkService({
       url: URL_, clock, instance: "slop-seeks", log: () => {}, env: { PLATFORM_ENV: "dev" }, networks: [{ id: "slop:nyc" }],
@@ -705,14 +777,26 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     });
     await s.start();
     const JO = "+12125550163";
-    for (const body of ["slop", "Jo, 30", "I'm a woman, I'm bi. I live in Bushwick and love dancing", "not sure honestly", "idk, whatever works"]) await text(s, clock, JO, body);
+    for (const body of ["slop", "Jo, 30", "I'm a woman. I live in Bushwick and love dancing", "not sure honestly", "idk, whatever works"]) await text(s, clock, JO, body);
     const jo = (await memberId(JO))!;
     expect(jo).toEqual(expect.any(String));
     await text(s, clock, JO, "25 to 35, within 5 miles of 11237");
     const all = (await inbox(jo)).map(m => m.body);
     debug(all.join(" | "));
     expect(all.filter(b => /Who are you hoping to meet/.test(b))).toHaveLength(2);
+    expect(all.filter(b => /Which genders are you open to dating/.test(b))).toHaveLength(0);
     expect(all.some(b => /looking for men/.test(b))).toBe(true);
+
+    const KIT = "+12125550164";
+    for (const body of ["slop", "Kit, 30", "I'm a woman, I'm bi. I live in Bushwick and love dancing", "not sure honestly", "idk, whatever works", "not sure", "whatever"]) await text(s, clock, KIT, body);
+    const kit = (await memberId(KIT))!;
+    expect(kit).toEqual(expect.any(String));
+    await text(s, clock, KIT, "25 to 35, within 5 miles of 11237");
+    const bi = (await inbox(kit)).map(m => m.body);
+    debug(bi.join(" | "));
+    expect(bi.filter(b => /Who are you hoping to meet/.test(b))).toHaveLength(2);
+    expect(bi.filter(b => /Which genders are you open to dating/.test(b))).toHaveLength(2);
+    expect(bi.some(b => /looking for (men|women)/.test(b))).toBe(false);
     await s.close(); svc = undefined;
   }, T);
 
@@ -742,7 +826,7 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     const queued = phase === "before queued reveal";
     const attempted: string[] = [];
     const turnSecret = "synthetic-slop-probe-receipt-signing-secret";
-    const adapter = new BlooioAdapter({ app: "slop", from: "+12125550169", clock, liveGate: () => true, log: () => {}, provider: {
+    const adapter = new BlooioAdapter({ app: "slop", from: "+12125550169", clock, log: () => {}, provider: {
       kind: "sim", send: async request => {
         attempted.push(request.idempotencyKey);
         return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent" };

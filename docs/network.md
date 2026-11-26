@@ -8,7 +8,7 @@ Results: [results/2026-10-07-network-consent.md](results/2026-10-07-network-cons
 
 ## 1. What it is
 
-`ConsentNetwork` (`packages/network/src/network.ts`) is the Network side of the product. It reads member messages, decides what to say, asks the engine for proposals, gates them, sends them for human review, asks members first, and schedules meetings. It implements the `NetworkUnderTest` interface, so the simulator runs it in place of the `StubNetwork`. It is written to run behind the real channel later.
+`ConsentNetwork` (`packages/network/src/network.ts`) is the Network side of the product. It reads member messages, decides what to say, asks the engine for proposals, gates them, has the review judge decide each one (staff decide the items it holds), asks members first, and schedules meetings. It implements the `NetworkUnderTest` interface, so the simulator runs it in place of the `StubNetwork`. It is written to run behind the real channel later.
 
 | File | What it does |
 |---|---|
@@ -33,7 +33,7 @@ The Network can save all of its state and load it in a new process. The producti
 
 - `exportState()` returns the whole state as plain JSON (`NetworkState`, version 1). It holds members (with what they told the Network and their full name), opportunities with their review records, requests, queued proposals, deferred sends, pair history, trust records, safety cases, counters and sequence numbers.
 - `importState(state)` replaces the Network's state with a stored one. It refuses any other version. `runTick()` and `runStored()` call it before every unit of work.
-- The review mode is never stored. It always comes from the options, so stored state cannot turn the simulated reviewer on.
+- There is no review mode. The judge comes from the options (`inlineJudge` in the simulator and tests, the service's worker in production), never from stored state. Stored review records name their approver (`approver: "judge" | "staff"`); an approved item stored before this change with the old simulated reviewer name is read as a judge approval, any other as a staff approval.
 - A deferred send is stored as data (a "hook"), not as a function, so it survives a restart. The hook changes how a deferred send is stored, not when it is sent.
 
 | Part | What it does |
@@ -59,7 +59,7 @@ The store tests check that a Network restarted from JSON gives the same messages
 
 ### 1.2 The production service
 
-`packages/network/service/` runs one Network for each row of `platform.networks` (`ntwrk:nyc`, `slop:nyc`, `peon:nyc`, `friends:nyc`) against Postgres. Details and the boundary with `packages/plugin-network` are in its [README](../packages/network/service/README.md). How to run it, its variables, the live-send flags and the staff API: [runbook-real.md](runbook-real.md) section 6.5. The four apps in local dev: [runbook-platform.md](runbook-platform.md). It is not deployed.
+`packages/network/service/` runs one Network for each row of `platform.networks` (`ntwrk:nyc`, `slop:nyc`, `peon:nyc`, `friends:nyc`) against Postgres. Details and the boundary with `packages/plugin-network` are in its [README](../packages/network/service/README.md). How to run it, its variables, the send channel and the staff API: [runbook-real.md](runbook-real.md) section 6.5. The four apps in local dev: [runbook-platform.md](runbook-platform.md). It is not deployed.
 
 ```bash
 NETWORK_DATABASE_URL=... node --import tsx --env-file-if-exists=.env packages/network/service/main.ts [--once] [--dry-run]
@@ -71,16 +71,16 @@ NETWORK_DATABASE_URL=... node --import tsx --env-file-if-exists=.env packages/ne
 | Snapshot | `service/snapshot.ts` `loadSnapshot(sql, now, { app, city })` reads one app's members, facets, intents, presence, edges and recent opportunities at the start of each unit of work. Every query filters by `app_id`. Person-to-person blocks (`platform.person_blocks`, from any app) become "blocked" edges when both people are members of this app. It derives `introduced` edges from booked participations whose `booked_told` rows record the booked plan reaching both members (the console projection of the saved state's `bookedTold`), recomputed from current rows each snapshot. The Observatory's shadow runs use the same builder. A member with no age on the record stays "unknown" (6.3). Each member carries `accountStatus` (6.6). |
 | Inbound | `POST /webhooks/blooio/<app>` (one app's line, secret `<APP>_BLOOIO_WEBHOOK_SECRET`) and `POST /webhooks/blooio` (the shared line). The shared line routes by `platform.app_lines`, then a keyword ("slop", "slop.date"), then the member's app, then The Network. The phone finds the person, then the membership, then the member id. One unit of work per message; a provider retry is handled once. |
 | Public API | `/api/*` for the four sites (`packages/platform/src/api.ts`), on `PLATFORM_API_PORT` (default 8790). A web join creates the network member and sends the welcome through the normal send path (`welcomeJoined`). Stop, leave, delete everything and export call the Network (`forgetMember` for a leave). |
-| Outbound | `ChannelAdapter`. `DryRunAdapter` (default) stores each send with status `dry_run`. `BlooioAdapter` wraps the prototype's `OutboundQueue` with `blooioRecipientPolicy` and `forbiddenProvider`. It refuses every send unless `BLOOIO_ALLOW_SEND=1`, `NTWRK_LIVE_APPROVED=1` and the app's own `<APP>_LIVE_APPROVED=1` are set. A person cap of 3 proactive messages a day across all apps is checked when a send goes to the adapter (`refused_person_cap`). |
-| Staff API | Role tokens (`NETWORK_SERVICE_TOKENS`, `role@app:<t>` or `role:<t>` for every app), bound to 127.0.0.1. Name the network with `?app=` or `/apps/<app>/...`. `GET /review`, `POST /review/:oppId`, `POST /safety/lift`, `POST /safety/close`, `POST /matching`, `GET /health`. Each action writes `network.staff_audit` (with the app) and the Network's logs. The review mode is not exposed, and the service refuses any mode but "human". `POST /matching` answers 409 `matching_not_allowed` for a network that `platform.networks` keeps off (slop and peon). |
+| Outbound | `ChannelAdapter`. `DryRunAdapter` (default) stores each send with status `dry_run`. `BlooioAdapter` wraps the prototype's `OutboundQueue` with `blooioRecipientPolicy` and `forbiddenProvider`. The configured channel alone decides real sends, for every app (spec/bootPolicy.md). A person cap of 3 proactive messages a day across all apps is checked when a send goes to the adapter (`refused_person_cap`). |
+| Staff API | Role tokens (`NETWORK_SERVICE_TOKENS`, `role@app:<t>` or `role:<t>` for every app), bound to 127.0.0.1. Name the network with `?app=` or `/apps/<app>/...`. `GET /review`, `POST /review/:oppId`, `POST /safety/lift`, `POST /safety/close`, `POST /matching`, `GET /health`. Each action writes `network.staff_audit` (with the app) and the Network's logs. There is no review mode: the review judge decides every item, staff decide held items (`GET /review`, `POST /review/:oppId`), read the judge's decisions (`GET /review/judged`) and stop an approved item before its reveal (`POST /review/:oppId/stop`). `POST /matching` answers 409 `matching_not_allowed` for a network that `platform.networks` keeps off. |
 | Under 13 | After the decline, the member row keeps only the id. Their messages, profile, phone and events are deleted. "Events" means every `network.events` row that names them: as the actor or the object, or in the payload (`memberId`, `from`, `newMemberId`, `out`, `in`, `participants`, `members`, `attendance`, the keys the writer reads with `membersOf`). |
 | Reply kind | A send is a Blooio "reply" (sent at once, past quiet hours and the queue's caps) only when the Network says so (`NetworkContext.send` option `reply`). A proactive send, a growth ask, a re-engagement or a weekly check-in made while the service handles that member's message is not a reply. |
 
 Tests (local Postgres, a database per test process):
 
-- `test/service.test.ts`: dry-run replies to signed webhooks, retries and strangers, STOP and HELP, an under-13 decline, review through the API after a restart and the next tick's probe, two instances that never tick at once, and no Blooio send without the live flags.
-- `test/service-apps.test.ts`: per-app copy, joins by text, under-age and invite-only answers, keyword routing and `platform.app_lines`, the link notice and SHARE, STOP, STOP ALL and START, leave, the person cap, the per-app live flags, staff roles per app, and the public API (join two apps, stop, export, leave, delete everything).
-- `test/crossapp.test.ts`: a two-app world (ntwrk and friends) with shared people and planted canaries. No canary or member id of one app reaches the other app's messages, review queue, opportunities, events, snapshot or health. A block made on ntwrk keeps the pair apart on buddies.
+- `test/service.test.ts`: dry-run replies to signed webhooks, retries and strangers, STOP and HELP, an under-13 decline, review through the API after a restart and the next tick's probe, two instances that never tick at once, and a Blooio send with no live flag set.
+- `test/service-apps.test.ts`: per-app copy, joins by text, under-age and invite-only answers, keyword routing and `platform.app_lines`, the link notice and SHARE, STOP, STOP ALL and START, leave, the person cap, sends for every app with no approval flag, staff roles per app, and the public API (join two apps, stop, export, leave, delete everything).
+- `test/crossapp.test.ts`: a two-app world (ntwrk and friends) with shared people and planted canaries. No canary or member id of one app reaches the other app's messages, review queue, opportunities, events, snapshot or health. A block made on ntwrk keeps the pair apart on friends.
 
 ### 1.3 Apps (the `app` option)
 
@@ -104,7 +104,7 @@ Proof that ntwrk did not change: a 21-day, seed-1 NYC run hashed every run recor
 
 Limits:
 
-- Every app runs The Network's NYC engine, places and time zone with its own brand words and join age. slop and peon matching stays off until an admin turns it on (`platform.networks.matching_enabled = false`). peon job seats: 1.4.
+- Every app runs The Network's NYC engine, places and time zone with its own brand words and join age. Every network starts with matching off, and an admin turns it on (`platform.networks.matching_enabled` allows it on all four). peon job seats: 1.4.
 - slop and peon review reasons exist only in the Observatory. The Network's `decide()` accepts the PRD 32.8 codes, so the console sends an app code as its PRD code with `[code]` at the start of the note ([admin-console.md](admin-console.md) 4.6).
 
 ### 1.4 peon job seats (#9)
@@ -131,32 +131,33 @@ A no from the manager closes the item (an alternate candidate never stands in fo
 
 **Close and fill.** At every tick, `checkSeats` ends a seat's items in review or in probes when the posting is closed or gone, or when intros that both sides accepted take all its openings. A candidate who already said yes gets "That job is no longer open...". Intros that are already done stay.
 
-**Validation.** `pnpm run sim --only peon-seats` (blocking: intake, routing, double opt-in, exclusions, restart, close; review "human", approved by the gate). `packages/network/test/peon-postings.integration.test.ts` (text intake, the yes, restart, the staff API, on Postgres). `packages/network/test/peon-seats.integration.test.ts` (seats and capacity from rows).
+**Validation.** `pnpm run sim --only peon-seats` (blocking: intake, routing, double opt-in, exclusions, restart, close; the stand-in judge holds every item, `holdEveryItem`, and the gate approves it as staff). `packages/network/test/peon-postings.integration.test.ts` (text intake, the yes, restart, the staff API, on Postgres). `packages/network/test/peon-seats.integration.test.ts` (seats and capacity from rows).
 
 Peon tracks the introduction in the member conversation. The pack models the later interview, offer, and hire stages (PRD 40.6).
 
-## 2. The review gate (PRD 32.8)
+## 2. The review gate (PRD 32.8; automated, owner decisions D15 to D17 of 2026-11-22)
 
-Every opportunity waits in a review queue before any member hears about it. This includes engine proposals, member requests, plans buddies, second encounters, newcomer welcomes, intros that staff compose in the Observatory, and scenario proposals. No origin skips the queue.
+Every opportunity waits in review before any member hears about it. This includes engine proposals, member requests, plans buddies, second encounters, newcomer welcomes, gathering repeats, teen introductions, peon seats, intros that staff compose in the Observatory, and scenario proposals. No origin skips review. The rules are in [automated review](../spec/automatedReview.md).
 
 | Setting | Value | Where |
 |---|---|---|
-| Default mode | `"human"`, always. The member count never changes the mode. | `reviewMode()` |
-| Simulator mode | `"auto"`: a simulated reviewer (`sim_auto_reviewer`) approves each queued item. Experiments, scenarios and tests ask for it explicitly. It is never the default. Production must refuse it (runbook-real 7.1). | `NetworkOptions.review` |
-| No review | There is no "off" mode. PRD 32.8 keeps review on for the whole MVP. Above 1,000 members, only a category that held the precision gate for 4 weeks may move to sampled review. Sampled review needs a founder-approved option. It is not built. | - |
-| SLA | 12 hours; 1 hour for a same-day opportunity | `reviewSlaHours` |
-| Missed SLA | The item expires (`review_expired`). Nobody is contacted. It is never sent late. | `advance()` |
-| Reject | The opportunity closes. Nobody it names is contacted. The pair is not proposed again for 30 days (requests) or 60 days (engine). | `review()` |
+| Who decides | The review judge (`gpt-6-luna`, `judgeLLM()`) reads each item's packet: what a staff reviewer saw, as data (first names and refs, ages, roles, reasons, probe, reveal and fallback texts, place and time). A roster with a minor gets the strict rubric. No staff member reads an approved item. | `judgePackets()`, `recordJudgment()`, service `review-judge.ts` |
+| Exceptions | A flag, an unsure or unparseable reply, a judge that cannot run (no provider, a budget or request limit, a model error or timeout, too close to the deadline), text that speaks to a reviewer (`packet_suspect`), a pair flagged in the last 90 days (`prior_flag`) or no judgment within 30 minutes (`judge_overdue`): the item is held for staff. | `ReviewItem.exception` |
+| Staff | Approve, edit or re-roll only a held item (`not_held_for_staff` otherwise); reject any open item; stop an approved item before its reveal (`stopApproved`). A re-roll sends the new revision to the judge. | `decide()`, `stopApproved()` |
+| Simulator | A deterministic stand-in (`simulatedReviewJudge`, reviewer `sim_review_judge`): no model call, it does not read text. `holdEveryItem` holds every item for staff. The runtime never takes an inline judge. | `NetworkOptions.inlineJudge` |
+| SLA | 12 hours; 1 hour for a same-day opportunity. It is also the deadline of a held item. | `reviewSlaHours` |
+| Missed SLA | The item expires (`review_expired`). Nobody is contacted. It is never sent late. A held item that expires marks the pair declined, and a flagged one marks the pair flagged. | `advance()` |
+| Reject | The opportunity closes. Nobody it names is contacted. The pair is not proposed again for 30 days (requests) or 60 days (engine). | `decide()` |
+| Replacements | During probes, only a roster the approval covered (the base roster and each single swap of the packet) may replace a member; another roster closes the item (`replacement_not_judged`). | `replaceOrClose()` |
 
-What the reviewer sees and does:
+What staff see and do:
 
-- `reviewQueue()` lists the waiting items, oldest first, with the proposal, the origin, the deadline and the number of re-rolls.
-- `decide(oppId, decision, opts)` records the decision and returns `{ ok: true }` or `{ ok: false, reason }`. `review()` takes the same arguments and returns only true or false.
+- `reviewQueue()` lists the held items and fraud items, oldest first, with the proposal, the origin, the deadline, the number of re-rolls and the `exception` (verdict, reason, revision, rubric).
+- `decide(oppId, decision, opts)` records the decision and returns `{ ok: true }` or `{ ok: false, reason }`. `review()` takes the same arguments and returns only true or false. A decision needs a named reviewer (`reviewer_required`); the judge's names are refused (`reviewer_reserved`).
 - The decisions are `"approve"`, `"reject"`, `"edit"` and `"reroll"`. Any other decision is refused (`unknown_decision`).
 - `opts` (`ReviewOptions`): `reason`, `note`, `reviewer`, `secondsSpent`, `explanations`, `objective`, `swapOut`.
 - `secondsSpent` is added up per item and logged. It is a training label (PRD 32.8).
-- `setReviewMode(mode, actor)` changes the mode and logs `review_mode { mode, actor }`. A switch to `"auto"` (simulator only) lets the simulated reviewer approve what waits.
-- Logs: `review_queued`, `review_decision`, `review_refused`, `review_invalidated`, `review_expired`, `review_mode`. `probe_started` names the origin, the reviewer who approved the opportunity, and the member probed first (`first`). `probe_sent` names the member, the number of time options, and whether it was an initial invite. `probe_unclear` names the member whose probe answer was neither a clear yes nor a clear no and who was asked again. Every message about an opportunity carries `meta.proposalId` (the judge's `unreviewed_contact` check reads these).
+- Logs: `review_queued`, `review_judgment` (verdict, reason, rubric, packet hashes, stale), `review_exception`, `review_decision` (with `approver`), `review_refused`, `review_invalidated`, `review_expired`, `review_stopped`. `probe_started` names the origin, the approver and the reviewer of the approval, and the member probed first (`first`). `probe_sent` names the member, the number of time options, and whether it was an initial invite. `probe_unclear` names the member whose probe answer was neither a clear yes nor a clear no and who was asked again. Every message about an opportunity carries `meta.proposalId` (the judge's `unreviewed_contact` and `exception_contact_without_staff` checks read these). The `unreviewed_contact` check counts an approval only when it names its approver (`judge` or `staff`) and no later reject or `review_stopped` cancels it.
 
 A member who asked for something still hears "On it" at once. The opportunity itself waits for review.
 
@@ -225,7 +226,7 @@ With a capital reader that returns gaming flags (`CapitalReader.flags`, section 
 - Approve records `fraud_confirmed` in the NC ledger. Reject dismisses the flag. Edit and re-roll are refused.
 - Nobody is messaged about a fraud item.
 - The same kind and members are not queued again within 14 days. An item nobody decides expires after 14 days.
-- The simulated reviewer never decides fraud items, in any mode.
+- The review judge never decides fraud items; staff do.
 - `reviewQueue()` lists them with the other items. The Observatory shows them as kind `fraud`; it has no special view for them yet.
 
 ## 3. Skeptical gating rules
@@ -268,7 +269,7 @@ The flow follows the engine session's reference, attention v1.2 ([results/2026-1
 
 ```
 engine proposal / member request / plans / second encounter / newcomer welcome
-  -> gates -> REVIEW (human, or the simulated reviewer)
+  -> gates -> REVIEW (the review judge; staff for a held item)
   -> probe the first member (anonymous, 2-3 time options)
   -> on their yes: probe the partner with only the times the first member picked
   -> both yes: the booked plan (names, time, place; "Reply if you can't make it")
@@ -288,7 +289,7 @@ engine proposal / member request / plans / second encounter / newcomer welcome
 - **No time in common.** When the others named times and none of them can still work (each is less than 12 hours away, or this member turned it down), the opportunity closes quietly: `no_common_time { oppId, memberId }` and the counter `noCommonTime`. The partner is then not probed at all, and a partner who says "neither" to the picked times gets "No problem." instead of a retry.
 - **"Neither" gets one more try.** A member who says yes but picks no time gets other times once, as a direct reply (a `scheduling` message with `timeOptions`). The retry never repeats a time anyone turned down. A second "neither" keeps the yes; the plan is then set at the time that suits them best from the other member's picks (never one they turned down).
 - **A requester with a strong fit** is not asked yes or no (they asked). They get one question first: which of the times works for them. Their picks are what the other person is offered. A requester with a partial fit gets a confirm-probe with the times.
-- A probe expires 26 hours after it went out. A probe that cannot go out (the member's send window never opens, section 6.4) expires after 2 days unsent. Before a probe goes out, the Network checks again that the member is in New York this week.
+- A probe expires 48 hours after it went out; a Slop probe and a time question expire after 24 hours. A probe that cannot go out (the member's send window never opens, section 6.4) expires after 2 days unsent. Before a probe goes out, the Network checks again that the member is in New York this week.
 - When a participant says no, does not answer, or cannot be contacted, an alternate takes their place (at most 3 swaps). A group of 3 or more continues without them. Otherwise the opportunity closes quietly. No member learns who said no.
 
 ### 4.2 The booked plan (the reveal with an opt-out)
@@ -338,13 +339,21 @@ Standing requests:
 - A repeat ask within 3 days ("still hoping to...") is the same request. It does not open a new one.
 - A member who already has an open opportunity hears "let's see how that goes first".
 
+Eligibility and the request search read their data once per pass:
+
+- `eligible()` tells if a member can go into a new opportunity now and be in New York for it this week. A requester (`asked`) is not interrupted, so a requester needs room on the Blooio streak only for logistics. All other members need room for an interruption.
+- `busy()` tells if a member is in an open opportunity (other than `exceptOpp`) and did not leave it. It reads every opportunity, or only the member's own list from `oppsByMember()` when one pass checks many members. That list holds each opportunity where the member is a participant or has a status, in stored order. A list with one of these missing gives a wrong "not busy", so give `busy()` only a list that `oppsByMember()` made.
+- `searchFor()` builds `oppsByMember()` and `metRecently()` once for each request, not once for each candidate. `metRecently()` gives every person who had a meeting (held or a no-show) with the requester in the last 60 days.
+- `snapshotRows()` indexes the member records and the presence and facet rows of each member once for each snapshot object, in snapshot order. The production snapshot adds the account status to the member record (service/snapshot.ts). Do not change a snapshot in place: a row added to its arrays after the index is built is not seen until the snapshot is built again. Member ids are unique in a snapshot. If an id occurs two times, the last record is used.
+- `learnedLive()` lets a fresh learned statement stand in for a missing or expired stored intent of the same want. It reads only the stored intents of that member.
+
 ### 5.2 Plans and plans buddies
 
 1. The member gets 3 nearby public venues that fit their interests.
 2. If another member asked for plans in the last 3 days and lives within 35 minutes, the Network composes a plans buddy: both go to the first venue together.
 3. Asking for plans is not consent to meet a stranger. Both members get a probe first, and the opportunity goes to review.
 
-Members aged 13-17 get the venue list only. A people request from a minor is answered as a plans request.
+Members aged 13-17 get the venue list only. A people request from a minor is answered as a plans request, except from a teen-ready member in friends.help or in the ntwrk `Friend` lane (`social`) while staff have not stopped teen introductions (section 6.3): that request runs the same search, and each result passes the teen age rule and the review judge with the strict rubric, or staff for a held item.
 
 ### 5.3 Plans v1.1: the planner and the plan lane
 
@@ -357,7 +366,7 @@ The engine's planner (`plans`, `DEFAULT_PLANS`, plans-v1.1.0 in `packages/engine
 | Review | Each plan is one review item (origin `planner`). No plan reaches a member before approval. |
 | Probe | An anonymous plan probe (`meta.type` `"plan_probe"`): the activity, the area, the time options. No names. A probe the engine cannot build without a leak (`buildPlanProbe` returns null) is not sent and counts as a no. |
 | Plan lane | At most one plan invite a day for a member, in the send window. Members on the plan allowance get at most 1 plan invite per 7 days (`planLedger`, a plan-only ledger). Plan invites count for the two-unanswered pause and the Blooio streak. They never count on the intro cap (6.4). |
-| Answers | Silence for 26 hours after a probe counts as a no. Alternates from the reviewed list fill in. |
+| Answers | Silence for 48 hours after a probe (24 hours on Slop) counts as a no. Alternates from the reviewed list fill in. |
 | Booking | The plan books at quorum. Anyone booked elsewhere within 4 hours (`BOOKING_GAP`) is dropped first. Names appear only after quorum, in the booked plan: the people, the time, the public place, and "everyone pays their own way". A late yes can join until 6 hours before. Booked plans count as away when the Network picks a time for an intro. |
 | Falls short | `planFallback`: a smaller plan, a public event, or next week. "That plan didn't come together this time." goes into the member's next message. Nobody learns who declined. |
 | After | "How was X, and would you do it again with this group?" Members who both say yes get a `would_interact_again` link. Crew detection uses those links. A crew is offered once, and members opt in. Weekly crew sessions are reviewed like any plan and handed off after 3. |
@@ -418,14 +427,27 @@ Staff actions (each logs `safety_action { action, caseId, memberId, actor, note 
 
 ### 6.3 Age policy
 
-The policy comes from `packages/core/src/policy.ts` (`MIN_MEMBER_AGE = 13`, `ADULT_AGE = 18`, `canJoin`, `isMinor`).
+The policy comes from `packages/core/src/policy.ts` (`MIN_MEMBER_AGE = 13`, `ADULT_AGE = 18`, `canJoin`, `isMinor`), [spec/memberAge.md](../spec/memberAge.md) and [spec/friendIntroAge.md](../spec/friendIntroAge.md).
+
+- **Birth date (owner decision 2026-11-22):** signup and the text line ask for the birthday (year, month and day). A civil date is one integer `yyyymmdd`. Each statement is a reading, an interval of possible birth dates: an exact birth date, or a typed age on a day. The person keeps the merged readings; two readings that disagree are an age conflict that never clears. The youngest reading wins, and no later reading makes the person older than an earlier one allows. The age comes from the birth date at Clock time, so it rises on the birthday. A test for "at least 13" or "at least 18" uses the earliest civil date on Earth (`earliestDayKeyOf`); a test for "at most 18" uses the latest (`latestDayKeyOf`). The integer columns (`network.members.age`, `platform.people.lowest_age`) are still written and decide only for rows without readings.
 
 - The Network reads an age from a message only when the member says it about themselves and the clause reads like an age ("I'm 15.", "I'm 15 years old", "I'm in 7th grade"). "I'm 4 years sober", "I'm 12 years into my career", "I'm 3 and 0 this season" and "12 yo whisky" are not ages. A bare "and", "now" or "too" after a number ends an age only for 13 and up.
 - **Under 13:** the member gets one kind decline (`UNDER_MIN_AGE_DECLINE`). Then the Network deletes everything it holds about them. It keeps only the id, so it never messages them again. The log `join_declined` holds only the reason. The Network declines only when the age on the member record is under 13, or when the member states an explicit age under 13 ("I am 12 years old", or "12" as the answer to the age question). The Observatory's Postgres writer (`db/writer.ts`) does the same: the member row keeps only the id and `account_status = 'removed'`, with no name, age, profile, contact, facets, messages or edges.
 - **Conflict:** a looser statement under 13 ("I'm in 7th grade", "I'm 5, maybe 10 minutes away") never declines, with or without a record age. The Network treats the member as a minor (fail closed), deletes nothing and logs `age_conflict` for staff to check. With no record age, the log has no `attestedAge`.
 - **Minor:** the Network uses the lowest age it knows (the record or any age the member states). Under 18 is a minor. The record is read again on every unit of work and at every send-time check (6.6): a record age under 18 makes the member a minor at once (`minor_record`), takes them out of every open opportunity, and stays (a later adult record age does not undo it).
 - **Found to be a minor after a booked plan:** when a member becomes a minor (a signal, a stated age or the record) after the Network revealed adults to them in a booked plan, the Network opens or adds to that member's safety case with one `minor_after_contact` event per adult (ids only) and logs `minor_after_contact`. Staff decide what to do about those adults. In the 21-day NYC runs this happened once in three seeds: a 16-year-old whose record said 20 and who gave no sign of age until after the meeting. Nothing before the meeting could have caught it; only age verification at onboarding would.
-- **13 to 17:** the member can use the agent for themselves (chat, events, places). They are never probed, matched, revealed to anyone or told about anyone. Growth asks and invites are off for them.
+- **13 to 17:** the member can use the agent for themselves (chat, events, places). Growth asks and invites are off for them. They are never in a date, work, ntwrk plan, gathering or public-event role, never rated and never in a number or photo relay. The looking-for question offers them friends only. A minor member of slop.date or peon.biz keeps solo help and is told once what they get (`minorScopeNoticeDue`). While staff have stopped teen introductions, they are never probed, matched, revealed to anyone or told about anyone.
+- **Teen friend introductions** (owner decision 2026-11-22, answers A1 to A5; [spec/friendIntroAge.md](../spec/friendIntroAge.md) and [spec/matchLane.md](../spec/matchLane.md) own the rules):
+  - Where: friends.help (`friend_circle`, `activity_partner`, `plan`, `friends_repeat`, `crew`, and member requests in `social` or `hobby`) and the ntwrk `Friend` lane (`social` pairs from `intent_to_capability`, circles from `group_composer`, and member requests). A generator that `teenGenerator` does not name never seats a minor.
+  - Who: every other person is teen ready, aged 13 to 18 on every day up to the meeting end, and born at most 2 calendar years (`20000` in day-key units) from every minor in the roster. Nobody aged 19 or more is in the roster, an alternate, a host, a via, an introducer or a relay party.
+  - Teen ready: an exact birth date, no age conflict, no open minor signal, no minor or `older_than_stated` report, and no teen-pool bar on the phone. There is no staff step.
+  - Shape: `one_to_one` or `small_group`, every role `peer` or `guest`, no via and no event anchor (`teenIntroShape`). A roster with a minor has 2 to 6 people, alternates and host included (`teenRosterSizeAllowed`).
+  - Place: a friends.help group with a minor meets at an all-ages place for an all-ages activity (`teenPlaceAllowed`). It gets no organizing reach, no replacement and no fallback. Teen meetings are between 10:00 and 19:00 New York time, with no adult booking at the same venue within 2 hours.
+  - Approval: the review judge approves with the strict rubric, or staff approve after the judge holds the item (owner decisions D15 to D17 of 2026-11-22).
+  - Probe and relay: a teen probe names only the activity, the time options and the public place. Relay is text only, with the `teen:*` holds and a daily limit of 10.
+  - Checks: every path calls the generated `groupAgeAllowed`. The teen sweep in each tick closes the whole item or relay thread that no longer passes (`age_changed`, or `teen_intros_off` after a stop), with a notice that names nobody.
+  - Stop: teen introductions are on from the start. One `admin` or `safety` staff member stops them on every app that offers them (`POST /teen-intros` with `{ "on": false }`), and one `admin` turns them on again. The stored key `teenStop` is the stop. Each step writes an audit row per network.
+  - Across apps: an open report or hold on one app makes the member unready in every teen pool (`platform.teen_pool_holds`). A teen pair declined or reported on one app is not proposed on the other (`platform.teen_pair_avoid`). A member with a stored minor signal, minor report or age conflict stays out of every teen pool until staff run the teen doubt clear (`teenDoubtClearResult`).
 - **No valid age:** the member is not declined, because a decline deletes data. The Network treats them as a minor (never matched) and logs `age_unknown`. The welcome asks the age once (`copy.welcomeAskAge`).
   - `ageAnswer()` in `classify.ts` reads a bare answer ("34", "fifteen", "I'm 34") as an explicit age. A longer reply with a number in it ("I'm 5, maybe 10 minutes away") is not a bare answer: under 13, it is a looser statement (see Conflict).
   - Under 13: declined, nothing kept.
@@ -435,6 +457,9 @@ The policy comes from `packages/core/src/policy.ts` (`MIN_MEMBER_AGE = 13`, `ADU
   - A reply with no age is not asked again. The member stays single-player (treated as a minor).
   - Review refuses approve for a member with an unknown age (`participant_minor`, section 2.1).
 - "I'm in middle school" maps to age 13 (a minor, not declined), because a decline deletes data. A member with a valid attested age of 13 or more is declined only by an explicit "I am N years old" under 13.
+- An explicit age under 13 from a member whose record says adult does not decline: the Network holds the member for staff and deletes nothing (network-service-1).
+- When a message makes a member a minor, the Network first writes the safety record of the adults the member met (`minor_after_contact`), then takes the member out of every open opportunity. On an app for adults only (join age above 13) the member gets no teen copy and no teen service: a case event `age_review` goes to staff.
+- A minor signal or a minor report is a fact about the person. The service stores it in `platform.person_minor_signals`, and it holds every membership of the person until staff clear each membership after the signal time (spec/safetyCase.md).
 
 ### 6.4 Outreach control (PRD 32.9)
 
@@ -484,6 +509,7 @@ The member record can change after the Network first sees the member: a staff ag
 | `age` | Under 18 makes the member a minor (sticky). Under 13 declines at the next message (6.3). |
 | `accountStatus` "paused" or "restricted" | Not matchable, and not reachable except for replies and safety notices (`send_refused` reason `account_paused` or `account_restricted`). Others in an opportunity with them get `other_not_matchable`. |
 | `invitedBy` | Updated. |
+| `minorSignalAt` (person minor signal) | While the signal is after the member's last minor clear, the member is a minor (`minor_signal`, `person: true`) and leaves every open opportunity. |
 
 A member the record now keeps out of matching (a minor, or a paused or restricted account) is dropped from every open opportunity at the start of the next unit, as for an opt-out. The production snapshot (`service/snapshot.ts`) carries `accountStatus`; the simulator's snapshot has none (every account is active).
 
@@ -621,8 +647,8 @@ The copy follows PRD 12.4: short, one question, an easy no, opt-out on first con
 
 | # | Finding | Recommendation |
 |---|---|---|
-| 1 | `welcome` says the agent will "suggest a person or plan". It does not say that a person reviews suggestions first. | Add "a person on our team checks every suggestion first" while review is on. It sets expectations for the delay. |
-| 2 | `requestAck` promises "within a day". With a 12-hour review SLA and a 26-hour probe, a fulfilled request takes a median of 21-30 hours in the simulator. | Say "in the next day or two". |
+| 1 | `welcome` says the agent will "suggest a person or plan". It does not say that every suggestion is checked first. | Add "every suggestion is checked before anyone hears of it". It sets expectations for the delay. |
+| 2 | `requestAck` promises "within a day". With a 12-hour review SLA and the 26-hour probe of that time (the probe window is now 48 hours, and 24 hours for a Slop probe or a time question: spec/probeDispatch.md), a fulfilled request takes a median of 21-30 hours in the simulator. | Say "in the next day or two". |
 | 3 | `probe` puts the reason in parentheses at the end. The reason is the strongest part of the ask. | Lead with it: "Someone near Greenpoint also wants a climbing partner. Up for a session this weekend? Yes or no is all I need." Test the change with a probe-yes A/B in the pilot, not in the simulator (the simulator ignores wording). |
 | 4 | `booked` (the booked plan, which replaced `reveal`) gives "First L.", the time, the place and the reason, but no way to see more. | Add "Reply WHO to hear a bit more about them" once the member web profile exists (32.17). Not before. |
 | 7 | `booked` ends with "Reply if you can't make it." A member who answers with the one word "cancel" is opted out of everything (STOP keyword), not only out of the plan. | Keep the wording away from "cancel". Decide with the STOP/HELP owner (section 11) whether a bare "cancel" inside an open booked plan should cancel the plan instead. |
@@ -645,7 +671,7 @@ Copy changes are UI changes. A PR that changes `copy.ts` needs the videos in CON
 - **Opt-out hours not exported.** `OPT_OUT_HOURS` (48) is private to `network.ts`. The Observatory's real mode copies the value (`BOOKED_OPT_OUT_HOURS`); game mode reads it from `SimMeta.booked`.
 - **New log kinds in Postgres.** The service writes only the log kinds in the Observatory's `NETWORK_EVENT_KINDS`. That list now includes `send_deferred`, `gate_reason`, `time_answer`, `booked_cancelled`, `plan_confirmed`, `plan_conflict`, `plan_probe_unavailable`, `availability_stated`, `availability_offer`, `calendar_consent`, `weekly_checkin_consent`, `checkin_sent`, `no_common_time`, `minor_record` and `minor_after_contact`. `gate_reason` adds one row per gated engine proposal per daily run, so `network.events` may need a retention rule.
 - **Fixed 2026-10-07 (attention v1.2):** the send timing, cap counting, sequential probes with time options, the booked plan and the logs follow the engine session's reference (sections 4 and 6.4). Deferrals (`send_deferred`), per-proposal gate reasons (`gate_reason`) and the review-mode actor are logged. An edited explanation for a requester reaches their confirm-probe or time question; the leak guard checks it.
-- **Fixed 2026-10-07 (probe answers and times):** a refusal with time words ("no, I can't make any of them") was read as a yes to every time, and the partner was booked and both names revealed. A ruled-out time ("yes, not Sunday", "Thursday doesn't work") was picked. The "neither" retry offered the time the member had just turned down, and a plan with no time in common was booked at an "estimated" time nobody picked. All four are fixed (4.1, 4.2); `test/units.test.ts` and `test/flows.test.ts` hold the regressions.
+- **Fixed 2026-10-07 (probe answers and times):** a refusal with time words ("no, I can't make any of them") was read as a yes to every time, and the partner was booked and both names revealed. A ruled-out time ("yes, not Sunday", "Thursday doesn't work") was picked. The "neither" retry offered the time the member had just turned down, and a plan with no time in common was booked at an "estimated" time nobody picked. All four are fixed (4.1, 4.2). The regression tests of that time (`test/units.test.ts`, `test/flows.test.ts`) were deleted in the 2026-10-08 cleanup; the probe-reply corpora in `evals/network/` (the sim's `evals` block) now check these replies.
 - **Fixed 2026-10-07 (the member record):** the Network read the record once, at first contact. A later staff age correction to under 18, a paused or restricted account, or new quiet hours did not apply. It now reads the record again (6.6).
 - **Fixed 2026-10-07 (probe copy):** probes named an interest plus a different want (two facts), raw tags reached members ("climate_tech"), the request probe gave the requester's neighborhood and a broken phrase ("asked me for meet people working in climate"), and skill reasons were broken ("they ha a truck", "they works in climate policy"). The changed texts (`probeForRequest`, the generic hobby activity, the request reasons) need the CONTRIBUTING.md 3.5 videos.
 - **A staff-removed account stays in the Network's state.** `loadSnapshot` leaves out `removed` (and `invited`) rows, and the Network keeps the member state it had. Only a paused or restricted status is read (6.6). Removal outside the under-13 decline has no flow yet.
@@ -653,9 +679,9 @@ Copy changes are UI changes. A PR that changes `copy.ts` needs the videos in CON
 - **Fixed 2026-10-07:** unknown age no longer declines (6.3); approval runs the gates again (2.2); reviewer edit and re-roll are built (2.3); state can be stored (1.1).
 - **Engine: plan probes dropped by the leak gate.** `buildPlanProbe` returned null for about a third of plan probe attempts (40 of about 120 in one 21-day run). In every case checked, the only blocked word was "free" from the cost line "Free.", which matched another invitee's private words. A null probe is not sent and counts as a no. The engine owner should exempt the cost words, as the activity and place words already are.
 - **Engine copy: crew probes.** Crew session probes read "Your an easy group run crew is on again" (the activity label already has an article). Engine owner.
-- **Fixed 2026-10-08: check-in answers were over-read.** `availabilityTags` crossed every named day with every named daypart, so "Tuesday evening and Saturday afternoon" also gave Tuesday afternoon and Saturday evening, and the planner could book them. A part of the day now goes with its own days only (`test/units.test.ts`). The plans results summarized in docs/results/SUMMARY.md ("Network capital events and plans v1.1") were measured before this fix.
+- **Fixed 2026-10-08: check-in answers were over-read.** `availabilityTags` crossed every named day with every named daypart, so "Tuesday evening and Saturday afternoon" also gave Tuesday afternoon and Saturday evening, and the planner could book them. A part of the day now goes with its own days only (its unit test was deleted in the 2026-10-08 cleanup). The plans results summarized in docs/results/SUMMARY.md ("Network capital events and plans v1.1") were measured before this fix.
 - **Plans book few plans in the simulator** (8 booked in 3 seeds x 21 days, no crews). A cold plan probe gets a yes about 1 time in 4, and a plan needs 3 yes. The weekly check-in is offered only once, in a member's first booked plan. Founder decision: also offer it at onboarding.
-- **Fraud detection precision is not measured.** The NYC world has no adversarial rings. Only `test/flows.test.ts` exercises fraud items.
+- **Fraud detection precision is not measured.** The NYC world has no adversarial rings. No current test exercises fraud items from the NYC world (`test/flows.test.ts` was deleted in the 2026-10-08 cleanup).
 - **NC organizing reach applies to crew sessions only.** Planner plans invite at most 6 members, so the "seats above 8" rule never applies to them. The NC owner should confirm this reading.
 - **`NetworkState` is still version 1.** The new fields (plans, fraud items) are optional. An older stored state loads with them empty.
 - **Apps: the rename and the ages are done** (2026-10-08): `friends` everywhere, 13+ may join every app, matching stays 18+ (`packages/platform/src/apps.ts`, migration 0007).

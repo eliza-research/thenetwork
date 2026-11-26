@@ -4,6 +4,10 @@
 
 /** Story: Find a current public event / Use only an upcoming event from the allowed in-person supply (spec/publicEventCatalog.md) */
 export const publicEventHorizonDays: number = 14;
+/** Story: Keep the deployed catalog current / The backend scans once a day, at most one process at a time, and waits after a failed attempt (spec/publicEventCatalog.md) */
+export const publicEventRefreshMs: number = 86400000;
+/** Story: Keep the deployed catalog current / The backend scans once a day, at most one process at a time, and waits after a failed attempt (spec/publicEventCatalog.md) */
+export const publicEventRetryMs: number = 3600000;
 /** Story: Find a current public event / A successful complete scan replaces the previous source and expires if refresh stops (spec/publicEventCatalog.md) */
 export const publicEventFreshDays: number = 2;
 /** Story: Find a current public event / A successful complete scan replaces the previous source and expires if refresh stops (spec/publicEventCatalog.md) */
@@ -116,6 +120,26 @@ export function closedPublicEventIsUnsent(bound: boolean, closed: boolean, conta
 //@ pure
 export function publicBookedEventLinkAllowed(booked: boolean, consenting: boolean, exactFinalLine: boolean): boolean {
   return booked && consenting && exactFinalLine;
+}
+
+/** Story: Keep the deployed catalog current / The backend scans once a day, at most one process at a time, and waits after a failed attempt (spec/publicEventCatalog.md) */
+//@ pure
+export function publicEventRefreshDue(published: boolean, checkedAt: number, attempted: boolean, attemptedAt: number, asOf: number): boolean {
+  return (!published || exact_publicEventCatalog(asOf - checkedAt) >= publicEventRefreshMs) && (!attempted || exact_publicEventCatalog(asOf - attemptedAt) >= publicEventRetryMs);
+}
+
+/** Story: Keep the deployed catalog current / The backend scans once a day, at most one process at a time, and waits after a failed attempt (spec/publicEventCatalog.md) */
+//@ pure
+export function lawRefreshDueBeforeCatalogExpires(checkedAt: number): boolean {
+  //@ ensures \result === true
+  return publicEventRefreshDue(true, checkedAt, false, 0, exact_publicEventCatalog(checkedAt + publicEventRefreshMs)) && publicEventCatalogFresh(checkedAt, exact_publicEventCatalog(checkedAt + publicEventRefreshMs));
+}
+
+/** Story: Keep the deployed catalog current / The backend scans once a day, at most one process at a time, and waits after a failed attempt (spec/publicEventCatalog.md) */
+//@ pure
+export function lawRecentAttemptWaits(published: boolean, checkedAt: number, attemptedAt: number): boolean {
+  //@ ensures \result === true
+  return !publicEventRefreshDue(published, checkedAt, true, attemptedAt, exact_publicEventCatalog(exact_publicEventCatalog(attemptedAt + publicEventRetryMs) - 1));
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */

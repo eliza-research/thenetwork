@@ -1,32 +1,3 @@
-// POST /internal/relay: a member's relay request from Eliza Cloud's RELAY action (issues #8, #9, #10;
-// AGENTS.md "Relay (#7)"). The wire is Cloud's: RelaySendRequest / RelaySendResponse in
-// packages/core/src/svc/contract.ts, the byte-for-byte mirror of elizaOS/eliza plugin-network (b763).
-//
-//   RelaySendRequest  {channel, messageId, app, memberId, itemId: string|null, text}
-//   RelaySendResponse {decision: pass|hold|block|none, senderNotice, delivered, replayed}
-//
-// Cloud signs it with SERVICE_TURN_SECRET (core svc-auth) and x-ntwrk-svc-id = "<messageId>:relay": one
-// relay per open turn, idempotent on that key. The request is size-checked before it is parsed and bound
-// to the original completed open turn and the member's current canonical membership, exactly like
-// /internal/set-state: the app and the member come from that turn, never from model output. `text` must be
-// that turn's own inbound message (network.messages "in:<channel>:<messageId>"), never model wording; the
-// service reads the request from it (engine parseRelayRequest: a text, "send them my number", a photo, or
-// nothing to relay). `itemId` may only narrow the match to an active item the turn's context offered.
-//
-// The ConsentNetwork's relay desk (packages/network/src/relay.ts) is the one owner of the decision: it
-// picks the member's current mutual match (the model never names anyone), asks the engine relay policy
-// (`relayItemAsync` with the Clef classifier when CLOUDFLARE_AI_TOKEN and CLOUDFLARE_ACCOUNT_ID are set;
-// rules only otherwise), holds for staff, swaps numbers only after both members asked, and sends only the
-// engine's `rendered` text, through the outbound queue ("relay:<item>", Cloud deliver kind "relay"). The
-// canonical owners' word on both members (consent ledger and STOP, bans, holds, membership, the lowest
-// age) tightens the desk's view for the request, and the queue reads the match and both members again at
-// final dispatch (runtime.ts relayAdmission). A photo request may consume only the unique current
-// selected, consented and reviewed item for that pair; no URL or gallery permission comes from the model.
-//
-// The action receipt, the relay log, the messages and the queued rows commit in one transaction (the
-// unit's save). `delivered` is true only for a pass whose outbound row Cloud accepted with provider ids
-// and recorded history; a replay reads that again (an unknown acceptance is recovered by the queue's
-// receipt-only lookup, never by a second send).
 import { createHash } from "node:crypto";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { Clock, MemberId } from "@thenetwork/core";
@@ -34,7 +5,6 @@ import { RELAY_PATH, type RelaySendResponse } from "../../core/src/svc/contract.
 import { svcVerify } from "../../core/src/svc/svc-auth.ts";
 import { isAppId, type AppId } from "../../platform/src/apps.ts";
 import { readCapped } from "../../platform/src/body.ts";
-import type { PhotoRelayService } from "../../platform/src/photo-relay.ts";
 import type { Accounts } from "../../platform/src/accounts.ts";
 import { readFileSync } from "node:fs";
 import { clefRelayClassifierFromEnv, DEFAULT_RELAY_CLEF_WEIGHTS, validateRelayClefWeights, type RelayClefWeights } from "../../engine/src/relayClef.ts";
@@ -42,18 +12,16 @@ import { parseRelayRequest, type RelayClassifierHook } from "../../engine/src/re
 import { withdrawsSwap, type RelayOutcome } from "../src/relay.ts";
 import type { NetworkRuntime } from "./runtime.ts";
 import type { CostLedger } from "./cost.ts";
-import { isProduction } from "../../platform/src/env.ts";
+import { PHOTO_RELAY_TEXT, type PhotoRelayAnswer, type PhotoRelayFinish } from "./photoRelayFlow.ts";
 
 import { routeEnvelopeAllowed, type NetworkRoutePolicy } from "./route-authority.ts";
 
 export { RELAY_PATH };
-/** A relay request is small: Cloud caps the text at 2000 characters. */
 export const RELAY_MAX_BODY_BYTES = 16 * 1024;
 const MAX_TEXT = 2000;
 const KEYS = ["channel", "messageId", "app", "memberId", "itemId", "text"];
 
 const NOTICE = {
-  photo: "I can't send photos to a match yet.",
   unconfirmed: "I've passed that on, but delivery isn't confirmed yet.",
   sent: "Sent.",
   withdrawn: "Okay, I won't share your number.",
@@ -65,33 +33,18 @@ export interface RelayEndpointDeps {
   secret: string | undefined;
   routePolicy?: NetworkRoutePolicy;
   accounts: Accounts;
-  photos?: PhotoRelayService;
+  photoRequest: (input: { app: AppId; personId: string; memberId: string; text: string; threadId: string | null; inboundId: string; photoAsked: boolean; finish: PhotoRelayFinish }) => Promise<PhotoRelayAnswer | undefined>;
   runtimeFor(app: AppId): NetworkRuntime | undefined;
-  /** The network ('<app>:<city>') this member belongs to; falls back to runtimeFor(app) when absent. */
   runtimeOfMember?(app: AppId, memberId: string): Promise<NetworkRuntime | undefined>;
-  /** The classifier hook for an app (each Workers AI call is a cost row for that app); undefined = rules only. */
-  hookFor?: (app: AppId) => RelayClassifierHook;
+  hookFor: (app: AppId) => RelayClassifierHook;
 }
 
-/**
- * The relay classifier from the environment, per app: Clef (clef-flash by default) when the Workers AI
- * token and account are set, else rules only (undefined). Logs which one once, at start. With a cost
- * ledger, every Clef call that reached Workers AI is a cost row for the app (cost.ts relayClefEvent).
- * Production without Clef fails closed: the hook always errors, so every text the rules pass is held for
- * staff (the go-live checklist requires Clef wired); dev and staging run on the rules alone.
- */
-export function relayClassifierFromEnv(env: Record<string, string | undefined>, log: (s: string) => void, cost?: CostLedger): ((app: AppId) => RelayClassifierHook) | undefined {
+export function relayClassifierFromEnv(env: Record<string, string | undefined>, log: (s: string) => void, cost?: CostLedger): (app: AppId) => RelayClassifierHook {
   if (!env.CLOUDFLARE_AI_TOKEN || !env.CLOUDFLARE_ACCOUNT_ID) {
-    if (isProduction(env)) {
-      log("relay classifier: not configured in production; every relayed text is held for staff");
-      const closed: RelayClassifierHook = async () => { throw new Error("relay classifier not configured"); };
-      return () => closed;
-    }
-    log("relay classifier: rules only");
-    return undefined;
+    log("relay classifier: Workers AI not configured; every relayed text is blocked");
+    const closed: RelayClassifierHook = async () => { throw new Error("relay classifier not configured"); };
+    return () => closed;
   }
-  // RELAY_CLEF_WEIGHTS_PATH names fitted weights (evals/relay/clef-relay-weights.json, written by `relay-eval fit`).
-  // A file that does not validate stops the start; without the variable the hand-set placeholder is used.
   const weights = env.RELAY_CLEF_WEIGHTS_PATH ? validateRelayClefWeights(JSON.parse(readFileSync(env.RELAY_CLEF_WEIGHTS_PATH, "utf8")) as RelayClefWeights) : undefined;
   log(`relay classifier: rules + Clef (${env.RELAY_CLEF_MODEL === "clef" ? "clef" : "clef-flash"}, weights ${(weights ?? DEFAULT_RELAY_CLEF_WEIGHTS).version})`);
   const hooks = new Map<AppId, RelayClassifierHook>();
@@ -111,19 +64,14 @@ export function relayClassifierFromEnv(env: Record<string, string | undefined>, 
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
 
-/** What the action receipt keeps: the decision and the desk's notice, and the outbound id of a pass. */
 interface StoredRelay { decision: RelaySendResponse["decision"]; notice: string; outboundId?: string }
 
-/** The desk's outcome on the Cloud wire. */
 function stored(outcome: RelayOutcome): StoredRelay {
+  if (outcome.decision === "unnamed") return { decision: "none", notice: outcome.reason };
   if (outcome.decision === "sent") return { decision: "pass", notice: outcome.reason, outboundId: `relay:${outcome.itemId}` };
-  return { decision: outcome.decision === "held" ? "hold" : "block", notice: outcome.reason };
+  return { decision: outcome.decision === "waiting" ? "hold" : "block", notice: outcome.reason };
 }
 
-/**
- * The answer for a stored decision. Delivered only when Cloud accepted the outbound row with provider ids
- * and recorded it in history; until then a pass says so plainly (Cloud never reports it as sent).
- */
 async function answer(sql: SQL, app: AppId, s: StoredRelay, replayed: boolean): Promise<RelaySendResponse> {
   if (s.decision !== "pass" || !s.outboundId) return { decision: s.decision, senderNotice: s.notice, delivered: false, replayed };
   const [row] = await sql.begin(async tx => {
@@ -139,7 +87,6 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
   const url = new URL(req.url);
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
   if (url.search) return json({ error: "invalid_request" }, 400);
-  // Size first: nothing is parsed or verified past the cap.
   const bytes = await readCapped(req, RELAY_MAX_BODY_BYTES);
   if (bytes === "too_large") return json({ error: "payload_too_large" }, 413);
   let raw: string;
@@ -156,16 +103,13 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
   if ((b.itemId !== null && !id(b.itemId, 200)) || typeof b.text !== "string" || !b.text.trim() || b.text.length > MAX_TEXT) return json({ error: "invalid_relay" }, 400);
   const app = b.app as AppId, memberId = b.memberId as string, text = b.text.trim(), itemId = b.itemId as string | null;
 
-  // The original completed open turn and the member's current membership (as /internal/set-state).
   const turnId = `msg:${b.channel}:${b.messageId}`;
   const [original] = await d.sql`select sender_hash,response from platform.inbound where id=${turnId} and status='done'`;
   if (!original || original.response?.outcome !== "open" || original.response.app !== app || original.response.memberId !== memberId) return json({ error: "turn_scope_invalid", retryable: false }, 403);
-  // The member's own network (a second city of the app keeps its own matches, relay log and held items).
   const who = await d.accounts.byPhoneHash(original.sender_hash), rt = d.runtimeOfMember ? await d.runtimeOfMember(app, memberId) : d.runtimeFor(app);
   if (!who || !rt) return json({ error: "membership_unavailable", retryable: false }, 403);
   const authorized = async () => (await d.accounts.activeMembership(rt.app, { e164: who.e164, personId: who.person.id }))?.membership.memberId === memberId;
   if (!await authorized()) return json({ error: "membership_unavailable", retryable: false }, 403);
-  // The text is the member's own message of that turn, and an item is one the turn's context offered.
   const [source] = await rt.scoped(tx => tx`select body from network.messages where app_id=${app} and id=${`in:${b.channel}:${b.messageId}`}
     and member_id=${memberId} and direction='inbound'`);
   const offered = (original.response.context?.activeItems ?? []) as { id: string }[];
@@ -211,50 +155,48 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
 
   try {
     const request = parseRelayRequest(text);
+    const threadId = itemId ?? await rt.readState(net => net.relayMatch(memberId as MemberId)?.id ?? null);
+    const swapWithdrawn = withdrawsSwap(text);
+    if (swapWithdrawn && request.kind !== "text") await rt.unitOfWork(net => { net.relayCancelSwap(memberId as MemberId); });
+    const photoStored = (photo: PhotoRelayAnswer): StoredRelay => ({ decision: photo.status === "unavailable" || photo.status === "blocked" ? "block" : "none", notice: photo.text });
+    const share = request.kind === "contact_share";
+    const photo = await d.photoRequest({
+      app, personId: who.person.id, memberId, text, threadId, inboundId: `in:${b.channel}:${b.messageId}`, photoAsked: request.kind === "photo",
+      finish: async tx => { await lock(tx); return answer => share ? Promise.resolve() : complete(tx, photoStored(answer)); },
+    });
+    const photoNotice = share && photo && photo.text !== PHOTO_RELAY_TEXT.noneToWithdraw ? photo.text : "";
     let result: StoredRelay;
-    if (request.kind === "none" && withdrawsSwap(text)) {
-      // "Don't send my number": the member takes back a pending number swap (committed with the receipt).
+    if (photo && !share) {
+      result = photoStored(photo);
+      if (swapWithdrawn && request.kind === "text") await rt.unitOfWork(net => { net.relayCancelSwap(memberId as MemberId); });
+    } else if (request.kind === "photo") {
+      result = photoStored({ status: "unavailable", text: PHOTO_RELAY_TEXT.unavailable });
+      await d.sql.begin(async tx => { await lock(tx); await complete(tx, result); });
+    } else if (request.kind === "none" && swapWithdrawn) {
       result = await rt.unitOfWork(async net => {
-        // The turn's own message may already have withdrawn it (network.ts); either way nothing of theirs is pending.
         net.relayCancelSwap(memberId as MemberId);
         const r: StoredRelay = { decision: "none", notice: NOTICE.withdrawn };
         rt.unit.completeAction = async tx => { await lock(tx); await complete(tx,r); };
         return r;
       });
     } else if (request.kind === "none") {
-      // Nothing to relay: persist only the action receipt.
       result = { decision: "none", notice: "" };
       await d.sql.begin(async tx => { await lock(tx); await complete(tx, result); });
     } else {
-      let key = `r_${receipt.slice(0, 32)}`;
+      const key = `r_${receipt.slice(0, 32)}`;
+      const kind = request.kind;
+      const body = request.kind === "text" ? request.body : undefined;
+      const targetName = request.targetName;
       result = await rt.unitOfWork(async net => {
-        // The canonical owners' word on both members of the match the desk will pick (fails closed).
-        const match = net.relayMatch(memberId as MemberId, itemId ?? undefined);
+        const match = net.relayMatch(memberId as MemberId, itemId ?? undefined, targetName);
         const canonical = match ? await rt.relayParties([...match.participants]) : undefined;
-        const photo = request.kind === "photo" && match ? await d.photos?.approvedForParty(app, match.id, memberId) : undefined;
-        if (request.kind === "photo" && !photo) {
-          const r: StoredRelay = {decision:"block",notice:NOTICE.photo};
-          rt.unit.completeAction = async tx => {await lock(tx);await complete(tx,r);};
-          return r;
-        }
-        if (photo) key = photo.itemId;
-        const hook = d.hookFor?.(app);
         const outcome = await net.relayRequest(
-          { itemId: key, from: memberId as MemberId, kind: request.kind, ...(photo ? {photoIds:[photo.photoId]} : {}),
-            ...(request.kind === "text" ? { text: request.body } : {}), ...(request.targetName !== undefined ? { targetName: request.targetName } : {}),
-            ...(itemId !== null ? { matchId: itemId } : {}) },
-          { ...(photo ? {photos:{ids:[photo.photoId],showConsent:true,approved:[photo]}} : {}), ...(hook ? { hook } : {}), contactOf: id => rt.addressOf(id), ...(canonical ? { canonical } : {}) },
+          { itemId: key, from: memberId as MemberId, kind, ...(body !== undefined ? { text: body } : {}), ...(targetName !== undefined ? { targetName } : {}), ...(itemId !== null ? { matchId: itemId } : {}) },
+          { hook: d.hookFor(app), contactOf: id => rt.addressOf(id), ...(canonical ? { canonical } : {}) },
         );
-        const r = stored(outcome);
-        // Committed with the relay log, the messages and the queued rows of this unit (runtime.ts writeUnit).
-        rt.unit.completeAction = async tx => {
-          await lock(tx);
-          if (photo && r.decision === "pass") {
-            const claimed = await d.photos!.claimForAction(tx,photo.itemId,app,photo.threadId,memberId,`photo-selection:${photo.itemId}`);
-            if (!claimed || JSON.stringify(claimed)!==JSON.stringify(photo)) throw new Error("Photo selection changed before commit");
-          }
-          await complete(tx,r);
-        };
+        const shared = stored(outcome);
+        const r = photoNotice ? { ...shared, notice: `${photoNotice} ${shared.notice}`.trim() } : shared;
+        rt.unit.completeAction = async tx => { await lock(tx); await complete(tx, r); };
         return r;
       });
     }

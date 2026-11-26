@@ -423,7 +423,7 @@ pure val laterValues = rValues
 
 The signup form asks for the birthday (the label is "Birthday"), not for the age. The person types it in the browser as a date (`yyyy-mm-dd`). The form never shows a birthday before the person types it, and it never shows the sent birthday again after the server refuses the form. A hint below the field tells the person that a member under 18 is never matched for dates or for work and that today nobody under 18 is introduced to anyone. It also tells the person that friendship is the only kind of introduction that can open to people under 18, only with people within 2 years of their own age. The hint does not promise an introduction.
 
-The handler takes the year, the month and the day from the sent text, and it takes the date of today from the platform Clock. The date of today is the calendar date in the latest time zone (UTC-12), so the form never counts a person older than the calendar where the person is. The birthday is refused with an error on the birthday field when the date is missing, when the text is not `yyyy-mm-dd`, when the date does not exist (such as February 30, or February 29 in a year that is not a leap year), when the date is after today, or when the age on today's date is more than 120. The age on a date is the number of full years since the birthday: before the birthday of this year, it is one year less than the difference of the years. A person born on February 29 becomes one year older on March 1 in a year that is not a leap year. The handler gives that age to the join step. When the effective age is below 13, the join step refuses enrollment and retains the numeric age under the existing [site enrollment rule](siteEnrollment.md#the-effective-age-controls-the-result-of-a-new-or-repeated-join). The refusal stores no membership, submitted profile details, birthday or private eligibility date. For a member who is 13 through 17, the handler gives the join step the initial age and the private date they will turn 18 at the start of the UTC-12 day. The join step never stores the typed birthday. A February 29 birthday reaches adult eligibility on March 1 when the eighteenth year is not a leap year.
+The handler takes the year, the month and the day from the sent text, and it takes the date of today from the platform Clock. The date of today is the calendar date in the latest time zone (UTC-12), so the form never counts a person older than the calendar where the person is. The birthday is refused with an error on the birthday field when the date is missing, when the text is not `yyyy-mm-dd`, when the date does not exist (such as February 30, or February 29 in a year that is not a leap year), when the date is after today, or when the age on today's date is more than 120. The age on a date is the number of full years since the birthday: before the birthday of this year, it is one year less than the difference of the years. A person born on February 29 becomes one year older on March 1 in a year that is not a leap year. The handler gives that age to the join step. When the effective age is below 13, the join step refuses enrollment and retains the numeric age under the existing [site enrollment rule](siteEnrollment.md#the-effective-age-controls-the-result-of-a-new-or-repeated-join). The refusal stores no membership, submitted profile details, birthday or private eligibility date. For a member who is 13 through 17, the handler gives the join step the initial age and the private date they will turn 18 at the start of the UTC-12 day. A successful verified join can also store the exact birthday privately for the teen friendship age check when the person is aged 13 through 18. This updates the earlier browser rule that kept only the private adult eligibility date. An older person gives only a numeric age. A refused join keeps no birthday. The exact birth reading and date are not part of the approval page, grant or member profile. A February 29 birthday reaches adult eligibility on March 1 when the eighteenth year is not a leap year.
 
 ```quint
 type CalendarDate = { year: int, month: int, day: int }
@@ -526,27 +526,42 @@ pure val secondValues = todayValues
 
 ### Each scope shows as one short sentence, never as its scope name
 
-The scope list shows each requested scope as one sentence that tells what the assistant can do, in the order of the request. Saved-profile reads must be requested explicitly. The default connection scopes do not include them. The page never shows the scope name of the server.
+The scope list shows each requested scope as one sentence that tells what the assistant can do, in the order of the request. Saved-profile reads must be requested explicitly. The default connection scopes do not include them. The page never shows the scope name of the server. Changed (owner decision 2026-11-22): the profile write sentence now also says that the assistant can pause or turn back on what the app looks for, and the profile read sentence says that it can read that list, because the looking-for tools use these two scopes and the person must see that before Allow. Changed (owner decision 2026-11-22): the photos scope is new; it must be requested explicitly, it is not a default scope, and its sentence says that the assistant sees only the photo list and never the photos, and that the person confirms each send on their phone. Changed (owner decision 2026-11-22): only the slop.date site offers the photos scope, because only slop.date keeps photos; the other sites leave it out of their metadata and drop it from a request, so their consent page never shows the slop.date photo sentence and their grants never hold a scope they cannot use. Changed (2026-11-23): a request whose named scopes all drop on the site is refused (`invalid_scope` at authorize and refresh, `invalid_client_metadata` at registration), because an empty grant gives the assistant no access and the person would approve a connection that can do nothing. Changed (2026-11-23): the two profile sentences say "what this app finds for you" in place of "what this app looks for for you" (and "what it looks for for you"), because the old words were not simple technical English.
 
 ```quint
-type Scope = AppsRead | MembershipRead | ProfileWrite | ProfileRead
+type Scope = AppsRead | MembershipRead | ProfileWrite | ProfileRead | PhotosUse
 
 pure val defaultScopes: List[Scope] = List(AppsRead, MembershipRead, ProfileWrite)
-pure val scopes: List[Scope] = List(AppsRead, MembershipRead, ProfileWrite, ProfileRead)
+pure val scopes: List[Scope] = List(AppsRead, MembershipRead, ProfileWrite, ProfileRead, PhotosUse)
 
 pure def scopeName(scope: Scope): str =
   if (scope == AppsRead) "apps:read"
   else if (scope == MembershipRead) "membership:read"
   else if (scope == ProfileRead) "profile:read"
+  else if (scope == PhotosUse) "photos:use"
   else "profile:write"
 
 pure def scopeText(scope: Scope): str =
   if (scope == AppsRead) "See which Network apps are available"
   else if (scope == MembershipRead) "Read your membership status and new updates"
-  else if (scope == ProfileRead) "Read the profile you saved for this app"
-  else "Save your profile and prepare signup details"
+  else if (scope == ProfileRead) "Read the profile you saved for this app and what this app finds for you"
+  else if (scope == PhotosUse) "See your slop.date photo list (numbers, names, days, who has each) and ask to send one. It never sees the photos, and you confirm each send on your phone."
+  else "Save your profile, prepare signup details, and pause or turn back on what this app finds for you"
 
 pure def lawScopeTextIsNotTheScopeName(scope: Scope): bool = scopeText(scope) != scopeName(scope)
+
+pure def lawPhotosScopeIsNeverDefault(scope: Scope): bool =
+  defaultScopes.includes(scope) implies scope != PhotosUse
+
+pure def scopeOfferedOn(scope: Scope, slopHost: bool): bool = scope != PhotosUse or slopHost
+
+pure def lawPhotosScopeOnlyOnSlop(scope: Scope, slopHost: bool): bool =
+  (scope == PhotosUse and scopeOfferedOn(scope, slopHost)) implies slopHost
+
+pure def lawSlopOffersEveryScope(scope: Scope): bool = scopeOfferedOn(scope, true)
+
+pure def lawDefaultScopesOfferedEverywhere(scope: Scope, slopHost: bool): bool =
+  defaultScopes.includes(scope) implies scopeOfferedOn(scope, slopHost)
 ```
 
 ### Only Allow on a consent page returns a code to the assistant

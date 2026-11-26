@@ -1,10 +1,11 @@
 import { expect, test } from "vitest";
-import { DAY, HOUR, fromLocal, type Facet, type InitialInviteReceipt, type MemberId } from "@thenetwork/core";
+import { DAY, HOUR, fromLocal, type InitialInviteReceipt, type MemberId } from "@thenetwork/core";
 import { FRIENDS_PLANS, friendsPack, localEmbed, plans, resolveConfig, World, type EngineInput } from "@thenetwork/engine";
 import { CapitalLedger, ledgerReader } from "../src/capital.ts";
 import { bookingNoticeReceiptKey, meetingFeedbackKey } from "../src/network.ts";
 import { PLAN_VENUES } from "../src/plans.ts";
 import { Mini, START } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 test("friends: a crew session is pair-gated on Friend profiles, and a block between two members stops it", () => {
   // spec/groupFormation.md and spec/planDecision.md: a crew's next session needs a pair value for
@@ -20,21 +21,20 @@ test("friends: a crew session is pair-gated on Friend profiles, and a block betw
     { id: "c", name: "Cara Li", age: 29, area: venue.area, interests },
   ]);
   const ids: MemberId[] = ["a", "b", "c"];
-  for (const id of ids) mini.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified", tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 } satisfies Facet);
+  mini.verify(...ids);
   const snapshot = JSON.parse(JSON.stringify(mini.ctx().snapshot())) as EngineInput;
   const cfg = resolveConfig({ seed: 1, cities: ["nyc"] });
   const crew: plans.Crew = {
     id: "crew_abc", activityId: activity, venueId: venue.id, city: "nyc", members: ids, cadenceDays: 7,
     hostRotation: ids, sessions: [], handedOff: false, slot: { start: Date.UTC(2026, 9, 10, 16) },
   };
-  const place = { name: venue.name, area: venue.area };
 
   const fitting = new World(snapshot, cfg, localEmbed, friendsPack);
-  const next = plans.crewSessionPlan(fitting, crew, START, place);
+  const next = plans.crewSessionPlan(fitting, crew, START, venue);
   expect(next?.invited).toEqual(ids);
 
   const blocked = new World({ ...snapshot, edges: [{ from: "b", to: "c", type: "blocked", strength: 1, explicit: true, createdAt: START - DAY }] }, cfg, localEmbed, friendsPack);
-  expect(plans.crewSessionPlan(blocked, crew, START, place)).toBeNull();
+  expect(plans.crewSessionPlan(blocked, crew, START, venue)).toBeNull();
 });
 
 // spec/crewOffer.md, "A new recurring session uses a current public venue"
@@ -45,9 +45,8 @@ test.each(["open", "closes_during_session", "removed"] as const)("a Friends crew
   const ids = ["a", "b", "c"];
   const w = new Mini(ids.map((id, index) => ({ id, name: ["Ari", "Ben", "Cara"][index]!, age: 30, area: venue.area,
     interests: ["coffee", "climbing"],
-  })), { app: "friends", pack: friendsPack, review: "human", plans: true, plansConfig: FRIENDS_PLANS });
-  for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
-    tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
+  })), { app: "friends", pack: friendsPack, inlineJudge: holdEveryItem.inline, plans: true, plansConfig: FRIENDS_PLANS });
+  w.verify(...ids);
   await w.onboard(...ids);
   const start = availability === "closes_during_session" ? fromLocal(2026, 10, 10, venue.hours.weekend[1] - 1, "America/New_York") : Date.UTC(2026, 9, 10, 16);
   const crew: plans.Crew = { id: "crew_availability", activityId: activity,
@@ -77,10 +76,9 @@ test.each(["current", "staged_booking", "old_revision", "unverified_history"] as
   const ids = ["a", "b", "c"];
   const w = new Mini(ids.map((id, index) => ({ id, name: ["Ari", "Ben", "Cara"][index]!, age: 30, area: venue.area,
     interests: ["coffee", "climbing"],
-  })), { app: "friends", pack: friendsPack, review: "human", plans: true,
+  })), { app: "friends", pack: friendsPack, inlineJudge: holdEveryItem.inline, plans: true,
     plansConfig: { ...FRIENDS_PLANS, crews: { ...FRIENDS_PLANS.crews, enabled: false } } });
-  for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
-    tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
+  w.verify(...ids);
   await w.onboard(...ids);
 
   const at = Date.UTC(2026, 9, 10, 16);
@@ -90,7 +88,7 @@ test.each(["current", "staged_booking", "old_revision", "unverified_history"] as
     place: { name: venue.name, area: venue.area }, window: { start: at, end: at + 90 * 60_000 },
     invited: ids, alternates: [], hostId: "a", partner: false, size: { min: 3, target: 3, max: 3 }, quorum: 3,
     probeDeadline: at - HOUR, score: 0.8, u: {}, familiar: {}, createdAt: at - DAY, category: "social",
-  }, at - DAY);
+  }, at - DAY)!;
   const state = w.net.exportState();
   const completed = state.opps.find(o => o.id === source.id)!;
   completed.stage = "done";
@@ -146,7 +144,8 @@ test.each(["current", "staged_booking", "old_revision", "unverified_history"] as
   const blocked = w.net.exportState();
   blocked.blocks.push("a|b");
   w.net.importState(blocked);
-  expect(w.net.review(proposed!.id, "approve", { reviewer: "sim_staff" })).toBe(false);
+  const held = w.net.reviewQueue().find(i => i.oppId === proposed!.id)!;
+  expect(w.net.review(proposed!.id, "approve", { reviewer: "sim_staff", revision: held.revision })).toBe(false);
   expect(w.sent.some(message => message.meta.type === "plan_probe")).toBe(false);
 });
 
@@ -172,11 +171,8 @@ test("friends crew reach fills only compatible seats in exposure order", async (
     // (spec/pairValue.md) gives it no Friend pair value, so only the pair-value condition excludes it.
     id, name: names[index]!, age: 30, area: id === "b-weak" ? "Riverdale" : venue.area,
     interests: id === "crew-c" ? ["climbing"] : id === "b-weak" ? ["coffee"] : ["coffee", "climbing"],
-  })), { app: "friends", pack: friendsPack, review: "human", plans: true, plansConfig: FRIENDS_PLANS, capital });
-  for (const { id } of w.members) w.facets.push({
-    id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified", tags: ["verify:liveness:pass", "verify:age:pass"],
-    scope: "agent_private", provenance: "said", confidence: 1,
-  });
+  })), { app: "friends", pack: friendsPack, inlineJudge: holdEveryItem.inline, plans: true, plansConfig: FRIENDS_PLANS, capital });
+  w.verify(...w.members.map(m => m.id));
   await w.onboard(...crewIds, ...applicants);
   const crew: plans.Crew = { id: "crew_fixture", activityId: activity, venueId: venue.id, city: "nyc", members: crewIds,
     cadenceDays: 7, hostRotation: crewIds, sessions: [], handedOff: false, slot: { start: Date.UTC(2026, 9, 10, 16) } };
@@ -206,7 +202,7 @@ test("settled Friday attendance supports a new Friends review once at the actual
   const venue = PLAN_VENUES.find(v => v.activities.includes(activity) && v.hours.weekday[1] >= 20)!;
   const ids = ["a", "b", "c"];
   const w = new Mini(ids.map((id, index) => ({ id, name: ["Ari", "Ben", "Cara"][index]!, age: 30,
-    area: venue.area, interests: ["running", "climbing"] })), { app: "friends", pack: friendsPack, review: "human", plans: true,
+    area: venue.area, interests: ["running", "climbing"] })), { app: "friends", pack: friendsPack, inlineJudge: holdEveryItem.inline, plans: true,
     plansConfig: { ...FRIENDS_PLANS, crews: { ...FRIENDS_PLANS.crews, enabled: false } } });
   for (const id of ids) w.facets.push({ id: id + ":verified", memberId: id, kind: "fact", value: "Verified",
     tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
@@ -220,6 +216,7 @@ test("settled Friday attendance supports a new Friends review once at the actual
     invited: ids, alternates: [], hostId: "a", partner: false, size: { min: 3, target: 3, max: 3 }, quorum: 3,
     probeDeadline: at - HOUR, score: 0.8, u: {}, familiar: {}, createdAt: at - DAY, category: "social",
   }, at - DAY);
+  if (!source) throw new Error("The original Friends plan was refused");
   const state = w.net.exportState();
   const completed = state.opps.find(o => o.id === source.id)!;
   completed.stage = "done";

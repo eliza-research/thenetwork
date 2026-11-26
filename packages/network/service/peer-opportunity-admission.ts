@@ -1,5 +1,7 @@
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { peerContactSeatStatuses, peerContactTypes, queuedPeerContactPolicy } from "../../core/src/generated/outboundAdmission.ts";
+import { friendsVerifyPasses } from "../../core/src/generated/friendIntroAge.ts";
+import { storedTeenStatus } from "./teen-roster.ts";
 
 function peerRosters(tx: SQL, app: string, recipient: string, ids: string[]) {
   return tx`select msg.id as message_id, member.id as member_id, member.person_id
@@ -16,6 +18,17 @@ function peerRosters(tx: SQL, app: string, recipient: string, ids: string[]) {
       and msg.direction='outbound' and msg.opportunity_id is not null and msg.type in ${tx(peerContactTypes)}`;
 }
 
+async function friendsStaffVerified(tx: SQL, roster: string[], now: number): Promise<boolean> {
+  const at = new Date(now);
+  const passes = await tx`select member_id from network.facets
+    where app_id='friends' and member_id in ${tx(roster)} and source='staff' and status='confirmed'
+      and (valid_from is null or valid_from <= ${at}) and (valid_to is null or valid_to >= ${at})
+      and ((id=member_id || ':verify:age' and 'verify:age:pass'=any(tags))
+        or (id=member_id || ':verify:liveness' and 'verify:liveness:pass'=any(tags)))
+    order by member_id, id for share`;
+  return passes.length === 2 * roster.length;
+}
+
 /** Take the same state/person order as the writer, before the queue pins its recipient. */
 export async function lockPeerOpportunityContact(tx: SQL, app: string, runtime: string, recipient: string, id: string): Promise<void> {
   const [saved] = await tx`select saved.id from network.network_state saved
@@ -29,8 +42,19 @@ export async function lockPeerOpportunityContact(tx: SQL, app: string, runtime: 
 }
 
 /** Recheck participant authority in the provider claim or signed handoff transaction. */
-export async function peerOpportunityContactRestricted(tx: SQL, app: string, recipient: string, ids: string[]): Promise<boolean> {
+export async function peerOpportunityContactRestricted(tx: SQL, app: string, recipient: string, ids: string[], now: number): Promise<boolean> {
   if (!ids.length) return false;
+  const messages = await tx<{ id: string; opportunity_id: string }[]>`select msg.id, msg.opportunity_id from network.messages msg
+    where msg.app_id=${app} and msg.id in ${tx(ids)} and msg.member_id=${recipient} and msg.direction='outbound'
+      and msg.opportunity_id is not null and msg.type in ${tx(peerContactTypes)} order by msg.opportunity_id, msg.id`;
+  const rosters = await peerRosters(tx, app, recipient, ids);
+  for (const message of messages) {
+    const roster = rosters.filter(r => r.message_id === message.id).map(r => String(r.member_id));
+    const teen = await storedTeenStatus(tx, app, message.opportunity_id, now, roster);
+    if (teen.status === "failed" || (teen.status === "unmarked" && teen.minor)) return true;
+    if (app === "friends" && !friendsVerifyPasses(teen.contactMinor, teen.status === "current", false)
+      && (!roster.length || !(await friendsStaffVerified(tx, roster, now)))) return true;
+  }
   const [row] = await tx<{ blocked: boolean; restricted: boolean }[]>`with roster as (${peerRosters(tx, app, recipient, ids)})
     select exists (
       select 1 from roster a join roster b on b.message_id=a.message_id and a.member_id<b.member_id

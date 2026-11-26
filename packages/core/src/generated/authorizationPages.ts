@@ -26,7 +26,7 @@ export interface SignupPrefillRequest { client: string; app: string; phone: stri
 /** Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date (spec/authorizationPages.md) */
 export interface CalendarDate { year: number; month: number; day: number }
 /** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
-export type Scope = "AppsRead" | "MembershipRead" | "ProfileWrite" | "ProfileRead";
+export type Scope = "AppsRead" | "MembershipRead" | "ProfileWrite" | "ProfileRead" | "PhotosUse";
 /** Story: Understand a page that stops the connection / Every page shows the brand mark and the legal links (spec/authorizationPages.md) */
 export interface PageChrome { brandMark: boolean; legalLinks: boolean }
 
@@ -50,7 +50,7 @@ export const noOffers: Offers = { sendCode: false, continueCode: false, allow: f
 /** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
 export const defaultScopes: Scope[] = ["AppsRead", "MembershipRead", "ProfileWrite"];
 /** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
-export const scopes: Scope[] = ["AppsRead", "MembershipRead", "ProfileWrite", "ProfileRead"];
+export const scopes: Scope[] = ["AppsRead", "MembershipRead", "ProfileWrite", "ProfileRead", "PhotosUse"];
 /** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 export const initial: AuthPage = { view: "Opening", fieldError: "NoFieldError", securityCheck: "CheckOff", turnstileOn: false, codeSent: false, consentSeen: false, approved: false };
 
@@ -792,13 +792,19 @@ export function calendarDateOfDay(epochDay: number): CalendarDate {
 /** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
 //@ pure
 export function scopeName(scope: Scope): string {
-  return scope === "AppsRead" ? "apps:read" : (scope === "MembershipRead" ? "membership:read" : (scope === "ProfileRead" ? "profile:read" : "profile:write"));
+  return scope === "AppsRead" ? "apps:read" : (scope === "MembershipRead" ? "membership:read" : (scope === "ProfileRead" ? "profile:read" : (scope === "PhotosUse" ? "photos:use" : "profile:write")));
 }
 
 /** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
 //@ pure
 export function scopeText(scope: Scope): string {
-  return scope === "AppsRead" ? "See which Network apps are available" : (scope === "MembershipRead" ? "Read your membership status and new updates" : (scope === "ProfileRead" ? "Read the profile you saved for this app" : "Save your profile and prepare signup details"));
+  return scope === "AppsRead" ? "See which Network apps are available" : (scope === "MembershipRead" ? "Read your membership status and new updates" : (scope === "ProfileRead" ? "Read the profile you saved for this app and what this app finds for you" : (scope === "PhotosUse" ? "See your slop.date photo list (numbers, names, days, who has each) and ask to send one. It never sees the photos, and you confirm each send on your phone." : "Save your profile, prepare signup details, and pause or turn back on what this app finds for you")));
+}
+
+/** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
+//@ pure
+export function scopeOfferedOn(scope: Scope, slopHost: boolean): boolean {
+  return scope !== "PhotosUse" || slopHost;
 }
 
 /** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
@@ -806,6 +812,34 @@ export function scopeText(scope: Scope): string {
 export function lawScopeTextIsNotTheScopeName(scope: Scope): boolean {
   //@ ensures \result === true
   return scopeText(scope) !== scopeName(scope);
+}
+
+/** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
+//@ pure
+export function lawPhotosScopeIsNeverDefault(scope: Scope): boolean {
+  //@ ensures \result === true
+  return !defaultScopes.includes(scope) || scope !== "PhotosUse";
+}
+
+/** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
+//@ pure
+export function lawPhotosScopeOnlyOnSlop(scope: Scope, slopHost: boolean): boolean {
+  //@ ensures \result === true
+  return !(scope === "PhotosUse" && scopeOfferedOn(scope, slopHost)) || slopHost;
+}
+
+/** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
+//@ pure
+export function lawSlopOffersEveryScope(scope: Scope): boolean {
+  //@ ensures \result === true
+  return scopeOfferedOn(scope, true);
+}
+
+/** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
+//@ pure
+export function lawDefaultScopesOfferedEverywhere(scope: Scope, slopHost: boolean): boolean {
+  //@ ensures \result === true
+  return !defaultScopes.includes(scope) || scopeOfferedOn(scope, slopHost);
 }
 
 /** Story: Decide what my assistant can do / Only Allow on a consent page returns a code to the assistant (spec/authorizationPages.md) */

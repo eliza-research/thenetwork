@@ -3,10 +3,12 @@
 // one, and the same tests run against both.
 
 import { pendingDeliveryMayClose, pendingDeliveryMayExpire } from "../../core/src/generated/notificationAcknowledgement.ts";
-import { digestItemSetCanBeRecorded, inboxItemDigestible } from "../../core/src/generated/notificationDispatch.ts";
+import { digestItemSetCanBeRecorded, digestWithinWeeklyCap, inboxItemDigestible } from "../../core/src/generated/notificationDispatch.ts";
 import type { SurfaceSignal } from "./surface.ts";
 import type { TaskToken } from "./tokens.ts";
 import type { Assistant, InboxItem, InboxItemInput, Surface } from "./types.ts";
+
+export const WEEK_MS = 7 * 24 * 3600_000;
 
 export const dedupeKey = (i: Pick<InboxItemInput, "personId" | "app" | "eventType" | "subjectId">) =>
   [i.personId, i.app, i.eventType, i.subjectId].join("|");
@@ -48,8 +50,8 @@ export interface NotifyStore {
   /** Mark unseen items seen. `ids` omitted = all of the person's. Returns the ids changed. */
   markSeen(personId: string, surface: Surface, now: number, ids?: string[]): Promise<string[]>;
 
-  /** Record a delivery and mark its items notified, atomically. False if the delivery id exists. */
-  recordDelivery(d: DeliveryRecord): Promise<boolean>;
+  recordDelivery(d: DeliveryRecord, weeklyCap: number): Promise<boolean>;
+  addDelivered(input: InboxItemInput, d: Omit<DeliveryRecord, "itemIds" | "personId" | "outcome" | "outcomeAt" | "assistantLink">): Promise<{ item: InboxItem; created: boolean }>;
   getDelivery(deliveryId: string): Promise<DeliveryRecord | undefined>;
   /** Send times of cap-counting deliveries to a person at or after `since`. */
   capSendsSince(personId: string, since: number): Promise<number[]>;
@@ -122,7 +124,7 @@ export class MemoryNotifyStore implements NotifyStore {
     return changed;
   }
 
-  async recordDelivery(d: DeliveryRecord) {
+  async recordDelivery(d: DeliveryRecord, weeklyCap: number) {
     if (this.deliveries.has(d.deliveryId)) return false;
     if (d.deliveryId.startsWith("ntf_")) {
       const pending = [...new Set(d.itemIds)].filter(id => {
@@ -131,13 +133,24 @@ export class MemoryNotifyStore implements NotifyStore {
           item.expiresAt !== undefined, item.expiresAt ?? 0, d.sentAt);
       });
       if (!digestItemSetCanBeRecorded(d.itemIds.length, pending.length)) return false;
+      if (!digestWithinWeeklyCap(d.countsTowardCap, (await this.capSendsSince(d.personId, d.sentAt - WEEK_MS + 1)).length, weeklyCap)) return false;
     }
+    this.insertDelivery(d);
+    return true;
+  }
+
+  private insertDelivery(d: DeliveryRecord) {
     this.deliveries.set(d.deliveryId, copyDelivery(d));
     for (const id of d.itemIds) {
       const i = this.items.get(id);
       if (i && i.notifiedAt === undefined) { i.notifiedAt = d.sentAt; i.deliveryId = d.deliveryId; }
     }
-    return true;
+  }
+
+  async addDelivered(input: InboxItemInput, d: Parameters<NotifyStore["addDelivered"]>[1]) {
+    const r = await this.addItem(input, d.sentAt);
+    if (r.item.notifiedAt === undefined && !this.deliveries.has(d.deliveryId)) this.insertDelivery({ ...d, personId: input.personId, itemIds: [r.item.id] });
+    return r;
   }
 
   async getDelivery(id: string) {

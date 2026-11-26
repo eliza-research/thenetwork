@@ -9,6 +9,9 @@
 // Plus registration (match age >= 18, adults-only lanes) and a positive control (worlds are non-trivial).
 import type { ChatMessage, LLM, MemberId } from "../../packages/core/src/index.ts";
 import { canBeMatched, DAY } from "../../packages/core/src/index.ts";
+import { ageOnDay } from "../../packages/core/src/generated/memberAge.ts";
+import { groupAgeAllowed, rosterHasMinor, teenFriendMaxAge, teenFriendRole, teenRosterSizeAllowed } from "../../packages/core/src/generated/friendIntroAge.ts";
+import { teenFriendCategory, teenGenerator } from "../../packages/core/src/generated/matchLane.ts";
 import * as A from "../../packages/engine/src/attention.ts";
 import { resolveConfig, type EngineConfigInput } from "../../packages/engine/src/config.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
@@ -23,6 +26,7 @@ import { EngineRng as Rng } from "../../packages/core/src/index.ts";
 import { randomWorld } from "../../packages/engine/src/testkit.ts";
 import type { AttentionItem, EngineInput, EngineProposal } from "../../packages/engine/src/types.ts";
 import { pairKey, World } from "../../packages/engine/src/world.ts";
+import { ageSideOrUnknown, teenShape } from "../../packages/sim/src/teen.ts";
 import { Block, expect } from "./gate.ts";
 
 export interface ConformanceOptions {
@@ -49,6 +53,77 @@ const YES_ALL = (refs = ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8"]) => {
 };
 
 function shuffled<T>(xs: T[], rng: Rng): T[] { const a = [...xs]; rng.shuffle(a); return a; }
+
+export async function teenConformance(b: Block, pack: AppPack, o: Required<Pick<ConformanceOptions, "world" | "seeds">>): Promise<void> {
+  const worlds = o.seeds.map(seed => ({ seed, input: o.world(seed) }));
+  const name = (rule: string) => `conformance ${pack.id} (teen world): ${rule}`;
+  const world = (input: EngineInput, seed: number) => new World(input, resolveConfig({ seed }), localEmbed, pack);
+  const sideOf = (w: World, id: MemberId) => ageSideOrUnknown(w.get(id)?.m);
+  const maxAgeOf = (w: World, id: MemberId) => { const m = w.get(id)?.m; return m?.birthKey === undefined ? (m?.age ?? Number.POSITIVE_INFINITY) : ageOnDay(m.birthKey, w.maxDay); };
+  const unready = (w: World) => new Set(w.ids.filter(id => !sideOf(w, id).adult && !sideOf(w, id).ready));
+  let teenProposals = 0;
+
+  await b.run(name("every proposal with a minor keeps the teen friendship rule in every role, comes from a teen generator, gives every member a friendship role, is in a friendship lane with a friendship format, holds at most 6, has no via and no event; members not teen ready stay out"), async () => {
+    for (const { seed, input } of worlds) {
+      expect(input.teenIntros).toBe(true);
+      const w = world(input, seed);
+      const out = unready(w);
+      const r = await runEngine(input, { seed }, { pack });
+      for (const p of r.proposals) {
+        const roster = [...p.participants, ...p.alternates];
+        const sides = roster.map(id => sideOf(w, id));
+        for (const id of [...roster, ...(p.via ? [p.via] : [])]) expect(out.has(id)).toBe(false);
+        if (!rosterHasMinor(sides)) continue;
+        teenProposals++;
+        expect([p.id, groupAgeAllowed(true, teenFriendCategory(pack.id, p.category), w.minDay, w.maxDay, sides)]).toEqual([p.id, true]);
+        expect([p.id, teenGenerator(pack.id, p.generator), teenRosterSizeAllowed(true, roster.length), p.anchor?.type === "event"]).toEqual([p.id, true, true, false]);
+        for (const id of roster) expect([p.id, id, p.roles[id] !== undefined && teenFriendRole(p.roles[id]!)]).toEqual([p.id, id, true]);
+        const shape = teenShape(pack.id, roster, p);
+        expect([p.id, shape.lane, shape.laneOk]).toEqual([p.id, true, true]);
+        expect(p.via).toBeUndefined();
+        for (const id of roster) expect(maxAgeOf(w, id)).toBeLessThanOrEqual(teenFriendMaxAge);
+      }
+      for (const a of r.asks) expect(out.has(a.memberId)).toBe(false);
+      for (const s of r.runLog.scored) for (const id of s.participants) expect(out.has(id)).toBe(false);
+      expect(r.runLog.funnel.rejectedAfterSelection).toBeUndefined();
+    }
+  });
+
+  await b.run(name("positive control: the engine proposes at least one teen friendship introduction"), () => {
+    expect(teenProposals).toBeGreaterThan(0);
+  });
+
+  await b.run(name("a teen-ready minor is refused with a person aged 19 or more, in romance and in work"), () => {
+    let checked = 0;
+    for (const { seed, input } of worlds) {
+      const w = world(input, seed);
+      const teens = w.ids.filter(id => !sideOf(w, id).adult && sideOf(w, id).ready);
+      const older = w.ids.find(id => sideOf(w, id).adult && maxAgeOf(w, id) > teenFriendMaxAge);
+      expect(older).toBeTruthy();
+      for (const id of teens) {
+        checked++;
+        for (const category of (["social", "hobby"] as const).filter(c => teenFriendCategory(pack.id, c))) expect(pairReason(w, id, older!, category)).toBe("underage");
+        for (const category of ["romance", "professional"] as const) expect(memberReason(w, id, { category, role: "peer", format: "one_to_one", timeSensitive: false })).not.toBeNull();
+      }
+      for (const id of unready(w)) expect(memberReason(w, id, { category: "social", role: "peer", format: "small_group", timeSensitive: false })).toBe("underage");
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+
+  await b.run(name("stopped: the same world puts no minor in any role"), async () => {
+    for (const { seed, input } of worlds) {
+      const off: EngineInput = { ...input, teenIntros: false };
+      const w = world(off, seed);
+      const minors = new Set(w.ids.filter(id => !canBeMatched(w.get(id)!.m.age)));
+      expect(minors.size).toBeGreaterThan(0);
+      const r = await runEngine(off, { seed }, { pack });
+      for (const p of r.proposals) for (const id of [...p.participants, ...p.alternates, ...(p.via ? [p.via] : [])]) expect(minors.has(id)).toBe(false);
+      for (const a of r.asks) expect(minors.has(a.memberId)).toBe(false);
+      for (const s of r.runLog.scored) for (const id of s.participants) expect(minors.has(id)).toBe(false);
+      for (const id of minors) expect(memberReason(w, id, { category: "social", role: "peer", format: "small_group", timeSensitive: false })).toBe("underage");
+    }
+  });
+}
 
 /** Run the conformance rules for `pack`; each rule is one blocking gate named "conformance <pack>: ...". */
 export async function conformance(b: Block, pack: AppPack, o: ConformanceOptions = {}): Promise<void> {

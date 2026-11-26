@@ -7,13 +7,15 @@ export declare function inv(current: DigestFlow): boolean;
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export declare function inboxItemAllowedForRecipient(requested: boolean, proactiveAllowed: boolean): boolean;
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
+export declare function rereadCountsPossible(plannedCount: number, remainingCount: number): boolean;
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export declare function inboxItemStillPending(seen: boolean, notified: boolean): boolean;
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export declare function inboxItemExpired(hasExpiry: boolean, expiresAt: number, at: number): boolean;
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export declare function inboxItemDigestible(seen: boolean, notified: boolean, hasExpiry: boolean, expiresAt: number, at: number): boolean;
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
-export declare function canRereadItems(digest: DigestFlow): boolean;
+export declare function canRereadItems(digest: DigestFlow, plannedCount: number, remainingCount: number): boolean;
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export declare function rereadItems(digest: DigestFlow, plannedCount: number, remainingCount: number, recipientAvailable: boolean, destinationChanged: boolean): DigestFlow;
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
@@ -22,6 +24,10 @@ export declare function lawExpiredItemLeavesTheDigest(seen: boolean, notified: b
 export declare function lawMissingRecipientCancels(plannedCount: number, remainingCount: number, destinationChanged: boolean): boolean;
 /** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) @throws {never} */
 export declare function digestItemSetCanBeRecorded(itemCount: number, pendingOwnedCount: number): boolean;
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) @throws {never} */
+export declare function digestWithinWeeklyCap(countsTowardCap: boolean, countedSends: number, weeklyCap: number): boolean;
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) @throws {never} */
+export declare function lawRecordedCountingDigestStaysUnderCap(countedSends: number, weeklyCap: number): boolean;
 /** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) @throws {never} */
 export declare function canRecordDigest(digest: DigestFlow): boolean;
 /** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) @throws {never} */

@@ -8,8 +8,8 @@ import { World } from "../src/world.ts";
 test("forced flakes: a booked member cancels or no-shows as scripted, then the one-shot ends", async () => {
     const scenario = await loadScenario(fileURLToPath(new URL("../scenarios/group-flake-morning-of.json", import.meta.url)));
     for (const how of [undefined, "notice", "no_show", "late_notice"] as const) {
-      const w = new World(scenarioWorldOptions({ ...scenario, actions: scenario.actions.filter(a => a.do !== "force_flake") }, {
-        network: () => new StubNetwork({ seed: scenario.seed, randomIntros: false }),
+      const w = new World(scenarioWorldOptions({ ...scenario, seed: 13, actions: scenario.actions.filter(a => a.do !== "force_flake") }, {
+        network: () => new StubNetwork({ seed: 13, randomIntros: false }),
       }));
       await w.begin();
       await w.advanceTo(w.clock.now() + DAY + 11 * HOUR);

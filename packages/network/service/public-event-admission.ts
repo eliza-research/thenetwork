@@ -3,7 +3,7 @@ import type { QueueRow, RecipientCheck } from "../../blooio/src/outbound-queue.t
 import { publicEventClaimAllowed, publicEventMemberAllowsMatch, publicEventRevisionMatches } from "../../core/src/generated/publicEventCatalog.ts";
 import { listedEventMinimumAge } from "../../core/src/public-event-age.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
-import type { NetworkState } from "../src/network.ts";
+import { reviewApproved, type NetworkState } from "../src/network.ts";
 import { publicEventRevision } from "../src/public-event-revision.ts";
 import { lockPublicEventCatalog, readPublicEvents } from "./public-events.ts";
 
@@ -26,13 +26,9 @@ async function eventContact(tx: SQL, row: QueueRow, runtimeId: string, lock: boo
     ${lock ? tx`for share of saved` : tx``}`;
   return contact;
 }
-
-/** Take the state and catalog fences before the queue locks the recipient. */
 export async function lockPublicEventContact(tx: SQL, row: QueueRow, runtimeId: string): Promise<void> {
   if (await eventContact(tx, row, runtimeId, true)) await lockPublicEventCatalog(tx);
 }
-
-/** A provider claim needs the exact current reviewed listing and eligible active participants. */
 export async function publicEventContactAdmission(tx: SQL, row: QueueRow, runtimeId: string, city: string, now: number): Promise<RecipientCheck> {
   const contact = await eventContact(tx, row, runtimeId, false);
   if (!contact) return { ok: true };
@@ -49,8 +45,8 @@ export async function publicEventContactAdmission(tx: SQL, row: QueueRow, runtim
     return current === "queued" || current === "probing" || current === "available" || current === "yes";
   });
   const expectedStage = bookingNotice || lateInvite ? "scheduled" : "probing";
-  const exactContact = body === row.text && participants.includes(recipient) && opp.review?.decision === "approve"
-    && !opp.review.invalidated && opp.stage === expectedStage;
+  const exactContact = body === row.text && participants.includes(recipient) && reviewApproved(opp.review)
+    && opp.stage === expectedStage;
   if (!exactContact) return refused;
   const [event] = await readPublicEvents(tx, now, city, eventId);
   if (!event || !publicEventRevisionMatches(opp.publicEventRevision, publicEventRevision(event))) return refused;

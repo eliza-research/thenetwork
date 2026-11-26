@@ -163,24 +163,47 @@ describe("ChatGPT on the ntwrk.party endpoint", () => {
     expect(env.provider.sent).toHaveLength(0);
   });
 
-  test("the allowlisted private Slop pilot still authorizes only adults at the dedicated full endpoint", async () => {
-    const env = setup({ env: { PLATFORM_ENV: "staging" }, customChatGptSlopPersonIds: ["eligible-owner", "underage-owner"] });
-    for (const [id, phone, age] of [["eligible-owner", PHONE_A, 30], ["underage-owner", PHONE_B, 17]] as const) {
-      await env.people.createPerson({ id, e164: phone, method: "otp_sms", at: env.clock.t, lowestAge: age, phoneHash: env.accounts.phoneHash(phone) });
+  test("the ntwrk.party Slop ChatGPT connector is open to every member at /mcp/slop/openai, with no allowlist, and slop.date refuses ChatGPT (owner decision 2026-11-23)", async () => {
+    const env = setup({ env: { PLATFORM_ENV: "staging" } });
+    for (const [id, phone] of [["first-member", PHONE_A], ["second-member", PHONE_B]] as const) {
+      await env.people.createPerson({ id, e164: phone, method: "otp_sms", at: env.clock.t, lowestAge: 30, phoneHash: env.accounts.phoneHash(phone) });
       await env.people.putMembership({ app: "slop", personId: id, memberId: `slop_${id}`, state: "active", review: null, firstName: "Rae", profile: {}, joinedAt: env.clock.t, leftAt: null });
     }
+    expect((await register(env, "slop.date", { redirect_uris: [CHATGPT] })).res.status).toBe(400);
     const hub = await register(env, HUB, { redirect_uris: [CHATGPT] });
     const hubFlow = await browserFlow(env, HUB, hub.body.client_id, PHONE_A, { redirectUri: CHATGPT, resource: endpoint("slop") });
     expect(hubFlow.start.status).toBe(400);
-    const opts = { redirectUri: CHATGPT, resource: "https://slop.date/mcp" };
-    const adult = await connect(env, "slop.date", PHONE_A, { ...opts, register: { redirect_uris: [CHATGPT] } });
-    expect(adult.tokenRes.status).toBe(200);
-    const status = await call(env, opts.resource, "check_status", {}, { token: adult.token.access_token });
-    expect(status.body!.result.structuredContent).toMatchObject({ app: "slop", status: "active" });
+    const opts = { redirectUri: CHATGPT, resource: endpoint("slop", true) };
+    for (const phone of [PHONE_A, PHONE_B]) {
+      const member = await connect(env, HUB, phone, { ...opts, register: { redirect_uris: [CHATGPT] } });
+      expect(member.tokenRes.status).toBe(200);
+      const status = await call(env, opts.resource, "check_status", {}, { token: member.token.access_token });
+      expect(status.body!.result.structuredContent).toMatchObject({ app: "slop", status: "active" });
+      env.clock.t += 61 * 60_000;
+    }
+  });
+
+  test("a 17-year-old slop.date member connects to the ChatGPT and full connectors, check_status answers, and my_photos lists nothing without asking the platform", async () => {
+    const calls: string[] = [];
+    const env = setup({ env: { PLATFORM_ENV: "staging" }, photoHoldings: async personId => { calls.push(personId); return { text: "", photos: [] }; } });
+    await env.people.createPerson({ id: "teen-member", e164: PHONE_B, method: "otp_sms", at: env.clock.t, lowestAge: 17, phoneHash: env.accounts.phoneHash(PHONE_B) });
+    await env.people.putMembership({ app: "slop", personId: "teen-member", memberId: "slop_teen-member", state: "active", review: null, firstName: "Rae", profile: {}, joinedAt: env.clock.t, leftAt: null });
+    const chatGpt = await connect(env, HUB, PHONE_B, {
+      redirectUri: CHATGPT, resource: endpoint("slop", true), scope: "apps:read membership:read profile:write",
+      register: { redirect_uris: [CHATGPT] },
+    });
+    expect(chatGpt.tokenRes.status).toBe(200);
+    const chatGptStatus = await call(env, endpoint("slop", true), "check_status", {}, { token: chatGpt.token.access_token });
+    expect(chatGptStatus.body!.result.structuredContent).toMatchObject({ app: "slop", status: "active" });
     env.clock.t += 61 * 60_000;
-    const minor = await browserFlow(env, "slop.date", adult.client.client_id, PHONE_B, opts);
-    expect(minor.location).toBeNull();
-    expect(minor.status).toBe(403);
+    const opts = { redirectUri: RETURN, resource: "https://slop.date/mcp", scope: "apps:read membership:read profile:write photos:use" };
+    const teen = await connect(env, "slop.date", PHONE_B, { ...opts, register: { redirect_uris: [RETURN] } });
+    expect(teen.tokenRes.status).toBe(200);
+    const status = await call(env, opts.resource, "check_status", {}, { token: teen.token.access_token });
+    expect(status.body!.result.structuredContent).toMatchObject({ app: "slop", status: "active" });
+    const photos = await call(env, opts.resource, "my_photos", {}, { token: teen.token.access_token });
+    expect(photos.body!.result.structuredContent).toEqual({ app: "slop", text: "Photos are not available for this person here.", photos: [] });
+    expect(calls).toEqual([]);
   });
 
   test("Peon membership status sends a new member to the app's browser join page", async () => {
@@ -293,7 +316,7 @@ describe("hub findings: each browser path of ntwrk.party acts for the app of its
     expect((await call(env, endpoint("ntwrk"), "check_status", {}, { token: prior.token.access_token })).res.status).toBe(200);
   });
 
-  test("/oauth/signup-draft acts for the app of the stored authorization request (rid), only in the browser that holds it", async () => {
+  test("the hub's Finish signup form of the stored authorization request shows the friends draft once, only in the browser that holds the request; the browser draft route is gone", async () => {
     const env = setup();
     const c = await connect(env, HUB, PHONE_B, { scope: "membership:read profile:write", resource: endpoint("friends") });
     const saved = await call(env, endpoint("friends"), "prepare_signup", { firstName: "Ari", homeCity: "sf" }, { token: c.token.access_token });
@@ -308,16 +331,21 @@ describe("hub findings: each browser path of ntwrk.party acts for the app of its
     const rid = /name="rid" value="([^"]+)"/.exec(html)?.[1];
     expect(rid, html.slice(0, 300)).toBeTruthy();
     const jar = cookieJar(friends, start.headers.get("set-cookie"));
-    const claim = (body: Record<string, unknown>, cookie = jar.header()) => env.fetch(new Request(`${origin(HUB)}/oauth/signup-draft`, {
-      method: "POST", headers: { cookie, origin: origin(HUB), "content-type": "application/json" }, body: JSON.stringify(body),
+    for (const path of ["/oauth/signup-draft", "/oauth/signup-draft/discard"]) {
+      const removed = await env.fetch(new Request(`${origin(HUB)}${path}`, {
+        method: "POST", headers: { cookie: jar.header(), origin: origin(HUB), "content-type": "application/json" }, body: JSON.stringify({ rid }),
+      }));
+      expect(removed.status).toBe(404);
+    }
+    const open = (cookie: string) => env.fetch(new Request(`${origin(HUB)}/oauth/authorize/signup`, {
+      method: "POST", body: new URLSearchParams({ rid: rid!, decision: "open" }).toString(),
+      headers: { "content-type": "application/x-www-form-urlencoded", origin: origin(HUB), cookie },
     }));
-    const other = await claim({ rid }, friends);
-    expect(other.status).toBe(403);
-    expect((await claim({ rid: "A".repeat(22) })).status).toBe(403);
-    expect((await claim({})).status).toBe(401);
-    const shown = await claim({ rid });
+    expect(await (await open(friends)).text()).not.toMatch(/name="firstName"[^>]*value="Ari"/);
+    const shown = await open(jar.header());
     expect(shown.status).toBe(200);
-    expect(await shown.json()).toMatchObject({ draft: { firstName: "Ari", homeCity: "sf" } });
+    expect(await shown.text()).toMatch(/name="firstName"[^>]*value="Ari"/);
+    expect(await (await open(jar.header())).text()).not.toMatch(/name="firstName"[^>]*value="Ari"/);
   });
 
   test("/oauth/consents on ntwrk.party lists and removes the grants of every app, each labeled with its app; an app site lists only its own", async () => {

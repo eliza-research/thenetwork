@@ -8,6 +8,7 @@ import { HOUR } from "@thenetwork/core";
 import { PgStore } from "@thenetwork/network";
 import { serveHttp } from "../../../packages/core/src/runtime/http.ts";
 import { SQL } from "../../../packages/core/src/runtime/postgres.ts";
+import { holdEveryItem } from "../../../packages/engine/src/reviewJudge.ts";
 import { Mini } from "../../../packages/network/test/mini.ts";
 import { RealSource } from "../src/sources/real.ts";
 import { dropTestDb, pgAvailable, testDb } from "./pg.ts";
@@ -24,9 +25,10 @@ describe.skipIf(!pgAvailable)("an approval that the re-check invalidates (Postgr
     const sql = new SQL(url);
     const store = new PgStore(sql);
     close.push(() => sql.close());
-    const w = new Mini([{ ...climber("r", "Rae Kim"), wants: [] }, climber("c1", "Cal One"), climber("c2", "Cleo Two")], { review: "human" });
+    const w = new Mini([{ ...climber("r", "Rae Kim"), wants: [] }, climber("c1", "Cal One"), climber("c2", "Cleo Two")], { inlineJudge: holdEveryItem.inline });
     await w.onboard("r", "c1", "c2");
     await w.say("r", "Anyone around who'd want to find a regular climbing partner? I'm near Greenpoint.");
+    await w.net.tick(w.clock.now());
     const oppId = w.net.reviewQueue()[0]!.oppId;
     await store.save({ ...w.net.exportState(), savedAt: w.clock.now() });
 

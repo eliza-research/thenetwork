@@ -14,6 +14,7 @@ import { Mini, START } from "./mini.ts";
 
 const turnSecret = "synthetic-calendar-bridge-fixture-turn-secret";
 const calendarSecret = "synthetic-calendar-bridge-fixture-scope-secret";
+const safetyToken = "synthetic-calendar-bridge-fixture-safety";
 const connectionId = "22222222-2222-4222-8222-222222222222";
 const organizationId = "33333333-3333-4333-8333-333333333333";
 const userId = "44444444-4444-4444-8444-444444444444";
@@ -30,7 +31,8 @@ test.skipIf(!pgAvailable)("a signed owner proof and fresh Cloud preload bind act
   let cloudRevoked = false;
   const service = new NetworkService({
     url, clock, photoStorage: null, log: () => {}, notify: false,
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: turnSecret, NETWORK_CALENDAR_FREE_BUSY_SECRET: calendarSecret,
+    tokens: `safety@friends:${safetyToken}`,
+    env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: turnSecret, NETWORK_CALENDAR_FREE_BUSY_SECRET: calendarSecret,
       NETWORK_CLOUD_DELIVERY_ORIGIN: "https://calendar.invalid" },
     networks: [{ id: "friends:nyc", matchingEnabled: false }],
     calendarFreeBusyFetch: async (destination, init) => {
@@ -72,13 +74,23 @@ test.skipIf(!pgAvailable)("a signed owner proof and fresh Cloud preload bind act
       const name = ["Ari", "Blair", "Casey", "Devon"][i]!;
       const joined = await service.accounts.join(app, { e164, personId: null }, { firstName: name, age: 30, consent: { sms: true, wording: app.consent.text } });
       if (!joined.ok) throw new Error(`Fixture join refused for ${name}`);
-      profiles.push({ id: joined.membership.memberId, personId: joined.membership.personId, name, age: 30, area: "Greenpoint",
+      const id = joined.membership.memberId;
+      for (const check of ["age", "liveness"]) {
+        const verified = await service.fetch(new Request(`http://localhost/apps/friends/members/${encodeURIComponent(id)}/verify`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${safetyToken}`, "content-type": "application/json" },
+          body: JSON.stringify({ check, result: "pass", note: "Adult calendar scheduling fixture" }),
+        }));
+        expect(await verified.json()).toEqual({ ok: true });
+      }
+      profiles.push({ id, personId: joined.membership.personId, name, age: 30, area: "Greenpoint",
         interests: ["climbing", "hiking"], skills: ["belaying"], wants: [{ objective: "find a regular climbing partner", category: "hobby" as const }] });
     }
     const [first, second, declined, pending] = profiles as [typeof profiles[number], typeof profiles[number], typeof profiles[number], typeof profiles[number]];
     const ids = [first.id, second.id];
     const rt = service.runtimes.get("friends:nyc")!;
     const world = new Mini(profiles, { app: app.id, growth: false, plans: false });
+    world.verify(...ids);
     await world.onboard(...profiles.map(profile => profile.id));
     const oppId = world.propose(ids);
     expect(await world.runUntil(() => world.probed(first.id), 2 * DAY)).toBe(true);

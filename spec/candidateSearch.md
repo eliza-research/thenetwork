@@ -46,9 +46,21 @@ pure def lawSegmentBlockingComplete(reachesOther: bool, otherReaches: bool): boo
   segmentPairAllowed(reachesOther, otherReaches) implies reachesOther
 ```
 
+### Mutual acceptance masks never drop a pair the pack rules admit
+
+A pack can give a membership one mask per dimension: an integer bitset of what the member is (`own`) and an integer bitset of what the member accepts (`accepts`). Age bands, stated dealbreakers and pools are examples. A member accepts another when, in every dimension, the member's `accepts` shares a bit with the other's `own`. The one pair gate admits a pair only when each member accepts the other, and the search tests the same masks when it touches a candidate, before any arithmetic. So the search and the brute-force oracle agree, and a refused candidate costs one touch and no bound.
+
+A pack gives masks only as a superset of its own pair rules: a mask never refuses a pair that the pack rules admit. As for segments, the exactness check cannot see a mask that breaks this, because the search and the oracle use the same gate. The engine therefore exposes a monitor that tells, for one pair, whether the masks refuse it and the pack rules admit it. It must find no such pair. This rule is new: a pack can now refuse a candidate with a few bit operations at the touch, before the search computes a bound, and the gate applies the same test so that the oracle still agrees.
+
+```quint
+pure def maskPairAllowed(acceptsOther: bool, otherAccepts: bool): bool = acceptsOther and otherAccepts
+```
+
 ### A bound is never below the value of the pair it covers
 
-The shell bounds the value of each candidate before it checks the candidate. For a candidate it touched, it knows both tag sets, both standings and both exchanges, so it computes the lane pair value with each utility replaced by an upper bound: the tag terms and the closeness are exact, and only the pack term, which the shell does not read before a check, counts at full value. The pair gate (minors, blocks, holds) can only lower a value to `noPairValue`. A higher utility never lowers the pair value: the floors are the only admission conditions that read a utility, and the harmonic value does not decrease when either utility increases. So the bound is never below the pair value (`lawCandidateBoundSound`).
+The shell bounds the value of each candidate before it checks the candidate. For a candidate it touched, it knows both tag sets, both standings and both exchanges, so it computes the lane pair value with each utility replaced by an upper bound: the tag terms and the closeness are exact, and only the pack term, which the shell does not read before a check, counts at full value or at the pack bound (below). When the pack gives no pack value, the bound is the pair arithmetic itself, and the check adds only the pair gate. The pair gate (minors, blocks, holds) can only lower a value to `noPairValue`. A higher utility never lowers the pair value: the floors are the only admission conditions that read a utility, and the harmonic value does not decrease when either utility increases. So the bound is never below the pair value (`lawCandidateBoundSound`).
+
+A pack that supplies a pack value can also supply a pack bound for a touched candidate: an upper bound on its directed pack value that it computes before the check. The shell then uses the pack bound in place of the full value. The pack must keep every pack value at or below its pack bound. The slop pack supplies the Date pair bound (`datePackPairBound`), which is never below the Date pack value of the pair it covers ([`lawDatePackPairBound`](datePackValue.md)). This changed because the slop pack did not supply a pack bound before, so every touched Date candidate counted its pack term at 1000 and was checked; a touched candidate whose pair bound keeps a utility below the Date floor now gets no check. A weighted term does not fall when its value rises (`lawPackBoundSound`), so the utility with the pack bound is at least the utility with the pack value, and `lawCandidateBoundSound` covers the pair. The search counts each check whose value is above the bound it used, and each pack value above its pack bound; both counts must be 0. This rule changed in two ways: the pack bound (`lawPackBoundSound`) replaces the full pack value when the pack supplies one, so that a touched bound can fall below the floor and the check is not made; and without a pack value the check reuses the bound as the arithmetic, so that the shell does not compute the same pair value twice.
 
 For a candidate it did not touch, the shell knows only upper bounds of the two utilities and the two exchanges. When a bound is below a required floor, no such pair has a value. Otherwise the harmonic mean of the utility bounds covers the pair because the standing penalty is nonnegative (`lawUnseenBoundSound`). The common bound remains sound when the shell can supply a higher lower bound on the penalty (`lawBucketBoundSound`).
 
@@ -79,6 +91,11 @@ pure def lawCandidateBoundSound(side: PairSide, other: PairSide, offset: int, ru
     pairValue(side, other, offset, rules)
       <= pairValue({ ...side, utility: utilityBound }, { ...other, utility: otherUtilityBound }, offset, rules)
 
+pure def lawPackBoundSound(weight: int, packValue: int, packBound: int): bool =
+  packValue <= packBound implies
+    utilityTermWeight({ weight: weight, value: packValue }) * boundedValue(packValue)
+      <= utilityTermWeight({ weight: weight, value: packBound }) * boundedValue(packBound)
+
 pure def lawUnseenBoundSound(side: PairSide, other: PairSide, offset: int, rules: PairRules, utilityBound: int, otherUtilityBound: int, exchangeBound: int, otherExchangeBound: int): bool =
   and {
     side.utility <= utilityBound, other.utility <= otherUtilityBound,
@@ -90,7 +107,7 @@ pure def lawUnseenBoundSound(side: PairSide, other: PairSide, offset: int, rules
 
 The shell walks the nonempty posting ranges of shared interests and of each side's seeks against the other side's offers. The range of one tag is the part of its posting inside the walked window ranges. It starts with the shortest range. An untouched partner can only share tags from ranges that remain open. An unfinished range stays open when the walk stops partway through it.
 
-The upper bound counts only the utility terms the pack provides. The open ranges bound the searcher's affinity and complement hit counts. For the other direction the bound allows full coverage while a relevant range is open. Closeness and custom pack value count at their maximum when present. If the bound still allows an untagged pair after the tag ranges are exhausted, the shell can walk the whole window: the standing window inside each segment the member reaches. When the next tag range is at least as long as the whole window, the shell walks the whole window in its place: that costs no more touches and leaves no partner untouched. The lane floors apply as specified.
+The upper bound counts only the utility terms the pack provides. The open ranges bound the searcher's affinity and complement hit counts. For the other direction the bound allows full coverage while a relevant range is open. Closeness counts at its maximum when present. The pack value of the other direction counts at its maximum. The pack value of the searcher's own direction counts at the pack class cap of the next rule when the pack supplies classes, and at its maximum when it does not. If the bound still allows an untagged pair after the tag ranges are exhausted, the shell can walk the whole window: the standing window inside each segment the member reaches. When the next tag range is at least as long as the whole window, the shell walks the whole window in its place: that costs no more touches and leaves no partner untouched. The lane floors apply as specified.
 
 Each visited posting or whole-window entry costs one touch, including a repeated visit to the same candidate. The shell visits an entry only while `searchMayTouch` holds: it stops visiting entries when their count reaches `searchTouchesPerCheck` times the lane's search budget. The search can still check candidates it has already touched.
 
@@ -101,6 +118,34 @@ pure def searchMayTouch(touches: int, budget: int): bool = touches < searchTouch
 
 pure def lawSearchTouchesStayWithinLimit(touches: int, budget: int): bool =
   searchMayTouch(touches, budget) implies touches + 1 <= searchTouchesPerCheck * budget
+```
+
+### A pack class cap bounds the pack term of every partner the walk did not touch
+
+A pack that supplies a pack value can also put each membership in a pack class, a small whole number, and give a class cap: for one searcher, one class, and one `untouched` fact, an upper bound on the searcher's pack value of every partner in that class. The index keeps the classes of the members of each segment. The untouched bound counts the searcher's pack term at the largest class cap over the classes of the segments in the window. A class of a reached segment can have no member in the standing window, so this cap can be higher than needed, but never lower than the pack value of an untouched partner. A weighted term does not fall when its value rises (`lawPackBoundSound`), so the untouched bound with the class cap still covers every untouched partner (`lawUnseenBoundSound`), and the exactness laws stay true.
+
+The shell passes `untouched` true only when every tag range of the walk is fully walked (`searchUntouchedSharesNoTag`). An untouched partner has at most as many hits in a group as the group has open ranges, so it then shares no interest with the searcher, has no offer in the searcher's seeks and no seek in the searcher's offers (`lawUntouchedSharesNoTag`). The pack must keep its cap for `untouched` true sound for each partner that shares no such tag. The slop pack gives the Date class (`datePackClassOf`) and the Date class cap (`datePackClassCap`): a common free slot is a tag in the offers and the seeks of both members, and a shared interest is a tag in the interests of both, so a partner that shares no tag shares neither ([`lawDatePackClassCap`](datePackValue.md)). This rule is new: before it, the untouched Date bound counted the pack term at 1000, which gave `3 x 1000 / 8 = 375`, above the Date floor of 350, so a Date search that did not close on its touched candidates walked its whole window after its tag ranges; now, once every tag range is walked, the untouched bound falls below the floor when the class cap is 933 or less, and the search closes without the whole-window walk.
+
+At each pair check, the shell compares the searcher's pack value with the class cap of the partner's class for `untouched` false. When the partner shares no interest, no offer in the searcher's seeks and no seek in the searcher's offers, it also compares the pack value with the cap for `untouched` true. It counts each pack value above its cap in `classCapViolations`, which must be 0, like `packBoundViolations`. This count is new: before it, only the touched pair bound had a run-time count, so an unsound class cap made a search inexact without a warning, and only the brute-force gate could find it. The slop pack drops an interest tag that is blank after trimming, because the postings drop it. Before this change, two members with the same blank interest shared an interest in the pack value but in no posting, so the untouched cap was not sound for that pair.
+
+```quint
+pure val openAffinityValues = Set(0, 1, 2)
+pure val openComplementValues = Set(0, 1, 2)
+pure val openReturnedValues = Set(0, 1, 2)
+pure val affinityHitsValues = Set(-1, 0, 1, 2)
+pure val complementHitsValues = Set(-1, 0, 1, 2)
+pure val returnedHitsValues = Set(-1, 0, 1, 2)
+
+pure def searchUntouchedSharesNoTag(openAffinity: int, openComplement: int, openReturned: int): bool =
+  openAffinity == 0 and openComplement == 0 and openReturned == 0
+
+pure def lawUntouchedSharesNoTag(openAffinity: int, openComplement: int, openReturned: int, affinityHits: int, complementHits: int, returnedHits: int): bool =
+  and {
+    0 <= affinityHits, affinityHits <= openAffinity,
+    0 <= complementHits, complementHits <= openComplement,
+    0 <= returnedHits, returnedHits <= openReturned,
+    searchUntouchedSharesNoTag(openAffinity, openComplement, openReturned),
+  } implies (affinityHits == 0 and complementHits == 0 and returnedHits == 0)
 ```
 
 ## Story: Keep the best candidates within a fixed number of pair checks
@@ -229,15 +274,17 @@ pure def sometimesExact(s: CandidateSearch): bool = s.phase == Exact and s.unsee
 
 ### A search that spends its budget or its posting walk before it is exact reports the value it may have missed
 
-A search that cannot stop exactly closes as Budgeted when it reaches its check budget, or when the shell has spent its posting walk (`walkSpent`) and has no touched candidate left to check. Its kept list is the best among the checked candidates, and no candidate it did not check has a pair value above `unseenBound`. The engine records the search, its bound, and an empty or Budgeted result as the reason of [Story F21](product/stories.md#story-f21--hear-when-nothing-fits). It never fills the gap with a pair that has no pair value. A closed search does not change.
+A search that cannot stop exactly closes as Budgeted when it reaches its check budget, or when the shell has spent its posting walk (`walkSpent`) and no touched candidate can still enter the kept list. The shell passes as `touchedBound` the highest bound of the touched candidates it has not checked, or `noPairValue` when none is left. No touched candidate can enter when that bound is below every kept value of a full list, the same test as an exact stop (`searchStopsExact`). More checks could then only drop candidates, so the search closes with the kept list that the checks would leave. Its kept list is the best among the checked candidates, and no candidate it did not check has a pair value above `unseenBound`. The engine records the search, its bound, and an empty or Budgeted result as the reason of [Story F21](product/stories.md#story-f21--hear-when-nothing-fits). The staff-only run log keeps one row for each such search (`searchOutcomes`: the member, the lane, `empty` or `budgeted`, and `unseenBound`), at most 500 rows with the highest bounds first, next to the run totals. This changed: before, only the totals and the largest bound were kept, so staff could not see which member's search closed empty or budgeted. It never fills the gap with a pair that has no pair value. A closed search does not change. This rule changed: before, a search whose walk was spent closed only when no touched candidate was left, so it spent its whole check budget on candidates that could no longer enter; now it closes when none of them can enter, with the same kept list.
 
-One search makes at most `budget` pair checks (`alwaysChecksWithinBudget`). In addition to the touch limit, the shell locates its posting ranges with binary searches, sorts those ranges by length, and ranks each touched candidate at most once in a heap.
+One search makes at most `budget` pair checks (`alwaysChecksWithinBudget`). The pair value is symmetric ([`lawPairValueSymmetric`](pairValue.md)), so a run keeps the value of each checked pair until the other member's search checks it, and that search reuses the value. A reused value still counts as one check. The reuse is sound only because the pair gate is symmetric too: the core checks (minors, blocks, holds, segments, masks) test both directions, and a pack pair rule must refuse a pair exactly when it refuses the reversed pair. A pair rule that tests only one direction breaks the reuse, and the exactness check against brute force would not show it on the reused pairs. The reuse is new: it removes the second computation of a pair value that the other side already checked. In addition to the touch limit, the shell locates its posting ranges with binary searches, sorts those ranges by length, and ranks each touched candidate at most once in a heap.
 
 ```quint
-pure def canCloseBudgeted(s: CandidateSearch, unseenBound: int, walkSpent: bool, touchedLeft: bool): bool =
-  s.phase == Scanning and (s.checks >= s.budget or (walkSpent and not(touchedLeft))) and not(searchStopsExact(s, unseenBound))
+pure val touchedBoundValues = Set(-1, 2, 4, 6)
 
-pure def closeBudgeted(s: CandidateSearch, unseenBound: int, walkSpent: bool, touchedLeft: bool): CandidateSearch =
+pure def canCloseBudgeted(s: CandidateSearch, unseenBound: int, walkSpent: bool, touchedBound: int): bool =
+  s.phase == Scanning and (s.checks >= s.budget or (walkSpent and searchStopsExact(s, touchedBound))) and not(searchStopsExact(s, unseenBound))
+
+pure def closeBudgeted(s: CandidateSearch, unseenBound: int, walkSpent: bool, touchedBound: int): CandidateSearch =
   { ...s, phase: Budgeted, unseenBound: unseenBound }
 
 pure def stepClosedSearchStaysClosed(before: CandidateSearch, after: CandidateSearch): bool =

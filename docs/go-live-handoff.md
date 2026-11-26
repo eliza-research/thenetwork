@@ -12,11 +12,11 @@ Repo: <https://github.com/eliza-research/thenetwork> (public). Work from a fresh
   - friends.help, friends;
   - peon.biz, work.
 - **eliza.app is just another entry into The Network**, like the four sites. Someone arriving through eliza.app joins The Network and is asked what they are looking for (friends, dating, work), or is routed by keyword. eliza.app is not a separate product with separate members.
-- **Joining:** slop.date, friends.help and peon.biz are open to anyone. The Network (ntwrk.party) stays invite-only on the web. Members aged 13-17 can join but are never matched or connected. Matching is 18+, based on the lowest age the person has stated.
+- **Joining:** slop.date, friends.help and peon.biz are open to anyone. The Network (ntwrk.party) stays invite-only on the web. Members aged 13-17 can join. They are never matched for dates or work. The one exception is friendship introductions on friends.help and in the ntwrk `Friend` lane between teen-ready people aged 13 to 18 born at most 2 calendar years apart, and small friends.help groups at all-ages public places. They are on from the start; one staff member can stop them on every app ([network.md](network.md) 6.3, owner decision 2026-11-22, answers A2 to A5). A minor is offered friends only. All other matching is 18+. The age is the youngest reading the person has given; signup and the text line ask for the birthday (owner decision 2026-11-22).
 - **Bans:** a banned person cannot rejoin, because the ban is on the phone number. Every join, login and inbound path must refuse a banned number.
-- **Ratings:** Clef photo ratings are on, and the scores are never shown to anyone. The placeholder weights ship until fitted weights pass the P2 decision rule. Production sets `CLEF_RATINGS=on`; the code reads an unset flag as off, so keep the variable set. Clef is also the scam and harassment classifier for relayed messages.
+- **Ratings:** Clef photo ratings are on, and the scores are never shown to anyone. The placeholder weights ship until fitted weights pass the P2 decision rule. They are on whenever `CLOUDFLARE_AI_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are set (owner decision 2026-11-22 removed `CLEF_RATINGS`). Clef is also the scam and harassment classifier for relayed messages.
 - **STOP and HELP** on the shared line are answered by the service inside the gateway's signed `/internal/turn`. Only one system ever answers STOP. The service parses STOP inside `/internal/turn` and reports it as `consent` in the handled response; the gateway copies it into its send fence.
-- **Review and model:** a person reviews every proactive proposal before any member hears of it. Every LLM use is gpt-6-luna on Surplus.
+- **Review and model:** every introduction gets one recorded approval before any member hears of it. The review judge gives it (the strict rubric when the roster has a minor); staff decide only the items it holds, and a held item expires unsent (owner decisions D15 to D17 of 2026-11-22). Every LLM use is gpt-6-luna on Surplus.
 - **Testing:** sims (`pnpm run sim`), integration tests and e2e tests. Do not add unit tests or smoke tests.
 
 ## 1. Hard rules for you
@@ -55,9 +55,10 @@ Status on 2026-10-09: **none of the founder-pasted secrets below are set yet**. 
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SERVICE_SID` | Web login codes. The backend won't boot without them. | Twilio console |
 | `CLOUDFLARE_AI_TOKEN` | Clef: photo ratings and relay scam checks | Cloudflare → API Tokens → custom token, Account → **Workers AI: Read** |
 | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Photo storage | R2 → Manage API tokens → **Object Read & Write**, scoped to the photo bucket |
-| `BLOOIO_WEBHOOK_SECRET` | Signed inbound, if the service receives any Blooio calls | Blooio dashboard |
+| `BLOOIO_WEBHOOK_SECRET` | Not needed: with `NETWORK_CHANNEL=eliza_cloud` the backend does not serve `/webhooks/blooio` and ignores this value (the Eliza gateway owns the carrier webhook and checks its signature) | Leave unset on the backend |
+| `NETWORK_PUBLIC_EVENTS_DATABASE_URL` | The public event catalog's ingest login. The backend does not boot without it in staging or production; each tick round refreshes the NYC Parks catalog as this login once a day (docs/deploy.md 2.3) | The platform owner creates the login (`network_events`, member of `network_public_event_ingest`) and seals the URL |
 | `SURPLUS_API_KEY` | gpt-6-luna for any service-side model calls | Surplus |
-| `SERVICE_TURN_SECRET` | Signs every Eliza ⇄ service call: the service's `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals`, `/internal/updates` and `/internal/relay`, and Eliza Cloud's `/api/internal/network/deliver`. HMAC per `packages/core/src/svc/svc-auth.ts`, the byte-identical mirror of upstream `@elizaos/plugin-network` | 32+ random bytes, generated once; the same value goes in Railway `backend` and in Eliza Cloud. The platform owner can generate it into Railway; the founder copies it from Railway's Variables page into Eliza Cloud. |
+| `SERVICE_TURN_SECRET` | Required: the backend does not boot in staging or production without it (32+ characters). Signs every Eliza ⇄ service call: the service's `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals`, `/internal/updates` and `/internal/relay`, and Eliza Cloud's `/api/internal/network/deliver`. HMAC per `packages/core/src/svc/svc-auth.ts`, the byte-identical mirror of upstream `@elizaos/plugin-network` | 32+ random bytes, generated once; the same value goes in Railway `backend` and in Eliza Cloud. The platform owner can generate it into Railway; the founder copies it from Railway's Variables page into Eliza Cloud. |
 
 **GitHub → eliza-research/thenetwork → Settings → Environments → production → Secrets:**
 - `CLOUDFLARE_API_TOKEN`: an account-owned token for the shawmakesmagic account with **Account → Cloudflare Pages: Edit** only, and a 90-day TTL. The founder can run `gh secret set CLOUDFLARE_API_TOKEN -R eliza-research/thenetwork --env production` and paste it.
@@ -71,7 +72,7 @@ Status on 2026-10-09: **none of the founder-pasted secrets below are set yet**. 
 
 Follow `docs/deploy.md` section 2. Summary:
 
-1. Non-secret variables, **already set**: `PLATFORM_ENV=production`, `OTP_PROVIDER=twilio`, `PORT=8790`, `STAFF_PORT=4848`, `SHUTDOWN_GRACE_MS=25000`, `CLOUDFLARE_ACCOUNT_ID`, `CLEF_RATINGS=on`, `R2_BUCKET=ntwrk-photos`, `R2_ACCOUNT_ID`, `PHOTO_VIEW_BASE_URL=https://slop.date`, `BUILD_ID`, `RAILWAY_DOCKERFILE_PATH=deploy/backend/Dockerfile`. **Still to set:** `PHOTO_STORAGE=r2`, only after the founder pastes the R2 keys.
+1. Non-secret variables, **already set**: `PLATFORM_ENV=production`, `OTP_PROVIDER=twilio`, `PORT=8790`, `STAFF_PORT=4848`, `SHUTDOWN_GRACE_MS=25000`, `CLOUDFLARE_ACCOUNT_ID`, `R2_BUCKET=ntwrk-photos`, `R2_ACCOUNT_ID`, `PHOTO_VIEW_BASE_URL=https://slop.date`, `BUILD_ID`, `RAILWAY_DOCKERFILE_PATH=deploy/backend/Dockerfile`. **Still to set:** `PHOTO_STORAGE=r2`, only after the founder pastes the R2 keys.
 2. The private R2 photo bucket **exists**: `ntwrk-photos` in the shawmakesmagic account (no public access, no r2.dev URL).
 3. **First boot** (approved step), once the founder has pasted the secrets:
    - Deploy `backend` from `main`: export a clean tree (`git archive origin/main | tar -x -C <dir>`), set `BUILD_ID` to the commit, and run `railway up --service backend --environment production --ci` in that directory. Watch the logs: a missing secret is named, and the service refuses to start. Current state (2026-10-11): main `33398b2` is deployed and healthy, with sends in dry-run. `STOP_HELP_OWNER` and `PLATFORM_DB_ENVIRONMENT_INIT` are removed. `LEAK_LABEL_KEY` is set.
@@ -130,18 +131,20 @@ Network service sends → POST Eliza Cloud /api/internal/network/deliver (signed
 
 | Where | Variable | Value |
 |---|---|---|
-| Gateway (Railway) | `NETWORK_TAKEOVER` | `1` turns it on; unset or `0` is the legacy path |
+| Gateway (Railway) | `NETWORK_TAKEOVER` | `1` turns it on; unset or `0` keeps the gateway's own path |
 | Gateway | `NETWORK_SERVICE_URL` | the service origin (Railway) |
 | Gateway | `SERVICE_TURN_SECRET` | 32+ random bytes; the same value on all three |
-| Gateway | `NETWORK_TAKEOVER_ALLOWLIST` | optional, comma-separated E.164 numbers; set only for the shadow step |
+| Gateway | `NETWORK_TAKEOVER_ALLOWLIST` | optional, comma-separated E.164 numbers; set only for the test-number step (section 7, step 2) |
 | Cloud API | `NETWORK_RELAY_ENABLED` | `1` registers the RELAY action (upstream #34661). Unset or `0` (the default): relay is off and the agent offers no relay. **[FOUNDER]** sets it only after the service's `/internal/relay` is deployed |
 | Cloud API (Workers secret) | `NETWORK_SERVICE_URL`, `SERVICE_TURN_SECRET` | same values. Without them the Cloud ignores the gateway's turn context and its own invite gate applies |
 | Cloud API (existing) | `GATEWAY_INTERNAL_SECRET`, `ELIZA_APP_WEBHOOK_GATEWAY_URL`, binding `SHARED_RUNTIME_CONVERSATIONS` | already set for reminders. `/api/internal/network/deliver` uses them |
-| Service (Railway) | `SERVICE_TURN_SECRET`, and the Cloud origin for `/api/internal/network/deliver` | platform owner names the variable |
+| Service (Railway) | `SERVICE_TURN_SECRET` | the same value; required, the backend does not boot without it |
+| Service (Railway) | `NETWORK_CLOUD_DELIVERY_ORIGIN` | the Cloud API origin that serves `/api/internal/network/deliver`; required before Cloud sends are live |
+| Service (Railway) | `NETWORK_CHANNEL` | `eliza_cloud`: the gateway owns the carrier and the backend stops serving `/webhooks/blooio` (404 `webhook_not_served`). It also makes the queued sends of every app real texts from the first deploy: the production start command in `deploy/backend/railway.toml` has no `--dry-run` (owner decision 2026-11-22, "Live from first deploy"; [docs/deploy.md section 6](deploy.md#6-go-live-checklist-real-sends-from-the-first-deploy)) |
 
 **Prerequisites, all of which must be true before go-live:**
 
-1. **Service.** `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals` and `/internal/updates` are served and signed (`deploy/backend/backend.ts`). `/internal/relay` is served too, on the upstream `RelaySendRequest`/`RelaySendResponse` contract, with `clefRelayClassifier` when the Workers AI token is set; without it production holds every relayed text for staff and dev runs on the rules alone (packages/network/service/README.md). The shared-line adapter sends through `/api/internal/network/deliver`. Owner: platform.
+1. **Service.** `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals` and `/internal/updates` are served and signed (`deploy/backend/backend.ts`). `/internal/relay` is served too, on the upstream `RelaySendRequest`/`RelaySendResponse` contract, with `clefRelayClassifier` when the Workers AI token is set; production refuses to start without the Workers AI token and account, and in dev and staging without them the classifier cannot run, so every relayed text is blocked with the notice to try again (owner decision 2026-11-22, D18; packages/network/service/README.md). The shared-line adapter sends through `/api/internal/network/deliver`. Owner: platform.
    - **Relay stays off upstream** until this endpoint is deployed on the production backend and the founder sets `NETWORK_RELAY_ENABLED=1` on the Cloud API. Without the flag the plugin does not register RELAY, so no member request reaches `/internal/relay`.
 2. **Plugin location (resolved 2026-10-09).** Founder decision: the plugin moved upstream as `@elizaos/plugin-network` (elizaOS/eliza `plugins/plugin-network`, a workspace package), so Eliza CI and the gateway image build it in-repo. thenetwork keeps only a byte-identical mirror of the contract in `packages/core/src/svc/`.
 3. **Merge.** `spike/network-plugin` is merged into elizaOS/eliza through a PR (founder approval).
@@ -166,21 +169,20 @@ Network service sends → POST Eliza Cloud /api/internal/network/deliver (signed
    - no keyword → "friends, dating or work?";
    - STOP, HELP, START and leave-one-app;
    - a banned number refused;
-   - a minor joining but never matched;
+   - a minor joining but never matched while teen introductions are stopped, and never matched on slop.date or peon.biz;
    - slop onboarding to a confirmed read-back;
-   - a relay that goes through, and a scam that's held;
+   - a relay that goes through, and a scam that is blocked, with its sender told;
    - a service outage. The webhook should reopen with nothing sent, then succeed on Blooio's retry.
-2. ★ **Production shadow.** Set `NETWORK_TAKEOVER=1` and `NETWORK_TAKEOVER_ALLOWLIST=<founder test numbers>` on the production gateway. Everyone else stays on today's path. Matching-engine live sends stay off, and every proactive proposal goes to the review queue.
+2. ★ **Production takeover for test numbers.** Set `NETWORK_TAKEOVER=1` and `NETWORK_TAKEOVER_ALLOWLIST=<founder test numbers>` on the production gateway. Everyone else stays on today's path. The backend sends real queued texts for every app from its first deploy (owner decision 2026-11-22, "Live from first deploy"): `deploy/backend/railway.toml` starts it without `--dry-run`, and `NETWORK_CHANNEL=eliza_cloud` with its credentials is the send channel. There is no shadow period.
 3. ★ **Production takeover for everyone.** Remove `NETWORK_TAKEOVER_ALLOWLIST`, then watch for one hour:
    - `/internal/turn` errors and latency (handled turns should take well under 1 s);
    - STOP handled once;
    - webhook reopen rate;
    - Blooio delivery failures under 2%.
-4. ★ **Live sends** for slop.date in NYC, behind the review gate, per [the pilot plan](../spec/product/pilot.md#evidence-before-live-slop-sends).
 
 **Rollback:**
-- Set `NETWORK_TAKEOVER=0` on the **gateway**. It's a gateway variable, not a Cloud one. Traffic returns to the legacy path, where the gateway handles STOP itself. The Cloud needs no change; without the gateway's turn context it uses its own store and gates.
-- Turn live sends off in the service.
+- Set `NETWORK_TAKEOVER=0` on the **gateway**. It's a gateway variable, not a Cloud one. Traffic returns to the gateway's own path, where the gateway handles STOP itself. The Cloud needs no change; without the gateway's turn context it uses its own store and gates.
+- Stop new proposals in the service: switch matching off for each app (`POST /apps/<app>/matching {"on":false}` on the staff API). Queued sends stay real; the production start command has no dry-run option.
 - Roll back Railway or Workers deployments from their dashboards, or redeploy the previous SHA with the same workflows.
 
 ## 8. Go-live checklist (all must be true)
@@ -190,11 +192,13 @@ Network service sends → POST Eliza Cloud /api/internal/network/deliver (signed
 - [ ] Postgres backups on; one restore tested.
 - [x] Four sites serving 200 on their domains; ntwrk.party on Pages; `deploy/smoke.ts` passes.
 - [x] CI green on `main`; `production` environment approval works.
-- [ ] Blooio webhook points only at the Eliza gateway; STOP handled once, HELP answered.
+- [ ] Blooio webhook points only at the Eliza gateway; STOP handled once, HELP answered. The backend has `NETWORK_CHANNEL=eliza_cloud`, its boot log says `"inbound":"eliza gateway"`, and `POST https://api.ntwrk.party/webhooks/blooio` gives 404 `webhook_not_served`.
+- [ ] The founder has read docs/deploy.md section 6 and knows its two facts (owner decision 2026-11-22, which closes audit PER34 and SHA41): every app is approved and the production start command has no `--dry-run`, so `NETWORK_CHANNEL=eliza_cloud` makes the queued sends of all four apps real from the first deploy (owner decision 2026-11-22, "Live from first deploy"), and replies to signed turns are sent by the gateway for every app (so friends and peon answer on the shared line once the gateway takes over). The boot log's `sends` line shows the intended channel.
+- [ ] The staff API is reachable from the console (`NETWORK_SERVICE_URL` on the private network; reviews and safety work).
 - [ ] Banned number refused on site join, OTP, inbound and eliza.app.
-- [ ] Minors: join allowed, never matched, never rated, never relayed (sims plus one live check with a test number).
+- [ ] Minors: join allowed, never rated, no number or photo relay; never matched on slop.date or peon.biz; while teen introductions are stopped, never matched and never relayed (sims plus one live check with a test number). Teen introductions are on at launch. The review judge approves each one with the strict rubric; staff approve only an item that the judge holds (spec/product/pilot.md, owner decision 2026-11-22, answers A2 to A5; owner decisions D15 to D17).
 - [ ] Clef ratings on; scores never visible (check the console, probes, reveals and relay output).
-- [ ] Relay: Clef classifier wired; a scam test message is held; an honest message passes.
+- [ ] Relay: Clef classifier wired; a scam test message is blocked and the sender is told; an honest message passes.
 - [ ] Monitoring and alerts on (uptime, heartbeat, send failures, review SLA, safety queue); cost alerts on.
 - [ ] Existing eliza.app users get the one-time notice; nobody is enrolled in matching without consent.
 - [ ] The founder has approved each starred step in section 7.

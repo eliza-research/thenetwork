@@ -1,0 +1,28 @@
+{"text":"CHANGE NUMBER","request":true}
+{"text":"change number","request":true}
+{"text":"Change my number","request":true}
+{"text":"change my number.","request":true}
+{"text":"change my phone number","request":true}
+{"text":"Change my phone number!","request":true}
+{"text":"update my number","request":true}
+{"text":"Update my phone number","request":true}
+{"text":"update phone number","request":true}
+{"text":"please change my number","request":true}
+{"text":"  change   my   number  ","request":true}
+{"text":"change my number?","request":true}
+{"text":"change my number to 212 555 0100","request":false}
+{"text":"change my number to +12125550100","request":false}
+{"text":"my number changed","request":false}
+{"text":"what is my number","request":false}
+{"text":"what's your number","request":false}
+{"text":"send them my number","request":false}
+{"text":"don't send my number","request":false}
+{"text":"change my name","request":false}
+{"text":"change my photos","request":false}
+{"text":"change the plan","request":false}
+{"text":"can you change the number of people","request":false}
+{"text":"STOP","request":false}
+{"text":"leave slop.date","request":false}
+{"text":"add photos","request":false}
+{"text":"number","request":false}
+{"text":"change","request":false}

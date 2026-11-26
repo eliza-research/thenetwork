@@ -48,7 +48,6 @@ function decodeChange(value: unknown): ProfileFactChange | undefined {
   }
 }
 
-/** The callers supply the current directly authenticated same-app owner and their transaction. */
 export class ProfileFactEdits {
   private readonly encryptionKey;
 
@@ -67,7 +66,6 @@ export class ProfileFactEdits {
     return { reference: this.reference(owner, row), kind: row.kind, value: row.value, scope: row.privacy_scope, source: row.source, provenance: row.provenance };
   }
 
-  /** Select confirmed ordinary facts, including exact source suggestions the owner explicitly accepted. */
   private eligible(tx: SQL, owner: ProfileFactOwner, now: number) {
     const at = new Date(now);
     return tx`f.app_id=${owner.app} and f.member_id=${owner.memberId} and f.status='confirmed' and f.sensitive is null
@@ -196,7 +194,6 @@ export class ProfileFactEdits {
   }
 
   private async lockFact(tx: SQL, owner: ProfileFactOwner, fact: FacetRow): Promise<FacetRow | undefined> {
-    // The source review locks the batch before any source suggestion or facet it changes.
     await tx`select b.id from platform.profile_suggestion_batches b where b.app_id=${owner.app} and b.member_id=${owner.memberId}
       and exists (select 1 from platform.profile_suggestions s where s.app_id=b.app_id and s.batch_id=b.id and s.fact_id=${fact.id})
       order by b.id for update`;

@@ -1,69 +1,34 @@
-// Appearance ratings from photos (iteration 3 interface; iteration 4, founder decision 2026-10-08:
-// ON in matching, NEVER shared). A pluggable `AppearanceRater` returns { face, body, overall } on a
-// z-like scale (0 = typical, about 1 = one SD) with a confidence, plus a categorical body type. The
-// production rater is `WorkersAIClefRater` (clef.ts: Cloudflare Workers AI Clef decision model,
-// jevector-style feature vector, learned head). Ratings are computed when photos are uploaded
-// (outside the engine run) and stored as agent_private facets (`appearanceFacet`); the pack reads
-// them from the snapshot and uses them ONLY inside matching (the overall rating is the private
-// Date-lane standing of spec/memberStanding.md; body type against stated or revealed preferences).
-//
-// Rules (enforced here and tested):
-//  - ADULTS ONLY (hard rule): photo processing, photo-in-probe and appearance ratings are for verified
-//    18+ members. Every rater refuses a subject who is not `canBeMatched` (13-17, or age unknown or
-//    invalid) or whose age is not verified, BEFORE touching a photo (no embedding, no model call);
-//    `appearanceFacet` throws for such a subject and the pack ignores any rating on one;
-//  - NEVER SHARED: agent_private only; no score, rank, bucket, body type or derived phrase ("you're
-//    both attractive", "similar looks") in any member-facing text, probe, reveal, explanation, ask,
-//    proposal or run log (`appearanceLeak` below; conformance tests grep all of them). Members talk
-//    through the agent relay and learn only what the agent tells them (first name, the plan);
-//  - KNOWN RISK: attractiveness models carry racial, age, body-size and disability bias. The slop
-//    world measures the outcome gap under a configurable rater bias, and `biasMonitor.ts` reports
-//    outcome ratios by group for admin (docs/results/2026-10-08-slop-pack.md, iterations 3-4).
 import { photoSubjectAllowed } from "../../../../core/src/generated/photoPolicy.ts";
 import type { Facet, MemberId } from "@thenetwork/core";
 import { canBeMatched } from "@thenetwork/core";
 
-/** Categorical body type (a matching attribute, never shown). "unclear" ratings carry no body type. */
 export const BODY_TYPES = ["slim", "athletic", "average", "curvy", "plus_size"] as const;
 export type BodyType = (typeof BODY_TYPES)[number];
-export const isBodyType = (x: unknown): x is BodyType => typeof x === "string" && (BODY_TYPES as readonly string[]).includes(x);
+const isBodyType = (x: unknown): x is BodyType => typeof x === "string" && (BODY_TYPES as readonly string[]).includes(x);
 
 export interface AppearanceScore {
-  /** z-like scores: 0 = typical, positive = rated more attractive. */
   face: number; body: number; overall: number;
-  /** Categorical body type when the photos show it clearly (else undefined), with its own confidence 0..1. */
   bodyType?: BodyType; bodyTypeConfidence?: number;
-  /** 0..1: how much to trust the rating (photo quality, agreement, number of photos). */
   confidence: number;
-  /** Photos the rating is based on: the uncertainty of the private standing shrinks with it. */
   photos?: number;
-  /** Rater id and version (provenance; never shown). */
+  spread?: number;
   model: string;
 }
 export interface PhotoRef { id: string; url?: string; bytes?: Uint8Array }
-/** Who the photos belong to: the rater checks this before processing anything. */
-export interface RatingSubject { age: number; /** false = age not verified yet (selfie / ID check pending). */ ageVerified?: boolean }
-/** Adults only: verified 18+ (canBeMatched), never 13-17, never an unknown or unverified age. */
+export interface RatingSubject { age: number; ageVerified?: boolean }
 export const canRatePhotos = (s: RatingSubject | undefined): boolean => photoSubjectAllowed(canBeMatched(s?.age), s?.ageVerified === false);
 
 export interface AppearanceRater {
   id: string;
-  /**
-   * Rate one member from their photos. Null = refused (not a verified adult) or cannot rate. A
-   * conforming rater checks `canRatePhotos(subject)` before processing any photo; use
-   * `adultsOnly(rater)` to wrap one that does not.
-   */
   rate(subject: RatingSubject, photos: readonly PhotoRef[]): Promise<AppearanceScore | null>;
 }
 
-/** Wrap any rater so it can never process a photo of someone who is not a verified adult. */
 export function adultsOnly(r: AppearanceRater): AppearanceRater {
   return { id: r.id, rate: (s, photos) => (canRatePhotos(s) ? r.rate(s, photos) : Promise.resolve(null)) };
 }
 
 const clampZ = (x: number) => Math.max(-3, Math.min(3, Number.isFinite(x) ? x : 0));
 const clamp01 = (x: number) => Math.max(0, Math.min(1, Number.isFinite(x) ? x : 0));
-/** The overall rating on the private rating scale of spec/memberStanding.md: z -3..3 maps to 0..1000. */
 export const ratingPermille = (overall: number): number => Math.round(((clampZ(overall) + 3) * 1000) / 6);
 const cos = (a: readonly number[], b: readonly number[]) => {
   let s = 0, na = 0, nb = 0;
@@ -71,13 +36,6 @@ const cos = (a: readonly number[], b: readonly number[]) => {
   return na && nb ? s / Math.sqrt(na * nb) : 0;
 };
 
-/**
- * CLIP-style adapter: image and text embeddings are INJECTED (a local CLIP model, or a hosted one);
- * this module makes no network call. Two modes:
- *   prompts  zero-shot: per dimension, scale x (cos(img, positive prompt) - cos(img, negative prompt));
- *   head     an aesthetic-head style linear probe per dimension over the image embedding.
- * Several photos are averaged; confidence grows with the number of photos and their agreement.
- */
 export class ClipAppearanceRater implements AppearanceRater {
   readonly id: string;
   constructor(private o: {
@@ -94,7 +52,7 @@ export class ClipAppearanceRater implements AppearanceRater {
   } as const;
 
   async rate(subject: RatingSubject, photos: readonly PhotoRef[]): Promise<AppearanceScore | null> {
-    if (!canRatePhotos(subject) || !photos.length) return null; // adults only, before any photo is touched
+    if (!canRatePhotos(subject) || !photos.length) return null;
     const embs = await Promise.all(photos.map(p => this.o.embedImage(p)));
     const scale = this.o.scale ?? 25;
     const per: [number, number, number][] = [];
@@ -108,23 +66,21 @@ export class ClipAppearanceRater implements AppearanceRater {
     }
     const mean = [0, 1, 2].map(d => per.reduce((s, x) => s + x[d]!, 0) / per.length);
     const spread = per.length > 1 ? Math.sqrt(per.reduce((s, x) => s + (x[2]! - mean[2]!) ** 2, 0) / (per.length - 1)) : 1;
-    return { face: clampZ(mean[0]!), body: clampZ(mean[1]!), overall: clampZ(mean[2]!), confidence: clamp01((1 - 1 / (1 + per.length)) * (1 / (1 + spread))), photos: per.length, model: this.id };
+    return { face: clampZ(mean[0]!), body: clampZ(mean[1]!), overall: clampZ(mean[2]!), confidence: clamp01((1 - 1 / (1 + per.length)) * (1 / (1 + spread))), photos: per.length, ...(per.length > 1 ? { spread } : {}), model: this.id };
   }
 }
 const dot = (w: readonly number[], e: readonly number[]) => w.reduce((s, x, i) => s + x * (e[i] ?? 0), 0);
 
-/** A vision-capable chat model (image parts). Kept separate from the text-only core LLM interface. */
 export interface VisionChat {
   chat(messages: { role: "system" | "user"; content: string | ({ type: "text"; text: string } | { type: "image_url"; url: string })[] }[], opts?: { json?: boolean; maxTokens?: number }): Promise<string>;
 }
 export const VISION_RATER_SYSTEM = "You rate dating-profile photos for an internal matching signal that is never shown to anyone. Return JSON only: {\"face\": z, \"body\": z, \"overall\": z, \"confidence\": c} where z is a number from -3 to 3 (0 = typical) and c is 0-1. If the photos do not show one adult clearly, return {\"confidence\": 0}. Do not describe the person.";
 
-/** Vision-LLM adapter stub: one call per member with their photos; tolerant JSON parsing, clamped. */
 export class VisionLlmAppearanceRater implements AppearanceRater {
   readonly id: string;
   constructor(private llm: VisionChat, model = "vision-llm") { this.id = `vlm-${model}`; }
   async rate(subject: RatingSubject, photos: readonly PhotoRef[]): Promise<AppearanceScore | null> {
-    if (!canRatePhotos(subject)) return null; // adults only, before any photo is sent anywhere
+    if (!canRatePhotos(subject)) return null;
     const urls = photos.map(p => p.url).filter((u): u is string => !!u);
     if (!urls.length) return null;
     const raw = await this.llm.chat([
@@ -139,13 +95,11 @@ export class VisionLlmAppearanceRater implements AppearanceRater {
   }
 }
 
-/** Rate a member through the adults-only guard (even if the rater itself forgot the check). */
 export async function rateMember(rater: AppearanceRater, member: RatingSubject, photos: readonly PhotoRef[]): Promise<AppearanceScore | null> {
   return adultsOnly(rater).rate(member, photos);
 }
 
 export const APPEARANCE_PREFIX = "appearance:";
-/** The facet the platform stores (agent_private; the value names no score, the tags carry it). */
 export function appearanceFacet(memberId: MemberId, subject: RatingSubject, s: AppearanceScore, at: number): Facet {
   if (!canRatePhotos(subject)) throw new Error("appearance ratings are for verified adults only");
   const f = (x: number) => x.toFixed(2);
@@ -153,11 +107,11 @@ export function appearanceFacet(memberId: MemberId, subject: RatingSubject, s: A
     id: `${memberId}:appearance`, memberId, kind: "fact", value: "photo rating (internal)",
     tags: [`${APPEARANCE_PREFIX}face=${f(s.face)}`, `${APPEARANCE_PREFIX}body=${f(s.body)}`, `${APPEARANCE_PREFIX}overall=${f(s.overall)}`, `${APPEARANCE_PREFIX}conf=${f(s.confidence)}`,
       ...(s.bodyType ? [`${APPEARANCE_PREFIX}bodyType=${s.bodyType}`, `${APPEARANCE_PREFIX}bodyTypeConf=${f(s.bodyTypeConfidence ?? s.confidence)}`] : []),
-      ...(s.photos !== undefined && Number.isSafeInteger(s.photos) && s.photos > 0 ? [`${APPEARANCE_PREFIX}photos=${s.photos}`] : [])],
+      ...(s.photos !== undefined && Number.isSafeInteger(s.photos) && s.photos > 0 ? [`${APPEARANCE_PREFIX}photos=${s.photos}`] : []),
+      ...(s.spread !== undefined && Number.isFinite(s.spread) && s.spread >= 0 ? [`${APPEARANCE_PREFIX}spread=${f(s.spread)}`] : [])],
     scope: "agent_private", provenance: "inferred", confidence: s.confidence, validFrom: at, observedAt: at, inferred: true, confirmedByMember: false,
   };
 }
-/** Read a rating back from tags (undefined when absent or malformed). Body type and the photo count are optional. */
 export function parseAppearance(tags: readonly string[]): (Omit<AppearanceScore, "model">) | undefined {
   const v: Record<string, number> = {};
   let bodyType: BodyType | undefined;
@@ -170,15 +124,10 @@ export function parseAppearance(tags: readonly string[]): (Omit<AppearanceScore,
     face: v.face!, body: v.body!, overall: v.overall!, confidence: v.conf!,
     ...(bodyType ? { bodyType, bodyTypeConfidence: Number.isFinite(v.bodyTypeConf) ? v.bodyTypeConf! : v.conf! } : {}),
     ...(Number.isSafeInteger(v.photos) && v.photos! > 0 ? { photos: v.photos! } : {}),
+    ...(Number.isFinite(v.spread) && v.spread! >= 0 ? { spread: v.spread! } : {}),
   };
 }
 
-/**
- * Words and phrases that would disclose an appearance rating, or that it is used, to a member
- * ("you're both attractive", "similar looks", "rated", "your score", body-type labels...). Checked on
- * every member-facing string, proposal and run log in the conformance tests; the platform's relay
- * should run `appearanceLeak` on agent-authored text about the other person too.
- */
 export const APPEARANCE_LEAK_PATTERNS: readonly RegExp[] = [
   /\battractive(ness)?\b/i, /\bunattractive\b/i, /\bgood[- ]looking\b/i, /\b(cute|pretty|handsome|beautiful|gorgeous|sexy)\b/i,
   /\b(similar|same|matching|compatible)\s+(looks|attractiveness|appearance|level)\b/i, /\blooks?\s+(match|similar|alike|level|rating|score)\b/i,
@@ -188,7 +137,6 @@ export const APPEARANCE_LEAK_PATTERNS: readonly RegExp[] = [
   /\bappearance\b/i, /\bbody[- ]?type\b/i, /\b(slim|athletic|curvy|plus[- ]size[d]?|heavyset|overweight|skinny|petite|chubby)\b/i,
   /\bappearance:/i, /\bclef\b/i, /\bphoto rating\b/i, /\btop\s+\d+\s*%/i, /\b\d+(st|nd|rd|th)\s+percentile\b/i,
 ];
-/** The first appearance-disclosing pattern in `text` (or an exact stored score tag), else null. */
 export function appearanceLeak(text: string, scoreTags: readonly string[] = []): string | null {
   for (const re of APPEARANCE_LEAK_PATTERNS) { const m = re.exec(text); if (m) return m[0]; }
   for (const t of scoreTags) if (t && text.includes(t)) return t;

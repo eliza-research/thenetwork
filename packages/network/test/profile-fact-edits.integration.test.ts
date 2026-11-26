@@ -52,8 +52,8 @@ if (pgAvailable) {
       values (${batchId},${owner.app},${personId},${owner.memberId},'test-user','test-org','test-chat',
       ${new Date(at)},${new Date(at + 3_600_000)},${new Date(at - 3_600_000)},${new Date(at)},'America/New_York',array['goal'],false)`;
     await sql`insert into platform.profile_suggestions
-      (id,batch_id,app_id,connection_id,source,observed_at,kind,confidence,original_value_hash,privacy_scope,status,fact_id)
-      values (${suggestionId},${batchId},${owner.app},'test-connection','gmail',${new Date(at)},'goal',0.9,'old-value-digest','matchable','accepted',${sourceId})`;
+      (id,batch_id,app_id,connection_id,source,observed_at,kind,confidence,original_value_hash,privacy_scope,status,fact_id,source_authorized_at)
+      values (${suggestionId},${batchId},${owner.app},'test-connection','gmail',${new Date(at)},'goal',0.9,'old-value-digest','matchable','accepted',${sourceId},${new Date(at)})`;
   }, 120_000);
   afterAll(async () => {
     await sql?.close();

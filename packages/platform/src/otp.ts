@@ -10,7 +10,7 @@ import { randomInt, randomUUID } from "node:crypto";
 import { BlooioClient, ChannelSendError, resolveSenderLine, type BlooioClientOptions } from "@thenetwork/blooio";
 import { DAY, HOUR } from "../../core/src/clock.ts";
 import {
-  initial, otpChallengeMaxAttempts, otpChecksPerIpHour, otpChecksPerPhoneHour, otpLifetimeMs, otpSendGapMs,
+  initial, otpBucketAllows, otpChallengeMaxAttempts, otpChecksPerIpHour, otpChecksPerPhoneHour, otpGapLeft, otpLifetimeMs, otpPhoneHourAllows, otpSendDecision, otpSendGapMs, otpStartCounts,
   otpSendsGlobalHour, otpSendsPerIpHour, otpSendsPerPhoneDay, otpSendsPerPhoneHour, step,
 } from "../../core/src/generated/otpLimits.ts";
 import type { AppId, AppInfo } from "./apps.ts";
@@ -174,36 +174,33 @@ export class OtpService {
   private now() { return (this.opts.now ?? Date.now)(); }
 
   /** Rate-limit, then send. A provider error is logged and not shown (the response stays the same). */
-  async start(app: AppInfo, e164: string, ip: string): Promise<OtpStart> {
+  async start(app: AppInfo, e164: string, ip: string, banned: boolean): Promise<OtpStart> {
     const at = this.now(), L = this.limits;
     const hourLeft = HOUR - (at % HOUR);
     const limited = (retryAfterMs = hourLeft): OtpStart => ({ ok: false, error: "rate_limited", retryAfterMs });
-    // spec/otpLimits.md, "Code sends have limits shared across apps"
-    // Check all four rate limits together first so a later limit refusal never counts against earlier buckets.
     const phoneKey = keyedHash(this.opts.hashKey, e164);
-    const results = await this.store.hitAll([
-      { bucket: `otp:ip:${keyedHash(this.opts.hashKey, ipBucket(ip))}`, windowMs: HOUR, rule: { limit: L.perIpPerHour } },
-      { bucket: `otp:phone:${phoneKey}`, windowMs: HOUR, rule: { limit: L.perPhonePerHour, minGapMs: L.minGapMs } },
-      { bucket: `otp:phone_day:${phoneKey}`, windowMs: DAY, rule: { limit: L.perPhonePerDay } },
-      { bucket: "otp:global", windowMs: HOUR, rule: { limit: L.globalPerHour } },
-    ], at);
-    let challenge = step(initial, { type: "requestCode" });
-    const byIp = results[0]!;
-    challenge = step(challenge, { type: "readSendAddress", allowed: byIp.ok });
-    if (challenge.phase !== "SendPhoneHour") return limited();
-    const byPhone = results[1]!;
-    const gapLeft = byPhone.prevAt === null ? 0 : L.minGapMs - (at - byPhone.prevAt);
-    challenge = step(challenge, { type: "readSendPhoneHour", allowed: byPhone.ok, gapLeft });
-    if (challenge.phase !== "SendPhoneDay") return limited(challenge.reason === "LimitedGap" ? gapLeft : hourLeft);
-    const byDay = results[2]!;
-    challenge = step(challenge, { type: "readSendPhoneDay", allowed: byDay.ok });
-    if (challenge.phase !== "SendGlobal") return limited(DAY - (at % DAY));
-    const all = results[3]!;
-    challenge = step(challenge, { type: "readSendGlobal", allowed: all.ok });
+    const buckets = [
+      { key: `otp:ip:${keyedHash(this.opts.hashKey, ipBucket(ip))}`, windowMs: HOUR },
+      { key: `otp:phone:${phoneKey}`, windowMs: HOUR },
+      { key: `otp:phone_day:${phoneKey}`, windowMs: DAY },
+      { key: "otp:global", windowMs: HOUR },
+    ];
+    const { flow, gapLeft } = await this.store.hitAll(buckets, at, ([address, phoneHour, phoneDay, global]) => {
+      const gapLeft = otpGapLeft(phoneHour!.prevAt !== null, phoneHour!.prevAt ?? 0, at, L.minGapMs);
+      const flow = otpSendDecision(
+        otpBucketAllows(address!.used, L.perIpPerHour),
+        otpPhoneHourAllows(phoneHour!.used, L.perPhonePerHour, gapLeft), gapLeft,
+        otpBucketAllows(phoneDay!.used, L.perPhonePerDay),
+        otpBucketAllows(global!.used, L.globalPerHour),
+      );
+      return { count: otpStartCounts(flow), value: { flow, gapLeft } };
+    });
+    let challenge = flow;
     if (challenge.phase !== "Sending") {
-      this.opts.log?.(`[otp] ALERT: the global budget of ${L.globalPerHour} codes an hour is used up; sends are refused until the hour ends`);
-      return limited();
+      if (challenge.reason === "LimitedGlobal") this.opts.log?.(`[otp] ALERT: the global budget of ${L.globalPerHour} codes an hour is used up; sends are refused until the hour ends`);
+      return limited(challenge.reason === "LimitedGap" ? gapLeft : challenge.reason === "LimitedDay" ? DAY - (at % DAY) : hourLeft);
     }
+    if (banned) return step(challenge, { type: "withholdSend" }).phase === "StartComplete" ? { ok: true } : limited();
     // spec/otpLimits.md, "Start keeps its public response private"
     try {
       const { code, ref, chatId } = await this.provider.send(e164, app);

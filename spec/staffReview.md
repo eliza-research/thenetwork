@@ -85,7 +85,7 @@ pure def lawPlanPreviewRefusesOlderRevision(currentTime: int, deadline: int, rev
 
 ### Plan approval in the console waits for the selected preview
 
-The real review card waits for the preview of its selected app, opportunity, revision and deadline before enabling approval or edit-and-approve. A change to the viewer, mode, app, card, or revision drops the old preview. Pending and unavailable previews leave approval disabled. Rejection and re-roll remain available. The existing service rechecks eligibility and the review revision when a reviewer decides.
+The real review card waits for the preview of its selected app, opportunity, revision and deadline before enabling approval or edit-and-approve. A change to the viewer, mode, app, card, or revision drops the old preview. Pending and unavailable previews leave approval disabled. Rejection and re-roll remain available. The existing service rechecks eligibility and the review revision when a reviewer decides. The queue lists only the items that the review judge held ([automated review](automatedReview.md)); staff approve or edit only such an item. Changed (owner decision 2026-11-22, D15 to D17): the queue listed every item, and an item with a minor needed a named reviewer (`teenReviewerNamed`) with no automatic approval (`teenAutoApproveAllowed`); the owner chose full automation, so the judge decides each item, staff see only its exceptions, and a held teen item now reaches the queue with the teen facts on its card.
 
 ```quint
 pure def planPreviewMatchesCard(cardApp: str, previewApp: str, cardId: str, previewId: str, cardRevision: int, previewRevision: int, cardDeadline: int, previewDeadline: int): bool =

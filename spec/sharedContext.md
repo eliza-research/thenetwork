@@ -44,7 +44,7 @@ pure def checkMember(context: SharedContext, memberAndModeExist: bool): SharedCo
 
 ### Check the public labels and each confirmed shareable fact
 
-The first name and home city must pass the normal output check. A fact must belong to the member, be shareable, be confirmed, contain no sensitive information, and be current. Check the fact's text before including it. Withhold the entire context when more than fifty facts remain or one exceeds three hundred UTF-16 code units.
+The first name and home city must pass the normal output check. A fact must belong to the member, be shareable, be confirmed, contain no sensitive information, and be current. Check the fact's text before including it. Leave out a fact longer than three hundred UTF-16 code units and never truncate a fact. Of the facts that remain, keep the fifty newest (by observation time, then valid-from time, then ID). The facet check withholds the context only if the kept facts still break a limit. Changed (audit SHA40): more than fifty facts or one long fact withheld the whole context -> the long facts and the facts past the fifty newest are left out, because a member with many job postings got no answer on the shared line.
 
 ```quint
 pure val contextFacetLimit: int = 50
@@ -56,6 +56,13 @@ pure def checkLabels(context: SharedContext, labelsSafe: bool): SharedContext =
 
 pure def contextFacetEligible(own: bool, shareable: bool, confirmed: bool, sensitive: bool, withinValidity: bool): bool =
   own and shareable and confirmed and not(sensitive) and withinValidity
+
+pure def contextFacetKept(rank: int, textSize: int): bool =
+  rank >= 0 and rank < contextFacetLimit and textSize <= contextFacetSizeLimit
+
+pure def lawFactsPastTheLimitsAreDropped(rank: int, textSize: int): bool =
+  not(contextFacetKept(contextFacetLimit, textSize)) and not(contextFacetKept(rank, contextFacetSizeLimit + 1))
+    and contextFacetKept(0, contextFacetSizeLimit)
 
 pure def canCheckFacets(context: SharedContext): bool = context.phase == CheckingFacets
 pure def checkFacets(context: SharedContext, facetCount: int, oversized: bool): SharedContext =
@@ -75,4 +82,69 @@ Use single-player context if the member is away from the city for this matching 
 pure def contextSinglePlayer(present: bool, ageEligible: bool): bool = not(present and ageEligible)
 
 pure def lawIneligibleAgeIsSinglePlayer(present: bool): bool = contextSinglePlayer(present, false)
+```
+
+### Active items list only the member's live matches with a safe summary
+
+An active item is one live match of the member: a two-person match in which both members said yes and that is not closed. Offer an item that is not a teen friendship item only while the member is eligible to be matched by their lowest known age; offer a teen friendship item, to every member of it, only while it passes the age rule now with the switch on; and offer either only when its summary passes the output check. The summary names only the other member's first name, which both members learn after the mutual yes. Offer at most twenty items, newest first. With no item to offer, the context has no list. The switch is on while no staff stop is stored, on friends.help and in the Friend lane of The Network (`teenItemListed`). `singlePlayer` stays true for every minor, because upstream Eliza cannot read friendship-only items. Changed (audit SHA38 and owner decision 2026-11-22, D1): the context offered no active items, and no minor saw an item -> it offers the live matches, and a current teen friendship item to each of its members, because a relay could not name its match.
+
+```quint
+pure val contextActiveItemLimit: int = 20
+
+pure def contextMatchItemShown(liveMatch: bool, ageEligible: bool, summarySafe: bool): bool =
+  liveMatch and ageEligible and summarySafe
+
+pure def contextActiveItemCount(shownMatches: int): int =
+  if (shownMatches < 0) 0 else if (shownMatches > contextActiveItemLimit) contextActiveItemLimit else shownMatches
+
+pure def lawActiveItemsAtMostTwenty(shownMatches: int): bool =
+  contextActiveItemCount(shownMatches) >= 0 and contextActiveItemCount(shownMatches) <= contextActiveItemLimit
+
+pure def lawIneligibleAgeGetsNoActiveItem(liveMatch: bool, summarySafe: bool): bool =
+  not(contextMatchItemShown(liveMatch, false, summarySafe))
+```
+
+### Active item summaries are distinct
+
+Two offered items never carry the same summary, so the agent never has to guess between two matches. The shell counts, among the member's live matches, the matches whose other member has the same first name, and the matches that also have the same day label. The day label is "meeting" and the day of the planned meeting, or "introduced" and the day of the introduction when no meeting is planned, in New York time (every network is in New York); both members know it. A first name that no other live match has is the whole summary. A shared first name adds the day label. When the first name and the day label are both shared, the shell leaves those items out, and a relay without an item gets the "which match" question. Changed (audit SHA38): two live matches with the same first name got the same summary -> the summary adds the day label or leaves the items out, because the agent could pick the wrong match.
+
+```quint
+type ContextItemLabel = ItemLabelName | ItemLabelNameAndDay | ItemLabelLeftOut
+
+pure def contextItemLabel(sameName: int, sameNameAndDay: int): ContextItemLabel =
+  if (sameName <= 1) ItemLabelName
+  else if (sameNameAndDay <= 1) ItemLabelNameAndDay
+  else ItemLabelLeftOut
+
+pure def lawNameAloneOnlyWhenTheNameIsUnique(sameName: int, sameNameAndDay: int): bool =
+  contextItemLabel(sameName, sameNameAndDay) == ItemLabelName implies sameName <= 1
+
+pure def lawDayLabelOnlyWhenNameAndDayAreUnique(sameName: int, sameNameAndDay: int): bool =
+  contextItemLabel(sameName, sameNameAndDay) == ItemLabelNameAndDay implies (sameName > 1 and sameNameAndDay <= 1)
+```
+
+### A member whose context is unavailable still gets an answer
+
+When a member's message would open a conversation but their context is unavailable, the turn answers as handled with one fixed reply that says the Network cannot help with that right now. The fixed reply goes to every admitted number, also when the active membership no longer matches the turn's member or the recorded age is unknown; the reply names nobody and carries no member data. A held, banned, suppressed or opted-out number, and a number with a recorded age under the join age, stays silent. Changed (audits SHA40 and sharedLineReplay-r39-3): the turn answered handled with no reply, then only a number with a matching membership and a known age got the fixed reply -> every admitted number gets it, because the member's message got no answer.
+
+```quint
+type OpenTurnAnswer = AnswerOpen | AnswerUnavailable
+
+pure def openTurnAnswer(contextAvailable: bool): OpenTurnAnswer =
+  if (contextAvailable) AnswerOpen else AnswerUnavailable
+
+pure def lawUnavailableContextStillAnswers(contextAvailable: bool): bool =
+  (openTurnAnswer(contextAvailable) == AnswerUnavailable) == not(contextAvailable)
+
+pure def unavailableReplySent(numberAdmitted: bool, underJoinAge: bool): bool =
+  numberAdmitted and not(underJoinAge)
+
+pure def lawRefusedNumberStaysSilent(underJoinAge: bool): bool =
+  not(unavailableReplySent(false, underJoinAge))
+
+pure def lawUnderJoinAgeStaysSilent(numberAdmitted: bool): bool =
+  not(unavailableReplySent(numberAdmitted, true))
+
+pure def lawAdmittedNumberGetsTheFixedReply(numberAdmitted: bool): bool =
+  numberAdmitted implies unavailableReplySent(numberAdmitted, false)
 ```

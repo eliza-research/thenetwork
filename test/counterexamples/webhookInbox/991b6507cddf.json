@@ -1,0 +1,21 @@
+{
+  "origin": "walk 31 of seed 1",
+  "seed": 1,
+  "trace": [
+    [
+      "sender-a",
+      {
+        "type": "recordHandled",
+        "stopCommand": true
+      }
+    ],
+    [
+      "sender-a",
+      {
+        "type": "recordFailure",
+        "attempts": 6,
+        "stopCommand": false
+      }
+    ]
+  ]
+}

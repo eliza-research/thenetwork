@@ -2,82 +2,48 @@
 //
 // After a mutual yes, members never talk directly. Every item one member wants the other to get (a
 // text message, "send them my number", a photo) goes through `relayItem`, which returns
-//   { decision: "pass" | "hold" | "block", reasons, rendered, photos, record, senderNotice }.
+//   { decision: "pass" | "block", reasons, rendered, photos, record, senderNotice }.
 // `rendered` is the agent's wording and the ONLY thing the other person sees; it is "" unless the
 // decision is "pass". `record` is the relay log row: no message body, no contact value, reason codes
 // from a fixed list (leak-guard matches are keyed hashes, core `labelHash`).
 //
-// Checks, in order (every check runs; the most severe outcome wins: block > hold > pass):
-//   1. parties     both are the opportunity's two participants; neither is a minor (lowest stated
-//                  age 18+, unknown fails closed: core `canBeMatched`); no block edge either way; the
-//                  recipient has not opted out; a safety hold on either side holds the item;
-//   2. state       the opportunity is "mutual" (both said yes) and not closed, cancelled or expired;
-//   3. consent     a contact share needs the sender's explicit request for THIS item (fresh, by the
-//                  sender, same kind); a photo needs the explicit send naming the photo ids, the
-//                  sender's photo consent, and photo ids the sender owns (opaque ids, never URLs);
-//   4. text        the core LeakGuard (other people's private facts, canaries, a split number across
-//                  the last messages); contact patterns in free text are held (the approved path is
-//                  a contact share); rating, score or attractiveness wording is held; a minor's
-//                  self-disclosure ("I'm 16") blocks and flags the age for the platform;
-//   5. classifier  rules first: money requests, gift cards, crypto and "investments", moving
-//                  off-platform before the first date, contact fishing, prompt injection, sexual
-//                  pressure, insults (hold); threats and slurs (block). An optional model hook
-//                  (`relayItemAsync`; production: the Clef decision model, relayClef.ts) runs on items
-//                  the rules pass (and, with `escalateHeld`, on items they hold). It can only ADD
-//                  reasons: it raises pass to hold or block, never lowers what the rules decided. A
-//                  hook error holds the item by default (the Clef hook never throws: it falls back to
-//                  the rules itself, see relayClef.ts);
-//   6. rate        per sender per opportunity: a burst limit, a daily limit, photos per day, and one
-//                  contact share per opportunity.
 // Deterministic and offline: no clock reads (the caller passes `now`), no randomness, no model call
 // unless the caller passes a hook. Network code, so it never reads hidden persona truth.
-import { pendingSwapWithdrawn, privateRelayRequestAllowed, relayConsentStale, relayVerdict } from "../../core/src/generated/relayDecision.ts";
+import { relayKindAllowed, teenFriendMaxAge } from "../../core/src/generated/friendIntroAge.ts";
+import { ageOnDay } from "../../core/src/generated/memberAge.ts";
+import { pendingSwapWithdrawn, privateRelayRequestAllowed, relayBlockNotice, relayClassifierReading, relayClassifierReads, relayConsentStale, relayVerdict, type RelayBlockNotice } from "../../core/src/generated/relayDecision.ts";
 import { relayEnvelopeTextAllowed, relayIsIndirectQuestion } from "../../core/src/generated/relayRequestAddress.ts";
-import { AGE_BIRTHDAY_AFTER_AGE, AGE_DISTANT_BIRTHDAY_AFTER_AGE, canBeMatched, hasOrElseThreat, labelHash, LeakGuard, normalizeAgeInitialism, OR_ELSE_THREAT, relayMinorAge, relayMinorEstimate, textVariants, type MemberId, type Owned } from "@thenetwork/core";
+import { AGE_BIRTHDAY_AFTER_AGE, AGE_DISTANT_BIRTHDAY_AFTER_AGE, canBeMatched, hasOrElseThreat, labelHash, latestDayKeyOf, LeakGuard, normalizeAgeInitialism, OR_ELSE_THREAT, relayMinorAge, relayMinorEstimate, textVariants, type MemberId, type Owned } from "@thenetwork/core";
 
-export const RELAY_POLICY_VERSION = "relay-1.0.0";
+const RELAY_POLICY_VERSION = "relay-1.0.0";
 
-export type RelayKind = "text" | "contact_share" | "photo";
-export type RelayDecision = "pass" | "hold" | "block";
+type RelayKind = "text" | "contact_share" | "photo";
+type RelayDecision = "pass" | "block";
 
-/** One side of the exchange, as the platform knows them. */
 export interface RelayParty {
   id: MemberId;
-  /** First name only (the reveal gave it); used in the agent's wording. */
   firstName: string;
-  /** The person's LOWEST stated or recorded age (core policy); undefined = unknown = never relayed. */
   age: number | undefined;
-  /** STOP, "leave slop", a pause or a deleted account: nothing is delivered to them. */
   optedOut?: boolean;
-  /** An open safety hold (report, scam flag, staff hold). */
   held?: boolean;
-  /** The member's photo ids (opaque, platform-resolved) that carry the current photo consent. */
   photoIds?: readonly string[];
-  /** The member agreed that their photos may be shown to a match (probe or relay). */
   photoConsent?: boolean;
 }
 
-/** The match the exchange belongs to. Only "mutual" allows relay. */
 export interface RelayOpportunity {
   id: string;
   app: string;
   participants: readonly [MemberId, MemberId];
-  /** Who said yes (both, for "mutual"). */
   acceptedBy: readonly MemberId[];
   status: "probing" | "mutual" | "closed" | "cancelled" | "expired";
-  /** When the first date happened (after it, moving off-platform is not an early move). */
   metAt?: number;
 }
 
-/** The sender's explicit consent to one item ("send them my number", "send this photo"). */
-export interface RelayConsent {
+interface RelayConsent {
   kind: "contact_share" | "photo";
-  /** The member who gave it (must be the sender). */
   by: MemberId;
-  /** The item it covers (the platform creates the item id when it reads the request). */
   itemId: string;
   at: number;
-  /** For a photo: exactly the photos the member chose. */
   photoIds?: readonly string[];
 }
 
@@ -87,46 +53,33 @@ export interface RelayItem {
   from: MemberId;
   to: MemberId;
   at: number;
-  /** The member's words (a text item; an optional caption on a photo). */
   text?: string;
-  /** A contact share: the sender's own verified contact, from the platform's person record (never parsed from free text). */
   contact?: { kind: "phone" | "email"; value: string };
-  /** A photo item: opaque photo ids. */
   photoIds?: readonly string[];
   consent?: RelayConsent;
 }
 
-export interface RelayLimits {
-  /** At most `n` items per sender per opportunity in `windowMs`. */
+interface RelayLimits {
   burst: { n: number; windowMs: number };
-  /** At most this many items per sender per opportunity per 24 hours. */
   daily: number;
-  /** At most this many photo items per sender per opportunity per 24 hours. */
+  teenDaily: number;
   photosDaily: number;
-  /** Contact shares per sender per opportunity. */
   contactShares: number;
-  /** Consent older than this does not count. */
   consentTtlMs: number;
-  /** Longest text relayed. */
   maxChars: number;
-  /** Photos in one item. */
   maxPhotos: number;
 }
 export const RELAY_LIMITS: RelayLimits = {
-  burst: { n: 6, windowMs: 10 * 60_000 }, daily: 40, photosDaily: 6, contactShares: 1, consentTtlMs: 15 * 60_000, maxChars: 1000, maxPhotos: 3,
+  burst: { n: 6, windowMs: 10 * 60_000 }, daily: 40, teenDaily: 10, photosDaily: 6, contactShares: 1, consentTtlMs: 15 * 60_000, maxChars: 1000, maxPhotos: 3,
 };
 
-/** The relay log row. No body, no contact value, no photo id: who, when, what kind, the outcome, reason codes. */
 export interface RelayRecord {
   itemId: string; opportunityId: string; app: string;
   kind: RelayKind; from: MemberId; to: MemberId; at: number;
   decision: RelayDecision;
-  /** Reason codes from RELAY_REASON_FAMILIES; any match-specific part is a keyed hash. */
   reasons: string[];
   photoCount: number;
-  /** A contact share was delivered. */
   contactShared: boolean;
-  /** The text carried a minor self-disclosure: the platform re-checks the person's lowest age. */
   ageSignal: boolean;
   policy: string;
 }
@@ -136,50 +89,31 @@ export interface RelayContext {
   opportunity: RelayOpportunity;
   sender: RelayParty;
   recipient: RelayParty;
-  /** A block edge exists in either direction (the platform resolves aliases and person-level bans). */
   blocked: boolean;
-  /** The relay log for this opportunity (both directions), any order. */
   history?: readonly RelayRecord[];
-  /** The sender's last delivered texts in this thread (oldest first): a number split across messages is caught. */
   recentTexts?: readonly string[];
-  /**
-   * The last few rendered messages in this thread, both directions, oldest first, exactly as delivered
-   * ("Sam says: ..."). Context for the classifier hook only (`relayItemAsync`); never logged.
-   */
   thread?: readonly string[];
-  /** A compiled guard with both members' private facts (owner set) and canaries (`relayGuard`). */
   guard?: LeakGuard;
-  /**
-   * Extra text rules from the platform (for example the slop pack's `appearanceLeak` on an app that
-   * rates photos). Returns reason codes from RELAY_REASON_FAMILIES ("rating:appearance"); they are
-   * added to the rules' reasons like any other.
-   */
   extraRules?: (text: string) => string[];
   limits?: Partial<RelayLimits>;
+  teenFriendPair?: boolean;
 }
 
 export interface RelayResult {
   decision: RelayDecision;
   reasons: string[];
-  /** The agent's wording, the only thing the recipient sees. "" unless decision is "pass". */
   rendered: string;
-  /** Photo ids to attach to `rendered` (pass only). */
   photos: string[];
   record: RelayRecord;
-  /** What the agent tells the sender. Never repeats the matched text or names a rule. */
   senderNotice: string;
+  classifierError?: string;
+  classifierAgeSignal?: boolean;
 }
 
-/** Reason families. `block` ones stop the item for good; `hold` ones send it to staff review. */
-export const RELAY_REASON_FAMILIES = {
-  block: ["state", "party", "minor", "optout", "consent", "photo", "contact_share", "canary", "harass_severe", "format", "llm_severe", "clef_severe"],
-  hold: ["safety", "leak", "contact", "rating", "scam", "offplatform", "fishing", "injection", "harass", "rate", "text", "llm", "clef"],
-} as const;
-const BLOCK_PREFIX = new Set<string>(RELAY_REASON_FAMILIES.block);
-
-// ------------------------------------------------------------------------------------------ rules
-// Rules-first classifier. Patterns run on core textVariants (lowercase, NFKC, homoglyphs mapped,
-// spaced letters collapsed, leetspeak undone). Each label maps to one reason code.
+const FINAL_FAMILIES = new Set(["state", "party", "minor", "optout", "consent", "photo", "contact_share", "canary", "harass_severe", "format", "clef_severe"]);
+const CONTACT_FAMILIES = new Set(["contact", "fishing", "offplatform"]);
+const EXPLAINED_FAMILIES = new Set(["consent", "rating", "rate", "classifier", ...CONTACT_FAMILIES]);
+const familyOf = (reason: string) => reason.split(":")[0]!;
 
 const R = (s: string) => new RegExp(s, "i");
 const PAY = "(?:send|wire|transfer|lend|loan|venmo|zelle|cash ?app|paypal|give|spot|front)";
@@ -190,11 +124,10 @@ const SPELLED_AMT = `(?:${NUMWORD}[-\\s]+){1,3}(?:dollars?|bucks?|usd)`;
 
 const otherThreats = R("\\bi(?:'?ll| will| am going to|'?m gonna| gonna| m gonna)\\s+(?:kill|hurt|find|ruin|destroy|beat|end|stab|shoot|expose|leak|post)\\b|\\bi know where (?:you|u) (?:live|work|sleep)\\b|\\b(?:you|u)(?:'?ll| will) (?:regret|pay for)\\b|\\b(?:make|making) (?:you|u) (?:regret|pay|sorry)\\b|\\bwatch (?:your|ur) back\\b|\\b(?:you|u)(?:'d| had)? better (?:answer|reply|respond|show|text)\\b|\\b(?:i'?ll |i will )?(?:make sure|let) everyone know|\\b(?:wait|show up|be waiting|come by|turn up)\\s+(?:for (?:you|u) )?(?:outside|at) (?:your|ur) (?:work|office|home|place|apartment|building|job|door)\\b");
 
-export const RELAY_RULES: { code: string; re: RegExp; matches?: (text: string) => boolean }[] = [
-  // Money and scams.
+const RELAY_RULES: { code: string; re: RegExp; matches?: (text: string) => boolean }[] = [
   { code: "scam:money", re: R(`\\b${PAY}\\s+(?:me|us)\\b[^.?!]{0,50}${MONEY}`) },
   { code: "scam:money", re: R("\\b(?:can|could|would)\\s+(?:you|u)\\s+(?:please\\s+)?(?:help(?: me)?(?: out)?(?: with)?|cover|spot|lend|loan|pay(?: for)?)\\b[^.?!]{0,40}\\b(?:rent|bills?|fees?|ticket|flight|hospital|medical|money|cash|\\$|bucks|loan|deposit|customs|visa|tuition|phone bill|gas money)\\b") },
-  { code: "scam:money", re: R(`\\b(?:i|we)\\s+(?:really\\s+|just\\s+)?(?:need|am short|are short|'m short|m short|owe)\\b[^.?!]{0,30}(?:\\$\\s?\\d+|\\d+\\s?(?:dollars?|bucks?|usd)|${SPELLED_AMT}|\\bmoney\\b|\\bcash\\b)`) },
+  { code: "scam:money", re: R(`\\b(?:i|we)(?:\\s+(?:really\\s+|just\\s+)?(?:need|am short|are short|m short|owe)|'m short|'re short)\\b[^.?!]{0,30}(?:\\$\\s?\\d+|\\d+\\s?(?:dollars?|bucks?|usd)|${SPELLED_AMT}|\\bmoney\\b|\\bcash\\b)`) },
   { code: "scam:money", re: R("\\b(?:western union|moneygram|wire transfer|bank (?:details|account|info|transfer)|routing number|account number)\\b|\\b(?:my|your|ur)\\s+(?:venmo|cash ?app|zelle|paypal)\\b") },
   { code: "scam:money", re: R("\\b(?:venmo|zelle|cash ?app|paypal|wire)\\s+(?:me|us)\\b|\\b(?:cover|help (?:me |us )?(?:with|pay(?:ing)?(?: for)?|cover)|pay(?:ing)? for)\\s+(?:my|our)\\s+(?:rent|bills?|phone bill|electric bill|flights?|tickets?|fees?|hospital bill|medical bills?|tuition|visa|car repair|leave|trip home)\\b|\\bneed (?:some )?help (?:paying|covering|with paying)\\b|\\b(?:receive|accept|cash|deposit)\\s+(?:a |some |the |my )?(?:transfer|check|cheque|payment|package|money|funds)\\s+for (?:me|us)\\b") },
   { code: "scam:gift_card", re: R("\\b(?:gift ?cards?|itunes cards?|apple (?:gift )?cards?|steam cards?|google play cards?|amazon cards?|card codes?|scratch (?:the|off) (?:back|code))\\b") },
@@ -205,17 +138,13 @@ export const RELAY_RULES: { code: string; re: RegExp; matches?: (text: string) =
   { code: "scam:money", re: R(`\\b(?:float|spot|front|lend|loan|advance)\\s+(?:me|us)\\s+(?:a (?:bit|little|few|couple|hundred|grand)|some|\\$|\\d|money|cash|the (?:money|cash|rest)|until|till|for)\\b|\\b(?:can'?t|cannot|unable to|not able to)\\s+(?:access|withdraw|get (?:to|at)|release|unlock)\\s+(?:my |our |the )?(?:funds|money|account|salary|savings|inheritance|paycheck)\\b|\\b(?:salary|paycheck|funds|account|card|money|inheritance|wallet)\\s+(?:is |was |got |has been |are |were )?(?:stuck|frozen|blocked|on hold|locked|seized|stolen)\\b|\\b(?:customs|clearance|release|processing|shipping|transfer|tax|delivery)\\s+fees?\\b|\\bhelp\\s+(?:me|us)\\s+(?:out\\s+)?(?:with|pay(?:ing)?|cover(?:ing)?)\\s+(?:the|my|our|a|this)\\s+(?:\\w+\\s+){0,2}(?:fee|fees|bill|bills|rent|deposit|fine)\\b|\\bneed\\s+(?:\\$\\s?\\d+|\\d+\\s?(?:dollars?|bucks?)|${SPELLED_AMT})\\b`) },
   { code: "scam:check", re: R("\\b(?:deposit|cash)\\s+(?:it|this|the|my|a)\\s*(?:check|cheque)?\\b[^.?!]{0,60}\\b(?:send|wire|transfer|give)\\b[^.?!]{0,25}\\b(?:back|difference|rest|remainder)\\b|\\bsend (?:me )?back the (?:difference|rest|remainder|extra)\\b") },
   { code: "scam:investment", re: R("\\b(?:make|making|made|earn|earning|pull in|clear)\\s+(?:like\\s+|about\\s+)?\\$?\\d+(?:k|,\\d{3})?\\s+(?:a|per|every|each)\\s+(?:day|week|month)\\b|\\btrading\\s+(?:gold|forex|stocks|options|futures|silver|oil|crypto)\\b|\\breturns?\\s+(?:are|is|were|have been)\\s+(?:crazy|insane|huge|amazing|unreal|incredible|guaranteed)\\b|\\b(?:set|sign|get)\\s+(?:you|u)\\s+up\\b[^.?!]{0,40}\\b(?:account|platform|app|wallet|trading|invest)|\\bwith my (?:mentor|broker|financial advisor|account manager)\\b") },
-  // Moving off-platform (early: only before the first date; see `relayItem`).
   { code: "offplatform:app", re: R(`\\b(?:add|find|message|text|dm|hit|reach|talk|chat|follow|move|switch|continue|download|join|call)\\b[^.?!]{0,30}\\b(?:on|via|over|to|in)\\s+${APPS}\\b`) },
   { code: "offplatform:app", re: R(`\\b${APPS}\\s+(?:me|instead|is (?:easier|better)|is my)\\b|\\b(?:do|have)\\s+(?:you|u)\\s+(?:have|got|use|on)\\s+${APPS}\\b|\\b(?:my|your|ur)\\s+${APPS}\\b`) },
   { code: "offplatform:app", re: R(`\\b(?:download|install|get|use|open|join)\\s+${APPS}\\b`) },
   { code: "offplatform:direct", re: R("\\b(?:text|call|email|message|dm)\\s+me\\s+(?:directly|instead|privately|on my (?:cell|phone))\\b|\\bmy (?:personal|private|other|real|direct) (?:number|phone|email|cell|line)\\b|\\b(?:talk|chat|message|text|continue|move|take this)\\b[^.?!]{0,25}\\b(?:off|outside(?: of)?)\\s+(?:this|the|here|of here)\\b|\\boff (?:this|the) (?:app|platform|site|agent|thing)\\b|\\b(?:without|skip|cut out|bypass) (?:the|this) (?:agent|middleman|app|bot)\\b|\\bnot (?:through|via|on|in|with) (?:this|the) (?:bot|agent|app|middleman|thing)\\b|\\b(?:talk|chat|text|speak)\\s+(?:somewhere|someplace)\\s+(?:private|else)\\b") },
-  // Fishing for the other person's contact or location (the approved path is a contact share).
   { code: "fishing:contact", re: R("\\b(?:what'?s|whats|what is|give me|send me|can i (?:get|have)|could i (?:get|have)|drop|share|tell me)\\s+(?:your|ur|her|his|their)\\s+(?:phone ?number|number|phone|cell|digits|email|e-mail|insta|ig|snap|handle|socials?|@|last name|full name|surname)\\b") },
   { code: "fishing:location", re: R("\\bwhere (?:exactly )?do (?:you|u) (?:live|stay|sleep)\\b|\\b(?:your|ur) (?:home |street |exact )?address\\b|\\bwhich (?:building|apartment|apt|street|floor) (?:are|do) (?:you|u)\\b|\\bwhere do (?:you|u) work(?! out)\\b|\\bwhat (?:company|office) do (?:you|u) work (?:at|for)\\b") },
-  // Prompt injection aimed at the agent.
   { code: "injection", re: R("\\b(?:ignore|disregard|forget|override)\\s+(?:all\\s+|your\\s+|the\\s+|any\\s+)?(?:previous|prior|above|earlier|system)?\\s*(?:instructions|rules|prompts?|directions|guidelines)\\b|\\b(?:system prompt|developer mode|jailbreak|you are now|pretend (?:you are|to be) (?:the|an?) (?:admin|agent|system))\\b|\\b(?:agent|assistant|bot|ai)\\b[,:]?\\s+(?:please\\s+)?(?:tell|give|send|share|reveal|show)\\s+(?:me|us)\\b[^.?!]{0,40}\\b(?:her|his|their|number|phone|email|address|last name|rating|score|photo)") },
-  // Ratings, scores and attractiveness talk (never relayed; nothing like it is ever shared).
   { code: "rating:probe", re: R("\\b(?:how|what)\\b[^.?!]{0,30}\\b(?:hot|attractive|cute|good[- ]looking|pretty|handsome|sexy|ugly)\\b[^.?!]{0,30}\\b(?:rate|rated|rating|score|scored|rank|ranked|grade|graded|think)\\b") },
   { code: "rating:probe", re: R("\\b(?:my|your|ur|her|his|their|our)\\s+(?:rating|score|rank|ranking|percentile|tier|elo|attractiveness|looks? score|hotness|hotness score|desirability)\\b") },
   { code: "rating:probe", re: R("\\b(?:rate|rated|rating|score|scored|rank|ranked|grade|graded)\\s+(?:me|you|u|her|him|them|my (?:looks|face|body|photos?|pics?)|your (?:looks|face|body|photos?|pics?))\\b") },
@@ -224,7 +153,6 @@ export const RELAY_RULES: { code: string; re: RegExp; matches?: (text: string) =
   { code: "rating:probe", re: R("\\bwhat (?:tier|rank|level|score|percentile|rating|number)\\s+(?:am i|are you|are u|is (?:she|he|they|mine|yours))\\b|\\b(?:rate|rates|rated|rank|ranks|ranked|score|scores|scored|grade|grades|graded|judge|judges)\\s+(?:us|people|members|everyone|users)\\s+(?:on|by|for)\\s+(?:looks|appearance|attractiveness|photos?|pics?|faces?|bodies)\\b") },
   { code: "rating:word", re: R("\\bappearance\\s*:|\\bphoto rating\\b|\\b(?:hotness|attractiveness|percentile|clef|body ?type|looks? (?:rating|score|tier|level|match)|(?:out of|in) (?:my|your|ur|her|his|their) league)\\b") },
   { code: "rating:word", re: R("\\b(?:you'?re|ur|you are|she'?s|he'?s|i'?m|im)\\s+(?:a|an|like a)\\s+(?:\\d{1,2}|ten|nine|eight|seven|six|five|solid \\d{1,2})(?:\\s?/\\s?10| out of (?:10|ten))?(?=\\s*(?:$|[.!?,;)]|out of|lol|haha|tbh|honestly|right|though))") },
-  // Harassment.
   { code: "harass_severe:threat", re: R(otherThreats.source + "|" + OR_ELSE_THREAT), matches: text => otherThreats.test(text) || hasOrElseThreat(text) },
   { code: "harass_severe:slur", re: R("\\b(?:fag(?:got)?s?|n[i]gg(?:a|er|ah|uh|az)s?|trann(?:y|ie)s?|kikes?|spics?|chinks?|retard(?:ed|s)?|dykes?|wetbacks?|shemales?|towelheads?|raghead)\\b") },
   { code: "harass:insult", re: R("\\b(?:fuck (?:you|off|u)|f off|stfu|bitch|whore|slut|cunt|skank|hoe|piece of shit|go die|kys|kill yourself|nobody (?:would|will|could) (?:ever )?(?:want|love|date|believe) (?:you|u)|(?:you|u)(?:'?re| are|r) (?:so |such an? |an? )?(?:ugly|fat|disgusting|gross|worthless|pathetic|nothing|a joke|trash|garbage|loser|idiot|moron|chubby|hideous))\\b") },
@@ -233,14 +161,53 @@ export const RELAY_RULES: { code: string; re: RegExp; matches?: (text: string) =
   { code: "harass:sexual", re: R("\\b(?:send|show)\\s+(?:me\\s+)?(?:nudes?|noods|naughty pics?|(?:a |some |more )?(?:pics?|photos?|pictures?|selfies?) of (?:your|ur) (?:body|tits|boobs|ass|chest|dick|butt|legs|feet)|(?:a |some |more )?(?:body|bikini|lingerie|bed(?:room)?) (?:pics?|photos?|selfies?)|something sexy|a sexy (?:pic|photo))\\b|\\bnudes\\b|\\bnude (?:pics?|photos?|selfies?)\\b|\\bdtf\\b|\\bdon'?t be (?:a |so |such a )?(?:prude|tease|frigid|uptight)\\b|\\b(?:you|u) know (?:you|u) want (?:it|this|me)\\b|\\bwe both know (?:why|what) (?:we'?re|this is|you)\\b|\\b(?:you|u) owe me\\b|\\bwhat are (?:you|u) wearing\\b|\\b(?:bring|wear)\\b[^.?!]{0,15}\\b(?:lingerie|condoms?)\\b|\\b(?:sex|fuck|smash|bang|hook ?up|sleep together|sleep with (?:me|you))\\b[^.?!]{0,40}\\b(?:tonight|first|after|right after|instead|now|before)\\b|\\b(?:skip|forget)\\b[^.?!]{0,15}\\b(?:the )?(?:coffee|date|drinks|dinner|museum|walk)\\b[^.?!]{0,30}\\b(?:my|your) (?:place|apartment|bed)\\b|\\b(?:back to|come over to|come to) (?:my|your) (?:place|apartment|bed|room|hotel)\\b") },
 ];
 
-// spec/memberAge.md, "A half age needs age wording to confirm an under-13 refusal".
 const CURRENT_TEEN_NUMBER = `1[3-7](?![.,]\\d|${AGE_BIRTHDAY_AFTER_AGE}|${AGE_DISTANT_BIRTHDAY_AFTER_AGE})`;
 
-/** A self-disclosed minor age or school year (blocks and flags the age for the platform). */
-export const MINOR_SIGNAL = R(`\\b(?:i'?m|i am|im)\\s+(?:only\\s+|just\\s+)?${CURRENT_TEEN_NUMBER}(?!\\s*(?:min|mins|minutes|blocks|miles|mi|km|away|%|stops|floors|hours|hrs|seconds|cm|lbs|k)\\b)(?:\\b|\\s*(?:yo|y/o|years? old)\\b)|(?<!\\d[.,])\\b${CURRENT_TEEN_NUMBER}\\s*(?:yo|y/o|years? old)\\b|\\b(?:i'?m|i am|im) (?:still )?(?:in|at) (?:high school|middle school|hs)\\b|\\bmy (?:mom|dad|parents) (?:won'?t|wont|don'?t|dont) let me\\b|\\bnot 18 (?:yet|until)\\b|\\b(?:i'?m|i am|im) (?:under ?18|underage|a minor)\\b|\\bhomeroom\\b`);
+const MINOR_SIGNAL = R(`\\b(?:i'?m|i am|im)\\s+(?:only\\s+|just\\s+)?${CURRENT_TEEN_NUMBER}(?!\\s*(?:min|mins|minutes|blocks|miles|mi|km|away|%|stops|floors|hours|hrs|seconds|cm|lbs|k)\\b)(?:\\b|\\s*(?:yo|y/o|years? old)\\b)|\\b(?:i'?m|i am|im)\\s+(?:only\\s+|just\\s+)?a\\s+${CURRENT_TEEN_NUMBER}\\s*-?\\s*(?:yo|y/o|years?[- ]old)\\b|(?<!\\d[.,])\\b${CURRENT_TEEN_NUMBER}\\s*-?\\s*(?:yo|y/o|years?[- ]old)(?:\\s+(?:girl|guy|boy|kid))?\\s+here\\b|(?<!\\d[.,])(?<!\\b(?!(?:we|age)\\b)[a-z]+(?:'s|'re|\\s+(?:is|was|are|were))\\s+)(?<!\\b(?:my|our|his|her|their|your|ur)\\s+(?!age\\b)[a-z]+(?:\\s+(?!age\\b)[a-z]+)?[\\s,]+)\\b${CURRENT_TEEN_NUMBER}\\s*-?\\s*(?:yo|y/o|years?[- ]old)\\b|\\b(?:i'?m|i am|im) (?:still )?(?:in|at) (?:high school|middle school|hs)\\b|\\bmy (?:mom|dad|parents) (?:won'?t|wont|don'?t|dont) let me\\b|\\bnot 18 (?:yet|until)\\b|\\b(?:i'?m|i am|im) (?:under ?18|underage|a minor)\\b|\\bhomeroom\\b`);
+
+const TEEN_RELAY_RULES: { code: string; re: RegExp }[] = [
+  { code: "teen:secrecy", re: R("\\b(?:don'?t|do not|dont|never)\\s+(?:tell|show|mention (?:this|it|me) to)\\s+(?:your|ur|anyone|anybody|nobody)\\b|\\b(?:our|a|little)\\s+(?:little\\s+)?secret\\b|\\bkeep\\s+(?:this|it|us|that)\\s+(?:between us|(?:a )?secret|quiet|private|to yourself|from)\\b|\\bbetween (?:you and me|us)\\b|\\b(?:delete|clear|erase)\\s+(?:this|these|the|our|my)\\s+(?:messages?|texts?|chats?|convo|conversation)\\b|\\b(?:parents?|mom|dad|mum|family|teachers?)\\s+(?:can'?t|cannot|shouldn'?t|don'?t need to|doesn'?t need to|won'?t)\\s+(?:know|find out|see)\\b") },
+  { code: "teen:age_probe", re: R("\\bhow old (?:are|r) (?:you|u)\\b|\\b(?:what'?s|whats|what is) (?:your|ur) (?:real |actual |true )?age\\b|\\b(?:are|r) (?:you|u) (?:really|actually) \\d{1,2}\\b|\\bwhat grade (?:are|r) (?:you|u)\\b|\\b(?:are|r) (?:you|u) (?:home )?(?:alone|by yourself)\\b|\\b(?:are|r|is) (?:your|ur) (?:parents?|mom|dad|mum|family) (?:home|around|there|out|away|asleep|awake)\\b|\\bwhen do (?:your|ur) (?:parents?|mom|dad|mum) (?:leave|get home|come home)\\b") },
+  { code: "teen:gift", re: R("\\b(?:gift ?cards?|gifts?|presents?|money|cash|venmo|cash ?app|zelle|paypal|robux|v-?bucks|allowance)\\b|\\b(?:buy|get|send|give|pay for|treat)\\s+(?:you|u)\\b|\\bmy treat\\b|\\bon me\\b") },
+  { code: "teen:picture", re: R("\\b(?:send|post|share|show|take)\\s+(?:me\\s+)?(?:a\\s+|some\\s+|more\\s+|another\\s+|your\\s+|ur\\s+)?(?:pics?|photos?|pictures?|selfies?|snaps?|videos?|vids?)\\b|\\bwhat do (?:you|u) look like\\b|\\bshow me (?:yourself|you|ur|your)\\b|\\b(?:pic|photo|picture|selfie|video)s? of (?:you|u|yourself)\\b|\\bface ?time\\b|\\bvideo ?(?:call|chat)\\b|\\bcam(?:era)?\\s+on\\b") },
+  { code: "teen:alone", re: R("\\b(?:meet|hang(?: out)?|come|be|go)\\s+(?:up\\s+)?(?:alone|by (?:yourself|urself))\\b|\\bjust (?:the two of us|you and me|us two|me and you)\\b|\\b(?:come|go|get|stop)\\s+(?:over\\s+)?(?:to|back to|by)\\s+(?:my|your|ur)\\s+(?:place|house|home|room|apartment|apt|car|hotel|building)\\b|\\b(?:my|your|ur)\\s+(?:place|house|home|room|apartment|apt|car|hotel|bedroom)\\b|\\bpick (?:you|u) up\\b|\\b(?:give (?:you|u) a ride|drive (?:you|u))\\b|\\b(?:don'?t|dont|no need to|without)\\s+(?:bring(?:ing)?|tell(?:ing)?)\\s+(?:anyone|anybody|friends?|your friends?|ur friends?|parents?)\\b|\\bcome over\\b|\\bsleep ?over\\b") },
+  { code: "teen:location", re: R("\\b(?:your|ur) (?:home |street |exact )?address\\b|\\bwhere (?:exactly )?do (?:you|u) (?:live|stay|sleep)\\b|\\bwhich (?:school|high school|middle school|neighborhood|building|street|block|apartment|floor)\\b|\\bwhat (?:school|high school|middle school|street|building)\\b|\\bwhere do (?:you|u) go to school\\b|\\bwhere (?:are|r) (?:you|u) (?:right )?now\\b|\\b(?:send|share|drop)\\s+(?:me\\s+)?(?:your|ur)\\s+(?:location|pin|address)\\b|\\bwhat (?:time|days?) (?:do (?:you|u) )?(?:get out of|leave|finish) school\\b") },
+  { code: "teen:contact", re: R(`\\b(?:phone|number|digits|cell|email|e-mail|gmail|handle|username|user ?name|tiktok|roblox|minecraft|${APPS})\\b|@[a-z0-9_.]{2,}`) },
+];
+
+const ADULT_NUMBER = "(?:19|[2-9]\\d)";
+const NOT_AN_AGE = "(?!\\s*(?:%|\\$|\\+|/|:|(?:min|mins|minutes|blocks|miles|mi|km|away|stops|floors|hours|hrs|seconds|secs|cm|lbs|kg|k|dollars|bucks|feet|ft|percent|times|days|weeks|months|people|ppl)\\b))";
+const SELF_IS = "(?:i'?m|i am|im)\\s+(?:actually\\s+|really\\s+|literally\\s+|already\\s+|now\\s+|like\\s+|basically\\s+|almost\\s+)?";
+const ADULT_AGE_RULES: RegExp[] = [
+  R(`\\b${SELF_IS}${ADULT_NUMBER}\\b${NOT_AN_AGE}`),
+  R(`\\b${SELF_IS}(?:nineteen|twenty|thirty|forty|fifty|sixty)\\b${NOT_AN_AGE}`),
+  R("\\b(?:i'?m|i am|im)\\s+in\\s+my\\s+(?:[2-6]0'?s|twenties|thirties|forties|fifties|sixties)\\b"),
+  R(`\\bmy age is\\s+${ADULT_NUMBER}\\b`),
+  R(`\\bi (?:just )?turned\\s+${ADULT_NUMBER}\\b`),
+];
+const G = (s: string) => new RegExp(s, "gi");
+const BIRTH_YEAR_RULES: { re: RegExp; year: (digits: string) => number }[] = [
+  { re: G("\\b(?:i was|i'?m|i am|im)\\s+born\\b[^.?!]{0,30}?\\b((?:19|20)\\d{2})\\b"), year: Number },
+  { re: G("(?:^|[.!?,;]\\s*|\\b(?:lol|actually|btw|tbh|fyi|and|but|so|oh)\\s+)born\\b[^.?!]{0,30}?\\b((?:19|20)\\d{2})\\b"), year: Number },
+  { re: G("\\bmy\\s+(?:birthday|bday|b-day|birth ?date|date of birth|dob|birth year)\\b[^.?!]{0,30}?\\b((?:19|20)\\d{2})\\b"), year: Number },
+  { re: G("\\b(?:dob|birth year)\\s*[:=-]?[^.?!]{0,20}?\\b((?:19|20)\\d{2})\\b"), year: Number },
+  { re: G("\\b(?:i was |i'?m |i am |im )?born in\\s+'?(9\\d)\\b"), year: digits => 1900 + Number(digits) },
+];
+
+function adultAgeStated(variants: readonly string[], now: number): boolean {
+  if (variants.some(v => ADULT_AGE_RULES.some(re => re.test(v)))) return true;
+  const today = latestDayKeyOf(now);
+  return variants.some(v => BIRTH_YEAR_RULES.some(({ re, year }) =>
+    [...v.matchAll(re)].some(m => ageOnDay(year(m[1]!) * 10000 + 101, today) > teenFriendMaxAge)));
+}
+
+function teenRelayCodes(text: string, now: number): string[] {
+  const vs = textVariants(text.replace(/[’‘`´]/g, "'"));
+  const codes = TEEN_RELAY_RULES.filter(({ re }) => vs.some(v => re.test(v))).map(({ code }) => code);
+  return adultAgeStated(vs, now) ? [...codes, "teen:adult_age"] : codes;
+}
 
 const DIGIT_WORDS: Record<string, string> = { zero: "0", oh: "0", o: "0", one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9" };
-/** A phone number spelled in words or digits with any separators ("three four seven, five five five, ..."): 7+ digits in a row. */
 export function spelledPhone(text: string): boolean {
   const toks = text.toLowerCase().replace(/\b\d{1,2}:\d{2}\b/g, " time ").split(/[^a-z0-9]+/).filter(Boolean);
   let run = 0;
@@ -252,83 +219,88 @@ export function spelledPhone(text: string): boolean {
   return run >= 7;
 }
 
-/** Labels (reason codes) the rules find in a text: classifier and rating rules, plus the minor signal. */
+const OTHER_PERSON_AGE = /\b(?:my|our|his|her|their)\s+\d{1,2}\s*-?\s*(?:yo|y\/o|years?[- ]old)(?=\s+(?:son|sons|daughter|daughters|kid|kids|child|children|baby|twins|boy|girl|brother|brothers|sister|sisters|bro|sis|niece|nieces|nephew|nephews|cousin|cousins|friend|friends|stepson|stepdaughter|grandson|granddaughter|student|students)\b|\s+(?:will|is|was|has|had|can|could|would|wants|needs|says|said|might|gets|got|goes|went|comes|came|loves|likes|thinks|does|did|isnt|isn't|wasnt|wasn't|doesnt|doesn't|wont|won't|cant|can't)\b|\s*[.,!?;:]|\s*$)/gi;
+
+function relayAgeVariants(normalized: string, vs: string[]): string[] {
+  const lower = normalized.toLowerCase();
+  const ageText = normalizeAgeInitialism(lower);
+  return ageText === lower ? vs : textVariants(ageText);
+}
+
+function relayMinorSigns(text: string, variants: string[]): boolean {
+  return relayMinorAge(text, true) !== undefined || relayMinorEstimate(text) || variants.some(v => MINOR_SIGNAL.test(v));
+}
+
 export function classifyRelayText(text: string): { codes: string[]; minorSignal: boolean } {
   const normalized = text.replace(/[’‘`´]/g, "'");
   const vs = textVariants(normalized);
   const codes = new Set<string>();
   for (const { code, re, matches } of RELAY_RULES) if (!codes.has(code) && vs.some(matches ?? (v => re.test(v)))) codes.add(code);
   if (spelledPhone(text)) codes.add("contact:spelled_phone");
-  const lower = normalized.toLowerCase();
-  const ageText = normalizeAgeInitialism(lower);
-  const ageVariants = ageText === lower ? vs : textVariants(ageText);
-  return { codes: [...codes], minorSignal: relayMinorAge(text, true) !== undefined || relayMinorEstimate(text) || ageVariants.some(v => MINOR_SIGNAL.test(v)) };
+  return { codes: [...codes], minorSignal: relayMinorSigns(text, relayAgeVariants(normalized, vs)) };
 }
 
-// ----------------------------------------------------------------------------------- photo ids
-/**
- * A photo reference is an opaque id the platform resolves (its own photo table): 8-64 characters of
- * [A-Za-z0-9_-], never a URL, path, email, phone number or a name with a contact in it. A run of 7 or
- * more digits (separators "-" and "_" ignored: "212-555-0147") reads as a phone number and fails; the
- * platform's id generator (platform/src/photos.ts `newPhotoId`) draws again until its id passes.
- */
+export function relaySenderMinorSign(text: string): boolean {
+  const normalized = text.replace(/[’‘`´]/g, "'");
+  return relayMinorSigns(text, relayAgeVariants(normalized, textVariants(normalized)).map(v => v.replace(OTHER_PERSON_AGE, " ")));
+}
+
 export function isOpaquePhotoId(id: unknown): id is string {
   return typeof id === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(id) && !/\d{7,}/.test(id.replace(/[-_]/g, "")) && !/^(?:https?|www|data|file)/i.test(id);
 }
 
-// ------------------------------------------------------------------------------------- guard
-/** Build the relay's LeakGuard once per thread: both members' private facts (owner set) and canaries. */
 export function relayGuard(o: { facts?: Owned[]; forbidden?: Owned[]; canaries?: string[] } = {}): LeakGuard {
   return new LeakGuard({ facts: o.facts ?? [], forbidden: o.forbidden ?? [], canaries: o.canaries ?? [], canaryShapes: true, contacts: true });
 }
 const DEFAULT_GUARD = relayGuard();
 
-// ------------------------------------------------------------------------------------ wording
 const cleanName = (s: string) => {
   const n = (s ?? "").normalize("NFKC").replace(/[^\p{L}\p{M}' -]/gu, "").trim().split(/\s+/)[0] ?? "";
   return n.length >= 1 && n.length <= 30 ? n : "Your match";
 };
-/** The agent's wording per kind. `body` is the member's text (text) or caption (photo). */
 export const RELAY_WORDING = {
   text: (name: string, body: string) => `${name} says: "${body}"`,
   photo: (name: string, caption?: string) => (caption ? `${name} sent you a photo: "${caption}"` : `${name} sent you a photo.`),
   contact: (name: string, kind: "phone" | "email", value: string) =>
     `${name} asked me to send you their ${kind === "phone" ? "number" : "email"}: ${value}. Say "send them my number" if you want me to send yours back.`,
 };
-const NOTICE: Record<string, string> = {
-  pass: "Sent.",
-  contact: "I don't pass contact details on inside a message. If you want them to have your number, say \"send them my number\" and I'll share it.",
-  rating: "I can't share anything like that, and I don't pass questions about it on.",
-  consent: "I didn't send that. Tell me again that you want me to send it, and I will.",
-  rate: "I'll hold that one for a bit; you've sent a lot in a short time.",
-  block: "I can't pass that on.",
-  hold: "I'm holding that one for a quick check before I pass it on.",
+const PASS_NOTICE = "Sent.";
+const BLOCK_NOTICE: Record<RelayBlockNotice, string> = {
+  NoticePlain: "I didn't send that, so it didn't reach them.",
+  NoticeConsent: "I didn't send that. Tell me again that you want me to send it, and I will.",
+  NoticeRating: "I didn't send that. I can't share anything like that, and I don't pass questions about it on.",
+  NoticeContact: "I didn't send that. I don't pass on contact details, handles, addresses or other apps inside a message.",
+  NoticeRetry: "I couldn't check that message just now, so I didn't send it. Please try again in a few minutes.",
+  NoticeRate: "I didn't send that: you've sent a lot in a short time. Please try again a bit later.",
 };
+
+export function relaySenderNotice(reasons: readonly string[]): string {
+  if (!reasons.length) return PASS_NOTICE;
+  const families = new Set(reasons.map(familyOf));
+  const has = (...f: string[]) => f.some(x => families.has(x));
+  return BLOCK_NOTICE[relayBlockNotice([...families].some(f => !EXPLAINED_FAMILIES.has(f)), has("consent"), has("rating"), [...CONTACT_FAMILIES].some(f => families.has(f)), has("classifier"), has("rate"))];
+}
 
 const normPhone = (v: string) => { const d = v.replace(/[^\d+]/g, ""); return /^\+?\d{10,15}$/.test(d) ? d : null; };
 const EMAIL = /^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){0,8}\.[A-Za-z]{2,24}$/;
 
-// ------------------------------------------------------------------------------------- relay
-/** Run one item through the relay policy (rules only, synchronous). */
 export function relayItem(item: RelayItem, ctx: RelayContext): RelayResult {
   const L = { ...RELAY_LIMITS, ...(ctx.limits ?? {}) };
   const reasons = new Set<string>();
   const { opportunity: op, sender: s, recipient: r } = ctx;
   let ageSignal = false;
 
-  // 1. parties
   if (s.id !== item.from || r.id !== item.to || item.from === item.to || !op.participants.includes(item.from) || !op.participants.includes(item.to)) reasons.add("party:not_participant");
-  if (!canBeMatched(s.age) || !canBeMatched(r.age)) reasons.add("minor:party");
+  const teenPair = ctx.teenFriendPair === true;
+  if (!relayKindAllowed(item.kind === "text", canBeMatched(s.age) && canBeMatched(r.age), teenPair)) reasons.add("minor:party");
   if (ctx.blocked) reasons.add("party:blocked");
   if (r.optedOut) reasons.add("optout:recipient");
   if (s.optedOut) reasons.add("optout:sender");
   if (s.held) reasons.add("safety:sender_held");
   if (r.held) reasons.add("safety:recipient_held");
-  // 2. state
   if (op.status !== "mutual") reasons.add(`state:${op.status}`);
   else if (!op.participants.every(p => op.acceptedBy.includes(p))) reasons.add("state:not_mutual");
 
-  // 3. consent and the item itself
   const freshConsent = (kind: RelayConsent["kind"]) => {
     const c = item.consent;
     if (!c) return "consent:missing";
@@ -345,7 +317,7 @@ export function relayItem(item: RelayItem, ctx: RelayContext): RelayResult {
     const c = item.contact;
     contactValue = !c ? null : c.kind === "phone" ? normPhone(c.value) : EMAIL.test(c.value.trim()) ? c.value.trim() : null;
     if (!contactValue) reasons.add("contact_share:invalid");
-    if (text) reasons.add("contact_share:free_text"); // a contact share carries no free text
+    if (text) reasons.add("contact_share:free_text");
   } else if (item.kind === "photo") {
     const bad = freshConsent("photo");
     if (bad) reasons.add(bad);
@@ -359,7 +331,6 @@ export function relayItem(item: RelayItem, ctx: RelayContext): RelayResult {
     if (!text) reasons.add("format:empty");
   } else reasons.add("format:kind");
 
-  // 4-5. text checks (a text item, or a photo caption)
   if (text) {
     if (text.length > L.maxChars) reasons.add("text:too_long");
     else {
@@ -373,30 +344,26 @@ export function relayItem(item: RelayItem, ctx: RelayContext): RelayResult {
       }
       const c = classifyRelayText(text);
       for (const code of c.codes) {
-        // Talk about moving off-platform after the first date is not an early move (contacts are still held).
-        if (code.startsWith("offplatform:") && op.metAt !== undefined && op.metAt <= ctx.now) continue;
+        if (code.startsWith("offplatform:") && op.metAt !== undefined && op.metAt <= ctx.now && !teenPair) continue;
         reasons.add(code);
       }
-      if (c.minorSignal) { reasons.add("minor:signal"); ageSignal = true; }
+      if (teenPair) for (const code of teenRelayCodes(text, ctx.now)) reasons.add(code);
+      if (c.minorSignal) { reasons.add(teenPair && !canBeMatched(s.age) ? "teen:age_talk" : "minor:signal"); ageSignal = true; }
       for (const code of ctx.extraRules?.(text) ?? []) if (/^[a-z_]+:[a-z0-9_]+$/.test(code)) reasons.add(code);
     }
   }
 
-  // 6. rate limits (attempts by this sender in this opportunity)
   const mine = (ctx.history ?? []).filter(h => h.opportunityId === op.id && h.from === item.from && h.itemId !== item.id);
   if (mine.filter(h => item.at - h.at >= 0 && item.at - h.at < L.burst.windowMs).length >= L.burst.n) reasons.add("rate:burst");
-  if (mine.filter(h => item.at - h.at >= 0 && item.at - h.at < 86_400_000).length >= L.daily) reasons.add("rate:daily");
-  if (item.kind === "photo" && mine.filter(h => h.kind === "photo" && h.decision === "pass" && item.at - h.at < 86_400_000).length >= L.photosDaily) reasons.add("rate:photos");
+  if (mine.filter(h => item.at - h.at >= 0 && item.at - h.at < 86_400_000).length >= (teenPair ? L.teenDaily : L.daily)) reasons.add("rate:daily");
+  if (item.kind === "photo" && mine.filter(h => h.kind === "photo" && h.decision === "pass" && item.at - h.at >= 0 && item.at - h.at < 86_400_000).length >= L.photosDaily) reasons.add("rate:photos");
   if (item.kind === "contact_share" && mine.filter(h => h.kind === "contact_share" && h.contactShared).length >= L.contactShares) reasons.add("contact_share:already_shared");
 
   return finish(item, ctx, [...reasons].sort(), { contactValue, photos, text, ageSignal });
 }
 
 function finish(item: RelayItem, ctx: RelayContext, reasons: string[], x: { contactValue: string | null; photos: string[]; text: string; ageSignal: boolean }): RelayResult {
-  const fam = (r: string) => r.split(":")[0]!;
-  // spec/relayDecision.md, "A blocking reason takes precedence over a hold"
-  const verdict = relayVerdict(reasons.some(r => BLOCK_PREFIX.has(fam(r))), reasons.length > 0);
-  const decision: RelayDecision = verdict === "Block" ? "block" : verdict === "Hold" ? "hold" : "pass";
+  const decision: RelayDecision = relayVerdict(reasons.length > 0) === "Pass" ? "pass" : "block";
   const name = cleanName(ctx.sender.firstName);
   let rendered = "";
   if (decision === "pass") {
@@ -409,60 +376,78 @@ function finish(item: RelayItem, ctx: RelayContext, reasons: string[], x: { cont
     decision, reasons, photoCount: decision === "pass" ? x.photos.length : 0, contactShared: decision === "pass" && item.kind === "contact_share",
     ageSignal: x.ageSignal, policy: RELAY_POLICY_VERSION,
   };
-  const has = (f: string) => reasons.some(r => fam(r) === f);
-  const senderNotice = decision === "pass" ? NOTICE.pass!
-    : decision === "block" ? (has("consent") ? NOTICE.consent! : NOTICE.block!)
-    : has("rating") ? NOTICE.rating! : has("contact") || has("fishing") ? NOTICE.contact! : reasons.every(r => fam(r) === "rate") ? NOTICE.rate! : NOTICE.hold!;
-  return { decision, reasons, rendered, photos: decision === "pass" ? x.photos : [], record, senderNotice };
+  return { decision, reasons, rendered, photos: decision === "pass" ? x.photos : [], record, senderNotice: relaySenderNotice(reasons) };
 }
 
-/** What a classifier hook sees: the item's text, its kind, and the thread so far (rendered, oldest first). */
 export interface RelayClassifierInput {
   text: string;
   kind: RelayKind;
-  /** The last few rendered messages (`RelayContext.thread`), oldest first; may be empty. */
   context?: readonly string[];
-  /** The pair has met (the first date happened): moving off-platform is not an early move. */
   met?: boolean;
 }
-/**
- * A hook's answer. `flags` hold the item (`<source>:<flag>`), `block` blocks it
- * (`<source>_severe:<flag>`). `source` is "llm" (default) or "clef". `scores` are for the caller's
- * own metrics; the relay ignores them.
- */
-export interface RelayClassifierOutput { flags: string[]; block?: string[]; source?: "llm" | "clef"; scores?: Record<string, number> }
-/** An optional model check after the rules. */
+export interface RelayClassifierOutput { flags: string[]; block?: string[]; scores?: Record<string, number>; unavailable?: true }
 export type RelayClassifierHook = (input: RelayClassifierInput) => Promise<RelayClassifierOutput>;
+export const simulatedRelayClassifier: RelayClassifierHook = async () => ({ flags: [], block: [] });
 
-const flagCode = (f: unknown) => String(f).toLowerCase().replace(/[^a-z_]/g, "").slice(0, 24) || "flag";
+const flagCode = (f: string) => f.toLowerCase().replace(/[^a-z_]/g, "").slice(0, 24) || "flag";
+const CLASSIFIER_MINOR_FLAG = "minor_signal";
+const CLASSIFIER_UNAVAILABLE = "classifier:unavailable";
 
-/**
- * `relayItem`, then the optional hook on an item with text that the rules passed (or held, with
- * `escalateHeld`). The hook only adds reasons: a flag holds, a block flag blocks, nothing lowers the
- * rules' decision, and an item the rules block never reaches the hook. A hook error holds the item
- * (`llm:error`) unless `failOpen` is set.
- */
-export async function relayItemAsync(item: RelayItem, ctx: RelayContext, o: { hook?: RelayClassifierHook; failOpen?: boolean; escalateHeld?: boolean } = {}): Promise<RelayResult> {
-  const first = relayItem(item, ctx);
-  const text = (item.text ?? "").trim();
-  if (!o.hook || !text || first.decision === "block" || (first.decision === "hold" && !o.escalateHeld)) return first;
-  let out: RelayClassifierOutput;
-  try {
-    out = await o.hook({ text, kind: item.kind, context: [...(ctx.thread ?? [])], met: ctx.opportunity.metAt !== undefined && ctx.opportunity.metAt <= ctx.now });
-  } catch { out = { flags: o.failOpen ? [] : ["error"] }; }
-  const src = out?.source === "clef" ? "clef" : "llm";
-  const extra = [...new Set([
-    ...(out?.flags ?? []).map(f => `${src}:${flagCode(f)}`),
-    ...(out?.block ?? []).map(f => `${src}_severe:${flagCode(f)}`),
-  ])];
-  if (!extra.length) return first;
-  // A classifier that reads the text as a minor's sets the age signal as the rules' self-disclosure does (never a minor's words for staff).
-  const ageSignal = first.record.ageSignal || extra.some(r => r.endsWith(":minor_signal"));
-  return finish(item, ctx, [...new Set([...first.reasons, ...extra])].sort(), { contactValue: null, photos: [], text, ageSignal });
+interface ClassifierAnswer { flags: string[]; block: string[] }
+function classifierAnswer(x: unknown): ClassifierAnswer | undefined {
+  if (typeof x !== "object" || x === null || Array.isArray(x)) return undefined;
+  const o = x as Record<string, unknown>;
+  const strings = (v: unknown) => (Array.isArray(v) && v.every(s => typeof s === "string") ? (v as string[]) : undefined);
+  const flags = strings(o.flags), block = o.block === undefined ? [] : strings(o.block);
+  if (o.unavailable !== undefined || !flags || !block) return undefined;
+  return { flags, block };
 }
 
-// --------------------------------------------------------------------------- member requests
-export type RelayRequest =
+const causePart =(v: string) => v.replace(/[^A-Za-z0-9_]/g, "").slice(0, 32) || "unknown";
+function thrownCause(e: unknown): string {
+  if (!(e instanceof Error)) return "thrown";
+  const code = "code" in e && typeof e.code === "string" ? `:${causePart(e.code)}` : "";
+  return `${causePart(e.name)}${code}`;
+}
+const unreadCause = (raw: unknown) =>
+  typeof raw === "object" && raw !== null && "unavailable" in raw && raw.unavailable !== undefined ? "unavailable" : "invalid_answer";
+
+async function askClassifier(hook: RelayClassifierHook | undefined, input: RelayClassifierInput): Promise<{ raw: unknown; error?: string }> {
+  if (!hook) return { raw: undefined, error: "no_classifier" };
+  try {
+    return { raw: await hook(input) };
+  } catch (e) {
+    return { raw: undefined, error: thrownCause(e) };
+  }
+}
+
+export async function relayItemAsync(item: RelayItem, ctx: RelayContext, o: { hook?: RelayClassifierHook } = {}): Promise<RelayResult> {
+  const first = relayItem(item, ctx);
+  const text = (item.text ?? "").trim();
+  const teenPair = ctx.teenFriendPair === true;
+  const read = relayClassifierReads(!!text, first.reasons.some(r => FINAL_FAMILIES.has(familyOf(r))), first.reasons.length > 0, teenPair);
+  let extra: string[] = [];
+  let classifierAgeSignal = false;
+  let classifierError: string | undefined;
+  if (read) {
+    const asked = await askClassifier(o.hook, { text, kind: item.kind, context: [...(ctx.thread ?? [])], met: !teenPair && ctx.opportunity.metAt !== undefined && ctx.opportunity.metAt <= ctx.now });
+    const answer = classifierAnswer(asked.raw);
+    classifierError = asked.error ?? (answer === undefined ? unreadCause(asked.raw) : undefined);
+    const flags = (answer?.flags ?? []).map(flagCode), block = (answer?.block ?? []).map(flagCode);
+    const reading = relayClassifierReading(answer !== undefined, flags.length + block.length > 0);
+    if (reading === "ReadingUnavailable") extra = [CLASSIFIER_UNAVAILABLE];
+    else if (reading === "ReadingFlagged") {
+      classifierAgeSignal = [...flags, ...block].includes(CLASSIFIER_MINOR_FLAG);
+      extra = [...new Set([...flags.map(f => `clef:${f}`), ...block.map(f => `clef_severe:${f}`)])];
+    }
+  }
+  if (!extra.length) return first;
+  const finished = finish(item, ctx, [...new Set([...first.reasons, ...extra])].sort(), { contactValue: null, photos: [], text, ageSignal: first.record.ageSignal || classifierAgeSignal });
+  const result = classifierAgeSignal ? { ...finished, classifierAgeSignal } : finished;
+  return classifierError ? { ...result, classifierError } : result;
+}
+
+type RelayRequest =
   | { kind: "contact_share"; targetName?: string }
   | { kind: "photo"; targetName?: string }
   | { kind: "text"; body: string; targetName?: string }
@@ -483,10 +468,17 @@ const RELAY_DESTINATION_WORDS = String.raw`(?:over\s+to|to|with)\b`;
 const RELAY_DESTINATION = String.raw`[\s,:–—-]+${RELAY_DESTINATION_WORDS}`;
 const UNPARSED_RELAY_DESTINATION = new RegExp(String.raw`^[\s,:;.!?–—()[\]/"'“”-]*(?:directly\s+to\b|${RELAY_DESTINATION_WORDS})`, "iu");
 const RELAY_WITH_THANKS = /^\s*,?\s*with\s+thanks\s*[.!]*\s*$/iu;
+const RELAY_AFFIRMED_SEND = String.raw`^\s*(?:yes|yeah|yep|ok|okay|sure)[,!.]?\s+(?:send|share|give)\s+`;
+const RELAY_AFFIRMED_IT = new RegExp(String.raw`${RELAY_AFFIRMED_SEND}it\b`, "iu");
+
+export function relayAffirmsIt(text: string): boolean {
+  return RELAY_AFFIRMED_IT.test(text.replace(/[’‘`´]/g, "'"));
+}
+
 const CONTACT_REQ = new RegExp(
   String.raw`\b(?:send|give|share|pass|forward|text)\s+(?<leadingRecipient>${PRIVATE_RELAY_RECIPIENT})\s+my\s+(?:${CONTACT_SWAP_NAME}|email)\b`
   + String.raw`|\b(?:share|send|give|pass|forward|text)\s+my\s+(?:${CONTACT_SWAP_NAME}|email)\s+(?:with|to)\s+(?<trailingRecipient>${PRIVATE_RELAY_RECIPIENT})`
-  + String.raw`|^\s*(?:yes|yeah|yep|ok|okay|sure)[,!.]?\s+(?:send|share|give)\s+(?:it|my number|them my number)\b(?:${RELAY_DESTINATION}\s+(?<affirmedRecipient>${PRIVATE_RELAY_RECIPIENT})|(?!${RELAY_DESTINATION}))`
+  + String.raw`|${RELAY_AFFIRMED_SEND}(?:it|my number|them my number)\b(?:${RELAY_DESTINATION}\s+(?<affirmedRecipient>${PRIVATE_RELAY_RECIPIENT})|(?!${RELAY_DESTINATION}))`
   + String.raw`|\b(?:they|she|he) can have my (?:number|digits|phone number)\b`,
   "giu",
 );
@@ -761,7 +753,8 @@ const LINKED_PRIVATE_LEAD = /^[\s,:–—]*(?:(?:and|but|then|only)[,\s:–—]+
 const PRIVATE_RECIPIENT_REFERENCE = /^(?:he|she|they|him|her|them|my\s+(?:match|date))$/i;
 const PRIVATE_NOTICE_THEN = /^\s*(?:please\s+)?(?:tell\s+(?:me|us)|let\s+(?:me|us)\s+know)\s+[^,]+,\s*(?=then\b)/iu;
 const LINKED_PRIVATE_TIME = /^[\s,–—]*(?:on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|next\s+week|at\s+(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|noon|midnight|(?:[01]?\d|2[0-3])(?::[0-5]\d)?(?:\s*[ap]m)?))\b/iu;
-const PRIVATE_RELAY_POST_ATTRIBUTION = /^\s*[,–—]\s*(?:(?!(?:i|we)\b)\p{L}[\p{L}'-]*\s+){1,3}(?:says?|said)\s*$/iu;
+const PRIVATE_RELAY_POST_ATTRIBUTION = /^\s*(?:[,–—]|-+\s)\s*(?:(?!(?:i|we)\b)\p{L}[\p{L}'-]*\s+){1,3}(?:says?|said)\s*$/iu;
+const PRIVATE_RELAY_NEXT_ATTRIBUTION = /^\s*(?:(?!(?:i|we)\b)\p{L}[\p{L}'-]*\s+){1,3}(?:says?|said)(?:\s+(?:so|that|this|it))?\s*$/iu;
 const PRIVATE_RELAY_CORRECTION = /^[,\s–—]*(?:instead|rather|actually|no)[,\s:]+/i;
 // A quotation can contain a refusal or a command, but it does not speak for the member.
 const RELAY_QUOTATION = /(?<!\d)"[^"]*(?:"|$)|(?<![a-z0-9])'(?:[^']|(?<=[a-z0-9])'(?=[a-z0-9]))*(?:'|$)/gi;
@@ -853,7 +846,8 @@ function refusesPrivateItem(text: string, otherItemRefusal: RegExp): boolean {
 
 function reportsPrivateRequest(text: string, request: RegExpMatchArray): boolean {
   const end = request.index! + request[0].length;
-  return PRIVATE_RELAY_POST_ATTRIBUTION.test(text.slice(end).split(RELAY_SENTENCE, 1)[0]!);
+  const [here = "", next = ""] = text.slice(end).split(RELAY_SENTENCE, 2);
+  return PRIVATE_RELAY_POST_ATTRIBUTION.test(here) || PRIVATE_RELAY_NEXT_ATTRIBUTION.test(next);
 }
 
 function reportsPrivateTransfer(tail: string): boolean {
@@ -1120,11 +1114,6 @@ export function withdrawsRelaySwap(text: string): boolean {
   return refusesNumberSwap(authored);
 }
 
-/**
- * What a member asks the agent to do with their match. Only an explicit, unhedged, unnegated request
- * is a contact share or a photo send; "should I send my number?" and "don't send them my number" are
- * not. The platform turns a positive answer into an item with a `RelayConsent` for that item.
- */
 export function parseRelayRequest(text: string): RelayRequest {
   const t = text.replace(/[’‘`´]/g, "'").trim();
   const own = ownRelayWords(t);
@@ -1189,23 +1178,9 @@ export function parseRelayRequest(text: string): RelayRequest {
     const trailingRecipient = privateRequest.groups?.trailingRecipient ?? privateRequest.groups?.affirmedRecipient;
     const recipient = privateRequest.groups?.leadingRecipient ?? trailingRecipient;
     const targetName = recipient && !IMPLICIT_RELAY_TARGET.test(recipient) ? recipient : undefined;
-    const privateModal = RELAY_MODAL.exec(spoken);
-    const low = spoken.toLowerCase();
-    const clauses = relayClauses(low);
-    const question = relayIsIndirectQuestion(spoken.endsWith("?"), /^(?:please\s+)?(?:can|could|would)\s+(?:you|u)\b/i.test(spoken),
-      privateModal?.[0].length === privateRequest.index, /^(?:should|would\s+it|could\s+i|is it|do you|can i)\b/i.test(spoken));
-    const priorCondition = priorSentenceConditionsShare(t.slice(start, start + privateRequest.index!), privateRequest, !!contact);
-    const envelopeCondition = independentNumber && ordinaryText !== undefined
-      && priorSentenceConditionsShare(ordinaryText.body + ".", privateRequest, true, true);
-    const uncertain = leadingCondition || HEDGE.test(low) || privateRelayTimingIsUncertain(spoken, ordinaryBody) || uncertainPrivateTransfer(clauses)
-      || envelopeCondition
-      || conditionsPrivateRequest(own.slice(start), t.slice(start), privateRequest.index! + privateRequest[0].length, privateRequest, !!contact)
-      || question || privateShareQualified(spoken, privateRequest)
-      || priorCondition;
-    // spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
-    const refused = refusesPrivateItem(low, contact ? PHOTO_ITEM_REFUSAL : CONTACT_ITEM_REFUSAL)
-      || retractsPrivateRequest(own.slice(start), t.slice(start), privateRequest, [...contacts, ...photos], !!contact)
-      || (!!contact && refusesNumberSwap(low, clauses));
+    const { refused, uncertain, priorCondition } = evaluatePrivateRequest(t, own, start, privateRequest, [...contacts, ...photos], !!contact, {
+      leadingCondition, ordinaryBody, ordinaryText, independentNumber,
+    });
     if (ordinaryText && independentNumber) {
       const body = ordinaryText.body.toLowerCase();
       const numberWithdrawn = !!contact && refused && withdrawsRelaySwap(t);
@@ -1222,12 +1197,88 @@ export function parseRelayRequest(text: string): RelayRequest {
   return { kind: "none" };
 }
 
-/**
- * The item for a member's request, with the consent for THIS item (given at `at`). The plugin action
- * or the platform calls `parseRelayRequest`, then this, then `relayItem`. `contact` is the sender's
- * verified contact from the person record (never parsed from the message); `photoIds` are the photos
- * the member chose. Returns null for "none", a contact share without a contact, or a photo without ids.
- */
+function evaluatePrivateRequest(
+  t: string, own: string, start: number, privateRequest: RegExpMatchArray, all: readonly RegExpMatchArray[], contact: boolean,
+  envelope: { leadingCondition?: boolean; ordinaryBody?: { start: number; end: number }; ordinaryText?: Extract<RelayRequest, { kind: "text" }>; independentNumber?: boolean } = {},
+): { refused: boolean; uncertain: boolean; priorCondition: boolean } {
+  const spoken = own.trim();
+  const privateModal = RELAY_MODAL.exec(spoken);
+  const low = spoken.toLowerCase();
+  const clauses = relayClauses(low);
+  const question = relayIsIndirectQuestion(spoken.endsWith("?"), /^(?:please\s+)?(?:can|could|would)\s+(?:you|u)\b/i.test(spoken),
+    privateModal?.[0].length === privateRequest.index, /^(?:should|would\s+it|could\s+i|is it|do you|can i)\b/i.test(spoken));
+  const priorCondition = priorSentenceConditionsShare(t.slice(start, start + privateRequest.index!), privateRequest, contact);
+  const envelopeCondition = !!envelope.independentNumber && envelope.ordinaryText !== undefined
+    && priorSentenceConditionsShare(envelope.ordinaryText.body + ".", privateRequest, true, true);
+  const uncertain = !!envelope.leadingCondition || HEDGE.test(low) || privateRelayTimingIsUncertain(spoken, envelope.ordinaryBody) || uncertainPrivateTransfer(clauses)
+    || envelopeCondition
+    || conditionsPrivateRequest(own.slice(start), t.slice(start), privateRequest.index! + privateRequest[0].length, privateRequest, contact)
+    || question || privateShareQualified(spoken, privateRequest)
+    || priorCondition;
+  // spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
+  const refused = refusesPrivateItem(low, contact ? PHOTO_ITEM_REFUSAL : CONTACT_ITEM_REFUSAL)
+    || retractsPrivateRequest(own.slice(start), t.slice(start), privateRequest, all, contact)
+    || (contact && refusesNumberSwap(low, clauses));
+  return { refused, uncertain, priorCondition };
+}
+
+function privateRequestPermitted(t: string, own: string, start: number, privateRequest: RegExpMatchArray, all: readonly RegExpMatchArray[], contact: boolean): boolean {
+  const { refused, uncertain } = evaluatePrivateRequest(t, own, start, privateRequest, all, contact);
+  return privateRelayRequestAllowed(refused, uncertain);
+}
+
+const PHOTO_RELAY_INLINE_WITH = /^\s+with\s+(?:(?:my|our)\s+(?!(?:match|date)\b)|(?:the|a|an|this|that|these|those|his|their|its|some|no|me|us)\b)/iu;
+const PHOTO_RELAY_ADDED_DESTINATION = /^[^.!?;\n]*?[\s,](?:and|plus|&)\s+(?:also\s+)?(?:directly\s+|over\s+)?(?:to|with)\b/iu;
+const RELAY_STATED_DESTINATION = /(?:^|[\s,:–—-])(?:directly\s+to|over\s+to|to|with)\b/giu;
+const RELAY_SEND_VERB = /\b(?:send|share|give|pass|forward|text|show)\b/iu;
+const RELAY_AFFIRMATION_LEAD = /^[\s,:!–—-]*(?:(?:yes|yeah|yep|ok|okay|sure|please|go ahead)[\s,:!–—-]*)+$/iu;
+const RELAY_STATED_RECIPIENT = new RegExp(String.raw`^(?<trailingRecipient>${OTHER})`, "iu");
+
+export type RelayStatedDestination = { kind: "unstated" } | { kind: "incomplete" } | { kind: "recipient"; name: string | null };
+
+export function relayStatedDestination(text: string): RelayStatedDestination {
+  const t = text.replace(/[’‘`´]/g, "'").trim();
+  const own = ownRelayWords(t);
+  let found: RelayStatedDestination = { kind: "unstated" };
+  for (const destination of own.matchAll(RELAY_STATED_DESTINATION)) {
+    const lead = own.slice(0, destination.index!).split(RELAY_SENTENCE).at(-1)!;
+    if (!RELAY_SEND_VERB.test(lead) && !RELAY_AFFIRMATION_LEAD.test(lead)) continue;
+    const rest = own.slice(destination.index! + destination[0].length);
+    if (/^with\b/iu.test(destination[0].trim()) && (RELAY_WITH_THANKS.test(" with" + rest) || PHOTO_RELAY_INLINE_WITH.test(" with" + rest))) continue;
+    const gap = /^\s+/u.exec(rest)?.[0].length ?? 0;
+    const recipient = gap > 0 ? RELAY_STATED_RECIPIENT.exec(rest.slice(gap)) : null;
+    if (!recipient) return { kind: "incomplete" };
+    recipient.index = destination.index! + destination[0].length + gap;
+    const name = recipient.groups!.trailingRecipient!;
+    if (!relayRecipientIsComplete(own, recipient, name)) return { kind: "incomplete" };
+    const named = IMPLICIT_RELAY_TARGET.test(name) ? null : name;
+    if (found.kind === "recipient" && (found.name ?? "").toLowerCase() !== (named ?? "").toLowerCase()) return { kind: "incomplete" };
+    found = { kind: "recipient", name: named };
+  }
+  return found;
+}
+
+export function relayPhotoReferenceAllowed(text: string): boolean {
+  const t = text.replace(/[’‘`´]/g, "'").trim();
+  const own = ownRelayWords(t);
+  const spoken = own.trim();
+  const start = own.length - own.trimStart().length;
+  const photos = [...spoken.matchAll(PHOTO_REQ)];
+  const request = photos.find(candidate => !reportsPrivateRequest(spoken, candidate));
+  if (!request) return false;
+  const modal = RELAY_MODAL.exec(t);
+  const envelope = TEXT_REQ.exec(t.slice(modal?.[0].length ?? 0));
+  if (envelope && TEXT_PRIVATE_DIRECTIVE_LEAD.test(t.slice(t.length - envelope[4]!.length, start + request.index!))) return false;
+  const prefix = t.slice(0, start + request.index!);
+  const lead = prefix.split(RELAY_SENTENCE).at(-1)!, comma = lead.lastIndexOf(",");
+  if (comma >= 0 && INCOMPLETE_RELAY_ASIDE.test(lead.slice(0, comma))) return false;
+  if (!directRelayLead(prefix) && RELAY_SPEECH_CUE.test(lead)) return false;
+  const after = t.slice(start + request.index! + request[0].length);
+  if (!PHOTO_RELAY_INLINE_WITH.test(after) && !relayRecipientIsComplete(t.slice(start), request, request.groups?.trailingRecipient)) return false;
+  if (PHOTO_RELAY_ADDED_DESTINATION.test(after)) return false;
+  return privateRequestPermitted(t, own, start, request, photos, false);
+}
+
 export function relayItemFromRequest(req: RelayRequest, o: { id: string; from: MemberId; to: MemberId; at: number; contact?: RelayItem["contact"]; photoIds?: readonly string[] }): RelayItem | null {
   const base = { id: o.id, from: o.from, to: o.to, at: o.at };
   if (req.kind === "text") return { ...base, kind: "text", text: req.body };
@@ -1236,19 +1287,15 @@ export function relayItemFromRequest(req: RelayRequest, o: { id: string; from: M
   return null;
 }
 
-// ------------------------------------------------------------------------------- log helpers
-/** Members who received a delivered item from, or sent one to, `member` (ban notices, PRD 40.5). */
 export function pastContacts(records: readonly RelayRecord[], member: MemberId): MemberId[] {
   const out = new Set<MemberId>();
   for (const r of records) if (r.decision === "pass") { if (r.from === member) out.add(r.to); if (r.to === member) out.add(r.from); }
   return [...out].sort();
 }
 
-/** What the platform stores per item in the thread (the rendered text only for delivered items). */
 export interface RelayThreadMessage {
   opportunityId: string; itemId: string; from: MemberId; to: MemberId; at: number; kind: RelayKind;
   decision: RelayDecision;
-  /** The delivered wording (pass only). Held items keep the original text in the review queue, never here. */
   rendered: string | null;
   photoIds: string[];
   reasons: string[];

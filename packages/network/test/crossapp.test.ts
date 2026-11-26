@@ -23,6 +23,7 @@ import { BlooioAdapter, DryRunAdapter } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
 import { Mini, START } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 const T = 600_000;
 const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
@@ -34,6 +35,7 @@ async function admin(q: string) { const sql = new SQL({ url: ADMIN_URL, max: 1 }
 const FR: AppId = "friends";
 const APPS_RUN: AppId[] = ["ntwrk", FR];
 const SECRET = "whsec_crossapp";
+const FRIENDS_SAFETY_TOKEN = "synthetic-crossapp-friends-safety";
 const CANARY: Record<string, string> = { ntwrk: "zqntwrkcanary", [FR]: "zqfriendscanary" };
 const CLIMB = "find a regular climbing partner";
 const SAIL = "find a regular sailing partner";
@@ -104,6 +106,18 @@ async function closeAll() {
 const staff = (svc: NetworkService, method: string, path: string, body?: unknown) =>
   svc.fetch(new Request(`http://127.0.0.1${path}`, { method, headers: { authorization: "Bearer adm-tok", "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) }));
 
+async function verifyFriends(svc: NetworkService, ...memberIds: string[]) {
+  for (const memberId of memberIds) {
+    for (const check of ["age", "liveness"]) {
+      const response = await svc.fetch(new Request(`http://127.0.0.1/apps/${FR}/members/${encodeURIComponent(memberId)}/verify`, {
+        method: "POST", headers: { authorization: `Bearer ${FRIENDS_SAFETY_TOKEN}`, "content-type": "application/json" },
+        body: JSON.stringify({ check, result: "pass", note: "Cross-app Friends fixture" }),
+      }));
+      expect(await response.json()).toEqual({ ok: true });
+    }
+  }
+}
+
 /** One run: onboarding on both apps, optionally Ana blocks Ben on The Network, Ana asks for a climbing partner on the friends app, the engine runs, every item is approved. */
 async function run(block: boolean) {
   // Close the previous run's service first: its pool (8 connections, a session advisory lock per sender
@@ -112,12 +126,14 @@ async function run(block: boolean) {
   await applySchema(URL_, { reset: true, lockTimeout: "5s" });
   const clock = new SimClock(START);
   const svc = new NetworkService({
-    url: URL_, clock, instance: "crossapp", log: () => {}, env: { PLATFORM_ENV: "dev" }, tokens: "admin:adm-tok", network: { seed: 1 },
+    url: URL_, clock, instance: "crossapp", log: () => {}, env: { PLATFORM_ENV: "dev" },
+    tokens: `admin:adm-tok,safety@friends:${FRIENDS_SAFETY_TOKEN}`, network: { seed: 1 },
     networks: APPS_RUN.map(a => ({ id: `${a}:nyc` })), webhookSecrets: Object.fromEntries(APPS_RUN.map(a => [a, SECRET])),
   });
   open.push(svc);
   await svc.start();
   const ids = await seed(svc);
+  await verifyFriends(svc, ids.a![FR]!, ids.b![FR]!);
   for (const app of APPS_RUN) expect((await staff(svc, "POST", `/apps/${app}/matching`, { on: true })).status).toBe(200);
   for (const app of APPS_RUN) for (const p of PEOPLE.filter(x => x.apps.includes(app))) for (const t of ONBOARD) await say(svc, clock, app, p.key, t);
   if (block) expect(await say(svc, clock, "ntwrk", "a", "block Ben Ito")).toBe("handled");
@@ -198,13 +214,14 @@ describe.skipIf(!pgAvailable)("cross_app_leak: two apps, shared people (Postgres
     await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
     const sends: SendRequest[] = [];
-    const friends = new BlooioAdapter({ app: FR, from: "+12125550099", clock, liveGate: () => true, log: () => {}, provider: {
+    const friends = new BlooioAdapter({ app: FR, from: "+12125550099", clock, log: () => {}, provider: {
       kind: "sim", send: async request => {
         sends.push(request);
         return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent" };
       },
     } });
     const svc = new NetworkService({ url: URL_, clock, instance: "crossapp-pending", log: () => {}, env: { PLATFORM_ENV: "dev" },
+      tokens: `safety@friends:${FRIENDS_SAFETY_TOKEN}`,
       adapter: rt => rt.app.id === FR ? friends : new DryRunAdapter(() => {}),
       networks: APPS_RUN.map(app => ({ id: `${app}:nyc`, matchingEnabled: false })), webhookSecrets: { ntwrk: SECRET },
     });
@@ -214,15 +231,18 @@ describe.skipIf(!pgAvailable)("cross_app_leak: two apps, shared people (Postgres
       const ids = await seed(svc);
       for (const who of ["a", "b"]) for (const text of ONBOARD) await say(svc, clock, "ntwrk", who, text);
       const w = new Mini(PEOPLE.filter(p => p.apps.includes(FR)).map(p => ({ id: ids[p.key]![FR]!, name: p.name,
-        age: 30, area: "Greenpoint", interests: p.interests[FR] })), { app: FR, review: "human", plans: false, growth: false });
+        age: 30, area: "Greenpoint", interests: p.interests[FR] })), { app: FR, inlineJudge: holdEveryItem.inline, plans: false, growth: false });
       const affected = [ids.b![FR]!, ids.a![FR]!];
       const unaffected = [ids.c![FR]!, ids.e![FR]!];
+      await verifyFriends(svc, ...affected, ...unaffected);
+      w.verify(...affected, ...unaffected);
       await w.onboard(...affected, ...unaffected);
       const blockedMatch = w.propose(affected, { category: "hobby" });
       const activeMatch = w.propose(unaffected, { alternates: affected, category: "hobby" });
       for (const opp of [blockedMatch, activeMatch]) {
         expect(await w.runUntil(() => w.net.reviewQueue().some(item => item.oppId === opp), 2 * DAY)).toBe(true);
-        expect(w.net.review(opp, "approve", { reviewer: "sim_staff" })).toBe(true);
+        const { revision } = w.net.reviewQueue().find(item => item.oppId === opp)!;
+        expect(w.net.review(opp, "approve", { reviewer: "sim_staff", revision })).toBe(true);
       }
       const rt = svc.runtimeFor(FR)!;
       await friends.queue.setLineSafety("review");

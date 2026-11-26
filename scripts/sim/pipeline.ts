@@ -1,24 +1,8 @@
 import { setTimeout as waitForMs } from "node:timers/promises";
-// The pipeline block: the real message path end to end (mvp-plan "Still missing in sim"; critical path
-// 3 and 9). A signed Blooio webhook goes into NetworkService.fetch, the service runs the four networks
-// (ntwrk, slop, peon, friends) on a throwaway Postgres database on the dev cluster (:54339), every send
-// goes into the persisted queue (platform.outbound) in the unit's transaction, and the Blooio adapter
-// delivers it to a fake provider that records every request (harness.ts). The clock is simulated.
-// Scripted members join by keyword, onboard, ask for a climbing partner, are reviewed by a person
-// through the staff API, probed and booked. Around that: duplicate webhooks, two messages of one
-// sender handled in order, a provider outage with retries, STOP in the middle of a probe, a crash during
-// a provider call and a restart (a second service instance), quiet hours across the restart, the
-// unanswered streak, line safety, "leave <app>", STOP on the shared line, and the one STOP/HELP
-// owner. No model is called; nothing leaves the machine.
-//
-// Without Postgres the block records one tracked gate saying it was skipped (CI fails on that skip).
-// Blocking gates: 0 lost or duplicated outbound messages; 0 sends after STOP; 0 sends to minors about
-// other members (and nothing stored for an under-13); every outbound row ends delivered or failed;
-// keyword routing; restart, crash, outage, dedupe, ordering, Apple line safety and the STOP/HELP owner.
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { DAY, HOUR, MINUTE, SimClock } from "../../packages/core/src/index.ts";
 import { NOT_SENT, OutboundQueue, recipientWindowHasher, WAITING } from "../../packages/blooio/src/outbound-queue.ts";
-import { BlooioAdapter, liveSendAllowed } from "../../packages/network/service/channel.ts";
+import { configuredChannel } from "../../packages/network/service/line-staff-boot.ts";
 import type { NetworkService } from "../../packages/network/service/service.ts";
 import { Block, expect } from "./gate.ts";
 import * as H from "./pipeline/harness.ts";
@@ -37,13 +21,13 @@ interface World {
 }
 
 export async function pipelineBlock(b: Block): Promise<void> {
-  await b.run("pipeline: dry run stays the default: no live flag in this process, a real provider never gets a bypass of the flags", () => {
-    const clock = new SimClock(H.START);
-    const real = { kind: "blooio" as const, send: async () => { throw new Error("must not be called"); } };
-    expect(liveSendAllowed(process.env, "slop")).toBe(false);
-    expect(new BlooioAdapter({ provider: real, clock, from: H.LINE, app: "slop" }).live).toBe(false);
-    expect(() => new BlooioAdapter({ provider: real, clock, from: H.LINE, app: "slop", liveGate: () => true })).toThrow();
-    expect(new BlooioAdapter({ provider: new H.FakeBlooio(clock), clock, from: H.LINE, app: "slop" }).live).toBe(false);
+  await b.run("pipeline: dry run stays the default: without NETWORK_CHANNEL every send is a dry run, and a channel without its credentials does not start", () => {
+    const line = { BLOOIO_API_KEY: "synthetic-key", BLOOIO_FROM: H.LINE };
+    expect(configuredChannel({}, [])).toBe("dry-run");
+    expect(configuredChannel(line, [])).toBe("dry-run");
+    expect(configuredChannel({ ...line, NETWORK_CHANNEL: "blooio" }, ["--dry-run"])).toBe("dry-run");
+    expect(() => configuredChannel({ NETWORK_CHANNEL: "blooio", BLOOIO_FROM: H.LINE }, [])).toThrow();
+    expect(configuredChannel({ ...line, NETWORK_CHANNEL: "blooio" }, [])).toBe("blooio");
   });
   if (!H.pgInstalled()) {
     b.track("pipeline: skipped, no Postgres installed (the dev cluster on :54339 is needed)", false, "install postgresql@16 and run pnpm run sim --only pipeline");
@@ -148,8 +132,19 @@ async function script(w: World) {
 
   debug("4");
   // ---- 4. A request, a person reviews it through the staff API, the probe, the yes, the booked plan.
+  for (const phone of [P.ana, P.ben, P.cy, P.ivy, P.jo]) {
+    const memberId = await memberOf(w, "friends", phone);
+    if (!memberId) throw new Error(`No Friends member for ${phone}`);
+    for (const check of ["age", "liveness"] as const) {
+      const verification = await H.staff(w.svc, H.SAFETY, "POST", `/apps/friends/members/${memberId}/verify`, {
+        check, result: "pass", note: "pipeline fixture verification",
+      });
+      expect(await verification.json()).toEqual({ ok: true });
+    }
+  }
   w.notes.matching = (await H.staff(w.svc, H.ADMIN, "POST", "/apps/friends/matching", { on: true })).status;
   await say(w, P.ana, "Anyone around who'd want to find a regular climbing partner? I'm near Greenpoint.");
+  await w.svc.reviewJudgeTick();
   const queue = await (await H.staff(w.svc, H.REVIEWER, "GET", "/apps/friends/review")).json();
   const item = queue.items?.[0];
   w.notes.reviewItem = !!item;

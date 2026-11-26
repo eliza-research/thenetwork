@@ -1,13 +1,14 @@
 import { expect, test } from "vitest";
 import { DAY, HOUR } from "@thenetwork/core";
 import type { plans } from "@thenetwork/engine";
+import { holdEveryItem } from "../../../packages/engine/src/reviewJudge.ts";
 import { Mini } from "../../../packages/network/test/mini.ts";
 import { Projector } from "../src/projector.ts";
 import { emptyCounters, Store } from "../src/store.ts";
 
 test("a booked plan's late joiner shows in the opportunity detail roster", async () => {
   const invited = ["a", "b", "c", "d"];
-  const world = new Mini(invited.map(id => ({ id, name: id, age: 30, area: "Inwood", interests: ["hiking"] })), { review: "human" });
+  const world = new Mini(invited.map(id => ({ id, name: id, age: 30, area: "Inwood", interests: ["hiking"] })), { inlineJudge: holdEveryItem.inline });
   await world.onboard(...invited);
   const now = world.clock.now();
   const startsAt = Date.UTC(2026, 9, 10, 14);
@@ -22,6 +23,7 @@ test("a booked plan's late joiner shows in the opportunity detail roster", async
   for (const member of snapshot.members) member.stated = { windows: [window], at: now, until: now + 7 * DAY };
   world.net.importState(snapshot);
   (world.net as unknown as { submitPlan(plan: plans.Plan, at: number): void }).submitPlan(plan, now);
+  await world.net.tick(now);
   const { oppId } = world.net.reviewQueue()[0]!;
   expect(world.net.review(oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
   expect(await world.runUntil(() => invited.every(id => world.probed(id)), DAY)).toBe(true);

@@ -6,12 +6,13 @@ import { describe, expect, test } from "vitest";
 import { copy } from "../src/copy.ts";
 import { relayDispatchCheck } from "../src/index.ts";
 import { Mini } from "./mini.ts";
+import { simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";
 
 const climber = (id: string, name: string) => ({ id, name, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"], skills: ["belaying"], wants: [{ objective: "find a regular climbing partner", category: "hobby" as const }] });
 
 describe("an urgent report before a booked date", () => {
   test("cancels the date neutrally for the subject, then holds them", async () => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { inlineJudge: simulatedReviewJudge({ exceptions: false }) });
     await w.onboard("a", "b", "c");
     w.propose(["a", "b"]);
     await w.answerProbes(["a", "b"]);

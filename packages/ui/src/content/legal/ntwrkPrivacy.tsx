@@ -64,7 +64,7 @@ export const ntwrkPrivacy: LegalText = {
     },
     {
       heading: "Members under 18",
-      body: <p>The Network is not for children under 13. Members aged 13 to 17 can use The Network for their own help and recommendations: answers, public events and plans for themselves. They are never matched on dates or for work. Today, no member under 18 is introduced to anyone. If introductions ever open to members under 18, they will be friendship introductions only, with people within 2 years of their own age. We ask for your birth date or your age at signup to apply these rules.</p>,
+      body: <p>The Network is not for children under 13. Members aged 13 to 17 can use The Network for their own help and recommendations: answers, public events and plans for themselves. They are never matched on dates or for work. On The Network, members aged 13 to 17 receive friendship introductions only, to people aged 13 to 18 born at most 2 years apart, after an automatic check approves each one. We ask for your birth date or your age at signup to apply these rules.</p>,
     },
     {
       heading: "Security",

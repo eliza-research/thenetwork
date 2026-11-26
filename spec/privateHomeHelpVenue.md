@@ -71,3 +71,55 @@ pure def lawHomeHelpVenueRevocationRequiresCurrentOwner(owner: bool, currentRevi
   not(mayRevokeHomeHelpVenue(false, currentRevision, now, expiresAt))
   and not(mayRevokeHomeHelpVenue(owner, false, now, expiresAt))
 ```
+
+### The conversation points each participant to the private page
+
+A participant sends `HOME HELP ADDRESS <plan ID> <revision>` in their own
+signed conversation. The reply never contains the address. It gives the
+requester the private page link when the requester may store the address, and
+says whether an address is already saved. It gives a helper the private page
+link only when a saved address exists and the helper may read it. Every other
+case, including a person outside the roster, a missing yes, a changed roster,
+a revoked address and expiry, gets the same closed answer. The reply to a
+recorded yes names this command. The requester learns only that the whole
+roster agreed, which the private page needs, and never who answered or how.
+Changed (audit CRI12): no message told a participant that the address step
+existed -> the reply to a recorded yes names the command, because an approved plan could not reach the
+private page.
+The private page reads the same step for the signed-in participant through a
+status action of the site call. An open step answers with the person's role,
+requester or helper, and whether an address is saved, and never with the
+address, the other people or the reason. A closed step gets the closed answer
+of the other actions. A revocation marker for the plan also closes the
+requester's step, because a submit then stores nothing. Changed (owner
+decision 2026-11-22, D7): the page could not know the role or a saved address
+before it acted -> a status action tells it, and a revocation closes the step,
+because the reply still asked the requester to add an address that the page
+then refused.
+
+```quint
+type HomeHelpAddressStep = AddressStepClosed | RequesterAddsAddress | RequesterAddressSaved | HelperReadsAddress
+
+pure val addressRevokedValues = Set(true, false)
+
+pure def homeHelpAddressStep(requester: bool, helper: bool, unanimousCurrentConsent: bool, addressStored: bool, addressRevoked: bool, now: int, expiresAt: int): HomeHelpAddressStep =
+  if (requester and mayStoreHomeHelpVenue(true, unanimousCurrentConsent, now, expiresAt))
+    (if (addressStored) RequesterAddressSaved else if (addressRevoked) AddressStepClosed else RequesterAddsAddress)
+  else if (helper and addressStored and mayReadHomeHelpVenue(true, unanimousCurrentConsent, now, expiresAt)) HelperReadsAddress
+  else AddressStepClosed
+
+pure def lawHomeHelpAddressStepNeedsConsent(requester: bool, helper: bool, addressStored: bool, addressRevoked: bool, now: int, expiresAt: int): bool =
+  homeHelpAddressStep(requester, helper, false, addressStored, addressRevoked, now, expiresAt) == AddressStepClosed
+
+pure def lawHomeHelpAddressStepNeedsParticipant(unanimousCurrentConsent: bool, addressStored: bool, addressRevoked: bool, now: int, expiresAt: int): bool =
+  homeHelpAddressStep(false, false, unanimousCurrentConsent, addressStored, addressRevoked, now, expiresAt) == AddressStepClosed
+
+pure def lawHelperWaitsForStoredAddress(unanimousCurrentConsent: bool, addressRevoked: bool, now: int, expiresAt: int): bool =
+  homeHelpAddressStep(false, true, unanimousCurrentConsent, false, addressRevoked, now, expiresAt) == AddressStepClosed
+
+pure def lawRevokedAddressClosesTheRequesterStep(helper: bool, unanimousCurrentConsent: bool, now: int, expiresAt: int): bool =
+  homeHelpAddressStep(true, helper, unanimousCurrentConsent, false, true, now, expiresAt) == AddressStepClosed
+
+pure def lawExpiredHomeHelpAddressStepIsClosed(requester: bool, helper: bool, unanimousCurrentConsent: bool, addressStored: bool, addressRevoked: bool, expiresAt: int): bool =
+  homeHelpAddressStep(requester, helper, unanimousCurrentConsent, addressStored, addressRevoked, expiresAt, expiresAt) == AddressStepClosed
+```

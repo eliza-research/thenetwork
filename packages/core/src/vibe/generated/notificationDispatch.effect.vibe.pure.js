@@ -7,13 +7,15 @@ export function inv(current) { return M.inv(current); }
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export function inboxItemAllowedForRecipient(requested, proactiveAllowed) { return M.inboxItemAllowedForRecipient(requested, proactiveAllowed); }
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
+export function rereadCountsPossible(plannedCount, remainingCount) { return M.rereadCountsPossible(plannedCount, remainingCount); }
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export function inboxItemStillPending(seen, notified) { return M.inboxItemStillPending(seen, notified); }
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export function inboxItemExpired(hasExpiry, expiresAt, at) { return M.inboxItemExpired(hasExpiry, expiresAt, at); }
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export function inboxItemDigestible(seen, notified, hasExpiry, expiresAt, at) { return M.inboxItemDigestible(seen, notified, hasExpiry, expiresAt, at); }
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
-export function canRereadItems(digest) { return M.canRereadItems(digest); }
+export function canRereadItems(digest, plannedCount, remainingCount) { return M.canRereadItems(digest, plannedCount, remainingCount); }
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export function rereadItems(digest, plannedCount, remainingCount, recipientAvailable, destinationChanged) { return M.rereadItems(digest, plannedCount, remainingCount, recipientAvailable, destinationChanged); }
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
@@ -22,6 +24,10 @@ export function lawExpiredItemLeavesTheDigest(seen, notified, expiresAt, at) { r
 export function lawMissingRecipientCancels(plannedCount, remainingCount, destinationChanged) { return M.lawMissingRecipientCancels(plannedCount, remainingCount, destinationChanged); }
 /** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) @throws {never} */
 export function digestItemSetCanBeRecorded(itemCount, pendingOwnedCount) { return M.digestItemSetCanBeRecorded(itemCount, pendingOwnedCount); }
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) @throws {never} */
+export function digestWithinWeeklyCap(countsTowardCap, countedSends, weeklyCap) { return M.digestWithinWeeklyCap(countsTowardCap, countedSends, weeklyCap); }
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) @throws {never} */
+export function lawRecordedCountingDigestStaysUnderCap(countedSends, weeklyCap) { return M.lawRecordedCountingDigestStaysUnderCap(countedSends, weeklyCap); }
 /** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) @throws {never} */
 export function canRecordDigest(digest) { return M.canRecordDigest(digest); }
 /** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) @throws {never} */

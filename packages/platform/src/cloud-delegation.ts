@@ -3,9 +3,8 @@ import { NETWORK_LOGIN_PATH, networkTarget, parseNetworkDelegation, type Network
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { readCapped } from "./body.ts";
 
-export function productionCloudDelegation(o: { secret: string; now: () => number; skewMs?: number; realm?: NetworkLoginRealm; fetch?: typeof fetch }) {
+export function productionCloudDelegation(o: { secret: string; now: () => number; realm?: NetworkLoginRealm; fetch?: typeof fetch }) {
   if (o.secret.length < 32) throw new Error("Cloud delegation requires the existing service authority");
-  const skewMs = o.skewMs ?? 0;
   async function post(app: NetworkLoginApp, action: "exchange" | "validate", fields: Record<string, unknown>) {
     const target=networkTarget(app,o.realm??"canonical"),path=`${NETWORK_LOGIN_PATH}/${action}`,body=JSON.stringify({target,...fields});
     const response=await(o.fetch??fetch)(new Request(`https://api.eliza.app${path}`,{method:"POST",body,redirect:"error",cache:"no-store",signal:AbortSignal.timeout(5000),
@@ -19,18 +18,18 @@ export function productionCloudDelegation(o: { secret: string; now: () => number
     async exchange(app:NetworkLoginApp,code:string,codeVerifier:string):Promise<(NetworkDelegation&{proof:string})|undefined>{
       const {response,value}=await post(app,"exchange",{code,codeVerifier});
       if(!response.ok)return;
-      const identity=parseNetworkDelegation(value?.identity,networkTarget(app,o.realm??"canonical"),o.now(),skewMs);
+      const identity=parseNetworkDelegation(value?.identity,networkTarget(app,o.realm??"canonical"),o.now());
       if(!identity || typeof value.proof!=="string" || !value.proof.startsWith("ensd_") || value.proof.length>12000)return;
       return {...identity,proof:value.proof};
     },
     async validate(app:NetworkLoginApp,stored:Record<string,unknown>):Promise<"valid"|"invalid"|"unavailable">{
       try{
-        const identity=parseNetworkDelegation(stored.identity,networkTarget(app,o.realm??"canonical"),o.now(),skewMs);
+        const identity=parseNetworkDelegation(stored.identity,networkTarget(app,o.realm??"canonical"),o.now());
         if(!identity || typeof stored.proof!=="string")return "invalid";
         const {response,value}=await post(app,"validate",{proof:stored.proof});
         if(response.status===403 && value.ok===false)return "invalid";
         if(!response.ok || value.ok!==true)return "unavailable";
-        const current=parseNetworkDelegation(value.identity,networkTarget(app,o.realm??"canonical"),o.now(),skewMs);
+        const current=parseNetworkDelegation(value.identity,networkTarget(app,o.realm??"canonical"),o.now());
         if(!current)return "unavailable";
         return Object.keys(identity).every(key=>current[key as keyof NetworkDelegation]===identity[key as keyof NetworkDelegation])?"valid":"invalid";
       }catch{return "unavailable";}

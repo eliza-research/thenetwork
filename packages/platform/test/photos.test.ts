@@ -1,11 +1,7 @@
-// Private member photos (photos.ts) on Postgres (integration; founder decision 4 of 2026-10-09):
-// adults only, consented, metadata stripped by an allowlist, no public URL, short signed staff links,
-// the rater refused for anyone not a rateable adult member, a rating discarded when the person stops
-// being one while the rater runs, each rater try a cost row, and every photo deleted on leave, delete
-// everything or a minor age. PgPeopleStore and PgPhotoStore on a database of its own, a temporary
-// folder for the bytes; no network, no R2 (R2PhotoStorage is not exercised here), no Workers AI.
-import { fileAt, writePath } from "../../core/src/runtime/files.ts";
+import { fileAt } from "../../core/src/runtime/files.ts";
+import { serveHttp } from "../../core/src/runtime/http.ts";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { createHash, createHmac } from "node:crypto";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,10 +9,11 @@ import { SQL } from "../../core/src/runtime/postgres.ts";
 import { APPS, type AppId } from "../src/apps.ts";
 import { createPublicApi } from "../src/api.ts";
 import {
-  BadImage, LocalDiskPhotoStorage, PgPhotoStore, PHOTO_CONSENT, PHOTO_MAX_BYTES, PHOTO_MAX_PER_PERSON, PHOTO_VIEW_TTL_MS, PhotoService, sniffType, stripMetadata, withRetry,
-  type PhotoRater, type PhotoRefusal,
+  BadImage, LocalDiskPhotoStorage, PgPhotoStore, PHOTO_CONSENT, R2PhotoStorage, PHOTO_MAX_BYTES, PHOTO_MAX_PER_PERSON, PHOTO_VIEW_TTL_MS, PhotoService, sniffType, stripMetadata, withRetry,
+  type PhotoRater, type PhotoRefusal, type PhotoStorage,
 } from "../src/photos.ts";
-import { PhotoRelayService, PgPhotoRelayStore } from "../src/photo-relay.ts";
+import { PHOTO_SEND_NOTICE, PhotoRelayService, PgPhotoRelayStore } from "../src/photo-relay.ts";
+import { simulatedPhotoScreen } from "../src/photo-screen.ts";
 import { PgPeopleStore } from "../src/pg-store.ts";
 import type { AppearanceScore } from "../../engine/src/packs/slop/appearance.ts";
 import { CostLedger, PgCostSink } from "../../network/service/cost.ts";
@@ -28,6 +25,23 @@ afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true 
 const enc = (s: string) => new TextEncoder().encode(s);
 const cat = (...xs: (Uint8Array | number[])[]) => { const parts = xs.map(x => (x instanceof Uint8Array ? x : Uint8Array.from(x))); const o = new Uint8Array(parts.reduce((n, p) => n + p.length, 0)); let i = 0; for (const p of parts) { o.set(p, i); i += p.length; } return o; };
 const has = (b: Uint8Array, s: string) => Buffer.from(b).includes(Buffer.from(s));
+const sha256Hex = (b: Uint8Array | string) => createHash("sha256").update(b).digest("hex");
+const hmac = (key: Uint8Array | string, text: string) => createHmac("sha256", key).update(text).digest();
+const rfc3986 = (s: string) => encodeURIComponent(s).replace(/[!'()*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+function sigV4Valid(req: Request, body: Uint8Array, accessKeyId: string, secret: string): boolean {
+  const m = /^AWS4-HMAC-SHA256 Credential=([^/]+)\/(\d{8})\/([^/]+)\/([^/]+)\/aws4_request, ?SignedHeaders=([a-z0-9;-]+), ?Signature=([0-9a-f]{64})$/.exec(req.headers.get("authorization") ?? "");
+  if (!m || m[1] !== accessKeyId) return false;
+  const [, , day, region, service, signed, signature] = m;
+  const payload = req.headers.get("x-amz-content-sha256") ?? "";
+  if (payload !== "UNSIGNED-PAYLOAD" && payload !== sha256Hex(body)) return false;
+  const url = new URL(req.url);
+  const query = [...url.searchParams].map(([k, v]) => `${rfc3986(k)}=${rfc3986(v)}`).sort().join("&");
+  const headers = signed.split(";").map(n => `${n}:${(req.headers.get(n) ?? "").trim().replace(/\s+/g, " ")}\n`).join("");
+  const scope = `${day}/${region}/${service}/aws4_request`;
+  const toSign = ["AWS4-HMAC-SHA256", req.headers.get("x-amz-date") ?? "", scope, sha256Hex([req.method, url.pathname, query, headers, signed, payload].join("\n"))].join("\n");
+  const key = [day, region, service, "aws4_request"].reduce<Uint8Array | string>((k, part) => hmac(k, part), `AWS4${secret}`);
+  return createHmac("sha256", key).update(toSign).digest("hex") === signature;
+}
 const seg = (marker: number, payload: Uint8Array) => cat([0xff, marker, (payload.length + 2) >> 8, (payload.length + 2) & 0xff], payload);
 
 // ------------------------------------------------------------------ the corpus
@@ -121,7 +135,11 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
 
   const score: AppearanceScore = { face: 0.7, body: 0.4, overall: 0.6, confidence: 0.5, model: "fake-clef" };
   let n = 0;
-  function setup(o: { rater?: PhotoRater } = {}) {
+  const phoneHashes = new Map<string, string>();
+  const stateAge = async (personId: string, age: number, at: number) => {
+    await people.recordAgeReading(personId, phoneHashes.get(personId)!, { kind: "age", age }, at);
+  };
+  function setup(o: { rater?: PhotoRater; storage?: (inner: PhotoStorage) => PhotoStorage; log?: (s: string) => void; removalFails?: () => boolean } = {}) {
     const dir = mkdtempSync(join(tmpdir(), "photos-test-")); dirs.push(dir);
     const meta = new PgPhotoStore(sql);
     const verified = new Set<string>();
@@ -129,21 +147,27 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     const removed: string[] = [];
     let now = Date.UTC(2026, 9, 9, 15);
     const svc = new PhotoService({
-      people, meta, storage: new LocalDiskPhotoStorage(dir), signingKey: "test-key", now: () => now, rater: o.rater,
+      people, meta, storage: o.storage ? o.storage(new LocalDiskPhotoStorage(dir)) : new LocalDiskPhotoStorage(dir), signingKey: "test-key", now: () => now, rater: o.rater,
       eligible: async (personId, app) => app === "slop" && verified.has(personId),
       banned: personId => people.isBanned("", personId),
       onRating: async (personId, _app, s) => { ratings.push({ personId, score: s }); },
-      onRemoved: async personId => { removed.push(personId); },
+      onRemoved: async personId => {
+        if (o.removalFails?.()) throw new Error("synthetic crash before the rating is cleared");
+        removed.push(personId);
+      },
+      ...(o.log ? { log: o.log } : {}),
     });
     /** A person with a live slop membership (verified unless told otherwise). */
     const person = async (age: number | null, verify = true) => {
       const k = n++;
-      const p = await people.createPerson({ id: crypto.randomUUID(), e164: `+1212555${String(1000 + k).padStart(4, "0")}`, method: "otp_sms", at: now, lowestAge: age });
+      const phoneHash = `photos-test-${process.pid}-${k}`;
+      const p = await people.createPerson({ id: crypto.randomUUID(), e164: `+1212555${String(1000 + k).padStart(4, "0")}`, method: "otp_sms", at: now, lowestAge: age, phoneHash });
+      phoneHashes.set(p.id, phoneHash);
       await people.putMembership({ app: "slop", personId: p.id, memberId: `slop_photos_${process.pid}_${k}`, state: "active", review: null, firstName: `P${k}`, profile: {}, joinedAt: now, leftAt: null });
       if (verify) verified.add(p.id);
       return p.id;
     };
-    return { svc, meta, dir, verified, ratings, removed, person, files: () => readdirSync(dir), tick: (ms: number) => { now += ms; } };
+    return { svc, meta, dir, verified, ratings, removed, person, files: () => { try { return readdirSync(dir); } catch { return []; } }, tick: (ms: number) => { now += ms; }, at: () => now };
   }
   /** `consent` null: no consent header at all. */
   const up = (svc: PhotoService, id: string, bytes = jpeg(), app: AppId = "slop", consent: string | null = PHOTO_CONSENT.version) => svc.upload(id, app, bytes, consent ?? undefined);
@@ -187,7 +211,7 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     const adult = await t.person(29);
     expect((await up(t.svc, adult)).ok).toBe(true);
     expect(t.ratings).toEqual([{ personId: adult, score }]);
-    await people.noteAge(adult, 16);
+    await stateAge(adult, 16, t.at());
     expect(await t.svc.rate(adult, "slop")).toEqual({ rated: false, refused: "adults_only" });
     const other = await t.person(31);
     expect((await up(t.svc, other)).ok).toBe(true);
@@ -201,13 +225,26 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     expect(plain.ratings).toHaveLength(0);
   }, T);
 
+  test("a selected photo whose bytes are missing ends the rating with no rater call; the rater never scores part of the selection", async () => {
+    let calls = 0;
+    const t = setup({ rater: { id: "fake-clef", rate: async () => { calls++; return score; } } });
+    const id = await t.person(30);
+    expect((await up(t.svc, id)).ok).toBe(true);
+    expect((await up(t.svc, id)).ok).toBe(true);
+    const before = calls;
+    const [first] = await t.meta.list(id, "slop");
+    rmSync(join(t.dir, first!.storageKey));
+    t.ratings.length = 0;
+    expect(await t.svc.rate(id, "slop")).toEqual({ rated: false, refused: "not_found" });
+    expect([calls - before, t.ratings.length]).toEqual([0, 0]);
+  }, T);
+
   test("a rating is discarded when the age drops under 18, a ban lands, the member leaves or a rated photo is deleted while the rater runs", async () => {
-    // The rater runs `during` before it answers: what happens in the world while Workers AI thinks.
     let during: (() => Promise<void>) | undefined;
     let calls = 0;
     const t = setup({ rater: { id: "fake-clef", rate: async () => { calls++; await during?.(); return score; } } });
     const cases: [string, (personId: string) => Promise<void>, PhotoRefusal][] = [
-      ["age", personId => people.noteAge(personId, 16).then(() => {}), "adults_only"],
+      ["age", personId => stateAge(personId, 16, t.at()), "adults_only"],
       ["ban", personId => people.ban({ id: `ban_${personId}`, scope: "person", personId, phoneHash: null, reason: "test", reportId: null, bannedBy: "safety@example.org", at: Date.now() }), "banned"],
       ["leave", personId => people.forgetMembership(personId, "slop", Date.now()), "not_member"],
       ["photo", async personId => { for (const r of await t.meta.list(personId, "slop")) await t.meta.delete(r.id); }, "not_found"],
@@ -231,7 +268,7 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     // onRating is slow: the person states 17 while it writes.
     const svc = new PhotoService({
       people, meta: t.meta, storage: new LocalDiskPhotoStorage(t.dir), signingKey: "k", rater: { id: "fake-clef", rate: async () => score },
-      eligible: async () => true, onRating: async () => { await people.noteAge(id, 17); }, onRemoved: async personId => { t.removed.push(personId); },
+      eligible: async () => true, onRating: async () => { await stateAge(id, 17, t.at()); }, onRemoved: async personId => { t.removed.push(personId); },
     });
     expect((await up(svc, id)).ok).toBe(true);
     expect(t.removed).toContain(id);
@@ -270,6 +307,33 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     expect(await t.svc.staffLinks(kid, "slop", "https://slop.date")).toEqual({ ok: false, reason: "adults_only" });
   }, T);
 
+  test("an open person minor signal refuses upload, rating, relay, staff links and views for an adult and keeps the stored photos; a removed signal lets them work again", async () => {
+    let calls = 0;
+    const t = setup({ rater: { id: "fake-clef", rate: async () => { calls++; return score; } } });
+    const adult = await t.person(30);
+    const first = await up(t.svc, adult);
+    if (!first.ok) throw new Error(JSON.stringify(first));
+    const links = await t.svc.staffLinks(adult, "slop", "https://slop.date");
+    if (!links.ok) throw new Error(JSON.stringify(links));
+    const u = new URL(links.value[0]!.url);
+    const view = () => t.svc.view(u.pathname.split("/").pop()!, Number(u.searchParams.get("exp")), u.searchParams.get("sig")!);
+    const before = calls;
+    await sql`insert into platform.person_minor_signals (person_id, at) values (${adult}::uuid, ${new Date(t.at())})`;
+    expect(await up(t.svc, adult)).toEqual({ ok: false, reason: "adults_only" });
+    expect(await t.svc.rate(adult, "slop")).toEqual({ rated: false, refused: "adults_only" });
+    expect(await t.svc.staffLinks(adult, "slop", "https://slop.date")).toEqual({ ok: false, reason: "adults_only" });
+    expect(await t.svc.relayPhoto(adult, "slop", first.value.id)).toBeUndefined();
+    expect(await view()).toBeUndefined();
+    expect(calls).toBe(before);
+    expect(await t.svc.holdAllowed(adult, "slop")).toBe(true);
+    expect(await rowsOf(adult)).toBe(1);
+    await sql`delete from platform.person_minor_signals where person_id = ${adult}::uuid`;
+    expect((await up(t.svc, adult)).ok).toBe(true);
+    expect((await t.svc.staffLinks(adult, "slop", "https://slop.date")).ok).toBe(true);
+    expect((await t.svc.relayPhoto(adult, "slop", first.value.id))?.id).toBe(first.value.id);
+    expect((await view())?.contentType).toBe("image/jpeg");
+  }, T);
+
   test("deleteFor removes the bytes and the rows (leave, delete everything, a minor age)", async () => {
     const t = setup();
     const adult = await t.person(27);
@@ -279,6 +343,102 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     expect(t.files()).toHaveLength(0);
     expect(await t.svc.list(adult, "slop")).toEqual([]);
     expect(await rowsOf(adult)).toBe(0);
+  }, T);
+
+  test("an upload in flight while an erasure, a leave or an age drop runs keeps no photo, also for a minor", async () => {
+    let entered!: () => void, release!: () => void;
+    let gate = { entered: new Promise<void>(r => { entered = r; }), released: new Promise<void>(r => { release = r; }) };
+    const t = setup({ storage: inner => ({ ...inner, kind: inner.kind, get: k => inner.get(k), delete: k => inner.delete(k),
+      put: async (k, b, type) => { entered(); await gate.released; await inner.put(k, b, type); } }) });
+    const erasures: [string, (id: string) => Promise<unknown>][] = [
+      ["delete everything", id => t.svc.deleteFor(id)],
+      ["leave", async id => { await t.svc.deleteFor(id, "slop"); await people.forgetMembership(id, "slop", Date.UTC(2026, 9, 9, 16)); }],
+      ["age drop", async id => { await stateAge(id, 16, t.at()); await t.svc.deleteFor(id); }],
+    ];
+    for (const [label, erase] of erasures) {
+      gate = { entered: new Promise<void>(r => { entered = r; }), released: new Promise<void>(r => { release = r; }) };
+      const id = await t.person(29);
+      const upload = up(t.svc, id);
+      await gate.entered;
+      await erase(id);
+      release();
+      expect([label, (await upload).ok]).toEqual([label, false]);
+      expect([label, await rowsOf(id)]).toEqual([label, 0]);
+    }
+    expect(t.files()).toHaveLength(0);
+  }, T);
+
+  test("parallel uploads never pass the per-person maximum", async () => {
+    let release!: () => void, entered!: () => void;
+    const released = new Promise<void>(r => { release = r; });
+    const inPut = new Promise<void>(r => { entered = r; });
+    let holding = true;
+    const t = setup({ storage: inner => ({ ...inner, kind: inner.kind, get: k => inner.get(k), delete: k => inner.delete(k),
+      put: async (k, b, type) => { if (holding) { entered(); await released; } await inner.put(k, b, type); } }) });
+    const id = await t.person(31);
+    holding = false;
+    for (let i = 0; i < PHOTO_MAX_PER_PERSON - 1; i++) expect((await up(t.svc, id)).ok).toBe(true);
+    holding = true;
+    const racing = [up(t.svc, id), up(t.svc, id), up(t.svc, id), up(t.svc, id)];
+    await inPut;
+    let settled = 0;
+    await new Promise<void>(resolve => { for (const r of racing) void r.then(() => { if (++settled === racing.length - 1) resolve(); }); });
+    release();
+    const results = await Promise.all(racing);
+    expect(results.filter(r => r.ok)).toHaveLength(1);
+    expect(results.filter(r => !r.ok).map(r => (r as { reason: PhotoRefusal }).reason)).toEqual(["too_many", "too_many", "too_many"]);
+    expect(await rowsOf(id)).toBe(PHOTO_MAX_PER_PERSON);
+    expect(t.files()).toHaveLength(PHOTO_MAX_PER_PERSON);
+  }, T);
+
+  test("a crash in the middle of an upload or a removal leaves nothing behind once the retention tick has run", async () => {
+    let failPut = false, failRemoved = false;
+    const t = setup({ storage: inner => ({ ...inner, kind: inner.kind, get: k => inner.get(k), delete: k => inner.delete(k),
+      put: async (k, b, type) => { await inner.put(k, b, type); if (failPut) throw new Error("synthetic crash after the bytes"); } }), removalFails: () => failRemoved });
+    const id = await t.person(33);
+    failPut = true;
+    await expect(up(t.svc, id)).rejects.toThrow("synthetic crash after the bytes");
+    failPut = false;
+    expect(t.files()).toHaveLength(1);
+    expect(await t.svc.list(id, "slop")).toEqual([]);
+    const kept = await up(t.svc, id);
+    if (!kept.ok) throw new Error(kept.reason);
+    const gone = await up(t.svc, id);
+    if (!gone.ok) throw new Error(gone.reason);
+    failRemoved = true;
+    await expect(t.svc.remove(id, "slop", gone.value.id)).rejects.toThrow("synthetic crash before the rating is cleared");
+    failRemoved = false;
+    expect((await t.svc.list(id, "slop")).map(p => p.id)).toEqual([kept.value.id]);
+    const removedOf = () => t.removed.filter(p => p === id).length, removedBefore = removedOf();
+    await t.svc.sweep();
+    expect(t.files()).toHaveLength(3);
+    t.tick(15 * 60_000);
+    await t.svc.sweep();
+    expect(t.files()).toHaveLength(1);
+    expect(await rowsOf(id)).toBe(1);
+    expect(removedOf()).toBe(removedBefore + 1);
+    expect((await t.svc.list(id, "slop")).map(p => p.id)).toEqual([kept.value.id]);
+  }, T);
+
+  test("one unfinished photo that fails every tick does not stop the sweep of the others", async () => {
+    let crash = true;
+    const stuck = new Set<string>();
+    const logs: string[] = [];
+    const t = setup({ log: (l: string) => logs.push(l), storage: inner => ({ ...inner, kind: inner.kind, get: k => inner.get(k),
+      delete: async k => { if (stuck.has(k)) throw new Error("storage refuses this key"); await inner.delete(k); },
+      put: async (k, b, type) => { await inner.put(k, b, type); if (crash) throw new Error("synthetic crash after the bytes"); } }) });
+    const first = await t.person(34), second = await t.person(35);
+    await expect(up(t.svc, first)).rejects.toThrow("synthetic crash after the bytes");
+    t.tick(1000);
+    await expect(up(t.svc, second)).rejects.toThrow("synthetic crash after the bytes");
+    crash = false;
+    const [firstRow] = await sql`select storage_key from platform.photos where person_id = ${first}::uuid`;
+    stuck.add(firstRow.storage_key);
+    t.tick(15 * 60_000);
+    expect((await t.svc.sweep()).failed).toBeGreaterThanOrEqual(1);
+    expect([await rowsOf(first), await rowsOf(second)]).toEqual([1, 0]);
+    expect(t.files()).toHaveLength(1);
+    expect(logs.some(l => l.includes("storage refuses this key"))).toBe(true);
   }, T);
 
   test("photos are off without storage", async () => {
@@ -339,169 +499,99 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     expect((await call("POST", "/api/photos/delete", JSON.stringify({ id: ok.body.id }), jsonH)).status).toBe(200);
     expect(readdirSync(dir)).toHaveLength(0);
   }, T);
-  test("selected photo requires fresh item consent, designated review and one durable action; revocation and deletion defeat delivery", async () => {
+  test("a photo offer needs the sender's own current photos, the receiver's yes and the automatic check; a flagged photo needs a safety reviewer; take-back and deletion end it", async () => {
     const t = setup(), sender = await t.person(29), recipient = await t.person(30), stranger = await t.person(31);
-    const uploaded = await up(t.svc, sender); expect(uploaded.ok).toBe(true); if (!uploaded.ok) throw new Error("upload refused");
-    const store = new PgPhotoRelayStore(sql);
-    let now = Date.UTC(2026, 9, 9, 15), allowed = true, reviewerAllowed = true;
+    const first = await up(t.svc, sender), second = await up(t.svc, sender), foreign = await up(t.svc, stranger);
+    if (!first.ok || !second.ok || !foreign.ok) throw new Error("upload refused");
+    let allowed = true;
     const binding = { senderPersonId: sender, recipientPersonId: recipient, senderMemberId: "member_sender", recipientMemberId: "member_recipient" };
-    const options = { store, photos: t.svc, signingKey: "fixture-only", now: () => now,
-      authorize: async ({ app, threadId, senderPersonId }: { app: AppId; threadId: string; senderPersonId: string }) => allowed && app === "slop" && threadId === "thread_fixture" && senderPersonId === sender ? binding : undefined,
-      threads: async () => [{ id: "thread_fixture", label: "Fixture recipient" }],
-    };
-    const closed = new PhotoRelayService(options);
-    expect(await closed.select("slop", sender, "thread_fixture", uploaded.value.id, "fixture-policy", true, "fixture-closed-request")).toBeUndefined();
-    const enabledOptions = { ...options, policy: { version: "fixture-policy", notice: "Share only this photo with {{recipient}} after a designated safety reviewer checks this selected item. Fixture policy only.", authorizeReviewer: async (id: string) => reviewerAllowed && id === "fixture_safety" } };
-    const relay = new PhotoRelayService(enabledOptions);
-    // Execute the request ledger through the actual restricted service role: SELECT/INSERT only.
+    const flagged = simulatedPhotoScreen(() => ({ kind: "answered", riskPerMille: 400 }));
+    const relay = new PhotoRelayService({
+      store: new PgPhotoRelayStore(sql), photos: t.svc, sql, signingKey: "fixture-only", hashKey: "fixture-hash-key", now: () => t.at(), screen: flagged,
+      origin: app => `https://${APPS[app].domain}`,
+      authorize: async ({ app, threadId, senderPersonId }) => allowed && app === "slop" && threadId === "thread_fixture" && senderPersonId === sender ? binding : undefined,
+      threads: async () => [{ id: "thread_fixture", label: "Robin Fixture" }],
+    });
+    const safety = { id: "staff_safety", roles: ["safety"] }, admin = { id: "staff_admin", roles: ["admin", "reviewer"] };
+    const draftFor = (proposedIds: string[]) => sql.begin(tx => relay.saveDraft(tx, {
+      personId: sender, app: "slop", purpose: "send", threadId: "thread_fixture", recipientMemberId: "member_recipient",
+      shownIds: [first.value.id, second.value.id], proposedIds, wantsSet: proposedIds.length > 1, listed: false, prompt: { via: "send" },
+    }));
+    expect((await relay.slots(sender, "slop")).map(s => [s.n, s.id, s.sharedWith])).toEqual([[1, first.value.id, []], [2, second.value.id, []]]);
+    await expect(draftFor([foreign.value.id])).rejects.toThrow("photo draft names a photo the member does not own");
+    const draft = await draftFor([first.value.id]);
+    expect(draft.link).toMatch(/^https:\/\/slop\.date\/photos\/check#[A-Za-z0-9_-]{43}$/);
+    expect(draft.promptKey).toBe(`photo-draft:${draft.draftId}:1`);
+    expect(await relay.prepareOffer(sender, "slop", draft.draftId, draft.revision + 1, t.at())).toBeUndefined();
+    allowed = false;
+    expect((await relay.prepareOffer(sender, "slop", draft.draftId, draft.revision, t.at()))?.admission).toBe("OfferUnavailable");
+    allowed = true;
+    const prepared = await relay.prepareOffer(sender, "slop", draft.draftId, draft.revision, t.at());
+    expect(prepared).toMatchObject({ admission: "OfferAsk", firstAsk: true, count: 1, recipientMemberId: "member_recipient" });
+    const committed = await sql.begin(tx => prepared!.commit(tx));
+    expect(committed).toMatchObject({ admission: "OfferAsk", phase: "asking", replayed: false });
+    expect(await sql.begin(tx => prepared!.commit(tx))).toMatchObject({ offerId: committed.offerId, replayed: true });
+    expect(Number((await sql`select count(*)::int as n from platform.photo_offers where sender_person_id = ${sender}::uuid`)[0].n)).toBe(1);
+    expect(await relay.held("slop")).toEqual([]);
+    expect((await relay.slots(sender, "slop")).map(s => s.sharedWith)).toEqual([["member_recipient"], []]);
+    expect((await relay.asksFor(recipient, "slop")).map(a => [a.offerId, a.count])).toEqual([[committed.offerId, 1]]);
+    expect(await relay.asksFor(stranger, "slop")).toEqual([]);
+    const waiting = await draftFor([second.value.id]);
+    expect((await relay.prepareOffer(sender, "slop", waiting.draftId, waiting.revision, t.at()))?.admission).toBe("OfferWaitForAnswer");
+    expect(await sql.begin(tx => relay.answer(tx, committed.offerId!, stranger, "yes"))).toEqual({ outcome: "not_open" });
+
     const restricted = new SQL({ url, max: 1 });
     try {
       await restricted`set role platform_service`;
       expect((await restricted`select has_table_privilege(current_user,'platform.photo_relay_requests','UPDATE') as can_update`)[0].can_update).toBe(false);
-      const restrictedRelay = new PhotoRelayService({ ...enabledOptions, store: new PgPhotoRelayStore(restricted) });
-      const restrictedItem = await restrictedRelay.select("slop", sender, "thread_fixture", uploaded.value.id, "fixture-policy", true, "fixture-restricted-role");
-      expect(restrictedItem).toBeDefined();
-      expect(await restrictedRelay.select("slop", sender, "thread_fixture", uploaded.value.id, "fixture-policy", true, "fixture-restricted-role")).toEqual(restrictedItem);
-      if (restrictedItem) await restrictedRelay.revoke("slop", sender, restrictedItem.itemId);
+      const restrictedRelay = new PhotoRelayService({ store: new PgPhotoRelayStore(restricted), photos: t.svc, sql: restricted, signingKey: "fixture-only", hashKey: "fixture-hash-key", now: () => t.at(), screen: flagged,
+        origin: app => `https://${APPS[app].domain}`, authorize: async () => binding, threads: async () => [{ id: "thread_fixture", label: "Robin" }] });
+      const taken = await restricted.begin(tx => restrictedRelay.answer(tx, committed.offerId!, recipient, "yes"));
+      expect(taken.outcome).toBe("taken");
+      expect(taken.offer?.phase).toBe("reviewing");
     } finally { await restricted.close(); }
+    expect(await sql.begin(tx => relay.answer(tx, committed.offerId!, recipient, "yes"))).toEqual({ outcome: "not_open" });
+    expect(await relay.held("slop")).toEqual([]);
+    const [screening] = await relay.screensDue("slop", committed.offerId);
+    expect(await relay.item(screening!.itemId)).toMatchObject({ state: "screening", screenAttempts: 0 });
+    expect(await relay.reviewBytes(screening!.itemId, safety)).toBeUndefined();
+    expect(await relay.review(screening!.itemId, safety, "safe")).toBe(false);
+    expect(await relay.screen(screening!.itemId)).toBe("HoldForStaff");
+    const held = await relay.held("slop");
+    expect(held.map(h => [h.photoId, h.offerId])).toEqual([[first.value.id, committed.offerId]]);
+    const item = held[0]!;
+    expect(await relay.item(item.id)).toMatchObject({ state: "pending", offerId: committed.offerId, policyVersion: PHOTO_SEND_NOTICE.version, policyNotice: PHOTO_SEND_NOTICE.text, notice: expect.stringContaining("Robin can view it until you take it back") });
+    expect(await relay.reviewBytes(item.id, admin)).toBeUndefined();
+    expect(await relay.reviewBytes(item.id, safety)).toMatchObject({ contentType: "image/jpeg" });
+    expect(await relay.reviewAuthorized(item.id, admin)).toBe(false);
+    expect(await relay.reviewAuthorized(item.id, safety)).toBe(true);
+    expect(await relay.review(item.id, admin, "safe")).toBe(false);
+    expect(await relay.review(item.id, safety, "unknown")).toBe(false);
+    expect(await relay.review(item.id, safety, "safe")).toBe(true);
+    const settled = await sql.begin(tx => relay.settle(tx, committed.offerId!));
+    expect(settled).toMatchObject({ from: "reviewing", phase: "ready", changed: true, notice: "TellSent", dueAt: t.at() });
+    expect(settled!.viewLink).toMatch(/^https:\/\/slop\.date\/photos\/view#[A-Za-z0-9_-]{43}$/);
+    expect((await relay.notices("slop")).map(n => [n.offerId, n.notice])).toEqual([[committed.offerId, "TellSent"]]);
+    expect(await sql.begin(tx => relay.noticeSent(tx, committed.offerId!))).toBe(true);
+    expect(await relay.notices("slop")).toEqual([]);
 
-    for (const [app, person, thread, consent] of [["friends",sender,"thread_fixture",true],["slop",stranger,"thread_fixture",true],["slop",sender,"other_thread",true],["slop",sender,"thread_fixture",false]] as const)
-      expect(await relay.select(app, person, thread, uploaded.value.id, "fixture-policy", consent, "fixture-invalid-request")).toBeUndefined();
-    const selected = await relay.select("slop", sender, "thread_fixture", uploaded.value.id, "fixture-policy", true, "fixture-primary-request");
-    expect(selected?.state).toBe("pending"); if (!selected) throw new Error("selection refused");
-    now += 1_000;
-    const retry = await relay.select("slop", sender, "thread_fixture", uploaded.value.id, "fixture-policy", true, "fixture-primary-request");
-    expect(retry).toEqual(selected);
-    const duplicate = await Promise.all([relay.select("slop", sender, "thread_fixture", uploaded.value.id, "fixture-policy", true, "fixture-primary-request"), relay.select("slop", sender, "thread_fixture", uploaded.value.id, "fixture-policy", true, "fixture-primary-request")]);
-    expect(duplicate).toEqual([selected, selected]);
-    const otherPhoto = await up(t.svc, sender); if (!otherPhoto.ok) throw new Error("second upload refused");
-    await expect(relay.select("slop", sender, "thread_fixture", otherPhoto.value.id, "fixture-policy", true, "fixture-primary-request")).rejects.toThrow("photo_selection_conflict");
-    const canceled = await relay.select("slop", sender, "thread_fixture", uploaded.value.id, "fixture-policy", true, "fixture-cancel-request"); if (!canceled) throw new Error("cancel fixture refused");
-    const owner = async () => ({ personId: sender, accountView: "fixture-owner-view" });
-    const reloaded = await closed.route(new Request("https://fixture.example/api/relay-photos/options"), "/api/relay-photos/options", "slop", owner);
-    const reloadedBody = await reloaded!.json() as any;
-    expect(reloadedBody).toMatchObject({ enabled: false });
-    expect(reloadedBody.selections.map((r: any) => r.itemId)).toContain(canceled.itemId);
-    expect(JSON.stringify(reloadedBody)).not.toMatch(/recipientMemberId|sha256|url|score|notice/);
-    t.verified.delete(sender); allowed = false;
-    const cancellation = (view: string) => new Request("https://fixture.example/api/relay-photos/revoke", { method: "POST", headers: { "content-type": "application/json", "x-photo-account": view }, body: JSON.stringify({ itemId: canceled.itemId }) });
-    expect((await closed.route(cancellation("wrong-view"), "/api/relay-photos/revoke", "slop", owner))!.status).toBe(409);
-    expect((await closed.route(cancellation("fixture-owner-view"), "/api/relay-photos/revoke", "friends", owner))!.status).toBe(404);
-    expect((await closed.route(cancellation("stranger-view"), "/api/relay-photos/revoke", "slop", async () => ({ personId: stranger, accountView: "stranger-view" })))!.status).toBe(404);
-    const cancelRequest = cancellation("fixture-owner-view");
-    expect((await closed.route(cancelRequest, "/api/relay-photos/revoke", "slop", owner))!.status).toBe(200);
-    expect((await closed.item(canceled.itemId))?.state).toBe("revoked");
-    allowed = true; t.verified.add(sender);
-    const changedNotice = new PhotoRelayService({ ...enabledOptions, policy: { ...enabledOptions.policy, notice: "A changed notice with {{recipient}} and the same version." } });
-    expect(await changedNotice.reviewBytes(selected.itemId, "fixture_safety")).toBeUndefined();
+    expect(await sql.begin(tx => relay.withdraw(tx, "slop", stranger, "thread_fixture", null))).toEqual({ revoked: 0, viewing: false });
+    expect(await sql.begin(tx => relay.withdraw(tx, "slop", sender, "thread_fixture", null))).toEqual({ revoked: 1, viewing: true });
+    expect(await relay.offer(committed.offerId!)).toMatchObject({ phase: "revoked", endedBySender: true, wasReady: true });
+    expect((await relay.item(item.id))?.state).toBe("revoked");
+    expect(await sql.begin(tx => relay.withdraw(tx, "slop", sender, "thread_fixture", null))).toEqual({ revoked: 0, viewing: false });
 
-    expect(await relay.approved(selected.itemId)).toBeUndefined();
-    expect(await relay.reviewBytes(selected.itemId, "other_staff")).toBeUndefined();
-    expect(await relay.reviewBytes(selected.itemId, "fixture_safety")).toMatchObject({ contentType: "image/jpeg" });
-    expect(await relay.review(selected.itemId, "fixture_safety", "unknown")).toBe(false);
-    expect(await relay.review(selected.itemId, "other_staff", "safe")).toBe(false);
-    expect(await relay.review(selected.itemId, "fixture_safety", "safe")).toBe(true);
-    expect((await relay.held("slop")).map(r => r.id)).toContain(selected.itemId);
-    expect(await relay.reviewAuthorized(selected.itemId, "fixture_safety")).toBe(true);
-    reviewerAllowed = false;
-    expect(await relay.reviewAuthorized(selected.itemId, "fixture_safety")).toBe(false);
-    await sql.begin(async tx => { expect(await relay.reviewAuthorized(selected.itemId, "fixture_safety", tx as unknown as SQL)).toBe(false); });
-    reviewerAllowed = true;
-
-    expect(await relay.reviewBytes(selected.itemId, "fixture_safety")).toMatchObject({ contentType: "image/jpeg" });
-    const approved = await relay.approved(selected.itemId); expect(approved?.photoId).toBe(uploaded.value.id); if (!approved) throw new Error("review refused");
-    expect(JSON.stringify(approved)).not.toMatch(/storageKey|url|rating|score|recipientPersonId/);
-    await sql.begin(async tx => { expect(await relay.approved(selected.itemId, tx as unknown as SQL)).toEqual(approved); });
-    // A real SQL rollback cannot leave a claimed selection behind.
-    await expect(sql.begin(async tx => {
-      expect(await relay.claimForAction(tx as unknown as SQL, selected.itemId, "slop", "thread_fixture", "member_sender", "rolled_back")).toEqual(approved);
-      throw new Error("fixture rollback");
-    })).rejects.toThrow("fixture rollback");
-    const claim = (action: string) => sql.begin(tx => relay.claimForAction(tx as unknown as SQL, selected.itemId, "slop", "thread_fixture", "member_sender", action));
-    const claims = await Promise.all([claim("action_one"), claim("action_two")]);
-    expect(claims.filter(Boolean)).toHaveLength(1);
-    expect(await relay.reviewBytes(selected.itemId, "fixture_safety")).toBeUndefined();
-    expect(await relay.issueDelivery(approved, "foreign_member", "intent_one", "https://fixture.example")).toBeUndefined();
-    const link = await relay.issueDelivery(approved, "member_recipient", "intent_one", "https://fixture.example"); expect(link).toBeDefined(); if (!link) throw new Error("delivery binding refused");
-    expect(await relay.issueDelivery(approved, "member_recipient", "different_intent", "https://fixture.example")).toBeUndefined();
-    now += 1_000;
-    expect(await relay.issueDelivery(approved, "member_recipient", "intent_one", "https://fixture.example")).toEqual(link);
-    // A new service/store instance reads the persisted deadline, without in-memory URL caching.
-    const restarted = new PhotoRelayService({ ...enabledOptions, store: new PgPhotoRelayStore(sql) });
-    now += 1_000;
-    expect(await restarted.issueDelivery(approved, "member_recipient", "intent_one", "https://fixture.example")).toEqual(link);
-
-    const u = new URL(link.url), exp = Number(u.searchParams.get("exp")), sig = u.searchParams.get("sig")!;
-    expect(await relay.delivery("slop", selected.itemId, exp, sig)).toMatchObject({ contentType: "image/jpeg" });
-    expect(await relay.delivery("friends", selected.itemId, exp, sig)).toBeUndefined();
-    const meta = (await t.meta.list(sender, "slop")).find(row => row.id === uploaded.value.id);
-    expect(meta?.id).toBe(uploaded.value.id);
-    if (!meta) throw new Error("selected photo row missing before tamper check");
-    const file = join(t.dir, meta.storageKey), original = new Uint8Array(await fileAt(file).arrayBuffer());
-    await writePath(file, new Uint8Array(original.length));
-    expect(await relay.delivery("slop", selected.itemId, exp, sig)).toBeUndefined();
-    await writePath(file, original);
-    expect(await relay.delivery("slop", selected.itemId, exp, sig)).toBeDefined();
-
-    expect(await relay.delivery("slop", selected.itemId, exp + 1, sig)).toBeUndefined();
-    allowed = false; expect(await relay.delivery("slop", selected.itemId, exp, sig)).toBeUndefined(); allowed = true;
-    const claimedBefore = await relay.item(selected.itemId);
-    expect(await relay.review(selected.itemId, "other_staff", "unsafe")).toBe(false);
-    expect(await relay.review(selected.itemId, "fixture_safety", "unsafe")).toBe(true);
-    expect(await relay.item(selected.itemId)).toMatchObject({ state: "revoked", actionId: claimedBefore!.actionId, deliveryIntent: "intent_one" });
-    expect(await relay.delivery("slop", selected.itemId, exp, sig)).toBeUndefined();
-
-    expect(await relay.revoke("slop", stranger, selected.itemId)).toBe(false);
-    expect(await relay.revoke("slop", sender, selected.itemId)).toBe(true);
-    expect(await relay.delivery("slop", selected.itemId, exp, sig)).toBeUndefined();
-    const next = await relay.select("slop", sender, "thread_fixture", uploaded.value.id, "fixture-policy", true, "fixture-second-request"); expect(next).toBeDefined();
-    expect(await relay.review(next!.itemId, "fixture_safety", "safe")).toBe(true);
-    const second = await relay.approved(next!.itemId); if (!second) throw new Error("second review refused");
-    await sql.begin(tx => relay.claimForAction(tx as unknown as SQL, next!.itemId, "slop", "thread_fixture", "member_sender", "action_expiry"));
-    const secondLink = await relay.issueDelivery(second, "member_recipient", "intent_expiry", "https://fixture.example"); if (!secondLink) throw new Error("second link refused");
-    const secondURL = new URL(secondLink.url), secondDeadline = Number(secondURL.searchParams.get("exp"));
-    // The capability is valid before its real row lock wait, but expires before the lock opens.
-    let acquired!: () => void, unlock!: () => void;
-    const acquiredLock = new Promise<void>(resolve => { acquired = resolve; });
-    const releaseLock = new Promise<void>(resolve => { unlock = resolve; });
-    const locker = sql.begin(async tx => { await tx`select id from platform.photo_relay_items where id=${next!.itemId} for update`; acquired(); await releaseLock; });
-    await acquiredLock;
-    let lateFetch: Promise<unknown>;
-    try {
-      lateFetch = restarted.delivery("slop", next!.itemId, secondDeadline, secondURL.searchParams.get("sig")!);
-      now = secondDeadline + 1;
-    } finally { unlock(); await locker; }
-    expect(await lateFetch!).toBeUndefined();
-    expect(now).toBeLessThan(second.expiresAt);
-    expect(await restarted.issueDelivery(second, "member_recipient", "intent_expiry", "https://fixture.example")).toBeUndefined();
-    expect(await restarted.delivery("slop", next!.itemId, secondDeadline, secondURL.searchParams.get("sig")!)).toBeUndefined();
-    const delayedItem = await relay.select("slop", sender, "thread_fixture", uploaded.value.id, "fixture-policy", true, "fixture-delayed-bytes"); if (!delayedItem) throw new Error("delayed fixture refused");
-    expect(await relay.review(delayedItem.itemId, "fixture_safety", "safe")).toBe(true);
-    const delayedDescriptor = await relay.approved(delayedItem.itemId); if (!delayedDescriptor) throw new Error("delayed approval refused");
-    await sql.begin(tx => relay.claimForAction(tx as unknown as SQL, delayedItem.itemId, "slop", "thread_fixture", "member_sender", "action_delayed"));
-    const delayedLink = await relay.issueDelivery(delayedDescriptor, "member_recipient", "intent_delayed", "https://fixture.example"); if (!delayedLink) throw new Error("delayed link refused");
-    const delayedURL = new URL(delayedLink.url), delayedDeadline = Number(delayedURL.searchParams.get("exp"));
-    const disk = new LocalDiskPhotoStorage(t.dir);
-    const delayedPhotos = new PhotoService({ people, meta: t.meta, signingKey: "fixture-only", now: () => now, eligible: async id => t.verified.has(id), storage: {
-      kind: "local", put: (key, bytes) => disk.put(key, bytes), delete: key => disk.delete(key),
-      get: async key => { const bytes = await disk.get(key); now = delayedDeadline + 1; return bytes; },
-    } });
-    const delayedRelay = new PhotoRelayService({ ...enabledOptions, photos: delayedPhotos });
-    expect(await delayedRelay.delivery("slop", delayedItem.itemId, delayedDeadline, delayedURL.searchParams.get("sig")!)).toBeUndefined();
-    const expiredDuringAuthorization = new PhotoRelayService({ ...enabledOptions, authorize: async input => {
-      const parties = await options.authorize(input); now = delayedDescriptor.expiresAt + 1; return parties;
-    } });
-    expect(await expiredDuringAuthorization.approved(delayedItem.itemId)).toBeUndefined();
-
-    await t.svc.remove(sender, "slop", uploaded.value.id);
-    expect(await relay.reviewBytes(next!.itemId, "fixture_safety")).toBeUndefined();
-    expect(await relay.review(next!.itemId, "fixture_safety", "safe")).toBe(false);
-    expect(Number((await sql`select count(*)::int n from platform.photo_relay_items where photo_id=${uploaded.value.id}`)[0].n)).toBe(0);
-    // Deleting an image cannot erase the idempotency conflict for its original request.
-    await expect(relay.select("slop", sender, "thread_fixture", otherPhoto.value.id, "fixture-policy", true, "fixture-primary-request")).rejects.toThrow("photo_selection_conflict");
-
-
-    now += 16 * 60_000; expect(await relay.approved(selected.itemId)).toBeUndefined();
+    const next = await draftFor([second.value.id]);
+    const nextOffer = await sql.begin(async tx => (await relay.prepareOffer(sender, "slop", next.draftId, next.revision, t.at()))!.commit(tx));
+    expect(nextOffer).toMatchObject({ admission: "OfferAsk", phase: "asking", firstAsk: false });
+    expect((await sql.begin(tx => relay.answer(tx, nextOffer.offerId!, recipient, "yes"))).outcome).toBe("taken");
+    for (const d of await relay.screensDue("slop", nextOffer.offerId)) expect(await relay.screen(d.itemId)).toBe("HoldForStaff");
+    const nextItem = (await relay.held("slop"))[0]!;
+    await t.svc.remove(sender, "slop", second.value.id);
+    expect(await relay.reviewBytes(nextItem.id, safety)).toBeUndefined();
+    expect(await relay.review(nextItem.id, safety, "safe")).toBe(false);
+    expect(Number((await sql`select count(*)::int n from platform.photo_relay_items where photo_id=${second.value.id}`)[0].n)).toBe(0);
+    expect(await sql.begin(tx => relay.settle(tx, nextOffer.offerId!))).toMatchObject({ phase: "ended", notice: "TellNotTaken" });
   }, T);
 
   test("/api/photos/delete rejects an oversized chunked body with 413", async () => {
@@ -524,4 +614,60 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     expect(await res?.json()).toEqual({ ok: false, error: "too_large" });
   }, T);
 
+  test("R2PhotoStorage on an S3-compatible bucket: signed put, get and delete under photos/<key>; a missing key reads as none, another error is raised; leaving the app deletes the object", async () => {
+    const name = "photos-r2-fixture";
+    const objects = new Map<string, { bytes: Uint8Array; type: string | null }>();
+    const fault = { status: 0 };
+    let badSignatures = 0;
+    const xmlError = (status: number, code: string) => new Response(`<?xml version="1.0" encoding="UTF-8"?><Error><Code>${code}</Code><Message>${code}</Message></Error>`, { status, headers: { "content-type": "application/xml" } });
+    const server = await serveHttp({
+      port: 0, hostname: "127.0.0.1",
+      async fetch(req) {
+        const path = decodeURIComponent(new URL(req.url).pathname.slice(1));
+        if (!path.startsWith(`${name}/`)) return xmlError(404, "NoSuchBucket");
+        const body = new Uint8Array(await req.arrayBuffer());
+        if (!sigV4Valid(req, body, "fixture-key", "fixture-secret")) { badSignatures++; return xmlError(403, "AccessDenied"); }
+        if (fault.status) return xmlError(fault.status, "AccessDenied");
+        const key = path.slice(name.length + 1);
+        if (req.method === "PUT") { objects.set(key, { bytes: body, type: req.headers.get("content-type") }); return new Response(null, { status: 200, headers: { etag: '"fixture"' } }); }
+        if (req.method === "DELETE") { objects.delete(key); return new Response(null, { status: 204 }); }
+        if (req.method === "GET") {
+          const o = objects.get(key);
+          return o ? new Response(Buffer.from(o.bytes), { status: 200, headers: { "content-length": String(o.bytes.length), "content-type": o.type ?? "application/octet-stream", etag: '"fixture"' } }) : xmlError(404, "NoSuchKey");
+        }
+        return xmlError(501, "NotImplemented");
+      },
+    });
+    try {
+      const r2 = new R2PhotoStorage({ endpoint: `http://127.0.0.1:${server.port}`, bucket: name, accessKeyId: "fixture-key", secretAccessKey: "fixture-secret" });
+      expect(r2.kind).toBe("r2");
+      const t = setup({ storage: () => r2 });
+      const id = await t.person(30);
+      const uploaded = await up(t.svc, id);
+      if (!uploaded.ok) throw new Error(JSON.stringify(uploaded));
+      const keys = [...objects.keys()];
+      expect(keys).toHaveLength(1);
+      expect(keys[0]).toMatch(/^photos\/[a-f0-9]{48}$/);
+      const stored = objects.get(keys[0]!)!;
+      expect(stored.type).toBe("image/jpeg");
+      expect(has(stored.bytes, "GPS")).toBe(false);
+      const [row] = await t.meta.list(id, "slop");
+      expect(row).toMatchObject({ id: uploaded.value.id, bytes: stored.bytes.length, contentType: "image/jpeg" });
+      expect(`photos/${row!.storageKey}`).toBe(keys[0]);
+      expect(await r2.get(row!.storageKey)).toEqual(stored.bytes);
+      expect(await r2.get("0".repeat(48))).toBeUndefined();
+      await expect(r2.get("../" + row!.storageKey)).rejects.toThrow("bad photo key");
+      fault.status = 403;
+      await expect(r2.get(row!.storageKey)).rejects.toThrow();
+      fault.status = 0;
+      expect(badSignatures).toBe(0);
+      const forged = new R2PhotoStorage({ endpoint: `http://127.0.0.1:${server.port}`, bucket: name, accessKeyId: "fixture-key", secretAccessKey: "another-secret" });
+      await expect(forged.get(row!.storageKey)).rejects.toThrow();
+      expect(badSignatures).toBe(1);
+      expect(await t.svc.deleteFor(id, "slop")).toBe(1);
+      expect(objects.size).toBe(0);
+      expect(await rowsOf(id)).toBe(0);
+      expect(await r2.get(row!.storageKey)).toBeUndefined();
+    } finally { await server.stop(true); }
+  }, T);
 });

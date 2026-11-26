@@ -2,17 +2,19 @@ import { parseNetworkCollectionCommand, hashNetworkCollectionSelection, networkC
 import { createHash } from "node:crypto";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { readCapped } from "../../platform/src/body.ts";
-import { resolveConsent } from "../../platform/src/consent.ts";
+import { ledgerOptedOut } from "./consent-ledger-read.ts";
 import { svcSign, svcVerify } from "../../core/src/svc/svc-auth.ts";
 import { LEARNING_CONSENT_CONTEXT_PATH, parseLearningConsentContextRequest, type LearningConsentContextProof, NETWORK_LEARNING_ENTRY_SELECTION_SHA256, learningSelectionMatchesStoredCommand } from "../../core/src/svc/learning-consent-context.ts";
 import { routeEnvelopeAllowed, type NetworkRoutePolicy } from "./route-authority.ts";
+import { canBeMatched } from "../../core/src/policy.ts";
+import { effectiveAgesOf } from "./snapshot.ts";
 
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { "Cache-Control": "no-store" } });
 
-/** Identity-only read. Cloud owns its separate private session/DO check and explicit consent write. */
-export async function learningConsentContextEndpoint(d: { sql: SQL; now: () => number; secret?: string; routePolicy?: NetworkRoutePolicy }, req: Request): Promise<Response> {
+export async function learningConsentContextEndpoint(d: { sql: SQL; now: () => number; secret?: string; routePolicy?: NetworkRoutePolicy; reviewEnabled: boolean }, req: Request): Promise<Response> {
   const url = new URL(req.url);
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
+  if (!d.reviewEnabled) return json({ error: "identity_unavailable" }, 503);
   if (url.pathname !== LEARNING_CONSENT_CONTEXT_PATH || url.search) return json({ error: "invalid_request" }, 400);
   const bytes = await readCapped(req, 16 * 1024);
   if (bytes === "too_large") return json({ error: "payload_too_large" }, 413);
@@ -24,7 +26,7 @@ export async function learningConsentContextEndpoint(d: { sql: SQL; now: () => n
   const auth = await svcVerify(d.secret, { method: "POST", path: LEARNING_CONSENT_CONTEXT_PATH, headers: req.headers, body: raw, nowS: Math.floor(now / 1000) });
   if (!auth.ok) return json({ error: auth.reason }, auth.reason === "no_secret" ? 503 : 401);
   let request;
-  try { request = parseLearningConsentContextRequest(JSON.parse(raw)); } catch { /* invalid request */ }
+  try { request = parseLearningConsentContextRequest(JSON.parse(raw)); } catch { request = undefined; }
   if (!request) return json({ error: "invalid_request" }, 400);
   const review = request.review, policy = d.routePolicy;
   const id = `${review.messageId}:learning-consent:${review.requestNonce}`;
@@ -46,13 +48,13 @@ export async function learningConsentContextEndpoint(d: { sql: SQL; now: () => n
         join platform.memberships m on m.person_id=p.id and m.app_id=n.app_id and m.member_id=n.id
         join platform.matching_ages ages on ages.app_id=n.app_id and ages.member_id=n.id
         where p.id=${candidate.id} and p.deleted_at is null and n.app_id=${review.app} and n.id=${review.memberId}
-        and n.account_status='active' and not n.opted_out and n.age>=18 and p.lowest_age>=18 and ages.age>=18
+        and n.account_status='active' and not n.opted_out
         and m.state in ('active','onboarding') and m.review is null
         and not exists(select 1 from platform.bans b where b.person_id=p.id or b.phone_hash=p.phone_hash)
         and not exists(select 1 from platform.suppression s where s.phone_hash=p.phone_hash)
         and not exists(select 1 from platform.phone_identities ph where ph.person_id=p.id and ph.hold is not null)
         for share of n,m`;
-      if (!member) return json({ error: "turn_scope_invalid" }, 403);
+      if (!member || !canBeMatched((await effectiveAgesOf(tx, review.app, [review.memberId], now)).get(review.memberId))) return json({ error: "turn_scope_invalid" }, 403);
       const [turn] = await tx`select i.request_hash,i.arrived_at,i.network_authority,i.response,m.body
         from platform.inbound i join platform.people p on p.phone_hash=i.sender_hash and p.id=${candidate.id}
         join network.messages m on m.app_id=${review.app} and m.member_id=${review.memberId} and m.id=${`in:${review.channel}:${review.messageId}`} and m.direction='inbound'
@@ -65,21 +67,13 @@ export async function learningConsentContextEndpoint(d: { sql: SQL; now: () => n
       const command = parseNetworkCollectionCommand(turn.body);
       if (!command || command.batchId !== review.batchId) return json({ error: 'turn_scope_invalid' }, 403);
       if (request.selection === undefined) {
-        // The exact Auth655 marker retains an entry lookup only; it grants no selected scope.
         if (request.selectionSha256 !== NETWORK_LEARNING_ENTRY_SELECTION_SHA256) return json({ error: 'turn_scope_invalid' }, 403);
       } else if (!learningSelectionMatchesStoredCommand(request.selection, turn.body, review.batchId, arrivedAt, d.now())
         || await hashNetworkCollectionSelection(request.selection) !== request.selectionSha256 || !current()) return json({ error: 'turn_scope_invalid' }, 403);
-      // STOP is canonical even when a delayed projection has not reached the member row yet.
-      // Never choose the newest of several identities: that could read another number's STOP ledger.
       const phones = await tx`select e164 from platform.phone_identities where person_id=${candidate.id} limit 2 for share`;
       if (phones.length !== 1) return json({ error: "turn_scope_invalid" }, 403);
       const phone = phones[0]!;
-      const optedOut = async () => {
-        const events = await tx`select distinct on (app_id) app_id,state,at from platform.consent_events
-          where e164=${phone.e164} and (app_id=${review.app} or app_id is null) order by app_id,at desc,id desc`;
-        const event = (app: typeof review.app | null) => { const e = events.find((r: any) => r.app_id === app); return e ? { e164: phone.e164, app, source: "canonical-ledger", state: e.state, at: new Date(e.at).getTime() } : undefined; };
-        return resolveConsent({ app: event(review.app), global: event(null) }) === 'opted_out';
-      };
+      const optedOut = () => ledgerOptedOut(tx, phone.e164, review.app);
       if (await optedOut() || !current()) return json({ error: "turn_scope_invalid" }, 403);
       const issuedAt = d.now(), collectionExpiresAt = networkCollectionDeadline(arrivedAt, issuedAt);
       if (collectionExpiresAt === undefined) return json({ error: "turn_scope_invalid" }, 403);
@@ -91,8 +85,6 @@ export async function learningConsentContextEndpoint(d: { sql: SQL; now: () => n
         selectionSha256: request.selectionSha256, collectionExpiresAt, issuedAt, expiresAt };
       const body = JSON.stringify(proof);
       const headers = await svcSign(d.secret!, { method: 'POST', path: LEARNING_CONSENT_CONTEXT_PATH, id: `${id}:proof`, body, nowS: Math.floor(d.now() / 1000) });
-      // addConsent can append without taking the person lock. Re-read after asynchronous signing;
-      // this is a fresh bounded observation, not a promise to serialize future consent changes.
       if (await optedOut() || !current() || d.now() >= expiresAt) return json({ error: 'turn_scope_invalid' }, 403);
       return new Response(body, { headers: { ...headers, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
     });

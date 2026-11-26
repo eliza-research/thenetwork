@@ -12,12 +12,10 @@ const sha256 = (value: string) => createHash("sha256").update(value).digest("hex
 
 export interface CloudProfileReviewOwnerOptions {
   origin: string; secret: string; routePolicy: NetworkRoutePolicy; now: () => number;
-  /** Only explicit development may use a loopback HTTP origin. */
   development?: boolean;
   fetch?: typeof fetch;
 }
 
-/** No cached owner, retry or identity fallback. This only consumes an existing attested turn. */
 export function cloudProfileReviewOwner(o: CloudProfileReviewOwnerOptions): SuggestionIdentityResolver {
   const post = profileReviewProofTransport(o);
   return async (context, tx) => {
@@ -28,7 +26,6 @@ export function cloudProfileReviewOwner(o: CloudProfileReviewOwnerOptions): Sugg
         || !context.networkAuthority || now >= o.routePolicy.admitUntil
         || !routeEnvelopeAllowed(o.routePolicy, context.networkAuthority, now)) return null;
       await tx`select set_config('app.app_id',${context.app},true)`;
-      // The context is a server hint. The stored signed turn and its current member remain authority.
       const [turn] = await tx`select i.request_hash,i.arrived_at,i.network_authority,i.response,m.body
         from platform.inbound i join platform.people p on p.phone_hash=i.sender_hash
         join network.members n on n.person_id=p.id and n.app_id=${context.app} and n.id=${context.memberId}
@@ -40,7 +37,6 @@ export function cloudProfileReviewOwner(o: CloudProfileReviewOwnerOptions): Sugg
         || turn.response.app !== context.app || turn.response.memberId !== context.memberId
         || !sameNetworkAuthority(turn.network_authority, context.networkAuthority)
         || typeof turn.body !== "string" || sha256(turn.body) !== context.commandSha256) return null;
-      // This narrows dispatch only; the canonical review parser still owns the exact decision.
       const command = turn.body.trim();
       if (context.action === "collect") {
         if (!context.collectionProposal || !collectionProposalMatchesStoredCommand(context.collectionProposal, turn.body, context.batchId, new Date(turn.arrived_at).getTime(), now)

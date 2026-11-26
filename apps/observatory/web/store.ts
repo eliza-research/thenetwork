@@ -703,7 +703,7 @@ class ObsStore {
       },
       queues: initialNav.queues,
     };
-    return canReceiveQueues(base) ? receiveQueues(base, this.reviewMode() === "human", reviewItems, this.requests.length > 0 || this.network?.kind === "consent") : base;
+    return canReceiveQueues(base) ? receiveQueues(base, reviewItems, this.requests.length > 0 || this.network?.kind === "consent") : base;
   }
 
   /**
@@ -972,7 +972,6 @@ class ObsStore {
     return n.length <= 2 ? n.join(" + ") : `${n.slice(0, 2).join(", ")} +${n.length - 2}`;
   }
 
-  reviewMode(): "human" | "auto" | undefined { return this.network?.review?.mode; }
   /**
    * Opportunities waiting for review, soonest deadline first (filters: borough, members, origin).
    * An opportunity focus selects its card but does not narrow the list, so j/k can step through it.

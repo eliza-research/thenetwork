@@ -1,8 +1,3 @@
-// Real signed HTTP on Cloud's wire (RelaySendRequest, x-ntwrk-svc-id "<messageId>:relay") -> POST /internal/relay
-// -> the ConsentNetwork relay desk (engine relay policy, rules only) -> network.messages / network.relay_records;
-// the staff held queue; a restart. Needs the dev Postgres on
-// :54339 (pnpm exec tsx packages/db/dev-pg.ts up). No live call: the adapter is a dry run and no
-// Cloudflare token is set, so the classifier is rules only.
 import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
 import {afterAll,beforeAll,expect,test} from "vitest";
 import {randomUUID} from "node:crypto";
@@ -13,6 +8,7 @@ import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {TURN_PATH,RELAY_PATH,type RelaySendRequest,type TurnRequest} from "../../core/src/svc/contract.ts";
 import {DryRunAdapter} from "../service/channel.ts";
 import {NetworkService} from "../service/service.ts";
+import {simulatedRelayClassifier} from "../../engine/src/relay.ts";
 import {ServiceClient} from "../../../apps/observatory/src/sources/service.ts";
 import type {NetworkState} from "../src/network.ts";
 
@@ -25,7 +21,7 @@ const logs:string[]=[];
 let sql:SQL,service:NetworkService,server:HttpServer,ari:string,bo:string;
 const start=async()=>{
   service=new NetworkService({url,clock,photoStorage:null,instance:"relay-integration",tokens:"safety:saf-tok,reviewer:rev-tok",
-    env:{PLATFORM_ENV:"dev",CLEF_RATINGS:"off",SERVICE_TURN_SECRET:secret},
+    env:{PLATFORM_ENV:"dev",SERVICE_TURN_SECRET:secret},relayClassifier:simulatedRelayClassifier,
     networks:[{id:"friends:nyc",matchingEnabled:false}],network:{seed:1},log:line=>{logs.push(line);},adapter:()=>new DryRunAdapter(()=>{})});
   await service.start();server=await serveHttp({hostname:"127.0.0.1",port:0,fetch:req=>service.fetch(req)});
 };
@@ -72,15 +68,21 @@ beforeAll(async()=>{
 afterAll(async()=>{await server?.stop(true);await service?.close();await sql?.close();await admin.unsafe(`drop database if exists ${db} with (force)`);await admin.close();});
 
 test("a relayed text is signed, size-checked, bound to the open turn, idempotent, and only the engine wording goes out",async()=>{
-  expect(logs).toContain("relay classifier: rules only");
+  expect(logs.filter(l=>l.startsWith("relay classifier:"))).toEqual([]);
   const ok=await ask("ari","relay-1","tell Bo running 10 min late, see you at the trailhead");
   expect((await post({...ok,memberId:bo})).status).toBe(403);
   expect((await signed(RELAY_PATH,"relay-1",JSON.stringify(ok))).status).toBe(400);
   expect((await signed(RELAY_PATH,"other-key",JSON.stringify(ok))).status).toBe(400);
   expect((await post({...ok,messageId:"ari-setup-0"})).status).toBe(403);
-  // The text is the member's own message of that turn, never model wording; an item the turn did not offer is refused.
   expect((await post({...ok,text:"tell Bo something the model invented"})).status).toBe(403);
-  expect((await post({...ok,itemId:"relay-op"})).status).toBe(403);
+  const [offered]=await sql`select response from platform.inbound where id='msg:blooio:relay-1'`;
+  expect(offered.response.context.activeItems).toEqual([{id:"relay-op",kind:"match",summary:"Match with Bo"}]);
+  expect((await post({...ok,itemId:"relay-op-not-offered"})).status).toBe(403);
+  const fixtureOpps=async(edit:(opps:any[])=>any[])=>service.runtimeFor("friends")!.unitOfWork(net=>{const st=net.exportState();st.opps=edit(st.opps as any[]) as any;net.importState(st);});
+  await fixtureOpps(opps=>[...opps,{...opps.find(o=>o.id==="relay-op"),id:"relay-op-2",objective:"a picnic",createdAt:clock.now()}]);
+  expect((await service.runtimeFor("friends")!.readState(n=>n.relayLiveMatches(ari as any).map(x=>x.match.id))).sort()).toEqual(["relay-op","relay-op-2"]);
+  expect((await post({...ok,itemId:"relay-op-2"})).status).toBe(403);
+  await fixtureOpps(opps=>opps.filter(o=>o.id!=="relay-op-2"));
   expect((await post({...ok,allow:["+12125550100"]} as RelaySendRequest)).status).toBe(400);
   expect((await post({...ok,text:"x".repeat(20_000)})).status).toBe(413);
   const unsigned=await fetch(new URL(RELAY_PATH,server.url),{method:"POST",body:JSON.stringify(ok),headers:{"content-type":"application/json"}});expect(unsigned.status).toBe(401);
@@ -107,42 +109,37 @@ test("a relayed text is signed, size-checked, bound to the open turn, idempotent
   await open(phones.ari, "refusal-cleanup", "don't send my number");
 },60_000);
 
-test("a scam is held for staff; staff list it (audited, app-scoped), reject it, and the text is gone; it all survives a restart",async()=>{
-  const held=await post(await ask("ari","relay-scam","tell Bo can you venmo me 200 for the tickets? my card got frozen"));
-  expect(await held.json()).toMatchObject({decision:"hold",delivered:false,replayed:false});
+test("a scam is blocked at once and the sender is told; no staff queue holds it and staff cannot release it, also after a restart",async()=>{
+  const blocked=await post(await ask("ari","relay-scam","tell Bo can you venmo me 200 for the tickets? my card got frozen"));
+  expect(await blocked.json()).toEqual({decision:"block",senderNotice:"I didn't send that, so it didn't reach them.",delivered:false,replayed:false});
   expect((await staff("/staff/relay/held?app=friends","nobody")).status).toBe(401);
-  const list=await (await staff("/staff/relay/held?app=friends","rev-tok")).json() as any;
-  expect(list.items).toHaveLength(1);expect(list.items[0]).toMatchObject({app:"friends",from:ari,memberId:ari,kind:"text"});
-  // The console's HeldText shape (apps/observatory/src/sources/service.ts): `id` is the item; no recipient id that the console would mask as a phone.
-  expect(list.items[0].id).toBe(list.items[0].itemId);expect(list.items[0]).not.toHaveProperty("to");
-  expect(JSON.stringify(list)).not.toMatch(/score|rating/i);
-  const id=list.items[0].itemId as string;
-  expect((await staff(`/staff/relay/${id}/reject?app=friends`,"rev-tok","POST",{})).status).toBe(403);
+  const reviewerRead=await staff("/staff/relay/held?app=friends","rev-tok");
+  expect(reviewerRead.status).toBe(403);
+  expect(await reviewerRead.json()).toMatchObject({code:"forbidden"});
+  expect(await (await staff("/staff/relay/held?app=friends","saf-tok")).json()).toMatchObject({ok:true,items:[]});
+  const [record]=await sql`select item_id,decision,reasons,review from network.relay_records where app_id='friends' and from_member=${ari} order by at desc limit 1`;
+  expect(record).toMatchObject({decision:"block",review:null});
+  expect((record.reasons as string[]).some(r=>r.startsWith("scam:"))).toBe(true);
+  const id=record.item_id as string;
+  expect((await sql`select id from network.messages where app_id='friends' and id=${`relay:${id}`}`).length).toBe(0);
+  expect(await (await staff(`/staff/relay/${id}/release?app=friends`,"saf-tok","POST",{note:"release it anyway"})).json()).toMatchObject({ok:false,reason:"not_held"});
+  expect(await (await staff(`/staff/relay/${id}/reject?app=friends`,"saf-tok","POST",{note:"asks for money: a scam"})).json()).toMatchObject({ok:false,reason:"not_held"});
   await server.stop(true);await service.close();await start();
-  expect((await (await staff("/staff/relay/held?app=friends","saf-tok")).json() as any).items.map((x:any)=>x.itemId)).toEqual([id]);
-  // Contract: the console's own client reads this real route (it used to drop every item for want of `id`).
-  const console_=new ServiceClient({url:server.url.href,token:"saf-tok",app:"friends"});
-  const seen=await console_.held("safety@example.org","relay");
-  expect(seen).toMatchObject({ok:true,items:[{id,queue:"relay",kind:"text",memberId:ari}]});
-  expect((seen as any).items[0].text).toContain("venmo");
-  // This network has no outbound queue (dry run): the leak review queue reads as not available, not as an error.
-  expect(await console_.held("safety@example.org","leak")).toMatchObject({ok:false,code:"not_available"});
-  // A decision needs a reason of 5 or more characters (it reaches the audit row); the console sends it as `note`.
-  expect(await (await staff(`/staff/relay/${id}/reject?app=friends`,"saf-tok","POST",{})).json()).toMatchObject({ok:false,reason:"reason_required"});
-  expect((await staff(`/staff/relay/${id}/reject?app=friends`,"saf-tok","POST",{note:"scam"})).status).toBe(409);
-  expect((await staff(`/staff/relay/${id}/reject?app=friends`,"saf-tok","POST",{note:"asks for money: a scam"})).status).toBe(200);
-  expect((await sql`select reason from network.staff_audit where action='relay_reject' and target_id=${id}`)[0].reason).toBe("asks for money: a scam");
   expect((await (await staff("/staff/relay/held?app=friends","saf-tok")).json() as any).items).toEqual([]);
-  const [state]=await sql`select state from network.network_state where id='friends:nyc'`;
+  const console_=new ServiceClient({url:server.url.href,token:"saf-tok",app:"friends"});
+  expect(await console_.held("safety@example.org","relay")).toEqual({ok:true,items:[]});
+  expect(await console_.held("safety@example.org","leak")).toMatchObject({ok:false,code:"not_available"});
+  expect((await sql`select actor from network.staff_audit where action='read_relay_held' and app_id='friends'`).length).toBeGreaterThanOrEqual(3);
+  const [row]=await sql`select state from network.network_state where id='friends:nyc'`;
+  const state=typeof row.state==="string"?JSON.parse(row.state):row.state;
   expect(JSON.stringify(state)).not.toContain("venmo");
-  expect((await sql`select review from network.relay_records where app_id='friends' and item_id=${id}`)[0].review).toBe("rejected");
-  expect((await sql`select action from network.staff_audit where action in ('read_relay_held','relay_reject')`).length).toBeGreaterThanOrEqual(2);
-  // Only the sender's own inbound message holds those words; nothing with them went out.
+  expect(Object.keys(state.relay).sort()).toEqual(["log","swaps","threads"]);
   expect((await sql`select id from network.messages where app_id='friends' and direction='outbound' and body like '%venmo%'`).length).toBe(0);
 },60_000);
 
 test("a swap request lasts only as long as the engine's consent (15 min, never backdated) and a member can take it back",async()=>{
   const numbers=async()=>(await sql`select id from network.messages where app_id='friends' and (body like ${"%"+phones.ari.slice(2)+"%"} or body like ${"%"+phones.bo.slice(2)+"%"})`).length;
+  clock.advance(10*MINUTE);
   expect(await (await post(await ask("ari","ttl-ari","send Bo my number"))).json()).toMatchObject({decision:"hold"});
   // 16 minutes later Bo asks: Ari's consent is stale, so nothing is shared; Bo's request now waits for Ari instead.
   clock.advance(16*MINUTE);
@@ -154,6 +151,7 @@ test("a swap request lasts only as long as the engine's consent (15 min, never b
   expect(await numbers()).toBe(0);
   // Ari takes theirs back through the relay action ("don't send my number" is nothing to relay, and confirmed).
   expect(await (await post(await ask("ari","ttl-ari-cancel","actually don't send my number"))).json()).toEqual({decision:"none",senderNotice:"Okay, I won't share your number.",delivered:false,replayed:false});
+  clock.advance(10*MINUTE);
   expect(await (await post(await ask("bo","ttl-bo-2","send Ari my number"))).json()).toMatchObject({decision:"hold"});
   expect(await (await post(await ask("bo","ttl-bo-refuse","don't delay, my number is off limits"))).json()).toEqual({decision:"none",senderNotice:"Okay, I won't share your number.",delivered:false,replayed:false});
   expect(await numbers()).toBe(0);
@@ -162,6 +160,7 @@ test("a swap request lasts only as long as the engine's consent (15 min, never b
 },60_000);
 
 test("a number goes out only after both members asked for the swap",async()=>{
+  clock.advance(10*MINUTE);
   const first=await post(await ask("ari","swap-ari","send Bo my number"));
   expect(await first.json()).toMatchObject({decision:"hold",delivered:false});
   expect((await sql`select id from network.messages where app_id='friends' and body like ${"%"+phones.ari.slice(2)+"%"}`).length).toBe(0);
@@ -240,7 +239,7 @@ test("an unselected named relay refuses two different counterparts with the same
   const [older, newer] = await namedRelaySams();
   await setNamedRelayMatches([
     { id: "same-name-text-old", other: older, dayOffset: 1 },
-    { id: "same-name-text-new", other: newer, dayOffset: 2 },
+    { id: "same-name-text-new", other: newer, dayOffset: 1 },
   ]);
   const outgoing = () => sql`select id from network.messages where app_id='friends' and direction='outbound' and type='relay' and body like '%shellfish%'`;
   const before = (await outgoing()).length;
@@ -333,6 +332,38 @@ async function startNumberSwap(id: string, who: "ari" | "bo") {
 }
 
 test.each([
+  "Give him my number if he asks.",
+  "Send him my number. Scratch that. Send it. If he asks.",
+  "Give Ari my number if Ari asks.",
+  "Give him my number unless he objects.",
+  "Give him my number if it's okay with him.",
+  "Give him my number if you can, after he asks.",
+  "Send him my number. If he asks.",
+  "Send him my number, please — if he asks.",
+  "Send him my number whenever he asks.",
+  "Give him my number every time he asks.",
+  "Send him my number each time he requests it.",
+  "Send him my number anytime he asks for it.",
+  "Send him my number. Let me think about it first",
+  "Send him my number. Let me think it over first.",
+  "Send him my number. Hmm idk.",
+  "Send him my number. Lol nevermind he's weird.",
+])("a trailing condition cannot arm or complete a signed number swap: %s", async text => {
+  const id = "conditional-swap-" + randomUUID();
+  await resetSwapMatch(id);
+  const before = await sharesQueued();
+  const conditional = await post(await ask("bo", id + "-conditional", text));
+  expect(conditional.status).toBe(200);
+  const requested = await conditional.json();
+  const pending = (await pendingNumberSwaps()).filter(swap => swap.matchId === id).length;
+  const counterpart = await post(await ask("ari", id + "-counterpart", "Send Bo my number."));
+  expect(counterpart.status).toBe(200);
+  expect({ requested, pending, counterpart: await counterpart.json(), newShares: await sharesQueued() - before })
+    .toMatchObject({ requested: { decision: "none", delivered: false }, pending: 0,
+      counterpart: { decision: "hold", delivered: false }, newShares: 0 });
+}, 60_000);
+
+test.each([
   ["Please send Sam my number.", "block"],
   ["Please send my number to Sam.", "block"],
   ["Yes, send it to Sam.", "block"],
@@ -387,38 +418,6 @@ test.each([
   await startNumberSwap(id, "ari");
   expect(await (await post(await ask("bo", id + "-reply", text))).json()).toMatchObject({ decision: "pass", delivered: false });
   expect(await sharesQueued()).toBe(before + 2);
-}, 60_000);
-
-test.each([
-  "Give him my number if he asks.",
-  "Send him my number. Scratch that. Send it. If he asks.",
-  "Give Ari my number if Ari asks.",
-  "Give him my number unless he objects.",
-  "Give him my number if it's okay with him.",
-  "Give him my number if you can, after he asks.",
-  "Send him my number. If he asks.",
-  "Send him my number, please — if he asks.",
-  "Send him my number whenever he asks.",
-  "Give him my number every time he asks.",
-  "Send him my number each time he requests it.",
-  "Send him my number anytime he asks for it.",
-  "Send him my number. Let me think about it first",
-  "Send him my number. Let me think it over first.",
-  "Send him my number. Hmm idk.",
-  "Send him my number. Lol nevermind he's weird.",
-])("a trailing condition cannot arm or complete a signed number swap: %s", async text => {
-  const id = "conditional-swap-" + randomUUID();
-  await resetSwapMatch(id);
-  const before = await sharesQueued();
-  const conditional = await post(await ask("bo", id + "-conditional", text));
-  expect(conditional.status).toBe(200);
-  const requested = await conditional.json();
-  const pending = (await pendingNumberSwaps()).filter(swap => swap.matchId === id).length;
-  const counterpart = await post(await ask("ari", id + "-counterpart", "Send Bo my number."));
-  expect(counterpart.status).toBe(200);
-  expect({ requested, pending, counterpart: await counterpart.json(), newShares: await sharesQueued() - before })
-    .toMatchObject({ requested: { decision: "none", delivered: false }, pending: 0,
-      counterpart: { decision: "hold", delivered: false }, newShares: 0 });
 }, 60_000);
 
 test.each([
@@ -548,7 +547,57 @@ test.each(["Ari said “Don't send my number.”", "Ari said ‘don't send it pl
     expect(await sharesQueued()).toBe(before + 2);
   }, 60_000,
 );
-
+test("a swap question that cannot go to the other person now is not recorded, and the asker is told it did not go (SD-138)", async () => {
+  const id = "quiet-swap-" + randomUUID();
+  const swapQuestions = async () => (await sql`select id from network.messages where app_id='friends' and member_id=${bo} and body like '%would like to swap numbers%'`).length;
+  await service.runtimeFor("friends")!.unitOfWork(net => {
+    const state = net.exportState();
+    clock.advance(DAY - ((clock.now() - Date.UTC(2026, 0, 1, 7)) % DAY));
+    const now = clock.now();
+    state.opps = [{ ...swapMatchTemplate!, id, createdAt: now, meetingAt: now + DAY, deadline: now + DAY }];
+    if (state.relay) state.relay.swaps = [];
+    net.importState(state);
+  });
+  const before = await swapQuestions();
+  expect(await (await post(await ask("ari", id + "-night", "send Bo my number"))).json())
+    .toMatchObject({ decision: "block", senderNotice: "I can't swap numbers right now.", delivered: false });
+  expect((await pendingNumberSwaps()).filter(swap => swap.matchId === id)).toEqual([]);
+  expect(await swapQuestions()).toBe(before);
+  clock.advance(9 * 60 * MINUTE);
+  expect(await (await post(await ask("ari", id + "-day", "send Bo my number"))).json())
+    .toMatchObject({ decision: "hold", senderNotice: "I'll share your number as soon as they say they want to swap numbers too.", delivered: false });
+  expect((await pendingNumberSwaps()).filter(swap => swap.matchId === id)).toHaveLength(1);
+  expect(await swapQuestions()).toBe(before + 1);
+}, 60_000);
+test("a swap asked again less than 10 minutes after the same question went to the other person does not wait, and one asked 10 minutes after it does", async () => {
+  const id = "reask-swap-" + randomUUID();
+  const swapQuestions = async () => (await sql`select id from network.messages where app_id='friends' and member_id=${bo} and body like '%would like to swap numbers%'`).length;
+  await service.runtimeFor("friends")!.unitOfWork(net => {
+    const state = net.exportState();
+    clock.advance(DAY - ((clock.now() - Date.UTC(2026, 0, 1, 7)) % DAY) + 9 * 60 * MINUTE);
+    const now = clock.now();
+    state.opps = [{ ...swapMatchTemplate!, id, createdAt: now, meetingAt: now + DAY, deadline: now + DAY }];
+    state.members = state.members.map(member => member.id === bo ? { ...member, outbound: 0, unsol: {}, unsolStreak: 0, lastOutUnsol: false } : member);
+    if (state.relay) state.relay.swaps = [];
+    net.importState(state);
+  });
+  const before = await swapQuestions();
+  expect(await (await post(await ask("ari", id + "-1", "send Bo my number"))).json()).toMatchObject({ decision: "hold" });
+  const askedAt = clock.now();
+  expect(await swapQuestions()).toBe(before + 1);
+  expect(await (await post(await ask("ari", id + "-cancel", "actually don't send my number"))).json()).toMatchObject({ decision: "none" });
+  clock.advance(askedAt + 9 * MINUTE - MINUTE - clock.now());
+  expect(await (await post(await ask("ari", id + "-2", "send Bo my number"))).json())
+    .toMatchObject({ decision: "block", senderNotice: "I can't swap numbers right now.", delivered: false });
+  expect(clock.now() - askedAt).toBe(9 * MINUTE);
+  expect((await pendingNumberSwaps()).filter(swap => swap.matchId === id)).toEqual([]);
+  expect(await swapQuestions()).toBe(before + 1);
+  expect(await (await post(await ask("ari", id + "-3", "send Bo my number"))).json()).toMatchObject({ decision: "hold" });
+  expect(clock.now() - askedAt).toBe(10 * MINUTE);
+  expect((await pendingNumberSwaps()).filter(swap => swap.matchId === id)).toHaveLength(1);
+  expect(await swapQuestions()).toBe(before + 2);
+  expect(await (await post(await ask("ari", id + "-end", "never mind, don't send my number"))).json()).toMatchObject({ decision: "none" });
+}, 60_000);
 test.each([
   "Tell Ana to send him my number",
   "Tell Ari to send my number to Sam9.",
@@ -900,7 +949,7 @@ test.each([
   { text: "Send him my number. Hold on, maybe send it.", shares: false },
   { text: "Send him my number. Hold on, send it if he asks.", shares: false },
   { text: "Send him my number. Hold on, send it 'to me instead'.", shares: false },
-  { text: "Send him my number. Hold on, send him my photo.", shares: false },
+  { text: "Send him my number. Hold on, send him my photo.", shares: false, photoRefused: true },
   { text: "Send him my number. Hold on, send her my number.", shares: false },
   { text: "Send him my number. Scratch that. Send it.", shares: true },
   { text: "Send him my number. Scratch that. Send it. I'm running late.", shares: true },
@@ -963,7 +1012,7 @@ test.each([
   { text: "Don't send him my photo. Send him my number tomorrow.", shares: false },
   { text: "Don't send him my photo. If you want to, send him my number.", shares: false },
   { text: "Don't send him my photo. Envíale mi número.", shares: false },
-])("a signed number request respects the intended item: $text", async ({ text, shares }) => {
+])("a signed number request respects the intended item: $text", async ({ text, shares, photoRefused }) => {
   const id = "scoped-number-" + randomUUID();
   const before = await sharesQueued();
   await startNumberSwap(id, "ari");
@@ -974,7 +1023,7 @@ test.each([
   expect(response.status).toBe(200);
   expect({ decision: (await response.json()).decision, newShares: await sharesQueued() - before,
     pending: (await pendingNumberSwaps()).find(swap => swap.matchId === id) })
-    .toEqual({ decision: shares ? "pass" : "none", newShares: shares ? 2 : 0, pending: shares ? undefined : original });
+    .toEqual({ decision: shares ? "pass" : photoRefused ? "block" : "none", newShares: shares ? 2 : 0, pending: shares ? undefined : original });
 }, 60_000);
 
 let ageEstimatePair = 0;
@@ -1064,12 +1113,48 @@ test.each([
     where app_id='friends' and direction='outbound' and member_id=${recipient} and opportunity_id=${id} and type='relay'`;
   expect(sent).toHaveLength(minor ? 0 : 1);
   expect((await service.accounts.personFor(senderPhone))?.lowestAge).toBe(before);
-  expect(await service.runtimeFor("friends")!.unitOfWork(net =>
-    net.exportState().opps.find(opp => opp.id === id)?.stage)).toBe("scheduled");
+  const after = await service.runtimeFor("friends")!.unitOfWork(net => net.exportState());
+  expect(after.opps.find(opp => opp.id === id)?.stage).toBe(minor ? "closed" : "scheduled");
+  expect(!!after.members.find(member => member.id === sender)?.minorSignal).toBe(minor);
   if (label === "short turning age") {
     const messageId = id + "-followup", text = "tell Bo the coffee shop is open.";
-    expect(await open(senderPhone, messageId, text)).toBe(sender);
-    const followup = await post({ channel: "blooio", messageId, app: "friends", memberId: sender, itemId: null, text });
-    expect(await followup.json()).toMatchObject({ decision: "pass", delivered: false });
+    clock.advance(MINUTE);
+    const turned = await signed(TURN_PATH, messageId, JSON.stringify(turn(senderPhone, messageId, text)));
+    expect(await turned.json()).toMatchObject({ outcome: "handled", memberId: sender });
+    expect((await post({ channel: "blooio", messageId, app: "friends", memberId: sender, itemId: null, text })).status).toBe(403);
+    expect(await sql`select id from network.messages
+      where app_id='friends' and direction='outbound' and member_id=${recipient} and opportunity_id=${id} and type='relay'`).toHaveLength(0);
   }
 }, 60_000);
+test("a relayed text that says the sender is under 18 is blocked and starts the minors policy: the minor signal on the person, a safety case, and the match closed (audit ST-D2)",async()=>{
+  await service.runtimeFor("friends")!.unitOfWork(net=>{
+    const st=net.exportState();
+    if(st.opps.some(o=>o.id==="relay-op"))return;
+    const now=clock.now();
+    st.opps=[{...swapMatchTemplate!,id:"relay-op",createdAt:now,meetingAt:now+DAY,deadline:now+DAY}];
+    if(st.relay)st.relay.swaps=[];
+    net.importState(st);
+  });
+  const relayed=async()=>(await sql`select id from network.messages where app_id='friends' and id like 'relay:%'`).length,before=await relayed();
+  const state=async()=>{const [{state:s}]=await sql`select state from network.network_state where id='friends:nyc'`;return typeof s==="string"?JSON.parse(s):s;};
+  const req=await ask("ari","relay-minor","tell Bo I have homeroom on weekday mornings so only weekends work for me");
+  const prior=(await state()).members.find((m:any)=>m.id===ari);
+  expect([!!prior.minor,!!prior.minorSignal]).toEqual([false,false]);
+  expect((await state()).opps.find((o:any)=>o.id==="relay-op").stage).not.toBe("closed");
+  const r=await post(req);
+  expect(r.status).toBe(200);
+  expect(await r.json()).toMatchObject({decision:"block",delivered:false,replayed:false});
+  expect(await relayed()).toBe(before);
+  expect((await sql`select age_signal,decision from network.relay_records where app_id='friends' and from_member=${ari} order by at desc limit 1`)[0]).toMatchObject({age_signal:true,decision:"block"});
+  const st=await state();
+  expect(st.members.find((m:any)=>m.id===ari)).toMatchObject({minor:true,minorSignal:true});
+  const kinds=(id:string)=>st.cases.filter((c:any)=>c.memberId===id).flatMap((c:any)=>c.events.map((e:any)=>e.kind));
+  expect(kinds(ari)).toEqual(expect.arrayContaining(["relay_age_signal","minor_after_contact"]));
+  expect(kinds(ari)).not.toContain("age_review");
+  expect(kinds(bo)).toContain("contact_with_minor");
+  expect(st.opps.find((o:any)=>o.id==="relay-op").stage).toBe("closed");
+  expect(JSON.stringify(st.cases)).not.toContain("homeroom");
+  const [{person_id:person}]=await sql`select person_id::text from network.members where app_id='friends' and id=${ari}`;
+  expect(person).toBeTruthy();
+  expect((await sql`select person_id::text from platform.person_minor_signals where person_id=${person}::uuid`).map((x:any)=>x.person_id)).toEqual([person]);
+},60_000);

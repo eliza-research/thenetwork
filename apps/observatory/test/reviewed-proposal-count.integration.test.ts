@@ -12,7 +12,7 @@ test.skipIf(!pgAvailable)("persisted proposal activity follows the seeded game r
   const url = await testDb();
   const sql = new SQL(url);
   const game = new GameSource({ seed: 4, personas: 80, days: 14, network: "consent",
-    review: "human", city: "all", pushMs: HOUR, tickMs: HOUR });
+    judge: "hold-every-item", city: "all", pushMs: HOUR, tickMs: HOUR });
   async function compare() {
     const expected = game.state();
     await writeRows(sql, rowsFromGame(game), { truncate: true });
@@ -58,7 +58,7 @@ test.skipIf(!pgAvailable)("a probe replacement moves persisted proposal activity
   const url = await testDb();
   const sql = new SQL(url);
   const game = new GameSource({ seed: 4, personas: 80, days: 14, network: "consent",
-    review: "human", city: "all", pushMs: HOUR, tickMs: HOUR });
+    judge: "hold-every-item", city: "all", pushMs: HOUR, tickMs: HOUR });
   async function compare() {
     const expected = game.state();
     await writeRows(sql, rowsFromGame(game), { truncate: true });

@@ -128,7 +128,7 @@ for (const s of stores) describe.skipIf(s.skip)(`API defences (${s.name})`, () =
       expect((await joinWith(submitted)).body).toEqual({ ok: false, error: "invalid" });
     }
     expect(await store.findPhone(phone)).toBeUndefined();
-    expect(await store.ageFloor(c.api.accounts.phoneHash(phone))).toBeUndefined();
+    expect(await store.ageFloorRecord(c.api.accounts.phoneHash(phone))).toBeUndefined();
     expect(await store.consentEvents(phone, "peon")).toEqual([]);
     const ok = await joinWith({ sms: true, wording: `  ${approved.text.replace(/ /g, "\n ")} ` });
     expect(ok.status).toBe(200);
@@ -205,6 +205,31 @@ for (const s of stores) describe.skipIf(s.skip)(`API defences (${s.name})`, () =
     expect(Math.min(va.ms, vb.ms)).toBeGreaterThanOrEqual(55);
   });
 
+  test("AE-1 a start that the phone limit refuses is counted in no bucket, so the address limit stays free for other numbers", async () => {
+    const c = make(store), phone = newPhone(), ip = { "x-real-ip": "198.18.7.1" };
+    const statuses: number[] = [];
+    for (let i = 0; i < 10; i++) { statuses.push((await c.call("slop", "POST", "/api/auth/otp/start", { phone }, ip)).status); c.clock.t += 31_000; }
+    expect(statuses).toEqual([200, 200, 200, 429, 429, 429, 429, 429, 429, 429]);
+    expect((await c.call("slop", "POST", "/api/auth/otp/start", { phone: newPhone() }, ip)).status).toBe(200);
+  });
+
+  test("AE-2 a banned number gets the same answers and limits as any number at code start, and no code", async () => {
+    const c = make(store), banned = newPhone(), plain = newPhone();
+    await store.ban({ id: `ban_otp_${process.pid}_${seq}`, scope: "phone", personId: null, phoneHash: c.api.accounts.phoneHash(banned), reason: "test", reportId: null, bannedBy: "staff", at: c.clock.t });
+    const starts = async (phone: string, ip: string) => {
+      const out: Array<[number, string]> = [];
+      for (let i = 0; i < 4; i++) { const r = await c.call("slop", "POST", "/api/auth/otp/start", { phone }, { "x-real-ip": ip }); out.push([r.status, r.text]); c.clock.t += 31_000; }
+      return out;
+    };
+    const before = c.sends();
+    const seenBanned = await starts(banned, "198.18.8.1");
+    expect(c.sends()).toBe(before);
+    const seenPlain = await starts(plain, "198.18.8.2");
+    expect(c.sends()).toBe(before + 3);
+    expect(seenBanned).toEqual(seenPlain);
+    expect(seenBanned.map(([status]) => status)).toEqual([200, 200, 200, 429]);
+  });
+
   test("banned number gets no SMS, verify fails, and pre-ban session export returns review", async () => {
     const c = make(store);
     const ban = (phone: string) => store.ban({ id: `ban_sec_${phone}`, scope: "phone", personId: null, phoneHash: c.api.accounts.phoneHash(phone), reason: "sim", reportId: null, bannedBy: "staff:1", at: c.clock.t });
@@ -257,7 +282,7 @@ test("the join flow sends no code and opens no cloud sign-in during mode discove
         if (path === "/api/auth/cloud/start") return Response.json({ url: "https://cloud-staging.eliza.app/network/sign-in" });
         return Response.json({ ok: false, error: "not_found" }, { status: 404 });
       }) as typeof fetch;
-      let page = send(machine.initial, { type: "openPage", viaAgent: false, fragmentName: false, ageDigitsOnly: false, ageDigitCount: 0, fragmentAge: 0 });
+      let page = send(machine.initial, { type: "openPage", viaAgent: false, fragmentName: false });
       page = send(page, { type: "loaded", view: { result: "SignedOut", account: 0, reason: "NoBlock" }, appUnreachable: false, inviteOnly: false });
       expect(machine.phoneFormWaiting(page)).toBe(true);
       expect(machine.enabled(page, { type: "submitPhone", phoneValid: true })).toBe(false);

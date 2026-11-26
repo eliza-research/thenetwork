@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import { holdEveryItem } from "../../../packages/engine/src/reviewJudge.ts";
 import { Mini } from "../../../packages/network/test/mini.ts";
 import { describe as describeEvent } from "../src/events.ts";
 import { Projector } from "../src/projector.ts";
@@ -9,7 +10,7 @@ test("a group member who leaves with no substitute leaves the observatory roster
   const remaining = ["ana", "ben", "cy"];
   const world = new Mini(planned.map(id => ({
     id, name: id, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"],
-  })), { review: "human", growth: false });
+  })), { inlineJudge: holdEveryItem.inline, growth: false });
   await world.onboard(...planned);
   const id = world.propose(planned, { explanations: { ana: "climbing nearby", ben: "climbing nearby", cy: "climbing nearby", dee: "climbing nearby" } });
   expect(await world.runUntil(() => world.net.reviewQueue().some(item => item.oppId === id))).toBe(true);

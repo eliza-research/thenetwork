@@ -1,6 +1,6 @@
 # Book a reviewed introduction after mutual consent
 
-Two members use friends.help to arrange a climbing session. A human reviewer approved the proposal. The requester has the first anonymous probe, and the other member waits for a probe of their own. The fixture supplies a shared time and starts at 14:00 Friday in New York. The [probe rules](probeDispatch.md), [opportunity lifecycle](opportunityLifecycle.md), and [gateway receipt rules](turnReceipt.md) govern the steps.
+Two members use friends.help to arrange a climbing session. The proposal passed review by the judge, or by staff for an exception (owner decision 2026-11-22, D15 to D17: review by a person was replaced by the review judge). The requester has the first anonymous probe, and the other member waits for a probe of their own. The fixture supplies a shared time and starts at 14:00 Friday in New York. The [probe rules](probeDispatch.md), [opportunity lifecycle](opportunityLifecycle.md), and [gateway receipt rules](turnReceipt.md) govern the steps.
 
 ## Story: Book the introduction only after both members agree
 

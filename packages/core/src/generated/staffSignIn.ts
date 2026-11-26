@@ -23,6 +23,8 @@ export type Event =
   | { type: "retryCheck" }
   | { type: "endSession"; roleRemoved: boolean };
 
+/** Story: Sign in as myself / A second factor is the multi-factor method or two distinct methods (spec/staffSignIn.md) */
+export const staffSignInDistinctMethodsForSecondFactor: number = 2;
 /** Story: Sign in as myself / The console takes a token out of the address before it calls the server (spec/staffSignIn.md) */
 export const initial: StaffSignIn = { phase: "Opening", method: "NoCredential", tokenInAddress: true, secondFactor: false, roleCount: 0 };
 
@@ -249,6 +251,46 @@ export function sometimesCheckFailed(signIn: StaffSignIn): boolean {
   return signIn.phase === "CheckFailed";
 }
 
+/** Story: Sign in as myself / The server serves data only to a single sign-on identity with a second factor (spec/staffSignIn.md) */
+//@ pure
+export function identityServed(viaAccess: boolean, secondFactorShown: boolean): boolean {
+  return !viaAccess || secondFactorShown;
+}
+
+/** Story: Sign in as myself / The server serves data only to a single sign-on identity with a second factor (spec/staffSignIn.md) */
+//@ pure
+export function lawServedAccessIdentityIsSignedIn(secondFactorShown: boolean, grants: number): boolean {
+  //@ ensures \result === true
+  return !(grants > 0 && identityServed(true, secondFactorShown)) || phaseForAnswer("IdentityAccepted", true, secondFactorShown, grants) === "SignedIn";
+}
+
+/** Story: Sign in as myself / The server serves data only to a single sign-on identity with a second factor (spec/staffSignIn.md) */
+//@ pure
+export function lawAccessWithoutSecondFactorGetsNoData(grants: number): boolean {
+  //@ ensures \result === true
+  return !identityServed(true, false) && phaseForAnswer("IdentityAccepted", true, false, grants) !== "SignedIn";
+}
+
+/** Story: Sign in as myself / A second factor is the multi-factor method or two distinct methods (spec/staffSignIn.md) */
+//@ pure
+export function staffSecondFactorShown(multiFactorNamed: boolean, distinctMethods: number): boolean {
+  return multiFactorNamed || distinctMethods >= staffSignInDistinctMethodsForSecondFactor;
+}
+
+/** Story: Sign in as myself / A second factor is the multi-factor method or two distinct methods (spec/staffSignIn.md) */
+//@ pure
+export function lawOneMethodAloneIsNoSecondFactor(distinctMethods: number): boolean {
+  //@ ensures \result === true
+  return !(distinctMethods <= 1) || !staffSecondFactorShown(false, distinctMethods);
+}
+
+/** Story: Sign in as myself / A second factor is the multi-factor method or two distinct methods (spec/staffSignIn.md) */
+//@ pure
+export function lawMultiFactorMethodIsSecondFactor(distinctMethods: number): boolean {
+  //@ ensures \result === true
+  return staffSecondFactorShown(true, distinctMethods);
+}
+
 /** Story: Keep my session bound to my roles / An expired sign-in or a changed role ends the signed-in phase (spec/staffSignIn.md) */
 //@ pure
 export function canEndSession(signIn: StaffSignIn): boolean {
@@ -340,6 +382,26 @@ export function lawStartedRealDataTakesNoTokenOffThisMachine(realOnlyServer: boo
 export function lawLocalSimulationNeedsNothing(platformEnv: PlatformEnv, accessOn: boolean): boolean {
   //@ ensures \result === true
   return !startRefused(false, false, platformEnv, accessOn);
+}
+
+/** Story: Start a console that holds real data only behind single sign-on / A deployed console with real data needs a durable audit log (spec/staffSignIn.md) */
+//@ pure
+export function startNeedsDurableAudit(realOnlyServer: boolean, remoteDatabase: boolean, platformEnv: PlatformEnv, auditDurable: boolean): boolean {
+  return (realOnlyServer || remoteDatabase) && (platformEnv === "EnvStaging" || platformEnv === "EnvProduction") && !auditDurable;
+}
+
+/** Story: Start a console that holds real data only behind single sign-on / A deployed console with real data needs a durable audit log (spec/staffSignIn.md) */
+//@ pure
+export function lawDeployedRealDataKeepsAuditDurable(realOnlyServer: boolean, remoteDatabase: boolean, platformEnv: PlatformEnv): boolean {
+  //@ ensures \result === true
+  return !((realOnlyServer || remoteDatabase) && (platformEnv === "EnvStaging" || platformEnv === "EnvProduction")) || startNeedsDurableAudit(realOnlyServer, remoteDatabase, platformEnv, false);
+}
+
+/** Story: Start a console that holds real data only behind single sign-on / A deployed console with real data needs a durable audit log (spec/staffSignIn.md) */
+//@ pure
+export function lawLocalSimulationNeedsNoAuditDatabase(platformEnv: PlatformEnv, auditDurable: boolean): boolean {
+  //@ ensures \result === true
+  return !startNeedsDurableAudit(false, false, platformEnv, auditDurable);
 }
 
 /** Do the rules allow this event in this state? */

@@ -32,7 +32,7 @@ import { GameSource } from "../src/sources/game.ts";
 
 for (const seed of [1, 2, 3]) {
   test(`seed ${seed}: opportunity detail shows only its own messages, including a member's cancel notice`, { timeout: 600_000 }, async () => {
-    const g = new GameSource({ seed, personas: 120, days: 14, network: "consent", review: "auto", pushMs: HOUR, tickMs: HOUR });
+    const g = new GameSource({ seed, personas: 120, days: 14, network: "consent", pushMs: HOUR, tickMs: HOUR });
     try {
       await g.init();
       expect((await g.control({ type: "step", ms: 14 * DAY })).ok).toBe(true);

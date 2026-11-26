@@ -1,4 +1,3 @@
-import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 // Channel-agnostic message types. Blooio and the simulated bus both speak these,
 // so the gateway, queue, and tests never depend on a specific provider.
 
@@ -94,8 +93,7 @@ export interface SendRequest {
   mediaUrls?: string[];
   /** Same key => provider will not send twice (Blooio honours Idempotency-Key on sends). */
   idempotencyKey: string;
-  /** Immutable persisted queue scope, supplied by the server rather than message text. */
-  context?: {id: string; app: string; memberId: string | null; kind: "reply" | "compliance" | "proactive" | "safety" | "transactional"; createdAt: number; approvedPhotos?: ApprovedRelayPhoto[]};
+  context?: {id: string; app: string; memberId: string | null; kind: "reply" | "compliance" | "proactive" | "safety" | "transactional"; createdAt: number};
 }
 
 export interface SendReceipt {

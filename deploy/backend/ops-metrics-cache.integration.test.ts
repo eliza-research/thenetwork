@@ -11,7 +11,7 @@ import { createBackend, jsonLogger, loadConfig } from "./backend.ts";
 import { createOps, PgAlertStore, runtimeProbe, type OpsMetrics } from "./ops.ts";
 
 test.skipIf(!pgAvailable)("ops metrics publishes completed alerts into the current HTTP cache, including a refresh during dispatch", async () => {
-  const g = new GameSource({ seed: 1, scenario: "spam_wave", review: "human", pushMs: HOUR, tickMs: HOUR });
+  const g = new GameSource({ seed: 1, scenario: "spam_wave", judge: "hold-every-item", pushMs: HOUR, tickMs: HOUR });
   let sql: SQL | undefined, service: NetworkService | undefined, pending: Promise<unknown> | undefined;
   let holdNext = false, release = () => {}, arrived = () => {}, stopHttp = async () => {};
   const blocked = new Promise<void>(resolve => { release = resolve; });

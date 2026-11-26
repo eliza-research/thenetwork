@@ -38,7 +38,6 @@ const REMOVE = /^remove[ \t]+fact[ \t]+(pfr_[a-p]{32})$/i;
 const SCOPE = /^set[ \t]+fact[ \t]+scope[ \t]+(pfr_[a-p]{32})[ \t]+to[ \t]+(agent_private|matchable|shareable)$/i;
 const CHOOSE = /^(confirm|cancel)[ \t]+fact[ \t]+edit[ \t]+(pfc_[a-p]{32})$/i;
 
-/** Parse the requested action only. The signed service resolves the app, verified member and current references. */
 export function memberFactCommand(text: string): MemberFactCommand | undefined {
   const line = text.trim();
   if (ALIAS.test(line)) return { kind: "list", page: 1 };
@@ -92,7 +91,6 @@ function sourceOf(fact: MemberFactView): string {
   return fact.provenance && Object.hasOwn(provenanceLabel, fact.provenance) ? provenanceLabel[fact.provenance] : "Unknown";
 }
 
-/** Known stored values may be larger than a text. Display a bounded preview and keep the edit reference. */
 function preview(value: string): string {
   const text = value.replace(INVISIBLE, " ").trim();
   if (text.length <= MEMBER_FACT_VALUE_LIMIT) return text;
@@ -108,7 +106,6 @@ const replies = {
 
 export function memberFactReply(outcome: keyof typeof replies): string { return replies[outcome]; }
 
-/** Render only facts that the service authorized for this app and member. The existing send guard checks each reply. */
 export function memberFactListText({ page, hasMore, facts }: { page: number; hasMore: boolean; facts: readonly MemberFactView[] }): string {
   if (!Number.isSafeInteger(page) || page < 1 || page > LAST_PAGE) return replies.unavailable;
   const groups = new Map<FacetKind, string[]>();
@@ -130,7 +127,6 @@ export function memberFactListText({ page, hasMore, facts }: { page: number; has
   return body.length <= REPLY_LENGTH ? body : replies.unavailable;
 }
 
-/** The code identifies the exact pending edit. The confirmation reply needs no old or replacement value. */
 export function memberFactEditPrompt({ draft, fact, change }: { draft: string; fact: Pick<MemberFactView, "reference" | "kind">; change: MemberFactChange }): string {
   if (!DRAFT.test(draft) || !REFERENCE.test(fact.reference) || !Object.hasOwn(kindLabel, fact.kind)) return replies.unavailable;
   const target = `${fact.reference} (${kindLabel[fact.kind]})`;

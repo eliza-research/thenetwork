@@ -19,6 +19,12 @@ export const TUNING_FILES = ["relay/relay.jsonl", "relay/relay-paraphrases.jsonl
 export const HELDOUT_FILE = "relay/relay-heldout-2.jsonl";
 export const BENIGN_FILE = "network/benign-adult.txt";
 
+export function wilson(k: number, n: number): [number, number] {
+  if (!n) return [0, 1];
+  const z = 1.96, p = k / n, d = 1 + z * z / n, c = (p + z * z / (2 * n)) / d, h = (z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))) / d;
+  return [Math.max(0, c - h), Math.min(1, c + h)];
+}
+
 export type CorpusRow = { text: string; class: RelayClass; want: "pass" | "stop" };
 export async function loadCorpus(file: string): Promise<CorpusRow[]> {
   const raw = (await fileAt(`${EVALS}/${file}`).text()).trim();

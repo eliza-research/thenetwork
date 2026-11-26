@@ -3,6 +3,7 @@ import { DAY, fromLocal, HOUR, type NetworkEvent } from "@thenetwork/core";
 import { localEmbed, plans, resolveConfig, World } from "@thenetwork/engine";
 import { PLAN_VENUES, statedWindows } from "../src/plans.ts";
 import { Mini, START } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 test("a weekly check-in applies to the first remaining local occurrence across the clock change", async () => {
   // spec/planFormation.md, "The member's latest weekly answer takes precedence"
@@ -112,7 +113,7 @@ test("the Network offers a public hike only to adults who can reach the reviewed
   const local = ["a", "b", "c", "d"];
   const ids = [...local, "e"];
   const mini = new Mini(ids.map(id => ({ id, name: id, age: 30, area: id === "e" ? "St. George" : "Inwood", interests: ["hiking"] })),
-    { review: "human", plans: true, matchingEnabled: true });
+    { inlineJudge: holdEveryItem.inline, plans: true, matchingEnabled: true });
   mini.members.find(member => member.id === "e")!.prefs.maxTravelMinutes = 15;
   await mini.onboard(...ids);
   const state = mini.net.exportState();
@@ -122,6 +123,7 @@ test("the Network offers a public hike only to adults who can reach the reviewed
   mini.net.importState(state);
 
   await mini.run(HOUR);
+  await mini.net.tick(mini.clock.now());
   const hike = mini.net.reviewQueue().find(item => item.origin === "planner");
   expect(hike?.proposal.participants.slice().sort()).toEqual(local);
   const plan = mini.net.exportState().opps.find(opp => opp.id === hike?.oppId)?.plan;
@@ -135,9 +137,10 @@ test("a member free for adjacent parts of Saturday can be offered a hike that cr
   const offeredHike = async (availability: string) => {
     const ids = ["a", "b", "c"];
     const mini = new Mini(ids.map(id => ({ id, name: id, age: 30, area: "Inwood", interests: ["hiking"] })),
-      { review: "human", growth: false, maxNewPerDay: 0, plansConfig: { minInvite: 3, size: { max: 3, target: 3 }, partnerPlans: false } });
+      { inlineJudge: holdEveryItem.inline, growth: false, maxNewPerDay: 0, plansConfig: { minInvite: 3, size: { max: 3, target: 3 }, partnerPlans: false } });
     for (const id of ids) for (const text of ["Hi!", "I like hiking and parks.", availability, "Small groups are good."]) await mini.say(id, text);
     await mini.run(HOUR);
+    await mini.net.tick(mini.clock.now());
     const item = mini.net.reviewQueue().find(review => review.origin === "planner");
     return item && mini.net.exportState().opps.find(opp => opp.id === item.oppId)?.plan;
   };

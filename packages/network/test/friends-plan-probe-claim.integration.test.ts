@@ -10,6 +10,7 @@ import { NetworkService } from "../service/service.ts";
 import { friendsPlanProbeDeliveryKey, friendsPlanTimeOptions } from "../src/friends-plan-time-choice.ts";
 import { NY } from "../src/outreach.ts";
 import { Mini, type Spec } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 test.skipIf(!pgAvailable).each([
   "current", "peer availability changed", "receipt replaced", "message changed", "message missing", "review revised", "unpicked slot", "deadline reached",
@@ -22,27 +23,33 @@ test.skipIf(!pgAvailable).each([
     const appRuntime = "friends:nyc";
     const people = [{ name: "Ari", e164: "+12125550881" }, { name: "Bren", e164: "+12125550882" }];
     const calls: SendRequest[] = [];
-    const adapter = new BlooioAdapter({ app: app.id, from: "+12125550880", clock, liveGate: () => true, log: () => {}, provider: {
+    const adapter = new BlooioAdapter({ app: app.id, from: "+12125550880", clock, log: () => {}, provider: {
       kind: "sim", send: async request => {
         calls.push(request);
         return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent" };
       },
     } });
     const service = new NetworkService({ url, clock, log: () => {}, photoStorage: null, adapter, networks: [{ id: appRuntime }],
-      env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off" }, network: { plans: false, growth: false } });
+      env: { PLATFORM_ENV: "dev" }, network: { plans: false, growth: false } });
     try {
       await service.start();
+      const rt = service.runtimes.get(appRuntime)!;
+      const staff = { id: "fixture-staff", roles: ["safety" as const], grants: [{ role: "safety" as const, app: app.id }], via: "sso" as const };
       const members: Spec[] = [];
       for (const { name, e164 } of people) {
         const joined = await service.accounts.join(app, { e164, personId: null }, { firstName: name, age: 30, consent: { sms: true, wording: app.consent.text } });
         if (!joined.ok) throw new Error("Fixture join was refused");
+        for (const check of ["age", "liveness"] as const) {
+          expect(await service.verify(staff, rt, joined.membership.memberId, check, "pass", "fixture verification")).toEqual({ ok: true });
+        }
         members.push({ id: joined.membership.memberId, name, age: 30 });
         await adapter.engaged(e164);
       }
       const [first, second] = members.map(m => m.id) as [string, string];
       const now = clock.now();
-      const fixture = new Mini(members, { app: app.id, review: "human", plans: false, growth: false });
+      const fixture = new Mini(members, { app: app.id, inlineJudge: holdEveryItem.inline, plans: false, growth: false });
       fixture.clock.set(now);
+      fixture.verify(first, second);
       await fixture.onboard(first, second);
       const slots = [4, 5, 6].map(days => ({ start: now + days * DAY, end: now + days * DAY + 2 * HOUR }));
       const plan: plans.Plan = {
@@ -51,7 +58,7 @@ test.skipIf(!pgAvailable).each([
         size: { min: 2, target: 2, max: 2 }, quorum: 2, probeDeadline: now + 2 * (scenario === "deadline reached" ? HOUR : DAY),
         score: 0.6, u: {}, familiar: {}, createdAt: now, category: "hobby",
       };
-      const { id: oppId } = fixture.net["submitPlan"](plan, now);
+      const { id: oppId } = fixture.net["submitPlan"](plan, now)!;
       const saved = fixture.net.exportState();
       const opp = saved.opps.find(o => o.id === oppId)!;
       const deliveryId = friendsPlanProbeDeliveryKey(oppId, 0, second);
@@ -67,7 +74,6 @@ test.skipIf(!pgAvailable).each([
       opp.contacted = [first, second];
       saved.members.find(m => m.id === second)!.awaiting = { kind: "probe", oppId, probeReceiptId: deliveryId, at: now };
       const body = `Would you like to go climbing? ${offered.map(option => `${option.key.toUpperCase()}: ${option.label}`).join(". ")}`;
-      const rt = service.runtimes.get(appRuntime)!;
       await adapter.queue.setLineSafety("review");
       await rt.unitOfWork(net => {
         net.importState({ ...net.exportState(), members: saved.members, opps: saved.opps });

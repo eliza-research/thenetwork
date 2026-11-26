@@ -1,6 +1,6 @@
 # Book and close a reviewed three-person hike
 
-[Story F12](product/stories.md#story-f12--join-a-small-group) requires review, anonymous invitations and quorum. [Story F18](product/stories.md#story-f18--keep-a-meeting-on-track) requires the booked group to close gracefully when its minimum attendance fails. This journey follows a public day hike with three adult invitees who shared a Saturday afternoon and evening window. There are no eligible alternates or smaller hike in the fixture.
+[Story F12](product/stories.md#story-f12--join-a-small-group) requires a recorded review (the review judge, or staff for an exception), anonymous invitations and quorum. [Story F18](product/stories.md#story-f18--keep-a-meeting-on-track) requires the booked group to close gracefully when its minimum attendance fails. This journey follows a public day hike with three adult invitees who shared a Saturday afternoon and evening window. There are no eligible alternates or smaller hike in the fixture.
 
 ## Story: Join a reviewed public hike only after the group agrees
 
@@ -8,32 +8,39 @@
 
 ### Review comes before anonymous contact
 
-The proposal starts in staff review. Only an approval opens the three invitations. A rejection closes the proposal without contacting any participant. The invitations use the public venue and the shared window without identifying other participants.
+The proposal starts waiting for the review judge. A judge approval opens the three invitations. Any other judgment holds the proposal for staff. Staff approve only a held proposal, which opens the three invitations, and staff may reject an open proposal, which closes it without contacting any participant. The invitations use the public venue and the shared window without identifying other participants. Changed (owner decision 2026-11-22, D15 to D17): the proposal started in staff review and staff approved it; now the review judge approves it, and staff decide only a proposal that the judge held.
 
 ```quint
 import planDecision as Plan from "./planDecision"
 import opportunityLifecycle as Opportunity from "./opportunityLifecycle"
 
 type Hiker = FirstHiker | SecondHiker | ThirdHiker
-type GroupPhase = AwaitingGroupReview | GroupInvited | ReviewDenied | GroupUnderfilled | HikeBooked | HikeCancelled
+type GroupPhase = AwaitingGroupJudge | GroupHeldForStaff | GroupInvited | ReviewDenied | GroupUnderfilled | HikeBooked | HikeCancelled
 type GroupEffect = AnonymousInvite | GroupReveal | PrivateCancellation
 type ReviewedGroupJourney = { phase: GroupPhase, accepted: List[Hiker], declined: List[Hiker], invites: int, meetings: int, reveals: int, cancellations: int }
 type GroupStep = { state: ReviewedGroupJourney, out: List[GroupEffect] }
 
 pure val hikers = List(FirstHiker, SecondHiker, ThirdHiker)
 pure val initial: ReviewedGroupJourney =
-  { phase: AwaitingGroupReview, accepted: List(), declined: List(), invites: 0, meetings: 0, reveals: 0, cancellations: 0 }
+  { phase: AwaitingGroupJudge, accepted: List(), declined: List(), invites: 0, meetings: 0, reveals: 0, cancellations: 0 }
 
-pure def canReviewGroup(s: ReviewedGroupJourney, approved: bool): bool = s.phase == AwaitingGroupReview
-pure def reviewGroup(s: ReviewedGroupJourney, approved: bool): GroupStep =
-  if (approved)
-    { state: { ...s, phase: GroupInvited, invites: 3 }, out: List(AnonymousInvite, AnonymousInvite, AnonymousInvite) }
+pure def canJudgeGroup(s: ReviewedGroupJourney, approved: bool): bool = s.phase == AwaitingGroupJudge
+pure def judgeGroup(s: ReviewedGroupJourney, approved: bool): GroupStep =
+  if (approved) { state: { ...s, phase: GroupInvited, invites: 3 }, out: List(AnonymousInvite, AnonymousInvite, AnonymousInvite) }
+  else { state: { ...s, phase: GroupHeldForStaff }, out: List() }
+
+pure def canStaffDecideGroup(s: ReviewedGroupJourney, approved: bool): bool =
+  if (approved) s.phase == GroupHeldForStaff else (s.phase == AwaitingGroupJudge or s.phase == GroupHeldForStaff)
+pure def staffDecideGroup(s: ReviewedGroupJourney, approved: bool): GroupStep =
+  if (approved) { state: { ...s, phase: GroupInvited, invites: 3 }, out: List(AnonymousInvite, AnonymousInvite, AnonymousInvite) }
   else { state: { ...s, phase: ReviewDenied }, out: List() }
 
 pure def alwaysNoContactWithoutApproval(s: ReviewedGroupJourney): bool =
-  (s.phase == AwaitingGroupReview or s.phase == ReviewDenied) implies
+  (s.phase == AwaitingGroupJudge or s.phase == GroupHeldForStaff or s.phase == ReviewDenied) implies
     (s.invites == 0 and s.meetings == 0 and s.reveals == 0 and s.cancellations == 0)
 pure def sometimesRejectedWithoutContact(s: ReviewedGroupJourney): bool = s.phase == ReviewDenied
+pure def sometimesHeldForStaff(s: ReviewedGroupJourney): bool = s.phase == GroupHeldForStaff
+pure val approvedValues = Set(false, true)
 ```
 
 ### Booking requires an independent yes from all three invitees

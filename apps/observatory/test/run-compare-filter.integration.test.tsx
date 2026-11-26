@@ -14,7 +14,8 @@ const makeRun = (id: string, at: number, proposals: number): EngineRunSummary =>
   byGenerator: {}, proposalsByGenerator: {}, rejectedBy: {}, memberFunnel: {},
   fairness: { gini: 0, top10Share: 0, zeroExposureShare: 0, newcomerCoverage: 1, viableCoverage: 1, lorenz: [], membersWithProposal: 20, eligibleMembers: 20 },
   emptyStates: 0, emptyStatesByReason: {},
-  search: { members: 0, checks: 0, touches: 0, exact: 0, budgeted: 0, empty: 0, largestUnseenBound: -1 },
+  search: { members: 0, checks: 0, touches: 0, exact: 0, budgeted: 0, empty: 0, largestUnseenBound: -1, bounds: 0, checksAfterSettled: 0, boundViolations: 0, packBoundViolations: 0, classCapViolations: 0, touchClosed: 0, checkClosed: 0, memoHits: 0, refusals: {} },
+  searchOutcomes: [],
   timingsMs: {}, top: [], proposalIds: [],
 });
 const makeDiff = (a: EngineRunSummary, b: EngineRunSummary): RunDiff => ({

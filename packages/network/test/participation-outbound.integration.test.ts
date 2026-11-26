@@ -10,10 +10,10 @@ import { BlooioAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
 import { localBookingStart, rescheduleUpdateKey } from "../src/rescheduling.ts";
 import { Mini, type Spec } from "./mini.ts";
+import { holdEveryItem, simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";
 
 test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the current member and opportunity", async () => {
   // spec/outboundAdmission.md, "A queued match invitation still needs the member's current settings"
-  // spec/outboundAdmission.md, "A current row needs live approval and the recipient's eligibility"
   // spec/outboundAdmission.md, "A cancelled booking can notify a participant who received the booked plan"
   // spec/meetingSettlement.md, "The day-of check-in uses one near-meeting message"
   const url = await migratedDb("participation_outbound");
@@ -23,7 +23,7 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
   const app = APPS.friends;
   const phones = ["+12125550381", "+12125550382"];
   const calls: SendRequest[] = [];
-  const adapter = new BlooioAdapter({ app: app.id, from: "+12125550380", clock, liveGate: () => true, log: () => {}, provider: {
+  const adapter = new BlooioAdapter({ app: app.id, from: "+12125550380", clock, log: () => {}, provider: {
     kind: "sim", send: async request => {
       calls.push(request);
       return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent" };
@@ -31,7 +31,7 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
   } });
   const service = new NetworkService({
     url, clock, log: () => {}, photoStorage: null, adapter: () => adapter,
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret }, networks: [{ id: "friends:nyc", matchingEnabled: false }],
+    env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret }, networks: [{ id: "friends:nyc", matchingEnabled: false }],
   });
   const sendTurn = async (messageId: string, text: string, receivedAt = clock.now()) => {
     const input: TurnRequest = { app: app.id, channel: "blooio", from: phones[0]!, to: null, messageId,
@@ -42,15 +42,21 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
   };
   try {
     await service.start();
+    const rt = service.runtimes.get("friends:nyc")!;
+    const staff = { id: "fixture-staff", roles: ["safety" as const], grants: [{ role: "safety" as const, app: app.id }], via: "sso" as const };
     const members: Spec[] = [];
     for (const [index, e164] of phones.entries()) {
       const name = index === 0 ? "Ari" : "Blair";
       const joined = await service.accounts.join(app, { e164, personId: null }, { firstName: name, age: 30, consent: { sms: true, wording: app.consent.text } });
       if (!joined.ok) throw new Error(`Fixture join refused for ${name}`);
+      for (const check of ["age", "liveness"] as const) {
+        expect(await service.verify(staff, rt, joined.membership.memberId, check, "pass", "fixture verification")).toEqual({ ok: true });
+      }
       members.push({ id: joined.membership.memberId, name, age: 30, area: "Greenpoint", interests: ["hiking", "climbing"], skills: ["belaying"] });
     }
     const [first, second] = members.map(m => m.id);
-    const w = new Mini(members, { app: app.id, review: "human", plans: false, growth: false });
+    const w = new Mini(members, { app: app.id, inlineJudge: holdEveryItem.inline, plans: false, growth: false });
+    w.verify(first!, second!);
     await w.onboard(first!, second!);
     const oppId = w.propose([first!, second!], { category: "hobby" });
     expect(await w.runUntil(() => w.net.reviewQueue().some(o => o.oppId === oppId), 2 * DAY)).toBe(true);
@@ -58,7 +64,6 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
     expect(await w.runUntil(() => w.probed(first!), DAY)).toBe(true);
     await w.say(first!, "yes");
     expect(await w.runUntil(() => w.probed(second!), DAY)).toBe(true);
-    const rt = service.runtimes.get("friends:nyc")!;
     const before = calls.length;
     await adapter.queue.setLineSafety("review");
     await rt.unitOfWork(net => {
@@ -95,8 +100,9 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
     expect(calls.slice(before).map(call => call.idempotencyKey)).toEqual(["tn:logistics-paused", `tn:${releaseId}`]);
 
     // A current day-before reminder sends. A pending copy for the other participant expires at the end of its window.
-    const pair = new Mini(members, { app: app.id, review: "auto", plans: false, growth: false });
+    const pair = new Mini(members, { app: app.id, inlineJudge: simulatedReviewJudge({ exceptions: false }), plans: false, growth: false });
     pair.clock.set(clock.now());
+    pair.verify(first!, second!);
     await pair.onboard(first!, second!);
     const planId = pair.propose([first!, second!]);
     await pair.answerProbes([first!, second!]);

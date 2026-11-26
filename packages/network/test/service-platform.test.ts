@@ -17,7 +17,7 @@ import { APPS, POWERED_BY, type AppId } from "../../platform/src/apps.ts";
 import { lastEvents, resolveConsent } from "../../platform/src/consent.ts";
 import type { OtpProvider } from "../../platform/src/otp.ts";
 import { BlooioAdapter, DryRunAdapter, type ChannelAdapter, type Delivery, type Outbound } from "../service/channel.ts";
-import { enrolledText, LOOKING_FOR_ASK, LOOKING_FOR_ASK_MINOR, NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";
+import { enrolledText, LOOKING_FOR_ASK, LOOKING_FOR_ASK_MINOR, NetworkService, WEBHOOK_PATH, type NetworkRuntime, type ServiceOptions } from "../service/service.ts";
 import { brandOf, copyFor } from "../src/copy.ts";
 import { START } from "./mini.ts";
 import { deliveryIdFor } from "../../notify/src/scheduler.ts";
@@ -199,9 +199,9 @@ describe.skipIf(!pgAvailable)("the service as the platform's channel (Postgres)"
     expect((await outbound(kn.id)).map(m => m.body)).toContain(LOOKING_FOR_ASK_MINOR);
     expect(LOOKING_FOR_ASK_MINOR).not.toMatch(/dating/i);
     for (const t of [LOOKING_FOR_ASK, LOOKING_FOR_ASK_MINOR]) expect(t).toMatch(/Message frequency varies\. Message and data rates may apply\. Reply STOP to stop, HELP for help\./);
-    // "dating" (or "all of these") from a 15-year-old never enrolls slop.date (before: active slop member, "you're in slop.date").
     expect(await text(b.s, clock, kai, "all of these, dating too")).toBe("handled");
-    for (const app of ["friends", "peon"] as AppId[]) expect((await memberOf(app, kai))!).toMatchObject({ account_status: "active", age: 15 });
+    expect((await memberOf("friends", kai))!).toMatchObject({ account_status: "active", age: 15 });
+    expect(await memberOf("peon", kai)).toBeUndefined();
     expect(await memberOf("slop", kai)).toBeUndefined();
     expect((await outbound(kn.id)).at(-1).body).not.toMatch(/slop/);
     expect((await sql`select distinct wording from platform.consent_events where e164 = ${kai} and source = 'looking_for'`).map((r: any) => r.wording)).toEqual([LOOKING_FOR_ASK_MINOR]);
@@ -338,7 +338,7 @@ describe.skipIf(!pgAvailable)("the service as the platform's channel (Postgres)"
     }
     const { s: restarted } = service(clock, {
       adapter: (_net, rt) => new HeldAdapter({
-        from: "+12125550100", clock, app: rt.app.id, liveGate: () => true, log: () => {},
+        from: "+12125550100", clock, app: rt.app.id, log: () => {},
         provider: { kind: "sim", send: async request => { sent.push(request); return { providerMessageId: request.idempotencyKey, status: "sent" }; } },
       }),
     });
@@ -379,10 +379,9 @@ describe.skipIf(!pgAvailable)("the service as the platform's channel (Postgres)"
     await row("w-probe-old", "queued", 30 * HOUR, true);
     await row("w-ancient", "queued", 4 * DAY, false);
     await s.close();
-    const flags = { BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1", FRIENDS_LIVE_APPROVED: "1" };
     const sent: SendRequest[] = [];
     const provider = { kind: "blooio" as const, send: async (r: SendRequest) => { sent.push(r); return { providerMessageId: `p${sent.length}`, status: "queued" as const }; } };
-    const live = { adapter: (net: any, rt: any) => new BlooioAdapter({ from: "+12125550100", net, provider, clock, memberOf: rt.memberOf, env: flags, app: rt.app.id, log: () => {} }) };
+    const live = { adapter: (_net: unknown, rt: NetworkRuntime) => new BlooioAdapter({ from: "+12125550100", provider, clock, env: {}, app: rt.app.id, log: () => {} }) };
     const { s: seeder } = service(clock, live);
     await seeder.start();
     const queue = (seeder.runtimeFor("friends")!.adapter as BlooioAdapter).queue;
@@ -643,8 +642,8 @@ describe.skipIf(!pgAvailable)("the service as the platform's channel (Postgres)"
     const k = "k".repeat(40);
     const otp = new FakeOtp();
     const { s } = service(clock, {
-      env: { PLATFORM_ENV: "production", TURNSTILE_SECRET_KEY: "0x4AAA", PLATFORM_HASH_KEY: k, PLATFORM_SESSION_SECRET: k, PLATFORM_PROXY_SECRET: k },
-      tokens: `admin@*:${k}`, publicApi: { otp, minStartMs: 0, minVerifyMs: 0 },
+      env: { PLATFORM_ENV: "production", TURNSTILE_SECRET_KEY: "0x4AAA", PLATFORM_HASH_KEY: k, PLATFORM_SESSION_SECRET: "s".repeat(40), PLATFORM_PROXY_SECRET: k },
+      tokens: `admin@*:${"t".repeat(40)}`, publicApi: { otp, minStartMs: 0, minVerifyMs: 0 },
     });
     const res = await s.publicFetch(new Request("https://slop.date/api/auth/otp/start", { method: "POST", headers: { host: "slop.date", "content-type": "application/json" }, body: JSON.stringify({ phone: newPhone() }) }));
     expect([res.status, (await res.json()).error]).toEqual([400, "turnstile"]);

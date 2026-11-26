@@ -28,7 +28,7 @@ test.skipIf(!pgAvailable)("approved probes use current settings and a sampled de
     { name: "Charlie", e164: "+12125550393" },
   ];
   const calls: SendRequest[] = [];
-  const adapter = new BlooioAdapter({ app: app.id, from: "+12125550390", clock, liveGate: () => true, log: () => {}, provider: {
+  const adapter = new BlooioAdapter({ app: app.id, from: "+12125550390", clock, log: () => {}, provider: {
     kind: "sim", send: async request => {
       calls.push(request);
       return { providerMessageId: `sim:${request.idempotencyKey}`, status: "sent" };
@@ -36,7 +36,7 @@ test.skipIf(!pgAvailable)("approved probes use current settings and a sampled de
   } });
   const service = new NetworkService({
     url, clock, log: () => {}, photoStorage: null, adapter: (_network, runtime) => runtime.app.id === app.id ? adapter : new DryRunAdapter(() => {}),
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret }, networks: [{ id: networkId }, { id: "peon:nyc" }],
+    env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret }, networks: [{ id: networkId }, { id: "peon:nyc" }],
     devMatching: [networkId], network: { plans: false, growth: false, maxNewPerDay: 0 }, tokens: "reviewer@friends:plan-reviewer",
   });
   const observatory = new RealSource({ app: app.id, url });
@@ -49,10 +49,15 @@ test.skipIf(!pgAvailable)("approved probes use current settings and a sampled de
   };
   try {
     await service.start();
+    const rt = service.runtimes.get(networkId)!;
+    const staff = { id: "fixture-staff", roles: ["safety" as const], grants: [{ role: "safety" as const, app: app.id }], via: "sso" as const };
     const members = [];
     for (const { name, e164 } of recipients) {
       const joined = await service.accounts.join(app, { e164, personId: null }, { firstName: name, age: 30, consent: { sms: true, wording: app.consent.text } });
       if (!joined.ok) throw new Error(`Fixture join refused for ${name}`);
+      for (const check of ["age", "liveness"] as const) {
+        expect(await service.verify(staff, rt, joined.membership.memberId, check, "pass", "fixture verification")).toEqual({ ok: true });
+      }
       members.push({ id: joined.membership.memberId, name, age: 30 });
       await adapter.engaged(e164);
     }
@@ -61,7 +66,6 @@ test.skipIf(!pgAvailable)("approved probes use current settings and a sampled de
     const now = clock.now();
     fixture.clock.set(now);
     await fixture.onboard(...invited);
-    const rt = service.runtimes.get(networkId)!;
     const plan: plans.Plan = {
       id: "reviewed_group_probe", city: "nyc", activityId: "day_hike", venueId: "inwood-hill",
       place: { name: "Inwood Hill Park", area: "Inwood" }, window: { start: now + 5 * DAY, end: now + 5 * DAY + 2 * HOUR },
@@ -80,12 +84,14 @@ test.skipIf(!pgAvailable)("approved probes use current settings and a sampled de
     expect(await probes()).toEqual([]);
     await adapter.queue.setLineSafety("review");
 
+    await service.reviewJudgeTick();
     const reviewUrl = "http://127.0.0.1/apps/friends/review";
     const headers = { authorization: "Bearer plan-reviewer", "content-type": "application/json" };
     const queue = await service.fetch(new Request(reviewUrl, { headers }));
     expect(queue.status).toBe(200);
-    const { items } = await queue.json() as { items: { oppId: string; revision: number }[] };
+    const { items } = await queue.json() as { items: { oppId: string; revision: number; exception?: { verdict: string; reason: string } }[] };
     expect(items).toHaveLength(1);
+    expect(items[0]!.exception).toMatchObject({ verdict: "cannot_run", reason: "no_provider" });
     const { oppId, revision } = items[0]!;
     expect(oppId).toBe(`${app.id}.nw-1-${sampledIndex}`);
     const approval = await service.fetch(new Request(`${reviewUrl}/${encodeURIComponent(oppId)}`, {

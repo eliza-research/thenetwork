@@ -12,7 +12,7 @@
 import type { MemberId } from "@thenetwork/core";
 import { DAY } from "@thenetwork/core";
 import { friendsCandidateCanMeet, friendsSeatFitsFormat } from "../../../../core/src/generated/friendsPlanningSeats.ts";
-import { memberReason, pairReason } from "../../filters.ts";
+import { isMinor, memberReason, pairReason } from "../../filters.ts";
 import { circleCandidate, pairCandidate, searchFor, type GenCtx } from "../../genkit.ts";
 import type { Circle } from "../../match/circles.ts";
 import type { MatchProfile } from "../../match/profile.ts";
@@ -20,6 +20,7 @@ import type { GeneratorSpec } from "../../pack.ts";
 import type { Candidate, Role } from "../../types.ts";
 import type { World } from "../../world.ts";
 import { FRIENDS_CITY } from "./geo.ts";
+import { friendsRosterVerified } from "./rules.ts";
 import { FRIENDS_ACTIVITY_TAGS } from "./vectors.ts";
 
 const positiveAbout = (ctx: GenCtx, from: MemberId, about: MemberId, opp: string) =>
@@ -78,7 +79,7 @@ export function sameTableAgain(ctx: GenCtx): Candidate[] {
     const startsAsGroup = ids.length >= 3;
     const fit = (id: MemberId, group: boolean) => {
       const format = group ? "small_group" : "one_to_one";
-      return w.get(id)?.m.prefs.formats.includes(format) === true
+      return !isMinor(w, id) && w.get(id)?.m.prefs.formats.includes(format) === true
         && memberReason(w, id, { category: "social", role: "peer", format, timeSensitive: false }) === null;
     };
     const firstPass = ids.filter(id => fit(id, startsAsGroup)).slice(0, 6);
@@ -128,9 +129,11 @@ export function activityPartner(ctx: GenCtx): Candidate[] {
     && memberReason(w, id, ONE_TO_ONE) === null;
   for (const profile of w.match.profiles) {
     if (profile.lane !== "Friend" || !oneToOne(profile.memberId)) continue;
-    const best = searchFor(ctx, profile).kept.find(({ profile: other }) =>
-      oneToOne(other.memberId) && friendsCandidateCanMeet(
-        pairReason(w, profile.memberId, other.memberId, ONE_TO_ONE.category) === null, w.canMeet([profile.memberId, other.memberId])));
+    const best = searchFor(ctx, profile).kept.find(({ profile: other }) => {
+      const pair = [profile.memberId, other.memberId];
+      return oneToOne(other.memberId) && friendsRosterVerified(w, pair) && friendsCandidateCanMeet(
+        pairReason(w, profile.memberId, other.memberId, ONE_TO_ONE.category) === null, w.canMeet(pair));
+    });
     if (!best) continue;
     const [a, b] = [profile.memberId, best.profile.memberId];
     const k = [a, b].sort().join(",");

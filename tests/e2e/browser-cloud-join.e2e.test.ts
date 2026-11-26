@@ -11,7 +11,7 @@ import { buildSite, site } from "../../sites/sites.ts";
 
 const browserTest = process.env.PLAYWRIGHT_MODULE ? test : test.skip;
 
-browserTest("Peon keeps the approved name and age through the exact first Cloud sign-in", async () => {
+browserTest("Peon keeps the approved name, and no birthday or age, through the exact first Cloud sign-in", async () => {
   const { chromium } = await import(process.env.PLAYWRIGHT_MODULE!);
   const out = mkdtempSync(join(tmpdir(), "peon-cloud-join-"));
   const built = await buildSite(site("peon"), out, { PLATFORM_ENV: "dev" });
@@ -41,7 +41,7 @@ browserTest("Peon keeps the approved name and age through the exact first Cloud 
   platform = createPublicApi({
     store, now: () => now, hostMap: { [server.url.host]: "peon" },
     env: {
-      PLATFORM_ENV: "dev", NETWORK_CLOUD_AUTH_ENABLED: "true", NETWORK_CLOUD_AUTH_LOGIN_ORIGIN: "https://cloud-staging.eliza.app",
+      PLATFORM_ENV: "dev", NETWORK_CLOUD_AUTH_MODE: "staging-local", NETWORK_CLOUD_AUTH_LOGIN_ORIGIN: "https://cloud-staging.eliza.app",
       NETWORK_CLOUD_AUTH_API_ORIGIN: "https://api-staging.eliza.app", NETWORK_CLOUD_AUTH_SITE_ORIGIN: origin,
       NETWORK_CLOUD_AUTH_SERVER_TOKEN: "local-peon-cloud-fixture".repeat(2),
     },
@@ -85,14 +85,21 @@ browserTest("Peon keeps the approved name and age through the exact first Cloud 
       }
       await route.continue();
     });
-    await page.goto(`${origin}/join?via=agent#firstName=Ari&age=31&invite=${invite}`);
+    const cloudStarts: unknown[] = [];
+    page.on("request", (request: any) => {
+      if (request.url() === `${origin}/api/auth/cloud/start`) cloudStarts.push(request.postDataJSON());
+    });
+    await page.goto(`${origin}/join?via=agent#firstName=Ari&age=31&birthdate=1995-03-14&invite=${invite}`);
     await page.getByRole("button", { name: "Continue with your phone" }).click();
     const name = page.getByLabel("First name");
     await name.waitFor();
     expect(page.url()).toBe(`${origin}/join`);
     expect(exchangeCount).toBe(1);
     expect(await name.inputValue()).toBe("Ari");
-    expect(await page.getByLabel("Age", { exact: true }).inputValue()).toBe("31");
+    expect(await page.getByLabel("Birthday", { exact: true }).inputValue()).toBe("");
+    expect(await page.getByLabel("Birthday", { exact: true }).getAttribute("type")).toBe("date");
+    expect(cloudStarts).toHaveLength(1);
+    expect((cloudStarts[0] as { prefill?: unknown }).prefill).toEqual({ firstName: "Ari", viaAgent: true });
     expect(await page.getByRole("checkbox").getAttribute("aria-checked")).toBe("false");
     expect(joins).toHaveLength(0);
     expect(await store.findPhone(phone)).toBeUndefined();
@@ -114,19 +121,21 @@ browserTest("Peon keeps the approved name and age through the exact first Cloud 
     });
     await secondTab.evaluate((receipt: string) => sessionStorage.setItem("peon-cloud-join-receipt", receipt), restoredReceipt!);
     const freshName = "Ari".repeat(16) + "Bo";
-    await secondTab.goto(`${origin}/join?via=agent#firstName=${freshName}Overflow&age=32`);
+    await secondTab.goto(`${origin}/join?via=agent#firstName=${freshName}Overflow&age=32&birthdate=1994-03-14`);
     expect(await secondTab.getByLabel("First name").inputValue()).toBe(freshName);
-    expect(await secondTab.getByLabel("Age", { exact: true }).inputValue()).toBe("32");
+    expect(await secondTab.getByLabel("Birthday", { exact: true }).inputValue()).toBe("");
     expect(await secondTab.getByRole("checkbox").getAttribute("aria-checked")).toBe("false");
     expect(presented).toEqual([]);
     expect(secondTab.url()).toBe(`${origin}/join?via=agent`);
     expect(await secondTab.evaluate(() => sessionStorage.getItem("peon-cloud-join-receipt"))).toBeNull();
 
     await page.getByRole("checkbox").click();
+    await page.getByLabel("Birthday", { exact: true }).fill("1995-03-14");
     await page.getByRole("button", { name: "Join", exact: true }).click();
     await page.getByText("Go back to the same chat to finish setting up your profile.").waitFor();
     expect(joins).toHaveLength(1);
-    expect(joins[0]).toMatchObject({ firstName: "Ari", age: 31, consent: { sms: true } });
+    expect(joins[0]).toMatchObject({ firstName: "Ari", birthdate: "1995-03-14", consent: { sms: true } });
+    expect(joins[0]).not.toHaveProperty("age");
     expect(joins[0]).not.toHaveProperty("inviteToken");
   } finally {
     await context.close();

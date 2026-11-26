@@ -26,7 +26,6 @@ export interface ProfileReviewCallbacks {
   profileSuggestionWithdrawalOwner: SuggestionWithdrawalOwnerResolver;
 }
 
-/** Binds source permission to the same database transaction's current canonical owner proof. */
 export function profileReviewFactory(o: CloudProfileReviewOwnerOptions): ProfileReviewCallbacks {
   const identity = cloudProfileReviewOwner(o), post = profileReviewProofTransport(o);
   const transactions = new WeakMap<SQL, TransactionReview>();
@@ -42,7 +41,6 @@ export function profileReviewFactory(o: CloudProfileReviewOwnerOptions): Profile
         || !Number.isSafeInteger(before) || before >= o.routePolicy.admitUntil) return null;
       const result = await post(PROFILE_REVIEW_DISCONNECT_PROOF_PATH, `connection-cleanup:${request.requestNonce}`, { request, requestSha256 });
       if (!result || result.now < before || result.now >= o.routePolicy.admitUntil) return null;
-      // The proof binds the original cleanup body hash, not the callback wrapper hash.
       const proof = parseProfileReviewDisconnectProof(result.value, request, requestSha256, result.now);
       return proof && proof.expiresAt <= o.routePolicy.admitUntil && o.now() >= result.now && o.now() < proof.expiresAt
         && o.now() < o.routePolicy.admitUntil ? proof : null;
@@ -90,20 +88,15 @@ export function profileReviewFactory(o: CloudProfileReviewOwnerOptions): Profile
           || (entry.turn.action === "collect" && (!Number.isSafeInteger(entry.turn.pendingExpiresAt)
             || entry.turn.pendingExpiresAt! > proof.pendingExpiresAt || entry.turn.pendingExpiresAt! <= o.now()))) return false;
         entry.sourceUntil = Math.min(entry.sourceUntil, proof.expiresAt);
-        return current(entry, tx);
+        return current(entry, tx) && { issuedAt: proof.issuedAt };
       } catch { return false; }
     },
   };
 }
 
-/** Source-only bootstrap: no flag or incomplete real scope means no automatically granted access. */
 export function profileReviewFromEnv(env: Record<string, string | undefined>, now: () => number, fetchImpl?: typeof fetch): Partial<ProfileReviewCallbacks> {
-  const enabled = env.NETWORK_PROFILE_REVIEW_ENABLED;
-  if (enabled === undefined || enabled === "0") return {};
-  if (enabled !== "1") throw new Error("NETWORK_PROFILE_REVIEW_ENABLED must be 0 or 1");
   const routePolicy = networkRoutePolicy(env);
-  if (!routePolicy || !env.NETWORK_CLOUD_DELIVERY_ORIGIN || !env.SERVICE_TURN_SECRET)
-    throw new Error("Profile review requires its existing isolated route, trusted Cloud origin and service key");
+  if (!routePolicy || !env.NETWORK_CLOUD_DELIVERY_ORIGIN || !env.SERVICE_TURN_SECRET) return {};
   return profileReviewFactory({ origin: env.NETWORK_CLOUD_DELIVERY_ORIGIN, secret: env.SERVICE_TURN_SECRET, routePolicy, now,
     development: env.PLATFORM_ENV === "dev", fetch: fetchImpl });
 }

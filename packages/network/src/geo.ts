@@ -2,15 +2,17 @@
 // real public venues (approximate WGS84 coordinates), a transit-time estimate, and meeting-spot
 // selection. Venues are public places (parks, libraries, plazas, markets): the MVP suggests where
 // to meet but never books, and never uses anyone's home (PRD 32.12, 17.5).
-import type { Category, City } from "@thenetwork/core";
+import { ADULT_AGE, type Category, type City } from "@thenetwork/core";
 import { km, type Borough, type LatLng } from "@thenetwork/core/src/geo.ts";
+import { teenActivityOffered, teenFriendMinAge } from "../../core/src/generated/friendIntroAge.ts";
 export { km, type Borough, type LatLng };
 
 export interface Neighborhood extends LatLng { name: string; borough: Borough }
 export interface Venue extends LatLng {
   id: string; name: string; neighborhood: string; borough: Borough;
-  kind: "park" | "library" | "plaza" | "market" | "museum" | "waterfront" | "courts" | "cafe_district";
+  kind: "park" | "library" | "plaza" | "market" | "museum" | "waterfront" | "courts" | "cafe_district" | "rec_center";
   tags: string[];
+  allAges: boolean; adultPlans: boolean;
   bookingUrl?: string;
 }
 
@@ -82,71 +84,86 @@ export const CITY_CENTER: Record<Exclude<City, "nyc">, LatLng> = {
   la: { lat: 34.0522, lng: -118.2437 },
 };
 
-const V = (id: string, name: string, neighborhood: string, kind: Venue["kind"], lat: number, lng: number, tags: string[], bookingUrl?: string): Venue =>
-  ({ id, name, neighborhood, borough: NEIGHBORHOOD.get(neighborhood)?.borough ?? "Manhattan", kind, lat, lng, tags, ...(bookingUrl ? { bookingUrl } : {}) });
+const V = (id: string, name: string, neighborhood: string, kind: Venue["kind"], lat: number, lng: number, tags: string[],
+  ages: { allAges: boolean; adultPlans: boolean }, bookingUrl?: string): Venue =>
+  ({ id, name, neighborhood, borough: NEIGHBORHOOD.get(neighborhood)?.borough ?? "Manhattan", kind, lat, lng, tags, allAges: ages.allAges, adultPlans: ages.adultPlans, ...(bookingUrl ? { bookingUrl } : {}) });
+const EVERYONE = { allAges: true, adultPlans: true };
+const TEEN_PLANS_ONLY = { allAges: true, adultPlans: false };
 export const VENUES: Venue[] = [
-  V("prospect-long-meadow", "Prospect Park, Long Meadow", "Park Slope", "park", 40.6602, -73.969, ["outdoors", "running", "picnic", "walk", "social"]),
-  V("grand-army-greenmarket", "Grand Army Plaza Greenmarket", "Prospect Heights", "market", 40.6741, -73.97, ["food", "cooking", "market", "social"]),
-  V("bpl-central", "Brooklyn Public Library, Central", "Prospect Heights", "library", 40.6724, -73.9682, ["books", "quiet", "writing", "study", "professional"]),
-  V("brooklyn-museum", "Brooklyn Museum", "Prospect Heights", "museum", 40.6712, -73.9636, ["arts", "museums", "film"], "https://secure.brooklynmuseum.org/"),
-  V("mccarren-park", "McCarren Park", "Williamsburg", "park", 40.7206, -73.9518, ["running", "sports", "outdoors", "social"]),
-  V("domino-park", "Domino Park", "Williamsburg", "waterfront", 40.7145, -73.9686, ["outdoors", "walk", "social", "photography"]),
-  V("transmitter-park", "Transmitter Park", "Greenpoint", "waterfront", 40.7273, -73.9606, ["outdoors", "walk", "quiet"]),
-  V("maria-hernandez", "Maria Hernandez Park", "Bushwick", "park", 40.7034, -73.9235, ["outdoors", "social", "sports"]),
-  V("fort-greene-park", "Fort Greene Park", "Fort Greene", "park", 40.6912, -73.9755, ["outdoors", "walk", "running", "social"]),
-  V("bbp-pier-2", "Brooklyn Bridge Park, Pier 2", "DUMBO", "courts", 40.699, -73.999, ["sports", "basketball", "outdoors", "tennis"]),
-  V("red-hook-fields", "Red Hook Ball Fields", "Red Hook", "courts", 40.6775, -74.0055, ["sports", "food", "outdoors"]),
-  V("sunset-park", "Sunset Park (the park)", "Sunset Park", "park", 40.6487, -74.004, ["outdoors", "walk", "photography"]),
-  V("shore-road", "Shore Road Park", "Bay Ridge", "waterfront", 40.6253, -74.0384, ["running", "cycling", "walk"]),
-  V("central-sheep-meadow", "Central Park, Sheep Meadow", "Upper West Side", "park", 40.7718, -73.975, ["outdoors", "picnic", "social", "walk"]),
-  V("central-reservoir", "Central Park Reservoir loop", "Upper East Side", "park", 40.7856, -73.9626, ["running", "outdoors"]),
-  V("riverside-park", "Riverside Park", "Upper West Side", "park", 40.801, -73.972, ["running", "cycling", "walk", "parents"]),
-  V("carl-schurz", "Carl Schurz Park", "Upper East Side", "park", 40.7754, -73.9433, ["quiet", "walk", "parents"]),
-  V("bryant-park", "Bryant Park", "Midtown", "plaza", 40.7536, -73.9832, ["chess", "cowork", "social", "professional"]),
-  V("nypl-schwarzman", "NYPL Stephen A. Schwarzman Building", "Midtown", "library", 40.7532, -73.9822, ["books", "quiet", "writing", "study"]),
-  V("washington-square", "Washington Square Park", "West Village", "park", 40.7308, -73.9973, ["music", "chess", "social", "arts"]),
-  V("union-square-greenmarket", "Union Square Greenmarket", "Flatiron", "market", 40.7359, -73.9911, ["food", "cooking", "market"]),
-  V("tompkins-square", "Tompkins Square Park", "East Village", "park", 40.7265, -73.9817, ["social", "dogs", "outdoors"]),
-  V("high-line", "The High Line at Gansevoort", "Chelsea", "park", 40.7398, -74.008, ["walk", "arts", "photography", "outdoors"]),
-  V("chelsea-market", "Chelsea Market", "Chelsea", "market", 40.7424, -74.006, ["food", "cooking", "social"]),
-  V("pier-45", "Hudson River Park, Pier 45", "West Village", "waterfront", 40.7339, -74.0118, ["running", "outdoors", "sailing", "walk"]),
-  V("seward-park", "Seward Park", "Lower East Side", "park", 40.7145, -73.9888, ["parents", "outdoors", "social"]),
-  V("columbus-park", "Columbus Park", "Chinatown", "park", 40.7154, -73.9997, ["chess", "social", "outdoors"]),
-  V("battery-park", "The Battery", "Financial District", "waterfront", 40.7033, -74.017, ["walk", "outdoors", "sailing"]),
-  V("marcus-garvey", "Marcus Garvey Park", "Harlem", "park", 40.8045, -73.9439, ["music", "outdoors", "social"]),
-  V("fort-tryon", "Fort Tryon Park", "Washington Heights", "park", 40.8649, -73.9319, ["walk", "outdoors", "photography"]),
-  V("inwood-hill", "Inwood Hill Park", "Inwood", "park", 40.8723, -73.9264, ["hiking", "outdoors"]),
-  V("astoria-park", "Astoria Park", "Astoria", "park", 40.7794, -73.9221, ["running", "tennis", "outdoors", "social"]),
-  V("socrates-sculpture", "Socrates Sculpture Park", "Astoria", "park", 40.7685, -73.9367, ["arts", "outdoors"]),
-  V("gantry-plaza", "Gantry Plaza State Park", "Long Island City", "waterfront", 40.7454, -73.9584, ["walk", "photography", "outdoors"]),
-  V("flushing-meadows", "Flushing Meadows Corona Park", "Flushing", "park", 40.74, -73.8407, ["sports", "tennis", "cycling", "outdoors"]),
-  V("travers-park", "Travers Park", "Jackson Heights", "park", 40.7553, -73.8869, ["food", "market", "parents", "social"]),
-  V("van-cortlandt", "Van Cortlandt Park", "Riverdale", "park", 40.8977, -73.8987, ["running", "hiking", "outdoors"]),
-  V("st-marys-park", "St. Mary's Park", "Mott Haven", "park", 40.8105, -73.9149, ["outdoors", "social", "parents"]),
-  V("snug-harbor", "Snug Harbor", "St. George", "park", 40.6437, -74.1027, ["arts", "gardens", "walk"]),
-  V("governors-island", "Governors Island", "Financial District", "park", 40.6895, -74.0168, ["cycling", "outdoors", "picnic", "arts"]),
-  V("carroll-park", "Carroll Park", "Carroll Gardens", "park", 40.6811, -73.9956, ["outdoors", "sports", "social", "parents"]),
-  V("herbert-von-king", "Herbert Von King Park", "Bed-Stuy", "park", 40.6898, -73.9466, ["outdoors", "sports", "social", "walk"]),
-  V("brower-park", "Brower Park", "Crown Heights", "park", 40.6739, -73.9437, ["outdoors", "sports", "social", "parents"]),
-  V("cortelyou-road", "Cortelyou Road", "Flatbush", "cafe_district", 40.6409, -73.9639, ["food", "social", "walk"]),
-  V("washington-market-park", "Washington Market Park", "Tribeca", "park", 40.717, -74.0116, ["outdoors", "walk", "social", "parents"]),
-  V("hudson-pier-26", "Hudson River Park, Pier 26", "Tribeca", "waterfront", 40.7211, -74.0135, ["outdoors", "walk", "sports", "social"]),
-  V("stone-street", "Stone Street", "Financial District", "cafe_district", 40.7044, -74.0102, ["food", "social", "walk"]),
-  V("foley-square", "Foley Square", "Chinatown", "plaza", 40.7144, -74.0031, ["walk", "social", "professional"]),
-  V("jefferson-market-library", "Jefferson Market Library", "West Village", "library", 40.7346, -73.9992, ["books", "quiet", "writing", "study"]),
-  V("dewitt-clinton-park", "DeWitt Clinton Park", "Hell's Kitchen", "park", 40.7682, -73.9943, ["outdoors", "sports", "social", "walk"]),
-  V("stuyvesant-square", "Stuyvesant Square Park", "Gramercy", "park", 40.7338, -73.9844, ["outdoors", "walk", "quiet", "dogs"]),
-  V("tudor-city-greens", "Tudor City Greens", "Murray Hill", "park", 40.7488, -73.9709, ["outdoors", "quiet", "walk"]),
-  V("thomas-jefferson-park", "Thomas Jefferson Park", "East Harlem", "park", 40.7932, -73.9355, ["outdoors", "sports", "running", "social"]),
-  V("museum-city-ny", "Museum of the City of New York", "East Harlem", "museum", 40.7925, -73.9518, ["arts", "museums", "photography"]),
-  V("morningside-park", "Morningside Park", "Harlem", "park", 40.806, -73.9587, ["outdoors", "walk", "running", "social"]),
-  V("lou-lodati-park", "Lou Lodati Park", "Sunnyside", "park", 40.7463, -73.9212, ["outdoors", "walk", "social", "parents"]),
-  V("grover-cleveland-park", "Grover Cleveland Park", "Ridgewood", "park", 40.7108, -73.9112, ["outdoors", "sports", "walk", "social"]),
-  V("queens-museum", "Queens Museum", "Flushing", "museum", 40.7459, -73.8467, ["arts", "museums", "photography"]),
-  V("bronx-museum", "Bronx Museum of the Arts", "Mott Haven", "museum", 40.8311, -73.9199, ["arts", "museums", "social"]),
-  V("macombs-dam-park", "Macombs Dam Park", "Mott Haven", "courts", 40.8274, -73.9285, ["sports", "basketball", "outdoors"]),
-  V("clove-lakes-park", "Clove Lakes Park", "St. George", "park", 40.6187, -74.1128, ["outdoors", "walk", "running", "picnic"]),
+  V("prospect-long-meadow", "Prospect Park, Long Meadow", "Park Slope", "park", 40.6602, -73.969, ["outdoors", "running", "picnic", "walk", "social"], EVERYONE),
+  V("grand-army-greenmarket", "Grand Army Plaza Greenmarket", "Prospect Heights", "market", 40.6741, -73.97, ["food", "cooking", "market", "social"], EVERYONE),
+  V("bpl-central", "Brooklyn Public Library, Central", "Prospect Heights", "library", 40.6724, -73.9682, ["books", "quiet", "writing", "study", "professional"], EVERYONE),
+  V("brooklyn-museum", "Brooklyn Museum", "Prospect Heights", "museum", 40.6712, -73.9636, ["arts", "museums", "film"], EVERYONE, "https://secure.brooklynmuseum.org/"),
+  V("mccarren-park", "McCarren Park", "Williamsburg", "park", 40.7206, -73.9518, ["running", "sports", "outdoors", "social"], EVERYONE),
+  V("domino-park", "Domino Park", "Williamsburg", "waterfront", 40.7145, -73.9686, ["outdoors", "walk", "social", "photography"], EVERYONE),
+  V("transmitter-park", "Transmitter Park", "Greenpoint", "waterfront", 40.7273, -73.9606, ["outdoors", "walk", "quiet"], EVERYONE),
+  V("maria-hernandez", "Maria Hernandez Park", "Bushwick", "park", 40.7034, -73.9235, ["outdoors", "social", "sports"], EVERYONE),
+  V("fort-greene-park", "Fort Greene Park", "Fort Greene", "park", 40.6912, -73.9755, ["outdoors", "walk", "running", "social"], EVERYONE),
+  V("bbp-pier-2", "Brooklyn Bridge Park, Pier 2", "DUMBO", "courts", 40.699, -73.999, ["sports", "basketball", "outdoors", "tennis"], EVERYONE),
+  V("red-hook-fields", "Red Hook Ball Fields", "Red Hook", "courts", 40.6775, -74.0055, ["sports", "food", "outdoors"], EVERYONE),
+  V("sunset-park", "Sunset Park (the park)", "Sunset Park", "park", 40.6487, -74.004, ["outdoors", "walk", "photography"], EVERYONE),
+  V("shore-road", "Shore Road Park", "Bay Ridge", "waterfront", 40.6253, -74.0384, ["running", "cycling", "walk"], EVERYONE),
+  V("central-sheep-meadow", "Central Park, Sheep Meadow", "Upper West Side", "park", 40.7718, -73.975, ["outdoors", "picnic", "social", "walk"], EVERYONE),
+  V("central-reservoir", "Central Park Reservoir loop", "Upper East Side", "park", 40.7856, -73.9626, ["running", "outdoors"], EVERYONE),
+  V("riverside-park", "Riverside Park", "Upper West Side", "park", 40.801, -73.972, ["running", "cycling", "walk", "parents"], EVERYONE),
+  V("carl-schurz", "Carl Schurz Park", "Upper East Side", "park", 40.7754, -73.9433, ["quiet", "walk", "parents"], EVERYONE),
+  V("bryant-park", "Bryant Park", "Midtown", "plaza", 40.7536, -73.9832, ["chess", "cowork", "social", "professional"], EVERYONE),
+  V("nypl-schwarzman", "NYPL Stephen A. Schwarzman Building", "Midtown", "library", 40.7532, -73.9822, ["books", "quiet", "writing", "study"], EVERYONE),
+  V("washington-square", "Washington Square Park", "West Village", "park", 40.7308, -73.9973, ["music", "chess", "social", "arts"], EVERYONE),
+  V("union-square-greenmarket", "Union Square Greenmarket", "Flatiron", "market", 40.7359, -73.9911, ["food", "cooking", "market"], EVERYONE),
+  V("tompkins-square", "Tompkins Square Park", "East Village", "park", 40.7265, -73.9817, ["social", "dogs", "outdoors"], EVERYONE),
+  V("high-line", "The High Line at Gansevoort", "Chelsea", "park", 40.7398, -74.008, ["walk", "arts", "photography", "outdoors"], EVERYONE),
+  V("chelsea-market", "Chelsea Market", "Chelsea", "market", 40.7424, -74.006, ["food", "cooking", "social"], EVERYONE),
+  V("pier-45", "Hudson River Park, Pier 45", "West Village", "waterfront", 40.7339, -74.0118, ["running", "outdoors", "sailing", "walk"], EVERYONE),
+  V("seward-park", "Seward Park", "Lower East Side", "park", 40.7145, -73.9888, ["parents", "outdoors", "social"], EVERYONE),
+  V("columbus-park", "Columbus Park", "Chinatown", "park", 40.7154, -73.9997, ["chess", "social", "outdoors"], EVERYONE),
+  V("battery-park", "The Battery", "Financial District", "waterfront", 40.7033, -74.017, ["walk", "outdoors", "sailing"], EVERYONE),
+  V("marcus-garvey", "Marcus Garvey Park", "Harlem", "park", 40.8045, -73.9439, ["music", "outdoors", "social"], EVERYONE),
+  V("fort-tryon", "Fort Tryon Park", "Washington Heights", "park", 40.8649, -73.9319, ["walk", "outdoors", "photography"], EVERYONE),
+  V("inwood-hill", "Inwood Hill Park", "Inwood", "park", 40.8723, -73.9264, ["hiking", "outdoors"], EVERYONE),
+  V("astoria-park", "Astoria Park", "Astoria", "park", 40.7794, -73.9221, ["running", "tennis", "outdoors", "social"], EVERYONE),
+  V("socrates-sculpture", "Socrates Sculpture Park", "Astoria", "park", 40.7685, -73.9367, ["arts", "outdoors"], EVERYONE),
+  V("gantry-plaza", "Gantry Plaza State Park", "Long Island City", "waterfront", 40.7454, -73.9584, ["walk", "photography", "outdoors"], EVERYONE),
+  V("flushing-meadows", "Flushing Meadows Corona Park", "Flushing", "park", 40.74, -73.8407, ["sports", "tennis", "cycling", "outdoors"], EVERYONE),
+  V("travers-park", "Travers Park", "Jackson Heights", "park", 40.7553, -73.8869, ["food", "market", "parents", "social"], EVERYONE),
+  V("van-cortlandt", "Van Cortlandt Park", "Riverdale", "park", 40.8977, -73.8987, ["running", "hiking", "outdoors"], EVERYONE),
+  V("st-marys-park", "St. Mary's Park", "Mott Haven", "park", 40.8105, -73.9149, ["outdoors", "social", "parents"], EVERYONE),
+  V("snug-harbor", "Snug Harbor", "St. George", "park", 40.6437, -74.1027, ["arts", "gardens", "walk"], EVERYONE),
+  V("governors-island", "Governors Island", "Financial District", "park", 40.6895, -74.0168, ["cycling", "outdoors", "picnic", "arts"], EVERYONE),
+  V("carroll-park", "Carroll Park", "Carroll Gardens", "park", 40.6811, -73.9956, ["outdoors", "sports", "social", "parents"], EVERYONE),
+  V("herbert-von-king", "Herbert Von King Park", "Bed-Stuy", "park", 40.6898, -73.9466, ["outdoors", "sports", "social", "walk"], EVERYONE),
+  V("brower-park", "Brower Park", "Crown Heights", "park", 40.6739, -73.9437, ["outdoors", "sports", "social", "parents"], EVERYONE),
+  V("cortelyou-road", "Cortelyou Road", "Flatbush", "cafe_district", 40.6409, -73.9639, ["food", "social", "walk"], EVERYONE),
+  V("washington-market-park", "Washington Market Park", "Tribeca", "park", 40.717, -74.0116, ["outdoors", "walk", "social", "parents"], EVERYONE),
+  V("hudson-pier-26", "Hudson River Park, Pier 26", "Tribeca", "waterfront", 40.7211, -74.0135, ["outdoors", "walk", "sports", "social"], EVERYONE),
+  V("stone-street", "Stone Street", "Financial District", "cafe_district", 40.7044, -74.0102, ["food", "social", "walk"], EVERYONE),
+  V("foley-square", "Foley Square", "Chinatown", "plaza", 40.7144, -74.0031, ["walk", "social", "professional"], EVERYONE),
+  V("jefferson-market-library", "Jefferson Market Library", "West Village", "library", 40.7346, -73.9992, ["books", "quiet", "writing", "study"], EVERYONE),
+  V("dewitt-clinton-park", "DeWitt Clinton Park", "Hell's Kitchen", "park", 40.7682, -73.9943, ["outdoors", "sports", "social", "walk"], EVERYONE),
+  V("stuyvesant-square", "Stuyvesant Square Park", "Gramercy", "park", 40.7338, -73.9844, ["outdoors", "walk", "quiet", "dogs"], EVERYONE),
+  V("tudor-city-greens", "Tudor City Greens", "Murray Hill", "park", 40.7488, -73.9709, ["outdoors", "quiet", "walk"], EVERYONE),
+  V("thomas-jefferson-park", "Thomas Jefferson Park", "East Harlem", "park", 40.7932, -73.9355, ["outdoors", "sports", "running", "social"], EVERYONE),
+  V("museum-city-ny", "Museum of the City of New York", "East Harlem", "museum", 40.7925, -73.9518, ["arts", "museums", "photography"], EVERYONE),
+  V("morningside-park", "Morningside Park", "Harlem", "park", 40.806, -73.9587, ["outdoors", "walk", "running", "social"], EVERYONE),
+  V("lou-lodati-park", "Lou Lodati Park", "Sunnyside", "park", 40.7463, -73.9212, ["outdoors", "walk", "social", "parents"], EVERYONE),
+  V("grover-cleveland-park", "Grover Cleveland Park", "Ridgewood", "park", 40.7108, -73.9112, ["outdoors", "sports", "walk", "social"], EVERYONE),
+  V("queens-museum", "Queens Museum", "Flushing", "museum", 40.7459, -73.8467, ["arts", "museums", "photography"], EVERYONE),
+  V("bronx-museum", "Bronx Museum of the Arts", "Mott Haven", "museum", 40.8311, -73.9199, ["arts", "museums", "social"], EVERYONE),
+  V("macombs-dam-park", "Macombs Dam Park", "Mott Haven", "courts", 40.8274, -73.9285, ["sports", "basketball", "outdoors"], EVERYONE),
+  V("clove-lakes-park", "Clove Lakes Park", "St. George", "park", 40.6187, -74.1128, ["outdoors", "walk", "running", "picnic"], EVERYONE),
+  V("st-johns-rec", "St. John's Recreation Center", "Crown Heights", "rec_center", 40.6694, -73.9422, ["sports", "basketball", "tennis", "games"], TEEN_PLANS_ONLY),
+  V("chelsea-rec", "Chelsea Recreation Center", "Chelsea", "rec_center", 40.7465, -74.0014, ["sports", "basketball", "tennis", "games"], TEEN_PLANS_ONLY),
+  V("hansborough-rec", "Hansborough Recreation Center", "Harlem", "rec_center", 40.8116, -73.9465, ["sports", "basketball", "tennis", "games"], TEEN_PLANS_ONLY),
+  V("al-oerter-rec", "Al Oerter Recreation Center", "Flushing", "rec_center", 40.7675, -73.8331, ["sports", "basketball", "tennis", "games"], TEEN_PLANS_ONLY),
+  V("bpl-williamsburgh", "Brooklyn Public Library, Williamsburgh", "Williamsburg", "library", 40.7081, -73.9571, ["books", "games"], TEEN_PLANS_ONLY),
+  V("nypl-jefferson-market", "NYPL Jefferson Market Library", "West Village", "library", 40.7358, -74.0036, ["books", "games"], TEEN_PLANS_ONLY),
+  V("amnh", "American Museum of Natural History", "Upper West Side", "museum", 40.787, -73.9754, ["museums", "arts"], TEEN_PLANS_ONLY),
+  V("moving-image", "Museum of the Moving Image", "Astoria", "museum", 40.7644, -73.9235, ["museums", "arts"], TEEN_PLANS_ONLY),
+  V("smith-street-cafes", "Smith Street cafes", "Carroll Gardens", "cafe_district", 40.6795, -73.9991, ["food", "coffee"], TEEN_PLANS_ONLY),
+  V("bedford-avenue-cafes", "Bedford Avenue cafes", "Williamsburg", "cafe_district", 40.7173, -73.9569, ["food", "coffee"], TEEN_PLANS_ONLY),
 ];
+
+export const venueAgeMin = (v: Pick<Venue, "allAges">): number => (v.allAges ? teenFriendMinAge : ADULT_AGE);
 
 /** Interest/category tags -> venue tags they suit. */
 const TAG_HINTS: Record<string, string[]> = {
@@ -183,14 +200,14 @@ export function neighborhood(name: string | undefined): Neighborhood {
  * A public place that suits the activity and keeps everyone's trip short: minimizes the worst
  * travel time over participants (fairness), with a bonus for matching tags.
  */
-export function meetingSpot(areasIn: (string | undefined)[], category: Category | undefined, tags: string[] = []): { venue: Venue; minutes: Record<string, number>; worst: number } {
+export function meetingSpot(areasIn: (string | undefined)[], category: Category | undefined, tags: string[] = [], rosterHasMinor = false): { venue: Venue; minutes: Record<string, number>; worst: number } {
   // Unknown areas are left out (never a default); with none known, the most central public places win.
   const known = areasIn.filter((a): a is string => !!a && NEIGHBORHOOD.has(a));
   const areas = known.length ? known : ["Midtown"];
   const homes = areas.map(neighborhood);
   const want = new Set([...(category ? TAG_HINTS[category] ?? [] : []), ...tags.flatMap(t => TAG_HINTS[t] ?? [t])]);
   let best: { venue: Venue; minutes: Record<string, number>; worst: number; cost: number } | undefined;
-  for (const v of VENUES) {
+  for (const v of VENUES.filter(x => teenActivityOffered(rosterHasMinor, x.allAges, x.adultPlans))) {
     const mins = homes.map(h => travelMinutes(h, v));
     const worst = Math.max(...mins);
     const match = v.tags.filter(t => want.has(t)).length;
@@ -204,7 +221,7 @@ export function meetingSpot(areasIn: (string | undefined)[], category: Category 
 export function nearbyVenues(area: string | undefined, tags: string[] = [], n = 3, exclude: ReadonlySet<string> = new Set()): Venue[] {
   const home = neighborhood(area && NEIGHBORHOOD.has(area) ? area : "Midtown");
   const want = new Set(tags.flatMap(t => TAG_HINTS[t] ?? [t]));
-  return VENUES.filter(v => !exclude.has(v.id))
+  return VENUES.filter(v => v.adultPlans && !exclude.has(v.id))
     .map(v => ({ v, s: travelMinutes(home, v) - 5 * Math.min(2, v.tags.filter(t => want.has(t)).length) }))
     .sort((a, b) => a.s - b.s).slice(0, n).map(x => x.v);
 }

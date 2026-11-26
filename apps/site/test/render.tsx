@@ -27,7 +27,7 @@ export function renderJoin(page: JoinPage, options: { consentText: string; minJo
   return renderToString(
     <JoinView
       page={page}
-      values={{ firstName: "", age: "", consent: false }}
+      values={{ firstName: "", birthdate: "", consent: false }}
       phone=""
       code=""
       phoneShown=""

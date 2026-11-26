@@ -1,53 +1,47 @@
-// What friends.help reads about a member beyond the core MemberIndex: home and often-around
-// neighborhoods (Presence areas), the stated travel tolerance, verification results, safety cues and
-// standing availability. Agent-private facets (verification, safety cues, travel tolerance,
-// availability) are read for hard filters only; they are never shown and never matched on. Cached
-// per World (the World is immutable).
 import type { Facet, MemberId } from "@thenetwork/core";
 import type { StandingAvailability } from "../../attention.ts";
 import type { World } from "../../world.ts";
+import { friendOpennessUnanswered, type FriendOpenness, type FriendStatement, type StatedGender } from "../../../../core/src/generated/mutualOpenness.ts";
 import { FRIENDS_CITY, hood, type Neighborhood } from "./geo.ts";
 
-/** Facet tag vocabulary friends.help writes at onboarding (the simulator's snapshot uses the same). */
 export const FT = {
   maxTravel: "friends:max_travel:", free: "friends:free:", groupPref: "friends:group_pref:", energy: "friends:energy:",
-  lifeStage: "friends:life_stage:", newToCity: "friends:new_to_city", liveness: "verify:liveness:", age: "verify:age:", safety: "safety:", reviewCleared: "review:cleared",
+  lifeStage: "friends:life_stage:", newToCity: "friends:new_to_city", gender: "friends:gender:", openGender: "friends:open_gender:", liveness: "verify:liveness:", age: "verify:age:", safety: "safety:", reviewCleared: "review:cleared",
 } as const;
 
-/** Weekly slots friends.help asks about ("usually free Tue evenings, Saturday mornings"): local start hour per slot. */
 export const FRIENDS_SLOTS = ["mon_eve", "tue_eve", "wed_eve", "thu_eve", "fri_eve", "sat_am", "sat_pm", "sat_eve", "sun_am", "sun_pm", "sun_eve"] as const;
 export type FriendsSlot = (typeof FRIENDS_SLOTS)[number];
-/** JS weekday (0 = Sunday) and local start hour of each slot (attention templates: weekday 19, weekend 10 / 14 / 19). */
 export const SLOT_TIME: Record<FriendsSlot, { day: number; hour: number }> = {
   mon_eve: { day: 1, hour: 19 }, tue_eve: { day: 2, hour: 19 }, wed_eve: { day: 3, hour: 19 }, thu_eve: { day: 4, hour: 19 }, fri_eve: { day: 5, hour: 19 },
   sat_am: { day: 6, hour: 10 }, sat_pm: { day: 6, hour: 14 }, sat_eve: { day: 6, hour: 19 }, sun_am: { day: 0, hour: 10 }, sun_pm: { day: 0, hour: 14 }, sun_eve: { day: 0, hour: 19 },
 };
 
-export interface FriendsInfo {
+interface FriendsInfo {
   home?: Neighborhood; often: Neighborhood[];
-  /** Stated max one-way transit minutes (default 40 when not stated). */
   tolerance: number;
-  /** Liveness and age assurance both passed (fail closed: absent = not verified). */
   verified: boolean;
-  /** A safety cue the agent observed that a human reviewer has not cleared (held from matching). */
   safetyCue: boolean;
   groupPref?: string; energy?: string; lifeStage?: string;
+  friend: FriendStatement;
   standing: StandingAvailability[];
 }
 
-/**
- * The one value a passed check has: verify:<check>:pass, as the staff verify path
- * (packages/network/service/service.ts verify) and slop write it. Anything else (fail, pending, the
- * older "passed") is not verified: fail closed.
- */
+const FRIEND_GENDER: Readonly<Record<string, StatedGender>> = { woman: "GenderWoman", man: "GenderMan", nonbinary: "GenderNonbinary" };
+const FRIEND_OPENNESS: Readonly<Record<string, FriendOpenness>> = { women: "FriendsWithWomen", men: "FriendsWithMen", anyone: "FriendsWithAnyone" };
+function friendStatementOf(gender: string | undefined, openGender: string | undefined): FriendStatement {
+  return { friendGender: FRIEND_GENDER[gender ?? ""] ?? "GenderUnstated", friendOpenness: FRIEND_OPENNESS[openGender ?? ""] ?? friendOpennessUnanswered };
+}
+
 export const VERIFY_PASS = "pass";
-/** The tag value of a check result (the simulator's personas say passed / failed / pending). */
 export const verifyTag = (r: "passed" | "failed" | "pending" | "pass" | "fail") => (r === "passed" || r === "pass" ? "pass" : r === "failed" || r === "fail" ? "fail" : "pending");
+export function friendsStaffVerified(tags: readonly string[]): boolean {
+  return tags.find(t => t.startsWith(FT.age)) === `${FT.age}${VERIFY_PASS}`
+    && tags.find(t => t.startsWith(FT.liveness)) === `${FT.liveness}${VERIFY_PASS}`;
+}
 
 export const DEFAULT_TOLERANCE = 40;
 const cache = new WeakMap<World, Map<MemberId, FriendsInfo>>();
 
-/** Keep each facet's timestamps alongside its tags (agent-side reads only, any scope). */
 function facetsBy(w: World): Map<MemberId, Facet[]> {
   const out = new Map<MemberId, Facet[]>();
   for (const f of w.input.facets) {
@@ -60,7 +54,7 @@ function facetsBy(w: World): Map<MemberId, Facet[]> {
   return out;
 }
 
-export function standingFromTags(tags: readonly string[], statedAt: number): StandingAvailability[] {
+function standingFromTags(tags: readonly string[], statedAt: number): StandingAvailability[] {
   const out: StandingAvailability[] = [];
   for (const t of tags) {
     if (!t.startsWith(FT.free)) continue;
@@ -87,9 +81,10 @@ export function friendsInfo(w: World): Map<MemberId, FriendsInfo> {
     const tol = Number(val(FT.maxTravel));
     m.set(id, {
       home, often, tolerance: Number.isFinite(tol) && tol > 0 ? tol : DEFAULT_TOLERANCE,
-      verified: val(FT.liveness) === VERIFY_PASS && val(FT.age) === VERIFY_PASS,
+      verified: friendsStaffVerified(ts),
       safetyCue: ts.some(t => t.startsWith(FT.safety)) && !ts.includes(FT.reviewCleared),
       groupPref: val(FT.groupPref), energy: val(FT.energy), lifeStage: val(FT.lifeStage),
+      friend: friendStatementOf(val(FT.gender), val(FT.openGender)),
       standing: fs.flatMap(f => standingFromTags(f.tags, f.observedAt ?? f.validFrom ?? mi.m.joinedAt)),
     });
   }

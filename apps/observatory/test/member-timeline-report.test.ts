@@ -16,7 +16,7 @@ test("a report shows on the reported member's timeline for safety staff only", a
     tokens: `admin:${TOK.admin},reviewer:${TOK.reviewer},safety:${TOK.safety},analyst:${TOK.analyst}`,
     staffRolesUrl: false, peopleUrl: false,
     audit: { dir: join(dir, "audit") }, lab: { dir: join(dir, "lab") },
-    game: { seed: 1, review: "human", pushMs: 3_600_000, tickMs: 3_600_000 },
+    game: { seed: 1, judge: "hold-every-item", pushMs: 3_600_000, tickMs: 3_600_000 },
   });
   try {
     const source = await server.source("game") as GameSource;

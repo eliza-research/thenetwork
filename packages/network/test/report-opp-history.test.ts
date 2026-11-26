@@ -11,7 +11,7 @@ const person = (id: string, name: string) => ({
 
 async function datedPair() {
   const w = new Mini([person("a", "Ana Diaz"), person("b", "Ben Ito"), person("c", "Cy Moss")], {
-    review: "auto", plans: false, hooks: { postDateReports: true },
+    plans: false,
   });
   await w.onboard("a", "b", "c");
   const oppId = w.propose(["a", "b"]);
@@ -46,7 +46,7 @@ describe("a check-in report names its opportunity in the event log", () => {
   });
 
   test("a report with no opportunity stays out of every opportunity History", async () => {
-    const w = new Mini([person("a", "Ana Diaz"), person("b", "Ben Ito"), person("c", "Cy Moss")], { review: "auto", plans: false });
+    const w = new Mini([person("a", "Ana Diaz"), person("b", "Ben Ito"), person("c", "Cy Moss")], { plans: false });
     await w.onboard("a", "b", "c");
     w.propose(["a", "b"]);
     await w.answerProbes(["a", "b"]);

@@ -27,10 +27,10 @@ export async function drainWebhookSender(effects) {
                 const row = selection === "RunCompliance" ? compliance : selection === "RunOldest" ? oldest : undefined;
                 if (row === undefined)
                     return handled;
-                let attempt = initial;
+                let attempt = yield* apply(initial, { type: "startWebhook", attempts: row.attempts, stopCommand: row.stopCommand });
                 const result = yield* runtime.$catch(yield* (() => { return Effect.sync(() => { return Effect.gen(function* () {
                     const outcome = yield* io(() => effects.handle(row));
-                    attempt = yield* apply(attempt, { type: "recordHandled", stopCommand: row.stopCommand });
+                    attempt = yield* apply(attempt, { type: "recordHandled" });
                     const cancelIds = attempt.phase === "CancelEarlier"
                         ? window.filter(item => earlierWebhookCancellable(item.id === row.id, item.compliance)).map(item => item.id)
                         : [];
@@ -45,10 +45,9 @@ export async function drainWebhookSender(effects) {
                 const { failure } = result;
                 if (!(failure instanceof WebhookDrainIO))
                     return yield* Effect.fail(failure);
-                const attempts = row.attempts + 1;
-                const failed = yield* apply(attempt, { type: "recordFailure", attempts, stopCommand: row.stopCommand });
+                const failed = yield* apply(attempt, { type: "recordFailure" });
                 const drop = failed.phase === "DropWebhook";
-                yield* io(() => effects.fail(row, attempts, drop, failure.cause));
+                yield* io(() => effects.fail(row, failed.attempts, drop, failure.cause));
                 if (!drop)
                     return handled;
             }

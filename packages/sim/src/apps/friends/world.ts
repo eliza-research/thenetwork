@@ -1,29 +1,16 @@
-// The friends.help harness: weekly rounds over ~400 New Yorkers. Each week:
-//   0. the opt-in weekly check-in ("what's your week like?") is answered (visible as stated windows);
-//   1. the matcher reads ONLY the snapshot and returns proposals: new plans (groups of 3-6, or an
-//      activity pair), "same table again" repeats, crew offers and crew sessions;
-//   2. probes are anonymous, activity-first, with 1-3 time options; each member answers with the
-//      options they are truly free for; a plan books the option most yes-sayers picked once quorum
-//      is reached (alternates are probed to backfill); a pair is asked first-then-second;
-//   3. the reveal is the booked plan (names exchanged: this is a "contact"); a member may back out;
-//   4. attendance, enjoyment (least misery), harms, private "see again?" answers, hours together;
-//   5. crews: an offer is opted into person by person (>= 3 form it); sessions weekly; after 3
-//      sessions the crew is handed to its own group chat and keeps meeting on its own (decaying);
-//   6. pairs who both want to see each other again also meet on their own (hidden hangouts).
-// Caps (attention v1.2 + plans v1.1 founder decisions, carried to every app, PRD 40.4): at most 1
-// new-plan invite per member per week (plan allowance; repeats count, crew sessions and crew offers
-// do not), at most 2 booked meetups per member per week and never two in one slot. Proposals past a
-// cap lose that member silently. A proposal naming a member with a CLAIMED age under 18 is dropped
-// and counted (policy violation; must be 0).
 import { requireSimulationCount } from "../../input.ts";
-import { canBeMatched, type MemberId } from "@thenetwork/core";
+import { canBeMatched, earliestDayKeyOf, latestDayKeyOf, type AgeSide, type Category, type Member, type MemberId } from "@thenetwork/core";
+import { ageOnDay } from "../../../../core/src/generated/memberAge.ts";
+import { groupAgeAllowed, rosterHasMinor, teenPlaceAllowed, teenRosterSizeAllowed } from "../../../../core/src/generated/friendIntroAge.ts";
 import type { Crew } from "@thenetwork/engine/src/plans.ts";
 import type { InteractionRecord } from "@thenetwork/engine/src/types.ts";
-import { activityById } from "@thenetwork/engine/src/packs/network/activities.ts";
-import { hood, nycVenues } from "@thenetwork/engine/src/packs/friends/index.ts";
+import { activityAllAges, activityById, venueAllAges } from "@thenetwork/engine/src/packs/network/activities.ts";
+import { SLOT_TIME, hood, nycVenues } from "@thenetwork/engine/src/packs/friends/index.ts";
 import { Rng, hash32 } from "@thenetwork/core";
+import { Coins, signature } from "../../coins.ts";
+import { ageSideOrUnknown, teenMinutesAllowed, teenShape, teenWindowAllowed } from "../../teen.ts";
 import { FriendsOracle, ORACLE_PARAMS, type HarmEvent, type OracleParams } from "./oracle.ts";
-import { FRIEND_ACTIVITIES, SLOTS, generateFriendsPersonas, isReal, type FriendsGenOptions, type FriendsPersona } from "./persona.ts";
+import { FRIEND_ACTIVITIES, NYC_TZ, SLOTS, generateFriendsPersonas, isReal, type FriendsGenOptions, type FriendsPersona } from "./persona.ts";
 import { buildFriendsSnapshot, emptyFriendsState, slotDay, slotTime, weekTime, type CrewState, type FriendsNetworkState, type FriendsSnapshot } from "./snapshot.ts";
 
 export type ProposalKind = "plan" | "partner" | "repeat" | "crew_offer" | "crew_session";
@@ -43,21 +30,56 @@ export interface FriendsProposal {
   crewId?: string;
   /** crew_offer: the crew proposed (members = invited). */
   crew?: Crew;
+  category?: Category;
+  generator?: string;
+  format?: string;
+  roles?: Readonly<Record<MemberId, string>>;
+  hostId?: MemberId;
+  times?: readonly { start: number; end: number }[];
+  via?: MemberId;
+  anchor?: { type: string; id: string };
 }
 export interface MatcherContext { week: number; snapshot: FriendsSnapshot; rng: Rng }
-export interface FriendsMatcher { name: string; propose(ctx: MatcherContext): FriendsProposal[] }
+export interface FriendsMatcher { name: string; propose(ctx: MatcherContext): FriendsProposal[] | Promise<FriendsProposal[]> }
 
 export interface MeetupRecord {
   key: string; week: number; day: number; kind: ProposalKind | "crew_self"; activity: string; venueHood: string;
   attendees: MemberId[]; enjoy: Record<MemberId, number>; good: boolean; travel: Record<MemberId, number>;
   crewId?: string;
 }
-export interface FlowRecord {
+export interface FlowRecord extends RosterAge {
   key: string; week: number; kind: ProposalKind; invited: MemberId[];
   additionalTable?: true;
   stage: "dropped_policy" | "no_quorum" | "backout" | "no_show" | "held" | "crew_declined";
   probed: number; yes: number; replied: number; going: MemberId[]; booked: MemberId[]; attended: MemberId[];
-  declaredMinor: boolean; harms: HarmEvent[]; capDrops: number;
+  ageRuleBroken: boolean; harms: HarmEvent[]; capDrops: number;
+  expected: number;
+  meetAt?: number;
+}
+export interface RosterAge {
+  roster: MemberId[]; sides: AgeSide[]; category?: Category;
+  teenIntros: boolean; minDay: number; maxDay: number;
+  laneOk: boolean; placeOk: boolean; ruleOk: boolean;
+}
+type RosterProposal = Pick<FriendsProposal, "category" | "generator" | "format" | "roles" | "via" | "anchor" | "activity" | "options" | "venueId" | "times">;
+
+export const teenSlotAllowed = (slot: number, durationMin: number): boolean => teenMinutesAllowed(Math.round(SLOT_TIME[SLOTS[slot]!].hour * 60), durationMin);
+
+export function rosterAge(s: FriendsSnapshot, members: ReadonlyMap<MemberId, Member>, ids: readonly MemberId[], pr: RosterProposal, week: number): RosterAge {
+  const sides = ids.map(id => ageSideOrUnknown(members.get(id)));
+  const activity = activityById.get(pr.activity);
+  const durationMin = activity?.durationMin ?? 120;
+  const meetingEnd = Math.max(s.now, ...pr.options.map(o => slotTime(week, o) + durationMin * 60_000), ...(pr.times ?? []).map(t => t.end));
+  const minDay = earliestDayKeyOf(s.now), maxDay = latestDayKeyOf(meetingEnd);
+  const teenIntros = s.teenIntros === true;
+  const { lane, laneOk } = teenShape("friends", ids, pr);
+  const venue = pr.venueId === undefined ? undefined : VENUE_BY_ID.get(pr.venueId);
+  const placeOk = teenPlaceAllowed(true, activity !== undefined, activity !== undefined && activityAllAges(activity), venue !== undefined && venueAllAges(venue))
+    && pr.options.every(o => teenSlotAllowed(o, durationMin))
+    && (pr.times === undefined ? pr.options.length > 0 : pr.times.length > 0 && pr.times.every(t => teenWindowAllowed(NYC_TZ, t.start, t.end)));
+  const ruleOk = !rosterHasMinor(sides) || (teenIntros && laneOk && placeOk && teenRosterSizeAllowed(true, ids.length)
+    && groupAgeAllowed(teenIntros, lane, minDay, maxDay, sides));
+  return { roster: [...ids], sides, ...(pr.category ? { category: pr.category } : {}), teenIntros, minDay, maxDay, laneOk, placeOk, ruleOk };
 }
 export interface Contact { a: MemberId; b: MemberId; day: number; key: string }
 
@@ -72,6 +94,7 @@ export interface FriendsRunOptions extends Omit<FriendsGenOptions, "seed"> {
   bookCap?: number;
   /** Intro cap: new one-to-one (activity partner) invites per member per week (default 2, attention v1.2 Normal). */
   introCap?: number;
+  teenStop?: boolean;
 }
 
 export interface FriendsWorld {
@@ -89,6 +112,7 @@ export interface FriendsWorld {
   selfHangouts: number;
   /** Hangouts a pair arranged on its own (hidden). */
   selfTogether: Map<string, number>;
+  coins: Coins;
 }
 export interface FriendsRunResult { world: FriendsWorld; flows: FlowRecord[]; meetups: MeetupRecord[]; contacts: Contact[]; matcher: string; valueDays: Map<MemberId, number[]> }
 
@@ -100,15 +124,35 @@ export function createFriendsWorld(o: Omit<FriendsRunOptions, "matcher">): Frien
   requireSimulationCount(weeks, "weeks", 1);
   const personas = o.personas ?? generateFriendsPersonas({ ...o, seed: o.seed });
   return {
-    seed: o.seed, weeks, personas, oracle: new FriendsOracle(personas, o.seed, { ...ORACLE_PARAMS, ...(o.params ?? {}) }), state: emptyFriendsState(),
-    hours: new Map(), hoursByWeek: new Map(), meetupsTogether: new Map(), bond: new Map(), mutual: new Set(), disliked: new Set(), lastEnjoy: new Map(), selfHangouts: 0, selfTogether: new Map(),
+    seed: o.seed, weeks, personas, oracle: new FriendsOracle(personas, o.seed, { ...ORACLE_PARAMS, ...(o.params ?? {}) }), state: emptyFriendsState(o.teenStop === true),
+    hours: new Map(), hoursByWeek: new Map(), meetupsTogether: new Map(), bond: new Map(), mutual: new Set(), disliked: new Set(), lastEnjoy: new Map(), selfHangouts: 0, selfTogether: new Map(), coins: new Coins(),
   };
 }
 
 export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
   const world = createFriendsWorld(o);
   const matcher = typeof o.matcher === "function" ? o.matcher(world) : o.matcher;
-  const { oracle, state } = world;
+  const run = friendsWeeks(o, world, matcher.name);
+  let step = run.next();
+  while (!step.done) {
+    const out = matcher.propose(step.value);
+    if (out instanceof Promise) throw new Error(`matcher ${matcher.name} is async: use runFriendsWorldAsync`);
+    step = run.next(out);
+  }
+  return step.value;
+}
+
+export async function runFriendsWorldAsync(o: FriendsRunOptions): Promise<FriendsRunResult> {
+  const world = createFriendsWorld(o);
+  const matcher = typeof o.matcher === "function" ? o.matcher(world) : o.matcher;
+  const run = friendsWeeks(o, world, matcher.name);
+  let step = run.next();
+  while (!step.done) step = run.next(await matcher.propose(step.value));
+  return step.value;
+}
+
+function* friendsWeeks(o: FriendsRunOptions, world: FriendsWorld, matcherName: string): Generator<MatcherContext, FriendsRunResult, FriendsProposal[]> {
+  const { oracle, state, coins } = world;
   const planCap = o.planCap ?? 1, bookCap = o.bookCap ?? 2, introCap = o.introCap ?? 2;
   const flows: FlowRecord[] = [], meetups: MeetupRecord[] = [], contacts: Contact[] = [];
   const completedEnjoyment: { at: number; values: Record<MemberId, number> }[] = [];
@@ -130,13 +174,14 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
     state.checkIns = new Map();
     for (const p of world.personas) {
       const h = p.hidden;
-      if (!h.checkIn || !canBeMatched(p.stated.claimedAge) || oracle.u("checkin", p.id, week) >= h.replyProb) continue;
+      if (!h.checkIn || !canBeMatched(ageOnDay(p.stated.birthKey, earliestDayKeyOf(state.now))) || oracle.u("checkin", p.id, week) >= h.replyProb) continue;
       const free = SLOTS.map((s, k) => [s, k] as const).filter(([, k]) => (oracle.free(p.id, week, k) ? oracle.u("ci", p.id, week, k) < 0.85 : oracle.u("ci", p.id, week, k) < 0.05)).map(([s]) => s);
       state.checkIns.set(p.id, free);
     }
     const independentCrews = state.crews.filter(c => c.handedOff);
     const snapshot = buildFriendsSnapshot(world.personas, state);
-    const proposals = matcher.propose({ week, snapshot, rng: new Rng(hash32(o.seed, "matcher", week)) });
+    const membersById = new Map(snapshot.members.map(m => [m.id, m]));
+    const proposals = yield { week, snapshot, rng: new Rng(hash32(o.seed, "matcher", week)) };
     const planInvites = new Map<MemberId, number>(), introInvites = new Map<MemberId, number>(), booked = new Map<MemberId, number>(), bookedSlots = new Set<string>(), answered = new Map<MemberId, number>();
     const canBook = (id: MemberId, slot: number) => (booked.get(id) ?? 0) < bookCap && !bookedSlots.has(`${id}|${slot}`);
     const reserve = (id: MemberId, slot: number) => {
@@ -146,11 +191,12 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
 
     proposals.forEach((pr, idx) => {
       const key = `w${week}:${idx}:${pr.kind}`;
-      const f: FlowRecord = { key, week, kind: pr.kind, invited: [...pr.invited], stage: "dropped_policy", probed: 0, yes: 0, replied: 0, going: [], booked: [], attended: [], declaredMinor: false, harms: [], capDrops: 0 };
+      const everyone = [...pr.invited, ...pr.alternates, ...(pr.hostId !== undefined && !pr.invited.includes(pr.hostId) ? [pr.hostId] : [])];
+      const age = rosterAge(snapshot, membersById, everyone, pr, week);
+      const f: FlowRecord = { key, week, kind: pr.kind, invited: [...pr.invited], stage: "dropped_policy", probed: 0, yes: 0, replied: 0, going: [], booked: [], attended: [], ageRuleBroken: false, harms: [], capDrops: 0, expected: 0, ...age };
       flows.push(f);
-      const everyone = [...pr.invited, ...pr.alternates];
       if (everyone.some(id => !oracle.byId.has(id))) return;
-      if (everyone.some(id => !canBeMatched(oracle.p(id).stated.claimedAge))) { f.declaredMinor = true; return; }
+      if (!age.ruleOk) { f.ageRuleBroken = true; return; }
       if (!pr.options.length || !activityById.has(pr.activity)) return;
       // Initial invites: new plans use the plan allowance, one-to-one partner intros the intro cap.
       // Repeats and crew offers ride on the member's own post-meetup answer; crew sessions are opted in.
@@ -159,6 +205,9 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
       if (pr.kind === "crew_session" && (!crewState || crewState.handedOff)) return;
       const prevEnjoy = (id: MemberId) => (pr.kind === "plan" || pr.kind === "partner" ? undefined : world.lastEnjoy.get(id));
       const size = Math.max(2, pr.invited.length);
+      const crew = pr.kind === "crew_session" || pr.kind === "crew_offer";
+      const primedFor = (id: MemberId, options: number[]) => (state.checkIns.get(id) ?? []).some(s => options.includes(SLOTS.indexOf(s)));
+      f.expected = oracle.expectedGood({ ...pr, week }, id => ({ prevEnjoy: prevEnjoy(id), crew, fatigue: 0, primed: primedFor(id, pr.options) }), (a, b) => world.bond.get(pk(a, b)) ?? 0);
       const ask = (id: MemberId, options: number[]) => {
         if (cap) {
           if ((cap.m.get(id) ?? 0) >= cap.n) { f.capDrops++; return null; }
@@ -166,8 +215,9 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
           if (pr.kind === "plan") state.lastPlannedAt.set(id, state.now);
         }
         f.probed++;
-        const primed = (state.checkIns.get(id) ?? []).some(s => options.includes(SLOTS.indexOf(s)));
-        const a = oracle.answer(id, key, { week, activity: pr.activity, venueHood: pr.venueHood, size, options, prevEnjoy: prevEnjoy(id), crew: pr.kind === "crew_session" || pr.kind === "crew_offer", fatigue: answered.get(id) ?? 0, primed });
+        const primed = primedFor(id, options);
+        const coin = coins.key(`probe:w${week}:${pr.kind}:${pr.activity}:${id}`, `${key}|${id}`);
+        const a = oracle.answer(id, coin, { week, activity: pr.activity, venueHood: pr.venueHood, size, options, prevEnjoy: prevEnjoy(id), crew, fatigue: answered.get(id) ?? 0, primed });
         answered.set(id, (answered.get(id) ?? 0) + 1);
         if (a.replied) f.replied++;
         if (a.yes) f.yes++;
@@ -178,7 +228,7 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
       let invited = [...pr.invited];
       if (pr.kind === "crew_offer" && pr.crew) {
         state.offered.push({ ...pr.crew });
-        const optIn = invited.filter(id => oracle.crewOptIn(id, key, world.lastEnjoy.get(id) ?? 0.5));
+        const optIn = invited.filter(id => oracle.crewOptIn(id, coins.key(`crew:w${week}:${pr.activity}:${signature(invited)}:${id}`, `${key}|${id}`), world.lastEnjoy.get(id) ?? 0.5));
         if (optIn.length < 3) { f.stage = "crew_declined"; return; }
         const crew: CrewState = { ...pr.crew, members: [...optIn].sort(), sessions: [], handedOff: false, sessionsHeld: 0, formedWeek: week };
         state.crews.push(crew);
@@ -230,18 +280,20 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
       function bookTable(g: FlowRecord, going: MemberId[], slot: number) {
         const tkey = g.key;
         g.going = going;
+        const reveal = coins.key(`reveal:w${week}:${pr.activity}:${signature(going)}`, tkey);
         // 3. reveal: names exchanged (contact), bots show themselves in the thread
         const day = slotDay(week, slot), at = slotTime(week, slot);
+        g.meetAt = at;
         for (let i = 0; i < going.length; i++) for (let j = i + 1; j < going.length; j++) contacts.push({ a: going[i]!, b: going[j]!, day, key: tkey });
         for (const b of going.filter(id => oracle.p(id).hidden.adversary === "bot"))
-          for (const v of going.filter(id => isReal(oracle.p(id)))) g.harms.push({ kind: "bot_contact", offender: b, victim: v, reported: oracle.u("report", tkey, b, v) < 0.25 });
-        const out = going.filter(id => oracle.backsOut(id, tkey, going.some(j => j !== id && world.disliked.has(dk(id, j)))));
+          for (const v of going.filter(id => isReal(oracle.p(id)))) g.harms.push({ kind: "bot_contact", offender: b, victim: v, reported: oracle.u("report", reveal, b, v) < 0.25 });
+        const out = going.filter(id => oracle.backsOut(id, reveal, going.some(j => j !== id && world.disliked.has(dk(id, j)))));
         const confirmed = going.filter(id => !out.includes(id));
         if (confirmed.length < 2) { g.stage = "backout"; record(tkey, "cancelled", going, at); applyHarms(g.harms, at); return; }
         g.booked = confirmed;
         for (const id of g.booked) reserve(id, slot);
         // 4. the meetup
-        g.attended = g.booked.filter(id => oracle.attends(id, tkey, week, slot, pr.venueHood));
+        g.attended = g.booked.filter(id => oracle.attends(id, coins.key(`attend:w${week}:s${slot}:${id}`, `${tkey}|${id}`), week, slot, pr.venueHood));
         if (g.attended.length < 2) { g.stage = "no_show"; record(tkey, "no_show", g.booked, at); applyHarms(g.harms, at); return; }
         g.stage = "held";
         const res = held(tkey, pr.kind, g.attended, pr.activity, pr.venueHood, week, day, at, pr.crewId ?? (pr.kind === "crew_offer" ? state.crews[state.crews.length - 1]!.id : undefined));
@@ -251,8 +303,8 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
         const reportedPositive: MemberId[] = [];
         for (const i of g.attended) {
           const h = oracle.p(i).hidden;
-          if (oracle.u("fb", tkey, i) >= h.replyProb * 0.9) continue;
-          const honest = oracle.u("honest", tkey, i) < h.honesty;
+          if (oracle.u("fb", res.coin, i) >= h.replyProb * 0.9) continue;
+          const honest = oracle.u("honest", res.coin, i) < h.honesty;
           const e = res.enjoy[i]!;
           const sentiment = e >= P.positive ? "positive" : e <= 0.35 ? "negative" : "neutral";
           if ((honest && sentiment === "positive") || (!honest && sentiment === "neutral")) reportedPositive.push(i);
@@ -284,7 +336,7 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
       const slot = SLOTS.indexOf(slotOfCrew(c));
       if (slot < 0) continue;
       const came = c.members.filter(id => canBook(id, slot) && !state.safetyHolds.some(h => h.memberId === id) &&
-        oracle.u("crewself", c.id, id, week) < 0.75 * Math.pow(0.97, age) * (1 - oracle.p(id).hidden.flakiness));
+        oracle.u("crewself", coins.key(`crewself:w${week}:${c.activityId}:${signature(c.members)}:${id}`, c.id)) < 0.75 * Math.pow(0.97, age) * (1 - oracle.p(id).hidden.flakiness));
       if (came.length < 2) continue;
       for (const id of came) reserve(id, slot);
       held(`self:${c.id}:w${week}`, "crew_self", came, c.activityId, hoodOfVenue(c.venueId) ?? oracle.p(c.members[0]!).hidden.home, week, slotDay(week, slot), slotTime(week, slot), c.id);
@@ -299,10 +351,11 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
       if (oracle.selfHangout(a, b, week, world.meetupsTogether.get(k) ?? 0)) { addHours(a, b, P.selfHours, week); world.selfHangouts++; world.selfTogether.set(k, (world.selfTogether.get(k) ?? 0) + 1); }
     }
   }
-  return { world, flows, meetups, contacts, matcher: matcher.name, valueDays };
+  return { world, flows, meetups, contacts, matcher: matcherName, valueDays };
 
   function held(key: string, kind: MeetupRecord["kind"], attendees: MemberId[], activity: string, venueHood: string, week: number, day: number, at: number, crewId?: string) {
-    const res = oracle.meetup(key, attendees, activity, venueHood, (a, b) => world.bond.get(pk(a, b)) ?? 0);
+    const coin = coins.key(`meet:w${week}:${activity}:${signature(attendees)}`, key);
+    const res = oracle.meetup(coin, attendees, activity, venueHood, (a, b) => world.bond.get(pk(a, b)) ?? 0);
     completedEnjoyment.push({ at, values: res.enjoy });
     const dur = activityById.get(activity)?.durationMin ?? 120;
     const travel: Record<MemberId, number> = {};
@@ -318,7 +371,7 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
       state.edges.push({ from: a, to: b, type: "met", strength: 0.5, explicit: true, createdAt: at });
     }
     meetups.push({ key, week, day, kind, activity, venueHood, attendees: [...attendees], enjoy: res.enjoy, good: res.good, travel, ...(crewId ? { crewId } : {}) });
-    return res;
+    return { ...res, coin };
   }
   /** Reported harms (reported right after the meetup): the offender is held, the victim blocks them. */
   function applyHarms(harms: HarmEvent[], at: number) {
@@ -342,5 +395,6 @@ export function slotOfCrew(c: Crew): (typeof SLOTS)[number] {
 }
 /** The shared public venue catalog (engine pack) and each venue's neighborhood. */
 export const VENUES = nycVenues(FRIEND_ACTIVITIES);
+export const VENUE_BY_ID = new Map(VENUES.map(v => [v.id, v]));
 const VENUE_HOOD = new Map(VENUES.map(v => [v.id, hood(v.area)!.id]));
 const hoodOfVenue = (venueId?: string) => (venueId ? VENUE_HOOD.get(venueId) : undefined);

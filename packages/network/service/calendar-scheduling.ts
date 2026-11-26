@@ -11,7 +11,7 @@ import {
   calendarPreloadSeatAllowed, calendarReschedulePreloadAllowed, calendarSchedulingPurpose,
 } from "../../core/src/generated/calendarFreeBusy.ts";
 import { rescheduleDraftCurrent } from "../../core/src/generated/meetingReschedule.ts";
-import { storedCalendarOwnerOptedIn, type NetworkState } from "../src/network.ts";
+import { reviewApproved, storedCalendarOwnerOptedIn, type NetworkState } from "../src/network.ts";
 import { rescheduleMemberRef, sameRescheduleRoster, type RescheduleCommand } from "../src/rescheduling.ts";
 
 const REQ_TIMEOUT_MS = 1500;
@@ -30,8 +30,8 @@ function rescheduleCalendarMembers(state: NetworkState, memberId: MemberId, comm
   const [opp] = matches;
   if (!opp || !calendarReschedulePreloadAllowed(matches.length)) return [];
   const { meetingAt, reschedule: draft } = opp;
-  if (opp.stage !== "scheduled" || meetingAt === undefined || meetingAt <= now || opp.review?.decision !== "approve"
-    || opp.review.invalidated || opp.seat || opp.publicEventRevision || opp.anchor?.type === "event" || opp.plan?.eventId) return [];
+  if (opp.stage !== "scheduled" || meetingAt === undefined || meetingAt <= now || !reviewApproved(opp.review)
+    || opp.seat || opp.publicEventRevision || opp.anchor?.type === "event" || opp.plan?.eventId) return [];
   const statuses = new Map(opp.status);
   const roster = [...new Set(opp.participants.filter(id => calendarPreloadSeatAllowed(statuses.get(id) ?? "", true, false)))].sort();
   if (!roster.includes(memberId) || roster.length < 2) return [];
@@ -40,7 +40,7 @@ function rescheduleCalendarMembers(state: NetworkState, memberId: MemberId, comm
   } else if (!draft || draft.accepted.includes(memberId)
     || !rescheduleDraftCurrent(true, meetingAt === draft.originalAt, sameRescheduleRoster(draft.roster, roster),
       (opp.scheduleRevision ?? 0) === draft.revision, true, now, draft.expiresAt)) return [];
-  return roster.filter(id => storedCalendarOwnerOptedIn(state, id));
+  return roster.filter(id => storedCalendarOwnerOptedIn(state, id, now));
 }
 
 /** Limit reads to seats whose reviewed scheduling can advance in this unit. */
@@ -57,12 +57,12 @@ export function schedulingCalendarMembers(state: NetworkState, target: CalendarS
     const pendingSeat = (id: MemberId) => calendarDirectTurnReadsBooked(statuses.get(id) ?? "", opp.planRun?.answers[id] === "pending", false);
     const lateJoin = target.kind === "tick" ? opp.participants.some(pendingSeat) : target.kind === "member" && pendingSeat(target.memberId);
     const booked = opp.stage === "scheduled" && (opp.meetingAt ?? 0) > now && lateJoin;
-    if (!reviewing && !(opp.review?.decision === "approve" && !opp.review.invalidated && (probing || booked))) continue;
+    if (!reviewing && !(reviewApproved(opp.review) && (probing || booked))) continue;
     // spec/calendarFreeBusy.md, "A scheduling read uses only the seats still involved in that work"
     const seats = opp.participants.filter(id => calendarPreloadSeatAllowed(statuses.get(id) ?? "", booked, lateJoin && pendingSeat(id)));
     if (target.kind === "member" && !seats.includes(target.memberId)) continue;
     for (const id of seats) {
-      if (storedCalendarOwnerOptedIn(state, id)) ids.add(id);
+      if (storedCalendarOwnerOptedIn(state, id, now)) ids.add(id);
     }
   }
   return [...ids].sort();

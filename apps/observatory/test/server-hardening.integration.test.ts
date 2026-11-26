@@ -71,7 +71,7 @@ describe("Observatory server hardening", () => {
       tokens: `admin:${TOK.admin},safety:${TOK.safety},analyst:${TOK.analyst}`,
       audit: { dir: join(dir, "audit") },
       lab: { dir: join(dir, "lab") },
-      game: { seed: 1, review: "human", pushMs: 3_600_000, tickMs: 3_600_000 },
+      game: { seed: 1, judge: "hold-every-item", pushMs: 3_600_000, tickMs: 3_600_000 },
     });
     base = obs.url;
     const state = await (await fetch(`${base}/api/state`, { headers: authHeaders(TOK.admin) })).json() as ObsState;
@@ -141,7 +141,7 @@ describe("Observatory server hardening", () => {
       socketCheckMs: 60_000,
     });
     try {
-      const jwt = await k.sign({ aud: [AUD], iss: ISS, email: "ana@example.org", iat: nowSec - 10, exp: nowSec + thirtyDaysSec });
+      const jwt = await k.sign({ aud: [AUD], iss: ISS, email: "ana@example.org", amr: ["mfa"], iat: nowSec - 10, exp: nowSec + thirtyDaysSec });
       const ws = new WebSocket(`${srv.url.replace("http", "ws")}/ws`, {
         headers: { "cf-access-jwt-assertion": jwt },
       } as never);
@@ -191,11 +191,11 @@ describe("Observatory server hardening", () => {
       const r1 = await fetch(`${base}/api/reveal`, {
         method: "POST",
         headers: authHeaders(TOK.safety),
-        body: JSON.stringify({ memberId: m1!.id, reason: "investigating first report", minutes: 1 }),
+        body: JSON.stringify({ memberId: m1!.id, reason: "investigating first report", minutes: 5 }),
       });
       expect(r1.status).toBe(200);
 
-      nowSpy.mockImplementation(() => t0 + 2 * 60_000);
+      nowSpy.mockImplementation(() => t0 + 6 * 60_000);
       const r2 = await fetch(`${base}/api/reveal`, {
         method: "POST",
         headers: authHeaders(TOK.safety),

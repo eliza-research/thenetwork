@@ -29,3 +29,5 @@ export function outputLeaks(text: string, o: { forbidden?: string[]; facts?: str
   if (variants.some(t => ISO_TIMESTAMP.test(t))) v.push("iso_timestamp");
   return v;
 }
+
+export const passesOutputGate = (text: string): boolean => outputLeaks(text).length === 0;

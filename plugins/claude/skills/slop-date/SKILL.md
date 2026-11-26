@@ -7,7 +7,7 @@ metadata:
   app: slop
   site: https://slop.date
   operator: Eliza Research Corporation
-  version: "1.5.0"
+  version: "1.5.1"
 ---
 
 # slop.date
@@ -25,11 +25,9 @@ Never invent age, profile facts, consent, verification, saved data or introducti
 A draft is not saved until the site confirms it. A saved profile is not a match.
 
 slop.date is dating by text message, with no feed, swiping or profile browsing.
-Anyone 13 or older may join. Dating matches and introductions are for adults 18 and older only.
-slop.date never matches anyone under 18 on dates. People aged 13–17 get their own help:
-answers, public events and plans for themselves. Today nobody under 18 is introduced to
-anyone. If introductions ever open to people under 18, they are friendship introductions
-only, with people within 2 years of their own age.
+Anyone 13 or older may join. slop.date doesn't match anyone under 18 for dates.
+Friendship introductions for people under 18 happen on friends.help and ntwrk.party.
+People aged 13–17 get their own help: answers, public events and plans for themselves.
 Introductions require both people to agree. Joining now saves a profile for later;
 it does not mean introductions have started.
 
@@ -54,11 +52,10 @@ it does not mean introductions have started.
    to explain what they get. Use the lowest age that any statement gives. Never send a
    birthday or an age through a tool; the person types their birthday on the app's
    signup page. Explain and stop below 13. Tell people aged 13–17 plainly that
-   slop.date will not match them on dates. Tell them what they get today: their own
-   help, with answers, public events and plans for themselves. Today nobody under 18 is
-   introduced to anyone. If introductions ever open to them, they are friendship
-   introductions only, with people within 2 years of their own age. Never promise them an
-   introduction. Draft their confirmed first name and home region.
+   slop.date will not match them on dates. Tell them what they get: their own help,
+   with answers, public events and plans for themselves. Friendship introductions for
+   people under 18 happen on friends.help and ntwrk.party. Never promise them an introduction.
+   Draft their confirmed first name and home region.
    Confirm the Bay Area (`sf`) or New York City (`nyc`) and keep their neighborhood
    separate. Ask if the region is ambiguous. Do not guess it from a neighborhood
    or ZIP code or pick an incorrect region.
@@ -93,7 +90,9 @@ it does not mean introductions have started.
 7. Use the authorized connector's `check_status` and confirm its app is slop. <!-- agentSignup: checkSiteStatus -->
    If the browser recognized an existing membership, report its current status.
    Do not enroll them again or replace their profile. Stop for
-   `not_joined`, `invited`, `stopped`, `on_hold` or the wrong app. For a new
+   `not_joined`, `invited`, `stopped`, `on_hold` or the wrong app, and tell the
+   person the returned `next_step`: for `not_joined` it is to disconnect the connector, connect
+   it again and choose **Finish signup** on the connection page. For a new
    signup confirmed in the browser, only `onboarding` or `active` allows the
    approved draft to be submitted. Never submit across apps.
 8. Call `submit_profile` once on this exact connection with the approved <!-- agentSignup: submitProfile -->
@@ -105,14 +104,43 @@ it does not mean introductions have started.
    Then report that the approved profile was recorded. Otherwise report an
    unconfirmed save. Do not claim matching, an introduction or a profile update
    in another app.
+10. To show what slop.date is looking for for the person, call `list_looking_for`.
+   Sending a profile only adds; leaving something out never removes it. If the
+   person asks to pause one thing, call `pause_looking_for` with its ref; to
+   turn a paused thing back on, call `resume_looking_for` with its ref; to
+   close it for good they reply CLOSE to the text they get. Never pause or
+   resume anything the person did not ask about.
+
+## Photos with a match
+
+This is for adult members with a match only. Use the person's own words, and
+never choose a photo for them.
+
+1. To show which photos slop.date has and who has each, call `my_photos`. It
+   gives each photo's number, name and day, and the first name of each match who
+   was offered it. It never gives the photos. If it says that the person must
+   allow access, tell them that they can connect again and allow the photo list,
+   or text MY PHOTOS to +18087881821.
+2. To send a photo to a match, name a photo or take one back, call
+   `photo_request` with the person's own words, such as "send Maya the beach
+   one", "call photo 2 beach" or "take back photo 2". Never pass a photo id, a
+   code or a link. Never choose a photo by looks, and never say what a photo
+   shows or how anyone looks.
+3. You cannot confirm a send. slop.date texts the person the photos to check,
+   with a private link. Only their YES to that text sends. The match is asked
+   first, and an automatic check screens each photo. Tell the person to
+   check their texts. Do not report that a photo was sent.
 
 ## Safety, privacy and account controls
 
 Only the person who controls the number may sign in or approve their profile.
 Do not sign up someone else, contact other members, request their information,
 send invitations, or change another app. The lowest stated age applies. Members
-13–17 are never matched on dates, and today they are not introduced to anyone. slop.date does not run criminal background checks. Members aged 13–17
+13–17 are never matched on dates or introduced on slop.date. slop.date does not run criminal background checks. Members aged 13–17
 receive no dating matches or photo requests. Do not upload or rate photos during signup.
+After signup, an adult member who wants to add photos texts ADD PHOTOS to
++18087881821. slop.date asks for the photo consent, then texts a private link
+that works once, for 15 minutes. Do not ask for the photos or the link here.
 
 Text STOP stops every text from the shared line; "leave slop.date" leaves this
 app only. Export/deletion support is help@ntwrk.party. To see or remove the access of an agent, the person opens https://ntwrk.party/oauth/consents in the browser where they connected. Do not invoke destructive

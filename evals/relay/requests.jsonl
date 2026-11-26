@@ -137,11 +137,11 @@
 {"text": "Ask Mary Jane to show him this photo. Please show Ari this photo.", "want": "photo"}
 {"text": "I want you to send them my number.", "want": "contact_share"}
 {"text": "Please go ahead and show them this photo.", "want": "photo"}
-{"text": "Tell them I asked Ana to send him my number.", "want": "text"}
 {"text": "I want Ana to, send him my number", "want": "none"}
 {"text": "I have Ana assigned to, show him this photo", "want": "none"}
 {"text": "I would not want Ana to, send him my number", "want": "none"}
 {"text": "Tell them I can send them my number", "want": "text"}
+{"text": "Tell them I asked Ana to send him my number.", "want": "text"}
 {"text":"Don't send him my photo. Send him my number.","want":"contact_share"}
 {"text":"Don't send him my number. Send him my photo.","want":"photo"}
 {"text": "I won't send my photo. Send him my number.", "want": "contact_share"}
@@ -418,6 +418,9 @@
 {"text": "Ari must approve sharing my number with him first. Ari already approved sharing my number with her. Share my number with him.", "want": "none"}
 {"text": "Wait for Ana to agree to share my number with Ari. Share my number with Ari.", "want": "none"}
 {"text": "Ana must approve sharing my number with Ari first. Ana already approved sharing my number with Ari. Share my number with Ari.", "want": "contact_share"}
+{"text": "send him my number - Ana said", "want": "none"}
+{"text": "send him my number. Ana said so", "want": "none"}
+{"text": "show him this photo -- Ana says", "want": "none"}
 {"text": "Wait until he asks. Share my number with him.", "want": "none"}
 {"text": "Wait till he asks. Share my number with him.", "want": "none"}
 {"text": "Hold it until he asks. Share my number with him.", "want": "none"}

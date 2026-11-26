@@ -6,9 +6,9 @@ import { matcherHeartbeatMillis, millisPerHour, missedMatcherHeartbeat, nearRevi
 import { reviewLate } from "../../../packages/core/src/generated/reviewDeadline.ts";
 import { confirmsProactiveDelivery, interruptionProxyWindowMs, observedMembershipMs, stopRejectsInterruption } from "../../../packages/core/src/generated/consolePanels.ts";
 import { DAY, HOUR, type MemberId } from "@thenetwork/core";
-import { SIM_AUTO_REVIEWER, URGENT_REPORTS } from "@thenetwork/network";
+import { URGENT_REPORTS } from "@thenetwork/network";
 import { ENJOYED } from "./projector.ts";
-import { matchingAllowed, type AppId } from "./apps.ts";
+import type { AppId } from "./apps.ts";
 import type { AppHealth, CohortActivation, GrowthStats, HealthAlert, ObsMember, ObsOpportunity, ObsRequest, ObsSafetyCase, ObsState, ReportKind, SafetyInfo, SafetyReport, ScoreMetric } from "./types.ts";
 
 /** Alerts look at the last 24 hours (sim time in game mode) unless they say otherwise. */
@@ -68,7 +68,8 @@ export function healthAlerts(x: AlertInput): HealthAlert[] {
     if (n > 0) add("info", `send_refused:${reason}`, n, `${n} send(s) refused in the last 24 h: ${reason.replace(/_/g, " ")}`);
   if (x.guardBlocked > 0) add("warn", "guard_blocked", x.guardBlocked, `The leak guard stopped ${x.guardBlocked} message(s) in the last 24 h`);
   if (x.expectEngine) {
-    if (!x.matchingEnabled) add("info", "matching_off", 0, x.matchingLocked ? "Proactive matching is off until this app's engine pack ships: joins, onboarding and safety only" : "Proactive matching is off (admin switch): no engine runs");
+    if (x.matchingLocked) add("info", "matching_off", 0, "Proactive matching is locked: the Network service says this app may not match (joins, onboarding and safety only)");
+    else if (!x.matchingEnabled) add("info", "matching_off", 0, "Proactive matching is off (admin switch): no engine runs");
     else if (x.lastEngineRun === undefined) { if (missedMatcherHeartbeat(x.now, x.start)) add("bad", "matcher_heartbeat", 0, "No engine run yet"); }
     else if (missedMatcherHeartbeat(x.now, x.lastEngineRun)) {
       const h = Math.round((x.now - x.lastEngineRun) / HOUR);
@@ -167,11 +168,8 @@ export function scorecard(x: ScoreInput): ScoreMetric[] {
   const due = joined.filter(m => m.joinedAt !== undefined && x.now - m.joinedAt >= FIRST_VALUE_DAYS * DAY);
   const fast = due.filter(m => { const t = first.get(m.id); return t !== undefined && t - m.joinedAt! <= FIRST_VALUE_DAYS * DAY; }).length;
 
-  // Shadow precision (PRD 34.6 and the 32.8 precision gate): engine proposals a person decided (shadow runs
-  // included; the simulated reviewer and expiries left out), approved without an edit, over approved plus
-  // rejected. The baseline that must hold before matching is switched on.
-  const decided = x.opps.filter(o => (o.source === "engine" || o.source === "shadow") && o.review?.reviewer && o.review.reviewer !== SIM_AUTO_REVIEWER
-    && (o.review.decision === "approve" || o.review.decision === "reject"));
+  const decided = x.opps.filter(o => (o.source === "engine" || o.source === "shadow") && o.review?.reviewer
+    && ((o.review.decision === "approve" && o.review.approver === "staff") || o.review.decision === "reject"));
   const clean = decided.filter(o => o.review!.decision === "approve" && !(o.review!.edits?.length)).length;
 
   const memberWeeks = joined.reduce((sum, member) => sum + observedMembershipMs(x.start, x.now, member.joinedAt ?? x.start), 0) / (7 * DAY);
@@ -195,15 +193,15 @@ export function scorecard(x: ScoreInput): ScoreMetric[] {
     metric({ key: "attention_burden", label: "Proactive messages per member per week", value: share(delivered, memberWeeks), unit: "per_member_week", n: delivered,
       how: "Delivered agent-started messages per observed member-week after joining." }),
     metric({ key: "reviewer_minutes", label: "Reviewer minutes per sent proposal", value: x.reviewSeconds > 0 && x.sentProposals > 0 ? x.reviewSeconds / 60 / x.sentProposals : null, unit: "minutes", n: x.sentProposals, target: { op: "<=", value: 2 },
-      how: "Recorded review time over opportunities a person approved that started (the simulated reviewer is left out). No value until reviewers record time." }),
+      how: "Recorded staff review time over approved opportunities that started (the review judge or staff approved them). No value until reviewers record time." }),
     metric({ key: "shadow_precision", label: "Shadow precision (approved without edits)", value: share(clean, decided.length), unit: "share", n: decided.length, target: { op: ">=", value: 0.8 },
-      how: "Engine proposals (shadow runs included) a person approved without an edit, over those a person approved or rejected. The simulated reviewer and expired items are left out. PRD 32.8 precision gate; PRD 34.6 shadow mode." }),
+      how: "Engine proposals (shadow runs included) staff approved without an edit, over those staff approved or rejected. Judge approvals and expired items are left out. PRD 32.8 precision gate; PRD 34.6 shadow mode." }),
     metric({ key: "opt_outs", label: "Opt-out rate", value: share(optedOut, joined.length), unit: "share", n: joined.length, target: { op: "<=", value: 0.05 },
       how: "Joined members who texted STOP (the PRD mute and complaint rate; mutes are not recorded separately)." }),
     metric({ key: "invite_rate", label: "Members who invited someone", value: share(x.inviters, joined.length), unit: "share", n: joined.length, target: { op: ">=", value: 0.3 },
       how: "Joined members who sent at least one invite." }),
     metric({ key: "minors_contacted", label: "Minor contacts", value: x.minorContacts, unit: "count", n: x.minorContacts ?? 0, target: { op: "==", value: 0 },
-      how: "Members under 18 contacted about another member (judge scorer in game mode; in real mode, messages about an opportunity while the recipient or anyone in it was treated as under 18, by the record age or the Network's age state)." }),
+      how: "Messages to members under 18 about another member. A teen friendship item does not count while the teen age rule held at the message time and teen introductions were not stopped." }),
     metric({ key: "leaks", label: "Leaks", value: x.leaks, unit: "count", n: x.leaks ?? 0, target: { op: "==", value: 0 },
       how: "Canary leaks (judge scorer in game mode; leak or canary invariant events in real mode)." }),
   ];
@@ -333,11 +331,9 @@ export function appHealth(app: AppId, st: ObsState, slaHours: number): AppHealth
   const expired = alerts.find(a => a.key === "review_sla_missed")?.count ?? 0;
   const failures = alerts.filter(a => a.key.startsWith("send_refused:") || a.key.startsWith("service_channel:") || a.key === "guard_blocked").reduce((n, a) => n + a.count, 0);
   const worst = alerts.map(a => a.level).sort((a, b) => LEVEL[a] - LEVEL[b])[0];
-  // The stored switch first: the service matches when its registry row allows it, whatever the pack list
-  // says. With no stored state, real mode is off (the service's default); game mode's stub Network matches.
   return {
     app, available: !st.env.error, ...(st.env.error ? { error: st.env.error } : {}),
     members: st.members.filter(m => m.joined && !m.declined).length, reviewBacklog: open.length, slaMisses: late + expired, slaHours, sendFailures: failures,
-    matching: st.network?.matchingEnabled ? "on" : !matchingAllowed(app) ? "locked" : st.network || st.env.mode === "real" ? "off" : "on", ...(worst ? { worst } : {}),
+    matching: st.env.matchingLocked ? "locked" : st.network?.matchingEnabled ? "on" : st.network || st.env.mode === "real" ? "off" : "on", ...(worst ? { worst } : {}),
   };
 }

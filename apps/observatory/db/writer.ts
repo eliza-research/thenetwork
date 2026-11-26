@@ -130,6 +130,7 @@ export function rowsFromGame(g: GameSource): NetworkRows {
       opportunity_id: o.id, queued_at: date(rv.queuedAt), deadline: date(rv.deadline), decision: rv.decision ?? null, reason: rv.reason ?? null,
       note: rv.note ?? null, reviewer: rv.reviewer ?? null, decided_at: date(rv.decidedAt),
       origin: o.origin ?? null, seconds_spent: rv.secondsSpent ?? null, edits: rv.edits ?? null, rerolls: rv.rerolls ?? 0, invalidated: rv.invalidated ?? null,
+      approver: rv.approver ?? null, exception_reason: rv.exceptionReason ?? null, judge_verdict: rv.judgeVerdict ?? null,
     });
   }
   for (const m of w.channel.all()) {

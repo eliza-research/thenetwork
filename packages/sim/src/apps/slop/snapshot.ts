@@ -137,7 +137,10 @@ export function raterFacet(p: SlopPersona, joinedAt: number, m: NonNullable<Plat
   const shift = demoGroupOf(p.id, m.biasShare) === "B" ? -m.bias : 0;
   const face = t.face + r.normal(0, m.noise) + shift, body = t.body + r.normal(0, m.noise) + shift;
   const conf = 1 / (1 + m.noise * m.noise);
-  return appearanceFacet(p.id, subject, { face, body, overall: (face + body) / 2, confidence: conf, model: "sim-rater", ...(bt ? { bodyType: ratedBodyType(p.id, bt), bodyTypeConfidence: bt.raterAccuracy } : {}) }, joinedAt);
+  const ph = new Rng(hash32("slop-rater-photos", p.id)), photos = ph.int(1, 4);
+  const per = Array.from({ length: photos }, () => ph.normal(0, m.noise)), mean = per.reduce((a, x) => a + x, 0) / photos;
+  const spread = photos > 1 ? Math.sqrt(per.reduce((a, x) => a + (x - mean) ** 2, 0) / (photos - 1)) : undefined;
+  return appearanceFacet(p.id, subject, { face, body, overall: (face + body) / 2, confidence: conf, photos, ...(spread !== undefined ? { spread } : {}), model: "sim-rater", ...(bt ? { bodyType: ratedBodyType(p.id, bt), bodyTypeConfidence: bt.raterAccuracy } : {}) }, joinedAt);
 }
 
 export const RELAY_DEFAULTS = { scamRecall: 0.85, hostileRecall: 0.7, falsePositive: 0.005 };
@@ -227,7 +230,9 @@ export function slopFacetsOf(p: SlopPersona, joinedAt: number, learned?: Readonl
   if (!minor) {
     const who = S.seeks.map(g => (g === "nonbinary" ? "nonbinary people" : g === "woman" ? "women" : "men")).join(" and ");
     f("preference", `Open to dating; interested in ${who}${K.ageRange ? `, ages ${S.ageRange[0]}-${S.ageRange[1]}` : ""}`,
-      [`romance:is:${S.matchGender}`, ...S.seeks.map(g => `romance:seeks:${g}`), ...(K.ageRange ? [`romance:age:${S.ageRange[0]}-${S.ageRange[1]}`] : [])], "agent_private");
+      [`romance:is:${S.matchGender}`, ...S.seeks.map(g => `romance:seeks:${g}`), ...(K.ageRange ? [`romance:age:${S.ageRange[0]}-${S.ageRange[1]}`] : []),
+        ...(S.transOpenness ? [`romance:open_trans:${S.transOpenness}`] : []), ...S.shownTo.map(g => `romance:shown_to:${g}`)], "agent_private");
+    if (S.transDisclosed) f("fact", "trans status stated", ["romance:trans:yes"], "agent_private");
     if (K.scope) {
       const sc = S.scope;
       const st = sc.mode === "city" ? "slop:scope:city" : sc.mode === "radius" ? `slop:scope:radius:${sc.miles}` : `slop:scope:multi:${sc.cities.join(",")}`;

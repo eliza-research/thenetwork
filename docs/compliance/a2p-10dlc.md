@@ -33,7 +33,7 @@ The founders fill these in; they must match IRS records exactly.
 | Opt-out message | You're unsubscribed from The Network and won't get more messages here. Reply START to resume. |
 | Help keywords | HELP, INFO |
 | Help message | The Network: invite-only messages about people, plans, and events you asked for. Message frequency varies. Reply STOP to opt out. Help: help@ntwrk.party |
-| Embedded links | Yes (event pages, the member's own settings page) |
+| Embedded links | Yes (public event source links, the member's private photo upload link, invitation links a member forwards) |
 | Embedded phone numbers | No (contact swaps happen only after both members agree, as relay text) |
 | Age-gated content | No |
 | Direct lending / affiliate marketing | No |
@@ -48,7 +48,7 @@ The founders fill these in; they must match IRS records exactly.
 
 ## Code alignment
 
-The keyword sets and replies above match `packages/blooio/src/ledger.ts`, the Eliza Cloud gateway STOP/HELP/START handling on branch `spike/network-plugin`, and the sample confirmations produced by `packages/plugin-network`. When registration is approved:
+The backend parses STOP, START, HELP and "leave <app>" with `parseOptOut` (`packages/core/src/replies.ts`) inside the signed turn, and returns the STOP and HELP texts from `packages/platform/src/apps.ts`; the Eliza Cloud gateway sends them (`@elizaos/plugin-network`, upstream in elizaOS/eliza). Compare the keyword sets and replies above with that code before each registration. When registration is approved:
 - set the HELP support contact (`defaultCopy(supportContact)`) to `help@ntwrk.party`;
 - attach the Twilio number to a Messaging Service tied to the campaign.
 

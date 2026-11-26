@@ -24,6 +24,7 @@ export interface EventRow {
 /** Network log kinds stored as events (packages/network ctx.log). "learned" and "feedback" hold member facts or words: never stored. */
 export const NETWORK_EVENT_KINDS: ReadonlySet<string> = new Set([
   "review_queued", "review_decision", "review_expired", "review_invalidated", "review_refused", "review_mode", "matching_switch",
+  "review_judgment", "review_exception", "review_stopped", "photo_review_expired", "relay_classifier_failed",
   "probe_started", "probe_sent", "probe_answer", "probe_unclear", "probe_replaced", "probe_closed", "proposal_skipped", "opportunity_closed", "venue",
   "request", "request_result", "request_withdrawn_want", "trust", "abuse", "safety_action", "guard_blocked", "send_refused", "send_skipped",
   "age_unknown", "age_resolved", "age_conflict", "minor_signal", "join_declined", "invite", "growth_ask", "reengagement",
@@ -40,7 +41,7 @@ export const NETWORK_EVENT_KINDS: ReadonlySet<string> = new Set([
   // under 18, and harm a member told us someone else did (kinds only). Never the reporter's words.
   "report_received", "minor_reported", "abuse_disclosed",
 ]);
-const STAFF_ACTOR: Record<string, EventRow["actor_type"]> = { review_decision: "reviewer", review_refused: "reviewer", review_mode: "admin", matching_switch: "admin", safety_action: "admin" };
+const STAFF_ACTOR: Record<string, EventRow["actor_type"]> = { review_decision: "reviewer", review_refused: "reviewer", review_stopped: "reviewer", review_judgment: "engine", matching_switch: "admin", safety_action: "admin" };
 /** Payload keys that could hold text a member wrote. */
 const NEVER = new Set(["text", "body", "message"]);
 
@@ -90,7 +91,7 @@ export function eventOf(rec: RunRecord): EventRow | undefined {
       const opp = (payload.oppId ?? payload.proposalId) as string | undefined;
       const member = (payload.memberId ?? payload.from) as string | undefined;
       const staff = STAFF_ACTOR[rec.kind];
-      const actorId = staff ? String(d.reviewer ?? d.actor ?? "") || null : null;
+      const actorId = staff ? String(d.reviewer ?? d.actor ?? d.by ?? "") || null : null;
       return ev(staff ?? "agent", actorId, rec.kind, opp ? "opportunity" : member ? "member" : null, opp ?? member ?? null, payload);
     }
     default: return undefined;
@@ -182,9 +183,15 @@ export function describe(row: EventRow, name: (id: string) => string = id => id)
       break;
     }
     case "review_expired": text = "Review SLA missed: expired, never sent"; severity = "warn"; break;
+    case "photo_review_expired": text = "Photo check expired, never sent"; severity = "warn"; break;
+    case "relay_classifier_failed": text = "Relay classifier could not read a text, so it was blocked"; severity = "warn"; break;
     case "review_invalidated": text = `Approved, then stopped on the re-check (${human(p.reason)}): nobody contacted`; severity = "warn"; keep("reason"); break;
     case "review_refused": text = `Review action refused: ${human(p.decision)} (${human(p.reason)})`; severity = "warn"; keep("decision", "reason"); break;
-    case "review_mode": text = `Review mode set to ${p.mode}`; keep("mode"); break;
+    case "review_judgment":
+      text = p.stale ? `Review judge read an older version (${human(p.verdict)}): read again` : `Review judge: ${human(p.verdict)}${p.reason && p.reason !== "none" ? ` (${human(p.reason)})` : ""}${p.rubric === "minor" ? ", strict rubric" : ""}`;
+      severity = p.verdict === "approve" && !p.stale ? "good" : p.stale ? undefined : "warn"; keep("verdict", "reason", "rubric", "revision", "stale"); break;
+    case "review_exception": text = `Held for staff: ${human(p.verdict)} (${human(p.reason)}); nobody contacted`; severity = "warn"; keep("verdict", "reason", "rubric", "revision"); break;
+    case "review_stopped": text = `Stopped by staff before the reveal${p.by ? ` (${p.by})` : ""}`; severity = "warn"; keep("revision", "by"); break;
     case "matching_switch": text = `Proactive matching turned ${p.on ? "on" : "off"}${p.actor ? ` by ${p.actor}` : ""}`; severity = p.on ? "info" : "warn"; keep("on", "actor"); break;
     case "probe_started": text = `Availability check started (${human(p.origin)})${typeof p.first === "string" ? `: ${name(p.first)} first, one at a time` : ""}; no names yet`; keep("origin", "first"); break;
     case "probe_sent":
@@ -245,7 +252,7 @@ export function describe(row: EventRow, name: (id: string) => string = id => id)
     case "age_unknown": text = "No valid age: treated as under 18 until they say"; severity = "warn"; break;
     case "age_resolved": text = `Age given: ${p.minor ? "under 18 (single-player only)" : "18 or over"}`; keep("minor"); break;
     case "age_conflict": text = p.attestedAge === undefined ? "Said an age under 13, not as an explicit age: treated as under 18; staff to check" : "Stated age conflicts with the age on record: treated as under 18; staff to check"; severity = "warn"; break;
-    case "minor_signal": text = "Under 18: single-player only, never introduced"; severity = "warn"; break;
+    case "minor_signal": text = "Signal of under 18: single-player and out of every introduction until staff clear the signal"; severity = "warn"; break;
     case "join_declined": text = "Someone under 13 tried to join: declined, nothing kept"; severity = "warn"; break;
     case "invite": text = `Invited a friend${p.newMemberId ? ` (${name(p.newMemberId)} joined)` : " (they did not join)"}`; severity = "good"; break;
     case "growth_ask": text = `Growth ask (${human(p.kind)})`; keep("kind"); break;

@@ -2,6 +2,7 @@ import { HOUR } from "@thenetwork/core";
 import type { EngineProposal } from "@thenetwork/engine";
 import { expect, test } from "vitest";
 import { Mini } from "./mini.ts";
+import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 async function ceramics(
   options: { optOut?: boolean; networkGrowth?: boolean; relabel?: boolean; category?: "growth" | "hobby" } = {},
@@ -12,7 +13,7 @@ async function ceramics(
     ...member, age: 30, interests: ["ceramics"], skills: ["pottery_wheel"], shareable: true,
     wants: [{ objective: "try ceramics", category: options.category ?? "growth" }],
   })), {
-    review: "human", onboardingRequests: false, maxNewPerDay: 1, runHour: 14, plans: false, growth: false,
+    inlineJudge: holdEveryItem.inline, onboardingRequests: false, maxNewPerDay: 1, runHour: 14, plans: false, growth: false,
     engine: { personalGrowthAsHobby: options.relabel ?? true },
     onEngineRun: (_log, generated) => proposals.push(...generated),
   });

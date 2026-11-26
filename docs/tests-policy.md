@@ -8,9 +8,12 @@ The validation layer is now:
 |---|---|---|
 | Simulations | `pnpm run sim` | Every simulation block with its gates on pinned seeds (offline, no LLM). The safety, ops, pipeline and audit blocks also use the dev Postgres; CI's sim job has one and fails when they skip. |
 | Integration | `pnpm run test:integration` | Tests against real Postgres, real HTTP servers, several packages together or the full service. Includes the security suite (`pnpm run security` runs that subset alone). |
-| E2E | `pnpm run test:e2e` | `tests/e2e`: the platform and notify driven from the outside through the running service. |
+| E2E | `pnpm run test:e2e` | `tests/e2e`: the platform, notify, connector signup, Cloud sign-in join, invitations, phone change, agent profile, auth feedback and photo upload links, driven from the outside through the running service. |
+| Conformance | `pnpm run spec:conformance <module>` | A driver in `test/drivers/<module>.ts` runs the application's own entry point against the spec module's journeys, counterexamples and random walks ([SPEC.md](../SPEC.md#conformance)). |
 
 The integration and e2e suites need the dev Postgres (`node --import tsx --env-file-if-exists=.env packages/db/dev-pg.ts up`, port 54339; `OBSERVATORY_PG_PORT` and `OBSERVATORY_PG_DIR` select another cluster). Each test process uses databases of its own (`network_test_<pid>`, `platform_test_<pid>_*`, `mcp_test_<pid>`) and drops them afterwards. Sends are dry-run and OTP providers are fakes. CI runs both suites in the `integration` job with a Postgres service and `REQUIRE_PG=1`, so no Postgres suite can skip silently.
+
+The other CI checks: `ci.yml` runs every simulation block (`offline-core` and the `matching` matrix, with Postgres and `REQUIRE_PG=1`). `ci.yml` also typechecks the root and `sites` TypeScript projects (`tsc --noEmit -p .` and `tsc --noEmit -p sites/tsconfig.json`). `vibespec.yml` runs `pnpm run spec:check-generated`, `pnpm run spec:explore` and its `full-check` job (`pnpm run check`: the spec check, the Dafny proofs and every conformance journey under `test/drivers`, with Postgres) on every pull request and on demand. Each night it runs the full check alone, with `--nightly`. A push to main runs them only for changes to specs, generated code and the sites. `quint-models.yml` runs `pnpm run quint:check` on every whole-flow model in `spec/models` (two shards, the bounds of each model, seed `0x5eed`) for changes to the models, the script or the pinned Quint (pull requests and main), on demand and weekly; a violated invariant or an unreached witness fails it.
 
 **No unit tests and no smoke tests.** A unit test checks one function with fakes. A smoke test checks that something starts or answers, or calls a live provider. Do not add either. A bug fix adds a sim gate, a scenario, a corpus row in `evals/`, or an integration or e2e case that fails before the fix.
 
@@ -20,46 +23,56 @@ The integration and e2e suites need the dev Postgres (`node --import tsx --env-f
 
 ### E2E: restored
 
-| File | Result |
+| File | What it checks |
 |---|---|
-| `tests/e2e/harness.ts` | Helper. Blooio import moved to `packages/blooio`. |
-| `tests/e2e/platform.e2e.test.ts` | 25 pass |
-| `tests/e2e/notify.e2e.test.ts` | 2 pass |
+| `tests/e2e/harness.ts` | Helper: starts the stack, signs in, joins on the web and connects an MCP client. Its Blooio import moved to `packages/blooio`. |
+| `tests/e2e/platform.e2e.test.ts` | The site, `/SKILL.md`, the router's signed app, a join with a texted code and home corrections, through the running stack |
+| `tests/e2e/notify.e2e.test.ts` | The member's inbox through the assistant: one app only, assistant links, the SMS handoff and signed shared texts |
 
 ### Integration: restored
 
-| File | Why integration | Result |
-|---|---|---|
-| `deploy/router.test.ts` | The site router with the platform's proxy signature, and the built Pages `_worker.js` | 31 pass |
-| `packages/mcp/test/mcp.test.ts` | The MCP server over Streamable HTTP on the real platform | 12 pass |
-| `packages/mcp/test/pg.test.ts` | The OAuth flow on Postgres | 2 pass |
-| `packages/mcp/test/updates.test.ts` | `get_updates` and the assistant signals through the server | 5 pass |
-| `packages/network/test/service.test.ts` | The production service on Postgres | 5 pass |
-| `packages/network/test/service-apps.test.ts` | The service with several apps, the public API mounted on it | 14 pass |
-| `packages/network/test/service-platform.test.ts` | The service as the platform's channel and backend (RLS role, consent ledger, boot checks) | 15 pass |
-| `packages/network/test/service-safety.test.ts` | Reports, holds, bans and private photos through the service | 6 pass |
-| `packages/network/test/crossapp.test.ts` | Two apps on one service and one database (cross-app leak, blocks) | 2 pass |
-| `packages/network/test/store.test.ts` | State persistence: restart from stored state in the NYC world, `PgStore`, the tick lock | 8 pass |
-| `packages/notify/test/store-contract.test.ts` | The notify store contract on memory and Postgres | 10 pass |
-| `packages/notify/test/wiring.test.ts` | The Notifier on the real blooio outbound queue | 3 pass |
-| `apps/observatory/test/apps.test.ts` | The console for four apps on a running server and Postgres (RLS read login) | 14 pass |
-| `apps/observatory/test/consent.test.ts` | Game mode with Postgres parity | 9 pass |
-| `apps/observatory/test/migrations.test.ts` | The console roles on a real database | 5 pass |
-| `apps/observatory/test/real.test.ts` | Real mode against Postgres | 6 pass |
-| `apps/observatory/test/real-console.test.ts` | Admin-console data read back from Postgres | 8 pass |
-| `apps/observatory/test/real-fixes.test.ts` | Real mode read paths on Postgres, with a running server | 8 pass |
-| `apps/observatory/test/real-service.test.ts` | Real mode acting through the network service's staff API | 4 pass |
-| `apps/observatory/test/server.test.ts` | HTTP and WebSocket API in both modes | 6 pass |
-| `apps/observatory/test/staff.test.ts` | Staff access on the server, Postgres audit | 17 pass |
-| `apps/observatory/test/staff-apps.test.ts` | Per-role, per-app access on a running server | 9 pass |
-| `packages/platform/test/api.test.ts` | The public API end to end, on memory and Postgres | 38 pass |
-| `packages/platform/test/photos.test.ts` | Private photos through the public API | 10 pass |
-| `packages/platform/test/proxy.test.ts` | Router signing, a local HTTP server and the public API | 4 pass |
-| `sites/test/contract.test.ts` | The sites' API client against the real platform API | 9 pass |
-| `sites/test/sites.test.ts` | The four built sites against the platform registry, plus the dev proxy server | 70 pass |
-| `packages/network/test/mini.ts` | Helper (`START`, the small world) | |
+| File | Why integration |
+|---|---|
+| `deploy/router.test.ts` | The site router with the platform's proxy signature, and the built Pages `_worker.js` |
+| `packages/mcp/test/mcp.test.ts` | The MCP server over Streamable HTTP on the real platform |
+| `packages/mcp/test/pg.test.ts` | The OAuth flow on Postgres |
+| `packages/mcp/test/updates.test.ts` | `get_updates` and the assistant signals through the server |
+| `packages/network/test/service.test.ts` | The production service on Postgres |
+| `packages/network/test/service-apps.test.ts` | The service with several apps, the public API mounted on it |
+| `packages/network/test/service-platform.test.ts` | The service as the platform's channel and backend (RLS role, consent ledger, boot checks) |
+| `packages/network/test/service-safety.test.ts` | Reports, holds, bans and private photos through the service |
+| `packages/network/test/crossapp.test.ts` | Two apps on one service and one database (cross-app leak, blocks) |
+| `packages/network/test/store.test.ts` | State persistence: restart from stored state in the NYC world, `PgStore`, the tick lock |
+| `packages/notify/test/store-contract.test.ts` | The notify store contract on memory and Postgres |
+| `packages/notify/test/wiring.test.ts` | The Notifier on the real blooio outbound queue |
+| `apps/observatory/test/apps.test.ts` | The console for four apps on a running server and Postgres (RLS read login) |
+| `apps/observatory/test/consent.test.ts` | Game mode with Postgres parity |
+| `apps/observatory/test/migrations.test.ts` | The console roles on a real database |
+| `apps/observatory/test/real.test.ts` | Real mode against Postgres |
+| `apps/observatory/test/real-console.test.ts` | Admin-console data read back from Postgres |
+| `apps/observatory/test/real-fixes.test.ts` | Real mode read paths on Postgres, with a running server |
+| `apps/observatory/test/real-service.test.ts` | Real mode acting through the network service's staff API |
+| `apps/observatory/test/server.test.ts` | HTTP and WebSocket API in both modes |
+| `apps/observatory/test/staff.test.ts` | Staff access on the server, Postgres audit |
+| `apps/observatory/test/staff-apps.test.ts` | Per-role, per-app access on a running server |
+| `packages/platform/test/api.test.ts` | The public API end to end, on memory and Postgres |
+| `packages/platform/test/photos.test.ts` | Private photos through the public API |
+| `packages/platform/test/proxy.test.ts` | Router signing, a local HTTP server and the public API |
+| `sites/test/contract.test.ts` | The sites' API client against the real platform API |
+| `sites/test/sites.test.ts` | The four built sites against the platform registry, plus the dev proxy server |
 
-The security suite is part of the integration suite. `pnpm run security` runs it alone. AGENTS.md has the same list. The 11 files (2026-10-09):
+Helper of the integration files: `packages/network/test/mini.ts` (`START`, the small world).
+
+### Integration: the backend's operations
+
+| File | What it checks |
+|---|---|
+| `deploy/backend/ops-precision.integration.test.ts` | The 7-day shadow precision counts only staff decisions on engine proposals; the review judge counts come from the stored review events, and `review_judge_down` and `review_judge_rate` start at their thresholds |
+| `deploy/backend/ops-turn-watch.integration.test.ts` | Signed shared-line turns over HTTP: unconfirmed replies, unresolved turns and unknown deliveries alert once each, a possible STOP first and bad, with counts only; an erased turn that was handled first raises no alert |
+| `deploy/backend/ops-catalog.integration.test.ts` | The public event catalog alert starts after a day and one retry hour without a successful scan, and the next scan resolves it |
+| `deploy/backend/selection-delivery.integration.test.ts` | Through `createBackend` on Postgres: a selected pair waits in review with nobody contacted, and a staff approval of the held item leads the tick to a dry-run delivery to the pair |
+
+The security suite is part of the integration suite. `pnpm run security` runs it alone (the file list is in `package.json`). AGENTS.md has the same list. The 11 files (2026-10-09):
 
 | File | What it checks |
 |---|---|

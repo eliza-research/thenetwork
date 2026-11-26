@@ -1,6 +1,7 @@
 // SD-286: a staff action carries the mode its page shows (x-observatory-mode). The server checks that
 // header, then reads the body and writes the audit row. When an admin switches the mode in that time,
-// the action must still run in the mode that the check saw, and its audit rows must name that mode.
+// the action must run nowhere (409 mode_changed), and its audit rows must name the mode that the check saw
+// (spec/models/staff_console.md controlStale).
 // Skipped without Postgres (real mode reads a test database).
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -9,7 +10,7 @@ import { join } from "node:path";
 import { DAY } from "@thenetwork/core";
 import { createServer, MODE_HEADER, type ObservatoryServer } from "../src/server.ts";
 import { FileAudit, type AuditSink } from "../src/staff.ts";
-import type { AuditEntry, ObsState } from "../src/types.ts";
+import type { ObsState } from "../src/types.ts";
 import { dropTestDb, pgAvailable, testDb } from "./pg.ts";
 
 const T = 300_000;
@@ -42,7 +43,7 @@ describe.skipIf(!pgAvailable)("the mode header check and a mode switch during th
     };
     obs = await createServer({
       port: 0, development: false, token: TOKEN, mode: "game", audit, lab: { dir: join(dir, "lab") }, peopleUrl: false, staffRolesUrl: false,
-      game: { seed: 1, review: "human", pushMs: 3_600_000, tickMs: 3_600_000 }, real: { url: await testDb(), pollMs: 3_600_000, pushMs: 3_600_000, service: false },
+      game: { seed: 1, judge: "hold-every-item", pushMs: 3_600_000, tickMs: 3_600_000 }, real: { url: await testDb(), pollMs: 3_600_000, pushMs: 3_600_000, service: false },
     });
     expect((await call("/api/control", { method: "POST", body: JSON.stringify({ type: "step", ms: DAY }) })).status).toBe(200);
   }, T);
@@ -52,7 +53,7 @@ describe.skipIf(!pgAvailable)("the mode header check and a mode switch during th
     if (dir) await rm(dir, { recursive: true, force: true });
   });
 
-  test("a review sent from the game page runs in game mode when the console switches to real while the handler awaits", async () => {
+  test("a review sent from the game page runs nowhere when the console switches to real while the handler awaits", async () => {
     const s = await (await call("/api/state")).json() as ObsState;
     const item = s.opportunities.find(o => o.state === "IN_REVIEW")!;
     expect(item).toBeDefined();
@@ -70,11 +71,13 @@ describe.skipIf(!pgAvailable)("the mode header check and a mode switch during th
     releaseReviewAudit!();
     const r = await pending;
     const out = await r.json() as { ok: boolean; code?: string };
-    expect(out).toMatchObject({ ok: true });
-    expect(r.status).toBe(200);
-    // The audit rows of the review name the mode the action ran in.
+    expect(out).toMatchObject({ ok: false, code: "mode_changed" });
+    expect(r.status).toBe(409);
+    // The audit rows of the review name the mode that the check saw; the result row says that nothing ran.
     const rows = await obs.audit.list({ limit: 100 });
     const review = rows.filter(e => e.action === "review" && e.targetId === item.id).reverse();
-    expect(review.map(e => [(e.detail as { phase?: string })?.phase, e.mode])).toEqual([["requested", "game"], ["result", "game"]]);
+    expect(review.map(e => [(e.detail as { phase?: string })?.phase, e.mode, e.ok, (e.detail as { code?: string })?.code])).toEqual([["requested", "game", true, undefined], ["result", "game", false, "mode_changed"]]);
+    // The item was not decided in either mode.
+    expect(((await (await obs.source("game")).state()).opportunities.find(o => o.id === item.id))?.state).toBe("IN_REVIEW");
   }, T);
 });

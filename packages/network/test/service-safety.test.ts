@@ -12,6 +12,7 @@ import { SQL } from "../../core/src/runtime/postgres.ts";
 import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { TURN_PATH, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
+import { earliestDayKeyOf } from "../../core/src/birth-date.ts";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import type { SendRequest } from "../../blooio/src/types.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../db/dev-pg.ts";
@@ -31,6 +32,7 @@ import { resolveConfig } from "../../engine/src/config.ts";
 import { localEmbed } from "../../engine/src/embed.ts";
 import { friendsInfo, friendsPack } from "../../engine/src/packs/friends/index.ts";
 import { World } from "../../engine/src/world.ts";
+import { simulatedReviewJudge } from "../../engine/src/reviewJudge.ts";
 
 const T = 300_000;
 const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
@@ -82,6 +84,16 @@ async function text(s: NetworkService, clock: SimClock, from: string, body: stri
 }
 const staff = (s: NetworkService, token: string, method: string, path: string, b?: unknown, headers: Record<string, string> = {}) =>
   s.fetch(new Request(`http://127.0.0.1:4848${path}`, { method, headers: { authorization: `Bearer ${token}`, ...(b ? { "content-type": "application/json" } : {}), ...headers }, ...(b ? { body: JSON.stringify(b) } : {}) }));
+async function verifyFriendsAdults(s: NetworkService, ...memberIds: string[]) {
+  for (const memberId of memberIds) {
+    for (const check of ["age", "liveness"]) {
+      const res = await staff(s, "saf-tok", "POST", `/apps/friends/members/${memberId}/verify`, {
+        check, result: "pass", note: "adult booking fixture",
+      });
+      expect(await res.json()).toEqual({ ok: true });
+    }
+  }
+}
 const memberOf = async (app: AppId, e164: string) =>
   (await sql`select m.id, m.account_status from network.members m join platform.phone_identities ph on ph.person_id = m.person_id where m.app_id = ${app} and ph.e164 = ${e164}`)[0] as { id: string; account_status: string } | undefined;
 
@@ -213,7 +225,8 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       expect(await banned.json()).toEqual({ ok: true });
       release();
       expect((await joining).body).toMatchObject({ ok: false, error: "review" });
-      expect(await s.people.getMembership(person.id, "friends")).toMatchObject({ state: "restricted" });
+      expect(await s.people.getMembership(person.id, "friends")).toMatchObject({ state: "removed" });
+      expect(await s.accounts.optedIn("friends", phone)).toBe(false);
       expect(await memberOf("friends", phone)).toBeUndefined();
     } finally {
       release();
@@ -833,7 +846,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
 
     // Hold: a decision note of 5+ characters; the person is held on slop and on friends.
     expect((await staff(s, "saf-tok", "POST", "/apps/slop/safety/hold", { memberId: b, note: "x" })).status).toBe(400);
-    expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/hold", { memberId: b, note: "reported after a date", reportId })).json()).toEqual({ ok: true });
+    expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/hold", { memberId: b, note: "reported after a date", reportId })).json()).toEqual({ reach: "all", ok: true });
     const level = async (app: AppId, id: string) => s.runtimeFor(app)!.readState(n => n.safetyCases().find(c => c.memberId === id)?.level);
     expect(await level("slop", b)).toBe("hold");
     expect(await level("friends", bf)).toBe("hold");
@@ -962,8 +975,8 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect((await staff(s, "saf-tok", "POST", "/apps/slop/safety/clear-minor", { memberId: h, note: "x" })).status).toBe(400);
     const res = await staff(s, "saf-tok", "POST", "/apps/slop/safety/clear-minor", { memberId: h, note: "record says 34; wrong report" });
     const out = await res.json() as any;
-    expect([res.status, out.ok]).toEqual([200, true]);
-    expect(Object.fromEntries((out.apps as { app: string; result: string }[]).map(a => [a.app, a.result]))).toEqual({ slop: "cleared", friends: "no_signal" });
+    expect([res.status, out.ok, out.reach]).toEqual([200, true, "all"]);
+    expect(Object.fromEntries((out.apps as { app: string; result: string }[]).map(a => [a.app, a.result]))).toEqual({ slop: "cleared", friends: "cleared" });
     expect((await minorReport())?.status).toBe("dismissed");
     // Nothing left to clear.
     expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/clear-minor", { memberId: h, note: "again, by mistake" })).json()).toMatchObject({ ok: false, reason: "no_signal" });
@@ -980,6 +993,71 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(rows.map(r => `${r.phase}:${r.ok}`)).toEqual(["requested:true", "result:true", "requested:true", "result:false", "requested:true", "result:false"]);
   }, T);
 
+  test("a minor report on slop holds the person out of matching on friends until staff clear it", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s, otp } = service(clock);
+    const web = site(s, clock, otp);
+    const gil = newPhone(), hal = newPhone();
+    for (const [p, who] of [[gil, "Gil, 31"], [hal, "Hal, 34"]] as const) { await text(s, clock, p, "slop"); await text(s, clock, p, who); }
+    await web.login("friends", hal);
+    expect((await web.join("friends", 34, "Hal")).status).toBe(200);
+    const friends = s.runtimeFor("friends")!;
+    const hf = (await memberOf("friends", hal))!.id;
+    const onFriends = () => friends.readState(n => {
+      const m = n.memberList().find(x => x.id === hf);
+      return { known: !!m, minor: m?.minor === true, minorSignal: m?.minorSignal === true };
+    });
+    await friends.tick();
+    expect((await onFriends()).minorSignal).toBe(false);
+
+    expect(await text(s, clock, gil, "report Hal, he's only 15")).toBe("handled");
+    const person = ((await sql`select person_id::text from network.members where app_id = 'friends' and id = ${hf}`) as { person_id: string }[])[0]!.person_id;
+    expect((await sql`select person_id::text from platform.person_minor_signals` as { person_id: string }[]).map(r => r.person_id)).toEqual([person]);
+    await friends.tick();
+    expect(await onFriends()).toEqual({ known: true, minor: true, minorSignal: true });
+
+    const res = await staff(s, "saf-tok", "POST", "/apps/slop/safety/clear-minor", { memberId: (await memberOf("slop", hal))!.id, note: "record says 34; wrong report" });
+    const out = await res.json() as { ok: boolean; apps: { app: string; result: string }[] };
+    expect([res.status, out.ok]).toEqual([200, true]);
+    expect(Object.fromEntries(out.apps.map(a => [a.app, a.result]))).toEqual({ slop: "cleared", friends: "cleared" });
+    expect(await sql`select person_id from platform.person_minor_signals`).toEqual([]);
+    await friends.tick();
+    expect(await onFriends()).toEqual({ known: true, minor: false, minorSignal: false });
+  }, T);
+
+  test("one-app minor clears on every app end the person signal, so a later join on a new app is not held", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s, otp } = service(clock, { tokens: "safety@slop:slop-safety-tok,safety@friends:friends-safety-tok,safety:saf-tok" });
+    const web = site(s, clock, otp);
+    const gil = newPhone(), hal = newPhone();
+    for (const [p, who] of [[gil, "Gil, 31"], [hal, "Hal, 34"]] as const) { await text(s, clock, p, "slop"); await text(s, clock, p, who); }
+    await web.login("friends", hal);
+    expect((await web.join("friends", 34, "Hal")).status).toBe(200);
+    const hs = (await memberOf("slop", hal))!.id, hf = (await memberOf("friends", hal))!.id;
+    expect(await text(s, clock, gil, "report Hal, he's only 15")).toBe("handled");
+    const signals = async () => (await sql`select person_id::text from platform.person_minor_signals`).length;
+    expect(await signals()).toBe(1);
+
+    const onFriends = await (await staff(s, "friends-safety-tok", "POST", "/apps/friends/safety/clear-minor", { memberId: hf, note: "record says 34" })).json() as { ok: boolean; reach: string; apps: { app: string; result: string }[] };
+    expect([onFriends.ok, onFriends.reach, onFriends.apps]).toEqual([true, "app", [{ app: "friends", result: "cleared" }]]);
+    expect(await signals()).toBe(1);
+
+    const onSlop = await (await staff(s, "slop-safety-tok", "POST", "/apps/slop/safety/clear-minor", { memberId: hs, note: "record says 34; wrong report" })).json() as { ok: boolean; reach: string; apps: { app: string; result: string }[] };
+    expect([onSlop.ok, onSlop.reach, onSlop.apps]).toEqual([true, "app", [{ app: "slop", result: "cleared" }]]);
+    expect(await signals()).toBe(0);
+
+    clock.advance(HOUR);
+    await web.login("peon", hal);
+    expect((await web.join("peon", 34, "Hal")).status).toBe(200);
+    const hp = (await memberOf("peon", hal))!.id;
+    const peon = s.runtimeFor("peon")!;
+    await peon.tick();
+    expect(await peon.readState(n => n.memberList().find(x => x.id === hp)?.minorSignal === true)).toBe(false);
+    expect((await loadSnapshot(sql, clock.now(), { app: "peon" })).members.find(x => x.id === hp)).not.toHaveProperty("minorSignalAt");
+  }, T);
+
   test("the console's client (observatory ServiceClient) reads the queue and acts through these routes; the signed-in person is the actor", async () => {
     await fresh();
     const clock = new SimClock(START);
@@ -993,7 +1071,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       const reports = await client.reports();
       expect(Array.isArray(reports) && reports[0]).toMatchObject({ kind: "unsafe", status: "open" });
       const r = (reports as { id: string; subjectId: string }[])[0]!;
-      expect(await client.safety("safety.lead@example.org", { action: "hold", memberId: r.subjectId, note: "urgent report", reportId: r.id } as never)).toEqual({ ok: true });
+      expect(await client.safety("safety.lead@example.org", { action: "hold", memberId: r.subjectId, note: "urgent report", reportId: r.id } as never)).toEqual({ ok: true, reach: "all" });
       expect(await client.safety("safety.lead@example.org", { action: "ban", memberId: r.subjectId, by: "person", note: "threat confirmed", reportId: r.id } as never)).toEqual({ ok: true });
       expect(await client.safety("safety.lead@example.org", { action: "ban", memberId: r.subjectId, by: "person", note: "threat confirmed" } as never)).toMatchObject({ ok: false, code: "already_banned" });
       expect((await sql`select banned_by from platform.bans`).map((x: any) => x.banned_by)).toEqual(["safety.lead@example.org"]);
@@ -1056,6 +1134,8 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await (await staff(s, "saf-tok", "POST", `/apps/slop/members/${a}/verify`, { check: "age", result: "fail", note: "staff review" })).json()).toEqual({ ok: true });
     expect(readdirSync(dir)).toHaveLength(0);
     expect(await (await upload()).json()).toEqual({ ok: false, error: "not_verified" });
+    expect(readdirSync(dir)).toHaveLength(0);
+    expect((await sql`select count(*)::int as n from platform.photos`)[0].n).toBe(0);
     expect(await (await staff(s, "saf-tok", "POST", `/apps/slop/members/${a}/verify`, { check: "age", result: "pass", note: "staff review" })).json()).toEqual({ ok: true });
     expect((await upload()).status).toBe(200);
     // A 16-year-old member (13+ may join slop): verified or not, never photos.
@@ -1073,7 +1153,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     // The photo consent says safety looks only after a report: with no open report or safety case about the member, no link (refused and audited).
     expect(await (await staff(s, "saf-tok", "GET", `/apps/slop/members/${a}/photos`, undefined, { "x-network-reason": "just curious" })).json()).toEqual({ ok: false, reason: "no_report" });
     // A staff hold opens a safety case about each of them.
-    for (const id of [k, a]) expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/hold", { memberId: id, note: "report review" })).json()).toEqual({ ok: true });
+    for (const id of [k, a]) expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/hold", { memberId: id, note: "report review" })).json()).toEqual({ reach: "all", ok: true });
     expect(await (await staff(s, "saf-tok", "GET", `/apps/slop/members/${k}/photos`, undefined, { "x-network-reason": "report review" })).json()).toEqual({ ok: false, reason: "adults_only" });
 
     // Staff read: a reason is required; the audit row comes before the link.
@@ -1098,6 +1178,86 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(readdirSync(dir)).toHaveLength(0);
     expect((await sql`select count(*)::int as n from platform.photos`)[0].n).toBe(0);
   }, T);
+  test("DELETE PHOTOS by text erases the photos and the rating; a crash after a lower age or a failed age check is finished by the retention tick", async () => {
+    await fresh();
+    const dir = mkdtempSync(join(tmpdir(), "svc-photo-sweep-")); dirs.push(dir);
+    const clock = new SimClock(START);
+    const rater: PhotoRater = { id: "fake", rate: async () => ({ face: 0.5, body: 0.5, overall: 0.5, confidence: 0.9, model: "fake" }) };
+    const { s, otp, directs } = service(clock, { photoStorage: new LocalDiskPhotoStorage(dir), photoRater: rater });
+    const web = site(s, clock, otp);
+    const upload = async () => (await (await web.call("slop", "POST", "/api/photos", jpeg() as unknown as BodyInit, { "content-type": "image/jpeg", "x-photo-consent": PHOTO_CONSENT.version })).json()) as { ok: boolean };
+    const photosOf = async (member: string) => (await sql`select count(*)::int as n from platform.photos ph join network.members m on m.person_id = ph.person_id and m.app_id = 'slop' where m.id = ${member}`)[0].n as number;
+    const ratingsOf = async (member: string) => (await sql`select count(*)::int as n from network.facets where member_id = ${member} and id = ${`${member}:appearance`}`)[0].n as number;
+    const joined = async (name: string) => {
+      web.forget("slop");
+      const phone = newPhone();
+      await web.login("slop", phone);
+      expect((await web.join("slop", 30, name)).status).toBe(200);
+      const id = (await memberOf("slop", phone))!.id;
+      expect((await upload()).ok).toBe(true);
+      expect([await photosOf(id), await ratingsOf(id)]).toEqual([1, 1]);
+      return { phone, id };
+    };
+    const ana = await joined("Ana");
+    expect(await text(s, clock, ana.phone, "DELETE PHOTOS")).toBe("handled");
+    expect(directs.filter(d => d.to === ana.phone).at(-1)?.body).toBe("I deleted your photo and the private rating made from it.");
+    expect([await photosOf(ana.id), await ratingsOf(ana.id)]).toEqual([0, 0]);
+    expect(await text(s, clock, ana.phone, "delete my photos")).toBe("handled");
+    expect(directs.filter(d => d.to === ana.phone).at(-1)?.body).toBe("You have no photos with me.");
+    expect(PHOTO_CONSENT.text).toContain("DELETE PHOTOS");
+    const di = await joined("Di");
+    await web.login("friends", di.phone);
+    expect((await web.join("friends", 30, "Di")).status).toBe(200);
+    await text(s, clock, di.phone, "friends");
+    const routed = async (body: string) => ((await (s as any).route({ kind: "message", from: di.phone, text: body })) as { app: string }).app;
+    expect(await routed("DELETE PHOTOS")).toBe("friends");
+    expect(await text(s, clock, di.phone, "DELETE PHOTOS")).toBe("handled");
+    expect(directs.filter(d => d.to === di.phone).at(-1)?.body).toBe("I deleted your photo and the private rating made from it.");
+    expect([await photosOf(di.id), await ratingsOf(di.id)]).toEqual([0, 0]);
+    const bo = await joined("Bo");
+    const sixteen = earliestDayKeyOf(clock.now()) - 160000;
+    await sql`update platform.people p set lowest_age = 16, birth_lower = ${sixteen - 10000}, birth_upper = ${sixteen}, birth_youngest = ${sixteen}
+      from network.members m where m.id = ${bo.id} and m.person_id = p.id`;
+    const cy = await joined("Cy");
+    await sql`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, source, confidence, status, valid_from)
+      values ('slop', ${`${cy.id}:verify:age`}, ${cy.id}, 'fact', 'age check failed', ${sql.array(["verify:age:fail"], "TEXT")}, 'agent_private', 'vouched', 'staff', 0.95, 'confirmed', ${new Date(clock.now())})`;
+    expect([await photosOf(bo.id), await ratingsOf(bo.id), await photosOf(cy.id), await ratingsOf(cy.id)]).toEqual([1, 1, 1, 1]);
+    await s.purge();
+    expect([await photosOf(bo.id), await ratingsOf(bo.id), await photosOf(cy.id), await ratingsOf(cy.id)]).toEqual([0, 0, 0, 0]);
+    expect(readdirSync(dir)).toHaveLength(0);
+  }, T);
+
+  test("an upload that lands between the photo erasure of a leave and the end of the membership is erased by the next retention tick", async () => {
+    await fresh();
+    const dir = mkdtempSync(join(tmpdir(), "svc-photo-leave-")); dirs.push(dir);
+    const clock = new SimClock(START);
+    const rater: PhotoRater = { id: "fake", rate: async () => ({ face: 0.5, body: 0.5, overall: 0.5, confidence: 0.9, model: "fake" }) };
+    const { s, otp } = service(clock, { photoStorage: new LocalDiskPhotoStorage(dir), photoRater: rater });
+    const web = site(s, clock, otp);
+    const phone = newPhone();
+    await web.login("slop", phone);
+    expect((await web.join("slop", 30, "Eve")).status).toBe(200);
+    const member = (await memberOf("slop", phone))!.id;
+    const person = (await s.accounts.personFor(phone))!.id;
+    const photoRows = async () => (await sql`select count(*)::int as n from platform.photos where person_id = ${person}::uuid`)[0].n as number;
+    const ratingRows = async () => (await sql`select count(*)::int as n from network.facets where app_id = 'slop' and (id = ${`${member}:appearance`} or source = 'photo_rater')`)[0].n as number;
+    const svc = s as unknown as { forget: (...a: unknown[]) => Promise<unknown> };
+    const forget = svc.forget.bind(s);
+    let late: { ok: boolean } | undefined;
+    svc.forget = async (...a: unknown[]) => {
+      late = await s.photos.upload(person, "slop", jpeg(), PHOTO_CONSENT.version);
+      return forget(...a);
+    };
+    expect((await web.json("slop", "POST", "/api/me/delete", { scope: "app" })).status).toBe(200);
+    svc.forget = forget;
+    expect(late?.ok).toBe(true);
+    expect((await s.people.getMembership(person, "slop"))?.state).not.toBe("active");
+    expect(await photoRows()).toBe(1);
+    await s.purge();
+    expect([await photoRows(), await ratingRows()]).toEqual([0, 0]);
+    expect(readdirSync(dir)).toHaveLength(0);
+  }, T);
+
   // spec/photoRating.md, "Write only after the returned score passes a fresh authority check"
   test("the private member rating follows the latest photos and clears on failed age or a minor age in any app", async () => {
     await fresh();
@@ -1187,6 +1347,103 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await verified()).toEqual({ [ari]: true, [bo]: false });
   }, T);
 
+  test.each([
+    { name: "age check missing", age: undefined, liveness: "pass", teen: false, delivered: false },
+    { name: "liveness check missing", age: "pass", liveness: undefined, teen: false, delivered: false },
+    { name: "age check failed", age: "fail", liveness: "pass", teen: false, delivered: false },
+    { name: "liveness check failed", age: "pass", liveness: "fail", teen: false, delivered: false },
+    { name: "both staff checks passed", age: "pass", liveness: "pass", teen: false, delivered: true },
+    { name: "eligible teen and 18-year-old", age: undefined, liveness: undefined, teen: true, delivered: true },
+  ] as const)("Friends booking delivery checks the current roster: $name", async fixture => {
+    await fresh();
+    const clock = new SimClock(START);
+    const delivered: SendRequest[] = [];
+    const { s, otp } = service(clock, {
+      adapter: (_net, runtime) => runtime.app.id !== "friends" ? new DryRunAdapter(() => {}) : new BlooioAdapter({
+        app: "friends", city: "nyc", from: "+12125550199", clock, log: () => {},
+        provider: { kind: "sim", send: async request => {
+          delivered.push(request);
+          return { providerMessageId: `friends-fixture:${request.idempotencyKey}`, status: "sent" };
+        } },
+      }),
+    });
+    const web = site(s, clock, otp);
+    const recipientPhone = newPhone(), peerPhone = newPhone();
+    const recipientAge = fixture.teen ? { birthdate: "2008-06-01" } : { age: 30 };
+    const peerBirthdate = fixture.teen ? "2009-06-01" : "2008-06-01";
+    for (const [phone, firstName, ageFields] of [
+      [recipientPhone, "Ari", recipientAge], [peerPhone, "Blair", { birthdate: peerBirthdate }],
+    ] as const) {
+      await web.login("friends", phone);
+      expect((await web.json("friends", "POST", "/api/join", {
+        firstName, ...ageFields, consent: { sms: true, wording: APPS.friends.consent.text },
+      })).status).toBe(200);
+    }
+    const recipient = (await memberOf("friends", recipientPhone))!.id;
+    const peer = (await memberOf("friends", peerPhone))!.id;
+    const roster = [recipient, peer];
+    const snapshot = await loadSnapshot(sql, clock.now(), { app: "friends", city: "nyc" });
+    expect(snapshot.members.find(member => member.id === peer)).toMatchObject({
+      age: fixture.teen ? 17 : 18, birthExact: true, ageConflict: false,
+    });
+    if (fixture.teen) {
+      expect(snapshot.members.find(member => member.id === recipient)).toMatchObject({ age: 18, birthExact: true, ageConflict: false });
+    }
+    const verify = async (memberId: string, check: "age" | "liveness", result: "pass" | "fail") => {
+      expect(await (await staff(s, "saf-tok", "POST", `/apps/friends/members/${memberId}/verify`, {
+        check, result, note: "staff verification fixture",
+      })).json()).toEqual({ ok: true });
+    };
+    if (!fixture.teen) {
+      await verify(recipient, "age", "pass");
+      await verify(recipient, "liveness", "pass");
+      if (fixture.age) await verify(peer, "age", "pass");
+      if (fixture.liveness) await verify(peer, "liveness", "pass");
+    }
+    const world = new Mini([
+      { id: recipient, name: "Ari", age: fixture.teen ? 18 : 30, area: "Greenpoint", interests: ["climbing"] },
+      { id: peer, name: "Blair", age: fixture.teen ? 17 : 18, area: "Greenpoint", interests: ["climbing"] },
+    ], { app: "friends", inlineJudge: simulatedReviewJudge({ exceptions: false }), plans: false, growth: false });
+    world.clock.set(clock.now());
+    Object.assign(world.members[1]!, { birthKey: Number(peerBirthdate.replaceAll("-", "")), birthExact: true });
+    if (fixture.teen) Object.assign(world.members[0]!, { birthKey: 20080601, birthExact: true });
+    else for (const memberId of roster) world.facets.push({ id: `${memberId}:verified-before-booking`, memberId, kind: "fact", value: "Staff verified",
+      tags: ["verify:age:pass", "verify:liveness:pass"], scope: "agent_private", provenance: "vouched", confidence: 1 });
+    await world.onboard(...roster);
+    if (fixture.teen) await world.say(peer, "Can you find me a regular climbing partner?");
+    else world.propose(roster);
+    await world.answerProbes(roster);
+    const ready = world.net.exportState();
+    const booked = ready.opps.find(opportunity => opportunity.stage === "scheduled");
+    expect(booked?.participants.toSorted()).toEqual(roster.toSorted());
+    expect(booked?.teenRuleAt !== undefined).toBe(fixture.teen);
+    clock.set(booked!.meetingAt! - 2 * HOUR);
+    const rt = s.runtimeFor("friends")!;
+    const adapter = rt.adapter as BlooioAdapter;
+    await sql`update network.members set prefs=prefs || ${{ quietHours: [0, 0] }}::jsonb where app_id='friends'`;
+    await adapter.engaged(recipientPhone);
+    await adapter.lineSafety("review");
+    const id = "friends-staff-verification-booking-fixture";
+    await rt.unitOfWork(net => {
+      net.importState({ ...net.exportState(), members: ready.members, opps: ready.opps });
+      rt.unit.sends.push({ id, memberId: recipient, to: recipientPhone, kind: "transactional", type: "proposal",
+        oppId: booked!.id, bookingRoster: roster, body: "Your meeting at the park is booked.", proactive: false, system: false, ts: clock.now() });
+    });
+    expect(await adapter.queue.statusOf(id)).toBe("retry_scheduled");
+
+    if (fixture.age === "fail") await verify(peer, "age", "fail");
+    if (fixture.liveness === "fail") await verify(peer, "liveness", "fail");
+    await adapter.lineSafety(undefined);
+    clock.advance(HOUR);
+    await adapter.engaged(recipientPhone);
+    await rt.deliver();
+    const [row] = await sql`select status, attempts, note from platform.outbound where id=${id}`;
+    expect({ status: row?.status, attempts: Number(row?.attempts), providerCalled: delivered.some(request => request.idempotencyKey === `tn:${id}`) }, row?.note)
+      .toEqual(fixture.delivered
+        ? { status: "sent", attempts: 1, providerCalled: true }
+        : { status: "suppressed_ineligible", attempts: 0, providerCalled: false });
+  }, T);
+
   // spec/travelPresence.md, "Use my travel dates for matching"
   test("friends matching uses bounded trips and drops them at the end", async () => {
     await fresh();
@@ -1233,7 +1490,8 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       return (x?.trust ?? []).some((t: any) => t.id === id && t.level === "hold");
     };
     // Before the fix a peon-only reviewer held the person on slop.date too, and the audit row said "apps: 2".
-    expect((await staff(s, "peon-safety-tok", "POST", "/apps/peon/safety/hold", { memberId: peon, note: "report after an interview" })).status).toBe(200);
+    const localHold = await staff(s, "peon-safety-tok", "POST", "/apps/peon/safety/hold", { memberId: peon, note: "report after an interview" });
+    expect([localHold.status, await localHold.json()]).toEqual([200, { reach: "app", ok: true }]);
     expect([await held("peon", peon), await held("slop", slop)]).toEqual([true, false]);
     expect(await (await staff(s, "peon-safety-tok", "POST", "/apps/peon/safety/ban", { memberId: peon, by: "phone", note: "repeated reports" })).json()).toEqual({ ok: false, reason: "needs_safety_everywhere" });
     expect((await sql`select count(*)::int as n from platform.bans`)[0].n).toBe(0);
@@ -1262,7 +1520,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       const snapshot = await loadSnapshot(sql, clock.now(), { app });
       return (snapshot.members.find(member => member.id === id) as { accountStatus: string } | undefined)?.accountStatus;
     };
-    expect(await (await staff(initial.s, "peon-safety-tok", "POST", "/apps/peon/safety/hold", { memberId: former, note: "local safety review" })).json()).toEqual({ ok: true });
+    expect(await (await staff(initial.s, "peon-safety-tok", "POST", "/apps/peon/safety/hold", { memberId: former, note: "local safety review" })).json()).toEqual({ reach: "app", ok: true });
     expect(await status("peon", former)).toBe("restricted");
     expect(await status("slop", slopId)).toBe("active");
     expect(await text(initial.s, clock, phone, "leave peon.biz")).toBe("left");
@@ -1287,7 +1545,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await (await lift("peon", "peon-safety-tok", current)).json()).toEqual({ ok: true });
     expect(await status("peon", current)).toBe("active");
 
-    expect(await (await staff(restarted.s, "saf-tok", "POST", "/apps/peon/safety/hold", { memberId: current, note: "global safety review" })).json()).toEqual({ ok: true });
+    expect(await (await staff(restarted.s, "saf-tok", "POST", "/apps/peon/safety/hold", { memberId: current, note: "global safety review" })).json()).toEqual({ reach: "all", ok: true });
     expect(await (await lift("peon", "peon-safety-tok", current)).json()).toEqual({ ok: false, reason: "needs_safety_everywhere" });
     expect(await status("peon", current)).toBe("restricted");
     expect(await (await lift("peon", "saf-tok", current)).json()).toEqual({ ok: true });
@@ -1307,7 +1565,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const person = (await restarted.s.accounts.personFor(phone))!;
     expect(await sql`select app_id from platform.staff_safety_holds where person_id=${person.id}`).toEqual([{ app_id: null }]);
     expect(await restarted.s.accounts.deleteAll({ e164: phone, personId: person.id })).toBe(true);
-    expect(await sql`select app_id from platform.staff_safety_holds where person_id=${person.id}`).toEqual([]);
+    expect(await sql`select app_id from platform.staff_safety_holds where person_id=${person.id}`).toEqual([{ app_id: null }]);
   }, T);
 
   test("an automatic hard hold committed after leave admission survives the atomic forget", async () => {
@@ -1372,7 +1630,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const delivered: SendRequest[] = [];
     const options: Partial<ServiceOptions> = { tokens,
       adapter: (_net, runtime) => runtime.app.id !== "friends" ? new DryRunAdapter(() => {}) : new BlooioAdapter({
-        app: "friends", city: "nyc", from: "+12125550199", clock, liveGate: () => true, log: () => {},
+        app: "friends", city: "nyc", from: "+12125550199", clock, log: () => {},
         provider: { kind: "sim", send: async request => {
           delivered.push(request);
           return { providerMessageId: `report-carryover:${request.idempotencyKey}`, status: "sent" };
@@ -1395,8 +1653,9 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const bookedPair = async (first: string, second: string, otherName: string) => {
       const world = new Mini([{ id: first, name: "Ari", age: 30, area: "Greenpoint", interests: ["hiking"] },
         { id: second, name: otherName, age: 30, area: "Greenpoint", interests: ["hiking"] }],
-        { app: "friends", review: "auto", plans: false, growth: false });
+        { app: "friends", inlineJudge: simulatedReviewJudge({ exceptions: false }), plans: false, growth: false });
       world.clock.set(clock.now());
+      world.verify(first, second);
       await world.onboard(first, second);
       const opportunityId = world.propose([first, second]);
       await world.answerProbes([first, second]);
@@ -1405,6 +1664,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       expect(opportunity.stage).toBe("scheduled");
       return { state, opportunity };
     };
+    await verifyFriendsAdults(s, former, reporter);
     const booked = await bookedPair(former, reporter, "Blair");
     await rt.unitOfWork(net => net.importState({ ...net.exportState(), members: booked.state.members, opps: booked.state.opps }));
     expect(await text(s, clock, reporterPhone, "report Ari, he was rude and kept texting me")).toBe("handled");
@@ -1449,6 +1709,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await status()).toEqual([{ app_id: "friends", staff_held: false, report_held: true }, other]);
     const active = restarted.s.runtimeFor("friends")!, adapter = active.adapter as BlooioAdapter;
     const peer = (await memberOf("friends", peerPhone))!.id;
+    await verifyFriendsAdults(restarted.s, current, peer);
     await sql`update network.members set prefs=prefs || ${{ quietHours: [0, 0] }}::jsonb where app_id='friends'`;
     const queueBookingReply = async (id: string) => {
       const next = await bookedPair(current, peer, "Casey");
@@ -1470,17 +1731,17 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     await adapter.engaged(peerPhone);
     await active.deliver();
     expect(await sql`select status,note,attempts from platform.outbound where id=${messageId}`)
-      .toEqual([{ status: "suppressed_ineligible", note: null, attempts: 0 }]);
+      .toEqual([{ status: "suppressed_ineligible", note: "opportunity_roster_blocked", attempts: 0 }]);
     expect(delivered.some(request => request.idempotencyKey === `tn:${messageId}`)).toBe(false);
 
     const decide = async (action: string, body: object, app: AppId = "friends", token = "friends-safety-tok") =>
       (await staff(restarted.s, token, "POST", `/apps/${app}/safety/${action}`, { ...body, note: "staff reviewed the report" })).json();
     expect(await decide("dismiss", { reportId: harassment }, "slop", "saf-tok")).toEqual({ ok: false, reason: "unknown_report" });
-    expect(await decide("hold", { memberId: former })).toEqual({ ok: false, reason: "unknown_member" });
+    expect(await decide("hold", { memberId: former })).toEqual({ reach: "app", ok: false, reason: "unknown_member" });
     expect(await decide("ban", { memberId: former, reportId: harassment, by: "person" }, "friends", "saf-tok"))
       .toEqual({ ok: false, reason: "no_person" });
-    expect(await decide("hold", { memberId: current, reportId: harassment })).toEqual({ ok: false, reason: "unknown_report" });
-    expect(await decide("hold", { memberId: former, reportId: scam })).toEqual({ ok: true });
+    expect(await decide("hold", { memberId: current, reportId: harassment })).toEqual({ reach: "app", ok: false, reason: "unknown_report" });
+    expect(await decide("hold", { memberId: former, reportId: scam })).toEqual({ reach: "app", ok: true });
     expect(await status()).toEqual([{ app_id: "friends", staff_held: true, report_held: true }, other]);
     expect(await decide("lift", { memberId: current })).toEqual({ ok: true });
     expect(await status()).toEqual([{ app_id: "friends", staff_held: false, report_held: true }, other]);
@@ -1574,7 +1835,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const delivered: SendRequest[] = [];
     const { s, otp } = service(clock, {
       adapter: (_net, runtime) => runtime.app.id !== "friends" ? new DryRunAdapter(() => {}) : new BlooioAdapter({
-        app: "friends", city: "nyc", from: "+12125550199", clock, liveGate: () => true, log: () => {},
+        app: "friends", city: "nyc", from: "+12125550199", clock, log: () => {},
         provider: { kind: "sim", send: async request => {
           delivered.push(request);
           return { providerMessageId: `safety-fixture:${request.idempotencyKey}`, status: "sent" };
@@ -1589,12 +1850,14 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     }
     const slopId = (await memberOf("slop", phone))!.id;
     const peerId = (await memberOf("friends", phone))!.id, recipient = (await memberOf("friends", recipientPhone))!.id;
+    await verifyFriendsAdults(s, peerId, recipient);
     const rt = s.runtimeFor("friends")!;
     const adapter = rt.adapter as BlooioAdapter;
     const world = new Mini([{ id: peerId, name: "Ari", age: 30, area: "Greenpoint", interests: ["hiking"] },
       { id: recipient, name: "Blair", age: 30, area: "Greenpoint", interests: ["hiking"] }],
-      { app: "friends", review: "auto", plans: false, growth: false });
+      { app: "friends", inlineJudge: simulatedReviewJudge({ exceptions: false }), plans: false, growth: false });
     world.clock.set(clock.now());
+    world.verify(peerId, recipient);
     await world.onboard(peerId, recipient);
     const opportunityId = world.propose([peerId, recipient]);
     await world.answerProbes([peerId, recipient]);
@@ -1635,7 +1898,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       expect(delivered.some(call => call.idempotencyKey === `tn:${notice}`)).toBe(false);
     } finally {
       resume();
-      expect(await (await applying).json()).toEqual({ ok: true });
+      expect(await (await applying).json()).toEqual(decision === "hold" ? { reach: "all", ok: true } : { ok: true });
       rt.unitOfWork = unit;
     }
   }, T);

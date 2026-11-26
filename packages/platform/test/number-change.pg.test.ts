@@ -5,6 +5,7 @@
 // never moves; the consent history, the age floor and the OAuth-style keyed hash move with the person;
 // the old number's sessions end; messages waiting for the old number are ended unsent; the change row
 // keeps only keyed hashes (the audit record).
+import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
@@ -147,6 +148,25 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
     expect(await store.pendingPhoneChange(owner.personId)).toMatchObject({ newE164: targets[2] });
   }, T);
 
+  test("a refused change start says when to try again: the OTP service's wait, or the end of the day window", async () => {
+    const t = setup();
+    const oldNumber = "+12125550281";
+    const browser = t.browser();
+    await browser.login(oldNumber);
+    expect((await t.join(browser)).status).toBe(200);
+    const start = async (phone: string) => {
+      const res = (await t.api.fetch(new Request(`http://${host}/api/me/phone/start`, {
+        method: "POST", headers: { host, cookie: browser.cookie, ...jsonH }, body: JSON.stringify({ phone }),
+      })))!;
+      return { status: res.status, retryAfter: res.headers.get("retry-after"), body: await res.json() };
+    };
+    expect(await start("+12125550282")).toEqual({ status: 200, retryAfter: null, body: { ok: true } });
+    expect(await start("+12125550282")).toEqual({ status: 429, retryAfter: "30", body: { ok: false, error: "rate_limited" } });
+    t.tick(31_000);
+    expect(await start("+12125550283")).toEqual({ status: 200, retryAfter: null, body: { ok: true } });
+    expect(await start("+12125550284")).toEqual({ status: 429, retryAfter: "32369", body: { ok: false, error: "rate_limited" } });
+  }, T);
+
   // spec/phoneChange.md, "A live pending request needs a valid code"
   test("a clock rollback leaves the new code available until its request starts", async () => {
     const t = setup();
@@ -206,7 +226,7 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
     await sql`insert into network.channel_identities (member_id,app_id,channel,address,is_primary)
       values (${member.memberId},'slop','sms',${oldNumber},true),(${legacyMember},'slop','sms',${legacyNumber},true)`;
     const service = new NetworkService({ url, clock: { now: t.now }, networks: [{ id: "slop:nyc", matchingEnabled: false }],
-      env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret }, photoStorage: null, log: () => {} });
+      env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret }, photoStorage: null, log: () => {} });
     try {
       await service.start();
       const runtime = service.runtimeFor("slop")!;
@@ -268,7 +288,7 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
   }, T);
 
   // spec/phoneChange.md, "The verified request can move only when both numbers allow it"
-  test("only a live native grant bound to the moving person carries its draft and tokens to the new number", async () => {
+  test("only a live native grant bound to the moving person carries its tokens to the new number", async () => {
     const t = setup();
     const [oldNumber, newNumber] = ["+12125550261", "+12125550262"];
     const browser = t.browser();
@@ -293,8 +313,6 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
     for (const row of rows) {
       await sql`insert into oauth.grants (id,client_id,app_id,phone_key,person_id,scopes,resource,created_at,expires_at,revoked_at,cloud_authority)
         values (${row.id},${client},'friends',${oldKey},${row.person},${["profile:write"]},${resource},${at},${expires},${row.revoked},${row.authority}::jsonb)`;
-      await sql`insert into oauth.signup_drafts (grant_id,app_id,phone_key,fields,expires_at)
-        values (${row.id},'friends',${oldKey},${{ firstName: "Ana" }}::jsonb,${expires})`;
       await sql`insert into oauth.tokens (hash,kind,grant_id,client_id,app_id,resource,scopes,created_at,expires_at,revoked_at)
         values (${`${row.id}-token`},'access',${row.id},${client},'friends',${resource},${["profile:write"]},${at},${expires},${row.revoked})`;
     }
@@ -307,13 +325,10 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
     expect(await oauth.getGrant(cloud)).toMatchObject({ phoneKey: oldKey, personId, cloudAuthority: authority, revokedAt: t.now() });
     expect(await oauth.getGrant(unbound)).toMatchObject({ phoneKey: oldKey, personId: null, revokedAt: t.now() });
     expect(await oauth.getGrant(retired)).toMatchObject({ phoneKey: oldKey, personId, revokedAt: at.getTime() });
-    expect(await oauth.claimSignupDraft(newKey, "friends", personId, () => t.now())).toEqual({ firstName: "Ana" });
-    expect(await oauth.claimSignupDraft(oldKey, "friends", personId, () => t.now())).toBeUndefined();
     expect(await oauth.getToken(`${local}-token`)).toMatchObject({ revokedAt: null });
     for (const id of [cloud, unbound]) expect(await oauth.getToken(`${id}-token`)).toMatchObject({ revokedAt: t.now() });
     const ended = [cloud, unbound].sort();
     expect((await sql`select grant_id from oauth.audit where kind='consent_revoked' order by grant_id`).map(row => row.grant_id)).toEqual(ended);
-    expect(await sql`select grant_id from oauth.signup_drafts where grant_id in ${sql(ended)}`).toEqual([]);
   }, T);
 
   test("a number that belongs to someone is refused only after its code is proved; nothing moves", async () => {
@@ -334,10 +349,15 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
     const t = setup();
     const [A, B, D, E] = ["+12125550187", "+12125550188", "+12125550189", "+12125550190"];
     const b = t.browser(); await b.login(A); await t.join(b);
-    // A banned new number: refused after the code, with the review answer.
+    const F = "+12125550198";
+    expect((await b.call("POST", "/api/me/phone/start", { phone: F })).status).toBe(200);
+    await store.ban({ id: `ban_nc_${process.pid}_3`, scope: "phone", personId: null, phoneHash: t.api.accounts.phoneHash(F), reason: "test", reportId: null, bannedBy: "staff", at: t.now() });
+    expect(await b.call("POST", "/api/me/phone/confirm", { code: t.codes.get(F) })).toMatchObject({ status: 403, body: { error: "review" } });
+    expect(await store.findPhone(F)).toBeUndefined();
     await store.ban({ id: `ban_nc_${process.pid}_1`, scope: "phone", personId: null, phoneHash: t.api.accounts.phoneHash(B), reason: "test", reportId: null, bannedBy: "staff", at: t.now() });
-    expect((await b.call("POST", "/api/me/phone/start", { phone: B })).status).toBe(200);
-    expect(await b.call("POST", "/api/me/phone/confirm", { code: t.codes.get(B) })).toMatchObject({ status: 403, body: { error: "review" } });
+    expect(await b.call("POST", "/api/me/phone/start", { phone: B })).toEqual({ status: 200, body: { ok: true } });
+    expect(t.sends.filter(x => x === B)).toEqual([]);
+    expect((await b.call("POST", "/api/me/phone/confirm", { code: "123456" })).body.ok).toBe(false);
     expect(await store.findPhone(B)).toBeUndefined();
     // A banned person cannot start (a new number would escape a ban by phone).
     const d = t.browser(); await d.login(D); await t.join(d);
@@ -356,14 +376,84 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
     const t = setup();
     const [A, B] = ["+12125550192", "+12125550193"];
     // Someone once stated 15 from the new number (the phone's age floor).
-    await store.noteAgeFloor(t.api.accounts.phoneHash(B), 15, t.now());
+    await store.recordAgeReading(null, t.api.accounts.phoneHash(B), { kind: "age", age: 15 }, t.now());
     const b = t.browser(); await b.login(A); await t.join(b, 29);
     const personId = (await store.findPhone(A))!.personId;
     expect((await b.call("POST", "/api/me/phone/start", { phone: B })).status).toBe(200);
     expect((await b.call("POST", "/api/me/phone/confirm", { code: t.codes.get(B) })).status).toBe(200);
     expect((await store.getPerson(personId))!.lowestAge).toBe(15);
     expect(t.lowered).toContainEqual({ personId, age: 15 });
-    expect(await store.ageFloor(t.api.accounts.phoneHash(B))).toBe(15);
-    expect(await store.ageFloor(t.api.accounts.phoneHash(A))).toBeUndefined();
+    expect((await store.ageFloorRecord(t.api.accounts.phoneHash(B)))?.age).toBe(15);
+    expect(await store.ageFloorRecord(t.api.accounts.phoneHash(A))).toBeUndefined();
+  }, T);
+
+  test("a Cloud sign-in site: a fresh Cloud proof on the old number starts the change, the platform code moves the person, and Cloud sign-in on the new number reaches the same person", async () => {
+    const ip = `203.0.113.${++tests}`;
+    let now = Date.UTC(2026, 9, 9, 15);
+    const [A, B] = ["+12125550194", "+12125550195"];
+    const codes = new Map<string, string>();
+    const sends: string[] = [];
+    let cloudPhone = A, challenge = "", exchanges = 0;
+    const cloudAuthFetch = (async (input: RequestInfo | URL) => {
+      const req = input as Request;
+      if (new URL(req.url).pathname.endsWith("network-validate")) return Response.json({ ok: true });
+      const body = await req.json() as { codeVerifier: string };
+      if (createHash("sha256").update(body.codeVerifier).digest("hex") !== challenge) return Response.json({ ok: false }, { status: 401 });
+      return Response.json({ userId: `cloud-user-${cloudPhone}`, organizationId: "cloud-org-fixture", stewardUserId: "steward-fixture",
+        e164: cloudPhone, issuedAt: Math.floor(now / 1000), expiresAt: now + 30 * MIN });
+    }) as typeof fetch;
+    const api = createPublicApi({
+      store, now: () => now, ipOf: () => ip, minStartMs: 0, minVerifyMs: 0, log: () => {}, cloudAuthFetch,
+      env: {
+        PLATFORM_ENV: "dev", NETWORK_CLOUD_AUTH_MODE: "staging-local", NETWORK_CLOUD_AUTH_LOGIN_ORIGIN: "https://cloud-staging.eliza.app",
+        NETWORK_CLOUD_AUTH_API_ORIGIN: "https://api-staging.eliza.app", NETWORK_CLOUD_AUTH_SITE_ORIGIN: "http://127.0.0.1:5102",
+        NETWORK_CLOUD_AUTH_SERVER_TOKEN: "phone-change-cloud-fixture".repeat(2),
+      },
+      otp: { name: "fake", send: async e164 => { const code = String(200000 + sends.length); codes.set(e164, code); sends.push(e164); return { code }; } },
+    });
+    const cloudHost = "127.0.0.1:5102";
+    const jar = new Map<string, string>();
+    const call = async (method: string, path: string, body?: unknown) => {
+      const cookie = [...jar].map(([k, v]) => `${k}=${v}`).join("; ");
+      const res = (await api.fetch(new Request(`http://${cloudHost}${path}`, { method,
+        headers: { host: cloudHost, ...(cookie ? { cookie } : {}), ...(body ? jsonH : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) })))!;
+      for (const c of res.headers.getSetCookie()) {
+        const pair = c.split(";")[0]!, i = pair.indexOf("=");
+        if (/max-age=0\b/i.test(c)) jar.delete(pair.slice(0, i)); else jar.set(pair.slice(0, i), pair.slice(i + 1));
+      }
+      return { status: res.status, location: res.headers.get("location"), body: await res.json().catch(() => null) as unknown };
+    };
+    const cloudSignIn = async (phone: string) => {
+      cloudPhone = phone;
+      const start = await call("POST", "/api/auth/cloud/start", { returnPath: "/phone" });
+      expect(start.status).toBe(200);
+      const authorize = new URL((start.body as { url: string }).url);
+      challenge = authorize.searchParams.get("challenge")!;
+      const code = `enso_${(++exchanges).toString(16).padStart(64, "0")}`;
+      const back = await call("GET", `/api/auth/cloud/callback?code=${code}&state=${authorize.searchParams.get("state")}`);
+      expect({ status: back.status, location: back.location }).toEqual({ status: 303, location: "/phone" });
+    };
+
+    await cloudSignIn(A);
+    expect((await call("POST", "/api/join", { firstName: "Ana", age: 31, consent: { sms: true, version: APPS.slop.consent.version } })).status).toBe(200);
+    const personId = (await store.findPhone(A))!.personId;
+    now += 11 * MIN;
+    expect(await call("POST", "/api/me/phone/start", { phone: B })).toMatchObject({ status: 403, body: { ok: false, error: "reauth" } });
+    expect(sends).toEqual([]);
+    await cloudSignIn(A);
+    const oldCookies = new Map(jar);
+    expect(await call("POST", "/api/me/phone/start", { phone: B })).toMatchObject({ status: 200, body: { ok: true } });
+    expect(sends).toEqual([B]);
+    expect((await call("POST", "/api/me/phone/confirm", { code: "000000" })).body).toEqual({ ok: false, error: "invalid_code" });
+    expect(await call("POST", "/api/me/phone/confirm", { code: codes.get(B) })).toMatchObject({ status: 200, body: { ok: true, phoneMasked: "+1 •••-•••-0195" } });
+    expect([...jar.keys()]).toEqual([]);
+    for (const [k, v] of oldCookies) jar.set(k, v);
+    expect((await call("GET", "/api/me")).status).toBe(401);
+    jar.clear();
+    expect(await store.findPhone(A)).toBeUndefined();
+    expect((await store.findPhone(B))!.personId).toBe(personId);
+    await cloudSignIn(B);
+    expect((await call("GET", "/api/me")).body).toMatchObject({ phoneMasked: "+1 •••-•••-0195", membership: { state: "active", firstName: "Ana" } });
+    expect((await store.findPhone(B))!.personId).toBe(personId);
   }, T);
 });

@@ -7,6 +7,12 @@ export type PrivacyPhase = "AwaitingOperation" | "AwaitingLeaveConsent" | "Await
 export type PrivacyOperation = "LeaveApp" | "DeleteAccount" | "ExportApp";
 /** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
 export interface PrivacyRequest { phase: PrivacyPhase; operation: PrivacyOperation; optedOut: boolean; ownerChecked: boolean; cleanupDone: boolean; includeMembership: boolean; membershipBound: boolean }
+/** Story: Staff carry out an export or erasure request sent to support / A support export covers one app or every app, and an erasure covers every app (spec/accountPrivacy.md) */
+export type PrivacySupportOperation = "SupportExport" | "SupportErase";
+/** Story: Staff carry out an export or erasure request sent to support / A support export covers one app or every app, and an erasure covers every app (spec/accountPrivacy.md) */
+export type PrivacySupportScope = "SupportOneApp" | "SupportEveryApp";
+/** Story: Staff carry out an export or erasure request sent to support / Staff act only on the confirmed person after a fresh code from the number (spec/accountPrivacy.md) */
+export type PrivacySupportDecision = "SupportProceeds" | "SupportAlreadyDone" | "SupportUnavailable" | "SupportTargetChanged" | "SupportCodeRefused";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -19,6 +25,12 @@ export type Event =
   | { type: "checkAppExport"; membershipBound: boolean }
   | { type: "recordConsentExport" };
 
+/** Story: Staff carry out an export or erasure request sent to support / Only a global admin with a stated reason opens or confirms a support request (spec/accountPrivacy.md) */
+export const privacySupportReasonMin: number = 5;
+/** Story: Staff carry out an export or erasure request sent to support / Only a global admin with a stated reason opens or confirms a support request (spec/accountPrivacy.md) */
+export const privacySupportReasonMax: number = 500;
+/** Story: Staff carry out an export or erasure request sent to support / Staff act only on the confirmed person after a fresh code from the number (spec/accountPrivacy.md) */
+export const privacySupportWindowMs: number = 1800000;
 /** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
 export const initial: PrivacyRequest = { phase: "AwaitingOperation", operation: "LeaveApp", optedOut: false, ownerChecked: false, cleanupDone: false, includeMembership: false, membershipBound: false };
 
@@ -279,6 +291,91 @@ export function sometimesErasesAccount(privacy: PrivacyRequest): boolean {
 //@ pure
 export function sometimesExportsMembership(privacy: PrivacyRequest): boolean {
   return privacy.operation === "ExportApp" && privacy.phase === "CompletePrivacyRequest" && privacy.includeMembership;
+}
+
+/** Story: Staff carry out an export or erasure request sent to support / Only a global admin with a stated reason opens or confirms a support request (spec/accountPrivacy.md) */
+//@ pure
+export function privacySupportAllowed(globalRoles: string[], reasonLength: number): boolean {
+  return globalRoles.includes("admin") && reasonLength >= privacySupportReasonMin && reasonLength <= privacySupportReasonMax;
+}
+
+/** Story: Staff carry out an export or erasure request sent to support / Only a global admin with a stated reason opens or confirms a support request (spec/accountPrivacy.md) */
+//@ pure
+export function lawSupportWithoutGlobalAdminRefused(globalRoles: string[], reasonLength: number): boolean {
+  //@ ensures \result === true
+  return !(!globalRoles.includes("admin")) || !privacySupportAllowed(globalRoles, reasonLength);
+}
+
+/** Story: Staff carry out an export or erasure request sent to support / Only a global admin with a stated reason opens or confirms a support request (spec/accountPrivacy.md) */
+//@ pure
+export function lawSupportReasonOutsideBoundsRefused(globalRoles: string[], reasonLength: number): boolean {
+  //@ ensures \result === true
+  return !(reasonLength < privacySupportReasonMin || reasonLength > privacySupportReasonMax) || !privacySupportAllowed(globalRoles, reasonLength);
+}
+
+/** Story: Staff carry out an export or erasure request sent to support / A support export covers one app or every app, and an erasure covers every app (spec/accountPrivacy.md) */
+//@ pure
+export function privacySupportScopeAllowed(operation: PrivacySupportOperation, scope: PrivacySupportScope): boolean {
+  return operation === "SupportExport" || scope === "SupportEveryApp";
+}
+
+/** Story: Staff carry out an export or erasure request sent to support / A support export covers one app or every app, and an erasure covers every app (spec/accountPrivacy.md) */
+//@ pure
+export function privacySupportExportApps(scope: PrivacySupportScope, app: string, apps: string[]): string[] {
+  return scope === "SupportEveryApp" ? apps : apps.filter((a: string) => a === app);
+}
+
+/** Story: Staff carry out an export or erasure request sent to support / A support export covers one app or every app, and an erasure covers every app (spec/accountPrivacy.md) */
+//@ pure
+export function lawOneAppExportStaysInItsApp(app: string, apps: string[]): boolean {
+  //@ ensures \result === true
+  return !privacySupportExportApps("SupportOneApp", app, apps).some((a: string) => !(a === app));
+}
+
+/** Story: Staff carry out an export or erasure request sent to support / A support export covers one app or every app, and an erasure covers every app (spec/accountPrivacy.md) */
+//@ pure
+export function lawEraseCoversEveryApp(scope: PrivacySupportScope): boolean {
+  //@ ensures \result === true
+  return !privacySupportScopeAllowed("SupportErase", scope) || scope === "SupportEveryApp";
+}
+
+/** Story: Staff carry out an export or erasure request sent to support / Staff act only on the confirmed person after a fresh code from the number (spec/accountPrivacy.md) */
+//@ pure
+export function privacySupportOpen(elapsedMs: number): boolean {
+  return elapsedMs >= 0 && elapsedMs < privacySupportWindowMs;
+}
+
+/** Story: Staff carry out an export or erasure request sent to support / Staff act only on the confirmed person after a fresh code from the number (spec/accountPrivacy.md) */
+//@ pure
+export function privacySupportDecision(sameRequest: boolean, completed: boolean, elapsedMs: number, echoedPerson: boolean, ownerCurrent: boolean, codeVerified: boolean): PrivacySupportDecision {
+  return !sameRequest ? "SupportUnavailable" : (completed ? "SupportAlreadyDone" : (!privacySupportOpen(elapsedMs) ? "SupportUnavailable" : (!echoedPerson || !ownerCurrent ? "SupportTargetChanged" : (!codeVerified ? "SupportCodeRefused" : "SupportProceeds"))));
+}
+
+/** Story: Staff carry out an export or erasure request sent to support / Staff act only on the confirmed person after a fresh code from the number (spec/accountPrivacy.md) */
+//@ pure
+export function lawSupportProceedsOnlyForTheConfirmedHolder(sameRequest: boolean, completed: boolean, elapsedMs: number, echoedPerson: boolean, ownerCurrent: boolean, codeVerified: boolean): boolean {
+  //@ ensures \result === true
+  return !(privacySupportDecision(sameRequest, completed, elapsedMs, echoedPerson, ownerCurrent, codeVerified) === "SupportProceeds") || (sameRequest && !completed && privacySupportOpen(elapsedMs) && echoedPerson && ownerCurrent && codeVerified);
+}
+
+/** Story: Staff carry out an export or erasure request sent to support / Staff act only on the confirmed person after a fresh code from the number (spec/accountPrivacy.md) */
+//@ pure
+export function lawCompletedSupportRequestNeverActsAgain(elapsedMs: number, echoedPerson: boolean, ownerCurrent: boolean, codeVerified: boolean): boolean {
+  //@ ensures \result === true
+  return privacySupportDecision(true, true, elapsedMs, echoedPerson, ownerCurrent, codeVerified) === "SupportAlreadyDone";
+}
+
+/** Story: Staff carry out an export or erasure request sent to support / A support request runs the member's own export or account erasure (spec/accountPrivacy.md) */
+//@ pure
+export function privacySupportOperation(operation: PrivacySupportOperation): PrivacyOperation {
+  return operation === "SupportErase" ? "DeleteAccount" : "ExportApp";
+}
+
+/** Story: Staff carry out an export or erasure request sent to support / A support request runs the member's own export or account erasure (spec/accountPrivacy.md) */
+//@ pure
+export function lawSupportUsesMemberOperation(operation: PrivacySupportOperation): boolean {
+  //@ ensures \result === true
+  return beginPrivacyRequest(initial, privacySupportOperation(operation)).phase === (operation === "SupportErase" ? "AwaitingAccountOwner" : "AwaitingAppExport");
 }
 
 /** Do the rules allow this event in this state? */

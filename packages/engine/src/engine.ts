@@ -6,7 +6,7 @@ import type { LLM, MemberId, WorldSnapshot } from "@thenetwork/core";
 import { configHash, ENGINE_VERSION, resolveConfig, type EngineConfigInput } from "./config.ts";
 import { localEmbed, type EmbedFn } from "./embed.ts";
 import { explain, privateVocabulary } from "./explain.ts";
-import { involvesMinor, memberReason, publicEventPreferencesAllow, screenCandidate } from "./filters.ts";
+import { candidateAgeReason, involvedMembers, isMinor, memberReason, publicEventPreferencesAllow, screenCandidate } from "./filters.ts";
 import type { GenCtx } from "./genkit.ts";
 import { JudgeCache, judgeCandidates, runCachedPass } from "./judge.ts";
 import { checkMemberFacing, redactPrivate } from "./judgeCommon.ts";
@@ -20,7 +20,7 @@ import { blockingPairs, fairnessMetrics, planAsks, selectProposals, updateExposu
 import { EngineRng as Rng } from "@thenetwork/core";
 import { sha256, stableStringify } from "./hash.ts";
 import { scoreCandidate, type Scored } from "./scoring.ts";
-import type { Candidate, EngineAsk, EngineInput, EngineProposal, JudgeVerdict, MatchingRunLog, MemberStandingRow } from "./types.ts";
+import type { Candidate, EngineAsk, EngineInput, EngineProposal, JudgeVerdict, MatchingRunLog, MemberStandingRow, Role } from "./types.ts";
 import type { AppPack } from "./pack.ts";
 import { networkPack } from "./packs/network/index.ts";
 import { World } from "./world.ts";
@@ -149,6 +149,10 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   const anchorReasons = new Map<string, Map<string, number>>();
   const passed: Candidate[] = [];
   for (const c of cands) {
+    const alternateRole: Role | undefined = c.format === "small_group" ? "guest" : c.format === "one_to_one" ? "peer" : undefined;
+    if (alternateRole && involvedMembers(c).some(id => isMinor(w, id))) {
+      c.roles = { ...Object.fromEntries(c.alternates.filter(id => c.roles[id] === undefined).map(id => [id, alternateRole])), ...c.roles };
+    }
     const screening = screenCandidate(w, c);
     if (screening.phase === "Refused") {
       const r = screening.refusal;
@@ -162,6 +166,7 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
     }
     if (!pack.geo.markets(cfg).includes(c.city!)) { f.rejectedBy.city_not_in_run = (f.rejectedBy.city_not_in_run ?? 0) + 1; continue; }
     c.alternates = screening.alternates;
+    if (candidateAgeReason(w, c) !== null) { f.rejectedBy.underage = (f.rejectedBy.underage ?? 0) + 1; continue; }
     passed.push(c);
   }
   f.passedHardFilters = passed.length;
@@ -279,9 +284,7 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   f.askFirst = askPlan.exclude.size;
   const selectionOptions = { exclude: askPlan.exclude, extraProactive: askPlan.extraProactive };
   const selection = selectProposals(w, scored, rng.fork("select"), priorDebt, selectionOptions);
-  // Minors policy, last line of defence: hard filters already drop these, so this never fires
-  // in a correct build. If it ever does, the configuration is withheld (fail closed), not sent.
-  const selected = selection.selected.filter(x => !involvesMinor(w, x.s.c));
+  const selected = selection.selected.filter(x => candidateAgeReason(w, x.s.c) === null);
   if (selected.length !== selection.selected.length) f.rejectedAfterSelection = { underage: selection.selected.length - selected.length };
   const budgetSkips = selection.budgetSkips;
   f.budgetSkips = budgetSkips;
@@ -293,7 +296,10 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
     runLog.judge.coverage = { selected: selected.length, judged: selected.filter(s => !!s.s.verdict).length };
   }
   const search = w.match.tally();
-  if (search.members > 0) runLog.search = search;
+  if (search.members > 0) {
+    runLog.search = search;
+    runLog.searchOutcomes = w.match.searchOutcomes();
+  }
   t = lap("select", t);
 
   // 6. Proposals with shareable-only explanations.
@@ -314,6 +320,7 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
       acceptance: Object.fromEntries(c.participants.map(id => [id, round(w.get(id)?.acceptance ?? cfg.acceptance.prior)])),
       ...(c.lane ? { lane: c.lane } : {}), ...(c.entities ? { entities: { ...c.entities } } : {}),
       ...(c.cofounderIntents ? { cofounderIntents: { ...c.cofounderIntents } } : {}),
+      ...(involvedMembers(c).some(id => isMinor(w, id)) ? { format: c.format } : {}),
     };
   });
   for (const p of proposals) runLog.proposalsByGenerator[p.generator] = (runLog.proposalsByGenerator[p.generator] ?? 0) + 1;

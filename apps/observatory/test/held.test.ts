@@ -2,6 +2,7 @@
 // relay items, read from the Network service's staff API and released or rejected through it. A local
 // fake of the service; the console in real mode on a running server. Per app, audited, safety or admin
 // only, never a score, never a minor's text; a queue the service does not have yet is "not available".
+import { setTimeout as sleep } from "node:timers/promises";
 import { serveHttp, type HttpServer } from "../../../packages/core/src/runtime/http.ts";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -13,6 +14,8 @@ import type { AuditEntry, HeldText } from "../src/types.ts";
 const T = 120_000;
 const long = (t: string) => t.padEnd(32, "-0123456789abcdef");
 const TOK = { admin: long("adm-held"), safety: long("saf-held"), reviewer: long("rev-held"), analyst: long("ana-held") };
+const SERVICE_TIMEOUT_MS = 500, SLOW_SERVICE_MS = 2_000;
+const HELD_PHOTO = "pri_" + "e".repeat(32);
 const calls: { method: string; path: string; app: string | null; staff: string | null; body?: any }[] = [];
 let fake: HttpServer;
 let obs: ObservatoryServer;
@@ -37,17 +40,16 @@ beforeAll(async () => {
       ] });
       if (u.pathname === "/queue/leak-review/leak%3A1" || u.pathname === "/queue/leak-review/leak:1") return Response.json({ ok: true });
       if (u.pathname.startsWith("/queue/leak-review/")) return Response.json({ ok: false, reason: "not_parked" }, { status: 409 });
-      // The relay route as packages/network/service/service.ts answers it (itemId, from and to member ids), on slop only.
       if (u.pathname === "/staff/relay/held" && req.method === "GET" && u.searchParams.get("app") === "slop") return Response.json({ ok: true, network: "slop:nyc", items: [
-        { itemId: "rl_1", app: "slop", kind: "text", from: "slop_m1", to: "slop_m2", reasons: ["clef:scam"], createdAt: Date.now() - 30_000, text: "send me a gift card" },
+        { id: HELD_PHOTO, itemId: HELD_PHOTO, app: "slop", kind: "photo", memberId: "slop_m1", from: "slop_m1", reasons: ["photo:review"], createdAt: 1_000, deadline: 2_000 },
       ] });
       if(/^\/staff\/relay\/pri_[a-f0-9]{32}\/photo$/.test(u.pathname)){
         if(u.pathname.includes("pri_"+"b".repeat(32)))return Response.json({error:"unavailable"},{status:403});
-        const bad=u.pathname.includes("pri_"+"c".repeat(32));
-        return new Response(bad?"<svg/>":Uint8Array.from([255,216,255,218,0,2,1,255,217]),{headers:{"content-type":bad?"image/svg+xml":"image/jpeg","x-network-photo-review-token":`${Date.now()+60_000}.${"a".repeat(64)}`}});
+        const bad=u.pathname.includes("pri_"+"c".repeat(32)),leads=u.pathname.includes("pri_"+"d".repeat(32));
+        return new Response(bad?"<svg/>":Uint8Array.from([255,216,255,218,0,2,1,255,217]),{headers:{"content-type":bad?"image/svg+xml":"image/jpeg","x-network-photo-review-token":`${Date.now()+(leads?10*60_000:60_000)}.${"a".repeat(64)}`}});
       }
-      if(/^\/staff\/relay\/pri_[a-f0-9]{32}\/(release|reject)$/.test(u.pathname)&&req.method==="POST")return Response.json({ok:true,delivered:false});
-      if (u.pathname === "/staff/relay/rl_1/release" && req.method === "POST") return Response.json({ ok: true, delivered: true });
+      if(/^\/staff\/relay\/pri_[a-f0-9]{32}\/(release|reject)$/.test(u.pathname)&&req.method==="POST"&&u.searchParams.get("app")==="slop")return Response.json({ok:true,delivered:false});
+      if ((u.pathname === "/safety/hold" || u.pathname === "/invite") && req.method === "POST") { await sleep(SLOW_SERVICE_MS); return Response.json({ ok: true }); }
       return Response.json({ error: "no route" }, { status: 404 });
     },
   });
@@ -55,7 +57,7 @@ beforeAll(async () => {
   obs = await createServer({
     port: 0, development: false, mode: "real", audit: { dir: join(dir, "audit") }, lab: { dir: join(dir, "lab") }, peopleUrl: false, staffRolesUrl: false,
     tokens: `admin:${TOK.admin},safety@slop:${TOK.safety},reviewer@slop:${TOK.reviewer},analyst@slop:${TOK.analyst}`,
-    real: { url: undefined, pollMs: 3_600_000, pushMs: 3_600_000, service: { url: fake.url.href, token: long("console-svc") } },
+    real: { url: undefined, pollMs: 3_600_000, pushMs: 3_600_000, service: { url: fake.url.href, token: long("console-svc"), timeoutMs: SERVICE_TIMEOUT_MS } },
   });
 }, T);
 afterAll(async () => {
@@ -68,6 +70,10 @@ describe("held texts in the console", () => {
   test("leak review: safety reads the app's queue (no score, phone masked, a minor's text hidden); other roles cannot", async () => {
     for (const tok of [TOK.reviewer, TOK.analyst]) expect((await as(tok, "/api/held?app=slop&queue=leak")).status).toBe(403);
     expect((await as(TOK.safety, "/api/held?app=peon&queue=leak")).status).toBe(403);
+    const relayCalls = calls.length;
+    const reviewerRelay = await as(TOK.reviewer, "/api/held?app=slop&queue=relay");
+    expect([reviewerRelay.status, (await reviewerRelay.json()).error]).toEqual([403, "forbidden: ReadHeldRelay needs admin or safety for slop"]);
+    expect(calls.length).toBe(relayCalls);
     expect((await as(TOK.safety, "/api/held?app=slop&queue=other")).status).toBe(400);
     const r = await as(TOK.safety, "/api/held?app=slop&queue=leak");
     expect(r.status).toBe(200);
@@ -95,27 +101,28 @@ describe("held texts in the console", () => {
     const audit = await (await as(TOK.admin, "/api/audit?app=slop")).json() as { entries: AuditEntry[] };
     const rows = audit.entries.filter(e => e.action.startsWith("held_") || e.action === "read_held_texts");
     expect(rows.some(e => e.action === "read_held_texts" && e.app === "slop")).toBe(true);
-    const phases = rows.filter(e => e.action === "held_release").map(e => `${e.detail?.phase}:${e.ok}`).sort();
+    const release = rows.filter(e => e.action === "held_release");
+    expect(release.filter(e => e.detail?.refused).map(e => `${e.detail?.refused}:${e.ok}:${e.roles.join(",")}`)).toEqual(["forbidden:false:reviewer"]);
+    const phases = release.filter(e => !e.detail?.refused).map(e => `${e.detail?.phase}:${e.ok}`).sort();
     expect(phases).toEqual(["requested:true", "result:true"]);
     expect(rows.filter(e => e.action === "held_reject").map(e => `${e.detail?.phase}:${e.ok}`).sort()).toEqual(["requested:true", "result:false"]);
   }, T);
 
-  test("held relay: the service's own item shape (itemId, from) is listed, and a decision sends the reason as the service's note", async () => {
-    // Regression: the console read only `id`, so every held relay item was dropped and the panel was always empty.
+  test("held relay lists the service's photo items with no text, and a relay id that is not a held photo is refused before the service", async () => {
     const r = await as(TOK.safety, "/api/held?app=slop&queue=relay");
     expect(r.status).toBe(200);
     const body = await r.json() as { ok: boolean; items: HeldText[] };
-    expect(body.items).toHaveLength(1);
-    expect(body.items[0]).toMatchObject({ id: "rl_1", queue: "relay", kind: "text", memberId: "slop_m1", reasons: ["clef:scam"], text: "send me a gift card" });
-    const p = await post(TOK.safety, "/api/held?app=slop", { queue: "relay", id: "rl_1", decision: "release", reason: "consent checked by staff" });
-    expect([p.status, (await p.json()).ok]).toEqual([200, true]);
-    expect(calls.filter(c => c.method === "POST" && c.path === "/staff/relay/rl_1/release").at(-1)!.body).toEqual({ reason: "consent checked by staff", note: "consent checked by staff" });
+    expect(body.items).toEqual([{ id: HELD_PHOTO, queue: "relay", kind: "photo", memberId: "slop_m1", reasons: ["photo:review"], createdAt: 1_000, deadline: 2_000 }]);
+    const before = calls.length;
+    const text = await post(TOK.safety, "/api/held?app=slop", { queue: "relay", id: "rl_1", decision: "release", reason: "consent checked by staff" });
+    expect([text.status, (await text.json()).code]).toEqual([400, "bad_action"]);
+    expect(calls.length).toBe(before);
   }, T);
 
   test("a queue the service does not answer is not available (and acts on nothing)", async () => {
     const r = await as(TOK.admin, "/api/held?app=peon&queue=relay");
     expect([r.status, (await r.json()).code]).toEqual([404, "not_available"]);
-    const p = await post(TOK.admin, "/api/held?app=peon", { queue: "relay", id: "rl1", decision: "release", reason: "consent checked" });
+    const p = await post(TOK.admin, "/api/held?app=peon", { queue: "relay", id: HELD_PHOTO, decision: "reject", reason: "consent checked" });
     expect([p.status, (await p.json()).code]).toEqual([404, "service_missing"]);
   }, T);
 });
@@ -133,13 +140,47 @@ test("selected photo proxy binds staff/app/item preview before release; denied o
   expect((await post(TOK.safety,"/api/held?app=slop",{...decision,photoReviewed:false})).status).toBe(409);
   expect((await post(TOK.safety,"/api/held?app=slop",decision)).status).toBe(200);
   const call=calls.filter(c=>c.path===`/staff/relay/${id}/release`).at(-1)!;expect(call.app).toBe("slop");expect(call.staff).toBeTruthy();expect(call.body.photoReviewToken).toMatch(/^[1-9]\d+\.[a-f0-9]{64}$/);
+  expect(call.body).toMatchObject({reason:decision.reason,note:decision.reason});
   expect((await post(TOK.safety,"/api/held?app=slop",decision)).status).toBe(409);
   for(const [suffix,status]of [["b",403],["c",502]] as const){
     const unavailable="pri_"+suffix.repeat(32);expect((await as(TOK.safety,`/api/held/${unavailable}/photo?app=slop`,{headers})).status).toBe(status);
     expect((await post(TOK.safety,"/api/held?app=slop",{...decision,id:unavailable})).status).toBe(409);
     expect((await post(TOK.safety,"/api/held?app=slop",{...decision,id:unavailable,decision:"reject"})).status).toBe(200);
+    expect(calls.filter(c=>c.path===`/staff/relay/${unavailable}/reject`).at(-1)!.body).toEqual({reason:decision.reason,note:decision.reason});
   }
   const audited=await (await as(TOK.admin,"/api/audit?app=slop")).json() as {entries:AuditEntry[]};
   expect(audited.entries.some(e=>e.action==="read_relay_photo"&&e.reason===headers["x-network-reason"])).toBe(true);
   expect(JSON.stringify(audited)).not.toMatch(/photoReviewToken|https?:.*sig=/);
 },T);
+
+test("a photo preview from a service clock that leads is kept for the console's five minutes, not refused as expired", async () => {
+  const id = "pri_" + "d".repeat(32), headers = { "x-network-reason": "Check this voluntarily selected item" };
+  const loadedAt = Date.now();
+  const preview = await as(TOK.safety, `/api/held/${id}/photo?app=slop`, { headers });
+  expect(preview.status).toBe(200);
+  expect([...new Uint8Array(await preview.arrayBuffer())]).toEqual([255, 216, 255, 218, 0, 2, 1, 255, 217]);
+  const release = await post(TOK.safety, "/api/held?app=slop", { queue: "relay", id, decision: "release", reason: "Selected item consent and safety checked", photoReviewed: true });
+  expect(release.status).toBe(200);
+  const call = calls.filter(c => c.path === `/staff/relay/${id}/release`).at(-1)!;
+  expect(Number(String(call.body.photoReviewToken).split(".")[0])).toBeGreaterThan(loadedAt + 5 * 60_000);
+}, T);
+
+test("a staff action whose service answer times out is reported and audited as an unknown outcome, not as a failure", async () => {
+  const hold = await post(TOK.safety, "/api/safety?app=slop", { action: "hold", memberId: "slop_m1", note: "two reports of threats" });
+  expect(hold.status).toBe(504);
+  expect(await hold.json()).toMatchObject({ ok: false, code: "service_timeout", error: expect.stringContaining("may have run") });
+  const step = await post(TOK.admin, "/api/staff/invite?app=ntwrk", { phone: "+12125550188", note: "founder referral" });
+  expect(step.status).toBe(504);
+  expect(await step.json()).toMatchObject({ ok: false, code: "service_timeout" });
+  const slop = await (await as(TOK.admin, "/api/audit?app=slop")).json() as { entries: AuditEntry[] };
+  expect(slop.entries.filter(e => e.action === "safety_hold").map(e => e.detail)).toEqual(expect.arrayContaining([
+    expect.objectContaining({ phase: "requested" }),
+    expect.objectContaining({ phase: "result", code: "service_timeout", outcome: "unknown" }),
+  ]));
+  const ntwrk = await (await as(TOK.admin, "/api/audit?app=ntwrk")).json() as { entries: AuditEntry[] };
+  expect(ntwrk.entries.filter(e => e.action === "step_invite_member").map(e => e.detail)).toEqual(expect.arrayContaining([
+    expect.objectContaining({ phase: "requested" }),
+    expect.objectContaining({ phase: "result", code: "service_timeout", outcome: "unknown" }),
+  ]));
+  expect(calls.filter(c => c.method === "POST" && (c.path === "/safety/hold" || c.path === "/invite"))).toHaveLength(2);
+}, T);

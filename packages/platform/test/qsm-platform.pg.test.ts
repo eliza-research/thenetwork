@@ -41,8 +41,8 @@ describe.skipIf(!pgAvailable)("QSM platform & DB fixes (Postgres)", () => {
       values ('in_002_c', 'sh_002', 'processing', true, now(), now())`).rejects.toThrow();
 
     // SD-383: age 0 allowed on age_floor and pending_texts.
-    await store.noteAgeFloor("ph_age_zero", 0, clock.t);
-    expect(await store.ageFloor("ph_age_zero")).toBe(0);
+    await sql`insert into platform.age_floor (phone_hash, lowest_age, at) values ('ph_age_zero', 0, ${new Date(clock.t)})`;
+    expect((await store.ageFloorRecord("ph_age_zero"))?.age).toBe(0);
     await store.putPending({ phoneHash: "ph_age_zero", kind: "join", app: "slop", name: "Zed", age: 0, at: clock.t });
     expect((await store.getPending("ph_age_zero", "join"))?.age).toBe(0);
 
@@ -150,10 +150,10 @@ describe.skipIf(!pgAvailable)("QSM platform & DB fixes (Postgres)", () => {
     // Seed Eliza notice using Accounts.noticeHash
     await sql`insert into platform.eliza_notices (phone_hash, sent_at) values (${accounts.noticeHash(oldPhone)}, ${new Date(clock.t)})`;
     clock.t += 1000;
-    expect(await accounts.startNumberChange(APPS.friends, { e164: oldPhone, personId: person.id }, movedPhone, async () => true)).toEqual({ ok: true });
+    expect(await accounts.startNumberChange(APPS.friends, { e164: oldPhone, personId: person.id }, movedPhone, true, async () => true)).toEqual({ ok: true });
 
     // Global STOP keyword produces namedApp (SD-318) and races movePhone via addConsent(e, personId) (SD-055)
-    const { event } = keywordEvent("stop", oldPhone, APPS.friends, clock.t + 500, { scope: "global", ref: "msg_race_stop" });
+    const { event } = keywordEvent("stop", oldPhone, APPS.friends, clock.t + 500, { ref: "msg_race_stop" });
     expect(event?.namedApp).toBe("friends");
 
     // Simulate movePhone committing right before addConsent writes
@@ -199,6 +199,8 @@ describe.skipIf(!pgAvailable)("QSM platform & DB fixes (Postgres)", () => {
     const accounts = new Accounts(store, { hashKey: "qsm-key", now: () => clock.t, apps: id => APPS[id] });
     const phone = newPhone();
     const person = await accounts.createPerson(phone, "otp_sms", 28);
+    // Photos are held only for a live adult member of the app (photoHoldAllowed).
+    await store.putMembership({ app: "slop", personId: person.id, memberId: "sl_qsm_photo", state: "active", review: null, firstName: "Ana", profile: {}, joinedAt: clock.t, leftAt: null });
     let allowEligible = true;
     let revokeOnPut = false;
     let failDelete = false;
@@ -232,12 +234,12 @@ describe.skipIf(!pgAvailable)("QSM platform & DB fixes (Postgres)", () => {
       0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
     ]);
 
-    // Interrupted upload leaves hidden row + bytes -> sweep removes both after PHOTO_PENDING_MS.
+    // Interrupted upload leaves a reserved row + bytes -> sweep removes both after PHOTO_PENDING_MS.
     failPut = true;
     await expect(svc.upload(person.id, "slop", png, PHOTO_CONSENT.version)).rejects.toThrow("put interrupted");
     expect(await svc.list(person.id, "slop")).toHaveLength(0);
     clock.t += PHOTO_PENDING_MS + 1000;
-    expect(await svc.sweep()).toBe(1);
+    expect((await svc.sweep()).finished).toBe(1);
     expect(readdirSync(dir)).toHaveLength(0);
     failPut = false;
 
@@ -259,9 +261,10 @@ describe.skipIf(!pgAvailable)("QSM platform & DB fixes (Postgres)", () => {
     expect(removed).toContain(live[0]!.id);
     failDelete = false;
     clock.t += PHOTO_PENDING_MS + 1000;
-    expect(await svc.sweep()).toBe(1);
+    expect((await svc.sweep()).finished).toBe(1);
+    expect(readdirSync(dir)).toHaveLength(PHOTO_MAX_PER_PERSON - 1);
 
-    // Racing eligibility drop while bytes are stored: show() re-checks under person lock and cleans up bytes & row.
+    // Racing eligibility drop while bytes are stored: confirm() re-checks under the person lock and cleans up bytes & row.
     expect(await svc.deleteFor(person.id, "slop")).toBe(PHOTO_MAX_PER_PERSON - 1);
     revokeOnPut = true;
     expect(await svc.upload(person.id, "slop", png, PHOTO_CONSENT.version)).toEqual({ ok: false, reason: "not_verified" });

@@ -203,7 +203,7 @@ export const POSTING_COPY = {
   askOpenings: `How many openings are there? Give a whole number from 1 to ${MAX_OPENINGS}.`,
   askChange: "What should I change? Reply yes to post it as shown, or send the updated details.",
   askCloseChange: (title: string) => `Still open: ${title}. Reply yes to close it, or tell me which post to close.`,
-  saved: (title: string) => `Posted: ${title}. A person on our team reviews every match before anyone hears about it, and you see a short summary of each candidate who says yes. ${NEVER_ASKS}`,
+  saved: (title: string) => `Posted: ${title}. An automatic check approves every match before anyone hears about it, and you see a short summary of each candidate who says yes. ${NEVER_ASKS}`,
   updated: (title: string) => `Updated: ${title}.`,
   closed: (title: string) => `Closed: ${title}. No new candidates will be sent for it.`,
   readBack: (d: PostingDraft) => {

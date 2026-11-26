@@ -87,8 +87,6 @@ function nyMonth(at: number): string {
   const local = localParts(at, CITY_TZ.nyc);
   return `${local.year}-${String(local.month).padStart(2, "0")}`;
 }
-
-/** Resolve only verified public data. An input listing must refer to the current published event, with its exact time. */
 async function publicVenueName(tx: SQL, input: GatheringInput, now: number): Promise<string | undefined> {
   const { startsAt, endsAt } = input;
   if (input.venue.kind === "curated") {
@@ -112,8 +110,6 @@ async function gatheringVenue(tx: SQL, input: GatheringInput, now: number): Prom
 function response(body: object, status = 200) {
   return Response.json(body, { status, headers: { "cache-control": "no-store" } });
 }
-
-/** The approved venue still has the exact public name and time window. */
 export async function gatheringVenueStillCurrent(tx: SQL, row: StoredGatheringVenue, now: number): Promise<boolean> {
   return await gatheringVenue(tx, gatheringInput(row), now) === row.venue_name;
 }
@@ -162,8 +158,6 @@ async function reviewGathering(tx: SQL, id: string, expectedRevision: number, de
   await auditGathering(tx, ctx, now, id, action, decided.revision, true);
   return response({ ok: true, gathering: gatheringView(decided) });
 }
-
-/** The mounted staff handler receives the authenticated actor and the current app's transaction. */
 export async function handleMonthlyGatherings(req: Request, path: string, ctx: GatheringContext): Promise<Response | undefined> {
   const review = GATHERING_REVIEW.exec(path);
   if (path !== "/gatherings" && !review) return;

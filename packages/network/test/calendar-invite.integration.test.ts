@@ -22,6 +22,7 @@ const museumLink = "https://secure.brooklynmuseum.org/";
 const cancelAfterNotice = "a cancellation reaches a booked participant who received the details";
 const cancelBeforeNotice = "a cancellation stays private from a booked participant whose details never sent";
 const cancelWaitingForNotice = "a cancellation waits for a pending signed receipt of booking details";
+const cancelAfterExpiredProviderNotice = "a cancellation is refused at once when the provider booking notice expired unknown";
 const feedbackReception = "post-meeting feedback reaches only a participant who received the booking";
 const feedbackWaitingForNotice = "post-meeting feedback waits for a pending signed receipt of booking details";
 const attendanceRequiresBooking = "attendance records require receipt of the participant's booking";
@@ -29,7 +30,7 @@ const independentMeetingValue = "verified meeting value requires a distinct atte
 const sentimentIsNotMeetingProof = "two positive ratings without attendance confirmation do not establish verified value";
 
 test.skipIf(!pgAvailable).each([
-  calendarJourney, expiredBookingNotice, curatedVenueBooking, staleCuratedVenueBooking, cancelAfterNotice, cancelBeforeNotice, cancelWaitingForNotice, feedbackReception, feedbackWaitingForNotice,
+  calendarJourney, expiredBookingNotice, curatedVenueBooking, staleCuratedVenueBooking, cancelAfterNotice, cancelBeforeNotice, cancelWaitingForNotice, cancelAfterExpiredProviderNotice, feedbackReception, feedbackWaitingForNotice,
   attendanceRequiresBooking, independentMeetingValue, sentimentIsNotMeetingProof,
 ] as const)("%s", async scenario => {
   // spec/calendarInvite.md, "The member asks for one current booking"
@@ -38,18 +39,20 @@ test.skipIf(!pgAvailable).each([
   const sql = new SQL(url);
   const clock = new SimClock(Date.UTC(2026, 10, scenario === expiredBookingNotice ? 19 : 16, 16));
   const secret = "a-synthetic-calendar-invite-fixture-secret";
+  const safetyToken = "calendar-invite-friends-safety-fixture";
   const phones = ["+12125550288", "+12125550289"];
   const app = APPS.friends;
   const delivered: SendRequest[] = [];
   const service = new NetworkService({
     url, clock, log: () => {}, photoStorage: null,
+    tokens: `safety@friends:${safetyToken}`,
     adapter: (_net, runtime) => new BlooioAdapter({ app: runtime.app.id, city: runtime.city, clock, from: "+12125550160",
-      env: {}, log: () => {}, liveGate: () => true, provider: { kind: "sim", send: async request => {
+      env: {}, log: () => {}, provider: { kind: "sim", send: async request => {
         delivered.push(request);
         return { providerMessageId: `calendar-fixture-${delivered.length}`, status: "queued" };
       } },
     }),
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret },
+    env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret },
     networks: [{ id: "friends:nyc", matchingEnabled: false }, { id: "peon:nyc", matchingEnabled: false }],
   });
   const turn = (id: string, text = "calendar invite", from = phones[0]!): TurnRequest => ({ app: "friends", from, messageId: id,
@@ -78,12 +81,22 @@ test.skipIf(!pgAvailable).each([
       const name = i ? "Blair" : "Ari";
       const joined = await service.accounts.join(app, { e164, personId: null }, { firstName: name, age: 30, consent: { sms: true, wording: app.consent.text } });
       if (!joined.ok) throw new Error(`Fixture join refused for ${name}`);
-      members.push({ id: joined.membership.memberId, name, age: 30, area: "Greenpoint", interests: ["hiking", "climbing"], skills: ["belaying"] });
+      const id = joined.membership.memberId;
+      for (const check of ["age", "liveness"]) {
+        const verified = await service.fetch(new Request(`http://localhost/apps/friends/members/${id}/verify`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${safetyToken}`, "content-type": "application/json" },
+          body: JSON.stringify({ check, result: "pass", note: "adult booking fixture" }),
+        }));
+        expect(await verified.json()).toEqual({ ok: true });
+      }
+      members.push({ id, name, age: 30, area: "Greenpoint", interests: ["hiking", "climbing"], skills: ["belaying"] });
     }
     const rt = service.runtimes.get("friends:nyc")!;
-    const world = new Mini(members, { app: "friends", review: "auto", plans: false, growth: false });
+    const world = new Mini(members, { app: "friends", plans: false, growth: false });
     world.clock.set(clock.now());
     const ids = members.map(member => member.id);
+    world.verify(...ids);
     await world.onboard(...ids);
     const id = world.propose(ids);
     expect(await world.runUntil(() => world.probed(ids[0]!), 2 * DAY)).toBe(true);
@@ -243,6 +256,27 @@ test.skipIf(!pgAvailable).each([
         expect((await rt.pg.load())!.reports).toMatchObject([{ reporterId: ids[1], subjectId: ids[0], kind: "harassment", source: "message" }]);
         expect(await feedbackData()).toHaveLength(1);
       }
+      return;
+    }
+    if (scenario === cancelAfterExpiredProviderNotice) {
+      const [notice] = await sql`select queued.id,queued.status,queued.attempts,message.inbound_id from platform.outbound queued
+        join network.messages message on message.app_id=queued.app_id and message.id=queued.id and message.member_id=queued.member_id
+        where message.opportunity_id=${id} and message.type='proposal' and message.member_id=${ids[0]!}`;
+      expect(notice).toMatchObject({ status: "accepted", attempts: 1, inbound_id: null });
+      await sql`update platform.outbound set status='failed_unknown',sent_at=null,provider_message_id=null,
+        note='provider acceptance never resolved',ended_at=${new Date(clock.now())} where id=${notice!.id}`;
+      expect((await acceptCollected(confirm, bookingReply.replyIds)).status).toBe(200);
+      const drop = turn("calendar-cancel", "I can't make it.", phones[1]);
+      expect(await (await send(drop)).json()).toMatchObject({ replies: [expect.stringContaining("thanks for the heads up")] });
+      expect(await sql`select state from network.opportunities where id=${id}`).toEqual([{ state: "CANCELLED" }]);
+      const cancellation = `${bookedCancellationPrefix}${id}:${ids[0]!}`;
+      clock.advance(HOUR);
+      expect(clock.now()).toBeLessThan(booked.meetingAt!);
+      await rt.deliver();
+      await rt.deliver();
+      expect({ ...(await sql`select status,attempts from platform.outbound where id=${cancellation}`)[0],
+        providerCalls: delivered.filter(call => call.idempotencyKey === `tn:${cancellation}`).length })
+        .toEqual({ status: "suppressed_ineligible", attempts: 0, providerCalls: 0 });
       return;
     }
     if (scenario === cancelAfterNotice || scenario === cancelBeforeNotice || scenario === cancelWaitingForNotice) {

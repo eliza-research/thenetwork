@@ -54,3 +54,25 @@ pure def lawOrdinaryCounterFollowsPlatformCutoff(lastAt: int, platformCutoff: in
 pure def lawStopHintCounterStaysInWindow(lastAt: int, platformCutoff: int): bool =
   lastAt >= platformCutoff - stopHintWindowMs implies not(stopHintCounterPastRetention(lastAt, platformCutoff))
 ```
+
+### Finished profile suggestions leave after the platform cutoff
+
+A rejected, expired or withdrawn profile suggestion has no text, but it still keeps its source, kind and connection. Remove it when its batch expired strictly before the platform cutoff, the platform window of two days counted from the batch expiry. An accepted suggestion whose saved fact is gone is also finished: no later disconnect or delete has a fact to find. A pending or accepted suggestion with its fact stays: an accepted one links a saved fact that a later disconnect or delete must find. A batch with no suggestion left is removed at the same cutoff. Changed (audits SD-376 and IPP-4): finished suggestion rows, and accepted rows whose fact another path removed, had no purge -> they are removed at the platform cutoff, because they kept the source, kind and connection for all time.
+
+```quint
+pure def suggestionRetentionCutoff(now: int): int = now - platformKeepMs
+pure def suggestionFinished(status: str, hasFact: bool): bool =
+  status == "rejected" or status == "expired" or status == "withdrawn" or (status == "accepted" and not(hasFact))
+pure def suggestionPastRetention(status: str, hasFact: bool, batchExpiresAt: int, cutoff: int): bool =
+  suggestionFinished(status, hasFact) and rowBeforeCutoff(batchExpiresAt, cutoff)
+pure def batchPastRetention(remaining: int, batchExpiresAt: int, cutoff: int): bool =
+  remaining == 0 and rowBeforeCutoff(batchExpiresAt, cutoff)
+
+pure def lawLiveSuggestionStays(hasFact: bool, batchExpiresAt: int, cutoff: int): bool =
+  not(suggestionPastRetention("proposed", hasFact, batchExpiresAt, cutoff))
+    and not(suggestionPastRetention("accepted", true, batchExpiresAt, cutoff))
+pure def lawAcceptedWithoutFactLeaves(batchExpiresAt: int, cutoff: int): bool =
+  rowBeforeCutoff(batchExpiresAt, cutoff) implies suggestionPastRetention("accepted", false, batchExpiresAt, cutoff)
+pure def lawBatchWithSuggestionsStays(remaining: int, batchExpiresAt: int, cutoff: int): bool =
+  remaining > 0 implies not(batchPastRetention(remaining, batchExpiresAt, cutoff))
+```

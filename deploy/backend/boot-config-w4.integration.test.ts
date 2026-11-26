@@ -17,6 +17,9 @@ const urls: string[] = [];
 const PRODUCTION = {
   ...OTP, PLATFORM_ENV: "production", TURNSTILE_SECRET_KEY: "fake", PLATFORM_PROXY_SECRET: "s".repeat(40),
   PLATFORM_HASH_KEY: "h".repeat(40), PLATFORM_SESSION_SECRET: "e".repeat(40),
+  SERVICE_TURN_SECRET: "t".repeat(40), NETWORK_SERVICE_TOKENS: `admin@*:${"a".repeat(40)}`, PHOTO_STORAGE: "r2",
+  CLOUDFLARE_AI_TOKEN: "synthetic-ai-token", CLOUDFLARE_ACCOUNT_ID: "synthetic-account", SURPLUS_API_KEY: "synthetic-surplus-key",
+  TURNSTILE_SITE_KEY: "fake-site",
 };
 
 async function run(entry: string[], extra: Record<string, string | undefined>, ms = 60_000) {
@@ -41,7 +44,7 @@ describe.skipIf(!pgAvailable)("boot gates of the process entries", () => {
       PORT: "0", BACKEND_STAFF: "off", TICK_MS: "3600000",
     });
     expect(r.code).toBe(1);
-    expect(r.logs).toMatch(/start failed.*NODE_ENV=production with PLATFORM_ENV=dev/);
+    expect(r.logs).toMatch(/start failed.*a NODE_ENV other than production when PLATFORM_ENV=dev/);
   }, 120_000);
 
   test("Q-boot_config-W4-3: main.ts refuses production with a superuser service login", async () => {

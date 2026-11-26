@@ -7,6 +7,7 @@ import { devShortcutsAllowed, type Env } from "../../platform/src/env.ts";
 import { CloudflareTurnstile } from "../../platform/src/turnstile.ts";
 import { isAppId, siteHosts, stagingSiteOrigins } from "../../platform/src/apps.ts";
 import type { NetworkService } from "./service.ts";
+import { PHOTO_RELAY_TEXT } from "./photoRelayFlow.ts";
 
 export interface ServiceMcpOptions {
   /** The Postgres for the oauth schema (packages/mcp/db/oauth.sql, applied here). Undefined: memory (tests and dev only). */
@@ -42,14 +43,6 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
   const dev = devShortcutsAllowed(env);
   const stageOrigins = stagingSiteOrigins(env);
   const privateOpenAiApps = o.privateOpenAiApps ?? (env.MCP_PRIVATE_OPENAI_APPS ?? "").split(",").map(s => s.trim()).filter(Boolean);
-  const customFlag = env.MCP_CUSTOM_CHATGPT_SLOP ?? "off";
-  if (customFlag !== "off" && customFlag !== "on") throw new Error("MCP_CUSTOM_CHATGPT_SLOP must be off or on");
-  const customChatGptSlopPersonIds = customFlag === "on" ? (env.MCP_CUSTOM_CHATGPT_SLOP_PERSON_IDS ?? "").split(",").map(s => s.trim()).filter(Boolean) : undefined;
-  if (customChatGptSlopPersonIds) {
-    if (privateOpenAiApps.length) throw new Error("custom ChatGPT Slop cannot use the dev pilot");
-    if (!["staging", "production"].includes(env.PLATFORM_ENV ?? "")) throw new Error("custom ChatGPT Slop needs explicit staging or production");
-    if (!customChatGptSlopPersonIds.length || customChatGptSlopPersonIds.includes("*")) throw new Error("custom ChatGPT Slop needs an explicit person allowlist");
-  }
   if (privateOpenAiApps.some(id => !isMcpAppId(id))) throw new Error("MCP_PRIVATE_OPENAI_APPS must name existing apps");
   if (privateOpenAiApps.length && !dev) throw new Error("MCP_PRIVATE_OPENAI_APPS is for an owned dev runtime only");
   const siteKey = env.TURNSTILE_SITE_KEY?.trim();
@@ -105,20 +98,25 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
       app: id => svc.apps[id],
       // The same cookie as the platform API (packages/platform/src/api.ts): sid_<app> in dev, __Host-sid elsewhere.
       cookieName: id => (dev ? `sid_${id}` : "__Host-sid"), secureCookie: !dev,
-      // submit_profile: the person's own profile, from their own agent, to their own member (decision 10).
       submitProfile: (personId, app, e164, text) => (isAppId(app) ? svc.submitProfile(personId, app, e164, text) : Promise.resolve("not_member" as const)),
-      // A staff or trust hold lives in the Network's state, not in platform.memberships.
+      lookingFor: (personId, app, e164) => (isAppId(app) ? svc.lookingFor(personId, app, e164) : Promise.resolve(undefined)),
+      minorNotice: (personId, app, e164) => (isAppId(app) ? svc.minorNotice(personId, app, e164) : Promise.resolve(undefined)),
+      changeLookingFor: (personId, app, e164, grantId, ref, change) => (isAppId(app)
+        ? svc.changeLookingFor(personId, app, e164, grantId, ref, change) : Promise.resolve({ kind: "refused", reason: "not_member" } as const)),
+      photoHoldings: (personId, app, e164) => (isAppId(app) ? svc.photoHoldings(personId, app, e164) : Promise.resolve(undefined)),
+      photoRequest: (personId, app, e164, words) => (isAppId(app) ? svc.photoRequest(personId, app, e164, words)
+        : Promise.resolve({ status: "unavailable" as const, text: PHOTO_RELAY_TEXT.unavailable })),
       memberHeld: async (app, memberId) => {
         const rt = await svc.runtimeOfMember(app, memberId);
         return rt ? rt.readState(n => n.trust.level(memberId as MemberId) === "hold") : false;
       },
       // get_updates and the inbox's surface signals (packages/notify; entry-flows doc 5).
       ...(svc.notify ? {
-        updates: (personId, app, assistant, token) => (isAppId(app) ? svc.updatesFor(personId, app, assistant, token) : Promise.resolve([])),
+        updates: (personId, app, assistant, token, passesLeakGate) => (isAppId(app) ? svc.updatesFor(personId, app, assistant, token, passesLeakGate) : Promise.resolve([])),
         assistantLinked: (personId, assistant, active) => svc.assistantLinked(personId, assistant, active),
       } : {}),
     }),
-    store, issuer, hostMap, env, privateOpenAiApps: privateOpenAiApps as McpAppId[], customChatGptSlopPersonIds, proxySecret: o.proxySecret, log, now,
+    store, issuer, hostMap, env, privateOpenAiApps: privateOpenAiApps as McpAppId[], proxySecret: o.proxySecret, log, now,
     // The token's hostname must be one of that site's hosts (as on the platform API), never another site.
     turnstile: siteKey && env.TURNSTILE_SECRET_KEY ? { siteKey, verify: (t, ip, app) => new CloudflareTurnstile(env.TURNSTILE_SECRET_KEY!).verify(t, ip, dev ? undefined : app ? siteHosts(app, env) : []) } : undefined,
   });
@@ -134,6 +132,11 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
     if (isMcpAppId(ctx.app.id)) await mcp.forgetPerson(ctx.personId, ctx.app.id);
   });
   svc.onEraseAccount(personId => mcp.forgetPerson(personId));
+  svc.onBan(phoneHashes => mcp.discardSignupDrafts(phoneHashes));
+  for (const accounts of new Set([svc.accounts, api.accounts])) {
+    accounts.setAgeRecordedListener(phoneHash => mcp.discardAgeRefusedSignupDrafts(phoneHash)
+      .catch((e: unknown) => log(`[mcp] signup draft age check failed: ${(e as Error).message}`)));
+  }
   return mcp;
 }
 
@@ -141,47 +144,56 @@ const TICK_MS = 60_000;
 /** Largest body the public API server reads: an 8 MB photo upload plus headroom (JSON routes enforce 16 KB). */
 const MAX_PUBLIC_BODY_BYTES = 9 * 1024 * 1024;
 
-/** The staff and webhook server (default 127.0.0.1:4848) and the public API the sites call (default 127.0.0.1:8790). */
-export async function serveService(svc: NetworkService, o: { host: string; port: number; apiPort: number; log?: (s: string) => void }) {
+export const isBlooioWebhookPath = (path: string) => path === "/webhooks/blooio" || path.startsWith("/webhooks/blooio/");
+
+export async function serveService(svc: NetworkService, o: { host: string; port: number; apiPort: number; blooioWebhook: boolean; log?: (s: string) => void }) {
   const log = o.log ?? console.log;
+  const fetch = (req: Request) => !o.blooioWebhook && isBlooioWebhookPath(new URL(req.url).pathname)
+    ? Response.json({ ok: false, error: "webhook_not_served" }, { status: 404 })
+    : svc.fetch(req);
   // Bodies are checked before they are read (audit network-service-17): webhooks 256 KB, the public API 9 MB for photos.
-  const server = await serveHttp({ hostname: o.host, port: o.port, fetch: svc.fetch, maxRequestBodySize: 256 * 1024 });
-  log(`listening on http://${o.host}:${server.port} (POST /webhooks/blooio[/:app], GET /health, GET /review, POST /review/:oppId, POST /safety/lift, POST /safety/close, POST /matching; ?app= or /apps/:app/...)`);
+  const server = await serveHttp({ hostname: o.host, port: o.port, fetch, maxRequestBodySize: 256 * 1024 });
+  log(`listening on http://${o.host}:${server.port} (${o.blooioWebhook ? "POST /webhooks/blooio[/:app], " : ""}GET /health, GET /review, POST /review/:oppId, POST /safety/lift, POST /safety/close, POST /matching; ?app= or /apps/:app/...)`);
   // The server is passed on: the client IP for the rate limits is the socket address unless a trusted proxy header is configured.
   const api = await serveHttp({ hostname: o.host, port: o.apiPort, fetch: (req, server) => svc.publicFetch(req, server), maxRequestBodySize: MAX_PUBLIC_BODY_BYTES });
   log(`public API on http://${o.host}:${api.port}/api/* (the app comes from the Host header)`);
   return { server, api, stop: () => { server.stop(); api.stop(); } };
 }
 
-/** Every network ticks once a minute on its own: a slow network never holds back another one. */
 export function startTicks(svc: NetworkService, log: (s: string) => void = console.log) {
   const busy = new Set<string>();
-  const inFlight = new Set<Promise<void>>();
-  const runGuarded = async (key: string, work: () => Promise<unknown>) => {
+  const worker = async (key: string, work: () => Promise<unknown>) => {
     if (busy.has(key)) return;
     busy.add(key);
     try { await work(); }
     catch (e) { log(`${key}: tick failed: ${(e as Error).message}`); }
     finally { busy.delete(key); }
   };
-  const loop = () => {
-    const run = (async () => {
-      // Inbound messages a crash or an error left waiting go first, in order per sender.
-      await runGuarded("inbox", () => svc.inboxTick());
-      await Promise.all([...svc.runtimes.values()].map(rt =>
-        runGuarded(rt.id, async () => {
-          if (!(await rt.tick())) log(`${rt.id}: tick skipped: another instance holds the lock`);
-        }),
-      ));
-      await runGuarded("retention", () => svc.purge());
-      await runGuarded("notify", () => svc.notifyTick());
-    })().catch(e => { log(`tick failed: ${(e as Error).message}`); });
-    inFlight.add(run);
-    run.finally(() => inFlight.delete(run)).catch(() => {});
-    return run;
+  let inbox: Promise<void> = Promise.resolve();
+  let judging: Promise<void> = Promise.resolve();
+  const inboxThenNetworks = async () => {
+    if (!busy.has("inbox")) inbox = worker("inbox", () => svc.inboxTick());
+    await inbox;
+    await judging;
+    await Promise.all([...svc.runtimes.values()].map(rt => worker(rt.id, async () => {
+      if (!(await rt.tick())) log(`${rt.id}: tick skipped: another instance holds the lock`);
+    })));
   };
-  const first = loop();
-  const timer = setInterval(() => { void loop(); }, TICK_MS);
+  const inFlight = new Set<Promise<void>>();
+  const round = () => {
+    const done = Promise.all([
+      inboxThenNetworks().then(() => {
+        if (!busy.has("review_judge")) judging = worker("review_judge", () => svc.reviewJudgeTick());
+        return judging;
+      }),
+      worker("retention", () => svc.purge()), worker("notify", () => svc.notifyTick()),
+    ]).then(() => undefined);
+    inFlight.add(done);
+    done.finally(() => inFlight.delete(done)).catch(() => {});
+    return done;
+  };
+  const first = round();
+  const timer = setInterval(() => { void round(); }, TICK_MS);
   // stop() waits for every tick in flight, so a shutdown commits and delivers before the pool closes.
   return { first, stop: async () => { clearInterval(timer); await Promise.allSettled([...inFlight]); } };
 }

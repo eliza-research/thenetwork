@@ -73,11 +73,9 @@ async function recipientCurrent(tx: SQL, accounts: GatheringAccounts, app: AppIn
   const current = !!member && await currentGatheringMember(tx, accounts, { app, memberId, e164: address }, event.city, now);
   return gatheringInvitationRecipientCurrent(current, trustedActive, gatheringEventPreference(member?.prefs), event.has_rsvp, event.reserved < event.capacity);
 }
-
-/** The live NYC runtime owns outbound staging; review alone never creates an outbound row. */
 export async function queueReviewedGatheringInvitations(rt: NetworkRuntime, accountsFor: (tx: SQL) => GatheringAccounts, now: () => number): Promise<void> {
   const { app, adapter } = rt;
-  if (app.id !== "ntwrk" || rt.city !== "nyc" || !rt.matchingAllowed || !rt.net.matchingEnabled() || !(adapter instanceof BlooioAdapter) || !adapter.live) return;
+  if (app.id !== "ntwrk" || rt.city !== "nyc" || !rt.matchingAllowed || !rt.net.matchingEnabled() || !(adapter instanceof BlooioAdapter)) return;
   const candidates = await rt.scoped(tx => tx<InviteeRow[]>`select g.id,g.revision,i.member_id
     from network.monthly_gatherings g join network.monthly_gathering_invitees i on i.app_id=g.app_id and i.gathering_id=g.id and i.revision=g.revision
     where g.app_id=${app.id} and g.city='nyc' and g.status='approved' and g.starts_at>${new Date(now())}
@@ -88,7 +86,7 @@ export async function queueReviewedGatheringInvitations(rt: NetworkRuntime, acco
     order by g.starts_at,g.id,i.position`);
   if (!candidates.length) return;
   await rt.unitOfWork(async net => {
-    if (!net.matchingEnabled() || !adapter.live) return;
+    if (!net.matchingEnabled()) return;
     for (const candidate of candidates) {
       const memberId = candidate.member_id;
       const address = rt.addressOf(memberId);
@@ -106,8 +104,6 @@ export async function queueReviewedGatheringInvitations(rt: NetworkRuntime, acco
     }
   });
 }
-
-/** Match the Network save lock order before serializing with the RSVP and member fences. */
 export async function lockGatheringAdmission(tx: SQL, app: string, runtimeId: string, row: QueueRow, prefix = monthlyGatheringInvitePrefix): Promise<void> {
   const key = gatheringDeliveryEvent(row, prefix);
   if (app !== "ntwrk" || row.app !== app || !key) return;
@@ -115,21 +111,19 @@ export async function lockGatheringAdmission(tx: SQL, app: string, runtimeId: st
   const [event] = await tx<{ venue_kind: string }[]>`select venue_kind from network.monthly_gatherings where app_id=${app} and id=${key.id} for share`;
   if (event?.venue_kind === "listing") await lockPublicEventCatalog(tx);
 }
-
-/** Last app-owned check, inside the persisted outbound claim after the shared send gates. */
 export async function gatheringInvitationAdmission(tx: SQL, app: AppInfo, runtimeId: string, accounts: GatheringAccounts,
   row: QueueRow, now: number): Promise<RecipientCheck> {
   const refused: RecipientCheck = { ok: false, reason: "gathering_invitation_changed" };
   const key = gatheringDeliveryEvent(row);
   const memberId = row.memberId;
   if (!key || !memberId || app.id !== "ntwrk" || row.app !== app.id || row.kind !== "proactive" || row.oppId ||
-    row.mediaUrls.length || row.approvedPhotos?.length) return refused;
+    row.mediaUrls.length) return refused;
   const [saved] = await tx<{ state: NetworkState }[]>`select state from network.network_state where id=${runtimeId} and app_id=${app.id}`;
   const event = await reviewedInvite(tx, app, key, memberId);
   if (!saved || !event) return refused;
   const currentReview = await reviewCurrent(tx, event, key.revision, saved.state.matchingEnabled, now);
   const eligible = currentReview && await recipientCurrent(tx, accounts, app, event, memberId, row.to,
-    storedGatheringInviteRecipientCurrent(saved.state, memberId), now);
+    storedGatheringInviteRecipientCurrent(saved.state, memberId, now), now);
   const [message] = await tx`select id from network.messages where app_id=${app.id} and id=${row.id} and member_id=${memberId}
       and direction='outbound' and type='info' and not system and proactive and opportunity_id is null and body=${row.text}`;
   return gatheringInvitationMayAdmit(currentReview, eligible, row.text === invitationCard(event, key.id), true, !!message) ? { ok: true } : refused;

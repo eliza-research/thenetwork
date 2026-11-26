@@ -8,6 +8,9 @@ import { spawnProcess } from "../../packages/core/src/runtime/process.ts";
 const DEPLOYED = {
   PLATFORM_ENV: "staging", DATABASE_URL: "postgres://svc@127.0.0.1:1/x", MIGRATION_DATABASE_URL: "postgres://owner@127.0.0.1:1/x", PLATFORM_HASH_KEY: "h".repeat(40), LEAK_LABEL_KEY: "l".repeat(40), PLATFORM_PROXY_SECRET: "s".repeat(40),
   TURNSTILE_SECRET_KEY: "fake", OTP_PROVIDER: "twilio", TWILIO_ACCOUNT_SID: "ACfake", TWILIO_AUTH_TOKEN: "fake", TWILIO_VERIFY_SERVICE_SID: "VAfake",
+  TURNSTILE_SITE_KEY: "fake-site", SERVICE_TURN_SECRET: "t".repeat(40), NETWORK_SERVICE_TOKENS: `admin@*:${"a".repeat(40)}`,
+  NETWORK_PUBLIC_EVENTS_DATABASE_URL: "postgres://events@127.0.0.1:1/x", PHOTO_STORAGE: "r2", CLOUDFLARE_AI_TOKEN: "synthetic-ai-token",
+  CLOUDFLARE_ACCOUNT_ID: "synthetic-account", SURPLUS_API_KEY: "synthetic-surplus-key",
   PORT: "0", BACKEND_STAFF: "off", NODE_ENV: "", NETWORK_CHANNEL: "", BLOOIO_ALLOW_SEND: "", NTWRK_LIVE_APPROVED: "",
 };
 

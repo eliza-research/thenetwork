@@ -40,14 +40,14 @@ export interface JoinAnswer {
 /** The answer to a cloud sign-in request: the address to go to, or the error. */
 export type CloudAnswer = { ok: true; url: string; receipt?: string } | { ok: false; error: ApiError };
 
-export interface CloudJoinPrefill { firstName: string; age: string; viaAgent: boolean }
+export interface CloudJoinPrefill { firstName: string; viaAgent: boolean }
 
 /** The profile that the page sends to join. */
 export interface JoinBody {
   signupView?: string;
   inviteToken?: string;
   firstName: string;
-  age: number;
+  birthdate: string;
   consent: { sms: true; wording: string };
 }
 
@@ -74,8 +74,8 @@ export async function readSession(receipt?: string): Promise<SessionAnswer> {
   const result: SessionResult = canJoin ? "MayJoin" : membership ? "AlreadyIn" : "MayNotJoin";
   const blocked: BlockReason = result !== "MayNotJoin" || typeof reason !== "string" ? "NoBlock" : (serverReasons[reason] ?? "OtherReason");
   const prefill = receipt && app === "peon" && view && result === "MayJoin" ? recordField(answer.data, "joinPrefill") : undefined;
-  const joinPrefill = prefill && typeof prefill.firstName === "string" && typeof prefill.age === "string" && typeof prefill.viaAgent === "boolean"
-    ? { firstName: prefill.firstName, age: prefill.age, viaAgent: prefill.viaAgent } : undefined;
+  const joinPrefill = prefill && typeof prefill.firstName === "string" && typeof prefill.viaAgent === "boolean"
+    ? { firstName: prefill.firstName, viaAgent: prefill.viaAgent } : undefined;
   return { result, account, reason: blocked, ...(view ? { signupView: view } : {}), ...(app === "peon" ? { peon: true } : {}), ...(joinPrefill ? { joinPrefill } : {}) };
 }
 
@@ -116,6 +116,7 @@ const joinRefusals: Readonly<Partial<Record<ApiError, JoinOutcome>>> = {
   account_changed: "JoinAccountChanged",
   unauthorized: "JoinUnauthorized",
   invalid_invitation: "JoinInvalidInvitation",
+  invalid_birthdate: "JoinInvalidBirthdate",
 };
 
 /** Sends the profile with the text consent. */

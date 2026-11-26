@@ -5,6 +5,8 @@
 export type ClaimPhase = "Claiming" | "CheckingPrior" | "RunningTurn" | "CheckingRescue" | "PreservingCompliance" | "ReleasingClaim" | "Finished" | "Replayed" | "Busy" | "Conflict" | "Unresolved" | "RetryCompliance";
 /** Story: Handle each signed message once without delaying consent / A worker runs only a committed claim (spec/signedInbox.md) */
 export interface SignedInbox { phase: ClaimPhase }
+/** Story: Handle each signed message once without delaying consent / A replayed open turn answers with the current context (spec/signedInbox.md) */
+export type OpenReplayAnswer = "ReplayCurrentContext" | "ReplayFixedReply" | "ReplayRefused";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -17,10 +19,10 @@ export type Event =
 
 /** Story: Handle each signed message once without delaying consent / A worker runs only a committed claim (spec/signedInbox.md) */
 export const processingLeaseMs: number = 120000;
-/** Story: Handle each signed message once without delaying consent / A completed signed row is later scrubbed and then removed (spec/signedInbox.md) */
-export const turnTombstoneKeepMs: number = exact_signedInbox(exact_signedInbox(exact_signedInbox(30 * 24) * 60) * 60000);
 /** Story: Handle each signed message once without delaying consent / A worker runs only a committed claim (spec/signedInbox.md) */
 export const leaseRenewMs: number = 30000;
+/** Story: Handle each signed message once without delaying consent / A completed signed row is later scrubbed and then removed (spec/signedInbox.md) */
+export const turnTombstoneKeepMs: number = exact_signedInbox(exact_signedInbox(exact_signedInbox(30 * 24) * 60) * 60000);
 /** Story: Handle each signed message once without delaying consent / A worker runs only a committed claim (spec/signedInbox.md) */
 export const unresolvedBlockMs: number = 600000;
 /** Story: Handle each signed message once without delaying consent / A worker runs only a committed claim (spec/signedInbox.md) */
@@ -184,6 +186,79 @@ export function atomicMemberReplyMatches(expected: string, actual: string, count
 export function lawAtomicMemberReplyNeedsExactKind(expected: string, actual: string, count: number, directReply: boolean): boolean {
   //@ ensures \result === true
   return !atomicMemberReplyMatches(expected, actual, count, directReply) || (expected === actual && count === 1 && directReply);
+}
+
+/** Story: Handle each signed message once without delaying consent / A stored ordinary reply goes out only while the number stays admitted (spec/signedInbox.md) */
+//@ pure
+export function storedReplyAdmitted(ordinaryReply: boolean, optedOut: boolean, held: boolean, banned: boolean): boolean {
+  return !ordinaryReply || !(optedOut || held || banned);
+}
+
+/** Story: Handle each signed message once without delaying consent / A stored ordinary reply goes out only while the number stays admitted (spec/signedInbox.md) */
+//@ pure
+export function lawOptedOutNumberGetsNoOrdinaryReply(held: boolean, banned: boolean): boolean {
+  //@ ensures \result === true
+  return !storedReplyAdmitted(true, true, held, banned);
+}
+
+/** Story: Handle each signed message once without delaying consent / A stored ordinary reply goes out only while the number stays admitted (spec/signedInbox.md) */
+//@ pure
+export function lawComplianceAlwaysReplays(optedOut: boolean, held: boolean, banned: boolean): boolean {
+  //@ ensures \result === true
+  return storedReplyAdmitted(false, optedOut, held, banned);
+}
+
+/** Story: Handle each signed message once without delaying consent / A direct reply in a turn is collected only when consent allows it (spec/signedInbox.md) */
+//@ pure
+export function directReplyCollectable(compliance: boolean, optedOut: boolean): boolean {
+  return compliance || !optedOut;
+}
+
+/** Story: Handle each signed message once without delaying consent / A direct reply in a turn is collected only when consent allows it (spec/signedInbox.md) */
+//@ pure
+export function lawNoDirectOrdinaryReplyAfterOptOut(compliance: boolean): boolean {
+  //@ ensures \result === true
+  return !directReplyCollectable(compliance, true) || compliance;
+}
+
+/** Story: Handle each signed message once without delaying consent / A replayed open turn answers with the current context (spec/signedInbox.md) */
+//@ pure
+export function openReplayAnswer(admitted: boolean, sameMember: boolean, contextAvailable: boolean): OpenReplayAnswer {
+  return !admitted || !sameMember ? "ReplayRefused" : (contextAvailable ? "ReplayCurrentContext" : "ReplayFixedReply");
+}
+
+/** Story: Handle each signed message once without delaying consent / A replayed open turn answers with the current context (spec/signedInbox.md) */
+//@ pure
+export function lawOpenReplayNeedsAdmission(sameMember: boolean, contextAvailable: boolean): boolean {
+  //@ ensures \result === true
+  return openReplayAnswer(false, sameMember, contextAvailable) === "ReplayRefused";
+}
+
+/** Story: Handle each signed message once without delaying consent / A replayed open turn answers with the current context (spec/signedInbox.md) */
+//@ pure
+export function lawAnotherMemberIsRefused(admitted: boolean, contextAvailable: boolean): boolean {
+  //@ ensures \result === true
+  return openReplayAnswer(admitted, false, contextAvailable) === "ReplayRefused";
+}
+
+/** Story: Handle each signed message once without delaying consent / A replayed open turn answers with the current context (spec/signedInbox.md) */
+//@ pure
+export function lawAdmittedMemberReplayIsNeverRefused(contextAvailable: boolean): boolean {
+  //@ ensures \result === true
+  return openReplayAnswer(true, true, contextAvailable) !== "ReplayRefused";
+}
+
+/** Story: Handle each signed message once without delaying consent / Every collected reply passes the line's leak guard (spec/signedInbox.md) */
+//@ pure
+export function collectedReplyMayLeave(leakReasons: number): boolean {
+  return leakReasons === 0;
+}
+
+/** Story: Handle each signed message once without delaying consent / Every collected reply passes the line's leak guard (spec/signedInbox.md) */
+//@ pure
+export function lawLeakingReplyIsNotCollected(leakReasons: number): boolean {
+  //@ ensures \result === true
+  return !(leakReasons > 0) || !collectedReplyMayLeave(leakReasons);
 }
 
 /** Do the rules allow this event in this state? */

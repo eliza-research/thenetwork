@@ -79,3 +79,49 @@ pure def biasRatioBelowThreshold(ratio: int, threshold: int): bool = ratio < thr
 pure def lawBiasAtThresholdIsQuiet(threshold: int): bool =
   not(biasRatioBelowThreshold(threshold, threshold))
 ```
+
+## Story: Stop using photo standing when it predicts nothing
+
+> As an authorized reviewer, I want the Date lane to stop using the private photo standing when real outcomes show that it does not help, and to see that decision in the weekly report.
+
+### The Date lane uses photo standing only while the standing gap predicts mutual interest
+
+The monitor reads real outcomes only, from the same observation window as the report. An introduction where both members said yes and a date was booked is positive: its record says the date was completed or that someone did not come. An introduction that ended before a date was booked is negative: its record says a member declined, or it expired. Expired is the record of every introduction that closed while its members were being asked: a no, no answer, and also a block, a pair that no longer fits, a withdrawn consent, a safety hold, an opt-out or a minor signal. The record does not carry the reason, so each of these counts as a negative. The production network records a no to a probe as expired, so the two endings count the same. When a member says no and the network swaps in an alternate, the introduction keeps its identifier and the pair that declined gets no record: the monitor counts only the final pair of each introduction, with the gap of that pair. A cancelled introduction is not an outcome, because a member can cancel before or after both said yes. The production network writes one record per check-in answer, so the shell counts each introduction once, by the identifier before ":fb:"; an introduction with a positive record is positive. Each outcome needs both members rated in pools large enough for a percentile, and its gap is the distance between their two percentiles. The shell counts every positive and negative pair of outcomes: a pair counts two when the positive outcome has the smaller gap, and one when the gaps are equal. That count, divided by twice the number of such pairs, is the chance that a positive outcome has a smaller gap than a negative one. With fewer than thirty positive or thirty negative outcomes, the evidence is too small and the lane keeps the standing. Otherwise the lane keeps the standing only when that chance is at least one half plus a margin of five percent. When the lane does not keep it, every member of the lane has the middle standing and the widest uncertainty until the monitor sees the chance reach the margin again. The monitor reads the percentiles, not the standing used in matching, so it can recover. The weekly report shows the counts and the decision, never a member or a rating. While the lane does not use the standing, the weekly run writes an alert line with the counts; the operations alert for bias reports counts only the group ratios under the threshold. Changed (owner decision 2026-11-22, ratings on): the Date lane always used the photo standing -> it uses it only while real outcomes support it, because the shipped rating weights are not fitted.
+
+The switch is not symmetric, and it has no recovery margin of its own. When the lane stops using the standing, the middle standing carries no rating evidence, so the stored standing history does not apply and every member is at the middle at once. When the lane uses the standing again, the history at the middle applies, and the weekly step moves each member back by at most five points a week. A monitor that changes its decision near the margin therefore keeps the standing near the middle; it never moves a member faster than the weekly step toward a rating. The weekly step needs the stored standing history. The monitor has no hysteresis; the simulation evidence for that choice is in `docs/results/2026-11-22-slop-photo-standing.md`.
+
+```quint
+pure val standingValidityMinimum: int = 30
+pure val standingValidityMarginPermille: int = 50
+
+pure def standingOutcomePositive(ending: str): bool =
+  ending == "completed" or ending == "no_show"
+
+pure def standingOutcomeNegative(ending: str): bool =
+  ending == "declined" or ending == "expired"
+
+pure val endingValues = Set("pending", "accepted", "declined", "expired", "completed", "cancelled", "no_show")
+
+pure def lawStandingOutcomeHasOneSide(ending: str): bool =
+  not(standingOutcomePositive(ending) and standingOutcomeNegative(ending))
+
+pure def standingGapPredicts(positives: int, negatives: int, concordantTwice: int): bool =
+  if (positives < standingValidityMinimum or negatives < standingValidityMinimum) true
+  else concordantTwice * 1000 >= (1000 + 2 * standingValidityMarginPermille) * positives * negatives
+
+pure val positivesValues = Set(-1, 0, 29, 30, 31, 60)
+pure val negativesValues = Set(0, 29, 30, 45)
+pure val concordantTwiceValues = Set(0, 900, 990, 1000, 1800, 5400)
+
+pure def lawStandingKeptWhileOutcomesAreFew(positives: int, negatives: int, concordantTwice: int): bool =
+  (positives < standingValidityMinimum or negatives < standingValidityMinimum) implies
+    standingGapPredicts(positives, negatives, concordantTwice)
+
+pure def lawStandingOffWhenGapOrdersNoBetterThanChance(positives: int, negatives: int, concordantTwice: int): bool =
+  (positives >= standingValidityMinimum and negatives >= standingValidityMinimum and
+    concordantTwice <= positives * negatives) implies not(standingGapPredicts(positives, negatives, concordantTwice))
+
+pure def lawStandingKeptWhenGapOrdersEveryPair(positives: int, negatives: int, concordantTwice: int): bool =
+  (positives >= standingValidityMinimum and negatives >= standingValidityMinimum and
+    concordantTwice >= 2 * positives * negatives) implies standingGapPredicts(positives, negatives, concordantTwice)
+```

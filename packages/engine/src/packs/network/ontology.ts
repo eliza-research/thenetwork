@@ -40,13 +40,13 @@ export function networkConstraints(boundaries: readonly Facet[]): MemberConstrai
 
 export const networkOntology: Ontology = {
   lanes: [
-    { id: "social", adultOnly: true },
-    { id: "professional", adultOnly: true },
-    { id: "romance", adultOnly: true, neverInPlans: true },
-    { id: "hobby", adultOnly: true },
-    { id: "help", adultOnly: true },
-    { id: "events", adultOnly: true },
-    { id: "growth", adultOnly: true },
+    { id: "social", minors: "teenFriendship" },
+    { id: "professional", minors: "never" },
+    { id: "romance", minors: "never", neverInPlans: true },
+    { id: "hobby", minors: "never" },
+    { id: "help", minors: "never" },
+    { id: "events", minors: "never" },
+    { id: "growth", minors: "never" },
   ],
   contributorRoles: CONTRIBUTOR_ROLES,
   warmEdges: NETWORK_WARM_EDGES,

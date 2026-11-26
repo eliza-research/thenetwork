@@ -60,7 +60,7 @@ export const peonPack: AppPack = {
   id: "peon",
   version: PEON_PACK_VERSION,
   ontology: {
-    lanes: [{ id: "professional", adultOnly: true }],
+    lanes: [{ id: "professional", minors: "never" }],
     // Hiring has no contributor budget and no warm graph (a referral path is future work).
     contributorRoles: new Set(),
     warmEdges: new Set(),
@@ -109,5 +109,6 @@ export const peonPack: AppPack = {
     facetPhrase: { skill: "has" },
     leadBits: (w, c, me) => peonLeadBits(w, c, me),
     safeFallback: PEON_SAFE_FALLBACK,
+    publicWords: ["verified", "employer", "hiring", "only", "never"],
   },
 };
