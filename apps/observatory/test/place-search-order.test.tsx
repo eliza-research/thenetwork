@@ -29,7 +29,7 @@ const stats = (): ObsStats => ({
   errors: 0, compatible: 0, unsafe: 0, oracleJudged: 0, edgesByType: {},
 });
 
-test("typing the exact place name Harlem offers Harlem first and Enter opens it", async () => {
+test("typing the exact place name Harlem offers it first and Enter only picks a visible hit", async () => {
   const state: ObsState = {
     env: {
       mode: "game", app: "ntwrk", label: "SIMULATION seed 1 · synthetic v1", dataset: "synthetic v1",
@@ -117,10 +117,20 @@ test("typing the exact place name Harlem offers Harlem first and Enter opens it"
       .map(el => (el.textContent ?? "").replace(/\s+/g, " ").trim());
     // The exact place name comes first; the longer name that merely contains it comes after.
     expect(options.slice(0, 2)).toEqual(["Harlem · Manhattan", "East Harlem · Manhattan"]);
-    await act(async () => {
-      input.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
-      await sleep(10);
-    });
+    const press = async (key: string) => {
+      await act(async () => { input.dispatchEvent(new window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); });
+    };
+    await press("Escape");
+    expect(input.getAttribute("aria-expanded")).toBe("false");
+    expect(input.value).toBe("harlem");
+    await press("Enter");
+    expect(store.ui.focus).toBeNull();
+    expect(input.value).toBe("harlem");
+    await press("ArrowDown");
+    expect(input.getAttribute("aria-expanded")).toBe("true");
+    await press("ArrowDown");
+    expect(input.getAttribute("aria-activedescendant")).toBe("obs-search-option-0");
+    await press("Enter");
     expect(store.ui.focus).toEqual({ kind: "neighborhood", id: "Harlem" });
     await act(async () => {
       Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, "maya");
