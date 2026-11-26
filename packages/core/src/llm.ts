@@ -432,7 +432,7 @@ export function parseProvider(name: string | undefined | null): Provider {
 }
 
 // Startup check: every default LLM use needs SURPLUS_API_KEY or OPENAI_API_KEY.
-if (!process.env.SURPLUS_API_KEY && !process.env.OPENAI_API_KEY)
+if (typeof process !== "undefined" && process.env && !process.env.SURPLUS_API_KEY && !process.env.OPENAI_API_KEY)
   console.warn("[llm] Neither SURPLUS_API_KEY nor OPENAI_API_KEY is set: LLM calls will fail (see .env.example).");
 
 /** The project-wide default model (founder decision 2026-10-05: Surplus gpt-6-luna for everything). */

@@ -50,9 +50,14 @@ class MessageFixtureNetwork extends StubNetwork {
   override init(ctx: NetworkContext) { super.init(ctx); this.channelContext = ctx; }
 }
 
-/** Regression floors (audit P2-20), not targets: pooled over seeds 1-3 at the CI lower bound (docs/results/2026-10-08-network-hardening.md). */
+/**
+ * Regression floors (audit P2-20), not targets: pooled over seeds 1-3 at the CI lower bound.
+ * Recalibrated from 140 to 120 after OPP18 requester re-ask (spec/probeDispatch.md:44) and
+ * D15-D17 single-swap automated review coverage (spec/probeDispatch.md:141) shifted the 3-seed
+ * A/A baseline to 135-138 +/- 13.8 pooled SD (docs/results/2026-10-08-network-hardening.md).
+ */
 const ALL_YES_MIN = 0.73;
-const MEETINGS_MIN = 140;
+const MEETINGS_MIN = 120;
 
 function meetingKeys(records: RunRecord[]): string[] {
   return records.filter((r): r is Extract<RunRecord, { type: "outcome" }> => r.type === "outcome")
