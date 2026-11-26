@@ -104,6 +104,18 @@ pure def capitalPeriodRoom(remaining: int): int = if (remaining <= 0) 0 else rem
 pure def lawCapitalPeriodRoomIsNonnegative(remaining: int): bool = capitalPeriodRoom(remaining) >= 0
 ```
 
+### A vouch credit waits for eligibility inside its value window
+
+A voucher earns the vouch credit when the invitee is active, has creditable value inside the value window, has no safety flag, and both the invitee and the voucher are eligible. If the invitee completes the activation and value conditions while either member is ineligible, the ledger writes no vouch entry then. When an age update makes the ineligible member eligible again inside the value window, the ledger checks the same vouch again and writes the credit if the conditions still hold. A safety flag, a removal, a taken stake, or the end of the value window stops the credit. The credit is written at most once for one invitee.
+
+```quint
+pure def vouchCreditMayEarn(qualified: bool, credited: bool, stakeTaken: bool, withinWindow: bool, inviteeEligible: bool, voucherEligible: bool, voucherRemoved: bool): bool =
+  qualified and not(credited) and not(stakeTaken) and withinWindow and inviteeEligible and voucherEligible and not(voucherRemoved)
+
+pure def lawVouchCreditAtMostOnce(qualified: bool, stakeTaken: bool, withinWindow: bool, inviteeEligible: bool, voucherEligible: bool, voucherRemoved: bool): bool =
+  not(vouchCreditMayEarn(qualified, true, stakeTaken, withinWindow, inviteeEligible, voucherEligible, voucherRemoved))
+```
+
 ### A vouch stake waits when the voucher is ineligible at removal
 
 When an invitee is removed for serious abuse, the voucher pays the vouch stake only if the voucher is eligible at that removal. If the voucher is ineligible at that removal, the stake waits. The ledger marks the stake as pending, and it writes no stake entry and no vouch credit reversal at that removal. The stake is not spent, and it is not lost. When the voucher becomes eligible again, the ledger takes the pending stake on that age update. It reverses the vouch credit and writes the vouch stake penalty at that time. The stake is taken at most once for one invitee. The stake window is set at the removal: the window runs from the invitee's join time to the confirmed abuse time, and the later age update does not extend it. If the voucher never becomes eligible again, the pending stake is never taken.

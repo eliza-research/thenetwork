@@ -113,6 +113,52 @@ export async function feedbackAfterFraudGate(b: Block): Promise<void> {
   });
 }
 
+export async function vouchCreditEligibilityGate(b: Block): Promise<void> {
+  await b.run("ledger: a vouch credit waits for eligibility inside its value window", () => {
+    const T0 = Date.UTC(2026, 0, 1);
+    const at = (d: number, n = 0) => T0 + d * DAY + n;
+    const qualified = () => {
+      const L = new CapitalLedger();
+      for (const [i, who] of ["v", "x"].entries()) L.record({ id: `join-${who}`, t: at(0, i), type: "member_joined", member: who, age: 30 });
+      L.record({ id: "join-i", t: at(1), type: "member_joined", member: "i", age: 30, vouchedBy: "v" });
+      L.record({ id: "act-i", t: at(2), type: "member_activated", member: "i" });
+      return L;
+    };
+    const vouchTimes = (L: CapitalLedger) => L.all().filter(e => e.category === "vouch" && e.member === "v").map(e => e.t);
+
+    const voucherReturns = qualified();
+    voucherReturns.record({ id: "age-v-minor", t: at(3), type: "age_updated", member: "v", age: 16 });
+    voucherReturns.record({ id: "value-i", t: at(4), type: "value_received", member: "i", with: ["x"], confirmedBy: ["x"] });
+    expect(vouchTimes(voucherReturns)).toEqual([]);
+    voucherReturns.record({ id: "age-v-adult", t: at(5), type: "age_updated", member: "v", age: 30 });
+    expect(vouchTimes(voucherReturns)).toEqual([at(5)]);
+    expect(voucherReturns.balance("v")).toBe(10);
+    voucherReturns.record({ id: "age-v-adult-again", t: at(6), type: "age_updated", member: "v", age: 30 });
+    expect(vouchTimes(voucherReturns)).toEqual([at(5)]);
+
+    const inviteeReturns = qualified();
+    inviteeReturns.record({ id: "age-i-minor", t: at(3), type: "age_updated", member: "i", age: 16 });
+    inviteeReturns.record({ id: "value-i", t: at(4), type: "value_received", member: "i", with: ["x"], confirmedBy: ["x"] });
+    expect(vouchTimes(inviteeReturns)).toEqual([]);
+    inviteeReturns.record({ id: "age-i-adult", t: at(5), type: "age_updated", member: "i", age: 30 });
+    expect(vouchTimes(inviteeReturns)).toEqual([at(5)]);
+    expect(inviteeReturns.balance("v")).toBe(10);
+
+    const afterWindow = qualified();
+    afterWindow.record({ id: "age-v-minor", t: at(3), type: "age_updated", member: "v", age: 16 });
+    afterWindow.record({ id: "value-i", t: at(4), type: "value_received", member: "i", with: ["x"], confirmedBy: ["x"] });
+    afterWindow.record({ id: "age-v-adult-late", t: at(40), type: "age_updated", member: "v", age: 30 });
+    expect(vouchTimes(afterWindow)).toEqual([]);
+
+    const flagged = qualified();
+    flagged.record({ id: "age-v-minor", t: at(3), type: "age_updated", member: "v", age: 16 });
+    flagged.record({ id: "value-i", t: at(4), type: "value_received", member: "i", with: ["x"], confirmedBy: ["x"] });
+    flagged.record({ id: "safety-i", t: at(5), type: "safety_flag", member: "i", serious: true });
+    flagged.record({ id: "age-v-adult", t: at(6), type: "age_updated", member: "v", age: 30 });
+    expect(vouchTimes(flagged)).toEqual([]);
+  });
+}
+
 export async function vouchStakeEligibilityGate(b: Block): Promise<void> {
   await b.run("ledger: a removal while the voucher is ineligible does not spend the stake", () => {
     const T0 = Date.UTC(2026, 0, 1);

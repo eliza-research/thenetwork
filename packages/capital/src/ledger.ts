@@ -16,7 +16,7 @@ import {
   capitalAttendanceEvidence, capitalEntryUsesPeriodCap, capitalFraudReverses, capitalHelpWasUseful,
   capitalPeriodRoom, initial as capitalEventInitial, isCapitalFraudCandidate, mayEarnCapital,
   mayReverseCapitalEntry, needCapitalSourceOpen, organizingCapitalQuorum, organizingCapitalSourceOpen,
-  step as stepCapitalEvent, vouchStakeMayDefer, vouchStakeMayTake,
+  step as stepCapitalEvent, vouchCreditMayEarn, vouchStakeMayDefer, vouchStakeMayTake,
 } from "../../core/src/generated/capitalLedger.ts";
 import { isMinor } from "../../core/src/policy.ts";
 import { resolveCapital, type CapitalConfig, type CapitalConfigInput } from "./config.ts";
@@ -164,10 +164,13 @@ export class CapitalLedger {
         const m = this.members.get(ev.member);
         if (m) m.eligible = !isMinor(ev.age);
         if (m && m.eligible) {
+          this.tryVouchCredit(ev, ev.member, out);
           for (const [inviteeId, invitee] of this.members) {
-            if (invitee.vouchedBy === ev.member && vouchStakeMayTake(invitee.stakePending, invitee.stakeTaken, this.isEligible(ev.member))) {
+            if (invitee.vouchedBy !== ev.member) continue;
+            if (vouchStakeMayTake(invitee.stakePending, invitee.stakeTaken, this.isEligible(ev.member))) {
               this.takeStake(inviteeId, invitee, ev, out);
             }
+            this.tryVouchCredit(ev, inviteeId, out);
           }
         }
         break;
@@ -375,11 +378,12 @@ export class CapitalLedger {
 
   private tryVouchCredit(ev: CapitalEvent, invitee: MemberId, out: LedgerEntry[]) {
     const m = this.members.get(invitee)!;
-    if (!m.vouchedBy || m.vouchCreditId || m.stakeTaken) return;
-    // Recruiting a minor, or someone whose age is unknown, earns nothing (capital-9).
-    if (!m.eligible || !m.activated || !m.valueInWindow || m.safetyFlagged || m.removed) return;
-    if (ev.t - m.joinedAt > this.cfg.vouch.valueWindowDays * DAY) return;
-    const e = this.credit(m.vouchedBy, "vouch", this.cfg.credit.vouch, ev, [invitee], m.valueProviders, "vouch: invitee active and got value", out);
+    const voucher = m.vouchedBy;
+    if (!voucher) return;
+    const qualified = m.activated && m.valueInWindow && !m.safetyFlagged && !m.removed;
+    const withinWindow = ev.t - m.joinedAt <= this.cfg.vouch.valueWindowDays * DAY;
+    if (!vouchCreditMayEarn(qualified, !!m.vouchCreditId, m.stakeTaken, withinWindow, m.eligible, this.isEligible(voucher), this.members.get(voucher)?.removed ?? false)) return;
+    const e = this.credit(voucher, "vouch", this.cfg.credit.vouch, ev, [invitee], m.valueProviders, "vouch: invitee active and got value", out);
     if (e) m.vouchCreditId = e.id;
   }
 
