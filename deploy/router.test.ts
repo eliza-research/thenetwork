@@ -140,6 +140,11 @@ describe("the built Pages _worker.js", () => {
       const res = await worker.fetch(new Request(path, { headers: { cookie: "sid_ntwrk=private" } }), { ASSETS: assets });
       expect(res.status).toBe(200);
       expect(res.headers.get("allow")).toBeNull();
+      expect(res.headers.get("strict-transport-security")).toBe("max-age=31536000; includeSubDomains");
+      expect(res.headers.get("permissions-policy")).toBe("camera=(), microphone=(), geolocation=(), payment=()");
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(res.headers.get("x-frame-options")).toBe("DENY");
+      expect(res.headers.get("referrer-policy")).toBe("no-referrer");
       expect(await res.text()).toContain('href="https://claude.ai/new?q=Ask%20The%20Network%20for%20update%20T-7F3K9Q"');
       const write = await worker.fetch(new Request(path, { method: "POST" }), { ASSETS: assets });
       expect(write.status).toBe(405);
@@ -238,11 +243,13 @@ describe("headers", () => {
     expect(seen[0]!.headers[PROXY_HEADERS.sig]).not.toBe(await sig("GET", "/api/app", "203.0.113.7"));
   });
 
-  test("keeps every Set-Cookie from the backend and adds nosniff", async () => {
+  test("keeps every Set-Cookie from the backend and adds nosniff, referrer-policy, and HSTS", async () => {
     const { run } = setup();
     const res = await run("/api/me");
     expect(res.headers.getSetCookie()).toEqual(["__Host-sid=a; Path=/; HttpOnly; Secure", "other=b; Path=/"]);
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(res.headers.get("strict-transport-security")).toBe("max-age=31536000; includeSubDomains");
   });
 });
 
@@ -251,6 +258,10 @@ describe("fails closed", () => {
     const { seen, run } = setup({ PLATFORM_PROXY_SECRET: undefined });
     const res = await run("/api/app");
     expect(res.status).toBe(503);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(res.headers.get("strict-transport-security")).toBe("max-age=31536000; includeSubDomains");
     expect(await res.json()).toEqual({ ok: false, error: "proxy_not_configured" });
     expect(seen).toEqual([]);
   });
@@ -259,6 +270,10 @@ describe("fails closed", () => {
     const env: Env = { ASSETS: { fetch: async () => new Response("asset") }, BACKEND_ORIGIN: "https://api.example.test", APP_ID: "slop", SITE_HOST: "slop.date", PLATFORM_PROXY_SECRET: SECRET };
     const res = await handle(new Request("https://slop.date/api/app"), env, (async () => { throw new Error("down"); }) as unknown as typeof fetch);
     expect(res.status).toBe(502);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(res.headers.get("strict-transport-security")).toBe("max-age=31536000; includeSubDomains");
     expect(await res.json()).toEqual({ ok: false, error: "api_unreachable" });
   });
 
@@ -286,6 +301,11 @@ test("retired signup routes cannot expose cached forms or forward writes", async
         expect(r.headers.get("cache-control")).toBe("no-store");
         expect(r.headers.get("location")).toBe(method === "POST" ? null : "/");
         expect(r.headers.get("allow")).toBe(method === "POST" ? "GET, HEAD" : null);
+        expect(r.headers.get("strict-transport-security")).toBe("max-age=31536000; includeSubDomains");
+        expect(r.headers.get("x-content-type-options")).toBe("nosniff");
+        expect(r.headers.get("x-frame-options")).toBe("DENY");
+        expect(r.headers.get("referrer-policy")).toBe("no-referrer");
+        expect(r.headers.get("content-security-policy")).toBe("default-src 'none'; frame-ancestors 'none'");
       }
     }
     expect(seen).toHaveLength(0); expect(assets).toHaveLength(0);
@@ -299,6 +319,11 @@ test("retired settings paths answer 404 with no page and no cache on every site,
       for (const method of ["GET", "HEAD", "POST"]) {
         const r = await run(path, { method });
         expect([app, path, method, r.status, r.headers.get("cache-control")]).toEqual([app, path, method, 404, "no-store"]);
+        expect(r.headers.get("strict-transport-security")).toBe("max-age=31536000; includeSubDomains");
+        expect(r.headers.get("x-content-type-options")).toBe("nosniff");
+        expect(r.headers.get("x-frame-options")).toBe("DENY");
+        expect(r.headers.get("referrer-policy")).toBe("no-referrer");
+        expect(r.headers.get("content-security-policy")).toBe("default-src 'none'; frame-ancestors 'none'");
         expect(await r.text()).toBe(method === "HEAD" ? "" : "Not found");
       }
     }

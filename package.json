@@ -38,7 +38,7 @@
     "ui:gen": "corepack pnpm@10.24.0 --filter @thenetwork/ui run gen",
     "ui:storybook": "corepack pnpm@10.24.0 run design:build && corepack pnpm@10.24.0 --filter @thenetwork/ui run storybook",
     "ui:test": "corepack pnpm@10.24.0 run design:build && corepack pnpm@10.24.0 run ui:gen && corepack pnpm@10.24.0 --filter @thenetwork/ui run test",
-    "lint:ui": "corepack pnpm@10.24.0 run design:build && eslint packages/ui apps apps/observatory/web packages/mcp/src/pages packages/mcp/src/pages.ts --max-warnings 0 --no-error-on-unmatched-pattern"
+    "lint:ui": "corepack pnpm@10.24.0 run design:build && eslint packages/ui apps packages/mcp/src/pages packages/mcp/src/pages.ts --max-warnings 0 --no-error-on-unmatched-pattern"
   },
   "devDependencies": {
     "@cloudflare/containers": "0.3.7",

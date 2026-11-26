@@ -59,8 +59,20 @@ export function workerPathKind(pathname: string): PathKind | undefined {
 
 const requestMethod = (method: string): RequestMethod => (method === "GET" ? "GetMethod" : method === "HEAD" ? "HeadMethod" : "OtherMethod");
 
+const HSTS = "max-age=31536000; includeSubDomains";
+const PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), payment=()";
+
 const jsonError = (status: number, error: string) =>
-  new Response(JSON.stringify({ ok: false, error }), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
+  new Response(JSON.stringify({ ok: false, error }), {
+    status,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+      "strict-transport-security": HSTS,
+      "referrer-policy": "no-referrer",
+      "x-content-type-options": "nosniff",
+    },
+  });
 
 /** The generated route of a request, or "unknown_app" for a path that the Worker decides on a site with an app id that is not known. */
 export function workerRoute(req: Request, app: string): SiteRoute | "unknown_app" | undefined {
@@ -76,7 +88,13 @@ export function retiredSitePage(req: Request, app: string): Response | null {
   if (route === "unknown_app") return jsonError(503, "proxy_not_configured");
   if (route === undefined || !isRetiredRoute(route)) return null;
   const answer = answerFor(route, requestMethod(req.method));
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = {
+    "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
+    "strict-transport-security": HSTS,
+    "x-frame-options": "DENY",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+  };
   if (answer.noStore) headers["cache-control"] = "no-store";
   if (answer.toLanding) headers.location = "/";
   if (answer.allowHeader) headers.allow = answer.allowHeader;
@@ -96,8 +114,9 @@ export async function updateHandoffPage(req: Request, app: string, asset: Env["A
   const headers = new Headers({
     "cache-control": "no-store",
     "content-security-policy": "default-src 'none'; style-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    "permissions-policy": PERMISSIONS_POLICY,
     "referrer-policy": "no-referrer",
-    "strict-transport-security": "max-age=31536000; includeSubDomains",
+    "strict-transport-security": HSTS,
     "x-content-type-options": "nosniff",
     "x-frame-options": "DENY",
     "x-robots-tag": "noindex, nofollow",
@@ -188,6 +207,7 @@ export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fet
   const out = new Response(upstream.body, upstream);
   if (!out.headers.has("x-content-type-options")) out.headers.set("x-content-type-options", "nosniff");
   if (!out.headers.has("referrer-policy")) out.headers.set("referrer-policy", "no-referrer");
+  if (!out.headers.has("strict-transport-security")) out.headers.set("strict-transport-security", HSTS);
   return out;
 }
 
