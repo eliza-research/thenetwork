@@ -8,6 +8,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { applySchema, devPgUp, DEV_PG_PORT } from "../../db/dev-pg.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
 import { ProfileSuggestions, type SuggestionOwner, type SourceSuggestion, type SuggestionAuthorization } from "../service/profile-suggestions.ts";
+import { ProfileFactEdits } from "../service/profile-fact-edits.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { SimClock } from "@thenetwork/core";
@@ -71,6 +72,19 @@ test("pending data never enters the canonical snapshot; exact review promotes so
   expect((await sql`select value,tags,status from platform.profile_suggestions`)[0]).toMatchObject({ value: null, tags: [], status: "accepted" });
   expect(await store.decide(owner, { batchId: b.id, revision: b.revision, decisions: [{ suggestionId: b.suggestions[0]!.id, action: "accept" }] }, now)).toEqual({ kind: "denied" });
   expect(await facets()).toHaveLength(1);
+});
+
+test("an accepted future Calendar suggestion appears in the member's saved facts", async () => {
+  const calendar: SourceSuggestion = { ...candidate(), source: "google_calendar", observedAt: now + 3_600_000,
+    value: "I enjoy group walks", tags: ["walking"] };
+  const b = (await store.propose(owner, { ...input([candidate(), calendar]), windowEnd: now + 7_200_000 }, now))!;
+  for (const s of b.suggestions) {
+    const [row] = await sql`select revision from platform.profile_suggestion_batches where id=${b.id}`;
+    expect(await store.decide(owner, { batchId: b.id, revision: row.revision,
+      decisions: [{ suggestionId: s.id, action: "accept" }] }, now)).toMatchObject({ kind: "saved" });
+  }
+  const listed = await sql.begin(tx => new ProfileFactEdits("fixture-secret", () => now).list(tx, { app: "ntwrk", memberId: "owned-member" }));
+  expect(listed.facts.map(f => f.value).sort()).toEqual(["I enjoy climbing", "I enjoy group walks"]);
 });
 
 test("a selected future Calendar event retains its time without allowing future Gmail or out-of-window events", async () => {

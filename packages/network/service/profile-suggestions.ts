@@ -379,7 +379,7 @@ export class ProfileSuggestions {
         if (d.action === "accept") {
           const factId = `source-suggestion:${s.id}`;
           await tx`insert into network.facets(app_id,id,member_id,kind,value,tags,privacy_scope,provenance,source,confidence,status,valid_from,observed_at)
-            values(${owner.app},${factId},${b.member_id},${s.kind},${s.value},${tx.array(s.tags,"TEXT")},${s.privacy_scope},'inferred',${s.source},${s.confidence},'confirmed',${new Date(s.observed_at)},${new Date(s.observed_at)})`;
+            values(${owner.app},${factId},${b.member_id},${s.kind},${s.value},${tx.array(s.tags,"TEXT")},${s.privacy_scope},'inferred',${s.source},${s.confidence},'confirmed',${new Date(Math.min(new Date(s.observed_at).getTime(), this.at(now)))},${new Date(s.observed_at)})`;
           await tx`update platform.profile_suggestions set status='accepted',fact_id=${factId},value=null,tags='{}' where id=${s.id}`;
           accepted.push(s.id);
         } else {
