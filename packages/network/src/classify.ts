@@ -824,10 +824,12 @@ export { explicitRepeatRequest, planAgainOf } from "@thenetwork/core";
 export function feedbackOf(body: string): { sentiment: "positive" | "neutral" | "negative"; selfNoShow: boolean; otherNoShow: boolean; again: boolean } {
   const t = body.toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'");
   const { self: selfNoShow, other: otherNoShow } = attendanceAbsences(t);
-  const negative = otherNoShow || NEGATIVE_FEEDBACK.test(t) || negatedPositiveFeedback(t);
+  const negated = negatedFeedbackVerdict(t);
+  const negative = otherNoShow || NEGATIVE_FEEDBACK.test(t) || negated === "negative";
+  const mixed = !negative && negated === "neutral";
   const positive = /great|clicked|loved|amazing|nice|easy to talk/.test(t) || /^we hit it off[.!]*$/.test(t.trim());
-  const sentiment = negative ? "negative" : positive ? "positive" : "neutral";
-  const again = !negative && /again|clicked/.test(t) && !/\b(wouldn'?t|won'?t|not|never)\b[^.!?]*\bagain\b/.test(t);
+  const sentiment = negative ? "negative" : mixed ? "neutral" : positive ? "positive" : "neutral";
+  const again = !negative && !mixed && /again|clicked/.test(t) && !/\b(wouldn'?t|won'?t|not|never)\b[^.!?]*\bagain\b/.test(t);
   return { sentiment, selfNoShow, otherNoShow, again };
 }
 const NEGATIVE_FEEDBACK = /\b((was|is|it's|that's)?\s*(not|n't|wasn't|isn't)\s+(that |very |really |so |too |super )?(great|good|fun|nice|amazing)|not much in common|nothing in common|didn't (really |quite )?(click|connect|enjoy)|didn't have much|not (really )?for me|not my (thing|type)|awkward|terrible|rude|creepy|bummer|uncomfortable)/;
@@ -838,11 +840,65 @@ function clauseBefore(t: string, at: number): string {
   const start = Math.max(t.lastIndexOf(".", at - 1), t.lastIndexOf("!", at - 1), t.lastIndexOf("?", at - 1), t.lastIndexOf(";", at - 1), t.lastIndexOf(",", at - 1)) + 1;
   return t.slice(start, at);
 }
+function complaintPredicate(pred: string): boolean {
+  return /\b(?:arrogant|awkward|boring|creepy|distracted|dull|forced|ignored|late|married|narcissist|pointless|rude|self-absorbed|stilted|terrible|tired|uncomfortable|waste|ex|phone|left|stood)\b/.test(pred);
+}
 function positivePredicate(pred: string): boolean {
   const p = pred.replace(/^(?:a|an|the)\s+/, "").trim();
   if (!p || /^(?:the|this|that|our|my|his|her|their|in|at|on|over|there|here|tall|short|young|old|whole|entire|all|same|other|first|last|no|not)\b/.test(p)) return false;
-  if (/\b(?:arrogant|awkward|boring|creepy|distracted|dull|forced|ignored|late|married|narcissist|pointless|rude|self-absorbed|stilted|terrible|tired|uncomfortable|waste|ex|phone|left|stood)\b/.test(p)) return false;
+  if (complaintPredicate(p)) return false;
   return /\b(?:amazing|awesome|brilliant|catch|charming|delight|delightful|dream|engaging|excellent|fab|fabulous|fantastic|fun|funny|gem|generous|genuine|great|hilarious|keeper|kind|legend|peach|perfect|riot|star|stellar|superb|sweet|sweetheart|thoughtful|warm|witty|wonderful)\b/.test(p);
+}
+function predicateKind(pred: string): "positive" | "complaint" | "unclassified" | null {
+  const p = pred.replace(/^(?:a|an|the)\s+/, "").trim();
+  if (!p || /^(?:the|this|that|our|my|his|her|their|in|at|on|over|there|here|tall|short|young|old|whole|entire|all|same|other|first|last|no|not)\b/.test(p)) return null;
+  if (complaintPredicate(p)) return "complaint";
+  if (positivePredicate(p)) return "positive";
+  return "unclassified";
+}
+function laterClauseKind(c: string): "complaint" | "unclassified" | null {
+  const clause = c.trim();
+  if (!clause) return null;
+  if (/\b(?:no spark|no connection|no chemistry|nothing in common|not much in common|nothing to talk about|no conversation)\b/.test(clause) || NEGATIVE_FEEDBACK.test(clause)) return "complaint";
+  const person = clause.match(/\b(?:(?:he|she|they)(?:'s|\s+is|\s+was|\s+seems|\s+seemed)|(?:the\s+real\s+)?(?:him|her|them)\s+is|(?:this|that)\s+(?:guy|girl|man|woman|person|member)\s+is)\s+(.+)$/);
+  if (person) {
+    const kind = predicateKind(person[1] ?? "");
+    if (kind === "complaint" || kind === "unclassified") return kind;
+    if (kind === "positive") return null;
+  }
+  if (/\bi\b[^.!?;,]*\b(?:thinking about|think about|miss(?:ing)?)\s+(?:him|her|them)\b/.test(clause)) return "unclassified";
+  if (disappointedClauseCounts(clause)) return "complaint";
+  if (/\b(?:he|she|they)\s+(?:kept|made|had|got|brought|put|won)\b/.test(clause)) return "unclassified";
+  const weWere = clause.match(/\bwe\s+(?:were|are)\s+(.+)$/);
+  if (weWere) {
+    const kind = predicateKind(weWere[1] ?? "");
+    if (kind === "complaint" || kind === "unclassified") return kind;
+    return null;
+  }
+  if (/\bwe\s+(?:talked|chatted|spoke|laughed|stayed|sat|kept|spent)\b/.test(clause)) {
+    return /\b(?:barely|hardly|nothing|awkward|forced|stilted|silence|quiet)\b/.test(clause) ? "complaint" : "unclassified";
+  }
+  if (/\b(?:food|cafe|coffee|venue|restaurant|bar|drinks?|view|weather|table|music)\b/.test(clause)) return null;
+  const meeting = clause.match(/\b(?:date|night|evening|meeting|time|chat|conversation|rest|company|session)(?:\s+itself)?\s+(?:was|is|seemed|felt)\s+(.+)$/);
+  if (meeting) {
+    const kind = predicateKind(meeting[1] ?? "");
+    if (kind === "complaint" || kind === "unclassified") return kind;
+    return null;
+  }
+  const adj = clause.match(/\b([a-z][a-z'-]*)\s+(?:guy|girl|man|woman|person|member|company|date|night|evening|meeting|time|chat|conversation|rest)\b/);
+  if (adj && adj[1] !== "disappointing" && adj[1] !== "disappointed") {
+    const kind = predicateKind(adj[1] ?? "");
+    if (kind === "complaint" || kind === "unclassified") return kind;
+  }
+  return null;
+}
+function negatedFormVerdict(t: string, from: number): "negative" | "neutral" {
+  let last: "complaint" | "unclassified" | null = null;
+  for (const clause of t.slice(from).split(/[.!?;,]/)) {
+    const kind = laterClauseKind(clause);
+    if (kind) last = kind;
+  }
+  return last === "unclassified" ? "neutral" : "negative";
 }
 function personEvaluation(c: string): boolean {
   const m = c.match(/\b(?:(?:he|she|they)(?:'s|\s+is|\s+was|\s+seems|\s+seemed)|(?:the\s+real\s+)?(?:him|her|them)\s+is)\s+(.+)$/);
@@ -925,9 +981,16 @@ function disappointedClauseCounts(clause: string): boolean {
   if (/\btalked about (?:his|her|their) ex\b/.test(c)) return true;
   return /\b(?:left early|was late|showed up late|arrived late|was rude|was creepy|was awkward|was terrible|was uncomfortable|didn't click|did not click|never clicked|never connected|wasn't easy to talk|was not easy to talk|nothing in common|barely asked|talked over me|ignored me|stood me up|didn't show|did not show)\b/.test(c);
 }
-function negatedPositiveFeedback(t: string): boolean {
+function negatedFeedbackVerdict(t: string): "negative" | "neutral" | null {
+  let verdict: "negative" | "neutral" | null = null;
+  const note = (end: number): boolean => {
+    if (reversedByMeetingPositive(t, end)) return false;
+    if (negatedFormVerdict(t, end) === "negative") { verdict = "negative"; return true; }
+    verdict ??= "neutral";
+    return false;
+  };
   for (const m of t.matchAll(/\bdid not\s+(?:(?:really|quite)\s+)?(?:click|connect|enjoy)\b|\bdid not have much\b/g)) {
-    if (!reversedByMeetingPositive(t, m.index + m[0].length)) return true;
+    if (note(m.index + m[0].length)) return verdict;
   }
   for (const m of t.matchAll(/\b(?:never|hardly|barely)\s+(?:really\s+)?(?:clicked|connected)\b/g)) {
     const end = m.index + m[0].length;
@@ -935,14 +998,14 @@ function negatedPositiveFeedback(t: string): boolean {
     if (/\bbefore\b|\bpreviously\b|\bsince\b|\buntil now\b|\bin the past\b/.test(rest)) continue;
     if (/\b(?:so|this|that)\s+(?:\w+ly|fast|hard|well|soon|much)\b|\b(?:faster|quicker|better|sooner|more)\b|\blike (?:that|this)\b/.test(rest)) continue;
     if (!clickCounts(rest)) continue;
-    if (!reversedByMeetingPositive(t, end)) return true;
+    if (note(end)) return verdict;
   }
   for (const m of t.matchAll(/(?:\bnot|\bnever|n't)\s+(?:really\s+|very\s+)?easy to talk\b/g)) {
     const end = m.index + m[0].length;
     const rest = clauseAfter(t, end);
     const personSubject = /\b(?:he|she|they)\b/.test(clauseBefore(t, m.index));
     if (!talkCounts(rest, personSubject)) continue;
-    if (!reversedByMeetingPositive(t, end)) return true;
+    if (note(end)) return verdict;
   }
   for (const m of t.matchAll(/\bdisappoint(?:ed|ing)\b/g)) {
     const end = m.index + m[0].length;
@@ -955,14 +1018,14 @@ function negatedPositiveFeedback(t: string): boolean {
     const rest = clauseAfter(t, end);
     if (m[0] === "disappointing") {
       if (/^(?:evening|night|meeting|date|time|experience|chat|conversation|session)\b/.test(rest) && !/^(?:evening|night|meeting|date|time|experience|chat|conversation|session)\s+(?:venue|weather|traffic|food|cafe|restaurant|bar|music|table|noise)\b/.test(rest)) {
-        if (!reversedByMeetingPositive(t, end)) return true;
+        if (note(end)) return verdict;
       } else if (!rest && /\bit\b|\b(?:night|evening|meeting|date|time|chat|conversation)\b/.test(beforeSeg)) {
-        if (!reversedByMeetingPositive(t, end)) return true;
+        if (note(end)) return verdict;
       }
       continue;
     }
     if (!rest || /^(?:greatly|really|very|so|quite|pretty|deeply|truly|a lot|a bit)$/.test(rest)) {
-      if (!reversedByMeetingPositive(t, end)) return true;
+      if (note(end)) return verdict;
       continue;
     }
     const prep = rest.match(/^(?:in|with|by|at)\s+(.+)$/);
@@ -971,14 +1034,14 @@ function negatedPositiveFeedback(t: string): boolean {
       const memberPrep = /^(?:him|them)\b/.test(comp) || /^her(?:\s+(?:at first|for\b)|$)/.test(comp);
       const circumstancePrep = /^(?:him|her|them)\s+for\b[^.!?;,]*\b(?:booking|choosing|picking|table|venue|restaurant|bar|noisy)\b/.test(comp) || /^(?:the|my|this|that)\s+(?:night|evening|meeting|date|time|chat|conversation|session)\s+(?:venue|weather|traffic|food|cafe|restaurant|bar|music|table|noise)\b/.test(comp);
       if (((memberPrep && !circumstancePrep) || /^(?:how it went|how the (?:meeting|date|night|evening|chat|conversation) went)\b/.test(comp) || /^(?:the|my|this|that)\s+(?:night|evening|meeting|date|time|chat|conversation|session)\b/.test(comp)) && !circumstancePrep) {
-        if (!reversedByMeetingPositive(t, end)) return true;
+        if (note(end)) return verdict;
       }
       continue;
     }
     const clause = rest.replace(/^(?:that|when|because)\s+/, "");
-    if (disappointedClauseCounts(clause) && !reversedByMeetingPositive(t, end)) return true;
+    if (disappointedClauseCounts(clause) && note(end)) return verdict;
   }
-  return false;
+  return verdict;
 }
 
 
