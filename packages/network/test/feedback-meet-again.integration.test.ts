@@ -53,6 +53,14 @@ test("contracted declines of meeting again read as no and contracted yes answers
     "I can't see myself meeting again",
     "I cannot see myself meeting again",
     "I have no interest in meeting again",
+    "I don't feel like I want to meet again",
+    "I don't want to see him again",
+    "I don't think I'll go again",
+    "don't think we'd click again",
+    "don't text me again",
+    "I can't ever meet again",
+    "I didn't really feel like meeting again",
+    "no interest in seeing her again",
   ]) expect(feedbackOf(reply).again, reply).toBe(false);
   for (const reply of [
     "cannot wait to meet again",
@@ -77,5 +85,14 @@ test("contracted declines of meeting again read as no and contracted yes answers
     "I don't see any reason we shouldn't meet again",
     "I don't think I'd say no to meeting again",
     "I don't think so but would meet again",
+    "I don't want to miss the chance to meet again",
+    "I don't think we should wait to meet again",
+    "I don't think twice about meeting again",
+    "I don't think there's anyone I'd rather meet again",
+    "I don't think I've ever wanted to meet someone again this much",
+    "I don't see a problem with meeting again",
+    "I don't see why we can't meet again",
+    "I don't plan on saying no if we meet again",
+    "didn't want the night to end we should meet again",
   ]) expect(feedbackOf(reply).again, reply).toBe(true);
 });
