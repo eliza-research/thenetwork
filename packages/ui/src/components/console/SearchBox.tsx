@@ -128,6 +128,7 @@ export function SearchBox({
           : []),
       ];
   const current = open && active >= 0 && active < choices.length ? active : -1;
+  const dismiss = () => { setDismissed(true); setActive(-1); };
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
@@ -143,14 +144,15 @@ export function SearchBox({
     if (event.key === "Escape" && open) {
       event.preventDefault();
       event.stopPropagation();
-      setDismissed(true);
-      setActive(-1);
+      dismiss();
       return;
     }
     if (event.key !== "Enter") return;
     event.preventDefault();
     const conversations = () => conversationSearch && onSearchConversations?.();
-    if (event.shiftKey || (conversation && !conversation.hits)) return void conversations();
+    if (event.shiftKey) return void conversations();
+    if (!open) return;
+    if (conversation && !conversation.hits) return void conversations();
     if (current >= 0) return void choices[current]?.select();
     const firstConversation = conversation?.hits?.[0];
     if (firstConversation) return void onPickConversation?.(firstConversation);
@@ -194,7 +196,11 @@ export function SearchBox({
           if ((event.target as Element | null)?.closest?.(`#${CSS.escape(inputId)}`)) event.preventDefault();
           else setDismissed(true);
         }}
-        onEscapeKeyDown={() => setDismissed(true)}
+        onEscapeKeyDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          dismiss();
+        }}
       >
         {conversation ? (
           <div className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground">
