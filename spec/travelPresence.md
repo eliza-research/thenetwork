@@ -96,3 +96,24 @@ pure val firstValues = windowValues
 pure val secondValues = windowValues
 pure val presenceValues = windowValues
 ```
+
+### A signed destination correction replaces one saved trip
+
+The signed conversation identifies the app and checks that the phone still belongs to the active member there, as for a save. Without that binding, the command produces no write or reply. A correction naming a new city and the saved city it replaces changes only the earliest current or future saved trip to the replaced city in that app, keeping that trip's calendar dates in the new city. A later trip to the replaced city, a trip to another city, another member's trip, and a trip that has ended all stay. The reply names the corrected trip with its dates, with the end date excluded. When no such trip is saved, the reply says so and nothing changes. This command changes no consent, account status, home location, or matching markets.
+
+```quint
+type TravelDestinationCorrection = TravelCorrectUnavailable | TravelCorrectNone | TravelCorrectOne
+
+pure def decideTravelDestinationCorrection(authorized: bool, savedTrips: int): TravelDestinationCorrection =
+  if (not(authorized)) TravelCorrectUnavailable
+  else if (savedTrips > 0) TravelCorrectOne
+  else TravelCorrectNone
+
+pure def lawDestinationCorrectionReplacesOneOnlyWhenSaved(authorized: bool, savedTrips: int): bool =
+  decideTravelDestinationCorrection(authorized, savedTrips) == TravelCorrectOne implies (authorized and savedTrips > 0)
+
+pure def lawUnauthorizedDestinationCorrectionChangesNothing(savedTrips: int): bool =
+  decideTravelDestinationCorrection(false, savedTrips) == TravelCorrectUnavailable
+
+pure val savedTripsValues = Set(-1, 0, 1, 2)
+```

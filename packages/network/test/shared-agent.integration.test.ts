@@ -6,7 +6,7 @@ import {afterAll, beforeAll, expect, test, vi} from "vitest";
 import {createHash, randomUUID} from "node:crypto";
 import {SQL} from "../../core/src/runtime/postgres.ts";
 import type { CapitalEvent } from "../../capital/src/index.ts";
-import {SimClock, MINUTE, DAY} from "@thenetwork/core";
+import {CITY_TZ, SimClock, MINUTE, DAY, fromLocal} from "@thenetwork/core";
 import {applySchema, DEV_PG_PORT} from "../../db/dev-pg.ts";
 import {APPS, type AppInfo} from "../../platform/src/apps.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
@@ -323,6 +323,52 @@ test("signed travel stores one coarse trip in the routed app and never guesses m
   const lockedReplay = await post(request);
   expect(lockedReplay.status).toBe(409);
   expect(await lockedReplay.json()).toEqual({ error: "turn_travel_account_changed", retryable: false });
+}, 60_000);
+
+// spec/travelPresence.md, "Tell the Network my travel dates"; spec/product/stories.md F26
+test("a destination correction text replaces the saved trip city", async () => {
+  const phone = "+12125550231", otherPhone = "+12125550232", app = APPS.friends;
+  const join = async (e164: string) => {
+    await service.accounts.invite(app, e164);
+    const person = (await service.accounts.personFor(e164))!;
+    const joined = await service.accounts.join(app, { e164, personId: person.id }, {
+      firstName: "Ari", age: 29, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+    });
+    if (!joined.ok) throw new Error(joined.error);
+    return joined.membership.memberId;
+  };
+  const memberId = await join(phone);
+  const otherId = await join(otherPhone);
+  const day = (offset: number) => new Date(clock.now() + offset * DAY).toISOString().slice(0, 10);
+  const atMiami = (value: string) => new Date(fromLocal(Number(value.slice(0, 4)), Number(value.slice(5, 7)), Number(value.slice(8, 10)), 0, CITY_TZ.miami));
+  const tripsOf = (id: string) => sql`select city, from_at, to_at from network.presence where app_id=${app.id}
+    and member_id=${id} and type='temporary' order by from_at, to_at`;
+  const declare = (id: string, text: string) => post(turn(id, phone, text, "friends"));
+  const chicago = `I will be in Chicago from ${day(20)} until ${day(22)}.`;
+  expect((await (await declare("travel-destination-save", chicago)).json()).replies[0]).toContain("Saved in friends.help");
+  expect((await (await post(turn("travel-destination-other", otherPhone, chicago, "friends"))).json()).replies[0]).toContain("Saved in friends.help");
+  expect((await (await declare("travel-destination-sf", `I will be in San Francisco from ${day(30)} until ${day(32)}.`)).json()).replies[0]).toContain("Saved in friends.help");
+  expect((await (await declare("travel-destination-chicago-again", `I will be in Chicago from ${day(40)} until ${day(42)}.`)).json()).replies[0]).toContain("Saved in friends.help");
+  const corrected = await declare("travel-destination-correct", "actually I'm going to Miami, not Chicago");
+  expect(corrected.status).toBe(200);
+  const correctedReply = (await corrected.json()).replies[0];
+  expect(correctedReply).toContain("Miami");
+  expect(correctedReply).toContain(day(20));
+  expect(correctedReply).toContain(day(22));
+  expect(await tripsOf(memberId)).toEqual([
+    { city: "miami", from_at: atMiami(day(20)), to_at: atMiami(day(22)) },
+    expect.objectContaining({ city: "sf" }),
+    expect.objectContaining({ city: "chicago" }),
+  ]);
+  const correctedAgain = await declare("travel-destination-correct-again", "actually I'm going to Miami, not Chicago");
+  expect(correctedAgain.status).toBe(200);
+  expect((await correctedAgain.json()).replies[0]).toContain(day(40));
+  expect((await tripsOf(memberId)).map(trip => trip.city)).toEqual(["miami", "sf", "miami"]);
+  const noTrip = await declare("travel-destination-none", "actually I'm going to Miami, not Los Angeles");
+  expect(noTrip.status).toBe(200);
+  expect((await noTrip.json()).replies[0]).toContain("No saved Los Angeles trip");
+  expect((await tripsOf(memberId)).map(trip => trip.city)).toEqual(["miami", "sf", "miami"]);
+  expect((await tripsOf(otherId)).map(trip => trip.city)).toEqual(["chicago"]);
 }, 60_000);
 
 test("a saved travel window keeps its exact signed reply after the runtime stops", async () => {

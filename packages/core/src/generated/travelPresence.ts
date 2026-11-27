@@ -5,6 +5,8 @@
 export interface PresenceWindow { from: number; to: number }
 /** Story: Tell the Network my travel dates / A signed travel statement saves only the member's own dates in that app (spec/travelPresence.md) */
 export type TravelEntry = "TravelUnavailable" | "TravelNeedsDates" | "TravelDateConflict" | "TravelAlreadySaved" | "TravelSave";
+/** Story: Tell the Network my travel dates / A signed destination correction replaces one saved trip (spec/travelPresence.md) */
+export type TravelDestinationCorrection = "TravelCorrectUnavailable" | "TravelCorrectNone" | "TravelCorrectOne";
 
 
 /** Story: Use my travel dates for matching / A temporary presence needs both dates in order (spec/travelPresence.md) */
@@ -101,4 +103,24 @@ export function lawUnavailableTravelNeverSaves(hasDates: boolean, window: Presen
 export function lawRepeatedTravelDoesNotSave(window: PresenceWindow, now: number, conflict: boolean): boolean {
   //@ ensures \result === true
   return decideTravelEntry(true, true, window, now, conflict, true) !== "TravelSave";
+}
+
+/** Story: Tell the Network my travel dates / A signed destination correction replaces one saved trip (spec/travelPresence.md) */
+//@ pure
+export function decideTravelDestinationCorrection(authorized: boolean, savedTrips: number): TravelDestinationCorrection {
+  return !authorized ? "TravelCorrectUnavailable" : (savedTrips > 0 ? "TravelCorrectOne" : "TravelCorrectNone");
+}
+
+/** Story: Tell the Network my travel dates / A signed destination correction replaces one saved trip (spec/travelPresence.md) */
+//@ pure
+export function lawDestinationCorrectionReplacesOneOnlyWhenSaved(authorized: boolean, savedTrips: number): boolean {
+  //@ ensures \result === true
+  return !(decideTravelDestinationCorrection(authorized, savedTrips) === "TravelCorrectOne") || (authorized && savedTrips > 0);
+}
+
+/** Story: Tell the Network my travel dates / A signed destination correction replaces one saved trip (spec/travelPresence.md) */
+//@ pure
+export function lawUnauthorizedDestinationCorrectionChangesNothing(savedTrips: number): boolean {
+  //@ ensures \result === true
+  return decideTravelDestinationCorrection(false, savedTrips) === "TravelCorrectUnavailable";
 }

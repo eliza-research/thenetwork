@@ -1,6 +1,6 @@
 import { CITY_TZ, fromLocal, isCity, localParts, resolveCity, temporaryPresenceWindow, type City } from "@thenetwork/core";
 import {
-  decideTravelEntry, presenceWindowsOverlap, samePresenceWindow, travelEntryReplyAllowed, type PresenceWindow,
+  decideTravelDestinationCorrection, decideTravelEntry, presenceWindowsOverlap, samePresenceWindow, travelEntryReplyAllowed, type PresenceWindow,
 } from "../../core/src/generated/travelPresence.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { homeCityOf, type Accounts } from "../../platform/src/accounts.ts";
@@ -110,6 +110,24 @@ export function travelPresenceCommand(text: string, now?: number): TravelCommand
   return natural ? { city, dates: natural } : { city };
 }
 
+const CITY_RX = "(new york city|new york|nyc|san francisco|bay area|sf|los angeles|la|chicago|chi|miami|mia)";
+
+/** A direct first-person correction of a saved trip's destination city. */
+export function travelDestinationCorrectionCommand(text: string): { city: City; replaces: City } | undefined {
+  const line = text.trim().replace(/[.!]$/, "").replace(/[^\S\n]+/g, " ");
+  const match = new RegExp(
+    `^(?:actually,? )?(?:(?:i will|i['’]ll) be in|(?:i am|i['’]m) (?:visiting|in|going to|heading to|traveling to|travelling to)) ${CITY_RX},? not ${CITY_RX}$`,
+    "i",
+  ).exec(line);
+  if (!match) return;
+  const resolve = (named: string): City | undefined => {
+    const resolved = homeCityOf(named.toLowerCase()) ?? resolveCity(named.toLowerCase());
+    return isCity(resolved) ? resolved : undefined;
+  };
+  const city = resolve(match[1]!), replaces = resolve(match[2]!);
+  return city && replaces && city !== replaces ? { city, replaces } : undefined;
+}
+
 /** Same canonical and app-local guard on the write and on any later reply replay. */
 export async function travelOwner(tx: SQL, accounts: Pick<Accounts, "activeMembership">, owner: MemberCommandOwner): Promise<boolean> {
   const binding = await memberCommandOwner(tx, accounts, owner);
@@ -143,4 +161,37 @@ export async function saveTravelPresence(tx: SQL, accounts: Pick<Accounts, "acti
     case "TravelAlreadySaved": break;
   }
   return `${decision === "TravelSave" ? "Saved" : "Already saved"} in ${app.domain}: ${name} from ${dates!.from} until ${dates!.to} (end date excluded).`;
+}
+
+/** Replaces the owner's earliest current or future trip to the replaced city, keeping its calendar dates. */
+export async function correctTravelPresence(tx: SQL, accounts: Pick<Accounts, "activeMembership">, owner: MemberCommandOwner, command: { city: City; replaces: City }, now: number): Promise<string | undefined> {
+  const authorized = await travelOwner(tx, accounts, owner);
+  const { app, memberId } = owner;
+  const current = authorized ? await tx`select member_id, city, type, from_at, to_at from network.presence
+    where app_id=${app.id} and member_id=${memberId} and type='temporary' and city=${command.replaces} and to_at > ${new Date(now)}
+    order by from_at asc` : [];
+  const trips = current.map(presenceOf).flatMap(p => {
+    const window = temporaryPresenceWindow(p);
+    return window ? [window] : [];
+  });
+  switch (decideTravelDestinationCorrection(authorized, trips.length)) {
+    case "TravelCorrectUnavailable": return;
+    case "TravelCorrectNone": return `No saved ${CITY_NAME[command.replaces]} trip in ${app.domain}.`;
+    case "TravelCorrectOne": break;
+  }
+  const trip = trips[0]!;
+  const fromParts = localParts(trip.from, CITY_TZ[command.replaces]);
+  const toParts = localParts(trip.to, CITY_TZ[command.replaces]);
+  const from = isoDate(fromParts.year, fromParts.month, fromParts.day);
+  const to = isoDate(toParts.year, toParts.month, toParts.day);
+  const start = from ? localMidnight(from, command.city) : undefined;
+  const end = to ? localMidnight(to, command.city) : undefined;
+  if (!from || !to || start === undefined || end === undefined) return;
+  await tx`delete from network.presence
+    where ctid in (select ctid from network.presence
+      where app_id=${app.id} and member_id=${memberId} and type='temporary' and city=${command.replaces} and to_at > ${new Date(now)}
+      order by from_at asc limit 1)`;
+  await tx`insert into network.presence (app_id, member_id, city, type, from_at, to_at)
+    values (${app.id}, ${memberId}, ${command.city}, 'temporary', ${new Date(start)}, ${new Date(end)})`;
+  return `Saved in ${app.domain}: ${CITY_NAME[command.city]} from ${from} until ${to} (end date excluded).`;
 }
