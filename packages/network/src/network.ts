@@ -858,8 +858,12 @@ function jointVenueRequest(body: string): boolean {
     VENUE_TARGET.test(sentence) && (VENUE_JOINT.test(sentence) || (/\?\s*$/.test(sentence.trim()) && /\b(?:meet|move|switch|change)\b/i.test(sentence))));
 }
 
+export function declinesBookedAttendance(body: string): boolean {
+  return declinesAttendanceAlongsideSwap(body) || VENUE_REFUSAL.test(body) || VENUE_ATTENDANCE_REFUSAL.test(body);
+}
+
 export function venueChangeKeepsBooking(body: string): boolean {
-  return jointVenueRequest(body) && !declinesAttendanceAlongsideSwap(body) && !VENUE_REFUSAL.test(body) && !VENUE_ATTENDANCE_REFUSAL.test(body);
+  return jointVenueRequest(body) && !declinesBookedAttendance(body);
 }
 
 const PHASE_BY_STAGE = { review: "InReview", probing: "Probing", scheduled: "Scheduled", done: "Done", closed: "Closed" } as const;
@@ -2018,7 +2022,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (venueObj && this.handleBookedVenueObjection(m, o, body, venueObj, now)) return;
         // spec/opportunityLifecycle.md, "A number-swap refusal does not decline the booked meeting"
         const venueChange = venueChangeKeepsBooking(bookingText);
-        const declines = !venueChange && bookedTextDeclines(bookingText, cancellation !== undefined || c.kind === "cancel" || yn === "no");
+        const declines = !venueChange && (bookedTextDeclines(bookingText, cancellation !== undefined || c.kind === "cancel" || yn === "no") || declinesBookedAttendance(bookingText));
         const confirms = !venueChange && (yn === "yes" || c.kind === "ack");
         if (checkIn && (declines || confirms)) {
           const receipt = this.ctx.initialInviteReceipt?.(bookedReminderKey("day-of-checkin", o.id, m.id, checkIn.revision));
@@ -2031,7 +2035,7 @@ export class ConsentNetwork implements NetworkUnderTest {
           }
         }
         if (!checkIn && directBookingReply && !o.plan && !o.workIntro && !o.publicEventRevision && o.meetingAt !== undefined && o.meetingAt > now
-          && !cancellation && !CANCEL_INTENT_OVERRIDE_RX.test(bookingText) && VENUE_SWAP_INTENT_RX.test(bookingText)) {
+          && !declines && !cancellation && !CANCEL_INTENT_OVERRIDE_RX.test(bookingText) && VENUE_SWAP_INTENT_RX.test(bookingText)) {
           const initialState = this.proposeTopOneVenueFor(o.participants, o.meetingAt, {
             city: this.networkCity(),
             teenFriendAllowed: o.teenRuleAt !== undefined,
