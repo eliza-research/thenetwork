@@ -60,5 +60,14 @@ describe("residence move texted after onboarding", () => {
 
     await w.say("a", "I moved out of Bushwick, I live in Bay Ridge now.");
     expect(areaOf(w, "a")).toBe("Bay Ridge");
+
+    await w.say("a", "I live in Inwood now.");
+    expect(areaOf(w, "a")).toBe("Inwood");
+
+    await w.say("a", "I moved to Astoria last year, then moved back to Inwood.");
+    expect(areaOf(w, "a")).toBe("Inwood");
+
+    await w.say("a", "I moved to Astoria in my dreams lol");
+    expect(areaOf(w, "a")).toBe("Inwood");
   });
 });

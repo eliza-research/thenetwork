@@ -914,7 +914,8 @@ export function areaOf(text: string, city?: CityId): { area?: string; unknown?: 
 const RESIDENCE_CUE = /\b(i\s+(?:just\s+)?(?:moved|relocated)|i\s+(?:now\s+)?(?:live|stay)|i'?m\s+(?:now\s+)?(?:living|based)|i'?m\s+now\s+(?:in|around|near|over in|up in|out in|down in)|i\s+am\s+(?:now\s+)?(?:living|based)|i\s+am\s+now\s+(?:in|around|near)|im\s+(?:living|based)|my\s+(?:new\s+)?(?:place|apartment|apt|home|neighborhood|hood|area)\s+is|home\s+is|based\s+(?:in|out of)|living\s+in)\b|(?:^|[,;]\s*)(?:just\s+)?moved\s+(?:back\s+)?to\b/;
 /** A residence cue that is hypothetical, negated, or about someone else never moves the sender. */
 const RESIDENCE_BLOCK = /\b(if|should|could|can|would|wish|maybe|might|thinking|planning|hoping|whether|not|never|n't|no longer|used to|visiting|friend|roommate|he|she|they)\b/;
-const RESIDENCE_TAIL_BLOCK = /\b(left|moved away|moved out|no longer|not anymore|back then|formerly|used to)\b/;
+const RESIDENCE_TAIL_BLOCK = /\b(left|moved away|moved out|moved back|no longer|not anymore|back then|formerly|used to)\b/;
+const RESIDENCE_NONLITERAL = /\b(dream|dreams|dreamed|dreaming|joke|joking|jk|just kidding|kidding)\b/;
 
 /** The neighborhood the sender states as their own residence, for a member-initiated text. */
 export function residenceAreaOf(text: string, city?: CityId): string | undefined {
@@ -925,7 +926,7 @@ export function residenceAreaOf(text: string, city?: CityId): string | undefined
     const tail = sentence.slice(end);
     const question = /\?\s*$/.test(sentence.trim()) && !/,\s*(?:anyone|can|could|would|find|looking|want|need|help)\b/.test(sentence);
     const pastDeparture = RESIDENCE_TAIL_BLOCK.test(tail) || (/\b(?:19|20)\d{2}\b/.test(tail) && /\b(then|later|after|left|away|no longer)\b/.test(tail));
-    return !question && !pastDeparture && !NOT_HOME.test(prefix) && !RESIDENCE_BLOCK.test(prefix) && !quoteStillOpen(prefix) && RESIDENCE_CUE.test(prefix);
+    return !question && !pastDeparture && !RESIDENCE_NONLITERAL.test(sentence) && !NOT_HOME.test(prefix) && !RESIDENCE_BLOCK.test(prefix) && !quoteStillOpen(prefix) && RESIDENCE_CUE.test(prefix);
   };
   if (normalizedCity && normalizedCity !== "nyc") {
     const cityAliases = cityLocationsFor(normalizedCity).aliases;
