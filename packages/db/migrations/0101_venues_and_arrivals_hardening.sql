@@ -1,9 +1,9 @@
--- 0100: upgrade-safe 0098 venue columns, NYC city name normalization, and
--- meetup_arrivals deduplication + uniqueness + valid state check.
+-- 0101: upgrade-safe 0098 venue columns, NYC city name normalization, and
+-- meetup_arrivals deduplication + uniqueness + unified valid state check.
 -- Idempotent: safe to run more than once on both fresh and upgraded databases.
 
 -- ---------------------------------------------------------------- 1. Upgrade-safe 0098 columns on platform.venues
-alter table platform.venues add column if not exists all_ages boolean not null default true;
+alter table platform.venues add column if not exists all_ages boolean not null default false;
 alter table platform.venues add column if not exists is_alcohol_centric boolean not null default false;
 alter table platform.venues add column if not exists halal_friendly boolean not null default false;
 alter table platform.venues add column if not exists kosher_friendly boolean not null default false;
@@ -47,39 +47,33 @@ begin
     join pg_namespace n on n.oid = t.relnamespace
     where n.nspname = 'network'
       and t.relname = 'meetup_arrivals'
-      and c.conname = 'meetup_arrivals_app_opp_member_uniq'
+      and c.conname in ('meetup_arrivals_app_opp_member_key', 'meetup_arrivals_app_opp_member_uniq')
   ) then
     alter table network.meetup_arrivals
-      add constraint meetup_arrivals_app_opp_member_uniq
+      add constraint meetup_arrivals_app_opp_member_key
       unique (app_id, opportunity_id, member_id);
   end if;
 
-  if not exists (
-    select 1
-    from pg_constraint c
-    join pg_class t on t.oid = c.conrelid
-    join pg_namespace n on n.oid = t.relnamespace
-    where n.nspname = 'network'
-      and t.relname = 'meetup_arrivals'
-      and c.conname = 'meetup_arrivals_state_check'
-  ) then
-    alter table network.meetup_arrivals
-      add constraint meetup_arrivals_state_check
-      check (state in (
-        'en_route',
-        'late',
-        'omw',
-        'delayed',
-        'arrived',
-        'seated',
-        'met',
-        'venue_closed',
-        'venue_full',
-        'cannot_find',
-        'cancelled',
-        'no_show'
-      ));
-  end if;
+  alter table network.meetup_arrivals
+    drop constraint if exists meetup_arrivals_state_check;
+
+  alter table network.meetup_arrivals
+    add constraint meetup_arrivals_state_check
+    check (state in (
+      'en_route',
+      'late',
+      'omw',
+      'delayed',
+      'arrived',
+      'seated',
+      'met',
+      'venue_closed',
+      'venue_full',
+      'cannot_find',
+      'panic_exit',
+      'cancelled',
+      'no_show'
+    ));
 end $$;
 
 drop index if exists network.meetup_arrivals_app_opp;

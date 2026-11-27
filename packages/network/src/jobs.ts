@@ -157,17 +157,17 @@ export function parsePosting(body: string): PostingDraft {
     d.area = area ? slug(area) : "";
     if (area) {
       const resolved = resolveCity(area);
-      if (resolved) d.city = resolved;
+      if (resolved && isCity(resolved)) d.city = resolved;
     }
   } else {
     const area = AREAS.find(a => lower.includes(` ${a} `));
     if (area) {
       d.area = slug(area);
       const resolved = resolveCity(area);
-      if (resolved) d.city = resolved;
+      if (resolved && isCity(resolved)) d.city = resolved;
     } else {
       const resolved = resolveCity(t);
-      if (resolved) d.city = resolved;
+      if (resolved && isCity(resolved)) d.city = resolved;
     }
   }
   const list = (s: string) => s.split(/,|\band\b|\/|;/i).map(x => x.trim().toLowerCase()).filter(x => x && x.length <= 40 && !/^(?:a|an|the|some)$/.test(x));

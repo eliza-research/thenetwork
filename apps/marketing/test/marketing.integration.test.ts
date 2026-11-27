@@ -3,17 +3,29 @@
 // anti-fraud, bandit, BD/QR, VIP, video factory, autopilot daemon + SSE, and live HTTP adapters.
 
 import { existsSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import type { LLM } from "../../../packages/core/src/llm.ts";
 import { serveHttp } from "../../../packages/core/src/runtime/http.ts";
 import { SQL } from "../../../packages/core/src/runtime/postgres.ts";
 import { findExecutable } from "../../../packages/core/src/runtime/process.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../../packages/db/dev-pg.ts";
 import { createPaidAdapterRegistry, spendAuthFromCampaign } from "../src/adapters/paid.ts";
-import { sanitizeCliEnv, type CliProcessRunner } from "../src/agent-lifecycle.ts";
+import {
+  AgentLifecycleManager,
+  sanitizeCliEnv,
+  type CliProcessRunner,
+} from "../src/agent-lifecycle.ts";
+import { CrowdsourcingEngine } from "../src/crowdsourcing.ts";
 import { DeviceBridge, type ExecFn } from "../src/devices/bridge.ts";
+import { createNetworkCoreBridge } from "../src/network-bridge.ts";
+import { keyedContactHash } from "../src/policy.ts";
 import { createMarketingServer } from "../src/server.ts";
 import { PgMarketingStore, PolicyViolationError } from "../src/store.ts";
 import type { Clock, MarketingAutopilotDaemon } from "../src/index.ts";
+
+const execFileAsync = promisify(execFile);
 
 const TEST_TIMEOUT = 120_000;
 const TEST_DB_NAME = `network_mkt_test_${process.pid}`;
@@ -1808,6 +1820,634 @@ describe.skipIf(!pgAvailable)("@thenetwork/marketing Postgres + HTTP Pass-2 inte
         expect(Array.isArray(tremBody.reward?.products)).toBe(true);
       } finally {
         await mockVendorServer.stop();
+      }
+    },
+    TEST_TIMEOUT,
+  );
+
+  test(
+    "16. Pass-3 Cross-Schema Bridge RPCs: marketing.contact_fence & marketing.supply_demand_k5",
+    async () => {
+      const bridge = createNetworkCoreBridge({ sql, clock });
+      const ping = await bridge.ping();
+      expect(ping.ok).toBe(true);
+      expect(ping.mode).toBe("platform_pg");
+      expect(ping.bridgeFunctionsPresent).toBe(true);
+
+      const bannedHash = keyedContactHash("phone", "+12125550111");
+      const stoppedE164 = "+12125550112";
+      const stoppedHash = keyedContactHash("phone", stoppedE164);
+      const minorHash = keyedContactHash("phone", "+12125550113");
+      const cleanHash = keyedContactHash("phone", "+12125550114");
+
+      await sql`
+        insert into platform.bans (id, scope, phone_hash, reason, banned_by, at)
+        values ('ban-mkt-p3-1', 'phone', ${bannedHash}, 'policy_abuse', 'staff-test', ${new Date(clock.now())})
+        on conflict do nothing
+      `;
+      await sql`
+        insert into platform.consent_events (e164, app_id, state, source, at)
+        values (${stoppedE164}, null, 'opted_out', 'sms_stop', ${new Date(clock.now())})
+      `;
+      await sql`
+        insert into platform.age_floor (phone_hash, lowest_age, at)
+        values (${minorHash}, 16, ${new Date(clock.now())})
+        on conflict (phone_hash) do update set lowest_age = 16
+      `;
+
+      const bannedVerdict = await bridge.checkContactFence({ phoneHash: bannedHash });
+      expect(bannedVerdict.allowed).toBe(false);
+      expect(bannedVerdict.banned).toBe(true);
+
+      const stoppedVerdict = await bridge.checkContactFence({
+        phoneHash: stoppedHash,
+        phone: stoppedE164,
+      });
+      expect(stoppedVerdict.allowed).toBe(false);
+      expect(stoppedVerdict.globallyStopped).toBe(true);
+
+      const minorVerdict = await bridge.checkContactFence({ phoneHash: minorHash });
+      expect(minorVerdict.allowed).toBe(false);
+      expect(minorVerdict.knownMinor).toBe(true);
+
+      const cleanVerdict = await bridge.checkContactFence({ phoneHash: cleanHash });
+      expect(cleanVerdict.allowed).toBe(true);
+
+      // Verify supply_demand_k5 bucket floor and line_safety backpressure trigger
+      await sql`
+        insert into platform.networks (id, app_id, city, matching_enabled)
+        values ('slop:nyc', 'slop', 'nyc', true)
+        on conflict (app_id, city) do update set matching_enabled = true
+      `;
+      for (let i = 0; i < 6; i += 1) {
+        await sql`
+          insert into network.members (id, app_id, home_city, account_status, age)
+          values (${`mkt-p3-adult-${i}`}, 'slop', 'nyc', 'active', 26)
+          on conflict (id) do nothing
+        `;
+      }
+      await sql`
+        insert into platform.line_safety (line, action, at)
+        values ('line-mkt-p3', 'throttle', ${new Date(clock.now())})
+        on conflict (line) do update set action = 'throttle'
+      `;
+
+      const signals = await bridge.getDemandAndPressure("nyc");
+      const slopNyc = signals.find((s) => s.appId === "slop" && s.city === "nyc");
+      expect(slopNyc).toBeDefined();
+      expect(slopNyc?.activeAdultBucket).toBeGreaterThanOrEqual(5);
+      expect((slopNyc?.activeAdultBucket ?? 0) % 5).toBe(0);
+      expect(slopNyc?.lineRestricted).toBe(true);
+      expect(slopNyc?.queuePressurePaused).toBe(true);
+
+      // Reset line_safety so subsequent tests stay unpaused
+      await sql`delete from platform.line_safety where line = 'line-mkt-p3'`;
+    },
+    TEST_TIMEOUT,
+  );
+
+  test(
+    "17. Pass-3 Global City Launch (POST /api/seed/sf, unknown city 400), /api/cities, /api/desire-lanes & /api/directory",
+    async () => {
+      const sfSeed = await api<{
+        ok: boolean;
+        city: string;
+        campaign: { id: string; city: string };
+        tasks: Array<{ taskKind: string; vendorChannel: string }>;
+      }>("POST", "/api/seed/sf");
+      expect(sfSeed.status).toBe(200);
+      expect(sfSeed.data.ok).toBe(true);
+      expect(sfSeed.data.city).toBe("sf");
+      expect(sfSeed.data.campaign.city).toBe("sf");
+      // CA AB5: SF street-team starter task uses W-2 agency_booking, never 1099 craigslist
+      expect(sfSeed.data.tasks.some((t) => t.taskKind === "agency_booking")).toBe(true);
+      expect(sfSeed.data.tasks.some((t) => t.taskKind === "street_fliering")).toBe(false);
+
+      const unknownSeed = await api<{ error?: string }>("POST", "/api/seed/unknown_city");
+      expect(unknownSeed.status).toBe(400);
+
+      const citiesRes = await api<{
+        cities: Array<{ code: string; stage: string; readiness?: { currentStage: string } }>;
+      }>("GET", "/api/cities");
+      expect(citiesRes.status).toBe(200);
+      expect(citiesRes.data.cities.length).toBeGreaterThanOrEqual(7);
+      expect(citiesRes.data.cities.some((c) => c.code === "sf")).toBe(true);
+
+      const lanesRes = await api<{
+        lanes: Array<{ id: string; defaultAppId?: string; appId?: string }>;
+        metrics: Record<string, { campaigns: number; tasks: number }>;
+      }>("GET", "/api/desire-lanes");
+      expect(lanesRes.status).toBe(200);
+      expect(lanesRes.data.lanes.length).toBeGreaterThanOrEqual(4);
+      expect(lanesRes.data.metrics).toBeDefined();
+
+      const dirRes = await api<{ city?: string; agencies?: unknown[] }>(
+        "GET",
+        "/api/directory?city=sf",
+      );
+      expect(dirRes.status).toBe(200);
+    },
+    TEST_TIMEOUT,
+  );
+
+  test(
+    "18. Pass-3 P0 Crowdsourcing Fixes: ops.ntwrk.party boundary, contactEmail-only dispatch, and B-07 duplicate media hash",
+    async () => {
+      const capturedEmails: Array<{ to: string; body: string }> = [];
+      const mockResendServer = await serveHttp({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch: async (req) => {
+          const text = await req.text();
+          const parsed = JSON.parse(text) as { to?: string | string[] };
+          const to = Array.isArray(parsed.to) ? (parsed.to[0] ?? "") : (parsed.to ?? "");
+          capturedEmails.push({ to, body: text });
+          return new Response(JSON.stringify({ id: "re_p3_ok" }), { status: 200 });
+        },
+      });
+      const localResendBase = mockResendServer.url.toString().replace(/\/$/, "");
+      const proxyFetch: typeof fetch = (input, init) => {
+        const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        const u = new URL(raw);
+        return fetch(`${localResendBase}${u.pathname}${u.search}`, init);
+      };
+
+      try {
+        const paidAdapters = createPaidAdapterRegistry({
+          clock,
+          store,
+          fetchFn: proxyFetch,
+          env: {
+            MARKETING_LIVE_BILLING: "1",
+            RESEND_API_KEY: "re_p3_test_key",
+          },
+        });
+        const engine = new CrowdsourcingEngine({
+          store,
+          clock,
+          paidAdapters,
+          env: { MARKETING_LIVE_SEND: "1" },
+        });
+
+        // P0 #1: Legal/release/contract URLs strictly use ops.ntwrk.party (never bare ntwrk.party)
+        const packet = engine.buildHiringPacket("creator_video", "nyc", 25_000, {
+          neighborhood: "SoHo",
+        });
+        const packetBody = packet.creatorBrief?.body ?? packet.craigslistPost.body;
+        expect(packetBody).toContain("https://ops.ntwrk.party/");
+        expect(packetBody).not.toMatch(/https:\/\/ntwrk\.party\/(release|contractor-terms|proofs)/i);
+
+        // P0 #2: Live email dispatch uses contactEmail ONLY, never displayLabel
+        const p0Camp = await store.createCampaign({
+          slug: "nyc-p3-contact-email-test",
+          name: "P3 Contact Email Guard",
+          appId: "slop",
+          monthlyBudgetCents: 100_000,
+          dailyCapCents: 50_000,
+          maxTaskCents: 20_000,
+          billingArmed: true,
+          status: "active",
+        });
+
+        const noEmailHuman = await store.upsertHuman({
+          handleOrEmailHmac: "p3:no-email-human",
+          displayLabel: "must-never-send@evil.example",
+          channel: "email",
+          role: "creator",
+          city: "nyc",
+          lowestAge: 26,
+        });
+        const validEmailHuman = await store.upsertHuman({
+          handleOrEmailHmac: "p3:valid-email-human",
+          displayLabel: "Real Creator Display Name",
+          contactEmail: "real-creator@example.com",
+          channel: "email",
+          role: "creator",
+          city: "nyc",
+          lowestAge: 27,
+        });
+
+        await engine.queueOutreach({
+          campaignId: p0Camp.id,
+          agentId: sloaneId,
+          humanId: noEmailHuman.id,
+          channel: "email",
+          tier: 1,
+          subject: "No-email guard check",
+          bodyText: "18+ street interview collaboration for slop.date #Ad",
+        });
+        await engine.queueOutreach({
+          campaignId: p0Camp.id,
+          agentId: sloaneId,
+          humanId: validEmailHuman.id,
+          channel: "email",
+          tier: 1,
+          subject: "Valid-email dispatch check",
+          bodyText: "18+ street interview collaboration for slop.date #Ad",
+        });
+
+        const dispatchRes = await engine.dispatchPendingOutreach(p0Camp.id);
+        expect(dispatchRes.failed).toBe(1);
+        expect(dispatchRes.sent).toBe(1);
+        expect(capturedEmails.length).toBe(1);
+        expect(capturedEmails[0]?.to).toBe("real-creator@example.com");
+
+        // B-07: submitAndEvaluateProof rejects duplicate checkinMediaHashes across tasks
+        const b07Task = await store.createTask({
+          campaignId: p0Camp.id,
+          tier: 4,
+          taskKind: "street_fliering",
+          city: "nyc",
+          title: "B-07 Duplicate Hash Check Shift",
+          briefText: "Verifies duplicate media hash rejection",
+          vendorChannel: "craigslist",
+          assigneeHumanId: validEmailHuman.id,
+          assigneeAgeYears: 27,
+          amountCents: 10_000,
+          payoutRail: "fiat_stripe",
+          status: "hired",
+        });
+        const b07Res = await engine.submitAndEvaluateProof({
+          taskId: b07Task.id,
+          proofKind: "street_shift",
+          evidenceUrl: "https://cdn.example.com/b07-dup.jpg",
+          checkinMediaHashes: ["sha256-unique-vid-001"],
+          qrScansCount: 10,
+          verifiedSignupsCount: 3,
+          ftcDisclosed: true,
+          geoTimeValid: true,
+          likenessReleaseOk: true,
+          workerAge: 27,
+        });
+        expect(b07Res.approved).toBe(false);
+        expect(b07Res.payoutAuthorized).toBe(false);
+      } finally {
+        await mockResendServer.stop();
+      }
+    },
+    TEST_TIMEOUT,
+  );
+
+  test(
+    "19. Pass-3 Contact Hygiene: POST /api/suppressions, 14-day cold cooldown & global STOP auto-suppression",
+    async () => {
+      const suppRes = await api<{ ok: boolean; suppression: { contactHash: string; reason: string } }>(
+        "POST",
+        "/api/suppressions",
+        {
+          email: "optout-user@example.com",
+          reason: "user_requested_stop",
+          sourceChannel: "email",
+        },
+      );
+      expect(suppRes.status).toBe(201);
+      expect(suppRes.data.ok).toBe(true);
+      expect(suppRes.data.suppression.contactHash).toHaveLength(64);
+
+      const listSupp = await api<{ suppressions: Array<{ contactHash: string }> }>(
+        "GET",
+        "/api/suppressions?limit=50",
+      );
+      expect(listSupp.status).toBe(200);
+      expect(
+        listSupp.data.suppressions.some(
+          (s) => s.contactHash === suppRes.data.suppression.contactHash,
+        ),
+      ).toBe(true);
+
+      // 14-day cold touch cooldown via CrowdsourcingEngine
+      const engine = new CrowdsourcingEngine({ store, clock });
+      const coldHuman = await store.upsertHuman({
+        handleOrEmailHmac: "p3:cold-cooldown-target",
+        displayLabel: "Cold Target",
+        contactEmail: "cold-target@example.com",
+        channel: "email",
+        role: "applicant",
+        city: "nyc",
+        lowestAge: 28,
+      });
+
+      const firstCold = await engine.queueOutreach({
+        campaignId: seededCampaignId,
+        agentId: sloaneId,
+        humanId: coldHuman.id,
+        channel: "email",
+        tier: 1,
+        subject: "First cold intro",
+        bodyText: "Quick 18+ local invite via go.slop.date",
+      });
+      expect(firstCold.status).toBe("queued");
+      await store.recordContactTouchpoint({
+        contactHash: coldHuman.handleOrEmailHmac,
+        campaignId: seededCampaignId,
+        surface: "outreach",
+        isCold: true,
+        answered: false,
+      });
+
+      // Immediate second cold outreach (< 14 days) MUST be blocked by cold cooldown!
+      const secondCold = await engine.queueOutreach({
+        campaignId: seededCampaignId,
+        agentId: sloaneId,
+        humanId: coldHuman.id,
+        channel: "email",
+        tier: 1,
+        subject: "Too-soon second cold intro",
+        bodyText: "Following up 1 minute later via go.slop.date",
+      });
+      expect(secondCold.status).toBe("blocked_policy");
+    },
+    TEST_TIMEOUT,
+  );
+
+  test(
+    "20. Pass-3 LLM Lifecycle: PromptCache hit, deterministic skip, trajectories in PG, LeakGuard turn burn & Dafny daily cap",
+    async () => {
+      let llmCalls = 0;
+      const testLlm: LLM = {
+        chat(messages): Promise<string> {
+          llmCalls += 1;
+          const userText = messages[messages.length - 1]?.content ?? "";
+          if (userText.includes("TRIGGER_LEAK")) {
+            return Promise.resolve("Call +1-212-555-0199 privately for the secret list.");
+          }
+          return Promise.resolve("18+ local NYC invitation via go.ntwrk.party #Ad");
+        },
+      };
+
+      const surplusAgent = await store.upsertAgent({
+        id: "agent-operator",
+        personaId: "operator",
+        displayName: "The Operator",
+        appId: "ntwrk",
+        provider: "surplus",
+        failoverProvider: "claude",
+        authMode: "api",
+        sessionRef: "api:surplus:p3-test",
+        dailyTurnCap: 80,
+        turnsUsedToday: 0,
+        status: "idle",
+      });
+
+      const currentDayIso = new Date(clock.now()).toISOString().slice(0, 10);
+      const baselineUsage = await store.getDailyLlmUsage({ dayIso: currentDayIso });
+      const manager = new AgentLifecycleManager({
+        store,
+        clock,
+        env: {},
+        dryRun: false,
+        llmClient: testLlm,
+        dailyTokenCap: baselineUsage.totalTokens + 550,
+        dailyCostCapMicros: baselineUsage.costMicros + 500_000,
+      });
+
+      // 1. Deterministic zero-token skip (no LLM call, 0 tokens)
+      const detRes = await manager.dispatchTurn(surplusAgent.id, "STOP emailing me", {
+        campaignId: seededCampaignId,
+        deterministicTaskHint: "opt_out_check",
+      });
+      expect(detRes.ok).toBe(true);
+      expect(detRes.deterministicRule).toBe("opt_out_check");
+      expect(detRes.inputTokens).toBe(0);
+      expect(llmCalls).toBe(0);
+
+      // 2. First real prompt hits LLM; identical second prompt hits PromptCache (0 tokens)
+      const p1 = await manager.dispatchTurn(surplusAgent.id, "Draft 18+ SoHo salon invite", {
+        campaignId: seededCampaignId,
+        estimatedOutputTokens: 80,
+      });
+      expect(p1.ok).toBe(true);
+      expect(p1.cached).toBe(false);
+      expect(llmCalls).toBe(1);
+
+      const p2 = await manager.dispatchTurn(surplusAgent.id, "Draft 18+ SoHo salon invite", {
+        campaignId: seededCampaignId,
+        estimatedOutputTokens: 80,
+      });
+      expect(p2.ok).toBe(true);
+      expect(p2.cached).toBe(true);
+      expect(p2.inputTokens).toBe(0);
+      expect(llmCalls).toBe(1);
+
+      // 3. LeakGuard-blocked output STILL consumes turn, is NOT cached, and persists leak_blocked trajectory
+      const beforeLeak = await store.getAgent(surplusAgent.id);
+      const leakRes = await manager.dispatchTurn(surplusAgent.id, "TRIGGER_LEAK draft", {
+        campaignId: seededCampaignId,
+        estimatedOutputTokens: 80,
+      });
+      expect(leakRes.ok).toBe(false);
+      expect(leakRes.blockedReason).toBe("leak_guard_blocked");
+      const afterLeak = await store.getAgent(surplusAgent.id);
+      expect(afterLeak?.turnsUsedToday).toBe((beforeLeak?.turnsUsedToday ?? 0) + 1);
+
+      // 4. Exceeding dailyTokenCap trips Dafny llmBudgetWithinCaps breaker
+      let blockedCount = 0;
+      for (let i = 0; i < 8; i += 1) {
+        const r = await manager.dispatchTurn(
+          surplusAgent.id,
+          `Unique P3 budget test prompt #${i} with enough tokens to trip cap`,
+          { campaignId: seededCampaignId, skipCache: true, estimatedOutputTokens: 150 },
+        );
+        if (!r.ok && r.blockedReason === "daily_token_cap_exceeded") {
+          blockedCount += 1;
+        }
+      }
+      expect(blockedCount).toBeGreaterThan(0);
+
+      // Verify HTTP endpoints return persisted Postgres LLM usage & trajectories
+      const usageRes = await api<{
+        usage: { calls: number; cachedCalls: number; leakBlockedCalls: number; budgetBlockedCalls: number };
+        caps: { dailyTokenCap: number; dailyCostCapMicros: number };
+      }>("GET", `/api/llm/usage?agentId=${encodeURIComponent(surplusAgent.id)}`);
+      expect(usageRes.status).toBe(200);
+      expect(usageRes.data.usage.calls).toBeGreaterThanOrEqual(5);
+      expect(usageRes.data.usage.leakBlockedCalls).toBeGreaterThanOrEqual(1);
+      expect(usageRes.data.usage.budgetBlockedCalls).toBeGreaterThanOrEqual(1);
+
+      const trajRes = await api<{ trajectories: Array<{ id: string; status: string }> }>(
+        "GET",
+        `/api/llm/trajectories?agentId=${encodeURIComponent(surplusAgent.id)}&limit=25`,
+      );
+      expect(trajRes.status).toBe(200);
+      expect(trajRes.data.trajectories.length).toBeGreaterThanOrEqual(5);
+    },
+    TEST_TIMEOUT,
+  );
+
+  test(
+    "21. Pass-3 Security Closures (B-01 BD PATCH, B-02 Video Lint Stage Gate, VIP Weak Hook 400) & Bandit T3 Attribution",
+    async () => {
+      // B-01: PATCH /api/bd/:id must reject stage and contractHash bypasses
+      const bdCreated = await api<{ deal: { id: string } }>("POST", "/api/bd", {
+        campaignId: seededCampaignId,
+        city: "nyc",
+        venueName: "B-01 Security Test Bar",
+        vertical: "slop",
+        offeredCents: 12_000,
+      });
+      expect(bdCreated.status).toBe(201);
+      const bdId = bdCreated.data.deal.id;
+
+      const stageBypass = await api("PATCH", `/api/bd/${bdId}`, { stage: "live" });
+      expect(stageBypass.status).toBe(400);
+      const hashBypass = await api("PATCH", `/api/bd/${bdId}`, { contractHash: "a".repeat(64) });
+      expect(hashBypass.status).toBe(400);
+
+      // B-02: POST /api/videos/:id/stage must block advancing failing-lint video to voice_render/published
+      const badVid = await api<{ asset: { id: string } }>("POST", "/api/videos", {
+        campaignId: seededCampaignId,
+        agentId: sloaneId,
+        title: "Unsafe Video Asset",
+        hook: "Hey high schoolers text 212-555-0199 now",
+        script: "Prom date hookup without disclosure",
+        stage: "script",
+        ftcDisclosed: false,
+      });
+      expect(badVid.status).toBe(201);
+      const badAdvance = await api("POST", `/api/videos/${badVid.data.asset.id}/stage`, {
+        stage: "published",
+      });
+      expect(badAdvance.status).toBe(400);
+
+      // VIP fail-closed: weak/raw DB slug hook rejected with 400
+      const vipCreated = await api<{ prospect: { id: string } }>("POST", "/api/vips", {
+        campaignId: seededCampaignId,
+        city: "nyc",
+        name: "Dr. Samira Patel",
+        archetype: "startup_founder",
+        organization: "Kernel Labs",
+        publicSource: "SEC Form D",
+      });
+      expect(vipCreated.status).toBe(201);
+      const weakInvite = await api("POST", `/api/vips/${vipCreated.data.prospect.id}/invite`, {
+        neighborhood: "SoHo",
+        proofOfWork1Line: "row_42",
+      });
+      expect(weakInvite.status).toBe(400);
+
+      // Bandit real T3 verifiedOutcomes increment + rebalance persistence
+      const arms = await store.listBanditArms(seededCampaignId);
+      const targetArm = arms.find((a) => a.status === "active");
+      expect(targetArm).toBeDefined();
+      if (!targetArm) throw new Error("Expected active bandit arm");
+      const beforeOutcomes = targetArm.verifiedOutcomes ?? 0;
+
+      const attrRes = await api("POST", "/api/attribution", {
+        campaignId: seededCampaignId,
+        armId: targetArm.id,
+        desireLane: "soulmate_dating",
+        eventKind: "signup_verified_adult",
+        city: "nyc",
+        appId: "slop",
+        count: 3,
+      });
+      expect(attrRes.status).toBe(201);
+
+      await store.recordAttributionEvent({
+        campaignId: seededCampaignId,
+        armId: targetArm.id,
+        desireLane: "soulmate_dating",
+        eventKind: "t3_match_verified",
+        city: "nyc",
+        appId: "slop",
+        count: 2,
+      });
+
+      const updatedArm = await store.getBanditArm(targetArm.id);
+      expect(updatedArm?.verifiedOutcomes).toBe(beforeOutcomes + 5);
+
+      const rebRes = await api("POST", "/api/bandit/rebalance", {
+        campaignId: seededCampaignId,
+        seed: "p3-t3-rebalance",
+      });
+      expect(rebRes.status).toBe(200);
+    },
+    TEST_TIMEOUT,
+  );
+
+  test(
+    "22. Pass-3 Ops Summary, Core Pressure, Offline Launch Simulator, Static UI ETag/304/gzip & Zero-PG CLI",
+    async () => {
+      const opsSummary = await api<{
+        overview: Record<string, unknown>;
+        cities: unknown[];
+        desireLanes: Record<string, unknown>;
+        llmUsage: Record<string, unknown>;
+        corePressure: Record<string, unknown>;
+      }>("GET", "/api/ops-summary");
+      expect(opsSummary.status).toBe(200);
+      expect(opsSummary.data.overview).toBeDefined();
+      expect(Array.isArray(opsSummary.data.cities)).toBe(true);
+      expect(opsSummary.data.desireLanes).toBeDefined();
+      expect(opsSummary.data.llmUsage).toBeDefined();
+      expect(opsSummary.data.corePressure).toBeDefined();
+
+      const pressure = await api<{
+        mode: string;
+        bridgeHealthy: boolean;
+        paused: boolean;
+        signals: unknown[];
+      }>("GET", "/api/core-pressure");
+      expect(pressure.status).toBe(200);
+      expect(pressure.data.bridgeHealthy).toBe(true);
+      expect(Array.isArray(pressure.data.signals)).toBe(true);
+
+      const simRes = await api<{
+        ok: boolean;
+        summary: {
+          allBlockingPass: boolean;
+          blockingTotal: number;
+          blockingPassed: number;
+          digest: string;
+        };
+      }>("POST", "/api/simulate/launch", {
+        seed: 1,
+        days: 14,
+        cities: ["nyc", "sf"],
+      });
+      expect(simRes.status).toBe(200);
+      expect(simRes.data.ok).toBe(true);
+      expect(simRes.data.summary.allBlockingPass).toBe(true);
+      expect(simRes.data.summary.blockingTotal).toBeGreaterThanOrEqual(11);
+      expect(simRes.data.summary.digest).toHaveLength(16);
+
+      // Static UI caching: ETag, 304 Not Modified, and gzip compression on app.css & app.js
+      for (const assetPath of ["/assets/app.css", "/assets/app.js"]) {
+        const res1 = await fetch(`${baseUrl}${assetPath}`, {
+          headers: { "Accept-Encoding": "gzip" },
+        });
+        expect(res1.status).toBe(200);
+        const etag = res1.headers.get("etag");
+        expect(etag).toBeTruthy();
+        expect(res1.headers.get("cache-control")).toContain("max-age");
+        expect(res1.headers.get("content-encoding")).toBe("gzip");
+        await res1.arrayBuffer();
+
+        const res304 = await fetch(`${baseUrl}${assetPath}`, {
+          headers: { "If-None-Match": etag ?? "" },
+        });
+        expect(res304.status).toBe(304);
+      }
+
+      // Offline CLI commands succeed with DATABASE_URL & NETWORK_DATABASE_URL stripped (zero PG boot!)
+      const offlineEnv = { ...process.env };
+      delete offlineEnv.DATABASE_URL;
+      delete offlineEnv.NETWORK_DATABASE_URL;
+      delete offlineEnv.SURPLUS_API_KEY;
+      delete offlineEnv.OPENAI_API_KEY;
+
+      for (const cliArgs of [
+        ["--import", "tsx", "apps/marketing/src/cli.ts", "cities", "--json"],
+        ["--import", "tsx", "apps/marketing/src/cli.ts", "doctor", "--json"],
+        ["--import", "tsx", "apps/marketing/src/cli.ts", "sim", "--quick", "--json"],
+      ]) {
+        const { stdout } = await execFileAsync(process.execPath, cliArgs, {
+          cwd: process.cwd(),
+          env: offlineEnv,
+          timeout: 30_000,
+        });
+        const parsed = JSON.parse(stdout) as { ok?: boolean };
+        expect(parsed.ok).toBe(true);
       }
     },
     TEST_TIMEOUT,

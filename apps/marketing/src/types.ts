@@ -8,7 +8,39 @@ export type { Clock };
 export type AppId = "slop" | "peon" | "friends" | "ntwrk" | "all";
 export type BrandAppId = "slop" | "peon" | "friends" | "ntwrk";
 export type SupportedCity = "nyc" | "sf" | "la" | "chicago" | "miami" | "austin" | "london";
+export type CityCode = string;
 export type ImplementationTier = 1 | 2 | 3 | 4;
+
+export type CoreDesireLaneId =
+  | "love_dating"
+  | "friends_belonging"
+  | "career_money"
+  | "status_scenes"
+  | "builders_founders"
+  | "creative_cultural"
+  | "fitness_sports"
+  | "local_hosts"
+  | "campus_early_career"
+  | "diaspora_newcomers";
+
+export type DesireLaneId = CoreDesireLaneId | (string & {});
+
+export type CityLaunchStage =
+  | "scout"
+  | "seed_waitlist"
+  | "soft_launch"
+  | "density_growth"
+  | "mature";
+
+export type LlmTrajectoryStatus =
+  | "ok"
+  | "cached"
+  | "fallback"
+  | "budget_blocked"
+  | "leak_blocked"
+  | "error";
+
+export type ContactTouchSurface = "outreach" | "vip" | "bd" | "agent";
 
 export type RiskZone = "zone_1_green" | "zone_2_amber" | "zone_3_red";
 export type RiskDial = "conservative" | "balanced" | "blitz" | "lockdown";
@@ -159,6 +191,7 @@ export interface Campaign {
   name: string;
   city: string;
   appId: AppId;
+  desireLane?: DesireLaneId | null;
   riskZone: RiskZone;
   riskDial: RiskDial;
   monthlyBudgetCents: number;
@@ -228,6 +261,7 @@ export interface ChannelAccount {
 export interface HumanPartner {
   id: string;
   handleOrEmailHmac: string;
+  contactEmail?: string | null;
   displayLabel: string;
   channel: OutreachChannel;
   role: HumanRole;
@@ -247,6 +281,7 @@ export interface MarketingTask {
   tier: ImplementationTier;
   taskKind: TaskKind;
   city: string;
+  desireLane?: DesireLaneId | null;
   title: string;
   briefText: string;
   vendorChannel: VendorChannel;
@@ -293,12 +328,26 @@ export interface OutreachMessage {
   createdAt: string;
 }
 
+export type AttributionEventKind =
+  | "qr_scan"
+  | "site_visit"
+  | "signup_started"
+  | "signup_verified_adult"
+  | "video_view"
+  | "first_match_accepted"
+  | "irl_meeting_confirmed"
+  | "second_meetup_retained"
+  | "intro_or_hire_unlocked"
+  | "t3_match_verified";
+
 export interface AttributionEvent {
   id: string;
   campaignId: string;
   taskId: string | null;
+  armId?: string | null;
+  desireLane?: DesireLaneId | null;
   qrBatchCode: string | null;
-  eventKind: "qr_scan" | "site_visit" | "signup_started" | "signup_verified_adult" | "video_view";
+  eventKind: AttributionEventKind;
   city: string;
   appId: BrandAppId;
   count: number;
@@ -338,11 +387,13 @@ export interface BanditArm {
   armKey: string;
   label: string;
   track: string;
+  desireLane?: DesireLaneId | null;
   alpha: number;
   beta: number;
   weight: number;
   spendCents: number;
   signups: number;
+  verifiedOutcomes?: number;
   stopEvents: number;
   totalContacts: number;
   status: BanditArmStatus;
@@ -353,6 +404,7 @@ export interface BdDeal {
   id: string;
   campaignId: string;
   city: string;
+  desireLane?: DesireLaneId | null;
   venueName: string;
   vertical: AppId;
   contactEmail: string | null;
@@ -386,6 +438,7 @@ export interface VipProspect {
   id: string;
   campaignId: string;
   city: string;
+  desireLane?: DesireLaneId | null;
   name: string;
   archetype: string;
   organization: string | null;
@@ -403,6 +456,7 @@ export interface VideoAsset {
   id: string;
   campaignId: string;
   agentId: string | null;
+  desireLane?: DesireLaneId | null;
   title: string;
   hook: string;
   script: string;
@@ -444,4 +498,166 @@ export interface DiscoveredLead {
   contactHint: string | null;
   score: number;
   discoveredAt: string;
+}
+
+export interface DesireLane {
+  id: DesireLaneId;
+  label: string;
+  appId: BrandAppId;
+  universalDesire: string;
+  copyAngles: string[];
+  vipArchetypes: string[];
+  venueCategories: string[];
+  videoFormats: string[];
+  discoveryQueries: string[];
+  adultOnly: true;
+}
+
+export interface CityPack {
+  code: string;
+  name: string;
+  country: string;
+  region: string;
+  currency: string;
+  locale: string;
+  tz: string;
+  platformActive: boolean;
+  stage: CityLaunchStage;
+  targetAdultDensity: number;
+  neighborhoods: string[];
+  culturalHooks: string[];
+  venues: string[];
+  localMedia: string[];
+  universities: string[];
+  desireLaneWeights: Record<string, number>;
+  complianceNotes: string[];
+  updatedAt?: string;
+}
+
+export interface CityPackOverride {
+  code: string;
+  stage: CityLaunchStage;
+  config: Record<string, unknown>;
+  updatedAt: string;
+}
+
+export interface LlmTrajectory {
+  id: string;
+  agentId: string | null;
+  campaignId: string | null;
+  provider: string;
+  model: string;
+  promptHash: string;
+  inputTokens: number;
+  outputTokens: number;
+  cached: boolean;
+  costMicros: number;
+  latencyMs: number;
+  status: LlmTrajectoryStatus;
+  failoverChain: string | null;
+  leakBlocked: boolean;
+  createdAt: string;
+}
+
+export type LlmTrajectoryRecord = LlmTrajectory;
+
+export interface DailyLlmUsage {
+  day: string;
+  calls: number;
+  cachedCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  costMicros: number;
+  leakBlockedCalls: number;
+  budgetBlockedCalls: number;
+}
+
+export interface ContactSuppression {
+  contactHash: string;
+  reason: string;
+  sourceChannel: string;
+  isMinor: boolean;
+  suppressedAt: string;
+}
+
+export type ContactSuppressionRecord = ContactSuppression;
+
+export interface ContactTouchpoint {
+  id: string;
+  contactHash: string;
+  campaignId: string | null;
+  surface: ContactTouchSurface;
+  isCold: boolean;
+  replied: boolean;
+  touchedAt: string;
+}
+
+export interface ContactTouchpointStats {
+  contactHash: string;
+  daysSinceLastCold: number;
+  coldTouches30d: number;
+  unansweredColdStreak: number;
+  opTouchesToday: number;
+  lastTouchedAt: string | null;
+}
+
+export interface ContactFenceVerdict {
+  allowed: boolean;
+  banned: boolean;
+  globallyStopped: boolean;
+  knownMinor: boolean;
+  recycledHold: boolean;
+  reason?: string;
+  source: "platform_pg" | "standalone_fallback";
+}
+
+export type NetworkFenceVerdict = ContactFenceVerdict;
+
+export interface CityAppDemandSignal {
+  appId: BrandAppId;
+  city: string;
+  activeAdultBucket: number;
+  matchingEnabled: boolean;
+  openReviewCount: number;
+  overdueReviewCount: number;
+  outboundWaitingCount: number;
+  lineRestricted: boolean;
+  closedVenueCount: number;
+  queuePressurePaused: boolean;
+}
+
+export interface NetworkSupplyDemandSnapshot {
+  capturedAt: string;
+  source: "platform_pg" | "standalone_fallback";
+  signals: CityAppDemandSignal[];
+  anyQueuePressurePaused: boolean;
+  anyLineRestricted: boolean;
+}
+
+export interface BdVenueCandidate {
+  id: string;
+  dealId: string;
+  city: string;
+  platformActiveCity: boolean;
+  neighborhood: string;
+  name: string;
+  address: string;
+  category: string;
+  vertical: BrandAppId;
+  isPublic: true;
+  allAges: false;
+  ageMin: number;
+  isBarOnly: boolean;
+  isAlcoholCentric: boolean;
+  alcoholOptional: boolean;
+  groupScore: number;
+  dateScore: number;
+  personaPriors: Record<string, never>;
+  source: "marketing_bd_partner";
+  contactEmail: string | null;
+  businessPhone: string | null;
+  contractHash: string;
+  qrBatchId: string | null;
+  createdAt: string;
 }

@@ -11,7 +11,7 @@ import {
 } from "../src/bandit.ts";
 
 describe("apps/marketing cities sync with @thenetwork/core CitySpec", () => {
-  test("all 5 launch cities match @thenetwork/core getCity(id) for name, tz, and isPrimaryLaunch", () => {
+  test("all 5 launch cities match @thenetwork/core getCity(id) for name, tz, and launch status", () => {
     expect(LAUNCH_CITIES).toHaveLength(5);
 
     for (const id of LAUNCH_CITIES) {
@@ -20,16 +20,24 @@ describe("apps/marketing cities sync with @thenetwork/core CitySpec", () => {
 
       const mkt = CITY_CONFIGS[id];
       expect(mkt).toBeDefined();
-      expect(getCityConfig(id)).toBe(mkt);
+      expect(getCityConfig(id)).toEqual(mkt);
       expect(mkt.code).toBe(core!.id);
       expect(mkt.label).toBe(core!.name);
       expect(mkt.timezone).toBe(core!.tz);
-      expect(mkt.isPrimaryLaunch).toBe(true);
 
       const readiness = canActivateCityExpansion(id, 0, 0);
-      expect(readiness.isPrimaryLaunch).toBe(true);
-      expect(readiness.ready).toBe(true);
-      expect(readiness.blockers).toEqual([]);
+      if (id === "nyc") {
+        expect(mkt.launchStatus).toBe("active");
+        expect(mkt.isPrimaryLaunch).toBe(true);
+        expect(readiness.isPrimaryLaunch).toBe(true);
+        expect(readiness.ready).toBe(true);
+        expect(readiness.blockers).toEqual([]);
+      } else {
+        expect(mkt.launchStatus).toBe("waitlist");
+        expect(readiness.isPrimaryLaunch).toBe(false);
+        expect(readiness.ready).toBe(false);
+        expect(readiness.blockers.length).toBeGreaterThan(0);
+      }
     }
   });
 

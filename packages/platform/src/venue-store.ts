@@ -7,6 +7,7 @@ import {
   type AppId,
   type ArrivalState,
   type City,
+  type CityId,
   type Clock,
   type NoiseLevel,
   type VenueCategory,
@@ -109,7 +110,7 @@ async function withTx<T>(pool: SQL, fn: (tx: SQL) => Promise<T>): Promise<T> {
 }
 
 export interface VenueListFilter {
-  city?: City;
+  city?: CityId;
   neighborhood?: string;
   status?: VenueStatus | VenueStatus[];
   maxPriceTier?: VenuePriceTier;
@@ -132,7 +133,7 @@ export interface VenueExtraMeta {
 export interface VenueCacheEntry {
   cacheKey: string;
   provider: string;
-  city: City;
+  city: CityId;
   payload: unknown;
   resultCount: number;
   fetchedAt: number;
@@ -237,10 +238,10 @@ function computeDefaultGroupScore(v: VenueRecord): number {
 }
 
 function venueToDbRow(tx: SQL, venue: VenueRecord, extra: VenueExtraMeta = {}): Record<string, unknown> {
-  const ageMin = venue.ageMin ?? 0;
   const isBarOnly = Boolean(venue.isBarOnly);
   const isAlcoholCentric = venue.isAlcoholCentric ?? isBarOnly;
-  const allAges = venue.allAges ?? (!isBarOnly && !isAlcoholCentric && ageMin <= 0);
+  const ageMin = venue.ageMin ?? (isBarOnly || isAlcoholCentric ? 21 : 0);
+  const allAges = venue.allAges ?? (!isBarOnly && !isAlcoholCentric && ageMin <= 13);
   const googlePlaceId = extra.googlePlaceId ?? (venue.source === "google_places" ? (venue.externalPlaceId ?? null) : null);
   const yelpId = extra.yelpId ?? (venue.source === "listing" && venue.externalPlaceId ? venue.externalPlaceId : null);
   const groupScore = extra.groupScore ?? computeDefaultGroupScore(venue);

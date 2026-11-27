@@ -21,14 +21,16 @@
 //  - Network capital. Every NC ledger event goes to one typed emitter (onLedger); the levers are read
 //    through an optional reader (capital.ts); gaming flags wait in the review queue as "fraud" items.
 import {
-  ADULT_AGE, ALL_SEED_VENUES, canBeMatched, canJoin, checkExternalEventT24Quorum, checkPublishExternalEvent, CITY_TZ, computeFollowupTimestamp, DAY,
-  directAgreementIdiom, evaluateDensityTier, evaluateExternalSourcingTrigger,
-  evaluateFollowupSend, evaluateVenueRedLines, HOUR, isCity, isLaunchCity, isMinor, localParts, LeakGuard, MINUTE,
-  pickPrimaryAndBackupVenue, quoteStillOpen, selectWorkIntroChannel, UNDER_MIN_AGE_DECLINE, validAge,
-  type Category, type City, type DensityTier, type ExternalEventDraft, type ExternalQuorumDecision, type Facet, type Intent,
+  ADULT_AGE, ALCOHOL_CENTRIC_CATEGORIES, ALL_SEED_VENUES, canBeMatched, canJoin, checkExternalEventT24Quorum, checkPublishExternalEvent,
+  CITY_TZ, cityTimezone, computeFollowupTimestamp, DAY, directAgreementIdiom, evaluateArrivalRelaySafe, evaluateBackupPivotV2, evaluateDensityTier,
+  evaluateExternalSourcingTrigger, evaluateFollowupSend, evaluateVenueQuarantine, evaluateVenueRedLines, HOUR, isCity, isLaunchCity, isMinor,
+  isVenueOpenAt, localParts, LeakGuard, MINUTE, pickPrimaryAndBackupVenue, proposeTopOne, quoteStillOpen, rejectAndPivot, rerankTopVenuesWithLLM,
+  seedVenuesForCity, selectWorkIntroChannel, UNDER_MIN_AGE_DECLINE, validAge, venueHardEligible,
+  type Category, type City, type CityId, type DensityTier, type ExternalEventDraft, type ExternalQuorumDecision, type Facet, type Intent,
   type LaunchCity, type LeakOptions, type LLM, type MemberId, type MemberVenuePrefs, type NetworkEvent,
-  type ParticipationState, type Preferences, type Presence, type PrimaryBackupVenuePick, type Proposal, type ScoreComponents,
-  type VenueNoiseLevel, type VenuePriceTier, type VenueRecord, type WorkIntroState, type WorldSnapshot,
+  type ParticipationState, type PivotFilterOptions, type Preferences, type Presence, type PrimaryBackupVenuePick, type Proposal,
+  type ScoreComponents, type TopOneSuggestionState, type VenueLLMRerankResult, type VenueNoiseLevel, type VenuePriceTier, type VenueRecord,
+  type VenueRejectionReason, type WorkIntroState, type WorldSnapshot,
 } from "@thenetwork/core";
 import {
   attention, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, existingFriendPlanPairValues, friendsKit, JudgeCache, localEmbed, networkPack, plans, resolveConfig, resolvePlans, seatFills,
@@ -58,7 +60,7 @@ import {
 } from "../../core/src/generated/meetingSettlement.ts";
 import { numberAsk, relayThreadOpen } from "../../core/src/generated/relayDecision.ts";
 import { lateArrivalBookingCurrent, lateArrivalBookingReceiptCurrent, lateArrivalMayDispatch, lateArrivalMayReport, lateArrivalReportTimeCurrent, lateArrivalText } from "../../core/src/generated/groupLateArrival.ts";
-import { isLateArrivalPairBooking, isLateArrivalReport, lateArrivalDeliveryId, type LateArrivalDelivery } from "./group-late-arrival.ts";
+import { isLateArrivalAdmitted, isLateArrivalPairBooking, isLateArrivalReport, lateArrivalDeliveryId, type LateArrivalDelivery } from "./group-late-arrival.ts";
 import { calendarPreferenceCommand, readCalendarFreeBusy, type CalendarFreeBusyAuthority } from "../../core/src/calendar-free-busy.ts";
 import { calendarPreferenceMayApply, calendarSchedulingPurpose } from "../../core/src/generated/calendarFreeBusy.ts";
 import { bookedCancellationAllowed, bookedCancellationPrefix, peerContactTypes } from "../../core/src/generated/outboundAdmission.ts";
@@ -173,7 +175,7 @@ import { brandOf, copy, copyFor, type Copy, whenPhrase } from "./copy.ts";
 import { APPS, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { lowestAge } from "../../platform/src/age.ts";
 import { allNeighborhoods, findCityNeighborhood, meetingSpot, nearbyVenues, NEIGHBORHOOD, NEIGHBORHOODS, neighborhood, travelMinutes, travelMinutesInCity, VENUES, venuesForCity, type Venue } from "./geo.ts";
-import { RelayDesk, withdrawsSwap, type RelayAsk, type RelayCallOptions, type RelayHost, type RelayMatch, type RelayMember, type RelayOutcome, type RelayState } from "./relay.ts";
+import { isPanicHaltedState, RelayDesk, withdrawsSwap, type RelayAsk, type RelayCallOptions, type RelayHost, type RelayMatch, type RelayMember, type RelayOutcome, type RelayState } from "./relay.ts";
 import { VenueManager, type ExternalVenueProvider, type VenueManagerState } from "./venue-manager.ts";
 import { MeetupCoordinator, type MeetupCoordHost, type MeetupCoordState } from "./meetup-coord.ts";
 import type { RelayRecord } from "../../engine/src/relay.ts";
@@ -561,6 +563,37 @@ export interface NetworkOptions {
    * the next snapshot makes it a job seat. Without it, a confirmed post is logged and not kept.
    */
   onPosting?: (p: JobPosting) => void;
+  /** Optional hydrated venue pool, member visit/rejection history, and cross-app concurrent headcounts (zero SQL in core). */
+  venues?: readonly VenueRecord[];
+  memberVenueHistory?: ReadonlyMap<MemberId, MemberVenueHistory>;
+  concurrentHeadcountByVenue?: Record<string, number>;
+}
+
+export interface MemberVenueHistory {
+  visited: readonly string[];
+  rejected: readonly string[];
+}
+
+export interface VenueRuntimeContext {
+  venues?: readonly VenueRecord[];
+  memberVenueHistory?: ReadonlyMap<MemberId, MemberVenueHistory>;
+  concurrentHeadcountByVenue?: Record<string, number>;
+}
+
+const SHORT_CIRCUIT_AWAITING = new Set(["probe", "checkin", "booked", "confirmation", "gathering"]);
+const BARE_YES_NO_RE = /^(?:yes|yeah|yep|yup|ya|sure|definitely|absolutely|down|i'?m down|i'?m in|count me in|no|nope|nah|pass|can'?t|not this time|no thanks)[.!?]*$/i;
+const BARE_OPTION_KEYS_RE = /^(?:(?:option\s+)?[a-d](?:\s*(?:,|or|and|\/|&)\s*(?:option\s+)?[a-d])*)[.!?]*$/i;
+const EXTRA_CLAUSE_RE = /[;\n]|\b(?:but|also|actually|except|though|however|because|moved|live|living|sober|halal|kosher|allerg|years?\s+old)\b/i;
+
+export function classifyVenueRejection(body: string): VenueRejectionReason {
+  const t = body.trim().toLowerCase();
+  if (/\b(?:sober|alcohol|bar|brewery|wine|halal|kosher|allerg|peanut|shellfish|gluten|celiac|wheelchair|stairs|smoke|smoking|too dark|unsafe|daytime)\b/.test(t)) return "red_line";
+  if (/\b(?:already been|been there|went there|just went|go there all the time|too familiar)\b/.test(t)) return "already_been";
+  if (/\b(?:too far|far|commute|train|subway|drive|closer|neighborhood|other side|across town)\b/.test(t)) return "too_far";
+  if (/\b(?:price|pricey|expensive|cheaper|budget|cost|spend|fancy)\b/.test(t)) return "price";
+  if (/\b(?:time|earlier|later|busy|can'?t make|reschedule|another day|wrong day)\b/.test(t)) return "bad_time";
+  if (/\b(?:loud|noisy|quiet|vibe|crowded|packed|chill|cozy|coffee|tea|casual|bar-y|stuffy)\b/.test(t)) return "wrong_vibe";
+  return "bare_no";
 }
 
 /**
@@ -1255,8 +1288,9 @@ export class ConsentNetwork implements NetworkUnderTest {
   readonly judgeReviewer: string;
   private flagged = new Map<string, { reason: JudgeReasonCode; at: number }>();
   private snapAvoid?: { snap: WorldSnapshot; set: Set<string> };
-  private opts: Required<Omit<NetworkOptions, "inlineJudge" | "judgeReviewer" | "app" | "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "plansConfig" | "understand" | "workIntroEmailOf" | "venueProvider" | "arrivalBriefs" | "onAgeStated" | "onMinorSignal" | "onTeenBar" | "onTeenPairAvoid" | "engineLLM" | "pack" | "allowedCategories" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "lateArrivalTurnAllowed" | "calendarFreeBusy" | "onPrivateInviteTurn" | "homeHelpIntakePrompt">>
+  private opts: Required<Omit<NetworkOptions, "inlineJudge" | "judgeReviewer" | "app" | "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "plansConfig" | "understand" | "workIntroEmailOf" | "venueProvider" | "arrivalBriefs" | "onAgeStated" | "onMinorSignal" | "onTeenBar" | "onTeenPairAvoid" | "engineLLM" | "pack" | "allowedCategories" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "lateArrivalTurnAllowed" | "calendarFreeBusy" | "onPrivateInviteTurn" | "homeHelpIntakePrompt" | "venues" | "memberVenueHistory" | "concurrentHeadcountByVenue">>
     & Pick<NetworkOptions, "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "understand" | "workIntroEmailOf" | "venueProvider" | "arrivalBriefs" | "onAgeStated" | "onMinorSignal" | "onTeenBar" | "onTeenPairAvoid" | "engineLLM" | "pack" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "lateArrivalTurnAllowed" | "calendarFreeBusy" | "onPrivateInviteTurn" | "homeHelpIntakePrompt">;
+  private venueRuntimeCtx: VenueRuntimeContext = {};
   /** The categories this app may start opportunities in (ALLOWED_CATEGORIES). */
   readonly allowedCategories: ReadonlySet<Category>;
   /** A service read for the current unit. This authority is never imported or exported with state. */
@@ -1284,6 +1318,11 @@ export class ConsentNetwork implements NetworkUnderTest {
       lateArrivalTurnAllowed: opts.lateArrivalTurnAllowed,
       calendarFreeBusy: opts.calendarFreeBusy,
       homeHelpIntakePrompt: opts.homeHelpIntakePrompt,
+    };
+    this.venueRuntimeCtx = {
+      ...(opts.venues !== undefined ? { venues: opts.venues } : {}),
+      ...(opts.memberVenueHistory !== undefined ? { memberVenueHistory: opts.memberVenueHistory } : {}),
+      ...(opts.concurrentHeadcountByVenue !== undefined ? { concurrentHeadcountByVenue: opts.concurrentHeadcountByVenue } : {}),
     };
     this.venues = new VenueManager({ provider: opts.venueProvider });
     this.meetups = new MeetupCoordinator(this.meetupHost());
@@ -1369,6 +1408,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     });
     if (meetings.length !== 1) return false;
     const { opp, roster } = meetings[0]!;
+    if (!isLateArrivalAdmitted({ panicTriggered: this.isOppPanicHalted(opp.id, [member.id, ...roster]) })) return false;
     const revision = opp.scheduleRevision ?? 0;
     if (!lateArrivalMayReport(true, true, true, meetings.length, opp.lateArrivalReported?.[member.id] === revision)) return true;
     opp.lateArrivalReported = { ...opp.lateArrivalReported, [member.id]: revision };
@@ -1376,6 +1416,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     let queued = false;
     for (const to of roster) {
       if (to === member.id || !this.lateArrivalPartyCurrent(to)) continue;
+      if (!isLateArrivalAdmitted({
+        panicTriggered: this.relayDesk.isPanicTriggered(member.id, opp.id) || this.relayDesk.isPanicTriggered(to, opp.id),
+        blocked: this.blocked(member.id, to),
+      })) continue;
       const delivery = { app: this.app.id, oppId: opp.id, meetingAt: opp.meetingAt!, revision, from: member.id, to };
       const result = this.send(this.members.get(to)!, notice, { type: "relay", proposalId: opp.id }, "relay", {
         key: lateArrivalDeliveryId(delivery), about: [member.id, to], hook: { t: "group_late", ...delivery },
@@ -1427,6 +1471,28 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   private static readonly BARE_CONSENT_RE = /^(?:yes|yeah|yep|yup|ya|no|nope|nah|ok|okay|sure)[.!?]*$/i;
 
+  /** Short-circuit LLM understanding ONLY for active members sending trivial <=40-char ack/option-key/yes-no replies to structured prompts. */
+  private canShortCircuitUnderstand(
+    m: MemberState | undefined,
+    body: string,
+    aw: MemberState["awaiting"],
+    options: readonly TimeOption[] | undefined
+  ): boolean {
+    if (!m || m.stage !== "active") return false;
+    const trimmed = body.trim();
+    if (!trimmed || trimmed.length > 40) return false;
+    if (ConsentNetwork.BARE_CONSENT_RE.test(trimmed)) return true;
+    if (!aw || !SHORT_CIRCUIT_AWAITING.has(String(aw.kind))) return false;
+    const isBareOption = Boolean(options?.length) && BARE_OPTION_KEYS_RE.test(trimmed);
+    const isPureShort = isBareOption || (!EXTRA_CLAUSE_RE.test(trimmed) && (ACK_ONLY.test(trimmed) || BARE_YES_NO_RE.test(trimmed)));
+    if (!isPureShort) return false;
+    const c = classify(trimmed);
+    if (c.abuse.length || c.minorSignal || c.statedAge !== undefined || c.tags.length || c.desireId || c.notWanted?.length) return false;
+    const profile = extractProfile(trimmed);
+    if (profile.interests.length || profile.skills.length || profile.desireIds.length || profile.notWanted.length || profile.area) return false;
+    return true;
+  }
+
   /** The LLM reader on one message, with what the Network asked last. Never throws; undefined fails closed to the offline rules. */
   private async understandSafely(msg: InboundMessage): Promise<Understood | undefined> {
     const fn = this.opts.understand;
@@ -1435,7 +1501,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!m || m.stage === "new" || m.optedOut || m.account || !this.trust.ok(m.id) || this.reportHeld(m.id)) return undefined;
     const aw = m.awaiting;
     const options = aw?.kind === "probe" && aw.oppId ? this.opps.get(aw.oppId)?.offered?.[m.id] : undefined;
-    if (ConsentNetwork.BARE_CONSENT_RE.test(msg.body.trim())) return undefined;
+    if (this.canShortCircuitUnderstand(m, msg.body, aw, options)) return undefined;
     try { return await fn(msg.body, { city: this.networkCity(), ...(aw ? { awaiting: aw.kind } : {}), ...(options?.length ? { options } : {}) }); } catch { return undefined; }
   }
 
@@ -5226,6 +5292,14 @@ export class ConsentNetwork implements NetworkUnderTest {
       : this.meetingTime(o, now);
     const areas = o.participants.map(p => this.member(p).area);
     const fixedVenue = o.fixedVenue;
+    const participantPrefs = this.participantVenuePrefsOf(o.participants);
+    const anyRedLines = participantPrefs.some(p => p.hasRedLines);
+    const memberPrefs = participantPrefs.map(p => p.prefs);
+    const bookingCity: CityId = this.opts.city ?? "nyc";
+    const bookingTz = cityTimezone(bookingCity) ?? CITY_TZ.nyc;
+    const venuePool = this.venuePoolForCity(bookingCity);
+    const modeForOpp: "date" | "group" | "solo" | "professional" =
+      this.app.id === "peon" ? "professional" : o.participants.length >= 3 ? "group" : "date";
     const excludedIds = this.venues.excludedIdsFor(o.participants);
     const prefs = this.memberVenuePrefs(o.participants);
     const useVenuePrefs = city !== "nyc" || excludedIds.size > 0 || prefs.nonDrinker || prefs.maxBudgetTier !== undefined;
@@ -5234,9 +5308,28 @@ export class ConsentNetwork implements NetworkUnderTest {
         id: published.id, name: published.listing.venue, neighborhood: published.area ?? city, lat: published.listing.lat, lng: published.listing.lng,
       } : fixedVenue || o.teenRuleAt !== undefined ? undefined : this.opts.hooks?.venue?.({ ...this.hookOpp(o), meetingAt: at }, this.inputOnce());
       const teenFriendAllowed = o.teenRuleAt !== undefined;
-      const redLinePick = !packVenue && !fixedVenue && this.hasVenueRedLines(o.participants)
-        ? this.pickVenueWithRedLines(o.participants, at, {
-          mode: o.participants.length >= 3 ? "group" : "date",
+      let validatedPackVenue = packVenue;
+      let validatedFixedVenue = fixedVenue;
+      if (anyRedLines) {
+        if (validatedPackVenue && !published?.listing) {
+          const rec = this.findVenueRecordInPool(validatedPackVenue, venuePool);
+          if (!rec || !this.venueRecordPassesRedLines(rec, memberPrefs, at, bookingTz, teenFriendAllowed)) {
+            validatedPackVenue = undefined;
+          }
+        }
+        if (validatedFixedVenue) {
+          const rec = this.findVenueRecordInPool(validatedFixedVenue, venuePool);
+          if (!rec || !this.venueRecordPassesRedLines(rec, memberPrefs, at, bookingTz, teenFriendAllowed)) {
+            validatedFixedVenue = undefined;
+          }
+        }
+      }
+      const needsRedLinePick = anyRedLines && !validatedPackVenue && !validatedFixedVenue;
+      const redLinePick = needsRedLinePick
+        ? this.pickVenueWithRedLinesFromPrefs(o.participants, memberPrefs, at, {
+          city: bookingCity,
+          venues: venuePool,
+          mode: modeForOpp,
           targetHobbies: o.tags,
           teenFriendAllowed,
         })
@@ -5244,8 +5337,11 @@ export class ConsentNetwork implements NetworkUnderTest {
       const redLinePrimary = redLinePick?.primary && (!teenFriendAllowed || redLinePick.primary.venue.allAges === true)
         ? redLinePick.primary
         : undefined;
-      const spot: { venue: Pick<Venue, "id" | "name" | "neighborhood" | "lat" | "lng">; worst: number } = packVenue ? { venue: packVenue, worst: -1 }
-        : fixedVenue ? { venue: fixedVenue, worst: Math.max(0, ...areas.filter((a): a is string => !!a).map(a => travelMinutesInCity(city, a, fixedVenue.neighborhood) ?? 0)) }
+      if (needsRedLinePick && !redLinePrimary) {
+        return undefined;
+      }
+      const spot: { venue: Pick<Venue, "id" | "name" | "neighborhood" | "lat" | "lng">; worst: number } = validatedPackVenue ? { venue: validatedPackVenue, worst: -1 }
+        : validatedFixedVenue ? { venue: validatedFixedVenue, worst: Math.max(0, ...areas.filter((a): a is string => !!a).map(a => travelMinutesInCity(city, a, validatedFixedVenue.neighborhood) ?? 0)) }
         : redLinePrimary ? { venue: { id: redLinePrimary.venue.id, name: redLinePrimary.venue.name, neighborhood: redLinePrimary.venue.neighborhood, lat: redLinePrimary.venue.lat, lng: redLinePrimary.venue.lng }, worst: redLinePrimary.maxTravelMinutes }
         : meetingSpot(areas, o.category, o.tags, teenFriendAllowed, city, useVenuePrefs ? {
           excludeIds: excludedIds,
@@ -5254,7 +5350,7 @@ export class ConsentNetwork implements NetworkUnderTest {
           ...(city !== "nyc" ? { venues: this.venues.listVenues(city) } : {}),
         } : undefined);
       const backupVenueId = redLinePrimary ? redLinePick?.backup?.venue.id : undefined;
-      return { packVenue, spot, backupVenueId };
+      return { packVenue: validatedPackVenue, spot, backupVenueId };
     };
     const skipped = new Set<number>();
     let chosen = t ? place(t.at) : undefined;
@@ -5635,7 +5731,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (releases) {
         const sent = this.send(m, copy.declinedQuiet, { type: "cancellation", proposalId: o.id }, "cancellation", { key: `opportunity-release:${o.id}:${id}`, ...minorSend });
         if (released && sent !== "refused") released.sent++;
-      } else if (!wasProbing && status === "yes" && reason !== "blocked") {
+      } else if (!wasProbing && status === "yes" && reason !== "blocked" && reason !== "panic_exit") {
         this.send(m, copy.declinedQuiet, { type: "info", proposalId: o.id }, "cancellation", minorSend);
         told.add(id);
       } else if (minorClose && minorCloseTellsAcceptor(current, o.contacted.has(id), status === "available", m.minor, o.requester === id)) {
@@ -7982,7 +8078,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       const tz = o.meetingTimeZone ?? this.cityTz();
       const remaining = o.meetingAt - now;
       const sameLocalDay = localDateParts(now, tz).day === localDateParts(o.meetingAt, tz).day;
-      for (const id of o.seat ? [] : o.participants) {
+      const panicHalted = this.isOppPanicHalted(o.id, o.participants);
+      for (const id of o.seat || panicHalted ? [] : o.participants) {
         if (o.status.get(id) !== "yes" || remaining <= 0 || remaining > DAY) continue;
         const m = this.members.get(id);
         if (!m || !this.timingOk(m, "logistics", now)) continue;
@@ -10518,10 +10615,36 @@ export class ConsentNetwork implements NetworkUnderTest {
   relayContactShareFrom(outboundId: string): MemberId | undefined { return this.relayDesk.contactShareFrom(outboundId); }
   relaySenderOf(outboundId: string): MemberId | undefined { return this.relayDesk.senderOf(outboundId); }
 
+  /** Hydrate active venues, member visit/rejection history, and cross-app concurrent headcounts from the service shell (zero SQL in ConsentNetwork). */
+  setVenueRuntimeContext(ctx: VenueRuntimeContext): void {
+    this.venueRuntimeCtx = {
+      ...(ctx.venues !== undefined ? { venues: ctx.venues } : this.venueRuntimeCtx.venues !== undefined ? { venues: this.venueRuntimeCtx.venues } : {}),
+      ...(ctx.memberVenueHistory !== undefined ? { memberVenueHistory: ctx.memberVenueHistory } : this.venueRuntimeCtx.memberVenueHistory !== undefined ? { memberVenueHistory: this.venueRuntimeCtx.memberVenueHistory } : {}),
+      ...(ctx.concurrentHeadcountByVenue !== undefined ? { concurrentHeadcountByVenue: ctx.concurrentHeadcountByVenue } : this.venueRuntimeCtx.concurrentHeadcountByVenue !== undefined ? { concurrentHeadcountByVenue: this.venueRuntimeCtx.concurrentHeadcountByVenue } : {}),
+    };
+  }
+
+  setMeetupVenueContext(ctx: VenueRuntimeContext): void {
+    this.setVenueRuntimeContext(ctx);
+  }
+
+  private isOppPanicHalted(oppId: string, participantIds: readonly MemberId[]): boolean {
+    return participantIds.some(pid => this.relayDesk.isPanicTriggered(pid, oppId));
+  }
+
   private handleRelayPanicExit(id: MemberId, matchIds: string[]) {
     this.dirty = true;
     this.ctx.log("relay_panic_exit", { memberId: id, matchIds });
     this.caseEvent(id, { at: this.now(), kind: "panic_exit", points: 0 });
+    for (const matchId of matchIds) {
+      const opps = matchId === "*"
+        ? [...this.opps.values()].filter(o => o.stage === "scheduled" && o.participants.includes(id))
+        : [this.opps.get(matchId)].filter((o): o is Opp => !!o && o.stage === "scheduled" && o.participants.includes(id));
+      for (const opp of opps) {
+        this.ctx.log("meeting_cancelled", { proposalId: opp.id, reason: "panic_exit" });
+        this.close(opp, "panic_exit");
+      }
+    }
   }
 
   relayPanicExit(memberId: MemberId, matchId?: string): { haltedMatches: string[]; cancelledSwaps: number; notice: string } {
@@ -10532,12 +10655,170 @@ export class ConsentNetwork implements NetworkUnderTest {
     return participantIds.some(id => this.venuePrefsOf(id).hasRedLines);
   }
 
-  venuePassesRedLines(venue: VenueRecord, participantIds: readonly MemberId[], startMs: number, tz = this.cityTz()): boolean {
-    const prefs = participantIds.map(id => this.venuePrefsOf(id).prefs);
+  canRelayArrivalForMeetup(
+    oppId: string,
+    senderId: MemberId,
+    recipientId: MemberId,
+    passedSafetyAndLeakCheck: boolean
+  ): boolean {
+    const opp = this.opps.get(oppId);
+    if (!opp || opp.stage !== "scheduled" || opp.meetingAt === undefined) return false;
+    const sender = this.members.get(senderId);
+    const recipient = this.members.get(recipientId);
+    if (!sender || !recipient) return false;
+    const ageOfMember = (m: MemberState) =>
+      m.minor || m.minorSignal || m.minorReported ? 13 : validAge(m.age) ? m.age : validAge(m.statedAge) ? m.statedAge : 0;
+    const anyMinorInEvent = opp.teenRuleAt !== undefined || opp.participants.some(pid => {
+      const pm = this.members.get(pid);
+      return !pm || isMinor(ageOfMember(pm));
+    });
+    const panicTriggered =
+      this.relayDesk.isPanicTriggered(senderId, oppId) ||
+      this.relayDesk.isPanicTriggered(recipientId, oppId);
+    return evaluateArrivalRelaySafe({
+      senderAge: ageOfMember(sender),
+      recipientAge: ageOfMember(recipient),
+      anyMinorInEvent,
+      senderConfirmed: opp.status.get(senderId) === "yes",
+      recipientConfirmed: opp.status.get(recipientId) === "yes",
+      blocked: this.blocked(senderId, recipientId),
+      panicTriggered,
+      senderOptedOut: sender.optedOut || !!sender.account || !this.trust.ok(senderId),
+      recipientOptedOut: recipient.optedOut || !!recipient.account || !this.trust.ok(recipientId),
+      nowMs: this.now(),
+      startMs: opp.meetingAt,
+      alreadyMet: false,
+      passedSafetyAndLeakCheck,
+    });
+  }
+
+  checkBackupPivot(
+    oppId: string,
+    trigger: { closed?: boolean; full?: boolean },
+    opts: { venuePool?: readonly VenueRecord[]; apply?: boolean } = {}
+  ): { shouldPivot: boolean; shouldQuarantine: boolean; backupVenue?: VenueRecord } {
+    const opp = this.opps.get(oppId);
+    if (!opp || opp.meetingAt === undefined) return { shouldPivot: false, shouldQuarantine: false };
+    const reportedClosed = Boolean(trigger.closed);
+    const reportedFull = Boolean(trigger.full);
+    const pool = opts.venuePool ?? this.venueRuntimeCtx.venues ?? this.venues.listVenues();
+    const backup = opp.backupVenueId ? pool.find(v => v.id === opp.backupVenueId) : undefined;
+    const hasVerifiedBackup = Boolean(backup && backup.status === "active");
+    const shouldPivot = evaluateBackupPivotV2(
+      reportedClosed,
+      reportedFull,
+      hasVerifiedBackup,
+      this.now(),
+      opp.meetingAt,
+      Boolean(opp.backupPivoted)
+    );
+    const shouldQuarantine = evaluateVenueQuarantine(reportedClosed, reportedFull);
+    if (shouldPivot && backup && opts.apply !== false) {
+      opp.backupPivoted = true;
+      opp.venueId = backup.id;
+      opp.venue = backup.name;
+      opp.venueArea = backup.neighborhood;
+      this.dirty = true;
+    }
+    return { shouldPivot, shouldQuarantine, ...(shouldPivot && backup ? { backupVenue: backup } : {}) };
+  }
+
+  private venuePoolForCity(city: CityId, explicit?: readonly VenueRecord[]): readonly VenueRecord[] {
+    if (explicit) return explicit;
+    if (this.venueRuntimeCtx.venues) {
+      const normalized = city.trim().toLowerCase();
+      const matching = this.venueRuntimeCtx.venues.filter(v => v.city.trim().toLowerCase() === normalized);
+      if (matching.length) return matching;
+      return this.venueRuntimeCtx.venues;
+    }
+    const live = this.venues.listVenues(city);
+    if (live.length) return live;
+    return seedVenuesForCity(city);
+  }
+
+  private findVenueRecordInPool(
+    candidate: Pick<Venue, "id" | "name">,
+    pool: readonly VenueRecord[]
+  ): VenueRecord | undefined {
+    const byId = pool.find(v => v.id === candidate.id);
+    if (byId) return byId;
+    const nameKey = candidate.name.trim().toLowerCase();
+    return pool.find(v => v.name.trim().toLowerCase() === nameKey);
+  }
+
+  private memberVenuePrefsOf(id: MemberId, _facetsByMember?: ReadonlyMap<MemberId, Facet[]>): { prefs: MemberVenuePrefs; hasRedLines: boolean } {
+    const base = this.venuePrefsOf(id);
+    const history = this.venueRuntimeCtx.memberVenueHistory?.get(id);
+    if (!history) return { prefs: base.prefs, hasRedLines: base.hasRedLines };
+    return {
+      hasRedLines: base.hasRedLines,
+      prefs: {
+        ...base.prefs,
+        visitedVenueIds: [...new Set([...base.prefs.visitedVenueIds, ...history.visited])],
+        rejectedVenueIds: [...new Set([...base.prefs.rejectedVenueIds, ...history.rejected])],
+      },
+    };
+  }
+
+  private participantVenuePrefsOf(participantIds: readonly MemberId[]): Array<{ prefs: MemberVenuePrefs; hasRedLines: boolean }> {
+    const facetsByMember = this.snapshotRows().facets;
+    return participantIds.map(id => this.memberVenuePrefsOf(id, facetsByMember));
+  }
+
+  private venueRecordPassesRedLines(
+    venue: VenueRecord,
+    prefs: readonly MemberVenuePrefs[],
+    startMs: number,
+    tz: string,
+    teenFriendAllowed = false,
+    opts: { hasReservation?: boolean; openEvent?: boolean; concurrentHeadcount?: number } = {}
+  ): boolean {
+    if (teenFriendAllowed && venue.allAges !== true) return false;
+    const minParticipantAge = prefs.length ? Math.min(...prefs.map(p => p.age)) : 0;
+    const groupSize = Math.max(1, prefs.length);
+    const hasReservation = opts.hasReservation === true;
     const parts = localParts(startMs, tz);
     const isAfterDark = parts.hour >= 19 || parts.hour < 7;
+    const openCheck = isVenueOpenAt(venue, tz, startMs, 30);
+    const isAlcoholCentric = venue.isAlcoholCentric ?? (venue.isBarOnly || ALCOHOL_CENTRIC_CATEGORIES.has(venue.category));
+    const venueAllAges = venue.allAges ?? (!venue.isBarOnly && !isAlcoholCentric && (venue.ageMin ?? 0) <= 13);
+    const maxBudgetTier = prefs.length ? Math.min(...prefs.map(p => p.maxBudgetTier)) : 2;
+    const hardOk = venueHardEligible({
+      isPublic: venue.public === true,
+      venueStatus: venue.status,
+      minParticipantAge,
+      venueAgeMin: venue.ageMin ?? 0,
+      venueAllAges,
+      teenFriendAllowed,
+      anyNonDrinker: prefs.some(p => !p.drinksAlcohol),
+      isBarOnly: venue.isBarOnly === true,
+      alcoholOptional: venue.alcoholOptional === true,
+      anyVegetarian: prefs.some(p => p.vegetarian === true),
+      servesVegetarian: venue.servesVegetarian === true,
+      anyVegan: prefs.some(p => p.vegan === true),
+      servesVegan: venue.servesVegan === true,
+      anyWheelchairNeeded: prefs.some(p => p.wheelchairNeeded === true),
+      wheelchairAccessible: venue.wheelchairAccessible === true,
+      anyVisited: prefs.some(p => p.visitedVenueIds.includes(venue.id)),
+      anyRejected: prefs.some(p => p.rejectedVenueIds.includes(venue.id)),
+      priceTier: venue.priceTier,
+      maxBudgetTier,
+      maxTravelMin: 5,
+      travelLimitMin: 45,
+      verifiedOpen: openCheck.open,
+      openBufferMin: openCheck.remainingMinutes,
+      groupSize,
+      reservationRequired: venue.reservationRequired === true,
+      hasReservation,
+      separateChecks: venue.separateChecks === true,
+      walkInCapacity: venue.walkInGroupCapacity,
+      isNightLiveMusic: venue.liveMusicAtNight === true && isAfterDark,
+      isOutdoorOnly: venue.outdoor === true && !venue.indoor,
+      badWeatherOrAfterDark: isAfterDark,
+    });
+    if (!hardOk) return false;
     const noiseTierMap: Record<VenueNoiseLevel, number> = { quiet: 0, conversational: 1, lively: 2, loud: 3 };
-    const isAlcoholCentric = venue.isAlcoholCentric ?? (venue.isBarOnly || ["brewery", "brewery_garden", "wine_bar", "cocktail_bar", "cocktail_lounge", "wine_beer_patio"].includes(venue.category));
+    const concurrentHeadcount = opts.concurrentHeadcount ?? this.venueRuntimeCtx.concurrentHeadcountByVenue?.[venue.id] ?? 0;
     return evaluateVenueRedLines({
       anyStrictSober: prefs.some(p => p.strictSober === true),
       anyNonDrinker: prefs.some(p => !p.drinksAlcohol),
@@ -10558,25 +10839,32 @@ export class ConsentNetwork implements NetworkUnderTest {
       noiseTier: noiseTierMap[venue.noiseLevel],
       anyDaytimeOnly: prefs.some(p => p.daytimeOnly === true),
       isAfterDark,
-      isFirstMeet: participantIds.length === 2,
+      isFirstMeet: prefs.length === 2,
       safetyScore: venue.safetyScore ?? 8,
       transitScore: venue.transitScore ?? 4,
       startLocalHour: parts.hour,
-      groupSize: Math.max(1, participantIds.length),
-      hasReservation: false,
-      openEventEligible: participantIds.length > 6 ? venue.openEventEligible === true : false,
-      concurrentHeadcount: 0,
+      groupSize,
+      hasReservation,
+      openEventEligible: (opts.openEvent || groupSize > 6) ? venue.openEventEligible === true : false,
+      concurrentHeadcount,
       walkInCapacity: venue.walkInGroupCapacity,
     });
   }
 
-  pickVenueWithRedLines(
+  venuePassesRedLines(venue: VenueRecord, participantIds: readonly MemberId[], startMs: number, tz?: string): boolean {
+    const prefs = this.participantVenuePrefsOf(participantIds).map(p => p.prefs);
+    const resolvedTz = tz ?? cityTimezone(venue.city) ?? CITY_TZ.nyc;
+    return this.venueRecordPassesRedLines(venue, prefs, startMs, resolvedTz);
+  }
+
+  private pickVenueWithRedLinesFromPrefs(
     participantIds: readonly MemberId[],
+    basePrefs: readonly MemberVenuePrefs[],
     startMs: number,
     opts: {
-      city?: LaunchCity;
+      city?: CityId;
       venues?: readonly VenueRecord[];
-      mode?: "date" | "group" | "solo";
+      mode?: "date" | "group" | "solo" | "professional";
       teenFriendAllowed?: boolean;
       concurrentHeadcountByVenue?: Record<string, number>;
       targetHobbies?: string[];
@@ -10585,30 +10873,142 @@ export class ConsentNetwork implements NetworkUnderTest {
       memberOverrides?: Partial<Record<MemberId, Partial<MemberVenuePrefs>>>;
     } = {}
   ): PrimaryBackupVenuePick {
-    const city: LaunchCity = opts.city ?? (isLaunchCity(this.opts.city) ? this.opts.city : "nyc");
+    const city: CityId = opts.city ?? (isLaunchCity(this.opts.city) ? this.opts.city : this.opts.city || "nyc");
     const areas = participantIds.map(id => this.member(id).area).filter((a): a is string => Boolean(a));
-    const members = participantIds.map(id => {
-      const base = this.venuePrefsOf(id).prefs;
-      const ov = opts.memberOverrides?.[id];
+    const members = basePrefs.map(base => {
+      const ov = opts.memberOverrides?.[base.memberId];
       return ov ? { ...base, ...ov } : base;
     });
-    const mode = opts.mode ?? (participantIds.length >= 3 ? "group" : participantIds.length === 2 ? "date" : "solo");
-    const app = this.app.id === "friends" ? "friends" : this.app.id === "slop" ? "slop" : "ntwrk";
-    const request = {
-      city,
-      memberAreas: areas,
-      members,
-      startMs,
-      mode,
-      app,
-      ...(opts.teenFriendAllowed !== undefined ? { teenFriendAllowed: opts.teenFriendAllowed } : {}),
-      ...(opts.concurrentHeadcountByVenue ? { concurrentHeadcountByVenue: opts.concurrentHeadcountByVenue } : {}),
-      ...(opts.targetHobbies ? { targetHobbies: opts.targetHobbies } : {}),
-      ...(opts.openEvent !== undefined ? { openEvent: opts.openEvent } : {}),
-      ...(opts.hasReservation !== undefined ? { hasReservation: opts.hasReservation } : {}),
-    } as const;
-    if (opts.venues) return pickPrimaryAndBackupVenue([...opts.venues], request, this.now());
-    return this.venues.pickForMatch(request, this.now());
+    const mode = opts.mode ?? (this.app.id === "peon" ? "professional" : participantIds.length >= 3 ? "group" : participantIds.length === 2 ? "date" : "solo");
+    const app = this.app.id === "friends" ? "friends" : this.app.id === "slop" ? "slop" : this.app.id === "peon" ? "peon" : "ntwrk";
+    const pool = this.venuePoolForCity(city, opts.venues);
+    const concurrentHeadcountByVenue = opts.concurrentHeadcountByVenue ?? this.venueRuntimeCtx.concurrentHeadcountByVenue;
+    return pickPrimaryAndBackupVenue(
+      pool,
+      {
+        city,
+        memberAreas: areas,
+        members,
+        startMs,
+        mode,
+        app,
+        ...(opts.teenFriendAllowed !== undefined ? { teenFriendAllowed: opts.teenFriendAllowed } : {}),
+        ...(concurrentHeadcountByVenue ? { concurrentHeadcountByVenue } : {}),
+        ...(opts.targetHobbies ? { targetHobbies: opts.targetHobbies } : {}),
+        ...(opts.openEvent !== undefined ? { openEvent: opts.openEvent } : {}),
+        ...(opts.hasReservation !== undefined ? { hasReservation: opts.hasReservation } : {}),
+      },
+      this.now()
+    );
+  }
+
+  pickVenueWithRedLines(
+    participantIds: readonly MemberId[],
+    startMs: number,
+    opts: {
+      city?: LaunchCity | CityId;
+      venues?: readonly VenueRecord[];
+      mode?: "date" | "group" | "solo" | "professional";
+      teenFriendAllowed?: boolean;
+      concurrentHeadcountByVenue?: Record<string, number>;
+      targetHobbies?: string[];
+      openEvent?: boolean;
+      hasReservation?: boolean;
+      memberOverrides?: Partial<Record<MemberId, Partial<MemberVenuePrefs>>>;
+    } = {}
+  ): PrimaryBackupVenuePick {
+    const basePrefs = this.participantVenuePrefsOf(participantIds).map(p => p.prefs);
+    return this.pickVenueWithRedLinesFromPrefs(participantIds, basePrefs, startMs, opts);
+  }
+
+  /** Stage 1: Deterministic red-line Top-1 suggestion state (0 LLM tokens). */
+  proposeTopOneVenueFor(
+    participantIds: readonly MemberId[],
+    startMs: number,
+    opts: {
+      city?: CityId;
+      venues?: readonly VenueRecord[];
+      mode?: "date" | "group" | "solo" | "professional";
+      teenFriendAllowed?: boolean;
+      concurrentHeadcountByVenue?: Record<string, number>;
+      targetHobbies?: string[];
+      openEvent?: boolean;
+      hasReservation?: boolean;
+      memberOverrides?: Partial<Record<MemberId, Partial<MemberVenuePrefs>>>;
+    } = {}
+  ): TopOneSuggestionState {
+    const city: CityId = opts.city ?? (this.opts.city || "nyc");
+    const areas = participantIds.map(id => this.member(id).area).filter((a): a is string => Boolean(a));
+    const basePrefs = this.participantVenuePrefsOf(participantIds).map(p => {
+      const ov = opts.memberOverrides?.[p.prefs.memberId];
+      return ov ? { ...p.prefs, ...ov } : p.prefs;
+    });
+    const mode = opts.mode ?? (this.app.id === "peon" ? "professional" : participantIds.length >= 3 ? "group" : participantIds.length === 2 ? "date" : "solo");
+    const app = this.app.id === "friends" ? "friends" : this.app.id === "slop" ? "slop" : this.app.id === "peon" ? "peon" : "ntwrk";
+    const pool = this.venuePoolForCity(city, opts.venues);
+    const concurrentHeadcountByVenue = opts.concurrentHeadcountByVenue ?? this.venueRuntimeCtx.concurrentHeadcountByVenue;
+    return proposeTopOne(
+      pool,
+      {
+        city,
+        memberAreas: areas,
+        members: basePrefs,
+        startMs,
+        mode,
+        app,
+        ...(opts.teenFriendAllowed !== undefined ? { teenFriendAllowed: opts.teenFriendAllowed } : {}),
+        ...(concurrentHeadcountByVenue ? { concurrentHeadcountByVenue } : {}),
+        ...(opts.targetHobbies ? { targetHobbies: opts.targetHobbies } : {}),
+        ...(opts.openEvent !== undefined ? { openEvent: opts.openEvent } : {}),
+        ...(opts.hasReservation !== undefined ? { hasReservation: opts.hasReservation } : {}),
+      },
+      this.now()
+    );
+  }
+
+  /** Stage 2: Optional bounded Top-5 verified-ID LLM rerank + rationale (fail-open to deterministic candidates[0]). */
+  async rerankTopOneVenueWithLLM(
+    state: TopOneSuggestionState,
+    participantIds: readonly MemberId[],
+    opts: { llm?: LLM; mode?: "date" | "group" | "solo" | "professional"; deadlineMs?: number } = {}
+  ): Promise<VenueLLMRerankResult> {
+    const facetsByMember = this.snapshotRows().facets;
+    const shareableInterests: string[] = [];
+    const forbiddenFacts: string[] = [];
+    for (const id of participantIds) {
+      for (const f of facetsByMember.get(id) ?? []) {
+        if (f.scope === "agent_private") {
+          if (f.value.trim()) forbiddenFacts.push(f.value);
+          for (const t of f.tags) forbiddenFacts.push(t.replace(/_/g, " "));
+        } else if (f.scope === "shareable" && f.kind === "interest") {
+          for (const t of f.tags) shareableInterests.push(t);
+        }
+      }
+    }
+    return rerankTopVenuesWithLLM({
+      llm: opts.llm ?? this.opts.engineLLM,
+      candidates: state.candidates,
+      shareableInterests: [...new Set(shareableInterests)],
+      mode: opts.mode ?? (this.app.id === "peon" ? "professional" : participantIds.length >= 3 ? "group" : "date"),
+      forbiddenFacts: [...new Set(forbiddenFacts)],
+      extraLeakCheck: text => (this.ratesPhotos && appearanceLeak(text) ? "appearance_leak" : null),
+      deadlineMs: opts.deadlineMs ?? 8_000,
+    });
+  }
+
+  /** Stage 3: Deterministic-first rejection classification + bounded orthogonal pivot (max 3 pivots). */
+  pivotVenueSuggestion(
+    state: TopOneSuggestionState,
+    replyBody: string,
+    opts: PivotFilterOptions = {}
+  ): { reason: VenueRejectionReason; state: TopOneSuggestionState } {
+    const reason = classifyVenueRejection(replyBody);
+    const derivedOpts: PivotFilterOptions = {
+      ...opts,
+      ...(reason === "red_line" && /\b(?:sober|alcohol|bar|brewery|wine)\b/i.test(replyBody) ? { requireNoAlcohol: true } : {}),
+      ...(reason === "wrong_vibe" && /\b(?:loud|noisy|quiet)\b/i.test(replyBody) ? { requireLowNoise: true } : {}),
+    };
+    return { reason, state: rejectAndPivot(state, reason, derivedOpts) };
   }
 
   densityTierFor(qualifiedLocalCount: number): DensityTier {
@@ -10774,7 +11174,10 @@ export function storedLateArrivalCurrent(state: NetworkState, delivery: LateArri
   const opp = state.opps.find(o => o.id === delivery.oppId);
   if (!opp || !lateArrivalDeliveryCurrent(opp, delivery, now,
     id => opp.status.some(([key, status]) => key === id && status === "yes"), received)) return false;
-  if (state.blocks.includes(pairKey(delivery.from, delivery.to))) return false;
+  if (!isLateArrivalAdmitted({
+    panicTriggered: isPanicHaltedState(state.relay, [delivery.from, delivery.to], delivery.oppId),
+    blocked: state.blocks.includes(pairKey(delivery.from, delivery.to)),
+  })) return false;
   return [delivery.from, delivery.to].every(id => {
     const member = state.members.find(m => m.id === id);
     if (!member || state.declinedIds.includes(id)) return false;
@@ -10874,6 +11277,7 @@ export function relayDispatchCheck(st: NetworkState, o: { matchId: string; from:
     if (v.optedOut) return "party:opted_out";
     if (v.held) return "party:held";
   }
+  if (isPanicHaltedState(st.relay, [o.from, o.to], o.matchId)) return "party:panic";
   if (st.blocks.includes(pairKey(o.from, o.to))) return "party:blocked";
   return null;
 }

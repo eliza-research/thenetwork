@@ -127,6 +127,13 @@ export function computeFollowupLocalHour(eventEndLocalHour: number): FollowupSlo
 
 /** Story: Protect anchor failover, quorum cutoffs, and follow-up limits / Schedule follow-ups outside quiet hours and enforce opt-out and daily caps (spec/meetupCoordination.md) */
 //@ pure
+export function computeFollowupLocalSlot(eventEndLocalHour: number, eventEndLocalMinute: number): FollowupSlot {
+  const local_3 = eventEndLocalMinute >= 0 && eventEndLocalMinute < 60 ? eventEndLocalMinute : 0;
+  return eventEndLocalHour > 16 ? ({ localHour: 9, localMinute: 30, nextDay: true } as FollowupSlot) : (eventEndLocalHour < 7 ? ({ localHour: 9, localMinute: 30, nextDay: false } as FollowupSlot) : ({ localHour: exact_meetupCoordination(eventEndLocalHour + 2), localMinute: local_3, nextDay: false } as FollowupSlot));
+}
+
+/** Story: Protect anchor failover, quorum cutoffs, and follow-up limits / Schedule follow-ups outside quiet hours and enforce opt-out and daily caps (spec/meetupCoordination.md) */
+//@ pure
 export function canSendFollowup(f: FollowupSendInput): boolean {
   return !f.optedOut && !f.inQuietHours && f.localHour >= 9 && f.localHour < 20 && f.dailyProactiveCount >= 0 && f.dailyProactiveCount < 3 && f.remindersSent >= 0 && f.remindersSent < 2 && !f.alreadyResponded;
 }
@@ -135,8 +142,16 @@ export function canSendFollowup(f: FollowupSendInput): boolean {
 //@ pure
 export function lawFollowupSlotAlwaysInSafeDayHours(eventEndLocalHour: number): boolean {
   //@ ensures \result === true
-  const local_3: FollowupSlot = computeFollowupLocalHour(eventEndLocalHour);
-  return !(eventEndLocalHour >= 0 && eventEndLocalHour <= 23) || (local_3.localHour >= 9 && local_3.localHour < 20 && (local_3.localMinute === 0 || local_3.localMinute === 30));
+  const local_4: FollowupSlot = computeFollowupLocalHour(eventEndLocalHour);
+  return !(eventEndLocalHour >= 0 && eventEndLocalHour <= 23) || (local_4.localHour >= 9 && local_4.localHour < 20 && (local_4.localMinute === 0 || local_4.localMinute === 30));
+}
+
+/** Story: Protect anchor failover, quorum cutoffs, and follow-up limits / Schedule follow-ups outside quiet hours and enforce opt-out and daily caps (spec/meetupCoordination.md) */
+//@ pure
+export function lawFollowupLocalSlotAlwaysInSafeDayHours(eventEndLocalHour: number, eventEndLocalMinute: number): boolean {
+  //@ ensures \result === true
+  const local_5: FollowupSlot = computeFollowupLocalSlot(eventEndLocalHour, eventEndLocalMinute);
+  return !(eventEndLocalHour >= 0 && eventEndLocalHour <= 23 && eventEndLocalMinute >= 0 && eventEndLocalMinute < 60) || (local_5.localHour >= 9 && local_5.localHour < 20 && local_5.localMinute >= 0 && local_5.localMinute < 60);
 }
 
 /** Story: Protect anchor failover, quorum cutoffs, and follow-up limits / Schedule follow-ups outside quiet hours and enforce opt-out and daily caps (spec/meetupCoordination.md) */

@@ -6,6 +6,10 @@ export type MemberId = string;
 export const LAUNCH_CITIES = ["sf", "nyc", "la", "chicago", "miami"] as const;
 export type City = (typeof LAUNCH_CITIES)[number];
 export type LaunchCity = City;
+/** Open city identifier for data-driven city expansion without widening exhaustive Record<City, ...> maps. */
+export type CityId = string;
+/** Per-city launch lifecycle status; only nyc defaults to active until staff flips another city live. */
+export type CityLaunchStatus = "active" | "waitlist" | "planned";
 export const isCity = (v: unknown): v is City =>
   typeof v === "string" && (LAUNCH_CITIES as readonly string[]).includes(v);
 export const isLaunchCity = isCity;
@@ -209,10 +213,12 @@ export interface VenuePersonaPrior {
   beta: number;
 }
 
+export type VenueSource = "curated" | "seed" | "google_places" | "places_api" | "overture" | "listing" | "bd_partner" | "member_suggested";
+
 export interface VenueRecord {
   id: string;
   name: string;
-  city: LaunchCity;
+  city: CityId;
   neighborhood: string;
   address: string;
   lat: number;
@@ -242,7 +248,7 @@ export interface VenueRecord {
   hours: VenueHoursSlot[];
   yelpRating?: number;
   externalPlaceId?: string;
-  source: "curated" | "google_places" | "overture" | "listing";
+  source: VenueSource;
   lastVerifiedAt: number;
   geoExpiresAt?: number;
   closureReports: number;
@@ -380,10 +386,13 @@ export interface CityBarrier {
 }
 
 export interface CitySpec {
-  id: LaunchCity;
+  id: CityId;
   name: string;
   shortName: string;
   tz: string;
+  country?: string;
+  currency?: string;
+  launchStatus?: CityLaunchStatus;
   primaryMode: "transit" | "car" | "hybrid";
   anchorZip: string;
   aliases: string[];
@@ -396,4 +405,38 @@ export interface CitySpec {
   neighborhoods: NeighborhoodSpec[];
   barriers: CityBarrier[];
   seedVenues: VenueRecord[];
+}
+
+export type MeetingModality = "irl_venue" | "async_or_video" | "sanctioned_event";
+
+export interface ConnectionOntologySpecLike {
+  readonly id: string;
+  readonly label?: string;
+  readonly defaultCategory: Category;
+  readonly defaultFormat: "one_to_one" | "small_group" | "event";
+  readonly sizeRange: readonly [number, number];
+  readonly defaultFreeAnchor: boolean;
+  readonly requiresHighDiscretion: boolean;
+  readonly adultOnly?: boolean;
+}
+
+export interface OutcomePolicyProfile {
+  readonly app: AppId;
+  readonly ontologyId: string;
+  readonly modality: MeetingModality;
+  readonly venueMode: "date" | "group" | "solo" | "professional";
+  readonly adultOnly: boolean;
+  readonly teenFriendEligible: boolean;
+  readonly minGroupSize: number;
+  readonly maxGroupSize: number;
+  readonly maxBudgetTier?: VenuePriceTier;
+  readonly lowNoiseRequired: boolean;
+  readonly daytimeOnly: boolean;
+  readonly alcoholExcluded: boolean;
+  readonly aestheticReadAllowed: boolean;
+  readonly peonCapitalAllowed: boolean;
+  readonly externalProspectReadAllowed: boolean;
+  readonly externalEventsAllowed: boolean;
+  readonly followupCadence: "next_day_local" | "work_48h_90d";
+  readonly firewallScope: AppId;
 }

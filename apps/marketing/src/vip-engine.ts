@@ -1,12 +1,15 @@
 import { RealClock } from "../../../packages/core/src/clock.ts";
 import { LeakGuard } from "../../../packages/core/src/guard.ts";
-import { getCityConfig } from "./cities.ts";
+import { requireCityPack } from "./city-registry.ts";
+import { marketingLeakAllowlist } from "./constants.ts";
+import type { DesireLaneId } from "./desire-lanes.ts";
 import type { Clock, VipProspect, VipProspectStatus } from "./types.ts";
 
 export interface VipArchetypeSpec {
   readonly num: number;
   readonly slug: string;
   readonly title: string;
+  readonly desireLane: DesireLaneId;
   readonly primaryFreeSources: readonly string[];
   readonly tableRoleLabel: string;
   readonly preferredNight: "Thu" | "Mon" | "Tue";
@@ -19,6 +22,7 @@ export const VIP_ARCHETYPES: readonly VipArchetypeSpec[] = [
     num: 1,
     slug: "startup_founder",
     title: "Startup Founders & Scale-Up CEOs",
+    desireLane: "cofounder_venture",
     primaryFreeSources: ["SEC EDGAR Form D", "YC Directory", "HN Show HN"],
     tableRoleLabel: "a technical founder",
     preferredNight: "Thu",
@@ -29,6 +33,7 @@ export const VIP_ARCHETYPES: readonly VipArchetypeSpec[] = [
     num: 2,
     slug: "vc_lp",
     title: "VCs, Super-Angels & Institutional LPs",
+    desireLane: "investors_patrons",
     primaryFreeSources: ["SEC Form ADV/IAPD", "SEC Form D", "Luma VC Calendars"],
     tableRoleLabel: "a seed investor",
     preferredNight: "Thu",
@@ -39,6 +44,7 @@ export const VIP_ARCHETYPES: readonly VipArchetypeSpec[] = [
     num: 3,
     slug: "patent_inventor",
     title: "Inventors & Prolific Patent Holders",
+    desireLane: "cofounder_venture",
     primaryFreeSources: ["USPTO Open Data Portal", "Google Patents BigQuery"],
     tableRoleLabel: "a hardware inventor",
     preferredNight: "Thu",
@@ -49,6 +55,7 @@ export const VIP_ARCHETYPES: readonly VipArchetypeSpec[] = [
     num: 4,
     slug: "scientist_academic",
     title: "Scientists & Top Academics",
+    desireLane: "mentorship_mastery",
     primaryFreeSources: ["OpenAlex API", "Semantic Scholar", "NSF", "NIH RePORTER", "ORCID"],
     tableRoleLabel: "a cognitive scientist",
     preferredNight: "Thu",
@@ -59,6 +66,7 @@ export const VIP_ARCHETYPES: readonly VipArchetypeSpec[] = [
     num: 5,
     slug: "ai_biotech_researcher",
     title: "AI, Biotech & Frontier Hardware Researchers",
+    desireLane: "cofounder_venture",
     primaryFreeSources: ["arXiv API", "bioRxiv", "Hugging Face Hub", "OpenAlex"],
     tableRoleLabel: "an AI researcher",
     preferredNight: "Thu",
@@ -69,6 +77,7 @@ export const VIP_ARCHETYPES: readonly VipArchetypeSpec[] = [
     num: 6,
     slug: "quant_finance",
     title: "Hedge Fund Managers, Quants & Finance Leaders",
+    desireLane: "investors_patrons",
     primaryFreeSources: ["SEC Form 13F", "SEC Form ADV", "FINRA BrokerCheck"],
     tableRoleLabel: "a quant strategist",
     preferredNight: "Thu",
@@ -79,6 +88,7 @@ export const VIP_ARCHETYPES: readonly VipArchetypeSpec[] = [
     num: 7,
     slug: "author_journalist",
     title: "Best-Selling Authors, Essayists & Investigative Journalists",
+    desireLane: "creative_collab",
     primaryFreeSources: ["NYT Books API", "Substack Directories", "Pulitzer Archives"],
     tableRoleLabel: "an investigative writer",
     preferredNight: "Thu",
@@ -89,6 +99,7 @@ export const VIP_ARCHETYPES: readonly VipArchetypeSpec[] = [
     num: 8,
     slug: "filmmaker_artist",
     title: "Filmmakers, Directors, Musicians & Fine Artists",
+    desireLane: "creative_collab",
     primaryFreeSources: ["TMDB API", "IMDb TSV", "Spotify Web API", "MusicBrainz"],
     tableRoleLabel: "a documentary director",
     preferredNight: "Thu",
@@ -99,6 +110,7 @@ export const VIP_ARCHETYPES: readonly VipArchetypeSpec[] = [
     num: 9,
     slug: "elite_athlete",
     title: "Elite Athletes, Olympians & Championship Coaches",
+    desireLane: "sport_wellness_crew",
     primaryFreeSources: ["Olympedia", "World Athletics", "SweatPals Elite Captains"],
     tableRoleLabel: "an Olympic rower",
     preferredNight: "Tue",
@@ -109,7 +121,8 @@ export const VIP_ARCHETYPES: readonly VipArchetypeSpec[] = [
     num: 10,
     slug: "michelin_chef_hospitality",
     title: "Michelin-Starred Chefs & Cult Hospitality Founders",
-    primaryFreeSources: ["James Beard Finder", "Michelin Guide", "NYS SLA Filings"],
+    desireLane: "bespoke_irl_experience",
+    primaryFreeSources: ["James Beard Finder", "Michelin Guide", "Municipal Hospitality Filings"],
     tableRoleLabel: "a Michelin pastry chef",
     preferredNight: "Mon",
     angleTag: "monday_off_night_hospitality_salon",
@@ -119,6 +132,7 @@ export const VIP_ARCHETYPES: readonly VipArchetypeSpec[] = [
     num: 11,
     slug: "architect_designer",
     title: "Architects & Industrial Designers",
+    desireLane: "creative_collab",
     primaryFreeSources: ["AIA Directory", "USPTO Design Patents", "Core77"],
     tableRoleLabel: "an industrial designer",
     preferredNight: "Thu",
@@ -129,6 +143,7 @@ export const VIP_ARCHETYPES: readonly VipArchetypeSpec[] = [
     num: 12,
     slug: "oss_maintainer",
     title: "Open-Source Maintainers & Principal Engineers",
+    desireLane: "money_work",
     primaryFreeSources: ["GitHub REST/GraphQL", "HN Algolia"],
     tableRoleLabel: "a systems maintainer",
     preferredNight: "Thu",
@@ -139,6 +154,7 @@ export const VIP_ARCHETYPES: readonly VipArchetypeSpec[] = [
     num: 13,
     slug: "policymaker_diplomat",
     title: "Policymakers, Think-Tank Fellows & Diplomats",
+    desireLane: "elite_serendipity",
     primaryFreeSources: ["Congress.gov API", "FEC API", "Think-Tank Directories"],
     tableRoleLabel: "a policy fellow",
     preferredNight: "Thu",
@@ -149,6 +165,7 @@ export const VIP_ARCHETYPES: readonly VipArchetypeSpec[] = [
     num: 14,
     slug: "podcaster_curator",
     title: "Top Podcasters, Creators & Cultural Curators",
+    desireLane: "creative_collab",
     primaryFreeSources: ["Podcast RSS", "YouTube RSS", "Luma Discovery"],
     tableRoleLabel: "a cultural curator",
     preferredNight: "Thu",
@@ -159,6 +176,7 @@ export const VIP_ARCHETYPES: readonly VipArchetypeSpec[] = [
     num: 15,
     slug: "leading_physician",
     title: "Leading Physicians, Surgeons & Longevity Leaders",
+    desireLane: "mentorship_mastery",
     primaryFreeSources: ["ClinicalTrials.gov v2", "NPPES NPI API", "PubMed E-utilities"],
     tableRoleLabel: "a clinical trial surgeon",
     preferredNight: "Thu",
@@ -169,6 +187,7 @@ export const VIP_ARCHETYPES: readonly VipArchetypeSpec[] = [
     num: 16,
     slug: "philanthropist_foundation",
     title: "Philanthropists, Museum Directors & Major Nonprofit Heads",
+    desireLane: "investors_patrons",
     primaryFreeSources: ["ProPublica Nonprofit Explorer 990", "IRS EO BMF"],
     tableRoleLabel: "a museum curator",
     preferredNight: "Thu",
@@ -179,6 +198,7 @@ export const VIP_ARCHETYPES: readonly VipArchetypeSpec[] = [
     num: 17,
     slug: "legal_rainmaker",
     title: "Legal & M&A Rainmakers / Appellate Litigators",
+    desireLane: "elite_serendipity",
     primaryFreeSources: ["CourtListener API", "SEC EDGAR Exhibits"],
     tableRoleLabel: "an appellate litigator",
     preferredNight: "Thu",
@@ -189,6 +209,7 @@ export const VIP_ARCHETYPES: readonly VipArchetypeSpec[] = [
     num: 18,
     slug: "defense_space_energy",
     title: "Defense, Aerospace, Space & Next-Gen Energy Pioneers",
+    desireLane: "cofounder_venture",
     primaryFreeSources: ["USASpending.gov API", "SBIR.gov API", "DOE ARPA-E"],
     tableRoleLabel: "a fusion engineer",
     preferredNight: "Thu",
@@ -210,6 +231,7 @@ export interface VipPrestigeSignals {
 export interface VipPrestigeScoreResult {
   readonly score: number;
   readonly archetype: VipArchetypeSpec;
+  readonly desireLane: DesireLaneId;
   readonly breakdown: {
     readonly sourceAuthority: number;
     readonly impact: number;
@@ -223,10 +245,12 @@ export interface VipInviteDraftInput {
   readonly firstName: string;
   readonly archetypeSlug: string;
   readonly city: string;
-  readonly neighborhood: string;
+  readonly neighborhood?: string;
   readonly proofOfWork1Line: string;
   readonly senderName: string;
   readonly dateLabel?: string;
+  readonly desireLane?: DesireLaneId;
+  readonly confirmedCoSeatedRoles?: readonly string[];
 }
 
 export interface VipInviteValidationResult {
@@ -235,6 +259,7 @@ export interface VipInviteValidationResult {
   readonly body: string;
   readonly wordCount: number;
   readonly archetype: VipArchetypeSpec;
+  readonly desireLane: DesireLaneId;
   readonly coSeatedRoles: readonly string[];
   readonly errors: readonly string[];
   readonly leakReasons: readonly string[];
@@ -242,13 +267,35 @@ export interface VipInviteValidationResult {
 
 export const MAX_VIP_INVITE_WORDS = 75;
 
+const WEAK_HOOK_FALLBACK_PATTERN =
+  /(open_data|dohmh|nys_sla|hn_show|arxiv_|manual_ui|public\s+discovery\s+slot|your\s+recent\s+work\s+at)/i;
+
 const VIP_SPAM_TRIGGER_PATTERNS: ReadonlyArray<{ readonly label: string; readonly re: RegExp }> = [
-  { label: "sales_hype_phrase", re: /\b(limited\s+time|act\s+now|free\s+trial|click\s+here|exclusive\s+offer|guaranteed|download\s+our\s+app|sign\s+up\s+today)\b/i },
-  { label: "calendly_or_booking_link", re: /\b(calendly|cal\.com|hubspot\.com\/meetings|book\s+a\s+demo)\b/i },
+  {
+    label: "sales_hype_phrase",
+    re: /\b(limited\s+time|act\s+now|free\s+trial|click\s+here|exclusive\s+offer|guaranteed|download\s+our\s+app|sign\s+up\s+today)\b/i,
+  },
+  {
+    label: "calendly_or_booking_link",
+    re: /\b(calendly|cal\.com|hubspot\.com\/meetings|book\s+a\s+demo)\b/i,
+  },
   { label: "raw_url_not_allowed", re: /https?:\/\//i },
   { label: "html_or_tracking_pixel", re: /<[a-z][^>]*>/i },
-  { label: "cash_vouch_violation", re: /\b(cash\s+bounty|paid\s+vouch|referral\s+cash|usdc\s+reward)\b/i },
+  {
+    label: "cash_vouch_violation",
+    re: /\b(cash\s+bounty|paid\s+vouch|referral\s+cash|usdc\s+reward)\b/i,
+  },
+  {
+    label: "fake_social_proof_or_cliche",
+    re: /(sparked\s+a\s+real\s+debate|bubbling\s+this\s+up|rare\s+honesty\s+on\s+the\s+trade-offs|five\s+of\s+six\s+seats)/i,
+  },
 ];
+
+export function isWeakOrFallbackProofOfWorkHook(hook: string): boolean {
+  const trimmed = hook.trim();
+  if (trimmed.length < 14) return true;
+  return WEAK_HOOK_FALLBACK_PATTERN.test(trimmed);
+}
 
 export function countWords(text: string): number {
   const tokens = text
@@ -303,8 +350,12 @@ export function scoreVipProspect(signals: VipPrestigeSignals): VipPrestigeScoreR
   const impact = Math.max(0, Math.min(30, Math.round((Math.max(0, Math.min(100, rawImpact)) / 100) * 30)));
   const recency = signals.recentWithin18Months === false ? 4 : 15;
   const locality = signals.inTargetCity === false ? 0 : 10;
-  const hookLen = signals.proofOfWorkHook?.trim().length ?? 0;
-  const hookSpecificity = hookLen >= 24 ? 10 : hookLen >= 10 ? 5 : 0;
+  const hook = signals.proofOfWorkHook?.trim() ?? "";
+  const hookSpecificity = isWeakOrFallbackProofOfWorkHook(hook)
+    ? 0
+    : hook.length >= 24
+      ? 10
+      : 5;
 
   const score = Math.max(
     0,
@@ -314,6 +365,7 @@ export function scoreVipProspect(signals: VipPrestigeSignals): VipPrestigeScoreR
   return {
     score,
     archetype,
+    desireLane: archetype.desireLane,
     breakdown: {
       sourceAuthority,
       impact,
@@ -348,7 +400,7 @@ export class VipDiscoveryEngine {
       new LeakGuard({
         contacts: true,
         canaryShapes: true,
-        allow: ["ntwrk.party"],
+        allow: [...marketingLeakAllowlist()],
       });
   }
 
@@ -358,57 +410,75 @@ export class VipDiscoveryEngine {
 
   buildAndValidateVipInvite(input: VipInviteDraftInput): VipInviteValidationResult {
     const archetype = getVipArchetype(input.archetypeSlug);
-    const cityCfg = getCityConfig(input.city);
+    const cityPack = requireCityPack(input.city);
+    const desireLane = input.desireLane ?? archetype.desireLane;
     const firstName = input.firstName.trim() || "there";
     const neighborhood =
-      input.neighborhood.trim() || cityCfg.corridors[0]?.neighborhood || cityCfg.label;
+      input.neighborhood?.trim() || cityPack.corridors[0]?.neighborhood || cityPack.label;
     const hook = input.proofOfWork1Line.trim().replace(/\.+$/, "");
-    const coSeatedRoles = selectComplementaryTableRoles(archetype);
+    const confirmedRoles = (input.confirmedCoSeatedRoles ?? [])
+      .map((r) => r.trim())
+      .filter((r) => r.length > 0);
+    const coSeatedRoles =
+      confirmedRoles.length > 0 ? confirmedRoles : selectComplementaryTableRoles(archetype);
     const night = input.dateLabel?.trim() || `next ${archetype.preferredNight}`;
-    const seatList = coSeatedRoles.join(", ");
+    const confirmedSeatClause =
+      confirmedRoles.length > 0 ? ` with ${confirmedRoles.join(", ")}` : "";
 
     let subject: string;
     let body: string;
 
     if (archetype.slug === "michelin_chef_hospitality") {
-      subject = `Monday off-night table in ${neighborhood}`;
+      subject = `Monday dinner in ${neighborhood}`;
       body = [
         `Hi Chef ${firstName},`,
         `Still thinking about ${hook}.`,
-        `We are hosting a quiet 6-seat off-duty dinner ${night} in ${neighborhood} with ${seatList}. No press, zero restaurant shop talk.`,
-        `Happy to hold a seat if you are off service—zero pressure if Mondays are sacred rest nights.`,
+        `Hosting a quiet 6-seat off-duty dinner ${night} in ${neighborhood}${confirmedSeatClause} — people from outside hospitality, no press, no shop talk.`,
+        `Happy to save a seat if Mondays are open, and completely understand if they are sacred rest nights.`,
         `— ${input.senderName}, The Network`,
       ].join("\n\n");
     } else if (archetype.slug === "oss_maintainer") {
-      subject = `quick note on your work (not recruiting)`;
+      subject = `Quick note on your work (not recruiting)`;
       body = [
         `Hi ${firstName},`,
-        `Upfront: not recruiting, not selling tools. Loved ${hook}.`,
-        `I host small 6-seat craft dinners in ${neighborhood} (${night}): ${seatList}. Pure off-the-record conversation.`,
-        `Want me to hold the 6th seat? Totally fine to skip.`,
+        `Upfront: not recruiting, not selling tools. Read ${hook} and appreciated how clearly you laid out the design.`,
+        `I host small 6-seat craft dinners in ${neighborhood} (${night})${confirmedSeatClause}. Pure off-the-record conversation.`,
+        `Want me to hold a seat? Zero pressure if the week is full.`,
         `— ${input.senderName}, The Network`,
       ].join("\n\n");
     } else if (archetype.slug === "startup_founder") {
-      subject = `${neighborhood} operator table ${night} (zero VCs)`;
+      subject = `${neighborhood} founder dinner ${night} (no VCs)`;
       body = [
         `Hi ${firstName},`,
-        `Noticed ${hook}—rare honesty on the trade-offs.`,
-        `We are hosting a 6-seat off-the-record dinner ${night} in ${neighborhood}: another technical founder, ${seatList}. Strictly zero pitching and zero investors.`,
-        `Happy to hold the final seat if you are in town—no pressure at all.`,
+        `Read ${hook} and wanted to reach out directly.`,
+        `Hosting a 6-seat off-the-record dinner ${night} in ${neighborhood}${confirmedSeatClause} for founders and builders in ${cityPack.label}. Strictly no pitching and no investors.`,
+        `Happy to hold a seat if you are in town — zero pressure.`,
         `— ${input.senderName}, The Network`,
       ].join("\n\n");
     } else {
-      subject = `${neighborhood} 6-seat table ${night}`;
+      subject = `${neighborhood} 6-seat dinner ${night}`;
       body = [
         `Hi ${firstName},`,
-        `Your work on ${hook} sparked a real debate at our last ${cityCfg.label} dinner.`,
-        `We are seating 6 curious peers off-the-record ${night} in ${neighborhood}: ${seatList}. No panels, no pitching.`,
-        `Would love to hold the 6th seat for you—completely understand if timing is tight.`,
+        `Read ${hook} and thought you would enjoy the conversation at our next ${cityPack.label} table.`,
+        `Six curious people off-the-record ${night} in ${neighborhood}${confirmedSeatClause}. No panels, no pitching.`,
+        `Happy to save you a seat if timing works — totally fine to pass.`,
         `— ${input.senderName}, The Network`,
       ].join("\n\n");
     }
 
-    return this.validateVipInvite(subject, body, archetype, coSeatedRoles);
+    const baseResult = this.validateVipInvite(subject, body, archetype, coSeatedRoles, desireLane);
+    if (isWeakOrFallbackProofOfWorkHook(hook)) {
+      return {
+        ...baseResult,
+        valid: false,
+        errors: [
+          ...baseResult.errors,
+          "weak_or_fallback_proof_of_work_hook: supply a specific, human-readable proof-of-work reference (>=14 chars, no raw DB slugs).",
+        ],
+      };
+    }
+
+    return baseResult;
   }
 
   validateVipInvite(
@@ -416,6 +486,7 @@ export class VipDiscoveryEngine {
     body: string,
     archetype: VipArchetypeSpec,
     coSeatedRoles: readonly string[] = [],
+    desireLane: DesireLaneId = archetype.desireLane,
   ): VipInviteValidationResult {
     const errors: string[] = [];
     const wordCount = countWords(body);
@@ -445,6 +516,7 @@ export class VipDiscoveryEngine {
       body,
       wordCount,
       archetype,
+      desireLane,
       coSeatedRoles,
       errors,
       leakReasons,
@@ -460,8 +532,8 @@ export class VipDiscoveryEngine {
     const name = firstName.trim() || "there";
     const body =
       touch === 2
-        ? `Hi ${name} — bubbling this up in case your week was packed. Five of six seats are set; want me to hold the last one? — ${senderName}`
-        : `Hi ${name} — assuming timing is off this round, totally understand. Happy to keep you on the quiet list for next month's ${topicLabel} table if helpful. — ${senderName}`;
+        ? `Hi ${name} — quick follow-up in case last week was packed. Still happy to save you a seat at the ${topicLabel} dinner if you are free. — ${senderName}`
+        : `Hi ${name} — assuming timing is off this round. Happy to keep you on the quiet list for next month's ${topicLabel} dinner if useful. — ${senderName}`;
     return {
       touch,
       body,
@@ -483,10 +555,11 @@ export class VipDiscoveryEngine {
   }): VipProspect {
     const nowIso = new Date(this.clock.now()).toISOString();
     const scored = scoreVipProspect(input.signals);
+    const cityPack = requireCityPack(input.city);
     return {
       id: input.id,
       campaignId: input.campaignId,
-      city: getCityConfig(input.city).code,
+      city: cityPack.code,
       name: input.name,
       archetype: scored.archetype.slug,
       organization: input.organization ?? null,

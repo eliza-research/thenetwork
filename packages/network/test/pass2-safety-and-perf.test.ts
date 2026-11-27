@@ -3,6 +3,7 @@ import {
   ALL_SEED_VENUES,
   CITY_TZ,
   DAY,
+  getCity,
   HOUR,
   LAUNCH_CITIES,
   LLMBudget,
@@ -135,9 +136,11 @@ describe("Pass 2 safety, routing, and performance regressions", () => {
     const fourPmLaMs = Date.UTC(2026, 9, 8, 23, 0);
 
     // heavy_drinker must NOT be rejected from alcohol-centric venue as a non-drinker
-    expect(la.net.venuePassesRedLines(barOrBrewery, ["d1", "d2"], fourPmLaMs)).toBe(true);
+    expect(la.net.venuePassesRedLines(barOrBrewery, ["d1"], fourPmLaMs)).toBe(true);
+    // d2 has hv:spend:lowtier (tier 1 cap), so tier-2 barOrBrewery is rejected for ["d1", "d2"]
+    expect(la.net.venuePassesRedLines(barOrBrewery, ["d1", "d2"], fourPmLaMs)).toBe(false);
     // strict_sober IS rejected from alcohol-centric venue
-    expect(la.net.venuePassesRedLines(barOrBrewery, ["s1", "d2"], fourPmLaMs)).toBe(false);
+    expect(la.net.venuePassesRedLines(barOrBrewery, ["s1"], fourPmLaMs)).toBe(false);
     // Default tz is this.cityTz() (America/Los_Angeles): 4 PM LA is daytime, NOT after-dark!
     expect(la.net.venuePassesRedLines(cafe, ["day1", "d2"], fourPmLaMs)).toBe(true);
     expect(la.net.venuePassesRedLines(cafe, ["day1", "d2"], fourPmLaMs, CITY_TZ.nyc)).toBe(false);
@@ -474,7 +477,7 @@ describe("Pass 2 safety, routing, and performance regressions", () => {
     const hoodLine = p1[0]!.content.split("\n").find(l => l.startsWith("Neighborhoods: "));
     expect(hoodLine).toBeDefined();
     const areas = hoodLine!.slice("Neighborhoods: ".length).replace(/\.$/, "").split("; ");
-    expect(areas.length).toBeLessThanOrEqual(12);
+    expect(areas.length).toBe(getCity("sf")!.neighborhoods.length);
     expect(areas.length).toBeGreaterThanOrEqual(8);
     expect(areas).toContain("Mission District");
     expect(areas).not.toContain("Brickell");

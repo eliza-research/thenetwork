@@ -1,8 +1,17 @@
 // Every member-facing message the Network sends, in one reviewed place (PRD 12.4 voice: observant,
 // concise, non-needy; one question at a time; an easy no; never another member's contact details
 // or private facts; opt-out language on first contact). Probes never name anyone.
-import type { Category } from "@thenetwork/core";
+import {
+  cityTimezone, clampSms, cleanPhrase, formatAnchorOrQuorumCancel, formatBackupVenuePivot, formatCrowdExpectation,
+  formatTopOneVenueSuggestion, SMS_MAX_CHARS, styleViolations, type Category, type CityId, type StyleViolationOptions,
+  type TopOneVenueSuggestionOptions,
+} from "@thenetwork/core";
 import type { MinorNotice } from "../../core/src/generated/textEnrollment.ts";
+
+export {
+  SMS_MAX_CHARS, styleViolations, formatTopOneVenueSuggestion, formatCrowdExpectation, formatBackupVenuePivot,
+  formatAnchorOrQuorumCancel, type StyleViolationOptions, type TopOneVenueSuggestionOptions,
+};
 
 const ACTIVITY: Record<Category, string> = {
   social: "meeting someone new for a coffee or a walk",
@@ -218,112 +227,146 @@ export function copyFor(b: CopyBrand) {
   /** "leave <app>": this app only; the member's data in it is deleted. */
   leftApp: `Done. You've left ${b.name} and I deleted what you shared here. Other apps you use with this number are not affected.`,
   notInApp: `You're not in ${b.name}, so there is nothing to leave and nothing changed. Other apps you use with this number are not affected.`,
-  topOneVenueSuggestion: (venue: string, area: string, when: string, opts?: { partner?: string; why?: string; pivot?: number }) =>
+  topOneVenueSuggestion: (venue: string, area: string, when: string, opts?: TopOneVenueSuggestionOptions) =>
     formatTopOneVenueSuggestion(venue, area, when, opts),
-  crowdExpectation: (mode: "network_curated" | "external_open", opts?: { interest?: string; platforms?: string; sparseAnchor?: boolean }) =>
+  crowdExpectation: (mode: "network_curated" | "external_open", opts?: { interest?: string; platforms?: string; sparseAnchor?: boolean; cityName?: string }) =>
     formatCrowdExpectation(mode, { ...opts, brandName: b.name }),
   backupVenuePivot: (primaryVenue: string, backupVenue: string, reason: "full" | "closed", opts?: { address?: string; landmark?: string }) =>
     formatBackupVenuePivot(primaryVenue, backupVenue, reason, opts),
   anchorOrQuorumCancel: (reason: "anchor_drop" | "low_quorum" | "co_anchor_promoted", opts?: { activity?: string; when?: string; venue?: string }) =>
     formatAnchorOrQuorumCancel(reason, opts),
+  silentPartnerVenueSwap: (when: string, venue: string, opts?: { area?: string; note?: string }) =>
+    formatSilentPartnerVenueSwap(when, venue, opts),
+  preArrivalBrief: (when: string, venue: string, opts?: { partner?: string; address?: string; landmark?: string; counterTab?: boolean }) =>
+    formatPreArrivalBrief(when, venue, opts),
+  partialGroupTwoPersonPivot: (when: string, venue: string, opts?: { activity?: string }) =>
+    formatPartialGroupTwoPersonPivot(when, venue, opts),
+  mediumDensityChoice: (activity: string, when: string, opts?: { venue?: string; networkCount?: number; platforms?: string }) =>
+    formatMediumDensityChoice(activity, when, opts),
+  weatherPivot: (activity: string, opts?: { originalVenue?: string; indoorBackup?: string; address?: string; when?: string }) =>
+    formatWeatherPivot(activity, opts),
+  externalFlakeRecovery: (opts?: { activity?: string; venue?: string }) =>
+    formatExternalFlakeRecovery(opts),
+  crossDomainBridge: (target: "dating" | "work" | "friends") =>
+    formatCrossDomainBridge(target, { brandName: b.name }),
   };
 }
 export type Copy = ReturnType<typeof copyFor>;
 /** The Network's copy (ntwrk). Other apps: copyFor(brandOf(app)). */
 export const copy: Copy = copyFor(NTWRK_BRAND);
 
-const cleanPhrase = (s: string) => s.replace(/_/g, " ").replace(/\?/g, "").replace(/\s+/g, " ").trim();
-const clampSms = (text: string, fallback: string) => (text.length <= 360 ? text : fallback.length <= 360 ? fallback : `${fallback.slice(0, 357).replace(/\?+$/, "")}...`);
-
-export function formatTopOneVenueSuggestion(
-  venue: string,
-  area: string,
+export function formatSilentPartnerVenueSwap(
   when: string,
-  opts: { partner?: string; why?: string; pivot?: number } = {}
+  venue: string,
+  opts: { area?: string; note?: string } = {}
 ): string {
-  const v = cleanPhrase(venue);
-  const a = cleanPhrase(area);
   const w = cleanPhrase(when);
-  const partner = opts.partner ? cleanPhrase(opts.partner) : undefined;
-  const why = opts.why ? ` (${cleanPhrase(opts.why)})` : "";
-  const pivot = opts.pivot ?? 0;
-  let text: string;
-  if (pivot <= 0) {
-    text = partner
-      ? `You're both in: meet ${partner} ${w} at ${v} in ${a}${why}. Works for you, or want to swap the spot or vibe?`
-      : `Top pick for ${w}: ${v} in ${a}${why}. Works for you, or want to swap the spot?`;
-  } else if (pivot >= 2) {
-    text = `Got it. How about ${v} in ${a} for ${w}${why}, or want to name a public spot you prefer?`;
-  } else {
-    text = `Fair call. How about ${v} in ${a} for ${w}${why} instead?`;
-  }
-  return clampSms(text, `How about ${v} in ${a} for ${w}?`);
+  const v = cleanPhrase(venue);
+  const details = [opts.area ? cleanPhrase(opts.area) : "", opts.note ? cleanPhrase(opts.note) : ""].filter(Boolean);
+  const detailBit = details.length ? ` (${details.join(", ")})` : "";
+  return clampSms(
+    `Quick tweak for ${w}: let's do ${v}${detailBit} instead. Still works for you?`,
+    `Quick tweak for ${w}: let's do ${v} instead. Still works for you?`
+  );
 }
 
-export function formatCrowdExpectation(
-  mode: "network_curated" | "external_open",
-  opts: { interest?: string; platforms?: string; sparseAnchor?: boolean; brandName?: string } = {}
+export function formatPreArrivalBrief(
+  when: string,
+  venue: string,
+  opts: { partner?: string; address?: string; landmark?: string; counterTab?: boolean } = {}
+): string {
+  const w = cleanPhrase(when);
+  const v = cleanPhrase(venue);
+  const who = opts.partner ? ` with ${cleanPhrase(opts.partner)}` : "";
+  const addr = opts.address ? ` (${cleanPhrase(opts.address)})` : "";
+  const landmark = opts.landmark ? ` Easy spot to meet: ${cleanPhrase(opts.landmark)}.` : "";
+  const tab = opts.counterTab !== false ? " Everyone handles their own tab at the counter." : "";
+  return clampSms(
+    `Heads up for ${w}${who} at ${v}${addr}.${landmark}${tab} Text me here if you're running late, or anytime if anything feels off.`,
+    `Heads up for ${w}${who} at ${v}.${landmark} Text me if you're running late, or anytime if anything feels off.`
+  );
+}
+
+export function formatPartialGroupTwoPersonPivot(
+  when: string,
+  venue: string,
+  opts: { activity?: string } = {}
+): string {
+  const w = cleanPhrase(when);
+  const v = cleanPhrase(venue);
+  const act = opts.activity ? ` for ${cleanPhrase(opts.activity)}` : "";
+  return clampSms(
+    `Quick update: a couple of people can't make ${w}${act}, so it would just be two of you at ${v}. Want to keep it as a 1:1, or should I find another time for a group?`,
+    `Quick update: it's down to two of you for ${w} at ${v}. Want to keep it as a 1:1, or reschedule for a group?`
+  );
+}
+
+export function formatMediumDensityChoice(
+  activity: string,
+  when: string,
+  opts: { venue?: string; networkCount?: number; platforms?: string } = {}
+): string {
+  const act = cleanPhrase(activity);
+  const w = cleanPhrase(when);
+  const count = opts.networkCount ?? 3;
+  const place = opts.venue ? ` at ${cleanPhrase(opts.venue)}` : "";
+  const platforms = cleanPhrase(opts.platforms || "Luma/Meetup");
+  return clampSms(
+    `For ${act} ${w}${place}, we have ${count} vetted members ready. Want to keep it as a cozy ${count}-person hangout, or open a few screened ${platforms} spots?`,
+    `We have ${count} vetted members for ${act} ${w}. Keep it small, or open a few screened local spots?`
+  );
+}
+
+export function formatWeatherPivot(
+  activity: string,
+  opts: { originalVenue?: string; indoorBackup?: string; address?: string; when?: string } = {}
+): string {
+  const act = cleanPhrase(activity);
+  const when = opts.when ? ` ${cleanPhrase(opts.when)}` : "";
+  if (opts.indoorBackup) {
+    const orig = opts.originalVenue ? ` for ${cleanPhrase(opts.originalVenue)}` : "";
+    const backup = cleanPhrase(opts.indoorBackup);
+    const addr = opts.address ? ` (${cleanPhrase(opts.address)})` : "";
+    return clampSms(
+      `Weather looks rough${orig}, so we're moving ${act}${when} indoors to ${backup}${addr} at the same time. Still in?`,
+      `Weather looks rough, so we're moving ${act} indoors to ${backup}. Still in?`
+    );
+  }
+  return clampSms(
+    `Rain is rolling in for ${act}${when}, so let's postpone today's session rather than getting soaked. Want me to look for next weekend?`,
+    `Rain is rolling in for ${act}, so let's postpone today. Want me to look for next weekend?`
+  );
+}
+
+export function formatExternalFlakeRecovery(opts: { activity?: string; venue?: string } = {}): string {
+  const act = opts.activity ? ` for ${cleanPhrase(opts.activity)}` : "";
+  const at = opts.venue ? ` at ${cleanPhrase(opts.venue)}` : "";
+  return clampSms(
+    `Ugh, looks like tonight's external RSVPs${act}${at} flaked — really sorry about that. Feel free to grab a snack or head out whenever you want; I'll prioritize a curated in-network match for you next.`,
+    "Looks like tonight's external RSVPs flaked — really sorry about that. Head out whenever you want; I'll prioritize a curated match next."
+  );
+}
+
+export function formatCrossDomainBridge(
+  target: "dating" | "work" | "friends",
+  opts: { brandName?: string } = {}
 ): string {
   const brand = cleanPhrase(opts.brandName || "the Network");
-  if (mode === "network_curated") {
+  if (target === "dating") {
     return clampSms(
-      `This is a curated ${brand} meetup — everyone coming is a vetted member.`,
-      "This is a curated meetup — everyone coming is a vetted member."
+      `Glad the friend hang went well. I keep friend meetups strictly platonic, and nothing carries over unless you ask. Want me to opt you into dating intros on ${brand} separately?`,
+      "I keep friend hangs strictly platonic. Want me to opt you into separate dating intros?"
     );
   }
-  const interest = cleanPhrase(opts.interest || "this meetup");
-  const platforms = cleanPhrase(opts.platforms || "Luma/Meetup");
-  if (opts.sparseAnchor) {
+  if (target === "work") {
     return clampSms(
-      `Heads up: you'll help anchor ${interest} with local guests screened from ${platforms}. If RSVPs stay under 3 by 24h out, I'll call it early so you don't waste a trip.`,
-      "Heads up: this is an open meetup with screened local guests. If RSVPs stay under 3 by 24h out, I'll call it early."
-    );
-  }
-  return clampSms(
-    `Heads up: this is an open ${interest} meetup with ${brand} members plus local ${platforms} guests we screened. Free public events can see last-minute drops, so we invite a few extra.`,
-    "Heads up: this is an open meetup with members plus screened local guests, so we invite a few extra."
-  );
-}
-
-export function formatBackupVenuePivot(
-  primaryVenue: string,
-  backupVenue: string,
-  reason: "full" | "closed",
-  opts: { address?: string; landmark?: string } = {}
-): string {
-  const p = cleanPhrase(primaryVenue);
-  const b = cleanPhrase(backupVenue);
-  const why = reason === "full" ? "is full" : "is closed";
-  const addr = opts.address ? ` (${cleanPhrase(opts.address)})` : "";
-  const landmark = opts.landmark ? ` Meet ${cleanPhrase(opts.landmark)}.` : "";
-  return clampSms(
-    `Quick pivot: ${p} ${why}, so let's meet at ${b}${addr} instead.${landmark} Reply if your plans change.`,
-    `Quick pivot: ${p} ${why}, so let's meet at ${b} instead. Reply if your plans change.`
-  );
-}
-
-export function formatAnchorOrQuorumCancel(
-  reason: "anchor_drop" | "low_quorum" | "co_anchor_promoted",
-  opts: { activity?: string; when?: string; venue?: string } = {}
-): string {
-  const act = cleanPhrase(opts.activity || "this meetup");
-  const when = opts.when ? ` ${cleanPhrase(opts.when)}` : "";
-  const venue = opts.venue ? ` at ${cleanPhrase(opts.venue)}` : "";
-  if (reason === "co_anchor_promoted") {
-    return clampSms(
-      `Quick update: our host changed, so ${act}${when}${venue} is still on as planned. Reply if your plans change.`,
-      `Quick update: our host changed, so ${act} is still on. Reply if your plans change.`
-    );
-  }
-  if (reason === "anchor_drop") {
-    return clampSms(
-      `Quick update: ${act}${when} is off since the host can't make it, sorry about that. I'll look for another time soon.`,
-      "Quick update: this meetup is off since the host can't make it, sorry about that. I'll look for another time."
+      `Glad that went well. Work intros stay completely separate from social and dating here, with nothing shared across lanes. Want me to opt you into work intros on ${brand}?`,
+      "Work intros stay completely separate here. Want me to opt you into work intros?"
     );
   }
   return clampSms(
-    `Quick update: not enough people came together for ${act}${when}, so I'm calling it early so you don't waste a trip. I'll keep an eye out for next week.`,
-    "Quick update: not enough people came together this time, so I'm calling it early. I'll keep an eye out for next week."
+    `Happy to help you expand your friend circle too. Friend intros stay separate and strictly platonic on ${brand}. Want me to look for a low-key friend hangout?`,
+    "Friend intros stay separate and platonic. Want me to look for a low-key friend hangout?"
   );
 }
 
@@ -342,27 +385,12 @@ function whenFormatter(tz: string): Intl.DateTimeFormat {
   return fmt;
 }
 
-/** "Thursday 7pm"-style phrasing in local city time (defaults to America/New_York). */
-export function whenPhrase(t: number, tz = "America/New_York"): string {
-  return whenFormatter(tz).format(t).replace(":00", "");
-}
-
-/** Copy style rules as code (PRD 12.4); the tests run every template through them. */
-export function styleViolations(text: string, opts: { firstContact?: boolean } = {}): string[] {
-  const v: string[] = [];
-  if (text.length > 360) v.push("too_long");
-  if ((text.match(/\?/g) ?? []).length > 1) v.push("more_than_one_question");
-  if (/\+?\d{3}[-.\s]\d{3}[-.\s]\d{4}|@\w+\.\w+/.test(text)) v.push("contact_details");
-  if (/!{2,}|you won't believe|act now|last chance/i.test(text)) v.push("pushy");
-  if (opts.firstContact && !/STOP/.test(text)) v.push("missing_opt_out");
-  // A bare CANCEL is a STOP word (platform consent.ts): no text may ask a member to reply "cancel" (platform plan 4.3).
-  if (/\b(?:reply|text|say|send|type)\s+["'“]?cancel\b/i.test(text)) v.push("asks_cancel");
-  // Built phrases that read wrong: a skill label after "they" ("they works", "they ha a truck",
-  // "they say they ML engineer") and a verb after "asked me for" ("asked me for meet people").
-  if (/\bthey (?:say they )?(?:plays|has|does|works|teaches|gives|cooks|throws|shoots|sings|edits|loves|ha|doe|[A-Z]{2,}|[a-z]+ (?:engineer|designer|player))\b|\b(?:asked me for|someone for) (?:meet|make|find|get|play|join|go|try|start|be|learn)\b/.test(text)) v.push("grammar");
-  // A raw taxonomy tag ("climate_tech") never reaches a member.
-  if (/\b[a-z]+_[a-z_]+\b/.test(text)) v.push("raw_tag");
-  return v;
+/** "Thursday 7pm"-style phrasing in a city's timezone (or explicit IANA timezone; defaults to America/New_York). */
+export function whenPhrase(t: number, cityOrTz?: CityId): string {
+  const timeZone = cityOrTz
+    ? (cityTimezone(cityOrTz) ?? (cityOrTz === "UTC" || cityOrTz.includes("/") ? cityOrTz : "America/New_York"))
+    : "America/New_York";
+  return whenFormatter(timeZone).format(t).replace(":00", "");
 }
 
 /**

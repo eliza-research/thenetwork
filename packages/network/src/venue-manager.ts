@@ -10,6 +10,7 @@ import {
   pickPrimaryAndBackupVenue,
   shouldFetchExternalVenues,
   type City,
+  type CityId,
   type MemberId,
   type MemberVenuePrefs,
   type PrimaryBackupVenuePick,
@@ -28,7 +29,7 @@ export type ExternalOpenResult =
   | "closed_permanent";
 
 export interface ExternalVenueProvider {
-  search(city: City, area: string, nowMs: number): Promise<VenueRecord[]>;
+  search(city: CityId, area: string, nowMs: number): Promise<VenueRecord[]>;
   checkOpen?(venue: VenueRecord, nowMs: number): Promise<ExternalOpenResult>;
 }
 
@@ -229,7 +230,7 @@ export class VenueManager {
     this.markMutation(v);
   }
 
-  count(city?: City): number {
+  count(city?: CityId): number {
     if (!city) return this.catalog.size;
     let n = 0;
     for (const v of this.catalog.values()) if (v.city === city) n++;
@@ -249,7 +250,7 @@ export class VenueManager {
     return v ? cloneVenue(v) : undefined;
   }
 
-  listVenues(city?: City): VenueRecord[] {
+  listVenues(city?: CityId): VenueRecord[] {
     const out: VenueRecord[] = [];
     for (const v of this.catalog.values()) {
       if (!city || v.city === city) out.push(cloneVenue(v));

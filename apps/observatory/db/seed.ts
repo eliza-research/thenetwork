@@ -60,9 +60,9 @@ export async function upsertSeedVenues(sql: SQL, venues: readonly VenueRecord[] 
     for (let i = 0; i < venues.length; i += chunkSize) {
       const rows = venues.slice(i, i + chunkSize).map(v => {
         const { groupScore, dateScore } = computeScores(v);
-        const ageMin = v.ageMin ?? 0;
         const isAlcoholCentric = v.isAlcoholCentric ?? v.isBarOnly;
-        const allAges = v.allAges ?? (!v.isBarOnly && !isAlcoholCentric && ageMin <= 0);
+        const ageMin = v.ageMin ?? (v.isBarOnly || isAlcoholCentric ? 21 : 0);
+        const allAges = v.allAges ?? (!v.isBarOnly && !isAlcoholCentric && ageMin <= 13);
         const priors = (v.personaPriors ?? {}) as any;
         return {
           id: v.id,

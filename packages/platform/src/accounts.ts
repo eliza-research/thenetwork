@@ -15,6 +15,7 @@
 //    to someone is refused, the consent history and the age floor move with the person, and the old
 //    number's sessions end. The phone_changes row (keyed hashes only) is the audit record.
 import { randomUUID } from "node:crypto";
+import { resolveCity } from "../../core/src/cities.ts";
 import { isCity, LAUNCH_CITIES, type City } from "../../core/src/types.ts";
 import { DAY } from "../../core/src/clock.ts";
 import {
@@ -81,8 +82,12 @@ const HOME_CITY_ALIASES: Record<string, City> = {
 export function homeCityOf(value: unknown): City | undefined {
   if (typeof value !== "string") return undefined;
   const city = value.normalize("NFKC").trim().toLowerCase().replace(/\s+/g, " ");
+  if (!city) return undefined;
   if (isCity(city) && LAUNCH_CITIES.includes(city)) return city;
-  return HOME_CITY_ALIASES[city];
+  const aliased = HOME_CITY_ALIASES[city];
+  if (aliased) return aliased;
+  const resolved = resolveCity(city);
+  return isCity(resolved) ? resolved : undefined;
 }
 
 export interface HomeInput { homeCity: City; neighborhood?: string }

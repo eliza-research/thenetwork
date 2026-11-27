@@ -14,7 +14,10 @@
 //            reviews a blind summary, and the intro goes out only after both yeses (peonHooks below,
 //            src/jobs.ts). Managers post, update and close jobs by text (read back, saved on a yes).
 //   friends  friendsPack with its plans config (FRIENDS_PLANS).
-import { canBeMatched, CITY_TZ, DAY, HOUR, seedVenuesForCity, type City, type MemberId, type VenuePriceTier, type VenueRecord } from "@thenetwork/core";
+import {
+  canBeMatched, CITY_TZ, cityTimezone, DAY, HOUR, isCity, isLaunchCity, localParts, seedVenuesForCity,
+  type City, type CityId, type LaunchCity, type MemberId, type MemberVenuePrefs, type VenuePriceTier, type VenueRecord,
+} from "@thenetwork/core";
 import {
   friendsPack, FRIENDS_PLANS, makeSlopPack, peonPack, PEON_ENGINE_CONFIG, peonSeatCapacity, planFromInput, SLOP_ENGINE_CONFIG, slopProfiles,
   type AppPack, type EngineConfigInput, type EngineInput, type PlansConfigInput, type World,
@@ -49,27 +52,33 @@ export interface AppWiring {
   prefs(age: number): { categoriesOptIn: string[]; romanceOptIn: boolean };
 }
 
+export interface AppWiringOptions {
+  venues?: () => readonly VenueRecord[];
+}
+
 const NTWRK_CATEGORIES = ["social", "hobby", "professional", "events", "growth", "help"];
+const asEngineCity = (city: CityId): City => (isCity(city) ? city : "nyc");
 
 /** The wiring for one app and city. A new instance each time (packs hold no state, but options are per network). */
-export function appWiring(app: AppId, city: City = "nyc"): AppWiring {
+export function appWiring(app: AppId, city: CityId = "nyc", opts?: AppWiringOptions): AppWiring {
+  const market = asEngineCity(city);
   switch (app) {
     case "slop": {
       // Founder decision 9: no ID check (phone login is the identity check; a stated age is enough).
       const pack = makeSlopPack({ verification: { required: false } });
       return {
-        pack, engine: { ...SLOP_ENGINE_CONFIG, cities: [city] }, hooks: slopHooks(pack.options, city), plans: false,
+        pack, engine: { ...SLOP_ENGINE_CONFIG, cities: [market] }, hooks: slopHooks(pack.options, market, opts?.venues), plans: false,
         dateStanding: w => new DateStandings(w, pack.options).validity,
         prefs: age => ({ categoriesOptIn: canBeMatched(age) ? ["romance"] : [], romanceOptIn: canBeMatched(age) }),
       };
     }
     case "peon":
       return {
-        pack: peonPack, engine: { ...PEON_ENGINE_CONFIG, cities: [city] }, plans: false, hooks: peonHooks(),
+        pack: peonPack, engine: { ...PEON_ENGINE_CONFIG, cities: [market] }, plans: false, hooks: peonHooks(),
         prefs: () => ({ categoriesOptIn: ["professional"], romanceOptIn: false }),
       };
     case "friends":
-      return { pack: friendsPack, engine: { cities: [city] }, plansConfig: FRIENDS_PLANS, prefs: () => ({ categoriesOptIn: ["social", "hobby"], romanceOptIn: false }) };
+      return { pack: friendsPack, engine: { cities: [market] }, plansConfig: FRIENDS_PLANS, prefs: () => ({ categoriesOptIn: ["social", "hobby"], romanceOptIn: false }) };
     default:
       return { prefs: () => ({ categoriesOptIn: NTWRK_CATEGORIES, romanceOptIn: false }) };
   }
@@ -188,35 +197,47 @@ export function slopVenue(
   cells: { lat: number; lon: number }[],
   activity: string,
   at?: number,
-  city: City = "nyc",
-  opts?: SlopVenueOptions,
+  city: CityId = "nyc",
+  opts?: SlopVenueOptions | readonly VenueRecord[],
 ): HookVenue | undefined {
   if (!cells.length) return undefined;
-  const timeZone = CITY_TZ[city] ?? CITY_TZ.nyc;
+  const o: SlopVenueOptions | undefined = Array.isArray(opts) ? { venues: opts } : (opts as SlopVenueOptions | undefined);
+  const timeZone = cityTimezone(city) ?? CITY_TZ.nyc;
   const want = new Set(ACTIVITY_TAGS[activity] ?? ["social"]);
+  // After dark, a busy, lit public place, never a park or a waterfront.
   const hour = at === undefined ? 12 : Number(new Intl.DateTimeFormat("en-US", { timeZone, hourCycle: "h23", hour: "2-digit" }).format(at));
   const dark = hour >= 17 || hour < 9;
-  const rawPool: (HookVenue & { tags: string[] })[] = city === "nyc" && !opts?.venues
-    ? (dark
+  const curatedPool = o?.venues?.length
+    ? o.venues.filter(v => v.city === city)
+    : city !== "nyc"
+      ? seedVenuesForCity(city)
+      : undefined;
+  const rawPool: (HookVenue & { tags: string[] })[] = curatedPool
+    ? curatedPool
+        .filter(v => {
+          if (v.status !== "active" || !v.public) return false;
+          if (dark && (!v.indoor || v.category === "park" || v.category === "waterfront_park")) return false;
+          if (o?.nonDrinker && (v.isBarOnly || v.isAlcoholCentric || !v.alcoholOptional)) return false;
+          if (o?.maxBudgetTier !== undefined && v.priceTier > o.maxBudgetTier) return false;
+          return true;
+        })
+        .map(v => ({
+          id: v.id,
+          name: v.name,
+          neighborhood: v.neighborhood,
+          lat: v.lat,
+          lng: v.lng,
+          tags: [
+            ...(v.hobbies ?? []),
+            ...(v.cuisineTags ?? []),
+            v.category,
+            ...(v.category === "park" || v.category === "waterfront_park" ? ["walk", "outdoors"] : ["social", "food"]),
+          ],
+        }))
+    : dark
       ? EVENING_VENUES.map(v => ({ ...v, tags: ["social", "food"] }))
-      : VENUES.filter(v => v.adultPlans).map(v => ({ id: v.id, name: v.name, neighborhood: v.neighborhood, lat: v.lat, lng: v.lng, tags: v.tags })))
-    : (opts?.venues ? opts.venues.filter(v => v.city === city) : seedVenuesForCity(city))
-      .filter(v => {
-        if (v.status !== "active" || !v.public) return false;
-        if (dark && !v.indoor) return false;
-        if (opts?.nonDrinker && (v.isBarOnly || !v.alcoholOptional)) return false;
-        if (opts?.maxBudgetTier !== undefined && v.priceTier > opts.maxBudgetTier) return false;
-        return true;
-      })
-      .map(v => ({
-        id: v.id,
-        name: v.name,
-        neighborhood: v.neighborhood,
-        lat: v.lat,
-        lng: v.lng,
-        tags: v.category === "park" || v.category === "waterfront_park" ? ["walk", "outdoors"] : ["social", "food"],
-      }));
-  const filtered = opts?.excludeIds?.size ? rawPool.filter(v => !opts.excludeIds!.has(v.id)) : rawPool;
+      : VENUES.filter(v => v.adultPlans).map(v => ({ id: v.id, name: v.name, neighborhood: v.neighborhood, lat: v.lat, lng: v.lng, tags: v.tags }));
+  const filtered = o?.excludeIds?.size ? rawPool.filter(v => !o.excludeIds!.has(v.id)) : rawPool;
   const pool = filtered.length ? filtered : rawPool;
   let best: { v: (typeof pool)[number]; cost: number } | undefined;
   for (const v of pool) {
@@ -227,12 +248,81 @@ export function slopVenue(
   return best && { id: best.v.id, name: best.v.name, neighborhood: best.v.neighborhood, lat: best.v.lat, lng: best.v.lng, timeZone };
 }
 
+function memberVenueRedLines(input: EngineInput, memberId: MemberId): Partial<MemberVenuePrefs> {
+  const tags = new Set(
+    input.facets
+      .filter(f => f.memberId === memberId)
+      .flatMap(f => f.tags.map(t => t.toLowerCase()))
+  );
+  const has = (...keys: string[]) => keys.some(k => tags.has(k));
+  const strictSober = has("strict_sober", "sober", "alcohol_free", "in_recovery", "aa", "slop:dealbreaker:strict_sober");
+  const nonDrinker = strictSober || has("non_drinker", "no_alcohol", "no_drinks", "slop:lifestyle:non_drinker");
+  return {
+    ...(strictSober ? { strictSober: true } : {}),
+    ...(nonDrinker ? { drinksAlcohol: false } : {}),
+    ...(has("vegetarian", "diet:vegetarian") ? { vegetarian: true } : {}),
+    ...(has("vegan", "diet:vegan") ? { vegan: true } : {}),
+    ...(has("halal", "diet:halal") ? { halal: true } : {}),
+    ...(has("kosher", "diet:kosher") ? { kosher: true } : {}),
+    ...(has("gluten_free", "celiac", "diet:gluten_free") ? { glutenFree: true } : {}),
+    ...(has("severe_allergen", "peanut_allergy", "shellfish_allergy", "anaphylaxis") ? { severeAllergen: true } : {}),
+    ...(has("wheelchair", "wheelchair_needed", "accessible_only") ? { wheelchairNeeded: true } : {}),
+    ...(has("low_walking", "mobility_limited") ? { lowWalking: true } : {}),
+    ...(has("smoke_free", "no_smoking") ? { smokeFree: true } : {}),
+    ...(has("low_noise", "quiet_only", "sensory_friendly") ? { lowNoiseRequired: true } : {}),
+    ...(has("daytime_only", "no_night") ? { daytimeOnly: true } : {}),
+  };
+}
+
+function hasAnyRedLine(prefs: Partial<MemberVenuePrefs>): boolean {
+  return Boolean(
+    prefs.strictSober ||
+    prefs.drinksAlcohol === false ||
+    prefs.halal ||
+    prefs.kosher ||
+    prefs.vegan ||
+    prefs.glutenFree ||
+    prefs.severeAllergen ||
+    prefs.wheelchairNeeded ||
+    prefs.lowWalking ||
+    prefs.lowNoiseRequired ||
+    prefs.daytimeOnly
+  );
+}
+
 /** The slop hooks (exported for tests). */
-export function slopHooks(options: Parameters<typeof planFromInput>[4], city: City = "nyc"): AppHooks {
-  const plan = (o: HookOpp, input: EngineInput) => {
+export function slopHooks(
+  options: Parameters<typeof planFromInput>[4],
+  city: CityId = "nyc",
+  venuesProvider?: () => readonly VenueRecord[]
+): AppHooks {
+  const market = asEngineCity(city);
+  const tz = cityTimezone(city) ?? CITY_TZ.nyc;
+  const venueCity: LaunchCity = isLaunchCity(city) ? city : "nyc";
+  const venuePool = (): readonly VenueRecord[] => {
+    const provided = venuesProvider?.();
+    return provided && provided.length > 0 ? provided : seedVenuesForCity(venueCity);
+  };
+  const homeAreaOf = (input: EngineInput, memberId: MemberId) =>
+    input.presence.find(p => p.memberId === memberId && p.type === "home")?.areas.find(a => !a.startsWith("zip:"));
+  const plan = (o: HookOpp, input: EngineInput, withVenue = false) => {
     const [a, b] = o.participants as [MemberId, MemberId];
     const first = o.first && o.participants.includes(o.first) ? o.first : a;
-    return planFromInput(input, first, first === a ? b : a, [city], options);
+    const partner = first === a ? b : a;
+    if (!withVenue) return planFromInput(input, first, partner, [market], options);
+    const startMs = o.meetingAt ?? input.now;
+    const hour = localParts(startMs, tz).hour;
+    const isAfterDark = hour >= 17 || hour < 9;
+    return planFromInput(input, first, partner, [market], options, {
+      city: venueCity,
+      venues: venuePool(),
+      memberAreas: [homeAreaOf(input, first), homeAreaOf(input, partner)],
+      memberPrefs: [memberVenueRedLines(input, first), memberVenueRedLines(input, partner)],
+      startMs,
+      nowMs: input.now,
+      isAfterDark,
+      badWeatherOrAfterDark: isAfterDark,
+    });
   };
   return {
     engineInput(input) {
@@ -246,10 +336,10 @@ export function slopHooks(options: Parameters<typeof planFromInput>[4], city: Ci
         let zip = mine.find(t => t.startsWith("slop:zip:"))?.slice(9);
         if (!zip) {
           const homeAreas = presence.find(p => p.memberId === m.id && p.type === "home")?.areas ?? [];
-          const area = city === "nyc"
+          const area = market === "nyc"
             ? homeAreas.find(x => NEIGHBORHOOD.has(x))
-            : homeAreas.find(x => !!findCityNeighborhood(x, city));
-          zip = zipForArea(area, city);
+            : homeAreas.find(x => !!findCityNeighborhood(x, market));
+          zip = zipForArea(area, market);
           if (zip) facets.push({ id: `${m.id}:slop:area-zip`, memberId: m.id, kind: "fact", value: zip, tags: [`slop:zip:${zip}`], scope: "agent_private", provenance: "inferred", confidence: 0.6, validFrom: now, source: "chat", observedAt: now, inferred: true, confirmedByMember: false });
         }
         const home = presence.find(p => p.memberId === m.id && p.type === "home");
@@ -261,12 +351,12 @@ export function slopHooks(options: Parameters<typeof planFromInput>[4], city: Ci
       }
       return { ...input, facets, presence, intents };
     },
-    hardDatingPairCurrent: (input, participants) => slopHardPairCurrent(input, participants, city, options),
-    onboarding: city === "nyc" ? slopOnboarding : slopOnboardingForCity(city),
+    hardDatingPairCurrent: (input, participants) => slopHardPairCurrent(input, participants, market, options),
+    onboarding: market === "nyc" ? slopOnboarding : slopOnboardingForCity(market),
     timeOptions(o, now, input) {
       const p = plan(o, input());
       if (!p) return undefined;
-      return p.slots.map(s => slotStart(s, now, city)).filter((t): t is number => t !== undefined).map(t => ({ start: t, end: t + 2 * HOUR }));
+      return p.slots.map(s => slotStart(s, now, market)).filter((t): t is number => t !== undefined).map(t => ({ start: t, end: t + 2 * HOUR }));
     },
     probe(o, id, ctx) {
       if (o.category !== "romance" || o.participants.length !== 2) return undefined;
@@ -282,14 +372,30 @@ export function slopHooks(options: Parameters<typeof planFromInput>[4], city: Ci
     },
     venue(o, input) {
       const inp = input();
+      const p = plan(o, inp, true);
+      if (p?.venueRecord) {
+        return {
+          id: p.venueRecord.id,
+          name: p.venueRecord.name,
+          neighborhood: p.venueRecord.neighborhood,
+          lat: p.venueRecord.lat,
+          lng: p.venueRecord.lng,
+          timeZone: tz,
+        };
+      }
+      if (o.participants.some(id => hasAnyRedLine(memberVenueRedLines(inp, id)))) {
+        return undefined;
+      }
       const P = slopProfiles(inp);
       const cells = o.participants.map(id => P.get(id)?.cell).filter((c): c is NonNullable<typeof c> => !!c);
       const nonDrinker = o.participants.some(id => {
         const prof = P.get(id);
         return !!prof && isNonDrinkerProfile(prof);
       });
-      const p = plan(o, inp);
-      return slopVenue(cells, p?.activity ?? "coffee", o.meetingAt, city, nonDrinker ? { nonDrinker: true } : undefined);
+      return slopVenue(cells, p?.activity ?? "coffee", o.meetingAt, city, {
+        ...(nonDrinker ? { nonDrinker: true } : {}),
+        venues: venuePool(),
+      });
     },
     booked(o, _id, ctx) {
       if (o.category !== "romance") return undefined;

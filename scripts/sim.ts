@@ -25,6 +25,7 @@
 //   peon      peon.biz: seeds 13-16, 8 weeks; the official gates block
 //   peon-seats peon job postings to seats to hiring managers through the ConsentNetwork (#9): intake, routing, double opt-in, exclusions, restart, close
 //   friends   friends.help: seeds 5-8, 8 weeks, 400 personas; the official gates block
+//   meetup    5-city meetup setup, red-line venue selection, Top-1 + 3-pivot flow, external events & matchmakers, panic exit & no-show recovery (seeds 13-16, 4 weeks, 200 personas)
 //   safety    slop.date photos (adults only, consent, rater), bans on every rejoin path, report -> hold -> ban, the reviewer
 //             of record, SLA alerts and the bias monitor; its Postgres scenarios block when the dev Postgres runs, else tracked
 //   ops       monitoring, alerts, cost, the console's deploy guards and image contents; on the dev Postgres (tracked):
@@ -42,6 +43,8 @@
 //   clef      P2 Clef weight fitting: synthetic labels from the slop world's hidden appearance (seed 1, 2,000 labels
 //             per dimension); ranking recovery, weights file round trip, extraction, bias audit, labelling page
 //   five-city 5-city (sf, nyc, la, chicago, miami) conversation-script suite through ConsentNetwork, VenueManager & MeetupCoordinator (--transcripts prints transcripts)
+//   marketing global multi-city marketing growth engine: 30-day NYC+SF deterministic world, 7 adversarial storms,
+//             Dafny policy invariants, LLM cache/budget, core queue backpressure, and paired Bandit vs Uniform CPA
 //   capital   network capital: 32 paired seeds, 90 days (--with-capital or --only capital)
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -62,6 +65,7 @@ const BLOCKS: Record<string, (b: Block, o: Opts) => Promise<void>> = {
   peon: async (b, o) => (await import("./sim/peon.ts")).peonBlock(b, o),
   "peon-seats": async (b) => (await import("./sim/peon-seats.ts")).peonSeatsBlock(b),
   friends: async (b, o) => (await import("./sim/friends.ts")).friendsBlock(b, o),
+  meetup: async (b, o) => (await import("./sim/meetup.ts")).meetupBlock(b, o),
   pipeline: async (b) => (await import("./sim/pipeline.ts")).pipelineBlock(b),
   "pipeline-slop": async (b) => (await import("./sim/pipeline-slop.ts")).pipelineSlopBlock(b),
   safety: async (b) => (await import("./sim/safety.ts")).safetyBlock(b),
@@ -69,9 +73,10 @@ const BLOCKS: Record<string, (b: Block, o: Opts) => Promise<void>> = {
   clef: async (b) => (await import("./sim/clef.ts")).clefBlock(b),
   "five-city": async (b, o) => (await import("./sim/five-city.ts")).fiveCityBlock(b, o),
   audit: async (b) => (await import("./sim/audit.ts")).auditBlock(b),
+  marketing: async (b, o) => (await import("./sim/marketing.ts")).marketingBlock(b, o),
   capital: async (b, o) => (await import("./sim/capital.ts")).capitalBlock(b, o),
 };
-const DEFAULT = ["evals", "onboard", "network", "matching", "slop", "relay", "peon", "peon-seats", "friends", "clef", "five-city", "safety", "ops", "pipeline", "pipeline-slop", "audit"];
+const DEFAULT = ["evals", "onboard", "network", "matching", "slop", "relay", "peon", "peon-seats", "friends", "meetup", "clef", "five-city", "safety", "ops", "pipeline", "pipeline-slop", "audit", "marketing"];
 const DISPATCH_WEIGHT: Readonly<Record<string, number>> = {
   capital: 100,
   "matching:ntwrk": 95,
@@ -88,7 +93,9 @@ const DISPATCH_WEIGHT: Readonly<Record<string, number>> = {
   safety: 40,
   pipeline: 35,
   ops: 30,
+  meetup: 28,
   "five-city": 25,
+  marketing: 22,
   onboard: 20,
   relay: 15,
   "peon-seats": 12,

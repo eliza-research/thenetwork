@@ -347,12 +347,15 @@ export function validatePublicHttpsUrl(value: unknown, field: string): string {
     throw new HttpValidationError(400, "INVALID_URL_AUTH", `${field} must not embed credentials.`);
   }
   const host = parsed.hostname.toLowerCase();
+  const bareHost = host.replace(/^\[|\]$/g, "");
+  const isIpLiteral = isIP(bareHost) !== 0;
   if (
     !host ||
     host === "localhost" ||
     host.endsWith(".localhost") ||
     host.endsWith(".local") ||
     host.endsWith(".internal") ||
+    (!isIpLiteral && !host.includes(".")) ||
     isPrivateIpAddress(host)
   ) {
     throw new HttpValidationError(
@@ -772,10 +775,22 @@ export interface ParsedCreateHuman {
   channel: OutreachChannel;
   role: HumanRole;
   city?: string;
+  contactEmail?: string | null;
   lowestAge?: number | null;
   stopped?: boolean;
   banned?: boolean;
   requireAdult?: boolean;
+}
+
+const BASIC_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+function optValidatedEmail(value: unknown, field: string): string | null | undefined {
+  const email = optNullableString(value, field, 254);
+  if (email === undefined || email === null) return email;
+  if (!BASIC_EMAIL_RE.test(email)) {
+    throw new HttpValidationError(400, "INVALID_EMAIL", `${field} must be a valid email address.`);
+  }
+  return email.toLowerCase();
 }
 
 export function parseCreateHuman(raw: unknown): ParsedCreateHuman {
@@ -787,6 +802,7 @@ export function parseCreateHuman(raw: unknown): ParsedCreateHuman {
     channel: reqEnum(b.channel, "channel", OUTREACH_CHANNELS),
     role: reqEnum(b.role, "role", HUMAN_ROLES),
     city: optString(b.city, "city", 64),
+    contactEmail: optValidatedEmail(b.contactEmail, "contactEmail"),
     lowestAge: optNullableInt(b.lowestAge, "lowestAge", 0, 150),
     stopped: optBool(b.stopped, "stopped"),
     banned: optBool(b.banned, "banned"),
@@ -919,6 +935,8 @@ export function parseCreateOutreach(raw: unknown): ParsedCreateOutreach {
 export interface ParsedCreateAttribution {
   campaignId: string;
   taskId?: string | null;
+  armId?: string | null;
+  desireLane?: string | null;
   qrBatchCode?: string | null;
   eventKind: "qr_scan" | "site_visit" | "signup_started" | "signup_verified_adult" | "video_view";
   city?: string;
@@ -930,9 +948,17 @@ export interface ParsedCreateAttribution {
 export function parseCreateAttribution(raw: unknown): ParsedCreateAttribution {
   const b = asRecord(raw);
   const meta = b.metadata === undefined ? undefined : asRecord(b.metadata, "metadata");
+  const desireLane =
+    b.desireLane === undefined
+      ? undefined
+      : b.desireLane === null
+        ? null
+        : parseDesireLane(b.desireLane, "desireLane");
   return {
     campaignId: reqString(b.campaignId, "campaignId", 128),
     taskId: optNullableString(b.taskId, "taskId", 128),
+    armId: optNullableString(b.armId, "armId", 128),
+    desireLane,
     qrBatchCode: optNullableString(b.qrBatchCode, "qrBatchCode", 128),
     eventKind: reqEnum(b.eventKind, "eventKind", ATTRIBUTION_KINDS),
     city: optString(b.city, "city", 64),
@@ -1123,4 +1149,255 @@ export function parsePaginationQuery(searchParams: URLSearchParams): ParsedPagin
   const status = searchParams.get("status")?.trim() || undefined;
 
   return { limit, offset, campaignId, city, status };
+}
+
+const CITY_SLUG_RE = /^[a-z][a-z0-9_-]{1,31}$/;
+const DESIRE_LANE_RE = /^[a-z][a-z0-9_]{1,63}$/;
+const CONTACT_HASH_RE = /^[a-f0-9]{16,128}$/i;
+const E164_OR_PHONE_RE = /^\+?[1-9]\d{6,14}$/;
+
+const DISCOVERY_SOURCES = new Set<string>([
+  "nyc_open_data",
+  "nys_sla",
+  "nys_sla_pending",
+  "city_open_data",
+  "hn",
+  "github",
+  "arxiv",
+  "reddit",
+  "youtube_rss",
+  "luma",
+  "eventbrite",
+  "partiful",
+  "sec_form_d",
+  "openalex",
+  "irs_990",
+  "clinical_trials",
+]);
+
+export function parseCityParam(
+  raw: unknown,
+  field = "city",
+  opts: { readonly allowAll?: boolean } = {},
+): string {
+  const value = reqString(raw, field, 32).toLowerCase();
+  if (opts.allowAll && value === "all") return "all";
+  if (!CITY_SLUG_RE.test(value)) {
+    throw new HttpValidationError(
+      400,
+      "INVALID_CITY",
+      `${field} must be a lowercase city code (2-32 chars, letters/digits/-/_).`,
+    );
+  }
+  return value;
+}
+
+export function parseDesireLane(raw: unknown, field = "desireLane"): string {
+  const value = reqString(raw, field, 64).toLowerCase();
+  if (!DESIRE_LANE_RE.test(value)) {
+    throw new HttpValidationError(
+      400,
+      "INVALID_DESIRE_LANE",
+      `${field} must be a lowercase snake_case desire lane identifier.`,
+    );
+  }
+  return value;
+}
+
+export interface ParsedSeedCity {
+  city?: string;
+  monthlyBudgetCents?: number;
+  dailyCapCents?: number;
+  maxTaskCents?: number;
+  riskDial?: RiskDial;
+  billingArmed?: boolean;
+}
+
+export function parseSeedCity(raw: unknown): ParsedSeedCity {
+  const b = asRecord(raw);
+  const city = b.city !== undefined && b.city !== null ? parseCityParam(b.city, "city") : undefined;
+  return {
+    city,
+    monthlyBudgetCents: optInt(b.monthlyBudgetCents, "monthlyBudgetCents", 100, 100_000_000),
+    dailyCapCents: optInt(b.dailyCapCents, "dailyCapCents", 100, 10_000_000),
+    maxTaskCents: optInt(b.maxTaskCents, "maxTaskCents", 100, 10_000_000),
+    riskDial: optEnum(b.riskDial, "riskDial", RISK_DIALS),
+    billingArmed: optBool(b.billingArmed, "billingArmed"),
+  };
+}
+
+export interface ParsedDiscoveryRequest {
+  city?: string;
+  desireLane?: string;
+  limitPerSource?: number;
+  redditSubreddits?: string[];
+  youtubeChannelIds?: string[];
+  includeSources?: string[];
+  includeVipBd?: boolean;
+}
+
+export function parseDiscoveryRequest(raw: unknown): ParsedDiscoveryRequest {
+  const b = asRecord(raw);
+  const city = b.city !== undefined && b.city !== null ? parseCityParam(b.city, "city") : undefined;
+  const desireLane =
+    b.desireLane !== undefined && b.desireLane !== null
+      ? parseDesireLane(b.desireLane, "desireLane")
+      : undefined;
+  const rawSources = optStringArray(b.includeSources, "includeSources", 20);
+  if (rawSources) {
+    for (const src of rawSources) {
+      if (!DISCOVERY_SOURCES.has(src)) {
+        throw new HttpValidationError(
+          400,
+          "INVALID_DISCOVERY_SOURCE",
+          `Unknown discovery source: ${src}`,
+        );
+      }
+    }
+  }
+  const includeVipBd =
+    b.includeVipBd !== undefined
+      ? reqBool(b.includeVipBd, "includeVipBd")
+      : optBool(b.includeVipBdSources, "includeVipBdSources");
+  return {
+    city,
+    desireLane,
+    limitPerSource: optInt(b.limitPerSource, "limitPerSource", 1, 50),
+    redditSubreddits: optStringArray(b.redditSubreddits, "redditSubreddits", 10),
+    youtubeChannelIds: optStringArray(b.youtubeChannelIds, "youtubeChannelIds", 10),
+    includeSources: rawSources,
+    includeVipBd,
+  };
+}
+
+export interface ParsedSimRequest {
+  seeds?: number[];
+  days?: number;
+  cities?: string[];
+  quick?: boolean;
+  monthlyBudgetCents?: number;
+}
+
+export function parseSimRequest(raw: unknown): ParsedSimRequest {
+  const b = asRecord(raw);
+  let seeds: number[] | undefined;
+  if (b.seeds !== undefined) {
+    if (!Array.isArray(b.seeds) || b.seeds.length === 0 || b.seeds.length > 16) {
+      throw new HttpValidationError(
+        400,
+        "INVALID_SEEDS",
+        "seeds must be a non-empty array of up to 16 positive integers.",
+      );
+    }
+    seeds = b.seeds.map((item, idx) => reqInt(item, `seeds[${idx}]`, 1, 1_000_000));
+  }
+  let cities: string[] | undefined;
+  if (b.cities !== undefined) {
+    if (!Array.isArray(b.cities) || b.cities.length === 0 || b.cities.length > 10) {
+      throw new HttpValidationError(
+        400,
+        "INVALID_CITIES",
+        "cities must be a non-empty array of up to 10 city codes.",
+      );
+    }
+    cities = b.cities.map((item, idx) => parseCityParam(item, `cities[${idx}]`));
+  }
+  return {
+    seeds,
+    days: optInt(b.days, "days", 1, 90),
+    cities,
+    quick: optBool(b.quick, "quick"),
+    monthlyBudgetCents: optInt(b.monthlyBudgetCents, "monthlyBudgetCents", 10_000, 100_000_000),
+  };
+}
+
+export interface ParsedContactSuppression {
+  contactHash?: string;
+  phone?: string;
+  email?: string;
+  reason: string;
+  sourceChannel: string;
+  isMinor: boolean;
+}
+
+export function parseContactSuppression(raw: unknown): ParsedContactSuppression {
+  const b = asRecord(raw);
+  const contactHash = optString(b.contactHash, "contactHash", 128);
+  if (contactHash && !CONTACT_HASH_RE.test(contactHash)) {
+    throw new HttpValidationError(
+      400,
+      "INVALID_CONTACT_HASH",
+      "contactHash must be a hex digest (16-128 hex chars).",
+    );
+  }
+  const phone = optString(b.phone, "phone", 32);
+  if (phone && !E164_OR_PHONE_RE.test(phone.replace(/[\s()-]/g, ""))) {
+    throw new HttpValidationError(400, "INVALID_PHONE", "phone must be a valid E.164 phone number.");
+  }
+  const email = optValidatedEmail(b.email, "email") ?? undefined;
+  if (!contactHash && !phone && !email) {
+    throw new HttpValidationError(
+      400,
+      "REQUIRED_FIELD",
+      "At least one of contactHash, phone, or email is required.",
+    );
+  }
+  return {
+    contactHash,
+    phone,
+    email,
+    reason: reqString(b.reason, "reason", 200),
+    sourceChannel: optString(b.sourceChannel, "sourceChannel", 64) ?? "operator_api",
+    isMinor: optBool(b.isMinor, "isMinor") ?? false,
+  };
+}
+
+export interface ParsedBdUpdate {
+  venueName?: string;
+  vertical?: AppId;
+  contactEmail?: string | null;
+  businessPhone?: string | null;
+  offeredCents?: number;
+  phoneCallbackVerified?: boolean;
+  qrBatchId?: string | null;
+  notes?: string | null;
+}
+
+export function parseBdUpdate(raw: unknown): ParsedBdUpdate {
+  const b = asRecord(raw);
+  if (b.stage !== undefined) {
+    throw new HttpValidationError(
+      400,
+      "USE_BD_STAGE_ENDPOINT",
+      "Stage transitions must use POST /api/bd/:id/stage so bdDealWithinBounds policy checks run.",
+    );
+  }
+  if (b.contractHash !== undefined) {
+    throw new HttpValidationError(
+      400,
+      "USE_BD_CONTRACT_ENDPOINT",
+      "Contract hashes must be issued via POST /api/bd/:id/contract.",
+    );
+  }
+  const businessPhone = optNullableString(b.businessPhone, "businessPhone", 40);
+  if (
+    typeof businessPhone === "string" &&
+    !E164_OR_PHONE_RE.test(businessPhone.replace(/[\s()-]/g, ""))
+  ) {
+    throw new HttpValidationError(
+      400,
+      "INVALID_PHONE",
+      "businessPhone must be a valid E.164 or numeric phone number.",
+    );
+  }
+  return {
+    venueName: optString(b.venueName, "venueName", 200),
+    vertical: optEnum(b.vertical, "vertical", APP_IDS),
+    contactEmail: optValidatedEmail(b.contactEmail, "contactEmail"),
+    businessPhone,
+    offeredCents: optInt(b.offeredCents, "offeredCents", 0, 10_000_000),
+    phoneCallbackVerified: optBool(b.phoneCallbackVerified, "phoneCallbackVerified"),
+    qrBatchId: optNullableString(b.qrBatchId, "qrBatchId", 128),
+    notes: optNullableString(b.notes, "notes", 4000),
+  };
 }

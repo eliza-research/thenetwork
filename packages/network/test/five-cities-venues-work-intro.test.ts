@@ -247,10 +247,11 @@ describe("VenueManager intelligence", () => {
     const teen = vm.pickForMatch({
       city: "miami",
       mode: "group",
+      app: "friends",
+      teenFriendAllowed: true,
       startMs: daytimeMs,
       memberAreas: ["Brickell", "Wynwood"],
       members: [mPrefs("t1", { age: 16, drinksAlcohol: false }), mPrefs("t2", { age: 17, drinksAlcohol: false })],
-      teenFriendAllowed: true,
     }, START);
     expect(teen.primary).toBeDefined();
     expect(teen.primary!.venue.ageMin).toBe(0);

@@ -77,9 +77,9 @@ pure def lawSlopDensityTierThresholds(qualifiedLocalCount: int): bool =
 pure val appKindValues = Set("friends", "slop", "ntwrk")
 ```
 
-### Exclude alcohol, high-walking, and after-dark date activities when red lines apply
+### Exclude alcohol, high-walking, loud, and after-dark date activities when red lines apply
 
-Forbid `"drinks"`, `"wine_bar"`, `"cocktail"`, `"bar"`, and `"brewery"` when any participant is strict sober or a non-drinker. Forbid `"hike"` and `"long_walk"` when any participant requires low walking. Forbid `"outdoor_night_walk"` when daytime-only applies, and forbid any activity when daytime-only meets after dark.
+Forbid `"drinks"`, `"wine_bar"`, `"cocktail"`, `"bar"`, and `"brewery"` when any participant is strict sober or a non-drinker. Forbid `"hike"`, `"long_walk"`, `"climbing"`, and `"walk"` when any participant requires low walking. Forbid `"live_music"` and `"comedy"` when any participant requires low noise or daytime-only scheduling. Forbid `"outdoor_night_walk"` when daytime-only applies, and forbid any activity when daytime-only meets after dark.
 
 ```quint
 pure def dateActivityAllowed(
@@ -87,6 +87,7 @@ pure def dateActivityAllowed(
   anyStrictSober: bool,
   anyNonDrinker: bool,
   anyLowWalking: bool,
+  anyLowNoise: bool,
   anyDaytimeOnly: bool,
   isAfterDark: bool
 ): bool =
@@ -96,9 +97,19 @@ pure def dateActivityAllowed(
       or activityKind == "cocktail"
       or activityKind == "bar"
       or activityKind == "brewery"
+  val isHighWalkingActivity =
+    activityKind == "hike"
+      or activityKind == "long_walk"
+      or activityKind == "climbing"
+      or activityKind == "walk"
+  val isLoudOrEveningActivity =
+    activityKind == "live_music"
+      or activityKind == "comedy"
   if (isAlcoholActivity and (anyStrictSober or anyNonDrinker))
     false
-  else if ((activityKind == "hike" or activityKind == "long_walk") and anyLowWalking)
+  else if (isHighWalkingActivity and anyLowWalking)
+    false
+  else if (isLoudOrEveningActivity and (anyLowNoise or anyDaytimeOnly))
     false
   else if (activityKind == "outdoor_night_walk" and anyDaytimeOnly)
     false
@@ -111,31 +122,48 @@ pure def lawSoberOrNonDrinkerNeverGetsDrinksActivity(
   anyStrictSober: bool,
   anyNonDrinker: bool,
   anyLowWalking: bool,
+  anyLowNoise: bool,
   anyDaytimeOnly: bool,
   isAfterDark: bool
 ): bool =
   (anyStrictSober or anyNonDrinker) implies
-    (not(dateActivityAllowed("drinks", anyStrictSober, anyNonDrinker, anyLowWalking, anyDaytimeOnly, isAfterDark))
-      and not(dateActivityAllowed("wine_bar", anyStrictSober, anyNonDrinker, anyLowWalking, anyDaytimeOnly, isAfterDark))
-      and not(dateActivityAllowed("cocktail", anyStrictSober, anyNonDrinker, anyLowWalking, anyDaytimeOnly, isAfterDark)))
+    (not(dateActivityAllowed("drinks", anyStrictSober, anyNonDrinker, anyLowWalking, anyLowNoise, anyDaytimeOnly, isAfterDark))
+      and not(dateActivityAllowed("wine_bar", anyStrictSober, anyNonDrinker, anyLowWalking, anyLowNoise, anyDaytimeOnly, isAfterDark))
+      and not(dateActivityAllowed("cocktail", anyStrictSober, anyNonDrinker, anyLowWalking, anyLowNoise, anyDaytimeOnly, isAfterDark)))
 
 pure def lawLowWalkingForbidsHike(
   anyStrictSober: bool,
   anyNonDrinker: bool,
+  anyLowNoise: bool,
   anyDaytimeOnly: bool,
   isAfterDark: bool
 ): bool =
-  not(dateActivityAllowed("hike", anyStrictSober, anyNonDrinker, true, anyDaytimeOnly, isAfterDark))
+  not(dateActivityAllowed("hike", anyStrictSober, anyNonDrinker, true, anyLowNoise, anyDaytimeOnly, isAfterDark))
+    and not(dateActivityAllowed("climbing", anyStrictSober, anyNonDrinker, true, anyLowNoise, anyDaytimeOnly, isAfterDark))
+    and not(dateActivityAllowed("walk", anyStrictSober, anyNonDrinker, true, anyLowNoise, anyDaytimeOnly, isAfterDark))
+
+pure def lawLowNoiseOrDaytimeForbidsLoudActivities(
+  anyStrictSober: bool,
+  anyNonDrinker: bool,
+  anyLowWalking: bool,
+  anyLowNoise: bool,
+  anyDaytimeOnly: bool,
+  isAfterDark: bool
+): bool =
+  (anyLowNoise or anyDaytimeOnly) implies
+    (not(dateActivityAllowed("live_music", anyStrictSober, anyNonDrinker, anyLowWalking, anyLowNoise, anyDaytimeOnly, isAfterDark))
+      and not(dateActivityAllowed("comedy", anyStrictSober, anyNonDrinker, anyLowWalking, anyLowNoise, anyDaytimeOnly, isAfterDark)))
 
 pure def lawDaytimeOnlyForbidsAfterDark(
   activityKind: str,
   anyStrictSober: bool,
   anyNonDrinker: bool,
-  anyLowWalking: bool
+  anyLowWalking: bool,
+  anyLowNoise: bool
 ): bool =
-  not(dateActivityAllowed(activityKind, anyStrictSober, anyNonDrinker, anyLowWalking, true, true))
+  not(dateActivityAllowed(activityKind, anyStrictSober, anyNonDrinker, anyLowWalking, anyLowNoise, true, true))
 
-pure val activityKindValues = Set("coffee", "drinks", "wine_bar", "cocktail", "hike", "outdoor_night_walk")
+pure val activityKindValues = Set("coffee", "drinks", "wine_bar", "cocktail", "hike", "climbing", "walk", "live_music", "comedy", "outdoor_night_walk")
 ```
 
 ## Story: Score venues with mode-specific weights

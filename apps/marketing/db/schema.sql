@@ -129,6 +129,7 @@ create table if not exists marketing.humans (
   city                 text not null default 'nyc',
   neighborhood         text,
   email                text,
+  phone_hash           text,
   handle               text,
   profile_url          text,
   age_years            smallint check (age_years is null or (age_years >= 0 and age_years <= 120)),
@@ -156,6 +157,10 @@ create index if not exists marketing_humans_stopped_idx
   on marketing.humans (stopped) where stopped = true;
 create index if not exists marketing_humans_banned_idx
   on marketing.humans (banned) where banned = true;
+alter table marketing.humans
+  add column if not exists phone_hash text;
+create index if not exists marketing_humans_phone_hash_idx
+  on marketing.humans (phone_hash) where phone_hash is not null;
 
 -- 6. Tasks (street fliering shifts, event activations, creator videos, agency bookings, print orders, OSS dev bounties)
 create table if not exists marketing.tasks (
@@ -502,19 +507,411 @@ create index if not exists idx_proofs_task_verdict
 create index if not exists idx_outreach_status_created
   on marketing.outreach_messages (campaign_id, status, created_at desc);
 
--- Idempotent constraint upgrade for existing databases (chk_attribution_verified_adult)
+-- Pass 3 performance indexes
+create index if not exists idx_proofs_checkin_media_hashes_gin
+  on marketing.proofs using gin (checkin_media_hashes);
+create index if not exists idx_antifraud_claims_worker_created
+  on marketing.antifraud_claims (worker_id, created_at desc) where worker_id is not null;
+create index if not exists idx_tasks_human_status_paid
+  on marketing.tasks (human_id, status, paid_at) where human_id is not null;
+
+-- 18. LLM Trajectories & Token/Cost Audit Ledger (Pass 3)
+create table if not exists marketing.llm_trajectories (
+  id                   text primary key default gen_random_uuid()::text,
+  agent_id             text,
+  campaign_id          text references marketing.campaigns (id) on delete set null,
+  provider             text not null check (length(btrim(provider)) > 0),
+  model                text not null check (length(btrim(model)) > 0),
+  prompt_hash          text not null check (length(btrim(prompt_hash)) > 0),
+  input_tokens         integer not null default 0 check (input_tokens >= 0),
+  output_tokens        integer not null default 0 check (output_tokens >= 0),
+  cached               boolean not null default false,
+  cost_micros          integer not null default 0 check (cost_micros >= 0),
+  latency_ms           integer not null default 0 check (latency_ms >= 0),
+  status               text not null default 'ok'
+                       check (status in ('ok', 'cached', 'fallback', 'budget_blocked', 'leak_blocked', 'error')),
+  failover_chain       text,
+  leak_blocked         boolean not null default false,
+  created_at           timestamptz not null default now()
+);
+create index if not exists idx_llm_trajectories_created
+  on marketing.llm_trajectories (created_at desc);
+create index if not exists idx_llm_trajectories_agent_created
+  on marketing.llm_trajectories (agent_id, created_at desc) where agent_id is not null;
+create index if not exists idx_llm_trajectories_prompt_hash
+  on marketing.llm_trajectories (prompt_hash);
+
+-- 19. Cross-Surface Contact Suppression Ledger (Pass 3)
+create table if not exists marketing.contact_suppression (
+  contact_hash         text primary key check (length(btrim(contact_hash)) > 0),
+  reason               text not null check (length(btrim(reason)) > 0),
+  source_channel       text not null default 'marketing',
+  is_minor             boolean not null default false,
+  suppressed_at        timestamptz not null default now()
+);
+create index if not exists idx_contact_suppression_minor
+  on marketing.contact_suppression (is_minor) where is_minor = true;
+
+-- 20. Cross-Surface Contact Touchpoint Cooldown Ledger (Pass 3)
+create table if not exists marketing.contact_touchpoints (
+  id                   text primary key default gen_random_uuid()::text,
+  contact_hash         text not null check (length(btrim(contact_hash)) > 0),
+  campaign_id          text references marketing.campaigns (id) on delete set null,
+  surface              text not null check (surface in ('outreach', 'vip', 'bd', 'agent')),
+  is_cold              boolean not null default true,
+  replied              boolean not null default false,
+  touched_at           timestamptz not null default now()
+);
+create index if not exists idx_contact_touchpoints_hash_time
+  on marketing.contact_touchpoints (contact_hash, touched_at desc);
+
+-- 21. Persistent Global City Pack Overrides (Pass 3)
+create table if not exists marketing.city_packs (
+  code                 text primary key check (length(btrim(code)) > 0),
+  stage                text not null default 'scout'
+                       check (stage in ('scout', 'seed_waitlist', 'soft_launch', 'density_growth', 'mature')),
+  config               jsonb not null default '{}'::jsonb,
+  updated_at           timestamptz not null default now()
+);
+
+-- Pass 3 additive columns (idempotent)
+alter table marketing.humans add column if not exists contact_email text;
+alter table marketing.campaigns add column if not exists desire_lane text;
+alter table marketing.bandit_arms add column if not exists desire_lane text;
+alter table marketing.bandit_arms add column if not exists verified_outcomes integer not null default 0 check (verified_outcomes >= 0);
+alter table marketing.bd_deals add column if not exists desire_lane text;
+alter table marketing.vip_prospects add column if not exists desire_lane text;
+alter table marketing.video_assets add column if not exists desire_lane text;
+alter table marketing.tasks add column if not exists desire_lane text;
+alter table marketing.attribution_events add column if not exists desire_lane text;
+alter table marketing.attribution_events add column if not exists arm_id text;
+
+-- Idempotent constraint upgrades without unconditional ACCESS EXCLUSIVE locks on boot
 do $$
+declare
+  v_def text;
+  v_et_con text;
+  v_et_def text;
 begin
-  if exists (
-    select 1 from pg_constraint where conname = 'chk_attribution_verified_adult'
-  ) then
-    alter table marketing.attribution_events drop constraint chk_attribution_verified_adult;
+  select pg_get_constraintdef(c.oid) into v_def
+  from pg_constraint c
+  where c.conrelid = 'marketing.attribution_events'::regclass
+    and c.conname = 'chk_attribution_verified_adult';
+
+  if v_def is null or v_def not like '%first_match_accepted%' then
+    if v_def is not null then
+      alter table marketing.attribution_events drop constraint chk_attribution_verified_adult;
+    end if;
+    alter table marketing.attribution_events
+      add constraint chk_attribution_verified_adult check (
+        event_type not in (
+          'signup_verified_18plus',
+          'signup_verified_adult',
+          'first_match_accepted',
+          'irl_meeting_confirmed',
+          'second_meetup_retained',
+          'intro_or_hire_unlocked',
+          't3_match_verified'
+        )
+        or is_adult_verified = true
+      );
   end if;
-  alter table marketing.attribution_events
-    add constraint chk_attribution_verified_adult check (
-      event_type not in ('signup_verified_18plus', 'signup_verified_adult')
-      or is_adult_verified = true
-    );
+
+  select c.conname, pg_get_constraintdef(c.oid) into v_et_con, v_et_def
+  from pg_constraint c
+  where c.conrelid = 'marketing.attribution_events'::regclass
+    and c.contype = 'c'
+    and c.conname <> 'chk_attribution_verified_adult'
+    and pg_get_constraintdef(c.oid) like '%event_type%';
+
+  if v_et_con is not null and v_et_def not like '%first_match_accepted%' then
+    execute format('alter table marketing.attribution_events drop constraint %I', v_et_con);
+    alter table marketing.attribution_events
+      add constraint chk_attribution_event_type check (
+        event_type in (
+          'qr_scan',
+          'site_visit',
+          'link_click',
+          'signup_started',
+          'signup_verified_18plus',
+          'signup_verified_adult',
+          'release_signed',
+          'video_view',
+          'video_view_snapshot',
+          'first_match_accepted',
+          'irl_meeting_confirmed',
+          'second_meetup_retained',
+          'intro_or_hire_unlocked',
+          't3_match_verified'
+        )
+      );
+  end if;
+end $$;
+
+-- Guarded least-privilege SECURITY DEFINER bridge RPCs inside marketing schema (Pass 3).
+-- Only created/updated when shared platform.* + network.* tables exist AND caller holds owner role.
+do $$
+declare
+  v_people_oid regclass := to_regclass('platform.people');
+begin
+  if v_people_oid is not null
+     and to_regclass('platform.bans') is not null
+     and to_regclass('platform.suppression') is not null
+     and to_regclass('platform.consent_events') is not null
+     and to_regclass('platform.phone_identities') is not null
+     and to_regclass('platform.age_floor') is not null
+     and to_regclass('platform.signup_eligibility') is not null
+     and to_regclass('platform.person_minor_signals') is not null
+     and to_regclass('platform.line_safety') is not null
+     and to_regclass('platform.outbound') is not null
+     and to_regclass('platform.networks') is not null
+     and to_regclass('network.members') is not null
+     and to_regclass('network.review_items') is not null
+  then
+    if pg_has_role(current_user, (select relowner from pg_class where oid = v_people_oid), 'MEMBER') then
+    create or replace function marketing.contact_fence(
+      p_phone_hash text,
+      p_e164 text default null,
+      p_today date default current_date
+    ) returns table (
+      banned boolean,
+      globally_stopped boolean,
+      known_minor boolean,
+      recycled_hold boolean,
+      reason text
+    )
+    language plpgsql
+    security definer
+    set search_path = pg_catalog
+    as $fn$
+    declare
+      v_hash text := nullif(btrim(p_phone_hash), '');
+      v_e164 text := nullif(btrim(p_e164), '');
+      v_today date := coalesce(p_today, current_date);
+      v_today_ymd integer := to_char(coalesce(p_today, current_date), 'YYYYMMDD')::integer;
+      v_banned boolean := false;
+      v_stopped boolean := false;
+      v_minor boolean := false;
+      v_recycled boolean := false;
+      v_reason text := null;
+    begin
+      if v_e164 is null and v_hash is not null then
+        select pi.e164 into v_e164
+        from platform.people p
+        join platform.phone_identities pi on pi.person_id = p.id
+        where p.phone_hash = v_hash
+        order by pi.verified_at desc nulls last
+        limit 1;
+      end if;
+
+      if v_hash is not null then
+        v_banned := exists (select 1 from platform.bans b where b.phone_hash = v_hash)
+          or exists (select 1 from platform.suppression s where s.phone_hash = v_hash);
+      end if;
+
+      if not v_banned and v_e164 is not null then
+        v_banned := exists (
+          select 1
+          from platform.phone_identities pi
+          join platform.bans b on b.person_id = pi.person_id
+          where pi.e164 = v_e164
+        );
+      end if;
+
+      if v_e164 is not null then
+        select coalesce((
+          select ce.state = 'opted_out'
+          from platform.consent_events ce
+          where ce.e164 = v_e164 and ce.app_id is null
+          order by ce.at desc, ce.id desc
+          limit 1
+        ), false) into v_stopped;
+
+        v_recycled := exists (
+          select 1
+          from platform.phone_identities pi
+          where pi.e164 = v_e164 and pi.hold is not null
+        );
+      end if;
+
+      if v_hash is not null then
+        v_minor := exists (
+          select 1 from platform.age_floor af
+          where af.phone_hash = v_hash
+            and (
+              (af.lowest_age is not null and af.lowest_age < 18)
+              or (af.birth_youngest is not null and (v_today_ymd - af.birth_youngest) / 10000 < 18)
+              or (af.birth_upper is not null and (v_today_ymd - af.birth_upper) / 10000 < 18)
+            )
+        ) or exists (
+          select 1 from platform.people p
+          where p.phone_hash = v_hash
+            and (
+              (p.lowest_age is not null and p.lowest_age < 18)
+              or (p.birth_date is not null and (v_today_ymd - p.birth_date) / 10000 < 18)
+              or (p.birth_youngest is not null and (v_today_ymd - p.birth_youngest) / 10000 < 18)
+              or (p.birth_upper is not null and (v_today_ymd - p.birth_upper) / 10000 < 18)
+              or exists (select 1 from platform.signup_eligibility se where se.person_id = p.id and se.eligible_at > v_today::timestamptz)
+              or exists (select 1 from platform.person_minor_signals ms where ms.person_id = p.id)
+            )
+        );
+      end if;
+
+      if not v_minor and v_e164 is not null then
+        v_minor := exists (
+          select 1
+          from platform.phone_identities pi
+          join platform.people p on p.id = pi.person_id
+          where pi.e164 = v_e164
+            and (
+              (p.lowest_age is not null and p.lowest_age < 18)
+              or (p.birth_date is not null and (v_today_ymd - p.birth_date) / 10000 < 18)
+              or (p.birth_youngest is not null and (v_today_ymd - p.birth_youngest) / 10000 < 18)
+              or (p.birth_upper is not null and (v_today_ymd - p.birth_upper) / 10000 < 18)
+              or exists (select 1 from platform.signup_eligibility se where se.person_id = p.id and se.eligible_at > v_today::timestamptz)
+              or exists (select 1 from platform.person_minor_signals ms where ms.person_id = p.id)
+            )
+        );
+      end if;
+
+      v_reason := case
+        when v_minor then 'platform_known_minor'
+        when v_banned then 'platform_banned_or_suppressed'
+        when v_stopped then 'platform_global_stop'
+        when v_recycled then 'platform_recycled_number_hold'
+        else null
+      end;
+
+      return query select v_banned, v_stopped, v_minor, v_recycled, v_reason;
+    end;
+    $fn$;
+
+    create or replace function marketing.supply_demand_k5(
+      p_city text default null
+    ) returns table (
+      app_id text,
+      city text,
+      active_adult_bucket integer,
+      matching_enabled boolean,
+      open_review_count integer,
+      overdue_review_count integer,
+      outbound_waiting_count integer,
+      line_restricted boolean,
+      closed_venue_count integer
+    )
+    language plpgsql
+    security definer
+    set search_path = pg_catalog
+    as $fn$
+    declare
+      v_city text := nullif(lower(btrim(p_city)), '');
+      v_line_restricted boolean := false;
+      v_has_venues boolean := to_regclass('platform.venues') is not null;
+    begin
+      select exists (
+        select 1 from platform.line_safety ls where ls.action <> 'none'
+      ) into v_line_restricted;
+
+      if v_has_venues then
+        return query
+        select
+          n.app_id,
+          n.city,
+          case
+            when coalesce(mc.adult_cnt, 0) < 5 then 0
+            else (floor(mc.adult_cnt / 5.0)::integer * 5)
+          end as active_adult_bucket,
+          n.matching_enabled,
+          coalesce(rc.open_cnt, 0)::integer as open_review_count,
+          coalesce(rc.overdue_cnt, 0)::integer as overdue_review_count,
+          coalesce(oc.waiting_cnt, 0)::integer as outbound_waiting_count,
+          v_line_restricted as line_restricted,
+          coalesce(vc.closed_cnt, 0)::integer as closed_venue_count
+        from platform.networks n
+        left join (
+          select m.app_id, lower(m.home_city) as city, count(*)::integer as adult_cnt
+          from network.members m
+          left join platform.people p on p.id = m.person_id
+          where m.account_status = 'active'
+            and (m.age is null or m.age >= 18)
+            and (p.lowest_age is null or p.lowest_age >= 18)
+          group by m.app_id, lower(m.home_city)
+        ) mc on mc.app_id = n.app_id and mc.city = n.city
+        left join (
+          select
+            ri.app_id,
+            count(*) filter (where ri.decision is null)::integer as open_cnt,
+            count(*) filter (where ri.decision is null and ri.deadline < now())::integer as overdue_cnt
+          from network.review_items ri
+          group by ri.app_id
+        ) rc on rc.app_id = n.app_id
+        left join (
+          select o.app_id, count(*)::integer as waiting_cnt
+          from platform.outbound o
+          where o.status in ('pending', 'retry_scheduled', 'deferred_quiet_hours', 'held_awaiting_reply', 'sending', 'unknown_acceptance')
+          group by o.app_id
+        ) oc on oc.app_id = n.app_id
+        left join (
+          select lower(v.city) as city, count(*)::integer as closed_cnt
+          from platform.venues v
+          where v.status in ('suspect_closed', 'closed_temporary', 'closed_permanent')
+          group by lower(v.city)
+        ) vc on vc.city = n.city
+        where v_city is null or n.city = v_city
+        order by n.city, n.app_id;
+      else
+        return query
+        select
+          n.app_id,
+          n.city,
+          case
+            when coalesce(mc.adult_cnt, 0) < 5 then 0
+            else (floor(mc.adult_cnt / 5.0)::integer * 5)
+          end as active_adult_bucket,
+          n.matching_enabled,
+          coalesce(rc.open_cnt, 0)::integer as open_review_count,
+          coalesce(rc.overdue_cnt, 0)::integer as overdue_review_count,
+          coalesce(oc.waiting_cnt, 0)::integer as outbound_waiting_count,
+          v_line_restricted as line_restricted,
+          0::integer as closed_venue_count
+        from platform.networks n
+        left join (
+          select m.app_id, lower(m.home_city) as city, count(*)::integer as adult_cnt
+          from network.members m
+          left join platform.people p on p.id = m.person_id
+          where m.account_status = 'active'
+            and (m.age is null or m.age >= 18)
+            and (p.lowest_age is null or p.lowest_age >= 18)
+          group by m.app_id, lower(m.home_city)
+        ) mc on mc.app_id = n.app_id and mc.city = n.city
+        left join (
+          select
+            ri.app_id,
+            count(*) filter (where ri.decision is null)::integer as open_cnt,
+            count(*) filter (where ri.decision is null and ri.deadline < now())::integer as overdue_cnt
+          from network.review_items ri
+          group by ri.app_id
+        ) rc on rc.app_id = n.app_id
+        left join (
+          select o.app_id, count(*)::integer as waiting_cnt
+          from platform.outbound o
+          where o.status in ('pending', 'retry_scheduled', 'deferred_quiet_hours', 'held_awaiting_reply', 'sending', 'unknown_acceptance')
+          group by o.app_id
+        ) oc on oc.app_id = n.app_id
+        where v_city is null or n.city = v_city
+        order by n.city, n.app_id;
+      end if;
+    end;
+    $fn$;
+
+    revoke all on function marketing.contact_fence(text, text, date) from public;
+    revoke all on function marketing.supply_demand_k5(text) from public;
+    if exists (select 1 from pg_roles where rolname = 'network_service') then
+      grant execute on function marketing.contact_fence(text, text, date) to network_service;
+      grant execute on function marketing.supply_demand_k5(text) to network_service;
+    end if;
+    end if;
+  end if;
 end $$;
 
 -- Least privilege: only the service login reads or writes marketing data.

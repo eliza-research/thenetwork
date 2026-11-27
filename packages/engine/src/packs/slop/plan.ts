@@ -103,6 +103,7 @@ export function planFirstDate(
     ...(prefA?.strictSober || prefB?.strictSober ? { anyStrictSober: true } : {}),
     ...(prefA?.drinksAlcohol === false || prefB?.drinksAlcohol === false ? { anyNonDrinker: true } : {}),
     ...(prefA?.lowWalking || prefB?.lowWalking ? { anyLowWalking: true } : {}),
+    ...(prefA?.lowNoiseRequired || prefB?.lowNoiseRequired ? { anyLowNoise: true } : {}),
     ...(prefA?.daytimeOnly || prefB?.daytimeOnly ? { anyDaytimeOnly: true } : {}),
     ...(venueCtx?.isAfterDark !== undefined ? { isAfterDark: venueCtx.isAfterDark } : {}),
   });
@@ -124,7 +125,7 @@ export function planFirstDate(
 
   if (venueCtx) {
     const venueCity: LaunchCity = venueCtx.city ?? market;
-    const pool = venueCtx.venues ? [...venueCtx.venues] : seedVenuesForCity(venueCity);
+    const pool = venueCtx.venues ?? seedVenuesForCity(venueCity);
     if (pool.length > 0) {
       const rlA = slopRedLinesOf(first, first);
       const rlB = slopRedLinesOf(partner, partner);

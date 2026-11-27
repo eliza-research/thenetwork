@@ -153,7 +153,7 @@ pure def lawMinorOrBusyMemberNeverTriggersSourcing(memberAge: int, activeSourcin
 
 ### Gate every external contact on adult age, recorded review, transparency, consent, kill-switch health, and TTL
 
-Outbound contact to an external prospect requires adult age (18 to 120), recorded approval under [automated review](automatedReview.md), upfront persona disclosure, zero URLs or brand spam, passing leak and classifier checks, no opt-out, decline, or suppression, logged off-app consent for SMS handoffs, an active persona under its daily cap, zero ban-evasion attempts, no holds or bans on either party, a matching persona lock, an active consent code (`0` to `3`), and a cache age within 60 days for `intro_future_optin` (`2`) or 30 days otherwise.
+Outbound contact to an external prospect requires adult age (18 to 120), recorded approval under [automated review](automatedReview.md), upfront persona disclosure, zero URLs or brand spam, passing leak and classifier checks, no opt-out, decline, or suppression, logged off-app consent for SMS handoffs, an active or degraded persona under its effective daily cap (`effectivePersonaOutboundCap` gives the full base cap for `active`, halves the base cap with floor 1 for `degraded`, and gives `0` for `suspended` or unknown status), zero ban-evasion attempts, no holds or bans on either party, a matching persona lock, an active consent code (`0` to `3`), and a cache age within 60 days for `intro_future_optin` (`2`) or 30 days otherwise.
 
 ```quint
 type ContactExternalProspectInput = {
@@ -180,8 +180,16 @@ type ContactExternalProspectInput = {
   cacheAgeDays: int
 }
 
+pure def effectivePersonaOutboundCap(personaStatus: int, dailyOutboundCap: int): int =
+  if (dailyOutboundCap <= 0) 0
+  else if (personaStatus == personaStatusActive) dailyOutboundCap
+  else if (personaStatus == personaStatusDegraded)
+    if (dailyOutboundCap / 2 > 0) dailyOutboundCap / 2 else 1
+  else 0
+
 pure def canContactExternalProspect(req: ContactExternalProspectInput): bool =
   val maxTtlDays = if (req.consentState == prospectConsentFutureOptin) 60 else 30
+  val allowedCap = effectivePersonaOutboundCap(req.personaStatus, req.dailyOutboundCap)
   req.statedAge >= 18 and
     req.statedAge <= 120 and
     req.reviewApproved and
@@ -192,10 +200,10 @@ pure def canContactExternalProspect(req: ContactExternalProspectInput): bool =
     not(req.declined) and
     not(req.suppressed) and
     (not(req.isSmsHandoff) or req.hasLoggedOffAppConsent) and
-    req.personaStatus == personaStatusActive and
-    req.dailyOutboundCap > 0 and
+    (req.personaStatus == personaStatusActive or req.personaStatus == personaStatusDegraded) and
+    allowedCap > 0 and
     req.dailyOutboundCount >= 0 and
-    req.dailyOutboundCount < req.dailyOutboundCap and
+    req.dailyOutboundCount < allowedCap and
     not(req.evasionAttempt) and
     not(req.memberHeld) and
     not(req.prospectHeld) and
@@ -209,8 +217,20 @@ pure def canContactExternalProspect(req: ContactExternalProspectInput): bool =
 
 pure val statedAgeValues = Set(13, 17, 18, 29, 120, 121)
 pure val personaStatusValues = Set(0, 1, 2)
+pure val dailyOutboundCapValues = Set(0, 1, 4, 10)
 pure val consentStateValues = Set(0, 1, 2, 3, 4, 5, 6)
 pure val cacheAgeDaysValues = Set(-1, 0, 30, 31, 60, 61)
+
+pure def lawDegradedPersonaHalvesCapAndSuspendedHalts(personaStatus: int, dailyOutboundCap: int): bool =
+  val cap = effectivePersonaOutboundCap(personaStatus, dailyOutboundCap)
+  and {
+    personaStatus == personaStatusSuspended implies cap == 0,
+    (personaStatus != personaStatusActive and personaStatus != personaStatusDegraded) implies cap == 0,
+    dailyOutboundCap <= 0 implies cap == 0,
+    (personaStatus == personaStatusActive and dailyOutboundCap > 0) implies cap == dailyOutboundCap,
+    (personaStatus == personaStatusDegraded and dailyOutboundCap >= 2) implies (cap > 0 and cap == dailyOutboundCap / 2),
+    (personaStatus == personaStatusDegraded and dailyOutboundCap == 1) implies cap == 1
+  }
 
 pure def lawMinorOrUnreviewedNeverExternallyContacted(statedAge: int, reviewApproved: bool, personaDisclosed: bool): bool =
   val ok = canContactExternalProspect({
@@ -267,7 +287,7 @@ pure def lawSuspendedOrSpamOrColdSmsNeverContacted(
     consentState: prospectConsentSingleOnly,
     cacheAgeDays: 5
   })
-  ok implies (personaStatus == personaStatusActive and not(containsUrlOrBrandSpam) and (not(isSmsHandoff) or hasLoggedOffAppConsent))
+  ok implies ((personaStatus == personaStatusActive or personaStatus == personaStatusDegraded) and not(containsUrlOrBrandSpam) and (not(isSmsHandoff) or hasLoggedOffAppConsent))
 
 pure def lawContactEnforcesTtlAndNoEvasionOrBans(consentState: int, cacheAgeDays: int, evasionAttempt: bool, prospectBanned: bool): bool =
   val ok = canContactExternalProspect({

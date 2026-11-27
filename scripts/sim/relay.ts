@@ -306,7 +306,7 @@ function fakeClef(pick: (message: string) => FakeAnswers | "timeout" | "error") 
   const fetch: ClefFetch = async (url, init) => {
     const body = JSON.parse(init.body) as { state: string; questions: Record<string, unknown> };
     calls.push({ url, state: body.state, questions: Object.keys(body.questions).length });
-    const msg = /<<<MESSAGE\n([\s\S]*)\nMESSAGE>>>/.exec(body.state)?.[1] ?? "";
+    const msg = /<<<UNTRUSTED MESSAGE [0-9a-f]+>>>\n([\s\S]*?)\n<<<END UNTRUSTED [0-9a-f]+>>>/.exec(body.state)?.[1] ?? "";
     const a = pick(msg);
     if (a === "timeout") return new Promise((_, rej) => init.signal?.addEventListener("abort", () => rej(new Error("aborted"))));
     if (a === "error") return { ok: false, status: 500, json: async () => ({ success: false, errors: [{ message: "internal" }] }) };
@@ -714,6 +714,46 @@ async function deskGates(b: Block): Promise<void> {
     const h = fakeHost(), d = new RelayDesk(h);
     h.match = { ...h.match, status: "mutual", metAt: NOW - 8 * 86_400_000 };
     expect((await d.request({ itemId: "p1", from: "a", kind: "text", text: "want to get dinner again next week?" }, { hook: simulatedRelayClassifier })).decision).toBe("sent");
+  });
+
+  await b.run("relay desk: arrival-window safety ([-30, +45]m) and panic exit immediately halt relays and cancel pending swaps", async () => {
+    const h = fakeHost(), d = new RelayDesk(h);
+    const startMs = NOW + 20 * 60_000;
+    const baseArrival = {
+      matchId: "op1", senderId: "a", recipientId: "b",
+      senderConfirmed: true, recipientConfirmed: true,
+      startMs, alreadyMet: false, passedSafetyAndLeakCheck: true,
+    };
+    // Inside [-30, +45]m arrival window (T-20m, T+0m, T+40m) -> allowed
+    expect(d.canRelayArrivalSafe(baseArrival)).toBe(true);
+    h.t = startMs;
+    expect(d.canRelayArrivalSafe(baseArrival)).toBe(true);
+    h.t = startMs + 40 * 60_000;
+    expect(d.canRelayArrivalSafe(baseArrival)).toBe(true);
+    // Outside arrival window (T-31m, T+46m) -> blocked
+    h.t = startMs - 31 * 60_000;
+    expect(d.canRelayArrivalSafe(baseArrival)).toBe(false);
+    h.t = startMs + 46 * 60_000;
+    expect(d.canRelayArrivalSafe(baseArrival)).toBe(false);
+    // Back inside window: minor, unconfirmed, or failed leak check -> blocked
+    h.t = startMs - 10 * 60_000;
+    expect(d.canRelayArrivalSafe({ ...baseArrival, anyMinorInEvent: true })).toBe(false);
+    expect(d.canRelayArrivalSafe({ ...baseArrival, senderConfirmed: false })).toBe(false);
+    expect(d.canRelayArrivalSafe({ ...baseArrival, passedSafetyAndLeakCheck: false })).toBe(false);
+    // Queue a pending contact swap, then trigger panic exit
+    expect((await d.request({ itemId: "pw1", from: "a", kind: "contact_share" }, { contactOf, hook: simulatedRelayClassifier })).decision).toBe("waiting");
+    const sentBeforePanic = h.sent.length;
+    const panic = d.triggerPanicExit("a", "op1");
+    expect(panic.haltedMatches).toContain("op1");
+    expect(panic.cancelledSwaps).toBeGreaterThanOrEqual(1);
+    expect(panic.notice).toMatch(/911/);
+    expect(d.isPanicTriggered("a", "op1")).toBe(true);
+    expect(d.canRelayArrivalSafe(baseArrival)).toBe(false);
+    // Both sides are immediately halted for subsequent texts and swaps
+    const rA = await d.request({ itemId: "pa1", from: "a", kind: "text", text: "still here?" }, { hook: simulatedRelayClassifier });
+    const rB = await d.request({ itemId: "pb1", from: "b", kind: "text", text: "where are you?" }, { hook: simulatedRelayClassifier });
+    expect([rA.decision, rB.decision]).toEqual(["refused", "refused"]);
+    expect(h.sent.length).toBe(sentBeforePanic);
   });
 
   await b.run("photo ids: every platform-issued id is opaque; phone-number-like ids still fail", () => {

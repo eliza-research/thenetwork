@@ -93,33 +93,48 @@ export function lawMinorOrBusyMemberNeverTriggersSourcing(memberAge: number, act
 
 /** Story: Enforce outreach safety, privacy retention, quality-gated onboarding, and app isolation / Gate every external contact on adult age, recorded review, transparency, consent, kill-switch health, and TTL (spec/externalMatchmaker.md) */
 //@ pure
+export function effectivePersonaOutboundCap(personaStatus: number, dailyOutboundCap: number): number {
+  return dailyOutboundCap <= 0 ? 0 : (personaStatus === personaStatusActive ? dailyOutboundCap : (personaStatus === personaStatusDegraded ? (quotient_externalMatchmaker(dailyOutboundCap, 2) > 0 ? quotient_externalMatchmaker(dailyOutboundCap, 2) : 1) : 0));
+}
+
+/** Story: Enforce outreach safety, privacy retention, quality-gated onboarding, and app isolation / Gate every external contact on adult age, recorded review, transparency, consent, kill-switch health, and TTL (spec/externalMatchmaker.md) */
+//@ pure
 export function canContactExternalProspect(req: ContactExternalProspectInput): boolean {
   const local_3 = req.consentState === prospectConsentFutureOptin ? 60 : 30;
-  return req.statedAge >= 18 && req.statedAge <= 120 && req.reviewApproved && req.personaDisclosed && !req.containsUrlOrBrandSpam && req.passedLeakAndClefGuard && !req.optedOut && !req.declined && !req.suppressed && (!req.isSmsHandoff || req.hasLoggedOffAppConsent) && req.personaStatus === personaStatusActive && req.dailyOutboundCap > 0 && req.dailyOutboundCount >= 0 && req.dailyOutboundCount < req.dailyOutboundCap && !req.evasionAttempt && !req.memberHeld && !req.prospectHeld && !req.memberBanned && !req.prospectBanned && req.personaMatchesLock && req.consentState >= prospectConsentNone && req.consentState <= prospectConsentSmsLogistics && req.cacheAgeDays >= 0 && req.cacheAgeDays <= local_3;
+  const local_4 = effectivePersonaOutboundCap(req.personaStatus, req.dailyOutboundCap);
+  return req.statedAge >= 18 && req.statedAge <= 120 && req.reviewApproved && req.personaDisclosed && !req.containsUrlOrBrandSpam && req.passedLeakAndClefGuard && !req.optedOut && !req.declined && !req.suppressed && (!req.isSmsHandoff || req.hasLoggedOffAppConsent) && (req.personaStatus === personaStatusActive || req.personaStatus === personaStatusDegraded) && local_4 > 0 && req.dailyOutboundCount >= 0 && req.dailyOutboundCount < local_4 && !req.evasionAttempt && !req.memberHeld && !req.prospectHeld && !req.memberBanned && !req.prospectBanned && req.personaMatchesLock && req.consentState >= prospectConsentNone && req.consentState <= prospectConsentSmsLogistics && req.cacheAgeDays >= 0 && req.cacheAgeDays <= local_3;
+}
+
+/** Story: Enforce outreach safety, privacy retention, quality-gated onboarding, and app isolation / Gate every external contact on adult age, recorded review, transparency, consent, kill-switch health, and TTL (spec/externalMatchmaker.md) */
+//@ pure
+export function lawDegradedPersonaHalvesCapAndSuspendedHalts(personaStatus: number, dailyOutboundCap: number): boolean {
+  //@ ensures \result === true
+  const local_5 = effectivePersonaOutboundCap(personaStatus, dailyOutboundCap);
+  return (!(personaStatus === personaStatusSuspended) || local_5 === 0) && (!(personaStatus !== personaStatusActive && personaStatus !== personaStatusDegraded) || local_5 === 0) && (!(dailyOutboundCap <= 0) || local_5 === 0) && (!(personaStatus === personaStatusActive && dailyOutboundCap > 0) || local_5 === dailyOutboundCap) && (!(personaStatus === personaStatusDegraded && dailyOutboundCap >= 2) || (local_5 > 0 && local_5 === quotient_externalMatchmaker(dailyOutboundCap, 2))) && (!(personaStatus === personaStatusDegraded && dailyOutboundCap === 1) || local_5 === 1);
 }
 
 /** Story: Enforce outreach safety, privacy retention, quality-gated onboarding, and app isolation / Gate every external contact on adult age, recorded review, transparency, consent, kill-switch health, and TTL (spec/externalMatchmaker.md) */
 //@ pure
 export function lawMinorOrUnreviewedNeverExternallyContacted(statedAge: number, reviewApproved: boolean, personaDisclosed: boolean): boolean {
   //@ ensures \result === true
-  const local_4 = canContactExternalProspect(({ statedAge: statedAge, reviewApproved: reviewApproved, personaDisclosed: personaDisclosed, containsUrlOrBrandSpam: false, passedLeakAndClefGuard: true, optedOut: false, declined: false, suppressed: false, isSmsHandoff: false, hasLoggedOffAppConsent: false, personaStatus: personaStatusActive, dailyOutboundCount: 0, dailyOutboundCap: 10, evasionAttempt: false, memberHeld: false, prospectHeld: false, memberBanned: false, prospectBanned: false, personaMatchesLock: true, consentState: prospectConsentSingleOnly, cacheAgeDays: 5 } as ContactExternalProspectInput));
-  return !local_4 || (statedAge >= 18 && statedAge <= 120 && reviewApproved && personaDisclosed);
+  const local_6 = canContactExternalProspect(({ statedAge: statedAge, reviewApproved: reviewApproved, personaDisclosed: personaDisclosed, containsUrlOrBrandSpam: false, passedLeakAndClefGuard: true, optedOut: false, declined: false, suppressed: false, isSmsHandoff: false, hasLoggedOffAppConsent: false, personaStatus: personaStatusActive, dailyOutboundCount: 0, dailyOutboundCap: 10, evasionAttempt: false, memberHeld: false, prospectHeld: false, memberBanned: false, prospectBanned: false, personaMatchesLock: true, consentState: prospectConsentSingleOnly, cacheAgeDays: 5 } as ContactExternalProspectInput));
+  return !local_6 || (statedAge >= 18 && statedAge <= 120 && reviewApproved && personaDisclosed);
 }
 
 /** Story: Enforce outreach safety, privacy retention, quality-gated onboarding, and app isolation / Gate every external contact on adult age, recorded review, transparency, consent, kill-switch health, and TTL (spec/externalMatchmaker.md) */
 //@ pure
 export function lawSuspendedOrSpamOrColdSmsNeverContacted(personaStatus: number, containsUrlOrBrandSpam: boolean, isSmsHandoff: boolean, hasLoggedOffAppConsent: boolean): boolean {
   //@ ensures \result === true
-  const local_5 = canContactExternalProspect(({ statedAge: 29, reviewApproved: true, personaDisclosed: true, containsUrlOrBrandSpam: containsUrlOrBrandSpam, passedLeakAndClefGuard: true, optedOut: false, declined: false, suppressed: false, isSmsHandoff: isSmsHandoff, hasLoggedOffAppConsent: hasLoggedOffAppConsent, personaStatus: personaStatus, dailyOutboundCount: 0, dailyOutboundCap: 10, evasionAttempt: false, memberHeld: false, prospectHeld: false, memberBanned: false, prospectBanned: false, personaMatchesLock: true, consentState: prospectConsentSingleOnly, cacheAgeDays: 5 } as ContactExternalProspectInput));
-  return !local_5 || (personaStatus === personaStatusActive && !containsUrlOrBrandSpam && (!isSmsHandoff || hasLoggedOffAppConsent));
+  const local_7 = canContactExternalProspect(({ statedAge: 29, reviewApproved: true, personaDisclosed: true, containsUrlOrBrandSpam: containsUrlOrBrandSpam, passedLeakAndClefGuard: true, optedOut: false, declined: false, suppressed: false, isSmsHandoff: isSmsHandoff, hasLoggedOffAppConsent: hasLoggedOffAppConsent, personaStatus: personaStatus, dailyOutboundCount: 0, dailyOutboundCap: 10, evasionAttempt: false, memberHeld: false, prospectHeld: false, memberBanned: false, prospectBanned: false, personaMatchesLock: true, consentState: prospectConsentSingleOnly, cacheAgeDays: 5 } as ContactExternalProspectInput));
+  return !local_7 || ((personaStatus === personaStatusActive || personaStatus === personaStatusDegraded) && !containsUrlOrBrandSpam && (!isSmsHandoff || hasLoggedOffAppConsent));
 }
 
 /** Story: Enforce outreach safety, privacy retention, quality-gated onboarding, and app isolation / Gate every external contact on adult age, recorded review, transparency, consent, kill-switch health, and TTL (spec/externalMatchmaker.md) */
 //@ pure
 export function lawContactEnforcesTtlAndNoEvasionOrBans(consentState: number, cacheAgeDays: number, evasionAttempt: boolean, prospectBanned: boolean): boolean {
   //@ ensures \result === true
-  const local_6 = canContactExternalProspect(({ statedAge: 29, reviewApproved: true, personaDisclosed: true, containsUrlOrBrandSpam: false, passedLeakAndClefGuard: true, optedOut: false, declined: false, suppressed: false, isSmsHandoff: false, hasLoggedOffAppConsent: false, personaStatus: personaStatusActive, dailyOutboundCount: 0, dailyOutboundCap: 10, evasionAttempt: evasionAttempt, memberHeld: false, prospectHeld: false, memberBanned: false, prospectBanned: prospectBanned, personaMatchesLock: true, consentState: consentState, cacheAgeDays: cacheAgeDays } as ContactExternalProspectInput));
-  return (!local_6 || (!evasionAttempt && !prospectBanned && consentState >= 0 && consentState <= 3)) && (!(local_6 && consentState === prospectConsentFutureOptin) || (cacheAgeDays >= 0 && cacheAgeDays <= 60)) && (!(local_6 && consentState !== prospectConsentFutureOptin) || (cacheAgeDays >= 0 && cacheAgeDays <= 30));
+  const local_8 = canContactExternalProspect(({ statedAge: 29, reviewApproved: true, personaDisclosed: true, containsUrlOrBrandSpam: false, passedLeakAndClefGuard: true, optedOut: false, declined: false, suppressed: false, isSmsHandoff: false, hasLoggedOffAppConsent: false, personaStatus: personaStatusActive, dailyOutboundCount: 0, dailyOutboundCap: 10, evasionAttempt: evasionAttempt, memberHeld: false, prospectHeld: false, memberBanned: false, prospectBanned: prospectBanned, personaMatchesLock: true, consentState: consentState, cacheAgeDays: cacheAgeDays } as ContactExternalProspectInput));
+  return (!local_8 || (!evasionAttempt && !prospectBanned && consentState >= 0 && consentState <= 3)) && (!(local_8 && consentState === prospectConsentFutureOptin) || (cacheAgeDays >= 0 && cacheAgeDays <= 60)) && (!(local_8 && consentState !== prospectConsentFutureOptin) || (cacheAgeDays >= 0 && cacheAgeDays <= 30));
 }
 
 /** Story: Enforce outreach safety, privacy retention, quality-gated onboarding, and app isolation / Reconsider a cached prospect only with explicit future opt-in, 30-day cooldown, and review approval (spec/externalMatchmaker.md) */
@@ -132,8 +147,8 @@ export function canReconsiderExternalProspect(req: ReconsiderExternalProspectInp
 //@ pure
 export function lawNoColdReuseWithoutFutureOptInAndCooldown(consentState: number, daysSinceLastContact: number, recontactCount: number): boolean {
   //@ ensures \result === true
-  const local_7 = canReconsiderExternalProspect(({ consentState: consentState, cacheAgeDays: 40, daysSinceLastContact: daysSinceLastContact, recontactCount: recontactCount, statedAge: 29, optedOut: false, banned: false, redFlagged: false, personaMatchesLock: true, reviewApproved: true } as ReconsiderExternalProspectInput));
-  return !local_7 || (consentState === prospectConsentFutureOptin && daysSinceLastContact >= 30 && recontactCount >= 0 && recontactCount < 2);
+  const local_9 = canReconsiderExternalProspect(({ consentState: consentState, cacheAgeDays: 40, daysSinceLastContact: daysSinceLastContact, recontactCount: recontactCount, statedAge: 29, optedOut: false, banned: false, redFlagged: false, personaMatchesLock: true, reviewApproved: true } as ReconsiderExternalProspectInput));
+  return !local_9 || (consentState === prospectConsentFutureOptin && daysSinceLastContact >= 30 && recontactCount >= 0 && recontactCount < 2);
 }
 
 /** Story: Enforce outreach safety, privacy retention, quality-gated onboarding, and app isolation / Purge prospect data immediately on opt-out, decline, underage, red flag, or TTL expiry (spec/externalMatchmaker.md) */
@@ -146,8 +161,8 @@ export function prospectRetentionDecision(req: ProspectRetentionInput): string {
 //@ pure
 export function lawStopUnderageOrExpiredPurgesWithSuppression(stopped: boolean, underageDetected: boolean, cacheAgeDays: number, maxTtlDays: number): boolean {
   //@ ensures \result === true
-  const local_8 = prospectRetentionDecision(({ stopped: stopped, declined: false, blocked: false, deletionRequested: false, underageDetected: underageDetected, redFlagged: false, expired: false, cacheAgeDays: cacheAgeDays, maxTtlDays: maxTtlDays } as ProspectRetentionInput));
-  return (!(stopped || underageDetected || cacheAgeDays < 0 || maxTtlDays <= 0 || maxTtlDays > 60 || cacheAgeDays > maxTtlDays) || local_8 === "purge_with_suppression") && (!(local_8 === "keep") || (!stopped && !underageDetected && cacheAgeDays >= 0 && maxTtlDays > 0 && maxTtlDays <= 60 && cacheAgeDays <= maxTtlDays));
+  const local_10 = prospectRetentionDecision(({ stopped: stopped, declined: false, blocked: false, deletionRequested: false, underageDetected: underageDetected, redFlagged: false, expired: false, cacheAgeDays: cacheAgeDays, maxTtlDays: maxTtlDays } as ProspectRetentionInput));
+  return (!(stopped || underageDetected || cacheAgeDays < 0 || maxTtlDays <= 0 || maxTtlDays > 60 || cacheAgeDays > maxTtlDays) || local_10 === "purge_with_suppression") && (!(local_10 === "keep") || (!stopped && !underageDetected && cacheAgeDays >= 0 && maxTtlDays > 0 && maxTtlDays <= 60 && cacheAgeDays <= maxTtlDays));
 }
 
 /** Story: Enforce outreach safety, privacy retention, quality-gated onboarding, and app isolation / Invite an external prospect to the Network only after a positive attended meetup (spec/externalMatchmaker.md) */
@@ -160,16 +175,16 @@ export function canInviteExternalProspectToNetwork(req: InviteExternalProspectIn
 //@ pure
 export function lawNetworkInviteRequiresPositiveAttendedMeetup(meetupCompleted: boolean, prospectAttended: boolean, memberQualityPositive: boolean, memberVouchedForOthers: boolean): boolean {
   //@ ensures \result === true
-  const local_9 = canInviteExternalProspectToNetwork(({ meetupCompleted: meetupCompleted, memberAttended: true, prospectAttended: prospectAttended, safetyOrRedFlag: false, catfishOrAgeMismatch: false, memberQualityPositive: memberQualityPositive, memberVouchedForOthers: memberVouchedForOthers, statedAge: 29, optedOut: false, banned: false, alreadyMember: false, inviteAttempts: 0, safeFollowupWindow: true } as InviteExternalProspectInput));
-  return !local_9 || (meetupCompleted && prospectAttended && (memberQualityPositive || memberVouchedForOthers));
+  const local_11 = canInviteExternalProspectToNetwork(({ meetupCompleted: meetupCompleted, memberAttended: true, prospectAttended: prospectAttended, safetyOrRedFlag: false, catfishOrAgeMismatch: false, memberQualityPositive: memberQualityPositive, memberVouchedForOthers: memberVouchedForOthers, statedAge: 29, optedOut: false, banned: false, alreadyMember: false, inviteAttempts: 0, safeFollowupWindow: true } as InviteExternalProspectInput));
+  return !local_11 || (meetupCompleted && prospectAttended && (memberQualityPositive || memberVouchedForOthers));
 }
 
 /** Story: Enforce outreach safety, privacy retention, quality-gated onboarding, and app isolation / Invite an external prospect to the Network only after a positive attended meetup (spec/externalMatchmaker.md) */
 //@ pure
 export function lawNetworkInviteBlocksFlagsMinorsAndDuplicates(safetyOrRedFlag: boolean, statedAge: number, inviteAttempts: number): boolean {
   //@ ensures \result === true
-  const local_10 = canInviteExternalProspectToNetwork(({ meetupCompleted: true, memberAttended: true, prospectAttended: true, safetyOrRedFlag: safetyOrRedFlag, catfishOrAgeMismatch: false, memberQualityPositive: true, memberVouchedForOthers: false, statedAge: statedAge, optedOut: false, banned: false, alreadyMember: false, inviteAttempts: inviteAttempts, safeFollowupWindow: true } as InviteExternalProspectInput));
-  return !local_10 || (!safetyOrRedFlag && statedAge >= 18 && statedAge <= 120 && inviteAttempts === 0);
+  const local_12 = canInviteExternalProspectToNetwork(({ meetupCompleted: true, memberAttended: true, prospectAttended: true, safetyOrRedFlag: safetyOrRedFlag, catfishOrAgeMismatch: false, memberQualityPositive: true, memberVouchedForOthers: false, statedAge: statedAge, optedOut: false, banned: false, alreadyMember: false, inviteAttempts: inviteAttempts, safeFollowupWindow: true } as InviteExternalProspectInput));
+  return !local_12 || (!safetyOrRedFlag && statedAge >= 18 && statedAge <= 120 && inviteAttempts === 0);
 }
 
 /** Story: Enforce outreach safety, privacy retention, quality-gated onboarding, and app isolation / Isolate external dating prospects strictly inside `slop` and block `peon` (spec/externalMatchmaker.md) */
@@ -183,4 +198,12 @@ export function canReadExternalProspectInApp(appCode: number): boolean {
 export function lawPeonCannotReadExternalProspects(appCode: number): boolean {
   //@ ensures \result === true
   return !canReadExternalProspectInApp(matchmakerAppPeon) && canReadExternalProspectInApp(appCode) === (appCode === matchmakerAppSlop);
+}
+
+/** Whole-number division as Quint does it: towards zero. */
+//@ pure
+export function quotient_externalMatchmaker(a: number, b: number): number {
+  //@ requires b !== 0
+  if (b === 0) throw new RangeError(`${a} cannot be divided by zero`);
+  return (a < 0 === b < 0 ? 1 : -1) * Math.floor(Math.abs(a) / Math.abs(b)) + 0;
 }

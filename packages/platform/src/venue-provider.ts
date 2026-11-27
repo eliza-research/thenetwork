@@ -2,6 +2,7 @@ import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { km } from "../../core/src/geo.ts";
 import {
   CITY_TZ,
+  cityTimezone,
   DAY,
   HOUR,
   MINUTE,
@@ -13,6 +14,7 @@ import {
   shouldFetchExternalVenues,
   type AppId,
   type City,
+  type CityId,
   type Clock,
   type VenueCandidateResult,
   type VenueCategory,
@@ -31,7 +33,7 @@ import {
 } from "./venue-store.ts";
 
 export interface VenueSearchQuery {
-  city: City;
+  city: CityId;
   neighborhood?: string;
   lat: number;
   lng: number;
@@ -446,7 +448,7 @@ export class GooglePlacesProvider implements VenueExternalProvider {
 }
 
 export interface SimulatedVenueProviderOptions {
-  discoveredByCity?: Partial<Record<City, VenueRecord[]>>;
+  discoveredByCity?: Partial<Record<CityId, VenueRecord[]>>;
   closedStatuses?: Record<string, VenueOpenStatusResult["status"]>;
   hoursOverrides?: Record<string, VenueHoursSlot[]>;
   ratingOverrides?: Record<string, { rating: number; reviewCount?: number }>;
@@ -459,7 +461,7 @@ export class SimulatedVenueProvider implements VenueExternalProvider {
   readonly searchLog: VenueSearchQuery[] = [];
   readonly verifyLog: string[] = [];
 
-  private readonly discoveredByCity: Partial<Record<City, VenueRecord[]>>;
+  private readonly discoveredByCity: Partial<Record<CityId, VenueRecord[]>>;
   private readonly closedStatuses: Map<string, VenueOpenStatusResult["status"]>;
   private readonly hoursOverrides: Map<string, VenueHoursSlot[]>;
   private readonly ratingOverrides: Map<string, { rating: number; reviewCount?: number }>;
@@ -725,7 +727,7 @@ export class CompositeVenueProvider {
     opts: { appId?: AppId; nowMs?: number; isWeekendOrHoliday?: boolean; startMs?: number; maxProviderCalls?: number } = {},
   ): Promise<VerifyOpenResult> {
     const nowMs = this.resolveNow(opts.nowMs);
-    const tz = getCity(venue.city)?.tz ?? CITY_TZ[venue.city] ?? "America/New_York";
+    const tz = getCity(venue.city)?.tz ?? cityTimezone(venue.city) ?? "America/New_York";
     const refMs = opts.startMs ?? nowMs;
     const isWeekendOrHoliday = opts.isWeekendOrHoliday ?? (localParts(refMs, tz).weekday >= 5);
     const ageHours = Math.floor((nowMs - venue.lastVerifiedAt) / (60 * MINUTE));
@@ -810,7 +812,7 @@ export class CompositeVenueProvider {
     const nowMs = this.resolveNow(opts.nowMs);
     const verifyCap = Math.max(0, opts.maxVerifyCalls ?? this.maxVerifyCalls);
     const discovery = await this.findAndRankVenues(request, nowMs);
-    const tz = getCity(request.city)?.tz ?? CITY_TZ[request.city] ?? "America/New_York";
+    const tz = getCity(request.city)?.tz ?? cityTimezone(request.city) ?? "America/New_York";
     const isWeekendOrHoliday = request.isWeekendOrHoliday ?? (localParts(request.startMs, tz).weekday >= 5);
 
     let externalVerifyCalls = 0;

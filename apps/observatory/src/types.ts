@@ -2,7 +2,7 @@
 // every panel works in both. Game mode builds it event-sourced from simulator run records; real
 // mode builds it from network.* rows. See docs/observatory.md.
 import type {
-  Category, City, EdgeType, Facet, Intent, MemberId, OpportunityKind, OpportunityState,
+  Category, City, CityId, EdgeType, Facet, Intent, MemberId, OpportunityKind, OpportunityState,
   ParticipationState, Presence, ScoreComponents, VenueCategory, VenuePriceTier, VenueStatus, WorkIntroChannel,
 } from "@thenetwork/core";
 import type { OracleSummary } from "@thenetwork/core";
@@ -784,7 +784,7 @@ export interface BiasReportView {
 
 export interface ObsVenue {
   id: string;
-  city: City;
+  city: CityId;
   neighborhood: string;
   name: string;
   address: string;
@@ -808,7 +808,7 @@ export interface ObsVenue {
 }
 
 export interface ObsCitySummary {
-  id: City;
+  id: CityId;
   name: string;
   shortName: string;
   tz: string;

@@ -52,12 +52,14 @@ export function parseScreenVerdict(raw: unknown, attending: string[]): ScreenVer
   f.bool("dealbreaker");
   const acc: Record<string, number> = {};
   for (const r of attending) { const p = f.prob(`accept_probability.${r}`, o.accept_probability?.[r]); if (p !== undefined) acc[r] = p; }
+  const reasoningFirst = f.reasoningFirst();
+  if (reasoning && verdict && !reasoningFirst) f.errs.push("reasoning must appear before verdict");
   f.done("schema: ", ", ");
   return {
     pass: 1, reasoning, citedFacts: f.citedFacts(), dealbreaker: o.dealbreaker,
     dealbreakerReason: str(o.dealbreaker_reason, 300) || undefined, verdict: verdict!, matchProbability: mp!,
     acceptProbability: acc, memberWhy: str(o.member_why ?? o.why, 600),
-    reasoningFirst: f.reasoningFirst(),
+    reasoningFirst,
   };
 }
 

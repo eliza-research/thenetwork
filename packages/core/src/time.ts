@@ -15,6 +15,28 @@ export const CITY_TZ: Record<City, string> = {
   miami: "America/New_York",
 };
 
+const dynamicCityTimezones = new Map<string, string>([
+  ["sf", "America/Los_Angeles"],
+  ["nyc", "America/New_York"],
+  ["la", "America/Los_Angeles"],
+  ["chicago", "America/Chicago"],
+  ["miami", "America/New_York"],
+]);
+
+/** Register or update an IANA timezone for a city id (synced by registerCity). */
+export function registerCityTimezone(city: string, tz: string): void {
+  const key = city.trim().toLowerCase();
+  const zone = tz.trim();
+  if (!key || !zone) return;
+  dynamicCityTimezones.set(key, zone);
+}
+
+/** Fail-closed city timezone lookup; returns undefined for unregistered cities. */
+export function cityTimezone(city: string | undefined | null): string | undefined {
+  if (!city) return undefined;
+  return dynamicCityTimezones.get(city.trim().toLowerCase());
+}
+
 /** Local date and time parts. `weekday`: Monday = 0 ... Sunday = 6. */
 export interface LocalParts { year: number; month: number; day: number; hour: number; minute: number; weekday: number }
 const WEEKDAY_INDEX: Record<string, number> = {

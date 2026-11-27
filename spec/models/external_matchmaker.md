@@ -42,7 +42,7 @@ module external_matchmaker {
 
   // ------------------------------------------------------------------------------------------ types
   type PersonaState = {
-    status: str,              // active | suspended
+    status: str,              // active | degraded | suspended
     dailyOutboundCount: int,
     banSignalSeen: bool,
   }
@@ -77,7 +77,7 @@ module external_matchmaker {
     persona: str,
     statedAge: int,
     reviewApprover: str,        // "judge" | "staff" (spec/automatedReview.md)
-    humanReviewApproved: bool,
+    reviewApproved: bool,
     personaDisclosed: bool,
     containsUrlOrBrandSpam: bool,
     leakPassed: bool,
@@ -107,7 +107,7 @@ module external_matchmaker {
     recontactCountBefore: int,
     personaMatchesLock: bool,
     reviewApprover: str,
-    humanReviewApproved: bool,
+    reviewApproved: bool,
     personaStatusAtSend: str,
     dailyCountBefore: int,
     memberHeld: bool,
@@ -167,6 +167,11 @@ module external_matchmaker {
 
   // ------------------------------------------------------------------------------------------ helpers
   pure def isAdult(age: int): bool = age >= 18 and age <= 120
+
+  pure def effectiveOutboundCapFor(status: str): int =
+    if (status == "active") DAILY_OUTBOUND_CAP
+    else if (status == "degraded") DAILY_OUTBOUND_CAP / 2
+    else 0
 
   pure def maxTtlFor(consent: str): int =
     if (consent == "intro_future_optin") OPTIN_TTL_DAYS else STANDARD_TTL_DAYS
@@ -293,7 +298,7 @@ module external_matchmaker {
   action contactExternalProspect(
     p: str,
     persona: str,
-    humanReviewApproved: bool,
+    reviewApproved: bool,
     personaDisclosed: bool,
     containsUrlOrBrandSpam: bool,
     leakPassed: bool,
@@ -308,7 +313,7 @@ module external_matchmaker {
       persona: persona,
       statedAge: pr.statedAge,
       reviewApprover: briefReviewApprover,
-      humanReviewApproved: humanReviewApproved,
+      reviewApproved: reviewApproved,
       personaDisclosed: personaDisclosed,
       containsUrlOrBrandSpam: containsUrlOrBrandSpam,
       leakPassed: leakPassed,
@@ -336,7 +341,7 @@ module external_matchmaker {
       pr.stage == "uncontacted",
       persona == assigned,
       isAdult(pr.statedAge),
-      humanReviewApproved,
+      reviewApproved,
       personaDisclosed,
       not(containsUrlOrBrandSpam),
       leakPassed,
@@ -348,9 +353,9 @@ module external_matchmaker {
       not(pr.redFlagged),
       not(memberHeld),
       not(pr.held),
-      per.status == "active",
+      per.status == "active" or per.status == "degraded",
       not(per.banSignalSeen),
-      per.dailyOutboundCount < DAILY_OUTBOUND_CAP,
+      per.dailyOutboundCount < effectiveOutboundCapFor(per.status),
       pr.cacheAgeDays <= maxTtl,
       personas' = personas.set(persona, { ...per, dailyOutboundCount: per.dailyOutboundCount + 1 }),
       prospects' = prospects.set(p, {
@@ -410,7 +415,7 @@ module external_matchmaker {
       persona: persona,
       statedAge: pr.statedAge,
       reviewApprover: briefReviewApprover,
-      humanReviewApproved: true,
+      reviewApproved: true,
       personaDisclosed: true,
       containsUrlOrBrandSpam: false,
       leakPassed: true,
@@ -434,8 +439,8 @@ module external_matchmaker {
       pr.stage == "member_yes",
       persona != "",
       Set("judge", "staff").contains(briefReviewApprover),
-      per.status == "active",
-      per.dailyOutboundCount < DAILY_OUTBOUND_CAP,
+      per.status == "active" or per.status == "degraded",
+      per.dailyOutboundCount < effectiveOutboundCapFor(per.status),
       pr.cachedPiiPresent,
       pr.cacheAgeDays <= STANDARD_TTL_DAYS,
       isAdult(pr.statedAge),
@@ -509,7 +514,7 @@ module external_matchmaker {
       recontactCountBefore: pr.recontactCount,
       personaMatchesLock: pr.personaLock == persona,
       reviewApprover: briefReviewApprover,
-      humanReviewApproved: true,
+      reviewApproved: true,
       personaStatusAtSend: per.status,
       dailyCountBefore: per.dailyOutboundCount,
       memberHeld: memberHeld,
@@ -535,9 +540,9 @@ module external_matchmaker {
       not(pr.held),
       not(memberHeld),
       pr.personaLock == persona,
-      per.status == "active",
+      per.status == "active" or per.status == "degraded",
       not(per.banSignalSeen),
-      per.dailyOutboundCount < DAILY_OUTBOUND_CAP,
+      per.dailyOutboundCount < effectiveOutboundCapFor(per.status),
       personas' = personas.set(persona, { ...per, dailyOutboundCount: per.dailyOutboundCount + 1 }),
       prospects' = prospects.set(p, {
         ...pr,
@@ -679,6 +684,26 @@ module external_matchmaker {
     }
   }
 
+  action degradePersona(persona: str): bool = {
+    val per = personas.get(persona)
+    all {
+      PERSONAS.contains(persona),
+      per.status == "active",
+      not(per.banSignalSeen),
+      personas' = personas.set(persona, { ...per, status: "degraded" }),
+      nowDays' = nowDays, prospects' = prospects, memberAge' = memberAge,
+      eligibleLocalPairs' = eligibleLocalPairs, topScoreScaled' = topScoreScaled,
+      memberOptedInRomance' = memberOptedInRomance, memberPaused' = memberPaused,
+      memberOptedOut' = memberOptedOut, memberTrustOk' = memberTrustOk, memberHeld' = memberHeld,
+      memberExternalScoutOptIn' = memberExternalScoutOptIn, sourcingTriggered' = sourcingTriggered,
+      briefReviewApprover' = briefReviewApprover, briefReviewApproved' = briefReviewApproved,
+      safeFollowupWindow' = safeFollowupWindow, outreachLog' = outreachLog, reuseLog' = reuseLog,
+      inviteLog' = inviteLog, readLog' = readLog, evasionBlockedCount' = evasionBlockedCount,
+      peonBlockedReads' = peonBlockedReads, failoverBookedPreserved' = failoverBookedPreserved,
+      purgeCount' = purgeCount,
+    }
+  }
+
   action reportPersonaBanSignal(persona: str): bool = {
     val per = personas.get(persona)
     val hadBooked = PROSPECTS.exists(p =>
@@ -692,7 +717,7 @@ module external_matchmaker {
     })
     all {
       PERSONAS.contains(persona),
-      per.status == "active",
+      per.status == "active" or per.status == "degraded",
       personas' = personas.set(persona, { ...per, status: "suspended", banSignalSeen: true }),
       prospects' = nextProspects,
       failoverBookedPreserved' = (failoverBookedPreserved or hadBooked),
@@ -841,6 +866,8 @@ module external_matchmaker {
       nondet rsn = Set("stopped", "declined", "blocked", "deletion_requested", "underage", "red_flagged").oneOf()
       purgeProspectWithSuppression(p, rsn),
       nondet per = PERSONAS.oneOf()
+      degradePersona(per),
+      nondet per = PERSONAS.oneOf()
       reportPersonaBanSignal(per),
       nondet per = PERSONAS.oneOf()
       attemptEvasionBurner(per),
@@ -874,8 +901,8 @@ module external_matchmaker {
     })
 
   val humanReviewRequiredBeforeExternalOutreach =
-    outreachLog.forall(e => e.humanReviewApproved and Set("judge", "staff").contains(e.reviewApprover)) and
-    reuseLog.forall(e => e.humanReviewApproved and Set("judge", "staff").contains(e.reviewApprover))
+    outreachLog.forall(e => e.reviewApproved and Set("judge", "staff").contains(e.reviewApprover)) and
+    reuseLog.forall(e => e.reviewApproved and Set("judge", "staff").contains(e.reviewApprover))
 
   val personaDisclosureAndNoLinksEnforced =
     outreachLog.forall(e =>
@@ -912,12 +939,12 @@ module external_matchmaker {
 
   val personaKillSwitchHaltsOnBanSignal =
     PERSONAS.forall(per => personas.get(per).banSignalSeen implies personas.get(per).status == "suspended") and
-    outreachLog.forall(e => e.personaStatusAtSend == "active" and e.dailyCountBefore < DAILY_OUTBOUND_CAP) and
-    reuseLog.forall(e => e.personaStatusAtSend == "active" and e.dailyCountBefore < DAILY_OUTBOUND_CAP)
+    outreachLog.forall(e => (e.personaStatusAtSend == "active" or e.personaStatusAtSend == "degraded") and e.dailyCountBefore < effectiveOutboundCapFor(e.personaStatusAtSend)) and
+    reuseLog.forall(e => (e.personaStatusAtSend == "active" or e.personaStatusAtSend == "degraded") and e.dailyCountBefore < effectiveOutboundCapFor(e.personaStatusAtSend))
 
   val noEvasionAfterPersonaSuspend =
-    outreachLog.forall(e => not(e.isEvasionBurner) and e.personaStatusAtSend == "active") and
-    reuseLog.forall(e => not(e.isEvasionBurner) and e.personaStatusAtSend == "active")
+    outreachLog.forall(e => not(e.isEvasionBurner) and (e.personaStatusAtSend == "active" or e.personaStatusAtSend == "degraded")) and
+    reuseLog.forall(e => not(e.isEvasionBurner) and (e.personaStatusAtSend == "active" or e.personaStatusAtSend == "degraded"))
 
   val bannedOrHeldNeverExternallyMatched =
     outreachLog.forall(e => not(e.memberHeldAtSend) and not(e.prospectHeldAtSend) and not(e.bannedAtSend)) and
@@ -1092,5 +1119,15 @@ module external_matchmaker {
       .then(attemptAppReadExternalProspect("peon", "p1"))
       .then(attemptAppReadExternalProspect("slop", "p1"))
       .expect(peonBlockedReads == 1 and readLog.size() == 1 and crossAppScoreFirewall and safety)
+
+  run degradedPersonaHalvesCapTest =
+    init
+      .then(triggerExternalSourcing)
+      .then(approveSourcingBrief("judge"))
+      .then(degradePersona("female"))
+      .then(contactExternalProspect("p1", "female", true, true, false, true, true))
+      .then(qualifyAndApprovePair("p1"))
+      .then(recordOffAppSmsConsentAndBook("p1"))
+      .expect(personas.get("female").status == "degraded" and personas.get("female").dailyOutboundCount == 2 and safety)
 }
 ```

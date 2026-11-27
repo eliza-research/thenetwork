@@ -125,7 +125,7 @@ pure val revealMinutesValues = Set(-1, 0, 1, 4, 5, 7, 10, 15, 16, 90)
 
 ### Each console staff step needs the role that its staff route needs
 
-The console offers each staff step and checks the person's own role before it forwards the step. Reading postings needs the reviewer role. Saving or closing a posting, verifying an employer, a seed invitation batch and a staff invite need the admin role. Home help, member verification, a decision on an agent signal, and the held queues need the safety role. Member invitations and reading agent signals need the reviewer or safety role. Reading the judged introductions (`ReadJudgedReviews`: the judged list and one judgment with its explanation and packet) and stopping an approved introduction before its reveal (`StopApprovedReview`) need the reviewer or safety role. A review decision (`DecideReviewItem`) needs the reviewer role and a safety case decision (`DecideSafetyCase`: hold, ban, dismiss, lift, close, clear a minor signal, stop or resume teen friendship introductions (`/teen-intros`; the service still needs admin to resume) and report a member older than stated (`/safety/older-than-stated`)) needs the safety role; the console keeps its own routes for these two. The `DecideSafetyCase` step exists so that the service can refuse a shared token on it; the `DecideReviewItem` step takes a shared reviewer token, which the service records as itself (the step-actor rule below). Admin passes every check. A posting or employer step exists only on peon. A privacy request, its confirmation and the privacy replay need admin for all apps, and an app grant does not count. Releasing the sender of a signed shared-line turn that did not finish (`ResolveInboundTurn`), and reading the shared-line turn watch counts (`ReadTurnWatch`), also need admin for all apps, because one shared line serves every app. `ReadHeldRelay` and `DecideHeldRelay` cover both held queues of the console: the leak queue (outbound texts that the leak guard held) and the relay queue (relay photos that the automatic image check flagged, [photo consent and review](photoRelayReview.md)). Both need the safety role, because a held text can show a member's private facts and a flagged photo shows a member's photo. No relayed text is held. Changed (audits PER35, console-api-gaps and STAFF-held-role of 2026-11-21 and 2026-11-22, owner decisions D3, D15 to D17): the steps were staff-port calls with a shared token, the held routes hard-coded the safety role, and the relay queue held texts -> each step is a console step with its own role, the judge-watch steps are new, and the relay queue holds only flagged photos, because the audit must name a person and no relayed text waits for staff. Changed (audit PER35, 2026-11-22): the service admitted a shared token on `/teen-intros` and `/safety/older-than-stated` -> both are `DecideSafetyCase` steps, because the audit must name a person.
+The console offers each staff step and checks the person's own role before it forwards the step. Reading postings needs the reviewer role. Saving or closing a posting, verifying an employer, a seed invitation batch and a staff invite need the admin role. Home help, member verification, a decision on an agent signal, venue catalog reads and quarantine status changes (`ReadVenues`, `UpdateVenueStatus`), matchmaker reads and kill-switch status changes (`ReadMatchmakers`, `UpdateMatchmakerStatus`), and the held queues need the safety role. Reading and reviewing sanctioned external events (`ReadExternalEvents`, `ReviewExternalEvent`) need the reviewer role. Member invitations and reading agent signals need the reviewer or safety role. Reading the judged introductions (`ReadJudgedReviews`: the judged list and one judgment with its explanation and packet) and stopping an approved introduction before its reveal (`StopApprovedReview`) need the reviewer or safety role. A review decision (`DecideReviewItem`) needs the reviewer role and a safety case decision (`DecideSafetyCase`: hold, ban, dismiss, lift, close, clear a minor signal, stop or resume teen friendship introductions (`/teen-intros`; the service still needs admin to resume) and report a member older than stated (`/safety/older-than-stated`)) needs the safety role; the console keeps its own routes for these two. The `DecideSafetyCase` step exists so that the service can refuse a shared token on it; the `DecideReviewItem` step takes a shared reviewer token, which the service records as itself (the step-actor rule below). Admin passes every check. A posting or employer step exists only on peon. Matchmaker steps (`ReadMatchmakers`, `UpdateMatchmakerStatus`) are never offered on peon, matching the cross-app firewall in [external matchmaker](externalMatchmaker.md). A privacy request, its confirmation and the privacy replay need admin for all apps, and an app grant does not count. Releasing the sender of a signed shared-line turn that did not finish (`ResolveInboundTurn`), reading the shared-line turn watch counts (`ReadTurnWatch`), and reading cross-app city readiness (`/ops/cities`, `ReadCityOps`) also need admin for all apps, because one shared line and city catalog serve every app. `ReadHeldRelay` and `DecideHeldRelay` cover both held queues of the console: the leak queue (outbound texts that the leak guard held) and the relay queue (relay photos that the automatic image check flagged, [photo consent and review](photoRelayReview.md)). Both need the safety role, because a held text can show a member's private facts and a flagged photo shows a member's photo. No relayed text is held. Changed (audits PER35, console-api-gaps and STAFF-held-role of 2026-11-21 and 2026-11-22, owner decisions D3, D15 to D17): the steps were staff-port calls with a shared token, the held routes hard-coded the safety role, and the relay queue held texts -> each step is a console step with its own role, the judge-watch steps are new, and the relay queue holds only flagged photos, because the audit must name a person and no relayed text waits for staff. Changed (audit PER35, 2026-11-22): the service admitted a shared token on `/teen-intros` and `/safety/older-than-stated` -> both are `DecideSafetyCase` steps, because the audit must name a person.
 
 ```quint
 type StaffStep = ReadPostings | SavePosting | ClosePosting | VerifyEmployer | ReadHomeHelp | DecideHomeHelp
@@ -133,6 +133,8 @@ type StaffStep = ReadPostings | SavePosting | ClosePosting | VerifyEmployer | Re
   | ReadAgentSignals | DecideAgentSignal | OpenPrivacyRequest | ConfirmPrivacyRequest | ReplayPrivacy
   | ReadHeldRelay | DecideHeldRelay | ResolveInboundTurn | ReadTurnWatch
   | DecideReviewItem | DecideSafetyCase | ReadJudgedReviews | StopApprovedReview
+  | ReadVenues | UpdateVenueStatus | ReadExternalEvents | ReviewExternalEvent
+  | ReadMatchmakers | UpdateMatchmakerStatus | ReadCityOps
 
 pure def staffStepRoles(staffStep: StaffStep): List[str] =
   match staffStep {
@@ -160,6 +162,13 @@ pure def staffStepRoles(staffStep: StaffStep): List[str] =
     | DecideSafetyCase => List("safety")
     | ReadJudgedReviews => List("reviewer", "safety")
     | StopApprovedReview => List("reviewer", "safety")
+    | ReadVenues => List("safety")
+    | UpdateVenueStatus => List("safety")
+    | ReadExternalEvents => List("reviewer")
+    | ReviewExternalEvent => List("reviewer")
+    | ReadMatchmakers => List("safety")
+    | UpdateMatchmakerStatus => List("safety")
+    | ReadCityOps => List("admin")
   }
 
 pure def staffStepEveryApp(staffStep: StaffStep): bool =
@@ -169,6 +178,7 @@ pure def staffStepEveryApp(staffStep: StaffStep): bool =
     | ReplayPrivacy => true
     | ResolveInboundTurn => true
     | ReadTurnWatch => true
+    | ReadCityOps => true
     | _ => false
   }
 
@@ -178,6 +188,8 @@ pure def staffStepOffered(staffStep: StaffStep, appName: str): bool =
     | SavePosting => appName == "peon"
     | ClosePosting => appName == "peon"
     | VerifyEmployer => appName == "peon"
+    | ReadMatchmakers => appName != "peon"
+    | UpdateMatchmakerStatus => appName != "peon"
     | _ => true
   }
 
@@ -194,7 +206,11 @@ pure def lawStepWithoutAppRoleRefused(staffStep: StaffStep, appName: str, global
 pure def lawEmployerVerificationOnlyOnPeon(appName: str, appRoles: List[str], globalRoles: List[str]): bool =
   staffStepAdmitted(VerifyEmployer, appName, appRoles, globalRoles) implies appName == "peon"
 
-pure val appNameValues = Set("peon", "slop", "ntwrk")
+pure def lawMatchmakerStepsRefusedOnPeon(appRoles: List[str], globalRoles: List[str]): bool =
+  not(staffStepAdmitted(ReadMatchmakers, "peon", appRoles, globalRoles)) and
+    not(staffStepAdmitted(UpdateMatchmakerStatus, "peon", appRoles, globalRoles))
+
+pure val appNameValues = Set("peon", "slop", "friends", "ntwrk")
 pure val appRolesValues = Set(List(), List("admin"), List("reviewer"), List("safety"), List("analyst"))
 pure val globalRolesValues = Set(List(), List("admin"), List("safety"), List("reviewer", "safety"))
 ```

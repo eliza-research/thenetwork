@@ -46,9 +46,13 @@ function refEstimateTravelMinutes(spec: CitySpec, fromArea: string, toArea: stri
   const a = refFindNeighborhood(spec, fromArea);
   const b = refFindNeighborhood(spec, toArea);
   if (!a || !b) {
+    const nf = refNormText(fromArea);
+    const nt = refNormText(toArea);
+    if (nf && nf === nt) return 5;
+    if (!a && !b) return 25;
     const pa = a ?? { lat: spec.center.lat, lng: spec.center.lng };
     const pb = b ?? { lat: spec.center.lat, lng: spec.center.lng };
-    return Math.max(5, Math.round(spec.baseMinutes + km(pa, pb) / spec.kmPerMinute));
+    return Math.max(20, Math.round(spec.baseMinutes + km(pa, pb) / spec.kmPerMinute));
   }
   if (a.name === b.name) return 5;
   let barrier = 0;

@@ -1,4 +1,4 @@
-import { CITY_TZ, fromLocal, resolveCity, temporaryPresenceWindow, type City } from "@thenetwork/core";
+import { CITY_TZ, fromLocal, isCity, resolveCity, temporaryPresenceWindow, type City } from "@thenetwork/core";
 import {
   decideTravelEntry, presenceWindowsOverlap, samePresenceWindow, travelEntryReplyAllowed, type PresenceWindow,
 } from "../../core/src/generated/travelPresence.ts";
@@ -29,7 +29,8 @@ export function travelPresenceCommand(text: string): TravelCommand | undefined {
   const declaration = /^(?:i will|i['’]ll) be in (new york city|new york|nyc|san francisco|sf|los angeles|la|chicago|chi|miami|mia)(?: (.*))?$/i.exec(line);
   if (!declaration) return;
   const named = declaration[1]!.toLowerCase();
-  const city = homeCityOf(named) ?? resolveCity(named);
+  const resolved = homeCityOf(named) ?? resolveCity(named);
+  const city: City | undefined = isCity(resolved) ? resolved : undefined;
   if (!city) return;
   const dates = /^from ([1-9]\d{3}-\d{2}-\d{2}) (?:until|to) ([1-9]\d{3}-\d{2}-\d{2})$/i.exec(declaration[2] ?? "");
   if (!dates) return { city };

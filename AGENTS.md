@@ -85,7 +85,7 @@ accepted merges and pays after maintainer review. There is no escrow.
   Eligible Slop.cash submissions incur a Points debit under the published policy.
 - Write in ASD-STE100 Simplified Technical English (CONTRIBUTING.md section 13).
 
-**Security suite** (`pnpm run security`, also part of `pnpm run test:integration`; the same list is in docs/tests-policy.md): `packages/platform/test/db.test.ts`, `packages/platform/test/api-security.test.ts`, `packages/platform/test/proxy.test.ts`, `packages/platform/test/cloud-auth.pg.test.ts`, `packages/platform/test/notify-retention.pg.test.ts`, `packages/mcp/test/oauth.test.ts`, `packages/mcp/test/pg.test.ts`, `deploy/backend/backend.test.ts`, `deploy/router.test.ts`, `packages/network/test/shared-agent.integration.test.ts`, `apps/observatory/test/staff.test.ts`.
+**Security suite** (`pnpm run security`, also part of `pnpm run test:integration`; the same list is in docs/tests-policy.md): `packages/platform/test/db.test.ts`, `packages/platform/test/api-security.test.ts`, `packages/platform/test/proxy.test.ts`, `packages/platform/test/cloud-auth.pg.test.ts`, `packages/platform/test/notify-retention.pg.test.ts`, `packages/platform/test/meetup-venues-external.pg.test.ts`, `packages/mcp/test/oauth.test.ts`, `packages/mcp/test/pg.test.ts`, `deploy/backend/backend.test.ts`, `deploy/router.test.ts`, `packages/network/test/shared-agent.integration.test.ts`, `apps/observatory/test/staff.test.ts`.
 
 **Postgres in the simulations.** The safety, ops, pipeline, pipeline-slop and audit blocks use the dev Postgres (:54339) when it is there and record a tracked "skipped" gate when it is not. CI's sim job has a Postgres service and `REQUIRE_PG=1`, and it fails on any such skip. The migration runner (`packages/db/migrate.ts`) refuses two numbered migrations with the same NNNN prefix: take the next free number.
 
@@ -136,7 +136,7 @@ pnpm run typecheck
 node --import tsx --env-file-if-exists=.env plugins/build.ts --check
 pnpm run test:integration     # integration suite incl. the security files (real Postgres on :54339 via dev-pg; docs/tests-policy.md)
 pnpm run test:e2e             # e2e: the full service and platform through HTTP (tests/e2e; needs Postgres)
-pnpm run security             # the security subset of the integration suite (11 files; list below)
+pnpm run security             # the security subset of the integration suite (12 files; list below)
 pnpm run clef <fit|calibrate|features|audit|synth>   # P2 Clef weight fitting (docs/results/2026-10-09-clef-fitting.md); only `features --live` calls Workers AI
 pnpm run relay-eval [rules|fit] [--live]   # the relay classifier report; only --live calls Workers AI
 

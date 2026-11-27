@@ -1,4 +1,7 @@
-import { CITY_TZ, fromLocal, localParts, temporaryPresenceWindow, validAge, type NetworkEvent } from "@thenetwork/core";
+import {
+  cityTimezone, fromLocal, isMinor, localParts, proposeTopOne, seedVenuesForCity, temporaryPresenceWindow, validAge,
+  type MemberVenuePrefs, type NetworkEvent,
+} from "@thenetwork/core";
 import {
   soloReplyHasRoom, soloEventAgeAllowed, soloEventCityAllowed, soloEventEligible, soloEventPrecedes,
 } from "../../core/src/generated/soloConcierge.ts";
@@ -11,6 +14,7 @@ import { plansPlaceQuestion, publicPlanLocation } from "../src/classify.ts";
 import { NEIGHBORHOOD, travelMinutes } from "../src/geo.ts";
 import { statedWindows } from "../src/plans.ts";
 import { memberCommandOwner, type MemberCommandOwner } from "./member-command.ts";
+import { listActiveVenues } from "./meetup-store.ts";
 import { readPublicEvents } from "./public-events.ts";
 import { automatedFacetPredicate, presenceOf } from "./snapshot.ts";
 
@@ -18,8 +22,8 @@ type Period = "today" | "tomorrow" | "this weekend" | "this week" | "next seven 
 interface SoloRequest { period: Period; area?: string; mentioned?: boolean }
 type Option = { event: NetworkEvent & { listing: NonNullable<NetworkEvent["listing"]> }; fit: number; minutes?: number; scheduled: boolean };
 interface SoloReply { body: string; publicLinks: string[] }
-const NY = CITY_TZ.nyc;
-const when = new Intl.DateTimeFormat("en-US", { timeZone: NY, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+const formatWhen = (tz: string) =>
+  new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
 const like = (text: string) => text.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
 /** Recognize a solo request without claiming arbitrary open conversation or proposal replies. */
@@ -32,11 +36,11 @@ export function soloConciergeRequest(text: string): SoloRequest | undefined {
   if (place.mentioned) return { period: (localized[1] ?? localized[3] ?? "next seven days").toLowerCase() as Period, ...place };
 }
 
-function requestedWindow(period: Period, now: number): PresenceWindow {
-  const parts = localParts(now, NY);
+function requestedWindow(period: Period, now: number, tz: string): PresenceWindow {
+  const parts = localParts(now, tz);
   const midnight = (offset: number) => {
     const day = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + offset));
-    return fromLocal(day.getUTCFullYear(), day.getUTCMonth() + 1, day.getUTCDate(), 0, NY);
+    return fromLocal(day.getUTCFullYear(), day.getUTCMonth() + 1, day.getUTCDate(), 0, tz);
   };
   if (period === "this weekend") {
     const start = 5 - parts.weekday;
@@ -60,8 +64,11 @@ export async function soloConciergeReply(tx: SQL, accounts: Pick<Accounts, "acti
   }
   const { member } = binding;
   const app = owner.app.id, id = owner.memberId;
+  const city = member.home_city || "nyc";
+  const tz = cityTimezone(city) ?? "America/New_York";
+  const when = formatWhen(tz);
   const [events, rawPresence, facets] = await Promise.all([
-    readPublicEvents(tx, now, "nyc"),
+    readPublicEvents(tx, now, city),
     tx`select member_id, city, type, from_at, to_at from network.presence where app_id=${app} and member_id=${id} and type='temporary'`,
     tx<{ kind: "interest" | "availability_pattern"; tags: string[] }[]>`select kind, tags from network.facets where app_id=${app} and member_id=${id}
       and kind in ('interest','availability_pattern') and status='confirmed' and privacy_scope in ('matchable','shareable')
@@ -72,11 +79,11 @@ export async function soloConciergeReply(tx: SQL, accounts: Pick<Accounts, "acti
     return window ? [{ city: p.city, window }] : [];
   });
   const interest = new Set(facets.filter(f => f.kind === "interest").flatMap(f => f.tags.map(like)).filter(Boolean));
-  const available = statedWindows(facets.filter(f => f.kind === "availability_pattern").flatMap(f => f.tags), now, NY)?.windows;
-  const home = member.home_city === "nyc" && member.home_area ? NEIGHBORHOOD.get(member.home_area) : undefined;
+  const available = statedWindows(facets.filter(f => f.kind === "availability_pattern").flatMap(f => f.tags), now, tz)?.windows;
+  const home = city === "nyc" && member.home_area ? NEIGHBORHOOD.get(member.home_area) : undefined;
   const travelLimit = member.prefs.maxTravelMinutes;
   const limit = typeof travelLimit === "number" && Number.isFinite(travelLimit) && travelLimit >= 0 ? travelLimit : undefined;
-  const requested = requestedWindow(request.period, now);
+  const requested = requestedWindow(request.period, now, tz);
   const options: Option[] = [];
 
   for (const event of events) {
@@ -106,5 +113,49 @@ export async function soloConciergeReply(tx: SQL, accounts: Pick<Accounts, "acti
     picks.push(line);
     publicLinks.push(event.listing.url);
   }
-  return { body: picks.length ? picks.join("\n") : "I couldn't find any current NYC Parks listings that fit your request.", publicLinks };
+  if (picks.length) return { body: picks.join("\n"), publicLinks };
+
+  const emptyPrefix = city === "nyc"
+    ? "I couldn't find any current NYC Parks listings that fit your request."
+    : "I couldn't find any current public listings that fit your request.";
+  const dbVenues = await listActiveVenues(tx, city).catch(() => []);
+  const venuePool = dbVenues.length ? dbVenues : city === "nyc" ? [] : seedVenuesForCity(city);
+  if (venuePool.length) {
+    const soloPrefs: MemberVenuePrefs = {
+      memberId: id,
+      age,
+      drinksAlcohol: !isMinor(age),
+      vegetarian: false,
+      vegan: false,
+      wheelchairNeeded: false,
+      maxBudgetTier: 2,
+      ...(limit !== undefined ? { maxTravelMinutes: limit } : {}),
+      visitedVenueIds: [],
+      rejectedVenueIds: [],
+      hobbies: [...interest],
+    };
+    const memberAreas = request.area ? [request.area] : member.home_area ? [member.home_area] : [];
+    const proposal = proposeTopOne(
+      venuePool,
+      {
+        city,
+        memberAreas,
+        members: [soloPrefs],
+        startMs: requested.from,
+        mode: "solo",
+        app,
+        isFirstMeet: false,
+        ...(interest.size ? { targetHobbies: [...interest] } : {}),
+      },
+      now
+    );
+    const spot = proposal.current?.venue;
+    if (spot && (!isMinor(age) || spot.allAges === true)) {
+      return {
+        body: `${emptyPrefix} If you want a public spot to drop into on your own, try ${spot.name} in ${spot.neighborhood}.`,
+        publicLinks,
+      };
+    }
+  }
+  return { body: emptyPrefix, publicLinks };
 }

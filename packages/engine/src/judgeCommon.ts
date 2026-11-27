@@ -8,7 +8,7 @@
 // verdict cache and the cached, bounded-concurrency pass loop, the parser base (field readers that
 // collect schema errors), the leak gate, evidence helpers and the shared prompt fragments.
 import type { ChatJsonOptions, ChatMessage, LLM, MemberId } from "@thenetwork/core";
-import { chatJson, labelHash, LeakGuard, textVariants } from "@thenetwork/core";
+import { chatJson, fenceUntrusted, labelHash, LeakGuard, textVariants, UNTRUSTED_NOTE } from "@thenetwork/core";
 import { cacheEntryExpired, initial as initialJudgmentAttempt, step as stepJudgmentAttempt } from "../../core/src/generated/judgmentAttempt.ts";
 import { tokenize } from "./embed.ts";
 import { sha256, stableStringify } from "./hash.ts";
@@ -23,9 +23,11 @@ import { HYPOTHESIS_CONFIDENCE, STALE_DAYS } from "./judgeConstants.ts";
 
 // ---- runner, cache, pass loop ---------------------------------------------------------------------
 
-/** System prompt + the context object as the user message (the prompt bytes every pass sends). */
-export const passMessages = (system: string, context: unknown): ChatMessage[] =>
-  [{ role: "system", content: system }, { role: "user", content: JSON.stringify(context) }];
+/** System prompt + nonce-fenced context object as the user message (the prompt bytes every pass sends). */
+export const passMessages = (system: string, context: unknown): ChatMessage[] => [
+  { role: "system", content: system.includes(UNTRUSTED_NOTE) ? system : `${system}\n${UNTRUSTED_NOTE}` },
+  { role: "user", content: fenceUntrusted(JSON.stringify(context), "context") },
+];
 
 export interface JudgeRequest<V> {
   pass: "screen" | "rubric" | "deep";

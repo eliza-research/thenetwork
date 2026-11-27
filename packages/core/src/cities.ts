@@ -3,11 +3,12 @@
 // Adding city #6+ is a single registerCity(spec) call. Core travel bounds and minimax+mean
 // midpoint costs delegate to the Vibespec-proved generated/venueSelection.ts.
 
-import { km, type LatLng } from "./geo.ts";
+import { km } from "./geo.ts";
 import { fairMidpointCostScaled, fairMidpointNetCostScaled, isValidMidpoint } from "./generated/venueSelection.ts";
-import type { CityBarrier, CityNeighborhood, CitySpec, CityZone, LaunchCity, NeighborhoodSpec, VenueHoursSlot, VenuePersonaPrior, VenueRecord } from "./types.ts";
+import { registerCityTimezone } from "./time.ts";
+import type { CityBarrier, CityId, CityNeighborhood, CitySpec, CityZone, LaunchCity, NeighborhoodSpec, VenueCategory, VenueHoursSlot, VenuePersonaPrior, VenueRecord } from "./types.ts";
 
-export type { CityBarrier, CityNeighborhood, CitySpec, CityZone, LaunchCity, NeighborhoodSpec };
+export type { CityBarrier, CityId, CityNeighborhood, CitySpec, CityZone, LaunchCity, NeighborhoodSpec };
 
 export interface FairMidpointResult {
   neighborhood: CityNeighborhood;
@@ -17,7 +18,7 @@ export interface FairMidpointResult {
   relaxedBy: number;
 }
 
-const SEED_VERIFIED_AT = Date.UTC(2026, 10, 26, 12, 0, 0);
+const SEED_VERIFIED_AT = Date.UTC(2026, 9, 1, 12, 0, 0);
 
 function dailyHours(openMin: number, closeMin: number): VenueHoursSlot[] {
   return [0, 1, 2, 3, 4, 5, 6].map(weekday => ({ weekday, openMin, closeMin }));
@@ -39,7 +40,7 @@ type SeedInput = Omit<VenueRecord, "public" | "status" | "source" | "lastVerifie
   personaPriors?: Record<string, VenuePersonaPrior>;
 };
 
-const ALCOHOL_CENTRIC_CATEGORIES = new Set<VenueRecord["category"]>([
+export const ALCOHOL_CENTRIC_CATEGORIES: ReadonlySet<VenueCategory> = new Set<VenueCategory>([
   "brewery",
   "brewery_garden",
   "wine_bar",
@@ -64,12 +65,12 @@ const OPEN_EVENT_CATEGORIES = new Set<VenueRecord["category"]>([
 
 function seedVenue(v: SeedInput): VenueRecord {
   const { personaPriors, ...rest } = v;
-  const ageMin = v.ageMin ?? 0;
   const isAlcoholCentric = v.isAlcoholCentric ?? (v.isBarOnly || ALCOHOL_CENTRIC_CATEGORIES.has(v.category));
   const openEventEligible =
     v.openEventEligible ??
     (v.walkInGroupCapacity >= 10 && !v.reservationRequired && OPEN_EVENT_CATEGORIES.has(v.category));
-  const allAges = !v.isBarOnly && !isAlcoholCentric && ageMin <= 0 ? (v.allAges ?? true) : false;
+  const ageMin = v.ageMin ?? (v.isBarOnly || isAlcoholCentric ? 21 : 0);
+  const allAges = !v.isBarOnly && !isAlcoholCentric && ageMin <= 13 ? (v.allAges ?? true) : false;
   return {
     ...rest,
     ageMin,
@@ -93,6 +94,9 @@ const SF_SPEC: CitySpec = {
   name: "San Francisco",
   shortName: "SF",
   tz: "America/Los_Angeles",
+  country: "US",
+  currency: "USD",
+  launchStatus: "waitlist",
   primaryMode: "hybrid",
   anchorZip: "94102",
   aliases: ["sf", "san francisco", "bay area", "san fran"],
@@ -112,13 +116,16 @@ const SF_SPEC: CitySpec = {
     { name: "Mission District", zone: "south_east", lat: 37.7599, lng: -122.4148, aliases: ["mission", "the mission", "valencia", "dolores"], hubSupply: 9 },
     { name: "Hayes Valley", zone: "central", lat: 37.7764, lng: -122.4243, aliases: ["hayes", "civic center"], hubSupply: 9 },
     { name: "SoMa / Yerba Buena", zone: "east_waterfront", lat: 37.7785, lng: -122.4056, aliases: ["soma", "yerba buena", "south of market", "mission bay"], hubSupply: 8 },
-    { name: "Embarcadero / FiDi", zone: "east_waterfront", lat: 37.7955, lng: -122.3937, aliases: ["embarcadero", "fidi", "financial district", "ferry building", "downtown sf"], hubSupply: 10 },
+    { name: "Embarcadero / FiDi", zone: "east_waterfront", lat: 37.7955, lng: -122.3937, aliases: ["embarcadero", "fidi", "financial district", "fidi sf", "ferry building", "downtown sf"], hubSupply: 10 },
     { name: "North Beach", zone: "north_hills", lat: 37.8005, lng: -122.4091, aliases: ["north beach", "telegraph hill", "chinatown sf"], hubSupply: 8 },
     { name: "Marina / Cow Hollow", zone: "north_hills", lat: 37.8015, lng: -122.4368, aliases: ["marina", "cow hollow", "presidio", "crissy field", "pac heights"], hubSupply: 7 },
     { name: "Russian Hill / Polk", zone: "north_hills", lat: 37.7960, lng: -122.4218, aliases: ["russian hill", "polk", "polk gulch", "nob hill"], hubSupply: 7 },
     { name: "Lower Haight / Duboce", zone: "central", lat: 37.7719, lng: -122.4310, aliases: ["lower haight", "duboce", "duboce triangle", "alamo square", "nopa", "haight"], hubSupply: 7 },
     { name: "Castro / Noe Valley", zone: "south_east", lat: 37.7609, lng: -122.4350, aliases: ["castro", "noe valley", "noe"], hubSupply: 7 },
     { name: "Potrero Hill / Dogpatch", zone: "south_east", lat: 37.7577, lng: -122.3924, aliases: ["potrero", "potrero hill", "dogpatch"], hubSupply: 6 },
+    { name: "Inner Sunset / Richmond", zone: "central", lat: 37.7638, lng: -122.4660, aliases: ["sunset", "inner sunset", "richmond", "inner richmond", "golden gate park"], hubSupply: 6 },
+    { name: "Oakland / Temescal", zone: "east_bay", lat: 37.8346, lng: -122.2633, aliases: ["oakland", "temescal", "lake merritt", "uptown oakland", "rockridge"], hubSupply: 8 },
+    { name: "Berkeley", zone: "east_bay", lat: 37.8715, lng: -122.2730, aliases: ["berkeley", "downtown berkeley", "elmwood"], hubSupply: 7 },
   ],
   barriers: [
     { fromZone: "north_hills", toZone: "south_east", penaltyMinutes: 10, reason: "SF hills & crosstown Muni slowness" },
@@ -237,7 +244,7 @@ const SF_SPEC: CitySpec = {
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 6, reservationRequired: false,
       noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "By the front antique wooden bar inside the 16th & Guerrero St corner door",
-      hours: dailyHours(14 * 60, 26 * 60), yelpRating: 4.4, safetyScore: 8, transitScore: 5,
+      hours: splitHours(14 * 60, 26 * 60, 12 * 60, 26 * 60), yelpRating: 4.4, safetyScore: 8, transitScore: 5,
       personaPriors: { nightowl: { alpha: 9, beta: 2 } },
     }),
     seedVenue({
@@ -296,6 +303,9 @@ const NYC_SPEC: CitySpec = {
   name: "New York City",
   shortName: "NYC",
   tz: "America/New_York",
+  country: "US",
+  currency: "USD",
+  launchStatus: "active",
   primaryMode: "transit",
   anchorZip: "10003",
   aliases: ["nyc", "new york", "new york city", "manhattan", "brooklyn", "queens", "bronx"],
@@ -317,13 +327,20 @@ const NYC_SPEC: CitySpec = {
     { name: "Flatiron / Union Square", zone: "manhattan_core", lat: 40.7359, lng: -73.9911, aliases: ["flatiron", "union square", "gramercy", "nomad"], hubSupply: 10 },
     { name: "West Village", zone: "manhattan_lower", lat: 40.7336, lng: -74.0027, aliases: ["west village", "greenwich village", "bleecker"], hubSupply: 9 },
     { name: "East Village", zone: "manhattan_lower", lat: 40.7265, lng: -73.9815, aliases: ["east village", "alphabet city", "st marks", "astor place"], hubSupply: 9 },
-    { name: "Lower East Side", zone: "manhattan_lower", lat: 40.7150, lng: -73.9843, aliases: ["les", "lower east side", "chinatown", "two bridges"], hubSupply: 8 },
+    { name: "Lower East Side", zone: "manhattan_lower", lat: 40.7150, lng: -73.9843, aliases: ["les", "lower east side", "chinatown", "chinatown nyc", "two bridges"], hubSupply: 8 },
     { name: "SoHo / Nolita", zone: "manhattan_lower", lat: 40.7233, lng: -74.0030, aliases: ["soho", "nolita", "noho", "tribeca", "little italy"], hubSupply: 9 },
     { name: "Chelsea / Meatpacking", zone: "manhattan_core", lat: 40.7465, lng: -74.0014, aliases: ["chelsea", "meatpacking", "high line", "little island"], hubSupply: 8 },
-    { name: "Midtown West / Hudson Yards", zone: "manhattan_core", lat: 40.7527, lng: -73.9935, aliases: ["midtown", "midtown west", "hudson yards", "hells kitchen", "penn station", "moynihan", "rockefeller"], hubSupply: 9 },
-    { name: "Financial District / Seaport", zone: "manhattan_lower", lat: 40.7075, lng: -74.0089, aliases: ["fidi", "financial district", "seaport", "battery park", "battery park city", "wall street"], hubSupply: 9 },
+    { name: "Midtown West / Hudson Yards", zone: "manhattan_core", lat: 40.7527, lng: -73.9935, aliases: ["midtown", "midtown nyc", "midtown manhattan", "midtown west", "hudson yards", "hells kitchen", "penn station", "moynihan", "rockefeller"], hubSupply: 9 },
+    { name: "Financial District / Seaport", zone: "manhattan_lower", lat: 40.7075, lng: -74.0089, aliases: ["fidi", "fidi nyc", "financial district", "seaport", "battery park", "battery park city", "wall street"], hubSupply: 9 },
+    { name: "Upper West Side", zone: "manhattan_core", lat: 40.7870, lng: -73.9754, aliases: ["uws", "upper west side", "lincoln center"], hubSupply: 7 },
+    { name: "Upper East Side", zone: "manhattan_core", lat: 40.7736, lng: -73.9566, aliases: ["ues", "upper east side", "yorkville"], hubSupply: 7 },
+    { name: "Harlem / Morningside", zone: "manhattan_core", lat: 40.8116, lng: -73.9465, aliases: ["harlem", "morningside heights", "columbia"], hubSupply: 6 },
     { name: "Williamsburg", zone: "brooklyn_north", lat: 40.7143, lng: -73.9573, aliases: ["williamsburg", "greenpoint", "bushwick", "domino"], hubSupply: 9 },
     { name: "Gowanus / Park Slope", zone: "brooklyn_south", lat: 40.6733, lng: -73.9882, aliases: ["gowanus", "park slope", "carroll gardens", "cobble hill", "boerum hill", "fort greene", "prospect heights"], hubSupply: 8 },
+    { name: "Bay Ridge / Sunset Park", zone: "brooklyn_south", lat: 40.6349, lng: -74.0277, aliases: ["bay ridge", "sunset park", "dyker heights"], hubSupply: 5 },
+    { name: "Astoria / LIC", zone: "queens", lat: 40.7644, lng: -73.9235, aliases: ["astoria", "long island city", "lic", "sunnyside"], hubSupply: 7 },
+    { name: "South Bronx / Mott Haven", zone: "bronx", lat: 40.8090, lng: -73.9229, aliases: ["south bronx", "mott haven", "concourse"], hubSupply: 5 },
+    { name: "St. George / Staten Island", zone: "staten_island", lat: 40.6437, lng: -74.0736, aliases: ["staten island", "st george", "st. george"], hubSupply: 4 },
   ],
   barriers: [
     { fromZone: "manhattan_core", toZone: "brooklyn_north", penaltyMinutes: 12, reason: "East River crossing" },
@@ -331,6 +348,10 @@ const NYC_SPEC: CitySpec = {
     { fromZone: "manhattan_lower", toZone: "brooklyn_north", penaltyMinutes: 10, reason: "East River crossing" },
     { fromZone: "manhattan_lower", toZone: "brooklyn_south", penaltyMinutes: 12, reason: "East River crossing" },
     { fromZone: "brooklyn_north", toZone: "brooklyn_south", penaltyMinutes: 12, reason: "G-train / outer-borough diagonal" },
+    { fromZone: "queens", toZone: "brooklyn_south", penaltyMinutes: 16, reason: "Outer-borough Queens-Brooklyn transfer" },
+    { fromZone: "queens", toZone: "manhattan_lower", penaltyMinutes: 12, reason: "East River tunnel & transfer" },
+    { fromZone: "bronx", toZone: "brooklyn_north", penaltyMinutes: 20, reason: "Cross-borough Bronx-Brooklyn transit" },
+    { fromZone: "bronx", toZone: "brooklyn_south", penaltyMinutes: 24, reason: "Cross-borough Bronx-Brooklyn transit" },
     { fromZone: "manhattan_core", toZone: "staten_island", penaltyMinutes: 25, reason: "Staten Island Ferry" },
     { fromZone: "manhattan_lower", toZone: "staten_island", penaltyMinutes: 25, reason: "Staten Island Ferry" },
     { fromZone: "brooklyn_north", toZone: "staten_island", penaltyMinutes: 25, reason: "Staten Island Ferry" },
@@ -504,6 +525,9 @@ const LA_SPEC: CitySpec = {
   name: "Los Angeles",
   shortName: "LA",
   tz: "America/Los_Angeles",
+  country: "US",
+  currency: "USD",
+  launchStatus: "waitlist",
   primaryMode: "car",
   anchorZip: "90013",
   aliases: ["la", "los angeles", "socal", "dtla", "hollywood", "santa monica", "silver lake"],
@@ -712,6 +736,9 @@ const CHICAGO_SPEC: CitySpec = {
   name: "Chicago",
   shortName: "CHI",
   tz: "America/Chicago",
+  country: "US",
+  currency: "USD",
+  launchStatus: "waitlist",
   primaryMode: "transit",
   anchorZip: "60607",
   aliases: ["chicago", "chi", "chicagoland", "windy city", "the loop", "west loop", "wicker park", "logan square"],
@@ -908,6 +935,9 @@ const MIAMI_SPEC: CitySpec = {
   name: "Miami",
   shortName: "MIA",
   tz: "America/New_York",
+  country: "US",
+  currency: "USD",
+  launchStatus: "waitlist",
   primaryMode: "car",
   anchorZip: "33131",
   aliases: ["miami", "mia", "south beach", "sobe", "miami beach", "brickell", "wynwood", "coral gables"],
@@ -1175,10 +1205,10 @@ function buildCityIndex(spec: CitySpec): CityIndex {
 
   const pairMinutes = new Int32Array(n * n);
   const centerMinutes = new Int32Array(n);
-  const centerToCenterMinutes = Math.max(5, Math.round(spec.baseMinutes));
+  const centerToCenterMinutes = 25;
   for (let i = 0; i < n; i++) {
     const a = spec.neighborhoods[i]!;
-    centerMinutes[i] = Math.max(5, Math.round(spec.baseMinutes + km(spec.center, a) / spec.kmPerMinute));
+    centerMinutes[i] = Math.max(20, Math.round(spec.baseMinutes + km(spec.center, a) / spec.kmPerMinute));
     for (let j = 0; j < n; j++) {
       const b = spec.neighborhoods[j]!;
       if (a.name === b.name) {
@@ -1207,21 +1237,20 @@ function buildCityIndex(spec: CitySpec): CityIndex {
   };
 }
 
-const registry = new Map<string, CitySpec>([
-  [SF_SPEC.id, SF_SPEC],
-  [NYC_SPEC.id, NYC_SPEC],
-  [LA_SPEC.id, LA_SPEC],
-  [CHICAGO_SPEC.id, CHICAGO_SPEC],
-  [MIAMI_SPEC.id, MIAMI_SPEC],
+const AMBIGUOUS_NEIGHBORHOOD_ALIASES = new Set([
+  "downtown",
+  "midtown",
+  "chinatown",
+  "fidi",
+  "financial district",
+  "edgewater",
 ]);
 
-const indexRegistry = new Map<string, CityIndex>([
-  [SF_SPEC.id, buildCityIndex(SF_SPEC)],
-  [NYC_SPEC.id, buildCityIndex(NYC_SPEC)],
-  [LA_SPEC.id, buildCityIndex(LA_SPEC)],
-  [CHICAGO_SPEC.id, buildCityIndex(CHICAGO_SPEC)],
-  [MIAMI_SPEC.id, buildCityIndex(MIAMI_SPEC)],
-]);
+const registry = new Map<string, CitySpec>();
+const indexRegistry = new Map<string, CityIndex>();
+const globalNeighborhoodOwner = new Map<string, CityId | null>();
+const allSeedVenuesBacking: VenueRecord[] = [];
+const cityIdsBacking: CityId[] = [];
 
 export const CITIES: Record<LaunchCity, CitySpec> = {
   sf: SF_SPEC,
@@ -1233,18 +1262,51 @@ export const CITIES: Record<LaunchCity, CitySpec> = {
 
 export const CITY_IDS: readonly LaunchCity[] = ["sf", "nyc", "la", "chicago", "miami"];
 
-function getCityIndex(id: LaunchCity | string): CityIndex | undefined {
+function getCityIndex(id: CityId): CityIndex | undefined {
   return indexRegistry.get(id) ?? indexRegistry.get(id.trim().toLowerCase());
+}
+
+function rebuildDerivedRegistryCaches(): void {
+  allSeedVenuesBacking.length = 0;
+  cityIdsBacking.length = 0;
+  globalNeighborhoodOwner.clear();
+
+  for (const spec of registry.values()) {
+    cityIdsBacking.push(spec.id);
+    for (const v of spec.seedVenues) allSeedVenuesBacking.push(v);
+    const idx = indexRegistry.get(spec.id);
+    if (!idx) continue;
+    for (const alias of idx.byNormArea.keys()) {
+      if (AMBIGUOUS_NEIGHBORHOOD_ALIASES.has(alias)) {
+        globalNeighborhoodOwner.set(alias, null);
+        continue;
+      }
+      const prev = globalNeighborhoodOwner.get(alias);
+      if (prev === undefined) {
+        globalNeighborhoodOwner.set(alias, spec.id);
+      } else if (prev !== spec.id) {
+        globalNeighborhoodOwner.set(alias, null);
+      }
+    }
+  }
 }
 
 /** Register a new city spec (or override an existing one) so expanding to city #6+ is a single call. */
 export function registerCity(spec: CitySpec): void {
-  registry.set(spec.id, spec);
-  indexRegistry.set(spec.id, buildCityIndex(spec));
-  (CITIES as Record<string, CitySpec>)[spec.id] = spec;
+  const id = spec.id.trim().toLowerCase();
+  const normalizedSpec: CitySpec = id === spec.id ? spec : { ...spec, id };
+  registry.set(id, normalizedSpec);
+  indexRegistry.set(id, buildCityIndex(normalizedSpec));
+  (CITIES as Record<string, CitySpec>)[id] = normalizedSpec;
+  registerCityTimezone(id, normalizedSpec.tz);
+  rebuildDerivedRegistryCaches();
 }
 
-export function getCity(id: LaunchCity | string): CitySpec | undefined {
+for (const spec of [SF_SPEC, NYC_SPEC, LA_SPEC, CHICAGO_SPEC, MIAMI_SPEC]) {
+  registerCity(spec);
+}
+
+export function getCity(id: CityId): CitySpec | undefined {
   return registry.get(id) ?? registry.get(id.trim().toLowerCase());
 }
 
@@ -1252,11 +1314,13 @@ export function listCities(): CitySpec[] {
   return [...registry.values()];
 }
 
-export function seedVenuesForCity(city: LaunchCity): VenueRecord[] {
-  return [...(getCity(city)?.seedVenues ?? [])];
+export function getCityIds(): CityId[] {
+  return [...cityIdsBacking];
 }
 
-export const ALL_SEED_VENUES: readonly VenueRecord[] = listCities().flatMap(c => c.seedVenues);
+export function seedVenuesForCity(city: CityId): VenueRecord[] {
+  return [...(getCity(city)?.seedVenues ?? [])];
+}
 
 function findNeighborhoodInIndex(idx: CityIndex, area: string): CityNeighborhood | undefined {
   const exact = idx.byExactName.get(area);
@@ -1275,17 +1339,23 @@ function findNeighborhoodInIndex(idx: CityIndex, area: string): CityNeighborhood
   return undefined;
 }
 
-/** Resolve free-form city text, abbreviation, or neighborhood name to a registered City id. */
-export function resolveCity(text: string): LaunchCity | undefined {
+/** Live view of every registered city's seed venues (reflects registerCity() calls). */
+export function getAllSeedVenues(): VenueRecord[] {
+  return [...allSeedVenuesBacking];
+}
+
+export const ALL_SEED_VENUES: readonly VenueRecord[] = allSeedVenuesBacking;
+
+/** Resolve free-form city text, abbreviation, or unambiguous neighborhood name to a registered CityId. */
+export function resolveCity(text: string): CityId | undefined {
   const q = normText(text);
   if (!q) return undefined;
-  if (registry.has(q)) return q as LaunchCity;
+  if (registry.has(q)) return q;
   for (const idx of indexRegistry.values()) {
     if (idx.normName === q || idx.normShortName === q || idx.normAliasSet.has(q)) return idx.spec.id;
   }
-  for (const idx of indexRegistry.values()) {
-    if (idx.byNormArea.has(q)) return idx.spec.id;
-  }
+  const uniqueHoodOwner = globalNeighborhoodOwner.get(q);
+  if (uniqueHoodOwner) return uniqueHoodOwner;
   for (const idx of indexRegistry.values()) {
     if (idx.normName && q.includes(idx.normName)) return idx.spec.id;
     for (let i = 0; i < idx.longNormAliases.length; i++) {
@@ -1295,8 +1365,8 @@ export function resolveCity(text: string): LaunchCity | undefined {
   return undefined;
 }
 
-/** Resolve a neighborhood name or alias within a city; returns undefined if unknown. */
-export function findNeighborhood(city: LaunchCity, area: string): CityNeighborhood | undefined {
+/** Resolve a neighborhood name or alias within a city using pre-indexed aliases; returns undefined if unknown. */
+export function findNeighborhood(city: CityId, area: string): CityNeighborhood | undefined {
   const idx = getCityIndex(city);
   if (!idx) return undefined;
   return findNeighborhoodInIndex(idx, area);
@@ -1334,21 +1404,27 @@ function estimateTravelInIndex(
  * Estimate door-to-door travel minutes between two areas in a city, incorporating
  * haversine distance, primary mode speed, and geographic barrier penalties.
  */
-export function estimateTravelMinutes(city: LaunchCity, fromArea: string, toArea: string): number {
+export function estimateTravelMinutes(city: CityId, fromArea: string, toArea: string): number {
   const idx = getCityIndex(city);
   if (!idx) return 30;
   const a = findNeighborhoodInIndex(idx, fromArea);
   const b = findNeighborhoodInIndex(idx, toArea);
+  if (!a && !b) {
+    const nf = normText(fromArea);
+    const nt = normText(toArea);
+    if (nf && nf === nt) return 5;
+    return idx.centerToCenterMinutes;
+  }
   return estimateTravelInIndex(idx, a, b);
 }
 
 /**
  * Discrete neighborhood minimax + efficiency midpoint selection.
  * Delegates travel-limit validation and integer-scaled cost (6*max + 4*mean) to proved venueSelection.ts.
- * Relaxes limit in +5m steps up to +10m if no strict candidate exists; returns undefined if none fits.
+ * Precomputes travel times once per candidate neighborhood across relax steps (0, +5, +10m).
  */
 export function chooseFairMidpoint(
-  city: LaunchCity,
+  city: CityId,
   areas: string[],
   mode: "date" | "group" = "date"
 ): FairMidpointResult | undefined {

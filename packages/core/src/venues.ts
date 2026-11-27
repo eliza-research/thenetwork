@@ -3,10 +3,15 @@
 // scheduling, arrival relay gates, and anchor failover.
 // All pure business decisions delegate to the Vibespec-generated modules under ./generated/.
 
+import { tryChatJson } from "./chatJson.ts";
 import { HOUR, MINUTE } from "./clock.ts";
+import { fenceUntrusted, UNTRUSTED_NOTE } from "./fence.ts";
 import { km } from "./geo.ts";
-import { CITY_TZ, fromLocal, localParts, type LocalParts } from "./time.ts";
-import { chooseFairMidpoint, estimateTravelMinutes, getCity } from "./cities.ts";
+import { LeakGuard } from "./guard.ts";
+import type { LLM } from "./llm.ts";
+import { cleanPhrase, formatTopOneVenueSuggestion, styleViolations } from "./smsCopy.ts";
+import { CITY_TZ, cityTimezone, fromLocal, localParts, type LocalParts } from "./time.ts";
+import { ALCOHOL_CENTRIC_CATEGORIES, chooseFairMidpoint, estimateTravelMinutes, getCity } from "./cities.ts";
 import {
   fairMidpointCostScaled,
   groupVenueRubricScore,
@@ -34,7 +39,7 @@ import {
   canAttendEventOrCoattend,
   canRelayArrivalSafe,
   canSendFollowup,
-  computeFollowupLocalHour,
+  computeFollowupLocalSlot,
   meetupPhase,
   noShowDecision,
   shouldPivotToBackupV2,
@@ -52,10 +57,14 @@ import {
 } from "./generated/encounterFollowup.ts";
 import { chooseWorkIntroChannel } from "./generated/workIntroChannel.ts";
 import type {
+  AppId,
+  CityId,
+  ConnectionOntologySpecLike,
   FollowupSchedule,
-  LaunchCity,
+  MeetingModality,
   MeetupPhase,
   MemberVenuePrefs,
+  OutcomePolicyProfile,
   VenueCandidateResult,
   VenueCategory,
   VenueFeedbackReport,
@@ -84,12 +93,12 @@ export interface VenueOpenCheck {
 }
 
 export interface VenueRankRequest {
-  city: LaunchCity;
+  city: CityId;
   memberAreas: string[];
   members: MemberVenuePrefs[];
   startMs: number;
-  mode: "date" | "group" | "solo";
-  app?: "friends" | "slop" | "ntwrk";
+  mode: "date" | "group" | "solo" | "professional";
+  app?: AppId;
   isWeekendOrHoliday?: boolean;
   badWeatherOrAfterDark?: boolean;
   overrideTravelLimitMin?: number;
@@ -142,7 +151,7 @@ export interface PivotFilterOptions {
 export interface TopOneCopyOptions {
   state: TopOneSuggestionState;
   whenLabel: string;
-  mode: "date" | "group" | "solo";
+  mode: "date" | "group" | "solo" | "professional";
   partnerFirstName?: string;
   why?: string;
 }
@@ -160,15 +169,6 @@ export interface ArrivalRelayInput {
   passedSafetyAndLeakCheck: boolean;
 }
 
-const ALCOHOL_CENTRIC_CATEGORIES = new Set<VenueCategory>([
-  "brewery",
-  "brewery_garden",
-  "wine_bar",
-  "cocktail_bar",
-  "cocktail_lounge",
-  "wine_beer_patio",
-]);
-
 const CLASSIC_DATE_CATEGORIES = new Set<VenueCategory>([
   "coffee_shop",
   "tea_house",
@@ -180,6 +180,16 @@ const CLASSIC_DATE_CATEGORIES = new Set<VenueCategory>([
   "casual_bistro",
   "dessert_cafe",
   "museum_gallery",
+]);
+
+const PROFESSIONAL_CATEGORIES = new Set<VenueCategory>([
+  "coffee_shop",
+  "tea_house",
+  "cafe_tea_bar",
+  "bakery_cafe",
+  "bookstore_cafe",
+  "coffee_casual",
+  "food_hall",
 ]);
 
 const HOBBY_NATIVE_CATEGORIES = new Set<VenueCategory>([
@@ -219,14 +229,24 @@ function normalizeTag(tag: string): string {
   return tag.trim().toLowerCase().replace(/\s+/g, "_");
 }
 
-function computeActivityFitScore(
-  venue: VenueRecord,
-  members: MemberVenuePrefs[],
-  targetHobbies?: string[]
-): { activityFit: number; sharedHobbyHit: boolean; bothShareHighHobbyAffinity: boolean } {
-  const venueHobbies = new Set((venue.hobbies ?? []).map(normalizeTag));
-  const requested = new Set<string>((targetHobbies ?? []).map(normalizeTag));
+interface HoistedActivityContext {
+  memberCount: number;
+  requested: ReadonlySet<string>;
+  memberHobbyCounts: ReadonlyMap<string, number>;
+  memberCuisineSets: readonly ReadonlySet<string>[];
+}
+
+function buildHoistedActivityContext(
+  members: readonly MemberVenuePrefs[],
+  targetHobbies?: readonly string[]
+): HoistedActivityContext {
+  const requested = new Set<string>();
+  for (const h of targetHobbies ?? []) {
+    const nh = normalizeTag(h);
+    if (nh) requested.add(nh);
+  }
   const memberHobbyCounts = new Map<string, number>();
+  const memberCuisineSets: ReadonlySet<string>[] = [];
 
   for (const m of members) {
     const seen = new Set<string>();
@@ -236,24 +256,41 @@ function computeActivityFitScore(
       seen.add(nh);
       memberHobbyCounts.set(nh, (memberHobbyCounts.get(nh) ?? 0) + 1);
     }
+    const cuisines = new Set<string>();
+    for (const c of m.cuisinePrefs ?? []) {
+      const nc = normalizeTag(c);
+      if (nc) cuisines.add(nc);
+    }
+    if (cuisines.size > 0) memberCuisineSets.push(cuisines);
   }
+
+  return { memberCount: members.length, requested, memberHobbyCounts, memberCuisineSets };
+}
+
+function computeActivityFitScore(
+  venue: VenueRecord,
+  ctx: HoistedActivityContext
+): { activityFit: number; sharedHobbyHit: boolean; bothShareHighHobbyAffinity: boolean } {
+  const venueHobbies = new Set((venue.hobbies ?? []).map(normalizeTag));
 
   let sharedHit = false;
   let anyHit = false;
-  for (const h of requested) {
-    if (venueHobbies.has(h)) {
-      anyHit = true;
-      if (members.length <= 1 || (memberHobbyCounts.get(h) ?? 0) >= 2) sharedHit = true;
+  if (venueHobbies.size > 0) {
+    for (const h of ctx.requested) {
+      if (venueHobbies.has(h)) {
+        anyHit = true;
+        if (ctx.memberCount <= 1 || (ctx.memberHobbyCounts.get(h) ?? 0) >= 2) sharedHit = true;
+      }
     }
-  }
-  for (const [h, count] of memberHobbyCounts) {
-    if (venueHobbies.has(h)) {
-      anyHit = true;
-      if (members.length >= 2 && count >= 2) sharedHit = true;
+    for (const [h, count] of ctx.memberHobbyCounts) {
+      if (venueHobbies.has(h)) {
+        anyHit = true;
+        if (ctx.memberCount >= 2 && count >= 2) sharedHit = true;
+      }
     }
   }
 
-  if (sharedHit) return { activityFit: 95, sharedHobbyHit: true, bothShareHighHobbyAffinity: members.length >= 2 };
+  if (sharedHit) return { activityFit: 95, sharedHobbyHit: true, bothShareHighHobbyAffinity: ctx.memberCount >= 2 };
   if (anyHit) return { activityFit: 82, sharedHobbyHit: false, bothShareHighHobbyAffinity: false };
   if (venue.category === "food_hall") {
     return { activityFit: 74, sharedHobbyHit: false, bothShareHighHobbyAffinity: false };
@@ -267,23 +304,29 @@ function computeActivityFitScore(
   return { activityFit: 58, sharedHobbyHit: false, bothShareHighHobbyAffinity: false };
 }
 
-function computeDateVibeScore(venue: VenueRecord, members: MemberVenuePrefs[]): number {
-  let score = CLASSIC_DATE_CATEGORIES.has(venue.category)
-    ? 80
-    : venue.category === "food_hall"
-      ? 72
-      : venue.isBarOnly
-        ? 64
-        : 62;
-  if (venue.noiseLevel === "conversational" || venue.noiseLevel === "quiet") score += 8;
+function computeDateVibeScore(venue: VenueRecord, ctx: HoistedActivityContext, isProfessional: boolean): number {
+  let score = isProfessional
+    ? (PROFESSIONAL_CATEGORIES.has(venue.category) ? 86 : 62)
+    : CLASSIC_DATE_CATEGORIES.has(venue.category)
+      ? 80
+      : venue.category === "food_hall"
+        ? 72
+        : venue.isBarOnly
+          ? 64
+          : 62;
+  if (venue.noiseLevel === "quiet") score += isProfessional ? 12 : 8;
+  else if (venue.noiseLevel === "conversational") score += 8;
   else if (venue.noiseLevel === "loud") score -= 15;
 
-  const venueCuisines = new Set((venue.cuisineTags ?? []).map(normalizeTag));
-  if (venueCuisines.size > 0) {
+  const venueCuisines = venue.cuisineTags?.length ? new Set(venue.cuisineTags.map(normalizeTag)) : undefined;
+  if (venueCuisines && ctx.memberCuisineSets.length > 0) {
     let cuisineMatches = 0;
-    for (const m of members) {
-      if ((m.cuisinePrefs ?? []).some(c => venueCuisines.has(normalizeTag(c)))) {
-        cuisineMatches++;
+    for (const memberCuisines of ctx.memberCuisineSets) {
+      for (const c of memberCuisines) {
+        if (venueCuisines.has(c)) {
+          cuisineMatches++;
+          break;
+        }
       }
     }
     if (cuisineMatches >= 2) score += 12;
@@ -360,17 +403,18 @@ export function computeVenuePersonaScore(venue: VenueRecord, archetypes: string[
 }
 
 /**
- * Filter and rank venues for a solo, 1-on-1 date, or 3+ group meetup.
+ * Filter and rank venues for a solo, 1-on-1 date, professional coffee, or 3+ group meetup.
  * Every hard eligibility, teen all-ages, and red-line invariant delegates to generated
  * `venueHardEligible` and `venueRedLinesEligible`; ranking delegates to `modeVenueScore`.
  */
 export function rankVenuesForMatch(
-  venues: VenueRecord[],
+  venues: readonly VenueRecord[],
   request: VenueRankRequest,
   nowMs: number
 ): VenueCandidateResult[] {
-  const citySpec = getCity(request.city);
-  const tz = citySpec?.tz ?? (CITY_TZ as Record<string, string>)[request.city] ?? "America/New_York";
+  const cityKey = request.city.trim().toLowerCase();
+  const citySpec = getCity(cityKey);
+  const tz = cityTimezone(cityKey) ?? citySpec?.tz ?? "America/New_York";
   const groupSize = Math.max(1, request.members.length);
   const requiredBuffer = groupSize >= 3 ? 120 : 90;
   const startParts = localParts(request.startMs, tz);
@@ -378,15 +422,16 @@ export function rankVenuesForMatch(
   const isAfterDark = startParts.hour >= 19 || startParts.hour < 7;
   const isWeekend = request.isWeekendOrHoliday ?? (startParts.weekday >= 5);
   const badWeatherOrAfterDark = request.badWeatherOrAfterDark ?? isAfterDark;
-  const isFirstMeet = request.isFirstMeet ?? (request.mode === "date");
+  const isProfessional = request.mode === "professional" || request.app === "peon";
+  const isFirstMeet = request.isFirstMeet ?? (request.mode === "date" || isProfessional);
   const hasReservation = request.hasReservation ?? false;
-  const teenFriendAllowed = request.teenFriendAllowed ?? false;
+  const teenFriendAllowed = isProfessional ? false : (request.teenFriendAllowed ?? false);
   const scoreMode = request.app === "friends" || (request.app === undefined && request.mode === "group") ? "friends" : "slop";
 
   const minParticipantAge =
     request.members.length > 0 ? Math.min(...request.members.map(m => m.age)) : 0;
-  const anyNonDrinker = request.members.some(m => !m.drinksAlcohol);
-  const anyStrictSober = request.members.some(m => m.strictSober === true);
+  const anyNonDrinker = isProfessional || request.members.some(m => !m.drinksAlcohol);
+  const anyStrictSober = isProfessional || request.members.some(m => m.strictSober === true);
   const anyVegetarian = request.members.some(m => m.vegetarian);
   const anyVegan = request.members.some(m => m.vegan);
   const anyHalal = request.members.some(m => m.halal === true);
@@ -394,14 +439,19 @@ export function rankVenuesForMatch(
   const anyGlutenFree = request.members.some(m => m.glutenFree === true);
   const anySevereAllergen = request.members.some(m => m.severeAllergen === true);
   const anyWheelchairNeeded = request.members.some(m => m.wheelchairNeeded);
-  const anySmokeFree = request.members.some(m => m.smokeFree === true);
-  const anyLowNoise = request.members.some(m => m.lowNoiseRequired === true);
-  const anyDaytimeOnly = request.members.some(m => m.daytimeOnly === true);
+  const anySmokeFree = isProfessional || request.members.some(m => m.smokeFree === true);
+  const anyLowNoise = isProfessional || request.members.some(m => m.lowNoiseRequired === true);
+  const anyDaytimeOnly = isProfessional || request.members.some(m => m.daytimeOnly === true);
   const bothOptedIntoActivityDates =
-    request.members.length >= 2 && request.members.every(m => m.optedIntoActivityDates === true);
+    !isProfessional && request.members.length >= 2 && request.members.every(m => m.optedIntoActivityDates === true);
 
   const maxBudgetTier =
     request.members.length > 0 ? Math.min(...request.members.map(m => m.maxBudgetTier)) : 2;
+  const activityCtx = buildHoistedActivityContext(request.members, request.targetHobbies);
+  const midpoint =
+    request.memberAreas.length > 0
+      ? chooseFairMidpoint(cityKey, request.memberAreas, request.mode === "group" ? "group" : "date")
+      : undefined;
   const defaultLimit =
     request.overrideTravelLimitMin ??
     (request.mode === "group" ? citySpec?.groupMaxMinutes ?? 35 : citySpec?.dateMaxMinutes ?? 25);
@@ -409,7 +459,11 @@ export function rankVenuesForMatch(
     .map(m => m.maxTravelMinutes)
     .filter((v): v is number => typeof v === "number" && v > 0);
   const travelLimitMin =
-    memberMaxTravel.length > 0 ? Math.min(defaultLimit, ...memberMaxTravel) : defaultLimit;
+    memberMaxTravel.length > 0
+      ? Math.min(defaultLimit, ...memberMaxTravel)
+      : request.overrideTravelLimitMin !== undefined
+        ? defaultLimit
+        : defaultLimit + (midpoint?.relaxedBy ?? 0);
 
   const visitedSet = new Set<string>();
   const rejectedSet = new Set<string>();
@@ -420,18 +474,13 @@ export function rankVenuesForMatch(
     if (m.archetype) archetypes.push(m.archetype);
   }
 
-  const midpoint =
-    request.memberAreas.length > 0
-      ? chooseFairMidpoint(request.city, request.memberAreas, request.mode === "group" ? "group" : "date")
-      : undefined;
-
   const ranked: VenueCandidateResult[] = [];
   for (const venue of venues) {
-    if (venue.city !== request.city) continue;
+    if (venue.city.trim().toLowerCase() !== cityKey) continue;
 
     const travelTimes =
       request.memberAreas.length > 0
-        ? request.memberAreas.map(area => estimateTravelMinutes(request.city, area, venue.neighborhood))
+        ? request.memberAreas.map(area => estimateTravelMinutes(cityKey, area, venue.neighborhood))
         : [5];
     const maxTravelMin = Math.max(...travelTimes);
     const meanTravelMin = Math.round(travelTimes.reduce((s, x) => s + x, 0) / travelTimes.length);
@@ -464,6 +513,7 @@ export function rankVenuesForMatch(
       openBufferMin: openCheck.remainingMinutes,
       groupSize,
       reservationRequired: venue.reservationRequired,
+      hasReservation,
       separateChecks: venue.separateChecks,
       walkInCapacity: venue.walkInGroupCapacity,
       isNightLiveMusic: venue.liveMusicAtNight && isNight,
@@ -527,8 +577,8 @@ export function rankVenuesForMatch(
     const travelScore = Math.max(0, 100 - Math.round(travelCost / 5));
     const midpointBonus = midpoint && midpoint.neighborhood.name === venue.neighborhood ? 6 : 0;
 
-    const activity = computeActivityFitScore(venue, request.members, request.targetHobbies);
-    const dateVibeFit = computeDateVibeScore(venue, request.members);
+    const activity = computeActivityFitScore(venue, activityCtx);
+    const dateVibeFit = computeDateVibeScore(venue, activityCtx, isProfessional);
     const safetyAcoustics = computeSafetyAcousticsScore(venue, isNight);
     const nicheHobbyBonus = activity.bothShareHighHobbyAffinity ? 15 : 0;
 
@@ -579,7 +629,7 @@ function selectNearbyBackup(
  * plus report whether external venue discovery is needed (< 10 qualified local matches).
  */
 export function pickPrimaryAndBackupVenue(
-  venues: VenueRecord[],
+  venues: readonly VenueRecord[],
   request: VenueRankRequest,
   nowMs: number
 ): PrimaryBackupVenuePick {
@@ -595,7 +645,7 @@ export function pickPrimaryAndBackupVenue(
 
 /** Initialize a bounded Top-1 venue suggestion flow (propose 1 crisp pick, pre-compute backup). */
 export function proposeTopOne(
-  venues: VenueRecord[],
+  venues: readonly VenueRecord[],
   request: VenueRankRequest,
   nowMs: number
 ): TopOneSuggestionState {
@@ -623,10 +673,20 @@ export function rejectAndPivot(
   reason: VenueRejectionReason,
   opts: PivotFilterOptions = {}
 ): TopOneSuggestionState {
+  if (!state.current || state.action === "ask_user_spot_or_pause") {
+    return {
+      ...state,
+      current: undefined,
+      backup: undefined,
+      action: "ask_user_spot_or_pause",
+      lastReason: reason,
+    };
+  }
+
   const rejectedSet = new Set(state.rejectedIds);
   const visitedSet = new Set(state.visitedIds);
-  const rejectedVenue = state.current?.venue;
-  if (rejectedVenue) rejectedSet.add(rejectedVenue.id);
+  const rejectedVenue = state.current.venue;
+  rejectedSet.add(rejectedVenue.id);
 
   const nextPivots = state.pivotsUsed + 1;
   const eligiblePool = state.candidates.filter(c => {
@@ -642,9 +702,10 @@ export function rejectAndPivot(
   });
 
   let ordered = [...eligiblePool];
-  if (reason === "wrong_vibe" && rejectedVenue) {
+  if (reason === "wrong_vibe") {
     const orthogonal = ordered.filter(c => c.venue.category !== rejectedVenue.category);
-    if (orthogonal.length > 0) ordered = orthogonal;
+    const sameCategory = ordered.filter(c => c.venue.category === rejectedVenue.category);
+    ordered = [...orthogonal, ...sameCategory];
   } else if (reason === "too_far") {
     ordered.sort((a, b) => a.maxTravelMinutes - b.maxTravelMinutes || b.score - a.score);
   } else if (reason === "price") {
@@ -667,48 +728,23 @@ export function rejectAndPivot(
   };
 }
 
-function sanitizeCopySnippet(text: string): string {
-  return text.replace(/_/g, " ").replace(/\?/g, "").replace(/\s+/g, " ").trim();
-}
-
 /**
  * Render concise member-facing copy for the Top-1 suggestion / pivot loop.
- * Obeys copy.ts style rules: <= 360 chars, at most 1 `?`, no raw tags,
- * no contact details, never asks to reply "cancel", never leaks red lines or who declined.
+ * Delegates to the single canonical formatter in smsCopy.ts.
  */
 export function buildTopOneCopy(opts: TopOneCopyOptions): string {
   const { state, mode } = opts;
-  const when = sanitizeCopySnippet(opts.whenLabel);
-  const partner = opts.partnerFirstName ? sanitizeCopySnippet(opts.partnerFirstName) : undefined;
-  const why = opts.why ? sanitizeCopySnippet(opts.why) : undefined;
-
   if (state.action === "ask_user_spot_or_pause" || !state.current) {
-    return "Looks like my picks aren't hitting the mark. Want to name a public spot you like nearby, or try again next week?";
+    return formatTopOneVenueSuggestion("", "", opts.whenLabel, { exhausted: true });
   }
-
   const v = state.current.venue;
-  const name = sanitizeCopySnippet(v.name);
-  const hood = sanitizeCopySnippet(v.neighborhood);
-  const reasonTail = why ? ` (${why})` : "";
-
-  let text: string;
-  if (state.pivotsUsed === 0) {
-    if (mode === "date" && partner) {
-      text = `You're both in: meet ${partner} ${when} at ${name} in ${hood}${reasonTail}. Works for you, or want to swap the vibe or area?`;
-    } else if (mode === "group") {
-      text = `I picked ${name} in ${hood} for ${when}${reasonTail}. Works for you, or want to swap the spot?`;
-    } else {
-      text = `Top spot for ${when}: ${name} in ${hood}${reasonTail}. Works for you, or want another idea?`;
-    }
-  } else if (state.pivotsUsed >= MAX_SUGGESTION_PIVOTS - 1) {
-    text = `Got it. How about ${name} in ${hood} for ${when}${reasonTail}, or is there a neighborhood you'd rather stick to?`;
-  } else {
-    text = `Fair call. How about ${name} in ${hood} for ${when}${reasonTail} instead?`;
-  }
-
-  if (text.length <= 360) return text;
-  const fallback = `How about ${name} in ${hood} for ${when}?`;
-  return fallback.length <= 360 ? fallback : `${fallback.slice(0, 356).replace(/\?+$/, "")}...?`;
+  return formatTopOneVenueSuggestion(v.name, v.neighborhood, opts.whenLabel, {
+    partner: opts.partnerFirstName,
+    why: opts.why,
+    pivot: state.pivotsUsed,
+    mode,
+    maxPivots: MAX_SUGGESTION_PIVOTS,
+  });
 }
 
 /** Bundled Top-1 suggestion flow helper (propose -> reject/pivot -> style-safe copy). */
@@ -792,9 +828,20 @@ export function applyVenueFeedback(
   };
 }
 
+function clampTimestampToSafeLocalHours(ts: number, tz: string): number {
+  const parts = localParts(ts, tz);
+  if (parts.hour >= 9 && parts.hour < 20) return ts;
+  if (parts.hour < 9) {
+    return fromLocal(parts.year, parts.month, parts.day, 9.5, tz);
+  }
+  const nextDay = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + 1));
+  return fromLocal(nextDay.getUTCFullYear(), nextDay.getUTCMonth() + 1, nextDay.getUTCDate(), 9.5, tz);
+}
+
 /**
- * Compute UTC dispatch schedule for a post-event/post-date follow-up using `computeFollowupLocalHour`.
- * Daytime end <= 16:00 -> same-day end + 2h; evening end > 16:00 -> next morning 9:30 local.
+ * Compute UTC dispatch schedule for a post-event/post-date follow-up using `computeFollowupLocalSlot`.
+ * Daytime end <= 16:59 -> same-day end + 2h preserving minutes; evening end > 16:59 -> next calendar day 09:30 local (DST-safe).
+ * Reminders (+36h) are always clamped into local safe hours [9, 20).
  */
 export function computeFollowupTimestamp(eventEndMs: number, tz: string, isWorkIntro = false): FollowupSchedule {
   const endParts = localParts(eventEndMs, tz);
@@ -812,16 +859,222 @@ export function computeFollowupTimestamp(eventEndMs: number, tz: string, isWorkI
       maxReminders: maxFollowupReminders,
     };
   }
-  const slot = computeFollowupLocalHour(endParts.hour);
-  const dayParts = slot.nextDay ? localParts(eventEndMs + 24 * HOUR, tz) : endParts;
-  const scheduledAt = fromLocal(dayParts.year, dayParts.month, dayParts.day, slot.localHour, tz) + slot.localMinute * MINUTE;
+  const slot = computeFollowupLocalSlot(endParts.hour, endParts.minute);
+  let targetYear = endParts.year;
+  let targetMonth = endParts.month;
+  let targetDay = endParts.day;
+  if (slot.nextDay) {
+    const nextCal = new Date(Date.UTC(endParts.year, endParts.month - 1, endParts.day + 1));
+    targetYear = nextCal.getUTCFullYear();
+    targetMonth = nextCal.getUTCMonth() + 1;
+    targetDay = nextCal.getUTCDate();
+  }
+  const scheduledAt = fromLocal(targetYear, targetMonth, targetDay, slot.localHour + slot.localMinute / 60, tz);
+  const reminderAt = clampTimestampToSafeLocalHours(scheduledAt + 36 * HOUR, tz);
   return {
     scheduledAt,
     localHour: slot.localHour,
     localMinute: slot.localMinute,
     nextDay: slot.nextDay,
-    reminderAt: scheduledAt + 36 * HOUR,
-    maxReminders: 1,
+    reminderAt,
+    maxReminders: maxFollowupReminders,
+  };
+}
+
+const APPEARANCE_LANGUAGE_RE =
+  /\b(?:attractive(?:ness)?|unattractive|good[- ]looking|cute|pretty|handsome|beautiful|gorgeous|sexy|appearance|body[- ]?type|clef|photo rating|out of your league|in your league|slim|athletic|curvy|plus[- ]size[d]?|heavyset|overweight|skinny|petite|chubby|top\s+\d+\s*%|\d+(?:st|nd|rd|th)\s+percentile)\b/i;
+
+export interface VenueLLMRerankOptions {
+  llm?: LLM;
+  candidates: readonly VenueCandidateResult[];
+  shareableInterests?: readonly string[];
+  mode: "date" | "group" | "solo" | "professional";
+  forbiddenFacts?: readonly string[];
+  extraLeakCheck?: (text: string) => string | null;
+  deadlineMs?: number;
+  maxTokens?: number;
+}
+
+export interface VenueLLMRerankResult {
+  picked?: VenueCandidateResult;
+  why?: string;
+  usedLLM: boolean;
+  fallbackReason?: string;
+}
+
+const VENUE_RERANK_SYSTEM = [
+  "You select ONE best public venue from a pre-verified Top-5 list and write one short, warm rationale.",
+  UNTRUSTED_NOTE,
+  "Never invent a venue ID outside the provided list. Never mention private constraints, health, sobriety, diet, appearance, looks, or contact details.",
+  'Reply with JSON ONLY using keys in this EXACT order: {"reasoning":"short explanation","picked_id":"exact id from list","why":"<=90 chars, no question mark, natural phrasing"}.',
+].join("\n");
+
+/**
+ * Stage 2 bounded Top-5 verified-ID LLM rerank/rationale helper.
+ * Structurally impossible to hallucinate venue IDs; enforces reasoning-first, fenceUntrusted, LeakGuard,
+ * appearance-language guard, and styleViolations; fails open cleanly to deterministic candidates[0].
+ */
+export async function rerankTopVenuesWithLLM(opts: VenueLLMRerankOptions): Promise<VenueLLMRerankResult> {
+  const top5 = opts.candidates.slice(0, 5);
+  if (top5.length === 0) return { usedLLM: false, fallbackReason: "empty_candidates" };
+  const deterministicPick = top5[0]!;
+  if (!opts.llm) return { picked: deterministicPick, usedLLM: false, fallbackReason: "no_llm" };
+
+  const byId = new Map<string, VenueCandidateResult>(top5.map(c => [c.venue.id, c]));
+  const compactCandidates = top5.map(c => ({
+    id: c.venue.id,
+    name: c.venue.name,
+    category: c.venue.category,
+    neighborhood: c.venue.neighborhood,
+    noiseLevel: c.venue.noiseLevel,
+    priceTier: c.venue.priceTier,
+    hobbies: (c.venue.hobbies ?? []).slice(0, 4),
+    score: c.score,
+  }));
+  const shareableInterests = (opts.shareableInterests ?? [])
+    .map(cleanPhrase)
+    .filter(Boolean)
+    .slice(0, 8);
+  const payload = JSON.stringify({
+    mode: opts.mode,
+    shareableInterests,
+    candidates: compactCandidates,
+  });
+
+  const guard = new LeakGuard({
+    forbidden: opts.forbiddenFacts ? [...opts.forbiddenFacts] : undefined,
+    contacts: true,
+  });
+
+  const res = await tryChatJson<{ pickedId: string; why: string }>(
+    opts.llm,
+    [
+      { role: "system", content: VENUE_RERANK_SYSTEM },
+      { role: "user", content: fenceUntrusted(payload, "venue_candidates") },
+    ],
+    raw => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        throw new Error("expected object");
+      }
+      const obj = raw as Record<string, unknown>;
+      const keys = Object.keys(obj);
+      const rIdx = keys.indexOf("reasoning");
+      const pIdx = keys.indexOf("picked_id");
+      if (rIdx < 0 || pIdx < 0 || rIdx > pIdx) {
+        throw new Error("reasoning_must_precede_picked_id");
+      }
+      if (typeof obj.reasoning !== "string" || !obj.reasoning.trim()) {
+        throw new Error("missing_reasoning");
+      }
+      if (typeof obj.picked_id !== "string" || !byId.has(obj.picked_id)) {
+        throw new Error("invalid_venue_id");
+      }
+      if (typeof obj.why !== "string") {
+        throw new Error("missing_why");
+      }
+      const why = cleanPhrase(obj.why);
+      if (!why || why.length > 90) {
+        throw new Error("invalid_why_length");
+      }
+      if (APPEARANCE_LANGUAGE_RE.test(why) || opts.extraLeakCheck?.(why)) {
+        throw new Error("appearance_leak");
+      }
+      if (guard.check(why).length > 0 || styleViolations(why).length > 0) {
+        throw new Error("why_failed_guard");
+      }
+      return { pickedId: obj.picked_id, why };
+    },
+    {
+      attempts: 1,
+      maxTokens: opts.maxTokens ?? 450,
+      deadlineMs: opts.deadlineMs ?? 8_000,
+    }
+  );
+
+  if (!res.ok) {
+    return {
+      picked: deterministicPick,
+      usedLLM: false,
+      fallbackReason: res.error instanceof Error ? res.error.message : "llm_rerank_failed",
+    };
+  }
+  return {
+    picked: byId.get(res.value.pickedId) ?? deterministicPick,
+    why: res.value.why,
+    usedLLM: true,
+  };
+}
+
+const ASYNC_OR_VIDEO_PEON_ONTOLOGIES = new Set([
+  "work_hiring",
+  "step_ahead_mentorship",
+  "patronage_sponsorship",
+]);
+
+const SANCTIONED_EVENT_ONTOLOGIES = new Set([
+  "event_travel_companion",
+  "intellectual_salon",
+  "civic_action_coalition",
+]);
+
+/**
+ * Pure mapper from `(app, ConnectionOntologySpec)` to `OutcomePolicyProfile`.
+ * Preserves `teenFriendAgeRule` (13-17 ONLY on friends or ntwrk:friendship, size 2..6, zero external events/slop/peon)
+ * and `crossAppScoreFirewall` (slop aesthetic/external prospects strictly isolated from peon/friends/ntwrk).
+ */
+export function mapOntologyToOutcomePolicy(
+  app: AppId,
+  spec: ConnectionOntologySpecLike,
+  opts: { hasMinor?: boolean } = {}
+): OutcomePolicyProfile {
+  const isPeon = app === "peon";
+  const isSlop = app === "slop";
+  const isFriends = app === "friends";
+  const teenFriendEligible = isFriends || (app === "ntwrk" && spec.id === "friendship");
+  const hasMinor = opts.hasMinor === true;
+
+  const venueMode: OutcomePolicyProfile["venueMode"] = isPeon || spec.defaultCategory === "professional"
+    ? "professional"
+    : isSlop || spec.id === "dating"
+      ? "date"
+      : spec.defaultFormat === "small_group" || spec.sizeRange[1] >= 3
+        ? "group"
+        : spec.sizeRange[1] <= 1
+          ? "solo"
+          : "date";
+
+  let modality: MeetingModality;
+  if (isPeon && ASYNC_OR_VIDEO_PEON_ONTOLOGIES.has(spec.id)) {
+    modality = "async_or_video";
+  } else if (!hasMinor && !isSlop && (spec.defaultFormat === "event" || SANCTIONED_EVENT_ONTOLOGIES.has(spec.id))) {
+    modality = "sanctioned_event";
+  } else {
+    modality = "irl_venue";
+  }
+
+  const maxGroupSize = teenFriendEligible && hasMinor
+    ? Math.min(6, Math.max(2, spec.sizeRange[1]))
+    : Math.max(1, spec.sizeRange[1]);
+
+  return {
+    app,
+    ontologyId: spec.id,
+    modality,
+    venueMode,
+    adultOnly: !teenFriendEligible,
+    teenFriendEligible,
+    minGroupSize: Math.max(1, spec.sizeRange[0]),
+    maxGroupSize,
+    ...(spec.defaultFreeAnchor ? { maxBudgetTier: 0 as const } : {}),
+    lowNoiseRequired: spec.requiresHighDiscretion || venueMode === "professional",
+    daytimeOnly: venueMode === "professional",
+    alcoholExcluded: venueMode === "professional" || spec.id === "habit_accountability" || (teenFriendEligible && hasMinor),
+    aestheticReadAllowed: isSlop,
+    peonCapitalAllowed: isPeon,
+    externalProspectReadAllowed: isSlop,
+    externalEventsAllowed: !isSlop && !hasMinor,
+    followupCadence: isPeon ? "work_48h_90d" : "next_day_local",
+    firewallScope: app,
   };
 }
 
@@ -858,6 +1111,7 @@ export function evaluateDateActivityAllowed(
   anyStrictSober: boolean,
   anyNonDrinker: boolean,
   anyLowWalking: boolean,
+  anyLowNoise: boolean,
   anyDaytimeOnly: boolean,
   isAfterDark: boolean
 ): boolean {
@@ -866,6 +1120,7 @@ export function evaluateDateActivityAllowed(
     anyStrictSober,
     anyNonDrinker,
     anyLowWalking,
+    anyLowNoise,
     anyDaytimeOnly,
     isAfterDark
   );
