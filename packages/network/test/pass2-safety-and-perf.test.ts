@@ -279,6 +279,77 @@ describe("Pass 2 safety, routing, and performance regressions", () => {
     expect(JSON.stringify(reExported).length).toBeLessThan(2048);
   });
 
+  test("VenueManager handles Postgres jsonb key reordering, custom seedVenues round-trip, and array clone isolation", () => {
+    // Simulate Postgres jsonb key ordering (key length ascending, then lexicographical) recursively
+    const reorderJsonb = (val: unknown): unknown => {
+      if (Array.isArray(val)) return val.map(reorderJsonb);
+      if (val && typeof val === "object") {
+        const obj = val as Record<string, unknown>;
+        const keys = Object.keys(obj).sort((a, b) => (a.length - b.length) || (a < b ? -1 : a > b ? 1 : 0));
+        const out: Record<string, unknown> = {};
+        for (const k of keys) out[k] = reorderJsonb(obj[k]);
+        return out;
+      }
+      return val;
+    };
+
+    const reorderedLegacy: VenueManagerState = {
+      venues: ALL_SEED_VENUES.map(v => reorderJsonb(v) as VenueRecord),
+      visited: [],
+      rejected: [],
+      externalFetchCount: 0,
+      openCheckCount: 0,
+    };
+    const fromJsonb = new VenueManager();
+    fromJsonb.importState(reorderedLegacy);
+    expect(fromJsonb.count()).toBe(ALL_SEED_VENUES.length);
+    const reExportedJsonb = fromJsonb.exportState();
+    expect(reExportedJsonb.venues).toHaveLength(0);
+    expect(reExportedJsonb.customCatalog).toBeUndefined();
+    expect(JSON.stringify(reExportedJsonb).length).toBeLessThan(120);
+
+    // Custom subset round-trip preserves exact venue count without resurrecting default seeds
+    const oneVenue = ALL_SEED_VENUES.find(v => (v.hobbies?.length ?? 0) > 0 && (v.cuisineTags?.length ?? 0) > 0)!;
+    const subsetVm = new VenueManager({ seedVenues: [oneVenue] });
+    expect(subsetVm.count()).toBe(1);
+    const subsetState = subsetVm.exportState();
+    expect(subsetState.customCatalog).toBe(true);
+    expect(subsetState.venues).toHaveLength(1);
+    expect(subsetState.venues[0]!.id).toBe(oneVenue.id);
+
+    const restoredSubset = new VenueManager();
+    restoredSubset.importState(subsetState);
+    expect(restoredSubset.count()).toBe(1);
+    expect(restoredSubset.listVenues().map(v => v.id)).toEqual([oneVenue.id]);
+    expect(restoredSubset.exportState().customCatalog).toBe(true);
+    expect(restoredSubset.exportState().venues).toHaveLength(1);
+
+    // Empty custom catalog round-trip preserves 0 venues without resurrecting default seeds
+    const emptyVm = new VenueManager({ seedVenues: [] });
+    expect(emptyVm.count()).toBe(0);
+    const emptyState = emptyVm.exportState();
+    expect(emptyState.customCatalog).toBe(true);
+    expect(emptyState.venues).toEqual([]);
+
+    const restoredEmpty = new VenueManager();
+    restoredEmpty.importState(emptyState);
+    expect(restoredEmpty.count()).toBe(0);
+    expect(restoredEmpty.listVenues()).toEqual([]);
+    expect(restoredEmpty.exportState().customCatalog).toBe(true);
+
+    // Array aliasing protection for hobbies and cuisineTags
+    const origHobbies = [...oneVenue.hobbies!];
+    const origCuisines = [...oneVenue.cuisineTags!];
+    const fetched = restoredSubset.getVenue(oneVenue.id)!;
+    fetched.hobbies!.push("mutated_hobby");
+    fetched.cuisineTags!.push("mutated_cuisine");
+    const listed = restoredSubset.listVenues()[0]!;
+    listed.hobbies!.push("mutated_listed");
+    listed.cuisineTags!.push("mutated_listed_cuisine");
+    expect(restoredSubset.getVenue(oneVenue.id)!.hobbies).toEqual(origHobbies);
+    expect(restoredSubset.getVenue(oneVenue.id)!.cuisineTags).toEqual(origCuisines);
+  });
+
   test("LLMBudget UTC day-rollover refreshes spend and seeds request count from cost_ledger before tick", async () => {
     const clock = new SimClock(Date.UTC(2026, 10, 27, 23, 55, 0));
     const rows: { app_id: string; day: string; kind: string; purpose: string; cost_usd: number }[] = [

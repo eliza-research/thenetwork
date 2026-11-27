@@ -23,7 +23,7 @@ import type { LaunchCity, MemberVenuePrefs } from "../src/types.ts";
 import { isVenueOpenAt, rankVenuesForMatch } from "../src/venues.ts";
 
 function refNormText(text: string): string {
-  return text.trim().toLowerCase().replace(/[^a-z0-9\s/-]+/g, " ").replace(/\s+/g, " ");
+  return text.toLowerCase().replace(/[^a-z0-9\s/-]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function refFindNeighborhood(spec: CitySpec, area: string) {
@@ -33,7 +33,11 @@ function refFindNeighborhood(spec: CitySpec, area: string) {
     if (refNormText(n.name) === q || n.aliases.some(a => refNormText(a) === q)) return n;
   }
   for (const n of spec.neighborhoods) {
-    if (q.includes(refNormText(n.name)) || n.aliases.some(a => a.length >= 4 && q.includes(refNormText(a)))) return n;
+    const nn = refNormText(n.name);
+    if ((nn && q.includes(nn)) || n.aliases.some(a => {
+      const na = refNormText(a);
+      return na.length >= 4 && q.includes(na);
+    })) return n;
   }
   return undefined;
 }
@@ -70,9 +74,9 @@ function refChooseFairMidpoint(spec: CitySpec, areas: string[], mode: "date" | "
       const maxMin = Math.max(...times);
       const meanMin = Math.round(times.reduce((s, x) => s + x, 0) / times.length);
       if (!isWithinTravelLimit(maxMin, baseLimit + relax)) continue;
-      const supplyBonus = Math.max(0, Math.round(candidate.hubSupply * 2));
+      const supplyBonus = Number.isFinite(candidate.hubSupply) ? Math.max(0, Math.round(candidate.hubSupply * 2)) : 0;
       const baseCost = fairMidpointCostScaled(maxMin, meanMin);
-      const netCost = fairMidpointNetCostScaled(maxMin, meanMin, supplyBonus);
+      const netCost = Math.max(0, fairMidpointNetCostScaled(maxMin, meanMin, supplyBonus));
       if (
         !best ||
         netCost < best.costScaled ||
@@ -148,6 +152,120 @@ describe("seed venues, indexed midpoints, open-hours hoisting, and localParts", 
     registerCity(sfSpec);
     expect(chooseFairMidpoint("sf", ["Mission District", "North Beach"], "date")).toEqual(
       refChooseFairMidpoint(sfSpec, ["Mission District", "North Beach"], "date")
+    );
+  });
+
+  test("chooseFairMidpoint and neighborhood lookup handle all edge cases, tie-breaking, barriers, and registerCity updates", () => {
+    // Unknown city & empty areas
+    expect(chooseFairMidpoint("atlanta" as LaunchCity, ["Midtown"], "date")).toBeUndefined();
+    expect(chooseFairMidpoint("sf", [], "date")).toBeUndefined();
+
+    // Single area & duplicate areas pick the same neighborhood with 5m travel and 0 relaxation
+    const single = chooseFairMidpoint("sf", ["Mission District"], "date");
+    const dup = chooseFairMidpoint("sf", ["Mission District", "Mission District"], "date");
+    expect(single).toBeDefined();
+    expect(single!.neighborhood.name).toBe("Mission District");
+    expect(single!.maxMinutes).toBe(5);
+    expect(single!.meanMinutes).toBe(5);
+    expect(single!.relaxedBy).toBe(0);
+    expect(dup).toEqual(single);
+
+    // Unknown area falls back to centerMinutes matching estimateTravelMinutes
+    const unknownOnly = chooseFairMidpoint("sf", ["Totally Unknown Area"], "date");
+    expect(unknownOnly).toBeDefined();
+    const expectedToChosen = estimateTravelMinutes("sf", "Totally Unknown Area", unknownOnly!.neighborhood.name);
+    expect(unknownOnly!.maxMinutes).toBe(expectedToChosen);
+    expect(unknownOnly!.meanMinutes).toBe(expectedToChosen);
+
+    // Cross-barrier refusal: LA 405 barrier refuses Santa Monica <-> Highland Park for date mode
+    expect(chooseFairMidpoint("la", ["Santa Monica", "Highland Park"], "date")).toBeUndefined();
+
+    // Miami causeway barrier: South Beach <-> Coral Gables date mode cannot ignore causeway penalty
+    const miamiBarrier = chooseFairMidpoint("miami", ["South Beach", "Coral Gables"], "date");
+    if (miamiBarrier) {
+      expect(miamiBarrier.maxMinutes).toBeLessThanOrEqual(getCity("miami")!.dateMaxMinutes + 10);
+      expect([0, 5, 10]).toContain(miamiBarrier.relaxedBy);
+    }
+
+    // Punctuation & empty-string normalization
+    expect(findNeighborhood("nyc", "SoHo!")?.name).toBe("SoHo / Nolita");
+    expect(findNeighborhood("nyc", "(Williamsburg)")?.name).toBe("Williamsburg");
+    expect(findNeighborhood("nyc", "!!!")).toBeUndefined();
+    expect(resolveCity("NYC!")).toBe("nyc");
+    expect(resolveCity("SF?")).toBe("sf");
+    expect(resolveCity("!!!")).toBeUndefined();
+
+    // Synthetic edge cases via registerCity with guaranteed restore
+    const origSf = getCity("sf")!;
+    try {
+      // 1. Zero-neighborhood city returns undefined cleanly
+      registerCity({ ...origSf, neighborhoods: [] });
+      expect(chooseFairMidpoint("sf", ["Mission District"], "date")).toBeUndefined();
+
+      // 2. Non-negativity clamp, tie-breaking (netCost -> baseCost -> deterministic index),
+      //    relaxation cap (+10 max), empty normName guard, and na.length >= 4 alias guard
+      registerCity({
+        ...origSf,
+        baseMinutes: 5,
+        kmPerMinute: 1,
+        dateMaxMinutes: 10,
+        groupMaxMinutes: 15,
+        barriers: [],
+        neighborhoods: [
+          { name: "!!!", zone: "central", lat: 37.77, lng: -122.42, aliases: ["   a   "], hubSupply: 1 },
+          { name: "Hub Alpha", zone: "central", lat: 37.77, lng: -122.42, aliases: ["alpha"], hubSupply: 50 },
+          { name: "Hub Beta", zone: "central", lat: 37.77, lng: -122.42, aliases: ["beta"], hubSupply: 50 },
+          { name: "Far Hub", zone: "central", lat: 37.99, lng: -122.42, aliases: ["farhub"], hubSupply: 5 },
+        ],
+      });
+
+      // Empty normName ("!!!") and short trimmed alias ("   a   ") must NOT match arbitrary queries
+      expect(findNeighborhood("sf", "random place a")).toBeUndefined();
+
+      // High hubSupply clamps netCost to >= 0 (never negative) and breaks equal ties by index order
+      const clamped = chooseFairMidpoint("sf", ["Hub Alpha"], "date");
+      expect(clamped).toBeDefined();
+      expect(clamped!.costScaled).toBe(0);
+      expect(clamped!.neighborhood.name).toBe("Hub Alpha");
+
+      // Tie-break: netCost equal, smaller baseCost wins over higher supplyBonus
+      registerCity({
+        ...origSf,
+        baseMinutes: 5,
+        kmPerMinute: 1,
+        dateMaxMinutes: 20,
+        barriers: [],
+        neighborhoods: [
+          // From Hub Origin: Dist=10km -> 15 min -> baseCost=150; supplyBonus=50*2=100 -> netCost=50
+          { name: "High Supply Far", zone: "central", lat: 37.86, lng: -122.42, aliases: [], hubSupply: 50 },
+          // From Hub Origin: same point -> 5 min -> baseCost=50; supplyBonus=0 -> netCost=50
+          { name: "Hub Origin", zone: "central", lat: 37.77, lng: -122.42, aliases: [], hubSupply: 0 },
+        ],
+      });
+      const tieBreak = chooseFairMidpoint("sf", ["Hub Origin"], "date");
+      expect(tieBreak).toBeDefined();
+      expect(tieBreak!.neighborhood.name).toBe("Hub Origin");
+      expect(tieBreak!.costScaled).toBe(50);
+
+      // Relaxation cap: baseLimit=10 -> max allowed is 20 (+10); if every candidate takes 21m, returns undefined
+      registerCity({
+        ...origSf,
+        baseMinutes: 21,
+        kmPerMinute: 1,
+        dateMaxMinutes: 10,
+        barriers: [],
+        neighborhoods: [
+          { name: "West Point", zone: "central", lat: 37.77, lng: -122.42, aliases: [], hubSupply: 5 },
+          { name: "East Point", zone: "central", lat: 37.77, lng: -122.41, aliases: [], hubSupply: 5 },
+        ],
+      });
+      // For two distinct neighborhoods with baseMinutes=21, both candidates have maxMin >= 21 > 10 + 10
+      expect(chooseFairMidpoint("sf", ["West Point", "East Point"], "date")).toBeUndefined();
+    } finally {
+      registerCity(origSf);
+    }
+    expect(chooseFairMidpoint("sf", ["Mission District", "North Beach"], "date")).toEqual(
+      refChooseFairMidpoint(origSf, ["Mission District", "North Beach"], "date")
     );
   });
 

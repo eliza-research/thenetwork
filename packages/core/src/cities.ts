@@ -4,7 +4,7 @@
 // midpoint costs delegate to the Vibespec-proved generated/venueSelection.ts.
 
 import { km, type LatLng } from "./geo.ts";
-import { fairMidpointCostScaled, fairMidpointNetCostScaled, isValidMidpoint, isWithinTravelLimit } from "./generated/venueSelection.ts";
+import { fairMidpointCostScaled, fairMidpointNetCostScaled, isValidMidpoint } from "./generated/venueSelection.ts";
 import type { CityBarrier, CityNeighborhood, CitySpec, CityZone, LaunchCity, NeighborhoodSpec, VenueHoursSlot, VenuePersonaPrior, VenueRecord } from "./types.ts";
 
 export type { CityBarrier, CityNeighborhood, CitySpec, CityZone, LaunchCity, NeighborhoodSpec };
@@ -1102,7 +1102,7 @@ const MIAMI_SPEC: CitySpec = {
 // ---- Registry & Pre-Indexed Lookup Tables ----
 
 function normText(text: string): string {
-  return text.trim().toLowerCase().replace(/[^a-z0-9\s/-]+/g, " ").replace(/\s+/g, " ");
+  return text.toLowerCase().replace(/[^a-z0-9\s/-]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
 interface NeighborhoodSubstringEntry {
@@ -1153,7 +1153,7 @@ function buildCityIndex(spec: CitySpec): CityIndex {
     for (const a of hood.aliases) {
       const na = normText(a);
       if (na && !byNormArea.has(na)) byNormArea.set(na, hood);
-      if (a.length >= 4 && na) normAliases.push(na);
+      if (na.length >= 4) normAliases.push(na);
     }
     substringEntries.push({ normName: nn, normAliases, neighborhood: hood });
   }
@@ -1267,7 +1267,7 @@ function findNeighborhoodInIndex(idx: CityIndex, area: string): CityNeighborhood
   if (hit) return hit;
   for (let i = 0; i < idx.substringEntries.length; i++) {
     const entry = idx.substringEntries[i]!;
-    if (q.includes(entry.normName)) return entry.neighborhood;
+    if (entry.normName && q.includes(entry.normName)) return entry.neighborhood;
     for (let j = 0; j < entry.normAliases.length; j++) {
       if (q.includes(entry.normAliases[j]!)) return entry.neighborhood;
     }
@@ -1287,7 +1287,7 @@ export function resolveCity(text: string): LaunchCity | undefined {
     if (idx.byNormArea.has(q)) return idx.spec.id;
   }
   for (const idx of indexRegistry.values()) {
-    if (q.includes(idx.normName)) return idx.spec.id;
+    if (idx.normName && q.includes(idx.normName)) return idx.spec.id;
     for (let i = 0; i < idx.longNormAliases.length; i++) {
       if (q.includes(idx.longNormAliases[i]!)) return idx.spec.id;
     }
@@ -1344,7 +1344,7 @@ export function estimateTravelMinutes(city: LaunchCity, fromArea: string, toArea
 
 /**
  * Discrete neighborhood minimax + efficiency midpoint selection.
- * Delegates travel-limit validation and integer-scaled cost (6*max + 4*mean) to proved cityCore.ts.
+ * Delegates travel-limit validation and integer-scaled cost (6*max + 4*mean) to proved venueSelection.ts.
  * Relaxes limit in +5m steps up to +10m if no strict candidate exists; returns undefined if none fits.
  */
 export function chooseFairMidpoint(
@@ -1353,7 +1353,7 @@ export function chooseFairMidpoint(
   mode: "date" | "group" = "date"
 ): FairMidpointResult | undefined {
   const idx = getCityIndex(city);
-  if (!idx || areas.length === 0) return undefined;
+  if (!idx || areas.length === 0 || idx.spec.neighborhoods.length === 0) return undefined;
   const { spec } = idx;
   const baseLimit = mode === "group" ? spec.groupMaxMinutes : spec.dateMaxMinutes;
 
@@ -1396,12 +1396,11 @@ export function chooseFairMidpoint(
       const times = candidateTimes[c]!;
       if (!isValidMidpoint(times, baseLimit, relax)) continue;
       const maxMin = candidateMax[c]!;
-      if (!isWithinTravelLimit(maxMin, baseLimit + relax)) continue;
       const candidate = candidates[c]!;
       const meanMin = candidateMean[c]!;
-      const supplyBonus = Math.max(0, Math.round(candidate.hubSupply * 2));
+      const supplyBonus = Number.isFinite(candidate.hubSupply) ? Math.max(0, Math.round(candidate.hubSupply * 2)) : 0;
       const baseCost = fairMidpointCostScaled(maxMin, meanMin);
-      const netCost = fairMidpointNetCostScaled(maxMin, meanMin, supplyBonus);
+      const netCost = Math.max(0, fairMidpointNetCostScaled(maxMin, meanMin, supplyBonus));
       if (
         !best ||
         netCost < best.costScaled ||
