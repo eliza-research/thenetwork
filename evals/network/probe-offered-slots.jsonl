@@ -354,3 +354,20 @@
 {"text":"Saturday works whenever","answer":"yes","keys":["b"]}
 {"text":"Saturday works when it suits you","answer":"yes","keys":["b"]}
 {"text":"Last time was great, Saturday works","answer":"yes","keys":["b"]}
+{"text":"Thursday doesn't do it for me, Saturday works","answer":"yes","keys":["b"]}
+{"text":"Thursday doesn't do it, Saturday works","answer":"yes","keys":["b"]}
+{"text":"Saturday works, Thursday doesn't do it for me","answer":"yes","keys":["b"]}
+{"text":"Saturday works, Thursday doesn't do it","answer":"yes","keys":["b"]}
+{"text":"Thursday won't do it, Saturday works","answer":"yes","keys":["b"]}
+{"text":"Thursday won't do, Saturday works","answer":"yes","keys":["b"]}
+{"text":"Thursday just doesn't do it, Saturday works","answer":"yes","keys":["b"]}
+{"text":"Thursday doesn't do it for me at all, Saturday works","answer":"yes","keys":["b"]}
+{"text":"Thursday really doesn't do it for me, Saturday works","answer":"yes","keys":["b"]}
+{"text":"Thursday does not do it for me, Saturday works","answer":"yes","keys":["b"]}
+{"text":"Saturday works, Thursday does not do it for me","answer":"yes","keys":["b"]}
+{"text":"Sunday doesn't do it for me, Saturday works","answer":"yes","keys":["b"]}
+{"text":"Saturday doesn't do it for me, Thursday works","answer":"yes","keys":["a"]}
+{"text":"Thursday doesn't do it for me, but Saturday does","answer":"yes","keys":["b"]}
+{"text":"Saturday does not do it, Thursday does","answer":"yes","keys":["a"]}
+{"text":"Thursday doesn't do it for me","answer":"unclear","keys":[]}
+{"text":"Thursday doesn't cut it, Saturday works","answer":"yes","keys":["b"]}
