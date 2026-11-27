@@ -71,6 +71,10 @@ test("a radius change texted after onboarding is saved and matching uses the new
     "my radius is fine, the restaurant is at 11201",
     "I'm looking for a new apartment near 11201",
     "keep it within 10 miles, my sister lives in Astoria",
+    "the last match was within 30 miles but still too far",
+    "the bar was within 20 miles of my place, way too far",
+    "my sister said keep it within 30 miles",
+    "my friend keeps it within 3 miles, crazy",
     "make my radius minus 5 miles",
     "make my radius −5 miles",
     "make my radius –5 miles",
@@ -81,6 +85,35 @@ test("a radius change texted after onboarding is saved and matching uses the new
     expect(after, remark).toContain("slop:scope:radius:10");
     expect(after).toContain("slop:max_miles:10");
     expect(after.some(t => t.startsWith("slop:location:") && !t.includes("11222"))).toBe(false);
+    await w.say("a", "Yes");
+  }
+  const statedOnly = [
+    "keep it within 10 miles since the last guy lived 30 miles away",
+    "keep it within 10 miles and my office is at 11201",
+    "keep it within 10 miles and my sister lives in Astoria",
+  ];
+  for (const text of statedOnly) {
+    await w.say("a", "set my radius to 7 miles");
+    await w.say("a", "Yes");
+    await w.say("a", text);
+    const after = (w.net.exportState().members.find(m => m.id === "a")?.appTags ?? []).map(t => t.tag);
+    expect(after, text).toContain("slop:scope:radius:10");
+    expect(after).toContain("slop:zip:11222");
+    expect(after).not.toContain("slop:zip:11201");
+    expect(after).not.toContain("slop:zip:11102");
+    expect(after).not.toContain("slop:area:astoria");
+    await w.say("a", "Yes");
+  }
+  const corrections: [string, string][] = [
+    ["keep it within 10 miles, actually 15", "15"],
+    ["set my radius to 10 km, sorry I meant 2 km", "1"],
+    ["make it 5 miles, no wait, 3 miles", "3"],
+  ];
+  for (const [text, miles] of corrections) {
+    await w.say("a", text);
+    const after = (w.net.exportState().members.find(m => m.id === "a")?.appTags ?? []).map(t => t.tag);
+    expect(after, text).toContain(`slop:scope:radius:${miles}`);
+    expect(after).toContain(`slop:max_miles:${miles}`);
     await w.say("a", "Yes");
   }
 });

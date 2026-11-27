@@ -791,8 +791,49 @@ export function statesOwnPreference(body: string): boolean {
   return OWN_PREFERENCE_RX.test(body) && !NEGATIVE_DISTANCE_RX.test(body);
 }
 
+const PREFERENCE_CLAUSE_SPLIT = /(?<=[.!?;])\s+|,\s+|\s+but\s+|\s+and\s+(?!(?:women|men|guys|girls|ladies|dudes)\b)|\s+since\s+/i;
+const OTHER_SUBJECT_RX = /\b(?:the\s+(?:last|previous|other)?\s*(?:match|date|guy|girl|man|woman|bar|restaurant|place|one|person)|my\s+(?:sister|brother|friend|mom|dad|mother|father|parents|roommate|office|ex|partner|place)|he|she|they|his|her|their|him)\b/i;
+const OTHER_VOICE_RX = /\b(?:was|were|lived|lives|said|says|keeps|kept|wants|prefers|went|visited|stayed|told)\b/i;
+const PAST_WITHIN_RX = /\bwas\s+within\s+\d/i;
+const CORRECTION_MARKER_RX = /\b(?:actually|sorry|oops|no wait|i meant|i mean|wait)\b/i;
+const CORRECTION_STRIP_RX = /\b(?:actually|sorry|oops|no wait|i meant|i mean|wait|please)\b/gi;
+
+function reportsOther(clause: string): boolean {
+  return PAST_WITHIN_RX.test(clause) || (OTHER_SUBJECT_RX.test(clause) && OTHER_VOICE_RX.test(clause));
+}
+
+function correctionValue(clause: string): { n: string; unit?: string } | undefined {
+  const m = /^(\d+(?:\.\d+)?)\s*(miles|mi|km|kilometers)?[.!?]*$/i.exec(clause.replace(CORRECTION_STRIP_RX, " ").trim());
+  return m ? { n: m[1]!, unit: m[2] } : undefined;
+}
+
+function correctionMarkerOnly(clause: string): boolean {
+  return CORRECTION_MARKER_RX.test(clause) && clause.replace(CORRECTION_STRIP_RX, " ").replace(/[^a-z0-9]/gi, "") === "";
+}
+
+function correctedClause(clause: string, value: { n: string; unit?: string }): string {
+  const m = /(\d+(?:\.\d+)?)\s*(miles|mi|km|kilometers)?/i.exec(clause);
+  if (!m) return `within ${value.n} ${value.unit ?? "miles"}`;
+  return clause.slice(0, m.index) + `${value.n} ${value.unit ?? m[2] ?? "miles"}` + clause.slice(m.index + m[0].length);
+}
+
 export function ownPreferenceText(body: string): string {
-  return body.split(/(?<=[.!?;])\s+|,\s+|\s+but\s+/i).filter(clause => statesOwnPreference(clause)).join(". ");
+  const kept: string[] = [];
+  let correctionPending = false;
+  for (const raw of body.split(PREFERENCE_CLAUSE_SPLIT)) {
+    const clause = raw.trim();
+    if (!clause) continue;
+    const value = correctionValue(clause);
+    if ((correctionPending || CORRECTION_MARKER_RX.test(clause)) && value && kept.length && !statesOwnPreference(clause)) {
+      kept[kept.length - 1] = correctedClause(kept[kept.length - 1]!, value);
+      correctionPending = false;
+      continue;
+    }
+    if (correctionMarkerOnly(clause)) { correctionPending = true; continue; }
+    correctionPending = false;
+    if (statesOwnPreference(clause) && !reportsOther(clause)) kept.push(clause);
+  }
+  return kept.join(". ");
 }
 
 export function bookedReplyKeepsMeeting(body: string): boolean {
