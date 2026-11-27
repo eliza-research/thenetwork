@@ -661,7 +661,9 @@ export async function engineReportMinorsGate(b: Block): Promise<void> {
     const hidden = readFileSync(`${DATA_DIR}/hidden_truth.jsonl`, "utf8").split("\n").filter(Boolean).map(l => JSON.parse(l));
     const claimedAdults = hidden.filter(h => h.hidden.trueAge < 18 && h.personaPublic.claimedAge >= 18).length;
     expect(claimedAdults).toBeGreaterThan(0);
-    expect(report.checks.minorsInAnyProposal).toBeGreaterThan(0);
+    const trueMinorIds = new Set(hidden.filter(h => h.hidden.trueAge < 18).map(h => h.memberId));
+    const expected = report.checks.proposalRosters.filter((r: { members: string[] }) => r.members.some(id => trueMinorIds.has(id))).length;
+    expect(report.checks.minorsInAnyProposal).toBe(expected);
   });
 }
 

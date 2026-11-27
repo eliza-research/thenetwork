@@ -140,6 +140,7 @@ if (import.meta.main) {
       fairness: runLog.fairness,
       checks: {
         minorsInAnyProposal: proposals.filter(p => [...p.participants, ...(p.alternates ?? []), ...((p as any).via ? [(p as any).via] : [])].some(id => trueMinors.has(id))).length,
+        proposalRosters: proposals.map(p => ({ id: p.id, members: [...p.participants, ...(p.alternates ?? []), ...((p as any).via ? [(p as any).via] : [])] })),
         canaryLeaksInProposals: canaries.filter(c => text.includes(c)).length,
       },
     };
