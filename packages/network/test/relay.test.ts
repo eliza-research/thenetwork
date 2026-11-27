@@ -493,6 +493,9 @@ test.each([
   "Ana says, if you need to, send it now. Don't send it anymore.",
   "Ana says, if it's urgent, send it now; Don't send it anymore.",
   "Ana says, “don't send it now.” Don't send it anymore",
+  "Withhold my number",
+  "Withdraw my number",
+  "Revoke my consent to share my number",
 ])("the signed turn withdraws a pending swap after %s", async (text) => {
   const id = "withdrawn-swap-" + randomUUID();
   const before = await sharesQueued();
