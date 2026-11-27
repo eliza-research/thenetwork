@@ -227,7 +227,6 @@ class ObsStore {
   stats?: ObsStats;
   runs: EngineRunSummary[] = [];
   game?: GameState;
-  /** Changes on an explicit simulator reset, not on an ordinary snapshot reload. */
   gameResetEpoch = 0;
   truth?: Record<string, MemberTruth>;
   network?: NetworkInfo;
