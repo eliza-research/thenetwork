@@ -784,6 +784,13 @@ function declinesAttendanceAlongsideSwap(body: string): boolean {
 }
 
 /** The source text for a booked reply, with independent transfer and attendance evidence. */
+const OWN_PREFERENCE_RX = /\b(?:my radius|keep it within|within \d+\s*(?:miles|mi|km|kilometers)|i'?d go up to|go up to \d+|up to \d+\s*(?:miles|mi|km|kilometers)|no (?:more|farther) than \d+|at most \d+\s*(?:miles|mi|km|kilometers)|make it \d+\s*(?:miles|mi|km|kilometers)|change (?:my )?(?:radius|distance)|anywhere in the city|my zip(?: code)? is \d{5}|i live in|i'?m looking for|looking for (?:men|women)|ages? \d+\s*(?:to|-|–)\s*\d+)\b/i;
+const NEGATIVE_DISTANCE_RX = /-\s*\d+\s*(?:miles|mi|km|kilometers)\b/i;
+
+export function statesOwnPreference(body: string): boolean {
+  return OWN_PREFERENCE_RX.test(body) && !NEGATIVE_DISTANCE_RX.test(body);
+}
+
 export function bookedReplyKeepsMeeting(body: string): boolean {
   const text = body.trim().replace(/[‘’ʼ`´]/g, "'");
   return KEEP_BOOKING.test(text) || QUALIFIED_ATTENDANCE.test(text);
@@ -1975,7 +1982,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (isRequest && m.stage !== "active") { this.activate(m); m.awaiting = undefined; }
     // A member-initiated message can restate a profile preference (a dating radius, an age range):
     // the app loop reads it here too, so the stored tags and the next search use what they just said.
-    this.learnAppTags(m, body, []);
+    // Only a clear statement of the member's own preference counts; remarks about trips, places
+    // or other people must not rewrite the stored profile.
+    if (statesOwnPreference(body)) {
+      const before = JSON.stringify(m.onboarding ?? null);
+      this.learnAppTags(m, body, []);
+      // A change clears confirmation: send the loop's read-back so the member can confirm it.
+      if (JSON.stringify(m.onboarding ?? null) !== before && this.onboardNext(m, []) && !isRequest) return;
+    }
     if (c.kind === "people_request" && (!m.minor || this.teenAdmitted(m.id))) return this.openRequest(m, c, {});
     if (c.kind === "plans_request" || c.kind === "people_request") return this.onPlans(m, c);
     if (m.minor && c.kind === "other" && body.length > 12) return this.concierge(m);

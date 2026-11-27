@@ -121,6 +121,7 @@ export function slopOnboardingForCity(city: City = "nyc"): AppOnboarding {
   return {
     read(state, body, reasons, { now, age }) {
       let p = stateOf(state, age);
+      const wasConfirmed = p.confirmed;
       if (reasons.includes(SLOP_READBACK)) p = applyCorrection(p, body, { market: city });
       else {
         const before = JSON.stringify(p.distance?.value);
@@ -130,6 +131,8 @@ export function slopOnboardingForCity(city: City = "nyc"): AppOnboarding {
           p = finalize({ ...p, distance: { value: { mode: "radius", miles: 25 }, confidence: 0.9, evidence: { turn: p.turns - 1, start: 0, end: body.length, text: body }, source: "rules" } }, true);
         }
       }
+      // A change after confirmation needs a fresh read-back, even when the onboarding one hit its ask cap.
+      if (wasConfirmed && !p.confirmed) p = { ...p, askCounts: { ...p.askCounts, [SLOP_READBACK]: 0 } };
       // A minor or a declined person keeps no dating tags at all.
       if (p.minor || p.declined) return { state: withoutWords(p), tags: [], replaces: ["romance:", "slop:"] };
       const r = slopOnboardTags(p);

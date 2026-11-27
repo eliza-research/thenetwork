@@ -52,4 +52,23 @@ test("a radius change texted after onboarding is saved and matching uses the new
   // The read-back the loop renders from the stored state repeats the new radius.
   const state = w.net.exportState().members.find(m => m.id === "a")?.onboarding as SlopOnboarding;
   expect(readBack(state)).toContain("within 10 mi");
+  // The change is read back to the member for confirmation.
+  expect(w.to("a").map(m => m.body).join("\n")).toContain("within 10 mi");
+  await w.say("a", "Yes");
+  // Ordinary remarks about trips, places and other people change nothing.
+  const remarks = [
+    "the date was 30 miles away, too far",
+    "I'm 17 miles from my parents",
+    "my office is 3 miles from home",
+    "make my radius -5 miles",
+    "my sister lives in Astoria",
+    "the restaurant is at 11201",
+  ];
+  for (const remark of remarks) {
+    await w.say("a", remark);
+    const after = (w.net.exportState().members.find(m => m.id === "a")?.appTags ?? []).map(t => t.tag);
+    expect(after).toContain("slop:scope:radius:10");
+    expect(after).toContain("slop:max_miles:10");
+    expect(after.some(t => t.startsWith("slop:location:") && !t.includes("11222"))).toBe(false);
+  }
 });
