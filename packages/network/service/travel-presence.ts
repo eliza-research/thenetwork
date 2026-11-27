@@ -66,6 +66,7 @@ export async function saveTravelPresence(tx: SQL, accounts: Pick<Accounts, "acti
     case "TravelNeedsDates": return `Send both dates like this: I will be in ${name} from YYYY-MM-DD until YYYY-MM-DD. Use the first day you will be away from ${name} as the end date.`;
     case "TravelDateConflict": return `Those dates overlap a different city already saved in ${app.domain}. Send dates that don't overlap.`;
     case "TravelSave":
+      await tx`delete from network.presence where app_id=${app.id} and member_id=${memberId} and city=${city} and type='temporary' and (from_at=${new Date(desired.from)} or to_at=${new Date(desired.to)})`;
       await tx`insert into network.presence (app_id, member_id, city, type, from_at, to_at)
         values (${app.id}, ${memberId}, ${city}, 'temporary', ${new Date(desired.from)}, ${new Date(desired.to)})`;
       break;

@@ -1733,3 +1733,25 @@ test("a signed age with months projects the minor's age to other app memberships
   const stored = await sql`select app_id as app, age from network.members where person_id=${person.id} order by app_id`;
   expect(stored).toEqual([{ app: "friends", age: 17 }, { app: "slop", age: 17 }]);
 }, 60_000);
+
+// spec/travelPresence.md, "Tell the Network my travel dates"; spec/product/stories.md F26
+test("a corrected return date replaces the saved trip instead of leaving the old end in matching", async () => {
+  const phone = "+12125550190", app = APPS.friends;
+  const joined = await service.accounts.join(app, { e164: phone, personId: null }, {
+    firstName: "Noor", age: 34, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+  });
+  if (!joined.ok) throw new Error(`Travel correction fixture signup failed: ${joined.error}`);
+  const trips = () => sql`select city, from_at, to_at from network.presence
+    where app_id=${app.id} and member_id=${joined.membership.memberId} and type='temporary' order by from_at, to_at`;
+  const declare = (id: string, text: string) => post(turn(id, phone, text, app.id));
+  expect((await (await declare("travel-correct-save", "I will be in San Francisco from 2026-10-31 until 2026-11-04.")).json()).replies[0]).toContain("Saved in friends.help");
+  expect(await trips()).toEqual([expect.objectContaining({ city: "sf", to_at: new Date("2026-11-04T08:00:00Z") })]);
+  expect((await (await declare("travel-correct-shorten", "I will be in San Francisco from 2026-10-31 until 2026-11-02.")).json()).replies[0]).toContain("until 2026-11-02");
+  expect(await trips()).toEqual([expect.objectContaining({ city: "sf", from_at: new Date("2026-10-31T07:00:00Z"), to_at: new Date("2026-11-02T08:00:00Z") })]);
+  expect((await (await declare("travel-correct-extend", "I will be in San Francisco from 2026-10-31 until 2026-11-03.")).json()).replies[0]).toContain("until 2026-11-03");
+  expect(await trips()).toEqual([expect.objectContaining({ city: "sf", to_at: new Date("2026-11-03T08:00:00Z") })]);
+  expect((await (await declare("travel-correct-overlap", "I will be in San Francisco from 2026-11-02 until 2026-11-05.")).json()).replies[0]).toContain("Saved in friends.help");
+  expect(await trips()).toHaveLength(2);
+  expect((await (await declare("travel-correct-separate", "I will be in San Francisco from 2026-11-10 until 2026-11-12.")).json()).replies[0]).toContain("Saved in friends.help");
+  expect(await trips()).toHaveLength(3);
+}, 60_000);
