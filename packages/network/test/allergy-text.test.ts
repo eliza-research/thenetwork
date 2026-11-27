@@ -54,6 +54,30 @@ describe("allergy texted after onboarding", () => {
     expect(w.net.memberRedLines("a")).toContain("severe_allergen");
   });
 
+  test("casual food and venue mentions do not become red lines", async () => {
+    const w = new Mini([climber("a", "Ana Diaz", "Greenpoint"), climber("b", "Ben Ito", "Astoria")]);
+    await w.onboard("a", "b");
+    for (const text of [
+      "I grabbed lunch at a halal cart today.",
+      "I tried a vegan bakery in Greenpoint.",
+      "My favorite bagel shop is kosher.",
+      "I baked gluten-free brownies for the potluck.",
+      "Yes, Thursday at 7pm works! I grabbed a halal platter earlier.",
+      "I heard the new place is vegan.",
+      "She is vegan and I eat with her often.",
+      "My coworker keeps kosher.",
+    ]) {
+      await w.say("a", text);
+      expect(w.net.memberRedLines("a")).toEqual([]);
+    }
+    await w.say("a", "I am vegan.");
+    expect(w.net.memberRedLines("a")).toContain("vegan");
+    await w.say("a", "I eat only halal food.");
+    expect(w.net.memberRedLines("a")).toContain("halal");
+    await w.say("a", "I have celiac disease.");
+    expect(w.net.memberRedLines("a")).toContain("gluten_free");
+  });
+
   test("an allergy stated with a request is stored before the search", async () => {
     const w = new Mini([climber("a", "Ana Diaz", "Greenpoint"), climber("b", "Ben Ito", "Astoria")]);
     await w.onboard("a", "b");
