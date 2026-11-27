@@ -49,6 +49,20 @@ test("a place objection with no alternative still cancels the booking", async ()
   expect(w.log("booked_cancelled")).toHaveLength(1);
 });
 
+test("a venue-change request with a place objection still keeps the booking", async () => {
+  const requests = [
+    "Can we meet somewhere else? I'm not sure about that park",
+    "Can we go somewhere else? It's not happening at that bar for me",
+  ];
+  for (const text of requests) {
+    const { w, booking } = await booked();
+    await w.say("a", text);
+    expect(booking().stage).toBe("scheduled");
+    expect(booking().confirmed ?? []).not.toContain("a");
+    expect(w.log("booked_cancelled")).toEqual([]);
+  }
+});
+
 test("a refusal that names another place still cancels the booking", async () => {
   const refusals = [
     "No thanks, I'd rather meet someone else somewhere else",
@@ -56,6 +70,15 @@ test("a refusal that names another place still cancels the booking", async () =>
     "I won't be there, go somewhere else without me",
     "No. Find a different place with someone else.",
     "I'm out. Choose another venue with someone else",
+    "Not happening, find a different venue for yourself",
+    "Not happening. Find a different place for yourself.",
+    "No. Pick another place, I'm not interested.",
+    "Not interested anymore, go somewhere else",
+    "No, I'm not meeting. Pick a different spot.",
+    "Nah, find another place, I'm done",
+    "No thanks. Meet somewhere else alone.",
+    "No. Go somewhere else.",
+    "I'm not interested, go find another venue",
   ];
   for (const text of refusals) {
     const { w, booking } = await booked();

@@ -748,11 +748,18 @@ export function bookedTextDeclines(body: string, ordinaryDecline: boolean): bool
     swapWithdrawal && declinesAttendanceAlongsideSwap(body), bookedReplyKeepsMeeting(body));
 }
 
-const VENUE_CHANGE = /\b(?:meet|go|move|switch|change|pick|choose|find)\b[^.!?]*\b(?:somewhere (?:else|closer)|someplace (?:else|closer)|another (?:place|spot|venue|location)|different (?:place|spot|venue|location)|other (?:place|spot|venue|location))\b|\b(?:another|different|other) (?:place|spot|venue|location)\b[^.!?]*\binstead\b/i;
+const VENUE_TARGET = /\b(?:somewhere (?:else|closer)|someplace (?:else|closer)|another (?:place|spot|venue|location)|different (?:place|spot|venue|location)|other (?:place|spot|venue|location))\b/i;
+const VENUE_JOINT = /\b(?:can|could|shall|should|will|would) we\b|\blet'?s\b|\bwe (?:could|can|should|might)\b|\bi'?d rather (?:meet|go)\b|\bi (?:want|would like|need) to (?:meet|go|move|switch|change)\b/i;
 const VENUE_REFUSAL = /\b(?:cancel (?:it|this|the meeting|our meeting)|call (?:it|this) off|i'?m out|i am out|count me out|won'?t be there|will not be there|not coming|can'?t (?:make it|come|attend)|cannot (?:make it|come|attend)|without me|someone else|somebody else|rather not meet|don'?t want to meet|do not want to meet)\b/i;
+const VENUE_ATTENDANCE_REFUSAL = /\bnot interested\b(?!\s+in\b)|\bnot happening\b(?!\s+(?:at|in|there)\b)|\bi'?m done\b|\bi am done\b|\bnot meeting\b|\bfor yourself\b|\bby yourself\b|\bon your own\b|(?:^|[.!?]\s*)(?:nah|no thanks|no|nope)[.!](?:\s|$)/i;
+
+function jointVenueRequest(body: string): boolean {
+  return body.split(/(?<=[.!?])\s+/).some(sentence =>
+    VENUE_TARGET.test(sentence) && (VENUE_JOINT.test(sentence) || (/\?\s*$/.test(sentence.trim()) && /\b(?:meet|move|switch|change)\b/i.test(sentence))));
+}
 
 export function venueChangeKeepsBooking(body: string): boolean {
-  return VENUE_CHANGE.test(body) && !declinesAttendanceAlongsideSwap(body) && !VENUE_REFUSAL.test(body);
+  return jointVenueRequest(body) && !declinesAttendanceAlongsideSwap(body) && !VENUE_REFUSAL.test(body) && !VENUE_ATTENDANCE_REFUSAL.test(body);
 }
 
 const PHASE_BY_STAGE = { review: "InReview", probing: "Probing", scheduled: "Scheduled", done: "Done", closed: "Closed" } as const;
