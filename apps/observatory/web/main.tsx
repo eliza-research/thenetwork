@@ -59,7 +59,6 @@ export function App() {
       else if (e.key === "n" && canStep) store.control({ type: "step", ms: HOUR });
       else if (e.key === "d" && canStep) store.control({ type: "step", ms: DAY });
     };
-    // A menu can consume Escape and still let it bubble to the window.
     const onUnhandledKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || !e.defaultPrevented) onKey(e);
     };

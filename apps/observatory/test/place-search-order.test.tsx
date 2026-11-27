@@ -142,8 +142,6 @@ test("typing the exact place name Harlem offers it first and Enter only picks a 
     expect(memberOptions[0]).toEqual("Maya · Greenwich Village");
     await press("Enter");
     expect(store.ui.focus).toEqual({ kind: "member", id: "m3" });
-    // A filter's Escape handler consumes the key while its menu closes. The
-    // event still bubbles, but it must not also clear the console's subject.
     const filterEscape = (consumed: boolean) => {
       const e = new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
       if (consumed) e.preventDefault();
