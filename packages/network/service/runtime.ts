@@ -1563,7 +1563,8 @@ export class NetworkRuntime {
       const [stored] = await tx`select name from network.members where app_id = ${app} and id = ${inboundId}`;
       const storedFirst = typeof stored?.name === "string" ? stored.name.trim().split(/\s+/)[0] : undefined;
       if (first && storedFirst && first !== storedFirst) {
-        await tx`update network.members set name = ${first} where app_id = ${app} and id = ${inboundId}`;
+        const last = typeof stored?.name === "string" ? stored.name.trim().split(/\s+/).slice(1).join(" ") : "";
+        await tx`update network.members set name = ${last ? `${first} ${last}` : first} where app_id = ${app} and id = ${inboundId}`;
         await tx`update platform.memberships set first_name = ${first} where app_id = ${app} and member_id = ${inboundId} and first_name is distinct from ${first}`;
       }
     }

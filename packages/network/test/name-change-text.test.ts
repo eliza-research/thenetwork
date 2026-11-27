@@ -36,5 +36,30 @@ describe("name change texted after onboarding", () => {
 
     await w.say("a", "I go by Cyd now.");
     expect(nameOf(w, "a")?.first).toBe("Cyd");
+
+    await w.say("a", "Sorry, I'm called away tonight.");
+    expect(nameOf(w, "a")?.first).toBe("Cyd");
+
+    await w.say("a", "I'm called into work this afternoon.");
+    expect(nameOf(w, "a")?.first).toBe("Cyd");
+
+    await w.say("a", "Call me crazy, Saturday works!");
+    expect(nameOf(w, "a")?.first).toBe("Cyd");
+
+    await w.say("a", "Call me old-fashioned, I prefer coffee.");
+    expect(nameOf(w, "a")?.first).toBe("Cyd");
+
+    await w.say("a", "Call me biased, that spot is great.");
+    expect(nameOf(w, "a")?.first).toBe("Cyd");
+
+    await w.say("a", "I go by train usually.");
+    expect(nameOf(w, "a")?.first).toBe("Cyd");
+
+    await w.say("a", "I go by myself usually.");
+    expect(nameOf(w, "a")?.first).toBe("Cyd");
+
+    await w.say("a", "call me ari");
+    expect(nameOf(w, "a")?.first).toBe("Ari");
+    expect(nameOf(w, "a")?.name).toBe("Ari Diaz");
   });
 });
