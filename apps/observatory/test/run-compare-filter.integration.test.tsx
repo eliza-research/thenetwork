@@ -4,7 +4,7 @@ import { Window } from "happy-dom";
 import { expect, test } from "vitest";
 import { DAY } from "@thenetwork/core";
 import { serveHttp } from "../../../packages/core/src/runtime/http.ts";
-import type { EngineRunSummary, RunDiff } from "../src/types.ts";
+import type { EngineRunSummary, ObsOpportunity, RunDiff } from "../src/types.ts";
 import { installDom } from "./dom.ts";
 
 const NOW = Date.UTC(2026, 10, 20, 12, 0, 0);
@@ -105,6 +105,61 @@ test("Runs compare drops hidden picks on a same-count filter swap and closes wit
     await act(async () => { root.unmount(); await sleep(40); });
     globalThis.fetch = nativeFetch;
     await api.stop(true);
+    await window.happyDOM.close();
+    restoreDom();
+  }
+});
+
+test("a focused opportunity can recover its linked run without widening Today's list", async () => {
+  const window = new Window({ url: "http://localhost/" });
+  const restoreDom = installDom(window, {
+    window, document: window.document, navigator: window.navigator, location: window.location,
+    history: window.history, localStorage: window.localStorage, sessionStorage: window.sessionStorage,
+    CustomEvent: window.CustomEvent, IS_REACT_ACT_ENVIRONMENT: true,
+  });
+  const { createRoot } = await import("react-dom/client");
+  const { store } = await import("../web/store.ts");
+  const { Drawer } = await import("../web/drawer.tsx");
+  const box = window.document.createElement("div");
+  window.document.body.append(box);
+  const root = createRoot(box as unknown as HTMLElement);
+  const visibility = (label: string) => box.textContent?.includes(label);
+  const button = (label: string) => [...box.querySelectorAll("button")].find(b => b.textContent?.trim() === label);
+  const run = makeRun("abcd-old-run", NOW - 3 * DAY, 4);
+  const normal = makeRun("today-unrelated", NOW - 3_600_000, 6);
+  const opportunity: ObsOpportunity = {
+    id: "linked-opp", kind: "intro", source: "engine", generator: "test", city: "nyc", objective: "A meeting",
+    score: 0.5, explanations: {}, exploration: false, participants: [], alternates: [], state: "PROPOSED",
+    status: {}, enjoyment: {}, createdAt: run.at, updatedAt: run.at, runId: run.id,
+  };
+  try {
+    await act(async () => {
+      store.me = { id: "fixture", roles: ["admin"], grants: [{ role: "admin", app: "*" }], via: "token" };
+      store.clock = { now: NOW, start: NOW - 10 * DAY, day: 10, playing: false, speed: 0, waitingForPlayer: false };
+      store.runs = [run, normal];
+      store.opps = new Map([[opportunity.id, opportunity]]);
+      store.setFilters({ range: "today", borough: "all", members: "all", origin: "all", stateGroup: "all" });
+      store.setUI({ drawer: "engine", drawerOpen: true, focus: { kind: "opportunity", id: opportunity.id } });
+      root.render(createElement(Drawer));
+    });
+    expect(visibility("Linked run is outside the selected range (Today).")).toBe(true);
+    expect(button("Show linked run")).toBeDefined();
+    await act(async () => { button("Show linked run")!.click(); });
+    expect(visibility("Linked run abcd")).toBe(true);
+    expect(visibility("Top configurations")).toBe(true);
+    expect(button("Compare two")).toBeUndefined();
+    expect(store.ui.filters.range).toBe("today");
+
+    await act(async () => { store.setUI({ focus: null }); await sleep(40); });
+    expect(visibility("Linked run abcd")).toBe(false);
+    expect(visibility("6 proposals")).toBe(true);
+    expect(visibility("4 proposals")).toBe(false);
+    await act(async () => { store.setUI({ focus: { kind: "opportunity", id: opportunity.id } }); await sleep(40); });
+    expect(button("Show linked run")).toBeDefined();
+    expect(visibility("Top configurations")).toBe(false);
+  } finally {
+    await act(async () => { root.unmount(); await sleep(40); });
+    store.disconnect();
     await window.happyDOM.close();
     restoreDom();
   }

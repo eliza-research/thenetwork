@@ -295,7 +295,13 @@ function Engine() {
   const view = runsView(model);
   const focusRunId = f?.kind === "opportunity" ? s.opps.get(f.id)?.runId : undefined;
   const run = runs.find(r => r.id === (focusRunId ?? sel)) ?? runs.find(r => r.id === sel) ?? runs[0];
-  if (view === "NoRunsView" || !run) return <EmptyState title={s.runs.length ? s.nothing() : "No runs yet."} />;
+  if (view === "NoRunsView" || !run) {
+    const linked = !runs.length && f?.kind === "opportunity" && focusRunId
+      ? s.runs.find(r => r.id === focusRunId && !s.inRange(r.at))
+      : undefined;
+    if (linked && f) return <LinkedRunOutsideRange key={JSON.stringify([s.app, s.mode, f.id, linked.id, s.ui.filters.range])} run={linked} range={s.rangeLabel()} />;
+    return <EmptyState title={s.runs.length ? s.nothing() : "No runs yet."} />;
+  }
   const toggle = () => { if (canToggleCompare(panels)) setCompare({ model: toggleCompare(panels).runs, ids: [] }); };
   const pick = (id: string) => {
     const already = compare.ids.includes(id);
@@ -326,6 +332,24 @@ function Engine() {
           : view === "PickTwoView" || pair.length !== 2 ? <EmptyState title="Pick two runs." />
           : <RunDiffView a={pair[0]!.id} b={pair[1]!.id} view={view} onAnswer={answer} />}
       </div>
+    </div>
+  );
+}
+
+function LinkedRunOutsideRange({ run, range }: { run: EngineRunSummary; range: string }) {
+  const [show, setShow] = useState(false);
+  if (!show) return (
+    <EmptyState title={`Linked run is outside the selected range (${range}).`}>
+      <Button variant="outline" size="sm" onClick={() => setShow(true)}>Show linked run</Button>
+    </EmptyState>
+  );
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-between gap-2 text-sm">
+        <span>Linked run {run.id.slice(0, 4)} · outside {range}</span>
+        <Button variant="ghost" size="sm" onClick={() => setShow(false)}>Hide linked run</Button>
+      </div>
+      <RunDetail run={run} />
     </div>
   );
 }
