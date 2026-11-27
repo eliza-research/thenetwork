@@ -78,3 +78,47 @@ test("console Back skips a browser history entry whose opportunity the latest sn
     restore();
   }
 });
+
+test("browser Back after reload does not make the newer subject a prior focus", async () => {
+  const window = new Window({ url: "http://localhost/#n=Harlem" });
+  const restore = installDom(window, {
+    window, document: window.document, navigator: window.navigator, location: window.location,
+    history: window.history, localStorage: window.localStorage, sessionStorage: window.sessionStorage,
+  });
+  history.replaceState({ obsDepth: 2 }, "", "#n=Harlem");
+  const { store: singleton } = await import("../web/store.ts");
+  const Store = singleton.constructor as new () => typeof singleton;
+  const store = new Store();
+  const arrive = (area: string, depth: number) => {
+    const state = { obsDepth: depth };
+    history.replaceState(state, "", "#n=" + encodeURIComponent(area));
+    window.dispatchEvent(new window.PopStateEvent("popstate", { state }));
+  };
+  try {
+    store.me = { id: "fixture", roles: ["admin"], grants: [{ role: "admin", app: "*" }], via: "token" } as typeof store.me;
+    expect(store.ui.focus).toEqual({ kind: "neighborhood", id: "Harlem" });
+    arrive("Chelsea", 1);
+    expect(store.ui.focus).toEqual({ kind: "neighborhood", id: "Chelsea" });
+    expect(store.focusHistory).toEqual([]);
+
+    // Forward is still allowed to build the actual prior focus.
+    arrive("Harlem", 2);
+    expect(store.ui.focus).toEqual({ kind: "neighborhood", id: "Harlem" });
+    expect(store.focusHistory).toEqual([{ kind: "neighborhood", id: "Chelsea" }]);
+    arrive("Chelsea", 1);
+    expect(store.ui.focus).toEqual({ kind: "neighborhood", id: "Chelsea" });
+    expect(store.focusHistory).toEqual([]);
+
+    // Forward to the same subject as the top of the Back stack is still Forward.
+    store.focus({ kind: "neighborhood", id: "Harlem" });
+    store.focus({ kind: "neighborhood", id: "Chelsea" });
+    arrive("Harlem", 2);
+    expect(store.focusHistory.map(f => f?.id)).toEqual(["Chelsea"]);
+    arrive("Chelsea", 3);
+    expect(store.focusHistory.map(f => f?.id)).toEqual(["Chelsea", "Harlem"]);
+  } finally {
+    store.disconnect();
+    await window.happyDOM.close();
+    restore();
+  }
+});
