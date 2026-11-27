@@ -51,7 +51,7 @@ describe.skipIf(!pgAvailable)("Pass 4 quality, safety quarantine, reliability & 
     if (url) await dropDb(url);
   });
 
-  test("migration 0101 tables, constraints, and observatory role isolation", async () => {
+  test("migration 0102 tables, constraints, and observatory role isolation", async () => {
     const tables = await sql<{ table_name: string }[]>`
       select table_name from information_schema.tables
       where table_schema = 'platform'

@@ -187,8 +187,14 @@ async function relaySchema(tx: SQL): Promise<{ tables: boolean; network: boolean
  * Write the relay rows (inside the save transaction; app.app_id is set). Skipped before migration 0026.
  * `networkId` ('<app>:<city>', migration 0031): a row of another network of the same app is never overwritten.
  */
-export async function writeRelayRows(tx: SQL, state: NetworkState, app: string, networkId?: string): Promise<void> {
-  const schema = await relaySchema(tx);
+export async function writeRelayRows(
+  tx: SQL,
+  state: NetworkState,
+  app: string,
+  networkId?: string,
+  cachedSchema?: { tables: boolean; network: boolean },
+): Promise<void> {
+  const schema = cachedSchema ?? await relaySchema(tx);
   if (!schema.tables) return;
   const net = schema.network ? networkId ?? `${app}:nyc` : undefined;
   const { threads, records } = relayRows(state, app, net);
@@ -201,9 +207,15 @@ export async function writeRelayRows(tx: SQL, state: NetworkState, app: string, 
     where ${net ?? null}::text is null or relay_records.network_id = ${net ?? null}`;
 }
 
-export async function loadRelayRows(tx: SQL, state: NetworkState | undefined, app: string, networkId?: string): Promise<NetworkState | undefined> {
+export async function loadRelayRows(
+  tx: SQL,
+  state: NetworkState | undefined,
+  app: string,
+  networkId?: string,
+  cachedSchema?: { tables: boolean; network: boolean },
+): Promise<NetworkState | undefined> {
   if (!state || state.relay?.log.length) return state;
-  const schema = await relaySchema(tx);
+  const schema = cachedSchema ?? await relaySchema(tx);
   if (!schema.tables) return state;
   const net = schema.network ? networkId ?? `${app}:nyc` : undefined;
   const rows = await tx`select * from network.relay_records where app_id = ${app} and (${net ?? null}::text is null or network_id = ${net ?? null})
@@ -239,10 +251,25 @@ export class PgStore implements NetworkStore {
   readonly app: string;
   readonly city: string;
   seen?: string;
+  private relaySchemaCache?: { tables: boolean; network: boolean };
+  private hasMembersTableCache?: boolean;
   constructor(db: string | SQL, readonly id = "ntwrk:nyc") {
     ({ app: this.app, city: this.city } = splitNetworkId(id));
     this.owned = typeof db === "string";
     this.sql = typeof db === "string" ? new SQL({ url: db, max: 4 }) : db;
+  }
+
+  private async getRelaySchema(tx: SQL): Promise<{ tables: boolean; network: boolean }> {
+    if (!this.relaySchemaCache) this.relaySchemaCache = await relaySchema(tx);
+    return this.relaySchemaCache;
+  }
+
+  private async hasMembersTable(tx: SQL): Promise<boolean> {
+    if (this.hasMembersTableCache === undefined) {
+      const [{ members }] = await tx`select to_regclass('network.members') is not null as members`;
+      this.hasMembersTableCache = !!members;
+    }
+    return this.hasMembersTableCache;
   }
 
   /** Apply packages/network/db/network-state.sql (idempotent). */
@@ -250,6 +277,8 @@ export class PgStore implements NetworkStore {
     // Read the URL directly to support checkout paths
     // with non-ASCII characters.
     await this.sql.unsafe(await fileAt(new URL("../db/network-state.sql", import.meta.url)).text());
+    this.relaySchemaCache = undefined;
+    this.hasMembersTableCache = undefined;
   }
 
   async load(): Promise<NetworkState | undefined> {
@@ -258,7 +287,9 @@ export class PgStore implements NetworkStore {
       const rows = await tx`select state, xmin::text as v from network.network_state where id = ${this.id}`;
       const s = rows[0]?.state;
       this.seen = rows[0]?.v;
-      return loadRelayRows(tx, s === undefined ? undefined : ((typeof s === "string" ? JSON.parse(s) : s) as NetworkState), this.app, this.id);
+      const parsed = s === undefined ? undefined : ((typeof s === "string" ? JSON.parse(s) : s) as NetworkState);
+      const schema = parsed && !parsed.relay?.log.length ? await this.getRelaySchema(tx) : undefined;
+      return loadRelayRows(tx, parsed, this.app, this.id, schema);
     }) as Promise<NetworkState | undefined>;
   }
 
@@ -287,7 +318,7 @@ export class PgStore implements NetworkStore {
       for (let i = 0; i < stateOppIds.length; i += 500) await tx`delete from network.participations where opportunity_id in ${tx(stateOppIds.slice(i, i + 500))}`;
       let parts = rows.participations;
       // With the console schema, a participation needs its network.members row (foreign key): skip any member not there.
-      const [{ members }] = await tx`select to_regclass('network.members') is not null as members`;
+      const members = await this.hasMembersTable(tx);
       if (members && parts.length) {
         const ids = [...new Set(parts.map(p => p.member_id as string))];
         const known = new Set<string>();
@@ -312,7 +343,7 @@ export class PgStore implements NetworkStore {
       for (let i = 0; i < rows.requests.length; i += 500) await tx`insert into network.requests ${tx(rows.requests.slice(i, i + 500))}
         on conflict (id) do update set outcome = excluded.outcome, tries = excluded.tries, opportunity_id = excluded.opportunity_id,
           fulfilled_at = excluded.fulfilled_at, updated_at = excluded.updated_at`;
-      await writeRelayRows(tx, state, this.app, this.id);
+      await writeRelayRows(tx, state, this.app, this.id, await this.getRelaySchema(tx));
       if (also) await also(tx);
     });
   }

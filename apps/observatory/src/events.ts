@@ -77,7 +77,7 @@ export function eventOf(rec: RunRecord): EventRow | undefined {
     case "decision":
       if (rec.messageType !== "proposal" || !["accept", "decline"].includes(rec.intent)) return undefined;
       return ev("member", rec.memberId, rec.intent === "accept" ? "member_accepted" : "member_declined", "opportunity", rec.proposalId ?? null);
-    case "meeting_scheduled": return ev("agent", null, "meeting_scheduled", "opportunity", rec.proposalId, { participants: rec.participants, at: rec.at, ...(rec.previousAt === undefined ? {} : { previousAt: rec.previousAt }) });
+    case "meeting_scheduled": return ev("agent", null, "meeting_scheduled", "opportunity", rec.proposalId, { participants: rec.participants, at: rec.at, city: rec.city, ...(rec.previousAt === undefined ? {} : { previousAt: rec.previousAt }) });
     case "outcome": return ev("sim", null, "interaction_occurred", "opportunity", rec.proposalId, { attendance: rec.attendance });
     case "feedback": return ev("member", rec.memberId, "feedback_given", "opportunity", rec.proposalId ?? null, { text: rec.text });
     case "block": return ev("member", rec.from, "member_blocked", "member", rec.to);
@@ -124,7 +124,7 @@ function subjectOf(row: EventRow): MemberId | undefined {
 export const toMs = (at: EventRow["at"]) => (typeof at === "number" ? at : new Date(at).getTime());
 const human = (s: unknown) => String(s ?? "").replace(/_/g, " ");
 const CITY_TIME_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
-function timeFormatterFor(city?: unknown): { fmt: Intl.DateTimeFormat; label: string } {
+function timeFormatterFor(city?: unknown): { fmt: Intl.DateTimeFormat; label: string; tz: string } {
   const c: City = isCity(city) ? city : "nyc";
   const spec = getCity(c);
   const tz = spec?.tz ?? CITY_TZ[c] ?? CITY_TZ.nyc;
@@ -134,7 +134,7 @@ function timeFormatterFor(city?: unknown): { fmt: Intl.DateTimeFormat; label: st
     CITY_TIME_FORMATTERS.set(tz, fmt);
   }
   const label = c === "nyc" ? "New York" : (spec?.name ?? "New York");
-  return { fmt, label };
+  return { fmt, label, tz };
 }
 const cityTime = (t: unknown, city?: unknown) => (typeof t === "number" && Number.isFinite(t) ? timeFormatterFor(city).fmt.format(t) : "later");
 /** Picked time keys ("a", "c"), or "none". */
@@ -170,8 +170,9 @@ export function describe(row: EventRow, name: (id: string) => string = id => id)
     case "member_declined": text = `${name(row.actor_id ?? "")} passed`; break;
     case "meeting_scheduled":
       if (typeof p.previousAt === "number" && Number.isFinite(p.previousAt) && Number.isFinite(p.at)) {
-        text = `Meeting rescheduled: ${describeBookingStart(p.previousAt)} → ${describeBookingStart(p.at)} (New York time)`;
-        keep("previousAt", "at");
+        const { tz, label } = timeFormatterFor(p.city);
+        text = `Meeting rescheduled: ${describeBookingStart(p.previousAt, tz)} → ${describeBookingStart(p.at, tz)} (${label} time)`;
+        keep("previousAt", "at", "city");
       } else text = "Meeting scheduled";
       severity = "good"; break;
     case "interaction_occurred": {

@@ -3,7 +3,7 @@ import { heldMeetingMinimum, observatoryMeetingHeld, observatoryProposalCounts }
 import { consoleBookingReceiptCurrent, consoleDeliveryEvidenceAllowed, consoleDeliveryGuard, consolePreparedBodyWithheld, type ConsoleDeliveryGuard } from "../../../../packages/core/src/generated/consoleMemberView.ts";
 import { confirmationWindowHours } from "../../../../packages/core/src/generated/meetingSettlement.ts";
 import {
-  ALL_SEED_VENUES, canBeMatched, DAY, earliestDayKeyOf, getCity, groupVenueRubricScore, isCity, isMinor, latestDayKeyOf, listCities, seedVenuesForCity, validAge,
+  ALL_SEED_VENUES, canBeMatched, CITY_IDS, DAY, earliestDayKeyOf, getCity, groupVenueRubricScore, isCity, isMinor, latestDayKeyOf, listCities, seedVenuesForCity, validAge,
   type AgeSide, type City, type EdgeType, type VenuePriceTier, type VenueRecord, type VenueStatus, type WorkIntroChannel, type WorldSnapshot,
 } from "@thenetwork/core";
 import { ageOnDay } from "../../../../packages/core/src/generated/memberAge.ts";
@@ -1301,7 +1301,7 @@ export class RealSource implements DataSource {
       this.shadowIds.clear();
       this.shadowRuns = [];
       const present = [...new Set([...this.store.members.values()].map(m => m.city).filter(isCity))];
-      const cities: City[] = city ? [city] : present.length ? present : ["sf", "nyc"];
+      const cities: City[] = city ? [city] : present.length ? present : [...CITY_IDS];
       let total = 0;
       for (const c of cities) {
         const { proposals, summary } = await runEngineSummarized(snap, { seed: 1, city: c, shadow: true });

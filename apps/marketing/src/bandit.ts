@@ -1,4 +1,5 @@
 import { Rng } from "../../../packages/core/src/rng.ts";
+import { getCityPack } from "./city-registry.ts";
 import { evaluateBanditArmEligibility } from "./policy.ts";
 import type { AppId, BanditArm as StoredBanditArm, Campaign, RiskDial } from "./types.ts";
 
@@ -427,16 +428,22 @@ export function createDefaultCityBanditArms(
   updatedAtIso: string,
 ): BanditArm[] {
   const code = city.trim().toLowerCase() || "nyc";
-  const upper = code.toUpperCase();
+  const cityPack = getCityPack(code);
+  const cityCode = cityPack?.code ?? code;
+  const upper = cityCode.toUpperCase();
+  const cityTag = cityCode === "nyc" ? "NYC" : (cityPack?.label ?? upper);
+  const totalBudget = cityPack?.defaultMonthlyBudgetCents ?? 1_000_000;
+  const alloc = (bps: number) => Math.round((totalBudget * bps) / 10_000);
+
   return [
     {
       id: `${campaignId}:street_fliering`,
       campaignId,
       armKey: "street_fliering",
-      label: `Direct Street Teams (${upper})`,
+      label: cityCode === "nyc" ? "Direct Street Teams (CL + RentAHuman)" : `Direct Street Teams (${upper})`,
       track: "street_fliering",
       playCode: `${upper}-TRACK-A`,
-      city: code,
+      city: cityCode,
       appId: "all",
       desireLane: "ideal_friends",
       alpha: 2,
@@ -450,7 +457,7 @@ export function createDefaultCityBanditArms(
       spentCents: 0,
       targetCpaCents: 711,
       allocatedShareBps: 3_200,
-      allocatedCents: 320_000,
+      allocatedCents: alloc(3_200),
       state: "active",
       killReason: null,
       updatedAt: updatedAtIso,
@@ -462,7 +469,7 @@ export function createDefaultCityBanditArms(
       label: "Street-Interview Creators (YT/TT/IG)",
       track: "creator_video",
       playCode: `${upper}-TRACK-B`,
-      city: code,
+      city: cityCode,
       appId: "slop",
       desireLane: "soulmate_dating",
       alpha: 2,
@@ -476,7 +483,7 @@ export function createDefaultCityBanditArms(
       spentCents: 0,
       targetCpaCents: 759,
       allocatedShareBps: 3_300,
-      allocatedCents: 330_000,
+      allocatedCents: alloc(3_300),
       state: "active",
       killReason: null,
       updatedAt: updatedAtIso,
@@ -485,10 +492,10 @@ export function createDefaultCityBanditArms(
       id: `${campaignId}:event_activation`,
       campaignId,
       armKey: "event_activation",
-      label: `${upper} Event & Venue Activators`,
+      label: `${cityTag} Event & Venue Activators`,
       track: "event_activation",
       playCode: `${upper}-TRACK-C`,
-      city: code,
+      city: cityCode,
       appId: "friends",
       desireLane: "ideal_friends",
       alpha: 2,
@@ -502,7 +509,7 @@ export function createDefaultCityBanditArms(
       spentCents: 0,
       targetCpaCents: 895,
       allocatedShareBps: 1_700,
-      allocatedCents: 170_000,
+      allocatedCents: alloc(1_700),
       state: "active",
       killReason: null,
       updatedAt: updatedAtIso,
@@ -514,7 +521,7 @@ export function createDefaultCityBanditArms(
       label: "Serialized 4x6 QR Flier Print",
       track: "print_qr",
       playCode: `${upper}-TRACK-D`,
-      city: code,
+      city: cityCode,
       appId: "all",
       desireLane: "money_work",
       alpha: 2,
@@ -528,7 +535,7 @@ export function createDefaultCityBanditArms(
       spentCents: 0,
       targetCpaCents: 858,
       allocatedShareBps: 800,
-      allocatedCents: 80_000,
+      allocatedCents: alloc(800),
       state: "active",
       killReason: null,
       updatedAt: updatedAtIso,
@@ -537,10 +544,10 @@ export function createDefaultCityBanditArms(
       id: `${campaignId}:agency_reserve`,
       campaignId,
       armKey: "agency_reserve",
-      label: `W-2 ${upper} Agency Surge Reserve`,
+      label: `W-2 ${cityTag} Agency Surge Reserve`,
       track: "agency_reserve",
       playCode: `${upper}-TRACK-E`,
-      city: code,
+      city: cityCode,
       appId: "all",
       desireLane: "elite_serendipity",
       alpha: 1,
@@ -554,7 +561,7 @@ export function createDefaultCityBanditArms(
       spentCents: 0,
       targetCpaCents: 1_111,
       allocatedShareBps: 1_000,
-      allocatedCents: 100_000,
+      allocatedCents: alloc(1_000),
       state: "active",
       killReason: null,
       updatedAt: updatedAtIso,
@@ -562,16 +569,13 @@ export function createDefaultCityBanditArms(
   ];
 }
 
+export const createDefaultBanditArms = createDefaultCityBanditArms;
+
 export function createDefaultNycBanditArms(
   campaignId: string,
   updatedAtIso: string,
 ): BanditArm[] {
-  const arms = createDefaultCityBanditArms(campaignId, "nyc", updatedAtIso);
-  return arms.map((arm) =>
-    arm.track === "street_fliering"
-      ? { ...arm, label: "Direct Street Teams (CL + RentAHuman)" }
-      : arm,
-  );
+  return createDefaultCityBanditArms(campaignId, "nyc", updatedAtIso);
 }
 
 export function computeBanditAllocations(

@@ -1531,6 +1531,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** What the LLM reader made of the message being handled (undefined without a reader, or when it failed). */
   private understood?: Understood;
 
+  private static readonly BARE_CONSENT_RE = /^(?:yes|yeah|yep|yup|ya|no|nope|nah|ok|okay|sure)[.!?]*$/i;
+
   /** Short-circuit LLM understanding ONLY for active members sending trivial <=50-char ack/option-key/yes-no replies. */
   private canShortCircuitUnderstand(
     m: MemberState | undefined,
@@ -1541,6 +1543,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!m || m.stage !== "active") return false;
     const trimmed = body.trim();
     if (!trimmed || trimmed.length > 50) return false;
+    if (ConsentNetwork.BARE_CONSENT_RE.test(trimmed)) return true;
     const structured = !!aw && SHORT_CIRCUIT_AWAITING.has(String(aw.kind));
     const isBareOption = structured && Boolean(options?.length) && BARE_OPTION_KEYS_RE.test(trimmed);
     const isPureAck = !EXTRA_CLAUSE_RE.test(trimmed) && ACK_ONLY.test(trimmed);
@@ -1556,12 +1559,13 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** The LLM reader on one message, with what the Network asked last. Never throws; undefined fails closed to the offline rules. */
   private async understandSafely(msg: InboundMessage): Promise<Understood | undefined> {
     const fn = this.opts.understand;
-    if (!fn || msg.keyword || !msg.body?.trim()) return undefined;
+    if (!fn || msg.keyword || msg.reaction || !msg.body?.trim()) return undefined;
     const m = this.members.get(msg.memberId);
-    const aw = m?.awaiting;
-    const options = aw?.kind === "probe" && aw.oppId ? this.opps.get(aw.oppId)?.offered?.[m!.id] : undefined;
+    if (!m || m.stage === "new" || m.optedOut || m.account || !this.trust.ok(m.id) || this.reportHeld(m.id)) return undefined;
+    const aw = m.awaiting;
+    const options = aw?.kind === "probe" && aw.oppId ? this.opps.get(aw.oppId)?.offered?.[m.id] : undefined;
     if (this.canShortCircuitUnderstand(m, msg.body, aw, options)) return undefined;
-    try { return await fn(msg.body, { ...(aw ? { awaiting: aw.kind } : {}), ...(options?.length ? { options } : {}) }); } catch { return undefined; }
+    try { return await fn(msg.body, { city: this.networkCity(), ...(aw ? { awaiting: aw.kind } : {}), ...(options?.length ? { options } : {}) }); } catch { return undefined; }
   }
 
   /** An inbound message answers everything pending and is the only thing that resets the unanswered rules. */
@@ -1781,6 +1785,7 @@ export class ConsentNetwork implements NetworkUnderTest {
             opp.venueId = nextVenue.id;
             opp.venue = nextVenue.name;
             opp.venueArea = nextVenue.neighborhood;
+            opp.backupPivoted = true;
           }
         }
         return;
@@ -5020,8 +5025,20 @@ export class ConsentNetwork implements NetworkUnderTest {
       ...(isGatheringRepeat(o) ? { key: gatheringRepeatProbeKey(o.id, id) } : {}) });
   }
 
-  private isWorkIntro(o: Pick<Opp, "seat" | "lane" | "category">): boolean {
-    return !!o.seat || o.lane === "Cofounder" || (this.app.id === "peon" && o.category === "professional");
+  private static readonly WORK_ONTOLOGY_TAGS: ReadonlySet<string> = new Set([
+    "work_hiring",
+    "step_ahead_mentorship",
+    "patronage_sponsorship",
+    "executive_peer_council",
+  ]);
+
+  private isWorkIntro(o: Pick<Opp, "seat" | "lane" | "category" | "tags">): boolean {
+    return (
+      !!o.seat ||
+      o.lane === "Cofounder" ||
+      (this.app.id === "peon" && o.category === "professional") ||
+      o.tags.some(t => ConsentNetwork.WORK_ONTOLOGY_TAGS.has(t))
+    );
   }
 
   private probeCopy(o: Opp, id: MemberId, now: number) {
@@ -5535,7 +5552,8 @@ export class ConsentNetwork implements NetworkUnderTest {
         mode: o.participants.length >= 3 ? "group" : "date",
         startMs: t.at,
         memberAreas: areas.filter((a): a is string => !!a),
-        members: o.participants.map(id => this.memberVenueRankPrefs(id, [spot.venue.id])),
+        members: o.participants.map(id => this.venuePrefsOf(id, [spot.venue.id]).prefs),
+        teenFriendAllowed: o.teenRuleAt !== undefined,
       }, now);
       const backup = backupPick.primary?.venue.id !== spot.venue.id ? backupPick.primary?.venue : backupPick.backup?.venue;
       if (backup && backup.id !== spot.venue.id) o.backupVenueId = backup.id;
@@ -5670,14 +5688,22 @@ export class ConsentNetwork implements NetworkUnderTest {
         text = this.opts.hooks?.booked?.(this.hookOpp(o), id, { others: [otherDisplay], where: "", when: "" })
           ?? (isManager ? SEAT_COPY.managerIntro(job, otherDisplay) : SEAT_COPY.candidateIntro(job, otherDisplay));
       }
+    } else if (o.lane === "Cofounder") {
+      if (channel === "WarmEmail") {
+        text = SEAT_COPY.cofounderWarmEmailIntro(otherDisplay);
+      } else if (channel === "ScheduledVideo" && when) {
+        text = SEAT_COPY.cofounderVideoSlotIntro(otherDisplay, when);
+      } else {
+        text = SEAT_COPY.cofounderRelayIntro(otherDisplay);
+      }
     } else if (channel === "WarmEmail") {
-      text = SEAT_COPY.cofounderWarmEmailIntro(otherDisplay);
+      text = SEAT_COPY.workWarmEmailIntro(otherDisplay);
     } else if (channel === "ScheduledVideo" && when) {
-      text = SEAT_COPY.cofounderVideoSlotIntro(otherDisplay, when);
+      text = SEAT_COPY.workVideoSlotIntro(otherDisplay, when);
     } else {
-      text = SEAT_COPY.cofounderRelayIntro(otherDisplay);
+      text = SEAT_COPY.workRelayIntro(otherDisplay);
     }
-    const fallback = SEAT_COPY.cofounderRelayIntro(otherDisplay);
+    const fallback = o.lane === "Cofounder" ? SEAT_COPY.cofounderRelayIntro(otherDisplay) : SEAT_COPY.workRelayIntro(otherDisplay);
     const proactive = !this.opts.probes && !o.primed.has(id);
     this.send(m, text, {
       type: "proposal", proposalId: o.id, participants: going,
@@ -7613,7 +7639,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       mode: keep.length >= 3 ? "group" : "date",
       startMs: plan.window.start,
       memberAreas: keep.map(id => this.member(id).area).filter((a): a is string => !!a),
-      members: keep.map(id => this.memberVenueRankPrefs(id, plan.venueId ? [plan.venueId] : [])),
+      members: keep.map(id => this.venuePrefsOf(id, plan.venueId ? [plan.venueId] : []).prefs),
+      teenFriendAllowed: o.teenRuleAt !== undefined,
     }, now);
     const backup = backupPick.primary?.venue.id !== plan.venueId ? backupPick.primary?.venue : backupPick.backup?.venue;
     if (backup && backup.id !== plan.venueId) o.backupVenueId = backup.id;
@@ -9773,56 +9800,101 @@ export class ConsentNetwork implements NetworkUnderTest {
     return m.proactive.filter(t => localDateParts(t, tz).day === today).length;
   }
 
-  private venuePrefsForMember(id: MemberId): { nonDrinker?: boolean; maxBudgetTier?: VenuePriceTier } {
-    const rows = this.snapshotRows();
+  private venuePrefsOf(
+    id: MemberId,
+    extraVisited: readonly string[] = [],
+  ): { prefs: MemberVenuePrefs; hasRedLines: boolean; nonDrinker: boolean; explicitBudgetTier?: VenuePriceTier } {
     const m = this.members.get(id);
-    const tags = [
-      ...(rows.facets.get(id) ?? []).filter(f => f.scope !== "agent_private").flatMap(f => f.tags),
-      ...(m?.appTags ?? []).map(t => t.tag),
-    ].map(t => t.toLowerCase());
-    const nonDrinker = tags.some(t => t === "slop:drinking:never" || t === "non_drinker" || t === "sober" || t === "no_alcohol" || t === "alcohol:none");
-    let maxBudgetTier: VenuePriceTier | undefined;
-    for (const t of tags) {
-      const match = /^(?:budget|price_tier|venue_budget):([1-4])$/.exec(t);
-      if (match) {
-        const tier = Number(match[1]) as VenuePriceTier;
-        maxBudgetTier = maxBudgetTier === undefined ? tier : (Math.min(maxBudgetTier, tier) as VenuePriceTier);
+    const snapFacets = this.snapshotRows().facets.get(id) ?? [];
+    const allTags = new Set<string>();
+    for (const f of snapFacets) {
+      for (const t of f.tags) allTags.add(t.trim().toLowerCase());
+      const v = f.value.trim().toLowerCase();
+      if (v) allTags.add(v);
+    }
+    for (const t of m?.appTags ?? []) allTags.add(t.tag.trim().toLowerCase());
+    const hasTag = (needles: readonly string[]) => needles.some(n => {
+      if (allTags.has(n)) return true;
+      for (const t of allTags) if (t.endsWith(`:${n}`) || t === n) return true;
+      return false;
+    });
+    const strictSober = hasTag(["strict_sober", "sober", "no_alcohol", "alcohol_free", "alcohol_boundary"]);
+    const nonDrinker = strictSober || hasTag(["non_drinker", "nondrinker", "slop:drinking:never", "alcohol:none"]);
+    const vegetarian = hasTag(["vegetarian"]);
+    const vegan = hasTag(["vegan"]);
+    const halal = hasTag(["halal"]);
+    const kosher = hasTag(["kosher"]);
+    const glutenFree = hasTag(["gluten_free", "celiac"]);
+    const severeAllergen = hasTag(["severe_allergen", "nut_allergy", "peanut_allergy", "shellfish_allergy"]);
+    const wheelchairNeeded = hasTag(["wheelchair", "wheelchair_accessible"]);
+    const lowWalking = wheelchairNeeded || hasTag(["low_walking", "no_hiking"]);
+    const smokeFree = hasTag(["smoke_free", "non_smoker", "slop:dealbreaker:smoker"]);
+    const lowNoiseRequired = hasTag(["low_noise", "quiet_only", "hearing_accessible"]);
+    const daytimeOnly = hasTag(["daytime_only", "no_after_dark"]);
+    let explicitBudgetTier: VenuePriceTier | undefined;
+    const setBudget = (tier: VenuePriceTier) => {
+      explicitBudgetTier = explicitBudgetTier === undefined ? tier : (Math.min(explicitBudgetTier, tier) as VenuePriceTier);
+    };
+    for (const t of allTags) {
+      const numeric = /^(?:budget|price_tier|venue_budget|spend|hv:spend):([1-4])$/.exec(t);
+      if (numeric) {
+        setBudget(Number(numeric[1]) as VenuePriceTier);
+        continue;
+      }
+      const named = /^(?:hv:)?spend:(free|low|moderate|high|unconstrained)(?:tier)?$/.exec(t);
+      if (named) {
+        const level = named[1]!;
+        setBudget(level === "free" || level === "low" ? 1 : level === "moderate" ? 2 : level === "high" ? 3 : 4);
       }
     }
-    return { ...(nonDrinker ? { nonDrinker: true } : {}), ...(maxBudgetTier !== undefined ? { maxBudgetTier } : {}) };
+    const hobbies = [...new Set(snapFacets.filter(f => f.kind === "interest").flatMap(f => f.tags))];
+    const age = m
+      ? (m.minor || m.minorSignal || m.minorReported ? 13 : validAge(m.age) ? m.age : validAge(m.statedAge) ? m.statedAge : (this.adultMember(id) ? 25 : 16))
+      : (this.adultMember(id) ? 25 : 16);
+    const hasRedLines = strictSober || nonDrinker || vegetarian || vegan || halal || kosher || glutenFree || severeAllergen || wheelchairNeeded || lowWalking || smokeFree || lowNoiseRequired || daytimeOnly;
+    const visitedVenueIds = extraVisited.length
+      ? [...new Set([...this.venues.visitedBy(id), ...extraVisited])]
+      : this.venues.visitedBy(id);
+    const rejectedVenueIds = this.venues.rejectedBy(id);
+    return {
+      hasRedLines,
+      nonDrinker,
+      ...(explicitBudgetTier !== undefined ? { explicitBudgetTier } : {}),
+      prefs: {
+        memberId: id,
+        age,
+        drinksAlcohol: !nonDrinker && canBeMatched(age),
+        strictSober,
+        vegetarian,
+        vegan,
+        halal,
+        kosher,
+        glutenFree,
+        severeAllergen,
+        wheelchairNeeded,
+        lowWalking,
+        smokeFree,
+        lowNoiseRequired,
+        daytimeOnly,
+        maxBudgetTier: explicitBudgetTier ?? 4,
+        visitedVenueIds,
+        rejectedVenueIds,
+        hobbies,
+      },
+    };
   }
 
   private memberVenuePrefs(ids: readonly MemberId[]): { nonDrinker: boolean; maxBudgetTier?: VenuePriceTier } {
     let nonDrinker = false;
     let maxBudgetTier: VenuePriceTier | undefined;
     for (const id of ids) {
-      const p = this.venuePrefsForMember(id);
+      const p = this.venuePrefsOf(id);
       if (p.nonDrinker) nonDrinker = true;
-      if (p.maxBudgetTier !== undefined) {
-        maxBudgetTier = maxBudgetTier === undefined ? p.maxBudgetTier : (Math.min(maxBudgetTier, p.maxBudgetTier) as VenuePriceTier);
+      if (p.explicitBudgetTier !== undefined) {
+        maxBudgetTier = maxBudgetTier === undefined ? p.explicitBudgetTier : (Math.min(maxBudgetTier, p.explicitBudgetTier) as VenuePriceTier);
       }
     }
     return { nonDrinker, ...(maxBudgetTier !== undefined ? { maxBudgetTier } : {}) };
-  }
-
-  private memberVenueRankPrefs(id: MemberId, extraVisited: string[] = []): {
-    memberId: MemberId; age: number; drinksAlcohol: boolean; vegetarian: boolean; vegan: boolean;
-    wheelchairNeeded: boolean; maxBudgetTier: VenuePriceTier; visitedVenueIds: string[]; rejectedVenueIds: string[];
-  } {
-    const mp = this.venuePrefsForMember(id);
-    const m = this.members.get(id);
-    const age = (m ? this.youngestAgeOnRecord(m) : undefined) ?? (this.adultMember(id) ? 25 : 16);
-    return {
-      memberId: id,
-      age,
-      drinksAlcohol: !mp.nonDrinker && canBeMatched(age),
-      vegetarian: false,
-      vegan: false,
-      wheelchairNeeded: false,
-      maxBudgetTier: mp.maxBudgetTier ?? 4,
-      visitedVenueIds: extraVisited,
-      rejectedVenueIds: [],
-    };
   }
 
   private memberZone(id: MemberId): string {
@@ -10569,9 +10641,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       },
       fraud: this.fraud, fraudSeq: this.fraudSeq, exposureDebt: this.exposureDebt,
       ...(this.memberStanding.length ? { memberStanding: this.memberStanding } : {}),
-      relay: this.relayDesk.exportState(),
+      relay: this.relayDesk.exportState(false),
       venues: this.venues.exportState(),
-      meetups: this.meetups.exportState(),
+      meetups: this.meetups.exportState(false),
       ...(this.teenStop ? { teenStop: this.teenStop } : {}),
       ...(this.flagged.size ? { flagged: [...this.flagged] } : {}),
     };
@@ -10638,9 +10710,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.fraud = st.fraud ?? []; this.fraudSeq = st.fraudSeq ?? 0;
     this.exposureDebt = { ...(st.exposureDebt ?? {}) };
     this.memberStanding = Array.isArray(st.memberStanding) ? st.memberStanding : [];
-    this.relayDesk.importState(st.relay);
+    this.relayDesk.importState(st.relay, false);
     this.venues.importState(st.venues);
-    this.meetups.importState(st.meetups);
+    this.meetups.importState(st.meetups, false);
     this.flagged = new Map((st.flagged ?? []).filter(([key, flag]) => typeof key === "string" && typeof flag?.at === "number" && typeof flag.reason === "string"));
     this.teenStop = parseTeenStop(st);
     this.planWorldCache = undefined;
@@ -10685,6 +10757,8 @@ export class ConsentNetwork implements NetworkUnderTest {
         };
       },
       blocked: (a, b) => this.blocked(a, b),
+      panicTriggered: (meetupId, senderId, recipientId) =>
+        this.relayDesk.isPanicTriggered(senderId, meetupId) || this.relayDesk.isPanicTriggered(recipientId, meetupId),
       privateFacts: () => {
         const priv = this.snapshotCached().facets.filter(f => f.scope === "agent_private");
         return {
@@ -10858,6 +10932,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     return this.relayDesk.triggerPanicExit(memberId, matchId);
   }
 
+  private hasVenueRedLines(participantIds: readonly MemberId[]): boolean {
+    return participantIds.some(id => this.venuePrefsOf(id).hasRedLines);
+  }
+
   canRelayArrivalForMeetup(
     oppId: string,
     senderId: MemberId,
@@ -10904,7 +10982,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!opp || opp.meetingAt === undefined) return { shouldPivot: false, shouldQuarantine: false };
     const reportedClosed = Boolean(trigger.closed);
     const reportedFull = Boolean(trigger.full);
-    const pool = opts.venuePool ?? this.venueRuntimeCtx.venues ?? ALL_SEED_VENUES;
+    const pool = opts.venuePool ?? this.venueRuntimeCtx.venues ?? this.venues.listVenues();
     const backup = opp.backupVenueId ? pool.find(v => v.id === opp.backupVenueId) : undefined;
     const hasVerifiedBackup = Boolean(backup && backup.status === "active");
     const shouldPivot = evaluateBackupPivotV2(
@@ -10934,6 +11012,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (matching.length) return matching;
       return this.venueRuntimeCtx.venues;
     }
+    const live = this.venues.listVenues(city);
+    if (live.length) return live;
     return seedVenuesForCity(city);
   }
 
@@ -10947,59 +11027,16 @@ export class ConsentNetwork implements NetworkUnderTest {
     return pool.find(v => v.name.trim().toLowerCase() === nameKey);
   }
 
-  private memberVenuePrefsOf(id: MemberId, facetsByMember?: ReadonlyMap<MemberId, Facet[]>): { prefs: MemberVenuePrefs; hasRedLines: boolean } {
-    const m = this.member(id);
-    const snapFacets = (facetsByMember ?? this.snapshotRows().facets).get(id) ?? [];
-    const allTags = new Set<string>();
-    for (const f of snapFacets) {
-      for (const t of f.tags) allTags.add(t.trim().toLowerCase());
-      const v = f.value.trim().toLowerCase();
-      if (v) allTags.add(v);
-    }
-    const hasTag = (needles: readonly string[]) => needles.some(n => {
-      if (allTags.has(n)) return true;
-      for (const t of allTags) if (t.endsWith(`:${n}`) || t === n) return true;
-      return false;
-    });
-    const strictSober = hasTag(["strict_sober", "sober", "no_alcohol", "alcohol_free", "alcohol_boundary"]);
-    const nonDrinker = strictSober || hasTag(["non_drinker", "nondrinker", "slop:drinking:never"]);
-    const vegetarian = hasTag(["vegetarian"]);
-    const vegan = hasTag(["vegan"]);
-    const halal = hasTag(["halal"]);
-    const kosher = hasTag(["kosher"]);
-    const glutenFree = hasTag(["gluten_free", "celiac"]);
-    const severeAllergen = hasTag(["severe_allergen", "nut_allergy", "peanut_allergy", "shellfish_allergy"]);
-    const wheelchairNeeded = hasTag(["wheelchair", "wheelchair_accessible"]);
-    const lowWalking = wheelchairNeeded || hasTag(["low_walking", "no_hiking"]);
-    const smokeFree = hasTag(["smoke_free", "non_smoker", "slop:dealbreaker:smoker"]);
-    const lowNoiseRequired = hasTag(["low_noise", "quiet_only", "hearing_accessible"]);
-    const daytimeOnly = hasTag(["daytime_only", "no_after_dark"]);
-    const hobbies = [...new Set(snapFacets.filter(f => f.kind === "interest").flatMap(f => f.tags))];
-    const age = m.minor || m.minorSignal || m.minorReported ? 13 : validAge(m.age) ? m.age : validAge(m.statedAge) ? m.statedAge : 0;
+  private memberVenuePrefsOf(id: MemberId, _facetsByMember?: ReadonlyMap<MemberId, Facet[]>): { prefs: MemberVenuePrefs; hasRedLines: boolean } {
+    const base = this.venuePrefsOf(id);
     const history = this.venueRuntimeCtx.memberVenueHistory?.get(id);
-    const hasRedLines = strictSober || nonDrinker || vegetarian || vegan || halal || kosher || glutenFree || severeAllergen || wheelchairNeeded || lowWalking || smokeFree || lowNoiseRequired || daytimeOnly;
+    if (!history) return { prefs: base.prefs, hasRedLines: base.hasRedLines };
     return {
-      hasRedLines,
+      hasRedLines: base.hasRedLines,
       prefs: {
-        memberId: id,
-        age,
-        drinksAlcohol: !nonDrinker,
-        strictSober,
-        vegetarian,
-        vegan,
-        halal,
-        kosher,
-        glutenFree,
-        severeAllergen,
-        wheelchairNeeded,
-        lowWalking,
-        smokeFree,
-        lowNoiseRequired,
-        daytimeOnly,
-        maxBudgetTier: 2,
-        visitedVenueIds: history ? [...history.visited] : [],
-        rejectedVenueIds: history ? [...history.rejected] : [],
-        hobbies,
+        ...base.prefs,
+        visitedVenueIds: [...new Set([...base.prefs.visitedVenueIds, ...history.visited])],
+        rejectedVenueIds: [...new Set([...base.prefs.rejectedVenueIds, ...history.rejected])],
       },
     };
   }

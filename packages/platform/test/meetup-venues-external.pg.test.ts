@@ -155,7 +155,8 @@ describe.skipIf(!pgAvailable)("0098+0100 five-city venues, external events, matc
     if (url) await dropDb(url);
   });
 
-  test("0001..0100 migrates cleanly and idempotently; verifies city launch_status, 20 app-city networks, 10 personas (no throttled), and 75 bulk-seeded venues", async () => {
+  test("0001..0101 migrates cleanly and idempotently; verifies city launch_status, 20 app-city networks, 10 personas (no throttled), and 75 bulk-seeded venues", async () => {
+    // Re-running migrate on the same DB proves idempotency of 0098..0101.
     await migrate(url, { lockTimeout: "5s" });
 
     const cities = (await sql`

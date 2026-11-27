@@ -92,7 +92,7 @@ describe("Pass 2 marketing prompt fencing, phone_hash suppression & city density
     });
 
     const res = await manager.dispatchTurn(
-      chadwick!.id,
+      chadwick?.id ?? "",
       "Draft an FTC-compliant street-team outreach reply.",
       {
         campaignId: campaign.id,
@@ -109,7 +109,7 @@ describe("Pass 2 marketing prompt fencing, phone_hash suppression & city density
 
     expect(res.ok).toBe(true);
     expect(receivedPrompts.length).toBe(1);
-    const sentPrompt = receivedPrompts[0]!;
+    const sentPrompt = receivedPrompts[0] ?? "";
     expect(sentPrompt).toContain(UNTRUSTED_NOTE);
     expect(sentPrompt).toContain("<<<UNTRUSTED contact_label ");
     expect(sentPrompt).toContain("<<<UNTRUSTED contact_message ");
@@ -138,7 +138,7 @@ describe("Pass 2 marketing prompt fencing, phone_hash suppression & city density
     const tick = await manager.runAutopilotTick(campaign.id);
     expect(tick.skipped).toBe(false);
     expect(receivedPrompts.length).toBeGreaterThanOrEqual(2);
-    const taskPrompt = receivedPrompts[1]!;
+    const taskPrompt = receivedPrompts[1] ?? "";
     expect(taskPrompt).toContain(UNTRUSTED_NOTE);
     expect(taskPrompt).toContain("<<<UNTRUSTED task_title ");
     expect(taskPrompt).not.toContain("owner@venue.io");
@@ -157,7 +157,7 @@ describe("Pass 2 marketing prompt fencing, phone_hash suppression & city density
         }),
     });
     const leakBlocked = await leakyManager.dispatchTurn(
-      chadwick!.id,
+      chadwick?.id ?? "",
       "Draft reply",
       { campaignId: campaign.id },
     );
@@ -206,7 +206,7 @@ describe("Pass 2 marketing prompt fencing, phone_hash suppression & city density
 
     const blockedMsg = await store.createOutreachMessage({
       campaignId: campaign.id,
-      agentId: chadwick!.id,
+      agentId: chadwick?.id ?? "",
       humanId: human.id,
       channel: "sms_opted_in",
       tier: 1,
@@ -216,7 +216,7 @@ describe("Pass 2 marketing prompt fencing, phone_hash suppression & city density
     });
     expect(blockedMsg.status).toBe("blocked_stop");
 
-    const blockedTurn = await manager.dispatchTurn(chadwick!.id, "Draft follow-up", {
+    const blockedTurn = await manager.dispatchTurn(chadwick?.id ?? "", "Draft follow-up", {
       campaignId: campaign.id,
       targetContact: { id: human.id },
     });
