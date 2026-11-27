@@ -110,6 +110,28 @@ export function travelPresenceCommand(text: string, now?: number): TravelCommand
   return natural ? { city, dates: natural } : { city };
 }
 
+const CITY_RX = "(new york city|new york|nyc|san francisco|bay area|sf|los angeles|la|chicago|chi|miami|mia)";
+const CANCELLED_RX = "(?:cancelled|canceled)";
+
+/** A direct first-person cancellation of the member's own trip to a named city. */
+export function travelCancellationCommand(text: string): { city: City } | undefined {
+  const line = text.trim().replace(/[.!]$/, "").replace(/[^\S\n]+/g, " ");
+  const match = new RegExp(
+    `^(?:my trip to ${CITY_RX} (?:is|was|has been) ${CANCELLED_RX}`
+    + `|my ${CITY_RX} trip (?:is|was|has been) ${CANCELLED_RX}`
+    + `|i ${CANCELLED_RX} my trip to ${CITY_RX}`
+    + `|i ${CANCELLED_RX} my ${CITY_RX} trip`
+    + `|(?:please )?cancel my trip to ${CITY_RX}`
+    + `|(?:please )?cancel my ${CITY_RX} trip)$`,
+    "i",
+  ).exec(line);
+  if (!match) return;
+  const named = match.slice(1).find(part => part !== undefined)!.toLowerCase();
+  const resolved = homeCityOf(named) ?? resolveCity(named);
+  const city: City | undefined = isCity(resolved) ? resolved : undefined;
+  return city ? { city } : undefined;
+}
+
 /** Same canonical and app-local guard on the write and on any later reply replay. */
 export async function travelOwner(tx: SQL, accounts: Pick<Accounts, "activeMembership">, owner: MemberCommandOwner): Promise<boolean> {
   const binding = await memberCommandOwner(tx, accounts, owner);
@@ -143,4 +165,18 @@ export async function saveTravelPresence(tx: SQL, accounts: Pick<Accounts, "acti
     case "TravelAlreadySaved": break;
   }
   return `${decision === "TravelSave" ? "Saved" : "Already saved"} in ${app.domain}: ${name} from ${dates!.from} until ${dates!.to} (end date excluded).`;
+}
+
+/** Removes the owner's current or future trips to the named city in the routed app. */
+export async function cancelTravelPresence(tx: SQL, accounts: Pick<Accounts, "activeMembership">, owner: MemberCommandOwner, city: City, now: number): Promise<string | undefined> {
+  const authorized = await travelOwner(tx, accounts, owner);
+  if (!authorized) return;
+  const { app, memberId } = owner;
+  const removed = await tx`delete from network.presence
+    where app_id=${app.id} and member_id=${memberId} and type='temporary' and city=${city} and to_at > ${new Date(now)}
+    returning city`;
+  const name = CITY_NAME[city];
+  return removed.length
+    ? `Removed in ${app.domain}: ${name} trip.`
+    : `No saved ${name} trip in ${app.domain}.`;
 }
