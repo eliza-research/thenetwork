@@ -287,24 +287,65 @@ function makeCoord(
 }
 
 interface WorldVectorCache {
-  byMember: Map<MemberId, HumanVector | null>;
-  adultsOnly: Map<MemberId, HumanVector>;
+  readonly w: World;
+  readonly adultMin: number;
+  readonly isSlop: boolean;
+  readonly isPeon: boolean;
+  readonly allFacetsBy: Map<MemberId, Facet[]>;
+  readonly fbStats: Map<MemberId, { pos: number; neg: number; explicitNeg: number; total: number }>;
+  readonly attStats: Map<MemberId, { completed: number; noShow: number; resolved: number }>;
+  readonly brokerage: Map<MemberId, number>;
+  readonly vouchQuality: Map<MemberId, number>;
+  readonly byMember: Map<MemberId, HumanVector | null>;
+  adultsOnly?: Map<MemberId, HumanVector>;
 }
 
 const worldCache = new WeakMap<World, WorldVectorCache>();
 
+function getOrCompileMember(cache: WorldVectorCache, id: MemberId): HumanVector | null {
+  if (cache.byMember.has(id)) return cache.byMember.get(id) ?? null;
+  const mi = cache.w.get(id);
+  if (!mi || cache.w.minors.has(id) || !vectorEligible(mi.m.age, cache.adultMin)) {
+    cache.byMember.set(id, null);
+    return null;
+  }
+  const vec = compileAdultVector(
+    cache.w,
+    mi,
+    cache.allFacetsBy.get(id) ?? [],
+    cache.fbStats.get(id),
+    cache.attStats.get(id),
+    cache.brokerage.get(id) ?? 0.2,
+    cache.vouchQuality.get(id) ?? 0.35,
+    cache.adultMin,
+    cache.isSlop,
+    cache.isPeon,
+  );
+  cache.byMember.set(id, vec);
+  return vec;
+}
+
 export function humanVectorOf(w: World, id: MemberId): HumanVector | null {
-  return ensureWorldVectors(w).byMember.get(id) ?? null;
+  return getOrCompileMember(ensureWorldVectors(w), id);
 }
 
 export function humanVectorsForWorld(w: World): ReadonlyMap<MemberId, HumanVector> {
-  return ensureWorldVectors(w).adultsOnly;
+  const cache = ensureWorldVectors(w);
+  if (!cache.adultsOnly) {
+    const adultsOnly = new Map<MemberId, HumanVector>();
+    for (const id of w.ids) {
+      const vec = getOrCompileMember(cache, id);
+      if (vec) adultsOnly.set(id, vec);
+    }
+    cache.adultsOnly = adultsOnly;
+  }
+  return cache.adultsOnly;
 }
 
 function ensureWorldVectors(w: World): WorldVectorCache {
   let cached = worldCache.get(w);
   if (cached) return cached;
-  cached = buildWorldVectors(w);
+  cached = buildWorldVectorCache(w);
   worldCache.set(w, cached);
   return cached;
 }
@@ -348,6 +389,8 @@ function computeSocialGraphSignals(w: World, adultMin: number): {
 } {
   const brokerage = new Map<MemberId, number>();
   const vouchQuality = new Map<MemberId, number>();
+  if (w.positive.size === 0) return { brokerage, vouchQuality };
+  const worldBrokerage = w.brokerage;
 
   for (const id of w.ids) {
     const mi = w.get(id);
@@ -361,28 +404,7 @@ function computeSocialGraphSignals(w: World, adultMin: number): {
     if (nbrs.size === 1) {
       brokerage.set(id, 0.25);
     } else {
-      let totalW = 0;
-      for (const s of nbrs.values()) totalW += s;
-      const denom = totalW > 0 ? totalW : 1;
-      let constraint = 0;
-      for (const [j, wIj] of nbrs) {
-        const pIj = wIj / denom;
-        let indirect = 0;
-        const jNbrs = w.positive.get(j);
-        if (jNbrs) {
-          let jTotal = 0;
-          for (const s of jNbrs.values()) jTotal += s;
-          const jDenom = jTotal > 0 ? jTotal : 1;
-          for (const [q, wIq] of nbrs) {
-            if (q === j) continue;
-            const wQj = jNbrs.get(q);
-            if (wQj !== undefined) indirect += (wIq / denom) * (wQj / jDenom);
-          }
-        }
-        const dyad = pIj + indirect;
-        constraint += dyad * dyad;
-      }
-      brokerage.set(id, clamp01(1 - constraint));
+      brokerage.set(id, clamp01(worldBrokerage.get(id) ?? 0));
     }
     let vouchSeed = Math.min(0.75, 0.35 + 0.08 * nbrs.size);
     for (const j of nbrs.keys()) {
@@ -413,7 +435,7 @@ function computeSocialGraphSignals(w: World, adultMin: number): {
   return { brokerage, vouchQuality };
 }
 
-function buildWorldVectors(w: World): WorldVectorCache {
+function buildWorldVectorCache(w: World): WorldVectorCache {
   const now = w.now;
   const adultMin = Math.max(ADULT_AGE, w.pack.eligibility.minMatchAge);
   const isSlop = w.pack.id === "slop";
@@ -425,8 +447,9 @@ function buildWorldVectors(w: World): WorldVectorCache {
     if (f.validFrom !== undefined && f.validFrom > now) continue;
     if (isPeon && f.tags.some(t => t.startsWith(PEON_TAG.proxy))) continue;
     const id = w.canonical(f.memberId);
-    if (!allFacetsBy.has(id)) allFacetsBy.set(id, []);
-    allFacetsBy.get(id)!.push(f);
+    let list = allFacetsBy.get(id);
+    if (!list) { list = []; allFacetsBy.set(id, list); }
+    list.push(f);
   }
 
   const fbStats = new Map<MemberId, { pos: number; neg: number; explicitNeg: number; total: number }>();
@@ -461,35 +484,59 @@ function buildWorldVectors(w: World): WorldVectorCache {
   }
 
   const { brokerage, vouchQuality } = computeSocialGraphSignals(w, adultMin);
-  const byMember = new Map<MemberId, HumanVector | null>();
-  const adultsOnly = new Map<MemberId, HumanVector>();
-
-  for (const id of w.ids) {
-    const mi = w.get(id);
-    if (!mi || w.minors.has(id) || !vectorEligible(mi.m.age, adultMin)) {
-      byMember.set(id, null);
-      continue;
-    }
-    const rawFacets = allFacetsBy.get(id) ?? [];
-    const vec = compileAdultVector(
-      w,
-      mi,
-      rawFacets,
-      fbStats.get(id),
-      attStats.get(id),
-      brokerage.get(id) ?? 0.2,
-      vouchQuality.get(id) ?? 0.35,
-      adultMin,
-      isSlop,
-      isPeon,
-    );
-    byMember.set(id, vec);
-    adultsOnly.set(id, vec);
-  }
-
-  return { byMember, adultsOnly };
+  return {
+    w,
+    adultMin,
+    isSlop,
+    isPeon,
+    allFacetsBy,
+    fbStats,
+    attStats,
+    brokerage,
+    vouchQuality,
+    byMember: new Map(),
+  };
 }
 
+const LANG_HINT_RE = /\b(native|fluent|mother tongue|learn|practic|study)/i;
+const POSITIVE_TAG_PREFIXES = [
+  "hv:",
+  "spend:",
+  "stage:",
+  "transition:",
+  "humor:",
+  "guild:",
+  "lang_native:",
+  "lang_learn:",
+  "rung:",
+  "econ_tier:",
+] as const;
+
+export function memberMayHavePositiveVectorBonus(w: World, id: MemberId, includeLanguages: boolean): boolean {
+  const cache = ensureWorldVectors(w);
+  const mi = w.get(id);
+  if (!mi || w.minors.has(id) || !vectorEligible(mi.m.age, cache.adultMin)) return false;
+  const facets = cache.allFacetsBy.get(id) ?? [];
+  for (let i = 0; i < facets.length; i++) {
+    const f = facets[i]!;
+    const tags = f.tags;
+    for (let j = 0; j < tags.length; j++) {
+      const t = tags[j]!.trim().toLowerCase();
+      for (let k = 0; k < POSITIVE_TAG_PREFIXES.length; k++) {
+        if (t.startsWith(POSITIVE_TAG_PREFIXES[k]!)) return true;
+      }
+      if (includeLanguages && t.endsWith("_native") && t.length > 7) return true;
+    }
+    if (includeLanguages && LANG_HINT_RE.test(f.value)) return true;
+  }
+  if (includeLanguages) {
+    for (let i = 0; i < mi.intents.length; i++) {
+      const it = mi.intents[i]!;
+      if (LANG_HINT_RE.test(it.objective) || (it.details && LANG_HINT_RE.test(it.details))) return true;
+    }
+  }
+  return false;
+}
 const LANGUAGE_PATTERNS = LANGUAGE_CODES.map(lang => ({
   lang,
   nativeRx: new RegExp(`\\b(native|fluent)\\s+${lang}\\b|\\b${lang}\\s+(native|mother tongue)\\b`),
@@ -497,6 +544,7 @@ const LANGUAGE_PATTERNS = LANGUAGE_CODES.map(lang => ({
 }));
 
 function inferLanguagesFromText(text: string): { native: string[]; learning: string[] } {
+  if (!LANG_HINT_RE.test(text)) return { native: [], learning: [] };
   const low = text.toLowerCase();
   const native: string[] = [];
   const learning: string[] = [];
@@ -638,11 +686,20 @@ function compileAdultVector(
   const homeArea = homePresence?.areas[0] ?? "core";
   const maxTravel = mi.m.prefs.maxTravelMinutes;
 
+  let cachedTasteEmb: number[] | undefined;
+  let cachedValueEmb: number[] | undefined;
+  let cachedStyleEmb: number[] | undefined;
   const horizontal: HorizontalProfile = {
     embeddings: {
-      interestsAndTaste: embOf(tasteFacets, mi.desireEmb),
-      worldviewAndValues: embOf(valueFacets, mi.profileEmb),
-      conversationalStyle: embOf(styleFacets, mi.profileEmb),
+      get interestsAndTaste() {
+        return cachedTasteEmb ??= embOf(tasteFacets, mi.desireEmb);
+      },
+      get worldviewAndValues() {
+        return cachedValueEmb ??= embOf(valueFacets, mi.profileEmb);
+      },
+      get conversationalStyle() {
+        return cachedStyleEmb ??= embOf(styleFacets, mi.profileEmb);
+      },
     },
     lifeStage,
     activeTransitions: transitions,

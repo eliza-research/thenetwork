@@ -4,12 +4,13 @@ import { cofounderIntentObjective } from "../../../../core/src/generated/cofound
 import { laneLimits, laneWeights, type LaneSide, type MatchLane } from "../../../../core/src/generated/matchLane.ts";
 import { standingEvidencePoints, standingFacetReadable, standingFromEvidence, standingUncertainty, type StandingEvidence } from "../../../../core/src/generated/memberStanding.ts";
 import { networkIntentRoute, type NetworkIntentRoute } from "../../../../core/src/generated/networkIntentLane.ts";
-import { coverageValue, directedUtility, pairValueScale } from "../../../../core/src/generated/pairValue.ts";
+import { pairValueScale } from "../../../../core/src/generated/pairValue.ts";
 import { standingIntentLive } from "../../../../core/src/standing-intent.ts";
 import { isMinor } from "../../filters.ts";
 import {
   discretionGateOk,
   humanVectorOf,
+  memberMayHavePositiveVectorBonus,
   spendTierCompatible,
   spendTierRank,
   stepAheadDeltaOk,
@@ -388,10 +389,10 @@ function intersectCount(a: TagSet, b: TagSet): number {
 
 function baseDirectedUtility(a: MatchProfile, b: MatchProfile): number {
   const weights = laneWeights(a.lane);
-  return directedUtility([
-    { weight: weights.complement, value: coverageValue(intersectCount(a.seeks, b.offers), a.seeks.length) },
-    { weight: weights.affinity, value: coverageValue(intersectCount(a.interests, b.interests), a.interests.length) },
-  ]);
+  const comp = a.seeks.length > 0 ? Math.floor((pairValueScale * intersectCount(a.seeks, b.offers)) / a.seeks.length) : 0;
+  const aff = a.interests.length > 0 ? Math.floor((pairValueScale * intersectCount(a.interests, b.interests)) / a.interests.length) : 0;
+  const wSum = weights.complement + weights.affinity;
+  return wSum > 0 ? Math.floor((weights.complement * comp + weights.affinity * aff) / wSum) : 0;
 }
 
 function packValue(w: World, a: MatchProfile, b: MatchProfile): number {
@@ -479,4 +480,58 @@ function packValue(w: World, a: MatchProfile, b: MatchProfile): number {
   return clampScale(base + delta);
 }
 
-export const networkVectors: PackVectors = { memberships, tags, standing, packValue };
+function networkPackBound(w: World, a: MatchProfile, b: MatchProfile): number {
+  const base = baseDirectedUtility(a, b);
+  if ((a.packClass ?? 0) === 0 && (b.packClass ?? 0) === 0) return base;
+  if (isMinor(w, a.memberId) || isMinor(w, b.memberId)) return base;
+  const va = humanVectorOf(w, a.memberId);
+  const vb = humanVectorOf(w, b.memberId);
+  if (!va || !vb) return base;
+  const ea = va.explicitSignals;
+  const eb = vb.explicitSignals;
+  let bonus = 0;
+  if (a.lane === "Mentor" && (ea.domainRungs || eb.domainRungs)) bonus += 320;
+  if (ea.spendTier || eb.spendTier) bonus += 240;
+  if (ea.lifeStage && eb.lifeStage) bonus += 110;
+  if (ea.depth && eb.depth) bonus += 120;
+  if (ea.humor && eb.humor) bonus += 100;
+  if (ea.transitions && eb.transitions) bonus += 120;
+  if (ea.languages && eb.languages) bonus += 280;
+  return bonus === 0 ? base : clampScale(base + bonus);
+}
+
+function networkPackClass(w: World, entity: MatchEntity): number {
+  return memberMayHavePositiveVectorBonus(w, entity.memberId, true) ? 1 : 0;
+}
+
+function networkPackClassCap(w: World, a: MatchProfile, partnerClass: number, untouched: boolean): number {
+  if (!untouched) return pairValueScale;
+  if ((a.packClass ?? 0) === 0 && partnerClass === 0) return 0;
+  if (isMinor(w, a.memberId)) return 0;
+  const va = humanVectorOf(w, a.memberId);
+  if (!va) return 0;
+  const ea = va.explicitSignals;
+  if (partnerClass === 0) {
+    let bonus = 0;
+    if (a.lane === "Mentor" && ea.domainRungs) bonus += 320;
+    if (ea.spendTier) bonus += 240;
+    return clampScale(bonus);
+  }
+  let bonus = 240;
+  if (a.lane === "Mentor") bonus += 320;
+  if (ea.lifeStage) bonus += 110;
+  if (ea.depth) bonus += 120;
+  if (ea.humor) bonus += 100;
+  if (ea.transitions) bonus += 120;
+  if (ea.languages) bonus += 280;
+  return clampScale(bonus);
+}
+
+export const networkVectors: PackVectors = {
+  memberships,
+  tags,
+  standing,
+  packValue,
+  packBound: networkPackBound,
+  packClasses: { of: networkPackClass, cap: networkPackClassCap },
+};

@@ -1,5 +1,6 @@
 import type { AppId, Facet, MemberId } from "@thenetwork/core";
 import { ADULT_AGE, canBeMatched } from "@thenetwork/core";
+import { humanVectorOf, peonCapitalAllowed } from "./humanVector.ts";
 import { APPEARANCE_PREFIX, canRatePhotos, parseAppearance } from "./packs/slop/appearance.ts";
 import { provenanceWeight, type World } from "./world.ts";
 
@@ -439,7 +440,9 @@ export function worldStatusBeliefs(w: World): ReadonlyMap<MemberId, StatusBelief
 
   const adultSet = new Set<MemberId>(adults);
   const isSlop = w.pack.id === "slop";
+  const isPeon = w.pack.id === "peon";
   const physGate = physDimensionWeight(isSlop, 1.0);
+  const brokerageMap = isPeon ? undefined : w.brokerage;
 
   const allFacetsBy = new Map<MemberId, Facet[]>();
   if (physGate > 0) {
@@ -543,18 +546,39 @@ export function worldStatusBeliefs(w: World): ReadonlyMap<MemberId, StatusBelief
       physSig.set(id, 1.0);
     }
 
-    const econScore = facetSignal(mi.caps, ECON_RE) + 0.5 * facetSignal(mi.match, ECON_RE) + 0.2 * mi.caps.length;
-    const cultScore = facetSignal(mi.caps, CULT_RE) + 0.6 * facetSignal(mi.match, CULT_RE) + 0.15 * mi.match.reduce((s, f) => s + provenanceWeight(f), 0);
+    const vec = humanVectorOf(w, id);
+    let topVerifiedRung = 0;
+    if (vec && peonCapitalAllowed("domain_craft")) {
+      for (const coord of Object.values(vec.capital.domainRungs)) {
+        const weighted = coord.value * coord.confidence;
+        if (weighted > topVerifiedRung) topVerifiedRung = weighted;
+      }
+    }
+    const econPrior = !isPeon && vec && vec.explicitSignals.spendTier
+      ? 0.9 * (vec.capital.economic.value - 0.5) * vec.capital.economic.confidence
+      : 0;
+    const econScore = facetSignal(mi.caps, ECON_RE) + 0.5 * facetSignal(mi.match, ECON_RE) + 0.2 * mi.caps.length + econPrior;
+    const cultScore = facetSignal(mi.caps, CULT_RE) + 0.6 * facetSignal(mi.match, CULT_RE)
+      + 0.15 * mi.match.reduce((s, f) => s + provenanceWeight(f), 0) + 0.20 * topVerifiedRung;
     const vouchedCount = mi.match.filter(f => f.provenance === "vouched").length;
     const rel = w.reliability[id];
     const noShows = rel?.noShows ?? 0;
     const completed = rel?.completedSinceLastNoShow ?? 0;
+    const extractPen = vec && vec.behavioral.extractionRiskScore > 0.25
+      ? 2.4 * (vec.behavioral.extractionRiskScore - 0.25)
+      : 0;
+    const discretionPen = !isPeon && vec && vec.explicitSignals.hypeOrExtraction && vec.behavioral.discretionVouchScore < 0.45
+      ? 0.8 * (0.45 - vec.behavioral.discretionVouchScore)
+      : 0;
     const warmScore = 0.8 * (posFbCount.get(id) ?? 0) - 1.4 * (negFbCount.get(id) ?? 0) + 0.4 * completed - 1.5 * noShows
-      + (mi.isHost ? 0.35 : 0) - (w.holds.has(id) ? 2.5 : 0);
-    const socScore = 0.55 * (eigenZ.get(id) ?? 0) + 0.45 * (springZ.get(id) ?? 0) + 0.12 * Math.log1p(mi.degree);
+      + (mi.isHost ? 0.35 : 0) - (w.holds.has(id) ? 2.5 : 0) - extractPen - discretionPen;
+    const brokPrior = !isPeon ? 0.25 * (brokerageMap?.get(id) ?? 0) : 0;
+    const vouchPrior = !isPeon && vec ? 0.30 * (vec.capital.social.vouchQuality.value - 0.35) : 0;
+    const socScore = 0.55 * (eigenZ.get(id) ?? 0) + 0.45 * (springZ.get(id) ?? 0) + 0.12 * Math.log1p(mi.degree) + brokPrior + vouchPrior;
     const invId = mi.m.invitedBy ? w.canonical(mi.m.invitedBy) : undefined;
     const invLift = invId && adultSet.has(invId) ? 0.35 * Math.max(0, eigenZ.get(invId) ?? 0) : 0;
-    const potScore = facetSignal(mi.match, POT_RE) + 0.45 * vouchedCount + invLift + 0.2 * Math.min(4, mi.caps.length);
+    const potScore = facetSignal(mi.match, POT_RE) + 0.45 * vouchedCount + invLift + 0.2 * Math.min(4, mi.caps.length)
+      + 0.15 * topVerifiedRung + (!isPeon && vec ? 0.25 * (vec.capital.social.vouchQuality.value - 0.35) : 0);
 
     econRaw.set(id, econScore);
     cultRaw.set(id, cultScore);

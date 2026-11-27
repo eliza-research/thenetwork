@@ -2,9 +2,9 @@ import type { MemberId } from "@thenetwork/core";
 import { laneLimits, laneWeights } from "../../../../core/src/generated/matchLane.ts";
 import { friendAdmits, friendOpennessUnanswered, type FriendStatement, type StatedGender } from "../../../../core/src/generated/mutualOpenness.ts";
 import { standingMiddle } from "../../../../core/src/generated/memberStanding.ts";
-import { closenessValue, coverageValue, directedUtility, pairValueScale } from "../../../../core/src/generated/pairValue.ts";
+import { directedUtility, pairValueScale } from "../../../../core/src/generated/pairValue.ts";
 import { isMinor, memberReason } from "../../filters.ts";
-import { discretionGateOk, humanVectorOf, spendTierCompatible, spendTierRank } from "../../humanVector.ts";
+import { discretionGateOk, humanVectorOf, memberMayHavePositiveVectorBonus, spendTierCompatible, spendTierRank } from "../../humanVector.ts";
 import type { EntitySegment, MatchEntity, MatchProfile, PackVectors, TagSet } from "../../match/profile.ts";
 import type { World } from "../../world.ts";
 import { ACTIVITIES } from "../network/activities.ts";
@@ -57,8 +57,6 @@ function friendsSegment(w: World, home: Neighborhood, tolerance: number, friend:
   return segment;
 }
 
-const FRIEND_TRAIT_COSTS: readonly number[] = [50, 50, 1, 250];
-
 function intersectCount(a: TagSet, b: TagSet): number {
   let i = 0, j = 0, count = 0;
   while (i < a.length && j < b.length) {
@@ -69,17 +67,19 @@ function intersectCount(a: TagSet, b: TagSet): number {
 }
 
 function baseFriendUtility(a: MatchProfile, b: MatchProfile): number {
-  const weights = laneWeights("Friend");
-  let closenessTotal = 0;
-  for (let d = 0; d < FRIEND_TRAIT_COSTS.length; d++) {
-    closenessTotal += closenessValue(a.traits[d]! - b.traits[d]!, FRIEND_TRAIT_COSTS[d]!);
-  }
-  const closeness = Math.floor(closenessTotal / FRIEND_TRAIT_COSTS.length);
-  return directedUtility([
-    { weight: weights.complement, value: coverageValue(intersectCount(a.seeks, b.offers), a.seeks.length) },
-    { weight: weights.affinity, value: coverageValue(intersectCount(a.interests, b.interests), a.interests.length) },
-    { weight: weights.closeness, value: closeness },
-  ]);
+  const ta = a.traits, tb = b.traits;
+  const d0 = Math.abs(ta[0]! - tb[0]!) * 50;
+  const d1 = Math.abs(ta[1]! - tb[1]!) * 50;
+  const d2 = Math.abs(ta[2]! - tb[2]!);
+  const d3 = Math.abs(ta[3]! - tb[3]!) * 250;
+  const c0 = d0 < pairValueScale ? pairValueScale - d0 : 0;
+  const c1 = d1 < pairValueScale ? pairValueScale - d1 : 0;
+  const c2 = d2 < pairValueScale ? pairValueScale - d2 : 0;
+  const c3 = d3 < pairValueScale ? pairValueScale - d3 : 0;
+  const closeness = (c0 + c1 + c2 + c3) >> 2;
+  const comp = a.seeks.length > 0 ? Math.floor((pairValueScale * intersectCount(a.seeks, b.offers)) / a.seeks.length) : 0;
+  const aff = a.interests.length > 0 ? Math.floor((pairValueScale * intersectCount(a.interests, b.interests)) / a.interests.length) : 0;
+  return Math.floor((comp + 6 * aff + 2 * closeness) / 9);
 }
 
 function friendsPackValue(w: World, a: MatchProfile, b: MatchProfile): number {
@@ -137,6 +137,54 @@ function friendsPackValue(w: World, a: MatchProfile, b: MatchProfile): number {
   return Math.max(0, Math.min(pairValueScale, Math.round(base + delta)));
 }
 
+const FRIEND_UNTOUCHED_BASE_CAP = directedUtility([
+  { weight: laneWeights("Friend").complement, value: 0 },
+  { weight: laneWeights("Friend").affinity, value: 0 },
+  { weight: laneWeights("Friend").closeness, value: pairValueScale },
+]);
+
+function friendsPackBound(w: World, a: MatchProfile, b: MatchProfile): number {
+  const base = baseFriendUtility(a, b);
+  if ((a.packClass ?? 0) === 0 && (b.packClass ?? 0) === 0) return base;
+  if (isMinor(w, a.memberId) || isMinor(w, b.memberId)) return base;
+  const va = humanVectorOf(w, a.memberId);
+  const vb = humanVectorOf(w, b.memberId);
+  if (!va || !vb) return base;
+  const ea = va.explicitSignals;
+  const eb = vb.explicitSignals;
+  let bonus = 0;
+  if (ea.spendTier || eb.spendTier) bonus += 240;
+  if (ea.lifeStage && eb.lifeStage) bonus += 110;
+  if (ea.depth && eb.depth) bonus += 100;
+  if (ea.humor && eb.humor) bonus += 100;
+  if (ea.transitions && eb.transitions) bonus += 100;
+  if (ea.guilds && eb.guilds) bonus += 140;
+  return bonus === 0 ? base : Math.min(pairValueScale, base + bonus);
+}
+
+function friendsPackClass(w: World, entity: MatchEntity): number {
+  return memberMayHavePositiveVectorBonus(w, entity.memberId, false) ? 1 : 0;
+}
+
+function friendsPackClassCap(w: World, a: MatchProfile, partnerClass: number, untouched: boolean): number {
+  if (!untouched) return pairValueScale;
+  if ((a.packClass ?? 0) === 0 && partnerClass === 0) return FRIEND_UNTOUCHED_BASE_CAP;
+  if (isMinor(w, a.memberId)) return FRIEND_UNTOUCHED_BASE_CAP;
+  const va = humanVectorOf(w, a.memberId);
+  if (!va) return FRIEND_UNTOUCHED_BASE_CAP;
+  const ea = va.explicitSignals;
+  if (partnerClass === 0) {
+    return Math.min(pairValueScale, FRIEND_UNTOUCHED_BASE_CAP + (ea.spendTier ? 240 : 0));
+  }
+  let bonus = 240;
+  if (ea.lifeStage) bonus += 110;
+  if (ea.depth) bonus += 100;
+  if (ea.humor) bonus += 100;
+  if (ea.transitions) bonus += 100;
+  if (ea.guilds) bonus += 140;
+  return Math.min(pairValueScale, FRIEND_UNTOUCHED_BASE_CAP + bonus);
+}
+
 export const friendsVectors: PackVectors = {
   memberships(w, memberId) {
     const mi = w.get(memberId);
@@ -172,4 +220,6 @@ export const friendsVectors: PackVectors = {
     },
   },
   packValue: friendsPackValue,
+  packBound: friendsPackBound,
+  packClasses: { of: friendsPackClass, cap: friendsPackClassCap },
 };
