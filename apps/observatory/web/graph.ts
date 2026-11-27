@@ -101,6 +101,7 @@ export class GraphView {
   private pulses: Pulse[] = [];
   private raf = 0;
   private lastBorough = "all";
+  private lastCity = store.selectedCity;
   private lastFocus = "";
   private ro: ResizeObserver;
   onHover?: (id: string | null, x: number, y: number) => void;
@@ -260,7 +261,11 @@ export class GraphView {
     this.raf = requestAnimationFrame(this.frame);
     this.syncGraph();
     this.fs = store.focusSet();
-    if (store.ui.filters.borough !== this.lastBorough) { this.lastBorough = store.ui.filters.borough; this.fit(); }
+    const cityChanged = store.selectedCity !== this.lastCity;
+    const zoneChanged = store.ui.filters.borough !== this.lastBorough;
+    this.lastCity = store.selectedCity;
+    this.lastBorough = store.ui.filters.borough;
+    if (cityChanged ? !store.ui.focus : zoneChanged) this.fit();
     const fk = store.ui.focus ? `${store.ui.focus.kind}:${store.ui.focus.id}` : "";
     if (fk !== this.lastFocus) {
       this.lastFocus = fk;

@@ -71,3 +71,58 @@ test.each(["pointercancel", "lostpointercapture"])("GraphView stops panning on %
     restoreDom();
   }
 });
+
+test("city changes fit the unselected graph without overriding a manual view or a member focus", async () => {
+  const window = new Window({ url: "http://127.0.0.1/" });
+  let nextFrame: FrameRequestCallback = () => {};
+  const restore = installDom(window, {
+    window, document: window.document, localStorage: window.localStorage,
+    requestAnimationFrame: (frame: FrameRequestCallback) => { nextFrame = frame; return 1; },
+    cancelAnimationFrame: () => {},
+    ResizeObserver: class { observe() {} disconnect() {} },
+  });
+  installCanvasShim(window);
+  const el = window.document.createElement("canvas");
+  window.document.body.append(el);
+  const canvas = el as unknown as HTMLCanvasElement;
+  canvas.getBoundingClientRect = () => ({ width: 600, height: 400, top: 0, left: 0, right: 600, bottom: 400, x: 0, y: 0, toJSON: () => ({}) });
+  const { GraphView } = await import("../web/graph.ts");
+  const { store } = await import("../web/store.ts");
+  const oldState = { selectedCity: store.selectedCity, members: store.members, ui: store.ui, graphTick: store.graphTick };
+  const counters = { msgsIn: 0, msgsOut: 0, proactive: 0, proposals: 0, accepted: 0, meetings: 0, enjoymentSum: 0, enjoymentN: 0 };
+  store.members = new Map([
+    ["ny", { id: "ny", name: "NY fixture", city: "nyc", area: "West Village", joined: true, state: "normal", minor: false, counters }],
+    ["sf", { id: "sf", name: "SF fixture", city: "sf", area: "Dogpatch", joined: true, state: "normal", minor: false, counters }],
+  ]);
+  store.setCity("nyc");
+  const graph = new GraphView(canvas);
+  const fit = vi.spyOn(graph, "fit");
+  const frame = () => nextFrame(1000);
+  const zoom = () => canvas.dispatchEvent(Object.assign(new window.Event("wheel"), { deltaY: -1200, offsetX: 300, offsetY: 200 }) as unknown as Event);
+  try {
+    frame();
+    fit.mockClear();
+    zoom();
+    frame();
+    expect(fit).not.toHaveBeenCalled();
+    store.setCity("sf");
+    frame();
+    expect(fit).toHaveBeenCalledTimes(1);
+    fit.mockClear();
+    zoom();
+    store.graphTick++;
+    frame();
+    expect(fit).not.toHaveBeenCalled();
+    store.setUI({ focus: { kind: "member", id: "sf" } });
+    frame();
+    store.setCity("nyc");
+    frame();
+    expect(fit).not.toHaveBeenCalled();
+    expect(store.ui.focus).toEqual({ kind: "member", id: "sf" });
+  } finally {
+    graph.destroy();
+    Object.assign(store, oldState);
+    await window.happyDOM.close();
+    restore();
+  }
+});
