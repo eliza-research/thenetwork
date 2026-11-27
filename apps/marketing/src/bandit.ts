@@ -479,6 +479,9 @@ export function computeBanditAllocations(
   const rootRng = new Rng(input.seed).fork("bandit", input.campaignId);
 
   if (input.riskDial === "lockdown" || safeAvailableCents === 0) {
+    const previousShareById = new Map(
+      input.arms.map((arm) => [arm.id, arm.allocatedShareBps]),
+    );
     const lockedArms: BanditArm[] = input.arms.map((arm) => ({
       ...arm,
       allocatedShareBps: 0,
@@ -488,7 +491,7 @@ export function computeBanditAllocations(
     const decisions: BanditArmDecision[] = lockedArms.map((arm) => ({
       armId: arm.id,
       armKey: arm.armKey,
-      previousShareBps: arm.allocatedShareBps,
+      previousShareBps: previousShareById.get(arm.id) ?? 0,
       nextShareBps: 0,
       allocatedCents: 0,
       sampledPosterior: 0,
