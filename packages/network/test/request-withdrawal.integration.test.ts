@@ -118,6 +118,10 @@ test("a close verb naming the want or the sole request withdraws the waiting req
     "Forget the climbing partner, I found one.",
     "End my search, I found someone.",
     "Close my request.",
+    "Cancel my climbing partner request and keep it closed.",
+    "Drop the climbing partner request, never mind why.",
+    "Cancel my request. Keep it simple next time.",
+    "Cancel the climbing partner request and keep it that way.",
   ];
   for (const phrase of phrases) {
     const { x, request } = await waiting();
@@ -148,6 +152,15 @@ test("a close verb naming the want or the sole request withdraws the waiting req
     "Drop the climbing partner request. Actually no, keep it.",
     "Cancel my request for a refund.",
     "Please cancel my request to change my number.",
+    "Cancel my request. jk",
+    "Cancel my request. Wait, no, keep looking.",
+    "Cancel my request. On second thought, keep looking.",
+    "Cancel my request. Ignore that.",
+    "Cancel my request, I'm joking.",
+    "Drop the climbing partner request. No wait, don't.",
+    "Cancel the climbing partner search party on Friday, I still want a partner.",
+    "Cancel the climbing partner thing on Saturday, I still want a partner.",
+    "Cancel the climbing partner one-on-one Friday, I still want a partner.",
   ];
   for (const phrase of keptPhrases) {
     const { x, request } = await waiting();

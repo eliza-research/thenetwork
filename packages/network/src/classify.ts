@@ -974,7 +974,7 @@ export function extractProfile(body: string, city?: CityId): Profile {
           for (let end = m.index + 1; end < wantEnd; end++) if (anchored.test(part.slice(m.index, end))) { wantEnd = end; break; }
         }
         const closedWant = !!closeVerb && /^\s+(?:about\s+)?(?:my|the|that|this)\s+(?:(?:standing\s+)?(?:request|search)\s+for\s+(?:a\s+|an\s+|the\s+)?)?$/.test(part.slice(closeVerb[0].length, m.index))
-          && /^(?:[a-z]|\s*(?:$|[.!;,]|(?:request|search|thing|one|instead|please|now)\b))/.test(part.slice(wantEnd));
+          && /^(?:[a-z]|\s*(?:$|[.!;,]|(?:request|search)(?=\s*(?:$|[.!;,]|(?:and|please|now|instead)\b))|(?:thing|one)(?=\s*(?:$|[.!;,]))|(?:instead|please|now)\b))/.test(part.slice(wantEnd));
         if (closedWant) { negatedAsk = true; firstCloseAt = Math.min(firstCloseAt, s.at + partOffset); }
         const negatedWant = excluded || NEG_WANT.test(part.slice(0, m.index)) || /^\s*(?:is|are|'s|'re)?\s*(?:n't|not|isn'?t|aren'?t)\b(?! only)/.test(after);
         if (closedWant && !negatedWant) closedIds.add(id);
@@ -1015,7 +1015,7 @@ export function extractProfile(body: string, city?: CityId): Profile {
   for (const i of INTERESTS) if (plain.includes(i.label.toLowerCase())) interests.add(i.tag);
   // A negated like is not an interest ("not into running"): drop interests named only after a negation.
   const where = areaOf(body, city);
-  if (firstCloseAt !== Infinity && /\b(?:just kidding|actually,?\s+no|keep it|never ?mind|scratch that|take (?:it|that) back|disregard (?:it|that)|don'?t cancel|do not cancel)\b/.test(t.slice(firstCloseAt))) {
+  if (firstCloseAt !== Infinity && /\b(?:jk|joking|kidding|wait(?!\s+for\b)|second thought|ignore (?:that|it)|scratch that|never ?mind(?!\s+(?:why|what|how)\b)|take (?:it|that) back|disregard (?:it|that)|actually,?\s+(?:no|not|don'?t)|don'?t(?=\s*(?:$|[.!;,]|(?:cancel|close|drop|withdraw|end|forget)\b))|do not(?=\s*(?:$|[.!;,]|(?:cancel|close|drop|withdraw|end|forget)\b))|keep (?:looking|searching|it open|it going)|still (?:want|looking|searching|need)|keep it(?!\s+(?:closed|that way|simple|short|brief)\b))\b/.test(t.slice(firstCloseAt))) {
     for (const id of closedIds) notWanted.delete(id);
     closeRequest = false;
   }
