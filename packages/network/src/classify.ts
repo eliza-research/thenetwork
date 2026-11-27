@@ -2028,7 +2028,7 @@ export function availabilityTags(body: string): string[] {
   toks.sort((a, b) => a.at - b.at || (a.days ? -1 : 1));
   const out = new Map<number, Set<string>>();
   const refused = new Map<number, Set<string>>(), refusedLead = new Set<string>();
-  const defaults = new Set<number>();
+  const defaults = new Set<number>(), scopedGiven = new Set<number>(), explicitGiven = new Set<number>();
   const give = (ds: number[], p: string) => ds.forEach(d => (out.get(d) ?? out.set(d, new Set()).get(d)!).add(p));
   let pending: number[] = [], group: number[] = [], prevPart = false;
   const lead: string[] = [];
@@ -2040,6 +2040,8 @@ export function availabilityTags(body: string): string[] {
     } else if (k.part) {
       if (k.scopeDays) {
         for (const d of k.scopeDays) (refused.get(d) ?? refused.set(d, new Set()).get(d)!).add(k.part);
+        const offered = pending.length ? pending : group.filter(d => !explicitGiven.has(d));
+        if (offered.length) { give(offered, k.part); offered.forEach(d => { scopedGiven.add(d); defaults.add(d); }); }
         prevPart = true;
         continue;
       }
@@ -2050,7 +2052,7 @@ export function availabilityTags(body: string): string[] {
           (refused.get(d) ?? refused.set(d, new Set()).get(d)!).add(k.part);
           defaults.add(d);
         }
-        else give(ds, k.part);
+        else { give(ds, k.part); ds.forEach(d => explicitGiven.add(d)); }
       } else if (k.refused) refusedLead.add(k.part);
       else lead.push(k.part);
       prevPart = true;
@@ -2058,7 +2060,8 @@ export function availabilityTags(body: string): string[] {
   }
   // Days at the end with no part after them: a part said first ("evenings, Tue or Thu"), else the default.
   for (const d of pending) defaults.add(d);
-  for (const d of defaults) if (pending.includes(d) || !out.has(d)) {
+  for (const d of defaults) if (pending.includes(d) || !out.has(d)
+    || (scopedGiven.has(d) && !explicitGiven.has(d))) {
     const parts = lead.length ? lead : d === 0 || d === 6 ? ["morning", "afternoon", "evening"] : ["evening"];
     parts.forEach(p => give([d], p));
   }

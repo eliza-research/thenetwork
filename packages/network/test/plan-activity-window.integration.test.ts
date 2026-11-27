@@ -92,6 +92,36 @@ test.each([
   expect(plans.planWindowMatchesStated(member?.stated, sun(14), now)).toBe(true);
 });
 
+test.each([
+  ["weekdays but not Tuesday mornings and no evenings",
+    ["morning:Mon", "morning:Wed", "morning:Thu", "morning:Fri"], [27, 19], [28, 10]],
+  ["weekdays, not Friday mornings, no nights",
+    ["morning:Mon", "morning:Tue", "morning:Wed", "morning:Thu"], [30, 10], [29, 10]],
+  ["weekdays, no Wednesday afternoons, and no evenings",
+    ["afternoon:Mon", "afternoon:Tue", "afternoon:Thu", "afternoon:Fri"], [28, 14], [27, 14]],
+  ["weekdays but not Monday mornings and no evenings",
+    ["morning:Tue", "morning:Wed", "morning:Thu", "morning:Fri"], [27, 19], [28, 10]],
+  ["I'm free weekends but not weekday evenings.",
+    ["morning:Sun", "afternoon:Sun", "evening:Sun", "morning:Sat", "afternoon:Sat", "evening:Sat"], [27, 19], [31, 18]],
+])("a scoped refusal in the weekly reply %j keeps the parts the member did not refuse", async (reply, tags, blocked, allowed) => {
+  const tz = "America/New_York";
+  const clockDay = (day: number, hour: number) => fromLocal(2026, 10, day, hour, tz);
+  const mini = new Mini([{ id: "a", name: "Ana", age: 30 }], { growth: false, matchingEnabled: false });
+  mini.clock.set(clockDay(25, 13));
+  await mini.onboard("a");
+  await mini.say("a", "WEEKLY");
+  expect(await mini.runUntil(() => mini.to("a").some(message => message.meta.checkIn), 10 * HOUR)).toBe(true);
+
+  const now = clockDay(26, 13);
+  mini.clock.set(now);
+  await mini.say("a", reply);
+  const member = mini.net.exportState().members.find(member => member.id === "a");
+  expect(member?.availability?.at(-1)?.tags).toEqual(tags);
+  const window = ([day, hour]: number[]) => ({ start: clockDay(day, hour), end: clockDay(day, hour + 1) });
+  expect(plans.planWindowMatchesStated(member?.stated, window(blocked), now)).toBe(false);
+  expect(plans.planWindowMatchesStated(member?.stated, window(allowed), now)).toBe(true);
+});
+
 test("the generic planner checks availability through the end of a four-hour hike", () => {
   const venue = PLAN_VENUES.find(v => v.id === "inwood-hill");
   if (!venue) throw new Error("Missing the curated Inwood Hill Park venue");
