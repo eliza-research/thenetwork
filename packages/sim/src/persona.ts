@@ -31,15 +31,11 @@ export type PersonaLifeStage =
   | "post_exit"
   | "retired";
 
-export type HumorRegister =
-  | "dry_ironic"
-  | "absurdist"
-  | "warm_earnest"
-  | "nerdy_wordplay"
-  | "roast_banter";
-
-export type AttachmentStyle = "secure" | "anxious" | "avoidant";
-export type SpendComfortTier = "free" | "low" | "moderate" | "high" | "unconstrained";
+import {
+  HUMOR_REGISTERS, SPEND_TIERS,
+  type DunbarOpenSlots, type HumorRegister, type SpendComfortTier,
+} from "./strata-shared.ts";
+export { HUMOR_REGISTERS, SPEND_TIERS, type DunbarOpenSlots, type HumorRegister, type SpendComfortTier };
 
 export type ConnectionGoalType =
   | "dating"
@@ -69,16 +65,12 @@ export interface ExchangeGoal {
   targetRungDelta?: [number, number];
 }
 
+export type AttachmentStyle = "secure" | "anxious" | "avoidant";
+
 export interface SubstanceProfile {
   alcohol: "none" | "light" | "social" | "heavy";
   cannabis: "none" | "occasional" | "regular";
   soberProtected: boolean;
-}
-
-export interface DunbarOpenSlots {
-  inner5: boolean;
-  sympathy15: boolean;
-  affinity50: boolean;
 }
 
 export interface TrueAttractiveness {
@@ -323,9 +315,6 @@ export function drawLapse(r: Rng, since: number, meanDays: number): number {
 
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
 const clampZ = (x: number) => Math.max(-3, Math.min(3, r3(x)));
-
-export const SPEND_TIERS: readonly SpendComfortTier[] = ["free", "low", "moderate", "high", "unconstrained"];
-export const HUMOR_REGISTERS: readonly HumorRegister[] = ["dry_ironic", "absurdist", "warm_earnest", "nerdy_wordplay", "roast_banter"];
 
 const DOMAIN_OF_TAG: Record<string, string> = {
   ai: "ai", ml_engineering: "ai", interview_practice: "ai", ai_mentor: "ai",
@@ -619,9 +608,10 @@ export function computeStrataSignals(p: Persona, r: Rng): StrataSignals {
     : r.range(0.65, 0.95) - (1 - h.honesty) * 0.12,
   ));
 
-  const openInner = p.archetype === "newcomer" || h.romance.optIn || (h.capacity > 0.45 && p.relationships.length <= 2 && r.bool(0.65));
-  const openSympathy = p.archetype === "newcomer" || (h.capacity >= 0.28 && (p.archetype !== "busy_parent" || r.bool(0.55)));
-  const openAffinity = h.capacity >= 0.22 && (h.socialEnergy >= 0.30 || r.bool(0.65));
+  const socialLoad = p.relationships.length;
+  const openInner = p.archetype === "newcomer" || h.romance.optIn || (socialLoad <= 2 && lifeStage !== "young_family" && r.bool(0.65));
+  const openSympathy = p.archetype === "newcomer" || activeTransitions.length > 0 || (socialLoad <= 3 && (p.archetype !== "busy_parent" || r.bool(0.65)));
+  const openAffinity = p.archetype === "newcomer" || socialLoad <= 4 || h.socialEnergy >= 0.35 || r.bool(0.7);
   const dunbarOpenSlots: DunbarOpenSlots = {
     inner5: openInner,
     sympathy15: openSympathy,

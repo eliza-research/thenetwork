@@ -4,8 +4,8 @@
 // are known to over-accept, so letting the model choose would grade the engine against
 // unrealistically agreeable people (docs/research/matching-and-graphs.md). Set
 // `llmDecides: true` only for experiments comparing the two. PRD 34.3 "Persona agents".
-import type { LLM } from "@thenetwork/core";
-import { chatJson } from "@thenetwork/core";
+import type { LLM, ResponseInfo } from "@thenetwork/core";
+import { chatJson, getCity } from "@thenetwork/core";
 import { anyJson, SIM_JSON_GROW } from "../llmGenerator.ts";
 import type { SimMessage } from "../channel.ts";
 import type { Persona } from "../persona.ts";
@@ -36,7 +36,7 @@ const skill = (t: string) => SKILLS.find(s => s.tag === t)?.label ?? t;
 export function personaCard(p: Persona): string {
   const h = p.hidden;
   const lines = [
-    `You are ${p.name}, ${p.public.claimedAge} (${p.gender}), living in ${p.routine.homeArea}, ${p.homeCity === "sf" ? "San Francisco" : "New York"}.`,
+    `You are ${p.name}, ${p.public.claimedAge} (${p.gender}), living in ${p.routine.homeArea}, ${getCity(p.homeCity)?.name ?? p.homeCity}.`,
     `Archetype: ${p.archetype.replace("_", " ")}. Social energy ${pct(h.socialEnergy)}, spare time this month ${pct(h.capacity)}.`,
     `What you're truly into: ${h.interests.map(label).join(", ")}.`,
     h.skills.length ? `Skills: ${h.skills.map(skill).join(", ")}.` : "",
@@ -108,12 +108,46 @@ function situation(d: PolicyDecision, llmDecides: boolean): string {
   }
 }
 
+export interface LLMUsageSummary {
+  calls: number;
+  failures: number;
+  promptTokens: number;
+  completionTokens: number;
+  reasoningTokens: number;
+  costMicro: number;
+  totalLatencyMs: number;
+  meanLatencyMs: number;
+}
+
 export class LLMPersonaAgent implements PersonaAgent {
   readonly mode = "llm" as const;
   private fallback: PolicyPersonaAgent;
   calls = 0; failures = 0;
+  promptTokens = 0; completionTokens = 0; reasoningTokens = 0; costMicro = 0; totalLatencyMs = 0; responses = 0;
   constructor(private llm: LLM, private worldStart: number, private opts: LLMAgentOptions = {}) {
     this.fallback = new PolicyPersonaAgent(worldStart, opts.policy);
+  }
+
+  recordResponse(info: ResponseInfo): void {
+    this.responses++;
+    this.promptTokens += info.usage.promptTokens;
+    this.completionTokens += info.usage.completionTokens;
+    this.reasoningTokens += info.usage.reasoningTokens;
+    this.costMicro += info.costMicro;
+    this.totalLatencyMs += info.latencyMs;
+  }
+
+  usageSummary(): LLMUsageSummary {
+    return {
+      calls: this.calls,
+      failures: this.failures,
+      promptTokens: this.promptTokens,
+      completionTokens: this.completionTokens,
+      reasoningTokens: this.reasoningTokens,
+      costMicro: this.costMicro,
+      totalLatencyMs: Math.round(this.totalLatencyMs),
+      meanLatencyMs: this.responses > 0 ? Math.round(this.totalLatencyMs / this.responses) : 0,
+    };
   }
 
   async respond(ctx: PersonaContext, msg: SimMessage): Promise<AgentReply> {

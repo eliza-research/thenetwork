@@ -6,7 +6,7 @@ import {
 import { coverageValue, directedUtility, noPairValue, pairValueScale } from "../../packages/core/src/generated/pairValue.ts";
 import { resolveConfig, type EngineConfigInput } from "../../packages/engine/src/config.ts";
 import { pairReason } from "../../packages/engine/src/filters.ts";
-import { bruteForceCandidates, laneCategory, pairSideOf, partnerBlock, type MatchProfile, type SearchResult } from "../../packages/engine/src/match/mod.ts";
+import { laneCategory, pairSideOf, partnerBlock, type MatchProfile, type SearchResult } from "../../packages/engine/src/match/mod.ts";
 import { eligiblePair, segmentReaches, vectorsOf, weightedTerms } from "../../packages/engine/src/match/pair.ts";
 import { searchWindowMetrics } from "../../packages/engine/src/match/search.ts";
 import type { AppPack } from "../../packages/engine/src/pack.ts";
@@ -170,7 +170,19 @@ function sampleProfile(w: World, r: Rung, p: MatchProfile, result: SearchResult)
   }
 
   if (r.n > ORACLE_UP_TO || !block) return;
-  const brute = bruteForceCandidates(w, w.match.index, p);
+  const limit = limits.searchLimit;
+  const brute: { profile: MatchProfile; value: number }[] = [];
+  for (let position = 0; position < others.length; position++) {
+    const value = all[position]!;
+    if (value < 0) continue;
+    const profile = others[position]!;
+    if (brute.length < limit || value > brute[brute.length - 1]!.value || (value === brute[brute.length - 1]!.value && profile.ordinal < brute[brute.length - 1]!.profile.ordinal)) {
+      let at = brute.length;
+      while (at > 0 && (value > brute[at - 1]!.value || (value === brute[at - 1]!.value && profile.ordinal < brute[at - 1]!.profile.ordinal))) at--;
+      brute.splice(at, 0, { profile, value });
+      if (brute.length > limit) brute.pop();
+    }
+  }
   const oracle = result.exact ? s.exact : s.budgeted;
   const keptValue = result.kept.reduce((t, c) => t + c.value, 0);
   oracle.searches++;

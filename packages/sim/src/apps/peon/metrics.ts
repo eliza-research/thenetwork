@@ -69,8 +69,8 @@ export interface PeonMetrics {
   };
 }
 
-const median = (xs: number[]) => { if (!xs.length) return NaN; const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2; };
-const div = (a: number, b: number) => (b > 0 ? a / b : 0);
+import { median as medianWithDefault, safeDiv as div } from "../../stats.ts";
+const median = (xs: number[]) => medianWithDefault(xs, NaN);
 
 export function peonMetrics(r: PeonRunResult, o: { requestsApplied?: number } = {}): PeonMetrics {
   const { world, flows, hires } = r;

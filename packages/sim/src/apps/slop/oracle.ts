@@ -34,8 +34,8 @@ export const ORACLE_PARAMS = {
   receptivityAfterLikedDate: 0.6, fatigue: 0.8, activityMiss: 0.75, askPrimed: 1.35, sharedFactLift: 1.1, notPresent: 0.05,
 };
 
-export const sigmoid = (x: number) => 1 / (1 + Math.exp(-x));
-const pairKey = (a: MemberId, b: MemberId) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+import { pairKey, sigmoid } from "../../stats.ts";
+export { sigmoid };
 
 export type HarmKind = "offplatform_move" | "money_ask" | "financial_loss" | "catfish_reveal" | "harassment" | "deception" | "minor_contact";
 export interface HarmRisk { kind: HarmKind; victim: MemberId; offender: MemberId; prob: number; when: "reveal" | "date" }

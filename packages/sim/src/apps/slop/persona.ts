@@ -58,8 +58,9 @@ export interface Availability {
   slotFree: number[]; shock: number;
 }
 
+import type { HumorRegister } from "../../strata-shared.ts";
 export type SlopAttachmentStyle = "secure" | "anxious" | "avoidant";
-export type SlopHumorRegister = "dry_ironic" | "absurdist" | "warm_earnest" | "nerdy_wordplay" | "roast_banter";
+export type SlopHumorRegister = HumorRegister;
 
 export interface HiddenTruth {
   trueAge: number;
