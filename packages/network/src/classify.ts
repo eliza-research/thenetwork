@@ -911,10 +911,12 @@ export function areaOf(text: string, city?: CityId): { area?: string; unknown?: 
 }
 
 /** Words that follow a name cue without naming the sender ("call me at", "call me back"). */
-const NOT_STATED_NAME = new Set(["at", "back", "later", "maybe", "please", "when", "if", "tomorrow", "tonight", "anytime", "now", "again", "soon", "sometime", "whenever", "not", "never", "no", "yes", "ok", "okay", "sure", "thanks", "thank", "hi", "hey", "hello", "the", "a", "an", "my", "me", "it", "this", "that", "what", "who", "how", "why", "in", "on", "by", "for", "to", "and", "or", "but", "so", "just", "really", "actually", "well", "um", "uh", "hmm", "yeah", "yep", "yup", "nope", "nah", "lol", "sorry", "cool", "nice", "great", "done", "none", "nobody", "anyone", "someone", "everyone", "anybody", "somebody", "everybody", "home", "here", "there", "today", "yesterday", "first", "second", "third", "once", "twice", "more", "less", "much", "many", "any", "some", "all", "both", "either", "neither", "other", "another", "same", "new", "old", "good", "bad", "best", "right", "wrong", "true", "false"]);
+const NOT_STATED_NAME = new Set(["at", "back", "later", "maybe", "please", "when", "if", "tomorrow", "tonight", "anytime", "now", "again", "soon", "sometime", "whenever", "not", "never", "no", "yes", "ok", "okay", "sure", "thanks", "thank", "hi", "hey", "hello", "the", "a", "an", "my", "me", "it", "this", "that", "what", "who", "how", "why", "in", "on", "by", "for", "to", "and", "or", "but", "so", "just", "really", "actually", "well", "um", "uh", "hmm", "yeah", "yep", "yup", "nope", "nah", "lol", "sorry", "cool", "nice", "great", "done", "none", "nobody", "anyone", "someone", "everyone", "anybody", "somebody", "everybody", "home", "here", "there", "today", "yesterday", "first", "second", "third", "once", "twice", "more", "less", "much", "many", "any", "some", "all", "both", "either", "neither", "other", "another", "same", "new", "old", "good", "bad", "best", "right", "wrong", "true", "false", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "mon", "tue", "tues", "wed", "thu", "thur", "thurs", "fri", "sat", "sun", "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december", "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec", "asap", "tmrw", "tmr", "noon", "midnight", "morning", "afternoon", "evening", "night", "after", "around", "during", "before", "about", "with", "without", "over", "under", "between", "through", "until", "since", "from", "into", "onto", "upon", "per", "via", "spelled", "written", "pronounced", "misspelled", "admin", "staff", "support", "system", "network"]);
 const NAME_CUE = /\b(?:call me|my name(?:'s| is)|i go by|i'm called|i am called|change my name to)\s+(\p{L}[\p{L}'-]*)/gu;
-const NAME_BLOCK = /\b(?:if|would|wish|maybe|might|thinking|planning|hoping|not|never|no longer|used to|friend|roommate|brother|sister|he|she|they|her|his|their|said|says|asked|told)\b|n't\b/;
+const NAME_BLOCK = /\b(?:if|would|wish|maybe|might|thinking|planning|hoping|not|never|no longer|used to|friend|roommate|brother|sister|boss|coworkers?|colleagues?|mom|dad|mother|father|teacher|coach|partner|wife|husband|girlfriend|boyfriend|book|story|song|movie|film|quote|line|starts|begins|wrote|written|people|everyone|he|she|they|her|his|their|said|says|asked|told)\b|n't\b/;
 const NAME_WEAK_CUE = /^(?:i go by|i'm called|i am called)\b/;
+const NAME_CALL_PREFIX = /^\s*(?:(?:please|actually|so|well|hi|hey|thanks|correction:?|you can|you may|i'd like you to|i want you to|i would like you to)[\s,:]*)?$/;
+const NAME_TAIL_OK = /^\s*(?:[.!?;:]|$)/;
 const NAME_FIGURATIVE = new Set(["away", "into", "crazy", "biased", "train", "myself", "yourself", "himself", "herself", "itself", "ourselves", "themselves", "alone", "home", "work", "school", "duty", "service", "attention", "question", "account"]);
 
 const formatStatedName = (word: string) =>
@@ -931,11 +933,16 @@ export function statedNameOf(text: string): string | undefined {
       if (token.includes("-") && token.split("-").every(part => NOT_STATED_NAME.has(part))) continue;
       const prefix = s.text.slice(0, m.index);
       if (NAME_BLOCK.test(prefix) || quoteStillOpen(t.slice(0, s.at + m.index))) continue;
+      const callMe = /^call me\b/.test(m[0]);
+      if (callMe && !NAME_CALL_PREFIX.test(prefix)) continue;
       const tokenAt = m.index! + m[0].length - m[1]!.length;
       const rawToken = raw.slice(s.at + tokenAt, s.at + tokenAt + m[1]!.length);
       const capitalised = /^\p{Lu}/u.test(rawToken);
       const tail = s.text.slice(m.index! + m[0].length);
       const closed = /^\s*(?:[.!?;:]|$)/.test(tail) || /^\s+(?:now|please)\b/.test(tail);
+      const nameTailOk = NAME_TAIL_OK.test(tail) || /^\s+(?:now|please)\b/.test(tail) || /^\s+from now on\b/.test(tail) || /^\s*,?\s*(?:instead|not\b)/.test(tail);
+      if (callMe && !nameTailOk) continue;
+      if (callMe && /^\p{Lu}{2,}$/u.test(rawToken) && !/\bplease\b/.test(prefix) && !/^\s+from now on\b/.test(tail)) continue;
       if (NAME_WEAK_CUE.test(m[0]) && !capitalised && !closed) continue;
       if (!capitalised && (NAME_FIGURATIVE.has(token) || /^\s*,/.test(tail))) continue;
       return formatStatedName(token);

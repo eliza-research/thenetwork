@@ -657,7 +657,7 @@ type PendingCheckInSafety = { verb: "check_in"; kind: ReportKind; at: number; ta
 
 interface MemberState {
   /** `area`: the neighborhood the member said (or the record says). Undefined when unknown: never a default (matching-e2e-1). */
-  id: MemberId; first: string; display: string; area?: string; quietHours: [number, number];
+  id: MemberId; first: string; display: string; formerNames?: { first: string; display: string; full: string }[]; area?: string; quietHours: [number, number];
   /** They said where they live, but not as a neighborhood the Network knows. */
   areaUnknown?: boolean;
   /** Another member reported them as under 18 (network-consent-9): out of matching until staff clear it. */
@@ -2666,11 +2666,14 @@ export class ConsentNetwork implements NetworkUnderTest {
   private learnName(m: MemberState, body: string) {
     const first = statedNameOf(body);
     if (!first || first === m.first) return;
-    const last = this.fullNames.get(m.id)?.split(" ").slice(1).join(" ");
+    const oldFull = this.fullNames.get(m.id) ?? m.display;
+    const last = oldFull.split(" ").slice(1).join(" ");
+    m.formerNames = [...(m.formerNames ?? []).filter(x => x.first !== m.first || x.display !== m.display || x.full !== oldFull), { first: m.first, display: m.display, full: oldFull }].slice(-8);
     m.first = first;
     m.display = last ? `${first} ${last[0]}.` : first;
     this.fullNames.set(m.id, last ? `${first} ${last}` : first);
     this.dirty = true;
+    this.send(m, `Got it — I'll call you ${first}.`, { type: "info" }, "reply");
     this.ctx.log("name_learned", { memberId: m.id });
   }
 
@@ -3123,6 +3126,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   stripNames(text: string): string {
     let t = text;
     for (const [, name] of this.fullNames) if (t.includes(name)) t = t.split(name).join("they");
+    for (const member of this.members.values()) for (const former of member.formerNames ?? []) if (t.includes(former.full)) t = t.split(former.full).join("they");
     // Keep the grammar right after a name became "they" ("Sam is into film" -> "they're into film").
     return t.replace(/\bthey: /g, "they ").replace(/\bthey is\b/g, "they're").replace(/\bthey has\b/g, "they have").replace(/\bthey was\b/g, "they were")
       .replace(/\bthey's\b/g, "their").replace(/\bthey does\b/g, "they do").replace(/\s+/g, " ").trim();
@@ -3137,7 +3141,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     const word = (w: string) => new RegExp(`(^|[^\\p{L}])${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=$|[^\\p{L}])`, "u");
     return all.find(x => full(x) && word(full(x)).test(t))
       ?? all.find(x => word(x.display.toLowerCase()).test(t))
-      ?? (() => { const f = all.filter(x => word(x.first.toLowerCase()).test(t)); return f.length === 1 ? f[0] : undefined; })();
+      ?? (() => { const f = all.filter(x => word(x.first.toLowerCase()).test(t)); return f.length === 1 ? f[0] : undefined; })()
+      ?? all.find(x => (x.formerNames ?? []).some(former => word(former.full.toLowerCase()).test(t)))
+      ?? all.find(x => (x.formerNames ?? []).some(former => word(former.display.toLowerCase()).test(t)))
+      ?? (() => { const f = all.filter(x => (x.formerNames ?? []).some(former => word(former.first.toLowerCase()).test(t))); return f.length === 1 ? f[0] : undefined; })();
   }
   private fullNames = new Map<MemberId, string>();
 
@@ -3283,6 +3290,15 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (hits.length === 1) return { target: hits[0]! };
       if (hits.length > 1) return { ask: hits };
     }
+    const formerNamed = (x: MemberState, k: "full" | "display" | "first") => (x.formerNames ?? []).some(former => {
+      const v = former[k].toLowerCase().replace(/\.$/, "");
+      return !!v && word(v).test(t);
+    });
+    for (const k of ["full", "display", "first"] as const) {
+      const hits = cps.filter(x => formerNamed(x.m, k)).map(x => x.m);
+      if (hits.length === 1) return { target: hits[0]! };
+      if (hits.length > 1) return { ask: hits };
+    }
     return { target: this.findByName(text, m.id) };
   }
 
@@ -3328,7 +3344,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const matches = new Map<MemberId, MemberState>();
     for (const name of reply.acceptsName || reply.compareAlternatives ? reply.names : []) {
       const match = this.resolveTarget(m, name, p.verb === "report").target;
-      if (match && [this.fullNames.get(match.id), match.display, match.first].some(value => value && safetyName(value) === name)) {
+      if (match && [this.fullNames.get(match.id), match.display, match.first, ...(match.formerNames ?? []).flatMap(former => [former.full, former.display, former.first])].some(value => value && safetyName(value) === name)) {
         matches.set(match.id, match);
       }
     }
@@ -3340,7 +3356,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const target = named ?? confirmed;
     const allowedTarget = target && (p.verb === "block" || this.counterparts(m.id).some(x => x.m.id === target.id)) ? target : undefined;
     const cancels = reply.cancels || (!competing && reply.refuses);
-    const exclusion = sole && readSoleSafetyTargetExclusion(text, [this.fullNames.get(sole.id), sole.display, sole.first], competing);
+    const exclusion = sole && readSoleSafetyTargetExclusion(text, [this.fullNames.get(sole.id), sole.display, sole.first, ...(sole.formerNames ?? []).flatMap(former => [former.full, former.display, former.first])], competing);
     const rulesOutTarget = exclusion?.excludes ?? false;
     // spec/safetyCase.md, "An unrelated reply keeps a current safety question"
     if (!safetyQuestionResolves(!!allowedTarget, competing, cancels, rulesOutTarget, text.split(/\s+/).length <= 4)) return body;

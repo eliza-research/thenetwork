@@ -51,6 +51,7 @@ import {
 import { bookedReminderKey, bookingNoticeReceiptKey, ConsentNetwork, gatheringRepeatOppPrefix, gatheringRepeatProbeKey, meetingFeedbackKey, pendingSlopIntroductions, presentInCity, presentInNyc, relayDispatchCheck, replacementProbeKey, reviewApproved, reviewStateOf, storedTeenStop, storedCalendarOwnerOptedIn, storedInviteNoticePartyCurrent, storedLateArrivalCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
 import { interruptionFeedbackKey } from "../src/interruption-feedback.ts";
 import { planProbeReceiptSlot, probeReplyReceiptKey } from "../src/network.ts";
+import { statedNameOf } from "../src/classify.ts";
 import { appTagFacet } from "../src/apphooks.ts";
 import { hireSeatCurrent, readHireEvidence } from "../src/peon-hire-dispatch.ts";
 import { lockPeerOpportunityContact } from "./peer-opportunity-admission.ts";
@@ -1562,7 +1563,7 @@ export class NetworkRuntime {
       const first = this.net.memberList().find(member => member.id === inboundId)?.first;
       const [stored] = await tx`select name from network.members where app_id = ${app} and id = ${inboundId}`;
       const storedFirst = typeof stored?.name === "string" ? stored.name.trim().split(/\s+/)[0] : undefined;
-      if (first && storedFirst && first !== storedFirst) {
+      if (first && storedFirst && first !== storedFirst && statedNameOf(typeof u.inbound?.body === "string" ? u.inbound.body : "") === first) {
         const last = typeof stored?.name === "string" ? stored.name.trim().split(/\s+/).slice(1).join(" ") : "";
         await tx`update network.members set name = ${last ? `${first} ${last}` : first} where app_id = ${app} and id = ${inboundId}`;
         await tx`update platform.memberships set first_name = ${first} where app_id = ${app} and member_id = ${inboundId} and first_name is distinct from ${first}`;

@@ -1554,7 +1554,7 @@ test("explicit saved-profile reads select the app without consuming onboarding o
 }, 60_000);
 
 test("a name-change text updates the saved profile name", async () => {
-  const phone = "+12125550993";
+  const phone = "+12125550199";
   await joinFriendsByText(phone, "name-change");
   const person = (await service.accounts.personFor(phone))!;
   expect((await service.accounts.store.getMembership(person.id, "friends"))?.firstName).toBe("Noa");
