@@ -175,6 +175,20 @@ export function clarifiedProbeTimeReading(timeChoice: boolean, answer: string, o
 
 /** Story: Make a choice about a proposed opportunity / An unresolved offered time needs a time choice (spec/probeReply.md) */
 //@ pure
+export function lawAClarifiedProbeCannotUseAnImplicitTime(offeredChoices: number): boolean {
+  //@ ensures \result === true
+  return !(offeredChoices > 0) || clarifiedProbeTimeReading(true, "yes", offeredChoices, 0) === "AwaitExplicitProbeTimes";
+}
+
+/** Story: Make a choice about a proposed opportunity / An unresolved offered time needs a time choice (spec/probeReply.md) */
+//@ pure
+export function lawAClarifiedProbeCanUseExplicitTimes(offeredChoices: number, explicitChoices: number): boolean {
+  //@ ensures \result === true
+  return !(offeredChoices > 0 && explicitChoices > 0) || clarifiedProbeTimeReading(true, "yes", offeredChoices, explicitChoices) === "UseExplicitProbeTimes";
+}
+
+/** Story: Make a choice about a proposed opportunity / An unresolved offered time needs a time choice (spec/probeReply.md) */
+//@ pure
 export function lawAnUntimedProbeDoesNotNeedATimeChoice(legacyClarified: boolean, unresolvedTime: boolean): boolean {
   //@ ensures \result === true
   return !probeNeedsExplicitTimeChoice(false, true, legacyClarified, unresolvedTime);
@@ -199,20 +213,6 @@ export function lawASecondQuestionCanClarifyTimes(clarified: boolean): boolean {
 export function lawAClarifiedPairNeedsTwoOfferedTimes(offeredCount: number): boolean {
   //@ ensures \result === true
   return !(offeredCount !== 2) || !clarifiedBroadTimeChoiceAllowed(true, true, offeredCount);
-}
-
-/** Story: Make a choice about a proposed opportunity / An unresolved offered time needs a time choice (spec/probeReply.md) */
-//@ pure
-export function lawAClarifiedProbeCannotUseAnImplicitTime(offeredChoices: number): boolean {
-  //@ ensures \result === true
-  return !(offeredChoices > 0) || clarifiedProbeTimeReading(true, "yes", offeredChoices, 0) === "AwaitExplicitProbeTimes";
-}
-
-/** Story: Make a choice about a proposed opportunity / An unresolved offered time needs a time choice (spec/probeReply.md) */
-//@ pure
-export function lawAClarifiedProbeCanUseExplicitTimes(offeredChoices: number, explicitChoices: number): boolean {
-  //@ ensures \result === true
-  return !(offeredChoices > 0 && explicitChoices > 0) || clarifiedProbeTimeReading(true, "yes", offeredChoices, explicitChoices) === "UseExplicitProbeTimes";
 }
 
 /** Story: Make a choice about a proposed opportunity / A suggested alternative needs a separate yes before asking for new times (spec/probeReply.md) */
@@ -256,16 +256,16 @@ export function untimedProbeTimeRejectionNeedsClarification(offeredTimes: boolea
 
 /** Story: Make a choice about a proposed opportunity / An untimed probe needs an answer to the opportunity (spec/probeReply.md) */
 //@ pure
-export function lawATimedProbeKeepsItsTimeRejectionRules(rejectedTimes: boolean, otherwiseUnqualified: boolean): boolean {
+export function lawAnUntimedTimeRejectionKeepsTheProbeOpen(modelConsent: string): boolean {
   //@ ensures \result === true
-  return !untimedProbeTimeRejectionNeedsClarification(true, rejectedTimes, otherwiseUnqualified);
+  return untimedProbeTimeRejectionNeedsClarification(false, true, true) && probeReplyReading(true, false, modelConsent) === "KeepOffline";
 }
 
 /** Story: Make a choice about a proposed opportunity / An untimed probe needs an answer to the opportunity (spec/probeReply.md) */
 //@ pure
-export function lawAnUntimedTimeRejectionKeepsTheProbeOpen(modelConsent: string): boolean {
+export function lawATimedProbeKeepsItsTimeRejectionRules(rejectedTimes: boolean, otherwiseUnqualified: boolean): boolean {
   //@ ensures \result === true
-  return untimedProbeTimeRejectionNeedsClarification(false, true, true) && probeReplyReading(true, false, modelConsent) === "KeepOffline";
+  return !untimedProbeTimeRejectionNeedsClarification(true, rejectedTimes, otherwiseUnqualified);
 }
 
 /** Story: Make a choice about a proposed opportunity / A short acknowledgement must immediately follow its own probe (spec/probeReply.md) */
@@ -292,6 +292,14 @@ export function lawWeakAcknowledgementNeedsUninterruptedTurn(precedingMessages: 
 //@ pure
 export function lateProbeRoute(direct: boolean, answered: boolean, latestProbe: boolean, receiptAccepted: boolean, acceptedAt: number, endedAt: number, receivedAt: number, alreadyTold: boolean, latestIsEndNotice: boolean, voided: boolean): LateProbeRoute {
   return alreadyTold ? (direct && answered && latestIsEndNotice ? "AlreadyToldProbeEnded" : "NotALateProbeAnswer") : (direct && answered && latestProbe && receiptAccepted && acceptedAt <= receivedAt && endedAt <= receivedAt ? (voided ? "TellPlanChanged" : "TellProbeEnded") : "NotALateProbeAnswer");
+}
+
+/** Story: Make a choice about a proposed opportunity / A late answer to an expired probe hears once that the invitation ended (spec/probeReply.md) */
+//@ pure
+export function lawALateAnswerIsToldOnce(direct: boolean, answered: boolean, latestProbe: boolean, receiptAccepted: boolean, acceptedAt: number, endedAt: number, receivedAt: number, latestIsEndNotice: boolean, voided: boolean): boolean {
+  //@ ensures \result === true
+  const local_0: LateProbeRoute = lateProbeRoute(direct, answered, latestProbe, receiptAccepted, acceptedAt, endedAt, receivedAt, true, latestIsEndNotice, voided);
+  return local_0 !== "TellProbeEnded" && local_0 !== "TellPlanChanged";
 }
 
 /** Story: Make a choice about a proposed opportunity / A late answer to an expired probe hears once that the invitation ended (spec/probeReply.md) */
@@ -326,16 +334,8 @@ export function lawAnAnswerBeforeTheExpiryIsNotLate(direct: boolean, answered: b
 //@ pure
 export function lawAVoidedProbeIsToldThatThePlanChanged(direct: boolean, answered: boolean, latestProbe: boolean, receiptAccepted: boolean, acceptedAt: number, endedAt: number, receivedAt: number, alreadyTold: boolean, latestIsEndNotice: boolean, voided: boolean): boolean {
   //@ ensures \result === true
-  const local_0: LateProbeRoute = lateProbeRoute(direct, answered, latestProbe, receiptAccepted, acceptedAt, endedAt, receivedAt, alreadyTold, latestIsEndNotice, voided);
-  return (!voided || local_0 !== "TellProbeEnded") && (!(!voided) || local_0 !== "TellPlanChanged");
-}
-
-/** Story: Make a choice about a proposed opportunity / A late answer to an expired probe hears once that the invitation ended (spec/probeReply.md) */
-//@ pure
-export function lawALateAnswerIsToldOnce(direct: boolean, answered: boolean, latestProbe: boolean, receiptAccepted: boolean, acceptedAt: number, endedAt: number, receivedAt: number, latestIsEndNotice: boolean, voided: boolean): boolean {
-  //@ ensures \result === true
-  const local_1: LateProbeRoute = lateProbeRoute(direct, answered, latestProbe, receiptAccepted, acceptedAt, endedAt, receivedAt, true, latestIsEndNotice, voided);
-  return local_1 !== "TellProbeEnded" && local_1 !== "TellPlanChanged";
+  const local_1: LateProbeRoute = lateProbeRoute(direct, answered, latestProbe, receiptAccepted, acceptedAt, endedAt, receivedAt, alreadyTold, latestIsEndNotice, voided);
+  return (!voided || local_1 !== "TellProbeEnded") && (!(!voided) || local_1 !== "TellPlanChanged");
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */

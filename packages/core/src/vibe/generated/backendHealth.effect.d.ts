@@ -1,8 +1,8 @@
 // Generated from spec/backendHealth.md via Vibestack and VibeLang. Run pnpm run spec:sync.
 import { Context, Effect, Layer, Stream } from "effect";
 export type * from "./backendHealth.ts";
-import { initial, inv, reportsStatus, canCheckAdmission, checkAdmission, canCheckDatabase, canCheckTicks, stepReportIsFinal, checkDatabase, checkTicks, sometimesReportsReady, sometimesReportsDraining, sometimesReportsDatabaseDown, sometimesReportsLateTick, enabled, step, parseEvent, parseState } from "./backendHealth.effect.vibe.pure.js";
-export { initial, inv, reportsStatus, canCheckAdmission, checkAdmission, canCheckDatabase, canCheckTicks, stepReportIsFinal, checkDatabase, checkTicks, sometimesReportsReady, sometimesReportsDraining, sometimesReportsDatabaseDown, sometimesReportsLateTick, enabled, step, parseEvent, parseState };
+import { initial, inv, reportsStatus, canCheckAdmission, checkAdmission, canCheckDatabase, checkDatabase, canCheckTicks, checkTicks, stepReportIsFinal, sometimesReportsReady, sometimesReportsDraining, sometimesReportsDatabaseDown, sometimesReportsLateTick, enabled, step, parseEvent, parseState } from "./backendHealth.effect.vibe.pure.js";
+export { initial, inv, reportsStatus, canCheckAdmission, checkAdmission, canCheckDatabase, checkDatabase, canCheckTicks, checkTicks, stepReportIsFinal, sometimesReportsReady, sometimesReportsDraining, sometimesReportsDatabaseDown, sometimesReportsLateTick, enabled, step, parseEvent, parseState };
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import type * as T from "./backendHealth.ts";
 declare const Rejected_base: new <A extends Record<string, any> = {}>(args: import("effect/Types").VoidIfEmpty<{ readonly [P in keyof A as P extends "_tag" ? never : P]: A[P]; }>) => import("effect/Cause").YieldableError & {

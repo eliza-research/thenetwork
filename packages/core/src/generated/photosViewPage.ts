@@ -2,17 +2,17 @@
 //@ backend dafny
 
 /** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
-export type ViewOpenKind = "OpenShown" | "OpenOtherDevice" | "OpenGone" | "OpenReplaced" | "OpenUnreachable" | "OpenFailed";
+export type ViewScreen = "ViewOpening" | "ViewTap" | "ViewShowing" | "ViewConfirmReport" | "ViewReported" | "ViewOtherDevice" | "ViewGone" | "ViewReplaced";
 /** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
 export type ViewPending = "ViewIdle" | "ViewOpeningLink" | "ViewLoadingPhotos" | "ViewReporting";
 /** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
 export type ViewError = "ViewNoError" | "ViewUnreachable" | "ViewRequestFailed";
 /** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
-export type ViewScreen = "ViewOpening" | "ViewTap" | "ViewShowing" | "ViewConfirmReport" | "ViewReported" | "ViewOtherDevice" | "ViewGone" | "ViewReplaced";
+export interface PhotosViewPage { screen: ViewScreen; pending: ViewPending; error: ViewError; linkHeld: boolean; opened: boolean; count: number; loaded: number; missing: number; reportLost: boolean }
+/** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
+export type ViewOpenKind = "OpenShown" | "OpenOtherDevice" | "OpenGone" | "OpenReplaced" | "OpenUnreachable" | "OpenFailed";
 /** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
 export interface ViewOpenAnswer { kind: ViewOpenKind; count: number }
-/** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
-export interface PhotosViewPage { screen: ViewScreen; pending: ViewPending; error: ViewError; linkHeld: boolean; opened: boolean; count: number; loaded: number; missing: number; reportLost: boolean }
 /** Story: See the photo my match chose to send me / The page loads each photo of the offer once and shows only what the server gives (spec/photosViewPage.md) */
 export type ViewImageAnswer = "ImageShown" | "ImageMissing" | "ImageOtherDevice" | "ImageGone" | "ImageReplaced" | "ImageUnreachable" | "ImageFailed";
 /** Story: Report a photo that is not okay / A report needs a confirm, goes once, and only the server's answer says it is done (spec/photosViewPage.md) */
@@ -20,24 +20,30 @@ export type ViewReportAnswer = "ReportDone" | "ReportGone" | "ReportOtherDevice"
 
 /** One variant per transition in the spec. */
 export type Event =
-  | { type: "tapToView" }
   | { type: "openViewPage"; tokenWellFormed: boolean }
+  | { type: "tapToView" }
   | { type: "answerViewOpen"; openAnswer: ViewOpenAnswer }
   | { type: "answerViewImage"; image: ViewImageAnswer }
+  | { type: "askToReport" }
   | { type: "keepViewing" }
   | { type: "sendReport" }
-  | { type: "askToReport" }
   | { type: "answerReport"; report: ViewReportAnswer };
 
 /** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
-export const photoViewMax: number = 3;
-/** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
 export const initial: PhotosViewPage = { screen: "ViewOpening", pending: "ViewIdle", error: "ViewNoError", linkHeld: false, opened: false, count: 0, loaded: 0, missing: 0, reportLost: false };
+/** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
+export const photoViewMax: number = 3;
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: PhotosViewPage): boolean {
   return alwaysNoPhotoBeforeTheOpen(current) && alwaysRequestsNeedTheLink(current) && alwaysPhotosWithinTheOffer(current) && alwaysShowingHasAPhotoOrLoads(current) && alwaysPhotosOnlyOnTheViewSteps(current) && alwaysConfirmHidesThePhotos(current) && alwaysConfirmHasAPhoto(current) && alwaysReportLostOnlyOnAClosedStep(current) && alwaysEndedPagesHoldNothing(current);
+}
+
+/** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
+//@ pure
+export function viewClosed(screen: ViewScreen, opened: boolean, reportLost: boolean): PhotosViewPage {
+  return { ...initial, screen: screen, opened: opened, reportLost: reportLost };
 }
 
 /** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
@@ -62,6 +68,26 @@ export function viewOpenError(kind: ViewOpenKind): ViewError {
 //@ pure
 export function canOpenViewPage(page: PhotosViewPage): boolean {
   return page.screen === "ViewOpening";
+}
+
+/** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
+//@ pure
+export function openViewPage(page: PhotosViewPage, tokenWellFormed: boolean): PhotosViewPage {
+  //@ ensures (inv(page) && canOpenViewPage(page)) ==> alwaysNoPhotoBeforeTheOpen(\result)
+  //@ ensures (inv(page) && canOpenViewPage(page)) ==> alwaysRequestsNeedTheLink(\result)
+  //@ ensures (inv(page) && canOpenViewPage(page)) ==> alwaysPhotosWithinTheOffer(\result)
+  //@ ensures (inv(page) && canOpenViewPage(page)) ==> alwaysShowingHasAPhotoOrLoads(\result)
+  //@ ensures (inv(page) && canOpenViewPage(page)) ==> alwaysPhotosOnlyOnTheViewSteps(\result)
+  //@ ensures (inv(page) && canOpenViewPage(page)) ==> alwaysConfirmHidesThePhotos(\result)
+  //@ ensures (inv(page) && canOpenViewPage(page)) ==> alwaysConfirmHasAPhoto(\result)
+  //@ ensures (inv(page) && canOpenViewPage(page)) ==> alwaysReportLostOnlyOnAClosedStep(\result)
+  //@ ensures (inv(page) && canOpenViewPage(page)) ==> alwaysEndedPagesHoldNothing(\result)
+  //@ ensures (inv(page) && canOpenViewPage(page)) ==> stepOpenOnlyByTap(page, "openViewPage", \result)
+  //@ ensures (inv(page) && canOpenViewPage(page)) ==> stepNoClockClosesThePhotos(page, "openViewPage", \result)
+  //@ ensures (inv(page) && canOpenViewPage(page)) ==> stepReportOnlyAfterTheConfirm(page, "openViewPage", \result)
+  //@ ensures (inv(page) && canOpenViewPage(page)) ==> stepReportedOnlyFromTheServer(page, "openViewPage", \result)
+  //@ ensures (inv(page) && canOpenViewPage(page)) ==> stepEndsAreFinal(page, \result)
+  return tokenWellFormed ? ({ ...page, screen: "ViewTap", linkHeld: true } as PhotosViewPage) : viewClosed("ViewGone", false, false);
 }
 
 /** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
@@ -98,64 +124,6 @@ export function canAnswerViewOpen(page: PhotosViewPage): boolean {
 
 /** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
 //@ pure
-export function stepOpenOnlyByTap(before: PhotosViewPage, via: string, after: PhotosViewPage): boolean {
-  return !(after.pending === "ViewOpeningLink" && before.pending !== "ViewOpeningLink") || (via === "tapToView" && before.screen === "ViewTap");
-}
-
-/** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
-//@ pure
-export function alwaysNoPhotoBeforeTheOpen(page: PhotosViewPage): boolean {
-  return !(page.loaded > 0 || page.screen === "ViewShowing" || page.screen === "ViewConfirmReport") || page.opened;
-}
-
-/** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
-//@ pure
-export function alwaysRequestsNeedTheLink(page: PhotosViewPage): boolean {
-  return !(page.pending !== "ViewIdle") || page.linkHeld;
-}
-
-/** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
-//@ pure
-export function viewClosed(screen: ViewScreen, opened: boolean, reportLost: boolean): PhotosViewPage {
-  return { ...initial, screen: screen, opened: opened, reportLost: reportLost };
-}
-
-/** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
-//@ pure
-export function lawOnlyAGoodOpenShowsPhotos(openAnswer: ViewOpenAnswer): boolean {
-  //@ ensures \result === true
-  return (viewScreenAfterOpen(openAnswer) === "ViewShowing") === (openAnswer.kind === "OpenShown" && viewCountOk(openAnswer.count));
-}
-
-/** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
-//@ pure
-export function lawOpenRetryShowsAnError(openAnswer: ViewOpenAnswer): boolean {
-  //@ ensures \result === true
-  return !(viewScreenAfterOpen(openAnswer) === "ViewTap") || viewOpenError(openAnswer.kind) !== "ViewNoError";
-}
-
-/** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
-//@ pure
-export function openViewPage(page: PhotosViewPage, tokenWellFormed: boolean): PhotosViewPage {
-  //@ ensures (inv(page) && canOpenViewPage(page)) ==> alwaysNoPhotoBeforeTheOpen(\result)
-  //@ ensures (inv(page) && canOpenViewPage(page)) ==> alwaysRequestsNeedTheLink(\result)
-  //@ ensures (inv(page) && canOpenViewPage(page)) ==> alwaysPhotosWithinTheOffer(\result)
-  //@ ensures (inv(page) && canOpenViewPage(page)) ==> alwaysShowingHasAPhotoOrLoads(\result)
-  //@ ensures (inv(page) && canOpenViewPage(page)) ==> alwaysPhotosOnlyOnTheViewSteps(\result)
-  //@ ensures (inv(page) && canOpenViewPage(page)) ==> alwaysConfirmHidesThePhotos(\result)
-  //@ ensures (inv(page) && canOpenViewPage(page)) ==> alwaysConfirmHasAPhoto(\result)
-  //@ ensures (inv(page) && canOpenViewPage(page)) ==> alwaysReportLostOnlyOnAClosedStep(\result)
-  //@ ensures (inv(page) && canOpenViewPage(page)) ==> alwaysEndedPagesHoldNothing(\result)
-  //@ ensures (inv(page) && canOpenViewPage(page)) ==> stepOpenOnlyByTap(page, "openViewPage", \result)
-  //@ ensures (inv(page) && canOpenViewPage(page)) ==> stepNoClockClosesThePhotos(page, "openViewPage", \result)
-  //@ ensures (inv(page) && canOpenViewPage(page)) ==> stepReportOnlyAfterTheConfirm(page, "openViewPage", \result)
-  //@ ensures (inv(page) && canOpenViewPage(page)) ==> stepReportedOnlyFromTheServer(page, "openViewPage", \result)
-  //@ ensures (inv(page) && canOpenViewPage(page)) ==> stepEndsAreFinal(page, \result)
-  return tokenWellFormed ? ({ ...page, screen: "ViewTap", linkHeld: true } as PhotosViewPage) : viewClosed("ViewGone", false, false);
-}
-
-/** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
-//@ pure
 export function answerViewOpen(page: PhotosViewPage, openAnswer: ViewOpenAnswer): PhotosViewPage {
   //@ ensures (inv(page) && canAnswerViewOpen(page)) ==> alwaysNoPhotoBeforeTheOpen(\result)
   //@ ensures (inv(page) && canAnswerViewOpen(page)) ==> alwaysRequestsNeedTheLink(\result)
@@ -175,6 +143,38 @@ export function answerViewOpen(page: PhotosViewPage, openAnswer: ViewOpenAnswer)
   return local_0 === "ViewShowing" ? ({ ...page, screen: "ViewShowing", pending: "ViewLoadingPhotos", error: "ViewNoError", opened: true, count: openAnswer.count, loaded: 0, missing: 0 } as PhotosViewPage) : (local_0 === "ViewTap" ? ({ ...page, pending: "ViewIdle", error: viewOpenError(openAnswer.kind) } as PhotosViewPage) : viewClosed(local_0, page.opened, false));
 }
 
+/** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
+//@ pure
+export function lawOnlyAGoodOpenShowsPhotos(openAnswer: ViewOpenAnswer): boolean {
+  //@ ensures \result === true
+  return (viewScreenAfterOpen(openAnswer) === "ViewShowing") === (openAnswer.kind === "OpenShown" && viewCountOk(openAnswer.count));
+}
+
+/** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
+//@ pure
+export function lawOpenRetryShowsAnError(openAnswer: ViewOpenAnswer): boolean {
+  //@ ensures \result === true
+  return !(viewScreenAfterOpen(openAnswer) === "ViewTap") || viewOpenError(openAnswer.kind) !== "ViewNoError";
+}
+
+/** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
+//@ pure
+export function stepOpenOnlyByTap(before: PhotosViewPage, via: string, after: PhotosViewPage): boolean {
+  return !(after.pending === "ViewOpeningLink" && before.pending !== "ViewOpeningLink") || (via === "tapToView" && before.screen === "ViewTap");
+}
+
+/** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
+//@ pure
+export function alwaysNoPhotoBeforeTheOpen(page: PhotosViewPage): boolean {
+  return !(page.loaded > 0 || page.screen === "ViewShowing" || page.screen === "ViewConfirmReport") || page.opened;
+}
+
+/** Story: See the photo my match chose to send me / The page opens the photos only when the person taps, and only from a well-formed token (spec/photosViewPage.md) */
+//@ pure
+export function alwaysRequestsNeedTheLink(page: PhotosViewPage): boolean {
+  return !(page.pending !== "ViewIdle") || page.linkHeld;
+}
+
 /** Story: See the photo my match chose to send me / The page loads each photo of the offer once and shows only what the server gives (spec/photosViewPage.md) */
 //@ pure
 export function viewLoadSettles(loaded: number, missing: number, count: number): boolean {
@@ -185,18 +185,6 @@ export function viewLoadSettles(loaded: number, missing: number, count: number):
 //@ pure
 export function canAnswerViewImage(page: PhotosViewPage): boolean {
   return page.screen === "ViewShowing" && page.pending === "ViewLoadingPhotos" && exact_photosViewPage(page.loaded + page.missing) < page.count;
-}
-
-/** Story: See the photo my match chose to send me / The page loads each photo of the offer once and shows only what the server gives (spec/photosViewPage.md) */
-//@ pure
-export function alwaysPhotosWithinTheOffer(page: PhotosViewPage): boolean {
-  return page.loaded >= 0 && page.missing >= 0 && exact_photosViewPage(page.loaded + page.missing) <= page.count && page.count <= photoViewMax;
-}
-
-/** Story: See the photo my match chose to send me / The page loads each photo of the offer once and shows only what the server gives (spec/photosViewPage.md) */
-//@ pure
-export function alwaysShowingHasAPhotoOrLoads(page: PhotosViewPage): boolean {
-  return !(page.screen === "ViewShowing") || (page.loaded > 0 || page.pending === "ViewLoadingPhotos");
 }
 
 /** Story: See the photo my match chose to send me / The page loads each photo of the offer once and shows only what the server gives (spec/photosViewPage.md) */
@@ -219,6 +207,18 @@ export function answerViewImage(page: PhotosViewPage, image: ViewImageAnswer): P
   const local_1 = viewLoadSettles(page.loaded, page.missing, page.count);
   const local_2: ViewPending = local_1 ? "ViewIdle" : "ViewLoadingPhotos";
   return image === "ImageShown" ? ({ ...page, loaded: exact_photosViewPage(page.loaded + 1), pending: local_2 } as PhotosViewPage) : (image === "ImageMissing" && local_1 && page.loaded === 0 ? viewClosed("ViewGone", true, false) : (image === "ImageMissing" ? ({ ...page, missing: exact_photosViewPage(page.missing + 1), pending: local_2 } as PhotosViewPage) : (image === "ImageOtherDevice" ? viewClosed("ViewOtherDevice", true, false) : (image === "ImageGone" ? viewClosed("ViewGone", true, false) : (image === "ImageReplaced" ? viewClosed("ViewReplaced", true, false) : ({ ...page, screen: "ViewTap", pending: "ViewIdle", loaded: 0, missing: 0, error: image === "ImageUnreachable" ? "ViewUnreachable" : "ViewRequestFailed" } as PhotosViewPage))))));
+}
+
+/** Story: See the photo my match chose to send me / The page loads each photo of the offer once and shows only what the server gives (spec/photosViewPage.md) */
+//@ pure
+export function alwaysPhotosWithinTheOffer(page: PhotosViewPage): boolean {
+  return page.loaded >= 0 && page.missing >= 0 && exact_photosViewPage(page.loaded + page.missing) <= page.count && page.count <= photoViewMax;
+}
+
+/** Story: See the photo my match chose to send me / The page loads each photo of the offer once and shows only what the server gives (spec/photosViewPage.md) */
+//@ pure
+export function alwaysShowingHasAPhotoOrLoads(page: PhotosViewPage): boolean {
+  return !(page.screen === "ViewShowing") || (page.loaded > 0 || page.pending === "ViewLoadingPhotos");
 }
 
 /** Story: See the photo my match chose to send me / The page offers no way to save the photo, and says what it cannot stop (spec/photosViewPage.md) */
@@ -249,6 +249,38 @@ export function alwaysConfirmHidesThePhotos(page: PhotosViewPage): boolean {
 //@ pure
 export function stepNoClockClosesThePhotos(before: PhotosViewPage, via: string, after: PhotosViewPage): boolean {
   return !(viewPhotosHeld(before) && !viewPhotosHeld(after)) || (via === "answerViewImage" || via === "askToReport" || via === "answerReport");
+}
+
+/** Story: Report a photo that is not okay / A report needs a confirm, goes once, and only the server's answer says it is done (spec/photosViewPage.md) */
+//@ pure
+export function viewScreenAfterReport(report: ViewReportAnswer): ViewScreen {
+  return report === "ReportDone" ? "ViewReported" : (report === "ReportGone" ? "ViewGone" : (report === "ReportOtherDevice" ? "ViewOtherDevice" : (report === "ReportReplaced" ? "ViewReplaced" : "ViewConfirmReport")));
+}
+
+/** Story: Report a photo that is not okay / A report needs a confirm, goes once, and only the server's answer says it is done (spec/photosViewPage.md) */
+//@ pure
+export function canAskToReport(page: PhotosViewPage): boolean {
+  return page.screen === "ViewShowing" && page.pending === "ViewIdle" && page.loaded >= 1;
+}
+
+/** Story: Report a photo that is not okay / A report needs a confirm, goes once, and only the server's answer says it is done (spec/photosViewPage.md) */
+//@ pure
+export function askToReport(page: PhotosViewPage): PhotosViewPage {
+  //@ ensures (inv(page) && canAskToReport(page)) ==> alwaysNoPhotoBeforeTheOpen(\result)
+  //@ ensures (inv(page) && canAskToReport(page)) ==> alwaysRequestsNeedTheLink(\result)
+  //@ ensures (inv(page) && canAskToReport(page)) ==> alwaysPhotosWithinTheOffer(\result)
+  //@ ensures (inv(page) && canAskToReport(page)) ==> alwaysShowingHasAPhotoOrLoads(\result)
+  //@ ensures (inv(page) && canAskToReport(page)) ==> alwaysPhotosOnlyOnTheViewSteps(\result)
+  //@ ensures (inv(page) && canAskToReport(page)) ==> alwaysConfirmHidesThePhotos(\result)
+  //@ ensures (inv(page) && canAskToReport(page)) ==> alwaysConfirmHasAPhoto(\result)
+  //@ ensures (inv(page) && canAskToReport(page)) ==> alwaysReportLostOnlyOnAClosedStep(\result)
+  //@ ensures (inv(page) && canAskToReport(page)) ==> alwaysEndedPagesHoldNothing(\result)
+  //@ ensures (inv(page) && canAskToReport(page)) ==> stepOpenOnlyByTap(page, "askToReport", \result)
+  //@ ensures (inv(page) && canAskToReport(page)) ==> stepNoClockClosesThePhotos(page, "askToReport", \result)
+  //@ ensures (inv(page) && canAskToReport(page)) ==> stepReportOnlyAfterTheConfirm(page, "askToReport", \result)
+  //@ ensures (inv(page) && canAskToReport(page)) ==> stepReportedOnlyFromTheServer(page, "askToReport", \result)
+  //@ ensures (inv(page) && canAskToReport(page)) ==> stepEndsAreFinal(page, \result)
+  return { ...page, screen: "ViewConfirmReport", error: "ViewNoError" };
 }
 
 /** Story: Report a photo that is not okay / A report needs a confirm, goes once, and only the server's answer says it is done (spec/photosViewPage.md) */
@@ -311,6 +343,41 @@ export function canAnswerReport(page: PhotosViewPage): boolean {
 
 /** Story: Report a photo that is not okay / A report needs a confirm, goes once, and only the server's answer says it is done (spec/photosViewPage.md) */
 //@ pure
+export function answerReport(page: PhotosViewPage, report: ViewReportAnswer): PhotosViewPage {
+  //@ ensures (inv(page) && canAnswerReport(page)) ==> alwaysNoPhotoBeforeTheOpen(\result)
+  //@ ensures (inv(page) && canAnswerReport(page)) ==> alwaysRequestsNeedTheLink(\result)
+  //@ ensures (inv(page) && canAnswerReport(page)) ==> alwaysPhotosWithinTheOffer(\result)
+  //@ ensures (inv(page) && canAnswerReport(page)) ==> alwaysShowingHasAPhotoOrLoads(\result)
+  //@ ensures (inv(page) && canAnswerReport(page)) ==> alwaysPhotosOnlyOnTheViewSteps(\result)
+  //@ ensures (inv(page) && canAnswerReport(page)) ==> alwaysConfirmHidesThePhotos(\result)
+  //@ ensures (inv(page) && canAnswerReport(page)) ==> alwaysConfirmHasAPhoto(\result)
+  //@ ensures (inv(page) && canAnswerReport(page)) ==> alwaysReportLostOnlyOnAClosedStep(\result)
+  //@ ensures (inv(page) && canAnswerReport(page)) ==> alwaysEndedPagesHoldNothing(\result)
+  //@ ensures (inv(page) && canAnswerReport(page)) ==> stepOpenOnlyByTap(page, "answerReport", \result)
+  //@ ensures (inv(page) && canAnswerReport(page)) ==> stepNoClockClosesThePhotos(page, "answerReport", \result)
+  //@ ensures (inv(page) && canAnswerReport(page)) ==> stepReportOnlyAfterTheConfirm(page, "answerReport", \result)
+  //@ ensures (inv(page) && canAnswerReport(page)) ==> stepReportedOnlyFromTheServer(page, "answerReport", \result)
+  //@ ensures (inv(page) && canAnswerReport(page)) ==> stepEndsAreFinal(page, \result)
+  const local_3: ViewScreen = viewScreenAfterReport(report);
+  return local_3 === "ViewConfirmReport" ? ({ ...page, pending: "ViewIdle", error: report === "ReportUnreachable" ? "ViewUnreachable" : "ViewRequestFailed" } as PhotosViewPage) : viewClosed(local_3, true, local_3 !== "ViewReported");
+}
+
+/** Story: Report a photo that is not okay / A report needs a confirm, goes once, and only the server's answer says it is done (spec/photosViewPage.md) */
+//@ pure
+export function lawOnlyTheServerConfirmsAReport(report: ViewReportAnswer): boolean {
+  //@ ensures \result === true
+  return (viewScreenAfterReport(report) === "ViewReported") === (report === "ReportDone");
+}
+
+/** Story: Report a photo that is not okay / A report needs a confirm, goes once, and only the server's answer says it is done (spec/photosViewPage.md) */
+//@ pure
+export function lawAFailedReportCanBeSentAgain(report: ViewReportAnswer): boolean {
+  //@ ensures \result === true
+  return !(report === "ReportUnreachable" || report === "ReportFailed") || viewScreenAfterReport(report) === "ViewConfirmReport";
+}
+
+/** Story: Report a photo that is not okay / A report needs a confirm, goes once, and only the server's answer says it is done (spec/photosViewPage.md) */
+//@ pure
 export function stepReportOnlyAfterTheConfirm(before: PhotosViewPage, via: string, after: PhotosViewPage): boolean {
   return !(after.pending === "ViewReporting" && before.pending !== "ViewReporting") || (via === "sendReport" && before.screen === "ViewConfirmReport");
 }
@@ -331,73 +398,6 @@ export function alwaysConfirmHasAPhoto(page: PhotosViewPage): boolean {
 //@ pure
 export function alwaysReportLostOnlyOnAClosedStep(page: PhotosViewPage): boolean {
   return !page.reportLost || (page.screen === "ViewGone" || page.screen === "ViewOtherDevice" || page.screen === "ViewReplaced");
-}
-
-/** Story: Report a photo that is not okay / A report needs a confirm, goes once, and only the server's answer says it is done (spec/photosViewPage.md) */
-//@ pure
-export function viewScreenAfterReport(report: ViewReportAnswer): ViewScreen {
-  return report === "ReportDone" ? "ViewReported" : (report === "ReportGone" ? "ViewGone" : (report === "ReportOtherDevice" ? "ViewOtherDevice" : (report === "ReportReplaced" ? "ViewReplaced" : "ViewConfirmReport")));
-}
-
-/** Story: Report a photo that is not okay / A report needs a confirm, goes once, and only the server's answer says it is done (spec/photosViewPage.md) */
-//@ pure
-export function canAskToReport(page: PhotosViewPage): boolean {
-  return page.screen === "ViewShowing" && page.pending === "ViewIdle" && page.loaded >= 1;
-}
-
-/** Story: Report a photo that is not okay / A report needs a confirm, goes once, and only the server's answer says it is done (spec/photosViewPage.md) */
-//@ pure
-export function askToReport(page: PhotosViewPage): PhotosViewPage {
-  //@ ensures (inv(page) && canAskToReport(page)) ==> alwaysNoPhotoBeforeTheOpen(\result)
-  //@ ensures (inv(page) && canAskToReport(page)) ==> alwaysRequestsNeedTheLink(\result)
-  //@ ensures (inv(page) && canAskToReport(page)) ==> alwaysPhotosWithinTheOffer(\result)
-  //@ ensures (inv(page) && canAskToReport(page)) ==> alwaysShowingHasAPhotoOrLoads(\result)
-  //@ ensures (inv(page) && canAskToReport(page)) ==> alwaysPhotosOnlyOnTheViewSteps(\result)
-  //@ ensures (inv(page) && canAskToReport(page)) ==> alwaysConfirmHidesThePhotos(\result)
-  //@ ensures (inv(page) && canAskToReport(page)) ==> alwaysConfirmHasAPhoto(\result)
-  //@ ensures (inv(page) && canAskToReport(page)) ==> alwaysReportLostOnlyOnAClosedStep(\result)
-  //@ ensures (inv(page) && canAskToReport(page)) ==> alwaysEndedPagesHoldNothing(\result)
-  //@ ensures (inv(page) && canAskToReport(page)) ==> stepOpenOnlyByTap(page, "askToReport", \result)
-  //@ ensures (inv(page) && canAskToReport(page)) ==> stepNoClockClosesThePhotos(page, "askToReport", \result)
-  //@ ensures (inv(page) && canAskToReport(page)) ==> stepReportOnlyAfterTheConfirm(page, "askToReport", \result)
-  //@ ensures (inv(page) && canAskToReport(page)) ==> stepReportedOnlyFromTheServer(page, "askToReport", \result)
-  //@ ensures (inv(page) && canAskToReport(page)) ==> stepEndsAreFinal(page, \result)
-  return { ...page, screen: "ViewConfirmReport", error: "ViewNoError" };
-}
-
-/** Story: Report a photo that is not okay / A report needs a confirm, goes once, and only the server's answer says it is done (spec/photosViewPage.md) */
-//@ pure
-export function lawOnlyTheServerConfirmsAReport(report: ViewReportAnswer): boolean {
-  //@ ensures \result === true
-  return (viewScreenAfterReport(report) === "ViewReported") === (report === "ReportDone");
-}
-
-/** Story: Report a photo that is not okay / A report needs a confirm, goes once, and only the server's answer says it is done (spec/photosViewPage.md) */
-//@ pure
-export function lawAFailedReportCanBeSentAgain(report: ViewReportAnswer): boolean {
-  //@ ensures \result === true
-  return !(report === "ReportUnreachable" || report === "ReportFailed") || viewScreenAfterReport(report) === "ViewConfirmReport";
-}
-
-/** Story: Report a photo that is not okay / A report needs a confirm, goes once, and only the server's answer says it is done (spec/photosViewPage.md) */
-//@ pure
-export function answerReport(page: PhotosViewPage, report: ViewReportAnswer): PhotosViewPage {
-  //@ ensures (inv(page) && canAnswerReport(page)) ==> alwaysNoPhotoBeforeTheOpen(\result)
-  //@ ensures (inv(page) && canAnswerReport(page)) ==> alwaysRequestsNeedTheLink(\result)
-  //@ ensures (inv(page) && canAnswerReport(page)) ==> alwaysPhotosWithinTheOffer(\result)
-  //@ ensures (inv(page) && canAnswerReport(page)) ==> alwaysShowingHasAPhotoOrLoads(\result)
-  //@ ensures (inv(page) && canAnswerReport(page)) ==> alwaysPhotosOnlyOnTheViewSteps(\result)
-  //@ ensures (inv(page) && canAnswerReport(page)) ==> alwaysConfirmHidesThePhotos(\result)
-  //@ ensures (inv(page) && canAnswerReport(page)) ==> alwaysConfirmHasAPhoto(\result)
-  //@ ensures (inv(page) && canAnswerReport(page)) ==> alwaysReportLostOnlyOnAClosedStep(\result)
-  //@ ensures (inv(page) && canAnswerReport(page)) ==> alwaysEndedPagesHoldNothing(\result)
-  //@ ensures (inv(page) && canAnswerReport(page)) ==> stepOpenOnlyByTap(page, "answerReport", \result)
-  //@ ensures (inv(page) && canAnswerReport(page)) ==> stepNoClockClosesThePhotos(page, "answerReport", \result)
-  //@ ensures (inv(page) && canAnswerReport(page)) ==> stepReportOnlyAfterTheConfirm(page, "answerReport", \result)
-  //@ ensures (inv(page) && canAnswerReport(page)) ==> stepReportedOnlyFromTheServer(page, "answerReport", \result)
-  //@ ensures (inv(page) && canAnswerReport(page)) ==> stepEndsAreFinal(page, \result)
-  const local_3: ViewScreen = viewScreenAfterReport(report);
-  return local_3 === "ViewConfirmReport" ? ({ ...page, pending: "ViewIdle", error: report === "ReportUnreachable" ? "ViewUnreachable" : "ViewRequestFailed" } as PhotosViewPage) : viewClosed(local_3, true, local_3 !== "ViewReported");
 }
 
 /** Story: A link on another phone, an ended offer or a report shows nothing / A closed step never opens again, and a withdrawn photo looks like an expired one (spec/photosViewPage.md) */
@@ -445,6 +445,24 @@ export function sometimesLoading(page: PhotosViewPage): boolean {
 
 /** Story: Reach every outcome / A person can see one or three photos, see part of an offer, report, and find each closed step and error (spec/photosViewPage.md) */
 //@ pure
+export function sometimesShowingOne(page: PhotosViewPage): boolean {
+  return viewPhotosShown(page) && page.pending === "ViewIdle" && page.count === 1;
+}
+
+/** Story: Reach every outcome / A person can see one or three photos, see part of an offer, report, and find each closed step and error (spec/photosViewPage.md) */
+//@ pure
+export function sometimesShowingThree(page: PhotosViewPage): boolean {
+  return viewPhotosShown(page) && page.pending === "ViewIdle" && page.loaded === 3;
+}
+
+/** Story: Reach every outcome / A person can see one or three photos, see part of an offer, report, and find each closed step and error (spec/photosViewPage.md) */
+//@ pure
+export function sometimesShowingPart(page: PhotosViewPage): boolean {
+  return viewPhotosShown(page) && page.pending === "ViewIdle" && page.missing > 0;
+}
+
+/** Story: Reach every outcome / A person can see one or three photos, see part of an offer, report, and find each closed step and error (spec/photosViewPage.md) */
+//@ pure
 export function sometimesConfirmReport(page: PhotosViewPage): boolean {
   return page.screen === "ViewConfirmReport" && page.pending === "ViewIdle";
 }
@@ -453,6 +471,12 @@ export function sometimesConfirmReport(page: PhotosViewPage): boolean {
 //@ pure
 export function sometimesReporting(page: PhotosViewPage): boolean {
   return page.pending === "ViewReporting";
+}
+
+/** Story: Reach every outcome / A person can see one or three photos, see part of an offer, report, and find each closed step and error (spec/photosViewPage.md) */
+//@ pure
+export function sometimesReportRetry(page: PhotosViewPage): boolean {
+  return page.screen === "ViewConfirmReport" && page.error === "ViewUnreachable" && canSendReport(page);
 }
 
 /** Story: Reach every outcome / A person can see one or three photos, see part of an offer, report, and find each closed step and error (spec/photosViewPage.md) */
@@ -493,6 +517,12 @@ export function sometimesReportLost(page: PhotosViewPage): boolean {
 
 /** Story: Reach every outcome / A person can see one or three photos, see part of an offer, report, and find each closed step and error (spec/photosViewPage.md) */
 //@ pure
+export function sometimesUnreachable(page: PhotosViewPage): boolean {
+  return page.screen === "ViewTap" && page.error === "ViewUnreachable" && canTapToView(page);
+}
+
+/** Story: Reach every outcome / A person can see one or three photos, see part of an offer, report, and find each closed step and error (spec/photosViewPage.md) */
+//@ pure
 export function sometimesRequestFailed(page: PhotosViewPage): boolean {
   return page.screen === "ViewTap" && page.error === "ViewRequestFailed";
 }
@@ -503,46 +533,16 @@ export function sometimesTapAgainAfterAPhotoFailed(page: PhotosViewPage): boolea
   return page.screen === "ViewTap" && page.opened && page.error !== "ViewNoError";
 }
 
-/** Story: Reach every outcome / A person can see one or three photos, see part of an offer, report, and find each closed step and error (spec/photosViewPage.md) */
-//@ pure
-export function sometimesShowingOne(page: PhotosViewPage): boolean {
-  return viewPhotosShown(page) && page.pending === "ViewIdle" && page.count === 1;
-}
-
-/** Story: Reach every outcome / A person can see one or three photos, see part of an offer, report, and find each closed step and error (spec/photosViewPage.md) */
-//@ pure
-export function sometimesShowingThree(page: PhotosViewPage): boolean {
-  return viewPhotosShown(page) && page.pending === "ViewIdle" && page.loaded === 3;
-}
-
-/** Story: Reach every outcome / A person can see one or three photos, see part of an offer, report, and find each closed step and error (spec/photosViewPage.md) */
-//@ pure
-export function sometimesShowingPart(page: PhotosViewPage): boolean {
-  return viewPhotosShown(page) && page.pending === "ViewIdle" && page.missing > 0;
-}
-
-/** Story: Reach every outcome / A person can see one or three photos, see part of an offer, report, and find each closed step and error (spec/photosViewPage.md) */
-//@ pure
-export function sometimesReportRetry(page: PhotosViewPage): boolean {
-  return page.screen === "ViewConfirmReport" && page.error === "ViewUnreachable" && canSendReport(page);
-}
-
-/** Story: Reach every outcome / A person can see one or three photos, see part of an offer, report, and find each closed step and error (spec/photosViewPage.md) */
-//@ pure
-export function sometimesUnreachable(page: PhotosViewPage): boolean {
-  return page.screen === "ViewTap" && page.error === "ViewUnreachable" && canTapToView(page);
-}
-
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: PhotosViewPage, event: Event): boolean {
-  if (event.type === "tapToView") return canTapToView(current);
   if (event.type === "openViewPage") return canOpenViewPage(current);
+  if (event.type === "tapToView") return canTapToView(current);
   if (event.type === "answerViewOpen") return canAnswerViewOpen(current);
   if (event.type === "answerViewImage") return canAnswerViewImage(current);
+  if (event.type === "askToReport") return canAskToReport(current);
   if (event.type === "keepViewing") return canKeepViewing(current);
   if (event.type === "sendReport") return canSendReport(current);
-  if (event.type === "askToReport") return canAskToReport(current);
   if (event.type === "answerReport") return canAnswerReport(current);
   return false;
 }
@@ -552,13 +552,13 @@ export function enabled(current: PhotosViewPage, event: Event): boolean {
 export function step(current: PhotosViewPage, event: Event): PhotosViewPage {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "tapToView") return canTapToView(current) ? tapToView(current) : current;
   if (event.type === "openViewPage") return canOpenViewPage(current) ? openViewPage(current, event.tokenWellFormed) : current;
+  if (event.type === "tapToView") return canTapToView(current) ? tapToView(current) : current;
   if (event.type === "answerViewOpen") return canAnswerViewOpen(current) ? answerViewOpen(current, event.openAnswer) : current;
   if (event.type === "answerViewImage") return canAnswerViewImage(current) ? answerViewImage(current, event.image) : current;
+  if (event.type === "askToReport") return canAskToReport(current) ? askToReport(current) : current;
   if (event.type === "keepViewing") return canKeepViewing(current) ? keepViewing(current) : current;
   if (event.type === "sendReport") return canSendReport(current) ? sendReport(current) : current;
-  if (event.type === "askToReport") return canAskToReport(current) ? askToReport(current) : current;
   if (event.type === "answerReport") return canAnswerReport(current) ? answerReport(current, event.report) : current;
   return current;
 }
@@ -578,13 +578,13 @@ export function parseEvent(x: unknown): Event | undefined {
   }
   const is_ViewOpenAnswer = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && (v.kind === "OpenShown" || v.kind === "OpenOtherDevice" || v.kind === "OpenGone" || v.kind === "OpenReplaced" || v.kind === "OpenUnreachable" || v.kind === "OpenFailed") && Number.isSafeInteger(v.count);
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "tapToView") return { type: "tapToView" };
   if (raw.type === "openViewPage" && typeof raw.tokenWellFormed === "boolean") return { type: "openViewPage", tokenWellFormed: raw.tokenWellFormed };
+  if (raw.type === "tapToView") return { type: "tapToView" };
   if (raw.type === "answerViewOpen" && is_ViewOpenAnswer(raw.openAnswer)) return { type: "answerViewOpen", openAnswer: ({ kind: raw.openAnswer.kind, count: raw.openAnswer.count }) };
   if (raw.type === "answerViewImage" && (raw.image === "ImageShown" || raw.image === "ImageMissing" || raw.image === "ImageOtherDevice" || raw.image === "ImageGone" || raw.image === "ImageReplaced" || raw.image === "ImageUnreachable" || raw.image === "ImageFailed")) return { type: "answerViewImage", image: raw.image };
+  if (raw.type === "askToReport") return { type: "askToReport" };
   if (raw.type === "keepViewing") return { type: "keepViewing" };
   if (raw.type === "sendReport") return { type: "sendReport" };
-  if (raw.type === "askToReport") return { type: "askToReport" };
   if (raw.type === "answerReport" && (raw.report === "ReportDone" || raw.report === "ReportGone" || raw.report === "ReportOtherDevice" || raw.report === "ReportReplaced" || raw.report === "ReportUnreachable" || raw.report === "ReportFailed")) return { type: "answerReport", report: raw.report };
   return undefined;
 }

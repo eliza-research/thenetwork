@@ -1,15 +1,15 @@
 // GENERATED from spec/turnReceiptJourney.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type ReceiptPhase as turnReceipt_ReceiptPhase, type TurnReceipt as turnReceipt_TurnReceipt, receiptReplyIdsMatch as turnReceipt_receiptReplyIdsMatch, noHistoryAllowed as turnReceipt_noHistoryAllowed, receiptAccepted as turnReceipt_receiptAccepted, checkTurn as turnReceipt_checkTurn, canCheckAuthority as turnReceipt_canCheckAuthority, checkAuthority as turnReceipt_checkAuthority, canReadPrevious as turnReceipt_canReadPrevious, readPrevious as turnReceipt_readPrevious, canCheckScope as turnReceipt_canCheckScope, checkScope as turnReceipt_checkScope, canCheckDelivery as turnReceipt_canCheckDelivery, checkDelivery as turnReceipt_checkDelivery, lawReceiptRequiresExactOrder as turnReceipt_lawReceiptRequiresExactOrder, lawAccountBoundReceiptNeedsHistory as turnReceipt_lawAccountBoundReceiptNeedsHistory, canRecordReceipt as turnReceipt_canRecordReceipt, recordReceipt as turnReceipt_recordReceipt, receiptFinal as turnReceipt_receiptFinal, receiptMessageStatus as turnReceipt_receiptMessageStatus, sometimesCanStoreReceipt as turnReceipt_sometimesCanStoreReceipt, sometimesCanReplayReceipt as turnReceipt_sometimesCanReplayReceipt, initial as turnReceipt_initial, canCheckTurn as turnReceipt_canCheckTurn, stepReceiptNeedsAdmission as turnReceipt_stepReceiptNeedsAdmission } from "./turnReceipt.ts";
+import { type ReceiptPhase as turnReceipt_ReceiptPhase, type TurnReceipt as turnReceipt_TurnReceipt, initial as turnReceipt_initial, canCheckTurn as turnReceipt_canCheckTurn, checkTurn as turnReceipt_checkTurn, canCheckAuthority as turnReceipt_canCheckAuthority, checkAuthority as turnReceipt_checkAuthority, canReadPrevious as turnReceipt_canReadPrevious, readPrevious as turnReceipt_readPrevious, canCheckScope as turnReceipt_canCheckScope, checkScope as turnReceipt_checkScope, canCheckDelivery as turnReceipt_canCheckDelivery, checkDelivery as turnReceipt_checkDelivery, receiptReplyIdsMatch as turnReceipt_receiptReplyIdsMatch, noHistoryAllowed as turnReceipt_noHistoryAllowed, lawReceiptRequiresExactOrder as turnReceipt_lawReceiptRequiresExactOrder, lawAccountBoundReceiptNeedsHistory as turnReceipt_lawAccountBoundReceiptNeedsHistory, canRecordReceipt as turnReceipt_canRecordReceipt, recordReceipt as turnReceipt_recordReceipt, receiptAccepted as turnReceipt_receiptAccepted, receiptFinal as turnReceipt_receiptFinal, receiptMessageStatus as turnReceipt_receiptMessageStatus, stepReceiptNeedsAdmission as turnReceipt_stepReceiptNeedsAdmission, sometimesCanStoreReceipt as turnReceipt_sometimesCanStoreReceipt, sometimesCanReplayReceipt as turnReceipt_sometimesCanReplayReceipt } from "./turnReceipt.ts";
 
-/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md) */
-export type ReceiptJourneyResult = "ReportStored" | "ReportReplayed" | "ReportConflict";
 /** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md) */
 export type DeliveryReport = "UnknownReport" | "AcceptedReport" | "AlternativeAcceptance" | "RejectedReport";
 /** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md) */
 export type ReceiptObservation =
   | { tag: "NoReceipt" }
   | { tag: "SavedReceipt"; report: DeliveryReport };
+/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md) */
+export type ReceiptJourneyResult = "ReportStored" | "ReportReplayed" | "ReportConflict";
 /** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md) */
 export interface ReceiptJourney { receipt: ReceiptObservation; replyStatus: string }
 /** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md) */
@@ -30,6 +30,12 @@ export function inv(current: ReceiptJourney): boolean {
 
 /** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md) */
 //@ pure
+export function delivery(report: DeliveryReport): string {
+  return report === "UnknownReport" ? "unknown" : (report === "RejectedReport" ? "rejected" : "accepted");
+}
+
+/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md) */
+//@ pure
 export function hasReceipt(r: ReceiptObservation): boolean {
   return r.tag === "NoReceipt" ? false : true;
 }
@@ -42,14 +48,14 @@ export function receiptIs(r: ReceiptObservation, report: DeliveryReport): boolea
 
 /** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md) */
 //@ pure
-export function delivery(report: DeliveryReport): string {
-  return report === "UnknownReport" ? "unknown" : (report === "RejectedReport" ? "rejected" : "accepted");
+export function replyStatusFor(receipt: ReceiptObservation): string {
+  return receipt.tag === "NoReceipt" ? "collected" : turnReceipt_receiptMessageStatus(delivery(receipt.report));
 }
 
 /** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md) */
 //@ pure
-export function replyStatusFor(receipt: ReceiptObservation): string {
-  return receipt.tag === "NoReceipt" ? "collected" : turnReceipt_receiptMessageStatus(delivery(receipt.report));
+export function alwaysReplyStatusMatchesReceipt(s: ReceiptJourney): boolean {
+  return s.replyStatus === replyStatusFor(s.receipt);
 }
 
 /** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md) */
@@ -70,22 +76,10 @@ export function sometimesStoresARejectedReceipt(s: ReceiptJourney): boolean {
   return receiptIs(s.receipt, "RejectedReport");
 }
 
-/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md) */
-//@ pure
-export function alwaysReplyStatusMatchesReceipt(s: ReceiptJourney): boolean {
-  return s.replyStatus === replyStatusFor(s.receipt);
-}
-
 /** Story: Keep a single delivery result for a collected reply / An exact replay leaves both records unchanged (spec/turnReceiptJourney.md) */
 //@ pure
 export function canReportDelivery(s: ReceiptJourney, report: DeliveryReport): boolean {
   return true;
-}
-
-/** Story: Keep a single delivery result for a collected reply / An exact replay leaves both records unchanged (spec/turnReceiptJourney.md) */
-//@ pure
-export function stepAStoredFinalReportStays(before: ReceiptJourney, after: ReceiptJourney): boolean {
-  return !(hasReceipt(before.receipt) && !receiptIs(before.receipt, "UnknownReport")) || equal_turnReceiptJourney(after, before);
 }
 
 /** Story: Keep a single delivery result for a collected reply / An exact replay leaves both records unchanged (spec/turnReceiptJourney.md) */
@@ -96,6 +90,12 @@ export function reportDelivery(s: ReceiptJourney, report: DeliveryReport): Recei
   const local_0: ReceiptObservation = ({ tag: "SavedReceipt", report: report } as ReceiptObservation);
   const local_1: turnReceipt_TurnReceipt = turnReceipt_readPrevious(({ phase: "CheckingPrevious" } as turnReceipt_TurnReceipt), receiptIs(s.receipt, report), hasReceipt(s.receipt), receiptIs(s.receipt, "UnknownReport"), turnReceipt_receiptFinal(delivery(report)));
   return turnReceipt_canCheckScope(local_1) ? ({ state: ({ receipt: local_0, replyStatus: replyStatusFor(local_0) } as ReceiptJourney), out: (["ReportStored"] as ReceiptJourneyResult[]) } as ReceiptJourneyStep) : ({ state: s, out: ([local_1.phase === "Replayed" ? "ReportReplayed" : "ReportConflict"] as ReceiptJourneyResult[]) } as ReceiptJourneyStep);
+}
+
+/** Story: Keep a single delivery result for a collected reply / An exact replay leaves both records unchanged (spec/turnReceiptJourney.md) */
+//@ pure
+export function stepAStoredFinalReportStays(before: ReceiptJourney, after: ReceiptJourney): boolean {
+  return !(hasReceipt(before.receipt) && !receiptIs(before.receipt, "UnknownReport")) || equal_turnReceiptJourney(after, before);
 }
 
 /** Do the rules allow this event in this state? */

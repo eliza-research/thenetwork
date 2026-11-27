@@ -10,6 +10,11 @@ export function inv(current) {
 }
 /** Story: Record the gateway's delivery result once / A receipt belongs to a completed handled turn under current authority (spec/turnReceipt.md) */
 //@ pure
+export function canCheckTurn(receipt) {
+    return receipt.phase === "ReadingTurn";
+}
+/** Story: Record the gateway's delivery result once / A receipt belongs to a completed handled turn under current authority (spec/turnReceipt.md) */
+//@ pure
 export function checkTurn(receipt, handled) {
     //@ ensures (inv(receipt) && canCheckTurn(receipt)) ==> stepReceiptNeedsAdmission(receipt, "checkTurn", \result)
     return { phase: handled ? "CheckingAuthority" : "TurnUnavailable" };
@@ -36,21 +41,6 @@ export function readPrevious(receipt, identical, alreadyStored, previouslyUnknow
     //@ ensures (inv(receipt) && canReadPrevious(receipt)) ==> stepReceiptNeedsAdmission(receipt, "readPrevious", \result)
     return identical ? { phase: "Replayed" } : (alreadyStored && !(previouslyUnknown && finalDelivery) ? { phase: "Conflict" } : { phase: "CheckingScope" });
 }
-/** Story: Record the gateway's delivery result once / A receipt belongs to a completed handled turn under current authority (spec/turnReceipt.md) */
-//@ pure
-export function canCheckTurn(receipt) {
-    return receipt.phase === "ReadingTurn";
-}
-/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md) */
-//@ pure
-export function receiptReplyIdsMatch(loadedIds, submittedIds) {
-    return equal_turnReceipt(loadedIds, submittedIds);
-}
-/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md) */
-//@ pure
-export function noHistoryAllowed(accountFree, replyKind, reason, memberAbsent, knownApp) {
-    return accountFree && (replyKind === "compliance" || (replyKind === "reply" && reason === "onboarding_asked" && memberAbsent && knownApp));
-}
 /** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md) */
 //@ pure
 export function canCheckScope(receipt) {
@@ -75,6 +65,16 @@ export function checkDelivery(receipt, accepted, providerIds, history, accountFr
 }
 /** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md) */
 //@ pure
+export function receiptReplyIdsMatch(loadedIds, submittedIds) {
+    return equal_turnReceipt(loadedIds, submittedIds);
+}
+/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md) */
+//@ pure
+export function noHistoryAllowed(accountFree, replyKind, reason, memberAbsent, knownApp) {
+    return accountFree && (replyKind === "compliance" || (replyKind === "reply" && reason === "onboarding_asked" && memberAbsent && knownApp));
+}
+/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md) */
+//@ pure
 export function lawReceiptRequiresExactOrder(firstId, secondId) {
     //@ ensures \result === true
     return !(firstId !== secondId) || !receiptReplyIdsMatch([firstId, secondId], [secondId, firstId]);
@@ -84,11 +84,6 @@ export function lawReceiptRequiresExactOrder(firstId, secondId) {
 export function lawAccountBoundReceiptNeedsHistory(replyKind, reason, memberAbsent, knownApp) {
     //@ ensures \result === true
     return !noHistoryAllowed(false, replyKind, reason, memberAbsent, knownApp);
-}
-/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md) */
-//@ pure
-export function receiptAccepted(delivery) {
-    return delivery === "accepted";
 }
 /** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md) */
 //@ pure
@@ -103,6 +98,11 @@ export function recordReceipt(receipt) {
 }
 /** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md) */
 //@ pure
+export function receiptAccepted(delivery) {
+    return delivery === "accepted";
+}
+/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md) */
+//@ pure
 export function receiptFinal(delivery) {
     return receiptAccepted(delivery) || delivery === "rejected";
 }
@@ -113,6 +113,11 @@ export function receiptMessageStatus(delivery) {
 }
 /** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md) */
 //@ pure
+export function stepReceiptNeedsAdmission(before, via, after) {
+    return !(after.phase === "Stored") || (via === "recordReceipt" && canRecordReceipt(before));
+}
+/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md) */
+//@ pure
 export function sometimesCanStoreReceipt(receipt) {
     return receipt.phase === "Stored";
 }
@@ -120,11 +125,6 @@ export function sometimesCanStoreReceipt(receipt) {
 //@ pure
 export function sometimesCanReplayReceipt(receipt) {
     return receipt.phase === "Replayed";
-}
-/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md) */
-//@ pure
-export function stepReceiptNeedsAdmission(before, via, after) {
-    return !(after.phase === "Stored") || (via === "recordReceipt" && canRecordReceipt(before));
 }
 /** Do the rules allow this event in this state? */
 //@ pure

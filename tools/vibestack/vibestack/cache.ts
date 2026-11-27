@@ -4,9 +4,10 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { gunzipSync, zstdCompressSync, zstdDecompressSync } from "node:zlib";
+import { cacheDirectory } from "./config.ts";
 import { sha, tokenize } from "./util.ts";
-import { evaluatorIdentity, executableDigest, InstallationChanged, LASTING, lasting, packageLocation, packageRoots } from "./installed.ts";
-import { NEEDS_DAFNY, findBin, formatStamp, exec, onPath, stamp, writeWhole } from "./run.ts";
+import { type Evaluator, installedEvaluator, executableDigest, InstallationChanged, LASTING, lasting, packageLocation, packageRoots } from "./installed.ts";
+import { NEEDS_DAFNY, findBin, findDafny, formatStamp, exec, onPath, stamp, writeWhole } from "./run.ts";
 
 export { executableDigest };
 
@@ -67,8 +68,8 @@ const treeDigest = (directory: string, files = treeFiles(directory), stamps?: Re
 
 /** Where the verifier runs from: its launcher and the runtime launchers it starts, its managed assemblies, and any separately installed .NET host. */
 function dafnyInstallation() {
-  const launcher = onPath("dafny");
-  if (!launcher) throw new Error("Dafny is not on PATH; the task cache needs its toolchain fingerprint");
+  const launcher = findDafny();
+  if (!launcher) throw new Error("Dafny is not on PATH or in ~/.cache/vibestack/dafny/4.11; the task cache needs its toolchain fingerprint");
   const real = fs.realpathSync(launcher);
   const locations = [path.dirname(real), path.resolve(path.dirname(real), "../libexec")];
   const selectedFiles = [launcher, ...locations.map((dir) => path.join(dir, "Dafny.dll"))];
@@ -115,10 +116,10 @@ const dafnySaid = (version: string | undefined, stopped?: string, out = "") => {
 type Check = {
   installation?: DafnyInstall | { at: string; files?: undefined };
   programs: Map<string, Program | undefined>;
-  evaluators: Map<string, string>;
+  evaluators: Map<string, Evaluator>;
   pending: Map<string, Buffer>;
   pendingDafny: Map<string, Buffer>;
-  verify: Set<Program>;
+  verify: Set<Pick<Program, "unchanged">>;
   solverAt?: string;
   dafnyBytes: number;
   touched: Set<string>;
@@ -141,6 +142,7 @@ function pendingLimit(check: Check) {
 
 function includePrograms(check: Check) {
   for (const program of check.programs.values()) if (program?.id) check.verify.add(program);
+  for (const evaluator of check.evaluators.values()) check.verify.add(evaluator);
 }
 
 function resetPending(check: Check) {
@@ -153,7 +155,7 @@ function resetPending(check: Check) {
 
 function verifyPrograms(check: Check, complete: boolean): boolean {
   if (complete) includePrograms(check);
-  const replaced = [...check.verify].some((program) => !program.unchanged());
+  const replaced = [...check.verify].some((tool) => !tool.unchanged());
   if (!replaced && !check.changed) return true;
   check.changed = true;
   resetPending(check);
@@ -213,7 +215,7 @@ function installation(): DafnyInstall | { at: string; files?: undefined } {
       try {
         for (const file of files) stamps.set(file, formatStamp(fs.statSync(file, { bigint: true })));
         return { launchers, assemblies, runtime, trees, files, stamps, at: JSON.stringify([...layout, ...stamps]),
-          unchanged: () => onPath("dafny") === launcher && sameFiles(stamps, layout) };
+          unchanged: () => findDafny() === launcher && sameFiles(stamps, layout) };
       } catch (e) {
         return { at: (e as Error).message };
       }
@@ -705,13 +707,13 @@ export function installedProgram(root: string, tool: keyof typeof TOOL_PACKAGES)
   return program;
 }
 
-export function evaluatorForCheck(root: string): string | undefined {
+export function evaluatorForCheck(root: string): Evaluator | undefined {
   const scope = checking.getStore();
   const known = scope?.evaluators.get(root);
   if (known) return known;
-  const id = evaluatorIdentity(root);
-  if (id) scope?.evaluators.set(root, id);
-  return id;
+  const evaluator = installedEvaluator(root);
+  if (evaluator) scope?.evaluators.set(root, evaluator);
+  return evaluator;
 }
 
 export function stableInstallation(same: boolean) {
@@ -739,7 +741,7 @@ async function readDafnyVersion(inst: DafnyInstall | undefined): Promise<{ versi
   try {
     const installed = inst && lasting(`dafny --version ${inst.files[0]}`, inst.files, inst.files.map((f) => inst.stamps.get(f)!).join(" "));
     if (installed?.value) return dafnySaid(installed.value);
-    const r = await exec(inst?.launchers[0] ?? "dafny", ["--version"], process.cwd());
+    const r = await exec(inst?.launchers[0] ?? findDafny() ?? "dafny", ["--version"], process.cwd());
     const version = r.status === 0 ? r.stdout.match(/\d+\.\d+\.\d+/)?.[0] : undefined;
     if (version && !r.stopped) installed?.keep(version);
     return dafnySaid(version, r.stopped, `${r.stdout}${r.stderr}`);
@@ -769,7 +771,7 @@ export const verifierIdentity = perCheck(async () => {
 });
 export function dafnyLauncher() {
   const now = installation();
-  return now.files ? now.launchers[0] : "dafny";
+  return now.files ? now.launchers[0] : (findDafny() ?? "dafny");
 }
 
 class SolverUnavailable extends Error {}
@@ -779,7 +781,7 @@ class SolverUnavailable extends Error {}
  * per check from the bundled candidates and Z3 on the PATH. A candidate's version is asked of it only once it changed.
  */
 function solverCandidates(): string[] {
-  const dafny = onPath("dafny");
+  const dafny = findDafny();
   const z3 = onPath("z3");
   const candidates: string[] = [];
   if (dafny) {
@@ -813,22 +815,31 @@ export const solver = perCheck(async () => {
   }
   throw new SolverUnavailable("the proof stage needs the Z3 solver bundled with Dafny or on the PATH");
 });
+async function findVibelangBinary(): Promise<string | null> {
+  try {
+    const { findBinary } = await import("vibelang/binary");
+    return findBinary();
+  } catch {
+    return null;
+  }
+}
+
 /** The native toolchain that a Turbo task's inputs cannot read from the repository. */
 export async function toolchainFingerprint() {
   const z3 = await solver().catch((error: unknown) => {
     if (error instanceof SolverUnavailable) return null;
     throw error;
   });
-  const { findBinary } = await import("vibelang/binary");
-  const compiler = findBinary();
-  for (const executable of [process.execPath, compiler]) fs.accessSync(executable, fs.constants.X_OK);
+  const compiler = await findVibelangBinary();
+  fs.accessSync(process.execPath, fs.constants.X_OK);
+  if (compiler) fs.accessSync(compiler, fs.constants.X_OK);
   if (z3) fs.accessSync(z3.path, fs.constants.X_OK);
   return {
     platform: process.platform, arch: process.arch,
     node: { version: process.versions.node, digest: executableDigest(process.execPath) },
-    dafny: onPath("dafny") ? await dafnyIdentity() : null,
+    dafny: findDafny() ? await dafnyIdentity() : null,
     z3: z3 && { version: z3.version, digest: executableDigest(z3.path) },
-    vibelang: { version: packageVersion("vibelang"), digest: executableDigest(compiler) },
+    vibelang: compiler ? { version: packageVersion("vibelang"), digest: executableDigest(compiler) } : null,
     packages: ["@informalsystems/quint", "lemmascript", "vibelang-runtime", "vibelang-vite", "typescript", "vitest", "effect", "@effect/platform-node", "@effect/vitest"].map(packageVersion),
   };
 }
@@ -933,8 +944,9 @@ async function toolchainId(root: string, stage: Stage): Promise<string | undefin
     if (stage === "prove") return [stage, node, code(closure("prove")), ...versions, verifier].join(" ");
     if (stage === "simulate") return [stage, ...versions, node, code(closure("simulate", "units"))].join(" ");
     const [quint, typescript, vibelang, ...rest] = versions;
-    const { findBinary } = await import("vibelang/binary");
-    return [stage, quint, node, code(stage === "explore" ? closure("explore") : [...tools.keys()]), typescript, `${vibelang}:${executableDigest(findBinary())}`, ...rest, verifier].filter(Boolean).join(" ");
+    const compiler = await findVibelangBinary();
+    const vibelangId = compiler ? `${vibelang}:${executableDigest(compiler)}` : "no vibelang";
+    return [stage, quint, node, code(stage === "explore" ? closure("explore") : [...tools.keys()]), typescript, vibelangId, ...rest, verifier].filter(Boolean).join(" ");
   })()));
   // A failed probe is not remembered: the next check probes again.
   id.catch(() => toolchains.delete(known));
@@ -952,10 +964,10 @@ export interface Memory {
   captureReceipt?: (receipt: { name: string; bytes: Uint8Array }) => void;
 }
 /** An entry of `.spec-cache`: JSON, compressed, since a run of the simulator says megabytes. */
-interface Entry { name: string; file: string; reusable: boolean; evaluator?: string }
+interface Entry { name: string; file: string; reusable: boolean; evaluator?: Evaluator }
 const formats = [["zst", zstdDecompressSync], ["gz", gunzipSync]] as const;
 const primaryExtension = `.${formats[0][0]}`;
-const localCache = (root: string) => path.join(root, ".spec-cache");
+const localCache = (root: string) => cacheDirectory(root);
 const formalCache = new AsyncLocalStorage<{ directory: string; used: Set<string> }>();
 const sharedCache = (name: string) => isActionEntry(name) ? formalCache.getStore() : undefined;
 const cacheFile = (root: string, name: string) => path.join(sharedCache(name)?.directory ?? localCache(root), name);
@@ -969,7 +981,7 @@ export async function withFormalCache<T>(directory: string, run: () => Promise<T
 
 export async function entry(root: string, stage: Stage, key: (string | undefined)[], evaluates = ["simulate", "tests", "traces", "explore"].includes(stage)): Promise<Entry> {
   const evaluator = evaluates ? evaluatorForCheck(root) : undefined;
-  const inputs = [await toolchainId(root, stage), ...evaluates ? [evaluator] : [], ...key];
+  const inputs = [await toolchainId(root, stage), ...evaluates ? [evaluator?.id] : [], ...key];
   const reusable = inputs.every((input) => input !== undefined);
   const name = `${stage}-${sha(...inputs.map((input) => input ?? "")).slice(0, 24)}.json${primaryExtension}`;
   return { name, file: cacheFile(root, name), reusable, evaluator };
@@ -1039,7 +1051,10 @@ export function store(memory: Memory, raw: Entry, value: unknown, source?: { pro
   if (!projected) memory.used.add(raw.name);
   const check = checking.getStore();
   if (unsure || check?.changed || check?.closed || !reusable) return;
-  if (evaluator !== undefined && !stableInstallation(evaluatorIdentity(memory.root) === evaluator)) return;
+  if (evaluator) {
+    if (check) check.verify.add(evaluator);
+    else if (!evaluator.unchanged()) return;
+  }
   const action = source === "dafny" ? undefined : source;
   if (action && !check && !action.program.unchanged()) return;
   const compact = projected && memory.actionProjection?.encode(value);

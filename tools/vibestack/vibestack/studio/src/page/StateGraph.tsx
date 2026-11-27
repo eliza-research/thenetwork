@@ -1,10 +1,10 @@
 // Interactive state machine viewer, live simulator and structural transition composer for a spec's model graph.
 import { useEffect, useId, useState, type ReactNode } from "react";
-import { Button, EmptyState, Input, Label, cn } from "@repo/ui";
+import { Button, EmptyState, Input, Label, cn, focusRing } from "@repo/ui";
 import type { GraphEdge, GraphNode, SimResult, SpecModelGraph } from "../graph.ts";
 import { itemsOf, ruleKey } from "../markdown.ts";
 import { S, addRuleFromGraph, postSim, reveal, type Working } from "./studio.ts";
-import { Icon, IconButton, Markdown, Quint } from "./text.tsx";
+import { CollapsibleSection, Icon, IconButton, InspectorToggle, Markdown, Quint, Tooltip } from "./text.tsx";
 
 interface GraphOverlays {
   guards?: boolean;
@@ -852,14 +852,9 @@ function uniqueRuleHeading(spec: Working, base: string): string {
 
 // --- Inspector Sub-Panels ---------------------------------------------------------------------------------------
 
-function InspectorSection({ label, children }: { label: ReactNode; children: ReactNode }) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="text-xs font-medium text-muted-foreground">{label}</div>
-      {children}
-    </div>
-  );
-}
+const InspectorSection = ({ label, count, defaultOpen = true, children }: { label: ReactNode; count?: number; defaultOpen?: boolean; children: ReactNode }) => (
+  <CollapsibleSection label={label} meta={count} defaultOpen={defaultOpen}>{children}</CollapsibleSection>
+);
 
 function RuleLinkList({
   file,
@@ -946,7 +941,6 @@ function ComposerField({
 
 function ComposerShell({
   title,
-  subtitle,
   file,
   diffPreview,
   canApply,
@@ -955,7 +949,6 @@ function ComposerShell({
   children,
 }: {
   title: string;
-  subtitle: string;
   file: string;
   diffPreview: string;
   canApply: boolean;
@@ -965,15 +958,12 @@ function ComposerShell({
 }) {
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-col gap-0.5 border-b border-border pb-2.5">
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="text-base font-semibold text-primary">{title}</h2>
-          <IconButton name="close" label={`Cancel ${title.toLowerCase()}`} onClick={onClose} />
-        </div>
-        <div className="text-xs text-muted-foreground">{subtitle}</div>
+      <div className="flex items-center justify-between gap-2 border-b border-border pb-2.5">
+        <h2 className="text-base font-semibold text-primary">{title}</h2>
+        <IconButton name="close" label={`Cancel ${title.toLowerCase()}`} align="right" onClick={onClose} />
       </div>
       {children}
-      <InspectorSection label={<span>Spec Diff Preview (<span className="font-mono">{file}</span>)</span>}>
+      <InspectorSection label={<span>Spec Diff (<span className="font-mono">{file}</span>)</span>}>
         <pre className="m-0 overflow-x-auto rounded-md border border-ok/40 bg-muted px-2.5 py-2 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap text-ok">
           {diffPreview}
         </pre>
@@ -996,15 +986,14 @@ function EdgeInspector({ spec, graph, edge, sim }: { spec: Working; graph: SpecM
   const clauses = edge.guardExpr
     ? [...new Set(edge.guardExpr.split(/\s+and\s+/).map((c) => c.trim()).filter(Boolean))]
     : [];
+  const preservedCount = graph.globalInvariants.length + graph.stepRules.length;
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1 border-b border-border pb-3">
         <div className="flex items-center justify-between gap-2">
           <h2 className="truncate font-mono text-base font-semibold text-foreground">→ {edge.name}</h2>
-          <Button variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => reveal(spec.file, edge.ruleKey)}>
-            View in Story <Icon name="external" className="size-3.5" />
-          </Button>
+          <IconButton name="stories" label="View in Story" align="right" onClick={() => reveal(spec.file, edge.ruleKey)} />
         </div>
         <div className="font-mono text-xs text-muted-foreground">
           {fromLabel} → {toLabel}{edge.condition ? ` · if ${edge.condition}` : ""}
@@ -1033,7 +1022,7 @@ function EdgeInspector({ spec, graph, edge, sim }: { spec: Working; graph: SpecM
           <>
             <span className="text-muted-foreground">Live</span>
             <span className={cn("font-mono font-medium", simEv.allowed ? "text-ok" : "text-muted-foreground")}>
-              {simEv.allowed ? "✓ enabled in live state" : "✗ disabled in live state"}
+              {simEv.allowed ? "✓ enabled" : "✗ disabled"}
             </span>
           </>
         )}
@@ -1073,12 +1062,12 @@ function EdgeInspector({ spec, graph, edge, sim }: { spec: Working; graph: SpecM
         </InspectorSection>
       )}
 
-      <InspectorSection label="Transition Quint">
+      <InspectorSection label="Quint">
         <Quint code={edge.quint} />
       </InspectorSection>
 
-      {(graph.globalInvariants.length > 0 || graph.stepRules.length > 0) && (
-        <InspectorSection label="Preserved Rules">
+      {preservedCount > 0 && (
+        <InspectorSection label="Preserved Rules" count={preservedCount} defaultOpen={preservedCount <= 4}>
           <div className="flex flex-col gap-1">
             <RuleLinkList file={spec.file} items={graph.globalInvariants} glyph="∀" showCheck />
             <RuleLinkList file={spec.file} items={graph.stepRules} glyph="⊢" showCheck />
@@ -1269,7 +1258,6 @@ function TransitionComposer({
   return (
     <ComposerShell
       title="New Transition"
-      subtitle="Compiled directly into a ### rule + Quint block"
       file={spec.file}
       diffPreview={diffPreview}
       canApply={Boolean(heading.trim())}
@@ -1386,7 +1374,6 @@ function StateComposer({ spec, graph, onClose }: { spec: Working; graph: SpecMod
   return (
     <ComposerShell
       title="New State"
-      subtitle="Scaffolds a state goal rule into the spec outline"
       file={spec.file}
       diffPreview={diffPreview}
       canApply={Boolean(heading.trim())}
@@ -1558,9 +1545,7 @@ function SimulatorDock({
           <span className="text-xs text-muted-foreground">No enabled transitions from this state</span>
         )}
         <span className="flex-1" />
-        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" disabled={stepping} onClick={onReset}>
-          <Icon name="undo" className="size-3.5" /> Reset
-        </Button>
+        <IconButton name="undo" label="Reset simulation" side="top" align="right" disabled={stepping} onClick={onReset} />
       </div>
     </div>
   );
@@ -1587,6 +1572,7 @@ function defaultInspectorFor(graph: SpecModelGraph | undefined, focusNode?: stri
 /** Interactive state machine view: toolbar, SVG canvas, live simulator dock, and contextual inspector/composer. */
 export function StateGraph({ spec, graph }: { spec: Working; graph: SpecModelGraph | undefined }) {
   const [overlays, setOverlays] = useState({ guards: true, invariants: true, liveness: true });
+  const [inspectorOpen, setInspectorOpen] = useState(true);
   const focusKey = `${spec.file}|${S.focusNode ?? ""}|${S.focusEdge ?? ""}`;
   const [savedInspector, setSavedInspector] = useState<{ forKey: string; mode: InspectorMode } | undefined>(undefined);
   const [draftEdge, setDraftEdge] = useState<DraftEdge | undefined>(undefined);
@@ -1653,6 +1639,7 @@ export function StateGraph({ spec, graph }: { spec: Working; graph: SpecModelGra
     const startTo = graph.nodes.find((n) => n.id !== startFrom)?.id ?? startFrom;
     setDraftEdge({ name: "refund", from: startFrom, to: startTo, sender: graph.roles[graph.roles.length - 1] });
     setInspector({ kind: "compose-transition", from: startFrom, to: startTo });
+    setInspectorOpen(true);
   };
 
   const handleStep = (ev: NonNullable<SimResult["enabledEvents"]>[number]) => {
@@ -1704,32 +1691,57 @@ export function StateGraph({ spec, graph }: { spec: Working; graph: SpecModelGra
   return (
     <div className="flex min-h-0 w-full flex-1 overflow-hidden">
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-card px-4 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-card px-4 py-1.5">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold text-foreground">{graph.projectionLabel}</span>
+            <span className="text-xs font-semibold text-foreground">{graph.stateType ?? graph.module}</span>
             <span className="text-xs text-muted-foreground tabular-nums">
-              {graph.nodes.length} states · {uniqueTransitionCount} transitions
+              {graph.nodes.length} · {uniqueTransitionCount}
             </span>
             <span className="h-3.5 w-px bg-border" aria-hidden />
-            {(["guards", "invariants", "liveness"] as const).map((key) => (
-              <Button
-                key={key}
-                variant={overlays[key] ? "outline" : "ghost"}
-                size="sm"
-                className="h-7 px-2 text-xs capitalize"
-                onClick={() => setOverlays((o) => ({ ...o, [key]: !o[key] }))}
-              >
-                {overlays[key] ? "✓ " : ""}{key}
-              </Button>
-            ))}
+            <div role="group" aria-label="Graph overlays" className="flex items-center gap-0.5 rounded-md bg-muted p-0.5">
+              <Tooltip label={overlays.guards ? "Hide guard labels" : "Show guard labels"}>
+                <button
+                  type="button"
+                  aria-label="Toggle guards"
+                  aria-pressed={overlays.guards}
+                  onClick={() => setOverlays((o) => ({ ...o, guards: !o.guards }))}
+                  className={cn(focusRing, "grid size-6 place-items-center rounded-sm transition-colors duration-fast", overlays.guards ? "bg-card text-primary shadow-sm" : "text-muted-foreground hover:text-foreground")}
+                >
+                  <Icon name="shield" className="size-3.5" />
+                </button>
+              </Tooltip>
+              <Tooltip label={overlays.invariants ? "Hide state invariants" : "Show state invariants"}>
+                <button
+                  type="button"
+                  aria-label="Toggle invariants"
+                  aria-pressed={overlays.invariants}
+                  onClick={() => setOverlays((o) => ({ ...o, invariants: !o.invariants }))}
+                  className={cn(focusRing, "grid size-6 place-items-center rounded-sm font-mono text-xs font-semibold transition-colors duration-fast", overlays.invariants ? "bg-card text-info shadow-sm" : "text-muted-foreground hover:text-foreground")}
+                >
+                  ∀
+                </button>
+              </Tooltip>
+              <Tooltip label={overlays.liveness ? "Hide liveness arrows" : "Show liveness arrows"}>
+                <button
+                  type="button"
+                  aria-label="Toggle liveness"
+                  aria-pressed={overlays.liveness}
+                  onClick={() => setOverlays((o) => ({ ...o, liveness: !o.liveness }))}
+                  className={cn(focusRing, "grid size-6 place-items-center rounded-sm font-mono text-xs font-semibold transition-colors duration-fast", overlays.liveness ? "bg-card text-warn shadow-sm" : "text-muted-foreground hover:text-foreground")}
+                >
+                  ↝
+                </button>
+              </Tooltip>
+            </div>
           </div>
-          <div className="flex items-center gap-1.5">
-            <Button variant="outline" size="sm" className="h-7 px-2.5 text-xs" onClick={() => setInspector({ kind: "compose-state" })}>
-              <Icon name="plus" className="size-3.5" /> State
+          <div className="flex items-center gap-1">
+            <Button variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => { setInspector({ kind: "compose-state" }); setInspectorOpen(true); }}>
+              <Icon name="plus" className="size-3.5" />State
             </Button>
-            <Button variant="primary" size="sm" className="h-7 px-2.5 text-xs" onClick={() => openTransitionComposer()}>
-              <Icon name="plus" className="size-3.5" /> Transition
+            <Button variant="primary" size="sm" className="h-7 px-2 text-xs" onClick={() => openTransitionComposer()}>
+              <Icon name="plus" className="size-3.5" />Transition
             </Button>
+            <InspectorToggle open={inspectorOpen} onToggle={() => setInspectorOpen((v) => !v)} />
           </div>
         </div>
 
@@ -1741,8 +1753,8 @@ export function StateGraph({ spec, graph }: { spec: Working; graph: SpecModelGra
             selectedEdge={selectedEdgeId}
             showOverlays={overlays}
             draftEdge={inspector.kind === "compose-transition" ? draftEdge : undefined}
-            onSelectNode={(nodeId) => setInspector({ kind: "node", nodeId })}
-            onSelectEdge={(edgeId) => setInspector({ kind: "edge", edgeId })}
+            onSelectNode={(nodeId) => { setInspector({ kind: "node", nodeId }); setInspectorOpen(true); }}
+            onSelectEdge={(edgeId) => { setInspector({ kind: "edge", edgeId }); setInspectorOpen(true); }}
           />
         </div>
 
@@ -1757,39 +1769,41 @@ export function StateGraph({ spec, graph }: { spec: Working; graph: SpecModelGra
         />
       </div>
 
-      <aside aria-label="State machine inspector" className="w-87 shrink-0 overflow-y-auto border-l border-border bg-card p-4 max-xl:w-80">
-        {inspector.kind === "compose-transition" ? (
-          <TransitionComposer
-            key={`${inspector.from}->${inspector.to}`}
-            spec={spec}
-            graph={graph}
-            initialFrom={inspector.from}
-            initialTo={inspector.to}
-            onDraftChange={setDraftEdge}
-            onClose={() => setInspector(defaultInspectorFor(graph))}
-          />
-        ) : inspector.kind === "compose-state" ? (
-          <StateComposer spec={spec} graph={graph} onClose={() => setInspector(defaultInspectorFor(graph))} />
-        ) : selectedEdgeObj ? (
-          <EdgeInspector spec={spec} graph={graph} edge={selectedEdgeObj} sim={sim} />
-        ) : selectedNodeObj ? (
-          <NodeInspector
-            spec={spec}
-            graph={graph}
-            node={selectedNodeObj}
-            activeNode={activeNode}
-            onSelectEdge={(edgeId) => setInspector({ kind: "edge", edgeId })}
-            onStartTransition={(from) => openTransitionComposer(from)}
-          />
-        ) : (
-          <OverviewInspector
-            spec={spec}
-            graph={graph}
-            onSelectNode={(nodeId) => setInspector({ kind: "node", nodeId })}
-            onSelectEdge={(edgeId) => setInspector({ kind: "edge", edgeId })}
-          />
-        )}
-      </aside>
+      {inspectorOpen && (
+        <aside aria-label="State machine inspector" className="w-84 shrink-0 overflow-y-auto border-l border-border bg-card p-4 max-xl:w-80">
+          {inspector.kind === "compose-transition" ? (
+            <TransitionComposer
+              key={`${inspector.from}->${inspector.to}`}
+              spec={spec}
+              graph={graph}
+              initialFrom={inspector.from}
+              initialTo={inspector.to}
+              onDraftChange={setDraftEdge}
+              onClose={() => setInspector(defaultInspectorFor(graph))}
+            />
+          ) : inspector.kind === "compose-state" ? (
+            <StateComposer spec={spec} graph={graph} onClose={() => setInspector(defaultInspectorFor(graph))} />
+          ) : selectedEdgeObj ? (
+            <EdgeInspector spec={spec} graph={graph} edge={selectedEdgeObj} sim={sim} />
+          ) : selectedNodeObj ? (
+            <NodeInspector
+              spec={spec}
+              graph={graph}
+              node={selectedNodeObj}
+              activeNode={activeNode}
+              onSelectEdge={(edgeId) => setInspector({ kind: "edge", edgeId })}
+              onStartTransition={(from) => openTransitionComposer(from)}
+            />
+          ) : (
+            <OverviewInspector
+              spec={spec}
+              graph={graph}
+              onSelectNode={(nodeId) => setInspector({ kind: "node", nodeId })}
+              onSelectEdge={(edgeId) => setInspector({ kind: "edge", edgeId })}
+            />
+          )}
+        </aside>
+      )}
     </div>
   );
 }

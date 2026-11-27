@@ -27,16 +27,16 @@ export function nextSuggestionAction(pivotsUsed: number, remainingCandidates: nu
 
 /** Story: Bound suggestion pivots and prevent repeats / Allow a suggestion pivot only below three pivots and for unvisited, unrejected venues (spec/suggestionFlow.md) */
 //@ pure
-export function lawNextSuggestionStopsAtLimitOrEmpty(pivotsUsed: number, remainingCandidates: number): boolean {
+export function lawSuggestionPivotsBounded(pivotsUsed: number, candidateAlreadyRejected: boolean, candidateAlreadyVisited: boolean): boolean {
   //@ ensures \result === true
-  return !(pivotsUsed >= maxSuggestionPivots || pivotsUsed < 0 || remainingCandidates <= 0) || nextSuggestionAction(pivotsUsed, remainingCandidates) === "ask_user_spot_or_pause";
+  return !canPivotSuggestion(pivotsUsed, candidateAlreadyRejected, candidateAlreadyVisited) || (pivotsUsed >= 0 && pivotsUsed < maxSuggestionPivots && !candidateAlreadyRejected && !candidateAlreadyVisited);
 }
 
 /** Story: Bound suggestion pivots and prevent repeats / Allow a suggestion pivot only below three pivots and for unvisited, unrejected venues (spec/suggestionFlow.md) */
 //@ pure
-export function lawSuggestionPivotsBounded(pivotsUsed: number, candidateAlreadyRejected: boolean, candidateAlreadyVisited: boolean): boolean {
+export function lawNextSuggestionStopsAtLimitOrEmpty(pivotsUsed: number, remainingCandidates: number): boolean {
   //@ ensures \result === true
-  return !canPivotSuggestion(pivotsUsed, candidateAlreadyRejected, candidateAlreadyVisited) || (pivotsUsed >= 0 && pivotsUsed < maxSuggestionPivots && !candidateAlreadyRejected && !candidateAlreadyVisited);
+  return !(pivotsUsed >= maxSuggestionPivots || pivotsUsed < 0 || remainingCandidates <= 0) || nextSuggestionAction(pivotsUsed, remainingCandidates) === "ask_user_spot_or_pause";
 }
 
 /** Story: Route local supply by density and enforce date activity red lines / Classify local supply into dense, medium, or sparse tiers (spec/suggestionFlow.md) */

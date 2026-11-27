@@ -1,7 +1,7 @@
 // GENERATED from spec/engineAsks.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type PartnerBackfill as probeDispatch_PartnerBackfill, type ProbeTiming as probeDispatch_ProbeTiming, type ProbeAvailability as probeDispatch_ProbeAvailability, type ProbePhase as probeDispatch_ProbePhase, type ReplacementRoute as probeDispatch_ReplacementRoute, type NoAlternateRoute as probeDispatch_NoAlternateRoute, type ParticipantProbe as probeDispatch_ParticipantProbe, questionHoldMs as probeDispatch_questionHoldMs, genericProbeResponseMs as probeDispatch_genericProbeResponseMs, shortProbeResponseMs as probeDispatch_shortProbeResponseMs, queuedProbeCurrent as probeDispatch_queuedProbeCurrent, groupBackfillKeepsYeses as probeDispatch_groupBackfillKeepsYeses, partnerPlanBackfill as probeDispatch_partnerPlanBackfill, probeIsInvite as probeDispatch_probeIsInvite, probeQuestionHoldUntil as probeDispatch_probeQuestionHoldUntil, probeResponseMs as probeDispatch_probeResponseMs, needsOtherTimes as probeDispatch_needsOtherTimes, probeExpiryDeadline as probeDispatch_probeExpiryDeadline, probeExpired as probeDispatch_probeExpired, slopProbeReplyCurrent as probeDispatch_slopProbeReplyCurrent, mayTryAlternate as probeDispatch_mayTryAlternate, alternateAllowed as probeDispatch_alternateAllowed, replacementJudged as probeDispatch_replacementJudged, stepOnlyARosterChangeMovesTheRoster as probeDispatch_stepOnlyARosterChangeMovesTheRoster, canJoinRoster as probeDispatch_canJoinRoster, joinRoster as probeDispatch_joinRoster, stepAnAlternateJoinsQueuedForTheCurrentRoster as probeDispatch_stepAnAlternateJoinsQueuedForTheCurrentRoster, sometimesAgreedAgainAfterARosterChange as probeDispatch_sometimesAgreedAgainAfterARosterChange, agreedToRoster as probeDispatch_agreedToRoster, usePriorIntent as probeDispatch_usePriorIntent, alwaysAnOpenTurnIsAboutTheCurrentRoster as probeDispatch_alwaysAnOpenTurnIsAboutTheCurrentRoster, alwaysAQueuedTurnHasNoProbe as probeDispatch_alwaysAQueuedTurnHasNoProbe, alwaysTheAnswerIsNotAheadOfTheRoster as probeDispatch_alwaysTheAnswerIsNotAheadOfTheRoster, lawAnEarlierRosterProbeIsRefused as probeDispatch_lawAnEarlierRosterProbeIsRefused, lawAnAlternateWhoChangesTheWordsIsSkipped as probeDispatch_lawAnAlternateWhoChangesTheWordsIsSkipped, lawAnyAlternateCanJoinBeforeAProbe as probeDispatch_lawAnyAlternateCanJoinBeforeAProbe, lawTheAlternateWaitsForTheMemberAskedAgain as probeDispatch_lawTheAlternateWaitsForTheMemberAskedAgain, reviewProbePreviewCurrent as probeDispatch_reviewProbePreviewCurrent, openTurn as probeDispatch_openTurn, needsProbeSend as probeDispatch_needsProbeSend, recordProbeSent as probeDispatch_recordProbeSent, probeTiming as probeDispatch_probeTiming, probeAvailability as probeDispatch_probeAvailability, canMarkUnavailable as probeDispatch_canMarkUnavailable, markUnavailable as probeDispatch_markUnavailable, lawASentProbeIsOpenForItsWholeWindow as probeDispatch_lawASentProbeIsOpenForItsWholeWindow, lawAGenericProbeIsStillOpenAfterOneDay as probeDispatch_lawAGenericProbeIsStillOpenAfterOneDay, initial as probeDispatch_initial, lawASlopProbeOrTimeQuestionEndsAfterOneDay as probeDispatch_lawASlopProbeOrTimeQuestionEndsAfterOneDay, canRecordReply as probeDispatch_canRecordReply, recordReply as probeDispatch_recordReply, shouldLookForOtherTimes as probeDispatch_shouldLookForOtherTimes, canOfferOtherTimes as probeDispatch_canOfferOtherTimes, offerOtherTimes as probeDispatch_offerOtherTimes, canExpireProbe as probeDispatch_canExpireProbe, expireProbe as probeDispatch_expireProbe, probePending as probeDispatch_probePending, stepUnavailableNeverReopens as probeDispatch_stepUnavailableNeverReopens, sometimesAgreed as probeDispatch_sometimesAgreed, sometimesSettledNo as probeDispatch_sometimesSettledNo, lawSlopProbeNeedsAcceptance as probeDispatch_lawSlopProbeNeedsAcceptance, replacementRoute as probeDispatch_replacementRoute, groupMayRemainWithoutAlternate as probeDispatch_groupMayRemainWithoutAlternate, noAlternateRoute as probeDispatch_noAlternateRoute, lawUnjudgedRosterNeverProbes as probeDispatch_lawUnjudgedRosterNeverProbes, canChangeRoster as probeDispatch_canChangeRoster, changeRoster as probeDispatch_changeRoster, stepARosterChangeVoidsEveryEarlierProbe as probeDispatch_stepARosterChangeVoidsEveryEarlierProbe, stepARosterChangeVoidsOrCarriesEveryEarlierYes as probeDispatch_stepARosterChangeVoidsOrCarriesEveryEarlierYes, lawNoMemberWhoHeardTheEarlierRosterHasAgreedToTheNewOne as probeDispatch_lawNoMemberWhoHeardTheEarlierRosterHasAgreedToTheNewOne, lawARequesterYesCarriesOverToTheNewRoster as probeDispatch_lawARequesterYesCarriesOverToTheNewRoster, lawAYesAboutAnEarlierRosterDoesNotCount as probeDispatch_lawAYesAboutAnEarlierRosterDoesNotCount, turnReached as probeDispatch_turnReached, lawProbePreviewRefusesAnOlderRevision as probeDispatch_lawProbePreviewRefusesAnOlderRevision, lawProbePreviewClosesAtTheDeadline as probeDispatch_lawProbePreviewClosesAtTheDeadline, canRecordProbeSent as probeDispatch_canRecordProbeSent, lawProbeWaitsForOpenQuestion as probeDispatch_lawProbeWaitsForOpenQuestion, lawOneToOneClosesWithoutAlternate as probeDispatch_lawOneToOneClosesWithoutAlternate, lawRequiredParticipantCannotBeReplaced as probeDispatch_lawRequiredParticipantCannotBeReplaced, lawPairClosesWithoutAlternate as probeDispatch_lawPairClosesWithoutAlternate, mayUsePriorIntent as probeDispatch_mayUsePriorIntent, lawGroupBelowThreeCloses as probeDispatch_lawGroupBelowThreeCloses, canOpenTurn as probeDispatch_canOpenTurn, lawLaterTurnRequiresFirst as probeDispatch_lawLaterTurnRequiresFirst, canUsePriorIntent as probeDispatch_canUsePriorIntent } from "./probeDispatch.ts";
-import { type UnlinkedCancellation as opportunityLifecycle_UnlinkedCancellation, type OpportunityPhase as opportunityLifecycle_OpportunityPhase, type OpportunityLifecycle as opportunityLifecycle_OpportunityLifecycle } from "./opportunityLifecycle.ts";
+import { type ProbePhase as probeDispatch_ProbePhase, type ParticipantProbe as probeDispatch_ParticipantProbe, type ProbeTiming as probeDispatch_ProbeTiming, type ProbeAvailability as probeDispatch_ProbeAvailability, type ReplacementRoute as probeDispatch_ReplacementRoute, type NoAlternateRoute as probeDispatch_NoAlternateRoute, type PartnerBackfill as probeDispatch_PartnerBackfill, initial as probeDispatch_initial, probePending as probeDispatch_probePending, mayUsePriorIntent as probeDispatch_mayUsePriorIntent, canUsePriorIntent as probeDispatch_canUsePriorIntent, usePriorIntent as probeDispatch_usePriorIntent, turnReached as probeDispatch_turnReached, canOpenTurn as probeDispatch_canOpenTurn, openTurn as probeDispatch_openTurn, lawLaterTurnRequiresFirst as probeDispatch_lawLaterTurnRequiresFirst, needsProbeSend as probeDispatch_needsProbeSend, canRecordProbeSent as probeDispatch_canRecordProbeSent, recordProbeSent as probeDispatch_recordProbeSent, probeIsInvite as probeDispatch_probeIsInvite, questionHoldMs as probeDispatch_questionHoldMs, probeQuestionHoldUntil as probeDispatch_probeQuestionHoldUntil, probeTiming as probeDispatch_probeTiming, lawProbeWaitsForOpenQuestion as probeDispatch_lawProbeWaitsForOpenQuestion, probeAvailability as probeDispatch_probeAvailability, canMarkUnavailable as probeDispatch_canMarkUnavailable, markUnavailable as probeDispatch_markUnavailable, genericProbeResponseMs as probeDispatch_genericProbeResponseMs, shortProbeResponseMs as probeDispatch_shortProbeResponseMs, probeResponseMs as probeDispatch_probeResponseMs, lawASentProbeIsOpenForItsWholeWindow as probeDispatch_lawASentProbeIsOpenForItsWholeWindow, lawAGenericProbeIsStillOpenAfterOneDay as probeDispatch_lawAGenericProbeIsStillOpenAfterOneDay, lawASlopProbeOrTimeQuestionEndsAfterOneDay as probeDispatch_lawASlopProbeOrTimeQuestionEndsAfterOneDay, canRecordReply as probeDispatch_canRecordReply, recordReply as probeDispatch_recordReply, needsOtherTimes as probeDispatch_needsOtherTimes, shouldLookForOtherTimes as probeDispatch_shouldLookForOtherTimes, canOfferOtherTimes as probeDispatch_canOfferOtherTimes, offerOtherTimes as probeDispatch_offerOtherTimes, probeExpiryDeadline as probeDispatch_probeExpiryDeadline, probeExpired as probeDispatch_probeExpired, canExpireProbe as probeDispatch_canExpireProbe, expireProbe as probeDispatch_expireProbe, stepUnavailableNeverReopens as probeDispatch_stepUnavailableNeverReopens, sometimesAgreed as probeDispatch_sometimesAgreed, sometimesSettledNo as probeDispatch_sometimesSettledNo, slopProbeReplyCurrent as probeDispatch_slopProbeReplyCurrent, lawSlopProbeNeedsAcceptance as probeDispatch_lawSlopProbeNeedsAcceptance, replacementRoute as probeDispatch_replacementRoute, mayTryAlternate as probeDispatch_mayTryAlternate, alternateAllowed as probeDispatch_alternateAllowed, groupMayRemainWithoutAlternate as probeDispatch_groupMayRemainWithoutAlternate, lawOneToOneClosesWithoutAlternate as probeDispatch_lawOneToOneClosesWithoutAlternate, lawRequiredParticipantCannotBeReplaced as probeDispatch_lawRequiredParticipantCannotBeReplaced, noAlternateRoute as probeDispatch_noAlternateRoute, lawPairClosesWithoutAlternate as probeDispatch_lawPairClosesWithoutAlternate, lawGroupBelowThreeCloses as probeDispatch_lawGroupBelowThreeCloses, replacementJudged as probeDispatch_replacementJudged, lawUnjudgedRosterNeverProbes as probeDispatch_lawUnjudgedRosterNeverProbes, canChangeRoster as probeDispatch_canChangeRoster, changeRoster as probeDispatch_changeRoster, stepARosterChangeVoidsEveryEarlierProbe as probeDispatch_stepARosterChangeVoidsEveryEarlierProbe, stepARosterChangeVoidsOrCarriesEveryEarlierYes as probeDispatch_stepARosterChangeVoidsOrCarriesEveryEarlierYes, stepOnlyARosterChangeMovesTheRoster as probeDispatch_stepOnlyARosterChangeMovesTheRoster, lawNoMemberWhoHeardTheEarlierRosterHasAgreedToTheNewOne as probeDispatch_lawNoMemberWhoHeardTheEarlierRosterHasAgreedToTheNewOne, lawARequesterYesCarriesOverToTheNewRoster as probeDispatch_lawARequesterYesCarriesOverToTheNewRoster, canJoinRoster as probeDispatch_canJoinRoster, joinRoster as probeDispatch_joinRoster, stepAnAlternateJoinsQueuedForTheCurrentRoster as probeDispatch_stepAnAlternateJoinsQueuedForTheCurrentRoster, sometimesAgreedAgainAfterARosterChange as probeDispatch_sometimesAgreedAgainAfterARosterChange, agreedToRoster as probeDispatch_agreedToRoster, lawAYesAboutAnEarlierRosterDoesNotCount as probeDispatch_lawAYesAboutAnEarlierRosterDoesNotCount, alwaysAnOpenTurnIsAboutTheCurrentRoster as probeDispatch_alwaysAnOpenTurnIsAboutTheCurrentRoster, alwaysAQueuedTurnHasNoProbe as probeDispatch_alwaysAQueuedTurnHasNoProbe, alwaysTheAnswerIsNotAheadOfTheRoster as probeDispatch_alwaysTheAnswerIsNotAheadOfTheRoster, queuedProbeCurrent as probeDispatch_queuedProbeCurrent, lawAnEarlierRosterProbeIsRefused as probeDispatch_lawAnEarlierRosterProbeIsRefused, groupBackfillKeepsYeses as probeDispatch_groupBackfillKeepsYeses, lawAnAlternateWhoChangesTheWordsIsSkipped as probeDispatch_lawAnAlternateWhoChangesTheWordsIsSkipped, lawAnyAlternateCanJoinBeforeAProbe as probeDispatch_lawAnyAlternateCanJoinBeforeAProbe, partnerPlanBackfill as probeDispatch_partnerPlanBackfill, lawTheAlternateWaitsForTheMemberAskedAgain as probeDispatch_lawTheAlternateWaitsForTheMemberAskedAgain, reviewProbePreviewCurrent as probeDispatch_reviewProbePreviewCurrent, lawProbePreviewRefusesAnOlderRevision as probeDispatch_lawProbePreviewRefusesAnOlderRevision, lawProbePreviewClosesAtTheDeadline as probeDispatch_lawProbePreviewClosesAtTheDeadline } from "./probeDispatch.ts";
+import { type OpportunityPhase as opportunityLifecycle_OpportunityPhase, type OpportunityLifecycle as opportunityLifecycle_OpportunityLifecycle, type UnlinkedCancellation as opportunityLifecycle_UnlinkedCancellation } from "./opportunityLifecycle.ts";
 
 /** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
 export type QuestionPhase = "AwaitingOptions" | "PlanningQuestions" | "QuestionsPublished";
@@ -12,42 +12,23 @@ export type SlopQuestionTrack = "RequiredQuestions" | "OptionalQuestions";
 
 /** One variant per transition in the spec. */
 export type Event =
-  | { type: "publishQuestions" }
   | { type: "setAvailability"; configured: boolean }
-  | { type: "reserveQuestion"; memberId: string; adult: boolean; supportedMarket: boolean };
+  | { type: "reserveQuestion"; memberId: string; adult: boolean; supportedMarket: boolean }
+  | { type: "publishQuestions" };
 
+/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
+export const initial: AskRun = { phase: "AwaitingOptions", counts: ({} as Record<string, number>) };
 /** Story: Ask for the information needed to find a match / Slop finishes required questions before proposing optional ones (spec/engineAsks.md) */
 export const requiredQuestionWaitMs: number = 604800000;
 /** Story: Ask for the information needed to find a match / Slop can offer a wider radius or ask about compatibility (spec/engineAsks.md) */
 export const compatibilityWaitMs: number = 1814400000;
 /** Story: Ask for the information needed to find a match / A queued question still belongs to the member's open turn (spec/engineAsks.md) */
 export const engineQuestionDeliveryPrefix: string = "engine-question:";
-/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
-export const initial: AskRun = { phase: "AwaitingOptions", counts: ({} as Record<string, number>) };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: AskRun): boolean {
   return true;
-}
-
-/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
-//@ pure
-export function canPublishQuestions(s: AskRun): boolean {
-  return s.phase === "PlanningQuestions";
-}
-
-/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
-//@ pure
-export function publishQuestions(s: AskRun): AskRun {
-  //@ ensures (inv(s) && canPublishQuestions(s)) ==> stepPublishedQuestionsStayClosed(s, \result)
-  return { ...s, phase: "QuestionsPublished" };
-}
-
-/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
-//@ pure
-export function stepPublishedQuestionsStayClosed(before: AskRun, after: AskRun): boolean {
-  return !(before.phase === "QuestionsPublished") || equal_engineAsks(after, before);
 }
 
 /** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
@@ -90,8 +71,27 @@ export function reserveQuestion(s: AskRun, memberId: string, adult: boolean, sup
 
 /** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
 //@ pure
+export function canPublishQuestions(s: AskRun): boolean {
+  return s.phase === "PlanningQuestions";
+}
+
+/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
+//@ pure
+export function publishQuestions(s: AskRun): AskRun {
+  //@ ensures (inv(s) && canPublishQuestions(s)) ==> stepPublishedQuestionsStayClosed(s, \result)
+  return { ...s, phase: "QuestionsPublished" };
+}
+
+/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
+//@ pure
 export function countPublishedQuestions(s: AskRun, memberId: string): number {
   return s.phase === "QuestionsPublished" ? countReservedQuestions(s, memberId) : 0;
+}
+
+/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
+//@ pure
+export function stepPublishedQuestionsStayClosed(before: AskRun, after: AskRun): boolean {
+  return !(before.phase === "QuestionsPublished") || equal_engineAsks(after, before);
 }
 
 /** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
@@ -108,14 +108,14 @@ export function slopQuestionSubject(adult: boolean, optedIn: boolean, paused: bo
 
 /** Story: Ask for the information needed to find a match / Slop finishes required questions before proposing optional ones (spec/engineAsks.md) */
 //@ pure
-export function requiredQuestionDue(elapsedMs: number, asked: number, cap: number): boolean {
-  return elapsedMs >= requiredQuestionWaitMs && !(cap > 0 && asked >= cap);
+export function slopQuestionTrack(missingFields: boolean): SlopQuestionTrack {
+  return missingFields ? "RequiredQuestions" : "OptionalQuestions";
 }
 
 /** Story: Ask for the information needed to find a match / Slop finishes required questions before proposing optional ones (spec/engineAsks.md) */
 //@ pure
-export function slopQuestionTrack(missingFields: boolean): SlopQuestionTrack {
-  return missingFields ? "RequiredQuestions" : "OptionalQuestions";
+export function requiredQuestionDue(elapsedMs: number, asked: number, cap: number): boolean {
+  return elapsedMs >= requiredQuestionWaitMs && !(cap > 0 && asked >= cap);
 }
 
 /** Story: Ask for the information needed to find a match / Slop can offer a wider radius or ask about compatibility (spec/engineAsks.md) */
@@ -165,9 +165,9 @@ export function lawEngineQuestionNeedsOpenTurn(memberEligible: boolean, askedAt:
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: AskRun, event: Event): boolean {
-  if (event.type === "publishQuestions") return canPublishQuestions(current);
   if (event.type === "setAvailability") return canSetAvailability(current);
   if (event.type === "reserveQuestion") return canReserveQuestion(current, event.memberId, event.adult, event.supportedMarket);
+  if (event.type === "publishQuestions") return canPublishQuestions(current);
   return false;
 }
 
@@ -176,9 +176,9 @@ export function enabled(current: AskRun, event: Event): boolean {
 export function step(current: AskRun, event: Event): AskRun {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "publishQuestions") return canPublishQuestions(current) ? publishQuestions(current) : current;
   if (event.type === "setAvailability") return canSetAvailability(current) ? setAvailability(current, event.configured) : current;
   if (event.type === "reserveQuestion") return canReserveQuestion(current, event.memberId, event.adult, event.supportedMarket) ? reserveQuestion(current, event.memberId, event.adult, event.supportedMarket) : current;
+  if (event.type === "publishQuestions") return canPublishQuestions(current) ? publishQuestions(current) : current;
   return current;
 }
 
@@ -196,9 +196,9 @@ export function parseEvent(x: unknown): Event | undefined {
     return undefined;
   }
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "publishQuestions") return { type: "publishQuestions" };
   if (raw.type === "setAvailability" && typeof raw.configured === "boolean") return { type: "setAvailability", configured: raw.configured };
   if (raw.type === "reserveQuestion" && typeof raw.memberId === "string" && typeof raw.adult === "boolean" && typeof raw.supportedMarket === "boolean") return { type: "reserveQuestion", memberId: raw.memberId, adult: raw.adult, supportedMarket: raw.supportedMarket };
+  if (raw.type === "publishQuestions") return { type: "publishQuestions" };
   return undefined;
 }
 

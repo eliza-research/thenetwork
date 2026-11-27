@@ -2,9 +2,9 @@
 //@ backend dafny
 
 /** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
-export type ChallengeReason = "NoReason" | "LimitedHour" | "LimitedGap" | "LimitedDay" | "LimitedGlobal" | "VerificationFailed";
-/** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
 export type ChallengePhase = "Beginning" | "SendAddress" | "SendPhoneHour" | "SendPhoneDay" | "SendGlobal" | "Sending" | "RecordingChallenge" | "StartComplete" | "CheckAddress" | "CheckPhone" | "ReadingChallenge" | "ClaimingAttempt" | "CheckingCode" | "ConsumingChallenge" | "Verified" | "Refused";
+/** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
+export type ChallengeReason = "NoReason" | "LimitedHour" | "LimitedGap" | "LimitedDay" | "LimitedGlobal" | "VerificationFailed";
 /** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
 export interface ChallengeFlow { phase: ChallengePhase; reason: ChallengeReason }
 
@@ -27,11 +27,9 @@ export type Event =
   | { type: "consumeChallenge"; consumed: boolean };
 
 /** Story: Prove ownership of my phone / Verification codes expire and have a limited number of attempts (spec/otpLimits.md) */
+export const otpLifetimeMs: number = exact_otpLimits(exact_otpLimits(10 * 60) * 1000);
+/** Story: Prove ownership of my phone / Verification codes expire and have a limited number of attempts (spec/otpLimits.md) */
 export const otpChallengeMaxAttempts: number = 5;
-/** Story: Prove ownership of my phone / Code checks also have limits shared across apps (spec/otpLimits.md) */
-export const otpChecksPerPhoneHour: number = 10;
-/** Story: Prove ownership of my phone / Code checks also have limits shared across apps (spec/otpLimits.md) */
-export const otpChecksPerIpHour: number = 30;
 /** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
 export const otpSendsPerPhoneHour: number = 3;
 /** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
@@ -40,12 +38,14 @@ export const otpSendsPerPhoneDay: number = 6;
 export const otpSendsPerIpHour: number = 10;
 /** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
 export const otpSendGapMs: number = exact_otpLimits(30 * 1000);
-/** Story: Prove ownership of my phone / Verification codes expire and have a limited number of attempts (spec/otpLimits.md) */
-export const otpLifetimeMs: number = exact_otpLimits(exact_otpLimits(10 * 60) * 1000);
 /** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
 export const otpSendsGlobalHour: number = 500;
 /** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
 export const initial: ChallengeFlow = { phase: "Beginning", reason: "NoReason" };
+/** Story: Prove ownership of my phone / Code checks also have limits shared across apps (spec/otpLimits.md) */
+export const otpChecksPerPhoneHour: number = 10;
+/** Story: Prove ownership of my phone / Code checks also have limits shared across apps (spec/otpLimits.md) */
+export const otpChecksPerIpHour: number = 30;
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
@@ -63,6 +63,12 @@ export function otpBucketAllows(used: number, limit: number): boolean {
 //@ pure
 export function otpGapLeft(hasLast: boolean, lastCountedAt: number, at: number, minGapMs: number): number {
   return hasLast ? exact_otpLimits(minGapMs - exact_otpLimits(at - lastCountedAt)) : 0;
+}
+
+/** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
+//@ pure
+export function otpPhoneHourAllows(used: number, limit: number, gapLeft: number): boolean {
+  return otpBucketAllows(used, limit) && gapLeft <= 0;
 }
 
 /** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
@@ -132,23 +138,17 @@ export function readSendGlobal(flow: ChallengeFlow, allowed: boolean): Challenge
 
 /** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
 //@ pure
-export function otpStartCounts(flow: ChallengeFlow): boolean {
-  return flow.phase === "Sending";
-}
-
-/** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
-//@ pure
-export function otpPhoneHourAllows(used: number, limit: number, gapLeft: number): boolean {
-  return otpBucketAllows(used, limit) && gapLeft <= 0;
-}
-
-/** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
-//@ pure
 export function otpSendDecision(addressAllows: boolean, phoneHourAllows: boolean, gapLeft: number, dayAllows: boolean, globalAllows: boolean): ChallengeFlow {
   const local_0: ChallengeFlow = readSendAddress(requestCode(initial), addressAllows);
   const local_1: ChallengeFlow = canReadSendPhoneHour(local_0) ? readSendPhoneHour(local_0, phoneHourAllows, gapLeft) : local_0;
   const local_2: ChallengeFlow = canReadSendPhoneDay(local_1) ? readSendPhoneDay(local_1, dayAllows) : local_1;
   return canReadSendGlobal(local_2) ? readSendGlobal(local_2, globalAllows) : local_2;
+}
+
+/** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */
+//@ pure
+export function otpStartCounts(flow: ChallengeFlow): boolean {
+  return flow.phase === "Sending";
 }
 
 /** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md) */

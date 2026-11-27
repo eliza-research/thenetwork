@@ -2,19 +2,19 @@
 //@ backend dafny
 
 /** Story: Know which page I am on / The viewer answer selects a page that the roles cover (spec/consoleNavigation.md) */
-export interface QueueFacts { reviewItems: boolean; requestsKnown: boolean }
+export type ConsolePage = "AppPage" | "AllAppsPage" | "PersonPage" | "NoRolePage";
 /** Story: Know which page I am on / The viewer answer selects a page that the roles cover (spec/consoleNavigation.md) */
 export type ConsoleMode = "SimulatedMode" | "RealMode";
 /** Story: Know which page I am on / The viewer answer selects a page that the roles cover (spec/consoleNavigation.md) */
 export type ConsoleStage = "MapStage" | "GraphStage";
-/** Story: Know which page I am on / The viewer answer selects a page that the roles cover (spec/consoleNavigation.md) */
-export type ConsolePage = "AppPage" | "AllAppsPage" | "PersonPage" | "NoRolePage";
 /** Story: Know which page I am on / The viewer answer selects a page that the roles cover (spec/consoleNavigation.md) */
 export type Subject = "Overview" | "NeighborhoodSubject" | "MemberSubject" | "OpportunitySubject";
 /** Story: Know which page I am on / The viewer answer selects a page that the roles cover (spec/consoleNavigation.md) */
 export type DrawerTab = "ReviewTab" | "FeedTab" | "PipelineTab" | "RequestsTab" | "EngineTab" | "SafetyTab" | "MetricsTab" | "LabTab" | "ConfigTab" | "GameTab";
 /** Story: Know which page I am on / The viewer answer selects a page that the roles cover (spec/consoleNavigation.md) */
 export interface Viewer { known: boolean; mode: ConsoleMode; appsHeld: number; crossApp: boolean; admin: boolean; analyst: boolean; simRole: boolean; safety: boolean; realOnly: boolean }
+/** Story: Know which page I am on / The viewer answer selects a page that the roles cover (spec/consoleNavigation.md) */
+export interface QueueFacts { reviewItems: boolean; requestsKnown: boolean }
 /** Story: Know which page I am on / The viewer answer selects a page that the roles cover (spec/consoleNavigation.md) */
 export interface ConsoleNav { page: ConsolePage; stage: ConsoleStage; subject: Subject; depth: number; wantedTab: DrawerTab; drawerOpen: boolean; popoverOpen: boolean; queryChars: number; picks: number; viewer: Viewer; queues: QueueFacts }
 /** Story: Know which page I am on / The console view follows the page (spec/consoleNavigation.md) */
@@ -35,8 +35,8 @@ export type Event =
   | { type: "closePerson" }
   | { type: "switchMode"; viewMode: ConsoleMode }
   | { type: "receiveModeChange"; viewMode: ConsoleMode }
-  | { type: "replaceFocus"; target: Subject }
   | { type: "focusOn"; target: Subject; sameAsShown: boolean }
+  | { type: "replaceFocus"; target: Subject }
   | { type: "goBack"; previous: Subject }
   | { type: "clearFocus" }
   | { type: "dropMissingSubjects"; subjectExists: boolean; droppedEntries: number }
@@ -48,9 +48,9 @@ export type Event =
   | { type: "showStage"; target: ConsoleStage }
   | { type: "flyToVenue" }
   | { type: "receiveQueues"; reviewItems: boolean; requestsKnown: boolean }
+  | { type: "chooseTab"; tab: DrawerTab }
   | { type: "jumpToTab"; tab: DrawerTab }
-  | { type: "toggleDrawer" }
-  | { type: "chooseTab"; tab: DrawerTab };
+  | { type: "toggleDrawer" };
 
 /** Story: Know which page I am on / The viewer answer selects a page that the roles cover (spec/consoleNavigation.md) */
 export const maxFocusHistory: number = 20;
@@ -111,6 +111,14 @@ export function receiveViewer(nav: ConsoleNav, viewMode: ConsoleMode, heldApps: 
 
 /** Story: Know which page I am on / The viewer answer selects a page that the roles cover (spec/consoleNavigation.md) */
 //@ pure
+export function lawViewerPageIsCovered(page: ConsolePage, heldApps: number, crossAppRole: boolean, viewMode: ConsoleMode): boolean {
+  //@ ensures \result === true
+  const local_2: ConsolePage = pageForViewer(page, heldApps, crossAppRole, viewMode);
+  return (!(local_2 === "AppPage") || heldApps > 0) && (!(local_2 === "AllAppsPage") || allAppsAllowed(heldApps, crossAppRole)) && (!(local_2 === "PersonPage") || (crossAppRole && viewMode === "RealMode")) && (local_2 === "NoRolePage") === (heldApps <= 0 && !crossAppRole);
+}
+
+/** Story: Know which page I am on / The viewer answer selects a page that the roles cover (spec/consoleNavigation.md) */
+//@ pure
 export function alwaysAppPageNeedsAnApp(nav: ConsoleNav): boolean {
   return !(nav.viewer.known && nav.page === "AppPage") || nav.viewer.appsHeld > 0;
 }
@@ -143,14 +151,6 @@ export function alwaysAdminHoldsEveryRole(nav: ConsoleNav): boolean {
 //@ pure
 export function alwaysRealOnlyServerStaysReal(nav: ConsoleNav): boolean {
   return !nav.viewer.realOnly || nav.viewer.mode === "RealMode";
-}
-
-/** Story: Know which page I am on / The viewer answer selects a page that the roles cover (spec/consoleNavigation.md) */
-//@ pure
-export function lawViewerPageIsCovered(page: ConsolePage, heldApps: number, crossAppRole: boolean, viewMode: ConsoleMode): boolean {
-  //@ ensures \result === true
-  const local_2: ConsolePage = pageForViewer(page, heldApps, crossAppRole, viewMode);
-  return (!(local_2 === "AppPage") || heldApps > 0) && (!(local_2 === "AllAppsPage") || allAppsAllowed(heldApps, crossAppRole)) && (!(local_2 === "PersonPage") || (crossAppRole && viewMode === "RealMode")) && (local_2 === "NoRolePage") === (heldApps <= 0 && !crossAppRole);
 }
 
 /** Story: Know which page I am on / The app switcher opens one app or the all-apps page (spec/consoleNavigation.md) */
@@ -305,18 +305,6 @@ export function sometimesPersonPage(nav: ConsoleNav): boolean {
 
 /** Story: Know which page I am on / A mode change clears the subject and the picks (spec/consoleNavigation.md) */
 //@ pure
-export function stepModeChangeClearsSubject(before: ConsoleNav, after: ConsoleNav): boolean {
-  return !(after.viewer.mode !== before.viewer.mode) || (after.subject === "Overview" && after.depth === 0 && after.picks === 0);
-}
-
-/** Story: Know which page I am on / A mode change clears the subject and the picks (spec/consoleNavigation.md) */
-//@ pure
-export function sometimesRealMode(nav: ConsoleNav): boolean {
-  return nav.viewer.known && nav.viewer.mode === "RealMode";
-}
-
-/** Story: Know which page I am on / A mode change clears the subject and the picks (spec/consoleNavigation.md) */
-//@ pure
 export function afterModeChange(viewMode: ConsoleMode, nav: ConsoleNav): ConsoleNav {
   return { ...nav, viewer: ({ ...nav.viewer, mode: viewMode } as Viewer), picks: 0, subject: "Overview", depth: 0, wantedTab: viewMode === "RealMode" && nav.wantedTab === "GameTab" ? "FeedTab" : nav.wantedTab, page: nav.page === "PersonPage" && viewMode === "SimulatedMode" ? "AllAppsPage" : nav.page };
 }
@@ -325,12 +313,6 @@ export function afterModeChange(viewMode: ConsoleMode, nav: ConsoleNav): Console
 //@ pure
 export function modeSwitchShown(nav: ConsoleNav): boolean {
   return nav.viewer.known && nav.viewer.admin && !nav.viewer.realOnly;
-}
-
-/** Story: Know which page I am on / A mode change clears the subject and the picks (spec/consoleNavigation.md) */
-//@ pure
-export function canReceiveModeChange(nav: ConsoleNav, viewMode: ConsoleMode): boolean {
-  return nav.viewer.known && viewMode !== nav.viewer.mode && !(nav.viewer.realOnly && viewMode === "SimulatedMode");
 }
 
 /** Story: Know which page I am on / A mode change clears the subject and the picks (spec/consoleNavigation.md) */
@@ -365,6 +347,12 @@ export function switchMode(nav: ConsoleNav, viewMode: ConsoleMode): ConsoleNav {
 
 /** Story: Know which page I am on / A mode change clears the subject and the picks (spec/consoleNavigation.md) */
 //@ pure
+export function canReceiveModeChange(nav: ConsoleNav, viewMode: ConsoleMode): boolean {
+  return nav.viewer.known && viewMode !== nav.viewer.mode && !(nav.viewer.realOnly && viewMode === "SimulatedMode");
+}
+
+/** Story: Know which page I am on / A mode change clears the subject and the picks (spec/consoleNavigation.md) */
+//@ pure
 export function receiveModeChange(nav: ConsoleNav, viewMode: ConsoleMode): ConsoleNav {
   //@ ensures (inv(nav) && canReceiveModeChange(nav, viewMode)) ==> alwaysAppPageNeedsAnApp(\result)
   //@ ensures (inv(nav) && canReceiveModeChange(nav, viewMode)) ==> alwaysAllAppsPageNeedsTwoAppsOrCrossApp(\result)
@@ -387,6 +375,18 @@ export function receiveModeChange(nav: ConsoleNav, viewMode: ConsoleMode): Conso
   return afterModeChange(viewMode, nav);
 }
 
+/** Story: Know which page I am on / A mode change clears the subject and the picks (spec/consoleNavigation.md) */
+//@ pure
+export function stepModeChangeClearsSubject(before: ConsoleNav, after: ConsoleNav): boolean {
+  return !(after.viewer.mode !== before.viewer.mode) || (after.subject === "Overview" && after.depth === 0 && after.picks === 0);
+}
+
+/** Story: Know which page I am on / A mode change clears the subject and the picks (spec/consoleNavigation.md) */
+//@ pure
+export function sometimesRealMode(nav: ConsoleNav): boolean {
+  return nav.viewer.known && nav.viewer.mode === "RealMode";
+}
+
 /** Story: Know which page I am on / The console view follows the page (spec/consoleNavigation.md) */
 //@ pure
 export function viewFor(nav: ConsoleNav): ConsoleView {
@@ -397,13 +397,6 @@ export function viewFor(nav: ConsoleNav): ConsoleView {
 //@ pure
 export function onAppPage(nav: ConsoleNav): boolean {
   return viewFor(nav) === "WorkspaceView";
-}
-
-/** Story: Know which page I am on / The console view follows the page (spec/consoleNavigation.md) */
-//@ pure
-export function lawNothingShowsBeforeTheViewer(page: ConsolePage): boolean {
-  //@ ensures \result === true
-  return viewFor(({ ...initial, page: page } as ConsoleNav)) === "LoadingView";
 }
 
 /** Story: Know which page I am on / The console view follows the page (spec/consoleNavigation.md) */
@@ -419,10 +412,53 @@ export function lawOnlyTheAppPageShowsTheStage(page: ConsolePage): boolean {
   return stageShown(({ ...initial, page: page, viewer: ({ ...initial.viewer, known: true } as Viewer) } as ConsoleNav)) === (page === "AppPage");
 }
 
+/** Story: Know which page I am on / The console view follows the page (spec/consoleNavigation.md) */
+//@ pure
+export function lawNothingShowsBeforeTheViewer(page: ConsolePage): boolean {
+  //@ ensures \result === true
+  return viewFor(({ ...initial, page: page } as ConsoleNav)) === "LoadingView";
+}
+
 /** Story: Follow one subject / Focus on a new subject keeps the last one in a short history (spec/consoleNavigation.md) */
 //@ pure
 export function withFocus(target: Subject, nav: ConsoleNav, sameAsShown: boolean): ConsoleNav {
   return sameAsShown ? nav : ({ ...nav, subject: target, depth: nav.subject === "Overview" ? nav.depth : (nav.depth >= maxFocusHistory ? maxFocusHistory : exact_consoleNavigation(nav.depth + 1)) } as ConsoleNav);
+}
+
+/** Story: Follow one subject / Focus on a new subject keeps the last one in a short history (spec/consoleNavigation.md) */
+//@ pure
+export function canFocusOn(nav: ConsoleNav, target: Subject, sameAsShown: boolean): boolean {
+  return onAppPage(nav) && target !== "Overview" && (!sameAsShown || target === nav.subject);
+}
+
+/** Story: Follow one subject / Focus on a new subject keeps the last one in a short history (spec/consoleNavigation.md) */
+//@ pure
+export function focusOn(nav: ConsoleNav, target: Subject, sameAsShown: boolean): ConsoleNav {
+  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> alwaysAppPageNeedsAnApp(\result)
+  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> alwaysAllAppsPageNeedsTwoAppsOrCrossApp(\result)
+  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> alwaysNoRolePageOnlyWithoutRoles(\result)
+  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> alwaysPersonPageNeedsCrossAppInReal(\result)
+  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> alwaysAdminHoldsEveryRole(\result)
+  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> alwaysRealOnlyServerStaysReal(\result)
+  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> alwaysHistoryIsBounded(\result)
+  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> alwaysOverviewHasNoHistory(\result)
+  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> alwaysQueryClassIsBounded(\result)
+  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> alwaysPicksNeedTheSimulatedWorld(\result)
+  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> alwaysPicksAreBounded(\result)
+  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> stepModeChangeClearsSubject(nav, \result)
+  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> stepFocusAddsAtMostOneEntry(nav, "focusOn", \result)
+  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> stepEscapeKeepsSubjectWhileSomethingIsOpen(nav, "focusOn", \result)
+  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> stepEscapeClosesTheMenuFirst(nav, "focusOn", \result)
+  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> stepVenueOpensTheMap(nav, "focusOn", \result)
+  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> stepJumpOpensTheDrawer(nav, "focusOn", \result)
+  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> stepChosenTabShowsUnlessItCollapses(nav, "focusOn", \result)
+  return withFocus(target, nav, sameAsShown);
+}
+
+/** Story: Follow one subject / Focus on a new subject keeps the last one in a short history (spec/consoleNavigation.md) */
+//@ pure
+export function canReplaceFocus(nav: ConsoleNav, target: Subject): boolean {
+  return onAppPage(nav) && target !== "Overview";
 }
 
 /** Story: Follow one subject / Focus on a new subject keeps the last one in a short history (spec/consoleNavigation.md) */
@@ -491,40 +527,16 @@ export function sometimesHistoryHasTwo(nav: ConsoleNav): boolean {
   return nav.depth >= 2;
 }
 
-/** Story: Follow one subject / Focus on a new subject keeps the last one in a short history (spec/consoleNavigation.md) */
+/** Story: Follow one subject / Back returns to the last subject and clear returns to the overview (spec/consoleNavigation.md) */
 //@ pure
-export function focusOn(nav: ConsoleNav, target: Subject, sameAsShown: boolean): ConsoleNav {
-  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> alwaysAppPageNeedsAnApp(\result)
-  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> alwaysAllAppsPageNeedsTwoAppsOrCrossApp(\result)
-  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> alwaysNoRolePageOnlyWithoutRoles(\result)
-  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> alwaysPersonPageNeedsCrossAppInReal(\result)
-  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> alwaysAdminHoldsEveryRole(\result)
-  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> alwaysRealOnlyServerStaysReal(\result)
-  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> alwaysHistoryIsBounded(\result)
-  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> alwaysOverviewHasNoHistory(\result)
-  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> alwaysQueryClassIsBounded(\result)
-  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> alwaysPicksNeedTheSimulatedWorld(\result)
-  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> alwaysPicksAreBounded(\result)
-  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> stepModeChangeClearsSubject(nav, \result)
-  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> stepFocusAddsAtMostOneEntry(nav, "focusOn", \result)
-  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> stepEscapeKeepsSubjectWhileSomethingIsOpen(nav, "focusOn", \result)
-  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> stepEscapeClosesTheMenuFirst(nav, "focusOn", \result)
-  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> stepVenueOpensTheMap(nav, "focusOn", \result)
-  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> stepJumpOpensTheDrawer(nav, "focusOn", \result)
-  //@ ensures (inv(nav) && canFocusOn(nav, target, sameAsShown)) ==> stepChosenTabShowsUnlessItCollapses(nav, "focusOn", \result)
-  return withFocus(target, nav, sameAsShown);
+export function backShown(nav: ConsoleNav): boolean {
+  return onAppPage(nav) && nav.depth > 0;
 }
 
-/** Story: Follow one subject / Focus on a new subject keeps the last one in a short history (spec/consoleNavigation.md) */
+/** Story: Follow one subject / Back returns to the last subject and clear returns to the overview (spec/consoleNavigation.md) */
 //@ pure
-export function canFocusOn(nav: ConsoleNav, target: Subject, sameAsShown: boolean): boolean {
-  return onAppPage(nav) && target !== "Overview" && (!sameAsShown || target === nav.subject);
-}
-
-/** Story: Follow one subject / Focus on a new subject keeps the last one in a short history (spec/consoleNavigation.md) */
-//@ pure
-export function canReplaceFocus(nav: ConsoleNav, target: Subject): boolean {
-  return onAppPage(nav) && target !== "Overview";
+export function canGoBack(nav: ConsoleNav, previous: Subject): boolean {
+  return backShown(nav) && previous !== "Overview";
 }
 
 /** Story: Follow one subject / Back returns to the last subject and clear returns to the overview (spec/consoleNavigation.md) */
@@ -613,18 +625,6 @@ export function dropMissingSubjects(nav: ConsoleNav, subjectExists: boolean, dro
 
 /** Story: Follow one subject / Back returns to the last subject and clear returns to the overview (spec/consoleNavigation.md) */
 //@ pure
-export function backShown(nav: ConsoleNav): boolean {
-  return onAppPage(nav) && nav.depth > 0;
-}
-
-/** Story: Follow one subject / Back returns to the last subject and clear returns to the overview (spec/consoleNavigation.md) */
-//@ pure
-export function canGoBack(nav: ConsoleNav, previous: Subject): boolean {
-  return backShown(nav) && previous !== "Overview";
-}
-
-/** Story: Follow one subject / Back returns to the last subject and clear returns to the overview (spec/consoleNavigation.md) */
-//@ pure
 export function sometimesBackAfterHistory(nav: ConsoleNav): boolean {
   return backShown(nav) && nav.subject !== "Overview";
 }
@@ -697,14 +697,26 @@ export function queryClass(characters: number): number {
 
 /** Story: Follow one subject / Search offers names and places from two characters and ids from three (spec/consoleNavigation.md) */
 //@ pure
+export function hitGroups(queryChars: number): HitGroups {
+  return queryChars >= 3 ? "NamesPlacesAndIds" : (queryChars >= 2 ? "NamesAndPlaces" : "NoHits");
+}
+
+/** Story: Follow one subject / Search offers names and places from two characters and ids from three (spec/consoleNavigation.md) */
+//@ pure
 export function conversationSearchShown(safetyRole: boolean, queryChars: number): boolean {
   return safetyRole && queryChars >= 2;
 }
 
 /** Story: Follow one subject / Search offers names and places from two characters and ids from three (spec/consoleNavigation.md) */
 //@ pure
-export function hitGroups(queryChars: number): HitGroups {
-  return queryChars >= 3 ? "NamesPlacesAndIds" : (queryChars >= 2 ? "NamesAndPlaces" : "NoHits");
+export function searchShown(nav: ConsoleNav): boolean {
+  return onAppPage(nav);
+}
+
+/** Story: Follow one subject / Search offers names and places from two characters and ids from three (spec/consoleNavigation.md) */
+//@ pure
+export function canTypeQuery(nav: ConsoleNav): boolean {
+  return searchShown(nav);
 }
 
 /** Story: Follow one subject / Search offers names and places from two characters and ids from three (spec/consoleNavigation.md) */
@@ -733,28 +745,8 @@ export function typeQuery(nav: ConsoleNav, characters: number): ConsoleNav {
 
 /** Story: Follow one subject / Search offers names and places from two characters and ids from three (spec/consoleNavigation.md) */
 //@ pure
-export function lawIdsNeedThreeCharacters(characters: number): boolean {
-  //@ ensures \result === true
-  return (hitGroups(queryClass(characters)) === "NamesPlacesAndIds") === characters >= 3;
-}
-
-/** Story: Follow one subject / Search offers names and places from two characters and ids from three (spec/consoleNavigation.md) */
-//@ pure
-export function lawNamesNeedTwoCharacters(characters: number): boolean {
-  //@ ensures \result === true
-  return (hitGroups(queryClass(characters)) === "NoHits") === characters < 2;
-}
-
-/** Story: Follow one subject / Search offers names and places from two characters and ids from three (spec/consoleNavigation.md) */
-//@ pure
-export function alwaysQueryClassIsBounded(nav: ConsoleNav): boolean {
-  return nav.queryChars >= 0 && nav.queryChars <= 3;
-}
-
-/** Story: Follow one subject / Search offers names and places from two characters and ids from three (spec/consoleNavigation.md) */
-//@ pure
-export function searchShown(nav: ConsoleNav): boolean {
-  return onAppPage(nav);
+export function canPickHit(nav: ConsoleNav, target: Subject, sameAsShown: boolean): boolean {
+  return searchShown(nav) && nav.queryChars >= 2 && target !== "Overview" && (!sameAsShown || target === nav.subject);
 }
 
 /** Story: Follow one subject / Search offers names and places from two characters and ids from three (spec/consoleNavigation.md) */
@@ -784,20 +776,34 @@ export function pickHit(nav: ConsoleNav, target: Subject, sameAsShown: boolean):
 
 /** Story: Follow one subject / Search offers names and places from two characters and ids from three (spec/consoleNavigation.md) */
 //@ pure
-export function canTypeQuery(nav: ConsoleNav): boolean {
-  return searchShown(nav);
+export function lawIdsNeedThreeCharacters(characters: number): boolean {
+  //@ ensures \result === true
+  return (hitGroups(queryClass(characters)) === "NamesPlacesAndIds") === characters >= 3;
 }
 
 /** Story: Follow one subject / Search offers names and places from two characters and ids from three (spec/consoleNavigation.md) */
 //@ pure
-export function canPickHit(nav: ConsoleNav, target: Subject, sameAsShown: boolean): boolean {
-  return searchShown(nav) && nav.queryChars >= 2 && target !== "Overview" && (!sameAsShown || target === nav.subject);
+export function lawNamesNeedTwoCharacters(characters: number): boolean {
+  //@ ensures \result === true
+  return (hitGroups(queryClass(characters)) === "NoHits") === characters < 2;
+}
+
+/** Story: Follow one subject / Search offers names and places from two characters and ids from three (spec/consoleNavigation.md) */
+//@ pure
+export function alwaysQueryClassIsBounded(nav: ConsoleNav): boolean {
+  return nav.queryChars >= 0 && nav.queryChars <= 3;
 }
 
 /** Story: Follow one subject / Search offers names and places from two characters and ids from three (spec/consoleNavigation.md) */
 //@ pure
 export function sometimesIdsOffered(nav: ConsoleNav): boolean {
   return searchShown(nav) && hitGroups(nav.queryChars) === "NamesPlacesAndIds";
+}
+
+/** Story: Follow one subject / Picks exist only for a viewer who plays the simulated world (spec/consoleNavigation.md) */
+//@ pure
+export function canTogglePick(nav: ConsoleNav, alreadyPicked: boolean, minorMember: boolean): boolean {
+  return onAppPage(nav) && nav.viewer.mode === "SimulatedMode" && nav.viewer.simRole && (alreadyPicked ? nav.picks > 0 : !minorMember);
 }
 
 /** Story: Follow one subject / Picks exist only for a viewer who plays the simulated world (spec/consoleNavigation.md) */
@@ -842,12 +848,6 @@ export function sometimesTwoPicks(nav: ConsoleNav): boolean {
   return nav.picks >= 2;
 }
 
-/** Story: Follow one subject / Picks exist only for a viewer who plays the simulated world (spec/consoleNavigation.md) */
-//@ pure
-export function canTogglePick(nav: ConsoleNav, alreadyPicked: boolean, minorMember: boolean): boolean {
-  return onAppPage(nav) && nav.viewer.mode === "SimulatedMode" && nav.viewer.simRole && (alreadyPicked ? nav.picks > 0 : !minorMember);
-}
-
 /** Story: Use the stage and the drawer / The stage shows the map or the graph (spec/consoleNavigation.md) */
 //@ pure
 export function canShowStage(nav: ConsoleNav, target: ConsoleStage): boolean {
@@ -876,6 +876,12 @@ export function showStage(nav: ConsoleNav, target: ConsoleStage): ConsoleNav {
   //@ ensures (inv(nav) && canShowStage(nav, target)) ==> stepJumpOpensTheDrawer(nav, "showStage", \result)
   //@ ensures (inv(nav) && canShowStage(nav, target)) ==> stepChosenTabShowsUnlessItCollapses(nav, "showStage", \result)
   return { ...nav, stage: target };
+}
+
+/** Story: Use the stage and the drawer / The stage shows the map or the graph (spec/consoleNavigation.md) */
+//@ pure
+export function canFlyToVenue(nav: ConsoleNav): boolean {
+  return onAppPage(nav);
 }
 
 /** Story: Use the stage and the drawer / The stage shows the map or the graph (spec/consoleNavigation.md) */
@@ -910,12 +916,6 @@ export function stepVenueOpensTheMap(before: ConsoleNav, via: string, after: Con
 
 /** Story: Use the stage and the drawer / The stage shows the map or the graph (spec/consoleNavigation.md) */
 //@ pure
-export function canFlyToVenue(nav: ConsoleNav): boolean {
-  return onAppPage(nav);
-}
-
-/** Story: Use the stage and the drawer / The stage shows the map or the graph (spec/consoleNavigation.md) */
-//@ pure
 export function sometimesGraphStage(nav: ConsoleNav): boolean {
   return nav.stage === "GraphStage" && onAppPage(nav);
 }
@@ -936,6 +936,12 @@ export function shownTab(wanted: DrawerTab, facts: TabFacts): DrawerTab {
 //@ pure
 export function factsOf(nav: ConsoleNav): TabFacts {
   return { simulated: nav.viewer.mode === "SimulatedMode", analystRole: nav.viewer.analyst, realOnlyServer: nav.viewer.realOnly, reviewItems: nav.queues.reviewItems, requestsKnown: nav.queues.requestsKnown };
+}
+
+/** Story: Use the stage and the drawer / Each drawer tab shows only where it applies (spec/consoleNavigation.md) */
+//@ pure
+export function tabNow(nav: ConsoleNav): DrawerTab {
+  return shownTab(nav.wantedTab, factsOf(nav));
 }
 
 /** Story: Use the stage and the drawer / Each drawer tab shows only where it applies (spec/consoleNavigation.md) */
@@ -970,6 +976,13 @@ export function receiveQueues(nav: ConsoleNav, reviewItems: boolean, requestsKno
 
 /** Story: Use the stage and the drawer / Each drawer tab shows only where it applies (spec/consoleNavigation.md) */
 //@ pure
+export function lawShownTabIsVisible(wanted: DrawerTab, facts: TabFacts): boolean {
+  //@ ensures \result === true
+  return tabVisible(shownTab(wanted, facts), facts);
+}
+
+/** Story: Use the stage and the drawer / Each drawer tab shows only where it applies (spec/consoleNavigation.md) */
+//@ pure
 export function lawFeedAlwaysShows(facts: TabFacts): boolean {
   //@ ensures \result === true
   return tabVisible("FeedTab", facts);
@@ -987,79 +1000,6 @@ export function lawGameTabNeedsTheSimulatedWorld(facts: TabFacts): boolean {
 export function lawLabNeedsAnAnalystOffARealOnlyServer(facts: TabFacts): boolean {
   //@ ensures \result === true
   return tabVisible("LabTab", facts) === (facts.analystRole && !facts.realOnlyServer);
-}
-
-/** Story: Use the stage and the drawer / Each drawer tab shows only where it applies (spec/consoleNavigation.md) */
-//@ pure
-export function tabNow(nav: ConsoleNav): DrawerTab {
-  return shownTab(nav.wantedTab, factsOf(nav));
-}
-
-/** Story: Use the stage and the drawer / Each drawer tab shows only where it applies (spec/consoleNavigation.md) */
-//@ pure
-export function lawShownTabIsVisible(wanted: DrawerTab, facts: TabFacts): boolean {
-  //@ ensures \result === true
-  return tabVisible(shownTab(wanted, facts), facts);
-}
-
-/** Story: Use the stage and the drawer / A tab choice opens the drawer, and the open tab collapses it (spec/consoleNavigation.md) */
-//@ pure
-export function jumpToTab(nav: ConsoleNav, tab: DrawerTab): ConsoleNav {
-  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> alwaysAppPageNeedsAnApp(\result)
-  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> alwaysAllAppsPageNeedsTwoAppsOrCrossApp(\result)
-  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> alwaysNoRolePageOnlyWithoutRoles(\result)
-  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> alwaysPersonPageNeedsCrossAppInReal(\result)
-  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> alwaysAdminHoldsEveryRole(\result)
-  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> alwaysRealOnlyServerStaysReal(\result)
-  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> alwaysHistoryIsBounded(\result)
-  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> alwaysOverviewHasNoHistory(\result)
-  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> alwaysQueryClassIsBounded(\result)
-  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> alwaysPicksNeedTheSimulatedWorld(\result)
-  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> alwaysPicksAreBounded(\result)
-  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> stepModeChangeClearsSubject(nav, \result)
-  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> stepFocusAddsAtMostOneEntry(nav, "jumpToTab", \result)
-  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> stepEscapeKeepsSubjectWhileSomethingIsOpen(nav, "jumpToTab", \result)
-  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> stepEscapeClosesTheMenuFirst(nav, "jumpToTab", \result)
-  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> stepVenueOpensTheMap(nav, "jumpToTab", \result)
-  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> stepJumpOpensTheDrawer(nav, "jumpToTab", \result)
-  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> stepChosenTabShowsUnlessItCollapses(nav, "jumpToTab", \result)
-  return { ...nav, wantedTab: tab, drawerOpen: true };
-}
-
-/** Story: Use the stage and the drawer / A tab choice opens the drawer, and the open tab collapses it (spec/consoleNavigation.md) */
-//@ pure
-export function toggleDrawer(nav: ConsoleNav): ConsoleNav {
-  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> alwaysAppPageNeedsAnApp(\result)
-  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> alwaysAllAppsPageNeedsTwoAppsOrCrossApp(\result)
-  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> alwaysNoRolePageOnlyWithoutRoles(\result)
-  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> alwaysPersonPageNeedsCrossAppInReal(\result)
-  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> alwaysAdminHoldsEveryRole(\result)
-  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> alwaysRealOnlyServerStaysReal(\result)
-  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> alwaysHistoryIsBounded(\result)
-  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> alwaysOverviewHasNoHistory(\result)
-  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> alwaysQueryClassIsBounded(\result)
-  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> alwaysPicksNeedTheSimulatedWorld(\result)
-  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> alwaysPicksAreBounded(\result)
-  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> stepModeChangeClearsSubject(nav, \result)
-  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> stepFocusAddsAtMostOneEntry(nav, "toggleDrawer", \result)
-  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> stepEscapeKeepsSubjectWhileSomethingIsOpen(nav, "toggleDrawer", \result)
-  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> stepEscapeClosesTheMenuFirst(nav, "toggleDrawer", \result)
-  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> stepVenueOpensTheMap(nav, "toggleDrawer", \result)
-  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> stepJumpOpensTheDrawer(nav, "toggleDrawer", \result)
-  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> stepChosenTabShowsUnlessItCollapses(nav, "toggleDrawer", \result)
-  return { ...nav, drawerOpen: !nav.drawerOpen };
-}
-
-/** Story: Use the stage and the drawer / A tab choice opens the drawer, and the open tab collapses it (spec/consoleNavigation.md) */
-//@ pure
-export function stepJumpOpensTheDrawer(before: ConsoleNav, via: string, after: ConsoleNav): boolean {
-  return !(via === "jumpToTab") || after.drawerOpen;
-}
-
-/** Story: Use the stage and the drawer / A tab choice opens the drawer, and the open tab collapses it (spec/consoleNavigation.md) */
-//@ pure
-export function stepChosenTabShowsUnlessItCollapses(before: ConsoleNav, via: string, after: ConsoleNav): boolean {
-  return !(via === "chooseTab" && after.drawerOpen) || tabVisible(after.wantedTab, factsOf(after));
 }
 
 /** Story: Use the stage and the drawer / A tab choice opens the drawer, and the open tab collapses it (spec/consoleNavigation.md) */
@@ -1100,8 +1040,68 @@ export function canJumpToTab(nav: ConsoleNav, tab: DrawerTab): boolean {
 
 /** Story: Use the stage and the drawer / A tab choice opens the drawer, and the open tab collapses it (spec/consoleNavigation.md) */
 //@ pure
+export function jumpToTab(nav: ConsoleNav, tab: DrawerTab): ConsoleNav {
+  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> alwaysAppPageNeedsAnApp(\result)
+  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> alwaysAllAppsPageNeedsTwoAppsOrCrossApp(\result)
+  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> alwaysNoRolePageOnlyWithoutRoles(\result)
+  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> alwaysPersonPageNeedsCrossAppInReal(\result)
+  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> alwaysAdminHoldsEveryRole(\result)
+  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> alwaysRealOnlyServerStaysReal(\result)
+  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> alwaysHistoryIsBounded(\result)
+  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> alwaysOverviewHasNoHistory(\result)
+  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> alwaysQueryClassIsBounded(\result)
+  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> alwaysPicksNeedTheSimulatedWorld(\result)
+  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> alwaysPicksAreBounded(\result)
+  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> stepModeChangeClearsSubject(nav, \result)
+  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> stepFocusAddsAtMostOneEntry(nav, "jumpToTab", \result)
+  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> stepEscapeKeepsSubjectWhileSomethingIsOpen(nav, "jumpToTab", \result)
+  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> stepEscapeClosesTheMenuFirst(nav, "jumpToTab", \result)
+  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> stepVenueOpensTheMap(nav, "jumpToTab", \result)
+  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> stepJumpOpensTheDrawer(nav, "jumpToTab", \result)
+  //@ ensures (inv(nav) && canJumpToTab(nav, tab)) ==> stepChosenTabShowsUnlessItCollapses(nav, "jumpToTab", \result)
+  return { ...nav, wantedTab: tab, drawerOpen: true };
+}
+
+/** Story: Use the stage and the drawer / A tab choice opens the drawer, and the open tab collapses it (spec/consoleNavigation.md) */
+//@ pure
 export function canToggleDrawer(nav: ConsoleNav): boolean {
   return onAppPage(nav);
+}
+
+/** Story: Use the stage and the drawer / A tab choice opens the drawer, and the open tab collapses it (spec/consoleNavigation.md) */
+//@ pure
+export function toggleDrawer(nav: ConsoleNav): ConsoleNav {
+  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> alwaysAppPageNeedsAnApp(\result)
+  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> alwaysAllAppsPageNeedsTwoAppsOrCrossApp(\result)
+  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> alwaysNoRolePageOnlyWithoutRoles(\result)
+  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> alwaysPersonPageNeedsCrossAppInReal(\result)
+  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> alwaysAdminHoldsEveryRole(\result)
+  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> alwaysRealOnlyServerStaysReal(\result)
+  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> alwaysHistoryIsBounded(\result)
+  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> alwaysOverviewHasNoHistory(\result)
+  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> alwaysQueryClassIsBounded(\result)
+  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> alwaysPicksNeedTheSimulatedWorld(\result)
+  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> alwaysPicksAreBounded(\result)
+  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> stepModeChangeClearsSubject(nav, \result)
+  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> stepFocusAddsAtMostOneEntry(nav, "toggleDrawer", \result)
+  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> stepEscapeKeepsSubjectWhileSomethingIsOpen(nav, "toggleDrawer", \result)
+  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> stepEscapeClosesTheMenuFirst(nav, "toggleDrawer", \result)
+  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> stepVenueOpensTheMap(nav, "toggleDrawer", \result)
+  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> stepJumpOpensTheDrawer(nav, "toggleDrawer", \result)
+  //@ ensures (inv(nav) && canToggleDrawer(nav)) ==> stepChosenTabShowsUnlessItCollapses(nav, "toggleDrawer", \result)
+  return { ...nav, drawerOpen: !nav.drawerOpen };
+}
+
+/** Story: Use the stage and the drawer / A tab choice opens the drawer, and the open tab collapses it (spec/consoleNavigation.md) */
+//@ pure
+export function stepJumpOpensTheDrawer(before: ConsoleNav, via: string, after: ConsoleNav): boolean {
+  return !(via === "jumpToTab") || after.drawerOpen;
+}
+
+/** Story: Use the stage and the drawer / A tab choice opens the drawer, and the open tab collapses it (spec/consoleNavigation.md) */
+//@ pure
+export function stepChosenTabShowsUnlessItCollapses(before: ConsoleNav, via: string, after: ConsoleNav): boolean {
+  return !(via === "chooseTab" && after.drawerOpen) || tabVisible(after.wantedTab, factsOf(after));
 }
 
 /** Story: Use the stage and the drawer / A tab choice opens the drawer, and the open tab collapses it (spec/consoleNavigation.md) */
@@ -1171,8 +1171,8 @@ export function enabled(current: ConsoleNav, event: Event): boolean {
   if (event.type === "closePerson") return canClosePerson(current);
   if (event.type === "switchMode") return canSwitchMode(current, event.viewMode);
   if (event.type === "receiveModeChange") return canReceiveModeChange(current, event.viewMode);
-  if (event.type === "replaceFocus") return canReplaceFocus(current, event.target);
   if (event.type === "focusOn") return canFocusOn(current, event.target, event.sameAsShown);
+  if (event.type === "replaceFocus") return canReplaceFocus(current, event.target);
   if (event.type === "goBack") return canGoBack(current, event.previous);
   if (event.type === "clearFocus") return canClearFocus(current);
   if (event.type === "dropMissingSubjects") return canDropMissingSubjects(current, event.droppedEntries);
@@ -1184,9 +1184,9 @@ export function enabled(current: ConsoleNav, event: Event): boolean {
   if (event.type === "showStage") return canShowStage(current, event.target);
   if (event.type === "flyToVenue") return canFlyToVenue(current);
   if (event.type === "receiveQueues") return canReceiveQueues(current);
+  if (event.type === "chooseTab") return canChooseTab(current, event.tab);
   if (event.type === "jumpToTab") return canJumpToTab(current, event.tab);
   if (event.type === "toggleDrawer") return canToggleDrawer(current);
-  if (event.type === "chooseTab") return canChooseTab(current, event.tab);
   return false;
 }
 
@@ -1202,8 +1202,8 @@ export function step(current: ConsoleNav, event: Event): ConsoleNav {
   if (event.type === "closePerson") return canClosePerson(current) ? closePerson(current) : current;
   if (event.type === "switchMode") return canSwitchMode(current, event.viewMode) ? switchMode(current, event.viewMode) : current;
   if (event.type === "receiveModeChange") return canReceiveModeChange(current, event.viewMode) ? receiveModeChange(current, event.viewMode) : current;
-  if (event.type === "replaceFocus") return canReplaceFocus(current, event.target) ? replaceFocus(current, event.target) : current;
   if (event.type === "focusOn") return canFocusOn(current, event.target, event.sameAsShown) ? focusOn(current, event.target, event.sameAsShown) : current;
+  if (event.type === "replaceFocus") return canReplaceFocus(current, event.target) ? replaceFocus(current, event.target) : current;
   if (event.type === "goBack") return canGoBack(current, event.previous) ? goBack(current, event.previous) : current;
   if (event.type === "clearFocus") return canClearFocus(current) ? clearFocus(current) : current;
   if (event.type === "dropMissingSubjects") return canDropMissingSubjects(current, event.droppedEntries) ? dropMissingSubjects(current, event.subjectExists, event.droppedEntries) : current;
@@ -1215,9 +1215,9 @@ export function step(current: ConsoleNav, event: Event): ConsoleNav {
   if (event.type === "showStage") return canShowStage(current, event.target) ? showStage(current, event.target) : current;
   if (event.type === "flyToVenue") return canFlyToVenue(current) ? flyToVenue(current) : current;
   if (event.type === "receiveQueues") return canReceiveQueues(current) ? receiveQueues(current, event.reviewItems, event.requestsKnown) : current;
+  if (event.type === "chooseTab") return canChooseTab(current, event.tab) ? chooseTab(current, event.tab) : current;
   if (event.type === "jumpToTab") return canJumpToTab(current, event.tab) ? jumpToTab(current, event.tab) : current;
   if (event.type === "toggleDrawer") return canToggleDrawer(current) ? toggleDrawer(current) : current;
-  if (event.type === "chooseTab") return canChooseTab(current, event.tab) ? chooseTab(current, event.tab) : current;
   return current;
 }
 
@@ -1242,8 +1242,8 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "closePerson") return { type: "closePerson" };
   if (raw.type === "switchMode" && (raw.viewMode === "SimulatedMode" || raw.viewMode === "RealMode")) return { type: "switchMode", viewMode: raw.viewMode };
   if (raw.type === "receiveModeChange" && (raw.viewMode === "SimulatedMode" || raw.viewMode === "RealMode")) return { type: "receiveModeChange", viewMode: raw.viewMode };
-  if (raw.type === "replaceFocus" && (raw.target === "Overview" || raw.target === "NeighborhoodSubject" || raw.target === "MemberSubject" || raw.target === "OpportunitySubject")) return { type: "replaceFocus", target: raw.target };
   if (raw.type === "focusOn" && (raw.target === "Overview" || raw.target === "NeighborhoodSubject" || raw.target === "MemberSubject" || raw.target === "OpportunitySubject") && typeof raw.sameAsShown === "boolean") return { type: "focusOn", target: raw.target, sameAsShown: raw.sameAsShown };
+  if (raw.type === "replaceFocus" && (raw.target === "Overview" || raw.target === "NeighborhoodSubject" || raw.target === "MemberSubject" || raw.target === "OpportunitySubject")) return { type: "replaceFocus", target: raw.target };
   if (raw.type === "goBack" && (raw.previous === "Overview" || raw.previous === "NeighborhoodSubject" || raw.previous === "MemberSubject" || raw.previous === "OpportunitySubject")) return { type: "goBack", previous: raw.previous };
   if (raw.type === "clearFocus") return { type: "clearFocus" };
   if (raw.type === "dropMissingSubjects" && typeof raw.subjectExists === "boolean" && Number.isSafeInteger(raw.droppedEntries)) return { type: "dropMissingSubjects", subjectExists: raw.subjectExists, droppedEntries: raw.droppedEntries };
@@ -1255,9 +1255,9 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "showStage" && (raw.target === "MapStage" || raw.target === "GraphStage")) return { type: "showStage", target: raw.target };
   if (raw.type === "flyToVenue") return { type: "flyToVenue" };
   if (raw.type === "receiveQueues" && typeof raw.reviewItems === "boolean" && typeof raw.requestsKnown === "boolean") return { type: "receiveQueues", reviewItems: raw.reviewItems, requestsKnown: raw.requestsKnown };
+  if (raw.type === "chooseTab" && (raw.tab === "ReviewTab" || raw.tab === "FeedTab" || raw.tab === "PipelineTab" || raw.tab === "RequestsTab" || raw.tab === "EngineTab" || raw.tab === "SafetyTab" || raw.tab === "MetricsTab" || raw.tab === "LabTab" || raw.tab === "ConfigTab" || raw.tab === "GameTab")) return { type: "chooseTab", tab: raw.tab };
   if (raw.type === "jumpToTab" && (raw.tab === "ReviewTab" || raw.tab === "FeedTab" || raw.tab === "PipelineTab" || raw.tab === "RequestsTab" || raw.tab === "EngineTab" || raw.tab === "SafetyTab" || raw.tab === "MetricsTab" || raw.tab === "LabTab" || raw.tab === "ConfigTab" || raw.tab === "GameTab")) return { type: "jumpToTab", tab: raw.tab };
   if (raw.type === "toggleDrawer") return { type: "toggleDrawer" };
-  if (raw.type === "chooseTab" && (raw.tab === "ReviewTab" || raw.tab === "FeedTab" || raw.tab === "PipelineTab" || raw.tab === "RequestsTab" || raw.tab === "EngineTab" || raw.tab === "SafetyTab" || raw.tab === "MetricsTab" || raw.tab === "LabTab" || raw.tab === "ConfigTab" || raw.tab === "GameTab")) return { type: "chooseTab", tab: raw.tab };
   return undefined;
 }
 

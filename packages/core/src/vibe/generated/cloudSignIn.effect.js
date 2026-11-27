@@ -2,14 +2,13 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
-import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { orDie } from "effect/Effect";
 import { $schemaErrorMatcher, TaggedError } from "vibelang-runtime/internal";
 import * as Effect_1 from "effect/Effect";
 import * as runtime from "vibelang-runtime/internal";
-import { cloudClockSkewMs, cloudProofLifeMs, validHandoff, initial, inv, liveBeforeDeadline, canCheckHandoff, checkHandoff, lawAnExpiredHandoffIsNeverLive, cloudIssuedAtWithinSkew, cloudProofLifeValid, cloudSessionStartedAt, cloudIdentityTimesValid, lawSessionStartIsNeverFuture, canRecordExchange, recordExchange, canCheckIdentity, checkIdentity, lawCloudProofLivesAtMostOneHour, lawOneHourProofIsAcceptedWhenIssued, lawCloudIdentityNeedsFutureExpiry, lawCloudIdentityNeedsPositiveIssueTime, lawStoredSessionEndsByIdentityExpiry, canCheckPhone, checkPhone, canRecordSession, recordSession, alwaysSessionRequiresAcceptedHandoff, sometimesSignsIn, sometimesRejectsCallback, sometimesDeniesSignIn, sometimesCloudUnavailable, callbackFailureCode, failedCallbackReturnsToPage, lawFailureCodeIsOneOfThree, lawJoinAndConnectorFailuresStayJson, enabled, step, parseEvent, parseState, snapshot_cloudSignIn } from "./cloudSignIn.effect.vibe.pure.js";
-export { cloudClockSkewMs, cloudProofLifeMs, validHandoff, initial, inv, liveBeforeDeadline, canCheckHandoff, checkHandoff, lawAnExpiredHandoffIsNeverLive, cloudIssuedAtWithinSkew, cloudProofLifeValid, cloudSessionStartedAt, cloudIdentityTimesValid, lawSessionStartIsNeverFuture, canRecordExchange, recordExchange, canCheckIdentity, checkIdentity, lawCloudProofLivesAtMostOneHour, lawOneHourProofIsAcceptedWhenIssued, lawCloudIdentityNeedsFutureExpiry, lawCloudIdentityNeedsPositiveIssueTime, lawStoredSessionEndsByIdentityExpiry, canCheckPhone, checkPhone, canRecordSession, recordSession, alwaysSessionRequiresAcceptedHandoff, sometimesSignsIn, sometimesRejectsCallback, sometimesDeniesSignIn, sometimesCloudUnavailable, callbackFailureCode, failedCallbackReturnsToPage, lawFailureCodeIsOneOfThree, lawJoinAndConnectorFailuresStayJson, enabled, step, parseEvent, parseState };
+import { initial, validHandoff, cloudClockSkewMs, cloudProofLifeMs, inv, liveBeforeDeadline, canCheckHandoff, checkHandoff, lawAnExpiredHandoffIsNeverLive, cloudIssuedAtWithinSkew, cloudProofLifeValid, cloudIdentityTimesValid, lawCloudProofLivesAtMostOneHour, lawOneHourProofIsAcceptedWhenIssued, lawCloudIdentityNeedsFutureExpiry, lawCloudIdentityNeedsPositiveIssueTime, cloudSessionStartedAt, lawSessionStartIsNeverFuture, canRecordExchange, recordExchange, canCheckIdentity, checkIdentity, lawStoredSessionEndsByIdentityExpiry, canCheckPhone, checkPhone, canRecordSession, recordSession, alwaysSessionRequiresAcceptedHandoff, sometimesSignsIn, sometimesRejectsCallback, sometimesDeniesSignIn, sometimesCloudUnavailable, failedCallbackReturnsToPage, callbackFailureCode, lawJoinAndConnectorFailuresStayJson, lawFailureCodeIsOneOfThree, enabled, step, parseEvent, parseState, snapshot_cloudSignIn, snapshot_in_cloudSignIn } from "./cloudSignIn.effect.vibe.pure.js";
+export { initial, validHandoff, cloudClockSkewMs, cloudProofLifeMs, inv, liveBeforeDeadline, canCheckHandoff, checkHandoff, lawAnExpiredHandoffIsNeverLive, cloudIssuedAtWithinSkew, cloudProofLifeValid, cloudIdentityTimesValid, lawCloudProofLivesAtMostOneHour, lawOneHourProofIsAcceptedWhenIssued, lawCloudIdentityNeedsFutureExpiry, lawCloudIdentityNeedsPositiveIssueTime, cloudSessionStartedAt, lawSessionStartIsNeverFuture, canRecordExchange, recordExchange, canCheckIdentity, checkIdentity, lawStoredSessionEndsByIdentityExpiry, canCheckPhone, checkPhone, canRecordSession, recordSession, alwaysSessionRequiresAcceptedHandoff, sometimesSignsIn, sometimesRejectsCallback, sometimesDeniesSignIn, sometimesCloudUnavailable, failedCallbackReturnsToPage, callbackFailureCode, lawJoinAndConnectorFailuresStayJson, lawFailureCodeIsOneOfThree, enabled, step, parseEvent, parseState };
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import { PreventSchedulerYield } from "effect/References";
 /** The rules do not allow this event in this state. */
@@ -36,7 +35,7 @@ export function decodeEvent(input) {
         const event = parseEvent(input);
         if (event === undefined)
             return yield* Effect_1.fail(new NotAnEvent({ input }));
-        return event;
+        return snapshot_cloudSignIn(event);
     });
 }
 /** `parseState`, failing where it returns undefined. */
@@ -45,7 +44,7 @@ export function decodeState(input) {
         const parsed = parseState(input);
         if (parsed === undefined)
             return yield* Effect_1.fail(new NotAState({ input }));
-        return parsed;
+        return snapshot_cloudSignIn(parsed);
     });
 }
 /** `step`, failing where `enabled` refuses the event instead of leaving the state unchanged. */
@@ -67,24 +66,25 @@ export class Machine extends runtime.$service("thenetwork/spec/cloudSignIn.md#Ma
  */
 export function machineOver(load, keep) {
     return Effect_1.gen(function* machineOver() {
-        const shown = yield* SubscriptionRef.make(snapshot_cloudSignIn(yield* load()));
+        const shown = yield* SubscriptionRef.make(snapshot_in_cloudSignIn(yield* load()));
         function send(event, isCurrent) {
             return Effect_1.gen(function* send() {
-                const input = snapshot_cloudSignIn({ event });
+                const input = snapshot_in_cloudSignIn({ event });
                 let completion_1 = runtime.$normal;
                 yield* runtime.uninterruptible(Effect_1.fnUntraced(function* send$uninterruptible() {
                     {
                         completion_1 = { kind: "return", value: yield* SubscriptionRef.modifyEffect(shown, () => {
                                 return Effect_1.gen(function* () {
-                                    const current = snapshot_cloudSignIn(yield* orDie(load()));
-                                    const next = yield* apply(current, input.event);
+                                    const current = snapshot_in_cloudSignIn(yield* orDie(load()));
+                                    const next = snapshot_cloudSignIn(yield* apply(current, input.event));
+                                    const nextState = next;
                                     const save = Effect_1.gen(function* save() {
-                                        if (isCurrent && !isCurrent(snapshot_cloudSignIn(current)))
+                                        if (isCurrent && !isCurrent(current))
                                             return yield* Effect_1.fail(new Rejected({ ...input, state: current }));
-                                        yield* keep(snapshot_cloudSignIn(next));
+                                        yield* keep(nextState);
                                     });
                                     yield* (isCurrent ? Effect.provideService(save, PreventSchedulerYield, true) : save);
-                                    return [snapshot_cloudSignIn(next), next];
+                                    return [next, nextState];
                                 });
                             }) };
                         return completion_1.value;
@@ -95,9 +95,9 @@ export function machineOver(load, keep) {
             });
         }
         return {
-            changes: Stream.map(SubscriptionRef.changes(shown), snapshot_cloudSignIn),
+            changes: SubscriptionRef.changes(shown),
             get() {
-                return Effect_1.gen({ *"get"() { return snapshot_cloudSignIn(yield* orDie(load())); } }["get"]);
+                return Effect_1.gen({ *"get"() { return snapshot_in_cloudSignIn(yield* orDie(load())); } }["get"]);
             },
             send,
             receive(input) {
@@ -109,10 +109,11 @@ export function machineOver(load, keep) {
 /** A Machine in memory, from `initial` or a state `decodeState` returned. */
 export function machine(start = initial) {
     return Layer.effect(Machine, Effect_1.gen(function* () {
-        const kept = yield* Ref.make(snapshot_cloudSignIn(start));
+        const kept = yield* Ref.make(start === initial ? snapshot_cloudSignIn(start) : snapshot_in_cloudSignIn(start));
         return yield* machineOver(() => Ref.get(kept), (next) => Ref.set(kept, next));
     }));
 }
+const snapshot_cache_cloudSignIn = new WeakMap();
 /**
  * A Machine kept in the KeyValueStore under `key`, as JSON: each event is applied to what is stored there when it
  * is sent, read through `decodeState`, or to `start` where nothing is, so that a state another page or program
@@ -123,13 +124,42 @@ export function machine(start = initial) {
 export function stored(key, start = initial) {
     return Layer.effect(Machine, Effect_1.gen(function* () {
         const store = yield* KeyValueStore.KeyValueStore;
+        const fallback = start === initial ? snapshot_cloudSignIn(start) : snapshot_in_cloudSignIn(start);
+        let entries = snapshot_cache_cloudSignIn.get(store);
+        if (entries === undefined) {
+            entries = new Map();
+            snapshot_cache_cloudSignIn.set(store, entries);
+        }
+        const cache = entries;
         function load() {
             return Effect_1.gen(function* load() {
                 const found = yield* store.get(key);
-                return found === undefined ? start
-                    : yield* decodeState(yield* Effect.try({ try: () => JSON.parse(found), catch: () => new NotAState({ input: found }) }));
+                if (found === undefined) {
+                    cache.delete(key);
+                    return fallback;
+                }
+                const cached = cache.get(key);
+                if (cached !== undefined && cached.raw === found)
+                    return cached.state;
+                const decoded = yield* decodeState(yield* Effect.try({ try: () => JSON.parse(found), catch: () => new NotAState({ input: found }) }));
+                cache.set(key, { raw: found, state: decoded });
+                return decoded;
             });
         }
-        return yield* machineOver(load, (next) => orDie(store.set(key, JSON.stringify(next))));
+        function keep(next) {
+            return Effect_1.gen(function* keep() {
+                const cached = cache.get(key);
+                if (cached !== undefined && Object.is(cached.state, next))
+                    return;
+                const raw = JSON.stringify(next);
+                if (cached !== undefined && cached.raw === raw) {
+                    cache.set(key, { raw, state: next });
+                    return;
+                }
+                yield* orDie(store.set(key, raw));
+                cache.set(key, { raw, state: next });
+            });
+        }
+        return yield* machineOver(load, keep);
     }));
 }

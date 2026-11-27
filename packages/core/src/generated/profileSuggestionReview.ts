@@ -2,9 +2,9 @@
 //@ backend dafny
 
 /** Story: Review suggestions before they change my profile / A review starts with no authorized batch (spec/profileSuggestionReview.md) */
-export type ReviewVerb = "AcceptVerb" | "RejectVerb" | "EditVerb";
-/** Story: Review suggestions before they change my profile / A review starts with no authorized batch (spec/profileSuggestionReview.md) */
 export type ReviewPhase = "Unchecked" | "NeedsItems" | "BatchUnavailable" | "ReadyToReview" | "CommandRefused" | "AcceptItem" | "RejectItem" | "PreviewEdit";
+/** Story: Review suggestions before they change my profile / A review starts with no authorized batch (spec/profileSuggestionReview.md) */
+export type ReviewVerb = "AcceptVerb" | "RejectVerb" | "EditVerb";
 /** Story: Review suggestions before they change my profile / A review starts with no authorized batch (spec/profileSuggestionReview.md) */
 export interface ReviewRequest { phase: ReviewPhase; metadataApproved: boolean; itemsApproved: boolean; commandBound: boolean }
 /** Story: Review suggestions before they change my profile / A retried review command returns its stored result (spec/profileSuggestionReview.md) */
@@ -16,28 +16,15 @@ export type Event =
   | { type: "checkItems"; itemCount: number; distinctIds: boolean; allItemsValid: boolean }
   | { type: "readCommand"; verb: ReviewVerb; tokenMatches: boolean; itemExists: boolean; scopeGiven: boolean; wordingGiven: boolean; wordingValid: boolean };
 
-/** Story: Review suggestions before they change my profile / Only a bounded batch of distinct, valid suggestions can be shown (spec/profileSuggestionReview.md) */
-export const maxSuggestions: number = 10;
 /** Story: Review suggestions before they change my profile / A review starts with no authorized batch (spec/profileSuggestionReview.md) */
 export const initial: ReviewRequest = { phase: "Unchecked", metadataApproved: false, itemsApproved: false, commandBound: false };
+/** Story: Review suggestions before they change my profile / Only a bounded batch of distinct, valid suggestions can be shown (spec/profileSuggestionReview.md) */
+export const maxSuggestions: number = 10;
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: ReviewRequest): boolean {
   return alwaysReviewNeedsEligibleBatch(current) && alwaysActionNeedsBoundCommand(current);
-}
-
-/** Story: Review suggestions before they change my profile / Only a current batch for the same person, app and chat enters review (spec/profileSuggestionReview.md) */
-//@ pure
-export function reviewBeforeExpiry(asOf: number, expiresAt: number): boolean {
-  return asOf < expiresAt;
-}
-
-/** Story: Review suggestions before they change my profile / Only a current batch for the same person, app and chat enters review (spec/profileSuggestionReview.md) */
-//@ pure
-export function lawDeadlineDoesNotIncludeExpiry(expiresAt: number): boolean {
-  //@ ensures \result === true
-  return !reviewBeforeExpiry(expiresAt, expiresAt);
 }
 
 /** Story: Review suggestions before they change my profile / Only a current batch for the same person, app and chat enters review (spec/profileSuggestionReview.md) */
@@ -48,11 +35,24 @@ export function canCheckBatch(review: ReviewRequest): boolean {
 
 /** Story: Review suggestions before they change my profile / Only a current batch for the same person, app and chat enters review (spec/profileSuggestionReview.md) */
 //@ pure
+export function reviewBeforeExpiry(asOf: number, expiresAt: number): boolean {
+  return asOf < expiresAt;
+}
+
+/** Story: Review suggestions before they change my profile / Only a current batch for the same person, app and chat enters review (spec/profileSuggestionReview.md) */
+//@ pure
 export function checkBatch(review: ReviewRequest, pending: boolean, ownerMatches: boolean, batchIdValid: boolean, revision: number, asOf: number, expiresAt: number): ReviewRequest {
   //@ ensures (inv(review) && canCheckBatch(review)) ==> alwaysReviewNeedsEligibleBatch(\result)
   //@ ensures (inv(review) && canCheckBatch(review)) ==> alwaysActionNeedsBoundCommand(\result)
   const local_0 = pending && ownerMatches && batchIdValid && revision > 0 && reviewBeforeExpiry(asOf, expiresAt);
   return { ...review, metadataApproved: local_0, phase: local_0 ? "NeedsItems" : "BatchUnavailable" };
+}
+
+/** Story: Review suggestions before they change my profile / Only a current batch for the same person, app and chat enters review (spec/profileSuggestionReview.md) */
+//@ pure
+export function lawDeadlineDoesNotIncludeExpiry(expiresAt: number): boolean {
+  //@ ensures \result === true
+  return !reviewBeforeExpiry(expiresAt, expiresAt);
 }
 
 /** Story: Review suggestions before they change my profile / Only a bounded batch of distinct, valid suggestions can be shown (spec/profileSuggestionReview.md) */

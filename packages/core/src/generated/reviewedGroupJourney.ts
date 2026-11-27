@@ -1,12 +1,12 @@
 // GENERATED from spec/reviewedGroupJourney.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type ReplyChoice as planDecision_ReplyChoice, type FallbackShape as planDecision_FallbackShape, type PlanStage as planDecision_PlanStage, type ReplyFacts as planDecision_ReplyFacts, currentFriendPlanSeatFits as planDecision_currentFriendPlanSeatFits, planProfileCapacityAllows as planDecision_planProfileCapacityAllows, unmetPlanQuorum as planDecision_unmetPlanQuorum, friendsPartnerPlanFits as planDecision_friendsPartnerPlanFits, planBookingConsented as planDecision_planBookingConsented, qualifiesForPlanAllowance as planDecision_qualifiesForPlanAllowance, hasCrewQuorum as planDecision_hasCrewQuorum, crewBelowMinimum as planDecision_crewBelowMinimum, crewMembersWhoOptedIn as planDecision_crewMembersWhoOptedIn, lawFriendPlanSeatNeedsACurrentProfile as planDecision_lawFriendPlanSeatNeedsACurrentProfile, lawFriendPlanSeatNeedsEveryPairValue as planDecision_lawFriendPlanSeatNeedsEveryPairValue, planFallbackShape as planDecision_planFallbackShape, lawGroupBookingNeedsThreeMembers as planDecision_lawGroupBookingNeedsThreeMembers, lawPartnerBookingNeedsQuorum as planDecision_lawPartnerBookingNeedsQuorum, singlePlanSeedsCrew as planDecision_singlePlanSeedsCrew, canApplyPlanReply as planDecision_canApplyPlanReply, planProbeExpired as planDecision_planProbeExpired, planReplyChoice as planDecision_planReplyChoice, lawOnlyProbingPlansExpire as planDecision_lawOnlyProbingPlansExpire, lawDirectFallbackRequiresGroup as planDecision_lawDirectFallbackRequiresGroup, crewHostOrder as planDecision_crewHostOrder, lawBookingNeedsQuorum as planDecision_lawBookingNeedsQuorum, lawReplyAtDeadlineClosesProbe as planDecision_lawReplyAtDeadlineClosesProbe } from "./planDecision.ts";
-import { type UnlinkedCancellation as opportunityLifecycle_UnlinkedCancellation, type OpportunityPhase as opportunityLifecycle_OpportunityPhase, type OpportunityLifecycle as opportunityLifecycle_OpportunityLifecycle, groupCanContinue as opportunityLifecycle_groupCanContinue, acceptedProbeWithdrawalAllowed as opportunityLifecycle_acceptedProbeWithdrawalAllowed, bookedReplyDeclines as opportunityLifecycle_bookedReplyDeclines, playerBookingConfirmationAllowed as opportunityLifecycle_playerBookingConfirmationAllowed, recurrenceAllowed as opportunityLifecycle_recurrenceAllowed, canComplete as opportunityLifecycle_canComplete, complete as opportunityLifecycle_complete, canClose as opportunityLifecycle_canClose, close as opportunityLifecycle_close, stepTerminalOpportunityCannotReopen as opportunityLifecycle_stepTerminalOpportunityCannotReopen, sometimesCanBook as opportunityLifecycle_sometimesCanBook, sometimesCanComplete as opportunityLifecycle_sometimesCanComplete, sometimesCanCloseBeforeContact as opportunityLifecycle_sometimesCanCloseBeforeContact, releasesPartialAcceptance as opportunityLifecycle_releasesPartialAcceptance, stepRerollRequiresNewApproval as opportunityLifecycle_stepRerollRequiresNewApproval, releasesOnRequesterClose as opportunityLifecycle_releasesOnRequesterClose, alwaysContactStagesRequireApproval as opportunityLifecycle_alwaysContactStagesRequireApproval, canBook as opportunityLifecycle_canBook, book as opportunityLifecycle_book, lawAGroupNeedsAtLeastThree as opportunityLifecycle_lawAGroupNeedsAtLeastThree, acceptedProbeCanWithdraw as opportunityLifecycle_acceptedProbeCanWithdraw, lawAcceptedProbeWithdrawalNeedsExactMatch as opportunityLifecycle_lawAcceptedProbeWithdrawalNeedsExactMatch, bookedReplyCurrent as opportunityLifecycle_bookedReplyCurrent, initial as opportunityLifecycle_initial, unlinkedCancellation as opportunityLifecycle_unlinkedCancellation, lawSwapWithdrawalAloneDoesNotCancel as opportunityLifecycle_lawSwapWithdrawalAloneDoesNotCancel, lawKeepingTheBookingVetoesABookedDecline as opportunityLifecycle_lawKeepingTheBookingVetoesABookedDecline, canStartProbing as opportunityLifecycle_canStartProbing, lawPlayerCannotConfirmAStartedBooking as opportunityLifecycle_lawPlayerCannotConfirmAStartedBooking, lawPlayerCanConfirmOnlyThePromptBooking as opportunityLifecycle_lawPlayerCanConfirmOnlyThePromptBooking, lawCancellationRequestCannotConfirmPlayerAttendance as opportunityLifecycle_lawCancellationRequestCannotConfirmPlayerAttendance, lawPlayerAttendanceConfirmationNeedsAClearYes as opportunityLifecycle_lawPlayerAttendanceConfirmationNeedsAClearYes, closesForMinor as opportunityLifecycle_closesForMinor, bookedGroupCanContinue as opportunityLifecycle_bookedGroupCanContinue, startProbing as opportunityLifecycle_startProbing, canReroll as opportunityLifecycle_canReroll, minorCloseTellsAcceptor as opportunityLifecycle_minorCloseTellsAcceptor, reroll as opportunityLifecycle_reroll, lawNoRecurrenceThatAMinorKnows as opportunityLifecycle_lawNoRecurrenceThatAMinorKnows, lawReleaseNeedsAContactedAcceptor as opportunityLifecycle_lawReleaseNeedsAContactedAcceptor, lawRequesterCloseNeverReleasesTheRequester as opportunityLifecycle_lawRequesterCloseNeverReleasesTheRequester, lawRequesterCloseReleasesOnlyAContactedAcceptor as opportunityLifecycle_lawRequesterCloseReleasesOnlyAContactedAcceptor, lawPairLeftFromGroupNeedsFreshConsent as opportunityLifecycle_lawPairLeftFromGroupNeedsFreshConsent, lawBookedReplyRequiresCurrentConsent as opportunityLifecycle_lawBookedReplyRequiresCurrentConsent, upcomingCancellationEligible as opportunityLifecycle_upcomingCancellationEligible, lawUnlinkedCancellationNeedsOneMatch as opportunityLifecycle_lawUnlinkedCancellationNeedsOneMatch, lawNamedCancellationCanSelectWithPendingReply as opportunityLifecycle_lawNamedCancellationCanSelectWithPendingReply, lawAskedMinorClosesABookedOpportunity as opportunityLifecycle_lawAskedMinorClosesABookedOpportunity, lawMinorOnTheRosterClosesABookedOpportunity as opportunityLifecycle_lawMinorOnTheRosterClosesABookedOpportunity, lawAMinorNeverLeavesABookedGroupRunning as opportunityLifecycle_lawAMinorNeverLeavesABookedGroupRunning, lawOtherDropsKeepTheGroupRule as opportunityLifecycle_lawOtherDropsKeepTheGroupRule, lawNoMinorCloseWithoutAMinorSignal as opportunityLifecycle_lawNoMinorCloseWithoutAMinorSignal, lawMinorContactClosesAnUnbookedOpportunity as opportunityLifecycle_lawMinorContactClosesAnUnbookedOpportunity, lawMinorCloseNeverTellsTheMinor as opportunityLifecycle_lawMinorCloseNeverTellsTheMinor, closesForBlock as opportunityLifecycle_closesForBlock, lawStartedBookingCannotBeSelected as opportunityLifecycle_lawStartedBookingCannotBeSelected, lawBlockClosesOnlyAnActivePair as opportunityLifecycle_lawBlockClosesOnlyAnActivePair } from "./opportunityLifecycle.ts";
+import { type PlanStage as planDecision_PlanStage, type ReplyChoice as planDecision_ReplyChoice, type ReplyFacts as planDecision_ReplyFacts, type FallbackShape as planDecision_FallbackShape, canApplyPlanReply as planDecision_canApplyPlanReply, planProbeExpired as planDecision_planProbeExpired, planReplyChoice as planDecision_planReplyChoice, currentFriendPlanSeatFits as planDecision_currentFriendPlanSeatFits, lawFriendPlanSeatNeedsACurrentProfile as planDecision_lawFriendPlanSeatNeedsACurrentProfile, lawFriendPlanSeatNeedsEveryPairValue as planDecision_lawFriendPlanSeatNeedsEveryPairValue, planProfileCapacityAllows as planDecision_planProfileCapacityAllows, lawBookingNeedsQuorum as planDecision_lawBookingNeedsQuorum, unmetPlanQuorum as planDecision_unmetPlanQuorum, lawOnlyProbingPlansExpire as planDecision_lawOnlyProbingPlansExpire, lawReplyAtDeadlineClosesProbe as planDecision_lawReplyAtDeadlineClosesProbe, planFallbackShape as planDecision_planFallbackShape, lawDirectFallbackRequiresGroup as planDecision_lawDirectFallbackRequiresGroup, friendsPartnerPlanFits as planDecision_friendsPartnerPlanFits, planBookingConsented as planDecision_planBookingConsented, lawGroupBookingNeedsThreeMembers as planDecision_lawGroupBookingNeedsThreeMembers, lawPartnerBookingNeedsQuorum as planDecision_lawPartnerBookingNeedsQuorum, qualifiesForPlanAllowance as planDecision_qualifiesForPlanAllowance, hasCrewQuorum as planDecision_hasCrewQuorum, singlePlanSeedsCrew as planDecision_singlePlanSeedsCrew, crewBelowMinimum as planDecision_crewBelowMinimum, crewMembersWhoOptedIn as planDecision_crewMembersWhoOptedIn, crewHostOrder as planDecision_crewHostOrder } from "./planDecision.ts";
+import { type OpportunityPhase as opportunityLifecycle_OpportunityPhase, type OpportunityLifecycle as opportunityLifecycle_OpportunityLifecycle, type UnlinkedCancellation as opportunityLifecycle_UnlinkedCancellation, initial as opportunityLifecycle_initial, canStartProbing as opportunityLifecycle_canStartProbing, startProbing as opportunityLifecycle_startProbing, canReroll as opportunityLifecycle_canReroll, reroll as opportunityLifecycle_reroll, stepRerollRequiresNewApproval as opportunityLifecycle_stepRerollRequiresNewApproval, alwaysContactStagesRequireApproval as opportunityLifecycle_alwaysContactStagesRequireApproval, canBook as opportunityLifecycle_canBook, book as opportunityLifecycle_book, groupCanContinue as opportunityLifecycle_groupCanContinue, lawAGroupNeedsAtLeastThree as opportunityLifecycle_lawAGroupNeedsAtLeastThree, lawPairLeftFromGroupNeedsFreshConsent as opportunityLifecycle_lawPairLeftFromGroupNeedsFreshConsent, acceptedProbeCanWithdraw as opportunityLifecycle_acceptedProbeCanWithdraw, acceptedProbeWithdrawalAllowed as opportunityLifecycle_acceptedProbeWithdrawalAllowed, lawAcceptedProbeWithdrawalNeedsExactMatch as opportunityLifecycle_lawAcceptedProbeWithdrawalNeedsExactMatch, bookedReplyCurrent as opportunityLifecycle_bookedReplyCurrent, lawBookedReplyRequiresCurrentConsent as opportunityLifecycle_lawBookedReplyRequiresCurrentConsent, upcomingCancellationEligible as opportunityLifecycle_upcomingCancellationEligible, unlinkedCancellation as opportunityLifecycle_unlinkedCancellation, lawUnlinkedCancellationNeedsOneMatch as opportunityLifecycle_lawUnlinkedCancellationNeedsOneMatch, lawNamedCancellationCanSelectWithPendingReply as opportunityLifecycle_lawNamedCancellationCanSelectWithPendingReply, lawStartedBookingCannotBeSelected as opportunityLifecycle_lawStartedBookingCannotBeSelected, bookedReplyDeclines as opportunityLifecycle_bookedReplyDeclines, lawSwapWithdrawalAloneDoesNotCancel as opportunityLifecycle_lawSwapWithdrawalAloneDoesNotCancel, lawKeepingTheBookingVetoesABookedDecline as opportunityLifecycle_lawKeepingTheBookingVetoesABookedDecline, playerBookingConfirmationAllowed as opportunityLifecycle_playerBookingConfirmationAllowed, lawPlayerCannotConfirmAStartedBooking as opportunityLifecycle_lawPlayerCannotConfirmAStartedBooking, lawPlayerCanConfirmOnlyThePromptBooking as opportunityLifecycle_lawPlayerCanConfirmOnlyThePromptBooking, lawCancellationRequestCannotConfirmPlayerAttendance as opportunityLifecycle_lawCancellationRequestCannotConfirmPlayerAttendance, lawPlayerAttendanceConfirmationNeedsAClearYes as opportunityLifecycle_lawPlayerAttendanceConfirmationNeedsAClearYes, closesForMinor as opportunityLifecycle_closesForMinor, bookedGroupCanContinue as opportunityLifecycle_bookedGroupCanContinue, lawAskedMinorClosesABookedOpportunity as opportunityLifecycle_lawAskedMinorClosesABookedOpportunity, lawMinorOnTheRosterClosesABookedOpportunity as opportunityLifecycle_lawMinorOnTheRosterClosesABookedOpportunity, lawAMinorNeverLeavesABookedGroupRunning as opportunityLifecycle_lawAMinorNeverLeavesABookedGroupRunning, lawOtherDropsKeepTheGroupRule as opportunityLifecycle_lawOtherDropsKeepTheGroupRule, lawNoMinorCloseWithoutAMinorSignal as opportunityLifecycle_lawNoMinorCloseWithoutAMinorSignal, lawMinorContactClosesAnUnbookedOpportunity as opportunityLifecycle_lawMinorContactClosesAnUnbookedOpportunity, minorCloseTellsAcceptor as opportunityLifecycle_minorCloseTellsAcceptor, lawMinorCloseNeverTellsTheMinor as opportunityLifecycle_lawMinorCloseNeverTellsTheMinor, recurrenceAllowed as opportunityLifecycle_recurrenceAllowed, lawNoRecurrenceThatAMinorKnows as opportunityLifecycle_lawNoRecurrenceThatAMinorKnows, closesForBlock as opportunityLifecycle_closesForBlock, lawBlockClosesOnlyAnActivePair as opportunityLifecycle_lawBlockClosesOnlyAnActivePair, canComplete as opportunityLifecycle_canComplete, complete as opportunityLifecycle_complete, canClose as opportunityLifecycle_canClose, close as opportunityLifecycle_close, stepTerminalOpportunityCannotReopen as opportunityLifecycle_stepTerminalOpportunityCannotReopen, sometimesCanBook as opportunityLifecycle_sometimesCanBook, sometimesCanComplete as opportunityLifecycle_sometimesCanComplete, sometimesCanCloseBeforeContact as opportunityLifecycle_sometimesCanCloseBeforeContact, releasesPartialAcceptance as opportunityLifecycle_releasesPartialAcceptance, lawReleaseNeedsAContactedAcceptor as opportunityLifecycle_lawReleaseNeedsAContactedAcceptor, releasesOnRequesterClose as opportunityLifecycle_releasesOnRequesterClose, lawRequesterCloseNeverReleasesTheRequester as opportunityLifecycle_lawRequesterCloseNeverReleasesTheRequester, lawRequesterCloseReleasesOnlyAContactedAcceptor as opportunityLifecycle_lawRequesterCloseReleasesOnlyAContactedAcceptor } from "./opportunityLifecycle.ts";
 
 /** Story: Join a reviewed public hike only after the group agrees / Review comes before anonymous contact (spec/reviewedGroupJourney.md) */
-export type GroupPhase = "AwaitingGroupJudge" | "GroupHeldForStaff" | "GroupInvited" | "ReviewDenied" | "GroupUnderfilled" | "HikeBooked" | "HikeCancelled";
-/** Story: Join a reviewed public hike only after the group agrees / Review comes before anonymous contact (spec/reviewedGroupJourney.md) */
 export type Hiker = "FirstHiker" | "SecondHiker" | "ThirdHiker";
+/** Story: Join a reviewed public hike only after the group agrees / Review comes before anonymous contact (spec/reviewedGroupJourney.md) */
+export type GroupPhase = "AwaitingGroupJudge" | "GroupHeldForStaff" | "GroupInvited" | "ReviewDenied" | "GroupUnderfilled" | "HikeBooked" | "HikeCancelled";
 /** Story: Join a reviewed public hike only after the group agrees / Review comes before anonymous contact (spec/reviewedGroupJourney.md) */
 export type GroupEffect = "AnonymousInvite" | "GroupReveal" | "PrivateCancellation";
 /** Story: Join a reviewed public hike only after the group agrees / Review comes before anonymous contact (spec/reviewedGroupJourney.md) */
@@ -18,15 +18,15 @@ export interface GroupStep { state: ReviewedGroupJourney; out: GroupEffect[] }
 export type Event =
   | { type: "judgeGroup"; approved: boolean }
   | { type: "staffDecideGroup"; approved: boolean }
-  | { type: "expireGroup" }
   | { type: "answerGroup"; hiker: Hiker; agrees: boolean }
+  | { type: "expireGroup" }
   | { type: "withdrawFromGroup"; hiker: Hiker }
   | { type: "restartGroup" };
 
 /** Story: Join a reviewed public hike only after the group agrees / Review comes before anonymous contact (spec/reviewedGroupJourney.md) */
-export const initial: ReviewedGroupJourney = { phase: "AwaitingGroupJudge", accepted: ([] as Hiker[]), declined: ([] as Hiker[]), invites: 0, meetings: 0, reveals: 0, cancellations: 0 };
-/** Story: Join a reviewed public hike only after the group agrees / Review comes before anonymous contact (spec/reviewedGroupJourney.md) */
 export const hikers: Hiker[] = ["FirstHiker", "SecondHiker", "ThirdHiker"];
+/** Story: Join a reviewed public hike only after the group agrees / Review comes before anonymous contact (spec/reviewedGroupJourney.md) */
+export const initial: ReviewedGroupJourney = { phase: "AwaitingGroupJudge", accepted: ([] as Hiker[]), declined: ([] as Hiker[]), invites: 0, meetings: 0, reveals: 0, cancellations: 0 };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
@@ -42,8 +42,28 @@ export function canJudgeGroup(s: ReviewedGroupJourney, approved: boolean): boole
 
 /** Story: Join a reviewed public hike only after the group agrees / Review comes before anonymous contact (spec/reviewedGroupJourney.md) */
 //@ pure
+export function judgeGroup(s: ReviewedGroupJourney, approved: boolean): GroupStep {
+  //@ ensures (inv(s) && canJudgeGroup(s, approved)) ==> alwaysNoContactWithoutApproval(\result.state)
+  //@ ensures (inv(s) && canJudgeGroup(s, approved)) ==> alwaysRevealsBelongToOneBooking(\result.state)
+  //@ ensures (inv(s) && canJudgeGroup(s, approved)) ==> alwaysBookingRequiresQuorum(\result.state)
+  //@ ensures (inv(s) && canJudgeGroup(s, approved)) ==> alwaysCancellationFollowsBooking(\result.state)
+  return approved ? ({ state: ({ ...s, phase: "GroupInvited", invites: 3 } as ReviewedGroupJourney), out: (["AnonymousInvite", "AnonymousInvite", "AnonymousInvite"] as GroupEffect[]) } as GroupStep) : ({ state: ({ ...s, phase: "GroupHeldForStaff" } as ReviewedGroupJourney), out: ([] as GroupEffect[]) } as GroupStep);
+}
+
+/** Story: Join a reviewed public hike only after the group agrees / Review comes before anonymous contact (spec/reviewedGroupJourney.md) */
+//@ pure
 export function canStaffDecideGroup(s: ReviewedGroupJourney, approved: boolean): boolean {
   return approved ? s.phase === "GroupHeldForStaff" : s.phase === "AwaitingGroupJudge" || s.phase === "GroupHeldForStaff";
+}
+
+/** Story: Join a reviewed public hike only after the group agrees / Review comes before anonymous contact (spec/reviewedGroupJourney.md) */
+//@ pure
+export function staffDecideGroup(s: ReviewedGroupJourney, approved: boolean): GroupStep {
+  //@ ensures (inv(s) && canStaffDecideGroup(s, approved)) ==> alwaysNoContactWithoutApproval(\result.state)
+  //@ ensures (inv(s) && canStaffDecideGroup(s, approved)) ==> alwaysRevealsBelongToOneBooking(\result.state)
+  //@ ensures (inv(s) && canStaffDecideGroup(s, approved)) ==> alwaysBookingRequiresQuorum(\result.state)
+  //@ ensures (inv(s) && canStaffDecideGroup(s, approved)) ==> alwaysCancellationFollowsBooking(\result.state)
+  return approved ? ({ state: ({ ...s, phase: "GroupInvited", invites: 3 } as ReviewedGroupJourney), out: (["AnonymousInvite", "AnonymousInvite", "AnonymousInvite"] as GroupEffect[]) } as GroupStep) : ({ state: ({ ...s, phase: "ReviewDenied" } as ReviewedGroupJourney), out: ([] as GroupEffect[]) } as GroupStep);
 }
 
 /** Story: Join a reviewed public hike only after the group agrees / Review comes before anonymous contact (spec/reviewedGroupJourney.md) */
@@ -64,26 +84,6 @@ export function sometimesHeldForStaff(s: ReviewedGroupJourney): boolean {
   return s.phase === "GroupHeldForStaff";
 }
 
-/** Story: Join a reviewed public hike only after the group agrees / Review comes before anonymous contact (spec/reviewedGroupJourney.md) */
-//@ pure
-export function judgeGroup(s: ReviewedGroupJourney, approved: boolean): GroupStep {
-  //@ ensures (inv(s) && canJudgeGroup(s, approved)) ==> alwaysNoContactWithoutApproval(\result.state)
-  //@ ensures (inv(s) && canJudgeGroup(s, approved)) ==> alwaysRevealsBelongToOneBooking(\result.state)
-  //@ ensures (inv(s) && canJudgeGroup(s, approved)) ==> alwaysBookingRequiresQuorum(\result.state)
-  //@ ensures (inv(s) && canJudgeGroup(s, approved)) ==> alwaysCancellationFollowsBooking(\result.state)
-  return approved ? ({ state: ({ ...s, phase: "GroupInvited", invites: 3 } as ReviewedGroupJourney), out: (["AnonymousInvite", "AnonymousInvite", "AnonymousInvite"] as GroupEffect[]) } as GroupStep) : ({ state: ({ ...s, phase: "GroupHeldForStaff" } as ReviewedGroupJourney), out: ([] as GroupEffect[]) } as GroupStep);
-}
-
-/** Story: Join a reviewed public hike only after the group agrees / Review comes before anonymous contact (spec/reviewedGroupJourney.md) */
-//@ pure
-export function staffDecideGroup(s: ReviewedGroupJourney, approved: boolean): GroupStep {
-  //@ ensures (inv(s) && canStaffDecideGroup(s, approved)) ==> alwaysNoContactWithoutApproval(\result.state)
-  //@ ensures (inv(s) && canStaffDecideGroup(s, approved)) ==> alwaysRevealsBelongToOneBooking(\result.state)
-  //@ ensures (inv(s) && canStaffDecideGroup(s, approved)) ==> alwaysBookingRequiresQuorum(\result.state)
-  //@ ensures (inv(s) && canStaffDecideGroup(s, approved)) ==> alwaysCancellationFollowsBooking(\result.state)
-  return approved ? ({ state: ({ ...s, phase: "GroupInvited", invites: 3 } as ReviewedGroupJourney), out: (["AnonymousInvite", "AnonymousInvite", "AnonymousInvite"] as GroupEffect[]) } as GroupStep) : ({ state: ({ ...s, phase: "ReviewDenied" } as ReviewedGroupJourney), out: ([] as GroupEffect[]) } as GroupStep);
-}
-
 /** Story: Join a reviewed public hike only after the group agrees / Booking requires an independent yes from all three invitees (spec/reviewedGroupJourney.md) */
 //@ pure
 export function groupReplyPending(s: ReviewedGroupJourney, hiker: Hiker): boolean {
@@ -92,8 +92,38 @@ export function groupReplyPending(s: ReviewedGroupJourney, hiker: Hiker): boolea
 
 /** Story: Join a reviewed public hike only after the group agrees / Booking requires an independent yes from all three invitees (spec/reviewedGroupJourney.md) */
 //@ pure
+export function canAnswerGroup(s: ReviewedGroupJourney, hiker: Hiker, agrees: boolean): boolean {
+  return s.phase === "GroupInvited" && groupReplyPending(s, hiker);
+}
+
+/** Story: Join a reviewed public hike only after the group agrees / Booking requires an independent yes from all three invitees (spec/reviewedGroupJourney.md) */
+//@ pure
+export function answerGroup(s: ReviewedGroupJourney, hiker: Hiker, agrees: boolean): GroupStep {
+  //@ ensures (inv(s) && canAnswerGroup(s, hiker, agrees)) ==> alwaysNoContactWithoutApproval(\result.state)
+  //@ ensures (inv(s) && canAnswerGroup(s, hiker, agrees)) ==> alwaysRevealsBelongToOneBooking(\result.state)
+  //@ ensures (inv(s) && canAnswerGroup(s, hiker, agrees)) ==> alwaysBookingRequiresQuorum(\result.state)
+  //@ ensures (inv(s) && canAnswerGroup(s, hiker, agrees)) ==> alwaysCancellationFollowsBooking(\result.state)
+  const local_0 = hikers.filter((person: Hiker) => s.accepted.includes(person) || (agrees && person === hiker));
+  const local_1 = hikers.filter((person: Hiker) => s.declined.includes(person) || (!agrees && person === hiker));
+  const local_2: ReviewedGroupJourney = { ...s, accepted: local_0, declined: local_1 };
+  const local_3: planDecision_ReplyChoice = planDecision_planReplyChoice(({ phase: "Probing", pendingMember: groupReplyPending(s, hiker), accepted: agrees, yesAfter: local_0.length, needed: 3, partnerPlan: false, firstMember: false, beforeDeadline: true, lateJoinOpen: true } as planDecision_ReplyFacts));
+  return local_3 === "BookPlan" ? ({ state: ({ ...local_2, phase: "HikeBooked", meetings: 1, reveals: 3 } as ReviewedGroupJourney), out: (["GroupReveal", "GroupReveal", "GroupReveal"] as GroupEffect[]) } as GroupStep) : (planDecision_unmetPlanQuorum(exact_reviewedGroupJourney(exact_reviewedGroupJourney(3 - local_0.length) - local_1.length), local_0.length, 3) ? ({ state: ({ ...local_2, phase: "GroupUnderfilled" } as ReviewedGroupJourney), out: ([] as GroupEffect[]) } as GroupStep) : ({ state: local_2, out: ([] as GroupEffect[]) } as GroupStep));
+}
+
+/** Story: Join a reviewed public hike only after the group agrees / Booking requires an independent yes from all three invitees (spec/reviewedGroupJourney.md) */
+//@ pure
 export function canExpireGroup(s: ReviewedGroupJourney): boolean {
   return s.phase === "GroupInvited";
+}
+
+/** Story: Join a reviewed public hike only after the group agrees / Booking requires an independent yes from all three invitees (spec/reviewedGroupJourney.md) */
+//@ pure
+export function expireGroup(s: ReviewedGroupJourney): GroupStep {
+  //@ ensures (inv(s) && canExpireGroup(s)) ==> alwaysNoContactWithoutApproval(\result.state)
+  //@ ensures (inv(s) && canExpireGroup(s)) ==> alwaysRevealsBelongToOneBooking(\result.state)
+  //@ ensures (inv(s) && canExpireGroup(s)) ==> alwaysBookingRequiresQuorum(\result.state)
+  //@ ensures (inv(s) && canExpireGroup(s)) ==> alwaysCancellationFollowsBooking(\result.state)
+  return { state: ({ ...s, phase: "GroupUnderfilled" } as ReviewedGroupJourney), out: ([] as GroupEffect[]) };
 }
 
 /** Story: Join a reviewed public hike only after the group agrees / Booking requires an independent yes from all three invitees (spec/reviewedGroupJourney.md) */
@@ -126,58 +156,10 @@ export function sometimesExpiresWithNobodyDeclined(s: ReviewedGroupJourney): boo
   return s.phase === "GroupUnderfilled" && s.declined.length === 0;
 }
 
-/** Story: Join a reviewed public hike only after the group agrees / Booking requires an independent yes from all three invitees (spec/reviewedGroupJourney.md) */
-//@ pure
-export function canAnswerGroup(s: ReviewedGroupJourney, hiker: Hiker, agrees: boolean): boolean {
-  return s.phase === "GroupInvited" && groupReplyPending(s, hiker);
-}
-
-/** Story: Join a reviewed public hike only after the group agrees / Booking requires an independent yes from all three invitees (spec/reviewedGroupJourney.md) */
-//@ pure
-export function expireGroup(s: ReviewedGroupJourney): GroupStep {
-  //@ ensures (inv(s) && canExpireGroup(s)) ==> alwaysNoContactWithoutApproval(\result.state)
-  //@ ensures (inv(s) && canExpireGroup(s)) ==> alwaysRevealsBelongToOneBooking(\result.state)
-  //@ ensures (inv(s) && canExpireGroup(s)) ==> alwaysBookingRequiresQuorum(\result.state)
-  //@ ensures (inv(s) && canExpireGroup(s)) ==> alwaysCancellationFollowsBooking(\result.state)
-  return { state: ({ ...s, phase: "GroupUnderfilled" } as ReviewedGroupJourney), out: ([] as GroupEffect[]) };
-}
-
-/** Story: Join a reviewed public hike only after the group agrees / Booking requires an independent yes from all three invitees (spec/reviewedGroupJourney.md) */
-//@ pure
-export function answerGroup(s: ReviewedGroupJourney, hiker: Hiker, agrees: boolean): GroupStep {
-  //@ ensures (inv(s) && canAnswerGroup(s, hiker, agrees)) ==> alwaysNoContactWithoutApproval(\result.state)
-  //@ ensures (inv(s) && canAnswerGroup(s, hiker, agrees)) ==> alwaysRevealsBelongToOneBooking(\result.state)
-  //@ ensures (inv(s) && canAnswerGroup(s, hiker, agrees)) ==> alwaysBookingRequiresQuorum(\result.state)
-  //@ ensures (inv(s) && canAnswerGroup(s, hiker, agrees)) ==> alwaysCancellationFollowsBooking(\result.state)
-  const local_0 = hikers.filter((person: Hiker) => s.accepted.includes(person) || (agrees && person === hiker));
-  const local_1 = hikers.filter((person: Hiker) => s.declined.includes(person) || (!agrees && person === hiker));
-  const local_2: ReviewedGroupJourney = { ...s, accepted: local_0, declined: local_1 };
-  const local_3: planDecision_ReplyChoice = planDecision_planReplyChoice(({ phase: "Probing", pendingMember: groupReplyPending(s, hiker), accepted: agrees, yesAfter: local_0.length, needed: 3, partnerPlan: false, firstMember: false, beforeDeadline: true, lateJoinOpen: true } as planDecision_ReplyFacts));
-  return local_3 === "BookPlan" ? ({ state: ({ ...local_2, phase: "HikeBooked", meetings: 1, reveals: 3 } as ReviewedGroupJourney), out: (["GroupReveal", "GroupReveal", "GroupReveal"] as GroupEffect[]) } as GroupStep) : (planDecision_unmetPlanQuorum(exact_reviewedGroupJourney(exact_reviewedGroupJourney(3 - local_0.length) - local_1.length), local_0.length, 3) ? ({ state: ({ ...local_2, phase: "GroupUnderfilled" } as ReviewedGroupJourney), out: ([] as GroupEffect[]) } as GroupStep) : ({ state: local_2, out: ([] as GroupEffect[]) } as GroupStep));
-}
-
 /** Story: Join a reviewed public hike only after the group agrees / A withdrawal below minimum closes a booked group privately (spec/reviewedGroupJourney.md) */
 //@ pure
 export function canWithdrawFromGroup(s: ReviewedGroupJourney, hiker: Hiker): boolean {
   return s.phase === "HikeBooked" && s.accepted.includes(hiker);
-}
-
-/** Story: Join a reviewed public hike only after the group agrees / A withdrawal below minimum closes a booked group privately (spec/reviewedGroupJourney.md) */
-//@ pure
-export function canRestartGroup(s: ReviewedGroupJourney): boolean {
-  return true;
-}
-
-/** Story: Join a reviewed public hike only after the group agrees / A withdrawal below minimum closes a booked group privately (spec/reviewedGroupJourney.md) */
-//@ pure
-export function alwaysCancellationFollowsBooking(s: ReviewedGroupJourney): boolean {
-  return s.cancellations === (s.phase === "HikeCancelled" ? 2 : 0);
-}
-
-/** Story: Join a reviewed public hike only after the group agrees / A withdrawal below minimum closes a booked group privately (spec/reviewedGroupJourney.md) */
-//@ pure
-export function sometimesBookedGroupCancels(s: ReviewedGroupJourney): boolean {
-  return s.phase === "HikeCancelled";
 }
 
 /** Story: Join a reviewed public hike only after the group agrees / A withdrawal below minimum closes a booked group privately (spec/reviewedGroupJourney.md) */
@@ -193,6 +175,12 @@ export function withdrawFromGroup(s: ReviewedGroupJourney, hiker: Hiker): GroupS
 
 /** Story: Join a reviewed public hike only after the group agrees / A withdrawal below minimum closes a booked group privately (spec/reviewedGroupJourney.md) */
 //@ pure
+export function canRestartGroup(s: ReviewedGroupJourney): boolean {
+  return true;
+}
+
+/** Story: Join a reviewed public hike only after the group agrees / A withdrawal below minimum closes a booked group privately (spec/reviewedGroupJourney.md) */
+//@ pure
 export function restartGroup(s: ReviewedGroupJourney): GroupStep {
   //@ ensures (inv(s) && canRestartGroup(s)) ==> alwaysNoContactWithoutApproval(\result.state)
   //@ ensures (inv(s) && canRestartGroup(s)) ==> alwaysRevealsBelongToOneBooking(\result.state)
@@ -201,13 +189,25 @@ export function restartGroup(s: ReviewedGroupJourney): GroupStep {
   return { state: s, out: ([] as GroupEffect[]) };
 }
 
+/** Story: Join a reviewed public hike only after the group agrees / A withdrawal below minimum closes a booked group privately (spec/reviewedGroupJourney.md) */
+//@ pure
+export function alwaysCancellationFollowsBooking(s: ReviewedGroupJourney): boolean {
+  return s.cancellations === (s.phase === "HikeCancelled" ? 2 : 0);
+}
+
+/** Story: Join a reviewed public hike only after the group agrees / A withdrawal below minimum closes a booked group privately (spec/reviewedGroupJourney.md) */
+//@ pure
+export function sometimesBookedGroupCancels(s: ReviewedGroupJourney): boolean {
+  return s.phase === "HikeCancelled";
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: ReviewedGroupJourney, event: Event): boolean {
   if (event.type === "judgeGroup") return canJudgeGroup(current, event.approved);
   if (event.type === "staffDecideGroup") return canStaffDecideGroup(current, event.approved);
-  if (event.type === "expireGroup") return canExpireGroup(current);
   if (event.type === "answerGroup") return canAnswerGroup(current, event.hiker, event.agrees);
+  if (event.type === "expireGroup") return canExpireGroup(current);
   if (event.type === "withdrawFromGroup") return canWithdrawFromGroup(current, event.hiker);
   if (event.type === "restartGroup") return canRestartGroup(current);
   return false;
@@ -220,8 +220,8 @@ export function step(current: ReviewedGroupJourney, event: Event): GroupStep {
   //@ ensures inv(\result.state)
   if (event.type === "judgeGroup") return canJudgeGroup(current, event.approved) ? judgeGroup(current, event.approved) : { state: current, out: ([] as GroupEffect[]) };
   if (event.type === "staffDecideGroup") return canStaffDecideGroup(current, event.approved) ? staffDecideGroup(current, event.approved) : { state: current, out: ([] as GroupEffect[]) };
-  if (event.type === "expireGroup") return canExpireGroup(current) ? expireGroup(current) : { state: current, out: ([] as GroupEffect[]) };
   if (event.type === "answerGroup") return canAnswerGroup(current, event.hiker, event.agrees) ? answerGroup(current, event.hiker, event.agrees) : { state: current, out: ([] as GroupEffect[]) };
+  if (event.type === "expireGroup") return canExpireGroup(current) ? expireGroup(current) : { state: current, out: ([] as GroupEffect[]) };
   if (event.type === "withdrawFromGroup") return canWithdrawFromGroup(current, event.hiker) ? withdrawFromGroup(current, event.hiker) : { state: current, out: ([] as GroupEffect[]) };
   if (event.type === "restartGroup") return canRestartGroup(current) ? restartGroup(current) : { state: current, out: ([] as GroupEffect[]) };
   return { state: current, out: ([] as GroupEffect[]) };
@@ -243,8 +243,8 @@ export function parseEvent(x: unknown): Event | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "judgeGroup" && typeof raw.approved === "boolean") return { type: "judgeGroup", approved: raw.approved };
   if (raw.type === "staffDecideGroup" && typeof raw.approved === "boolean") return { type: "staffDecideGroup", approved: raw.approved };
-  if (raw.type === "expireGroup") return { type: "expireGroup" };
   if (raw.type === "answerGroup" && (raw.hiker === "FirstHiker" || raw.hiker === "SecondHiker" || raw.hiker === "ThirdHiker") && typeof raw.agrees === "boolean") return { type: "answerGroup", hiker: raw.hiker, agrees: raw.agrees };
+  if (raw.type === "expireGroup") return { type: "expireGroup" };
   if (raw.type === "withdrawFromGroup" && (raw.hiker === "FirstHiker" || raw.hiker === "SecondHiker" || raw.hiker === "ThirdHiker")) return { type: "withdrawFromGroup", hiker: raw.hiker };
   if (raw.type === "restartGroup") return { type: "restartGroup" };
   return undefined;

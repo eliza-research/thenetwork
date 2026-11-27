@@ -1,8 +1,8 @@
 // Generated from spec/webhookInbox.md via Vibestack and VibeLang. Run pnpm run spec:sync.
 /** Story: Handle my pending messages in order while prioritizing consent / Dedupe a received message and choose the next pending turn (spec/webhookInbox.md) */
-export type QueueChoice = "QueueEmpty" | "RunCompliance" | "WaitForSignedTurn" | "RunOldest";
-/** Story: Handle my pending messages in order while prioritizing consent / Dedupe a received message and choose the next pending turn (spec/webhookInbox.md) */
 export type ArrivalResult = "DrainSender" | "DuplicateWebhook";
+/** Story: Handle my pending messages in order while prioritizing consent / Dedupe a received message and choose the next pending turn (spec/webhookInbox.md) */
+export type QueueChoice = "QueueEmpty" | "RunCompliance" | "WaitForSignedTurn" | "RunOldest";
 /** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) */
 export type WebhookPhase = "WebhookQueued" | "RunningWebhook" | "CompleteWebhook" | "CancelEarlier" | "WebhookDone" | "RetryWebhook" | "DropWebhook";
 /** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) */
@@ -25,12 +25,12 @@ export type Event = {
 } | {
     type: "recordFailure";
 };
-/** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) */
-export declare const webhookAttemptLimit: number;
 /** Story: Handle my pending messages in order while prioritizing consent / Dedupe a received message and choose the next pending turn (spec/webhookInbox.md) */
 export declare const webhookScanLimit: number;
 /** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) */
 export declare const initial: WebhookTurn;
+/** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) */
+export declare const webhookAttemptLimit: number;
 /** Every `always` rule at once. Holds initially and after every transition. */
 export declare function inv(current: WebhookTurn): boolean;
 /** Story: Handle my pending messages in order while prioritizing consent / Dedupe a received message and choose the next pending turn (spec/webhookInbox.md) */
@@ -39,8 +39,6 @@ export declare function webhookArrival(inserted: boolean): ArrivalResult;
 export declare function chooseWebhook(hasWaiting: boolean, complianceFound: boolean, signedTurnBlocks: boolean): QueueChoice;
 /** Story: Handle my pending messages in order while prioritizing consent / Dedupe a received message and choose the next pending turn (spec/webhookInbox.md) */
 export declare function lawComplianceGoesFirst(signedTurnBlocks: boolean): boolean;
-/** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) */
-export declare function earlierWebhookCancellable(selectedTurn: boolean, compliance: boolean): boolean;
 /** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) */
 export declare function canStartWebhook(turn: WebhookTurn, attempts: number, stopCommand: boolean): boolean;
 /** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) */
@@ -54,21 +52,23 @@ export declare function canRecordCompletion(turn: WebhookTurn): boolean;
 /** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) */
 export declare function recordCompletion(turn: WebhookTurn): WebhookTurn;
 /** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) */
+export declare function stepDoneRequiresCompletion(before: WebhookTurn, via: string, after: WebhookTurn): boolean;
+/** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) */
 export declare function sometimesCanCompleteWebhook(turn: WebhookTurn): boolean;
 /** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) */
-export declare function lawNeverCancelCompliance(selectedTurn: boolean): boolean;
+export declare function earlierWebhookCancellable(selectedTurn: boolean, compliance: boolean): boolean;
 /** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md) */
-export declare function stepDoneRequiresCompletion(before: WebhookTurn, via: string, after: WebhookTurn): boolean;
+export declare function lawNeverCancelCompliance(selectedTurn: boolean): boolean;
+/** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) */
+export declare function canRecordFailure(turn: WebhookTurn): boolean;
 /** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) */
 export declare function recordFailure(turn: WebhookTurn): WebhookTurn;
 /** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) */
 export declare function alwaysStopNeverDropped(turn: WebhookTurn): boolean;
 /** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) */
-export declare function sometimesCanRetryWebhook(turn: WebhookTurn): boolean;
-/** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) */
-export declare function canRecordFailure(turn: WebhookTurn): boolean;
-/** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) */
 export declare function lawStopNeverDrops(turn: WebhookTurn): boolean;
+/** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md) */
+export declare function sometimesCanRetryWebhook(turn: WebhookTurn): boolean;
 /** Story: Handle my pending messages in order while prioritizing consent / Report the received row's stored result after draining (spec/webhookInbox.md) */
 export declare function webhookAnswer(done: boolean, failed: boolean): WebhookAnswer;
 /** Do the rules allow this event in this state? */

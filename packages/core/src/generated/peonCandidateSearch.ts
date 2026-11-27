@@ -3,6 +3,10 @@
 
 
 /** Story: Tell Peon what work to look for / Use the local hiring catalogue and the stated work terms (spec/peonCandidateSearch.md) */
+export const peonSearchRoles: string[] = ["software_engineer", "data_analyst", "accountant", "registered_nurse", "customer_support", "sales_rep", "warehouse_logistics"];
+/** Story: Tell Peon what work to look for / Use the local hiring catalogue and the stated work terms (spec/peonCandidateSearch.md) */
+export const peonSearchSkills: string[] = ["javascript", "python", "system_design", "sql", "cloud", "testing", "statistics", "excel", "tableau", "machine_learning", "gaap", "reconciliation", "tax", "quickbooks", "audit", "patient_care", "medication_admin", "ehr", "triage", "iv_therapy", "care_planning", "communication", "crm", "ticketing", "deescalation", "troubleshooting", "prospecting", "negotiation", "closing", "account_management", "inventory", "shipping", "safety_compliance", "forklift", "scheduling", "cdl_driving"];
+/** Story: Tell Peon what work to look for / Use the local hiring catalogue and the stated work terms (spec/peonCandidateSearch.md) */
 export const peonSearchAreas: string[] = ["manhattan", "brooklyn", "queens", "bronx", "jersey_city", "san_francisco", "oakland", "east_bay", "peninsula", "south_bay"];
 /** Story: Tell Peon what work to look for / Use the local hiring catalogue and the stated work terms (spec/peonCandidateSearch.md) */
 export const peonSearchModes: string[] = ["remote", "hybrid", "onsite"];
@@ -10,10 +14,6 @@ export const peonSearchModes: string[] = ["remote", "hybrid", "onsite"];
 export const peonSearchDraftMs: number = 900000;
 /** Story: Tell Peon what work to look for / Read back the whole draft and accept only its exact confirmation (spec/peonCandidateSearch.md) */
 export const peonSearchHorizonDays: number = 90;
-/** Story: Tell Peon what work to look for / Use the local hiring catalogue and the stated work terms (spec/peonCandidateSearch.md) */
-export const peonSearchRoles: string[] = ["software_engineer", "data_analyst", "accountant", "registered_nurse", "customer_support", "sales_rep", "warehouse_logistics"];
-/** Story: Tell Peon what work to look for / Use the local hiring catalogue and the stated work terms (spec/peonCandidateSearch.md) */
-export const peonSearchSkills: string[] = ["javascript", "python", "system_design", "sql", "cloud", "testing", "statistics", "excel", "tableau", "machine_learning", "gaap", "reconciliation", "tax", "quickbooks", "audit", "patient_care", "medication_admin", "ehr", "triage", "iv_therapy", "care_planning", "communication", "crm", "ticketing", "deescalation", "troubleshooting", "prospecting", "negotiation", "closing", "account_management", "inventory", "shipping", "safety_compliance", "forklift", "scheduling", "cdl_driving"];
 
 /** Story: Tell Peon what work to look for / Only the current adult Peon member can manage this search (spec/peonCandidateSearch.md) */
 //@ pure

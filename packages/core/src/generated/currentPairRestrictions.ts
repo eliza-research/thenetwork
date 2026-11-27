@@ -11,15 +11,15 @@ export function currentPairAllowed(blocked: boolean, avoided: boolean): boolean 
 
 /** Story: A blocked or avoided pair stays apart / Use current app and saved pair restrictions throughout the flow (spec/currentPairRestrictions.md) */
 //@ pure
-export function welcomePairMayRank(compatible: boolean, sharesTime: boolean): boolean {
-  return compatible && sharesTime;
+export function lawRestrictedPairCannotProceed(blocked: boolean, avoided: boolean): boolean {
+  //@ ensures \result === true
+  return !(blocked || avoided) || !currentPairAllowed(blocked, avoided);
 }
 
 /** Story: A blocked or avoided pair stays apart / Use current app and saved pair restrictions throughout the flow (spec/currentPairRestrictions.md) */
 //@ pure
-export function lawRestrictedPairCannotProceed(blocked: boolean, avoided: boolean): boolean {
-  //@ ensures \result === true
-  return !(blocked || avoided) || !currentPairAllowed(blocked, avoided);
+export function welcomePairMayRank(compatible: boolean, sharesTime: boolean): boolean {
+  return compatible && sharesTime;
 }
 
 /** Story: A blocked or avoided pair stays apart / Use current app and saved pair restrictions throughout the flow (spec/currentPairRestrictions.md) */

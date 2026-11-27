@@ -184,6 +184,12 @@ importers:
         specifier: 2.9.1
         version: 2.9.1
 
+  apps/marketing:
+    dependencies:
+      '@thenetwork/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+
   apps/observatory:
     dependencies:
       '@tailwindcss/postcss':

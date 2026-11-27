@@ -25,18 +25,6 @@ export function inv(current: DetailGate): boolean {
 
 /** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md) */
 //@ pure
-export function sometimesADetailFinishes(gate: DetailGate): boolean {
-  return gate.lastTicket > 0 && gate.closedThrough === gate.lastTicket;
-}
-
-/** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md) */
-//@ pure
-export function sometimesADetailWaits(gate: DetailGate): boolean {
-  return gate.closedThrough < gate.lastTicket;
-}
-
-/** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md) */
-//@ pure
 export function beginDetail(gate: DetailGate): DetailGate {
   //@ ensures (inv(gate)) ==> alwaysTicketBounds(\result)
   //@ ensures (inv(gate)) ==> stepDetailBoundaryNeverFalls(gate, \result)
@@ -75,6 +63,18 @@ export function alwaysTicketBounds(gate: DetailGate): boolean {
 //@ pure
 export function stepDetailBoundaryNeverFalls(before: DetailGate, after: DetailGate): boolean {
   return after.closedThrough >= before.closedThrough;
+}
+
+/** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md) */
+//@ pure
+export function sometimesADetailFinishes(gate: DetailGate): boolean {
+  return gate.lastTicket > 0 && gate.closedThrough === gate.lastTicket;
+}
+
+/** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md) */
+//@ pure
+export function sometimesADetailWaits(gate: DetailGate): boolean {
+  return gate.closedThrough < gate.lastTicket;
 }
 
 /** Story: Read details for the current subject / Serving revealed details requires current staff authority (spec/consoleMemberView.md) */
@@ -150,14 +150,14 @@ export function staffPhotoAllowed(rulePermitsRead: boolean, canSafety: boolean, 
 
 /** Story: Open Slop photos for a verified adult / Photo access requires the current member and staff permission (spec/consoleMemberView.md) */
 //@ pure
-export function staffPhotoReasonReady(lengthOfReason: number): boolean {
-  return lengthOfReason >= 5;
+export function staffPhotoView(allowedRead: boolean, loaded: boolean): StaffPhotoView {
+  return !allowedRead ? "HidePhotos" : (loaded ? "ShowGallery" : "ShowPhotoForm");
 }
 
 /** Story: Open Slop photos for a verified adult / Photo access requires the current member and staff permission (spec/consoleMemberView.md) */
 //@ pure
-export function staffPhotoView(allowedRead: boolean, loaded: boolean): StaffPhotoView {
-  return !allowedRead ? "HidePhotos" : (loaded ? "ShowGallery" : "ShowPhotoForm");
+export function staffPhotoReasonReady(lengthOfReason: number): boolean {
+  return lengthOfReason >= 5;
 }
 
 /** Story: Open Slop photos for a verified adult / Photo access requires the current member and staff permission (spec/consoleMemberView.md) */

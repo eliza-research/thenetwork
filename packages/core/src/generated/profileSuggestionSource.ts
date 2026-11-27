@@ -21,10 +21,10 @@ export type Event =
   | { type: "readCleanupReceipt"; prior: boolean; matches: boolean }
   | { type: "confirmSourceCleanup"; authorized: boolean };
 
-/** Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch (spec/profileSuggestionSource.md) */
-export const collectionReceiptLimit: number = 16;
 /** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md) */
 export const initial: SourceFlow = { phase: "SourceInitial" };
+/** Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch (spec/profileSuggestionSource.md) */
+export const collectionReceiptLimit: number = 16;
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
@@ -34,8 +34,8 @@ export function inv(current: SourceFlow): boolean {
 
 /** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md) */
 //@ pure
-export function sourceUseAllowed(allowed: boolean, stillEligible: boolean): boolean {
-  return allowed && stillEligible;
+export function canStartSourceCollection(flow: SourceFlow): boolean {
+  return flow.phase === "SourceInitial";
 }
 
 /** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md) */
@@ -64,6 +64,12 @@ export function readCollectionTurn(flow: SourceFlow, matches: boolean): SourceFl
 
 /** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md) */
 //@ pure
+export function sourceUseAllowed(allowed: boolean, stillEligible: boolean): boolean {
+  return allowed && stillEligible;
+}
+
+/** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md) */
+//@ pure
 export function canReadLiveSourceConsent(flow: SourceFlow): boolean {
   return flow.phase === "CheckingLiveSources";
 }
@@ -84,30 +90,6 @@ export function lawSourceUseNeedsCurrentEligibility(allowed: boolean): boolean {
   return !sourceUseAllowed(allowed, false);
 }
 
-/** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md) */
-//@ pure
-export function canStartSourceCollection(flow: SourceFlow): boolean {
-  return flow.phase === "SourceInitial";
-}
-
-/** Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch (spec/profileSuggestionSource.md) */
-//@ pure
-export function collectionRevisionIsOriginal(revision: number): boolean {
-  return revision === 1;
-}
-
-/** Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch (spec/profileSuggestionSource.md) */
-//@ pure
-export function collectionPreviewUnchanged(sameCount: boolean, onlyPending: boolean): boolean {
-  return sameCount && onlyPending;
-}
-
-/** Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch (spec/profileSuggestionSource.md) */
-//@ pure
-export function collectionReceiptHasRoom(count: number): boolean {
-  return count >= 0 && count < collectionReceiptLimit;
-}
-
 /** Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch (spec/profileSuggestionSource.md) */
 //@ pure
 export function canReadCollectionReceipt(flow: SourceFlow): boolean {
@@ -125,6 +107,18 @@ export function readCollectionReceipt(flow: SourceFlow, prior: boolean, matches:
 
 /** Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch (spec/profileSuggestionSource.md) */
 //@ pure
+export function collectionRevisionIsOriginal(revision: number): boolean {
+  return revision === 1;
+}
+
+/** Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch (spec/profileSuggestionSource.md) */
+//@ pure
+export function collectionPreviewUnchanged(sameCount: boolean, onlyPending: boolean): boolean {
+  return sameCount && onlyPending;
+}
+
+/** Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch (spec/profileSuggestionSource.md) */
+//@ pure
 export function canCheckCollectionReplay(flow: SourceFlow): boolean {
   return flow.phase === "ReplayingCollection";
 }
@@ -136,6 +130,12 @@ export function checkCollectionReplay(flow: SourceFlow, revision: number, sameCo
   //@ ensures (inv(flow) && canCheckCollectionReplay(flow)) ==> stepCollectionSaveNeedsCapacity(flow, "checkCollectionReplay", \result)
   //@ ensures (inv(flow) && canCheckCollectionReplay(flow)) ==> stepCollectionSaveRequiresReceiptCheck(flow, "checkCollectionReplay", \result)
   return { phase: collectionRevisionIsOriginal(revision) && collectionPreviewUnchanged(sameCount, onlyPending) ? "CollectionReadyToReplay" : "SourceDenied" };
+}
+
+/** Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch (spec/profileSuggestionSource.md) */
+//@ pure
+export function collectionReceiptHasRoom(count: number): boolean {
+  return count >= 0 && count < collectionReceiptLimit;
 }
 
 /** Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch (spec/profileSuggestionSource.md) */

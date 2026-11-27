@@ -1,13 +1,13 @@
 // GENERATED from spec/lineRouting.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type FractionalAgeEvidence as memberAge_FractionalAgeEvidence, type BirthReadings as memberAge_BirthReadings, minMemberAge as memberAge_minMemberAge, minLooseHeightAge as memberAge_minLooseHeightAge, maxAge as memberAge_maxAge, minLooseTeamAge as memberAge_minLooseTeamAge, adultAge as memberAge_adultAge, dayKeyYear as memberAge_dayKeyYear, earliestBirthKey as memberAge_earliestBirthKey, ownAgeEvidenceAllowed as memberAge_ownAgeEvidenceAllowed, signupAgeAt as memberAge_signupAgeAt, signupAgeCapNeeded as memberAge_signupAgeCapNeeded, mayClearMaturedSignupMinor as memberAge_mayClearMaturedSignupMinor, ownYouthCueAllowed as memberAge_ownYouthCueAllowed, keepLaterEligibilityDate as memberAge_keepLaterEligibilityDate, ageInRange as memberAge_ageInRange, precedingBirthdayAge as memberAge_precedingBirthdayAge, ageQualifierFollows as memberAge_ageQualifierFollows, ageConjunctionAllowed as memberAge_ageConjunctionAllowed, lowerAge as memberAge_lowerAge, ageOnDay as memberAge_ageOnDay, statedAgeLower as memberAge_statedAgeLower, statedAgeUpper as memberAge_statedAgeUpper, birthDateLower as memberAge_birthDateLower, laterBirthKey as memberAge_laterBirthKey, readingsConflict as memberAge_readingsConflict, recordedChatAge as memberAge_recordedChatAge, lawDeclineKeepsStatedAge as memberAge_lawDeclineKeepsStatedAge, lawQuotedWordsDoNotSetSenderAge as memberAge_lawQuotedWordsDoNotSetSenderAge, lawMatchingSignupBirthKeepsBirthdays as memberAge_lawMatchingSignupBirthKeepsBirthdays, lawOtherBirthCannotAdvanceSignupMinor as memberAge_lawOtherBirthCannotAdvanceSignupMinor, lawSignupAgeDoesNotAdvanceEarly as memberAge_lawSignupAgeDoesNotAdvanceEarly, lawSignupAgeAdvancesAtEligibility as memberAge_lawSignupAgeAdvancesAtEligibility, lawSignupAgeKeepsAnIndependentFloor as memberAge_lawSignupAgeKeepsAnIndependentFloor, lawOtherYouthEvidenceKeepsMinorRestricted as memberAge_lawOtherYouthEvidenceKeepsMinorRestricted, lawAnotherSignupCannotAdvanceEligibility as memberAge_lawAnotherSignupCannotAdvanceEligibility, lawAnotherSpeakersYouthCueCannotRestrictSender as memberAge_lawAnotherSpeakersYouthCueCannotRestrictSender, lawDistantBirthdayQualifiesTheAge as memberAge_lawDistantBirthdayQualifiesTheAge, joinableAge as memberAge_joinableAge, lawSmallSportsRecordsDoNotSupplyAge as memberAge_lawSmallSportsRecordsDoNotSupplyAge, lawSmallTeamResultsDoNotSupplyAge as memberAge_lawSmallTeamResultsDoNotSupplyAge, lawStatedBirthdaySurvivesSportsContext as memberAge_lawStatedBirthdaySurvivesSportsContext, lawEffectiveAgeCannotRise as memberAge_lawEffectiveAgeCannotRise, birthKeyUsable as memberAge_birthKeyUsable, matchableAge as memberAge_matchableAge, lawBirthdayAddsOneYear as memberAge_lawBirthdayAddsOneYear, lawLeapDayBirthdayCountsFromMarchFirst as memberAge_lawLeapDayBirthdayCountsFromMarchFirst, statedAgeBeforeBirthDates as memberAge_statedAgeBeforeBirthDates, lawStatedAgeReadsBack as memberAge_lawStatedAgeReadsBack, mergeReading as memberAge_mergeReading, effectiveBirthKey as memberAge_effectiveBirthKey, birthDateExact as memberAge_birthDateExact, confirmedUnderage as memberAge_confirmedUnderage, lawAgreeingAgeKeepsTheBirthDateExact as memberAge_lawAgreeingAgeKeepsTheBirthDateExact, lawConflictIsPermanent as memberAge_lawConflictIsPermanent, lawOlderClaimNeverUnlocksAdult as memberAge_lawOlderClaimNeverUnlocksAdult, lawFloorTwelveRefusesAdultBirthDate as memberAge_lawFloorTwelveRefusesAdultBirthDate, verifiedBrowserBirthMayBeKept as memberAge_verifiedBrowserBirthMayBeKept, lawBeforeAnEighteenthBirthdayIsNotAdult as memberAge_lawBeforeAnEighteenthBirthdayIsNotAdult, fractionalAgeEvidence as memberAge_fractionalAgeEvidence, lawJoiningNeedsUsableAge as memberAge_lawJoiningNeedsUsableAge, lawBirthKeyUsableIsHuman as memberAge_lawBirthKeyUsableIsHuman, lawMatchingNeedsAdultAge as memberAge_lawMatchingNeedsAdultAge, effectiveAge as memberAge_effectiveAge, lawLaterBirthDateWins as memberAge_lawLaterBirthDateWins, lawMergeKeepsYoungest as memberAge_lawMergeKeepsYoungest, lawMergeKeepsWellFormed as memberAge_lawMergeKeepsWellFormed, lawMinorBeforeBirthDatesKeepsMinorAge as memberAge_lawMinorBeforeBirthDatesKeepsMinorAge, lawBrowserBirthNeedsEligibleVerifiedEnrollment as memberAge_lawBrowserBirthNeedsEligibleVerifiedEnrollment, underageCleanupRequired as memberAge_underageCleanupRequired, textUseAllowedAtAge as memberAge_textUseAllowedAtAge, lawAnUpcomingFractionalAgeSuppliesNoCurrentAge as memberAge_lawAnUpcomingFractionalAgeSuppliesNoCurrentAge, lawAFractionalAgeNeedsAgeWordsToBeExplicit as memberAge_lawAFractionalAgeNeedsAgeWordsToBeExplicit, lawPossibleHeightRequiresAgeWords as memberAge_lawPossibleHeightRequiresAgeWords, lawExplicitCurrentFractionalAgeIsAccepted as memberAge_lawExplicitCurrentFractionalAgeIsAccepted, lawUnderageMonthOrQuarterNeedsAgeWords as memberAge_lawUnderageMonthOrQuarterNeedsAgeWords, lawLowerStatedAgeWins as memberAge_lawLowerStatedAgeWins, lawUnderageCleanupNeedsAConfirmedAge as memberAge_lawUnderageCleanupNeedsAConfirmedAge, lawConfirmedUnderageCannotRestart as memberAge_lawConfirmedUnderageCannotRestart } from "./memberAge.ts";
-import { type StaffActionResult as safetyCase_StaffActionResult, type ReportPhase as safetyCase_ReportPhase, type ReportDecision as safetyCase_ReportDecision, type CasePhase as safetyCase_CasePhase, type SharedReportRoute as safetyCase_SharedReportRoute, type SafetyCase as safetyCase_SafetyCase, safetyQuestionUsesSoleOffer as safetyCase_safetyQuestionUsesSoleOffer, inboundAllowedAfterBan as safetyCase_inboundAllowedAfterBan, personMinorSignalOpen as safetyCase_personMinorSignalOpen, pairOpportunityClosesOnBlock as safetyCase_pairOpportunityClosesOnBlock, pairBlockCancellationGoesTo as safetyCase_pairBlockCancellationGoesTo, holdSubjectKnown as safetyCase_holdSubjectKnown, immediateDangerReply as safetyCase_immediateDangerReply, emergencyCheckInReport as safetyCase_emergencyCheckInReport, safetyRequestMayResolveTarget as safetyCase_safetyRequestMayResolveTarget, acceptsReportEvidence as safetyCase_acceptsReportEvidence, acceptsMinorReportEvidence as safetyCase_acceptsMinorReportEvidence, archivedReportHoldAllowed as safetyCase_archivedReportHoldAllowed, reportClarificationTimeCurrent as safetyCase_reportClarificationTimeCurrent, safetyQuestionIsCurrent as safetyCase_safetyQuestionIsCurrent, safetyQuestionAcceptsName as safetyCase_safetyQuestionAcceptsName, safetyQuestionAppliesTarget as safetyCase_safetyQuestionAppliesTarget, safetyQuestionExclusion as safetyCase_safetyQuestionExclusion, safetyReplyAfterExclusion as safetyCase_safetyReplyAfterExclusion, liveCase as safetyCase_liveCase, lawCompetingPromptCannotUseSoleSafetyOffer as safetyCase_lawCompetingPromptCannotUseSoleSafetyOffer, lawSoleSafetyOfferRequiresExactConfirmation as safetyCase_lawSoleSafetyOfferRequiresExactConfirmation, lawNamedSafetyAnswerCannotUseSoleOffer as safetyCase_lawNamedSafetyAnswerCannotUseSoleOffer, lawBanBlocksOrdinaryInbound as safetyCase_lawBanBlocksOrdinaryInbound, minorClearResult as safetyCase_minorClearResult, markCaseHeld as safetyCase_markCaseHeld, teenDoubtClearResult as safetyCase_teenDoubtClearResult, markCaseLifted as safetyCase_markCaseLifted, lawAnUnclearedMinorSignalHoldsThePerson as safetyCase_lawAnUnclearedMinorSignalHoldsThePerson, lawAClearAtOrAfterTheSignalEndsIt as safetyCase_lawAClearAtOrAfterTheSignalEndsIt, lawANewSignalAfterAClearHoldsAgain as safetyCase_lawANewSignalAfterAClearHoldsAgain, lawNoSignalHoldsNobody as safetyCase_lawNoSignalHoldsNobody, personMinorSignalEndsEverywhere as safetyCase_personMinorSignalEndsEverywhere, closeCase as safetyCase_closeCase, lawOtherOpportunitiesStay as safetyCase_lawOtherOpportunitiesStay, lawAClosedOpportunityStaysClosed as safetyCase_lawAClosedOpportunityStaysClosed, lawTheKnownActorGetsNoCancellation as safetyCase_lawTheKnownActorGetsNoCancellation, lawTheOthersOfABookingHearItIsOff as safetyCase_lawTheOthersOfABookingHearItIsOff, lawWithAnUnknownActorEveryParticipantHears as safetyCase_lawWithAnUnknownActorEveryParticipantHears, lawNoCancellationBeforeABooking as safetyCase_lawNoCancellationBeforeABooking, stepClosedCaseStaysClosed as safetyCase_stepClosedCaseStaysClosed, sometimesCaseCloses as safetyCase_sometimesCaseCloses, sometimesCaseWasLifted as safetyCase_sometimesCaseWasLifted, holdLiftResult as safetyCase_holdLiftResult, caseCloseResult as safetyCase_caseCloseResult, holdAuthority as safetyCase_holdAuthority, lawEmergencyReplyRequiresOwnText as safetyCase_lawEmergencyReplyRequiresOwnText, lawEmergencyReplyRequiresCurrentDanger as safetyCase_lawEmergencyReplyRequiresCurrentDanger, initial as safetyCase_initial, lawEmergencyCheckInNeedsReceipt as safetyCase_lawEmergencyCheckInNeedsReceipt, lawConditionalSafetyRequestCannotResolveTarget as safetyCase_lawConditionalSafetyRequestCannotResolveTarget, lawCasualContactDoesNotEstablishHarm as safetyCase_lawCasualContactDoesNotEstablishHarm, lawDeniedEvidenceDoesNotEstablishHarm as safetyCase_lawDeniedEvidenceDoesNotEstablishHarm, lawMinorReportNeedsAffirmation as safetyCase_lawMinorReportNeedsAffirmation, canRecordCaseEvent as safetyCase_canRecordCaseEvent, lawMinorReportNeedsAnEligibleSubject as safetyCase_lawMinorReportNeedsAnEligibleSubject, reportAfterDecision as safetyCase_reportAfterDecision, reportRestrictsMatching as safetyCase_reportRestrictsMatching, lawArchivedHoldRequiresExactSubject as safetyCase_lawArchivedHoldRequiresExactSubject, sharedReportRoute as safetyCase_sharedReportRoute, recordCaseEvent as safetyCase_recordCaseEvent, lawReportReplyCannotPredateQuestion as safetyCase_lawReportReplyCannotPredateQuestion, lawExpiredSafetyQuestionCannotAct as safetyCase_lawExpiredSafetyQuestionCannotAct, lawSafetyControlCannotNameTarget as safetyCase_lawSafetyControlCannotNameTarget, lawCompetingPromptNeedsExplicitSafetyExclusion as safetyCase_lawCompetingPromptNeedsExplicitSafetyExclusion, lawExplicitSafetyExclusionStillApplies as safetyCase_lawExplicitSafetyExclusionStillApplies, lawSafetyReplacementSendsOnlySeparateReply as safetyCase_lawSafetyReplacementSendsOnlySeparateReply, lawSafetyReplacementAloneDoesNotAnswerAnotherPrompt as safetyCase_lawSafetyReplacementAloneDoesNotAnswerAnotherPrompt, safetyQuestionResolves as safetyCase_safetyQuestionResolves, lawAllowedTargetResolvesSafety as safetyCase_lawAllowedTargetResolvesSafety, lawTargetExclusionClosesWithoutFiling as safetyCase_lawTargetExclusionClosesWithoutFiling, lawLongUnrelatedReplyKeepsSafety as safetyCase_lawLongUnrelatedReplyKeepsSafety, canMarkCaseHeld as safetyCase_canMarkCaseHeld, canMarkCaseLifted as safetyCase_canMarkCaseLifted, lawTeenDoubtClearNeverClearsABar as safetyCase_lawTeenDoubtClearNeverClearsABar, lawTeenDoubtClearNeverClearsOlderReport as safetyCase_lawTeenDoubtClearNeverClearsOlderReport, lawTeenDoubtClearNeedsExactTeenBirth as safetyCase_lawTeenDoubtClearNeedsExactTeenBirth, lawTeenDoubtClearRefusesAnAdultBirth as safetyCase_lawTeenDoubtClearRefusesAnAdultBirth, canCloseCase as safetyCase_canCloseCase, lawAnUnclearedMembershipKeepsThePersonSignal as safetyCase_lawAnUnclearedMembershipKeepsThePersonSignal, lawASignalAfterTheEarliestClearStays as safetyCase_lawASignalAfterTheEarliestClearStays, lawClearsAtOrAfterTheSignalEverywhereEndIt as safetyCase_lawClearsAtOrAfterTheSignalEverywhereEndIt, lawDecidedReportDoesNotRestrictMatching as safetyCase_lawDecidedReportDoesNotRestrictMatching, lawDismissedReportStaysDismissed as safetyCase_lawDismissedReportStaysDismissed, carryReportOnAppLeave as safetyCase_carryReportOnAppLeave, lawSharedReportRequiresOneChoice as safetyCase_lawSharedReportRequiresOneChoice, lawDecayNeverOpensCase as safetyCase_lawDecayNeverOpensCase, lawCompetingPromptKeepsUnresolvedSafety as safetyCase_lawCompetingPromptKeepsUnresolvedSafety, lawCancellationResolvesSafety as safetyCase_lawCancellationResolvesSafety, lawOnlyOpenReportsCarry as safetyCase_lawOnlyOpenReportsCarry, lawReportedMinorSignalSurvivesOrdinaryLeave as safetyCase_lawReportedMinorSignalSurvivesOrdinaryLeave, lawAccountErasureCarriesNoReport as safetyCase_lawAccountErasureCarriesNoReport } from "./safetyCase.ts";
+import { type FractionalAgeEvidence as memberAge_FractionalAgeEvidence, type BirthReadings as memberAge_BirthReadings, maxAge as memberAge_maxAge, ageInRange as memberAge_ageInRange, minMemberAge as memberAge_minMemberAge, joinableAge as memberAge_joinableAge, lawJoiningNeedsUsableAge as memberAge_lawJoiningNeedsUsableAge, adultAge as memberAge_adultAge, matchableAge as memberAge_matchableAge, lawMatchingNeedsAdultAge as memberAge_lawMatchingNeedsAdultAge, recordedChatAge as memberAge_recordedChatAge, confirmedUnderage as memberAge_confirmedUnderage, lawDeclineKeepsStatedAge as memberAge_lawDeclineKeepsStatedAge, ownAgeEvidenceAllowed as memberAge_ownAgeEvidenceAllowed, lawQuotedWordsDoNotSetSenderAge as memberAge_lawQuotedWordsDoNotSetSenderAge, ownYouthCueAllowed as memberAge_ownYouthCueAllowed, lawAnotherSpeakersYouthCueCannotRestrictSender as memberAge_lawAnotherSpeakersYouthCueCannotRestrictSender, underageCleanupRequired as memberAge_underageCleanupRequired, lawUnderageCleanupNeedsAConfirmedAge as memberAge_lawUnderageCleanupNeedsAConfirmedAge, textUseAllowedAtAge as memberAge_textUseAllowedAtAge, lawConfirmedUnderageCannotRestart as memberAge_lawConfirmedUnderageCannotRestart, precedingBirthdayAge as memberAge_precedingBirthdayAge, ageQualifierFollows as memberAge_ageQualifierFollows, lawDistantBirthdayQualifiesTheAge as memberAge_lawDistantBirthdayQualifiesTheAge, lawBeforeAnEighteenthBirthdayIsNotAdult as memberAge_lawBeforeAnEighteenthBirthdayIsNotAdult, minLooseHeightAge as memberAge_minLooseHeightAge, fractionalAgeEvidence as memberAge_fractionalAgeEvidence, minLooseTeamAge as memberAge_minLooseTeamAge, ageConjunctionAllowed as memberAge_ageConjunctionAllowed, lawAnUpcomingFractionalAgeSuppliesNoCurrentAge as memberAge_lawAnUpcomingFractionalAgeSuppliesNoCurrentAge, lawAFractionalAgeNeedsAgeWordsToBeExplicit as memberAge_lawAFractionalAgeNeedsAgeWordsToBeExplicit, lawPossibleHeightRequiresAgeWords as memberAge_lawPossibleHeightRequiresAgeWords, lawExplicitCurrentFractionalAgeIsAccepted as memberAge_lawExplicitCurrentFractionalAgeIsAccepted, lawUnderageMonthOrQuarterNeedsAgeWords as memberAge_lawUnderageMonthOrQuarterNeedsAgeWords, lawSmallSportsRecordsDoNotSupplyAge as memberAge_lawSmallSportsRecordsDoNotSupplyAge, lawSmallTeamResultsDoNotSupplyAge as memberAge_lawSmallTeamResultsDoNotSupplyAge, lawStatedBirthdaySurvivesSportsContext as memberAge_lawStatedBirthdaySurvivesSportsContext, lowerAge as memberAge_lowerAge, lawEffectiveAgeCannotRise as memberAge_lawEffectiveAgeCannotRise, dayKeyYear as memberAge_dayKeyYear, earliestBirthKey as memberAge_earliestBirthKey, ageOnDay as memberAge_ageOnDay, birthKeyUsable as memberAge_birthKeyUsable, lawBirthdayAddsOneYear as memberAge_lawBirthdayAddsOneYear, lawLeapDayBirthdayCountsFromMarchFirst as memberAge_lawLeapDayBirthdayCountsFromMarchFirst, lawBirthKeyUsableIsHuman as memberAge_lawBirthKeyUsableIsHuman, statedAgeLower as memberAge_statedAgeLower, statedAgeUpper as memberAge_statedAgeUpper, birthDateLower as memberAge_birthDateLower, statedAgeBeforeBirthDates as memberAge_statedAgeBeforeBirthDates, lawStatedAgeReadsBack as memberAge_lawStatedAgeReadsBack, laterBirthKey as memberAge_laterBirthKey, mergeReading as memberAge_mergeReading, readingsConflict as memberAge_readingsConflict, effectiveBirthKey as memberAge_effectiveBirthKey, birthDateExact as memberAge_birthDateExact, effectiveAge as memberAge_effectiveAge, lawLowerStatedAgeWins as memberAge_lawLowerStatedAgeWins, lawLaterBirthDateWins as memberAge_lawLaterBirthDateWins, lawAgreeingAgeKeepsTheBirthDateExact as memberAge_lawAgreeingAgeKeepsTheBirthDateExact, lawConflictIsPermanent as memberAge_lawConflictIsPermanent, lawMergeKeepsYoungest as memberAge_lawMergeKeepsYoungest, lawMergeKeepsWellFormed as memberAge_lawMergeKeepsWellFormed, lawOlderClaimNeverUnlocksAdult as memberAge_lawOlderClaimNeverUnlocksAdult, lawMinorBeforeBirthDatesKeepsMinorAge as memberAge_lawMinorBeforeBirthDatesKeepsMinorAge, lawFloorTwelveRefusesAdultBirthDate as memberAge_lawFloorTwelveRefusesAdultBirthDate, verifiedBrowserBirthMayBeKept as memberAge_verifiedBrowserBirthMayBeKept, lawBrowserBirthNeedsEligibleVerifiedEnrollment as memberAge_lawBrowserBirthNeedsEligibleVerifiedEnrollment, signupAgeAt as memberAge_signupAgeAt, signupAgeCapNeeded as memberAge_signupAgeCapNeeded, lawMatchingSignupBirthKeepsBirthdays as memberAge_lawMatchingSignupBirthKeepsBirthdays, lawOtherBirthCannotAdvanceSignupMinor as memberAge_lawOtherBirthCannotAdvanceSignupMinor, lawSignupAgeDoesNotAdvanceEarly as memberAge_lawSignupAgeDoesNotAdvanceEarly, lawSignupAgeAdvancesAtEligibility as memberAge_lawSignupAgeAdvancesAtEligibility, lawSignupAgeKeepsAnIndependentFloor as memberAge_lawSignupAgeKeepsAnIndependentFloor, mayClearMaturedSignupMinor as memberAge_mayClearMaturedSignupMinor, lawOtherYouthEvidenceKeepsMinorRestricted as memberAge_lawOtherYouthEvidenceKeepsMinorRestricted, keepLaterEligibilityDate as memberAge_keepLaterEligibilityDate, lawAnotherSignupCannotAdvanceEligibility as memberAge_lawAnotherSignupCannotAdvanceEligibility } from "./memberAge.ts";
+import { type CasePhase as safetyCase_CasePhase, type SafetyCase as safetyCase_SafetyCase, type StaffActionResult as safetyCase_StaffActionResult, type ReportPhase as safetyCase_ReportPhase, type ReportDecision as safetyCase_ReportDecision, type SharedReportRoute as safetyCase_SharedReportRoute, initial as safetyCase_initial, canRecordCaseEvent as safetyCase_canRecordCaseEvent, recordCaseEvent as safetyCase_recordCaseEvent, lawDecayNeverOpensCase as safetyCase_lawDecayNeverOpensCase, liveCase as safetyCase_liveCase, canMarkCaseHeld as safetyCase_canMarkCaseHeld, markCaseHeld as safetyCase_markCaseHeld, canMarkCaseLifted as safetyCase_canMarkCaseLifted, markCaseLifted as safetyCase_markCaseLifted, canCloseCase as safetyCase_canCloseCase, closeCase as safetyCase_closeCase, stepClosedCaseStaysClosed as safetyCase_stepClosedCaseStaysClosed, sometimesCaseCloses as safetyCase_sometimesCaseCloses, sometimesCaseWasLifted as safetyCase_sometimesCaseWasLifted, holdLiftResult as safetyCase_holdLiftResult, caseCloseResult as safetyCase_caseCloseResult, holdAuthority as safetyCase_holdAuthority, holdSubjectKnown as safetyCase_holdSubjectKnown, immediateDangerReply as safetyCase_immediateDangerReply, lawEmergencyReplyRequiresOwnText as safetyCase_lawEmergencyReplyRequiresOwnText, lawEmergencyReplyRequiresCurrentDanger as safetyCase_lawEmergencyReplyRequiresCurrentDanger, emergencyCheckInReport as safetyCase_emergencyCheckInReport, lawEmergencyCheckInNeedsReceipt as safetyCase_lawEmergencyCheckInNeedsReceipt, safetyRequestMayResolveTarget as safetyCase_safetyRequestMayResolveTarget, lawConditionalSafetyRequestCannotResolveTarget as safetyCase_lawConditionalSafetyRequestCannotResolveTarget, acceptsReportEvidence as safetyCase_acceptsReportEvidence, lawCasualContactDoesNotEstablishHarm as safetyCase_lawCasualContactDoesNotEstablishHarm, lawDeniedEvidenceDoesNotEstablishHarm as safetyCase_lawDeniedEvidenceDoesNotEstablishHarm, acceptsMinorReportEvidence as safetyCase_acceptsMinorReportEvidence, lawMinorReportNeedsAffirmation as safetyCase_lawMinorReportNeedsAffirmation, lawMinorReportNeedsAnEligibleSubject as safetyCase_lawMinorReportNeedsAnEligibleSubject, reportAfterDecision as safetyCase_reportAfterDecision, reportRestrictsMatching as safetyCase_reportRestrictsMatching, lawDecidedReportDoesNotRestrictMatching as safetyCase_lawDecidedReportDoesNotRestrictMatching, lawDismissedReportStaysDismissed as safetyCase_lawDismissedReportStaysDismissed, carryReportOnAppLeave as safetyCase_carryReportOnAppLeave, archivedReportHoldAllowed as safetyCase_archivedReportHoldAllowed, lawOnlyOpenReportsCarry as safetyCase_lawOnlyOpenReportsCarry, lawReportedMinorSignalSurvivesOrdinaryLeave as safetyCase_lawReportedMinorSignalSurvivesOrdinaryLeave, lawAccountErasureCarriesNoReport as safetyCase_lawAccountErasureCarriesNoReport, lawArchivedHoldRequiresExactSubject as safetyCase_lawArchivedHoldRequiresExactSubject, sharedReportRoute as safetyCase_sharedReportRoute, reportClarificationTimeCurrent as safetyCase_reportClarificationTimeCurrent, lawSharedReportRequiresOneChoice as safetyCase_lawSharedReportRequiresOneChoice, lawReportReplyCannotPredateQuestion as safetyCase_lawReportReplyCannotPredateQuestion, safetyQuestionIsCurrent as safetyCase_safetyQuestionIsCurrent, lawExpiredSafetyQuestionCannotAct as safetyCase_lawExpiredSafetyQuestionCannotAct, safetyQuestionAcceptsName as safetyCase_safetyQuestionAcceptsName, lawSafetyControlCannotNameTarget as safetyCase_lawSafetyControlCannotNameTarget, safetyQuestionAppliesTarget as safetyCase_safetyQuestionAppliesTarget, safetyQuestionExclusion as safetyCase_safetyQuestionExclusion, lawCompetingPromptNeedsExplicitSafetyExclusion as safetyCase_lawCompetingPromptNeedsExplicitSafetyExclusion, lawExplicitSafetyExclusionStillApplies as safetyCase_lawExplicitSafetyExclusionStillApplies, safetyReplyAfterExclusion as safetyCase_safetyReplyAfterExclusion, lawSafetyReplacementSendsOnlySeparateReply as safetyCase_lawSafetyReplacementSendsOnlySeparateReply, lawSafetyReplacementAloneDoesNotAnswerAnotherPrompt as safetyCase_lawSafetyReplacementAloneDoesNotAnswerAnotherPrompt, safetyQuestionResolves as safetyCase_safetyQuestionResolves, lawCompetingPromptKeepsUnresolvedSafety as safetyCase_lawCompetingPromptKeepsUnresolvedSafety, lawCancellationResolvesSafety as safetyCase_lawCancellationResolvesSafety, lawAllowedTargetResolvesSafety as safetyCase_lawAllowedTargetResolvesSafety, lawTargetExclusionClosesWithoutFiling as safetyCase_lawTargetExclusionClosesWithoutFiling, lawLongUnrelatedReplyKeepsSafety as safetyCase_lawLongUnrelatedReplyKeepsSafety, safetyQuestionUsesSoleOffer as safetyCase_safetyQuestionUsesSoleOffer, lawCompetingPromptCannotUseSoleSafetyOffer as safetyCase_lawCompetingPromptCannotUseSoleSafetyOffer, lawSoleSafetyOfferRequiresExactConfirmation as safetyCase_lawSoleSafetyOfferRequiresExactConfirmation, lawNamedSafetyAnswerCannotUseSoleOffer as safetyCase_lawNamedSafetyAnswerCannotUseSoleOffer, inboundAllowedAfterBan as safetyCase_inboundAllowedAfterBan, lawBanBlocksOrdinaryInbound as safetyCase_lawBanBlocksOrdinaryInbound, minorClearResult as safetyCase_minorClearResult, teenDoubtClearResult as safetyCase_teenDoubtClearResult, lawTeenDoubtClearNeverClearsABar as safetyCase_lawTeenDoubtClearNeverClearsABar, lawTeenDoubtClearNeverClearsOlderReport as safetyCase_lawTeenDoubtClearNeverClearsOlderReport, lawTeenDoubtClearNeedsExactTeenBirth as safetyCase_lawTeenDoubtClearNeedsExactTeenBirth, lawTeenDoubtClearRefusesAnAdultBirth as safetyCase_lawTeenDoubtClearRefusesAnAdultBirth, personMinorSignalOpen as safetyCase_personMinorSignalOpen, lawAnUnclearedMinorSignalHoldsThePerson as safetyCase_lawAnUnclearedMinorSignalHoldsThePerson, lawAClearAtOrAfterTheSignalEndsIt as safetyCase_lawAClearAtOrAfterTheSignalEndsIt, lawANewSignalAfterAClearHoldsAgain as safetyCase_lawANewSignalAfterAClearHoldsAgain, lawNoSignalHoldsNobody as safetyCase_lawNoSignalHoldsNobody, personMinorSignalEndsEverywhere as safetyCase_personMinorSignalEndsEverywhere, lawAnUnclearedMembershipKeepsThePersonSignal as safetyCase_lawAnUnclearedMembershipKeepsThePersonSignal, lawASignalAfterTheEarliestClearStays as safetyCase_lawASignalAfterTheEarliestClearStays, lawClearsAtOrAfterTheSignalEverywhereEndIt as safetyCase_lawClearsAtOrAfterTheSignalEverywhereEndIt, pairOpportunityClosesOnBlock as safetyCase_pairOpportunityClosesOnBlock, pairBlockCancellationGoesTo as safetyCase_pairBlockCancellationGoesTo, lawOtherOpportunitiesStay as safetyCase_lawOtherOpportunitiesStay, lawAClosedOpportunityStaysClosed as safetyCase_lawAClosedOpportunityStaysClosed, lawTheKnownActorGetsNoCancellation as safetyCase_lawTheKnownActorGetsNoCancellation, lawTheOthersOfABookingHearItIsOff as safetyCase_lawTheOthersOfABookingHearItIsOff, lawWithAnUnknownActorEveryParticipantHears as safetyCase_lawWithAnUnknownActorEveryParticipantHears, lawNoCancellationBeforeABooking as safetyCase_lawNoCancellationBeforeABooking } from "./safetyCase.ts";
 import { type AgeSide as friendIntroAge_AgeSide } from "./friendIntroAge.ts";
 
 /** Story: Keep carrier commands, bans and age ahead of every other reading / STOP ends the message before any other check (spec/lineRouting.md) */
-export type LineGatePhase = "LineAwaitingCommand" | "LineAwaitingBan" | "LineAwaitingAge" | "LineAwaitingInviteDecline" | "LineAwaitingNumberHold" | "LineStopped" | "LineBannedIgnored" | "LineBannedHelp" | "LineAgeDeclined" | "LineUnderageHelp" | "LineInviteDeclined" | "LineNumberHeld" | "LineContinue";
-/** Story: Keep carrier commands, bans and age ahead of every other reading / STOP ends the message before any other check (spec/lineRouting.md) */
 export type LineCommand = "LineNoCommand" | "LineStop" | "LineHelp" | "LineStart";
+/** Story: Keep carrier commands, bans and age ahead of every other reading / STOP ends the message before any other check (spec/lineRouting.md) */
+export type LineGatePhase = "LineAwaitingCommand" | "LineAwaitingBan" | "LineAwaitingAge" | "LineAwaitingInviteDecline" | "LineAwaitingNumberHold" | "LineStopped" | "LineBannedIgnored" | "LineBannedHelp" | "LineAgeDeclined" | "LineUnderageHelp" | "LineInviteDeclined" | "LineNumberHeld" | "LineContinue";
 /** Story: Keep carrier commands, bans and age ahead of every other reading / STOP ends the message before any other check (spec/lineRouting.md) */
 export interface LineGate { phase: LineGatePhase; command: LineCommand; leaveNamed: boolean; banned: boolean; underage: boolean }
 /** Story: Keep carrier commands, bans and age ahead of every other reading / Every app leave gets one honest reply (spec/lineRouting.md) */
@@ -25,10 +25,10 @@ export type Event =
   | { type: "checkLineInviteDecline"; declines: boolean }
   | { type: "checkLineNumberHold"; held: boolean };
 
-/** Story: Report a person in the app where I met them / A block, a report and the answer to "Who do you mean?" go to the app where they belong (spec/lineRouting.md) */
-export const maxWhoAnswerWords: number = 4;
 /** Story: Keep carrier commands, bans and age ahead of every other reading / STOP ends the message before any other check (spec/lineRouting.md) */
 export const initial: LineGate = { phase: "LineAwaitingCommand", command: "LineNoCommand", leaveNamed: false, banned: false, underage: false };
+/** Story: Report a person in the app where I met them / A block, a report and the answer to "Who do you mean?" go to the app where they belong (spec/lineRouting.md) */
+export const maxWhoAnswerWords: number = 4;
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
@@ -50,12 +50,6 @@ export function canReadLineCommand(gate: LineGate): boolean {
 
 /** Story: Keep carrier commands, bans and age ahead of every other reading / STOP ends the message before any other check (spec/lineRouting.md) */
 //@ pure
-export function sometimesLineStopped(gate: LineGate): boolean {
-  return gate.phase === "LineStopped";
-}
-
-/** Story: Keep carrier commands, bans and age ahead of every other reading / STOP ends the message before any other check (spec/lineRouting.md) */
-//@ pure
 export function readLineCommand(gate: LineGate, command: LineCommand, leaveNamed: boolean): LineGate {
   //@ ensures (inv(gate) && canReadLineCommand(gate)) ==> alwaysStopGoesNoFurther(\result)
   //@ ensures (inv(gate) && canReadLineCommand(gate)) ==> alwaysBannedPassesOnlyToLeave(\result)
@@ -68,6 +62,12 @@ export function readLineCommand(gate: LineGate, command: LineCommand, leaveNamed
 //@ pure
 export function alwaysStopGoesNoFurther(gate: LineGate): boolean {
   return !lineCommandStops(gate.command) || gate.phase === "LineStopped";
+}
+
+/** Story: Keep carrier commands, bans and age ahead of every other reading / STOP ends the message before any other check (spec/lineRouting.md) */
+//@ pure
+export function sometimesLineStopped(gate: LineGate): boolean {
+  return gate.phase === "LineStopped";
 }
 
 /** Story: Keep carrier commands, bans and age ahead of every other reading / A banned number gets only HELP and app leave (spec/lineRouting.md) */
@@ -90,6 +90,22 @@ export function canCheckLineBan(gate: LineGate): boolean {
 
 /** Story: Keep carrier commands, bans and age ahead of every other reading / A banned number gets only HELP and app leave (spec/lineRouting.md) */
 //@ pure
+export function checkLineBan(gate: LineGate, banned: boolean): LineGate {
+  //@ ensures (inv(gate) && canCheckLineBan(gate)) ==> alwaysStopGoesNoFurther(\result)
+  //@ ensures (inv(gate) && canCheckLineBan(gate)) ==> alwaysBannedPassesOnlyToLeave(\result)
+  //@ ensures (inv(gate) && canCheckLineBan(gate)) ==> alwaysUnderagePassesOnlyToLeave(\result)
+  //@ ensures (inv(gate) && canCheckLineBan(gate)) ==> alwaysHeldNumberIsNotBanned(\result)
+  return { ...gate, banned: banned, phase: !safetyCase_inboundAllowedAfterBan(banned, lineCompliance(gate.command, gate.leaveNamed)) ? "LineBannedIgnored" : (banned && gate.command === "LineHelp" ? "LineBannedHelp" : "LineAwaitingAge") };
+}
+
+/** Story: Keep carrier commands, bans and age ahead of every other reading / A banned number gets only HELP and app leave (spec/lineRouting.md) */
+//@ pure
+export function alwaysBannedPassesOnlyToLeave(gate: LineGate): boolean {
+  return !(linePastBan(gate.phase) && gate.banned) || (gate.leaveNamed && gate.command !== "LineHelp");
+}
+
+/** Story: Keep carrier commands, bans and age ahead of every other reading / A banned number gets only HELP and app leave (spec/lineRouting.md) */
+//@ pure
 export function sometimesBannedLeaves(gate: LineGate): boolean {
   return gate.phase === "LineContinue" && gate.banned;
 }
@@ -106,22 +122,6 @@ export function sometimesBannedGetsHelp(gate: LineGate): boolean {
   return gate.phase === "LineBannedHelp";
 }
 
-/** Story: Keep carrier commands, bans and age ahead of every other reading / A banned number gets only HELP and app leave (spec/lineRouting.md) */
-//@ pure
-export function checkLineBan(gate: LineGate, banned: boolean): LineGate {
-  //@ ensures (inv(gate) && canCheckLineBan(gate)) ==> alwaysStopGoesNoFurther(\result)
-  //@ ensures (inv(gate) && canCheckLineBan(gate)) ==> alwaysBannedPassesOnlyToLeave(\result)
-  //@ ensures (inv(gate) && canCheckLineBan(gate)) ==> alwaysUnderagePassesOnlyToLeave(\result)
-  //@ ensures (inv(gate) && canCheckLineBan(gate)) ==> alwaysHeldNumberIsNotBanned(\result)
-  return { ...gate, banned: banned, phase: !safetyCase_inboundAllowedAfterBan(banned, lineCompliance(gate.command, gate.leaveNamed)) ? "LineBannedIgnored" : (banned && gate.command === "LineHelp" ? "LineBannedHelp" : "LineAwaitingAge") };
-}
-
-/** Story: Keep carrier commands, bans and age ahead of every other reading / A banned number gets only HELP and app leave (spec/lineRouting.md) */
-//@ pure
-export function alwaysBannedPassesOnlyToLeave(gate: LineGate): boolean {
-  return !(linePastBan(gate.phase) && gate.banned) || (gate.leaveNamed && gate.command !== "LineHelp");
-}
-
 /** Story: Keep carrier commands, bans and age ahead of every other reading / A confirmed age under 13 gets only HELP and app leave (spec/lineRouting.md) */
 //@ pure
 export function linePastAge(phase: LineGatePhase): boolean {
@@ -132,24 +132,6 @@ export function linePastAge(phase: LineGatePhase): boolean {
 //@ pure
 export function canCheckLineAge(gate: LineGate): boolean {
   return gate.phase === "LineAwaitingAge";
-}
-
-/** Story: Keep carrier commands, bans and age ahead of every other reading / A confirmed age under 13 gets only HELP and app leave (spec/lineRouting.md) */
-//@ pure
-export function sometimesUnderageLeaves(gate: LineGate): boolean {
-  return gate.phase === "LineContinue" && gate.underage;
-}
-
-/** Story: Keep carrier commands, bans and age ahead of every other reading / A confirmed age under 13 gets only HELP and app leave (spec/lineRouting.md) */
-//@ pure
-export function sometimesAgeDeclined(gate: LineGate): boolean {
-  return gate.phase === "LineAgeDeclined";
-}
-
-/** Story: Keep carrier commands, bans and age ahead of every other reading / A confirmed age under 13 gets only HELP and app leave (spec/lineRouting.md) */
-//@ pure
-export function sometimesUnderageGetsHelp(gate: LineGate): boolean {
-  return gate.phase === "LineUnderageHelp";
 }
 
 /** Story: Keep carrier commands, bans and age ahead of every other reading / A confirmed age under 13 gets only HELP and app leave (spec/lineRouting.md) */
@@ -175,10 +157,22 @@ export function lawUnderageStartIsDeclined(age: number): boolean {
   return !memberAge_confirmedUnderage(age) || checkLineAge(({ phase: "LineAwaitingAge", command: "LineStart", leaveNamed: false, banned: false, underage: false } as LineGate), age).phase === "LineAgeDeclined";
 }
 
-/** Story: Keep carrier commands, bans and age ahead of every other reading / An invitation decline and a held number come before any flow (spec/lineRouting.md) */
+/** Story: Keep carrier commands, bans and age ahead of every other reading / A confirmed age under 13 gets only HELP and app leave (spec/lineRouting.md) */
 //@ pure
-export function lineNumberHoldReadNeeded(banned: boolean): boolean {
-  return !banned;
+export function sometimesUnderageLeaves(gate: LineGate): boolean {
+  return gate.phase === "LineContinue" && gate.underage;
+}
+
+/** Story: Keep carrier commands, bans and age ahead of every other reading / A confirmed age under 13 gets only HELP and app leave (spec/lineRouting.md) */
+//@ pure
+export function sometimesAgeDeclined(gate: LineGate): boolean {
+  return gate.phase === "LineAgeDeclined";
+}
+
+/** Story: Keep carrier commands, bans and age ahead of every other reading / A confirmed age under 13 gets only HELP and app leave (spec/lineRouting.md) */
+//@ pure
+export function sometimesUnderageGetsHelp(gate: LineGate): boolean {
+  return gate.phase === "LineUnderageHelp";
 }
 
 /** Story: Keep carrier commands, bans and age ahead of every other reading / An invitation decline and a held number come before any flow (spec/lineRouting.md) */
@@ -195,6 +189,12 @@ export function checkLineInviteDecline(gate: LineGate, declines: boolean): LineG
   //@ ensures (inv(gate) && canCheckLineInviteDecline(gate)) ==> alwaysUnderagePassesOnlyToLeave(\result)
   //@ ensures (inv(gate) && canCheckLineInviteDecline(gate)) ==> alwaysHeldNumberIsNotBanned(\result)
   return { ...gate, phase: declines ? "LineInviteDeclined" : "LineAwaitingNumberHold" };
+}
+
+/** Story: Keep carrier commands, bans and age ahead of every other reading / An invitation decline and a held number come before any flow (spec/lineRouting.md) */
+//@ pure
+export function lineNumberHoldReadNeeded(banned: boolean): boolean {
+  return !banned;
 }
 
 /** Story: Keep carrier commands, bans and age ahead of every other reading / An invitation decline and a held number come before any flow (spec/lineRouting.md) */
@@ -278,18 +278,18 @@ export function lookingForWants(mention: LookingForMention, everything: boolean)
 
 /** Story: Join the apps I asked for from The Network / A refused app is never enrolled, even with "all of them" (spec/lineRouting.md) */
 //@ pure
-export function lawRefusedMentionIsNeverWanted(everything: boolean): boolean {
-  //@ ensures \result === true
-  return !lookingForWants("MentionRefused", everything);
-}
-
-/** Story: Join the apps I asked for from The Network / A refused app is never enrolled, even with "all of them" (spec/lineRouting.md) */
-//@ pure
 export function lookingForApps(reading: LookingForReading): string[] {
   const local_0 = lookingForWants(reading.friends, reading.everything) ? (["friends"] as string[]) : ([] as string[]);
   const local_1 = lookingForWants(reading.dating, reading.everything) ? (["slop"] as string[]) : ([] as string[]);
   const local_2 = lookingForWants(reading.work, reading.everything) ? (["peon"] as string[]) : ([] as string[]);
   return local_0.concat(local_1, local_2);
+}
+
+/** Story: Join the apps I asked for from The Network / A refused app is never enrolled, even with "all of them" (spec/lineRouting.md) */
+//@ pure
+export function lawRefusedMentionIsNeverWanted(everything: boolean): boolean {
+  //@ ensures \result === true
+  return !lookingForWants("MentionRefused", everything);
 }
 
 /** Story: Join the apps I asked for from The Network / A refused app is never enrolled, even with "all of them" (spec/lineRouting.md) */
@@ -334,6 +334,13 @@ export function safetyAnswerClaims(pendingSafetyAt: number, newestOtherMessageAt
 //@ pure
 export function safetyClaimLeads(claims: boolean, at: number, leadAt: number): boolean {
   return claims && at > leadAt;
+}
+
+/** Story: Report a person in the app where I met them / A block, a report and the answer to "Who do you mean?" go to the app where they belong (spec/lineRouting.md) */
+//@ pure
+export function lawOneAppNeedsNoSafetyRead(safetyCommand: boolean, words: number): boolean {
+  //@ ensures \result === true
+  return !safetyRouteReadNeeded(1, safetyCommand, words);
 }
 
 /** Story: Report a person in the app where I met them / A block, a report and the answer to "Who do you mean?" go to the app where they belong (spec/lineRouting.md) */
@@ -418,13 +425,6 @@ export function lawFirstClaimLeads(at: number): boolean {
 export function lawEqualTimeKeepsTheLead(at: number): boolean {
   //@ ensures \result === true
   return !safetyClaimLeads(true, at, at);
-}
-
-/** Story: Report a person in the app where I met them / A block, a report and the answer to "Who do you mean?" go to the app where they belong (spec/lineRouting.md) */
-//@ pure
-export function lawOneAppNeedsNoSafetyRead(safetyCommand: boolean, words: number): boolean {
-  //@ ensures \result === true
-  return !safetyRouteReadNeeded(1, safetyCommand, words);
 }
 
 /** Do the rules allow this event in this state? */

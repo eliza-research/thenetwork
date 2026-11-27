@@ -13,13 +13,6 @@ export function networkIntentRoute(eligibleCategory: boolean, specific: NetworkI
 
 /** Story: Use my request as the purpose of the introduction / One request can open one lane (spec/networkIntentLane.md) */
 //@ pure
-export function lawExcludedNetworkIntentHasNoRoute(specific: NetworkIntentRoute, professional: boolean): boolean {
-  //@ ensures \result === true
-  return networkIntentRoute(false, specific, professional) === "NoRoute";
-}
-
-/** Story: Use my request as the purpose of the introduction / One request can open one lane (spec/networkIntentLane.md) */
-//@ pure
 export function lawExplicitNetworkIntentKeepsItsRoute(specific: NetworkIntentRoute, professional: boolean): boolean {
   //@ ensures \result === true
   return !(specific !== "NoRoute") || networkIntentRoute(true, specific, professional) === specific;
@@ -30,6 +23,13 @@ export function lawExplicitNetworkIntentKeepsItsRoute(specific: NetworkIntentRou
 export function lawNetworkIntentDefaultsOnlyWithNoSpecificRoute(professional: boolean): boolean {
   //@ ensures \result === true
   return networkIntentRoute(true, "NoRoute", professional) === (professional ? "IntroRoute" : "FriendRoute");
+}
+
+/** Story: Use my request as the purpose of the introduction / One request can open one lane (spec/networkIntentLane.md) */
+//@ pure
+export function lawExcludedNetworkIntentHasNoRoute(specific: NetworkIntentRoute, professional: boolean): boolean {
+  //@ ensures \result === true
+  return networkIntentRoute(false, specific, professional) === "NoRoute";
 }
 
 /** Story: Use my request as the purpose of the introduction / A direct introduction keeps its hobby purpose (spec/networkIntentLane.md) */

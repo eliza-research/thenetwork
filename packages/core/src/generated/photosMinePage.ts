@@ -2,11 +2,11 @@
 //@ backend dafny
 
 /** Story: See which matches have my photos and take one back / The page reads the token from the fragment once and asks for the list only for a well-formed token (spec/photosMinePage.md) */
+export type HoldingsScreen = "HoldingsOpening" | "HoldingsList" | "HoldingsEmpty" | "HoldingsTimedOut" | "HoldingsUnavailable" | "HoldingsOtherPhone" | "HoldingsOpenFailed";
+/** Story: See which matches have my photos and take one back / The page reads the token from the fragment once and asks for the list only for a well-formed token (spec/photosMinePage.md) */
 export type HoldingsPending = "HoldingsIdle" | "HoldingsReading" | "HoldingsTakingBack";
 /** Story: See which matches have my photos and take one back / The page reads the token from the fragment once and asks for the list only for a well-formed token (spec/photosMinePage.md) */
 export type HoldingsNotice = "HoldingsNoNotice" | "HoldingsUnreachable" | "HoldingsFailed";
-/** Story: See which matches have my photos and take one back / The page reads the token from the fragment once and asks for the list only for a well-formed token (spec/photosMinePage.md) */
-export type HoldingsScreen = "HoldingsOpening" | "HoldingsList" | "HoldingsEmpty" | "HoldingsTimedOut" | "HoldingsUnavailable" | "HoldingsOtherPhone" | "HoldingsOpenFailed";
 /** Story: See which matches have my photos and take one back / The page reads the token from the fragment once and asks for the list only for a well-formed token (spec/photosMinePage.md) */
 export interface PhotoHoldingsPage { screen: HoldingsScreen; pending: HoldingsPending; notice: HoldingsNotice; linkHeld: boolean; photos: number; grants: number; takenBack: number }
 /** Story: See which matches have my photos and take one back / The open answer decides between the list, the empty list, a closed link and a retry (spec/photosMinePage.md) */
@@ -20,31 +20,31 @@ export type GrantAccess = "GrantAsked" | "GrantChecking" | "GrantReady" | "Grant
 /** Story: See which matches have my photos and take one back / Each share shows who has the photo and how far the offer is, and never whether it was opened (spec/photosMinePage.md) */
 export type GrantMark = "GrantOpen" | "GrantTakingBack" | "GrantTakenBack" | "GrantClosed";
 /** Story: See which matches have my photos and take one back / Each photo shows its image only from its own answer (spec/photosMinePage.md) */
-export type PhotoTile = "TileLoading" | "TileShown" | "TileMissing";
-/** Story: See which matches have my photos and take one back / Each photo shows its image only from its own answer (spec/photosMinePage.md) */
 export type ImageKind = "ImageShown" | "ImageMissing" | "ImageTimedOut" | "ImageUnavailable" | "ImageOtherPhone";
+/** Story: See which matches have my photos and take one back / Each photo shows its image only from its own answer (spec/photosMinePage.md) */
+export type PhotoTile = "TileLoading" | "TileShown" | "TileMissing";
 /** Story: See which matches have my photos and take one back / The person takes back one share at a time, and only the server's answer marks it taken back (spec/photosMinePage.md) */
 export type TakeBackKind = "TakeBackDone" | "TakeBackNothingOpen" | "TakeBackTimedOut" | "TakeBackUnavailable" | "TakeBackOtherPhone" | "TakeBackUnreachable" | "TakeBackFailed";
 
 /** One variant per transition in the spec. */
 export type Event =
   | { type: "openHoldingsPage"; tokenWellFormed: boolean }
-  | { type: "retryOpen" }
   | { type: "answerOpen"; opened: OpenAnswer }
+  | { type: "retryOpen" }
   | { type: "answerImage"; imageAnswer: ImageKind }
   | { type: "takeBack" }
-  | { type: "reopenAfterTakeBack" }
-  | { type: "answerTakeBack"; takeBackAnswer: TakeBackKind };
+  | { type: "answerTakeBack"; takeBackAnswer: TakeBackKind }
+  | { type: "reopenAfterTakeBack" };
 
 /** Story: See which matches have my photos and take one back / The page reads the token from the fragment once and asks for the list only for a well-formed token (spec/photosMinePage.md) */
-export const holdingsPhotoMax: number = 6;
-/** Story: See which matches have my photos and take one back / The page reads the token from the fragment once and asks for the list only for a well-formed token (spec/photosMinePage.md) */
 export const initial: PhotoHoldingsPage = { screen: "HoldingsOpening", pending: "HoldingsIdle", notice: "HoldingsNoNotice", linkHeld: false, photos: 0, grants: 0, takenBack: 0 };
+/** Story: See which matches have my photos and take one back / The page reads the token from the fragment once and asks for the list only for a well-formed token (spec/photosMinePage.md) */
+export const holdingsPhotoMax: number = 6;
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: PhotoHoldingsPage): boolean {
-  return alwaysReadingHoldsTheLink(current) && alwaysClosedScreensDropTheLink(current) && alwaysListHasAPhotoAndTheLink(current) && alwaysOnlyTheListHasPhotos(current) && alwaysRetryHoldsTheLink(current) && alwaysTakeBackOnlyOnTheList(current) && alwaysCountsNeverNegative(current) && alwaysNoticeOnlyWithTheLink(current);
+  return alwaysClosedScreensDropTheLink(current) && alwaysReadingHoldsTheLink(current) && alwaysListHasAPhotoAndTheLink(current) && alwaysOnlyTheListHasPhotos(current) && alwaysRetryHoldsTheLink(current) && alwaysTakeBackOnlyOnTheList(current) && alwaysCountsNeverNegative(current) && alwaysNoticeOnlyWithTheLink(current);
 }
 
 /** Story: See which matches have my photos and take one back / The page reads the token from the fragment once and asks for the list only for a well-formed token (spec/photosMinePage.md) */
@@ -56,8 +56,8 @@ export function canOpenHoldingsPage(page: PhotoHoldingsPage): boolean {
 /** Story: See which matches have my photos and take one back / The page reads the token from the fragment once and asks for the list only for a well-formed token (spec/photosMinePage.md) */
 //@ pure
 export function openHoldingsPage(page: PhotoHoldingsPage, tokenWellFormed: boolean): PhotoHoldingsPage {
-  //@ ensures (inv(page) && canOpenHoldingsPage(page)) ==> alwaysReadingHoldsTheLink(\result)
   //@ ensures (inv(page) && canOpenHoldingsPage(page)) ==> alwaysClosedScreensDropTheLink(\result)
+  //@ ensures (inv(page) && canOpenHoldingsPage(page)) ==> alwaysReadingHoldsTheLink(\result)
   //@ ensures (inv(page) && canOpenHoldingsPage(page)) ==> alwaysListHasAPhotoAndTheLink(\result)
   //@ ensures (inv(page) && canOpenHoldingsPage(page)) ==> alwaysOnlyTheListHasPhotos(\result)
   //@ ensures (inv(page) && canOpenHoldingsPage(page)) ==> alwaysRetryHoldsTheLink(\result)
@@ -80,14 +80,14 @@ export function holdingsClosed(screen: HoldingsScreen): boolean {
 
 /** Story: See which matches have my photos and take one back / The page reads the token from the fragment once and asks for the list only for a well-formed token (spec/photosMinePage.md) */
 //@ pure
-export function alwaysReadingHoldsTheLink(page: PhotoHoldingsPage): boolean {
-  return !(page.pending === "HoldingsReading") || (page.linkHeld && page.screen === "HoldingsOpening");
+export function alwaysClosedScreensDropTheLink(page: PhotoHoldingsPage): boolean {
+  return !holdingsClosed(page.screen) || (!page.linkHeld && page.pending === "HoldingsIdle");
 }
 
 /** Story: See which matches have my photos and take one back / The page reads the token from the fragment once and asks for the list only for a well-formed token (spec/photosMinePage.md) */
 //@ pure
-export function alwaysClosedScreensDropTheLink(page: PhotoHoldingsPage): boolean {
-  return !holdingsClosed(page.screen) || (!page.linkHeld && page.pending === "HoldingsIdle");
+export function alwaysReadingHoldsTheLink(page: PhotoHoldingsPage): boolean {
+  return !(page.pending === "HoldingsReading") || (page.linkHeld && page.screen === "HoldingsOpening");
 }
 
 /** Story: See which matches have my photos and take one back / The open answer decides between the list, the empty list, a closed link and a retry (spec/photosMinePage.md) */
@@ -116,6 +116,27 @@ export function canAnswerOpen(page: PhotoHoldingsPage): boolean {
 
 /** Story: See which matches have my photos and take one back / The open answer decides between the list, the empty list, a closed link and a retry (spec/photosMinePage.md) */
 //@ pure
+export function answerOpen(page: PhotoHoldingsPage, opened: OpenAnswer): PhotoHoldingsPage {
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysClosedScreensDropTheLink(\result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysReadingHoldsTheLink(\result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysListHasAPhotoAndTheLink(\result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysOnlyTheListHasPhotos(\result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysRetryHoldsTheLink(\result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysTakeBackOnlyOnTheList(\result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysCountsNeverNegative(\result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysNoticeOnlyWithTheLink(\result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> stepReopenOnlyAfterATakeBack(page, "answerOpen", \result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> stepOneTakeBackAtATime(page, "answerOpen", \result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> stepTakenBackOnlyFromTheAnswer(page, "answerOpen", \result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> stepSharesNeverGrow(page, "answerOpen", \result)
+  //@ ensures (inv(page) && canAnswerOpen(page)) ==> stepClosedLinkNeverReopens(page, \result)
+  const local_0: PhotoHoldingsPage = { ...page, pending: "HoldingsIdle", notice: "HoldingsNoNotice" };
+  const local_1 = photosShown(opened.photos);
+  return opened.kind === "OpenListed" && local_1 >= 1 ? ({ ...local_0, screen: "HoldingsList", photos: local_1, grants: grantsShown(opened.photos, opened.grants), takenBack: 0 } as PhotoHoldingsPage) : (opened.kind === "OpenListed" ? ({ ...local_0, screen: "HoldingsEmpty", linkHeld: false, photos: 0, grants: 0, takenBack: 0 } as PhotoHoldingsPage) : (opened.kind === "OpenUnreachable" ? ({ ...local_0, screen: "HoldingsOpenFailed", notice: "HoldingsUnreachable" } as PhotoHoldingsPage) : (opened.kind === "OpenFailed" ? ({ ...local_0, screen: "HoldingsOpenFailed", notice: "HoldingsFailed" } as PhotoHoldingsPage) : ({ ...local_0, screen: closedScreenFor(opened.kind), linkHeld: false, photos: 0, grants: 0, takenBack: 0 } as PhotoHoldingsPage))));
+}
+
+/** Story: See which matches have my photos and take one back / The open answer decides between the list, the empty list, a closed link and a retry (spec/photosMinePage.md) */
+//@ pure
 export function canRetryOpen(page: PhotoHoldingsPage): boolean {
   return page.screen === "HoldingsOpenFailed" && page.pending === "HoldingsIdle" && page.linkHeld;
 }
@@ -123,8 +144,8 @@ export function canRetryOpen(page: PhotoHoldingsPage): boolean {
 /** Story: See which matches have my photos and take one back / The open answer decides between the list, the empty list, a closed link and a retry (spec/photosMinePage.md) */
 //@ pure
 export function retryOpen(page: PhotoHoldingsPage): PhotoHoldingsPage {
-  //@ ensures (inv(page) && canRetryOpen(page)) ==> alwaysReadingHoldsTheLink(\result)
   //@ ensures (inv(page) && canRetryOpen(page)) ==> alwaysClosedScreensDropTheLink(\result)
+  //@ ensures (inv(page) && canRetryOpen(page)) ==> alwaysReadingHoldsTheLink(\result)
   //@ ensures (inv(page) && canRetryOpen(page)) ==> alwaysListHasAPhotoAndTheLink(\result)
   //@ ensures (inv(page) && canRetryOpen(page)) ==> alwaysOnlyTheListHasPhotos(\result)
   //@ ensures (inv(page) && canRetryOpen(page)) ==> alwaysRetryHoldsTheLink(\result)
@@ -148,45 +169,6 @@ export function lawPhotosShownFitTheLimit(count: number): boolean {
 
 /** Story: See which matches have my photos and take one back / The open answer decides between the list, the empty list, a closed link and a retry (spec/photosMinePage.md) */
 //@ pure
-export function alwaysListHasAPhotoAndTheLink(page: PhotoHoldingsPage): boolean {
-  return !(page.screen === "HoldingsList") || (page.photos >= 1 && page.photos <= holdingsPhotoMax && page.linkHeld);
-}
-
-/** Story: See which matches have my photos and take one back / The open answer decides between the list, the empty list, a closed link and a retry (spec/photosMinePage.md) */
-//@ pure
-export function alwaysOnlyTheListHasPhotos(page: PhotoHoldingsPage): boolean {
-  return !(page.screen !== "HoldingsList") || (page.photos === 0 && page.grants === 0 && page.takenBack === 0);
-}
-
-/** Story: See which matches have my photos and take one back / The open answer decides between the list, the empty list, a closed link and a retry (spec/photosMinePage.md) */
-//@ pure
-export function alwaysRetryHoldsTheLink(page: PhotoHoldingsPage): boolean {
-  return !(page.screen === "HoldingsOpenFailed") || (page.linkHeld && page.notice !== "HoldingsNoNotice");
-}
-
-/** Story: See which matches have my photos and take one back / The open answer decides between the list, the empty list, a closed link and a retry (spec/photosMinePage.md) */
-//@ pure
-export function answerOpen(page: PhotoHoldingsPage, opened: OpenAnswer): PhotoHoldingsPage {
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysReadingHoldsTheLink(\result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysClosedScreensDropTheLink(\result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysListHasAPhotoAndTheLink(\result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysOnlyTheListHasPhotos(\result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysRetryHoldsTheLink(\result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysTakeBackOnlyOnTheList(\result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysCountsNeverNegative(\result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> alwaysNoticeOnlyWithTheLink(\result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> stepReopenOnlyAfterATakeBack(page, "answerOpen", \result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> stepOneTakeBackAtATime(page, "answerOpen", \result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> stepTakenBackOnlyFromTheAnswer(page, "answerOpen", \result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> stepSharesNeverGrow(page, "answerOpen", \result)
-  //@ ensures (inv(page) && canAnswerOpen(page)) ==> stepClosedLinkNeverReopens(page, \result)
-  const local_0: PhotoHoldingsPage = { ...page, pending: "HoldingsIdle", notice: "HoldingsNoNotice" };
-  const local_1 = photosShown(opened.photos);
-  return opened.kind === "OpenListed" && local_1 >= 1 ? ({ ...local_0, screen: "HoldingsList", photos: local_1, grants: grantsShown(opened.photos, opened.grants), takenBack: 0 } as PhotoHoldingsPage) : (opened.kind === "OpenListed" ? ({ ...local_0, screen: "HoldingsEmpty", linkHeld: false, photos: 0, grants: 0, takenBack: 0 } as PhotoHoldingsPage) : (opened.kind === "OpenUnreachable" ? ({ ...local_0, screen: "HoldingsOpenFailed", notice: "HoldingsUnreachable" } as PhotoHoldingsPage) : (opened.kind === "OpenFailed" ? ({ ...local_0, screen: "HoldingsOpenFailed", notice: "HoldingsFailed" } as PhotoHoldingsPage) : ({ ...local_0, screen: closedScreenFor(opened.kind), linkHeld: false, photos: 0, grants: 0, takenBack: 0 } as PhotoHoldingsPage))));
-}
-
-/** Story: See which matches have my photos and take one back / The open answer decides between the list, the empty list, a closed link and a retry (spec/photosMinePage.md) */
-//@ pure
 export function lawNoPhotoMeansNoShare(grants: number): boolean {
   //@ ensures \result === true
   return grantsShown(0, grants) === 0;
@@ -206,6 +188,24 @@ export function lawRetryKindsKeepTheLink(page: PhotoHoldingsPage, opened: OpenAn
   return !(canAnswerOpen(page) && page.linkHeld && (opened.kind === "OpenUnreachable" || opened.kind === "OpenFailed")) || (answerOpen(page, opened).linkHeld === page.linkHeld && canRetryOpen(answerOpen(page, opened)));
 }
 
+/** Story: See which matches have my photos and take one back / The open answer decides between the list, the empty list, a closed link and a retry (spec/photosMinePage.md) */
+//@ pure
+export function alwaysListHasAPhotoAndTheLink(page: PhotoHoldingsPage): boolean {
+  return !(page.screen === "HoldingsList") || (page.photos >= 1 && page.photos <= holdingsPhotoMax && page.linkHeld);
+}
+
+/** Story: See which matches have my photos and take one back / The open answer decides between the list, the empty list, a closed link and a retry (spec/photosMinePage.md) */
+//@ pure
+export function alwaysOnlyTheListHasPhotos(page: PhotoHoldingsPage): boolean {
+  return !(page.screen !== "HoldingsList") || (page.photos === 0 && page.grants === 0 && page.takenBack === 0);
+}
+
+/** Story: See which matches have my photos and take one back / The open answer decides between the list, the empty list, a closed link and a retry (spec/photosMinePage.md) */
+//@ pure
+export function alwaysRetryHoldsTheLink(page: PhotoHoldingsPage): boolean {
+  return !(page.screen === "HoldingsOpenFailed") || (page.linkHeld && page.notice !== "HoldingsNoNotice");
+}
+
 /** Story: See which matches have my photos and take one back / Each share shows who has the photo and how far the offer is, and never whether it was opened (spec/photosMinePage.md) */
 //@ pure
 export function grantAccessOf(wire: GrantWire): GrantAccess {
@@ -222,6 +222,13 @@ export function grantCanBeTakenBack(access: GrantAccess): boolean {
 //@ pure
 export function grantMarkOnOpen(access: GrantAccess): GrantMark {
   return grantCanBeTakenBack(access) ? "GrantOpen" : "GrantTakenBack";
+}
+
+/** Story: See which matches have my photos and take one back / Each share shows who has the photo and how far the offer is, and never whether it was opened (spec/photosMinePage.md) */
+//@ pure
+export function lawTakenBackShareOffersNothing(access: GrantAccess): boolean {
+  //@ ensures \result === true
+  return (access === "GrantWasTakenBack") === (grantMarkOnOpen(access) === "GrantTakenBack");
 }
 
 /** Story: See which matches have my photos and take one back / Each share shows who has the photo and how far the offer is, and never whether it was opened (spec/photosMinePage.md) */
@@ -245,13 +252,6 @@ export function lawOnlyTakenBackOnTheWireShowsTakenBack(wire: GrantWire): boolea
   return (grantAccessOf(wire) === "GrantWasTakenBack") === (wire === "WireTakenBack");
 }
 
-/** Story: See which matches have my photos and take one back / Each share shows who has the photo and how far the offer is, and never whether it was opened (spec/photosMinePage.md) */
-//@ pure
-export function lawTakenBackShareOffersNothing(access: GrantAccess): boolean {
-  //@ ensures \result === true
-  return (access === "GrantWasTakenBack") === (grantMarkOnOpen(access) === "GrantTakenBack");
-}
-
 /** Story: See which matches have my photos and take one back / Each photo shows its image only from its own answer (spec/photosMinePage.md) */
 //@ pure
 export function photoTileFor(kind: ImageKind): PhotoTile {
@@ -273,8 +273,8 @@ export function canAnswerImage(page: PhotoHoldingsPage): boolean {
 /** Story: See which matches have my photos and take one back / Each photo shows its image only from its own answer (spec/photosMinePage.md) */
 //@ pure
 export function answerImage(page: PhotoHoldingsPage, imageAnswer: ImageKind): PhotoHoldingsPage {
-  //@ ensures (inv(page) && canAnswerImage(page)) ==> alwaysReadingHoldsTheLink(\result)
   //@ ensures (inv(page) && canAnswerImage(page)) ==> alwaysClosedScreensDropTheLink(\result)
+  //@ ensures (inv(page) && canAnswerImage(page)) ==> alwaysReadingHoldsTheLink(\result)
   //@ ensures (inv(page) && canAnswerImage(page)) ==> alwaysListHasAPhotoAndTheLink(\result)
   //@ ensures (inv(page) && canAnswerImage(page)) ==> alwaysOnlyTheListHasPhotos(\result)
   //@ ensures (inv(page) && canAnswerImage(page)) ==> alwaysRetryHoldsTheLink(\result)
@@ -325,8 +325,8 @@ export function canTakeBack(page: PhotoHoldingsPage): boolean {
 /** Story: See which matches have my photos and take one back / The person takes back one share at a time, and only the server's answer marks it taken back (spec/photosMinePage.md) */
 //@ pure
 export function takeBack(page: PhotoHoldingsPage): PhotoHoldingsPage {
-  //@ ensures (inv(page) && canTakeBack(page)) ==> alwaysReadingHoldsTheLink(\result)
   //@ ensures (inv(page) && canTakeBack(page)) ==> alwaysClosedScreensDropTheLink(\result)
+  //@ ensures (inv(page) && canTakeBack(page)) ==> alwaysReadingHoldsTheLink(\result)
   //@ ensures (inv(page) && canTakeBack(page)) ==> alwaysListHasAPhotoAndTheLink(\result)
   //@ ensures (inv(page) && canTakeBack(page)) ==> alwaysOnlyTheListHasPhotos(\result)
   //@ ensures (inv(page) && canTakeBack(page)) ==> alwaysRetryHoldsTheLink(\result)
@@ -349,6 +349,28 @@ export function canAnswerTakeBack(page: PhotoHoldingsPage): boolean {
 
 /** Story: See which matches have my photos and take one back / The person takes back one share at a time, and only the server's answer marks it taken back (spec/photosMinePage.md) */
 //@ pure
+export function answerTakeBack(page: PhotoHoldingsPage, takeBackAnswer: TakeBackKind): PhotoHoldingsPage {
+  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> alwaysClosedScreensDropTheLink(\result)
+  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> alwaysReadingHoldsTheLink(\result)
+  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> alwaysListHasAPhotoAndTheLink(\result)
+  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> alwaysOnlyTheListHasPhotos(\result)
+  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> alwaysRetryHoldsTheLink(\result)
+  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> alwaysTakeBackOnlyOnTheList(\result)
+  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> alwaysCountsNeverNegative(\result)
+  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> alwaysNoticeOnlyWithTheLink(\result)
+  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> stepReopenOnlyAfterATakeBack(page, "answerTakeBack", \result)
+  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> stepOneTakeBackAtATime(page, "answerTakeBack", \result)
+  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> stepTakenBackOnlyFromTheAnswer(page, "answerTakeBack", \result)
+  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> stepSharesNeverGrow(page, "answerTakeBack", \result)
+  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> stepClosedLinkNeverReopens(page, \result)
+  const local_3: PhotoHoldingsPage = { ...page, pending: "HoldingsIdle", notice: "HoldingsNoNotice" };
+  const local_4: PhotoHoldingsPage = { ...local_3, linkHeld: false, photos: 0, grants: 0, takenBack: 0 };
+  const local_5 = page.grants >= 1 ? exact_photosMinePage(page.grants - 1) : 0;
+  return takeBackAnswer === "TakeBackDone" ? ({ ...local_3, grants: local_5, takenBack: exact_photosMinePage(page.takenBack + 1) } as PhotoHoldingsPage) : (takeBackAnswer === "TakeBackNothingOpen" ? ({ ...local_3, grants: local_5 } as PhotoHoldingsPage) : (takeBackAnswer === "TakeBackTimedOut" ? ({ ...local_4, screen: "HoldingsTimedOut" } as PhotoHoldingsPage) : (takeBackAnswer === "TakeBackUnavailable" ? ({ ...local_4, screen: "HoldingsUnavailable" } as PhotoHoldingsPage) : (takeBackAnswer === "TakeBackOtherPhone" ? ({ ...local_4, screen: "HoldingsOtherPhone" } as PhotoHoldingsPage) : (takeBackAnswer === "TakeBackUnreachable" ? ({ ...local_3, notice: "HoldingsUnreachable" } as PhotoHoldingsPage) : ({ ...local_3, notice: "HoldingsFailed" } as PhotoHoldingsPage))))));
+}
+
+/** Story: See which matches have my photos and take one back / The person takes back one share at a time, and only the server's answer marks it taken back (spec/photosMinePage.md) */
+//@ pure
 export function canReopenAfterTakeBack(page: PhotoHoldingsPage): boolean {
   return page.screen === "HoldingsList" && page.pending === "HoldingsIdle" && page.linkHeld && page.takenBack >= 1;
 }
@@ -356,8 +378,8 @@ export function canReopenAfterTakeBack(page: PhotoHoldingsPage): boolean {
 /** Story: See which matches have my photos and take one back / The person takes back one share at a time, and only the server's answer marks it taken back (spec/photosMinePage.md) */
 //@ pure
 export function reopenAfterTakeBack(page: PhotoHoldingsPage): PhotoHoldingsPage {
-  //@ ensures (inv(page) && canReopenAfterTakeBack(page)) ==> alwaysReadingHoldsTheLink(\result)
   //@ ensures (inv(page) && canReopenAfterTakeBack(page)) ==> alwaysClosedScreensDropTheLink(\result)
+  //@ ensures (inv(page) && canReopenAfterTakeBack(page)) ==> alwaysReadingHoldsTheLink(\result)
   //@ ensures (inv(page) && canReopenAfterTakeBack(page)) ==> alwaysListHasAPhotoAndTheLink(\result)
   //@ ensures (inv(page) && canReopenAfterTakeBack(page)) ==> alwaysOnlyTheListHasPhotos(\result)
   //@ ensures (inv(page) && canReopenAfterTakeBack(page)) ==> alwaysRetryHoldsTheLink(\result)
@@ -376,6 +398,34 @@ export function reopenAfterTakeBack(page: PhotoHoldingsPage): PhotoHoldingsPage 
 //@ pure
 export function stepReopenOnlyAfterATakeBack(before: PhotoHoldingsPage, via: string, after: PhotoHoldingsPage): boolean {
   return !(before.screen === "HoldingsList" && after.screen === "HoldingsOpening") || (via === "reopenAfterTakeBack" && before.takenBack >= 1);
+}
+
+/** Story: See which matches have my photos and take one back / The person takes back one share at a time, and only the server's answer marks it taken back (spec/photosMinePage.md) */
+//@ pure
+export function lawOnlyTheServerMarksTakenBack(kind: TakeBackKind): boolean {
+  //@ ensures \result === true
+  return (grantMarkAfter(kind) === "GrantTakenBack") === (kind === "TakeBackDone");
+}
+
+/** Story: See which matches have my photos and take one back / The person takes back one share at a time, and only the server's answer marks it taken back (spec/photosMinePage.md) */
+//@ pure
+export function lawAFailedTakeBackOffersItAgain(kind: TakeBackKind): boolean {
+  //@ ensures \result === true
+  return !(kind === "TakeBackUnreachable" || kind === "TakeBackFailed") || grantMarkAfter(kind) === "GrantOpen";
+}
+
+/** Story: See which matches have my photos and take one back / The person takes back one share at a time, and only the server's answer marks it taken back (spec/photosMinePage.md) */
+//@ pure
+export function lawNoTakeBackWhileOneRuns(page: PhotoHoldingsPage, mark: GrantMark): boolean {
+  //@ ensures \result === true
+  return !(page.pending === "HoldingsTakingBack") || !grantOffersTakeBack(page, mark);
+}
+
+/** Story: See which matches have my photos and take one back / The person takes back one share at a time, and only the server's answer marks it taken back (spec/photosMinePage.md) */
+//@ pure
+export function lawATakeBackNeedsAShare(page: PhotoHoldingsPage): boolean {
+  //@ ensures \result === true
+  return !canTakeBack(page) || page.grants >= 1;
 }
 
 /** Story: See which matches have my photos and take one back / The person takes back one share at a time, and only the server's answer marks it taken back (spec/photosMinePage.md) */
@@ -412,56 +462,6 @@ export function stepTakenBackOnlyFromTheAnswer(before: PhotoHoldingsPage, via: s
 //@ pure
 export function stepSharesNeverGrow(before: PhotoHoldingsPage, via: string, after: PhotoHoldingsPage): boolean {
   return !(before.screen === "HoldingsList" && after.screen === "HoldingsList") || after.grants <= before.grants;
-}
-
-/** Story: See which matches have my photos and take one back / The person takes back one share at a time, and only the server's answer marks it taken back (spec/photosMinePage.md) */
-//@ pure
-export function lawOnlyTheServerMarksTakenBack(kind: TakeBackKind): boolean {
-  //@ ensures \result === true
-  return (grantMarkAfter(kind) === "GrantTakenBack") === (kind === "TakeBackDone");
-}
-
-/** Story: See which matches have my photos and take one back / The person takes back one share at a time, and only the server's answer marks it taken back (spec/photosMinePage.md) */
-//@ pure
-export function lawAFailedTakeBackOffersItAgain(kind: TakeBackKind): boolean {
-  //@ ensures \result === true
-  return !(kind === "TakeBackUnreachable" || kind === "TakeBackFailed") || grantMarkAfter(kind) === "GrantOpen";
-}
-
-/** Story: See which matches have my photos and take one back / The person takes back one share at a time, and only the server's answer marks it taken back (spec/photosMinePage.md) */
-//@ pure
-export function lawNoTakeBackWhileOneRuns(page: PhotoHoldingsPage, mark: GrantMark): boolean {
-  //@ ensures \result === true
-  return !(page.pending === "HoldingsTakingBack") || !grantOffersTakeBack(page, mark);
-}
-
-/** Story: See which matches have my photos and take one back / The person takes back one share at a time, and only the server's answer marks it taken back (spec/photosMinePage.md) */
-//@ pure
-export function lawATakeBackNeedsAShare(page: PhotoHoldingsPage): boolean {
-  //@ ensures \result === true
-  return !canTakeBack(page) || page.grants >= 1;
-}
-
-/** Story: See which matches have my photos and take one back / The person takes back one share at a time, and only the server's answer marks it taken back (spec/photosMinePage.md) */
-//@ pure
-export function answerTakeBack(page: PhotoHoldingsPage, takeBackAnswer: TakeBackKind): PhotoHoldingsPage {
-  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> alwaysReadingHoldsTheLink(\result)
-  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> alwaysClosedScreensDropTheLink(\result)
-  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> alwaysListHasAPhotoAndTheLink(\result)
-  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> alwaysOnlyTheListHasPhotos(\result)
-  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> alwaysRetryHoldsTheLink(\result)
-  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> alwaysTakeBackOnlyOnTheList(\result)
-  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> alwaysCountsNeverNegative(\result)
-  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> alwaysNoticeOnlyWithTheLink(\result)
-  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> stepReopenOnlyAfterATakeBack(page, "answerTakeBack", \result)
-  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> stepOneTakeBackAtATime(page, "answerTakeBack", \result)
-  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> stepTakenBackOnlyFromTheAnswer(page, "answerTakeBack", \result)
-  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> stepSharesNeverGrow(page, "answerTakeBack", \result)
-  //@ ensures (inv(page) && canAnswerTakeBack(page)) ==> stepClosedLinkNeverReopens(page, \result)
-  const local_3: PhotoHoldingsPage = { ...page, pending: "HoldingsIdle", notice: "HoldingsNoNotice" };
-  const local_4: PhotoHoldingsPage = { ...local_3, linkHeld: false, photos: 0, grants: 0, takenBack: 0 };
-  const local_5 = page.grants >= 1 ? exact_photosMinePage(page.grants - 1) : 0;
-  return takeBackAnswer === "TakeBackDone" ? ({ ...local_3, grants: local_5, takenBack: exact_photosMinePage(page.takenBack + 1) } as PhotoHoldingsPage) : (takeBackAnswer === "TakeBackNothingOpen" ? ({ ...local_3, grants: local_5 } as PhotoHoldingsPage) : (takeBackAnswer === "TakeBackTimedOut" ? ({ ...local_4, screen: "HoldingsTimedOut" } as PhotoHoldingsPage) : (takeBackAnswer === "TakeBackUnavailable" ? ({ ...local_4, screen: "HoldingsUnavailable" } as PhotoHoldingsPage) : (takeBackAnswer === "TakeBackOtherPhone" ? ({ ...local_4, screen: "HoldingsOtherPhone" } as PhotoHoldingsPage) : (takeBackAnswer === "TakeBackUnreachable" ? ({ ...local_3, notice: "HoldingsUnreachable" } as PhotoHoldingsPage) : ({ ...local_3, notice: "HoldingsFailed" } as PhotoHoldingsPage))))));
 }
 
 /** Story: A timed-out or moved link shows nothing / A closed link never opens again on the page (spec/photosMinePage.md) */
@@ -565,12 +565,12 @@ export function sometimesTakeBackFailed(page: PhotoHoldingsPage): boolean {
 //@ pure
 export function enabled(current: PhotoHoldingsPage, event: Event): boolean {
   if (event.type === "openHoldingsPage") return canOpenHoldingsPage(current);
-  if (event.type === "retryOpen") return canRetryOpen(current);
   if (event.type === "answerOpen") return canAnswerOpen(current);
+  if (event.type === "retryOpen") return canRetryOpen(current);
   if (event.type === "answerImage") return canAnswerImage(current);
   if (event.type === "takeBack") return canTakeBack(current);
-  if (event.type === "reopenAfterTakeBack") return canReopenAfterTakeBack(current);
   if (event.type === "answerTakeBack") return canAnswerTakeBack(current);
+  if (event.type === "reopenAfterTakeBack") return canReopenAfterTakeBack(current);
   return false;
 }
 
@@ -580,12 +580,12 @@ export function step(current: PhotoHoldingsPage, event: Event): PhotoHoldingsPag
   //@ requires inv(current)
   //@ ensures inv(\result)
   if (event.type === "openHoldingsPage") return canOpenHoldingsPage(current) ? openHoldingsPage(current, event.tokenWellFormed) : current;
-  if (event.type === "retryOpen") return canRetryOpen(current) ? retryOpen(current) : current;
   if (event.type === "answerOpen") return canAnswerOpen(current) ? answerOpen(current, event.opened) : current;
+  if (event.type === "retryOpen") return canRetryOpen(current) ? retryOpen(current) : current;
   if (event.type === "answerImage") return canAnswerImage(current) ? answerImage(current, event.imageAnswer) : current;
   if (event.type === "takeBack") return canTakeBack(current) ? takeBack(current) : current;
-  if (event.type === "reopenAfterTakeBack") return canReopenAfterTakeBack(current) ? reopenAfterTakeBack(current) : current;
   if (event.type === "answerTakeBack") return canAnswerTakeBack(current) ? answerTakeBack(current, event.takeBackAnswer) : current;
+  if (event.type === "reopenAfterTakeBack") return canReopenAfterTakeBack(current) ? reopenAfterTakeBack(current) : current;
   return current;
 }
 
@@ -605,12 +605,12 @@ export function parseEvent(x: unknown): Event | undefined {
   const is_OpenAnswer = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && (v.kind === "OpenListed" || v.kind === "OpenUnavailable" || v.kind === "OpenTimedOut" || v.kind === "OpenOtherPhone" || v.kind === "OpenUnreachable" || v.kind === "OpenFailed") && Number.isSafeInteger(v.photos) && Number.isSafeInteger(v.grants);
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "openHoldingsPage" && typeof raw.tokenWellFormed === "boolean") return { type: "openHoldingsPage", tokenWellFormed: raw.tokenWellFormed };
-  if (raw.type === "retryOpen") return { type: "retryOpen" };
   if (raw.type === "answerOpen" && is_OpenAnswer(raw.opened)) return { type: "answerOpen", opened: ({ kind: raw.opened.kind, photos: raw.opened.photos, grants: raw.opened.grants }) };
+  if (raw.type === "retryOpen") return { type: "retryOpen" };
   if (raw.type === "answerImage" && (raw.imageAnswer === "ImageShown" || raw.imageAnswer === "ImageMissing" || raw.imageAnswer === "ImageTimedOut" || raw.imageAnswer === "ImageUnavailable" || raw.imageAnswer === "ImageOtherPhone")) return { type: "answerImage", imageAnswer: raw.imageAnswer };
   if (raw.type === "takeBack") return { type: "takeBack" };
-  if (raw.type === "reopenAfterTakeBack") return { type: "reopenAfterTakeBack" };
   if (raw.type === "answerTakeBack" && (raw.takeBackAnswer === "TakeBackDone" || raw.takeBackAnswer === "TakeBackNothingOpen" || raw.takeBackAnswer === "TakeBackTimedOut" || raw.takeBackAnswer === "TakeBackUnavailable" || raw.takeBackAnswer === "TakeBackOtherPhone" || raw.takeBackAnswer === "TakeBackUnreachable" || raw.takeBackAnswer === "TakeBackFailed")) return { type: "answerTakeBack", takeBackAnswer: raw.takeBackAnswer };
+  if (raw.type === "reopenAfterTakeBack") return { type: "reopenAfterTakeBack" };
   return undefined;
 }
 

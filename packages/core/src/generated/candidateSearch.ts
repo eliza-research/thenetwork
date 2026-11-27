@@ -1,6 +1,6 @@
 // GENERATED from spec/candidateSearch.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type PairSide as pairValue_PairSide, type PairRules as pairValue_PairRules, type UtilityTerm as pairValue_UtilityTerm, pairValueScale as pairValue_pairValueScale, noPairValue as pairValue_noPairValue, utilityTermWeight as pairValue_utilityTermWeight, boundedValue as pairValue_boundedValue, harmonicValue as pairValue_harmonicValue, parityAllowed as pairValue_parityAllowed, lawHarmonicMonotone as pairValue_lawHarmonicMonotone, coverageValue as pairValue_coverageValue, standingGap as pairValue_standingGap, parityPenalty as pairValue_parityPenalty, exchangeBalanced as pairValue_exchangeBalanced, directedUtility as pairValue_directedUtility, lawHarmonicBetweenSides as pairValue_lawHarmonicBetweenSides, closenessValue as pairValue_closenessValue, pairAdmissible as pairValue_pairAdmissible, lawUtilityTermsBounded as pairValue_lawUtilityTermsBounded, lawDirectedUtilityBounded as pairValue_lawDirectedUtilityBounded, pairValue as pairValue_pairValue, lawNoOneSidedPair as pairValue_lawNoOneSidedPair, lawPairValueSymmetric as pairValue_lawPairValueSymmetric, lawParityHolds as pairValue_lawParityHolds, lawSmallerGapNeverWorse as pairValue_lawSmallerGapNeverWorse, lawBalancedExchange as pairValue_lawBalancedExchange, lawPairValueBounded as pairValue_lawPairValueBounded } from "./pairValue.ts";
+import { type UtilityTerm as pairValue_UtilityTerm, type PairSide as pairValue_PairSide, type PairRules as pairValue_PairRules, pairValueScale as pairValue_pairValueScale, boundedValue as pairValue_boundedValue, coverageValue as pairValue_coverageValue, closenessValue as pairValue_closenessValue, utilityTermWeight as pairValue_utilityTermWeight, directedUtility as pairValue_directedUtility, lawUtilityTermsBounded as pairValue_lawUtilityTermsBounded, lawDirectedUtilityBounded as pairValue_lawDirectedUtilityBounded, harmonicValue as pairValue_harmonicValue, lawHarmonicBetweenSides as pairValue_lawHarmonicBetweenSides, lawHarmonicMonotone as pairValue_lawHarmonicMonotone, noPairValue as pairValue_noPairValue, pairAdmissible as pairValue_pairAdmissible, pairValue as pairValue_pairValue, lawNoOneSidedPair as pairValue_lawNoOneSidedPair, lawPairValueSymmetric as pairValue_lawPairValueSymmetric, lawPairValueBounded as pairValue_lawPairValueBounded, standingGap as pairValue_standingGap, parityAllowed as pairValue_parityAllowed, lawParityHolds as pairValue_lawParityHolds, parityPenalty as pairValue_parityPenalty, lawSmallerGapNeverWorse as pairValue_lawSmallerGapNeverWorse, exchangeBalanced as pairValue_exchangeBalanced, lawBalancedExchange as pairValue_lawBalancedExchange } from "./pairValue.ts";
 
 /** Story: Keep the best candidates within a fixed number of pair checks / A search starts once with a positive limit and a budget no smaller than the limit (spec/candidateSearch.md) */
 export type SearchPhase = "Idle" | "Scanning" | "Exact" | "Budgeted";
@@ -75,20 +75,6 @@ export function maskPairAllowed(acceptsOther: boolean, otherAccepts: boolean): b
 
 /** Story: Search only where a pair can have a value / A bound is never below the value of the pair it covers (spec/candidateSearch.md) */
 //@ pure
-export function lawCandidateBoundSound(side: pairValue_PairSide, other: pairValue_PairSide, offset: number, rules: pairValue_PairRules, utilityBound: number, otherUtilityBound: number): boolean {
-  //@ ensures \result === true
-  return !(side.utility <= utilityBound && other.utility <= otherUtilityBound) || pairValue_pairValue(side, other, offset, rules) <= pairValue_pairValue(({ ...side, utility: utilityBound } as pairValue_PairSide), ({ ...other, utility: otherUtilityBound } as pairValue_PairSide), offset, rules);
-}
-
-/** Story: Search only where a pair can have a value / A bound is never below the value of the pair it covers (spec/candidateSearch.md) */
-//@ pure
-export function lawPackBoundSound(weight: number, packValue: number, packBound: number): boolean {
-  //@ ensures \result === true
-  return !(packValue <= packBound) || exact_candidateSearch(pairValue_utilityTermWeight(({ weight: weight, value: packValue } as pairValue_UtilityTerm)) * pairValue_boundedValue(packValue)) <= exact_candidateSearch(pairValue_utilityTermWeight(({ weight: weight, value: packBound } as pairValue_UtilityTerm)) * pairValue_boundedValue(packBound));
-}
-
-/** Story: Search only where a pair can have a value / A bound is never below the value of the pair it covers (spec/candidateSearch.md) */
-//@ pure
 export function bucketValueBound(utilityBound: number, otherUtilityBound: number, leastPenalty: number): number {
   const local_0 = exact_candidateSearch(pairValue_harmonicValue(utilityBound, otherUtilityBound) - leastPenalty);
   return local_0 > 0 ? local_0 : 0;
@@ -109,6 +95,20 @@ export function unseenValueBound(utilityBound: number, otherUtilityBound: number
   const local_3 = utilityBound < rules.utilityFloor || otherUtilityBound < rules.utilityFloor;
   const local_4 = rules.balanceRequired && (exchangeBound < rules.exchangeFloor || otherExchangeBound < rules.exchangeFloor);
   return local_3 || local_4 ? pairValue_noPairValue : bucketValueBound(utilityBound, otherUtilityBound, 0);
+}
+
+/** Story: Search only where a pair can have a value / A bound is never below the value of the pair it covers (spec/candidateSearch.md) */
+//@ pure
+export function lawCandidateBoundSound(side: pairValue_PairSide, other: pairValue_PairSide, offset: number, rules: pairValue_PairRules, utilityBound: number, otherUtilityBound: number): boolean {
+  //@ ensures \result === true
+  return !(side.utility <= utilityBound && other.utility <= otherUtilityBound) || pairValue_pairValue(side, other, offset, rules) <= pairValue_pairValue(({ ...side, utility: utilityBound } as pairValue_PairSide), ({ ...other, utility: otherUtilityBound } as pairValue_PairSide), offset, rules);
+}
+
+/** Story: Search only where a pair can have a value / A bound is never below the value of the pair it covers (spec/candidateSearch.md) */
+//@ pure
+export function lawPackBoundSound(weight: number, packValue: number, packBound: number): boolean {
+  //@ ensures \result === true
+  return !(packValue <= packBound) || exact_candidateSearch(pairValue_utilityTermWeight(({ weight: weight, value: packValue } as pairValue_UtilityTerm)) * pairValue_boundedValue(packValue)) <= exact_candidateSearch(pairValue_utilityTermWeight(({ weight: weight, value: packBound } as pairValue_UtilityTerm)) * pairValue_boundedValue(packBound));
 }
 
 /** Story: Search only where a pair can have a value / A bound is never below the value of the pair it covers (spec/candidateSearch.md) */
@@ -187,6 +187,52 @@ export function candidateRanksAbove(candidate: RankedCandidate, other: RankedCan
 
 /** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
 //@ pure
+export function searchHigherRanked(left: RankedCandidate, right: RankedCandidate): RankedCandidate {
+  return candidateRanksAbove(right, left) ? right : left;
+}
+
+/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
+//@ pure
+export function searchDroppedRank(s: CandidateSearch): RankedCandidate {
+  return { value: s.bestDropped, ordinal: s.bestDroppedOrdinal };
+}
+
+/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
+//@ pure
+export function worstKeptScan(kept: RankedCandidate[]): WorstKeptScan {
+  return kept.reduce((scan: WorstKeptScan, candidate: RankedCandidate) => scan.worstPosition < 0 || candidateRanksAbove(scan.worst, candidate) ? ({ position: exact_candidateSearch(scan.position + 1), worstPosition: scan.position, worst: candidate } as WorstKeptScan) : ({ ...scan, position: exact_candidateSearch(scan.position + 1) } as WorstKeptScan), ({ position: 0, worstPosition: -1, worst: ({ value: 0, ordinal: 0 } as RankedCandidate) } as WorstKeptScan));
+}
+
+/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
+//@ pure
+export function canCheckCandidate(s: CandidateSearch, ordinal: number): boolean {
+  return s.phase === "Scanning" && s.checks < s.budget && !s.kept.some((c: RankedCandidate) => c.ordinal === ordinal);
+}
+
+/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
+//@ pure
+export function checkCandidate(s: CandidateSearch, value: number, ordinal: number): CandidateSearch {
+  //@ ensures (inv(s) && canCheckCandidate(s, ordinal)) ==> alwaysIdleSearchIsEmpty(\result)
+  //@ ensures (inv(s) && canCheckCandidate(s, ordinal)) ==> alwaysChecksWithinBudget(\result)
+  //@ ensures (inv(s) && canCheckCandidate(s, ordinal)) ==> alwaysKeptWithinLimit(\result)
+  //@ ensures (inv(s) && canCheckCandidate(s, ordinal)) ==> alwaysKeptValuesAreRealPairs(\result)
+  //@ ensures (inv(s) && canCheckCandidate(s, ordinal)) ==> alwaysDroppedOnlyWhenFull(\result)
+  //@ ensures (inv(s) && canCheckCandidate(s, ordinal)) ==> alwaysKeptOrdinalsDistinct(\result)
+  //@ ensures (inv(s) && canCheckCandidate(s, ordinal)) ==> alwaysKeptBeatDropped(\result)
+  //@ ensures (inv(s) && canCheckCandidate(s, ordinal)) ==> alwaysKeptRankAboveDropped(\result)
+  //@ ensures (inv(s) && canCheckCandidate(s, ordinal)) ==> alwaysExactBeatsUnseen(\result)
+  //@ ensures (inv(s) && canCheckCandidate(s, ordinal)) ==> stepEachCheckCountsOnce(s, "checkCandidate", \result)
+  //@ ensures (inv(s) && canCheckCandidate(s, ordinal)) ==> stepClosedSearchStaysClosed(s, \result)
+  const local_5: RankedCandidate = { value: value, ordinal: ordinal };
+  const local_6: WorstKeptScan = worstKeptScan(s.kept);
+  const local_7: RankedCandidate = searchHigherRanked(searchDroppedRank(s), local_6.worst);
+  const local_8: RankedCandidate = searchHigherRanked(searchDroppedRank(s), local_5);
+  const local_9: CandidateSearch = { ...s, checks: exact_candidateSearch(s.checks + 1) };
+  return value < 0 ? local_9 : (s.kept.length < s.limit ? ({ ...local_9, kept: s.kept.concat([local_5]) } as CandidateSearch) : (local_6.worstPosition >= 0 && local_6.worstPosition < s.kept.length && candidateRanksAbove(local_5, local_6.worst) ? ({ ...local_9, kept: (0 <= local_6.worstPosition && local_6.worstPosition < s.kept.length ? s.kept.slice(0, local_6.worstPosition).concat(s.kept.slice(local_6.worstPosition + 1)) : s.kept).concat([local_5]), bestDropped: local_7.value, bestDroppedOrdinal: local_7.ordinal } as CandidateSearch) : ({ ...local_9, bestDropped: local_8.value, bestDroppedOrdinal: local_8.ordinal } as CandidateSearch)));
+}
+
+/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
+//@ pure
 export function alwaysKeptWithinLimit(s: CandidateSearch): boolean {
   return s.kept.length <= s.limit;
 }
@@ -217,6 +263,13 @@ export function alwaysKeptBeatDropped(s: CandidateSearch): boolean {
 
 /** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
 //@ pure
+export function alwaysKeptRankAboveDropped(s: CandidateSearch): boolean {
+  const local_10: RankedCandidate = searchDroppedRank(s);
+  return !(s.bestDropped > pairValue_noPairValue) || !s.kept.some((c: RankedCandidate) => !candidateRanksAbove(c, local_10));
+}
+
+/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
+//@ pure
 export function stepEachCheckCountsOnce(before: CandidateSearch, via: string, after: CandidateSearch): boolean {
   return via === "checkCandidate" ? after.checks === exact_candidateSearch(before.checks + 1) : after.checks === before.checks;
 }
@@ -227,63 +280,16 @@ export function sometimesDroppedCandidate(s: CandidateSearch): boolean {
   return s.bestDropped >= 0;
 }
 
-/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
-//@ pure
-export function searchHigherRanked(left: RankedCandidate, right: RankedCandidate): RankedCandidate {
-  return candidateRanksAbove(right, left) ? right : left;
-}
-
-/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
-//@ pure
-export function searchDroppedRank(s: CandidateSearch): RankedCandidate {
-  return { value: s.bestDropped, ordinal: s.bestDroppedOrdinal };
-}
-
-/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
-//@ pure
-export function worstKeptScan(kept: RankedCandidate[]): WorstKeptScan {
-  return kept.reduce((scan: WorstKeptScan, candidate: RankedCandidate) => scan.worstPosition < 0 || candidateRanksAbove(scan.worst, candidate) ? ({ position: exact_candidateSearch(scan.position + 1), worstPosition: scan.position, worst: candidate } as WorstKeptScan) : ({ ...scan, position: exact_candidateSearch(scan.position + 1) } as WorstKeptScan), ({ position: 0, worstPosition: -1, worst: ({ value: 0, ordinal: 0 } as RankedCandidate) } as WorstKeptScan));
-}
-
-/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
-//@ pure
-export function canCheckCandidate(s: CandidateSearch, ordinal: number): boolean {
-  return s.phase === "Scanning" && s.checks < s.budget && !s.kept.some((c: RankedCandidate) => c.ordinal === ordinal);
-}
-
-/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
-//@ pure
-export function alwaysKeptRankAboveDropped(s: CandidateSearch): boolean {
-  const local_5: RankedCandidate = searchDroppedRank(s);
-  return !(s.bestDropped > pairValue_noPairValue) || !s.kept.some((c: RankedCandidate) => !candidateRanksAbove(c, local_5));
-}
-
-/** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
-//@ pure
-export function checkCandidate(s: CandidateSearch, value: number, ordinal: number): CandidateSearch {
-  //@ ensures (inv(s) && canCheckCandidate(s, ordinal)) ==> alwaysIdleSearchIsEmpty(\result)
-  //@ ensures (inv(s) && canCheckCandidate(s, ordinal)) ==> alwaysChecksWithinBudget(\result)
-  //@ ensures (inv(s) && canCheckCandidate(s, ordinal)) ==> alwaysKeptWithinLimit(\result)
-  //@ ensures (inv(s) && canCheckCandidate(s, ordinal)) ==> alwaysKeptValuesAreRealPairs(\result)
-  //@ ensures (inv(s) && canCheckCandidate(s, ordinal)) ==> alwaysDroppedOnlyWhenFull(\result)
-  //@ ensures (inv(s) && canCheckCandidate(s, ordinal)) ==> alwaysKeptOrdinalsDistinct(\result)
-  //@ ensures (inv(s) && canCheckCandidate(s, ordinal)) ==> alwaysKeptBeatDropped(\result)
-  //@ ensures (inv(s) && canCheckCandidate(s, ordinal)) ==> alwaysKeptRankAboveDropped(\result)
-  //@ ensures (inv(s) && canCheckCandidate(s, ordinal)) ==> alwaysExactBeatsUnseen(\result)
-  //@ ensures (inv(s) && canCheckCandidate(s, ordinal)) ==> stepEachCheckCountsOnce(s, "checkCandidate", \result)
-  //@ ensures (inv(s) && canCheckCandidate(s, ordinal)) ==> stepClosedSearchStaysClosed(s, \result)
-  const local_6: RankedCandidate = { value: value, ordinal: ordinal };
-  const local_7: WorstKeptScan = worstKeptScan(s.kept);
-  const local_8: RankedCandidate = searchHigherRanked(searchDroppedRank(s), local_7.worst);
-  const local_9: RankedCandidate = searchHigherRanked(searchDroppedRank(s), local_6);
-  const local_10: CandidateSearch = { ...s, checks: exact_candidateSearch(s.checks + 1) };
-  return value < 0 ? local_10 : (s.kept.length < s.limit ? ({ ...local_10, kept: s.kept.concat([local_6]) } as CandidateSearch) : (local_7.worstPosition >= 0 && local_7.worstPosition < s.kept.length && candidateRanksAbove(local_6, local_7.worst) ? ({ ...local_10, kept: (0 <= local_7.worstPosition && local_7.worstPosition < s.kept.length ? s.kept.slice(0, local_7.worstPosition).concat(s.kept.slice(local_7.worstPosition + 1)) : s.kept).concat([local_6]), bestDropped: local_8.value, bestDroppedOrdinal: local_8.ordinal } as CandidateSearch) : ({ ...local_10, bestDropped: local_9.value, bestDroppedOrdinal: local_9.ordinal } as CandidateSearch)));
-}
-
 /** Story: Keep the best candidates within a fixed number of pair checks / An exact search stops only when no unseen candidate can enter the kept list (spec/candidateSearch.md) */
 //@ pure
 export function searchStopsExact(s: CandidateSearch, unseenBound: number): boolean {
   return unseenBound < 0 || (s.kept.length === s.limit && !s.kept.some((c: RankedCandidate) => !(c.value > unseenBound)));
+}
+
+/** Story: Keep the best candidates within a fixed number of pair checks / An exact search stops only when no unseen candidate can enter the kept list (spec/candidateSearch.md) */
+//@ pure
+export function canCloseExact(s: CandidateSearch, unseenBound: number): boolean {
+  return s.phase === "Scanning" && searchStopsExact(s, unseenBound);
 }
 
 /** Story: Keep the best candidates within a fixed number of pair checks / An exact search stops only when no unseen candidate can enter the kept list (spec/candidateSearch.md) */
@@ -305,20 +311,20 @@ export function closeExact(s: CandidateSearch, unseenBound: number): CandidateSe
 
 /** Story: Keep the best candidates within a fixed number of pair checks / An exact search stops only when no unseen candidate can enter the kept list (spec/candidateSearch.md) */
 //@ pure
+export function alwaysExactBeatsUnseen(s: CandidateSearch): boolean {
+  return !(s.phase === "Exact") || searchStopsExact(s, s.unseenBound);
+}
+
+/** Story: Keep the best candidates within a fixed number of pair checks / An exact search stops only when no unseen candidate can enter the kept list (spec/candidateSearch.md) */
+//@ pure
 export function sometimesExact(s: CandidateSearch): boolean {
   return s.phase === "Exact" && s.unseenBound >= 0;
 }
 
-/** Story: Keep the best candidates within a fixed number of pair checks / An exact search stops only when no unseen candidate can enter the kept list (spec/candidateSearch.md) */
+/** Story: Keep the best candidates within a fixed number of pair checks / A search that spends its budget or its posting walk before it is exact reports the value it may have missed (spec/candidateSearch.md) */
 //@ pure
-export function canCloseExact(s: CandidateSearch, unseenBound: number): boolean {
-  return s.phase === "Scanning" && searchStopsExact(s, unseenBound);
-}
-
-/** Story: Keep the best candidates within a fixed number of pair checks / An exact search stops only when no unseen candidate can enter the kept list (spec/candidateSearch.md) */
-//@ pure
-export function alwaysExactBeatsUnseen(s: CandidateSearch): boolean {
-  return !(s.phase === "Exact") || searchStopsExact(s, s.unseenBound);
+export function canCloseBudgeted(s: CandidateSearch, unseenBound: number, walkSpent: boolean, touchedBound: number): boolean {
+  return s.phase === "Scanning" && (s.checks >= s.budget || (walkSpent && searchStopsExact(s, touchedBound))) && !searchStopsExact(s, unseenBound);
 }
 
 /** Story: Keep the best candidates within a fixed number of pair checks / A search that spends its budget or its posting walk before it is exact reports the value it may have missed (spec/candidateSearch.md) */
@@ -348,12 +354,6 @@ export function stepClosedSearchStaysClosed(before: CandidateSearch, after: Cand
 //@ pure
 export function sometimesBudgeted(s: CandidateSearch): boolean {
   return s.phase === "Budgeted";
-}
-
-/** Story: Keep the best candidates within a fixed number of pair checks / A search that spends its budget or its posting walk before it is exact reports the value it may have missed (spec/candidateSearch.md) */
-//@ pure
-export function canCloseBudgeted(s: CandidateSearch, unseenBound: number, walkSpent: boolean, touchedBound: number): boolean {
-  return s.phase === "Scanning" && (s.checks >= s.budget || (walkSpent && searchStopsExact(s, touchedBound))) && !searchStopsExact(s, unseenBound);
 }
 
 /** Do the rules allow this event in this state? */

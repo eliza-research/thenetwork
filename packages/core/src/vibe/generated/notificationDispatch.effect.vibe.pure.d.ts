@@ -5,21 +5,21 @@ export declare const initial: DigestFlow;
 /** Every `always` rule at once. Holds initially and after every transition. @throws {never} */
 export declare function inv(current: DigestFlow): boolean;
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
-export declare function inboxItemAllowedForRecipient(requested: boolean, proactiveAllowed: boolean): boolean;
-/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
-export declare function rereadCountsPossible(plannedCount: number, remainingCount: number): boolean;
-/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export declare function inboxItemStillPending(seen: boolean, notified: boolean): boolean;
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export declare function inboxItemExpired(hasExpiry: boolean, expiresAt: number, at: number): boolean;
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export declare function inboxItemDigestible(seen: boolean, notified: boolean, hasExpiry: boolean, expiresAt: number, at: number): boolean;
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
+export declare function lawExpiredItemLeavesTheDigest(seen: boolean, notified: boolean, expiresAt: number, at: number): boolean;
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
+export declare function inboxItemAllowedForRecipient(requested: boolean, proactiveAllowed: boolean): boolean;
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
+export declare function rereadCountsPossible(plannedCount: number, remainingCount: number): boolean;
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export declare function canRereadItems(digest: DigestFlow, plannedCount: number, remainingCount: number): boolean;
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export declare function rereadItems(digest: DigestFlow, plannedCount: number, remainingCount: number, recipientAvailable: boolean, destinationChanged: boolean): DigestFlow;
-/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
-export declare function lawExpiredItemLeavesTheDigest(seen: boolean, notified: boolean, expiresAt: number, at: number): boolean;
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) @throws {never} */
 export declare function lawMissingRecipientCancels(plannedCount: number, remainingCount: number, destinationChanged: boolean): boolean;
 /** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) @throws {never} */
@@ -68,5 +68,7 @@ export declare function step(current: DigestFlow, event: Event): DigestFlow;
 export declare function parseEvent(x: unknown): Event | undefined;
 /** Turn an untrusted value, such as a state loaded from storage, into a state, or undefined if it is not one. It must have exactly the state's shape (no other fields, whole numbers that are safe integers, sets that hold nothing twice, maps as records whose keys carry the "$" every key carries here) and satisfy every `always` rule. The result is a fresh copy, so nothing the caller keeps can change it afterwards. @throws {never} */
 export declare function parseState(x: unknown): DigestFlow | undefined;
-/** A Machine never shares a state with its callers. @throws {never} */
+/** @throws {never} */
 export declare function snapshot_notificationDispatch<A>(value: A): A;
+/** @throws {never} */
+export declare function snapshot_in_notificationDispatch<A>(value: A): A;

@@ -8,9 +8,9 @@ import type { JobView } from "../project.ts";
 import {
   S, can, dirtySpecs, discard, failing, graphOf, isDarkTheme, locate, openComponent, openStateFocus, publish,
   publishedText, reveal, select, setCmdOpen, setDensity, setDrawer, setView, specLabel, stagesOf, start, toast,
-  toggleTheme, type StageMark, type StudioView,
+  toggleRail, toggleTheme, type StageMark, type StudioView,
 } from "./studio.ts";
-import { Code, Dot, Icon, IconButton, Markdown, Quint } from "./text.tsx";
+import { Code, Dot, Icon, IconButton, Markdown, Quint, Tooltip, type IconName } from "./text.tsx";
 
 const elapsed = (job: JobView, now: number) => { const s = Math.round(((job.finished ?? now) - job.started) / 1000); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`; };
 /** A running job's time, ticking. */
@@ -140,14 +140,28 @@ function pipelineSteps(): PipelineStep[] {
   ];
 }
 
-const MODES: { id: StudioView; label: string; needsComponents?: boolean }[] = [
-  { id: "specs", label: "Stories" },
-  { id: "states", label: "States" },
-  { id: "components", label: "Layout", needsComponents: true },
-  { id: "split", label: "Split", needsComponents: true },
+const MODES: { id: StudioView; label: string; icon: IconName; needsComponents?: boolean }[] = [
+  { id: "specs", label: "Stories", icon: "stories" },
+  { id: "states", label: "States", icon: "graph" },
+  { id: "components", label: "Layout", icon: "layout", needsComponents: true },
+  { id: "split", label: "Split", icon: "split", needsComponents: true },
 ];
 
-/** The 48px Top Pipeline Bar: project switcher, lens switcher, 5-step pipeline, density, theme, and session actions. */
+function pipelineHeadline(steps: PipelineStep[]): { text: string; state: StageState } {
+  const running = steps.find((s) => s.state === "running");
+  if (running) return { text: `${running.name}…`, state: "running" };
+  const bad = steps.find((s) => s.state === "bad");
+  if (bad) return { text: bad.label, state: "bad" };
+  const active = steps.find((s) => s.state === "active");
+  if (active) return { text: active.label, state: "active" };
+  const todo = steps.find((s) => s.state === "todo" && s.count > 0);
+  if (todo) return { text: todo.label, state: "todo" };
+  const check = steps.find((s) => s.name === "Check");
+  if (check?.state === "ok") return { text: "All green", state: "ok" };
+  return { text: "In step", state: "idle" };
+}
+
+/** The 48px Top Bar: sidebar toggle, project switcher, active lens switcher, compact 5-dot status stepper, and icon actions. */
 export function TopBar({ onPublish }: { onPublish: () => void }) {
   const snap = S.snap;
   const [asking, setAsking] = useState<"discard" | "review">();
@@ -157,12 +171,23 @@ export function TopBar({ onPublish }: { onPublish: () => void }) {
   const running = snap?.session.job && snap.session.job !== "Idle";
   const hasComponents = !!S.components;
   const dark = isDarkTheme();
-  const activeProject = S.projects.find((p) => p.id === S.project)?.name ?? snap?.project.name ?? "Spec Studio";
+  const activeProject = S.projects.find((p) => p.id === S.project)?.name ?? snap?.project.name ?? "Vibestack Studio";
   const blocking = failing(snap?.check?.results).length;
+  const visibleModes = MODES.filter((m) => !m.needsComponents || hasComponents);
+  const headline = steps.length ? pipelineHeadline(steps) : undefined;
+  const statusMark = blocking ? "bad" : snap?.session.waiting ? "review" : snap?.session.previewing ? "ok" : "";
 
   return (
     <header className="flex h-12 flex-none items-center justify-between gap-2 border-b border-border bg-card px-3">
       <div className="flex min-w-0 items-center gap-2">
+        <IconButton
+          name="sidebar"
+          label={S.railCollapsed ? "Show sidebar" : "Hide sidebar"}
+          shortcut="⌘\"
+          align="left"
+          active={!S.railCollapsed}
+          onClick={toggleRail}
+        />
         <div className="flex items-center gap-2">
           <span aria-hidden className="grid size-6 flex-none place-items-center rounded-sm bg-primary text-xs font-bold text-primary-foreground">S</span>
           {S.projects.length > 1 ? (
@@ -175,73 +200,82 @@ export function TopBar({ onPublish }: { onPublish: () => void }) {
             <span className="max-w-36 truncate text-sm font-semibold">{activeProject}</span>
           )}
         </div>
-        <span aria-hidden className="h-5 w-px bg-border" />
+        <span aria-hidden className="h-4 w-px bg-border" />
         <div role="tablist" aria-label="Workspace mode" className="flex items-center gap-0.5 rounded-md bg-muted p-0.5">
-          {MODES.map((m) => {
-            const disabled = !!m.needsComponents && !hasComponents;
+          {visibleModes.map((m) => {
             const active = S.view === m.id;
             return (
-              <button key={m.id} type="button" role="tab" aria-selected={active} disabled={disabled}
-                title={disabled ? "No React component catalog in this project" : undefined}
+              <button key={m.id} type="button" role="tab" aria-selected={active}
                 onClick={() => setView(m.id)}
-                className={cn(focusRing, "rounded-sm px-2.5 py-1 text-xs font-medium transition-colors duration-fast",
-                  active ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
-                  disabled && "pointer-events-none opacity-40")}>
-                {m.label}
+                className={cn(focusRing, "flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-xs font-medium transition-colors duration-fast",
+                  active ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>
+                <Icon name={m.icon} className="size-3.5" />
+                <span>{m.label}</span>
               </button>
             );
           })}
         </div>
       </div>
 
-      {steps.length > 0 && (
-        <button type="button" aria-label="Session pipeline" aria-expanded={S.drawer} onClick={() => setDrawer(!S.drawer)}
-          className={cn(focusRing, "hidden items-center gap-1.5 rounded-md px-2 py-1 text-xs hover:bg-accent xl:flex")}>
-          {steps.map((st, i) => (
-            <span key={st.name} className="flex items-center gap-1.5">
-              {i > 0 && <span aria-hidden className="text-muted-foreground">·</span>}
-              <span title={st.label} className={cn("flex items-center gap-1", PIPELINE_TEXT[st.state])}>
-                {st.state === "running"
-                  ? <Spinner size="sm" label={`${st.name}: running`} className="size-3 text-primary" />
-                  : <span aria-hidden className={cn("size-1.5 rounded-full", PIPELINE_DOT[st.state])} />}
-                <span>{st.name}{st.count > 0 ? ` (${st.count})` : ""}</span>
-              </span>
+      {steps.length > 0 && headline && (
+        <Tooltip label={steps.map((st) => `${st.name}: ${st.label}`).join(" · ")}>
+          <button type="button" aria-label="Session pipeline" aria-expanded={S.drawer} onClick={() => setDrawer(!S.drawer)}
+            className={cn(focusRing, "hidden items-center gap-2 rounded-full border border-border/70 bg-background/60 px-2.5 py-1 text-xs transition-colors duration-fast hover:bg-accent lg:flex")}>
+            <span aria-hidden className="flex items-center gap-1">
+              {steps.map((st) => (
+                st.state === "running"
+                  ? <Spinner key={st.name} size="sm" label={`${st.name}: running`} className="size-2.5 text-primary" />
+                  : <span key={st.name} className={cn("size-1.5 rounded-full transition-colors duration-fast", PIPELINE_DOT[st.state])} />
+              ))}
             </span>
-          ))}
-        </button>
+            <span className={cn("text-xs", PIPELINE_TEXT[headline.state])}>{headline.text}</span>
+          </button>
+        </Tooltip>
       )}
 
-      <div className="flex flex-none items-center gap-1.5">
+      <div className="flex flex-none items-center gap-1">
         {S.view === "specs" && (
-          <div role="group" aria-label="Detail density" className="hidden items-center gap-0.5 rounded-md bg-muted p-0.5 md:flex">
-            <button type="button" aria-pressed={S.density === "prose"} onClick={() => setDensity("prose")}
-              className={cn(focusRing, "rounded-sm px-2 py-0.5 text-xs font-medium", S.density === "prose" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>
-              Prose
-            </button>
-            <button type="button" aria-pressed={S.density === "quint"} onClick={() => setDensity("quint")}
-              className={cn(focusRing, "rounded-sm px-2 py-0.5 text-xs font-medium", S.density === "quint" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>
-              + Quint
-            </button>
-          </div>
+          <IconButton
+            name="code"
+            label={S.density === "quint" ? "Hide Quint blocks (Prose only)" : "Show Quint blocks"}
+            active={S.density === "quint"}
+            onClick={() => setDensity(S.density === "quint" ? "prose" : "quint")}
+          />
         )}
         <IconButton name={dark ? "sun" : "moon"} label={dark ? "Switch to light theme" : "Switch to dark theme"} onClick={toggleTheme} />
-        <Button variant="outline" size="sm" disabled={!can({ type: "check" })} onClick={() => start("check")}>
-          <Icon name="play" className="size-3.5" />Run check
-        </Button>
+        <Tooltip label={snap?.session.job === "Checking" ? "Checking…" : "Run check"}>
+          <Button variant="ghost" size="icon" aria-label="Run check" disabled={!can({ type: "check" })}
+            className="size-7 text-muted-foreground hover:text-foreground" onClick={() => start("check")}>
+            {snap?.session.job === "Checking" ? <Spinner size="sm" label="Checking" className="size-3.5 text-primary" /> : <Icon name="play" className="size-3.5" />}
+          </Button>
+        </Tooltip>
+        <Tooltip label={snap?.app.script ? "App & activity" : "Build & activity"} align={dirty.length === 0 && review === 0 ? "right" : "center"}>
+          <Button variant={S.drawer ? "secondary" : "ghost"} size="icon" aria-label={snap?.app.script ? "App" : "Build"} aria-expanded={S.drawer}
+            className={cn("relative size-7 text-muted-foreground hover:text-foreground", S.drawer && "text-primary")}
+            onClick={() => setDrawer(!S.drawer)}>
+            {running ? <Spinner size="sm" label="Job running" className="size-3.5 text-primary" /> : <Icon name="activity" className="size-3.5" />}
+            {!running && statusMark && (
+              <span aria-hidden className={cn("absolute top-1 right-1 size-1.5 rounded-full", statusMark === "bad" ? "bg-destructive" : statusMark === "review" ? "bg-warn" : "bg-ok")} />
+            )}
+          </Button>
+        </Tooltip>
+        {can({ type: "discard" }) && (
+          <IconButton name="undo" label="Discard changes" danger onClick={() => setAsking("discard")} />
+        )}
         {review > 0 && (
-          <Button variant="outline" size="sm" className="border-warn text-warn hover:bg-warn/10 hover:text-warn" onClick={() => setAsking("review")}>
+          <Button variant="outline" size="sm" className="h-7 border-warn px-2 text-xs text-warn hover:bg-warn/10 hover:text-warn" onClick={() => setAsking("review")}>
             <Icon name="check" className="size-3.5" />Review {review}
           </Button>
         )}
-        <Button variant={S.drawer ? "secondary" : "ghost"} size="sm" aria-expanded={S.drawer} onClick={() => setDrawer(!S.drawer)}>
-          {running ? <Spinner size="sm" label="Job running" className="size-3.5 text-primary" />
-            : <Dot mark={blocking ? "bad" : snap?.session.waiting ? "review" : snap?.session.previewing ? "ok" : ""} label={blocking ? `${blocking} failing` : snap?.session.waiting ? `${snap.session.waiting} waiting` : "Activity"} />}
-          {snap?.app.script ? "App" : "Build"}
-        </Button>
-        {can({ type: "discard" }) && <Button variant="ghost" size="sm" onClick={() => setAsking("discard")}>Discard</Button>}
-        <Button variant={dirty.length ? "primary" : "secondary"} size="sm" title="⌘S" disabled={!can({ type: "publish", changes: 0 })} onClick={onPublish}>
-          <Icon name="check" className="size-3.5" />{dirty.length ? `Publish ${dirty.length}` : "Publish"}
-        </Button>
+        {dirty.length > 0 ? (
+          <Tooltip label="Publish changes" shortcut="⌘S" align="right">
+            <Button variant="primary" size="sm" className="h-7 px-2.5 text-xs" disabled={!can({ type: "publish", changes: 0 })} onClick={onPublish}>
+              <Icon name="check" className="size-3.5" />Publish {dirty.length}
+            </Button>
+          </Tooltip>
+        ) : (
+          <IconButton name="check" label="Publish" shortcut="⌘S" align="right" disabled onClick={onPublish} />
+        )}
       </div>
 
       <Ask open={asking === "discard"} onOpenChange={() => setAsking(undefined)} title={`Discard changes to ${dirty.map((s) => s.file).join(", ")}`} action="Discard" onConfirm={discard} />
@@ -305,26 +339,38 @@ export function BuildDrawer() {
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
           <span className="text-xs font-medium text-muted-foreground">Sync agents</span>
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground" onClick={copyPrompt}><Icon name="copy" className="size-3.5" />Copy prompt</Button>
+          <IconButton name="copy" label="Copy sync prompt" align="right" onClick={copyPrompt} />
         </div>
         {snap.agents.map((a) => (
-          <div key={a.id} className="flex items-center gap-2">
+          <div key={a.id} className="flex items-center gap-1.5">
             <span className="flex-1 text-sm font-medium">{a.label}</span>
-            <Button variant="outline" size="sm" disabled={!a.available || !can({ type: "sync" })} title={a.available ? undefined : `${a.label} is not installed`} onClick={() => start("agent", { agent: a.id })}><Icon name="play" />Run</Button>
-            {a.link && <Button variant="outline" size="sm" asChild><a href={a.link}><Icon name="open" />Open</a></Button>}
+            <IconButton name="play" label={a.available ? `Run ${a.label}` : `${a.label} is not installed`} disabled={!a.available || !can({ type: "sync" })} align="right" onClick={() => start("agent", { agent: a.id })} />
+            {a.link && (
+              <Tooltip label={`Open ${a.label}`} align="right">
+                <Button variant="ghost" size="icon" className="size-7 text-muted-foreground hover:text-foreground" asChild>
+                  <a href={a.link} aria-label={`Open ${a.label}`}><Icon name="open" className="size-3.5" /></a>
+                </Button>
+              </Tooltip>
+            )}
           </div>
         ))}
       </div>
 
       {(snap.app.script || snap.app.buildable) && (
         <div className="flex flex-col gap-2 border-t border-border pt-4">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <Dot mark={snap.session.previewing ? "ok" : ""} label={snap.session.previewing ? "running" : "stopped"} />
-            <span className="flex-1 text-sm font-semibold">App {snap.app.script && <span className="font-mono text-xs font-normal text-muted-foreground">pnpm {snap.app.script}</span>}</span>
-            {snap.session.previewing && snap.app.url && <Button variant="outline" size="sm" asChild><a href={snap.app.url} target="_blank" rel="noreferrer"><Icon name="open" />Open</a></Button>}
-            {snap.app.buildable && <Button variant="outline" size="sm" disabled={!can({ type: "build" })} onClick={() => start("build")}><Icon name="check" />Build</Button>}
-            {snap.app.script && can({ type: "preview" }) && <Button variant="outline" size="sm" onClick={() => start("app", { start: true })}><Icon name="play" />Start</Button>}
-            {can({ type: "endPreview" }) && <Button variant="outline" size="sm" onClick={() => start("app", { start: false })}><Icon name="stop" />Stop</Button>}
+            <span className="flex-1 truncate text-sm font-semibold">App {snap.app.script && <span className="font-mono text-xs font-normal text-muted-foreground">pnpm {snap.app.script}</span>}</span>
+            {snap.session.previewing && snap.app.url && (
+              <Tooltip label="Open app in browser" align="right">
+                <Button variant="ghost" size="icon" className="size-7 text-muted-foreground hover:text-foreground" asChild>
+                  <a href={snap.app.url} target="_blank" rel="noreferrer" aria-label="Open app"><Icon name="open" className="size-3.5" /></a>
+                </Button>
+              </Tooltip>
+            )}
+            {snap.app.buildable && <IconButton name="check" label="Build app" disabled={!can({ type: "build" })} align="right" onClick={() => start("build")} />}
+            {snap.app.script && can({ type: "preview" }) && <IconButton name="play" label="Start app" align="right" onClick={() => start("app", { start: true })} />}
+            {can({ type: "endPreview" }) && <IconButton name="stop" label="Stop app" align="right" onClick={() => start("app", { start: false })} />}
           </div>
           {snap.app.log.length > 0 && <Code className="max-h-40">{snap.app.log.slice(-40).join("\n")}</Code>}
         </div>

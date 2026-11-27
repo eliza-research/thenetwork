@@ -9,12 +9,6 @@ export const rescheduleDraftLifetimeMs: number = exact_meetingReschedule(24 * 36
 
 /** Story: Change the time only when everyone agrees / A request selects one future booking and one viable slot (spec/meetingReschedule.md) */
 //@ pure
-export function rescheduleDraftCurrent(bookingCurrent: boolean, exactOriginal: boolean, exactRoster: boolean, exactRevision: boolean, viableSlot: boolean, now: number, expiresAt: number): boolean {
-  return bookingCurrent && exactOriginal && exactRoster && exactRevision && viableSlot && now < expiresAt;
-}
-
-/** Story: Change the time only when everyone agrees / A request selects one future booking and one viable slot (spec/meetingReschedule.md) */
-//@ pure
 export function rescheduleBookingSelected(matchingBookings: number): boolean {
   return matchingBookings === 1;
 }
@@ -32,6 +26,12 @@ export function rescheduleDeadline(now: number, originalAt: number, proposedAt: 
   const local_1 = exact_meetingReschedule(proposedAt - minimumLead);
   const local_2 = originalAt < local_1 ? originalAt : local_1;
   return local_2 < local_0 ? local_2 : local_0;
+}
+
+/** Story: Change the time only when everyone agrees / A request selects one future booking and one viable slot (spec/meetingReschedule.md) */
+//@ pure
+export function rescheduleDraftCurrent(bookingCurrent: boolean, exactOriginal: boolean, exactRoster: boolean, exactRevision: boolean, viableSlot: boolean, now: number, expiresAt: number): boolean {
+  return bookingCurrent && exactOriginal && exactRoster && exactRevision && viableSlot && now < expiresAt;
 }
 
 /** Story: Change the time only when everyone agrees / Only independent answers to the current offer can change the booking (spec/meetingReschedule.md) */

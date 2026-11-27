@@ -212,6 +212,7 @@ repository skill discovery can read these files directly.
 | [Shell](.agents/skills/shell/SKILL.md) | Designing an effectful boundary, including input decoding, storage, retries, and the Vibestack Machine adapter |
 | [Prove](.agents/skills/prove/SKILL.md) | Writing a proof file or a `//@` contract, or working on a failed proof |
 | [Design](.agents/skills/design/SKILL.md) | Making an approved change to anything a person sees |
+| [Bug review](.agents/skills/bug-review/SKILL.md) | Finishing an application, feature, or non-trivial PR: parallel review for bugs, leaks, state/rendering issues, inefficiencies, and code smells past `pnpm run check` |
 | [Architect](.agents/skills/architect/SKILL.md), [arena](.agents/skills/arena/SKILL.md), and [why](.agents/skills/why/SKILL.md) | Comparing designs or changing existing ownership |
 | [Benchmark checklist](.agents/skills/benchmark-checklist/SKILL.md) | Measuring performance |
 | [TypeScript best practices](.agents/skills/typescript-best-practices/SKILL.md) | Reading or writing TypeScript |
@@ -271,6 +272,11 @@ callers. The product owner runs `pnpm run accept` to record review.
 - **Clarity.** Use domain names and readable structure. Keep code free of
   comments. Put explanations in the spec or documentation. Use comment
   syntax only for required tool directives such as `//@` proof contracts.
+- **Scripts and project levers.** Extend existing CLI entrypoints and scripts
+  before adding new ones; keep operational, verification, seeding, inspection,
+  and migration levers typed, structured (`--json` output where applicable),
+  and idempotent per the [Build the Lever](.agents/skills/principle-build-the-lever/SKILL.md)
+  skill, and delete levers once they become unused.
 - **Speed.** Keep checks focused while working. Run the full suite before merge.
 - **Review.** Reread the wiring and its corresponding rule on a second pass.
 
@@ -306,8 +312,9 @@ its name.
   with no precedent. Build 2-3 competing prototypes and compare before
   committing.
 - **Build the Lever.** Any non-trivial work. Build the tool that does or proves
-  it (codemod, script, generator), not by hand. The tool is the artifact a
-  reviewer reruns.
+  it — extending the project CLI or existing script with structured `--json`
+  output when it belongs to the project rather than scattering ad-hoc scripts.
+  The tool is the artifact a reviewer reruns.
 - **Model the Domain.** Writing stateful logic, or code that branches a lot or
   repeats a shape assumption across files. Encode the domain in a structure
   (state machine, typed model, table or registry, reducer, boundary, the right
@@ -353,7 +360,7 @@ its name.
 
 Read the [`typescript-best-practices` skill](.agents/skills/typescript-best-practices/SKILL.md)
 before reading or editing `.ts` or `.tsx` files. Adapt the
-[TypeScript type reference](tools/vibestack/vibestack/reference/typereferences.md)
+[TypeScript type reference](.agents/skills/typescript-best-practices/references/typereferences.md)
 to the repository's schema library. Validate that a duration is nonnegative
 when it represents an ordered range.
 
@@ -434,7 +441,11 @@ indicators. Review the content and layout across two or three passes.
 
 Verify the generated snapshots against the source specs. Verify that the
 running application fully implements and integrates the approved stories,
-rules, and models. Every required check must pass. Resolve open proof
+rules, and models. Before declaring a feature or non-trivial change done, run
+the [`bug-review` skill](.agents/skills/bug-review/SKILL.md) (diff-scoped pass
+for incremental changes, full pass when finishing an app), resolve discovered
+`P0`/`P1` bugs and errors (and any `P2`s worth fixing), and confirm required
+checks are green after the final fix. Every required check must pass. Resolve open proof
 obligations before merge. Meet all [Vibestack requirements](SPEC.md) and
 [TypeScript conventions](#typescript-best-practices). Submit the
 [PR evidence](CONTRIBUTING.md#122-evidence-checklist). The product owner

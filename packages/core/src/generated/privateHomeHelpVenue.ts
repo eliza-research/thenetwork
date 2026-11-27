@@ -32,16 +32,16 @@ export function mayReadHomeHelpVenue(helper: boolean, unanimousCurrentConsent: b
 
 /** Story: Control who can read my home-help address / A helper reads the address in a directly verified private request (spec/privateHomeHelpVenue.md) */
 //@ pure
-export function lawExpiredHomeHelpVenueIsUnavailable(owner: boolean, helper: boolean, unanimousCurrentConsent: boolean, expiresAt: number): boolean {
+export function lawHomeHelpVenueReadRequiresHelperAndConsent(helper: boolean, unanimousCurrentConsent: boolean, now: number, expiresAt: number): boolean {
   //@ ensures \result === true
-  return !mayStoreHomeHelpVenue(owner, unanimousCurrentConsent, expiresAt, expiresAt) && !mayReadHomeHelpVenue(helper, unanimousCurrentConsent, expiresAt, expiresAt);
+  return !mayReadHomeHelpVenue(false, unanimousCurrentConsent, now, expiresAt) && !mayReadHomeHelpVenue(helper, false, now, expiresAt);
 }
 
 /** Story: Control who can read my home-help address / A helper reads the address in a directly verified private request (spec/privateHomeHelpVenue.md) */
 //@ pure
-export function lawHomeHelpVenueReadRequiresHelperAndConsent(helper: boolean, unanimousCurrentConsent: boolean, now: number, expiresAt: number): boolean {
+export function lawExpiredHomeHelpVenueIsUnavailable(owner: boolean, helper: boolean, unanimousCurrentConsent: boolean, expiresAt: number): boolean {
   //@ ensures \result === true
-  return !mayReadHomeHelpVenue(false, unanimousCurrentConsent, now, expiresAt) && !mayReadHomeHelpVenue(helper, false, now, expiresAt);
+  return !mayStoreHomeHelpVenue(owner, unanimousCurrentConsent, expiresAt, expiresAt) && !mayReadHomeHelpVenue(helper, unanimousCurrentConsent, expiresAt, expiresAt);
 }
 
 /** Story: Control who can read my home-help address / Revocation, plan change and expiry end access (spec/privateHomeHelpVenue.md) */

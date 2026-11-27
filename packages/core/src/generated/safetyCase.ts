@@ -1,6 +1,6 @@
 // GENERATED from spec/safetyCase.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type AgeSide as friendIntroAge_AgeSide, teenRosterMaximum as friendIntroAge_teenRosterMaximum, teenFriendMinAge as friendIntroAge_teenFriendMinAge, teenBirthGap as friendIntroAge_teenBirthGap, teenFriendMaxAge as friendIntroAge_teenFriendMaxAge, teenReady as friendIntroAge_teenReady, teenBarOnConflict as friendIntroAge_teenBarOnConflict, teenFriendRole as friendIntroAge_teenFriendRole, teenFriendFormat as friendIntroAge_teenFriendFormat, teenRosterSizeAllowed as friendIntroAge_teenRosterSizeAllowed, teenPlaceAllowed as friendIntroAge_teenPlaceAllowed, allAgesMarkValid as friendIntroAge_allAgesMarkValid, teenActivityOffered as friendIntroAge_teenActivityOffered, relayKindAllowed as friendIntroAge_relayKindAllowed, singlePlayerMember as friendIntroAge_singlePlayerMember, minorSignalOpens as friendIntroAge_minorSignalOpens, friendsVerifyPasses as friendIntroAge_friendsVerifyPasses, birthKeysWithinTwoYears as friendIntroAge_birthKeysWithinTwoYears, rosterHasMinor as friendIntroAge_rosterHasMinor, teenIntroShape as friendIntroAge_teenIntroShape, lawTeenReadyNeedsExactBirthDate as friendIntroAge_lawTeenReadyNeedsExactBirthDate, lawContributorRolesAreNotTeenRoles as friendIntroAge_lawContributorRolesAreNotTeenRoles, lawTeenRosterIsSmall as friendIntroAge_lawTeenRosterIsSmall, lawAdultRosterSizeUnchanged as friendIntroAge_lawAdultRosterSizeUnchanged, lawTeenReadyWithoutStaffStep as friendIntroAge_lawTeenReadyWithoutStaffStep, lawTeenPlaceIsAllAges as friendIntroAge_lawTeenPlaceIsAllAges, lawAdultPlaceUnchanged as friendIntroAge_lawAdultPlaceUnchanged, lawAllAgesNeverABarOrHome as friendIntroAge_lawAllAgesNeverABarOrHome, lawAllAgesOpensAtThirteen as friendIntroAge_lawAllAgesOpensAtThirteen, lawAdultPlansKeepTheirCatalog as friendIntroAge_lawAdultPlansKeepTheirCatalog, lawTeenGroupsGetOnlyAllAges as friendIntroAge_lawTeenGroupsGetOnlyAllAges, lawNoNumberOrPhotoWithAMinor as friendIntroAge_lawNoNumberOrPhotoWithAMinor, lawAdultRelayUnchanged as friendIntroAge_lawAdultRelayUnchanged, lawAdultIsNeverSinglePlayerByAge as friendIntroAge_lawAdultIsNeverSinglePlayerByAge, lawAdultRecordOpensOnEvidence as friendIntroAge_lawAdultRecordOpensOnEvidence, lawAgreeingMinorStatementOpensNothing as friendIntroAge_lawAgreeingMinorStatementOpensNothing, lawAnyDoubtMakesUnready as friendIntroAge_lawAnyDoubtMakesUnready, lawTeenReadyNeedsNoStaffVerify as friendIntroAge_lawTeenReadyNeedsNoStaffVerify, lawUnreadyNeedsStaffVerify as friendIntroAge_lawUnreadyNeedsStaffVerify, lawAdultRosterNeedsStaffVerify as friendIntroAge_lawAdultRosterNeedsStaffVerify, teenPartnerAge as friendIntroAge_teenPartnerAge, viaAllowedForRoster as friendIntroAge_viaAllowedForRoster, teenSideFits as friendIntroAge_teenSideFits, lawTeenShapeNeedsFriendshipLane as friendIntroAge_lawTeenShapeNeedsFriendshipLane, lawTeenShapeNeverAnEvent as friendIntroAge_lawTeenShapeNeverAnEvent, lawTeenShapeNeverVia as friendIntroAge_lawTeenShapeNeverVia, teenFriendCandidate as friendIntroAge_teenFriendCandidate, teenPairAllowed as friendIntroAge_teenPairAllowed, lawViaNeverWithAMinor as friendIntroAge_lawViaNeverWithAMinor, lawStoppedMinorIsSinglePlayer as friendIntroAge_lawStoppedMinorIsSinglePlayer, lawUnreadyMinorIsSinglePlayer as friendIntroAge_lawUnreadyMinorIsSinglePlayer, pairAgeAllowed as friendIntroAge_pairAgeAllowed, lawTeenPairWitness as friendIntroAge_lawTeenPairWitness, lawNineteenEdgeRefused as friendIntroAge_lawNineteenEdgeRefused, sidesAllowed as friendIntroAge_sidesAllowed, lawAdultPairUnchanged as friendIntroAge_lawAdultPairUnchanged, lawStoppedIsTheAdultRule as friendIntroAge_lawStoppedIsTheAdultRule, lawMinorPairOnlyInFriendshipLanes as friendIntroAge_lawMinorPairOnlyInFriendshipLanes, lawMinorPartnerIsThirteenToEighteen as friendIntroAge_lawMinorPartnerIsThirteenToEighteen, lawNineteenNeverWithAMinor as friendIntroAge_lawNineteenNeverWithAMinor, lawMinorPairWithinTwoYears as friendIntroAge_lawMinorPairWithinTwoYears, lawMinorPairNeedsReadySides as friendIntroAge_lawMinorPairNeedsReadySides, lawPairAgeSymmetric as friendIntroAge_lawPairAgeSymmetric, sideAllowedWithAll as friendIntroAge_sideAllowedWithAll, groupAgeAllowed as friendIntroAge_groupAgeAllowed, lawGroupNineteenNeverWithAMinor as friendIntroAge_lawGroupNineteenNeverWithAMinor, lawGroupMinorWithinTwoYearsOfEveryone as friendIntroAge_lawGroupMinorWithinTwoYearsOfEveryone, lawGroupWithMinorEverySideFits as friendIntroAge_lawGroupWithMinorEverySideFits, lawGroupWithMinorHoldsOnlyTeenAges as friendIntroAge_lawGroupWithMinorHoldsOnlyTeenAges, lawGroupStoppedAdultsOnly as friendIntroAge_lawGroupStoppedAdultsOnly } from "./friendIntroAge.ts";
+import { type AgeSide as friendIntroAge_AgeSide, teenFriendMinAge as friendIntroAge_teenFriendMinAge, teenFriendMaxAge as friendIntroAge_teenFriendMaxAge, teenPartnerAge as friendIntroAge_teenPartnerAge, teenBirthGap as friendIntroAge_teenBirthGap, birthKeysWithinTwoYears as friendIntroAge_birthKeysWithinTwoYears, teenReady as friendIntroAge_teenReady, teenBarOnConflict as friendIntroAge_teenBarOnConflict, lawTeenReadyNeedsExactBirthDate as friendIntroAge_lawTeenReadyNeedsExactBirthDate, lawTeenReadyWithoutStaffStep as friendIntroAge_lawTeenReadyWithoutStaffStep, lawAnyDoubtMakesUnready as friendIntroAge_lawAnyDoubtMakesUnready, friendsVerifyPasses as friendIntroAge_friendsVerifyPasses, lawTeenReadyNeedsNoStaffVerify as friendIntroAge_lawTeenReadyNeedsNoStaffVerify, lawUnreadyNeedsStaffVerify as friendIntroAge_lawUnreadyNeedsStaffVerify, lawAdultRosterNeedsStaffVerify as friendIntroAge_lawAdultRosterNeedsStaffVerify, teenPairAllowed as friendIntroAge_teenPairAllowed, pairAgeAllowed as friendIntroAge_pairAgeAllowed, sidesAllowed as friendIntroAge_sidesAllowed, lawAdultPairUnchanged as friendIntroAge_lawAdultPairUnchanged, lawStoppedIsTheAdultRule as friendIntroAge_lawStoppedIsTheAdultRule, lawMinorPairOnlyInFriendshipLanes as friendIntroAge_lawMinorPairOnlyInFriendshipLanes, lawMinorPartnerIsThirteenToEighteen as friendIntroAge_lawMinorPartnerIsThirteenToEighteen, lawNineteenNeverWithAMinor as friendIntroAge_lawNineteenNeverWithAMinor, lawMinorPairWithinTwoYears as friendIntroAge_lawMinorPairWithinTwoYears, lawMinorPairNeedsReadySides as friendIntroAge_lawMinorPairNeedsReadySides, lawPairAgeSymmetric as friendIntroAge_lawPairAgeSymmetric, lawTeenPairWitness as friendIntroAge_lawTeenPairWitness, lawNineteenEdgeRefused as friendIntroAge_lawNineteenEdgeRefused, sideAllowedWithAll as friendIntroAge_sideAllowedWithAll, groupAgeAllowed as friendIntroAge_groupAgeAllowed, rosterHasMinor as friendIntroAge_rosterHasMinor, viaAllowedForRoster as friendIntroAge_viaAllowedForRoster, lawGroupWithMinorHoldsOnlyTeenAges as friendIntroAge_lawGroupWithMinorHoldsOnlyTeenAges, lawGroupStoppedAdultsOnly as friendIntroAge_lawGroupStoppedAdultsOnly, lawViaNeverWithAMinor as friendIntroAge_lawViaNeverWithAMinor, teenSideFits as friendIntroAge_teenSideFits, lawGroupNineteenNeverWithAMinor as friendIntroAge_lawGroupNineteenNeverWithAMinor, lawGroupMinorWithinTwoYearsOfEveryone as friendIntroAge_lawGroupMinorWithinTwoYearsOfEveryone, lawGroupWithMinorEverySideFits as friendIntroAge_lawGroupWithMinorEverySideFits, teenFriendRole as friendIntroAge_teenFriendRole, teenFriendFormat as friendIntroAge_teenFriendFormat, teenIntroShape as friendIntroAge_teenIntroShape, lawTeenShapeNeedsFriendshipLane as friendIntroAge_lawTeenShapeNeedsFriendshipLane, lawTeenShapeNeverAnEvent as friendIntroAge_lawTeenShapeNeverAnEvent, lawTeenShapeNeverVia as friendIntroAge_lawTeenShapeNeverVia, lawContributorRolesAreNotTeenRoles as friendIntroAge_lawContributorRolesAreNotTeenRoles, teenRosterMaximum as friendIntroAge_teenRosterMaximum, teenRosterSizeAllowed as friendIntroAge_teenRosterSizeAllowed, lawTeenRosterIsSmall as friendIntroAge_lawTeenRosterIsSmall, lawAdultRosterSizeUnchanged as friendIntroAge_lawAdultRosterSizeUnchanged, teenPlaceAllowed as friendIntroAge_teenPlaceAllowed, allAgesMarkValid as friendIntroAge_allAgesMarkValid, teenActivityOffered as friendIntroAge_teenActivityOffered, lawTeenPlaceIsAllAges as friendIntroAge_lawTeenPlaceIsAllAges, lawAdultPlaceUnchanged as friendIntroAge_lawAdultPlaceUnchanged, lawAllAgesNeverABarOrHome as friendIntroAge_lawAllAgesNeverABarOrHome, lawAllAgesOpensAtThirteen as friendIntroAge_lawAllAgesOpensAtThirteen, lawAdultPlansKeepTheirCatalog as friendIntroAge_lawAdultPlansKeepTheirCatalog, lawTeenGroupsGetOnlyAllAges as friendIntroAge_lawTeenGroupsGetOnlyAllAges, relayKindAllowed as friendIntroAge_relayKindAllowed, lawNoNumberOrPhotoWithAMinor as friendIntroAge_lawNoNumberOrPhotoWithAMinor, lawAdultRelayUnchanged as friendIntroAge_lawAdultRelayUnchanged, teenFriendCandidate as friendIntroAge_teenFriendCandidate, singlePlayerMember as friendIntroAge_singlePlayerMember, lawStoppedMinorIsSinglePlayer as friendIntroAge_lawStoppedMinorIsSinglePlayer, lawUnreadyMinorIsSinglePlayer as friendIntroAge_lawUnreadyMinorIsSinglePlayer, lawAdultIsNeverSinglePlayerByAge as friendIntroAge_lawAdultIsNeverSinglePlayerByAge, minorSignalOpens as friendIntroAge_minorSignalOpens, lawAdultRecordOpensOnEvidence as friendIntroAge_lawAdultRecordOpensOnEvidence, lawAgreeingMinorStatementOpensNothing as friendIntroAge_lawAgreeingMinorStatementOpensNothing } from "./friendIntroAge.ts";
 import { type FractionalAgeEvidence as memberAge_FractionalAgeEvidence, type BirthReadings as memberAge_BirthReadings } from "./memberAge.ts";
 
 /** Story: Review a safety case without removing a hold by accident / An event opens a case or adds to its current record (spec/safetyCase.md) */
@@ -60,6 +60,12 @@ export function liveCase(c: SafetyCase): boolean {
 
 /** Story: Review a safety case without removing a hold by accident / A recorded hold or lift updates the open case (spec/safetyCase.md) */
 //@ pure
+export function canMarkCaseHeld(c: SafetyCase): boolean {
+  return liveCase(c);
+}
+
+/** Story: Review a safety case without removing a hold by accident / A recorded hold or lift updates the open case (spec/safetyCase.md) */
+//@ pure
 export function markCaseHeld(c: SafetyCase): SafetyCase {
   //@ ensures (inv(c) && canMarkCaseHeld(c)) ==> stepClosedCaseStaysClosed(c, \result)
   return { phase: "CaseHeld" };
@@ -67,9 +73,21 @@ export function markCaseHeld(c: SafetyCase): SafetyCase {
 
 /** Story: Review a safety case without removing a hold by accident / A recorded hold or lift updates the open case (spec/safetyCase.md) */
 //@ pure
+export function canMarkCaseLifted(c: SafetyCase): boolean {
+  return liveCase(c);
+}
+
+/** Story: Review a safety case without removing a hold by accident / A recorded hold or lift updates the open case (spec/safetyCase.md) */
+//@ pure
 export function markCaseLifted(c: SafetyCase): SafetyCase {
   //@ ensures (inv(c) && canMarkCaseLifted(c)) ==> stepClosedCaseStaysClosed(c, \result)
   return { phase: "CaseLifted" };
+}
+
+/** Story: Review a safety case without removing a hold by accident / A recorded hold or lift updates the open case (spec/safetyCase.md) */
+//@ pure
+export function canCloseCase(c: SafetyCase): boolean {
+  return liveCase(c);
 }
 
 /** Story: Review a safety case without removing a hold by accident / A recorded hold or lift updates the open case (spec/safetyCase.md) */
@@ -97,30 +115,6 @@ export function sometimesCaseWasLifted(c: SafetyCase): boolean {
   return c.phase === "CaseLifted";
 }
 
-/** Story: Review a safety case without removing a hold by accident / A recorded hold or lift updates the open case (spec/safetyCase.md) */
-//@ pure
-export function canMarkCaseHeld(c: SafetyCase): boolean {
-  return liveCase(c);
-}
-
-/** Story: Review a safety case without removing a hold by accident / A recorded hold or lift updates the open case (spec/safetyCase.md) */
-//@ pure
-export function canMarkCaseLifted(c: SafetyCase): boolean {
-  return liveCase(c);
-}
-
-/** Story: Review a safety case without removing a hold by accident / A recorded hold or lift updates the open case (spec/safetyCase.md) */
-//@ pure
-export function canCloseCase(c: SafetyCase): boolean {
-  return liveCase(c);
-}
-
-/** Story: Review a safety case without removing a hold by accident / A staff action requires an actor and an applicable record (spec/safetyCase.md) */
-//@ pure
-export function holdSubjectKnown(knownMember: boolean, reportOnFile: boolean): boolean {
-  return knownMember || reportOnFile;
-}
-
 /** Story: Review a safety case without removing a hold by accident / A staff action requires an actor and an applicable record (spec/safetyCase.md) */
 //@ pure
 export function holdLiftResult(actorPresent: boolean, currentlyHeld: boolean): StaffActionResult {
@@ -139,16 +133,16 @@ export function holdAuthority(actorPresent: boolean, reportMatches: boolean): St
   return !actorPresent ? "ActorRequired" : (!reportMatches ? "UnknownReport" : "AllowedAction");
 }
 
-/** Story: Get immediate safety guidance in a member conversation / Direct current-danger text gets immediate guidance first (spec/safetyCase.md) */
+/** Story: Review a safety case without removing a hold by accident / A staff action requires an actor and an applicable record (spec/safetyCase.md) */
 //@ pure
-export function immediateDangerReply(directText: boolean, currentDanger: boolean): boolean {
-  return directText && currentDanger;
+export function holdSubjectKnown(knownMember: boolean, reportOnFile: boolean): boolean {
+  return knownMember || reportOnFile;
 }
 
 /** Story: Get immediate safety guidance in a member conversation / Direct current-danger text gets immediate guidance first (spec/safetyCase.md) */
 //@ pure
-export function emergencyCheckInReport(exactReceipt: boolean, attributedReport: boolean): boolean {
-  return exactReceipt && attributedReport;
+export function immediateDangerReply(directText: boolean, currentDanger: boolean): boolean {
+  return directText && currentDanger;
 }
 
 /** Story: Get immediate safety guidance in a member conversation / Direct current-danger text gets immediate guidance first (spec/safetyCase.md) */
@@ -163,6 +157,12 @@ export function lawEmergencyReplyRequiresOwnText(currentDanger: boolean): boolea
 export function lawEmergencyReplyRequiresCurrentDanger(directText: boolean): boolean {
   //@ ensures \result === true
   return !immediateDangerReply(directText, false);
+}
+
+/** Story: Get immediate safety guidance in a member conversation / Direct current-danger text gets immediate guidance first (spec/safetyCase.md) */
+//@ pure
+export function emergencyCheckInReport(exactReceipt: boolean, attributedReport: boolean): boolean {
+  return exactReceipt && attributedReport;
 }
 
 /** Story: Get immediate safety guidance in a member conversation / Direct current-danger text gets immediate guidance first (spec/safetyCase.md) */
@@ -253,21 +253,14 @@ export function lawDismissedReportStaysDismissed(decision: ReportDecision, sameM
 
 /** Story: Resolve a report with its own disposition / The exact open report follows its subject through ordinary app leave (spec/safetyCase.md) */
 //@ pure
-export function archivedReportHoldAllowed(exactSubject: boolean, matchingRestriction: boolean): boolean {
-  return exactSubject && matchingRestriction;
-}
-
-/** Story: Resolve a report with its own disposition / The exact open report follows its subject through ordinary app leave (spec/safetyCase.md) */
-//@ pure
-export function lawArchivedHoldRequiresExactSubject(matchingRestriction: boolean): boolean {
-  //@ ensures \result === true
-  return !archivedReportHoldAllowed(false, matchingRestriction);
-}
-
-/** Story: Resolve a report with its own disposition / The exact open report follows its subject through ordinary app leave (spec/safetyCase.md) */
-//@ pure
 export function carryReportOnAppLeave(ordinaryLeave: boolean, reportPhase: ReportPhase, metBefore: boolean, urgent: boolean, reportedMinor: boolean): boolean {
   return ordinaryLeave && (reportRestrictsMatching(reportPhase, metBefore, urgent) || (reportPhase === "ReportOpen" && reportedMinor));
+}
+
+/** Story: Resolve a report with its own disposition / The exact open report follows its subject through ordinary app leave (spec/safetyCase.md) */
+//@ pure
+export function archivedReportHoldAllowed(exactSubject: boolean, matchingRestriction: boolean): boolean {
+  return exactSubject && matchingRestriction;
 }
 
 /** Story: Resolve a report with its own disposition / The exact open report follows its subject through ordinary app leave (spec/safetyCase.md) */
@@ -291,10 +284,11 @@ export function lawAccountErasureCarriesNoReport(reportPhase: ReportPhase, metBe
   return !carryReportOnAppLeave(false, reportPhase, metBefore, urgent, reportedMinor);
 }
 
-/** Story: Resolve a report with its own disposition / A unique offered report name routes back to its app (spec/safetyCase.md) */
+/** Story: Resolve a report with its own disposition / The exact open report follows its subject through ordinary app leave (spec/safetyCase.md) */
 //@ pure
-export function reportClarificationTimeCurrent(askedAt: number, receivedAt: number, asOf: number, oldestPrompt: number): boolean {
-  return oldestPrompt <= askedAt && askedAt <= receivedAt && receivedAt <= asOf;
+export function lawArchivedHoldRequiresExactSubject(matchingRestriction: boolean): boolean {
+  //@ ensures \result === true
+  return !archivedReportHoldAllowed(false, matchingRestriction);
 }
 
 /** Story: Resolve a report with its own disposition / A unique offered report name routes back to its app (spec/safetyCase.md) */
@@ -305,9 +299,8 @@ export function sharedReportRoute(signedMember: boolean, choices: number): Share
 
 /** Story: Resolve a report with its own disposition / A unique offered report name routes back to its app (spec/safetyCase.md) */
 //@ pure
-export function lawReportReplyCannotPredateQuestion(askedAt: number, receivedAt: number, asOf: number, oldestPrompt: number): boolean {
-  //@ ensures \result === true
-  return !reportClarificationTimeCurrent(askedAt, receivedAt, asOf, oldestPrompt) || receivedAt >= askedAt;
+export function reportClarificationTimeCurrent(askedAt: number, receivedAt: number, asOf: number, oldestPrompt: number): boolean {
+  return oldestPrompt <= askedAt && askedAt <= receivedAt && receivedAt <= asOf;
 }
 
 /** Story: Resolve a report with its own disposition / A unique offered report name routes back to its app (spec/safetyCase.md) */
@@ -315,6 +308,13 @@ export function lawReportReplyCannotPredateQuestion(askedAt: number, receivedAt:
 export function lawSharedReportRequiresOneChoice(signedMember: boolean, choices: number): boolean {
   //@ ensures \result === true
   return !(sharedReportRoute(signedMember, choices) === "UniqueReportRoute") || (signedMember && choices === 1);
+}
+
+/** Story: Resolve a report with its own disposition / A unique offered report name routes back to its app (spec/safetyCase.md) */
+//@ pure
+export function lawReportReplyCannotPredateQuestion(askedAt: number, receivedAt: number, asOf: number, oldestPrompt: number): boolean {
+  //@ ensures \result === true
+  return !reportClarificationTimeCurrent(askedAt, receivedAt, asOf, oldestPrompt) || receivedAt >= askedAt;
 }
 
 /** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
@@ -325,8 +325,22 @@ export function safetyQuestionIsCurrent(askedAt: number, oldestQuestion: number)
 
 /** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
 //@ pure
+export function lawExpiredSafetyQuestionCannotAct(askedAt: number, oldestQuestion: number): boolean {
+  //@ ensures \result === true
+  return !(askedAt < oldestQuestion) || !safetyQuestionIsCurrent(askedAt, oldestQuestion);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
 export function safetyQuestionAcceptsName(confirmation: boolean, refusal: boolean, cancellation: boolean): boolean {
   return !(confirmation || refusal || cancellation);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
+export function lawSafetyControlCannotNameTarget(confirmation: boolean, refusal: boolean, cancellation: boolean): boolean {
+  //@ ensures \result === true
+  return !(confirmation || refusal || cancellation) || !safetyQuestionAcceptsName(confirmation, refusal, cancellation);
 }
 
 /** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
@@ -343,26 +357,6 @@ export function safetyQuestionExclusion(explicitExclusion: boolean, ambiguousExc
 
 /** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
 //@ pure
-export function safetyReplyAfterExclusion(competingPrompt: boolean, replacementSentence: boolean, reply: string, separateReply: string): string {
-  return !competingPrompt ? "" : (replacementSentence ? separateReply : reply);
-}
-
-/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
-//@ pure
-export function lawExpiredSafetyQuestionCannotAct(askedAt: number, oldestQuestion: number): boolean {
-  //@ ensures \result === true
-  return !(askedAt < oldestQuestion) || !safetyQuestionIsCurrent(askedAt, oldestQuestion);
-}
-
-/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
-//@ pure
-export function lawSafetyControlCannotNameTarget(confirmation: boolean, refusal: boolean, cancellation: boolean): boolean {
-  //@ ensures \result === true
-  return !(confirmation || refusal || cancellation) || !safetyQuestionAcceptsName(confirmation, refusal, cancellation);
-}
-
-/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
-//@ pure
 export function lawCompetingPromptNeedsExplicitSafetyExclusion(ambiguousExclusion: boolean): boolean {
   //@ ensures \result === true
   return !safetyQuestionExclusion(false, ambiguousExclusion, true);
@@ -373,6 +367,12 @@ export function lawCompetingPromptNeedsExplicitSafetyExclusion(ambiguousExclusio
 export function lawExplicitSafetyExclusionStillApplies(ambiguousExclusion: boolean, competingPrompt: boolean): boolean {
   //@ ensures \result === true
   return safetyQuestionExclusion(true, ambiguousExclusion, competingPrompt);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
+export function safetyReplyAfterExclusion(competingPrompt: boolean, replacementSentence: boolean, reply: string, separateReply: string): string {
+  return !competingPrompt ? "" : (replacementSentence ? separateReply : reply);
 }
 
 /** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
@@ -397,6 +397,20 @@ export function safetyQuestionResolves(allowedTarget: boolean, competingPrompt: 
 
 /** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
 //@ pure
+export function lawCompetingPromptKeepsUnresolvedSafety(shortReply: boolean): boolean {
+  //@ ensures \result === true
+  return !safetyQuestionResolves(false, true, false, false, shortReply);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
+export function lawCancellationResolvesSafety(competingPrompt: boolean, shortReply: boolean): boolean {
+  //@ ensures \result === true
+  return safetyQuestionResolves(false, competingPrompt, true, false, shortReply);
+}
+
+/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
+//@ pure
 export function lawAllowedTargetResolvesSafety(competingPrompt: boolean, cancels: boolean, shortReply: boolean): boolean {
   //@ ensures \result === true
   return safetyQuestionResolves(true, competingPrompt, cancels, false, shortReply);
@@ -414,20 +428,6 @@ export function lawTargetExclusionClosesWithoutFiling(allowedTarget: boolean, co
 export function lawLongUnrelatedReplyKeepsSafety(competingPrompt: boolean): boolean {
   //@ ensures \result === true
   return !safetyQuestionResolves(false, competingPrompt, false, false, false);
-}
-
-/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
-//@ pure
-export function lawCompetingPromptKeepsUnresolvedSafety(shortReply: boolean): boolean {
-  //@ ensures \result === true
-  return !safetyQuestionResolves(false, true, false, false, shortReply);
-}
-
-/** Story: Resolve a report with its own disposition / An unrelated reply keeps a current safety question (spec/safetyCase.md) */
-//@ pure
-export function lawCancellationResolvesSafety(competingPrompt: boolean, shortReply: boolean): boolean {
-  //@ ensures \result === true
-  return safetyQuestionResolves(false, competingPrompt, true, false, shortReply);
 }
 
 /** Story: Resolve a report with its own disposition / A complete name or confirmation identifies one safety target (spec/safetyCase.md) */

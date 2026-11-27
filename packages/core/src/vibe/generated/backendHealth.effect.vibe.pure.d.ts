@@ -13,13 +13,13 @@ export declare function checkAdmission(s: BackendHealth, serving: boolean): Back
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
 export declare function canCheckDatabase(s: BackendHealth): boolean;
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
-export declare function canCheckTicks(s: BackendHealth): boolean;
-/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
-export declare function stepReportIsFinal(before: BackendHealth, after: BackendHealth): boolean;
-/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
 export declare function checkDatabase(s: BackendHealth, reachable: boolean): BackendHealth;
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
+export declare function canCheckTicks(s: BackendHealth): boolean;
+/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
 export declare function checkTicks(s: BackendHealth, late: boolean): BackendHealth;
+/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
+export declare function stepReportIsFinal(before: BackendHealth, after: BackendHealth): boolean;
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
 export declare function sometimesReportsReady(s: BackendHealth): boolean;
 /** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) @throws {never} */
@@ -36,5 +36,7 @@ export declare function step(current: BackendHealth, event: Event): BackendHealt
 export declare function parseEvent(x: unknown): Event | undefined;
 /** Turn an untrusted value, such as a state loaded from storage, into a state, or undefined if it is not one. It must have exactly the state's shape (no other fields, whole numbers that are safe integers, sets that hold nothing twice, maps as records whose keys carry the "$" every key carries here) and satisfy every `always` rule. The result is a fresh copy, so nothing the caller keeps can change it afterwards. @throws {never} */
 export declare function parseState(x: unknown): BackendHealth | undefined;
-/** A Machine never shares a state with its callers. @throws {never} */
+/** @throws {never} */
 export declare function snapshot_backendHealth<A>(value: A): A;
+/** @throws {never} */
+export declare function snapshot_in_backendHealth<A>(value: A): A;

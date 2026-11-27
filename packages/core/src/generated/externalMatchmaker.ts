@@ -15,6 +15,12 @@ export interface ProspectRetentionInput { stopped: boolean; declined: boolean; b
 export interface InviteExternalProspectInput { meetupCompleted: boolean; memberAttended: boolean; prospectAttended: boolean; safetyOrRedFlag: boolean; catfishOrAgeMismatch: boolean; memberQualityPositive: boolean; memberVouchedForOthers: boolean; statedAge: number; optedOut: boolean; banned: boolean; alreadyMember: boolean; inviteAttempts: number; safeFollowupWindow: boolean }
 
 /** Story: Route personas consistently and trigger external sourcing only when local supply is sparse / Route each prospect deterministically to one locked matchmaker persona (spec/externalMatchmaker.md) */
+export const matchmakerPersonaFemale: number = 0;
+/** Story: Route personas consistently and trigger external sourcing only when local supply is sparse / Route each prospect deterministically to one locked matchmaker persona (spec/externalMatchmaker.md) */
+export const matchmakerPersonaMale: number = 1;
+/** Story: Route personas consistently and trigger external sourcing only when local supply is sparse / Route each prospect deterministically to one locked matchmaker persona (spec/externalMatchmaker.md) */
+export const matchmakerAppNtwrk: number = 0;
+/** Story: Route personas consistently and trigger external sourcing only when local supply is sparse / Route each prospect deterministically to one locked matchmaker persona (spec/externalMatchmaker.md) */
 export const matchmakerAppSlop: number = 1;
 /** Story: Route personas consistently and trigger external sourcing only when local supply is sparse / Route each prospect deterministically to one locked matchmaker persona (spec/externalMatchmaker.md) */
 export const matchmakerAppPeon: number = 2;
@@ -26,8 +32,6 @@ export const genderWoman: number = 0;
 export const genderMan: number = 1;
 /** Story: Route personas consistently and trigger external sourcing only when local supply is sparse / Route each prospect deterministically to one locked matchmaker persona (spec/externalMatchmaker.md) */
 export const genderNonbinary: number = 2;
-/** Story: Route personas consistently and trigger external sourcing only when local supply is sparse / Route each prospect deterministically to one locked matchmaker persona (spec/externalMatchmaker.md) */
-export const matchmakerPersonaFemale: number = 0;
 /** Story: Route personas consistently and trigger external sourcing only when local supply is sparse / Route each prospect deterministically to one locked matchmaker persona (spec/externalMatchmaker.md) */
 export const genderUnknown: number = -1;
 /** Story: Route personas consistently and trigger external sourcing only when local supply is sparse / Route each prospect deterministically to one locked matchmaker persona (spec/externalMatchmaker.md) */
@@ -49,11 +53,7 @@ export const prospectConsentDeclined: number = 4;
 /** Story: Route personas consistently and trigger external sourcing only when local supply is sparse / Route each prospect deterministically to one locked matchmaker persona (spec/externalMatchmaker.md) */
 export const prospectConsentStopped: number = 5;
 /** Story: Route personas consistently and trigger external sourcing only when local supply is sparse / Route each prospect deterministically to one locked matchmaker persona (spec/externalMatchmaker.md) */
-export const matchmakerPersonaMale: number = 1;
-/** Story: Route personas consistently and trigger external sourcing only when local supply is sparse / Route each prospect deterministically to one locked matchmaker persona (spec/externalMatchmaker.md) */
 export const prospectConsentBanned: number = 6;
-/** Story: Route personas consistently and trigger external sourcing only when local supply is sparse / Route each prospect deterministically to one locked matchmaker persona (spec/externalMatchmaker.md) */
-export const matchmakerAppNtwrk: number = 0;
 
 /** Story: Route personas consistently and trigger external sourcing only when local supply is sparse / Route each prospect deterministically to one locked matchmaker persona (spec/externalMatchmaker.md) */
 //@ pure

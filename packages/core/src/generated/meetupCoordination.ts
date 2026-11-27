@@ -27,21 +27,14 @@ export function lawMeetupPhasePartition(minutesFromStart: number): boolean {
 
 /** Story: Coordinate safe on-site arrivals and backup pivots / Halt arrival relay immediately on panic, block, or any minor in the event (spec/meetupCoordination.md) */
 //@ pure
-export function canAttendEventOrCoattend(participantAge: number, anyMinorInGroup: boolean, isSoloSuggestion: boolean): boolean {
-  return participantAge >= 13 && participantAge <= 120 && (isSoloSuggestion || (participantAge >= 18 && !anyMinorInGroup));
-}
-
-/** Story: Coordinate safe on-site arrivals and backup pivots / Halt arrival relay immediately on panic, block, or any minor in the event (spec/meetupCoordination.md) */
-//@ pure
 export function canRelayArrivalSafe(r: ArrivalRelaySafeInput): boolean {
   return !r.panicTriggered && !r.blocked && !r.anyMinorInEvent && r.senderAge >= 18 && r.senderAge <= 120 && r.recipientAge >= 18 && r.recipientAge <= 120 && r.senderConfirmed && r.recipientConfirmed && !r.senderOptedOut && !r.recipientOptedOut && meetupPhase(r.minutesFromStart) === "active_arrival" && !r.alreadyMet && r.passedSafetyAndLeakCheck;
 }
 
 /** Story: Coordinate safe on-site arrivals and backup pivots / Halt arrival relay immediately on panic, block, or any minor in the event (spec/meetupCoordination.md) */
 //@ pure
-export function lawNoMinorInAnyEventOrCoattend(participantAge: number, anyMinorInGroup: boolean): boolean {
-  //@ ensures \result === true
-  return !(participantAge < 18 || anyMinorInGroup) || !canAttendEventOrCoattend(participantAge, anyMinorInGroup, false);
+export function canAttendEventOrCoattend(participantAge: number, anyMinorInGroup: boolean, isSoloSuggestion: boolean): boolean {
+  return participantAge >= 13 && participantAge <= 120 && (isSoloSuggestion || (participantAge >= 18 && !anyMinorInGroup));
 }
 
 /** Story: Coordinate safe on-site arrivals and backup pivots / Halt arrival relay immediately on panic, block, or any minor in the event (spec/meetupCoordination.md) */
@@ -56,6 +49,13 @@ export function lawPanicOrBlockImmediatelyHaltsRelay(r: ArrivalRelaySafeInput): 
 export function lawNoMinorInArrivalRelayOrCoattend(r: ArrivalRelaySafeInput): boolean {
   //@ ensures \result === true
   return !(r.anyMinorInEvent || r.senderAge < 18 || r.recipientAge < 18) || !canRelayArrivalSafe(r);
+}
+
+/** Story: Coordinate safe on-site arrivals and backup pivots / Halt arrival relay immediately on panic, block, or any minor in the event (spec/meetupCoordination.md) */
+//@ pure
+export function lawNoMinorInAnyEventOrCoattend(participantAge: number, anyMinorInGroup: boolean): boolean {
+  //@ ensures \result === true
+  return !(participantAge < 18 || anyMinorInGroup) || !canAttendEventOrCoattend(participantAge, anyMinorInGroup, false);
 }
 
 /** Story: Coordinate safe on-site arrivals and backup pivots / Escalate late arrivals at 12 minutes and free waiting attendees by 18 minutes (spec/meetupCoordination.md) */
@@ -80,15 +80,15 @@ export function lawNoShowSilentBefore12m(minutesAfterStart: number, someArrived:
 
 /** Story: Coordinate safe on-site arrivals and backup pivots / Pivot to backup on closed or full venue, but quarantine only on closure (spec/meetupCoordination.md) */
 //@ pure
-export function shouldQuarantineVenue(venueReportedClosed: boolean, venueReportedFull: boolean): boolean {
-  return venueReportedClosed;
+export function shouldPivotToBackupV2(venueReportedClosed: boolean, venueReportedFull: boolean, hasVerifiedBackup: boolean, minutesFromStart: number, alreadyPivoted: boolean): boolean {
+  const local_1 = meetupPhase(minutesFromStart);
+  return (venueReportedClosed || venueReportedFull) && hasVerifiedBackup && !alreadyPivoted && (local_1 === "pre_brief" || local_1 === "active_arrival");
 }
 
 /** Story: Coordinate safe on-site arrivals and backup pivots / Pivot to backup on closed or full venue, but quarantine only on closure (spec/meetupCoordination.md) */
 //@ pure
-export function shouldPivotToBackupV2(venueReportedClosed: boolean, venueReportedFull: boolean, hasVerifiedBackup: boolean, minutesFromStart: number, alreadyPivoted: boolean): boolean {
-  const local_1 = meetupPhase(minutesFromStart);
-  return (venueReportedClosed || venueReportedFull) && hasVerifiedBackup && !alreadyPivoted && (local_1 === "pre_brief" || local_1 === "active_arrival");
+export function shouldQuarantineVenue(venueReportedClosed: boolean, venueReportedFull: boolean): boolean {
+  return venueReportedClosed;
 }
 
 /** Story: Coordinate safe on-site arrivals and backup pivots / Pivot to backup on closed or full venue, but quarantine only on closure (spec/meetupCoordination.md) */
@@ -133,17 +133,17 @@ export function canSendFollowup(f: FollowupSendInput): boolean {
 
 /** Story: Protect anchor failover, quorum cutoffs, and follow-up limits / Schedule follow-ups outside quiet hours and enforce opt-out and daily caps (spec/meetupCoordination.md) */
 //@ pure
-export function lawFollowupNeverDuringQuietHoursOrOverCap(f: FollowupSendInput): boolean {
-  //@ ensures \result === true
-  return !canSendFollowup(f) || (!f.optedOut && !f.inQuietHours && f.localHour >= 9 && f.localHour < 20 && f.dailyProactiveCount < 3 && f.remindersSent < 2 && !f.alreadyResponded);
-}
-
-/** Story: Protect anchor failover, quorum cutoffs, and follow-up limits / Schedule follow-ups outside quiet hours and enforce opt-out and daily caps (spec/meetupCoordination.md) */
-//@ pure
 export function lawFollowupSlotAlwaysInSafeDayHours(eventEndLocalHour: number): boolean {
   //@ ensures \result === true
   const local_3: FollowupSlot = computeFollowupLocalHour(eventEndLocalHour);
   return !(eventEndLocalHour >= 0 && eventEndLocalHour <= 23) || (local_3.localHour >= 9 && local_3.localHour < 20 && (local_3.localMinute === 0 || local_3.localMinute === 30));
+}
+
+/** Story: Protect anchor failover, quorum cutoffs, and follow-up limits / Schedule follow-ups outside quiet hours and enforce opt-out and daily caps (spec/meetupCoordination.md) */
+//@ pure
+export function lawFollowupNeverDuringQuietHoursOrOverCap(f: FollowupSendInput): boolean {
+  //@ ensures \result === true
+  return !canSendFollowup(f) || (!f.optedOut && !f.inQuietHours && f.localHour >= 9 && f.localHour < 20 && f.dailyProactiveCount < 3 && f.remindersSent < 2 && !f.alreadyResponded);
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */

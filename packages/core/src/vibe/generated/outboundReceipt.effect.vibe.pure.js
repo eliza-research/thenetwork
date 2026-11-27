@@ -7,15 +7,15 @@ export function inv(current) { return M.inv(current); }
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
 export function receiptRank(phase) { return M.receiptRank(phase); }
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
+export function canRecordAcceptance(outbound, providerPhase) { return M.canRecordAcceptance(outbound, providerPhase); }
+/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
 export function recordAcceptance(outbound, providerPhase) { return M.recordAcceptance(outbound, providerPhase); }
+/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
+export function canApplyReceipt(outbound, providerPhase) { return M.canApplyReceipt(outbound, providerPhase); }
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
 export function applyReceipt(outbound, providerPhase) { return M.applyReceipt(outbound, providerPhase); }
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
-export function canRecordAcceptance(outbound, providerPhase) { return M.canRecordAcceptance(outbound, providerPhase); }
-/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
 export function stepReceiptsDoNotRegress(before, via, after) { return M.stepReceiptsDoNotRegress(before, via, after); }
-/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
-export function canApplyReceipt(outbound, providerPhase) { return M.canApplyReceipt(outbound, providerPhase); }
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
 export function lawDeliveredIgnoresFailure(phase) { return M.lawDeliveredIgnoresFailure(phase); }
 /** Story: Know whether a queued message reached the provider / A terminal receipt preserves the recipient cap after payload erasure (spec/outboundReceipt.md) @throws {never} */
@@ -67,11 +67,11 @@ export function lawReceiptOwnerAcceptanceKeepsRecipientCount(phase) { return M.l
 /** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) @throws {never} */
 export function lawFailedAcceptanceHasNoRecipientCount(receiptOwner, nonmember, hadAddress, windowOpen) { return M.lawFailedAcceptanceHasNoRecipientCount(receiptOwner, nonmember, hadAddress, windowOpen); }
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
+export function gatewayReplyPhase(pastLimit) { return M.gatewayReplyPhase(pastLimit); }
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
 export function gatewayReceiptApplies(replyStatus, delivery) { return M.gatewayReceiptApplies(replyStatus, delivery); }
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
 export function gatewayReplySendTime(replyStatus, collectedAt, receivedAt) { return M.gatewayReplySendTime(replyStatus, collectedAt, receivedAt); }
-/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
-export function gatewayReplyPhase(pastLimit) { return M.gatewayReplyPhase(pastLimit); }
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
 export function lawExpiredReplySendsAtCollection(replyStatus, collectedAt, receivedAt) { return M.lawExpiredReplySendsAtCollection(replyStatus, collectedAt, receivedAt); }
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) @throws {never} */
@@ -92,5 +92,33 @@ export function step(current, event) { return M.step(current, event); }
 export function parseEvent(x) { return M.parseEvent(x); }
 /** Turn an untrusted value, such as a state loaded from storage, into a state, or undefined if it is not one. It must have exactly the state's shape (no other fields, whole numbers that are safe integers, sets that hold nothing twice, maps as records whose keys carry the "$" every key carries here) and satisfy every `always` rule. The result is a fresh copy, so nothing the caller keeps can change it afterwards. @throws {never} */
 export function parseState(x) { return M.parseState(x); }
-/** A Machine never shares a state with its callers. @throws {never} */
-export function snapshot_outboundReceipt(value) { return structuredClone(value); }
+/** @throws {never} */
+export function snapshot_outboundReceipt(value) {
+    if (value === null || typeof value !== "object" || Object.isFrozen(value))
+        return value;
+    Object.freeze(value);
+    if (Array.isArray(value)) {
+        for (let i = 0; i < value.length; i++)
+            snapshot_outboundReceipt(value[i]);
+    }
+    else {
+        for (const key of Object.keys(value))
+            snapshot_outboundReceipt(value[key]);
+    }
+    return value;
+}
+/** @throws {never} */
+export function snapshot_in_outboundReceipt(value) {
+    if (value === null || typeof value !== "object" || Object.isFrozen(value))
+        return value;
+    if (Array.isArray(value)) {
+        const copy = new Array(value.length);
+        for (let i = 0; i < value.length; i++)
+            copy[i] = snapshot_in_outboundReceipt(value[i]);
+        return Object.freeze(copy);
+    }
+    const copy = {};
+    for (const key of Object.keys(value))
+        copy[key] = snapshot_in_outboundReceipt(value[key]);
+    return Object.freeze(copy);
+}

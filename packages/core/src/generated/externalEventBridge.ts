@@ -9,17 +9,17 @@ export interface ApproveExternalEventRsvpInput { attendeeAge: number; banned: bo
 export interface InviteExternalEventAttendeeInput { eventCompleted: boolean; networkFeedbackPositive: boolean; safetyFlag: boolean; attendeeAge: number; optedOut: boolean; banned: boolean; alreadyMember: boolean; invitesSent: number; safeFollowupWindow: boolean }
 
 /** Story: Ingest and publish only sanctioned, anchored, capacity-safe external events / Accept only sanctioned external event sources (spec/externalEventBridge.md) */
-export const externalEventMaxHeadcount: number = 15;
-/** Story: Ingest and publish only sanctioned, anchored, capacity-safe external events / Accept only sanctioned external event sources (spec/externalEventBridge.md) */
-export const externalEventT24Hours: number = 24;
-/** Story: Ingest and publish only sanctioned, anchored, capacity-safe external events / Accept only sanctioned external event sources (spec/externalEventBridge.md) */
-export const externalEventMinQuorum: number = 3;
-/** Story: Ingest and publish only sanctioned, anchored, capacity-safe external events / Accept only sanctioned external event sources (spec/externalEventBridge.md) */
 export const externalEventSourceHostNative: number = 0;
 /** Story: Ingest and publish only sanctioned, anchored, capacity-safe external events / Accept only sanctioned external event sources (spec/externalEventBridge.md) */
 export const externalEventSourceOfficialApi: number = 1;
 /** Story: Ingest and publish only sanctioned, anchored, capacity-safe external events / Accept only sanctioned external event sources (spec/externalEventBridge.md) */
 export const externalEventSourceMemberSubmittedPublic: number = 2;
+/** Story: Ingest and publish only sanctioned, anchored, capacity-safe external events / Accept only sanctioned external event sources (spec/externalEventBridge.md) */
+export const externalEventMaxHeadcount: number = 15;
+/** Story: Ingest and publish only sanctioned, anchored, capacity-safe external events / Accept only sanctioned external event sources (spec/externalEventBridge.md) */
+export const externalEventT24Hours: number = 24;
+/** Story: Ingest and publish only sanctioned, anchored, capacity-safe external events / Accept only sanctioned external event sources (spec/externalEventBridge.md) */
+export const externalEventMinQuorum: number = 3;
 
 /** Story: Ingest and publish only sanctioned, anchored, capacity-safe external events / Accept only sanctioned external event sources (spec/externalEventBridge.md) */
 //@ pure

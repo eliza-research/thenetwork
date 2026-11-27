@@ -33,10 +33,10 @@ export type Event = {
 } | {
     type: "recordStorageFailure";
 };
-/** Story: Connect my agent after I approve access / Locked approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md) */
-export declare const eligibleApproval: LockedApproval;
 /** Story: Connect my agent after I approve access / An expired request cannot begin issuance (spec/oauthGrantIssuance.md) */
 export declare const initial: Issuance;
+/** Story: Connect my agent after I approve access / Locked approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md) */
+export declare const eligibleApproval: LockedApproval;
 /** Every `always` rule at once. Holds initially and after every transition. */
 export declare function inv(current: Issuance): boolean;
 /** Story: Connect my agent after I approve access / An expired request cannot begin issuance (spec/oauthGrantIssuance.md) */

@@ -1,6 +1,6 @@
 // GENERATED from spec/opsAlertDispatch.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { publicEventHorizonDays as publicEventCatalog_publicEventHorizonDays, publicEventRefreshMs as publicEventCatalog_publicEventRefreshMs, publicEventRetryMs as publicEventCatalog_publicEventRetryMs, publicEventFreshDays as publicEventCatalog_publicEventFreshDays, publicEventScanMaxBytes as publicEventCatalog_publicEventScanMaxBytes, publicEventScanRowLimit as publicEventCatalog_publicEventScanRowLimit, publicEventScanResponseAllowed as publicEventCatalog_publicEventScanResponseAllowed, publicEventScanComplete as publicEventCatalog_publicEventScanComplete, publicEventPublicationNewer as publicEventCatalog_publicEventPublicationNewer, publicEventCatalogFresh as publicEventCatalog_publicEventCatalogFresh, publicEventDuplicateAllowed as publicEventCatalog_publicEventDuplicateAllowed, publicEventRevisionMatches as publicEventCatalog_publicEventRevisionMatches, publicEventMemberAllowsMatch as publicEventCatalog_publicEventMemberAllowsMatch, publicEventWindowUsable as publicEventCatalog_publicEventWindowUsable, publicEventClaimAllowed as publicEventCatalog_publicEventClaimAllowed, closedPublicEventIsUnsent as publicEventCatalog_closedPublicEventIsUnsent, publicBookedEventLinkAllowed as publicEventCatalog_publicBookedEventLinkAllowed, publicEventRefreshDue as publicEventCatalog_publicEventRefreshDue, lawPartialEventScanCannotPublish as publicEventCatalog_lawPartialEventScanCannotPublish, lawCatalogExpiresAtLimit as publicEventCatalog_lawCatalogExpiresAtLimit, lawConflictingPublicEventRowsCannotPublish as publicEventCatalog_lawConflictingPublicEventRowsCannotPublish, lawEventMinimumAgeAppliesToAdults as publicEventCatalog_lawEventMinimumAgeAppliesToAdults, lawMovedPublicEventCannotAuthorizeClaim as publicEventCatalog_lawMovedPublicEventCannotAuthorizeClaim, lawRefreshDueBeforeCatalogExpires as publicEventCatalog_lawRefreshDueBeforeCatalogExpires, lawRecentAttemptWaits as publicEventCatalog_lawRecentAttemptWaits, publicEventAllowed as publicEventCatalog_publicEventAllowed } from "./publicEventCatalog.ts";
+import { publicEventHorizonDays as publicEventCatalog_publicEventHorizonDays, publicEventWindowUsable as publicEventCatalog_publicEventWindowUsable, publicEventAllowed as publicEventCatalog_publicEventAllowed, publicEventFreshDays as publicEventCatalog_publicEventFreshDays, publicEventScanMaxBytes as publicEventCatalog_publicEventScanMaxBytes, publicEventScanRowLimit as publicEventCatalog_publicEventScanRowLimit, publicEventScanResponseAllowed as publicEventCatalog_publicEventScanResponseAllowed, publicEventScanComplete as publicEventCatalog_publicEventScanComplete, lawPartialEventScanCannotPublish as publicEventCatalog_lawPartialEventScanCannotPublish, publicEventPublicationNewer as publicEventCatalog_publicEventPublicationNewer, publicEventCatalogFresh as publicEventCatalog_publicEventCatalogFresh, lawCatalogExpiresAtLimit as publicEventCatalog_lawCatalogExpiresAtLimit, publicEventDuplicateAllowed as publicEventCatalog_publicEventDuplicateAllowed, lawConflictingPublicEventRowsCannotPublish as publicEventCatalog_lawConflictingPublicEventRowsCannotPublish, publicEventRevisionMatches as publicEventCatalog_publicEventRevisionMatches, publicEventMemberAllowsMatch as publicEventCatalog_publicEventMemberAllowsMatch, lawEventMinimumAgeAppliesToAdults as publicEventCatalog_lawEventMinimumAgeAppliesToAdults, publicEventClaimAllowed as publicEventCatalog_publicEventClaimAllowed, lawMovedPublicEventCannotAuthorizeClaim as publicEventCatalog_lawMovedPublicEventCannotAuthorizeClaim, closedPublicEventIsUnsent as publicEventCatalog_closedPublicEventIsUnsent, publicBookedEventLinkAllowed as publicEventCatalog_publicBookedEventLinkAllowed, publicEventRefreshMs as publicEventCatalog_publicEventRefreshMs, publicEventRetryMs as publicEventCatalog_publicEventRetryMs, publicEventRefreshDue as publicEventCatalog_publicEventRefreshDue, lawRefreshDueBeforeCatalogExpires as publicEventCatalog_lawRefreshDueBeforeCatalogExpires, lawRecentAttemptWaits as publicEventCatalog_lawRecentAttemptWaits } from "./publicEventCatalog.ts";
 
 /** Story: Receive useful operations alerts without duplicate notices / An alert sends when it starts, gets worse, or reaches its repeat time (spec/opsAlertDispatch.md) */
 export type FiringPlan = "StartAlert" | "SendAgain" | "UpdateOnly";
@@ -26,6 +26,8 @@ export type Event =
 
 /** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) */
 export const alertPostWindowMs: number = 3600000;
+/** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) */
+export const initial: AlertDispatch = { phase: "AwaitingNotices" };
 /** Story: Report the result of each operations round / Collect scheduled rounds and reuse fresh metrics (spec/opsAlertDispatch.md) */
 export const metricsFreshMs: number = 15000;
 /** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) */
@@ -34,16 +36,14 @@ export const turnWatchComplianceAfterMs: number = 120000;
 export const turnWatchReplyAfterMs: number = 900000;
 /** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) */
 export const turnWatchWindowMs: number = 86400000;
+/** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) */
+export const catalogStaleAfterMs: number = exact_opsAlertDispatch(publicEventCatalog_publicEventRefreshMs + publicEventCatalog_publicEventRetryMs);
 /** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) */
 export const judgeCannotRunAlertAbove: number = 10;
 /** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) */
 export const judgeRateMinDecisions: number = 20;
 /** Story: Hear when the review judge stops working or approves too much / The review judge alerts when it cannot run or approves above its qualified rate (spec/opsAlertDispatch.md) */
 export const judgeRateMarginBp: number = 1000;
-/** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) */
-export const initial: AlertDispatch = { phase: "AwaitingNotices" };
-/** Story: Hear when the public event catalog stops refreshing / The catalog alerts when its last scan is older than a day and one retry (spec/opsAlertDispatch.md) */
-export const catalogStaleAfterMs: number = exact_opsAlertDispatch(publicEventCatalog_publicEventRefreshMs + publicEventCatalog_publicEventRetryMs);
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
@@ -53,14 +53,14 @@ export function inv(current: AlertDispatch): boolean {
 
 /** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) */
 //@ pure
-export function reportedSmsTotal(exactTotalAvailable: boolean, exactTotal: number, legacyTotal: number): number {
-  return exactTotalAvailable ? exactTotal : legacyTotal;
+export function countSendOutcome(waiting: boolean): boolean {
+  return !waiting;
 }
 
 /** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) */
 //@ pure
-export function countSendOutcome(waiting: boolean): boolean {
-  return !waiting;
+export function reportedSmsTotal(exactTotalAvailable: boolean, exactTotal: number, legacyTotal: number): number {
+  return exactTotalAvailable ? exactTotal : legacyTotal;
 }
 
 /** Story: Receive useful operations alerts without duplicate notices / Pending delivery does not affect the failure rate (spec/opsAlertDispatch.md) */
@@ -142,12 +142,6 @@ export function batchWasHeld(s: AlertDispatch): boolean {
 
 /** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) */
 //@ pure
-export function sometimesRejected(s: AlertDispatch): boolean {
-  return s.phase === "PostRejected";
-}
-
-/** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) */
-//@ pure
 export function stepResultFollowsAttempt(before: AlertDispatch, after: AlertDispatch): boolean {
   return !(batchWasAttempted(after) && !batchWasAttempted(before)) || before.phase === "PostingNotices";
 }
@@ -162,6 +156,12 @@ export function sometimesHeld(s: AlertDispatch): boolean {
 //@ pure
 export function sometimesAccepted(s: AlertDispatch): boolean {
   return batchWasAccepted(s);
+}
+
+/** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md) */
+//@ pure
+export function sometimesRejected(s: AlertDispatch): boolean {
+  return s.phase === "PostRejected";
 }
 
 /** Story: Report the result of each operations round / Collect scheduled rounds and reuse fresh metrics (spec/opsAlertDispatch.md) */
@@ -184,20 +184,8 @@ export function roundReport(hasNotices: boolean, postAttempted: boolean, deliver
 
 /** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) */
 //@ pure
-export function turnWatchAfterMs(possibleCompliance: boolean): number {
-  return possibleCompliance ? turnWatchComplianceAfterMs : turnWatchReplyAfterMs;
-}
-
-/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) */
-//@ pure
 export function turnWatchUnconfirmed(receipt: TurnWatchReceipt, complianceReply: boolean): boolean {
   return receipt === "NoReceipt" || receipt === "ReceiptUnknown" || (receipt === "ReceiptRejected" && complianceReply);
-}
-
-/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) */
-//@ pure
-export function turnWatchPossibleCompliance(condition: TurnWatchCondition, complianceReply: boolean): boolean {
-  return condition === "TurnUnresolved" || complianceReply;
 }
 
 /** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) */
@@ -212,6 +200,18 @@ export function lawAcceptedReceiptConfirms(complianceReply: boolean): boolean {
 export function lawRejectedComplianceIsWatched(receipt: TurnWatchReceipt): boolean {
   //@ ensures \result === true
   return !turnWatchUnconfirmed(receipt, false) || turnWatchUnconfirmed(receipt, true);
+}
+
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) */
+//@ pure
+export function turnWatchPossibleCompliance(condition: TurnWatchCondition, complianceReply: boolean): boolean {
+  return condition === "TurnUnresolved" || complianceReply;
+}
+
+/** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) */
+//@ pure
+export function turnWatchAfterMs(possibleCompliance: boolean): number {
+  return possibleCompliance ? turnWatchComplianceAfterMs : turnWatchReplyAfterMs;
 }
 
 /** Story: Hear when a shared-line turn may have reached nobody / Each unconfirmed turn condition becomes overdue after its threshold (spec/opsAlertDispatch.md) */
@@ -243,6 +243,12 @@ export function lawUnresolvedTurnStaysWatched(complianceReply: boolean, ageMs: n
 
 /** Story: Hear when a shared-line turn may have reached nobody / Each condition is one alert, and a possible STOP makes it bad and first (spec/opsAlertDispatch.md) */
 //@ pure
+export function turnWatchAlertKey(condition: TurnWatchCondition): string {
+  return condition === "RepliesUnconfirmed" ? "turn_unconfirmed" : (condition === "TurnUnresolved" ? "turn_unresolved" : "deliver_unknown");
+}
+
+/** Story: Hear when a shared-line turn may have reached nobody / Each condition is one alert, and a possible STOP makes it bad and first (spec/opsAlertDispatch.md) */
+//@ pure
 export function turnWatchRaises(overdueCount: number): boolean {
   return overdueCount > 0;
 }
@@ -257,12 +263,6 @@ export function turnWatchLevel(complianceCount: number): string {
 //@ pure
 export function turnWatchLeads(complianceCount: number): boolean {
   return complianceCount > 0;
-}
-
-/** Story: Hear when a shared-line turn may have reached nobody / Each condition is one alert, and a possible STOP makes it bad and first (spec/opsAlertDispatch.md) */
-//@ pure
-export function turnWatchAlertKey(condition: TurnWatchCondition): string {
-  return condition === "RepliesUnconfirmed" ? "turn_unconfirmed" : (condition === "TurnUnresolved" ? "turn_unresolved" : "deliver_unknown");
 }
 
 /** Story: Hear when a shared-line turn may have reached nobody / Each condition is one alert, and a possible STOP makes it bad and first (spec/opsAlertDispatch.md) */

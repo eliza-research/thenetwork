@@ -27,12 +27,6 @@ export function lawHireCompanyExclusionBlocksContact(searchActive: boolean, same
 
 /** Story: Stay in charge of a Peon job search / An employer hears only after the candidate accepts (spec/peonHireDispatch.md) */
 //@ pure
-export function hireAnswerAllowed(direct: boolean, delivered: boolean, receivedAt: number, deliveredAt: number, at: number, deadline: number): boolean {
-  return direct && delivered && receivedAt >= deliveredAt && receivedAt <= at && at < deadline;
-}
-
-/** Story: Stay in charge of a Peon job search / An employer hears only after the candidate accepts (spec/peonHireDispatch.md) */
-//@ pure
 export function hireContactAllowed(evidenceCurrent: boolean, reviewed: boolean, phaseCurrent: boolean, employerProbe: boolean, reveal: boolean, candidateYes: boolean, employerYes: boolean): boolean {
   return evidenceCurrent && reviewed && phaseCurrent && (!(employerProbe || reveal) || candidateYes) && (!reveal || employerYes);
 }
@@ -46,6 +40,12 @@ export function lawEmployerCannotBeContactedFirst(evidenceCurrent: boolean, revi
 
 /** Story: Stay in charge of a Peon job search / An employer hears only after the candidate accepts (spec/peonHireDispatch.md) */
 //@ pure
+export function hireAnswerAllowed(direct: boolean, delivered: boolean, receivedAt: number, deliveredAt: number, at: number, deadline: number): boolean {
+  return direct && delivered && receivedAt >= deliveredAt && receivedAt <= at && at < deadline;
+}
+
+/** Story: Stay in charge of a Peon job search / An employer hears only after the candidate accepts (spec/peonHireDispatch.md) */
+//@ pure
 export function lawHireAnswerRequiresDelivery(direct: boolean, receivedAt: number, deliveredAt: number, at: number, deadline: number): boolean {
   //@ ensures \result === true
   return !hireAnswerAllowed(direct, false, receivedAt, deliveredAt, at, deadline);
@@ -53,14 +53,14 @@ export function lawHireAnswerRequiresDelivery(direct: boolean, receivedAt: numbe
 
 /** Story: Stay in charge of a Peon job search / A closed application keeps its recorded answers (spec/peonHireDispatch.md) */
 //@ pure
-export function hireProbeWasDeclined(existingDecline: boolean, recordedDecline: boolean): boolean {
-  return existingDecline || recordedDecline;
+export function hireClosedProbeReply(answer: string): HireProbeHistory {
+  return answer === "yes" ? "HireProbeAccepted" : (answer === "no" ? "HireProbeDeclined" : "HireProbeUnrecorded");
 }
 
 /** Story: Stay in charge of a Peon job search / A closed application keeps its recorded answers (spec/peonHireDispatch.md) */
 //@ pure
-export function hireClosedProbeReply(answer: string): HireProbeHistory {
-  return answer === "yes" ? "HireProbeAccepted" : (answer === "no" ? "HireProbeDeclined" : "HireProbeUnrecorded");
+export function hireProbeWasDeclined(existingDecline: boolean, recordedDecline: boolean): boolean {
+  return existingDecline || recordedDecline;
 }
 
 /** Story: Stay in charge of a Peon job search / A closed application keeps its recorded answers (spec/peonHireDispatch.md) */

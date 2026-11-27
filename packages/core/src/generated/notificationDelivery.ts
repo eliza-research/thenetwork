@@ -34,15 +34,15 @@ export function digestUsesProactiveSlot(itemCount: number, requestedCount: numbe
 
 /** Story: Get a requested update when it is due / At the weekly cap only requested updates can go out (spec/notificationDelivery.md) */
 //@ pure
-export function lawRequestedOnlyDigestUsesNoSlot(itemCount: number): boolean {
-  //@ ensures \result === true
-  return !digestUsesProactiveSlot(itemCount, itemCount);
+export function weeklyDigest(recentSends: number, weeklyCap: number, itemCount: number, requestedCount: number): WeeklyDigest {
+  return recentSends < weeklyCap || !digestUsesProactiveSlot(itemCount, requestedCount) ? "KeepDigest" : (requestedCount > 0 ? "KeepRequested" : "HoldDigest");
 }
 
 /** Story: Get a requested update when it is due / At the weekly cap only requested updates can go out (spec/notificationDelivery.md) */
 //@ pure
-export function weeklyDigest(recentSends: number, weeklyCap: number, itemCount: number, requestedCount: number): WeeklyDigest {
-  return recentSends < weeklyCap || !digestUsesProactiveSlot(itemCount, requestedCount) ? "KeepDigest" : (requestedCount > 0 ? "KeepRequested" : "HoldDigest");
+export function lawRequestedOnlyDigestUsesNoSlot(itemCount: number): boolean {
+  //@ ensures \result === true
+  return !digestUsesProactiveSlot(itemCount, itemCount);
 }
 
 /** Story: Get a requested update when it is due / At the weekly cap only requested updates can go out (spec/notificationDelivery.md) */
@@ -66,13 +66,6 @@ export function projectAssistantActivity(hasEligibleGrant: boolean, checksComple
 
 /** Story: Receive updates on a surface I use / One app's removal keeps an assistant active while another grant remains (spec/notificationDelivery.md) */
 //@ pure
-export function lawDifferentPersonOrAssistantCannotCount(samePerson: boolean, sameAssistant: boolean, allowsUpdates: boolean, live: boolean): boolean {
-  //@ ensures \result === true
-  return !(!samePerson || !sameAssistant) || !assistantGrantCounts(samePerson, sameAssistant, allowsUpdates, live);
-}
-
-/** Story: Receive updates on a surface I use / One app's removal keeps an assistant active while another grant remains (spec/notificationDelivery.md) */
-//@ pure
 export function lawAnotherEligibleGrantKeepsAssistantActive(checksComplete: boolean): boolean {
   //@ ensures \result === true
   return projectAssistantActivity(true, checksComplete) === "AssistantActive";
@@ -83,6 +76,13 @@ export function lawAnotherEligibleGrantKeepsAssistantActive(checksComplete: bool
 export function lawUnverifiedGrantCannotDeactivateAssistant(hasEligibleGrant: boolean): boolean {
   //@ ensures \result === true
   return projectAssistantActivity(hasEligibleGrant, false) !== "AssistantInactive";
+}
+
+/** Story: Receive updates on a surface I use / One app's removal keeps an assistant active while another grant remains (spec/notificationDelivery.md) */
+//@ pure
+export function lawDifferentPersonOrAssistantCannotCount(samePerson: boolean, sameAssistant: boolean, allowsUpdates: boolean, live: boolean): boolean {
+  //@ ensures \result === true
+  return !(!samePerson || !sameAssistant) || !assistantGrantCounts(samePerson, sameAssistant, allowsUpdates, live);
 }
 
 /** Story: Receive updates on a surface I use / The text thread carries a digest one connector cannot read (spec/notificationDelivery.md) */

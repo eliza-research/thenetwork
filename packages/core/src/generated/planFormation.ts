@@ -13,10 +13,10 @@ export type Event =
   | { type: "reservePlan"; invited: string[]; limit: number }
   | { type: "publishPlans" };
 
-/** Story: Use the same activity window for availability and a proposal / The member's latest weekly answer takes precedence (spec/planFormation.md) */
-export const weeklyCheckinEvidenceMs: number = 604800000;
 /** Story: Give each invited member one plan per city run / Reserve ranked plans until the city limit is reached (spec/planFormation.md) */
 export const initial: CityPlanRun = { phase: "ReservingPlans", count: 0, occupied: ({} as Record<string, boolean>) };
+/** Story: Use the same activity window for availability and a proposal / The member's latest weekly answer takes precedence (spec/planFormation.md) */
+export const weeklyCheckinEvidenceMs: number = 604800000;
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
@@ -101,12 +101,6 @@ export function planScoreQualifies(minimumScore: number, overallScore: number, m
 
 /** Story: Find a public activity that fits the group / Search for a qualifying group before an activity partner (spec/planFormation.md) */
 //@ pure
-export function searchForPlanPartner(hasGroup: boolean, partnerEnabled: boolean, activityMinimum: number, capacity: number): boolean {
-  return !hasGroup && partnerEnabled && activityMinimum <= 2 && capacity >= 2;
-}
-
-/** Story: Find a public activity that fits the group / Search for a qualifying group before an activity partner (spec/planFormation.md) */
-//@ pure
 export function planGroupCanReserve(coherent: boolean, minimumScore: number, overallScore: number, memberFloor: number, planFloor: number): boolean {
   return coherent && planScoreQualifies(minimumScore, overallScore, memberFloor, planFloor);
 }
@@ -116,6 +110,12 @@ export function planGroupCanReserve(coherent: boolean, minimumScore: number, ove
 export function lawPlanGroupReservationRequiresBothScores(coherent: boolean, minimumScore: number, overallScore: number, memberFloor: number, planFloor: number): boolean {
   //@ ensures \result === true
   return !planGroupCanReserve(coherent, minimumScore, overallScore, memberFloor, planFloor) || (coherent && minimumScore >= memberFloor && overallScore >= planFloor);
+}
+
+/** Story: Find a public activity that fits the group / Search for a qualifying group before an activity partner (spec/planFormation.md) */
+//@ pure
+export function searchForPlanPartner(hasGroup: boolean, partnerEnabled: boolean, activityMinimum: number, capacity: number): boolean {
+  return !hasGroup && partnerEnabled && activityMinimum <= 2 && capacity >= 2;
 }
 
 /** Story: Find a public activity that fits the group / Alternates must fit the entire offered group (spec/planFormation.md) */
@@ -144,6 +144,12 @@ export function memberAlreadyInvited(s: CityPlanRun, memberId: string): boolean 
 
 /** Story: Give each invited member one plan per city run / Reserve ranked plans until the city limit is reached (spec/planFormation.md) */
 //@ pure
+export function canReservePlan(s: CityPlanRun, invited: string[], limit: number): boolean {
+  return s.phase === "ReservingPlans" && !cityPlanLimitReached(s, limit) && !invited.some((memberId: string) => !(!memberAlreadyInvited(s, memberId)));
+}
+
+/** Story: Give each invited member one plan per city run / Reserve ranked plans until the city limit is reached (spec/planFormation.md) */
+//@ pure
 export function reservePlan(s: CityPlanRun, invited: string[], limit: number): CityPlanRun {
   //@ ensures (inv(s) && canReservePlan(s, invited, limit)) ==> stepPlanCountChangesOnlyOnReservation(s, "reservePlan", \result)
   //@ ensures (inv(s) && canReservePlan(s, invited, limit)) ==> stepPublishedPlansStayClosed(s, \result)
@@ -154,12 +160,6 @@ export function reservePlan(s: CityPlanRun, invited: string[], limit: number): C
 //@ pure
 export function stepPlanCountChangesOnlyOnReservation(before: CityPlanRun, via: string, after: CityPlanRun): boolean {
   return via === "reservePlan" ? after.count === exact_planFormation(before.count + 1) : after.count === before.count;
-}
-
-/** Story: Give each invited member one plan per city run / Reserve ranked plans until the city limit is reached (spec/planFormation.md) */
-//@ pure
-export function canReservePlan(s: CityPlanRun, invited: string[], limit: number): boolean {
-  return s.phase === "ReservingPlans" && !cityPlanLimitReached(s, limit) && !invited.some((memberId: string) => !(!memberAlreadyInvited(s, memberId)));
 }
 
 /** Story: Give each invited member one plan per city run / Publish alternates after all invitations are reserved (spec/planFormation.md) */
@@ -178,6 +178,12 @@ export function publishPlans(s: CityPlanRun): CityPlanRun {
 
 /** Story: Give each invited member one plan per city run / Publish alternates after all invitations are reserved (spec/planFormation.md) */
 //@ pure
+export function planAlternateCanRemain(s: CityPlanRun, memberId: string): boolean {
+  return s.phase === "PlansPublished" && !memberAlreadyInvited(s, memberId);
+}
+
+/** Story: Give each invited member one plan per city run / Publish alternates after all invitations are reserved (spec/planFormation.md) */
+//@ pure
 export function stepPublishedPlansStayClosed(before: CityPlanRun, after: CityPlanRun): boolean {
   return !(before.phase === "PlansPublished") || equal_planFormation(after, before);
 }
@@ -186,12 +192,6 @@ export function stepPublishedPlansStayClosed(before: CityPlanRun, after: CityPla
 //@ pure
 export function sometimesPublishesAnInvitation(s: CityPlanRun): boolean {
   return s.phase === "PlansPublished" && s.count > 0;
-}
-
-/** Story: Give each invited member one plan per city run / Publish alternates after all invitations are reserved (spec/planFormation.md) */
-//@ pure
-export function planAlternateCanRemain(s: CityPlanRun, memberId: string): boolean {
-  return s.phase === "PlansPublished" && !memberAlreadyInvited(s, memberId);
 }
 
 /** Story: Use the same activity window for availability and a proposal / A template supplies the start and the activity supplies the end (spec/planFormation.md) */
@@ -221,12 +221,6 @@ export function weeklyWindowCandidate(end: number, start: number, now: number, u
 
 /** Story: Use the same activity window for availability and a proposal / The member's latest weekly answer takes precedence (spec/planFormation.md) */
 //@ pure
-export function statedPlanWindowAllows(statedAt: number, statedUntil: number, now: number, slotStart: number, coversSlot: boolean): boolean {
-  return statedAt > now || statedUntil <= slotStart || coversSlot;
-}
-
-/** Story: Use the same activity window for availability and a proposal / The member's latest weekly answer takes precedence (spec/planFormation.md) */
-//@ pure
 export function lawExpiredWeeklyWindowCannotEnterEvidence(start: number, now: number, until: number): boolean {
   //@ ensures \result === true
   return !weeklyWindowCandidate(now, start, now, until);
@@ -240,9 +234,8 @@ export function weeklyCheckinEvidence(directAnswer: boolean, hasWindows: boolean
 
 /** Story: Use the same activity window for availability and a proposal / The member's latest weekly answer takes precedence (spec/planFormation.md) */
 //@ pure
-export function lawCurrentExcludedWindowStopsPlan(statedAt: number, statedUntil: number, now: number, slotStart: number): boolean {
-  //@ ensures \result === true
-  return !(statedAt <= now && statedUntil > slotStart) || !statedPlanWindowAllows(statedAt, statedUntil, now, slotStart, false);
+export function statedPlanWindowAllows(statedAt: number, statedUntil: number, now: number, slotStart: number, coversSlot: boolean): boolean {
+  return statedAt > now || statedUntil <= slotStart || coversSlot;
 }
 
 /** Story: Use the same activity window for availability and a proposal / The member's latest weekly answer takes precedence (spec/planFormation.md) */
@@ -250,6 +243,13 @@ export function lawCurrentExcludedWindowStopsPlan(statedAt: number, statedUntil:
 export function lawUnclearWeeklyAnswerKeepsEarlier(directAnswer: boolean): boolean {
   //@ ensures \result === true
   return weeklyCheckinEvidence(directAnswer, false, false) === "KeepEarlier";
+}
+
+/** Story: Use the same activity window for availability and a proposal / The member's latest weekly answer takes precedence (spec/planFormation.md) */
+//@ pure
+export function lawCurrentExcludedWindowStopsPlan(statedAt: number, statedUntil: number, now: number, slotStart: number): boolean {
+  //@ ensures \result === true
+  return !(statedAt <= now && statedUntil > slotStart) || !statedPlanWindowAllows(statedAt, statedUntil, now, slotStart, false);
 }
 
 /** Do the rules allow this event in this state? */

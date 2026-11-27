@@ -1,6 +1,6 @@
 // GENERATED from spec/oneStepPage.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type JoinMode as brandIdentity_JoinMode, type AccentTokens as brandIdentity_AccentTokens, type Accent as brandIdentity_Accent, type Surface as brandIdentity_Surface, type AppKey as brandIdentity_AppKey, type LogoMark as brandIdentity_LogoMark, type SharedPart as brandIdentity_SharedPart, type StateColor as brandIdentity_StateColor, type MarkFill as brandIdentity_MarkFill, type ColorScheme as brandIdentity_ColorScheme, type Brand as brandIdentity_Brand, supportEmail as brandIdentity_supportEmail, agentAccessPage as brandIdentity_agentAccessPage, nearColorFloorPermille as brandIdentity_nearColorFloorPermille, inverseTextContrastFloorTenths as brandIdentity_inverseTextContrastFloorTenths, inverseEdgeContrastFloorTenths as brandIdentity_inverseEdgeContrastFloorTenths, ringIsTheAccent as brandIdentity_ringIsTheAccent, colorIsClearOfAccent as brandIdentity_colorIsClearOfAccent, inverseIsReadable as brandIdentity_inverseIsReadable, colorSchemes as brandIdentity_colorSchemes, markTileFill as brandIdentity_markTileFill, faviconMedia as brandIdentity_faviconMedia, joinModes as brandIdentity_joinModes, accents as brandIdentity_accents, logoMarks as brandIdentity_logoMarks, ntwrkBrand as brandIdentity_ntwrkBrand, slopBrand as brandIdentity_slopBrand, peonBrand as brandIdentity_peonBrand, friendsBrand as brandIdentity_friendsBrand, designBrandId as brandIdentity_designBrandId, accentTokens as brandIdentity_accentTokens, connectorEndpoint as brandIdentity_connectorEndpoint, openaiConnectorEndpoint as brandIdentity_openaiConnectorEndpoint, mayName as brandIdentity_mayName, siteUsesPart as brandIdentity_siteUsesPart, stateColors as brandIdentity_stateColors, stateToken as brandIdentity_stateToken, hoverFillIsClear as brandIdentity_hoverFillIsClear, lawRingEqualsTheAccent as brandIdentity_lawRingEqualsTheAccent, lawInverseNeedsBothContrasts as brandIdentity_lawInverseNeedsBothContrasts, appKeys as brandIdentity_appKeys, lawOnlyTheTwoCirclesTileTakesThePageColor as brandIdentity_lawOnlyTheTwoCirclesTileTakesThePageColor, lawLightFaviconHasNoCondition as brandIdentity_lawLightFaviconHasNoCondition, brandFor as brandIdentity_brandFor, lawDesignBrandIdsAreDistinct as brandIdentity_lawDesignBrandIdsAreDistinct, hubTextsOnAppSurface as brandIdentity_hubTextsOnAppSurface, lawAppEndpointsAreDistinct as brandIdentity_lawAppEndpointsAreDistinct, lawAppSiteNeverNamesTheNetwork as brandIdentity_lawAppSiteNeverNamesTheNetwork, lawAppSiteNamesNoOtherApp as brandIdentity_lawAppSiteNamesNoOtherApp, lawHubLandingNamesNoApp as brandIdentity_lawHubLandingNamesNoApp, lawSitesShareParts as brandIdentity_lawSitesShareParts, lawTheAccentIsNeverClearOfItself as brandIdentity_lawTheAccentIsNeverClearOfItself, lawStateTokensAreDistinct as brandIdentity_lawStateTokensAreDistinct, lawBrandNamesItsApp as brandIdentity_lawBrandNamesItsApp, lawOnlyTheNetworkIsInviteOnly as brandIdentity_lawOnlyTheNetworkIsInviteOnly, lawAccentInkDiffersFromAccent as brandIdentity_lawAccentInkDiffersFromAccent, lawOnlyTheSkillNamesTheEndpoint as brandIdentity_lawOnlyTheSkillNamesTheEndpoint, partTokens as brandIdentity_partTokens, lawBrandsAreDistinct as brandIdentity_lawBrandsAreDistinct, lawPartsTakeTheBrandTokens as brandIdentity_lawPartsTakeTheBrandTokens } from "./brandIdentity.ts";
+import { type AppKey as brandIdentity_AppKey, type JoinMode as brandIdentity_JoinMode, type Accent as brandIdentity_Accent, type LogoMark as brandIdentity_LogoMark, type Brand as brandIdentity_Brand, type AccentTokens as brandIdentity_AccentTokens, type Surface as brandIdentity_Surface, type SharedPart as brandIdentity_SharedPart, type StateColor as brandIdentity_StateColor, type MarkFill as brandIdentity_MarkFill, type ColorScheme as brandIdentity_ColorScheme, appKeys as brandIdentity_appKeys, joinModes as brandIdentity_joinModes, accents as brandIdentity_accents, logoMarks as brandIdentity_logoMarks, ntwrkBrand as brandIdentity_ntwrkBrand, slopBrand as brandIdentity_slopBrand, peonBrand as brandIdentity_peonBrand, friendsBrand as brandIdentity_friendsBrand, brandFor as brandIdentity_brandFor, lawBrandNamesItsApp as brandIdentity_lawBrandNamesItsApp, lawBrandsAreDistinct as brandIdentity_lawBrandsAreDistinct, designBrandId as brandIdentity_designBrandId, lawDesignBrandIdsAreDistinct as brandIdentity_lawDesignBrandIdsAreDistinct, lawOnlyTheNetworkIsInviteOnly as brandIdentity_lawOnlyTheNetworkIsInviteOnly, accentTokens as brandIdentity_accentTokens, lawAccentInkDiffersFromAccent as brandIdentity_lawAccentInkDiffersFromAccent, supportEmail as brandIdentity_supportEmail, agentAccessPage as brandIdentity_agentAccessPage, connectorEndpoint as brandIdentity_connectorEndpoint, openaiConnectorEndpoint as brandIdentity_openaiConnectorEndpoint, hubTextsOnAppSurface as brandIdentity_hubTextsOnAppSurface, lawAppEndpointsAreDistinct as brandIdentity_lawAppEndpointsAreDistinct, lawOnlyTheSkillNamesTheEndpoint as brandIdentity_lawOnlyTheSkillNamesTheEndpoint, mayName as brandIdentity_mayName, lawAppSiteNeverNamesTheNetwork as brandIdentity_lawAppSiteNeverNamesTheNetwork, lawAppSiteNamesNoOtherApp as brandIdentity_lawAppSiteNamesNoOtherApp, lawHubLandingNamesNoApp as brandIdentity_lawHubLandingNamesNoApp, siteUsesPart as brandIdentity_siteUsesPart, lawSitesShareParts as brandIdentity_lawSitesShareParts, partTokens as brandIdentity_partTokens, lawPartsTakeTheBrandTokens as brandIdentity_lawPartsTakeTheBrandTokens, stateColors as brandIdentity_stateColors, stateToken as brandIdentity_stateToken, nearColorFloorPermille as brandIdentity_nearColorFloorPermille, inverseTextContrastFloorTenths as brandIdentity_inverseTextContrastFloorTenths, inverseEdgeContrastFloorTenths as brandIdentity_inverseEdgeContrastFloorTenths, ringIsTheAccent as brandIdentity_ringIsTheAccent, colorIsClearOfAccent as brandIdentity_colorIsClearOfAccent, hoverFillIsClear as brandIdentity_hoverFillIsClear, inverseIsReadable as brandIdentity_inverseIsReadable, lawRingEqualsTheAccent as brandIdentity_lawRingEqualsTheAccent, lawTheAccentIsNeverClearOfItself as brandIdentity_lawTheAccentIsNeverClearOfItself, lawStateTokensAreDistinct as brandIdentity_lawStateTokensAreDistinct, lawInverseNeedsBothContrasts as brandIdentity_lawInverseNeedsBothContrasts, colorSchemes as brandIdentity_colorSchemes, markTileFill as brandIdentity_markTileFill, faviconMedia as brandIdentity_faviconMedia, lawOnlyTheTwoCirclesTileTakesThePageColor as brandIdentity_lawOnlyTheTwoCirclesTileTakesThePageColor, lawLightFaviconHasNoCondition as brandIdentity_lawLightFaviconHasNoCondition } from "./brandIdentity.ts";
 
 /** Story: Do one step from a link / Each step page is on the sites that can do the step (spec/oneStepPage.md) */
 export type OneStepKind = "StepPhone" | "StepHomeHelp" | "StepPhotoUpload" | "StepPhotoCheck" | "StepPhotoMine" | "StepPhotoView";
@@ -21,13 +21,13 @@ export type SignInCheck = "NoCheck" | "CheckRunning" | "CheckPassed" | "CheckBro
 /** Story: Sign in on the step page / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/oneStepPage.md) */
 export type SignInError = "SignInNoError" | "SignInInvalidPhone" | "SignInCheckPending" | "SignInCheckFailed" | "SignInCheckRejected" | "SignInCheckAgain" | "SignInRateLimited" | "SignInCodeFormat" | "SignInWrongCode" | "SignInNewCodeSent" | "SignInCloudUnavailable" | "SignInRequestFailed";
 /** Story: Sign in on the step page / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/oneStepPage.md) */
+export interface StepSignIn { auth: SignInAuth; stage: SignInStage; pending: SignInPending; check: SignInCheck; checkOn: boolean; error: SignInError; retryKnown: boolean }
+/** Story: Sign in on the step page / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/oneStepPage.md) */
 export type SignInLookup = "SignInLookupFailed" | "SignInLookupOtp" | "SignInLookupCloud";
 /** Story: Sign in on the step page / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/oneStepPage.md) */
 export type SignInAnswer = "SignInAnswerOk" | "SignInAnswerRateLimited" | "SignInAnswerCheckRejected" | "SignInAnswerWrongCode" | "SignInAnswerFailed";
 /** Story: Sign in on the step page / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/oneStepPage.md) */
 export type SignInAttemptKind = "AttemptReadMode" | "AttemptSubmitNumber" | "AttemptAnswerStart" | "AttemptSubmitCode" | "AttemptAnswerVerify" | "AttemptResend" | "AttemptAnswerResend" | "AttemptChangeNumber" | "AttemptContinueCloud" | "AttemptAnswerCloud" | "AttemptSettleCheck" | "AttemptExpireCheck";
-/** Story: Sign in on the step page / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/oneStepPage.md) */
-export interface StepSignIn { auth: SignInAuth; stage: SignInStage; pending: SignInPending; check: SignInCheck; checkOn: boolean; error: SignInError; retryKnown: boolean }
 /** Story: Sign in on the step page / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/oneStepPage.md) */
 export interface SignInAttempt { kind: SignInAttemptKind; lookup: SignInLookup; checkOn: boolean; valid: boolean; digits: number; answer: SignInAnswer; retryKnown: boolean; passed: boolean }
 
@@ -52,6 +52,13 @@ export function oneStepOnSite(kind: OneStepKind, app: brandIdentity_AppKey): boo
 
 /** Story: Do one step from a link / Each step page is on the sites that can do the step (spec/oneStepPage.md) */
 //@ pure
+export function lawPhotoUploadOnlyOnSlop(app: brandIdentity_AppKey): boolean {
+  //@ ensures \result === true
+  return oneStepOnSite("StepPhotoUpload", app) === (app === "Slop");
+}
+
+/** Story: Do one step from a link / Each step page is on the sites that can do the step (spec/oneStepPage.md) */
+//@ pure
 export function lawPhotoStepsOnlyOnSlop(kind: OneStepKind, app: brandIdentity_AppKey): boolean {
   //@ ensures \result === true
   return !oneStepIsPhoto(kind) || oneStepOnSite(kind, app) === (app === "Slop");
@@ -71,13 +78,6 @@ export function lawPhoneChangeOnEverySite(app: brandIdentity_AppKey): boolean {
   return oneStepOnSite("StepPhone", app);
 }
 
-/** Story: Do one step from a link / Each step page is on the sites that can do the step (spec/oneStepPage.md) */
-//@ pure
-export function lawPhotoUploadOnlyOnSlop(app: brandIdentity_AppKey): boolean {
-  //@ ensures \result === true
-  return oneStepOnSite("StepPhotoUpload", app) === (app === "Slop");
-}
-
 /** Story: Do one step from a link / A photo link page names its own purpose in each call (spec/oneStepPage.md) */
 //@ pure
 export function photoPagePurpose(kind: OneStepKind): string {
@@ -89,6 +89,12 @@ export function photoPagePurpose(kind: OneStepKind): string {
 export function lawOnlyPhotoLinkPagesNameAPurpose(kind: OneStepKind): boolean {
   //@ ensures \result === true
   return (photoPagePurpose(kind) !== "") === (kind === "StepPhotoCheck" || kind === "StepPhotoMine" || kind === "StepPhotoView");
+}
+
+/** Story: Do one step from a link / The link stays in the fragment, and only the home-help link is kept across Cloud sign-in (spec/oneStepPage.md) */
+//@ pure
+export function oneStepNeedsSignIn(kind: OneStepKind): boolean {
+  return !oneStepIsPhoto(kind);
 }
 
 /** Story: Do one step from a link / The link stays in the fragment, and only the home-help link is kept across Cloud sign-in (spec/oneStepPage.md) */
@@ -105,8 +111,9 @@ export function oneStepLinkMayBeKept(kind: OneStepKind): boolean {
 
 /** Story: Do one step from a link / The link stays in the fragment, and only the home-help link is kept across Cloud sign-in (spec/oneStepPage.md) */
 //@ pure
-export function oneStepNeedsSignIn(kind: OneStepKind): boolean {
-  return !oneStepIsPhoto(kind);
+export function lawPhotoTokenIsNeverKept(kind: OneStepKind): boolean {
+  //@ ensures \result === true
+  return !oneStepLinkMayBeKept(kind) || oneStepNeedsSignIn(kind);
 }
 
 /** Story: Do one step from a link / The link stays in the fragment, and only the home-help link is kept across Cloud sign-in (spec/oneStepPage.md) */
@@ -114,13 +121,6 @@ export function oneStepNeedsSignIn(kind: OneStepKind): boolean {
 export function lawKeptLinkIsInTheFragment(kind: OneStepKind): boolean {
   //@ ensures \result === true
   return !oneStepLinkMayBeKept(kind) || oneStepLinkInFragment(kind);
-}
-
-/** Story: Do one step from a link / The link stays in the fragment, and only the home-help link is kept across Cloud sign-in (spec/oneStepPage.md) */
-//@ pure
-export function lawPhotoTokenIsNeverKept(kind: OneStepKind): boolean {
-  //@ ensures \result === true
-  return !oneStepLinkMayBeKept(kind) || oneStepNeedsSignIn(kind);
 }
 
 /** Story: Do one step from a link / A step page shows one shared notice above the step (spec/oneStepPage.md) */
@@ -264,13 +264,6 @@ export function signInStartError(answer: SignInAnswer): SignInError {
 
 /** Story: Sign in on the step page / The sign-in moves as the browser join sign-in does (spec/oneStepPage.md) */
 //@ pure
-export function lawCodeNeedsFourToEightDigits(digits: number): boolean {
-  //@ ensures \result === true
-  return !(digits < 4 || digits > 8) || !signInCodeAccepted(digits);
-}
-
-/** Story: Sign in on the step page / The sign-in moves as the browser join sign-in does (spec/oneStepPage.md) */
-//@ pure
 export function signInSettledError(stage: SignInStage, error: SignInError, passed: boolean): SignInError {
   const local_0 = error === "SignInCheckPending" || error === "SignInCheckFailed";
   return stage !== "SignInNumber" ? error : (!passed && (error === "SignInNoError" || local_0) ? "SignInCheckFailed" : (passed && local_0 ? "SignInNoError" : error));
@@ -286,6 +279,13 @@ export function signInMove(s: StepSignIn, attempt: SignInAttempt): StepSignIn {
   const local_5 = local_4 === "SignInRateLimited" && attempt.retryKnown;
   const local_6: SignInError = signInSettledError(s.stage, s.error, attempt.passed);
   return attempt.kind === "AttemptReadMode" ? ({ ...s, auth: local_2, checkOn: attempt.checkOn, check: signInCheckFor(local_2, attempt.checkOn) } as StepSignIn) : (attempt.kind === "AttemptSubmitNumber" ? (!attempt.valid ? ({ ...s, error: "SignInInvalidPhone", retryKnown: false } as StepSignIn) : (s.check === "CheckRunning" ? ({ ...s, error: "SignInCheckPending", retryKnown: false } as StepSignIn) : (s.check === "CheckBroken" ? ({ ...s, error: "SignInCheckFailed", retryKnown: false } as StepSignIn) : ({ ...s, pending: "SignInStarting", error: "SignInNoError", retryKnown: false } as StepSignIn)))) : (attempt.kind === "AttemptAnswerStart" ? (attempt.answer === "SignInAnswerOk" ? ({ ...local_1, check: local_3, stage: "SignInCode", error: "SignInNoError", retryKnown: false } as StepSignIn) : ({ ...local_1, check: local_3, error: local_4, retryKnown: local_5 } as StepSignIn)) : (attempt.kind === "AttemptSubmitCode" ? (signInCodeAccepted(attempt.digits) ? ({ ...s, pending: "SignInVerifying", error: "SignInNoError", retryKnown: false } as StepSignIn) : ({ ...s, error: "SignInCodeFormat", retryKnown: false } as StepSignIn)) : (attempt.kind === "AttemptAnswerVerify" ? (attempt.answer === "SignInAnswerOk" ? ({ ...local_1, stage: "SignInVerified", error: "SignInNoError", retryKnown: false } as StepSignIn) : (attempt.answer === "SignInAnswerWrongCode" ? ({ ...local_1, error: "SignInWrongCode", retryKnown: false } as StepSignIn) : (attempt.answer === "SignInAnswerRateLimited" ? ({ ...local_1, error: "SignInRateLimited", retryKnown: attempt.retryKnown } as StepSignIn) : ({ ...local_1, error: "SignInRequestFailed", retryKnown: false } as StepSignIn)))) : (attempt.kind === "AttemptResend" ? (s.check !== "NoCheck" ? ({ ...s, stage: "SignInNumber", error: "SignInCheckAgain", retryKnown: false } as StepSignIn) : ({ ...s, pending: "SignInResending", error: "SignInNoError", retryKnown: false } as StepSignIn)) : (attempt.kind === "AttemptAnswerResend" ? (attempt.answer === "SignInAnswerOk" ? ({ ...local_1, check: local_3, error: "SignInNewCodeSent", retryKnown: false } as StepSignIn) : ({ ...local_1, check: local_3, error: local_4, retryKnown: local_5 } as StepSignIn)) : (attempt.kind === "AttemptChangeNumber" ? ({ ...s, stage: "SignInNumber", error: "SignInNoError", retryKnown: false } as StepSignIn) : (attempt.kind === "AttemptContinueCloud" ? ({ ...s, pending: "SignInOpeningCloud", error: "SignInNoError", retryKnown: false } as StepSignIn) : (attempt.kind === "AttemptAnswerCloud" ? (attempt.answer === "SignInAnswerOk" ? ({ ...local_1, stage: "SignInLeftForCloud", error: "SignInNoError", retryKnown: false } as StepSignIn) : ({ ...local_1, error: "SignInCloudUnavailable", retryKnown: false } as StepSignIn)) : (attempt.kind === "AttemptSettleCheck" ? ({ ...s, check: attempt.passed ? "CheckPassed" : "CheckBroken", error: local_6, retryKnown: s.retryKnown && local_6 === "SignInRateLimited" } as StepSignIn) : ({ ...s, check: "CheckRunning" } as StepSignIn)))))))))));
+}
+
+/** Story: Sign in on the step page / The sign-in moves as the browser join sign-in does (spec/oneStepPage.md) */
+//@ pure
+export function lawCodeNeedsFourToEightDigits(digits: number): boolean {
+  //@ ensures \result === true
+  return !(digits < 4 || digits > 8) || !signInCodeAccepted(digits);
 }
 
 /** Story: Sign in on the step page / The sign-in moves as the browser join sign-in does (spec/oneStepPage.md) */
@@ -330,16 +330,16 @@ export function signInConsistent(s: StepSignIn): boolean {
 
 /** Story: Sign in on the step page / Each sign-in request belongs to its stage, and the check belongs to text codes (spec/oneStepPage.md) */
 //@ pure
-export function lawSignInAgainIsConsistent(s: StepSignIn): boolean {
+export function lawEveryAllowedMoveStaysConsistent(s: StepSignIn, attempt: SignInAttempt): boolean {
   //@ ensures \result === true
-  return !signInConsistent(s) || signInConsistent(signInAgain(s));
+  return !(signInConsistent(s) && signInAttemptAllowed(s, attempt)) || signInConsistent(signInMove(s, attempt));
 }
 
 /** Story: Sign in on the step page / Each sign-in request belongs to its stage, and the check belongs to text codes (spec/oneStepPage.md) */
 //@ pure
-export function lawEveryAllowedMoveStaysConsistent(s: StepSignIn, attempt: SignInAttempt): boolean {
+export function lawSignInAgainIsConsistent(s: StepSignIn): boolean {
   //@ ensures \result === true
-  return !(signInConsistent(s) && signInAttemptAllowed(s, attempt)) || signInConsistent(signInMove(s, attempt));
+  return !signInConsistent(s) || signInConsistent(signInAgain(s));
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */

@@ -25,18 +25,6 @@ export function inv(current: DigestFlow): boolean {
 
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
 //@ pure
-export function inboxItemAllowedForRecipient(requested: boolean, proactiveAllowed: boolean): boolean {
-  return requested || proactiveAllowed;
-}
-
-/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
-//@ pure
-export function rereadCountsPossible(plannedCount: number, remainingCount: number): boolean {
-  return plannedCount >= 1 && remainingCount >= 0 && remainingCount <= plannedCount;
-}
-
-/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
-//@ pure
 export function inboxItemStillPending(seen: boolean, notified: boolean): boolean {
   return !seen && !notified;
 }
@@ -55,6 +43,25 @@ export function inboxItemDigestible(seen: boolean, notified: boolean, hasExpiry:
 
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
 //@ pure
+export function lawExpiredItemLeavesTheDigest(seen: boolean, notified: boolean, expiresAt: number, at: number): boolean {
+  //@ ensures \result === true
+  return !(expiresAt <= at) || !inboxItemDigestible(seen, notified, true, expiresAt, at);
+}
+
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
+//@ pure
+export function inboxItemAllowedForRecipient(requested: boolean, proactiveAllowed: boolean): boolean {
+  return requested || proactiveAllowed;
+}
+
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
+//@ pure
+export function rereadCountsPossible(plannedCount: number, remainingCount: number): boolean {
+  return plannedCount >= 1 && remainingCount >= 0 && remainingCount <= plannedCount;
+}
+
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
+//@ pure
 export function canRereadItems(digest: DigestFlow, plannedCount: number, remainingCount: number): boolean {
   return digest.phase === "DigestStarting" && rereadCountsPossible(plannedCount, remainingCount);
 }
@@ -64,13 +71,6 @@ export function canRereadItems(digest: DigestFlow, plannedCount: number, remaini
 export function rereadItems(digest: DigestFlow, plannedCount: number, remainingCount: number, recipientAvailable: boolean, destinationChanged: boolean): DigestFlow {
   //@ ensures (inv(digest) && canRereadItems(digest, plannedCount, remainingCount)) ==> stepQueueRequiresRecordedDigest(digest, "rereadItems", \result)
   return { phase: remainingCount === 0 || !recipientAvailable ? "DigestCancelled" : (remainingCount === plannedCount && !destinationChanged ? "ReusingDigest" : "RebuildingDigest") };
-}
-
-/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
-//@ pure
-export function lawExpiredItemLeavesTheDigest(seen: boolean, notified: boolean, expiresAt: number, at: number): boolean {
-  //@ ensures \result === true
-  return !(expiresAt <= at) || !inboxItemDigestible(seen, notified, true, expiresAt, at);
 }
 
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */

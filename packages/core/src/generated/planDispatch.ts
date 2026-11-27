@@ -35,6 +35,12 @@ export function planLaneOpen(probing: boolean, booked: boolean, lateJoinOpen: bo
 
 /** Story: Ask me about one group plan during my send window / Only an open plan can invite a pending member (spec/planDispatch.md) */
 //@ pure
+export function planInvitationOpen(probing: boolean, booked: boolean, now: number, probeDeadline: number, lateJoinAt: number): boolean {
+  return planLaneOpen(probing && now < probeDeadline, booked, now <= lateJoinAt);
+}
+
+/** Story: Ask me about one group plan during my send window / Only an open plan can invite a pending member (spec/planDispatch.md) */
+//@ pure
 export function queuedPlanProbeAllowed(approvalCurrent: boolean, pendingSeat: boolean, laneOpen: boolean): boolean {
   return approvalCurrent && pendingSeat && laneOpen;
 }
@@ -43,12 +49,6 @@ export function queuedPlanProbeAllowed(approvalCurrent: boolean, pendingSeat: bo
 //@ pure
 export function planTurnDue(pending: boolean, contacted: boolean): boolean {
   return pending && !contacted;
-}
-
-/** Story: Ask me about one group plan during my send window / Only an open plan can invite a pending member (spec/planDispatch.md) */
-//@ pure
-export function planInvitationOpen(probing: boolean, booked: boolean, now: number, probeDeadline: number, lateJoinAt: number): boolean {
-  return planLaneOpen(probing && now < probeDeadline, booked, now <= lateJoinAt);
 }
 
 /** Story: Ask me about one group plan during my send window / Only an open plan can invite a pending member (spec/planDispatch.md) */

@@ -39,13 +39,6 @@ export function unshareRevokesGrant(alreadyRevoked: boolean, readsFromApp: boole
 
 /** Story: Reuse my approved basics in a second app / UNSHARE revokes every live grant to or from this app (spec/baseProfileShare.md) */
 //@ pure
-export function lawUnshareRevokesEveryLiveGrantOfTheApp(readsFromApp: boolean, readsIntoApp: boolean): boolean {
-  //@ ensures \result === true
-  return !(readsFromApp || readsIntoApp) || unshareRevokesGrant(false, readsFromApp, readsIntoApp);
-}
-
-/** Story: Reuse my approved basics in a second app / UNSHARE revokes every live grant to or from this app (spec/baseProfileShare.md) */
-//@ pure
 export function lawUnshareKeepsGrantsBetweenOtherApps(alreadyRevoked: boolean): boolean {
   //@ ensures \result === true
   return !unshareRevokesGrant(alreadyRevoked, false, false);
@@ -56,6 +49,13 @@ export function lawUnshareKeepsGrantsBetweenOtherApps(alreadyRevoked: boolean): 
 export function lawUnshareKeepsTheFirstRevocation(readsFromApp: boolean, readsIntoApp: boolean): boolean {
   //@ ensures \result === true
   return !unshareRevokesGrant(true, readsFromApp, readsIntoApp);
+}
+
+/** Story: Reuse my approved basics in a second app / UNSHARE revokes every live grant to or from this app (spec/baseProfileShare.md) */
+//@ pure
+export function lawUnshareRevokesEveryLiveGrantOfTheApp(readsFromApp: boolean, readsIntoApp: boolean): boolean {
+  //@ ensures \result === true
+  return !(readsFromApp || readsIntoApp) || unshareRevokesGrant(false, readsFromApp, readsIntoApp);
 }
 
 /** Story: Reuse my approved basics in a second app / An interest is shared only when the member confirmed it and it is not private (spec/baseProfileShare.md) */

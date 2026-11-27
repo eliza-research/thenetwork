@@ -2,9 +2,9 @@
 //@ backend dafny
 
 /** Story: See only my saved profile for the app I use / A read returns only this member's current profile for the requested app (spec/savedProfileJourney.md) */
-export type ProfileReadKind = "ReadOwn" | "ReadSomeoneElse" | "ReadOnOtherLine";
-/** Story: See only my saved profile for the app I use / A read returns only this member's current profile for the requested app (spec/savedProfileJourney.md) */
 export type ProfileApp = "Slop" | "Friends";
+/** Story: See only my saved profile for the app I use / A read returns only this member's current profile for the requested app (spec/savedProfileJourney.md) */
+export type ProfileReadKind = "ReadOwn" | "ReadSomeoneElse" | "ReadOnOtherLine";
 /** Story: See only my saved profile for the app I use / A read returns only this member's current profile for the requested app (spec/savedProfileJourney.md) */
 export type ProfileShown = "SlopProfile" | "FriendsProfile";
 /** Story: See only my saved profile for the app I use / A read returns only this member's current profile for the requested app (spec/savedProfileJourney.md) */
@@ -19,21 +19,15 @@ export type Event =
   | { type: "readProfile"; app: ProfileApp; kind: ProfileReadKind }
   | { type: "leaveProfileApp"; app: ProfileApp };
 
-/** Story: See only my saved profile for the app I use / A displayed profile uses the saved location and the signed-turn size limit (spec/savedProfileJourney.md) */
-export const savedProfileReplyLimit: number = 1600;
 /** Story: See only my saved profile for the app I use / A read returns only this member's current profile for the requested app (spec/savedProfileJourney.md) */
 export const initial: ProfileMemberships = { inSlop: true, inFriends: true };
+/** Story: See only my saved profile for the app I use / A displayed profile uses the saved location and the signed-turn size limit (spec/savedProfileJourney.md) */
+export const savedProfileReplyLimit: number = 1600;
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: ProfileMemberships): boolean {
   return true;
-}
-
-/** Story: See only my saved profile for the app I use / A read returns only this member's current profile for the requested app (spec/savedProfileJourney.md) */
-//@ pure
-export function stepReadingKeepsMemberships(before: ProfileMemberships, via: string, after: ProfileMemberships): boolean {
-  return !(via === "readProfile") || equal_savedProfileJourney(after, before);
 }
 
 /** Story: See only my saved profile for the app I use / A read returns only this member's current profile for the requested app (spec/savedProfileJourney.md) */
@@ -50,10 +44,23 @@ export function readProfile(s: ProfileMemberships, app: ProfileApp, kind: Profil
   return { state: s, out: kind === "ReadOwn" && local_0 ? ([app === "Slop" ? "SlopProfile" : "FriendsProfile"] as ProfileShown[]) : ([] as ProfileShown[]) };
 }
 
+/** Story: See only my saved profile for the app I use / A read returns only this member's current profile for the requested app (spec/savedProfileJourney.md) */
+//@ pure
+export function stepReadingKeepsMemberships(before: ProfileMemberships, via: string, after: ProfileMemberships): boolean {
+  return !(via === "readProfile") || equal_savedProfileJourney(after, before);
+}
+
 /** Story: See only my saved profile for the app I use / An app leave removes that app's profile from later reads (spec/savedProfileJourney.md) */
 //@ pure
 export function canLeaveProfileApp(s: ProfileMemberships, app: ProfileApp): boolean {
   return true;
+}
+
+/** Story: See only my saved profile for the app I use / An app leave removes that app's profile from later reads (spec/savedProfileJourney.md) */
+//@ pure
+export function leaveProfileApp(s: ProfileMemberships, app: ProfileApp): ProfileTurn {
+  //@ ensures (inv(s) && canLeaveProfileApp(s, app)) ==> stepReadingKeepsMemberships(s, "leaveProfileApp", \result.state)
+  return { state: app === "Slop" ? ({ ...s, inSlop: false } as ProfileMemberships) : ({ ...s, inFriends: false } as ProfileMemberships), out: ([] as ProfileShown[]) };
 }
 
 /** Story: See only my saved profile for the app I use / An app leave removes that app's profile from later reads (spec/savedProfileJourney.md) */
@@ -74,23 +81,16 @@ export function sometimesLeavesBothApps(s: ProfileMemberships): boolean {
   return !s.inFriends && !s.inSlop;
 }
 
-/** Story: See only my saved profile for the app I use / An app leave removes that app's profile from later reads (spec/savedProfileJourney.md) */
+/** Story: See only my saved profile for the app I use / A displayed profile uses the saved location and the signed-turn size limit (spec/savedProfileJourney.md) */
 //@ pure
-export function leaveProfileApp(s: ProfileMemberships, app: ProfileApp): ProfileTurn {
-  //@ ensures (inv(s) && canLeaveProfileApp(s, app)) ==> stepReadingKeepsMemberships(s, "leaveProfileApp", \result.state)
-  return { state: app === "Slop" ? ({ ...s, inSlop: false } as ProfileMemberships) : ({ ...s, inFriends: false } as ProfileMemberships), out: ([] as ProfileShown[]) };
+export function savedProfileLocation(hasNeighborhood: boolean, homeCity: string): LocationLabel {
+  return hasNeighborhood ? "NeighborhoodLabel" : (homeCity === "sf" ? "BayAreaLabel" : (homeCity === "nyc" ? "NewYorkLabel" : "NoLocationLabel"));
 }
 
 /** Story: See only my saved profile for the app I use / A displayed profile uses the saved location and the signed-turn size limit (spec/savedProfileJourney.md) */
 //@ pure
 export function savedProfileFitsReply(units: number): boolean {
   return units <= savedProfileReplyLimit;
-}
-
-/** Story: See only my saved profile for the app I use / A displayed profile uses the saved location and the signed-turn size limit (spec/savedProfileJourney.md) */
-//@ pure
-export function savedProfileLocation(hasNeighborhood: boolean, homeCity: string): LocationLabel {
-  return hasNeighborhood ? "NeighborhoodLabel" : (homeCity === "sf" ? "BayAreaLabel" : (homeCity === "nyc" ? "NewYorkLabel" : "NoLocationLabel"));
 }
 
 /** Do the rules allow this event in this state? */

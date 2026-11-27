@@ -44,15 +44,15 @@ export function fairMidpointCostScaled(maxMin: number, meanMin: number): number 
 
 /** Story: Bound travel time and score fair midpoints / Balance worst-case fairness and mean travel in integer-scaled midpoint cost (spec/venueSelection.md) */
 //@ pure
-export function lawMidpointCostBoundedByMeanAndMax(maxMin: number, meanMin: number): boolean {
-  //@ ensures \result === true
-  return !(maxMin >= 0 && meanMin >= 0 && meanMin <= maxMin) || (fairMidpointCostScaled(maxMin, meanMin) >= exact_venueSelection(10 * meanMin) && fairMidpointCostScaled(maxMin, meanMin) <= exact_venueSelection(10 * maxMin));
+export function fairMidpointNetCostScaled(maxMin: number, meanMin: number, supplyBonusScaled: number): number {
+  return exact_venueSelection(fairMidpointCostScaled(maxMin, meanMin) - supplyBonusScaled);
 }
 
 /** Story: Bound travel time and score fair midpoints / Balance worst-case fairness and mean travel in integer-scaled midpoint cost (spec/venueSelection.md) */
 //@ pure
-export function fairMidpointNetCostScaled(maxMin: number, meanMin: number, supplyBonusScaled: number): number {
-  return exact_venueSelection(fairMidpointCostScaled(maxMin, meanMin) - supplyBonusScaled);
+export function lawMidpointCostBoundedByMeanAndMax(maxMin: number, meanMin: number): boolean {
+  //@ ensures \result === true
+  return !(maxMin >= 0 && meanMin >= 0 && meanMin <= maxMin) || (fairMidpointCostScaled(maxMin, meanMin) >= exact_venueSelection(10 * meanMin) && fairMidpointCostScaled(maxMin, meanMin) <= exact_venueSelection(10 * maxMin));
 }
 
 /** Story: Bound travel time and score fair midpoints / Accept a midpoint only when every attendee fits within bounded relaxation (spec/venueSelection.md) */
@@ -240,39 +240,39 @@ export function clampInt(value: number, low: number, high: number): number {
 
 /** Story: Maintain catalog freshness, closure quarantine, and deterministic venue scores / Clamp integers and compute bounded group rubric and budget scores (spec/venueSelection.md) */
 //@ pure
-export function venueBudgetFitScore(priceTier: number, maxBudgetTier: number): number {
-  const local_1 = exact_venueSelection(maxBudgetTier - priceTier);
-  return priceTier < 0 || maxBudgetTier < 0 || priceTier > maxBudgetTier ? 0 : (local_1 === 0 ? 100 : (local_1 === 1 ? 90 : (local_1 === 2 ? 75 : 60)));
-}
-
-/** Story: Maintain catalog freshness, closure quarantine, and deterministic venue scores / Clamp integers and compute bounded group rubric and budget scores (spec/venueSelection.md) */
-//@ pure
 export function groupVenueRubricScore(g: GroupVenueRubricInput): number {
-  const local_2 = g.separateChecks ? 20 : 0;
-  const local_3 = g.walkInCapacity >= 6 ? 20 : (g.walkInCapacity >= 4 ? 12 : 0);
-  const local_4 = g.liveMusicAtNight ? 0 : (g.noiseLevel === "conversational" || g.noiseLevel === "lively" ? 15 : (g.noiseLevel === "quiet" ? 6 : 0));
-  const local_5 = exact_venueSelection(exact_venueSelection((g.alcoholOptional ? 8 : 0) + (g.servesVegetarian ? 4 : 0)) + (g.servesVegan ? 3 : 0));
-  const local_6 = clampInt(g.safetyScore, 0, 10);
-  const local_7 = g.indoor && !g.weatherSensitive ? 10 : (g.indoor ? 7 : (!g.weatherSensitive ? 4 : 0));
-  const local_8 = g.hasArrivalLandmark ? 5 : 0;
-  const local_9 = clampInt(g.transitScore, 0, 5);
-  return exact_venueSelection(exact_venueSelection(exact_venueSelection(exact_venueSelection(exact_venueSelection(exact_venueSelection(exact_venueSelection(local_2 + local_3) + local_4) + local_5) + local_6) + local_7) + local_8) + local_9);
+  const local_1 = g.separateChecks ? 20 : 0;
+  const local_2 = g.walkInCapacity >= 6 ? 20 : (g.walkInCapacity >= 4 ? 12 : 0);
+  const local_3 = g.liveMusicAtNight ? 0 : (g.noiseLevel === "conversational" || g.noiseLevel === "lively" ? 15 : (g.noiseLevel === "quiet" ? 6 : 0));
+  const local_4 = exact_venueSelection(exact_venueSelection((g.alcoholOptional ? 8 : 0) + (g.servesVegetarian ? 4 : 0)) + (g.servesVegan ? 3 : 0));
+  const local_5 = clampInt(g.safetyScore, 0, 10);
+  const local_6 = g.indoor && !g.weatherSensitive ? 10 : (g.indoor ? 7 : (!g.weatherSensitive ? 4 : 0));
+  const local_7 = g.hasArrivalLandmark ? 5 : 0;
+  const local_8 = clampInt(g.transitScore, 0, 5);
+  return exact_venueSelection(exact_venueSelection(exact_venueSelection(exact_venueSelection(exact_venueSelection(exact_venueSelection(exact_venueSelection(local_1 + local_2) + local_3) + local_4) + local_5) + local_6) + local_7) + local_8);
 }
 
 /** Story: Maintain catalog freshness, closure quarantine, and deterministic venue scores / Clamp integers and compute bounded group rubric and budget scores (spec/venueSelection.md) */
 //@ pure
-export function lawBudgetFitScoreBoundedAndZeroOverBudget(priceTier: number, maxBudgetTier: number): boolean {
-  //@ ensures \result === true
-  const local_10 = venueBudgetFitScore(priceTier, maxBudgetTier);
-  return local_10 >= 0 && local_10 <= 100 && (!(priceTier > maxBudgetTier) || local_10 === 0);
+export function venueBudgetFitScore(priceTier: number, maxBudgetTier: number): number {
+  const local_9 = exact_venueSelection(maxBudgetTier - priceTier);
+  return priceTier < 0 || maxBudgetTier < 0 || priceTier > maxBudgetTier ? 0 : (local_9 === 0 ? 100 : (local_9 === 1 ? 90 : (local_9 === 2 ? 75 : 60)));
 }
 
 /** Story: Maintain catalog freshness, closure quarantine, and deterministic venue scores / Clamp integers and compute bounded group rubric and budget scores (spec/venueSelection.md) */
 //@ pure
 export function lawGroupRubricScoreBounded(g: GroupVenueRubricInput): boolean {
   //@ ensures \result === true
-  const local_11 = groupVenueRubricScore(g);
-  return local_11 >= 0 && local_11 <= 100;
+  const local_10 = groupVenueRubricScore(g);
+  return local_10 >= 0 && local_10 <= 100;
+}
+
+/** Story: Maintain catalog freshness, closure quarantine, and deterministic venue scores / Clamp integers and compute bounded group rubric and budget scores (spec/venueSelection.md) */
+//@ pure
+export function lawBudgetFitScoreBoundedAndZeroOverBudget(priceTier: number, maxBudgetTier: number): boolean {
+  //@ ensures \result === true
+  const local_11 = venueBudgetFitScore(priceTier, maxBudgetTier);
+  return local_11 >= 0 && local_11 <= 100 && (!(priceTier > maxBudgetTier) || local_11 === 0);
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */

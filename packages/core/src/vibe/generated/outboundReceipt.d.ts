@@ -34,15 +34,15 @@ export declare function inv(current: ReceiptLifecycle): boolean;
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
 export declare function receiptRank(phase: ReceiptPhase): number;
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
+export declare function canRecordAcceptance(outbound: ReceiptLifecycle, providerPhase: ReceiptPhase): boolean;
+/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
 export declare function recordAcceptance(outbound: ReceiptLifecycle, providerPhase: ReceiptPhase): ReceiptLifecycle;
+/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
+export declare function canApplyReceipt(outbound: ReceiptLifecycle, providerPhase: ReceiptPhase): boolean;
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
 export declare function applyReceipt(outbound: ReceiptLifecycle, providerPhase: ReceiptPhase): ReceiptLifecycle;
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
-export declare function canRecordAcceptance(outbound: ReceiptLifecycle, providerPhase: ReceiptPhase): boolean;
-/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
 export declare function stepReceiptsDoNotRegress(before: ReceiptLifecycle, via: string, after: ReceiptLifecycle): boolean;
-/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
-export declare function canApplyReceipt(outbound: ReceiptLifecycle, providerPhase: ReceiptPhase): boolean;
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
 export declare function lawDeliveredIgnoresFailure(phase: ReceiptPhase): boolean;
 /** Story: Know whether a queued message reached the provider / A terminal receipt preserves the recipient cap after payload erasure (spec/outboundReceipt.md) */
@@ -94,11 +94,11 @@ export declare function lawReceiptOwnerAcceptanceKeepsRecipientCount(phase: Rece
 /** Story: Know whether a queued message reached the provider / An acceptance records a send time only for a send that went out (spec/outboundReceipt.md) */
 export declare function lawFailedAcceptanceHasNoRecipientCount(receiptOwner: boolean, nonmember: boolean, hadAddress: boolean, windowOpen: boolean): boolean;
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
+export declare function gatewayReplyPhase(pastLimit: boolean): ReceiptPhase;
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
 export declare function gatewayReceiptApplies(replyStatus: string, delivery: string): boolean;
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
 export declare function gatewayReplySendTime(replyStatus: string, collectedAt: number, receivedAt: number): number;
-/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
-export declare function gatewayReplyPhase(pastLimit: boolean): ReceiptPhase;
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
 export declare function lawExpiredReplySendsAtCollection(replyStatus: string, collectedAt: number, receivedAt: number): boolean;
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */

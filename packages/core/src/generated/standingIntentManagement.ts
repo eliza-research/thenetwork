@@ -2,9 +2,9 @@
 //@ backend dafny
 
 /** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md) */
-export type IntentCommandPhase = "AwaitingMember" | "ShowIntents" | "SelectIntent" | "MemberRefused" | "UnknownIntent" | "AmbiguousIntent" | "IntentUnchanged" | "PauseSelected" | "CloseSelected" | "ResumeSelected" | "KeepSelected" | "UndoRequested";
-/** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md) */
 export type IntentCommand = "ListIntents" | "PauseIntent" | "CloseIntent" | "ResumeIntent" | "KeepIntent" | "UndoIntent";
+/** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md) */
+export type IntentCommandPhase = "AwaitingMember" | "ShowIntents" | "SelectIntent" | "MemberRefused" | "UnknownIntent" | "AmbiguousIntent" | "IntentUnchanged" | "PauseSelected" | "CloseSelected" | "ResumeSelected" | "KeepSelected" | "UndoRequested";
 /** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md) */
 export interface IntentManagement { phase: IntentCommandPhase; command: IntentCommand }
 /** Story: See and manage the things the Network is looking for / Change only the single thing the member named (spec/standingIntentManagement.md) */
@@ -29,18 +29,18 @@ export type Event =
   | { type: "authorizeIntentCommand"; allowed: boolean; command: IntentCommand }
   | { type: "chooseOwnedIntent"; matches: number; live: boolean; paused: boolean };
 
+/** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md) */
+export const initial: IntentManagement = { phase: "AwaitingMember", command: "ListIntents" };
+/** Story: See and manage the things the Network is looking for / Only the member's own words close a standing thing (spec/standingIntentManagement.md) */
+export const agentDailyChangeLimit: number = 3;
+/** Story: See and manage the things the Network is looking for / Only the member's own words close a standing thing (spec/standingIntentManagement.md) */
+export const recentCloseDays: number = 30;
 /** Story: See and manage the things the Network is looking for / A bare reply answers only the newest open standing question (spec/standingIntentManagement.md) */
 export const standingUndoWindowMs: number = 86400000;
 /** Story: See and manage the things the Network is looking for / A bare reply answers only the newest open standing question (spec/standingIntentManagement.md) */
 export const standingAskLifetimeMs: number = 259200000;
 /** Story: See and manage the things the Network is looking for / A list number names a thing for one day (spec/standingIntentManagement.md) */
 export const standingListLifetimeMs: number = 86400000;
-/** Story: See and manage the things the Network is looking for / Only the member's own words close a standing thing (spec/standingIntentManagement.md) */
-export const agentDailyChangeLimit: number = 3;
-/** Story: See and manage the things the Network is looking for / Only the member's own words close a standing thing (spec/standingIntentManagement.md) */
-export const recentCloseDays: number = 30;
-/** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md) */
-export const initial: IntentManagement = { phase: "AwaitingMember", command: "ListIntents" };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
@@ -56,12 +56,6 @@ export function intentManagementAllowed(canonicalMembership: boolean, ownNetwork
 
 /** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md) */
 //@ pure
-export function standingIntentReplayAllowed(canonicalMember: boolean): boolean {
-  return canonicalMember;
-}
-
-/** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md) */
-//@ pure
 export function canAuthorizeIntentCommand(s: IntentManagement): boolean {
   return s.phase === "AwaitingMember";
 }
@@ -71,6 +65,12 @@ export function canAuthorizeIntentCommand(s: IntentManagement): boolean {
 export function authorizeIntentCommand(s: IntentManagement, allowed: boolean, command: IntentCommand): IntentManagement {
   //@ ensures (inv(s) && canAuthorizeIntentCommand(s)) ==> stepChangeRequiresSelection(s, \result)
   return { command: command, phase: !allowed ? "MemberRefused" : (command === "ListIntents" ? "ShowIntents" : (command === "UndoIntent" ? "UndoRequested" : "SelectIntent")) };
+}
+
+/** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md) */
+//@ pure
+export function standingIntentReplayAllowed(canonicalMember: boolean): boolean {
+  return canonicalMember;
 }
 
 /** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md) */
@@ -205,6 +205,12 @@ export function sameStandingWant(desireNamed: boolean, sameDesire: boolean, same
 
 /** Story: See and manage the things the Network is looking for / Saying a want again changes nothing that the member paused or closed (spec/standingIntentManagement.md) */
 //@ pure
+export function standingAddRoute(source: StandingSource, request: boolean, paused: boolean, closed: boolean, closedDaysAgo: number): StandingAddRoute {
+  return standingChangeOutcome(source, "AddStanding", false, false, 0, closedDaysAgo) !== "ApplyNow" ? "AddRefused" : (closed ? (request ? "AddReopens" : "AddKeepsClose") : (paused ? "AddKeepsPause" : "AddOpens"));
+}
+
+/** Story: See and manage the things the Network is looking for / Saying a want again changes nothing that the member paused or closed (spec/standingIntentManagement.md) */
+//@ pure
 export function lawDifferentCategoryIsAnotherWant(sharedTags: number, untagged: boolean): boolean {
   //@ ensures \result === true
   return !sameStandingWant(false, true, false, sharedTags, untagged);
@@ -215,12 +221,6 @@ export function lawDifferentCategoryIsAnotherWant(sharedTags: number, untagged: 
 export function lawNamedDesireDecidesTheWant(sameDesire: boolean, sameCategory: boolean, sharedTags: number, untagged: boolean): boolean {
   //@ ensures \result === true
   return sameStandingWant(true, sameDesire, sameCategory, sharedTags, untagged) === sameDesire;
-}
-
-/** Story: See and manage the things the Network is looking for / Saying a want again changes nothing that the member paused or closed (spec/standingIntentManagement.md) */
-//@ pure
-export function standingAddRoute(source: StandingSource, request: boolean, paused: boolean, closed: boolean, closedDaysAgo: number): StandingAddRoute {
-  return standingChangeOutcome(source, "AddStanding", false, false, 0, closedDaysAgo) !== "ApplyNow" ? "AddRefused" : (closed ? (request ? "AddReopens" : "AddKeepsClose") : (paused ? "AddKeepsPause" : "AddOpens"));
 }
 
 /** Story: See and manage the things the Network is looking for / Saying a want again changes nothing that the member paused or closed (spec/standingIntentManagement.md) */
@@ -279,12 +279,6 @@ export function lawLegacyReconciliationKeepsIneligible(storedStatus: string, con
 
 /** Story: See and manage the things the Network is looking for / A pause or close stops only the work linked to that thing (spec/standingIntentManagement.md) */
 //@ pure
-export function retireIntentSearch(recognizedDesire: boolean, stillLive: boolean): boolean {
-  return recognizedDesire && !stillLive;
-}
-
-/** Story: See and manage the things the Network is looking for / A pause or close stops only the work linked to that thing (spec/standingIntentManagement.md) */
-//@ pure
 export function retireStandingOpportunity(linked: boolean, source: StandingSource, control: IntentControl, stage: string): boolean {
   return linked && source !== "AssistantProfile" && (stage === "review" || (stage === "probing" && control === "CloseControl" && source === "MemberThread"));
 }
@@ -310,16 +304,16 @@ export function lawAgentNeverRetiresAContact(linked: boolean, control: IntentCon
   return !retireStandingOpportunity(linked, "MemberAgent", control, "probing");
 }
 
-/** Story: See and manage the things the Network is looking for / A bare reply answers only the newest open standing question (spec/standingIntentManagement.md) */
+/** Story: See and manage the things the Network is looking for / A pause or close stops only the work linked to that thing (spec/standingIntentManagement.md) */
 //@ pure
-export function standingReplyApplies(pending: StandingPendingKind, reply: StandingReply, ageMs: number): boolean {
-  return ageMs < 0 ? false : (reply === "UndoReply" ? (pending === "ClosedByMember" || pending === "PausedByMember" || pending === "PausedByAgent" || pending === "ResumedByAgent") && ageMs < standingUndoWindowMs : (reply === "CloseReply" ? (pending === "PausedByMember" || pending === "PausedByAgent" || pending === "CloseAsked" || pending === "RenewalAsked") && ageMs < standingAskLifetimeMs : (pending === "CloseAsked" || pending === "RenewalAsked") && ageMs < standingAskLifetimeMs));
+export function retireIntentSearch(recognizedDesire: boolean, stillLive: boolean): boolean {
+  return recognizedDesire && !stillLive;
 }
 
 /** Story: See and manage the things the Network is looking for / A bare reply answers only the newest open standing question (spec/standingIntentManagement.md) */
 //@ pure
-export function standingCloseConfirmed(pending: StandingPendingKind, introNamed: boolean): boolean {
-  return pending === "CloseAsked" || ((pending === "PausedByMember" || pending === "PausedByAgent") && introNamed);
+export function standingReplyApplies(pending: StandingPendingKind, reply: StandingReply, ageMs: number): boolean {
+  return ageMs < 0 ? false : (reply === "UndoReply" ? (pending === "ClosedByMember" || pending === "PausedByMember" || pending === "PausedByAgent" || pending === "ResumedByAgent") && ageMs < standingUndoWindowMs : (reply === "CloseReply" ? (pending === "PausedByMember" || pending === "PausedByAgent" || pending === "CloseAsked" || pending === "RenewalAsked") && ageMs < standingAskLifetimeMs : (pending === "CloseAsked" || pending === "RenewalAsked") && ageMs < standingAskLifetimeMs));
 }
 
 /** Story: See and manage the things the Network is looking for / A bare reply answers only the newest open standing question (spec/standingIntentManagement.md) */
@@ -348,6 +342,12 @@ export function lawQuestionsLapse(pending: StandingPendingKind, reply: StandingR
 export function lawClosedIsNotClosedAgain(ageMs: number): boolean {
   //@ ensures \result === true
   return !standingReplyApplies("ClosedByMember", "CloseReply", ageMs);
+}
+
+/** Story: See and manage the things the Network is looking for / A bare reply answers only the newest open standing question (spec/standingIntentManagement.md) */
+//@ pure
+export function standingCloseConfirmed(pending: StandingPendingKind, introNamed: boolean): boolean {
+  return pending === "CloseAsked" || ((pending === "PausedByMember" || pending === "PausedByAgent") && introNamed);
 }
 
 /** Story: See and manage the things the Network is looking for / A bare reply answers only the newest open standing question (spec/standingIntentManagement.md) */

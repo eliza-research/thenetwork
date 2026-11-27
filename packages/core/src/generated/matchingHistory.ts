@@ -2,9 +2,9 @@
 //@ backend dafny
 
 /** Story: Use what each invitee did / Preserve a booked or held group and record individual refusals (spec/matchingHistory.md) */
-export type MatchingPairHistory = "HistoryRecordedPair" | "HistoryRefusedPair" | "HistoryOmittedPair";
-/** Story: Use what each invitee did / Preserve a booked or held group and record individual refusals (spec/matchingHistory.md) */
 export type MatchingHistoryOutcome = "HistoryCompleted" | "HistoryNoShow" | "HistoryBooked" | "HistoryDeclined" | "HistoryExpired" | "HistoryInviting";
+/** Story: Use what each invitee did / Preserve a booked or held group and record individual refusals (spec/matchingHistory.md) */
+export type MatchingPairHistory = "HistoryRecordedPair" | "HistoryRefusedPair" | "HistoryOmittedPair";
 
 
 /** Story: Use what each invitee did / Preserve a booked or held group and record individual refusals (spec/matchingHistory.md) */

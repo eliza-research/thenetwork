@@ -1,9 +1,9 @@
 // Generated from spec/oauthGrantIssuance.md via Vibestack and VibeLang. Run pnpm run spec:sync.
 import type { AuthorityResult, Issuance, LockedApproval, Event } from "./oauthGrantIssuance.ts";
-/** Story: Connect my agent after I approve access / Locked approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md) @throws {never} */
-export declare const eligibleApproval: LockedApproval;
 /** Story: Connect my agent after I approve access / An expired request cannot begin issuance (spec/oauthGrantIssuance.md) @throws {never} */
 export declare const initial: Issuance;
+/** Story: Connect my agent after I approve access / Locked approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md) @throws {never} */
+export declare const eligibleApproval: LockedApproval;
 /** Every `always` rule at once. Holds initially and after every transition. @throws {never} */
 export declare function inv(current: Issuance): boolean;
 /** Story: Connect my agent after I approve access / An expired request cannot begin issuance (spec/oauthGrantIssuance.md) @throws {never} */
@@ -52,5 +52,7 @@ export declare function step(current: Issuance, event: Event): Issuance;
 export declare function parseEvent(x: unknown): Event | undefined;
 /** Turn an untrusted value, such as a state loaded from storage, into a state, or undefined if it is not one. It must have exactly the state's shape (no other fields, whole numbers that are safe integers, sets that hold nothing twice, maps as records whose keys carry the "$" every key carries here) and satisfy every `always` rule. The result is a fresh copy, so nothing the caller keeps can change it afterwards. @throws {never} */
 export declare function parseState(x: unknown): Issuance | undefined;
-/** A Machine never shares a state with its callers. @throws {never} */
+/** @throws {never} */
 export declare function snapshot_oauthGrantIssuance<A>(value: A): A;
+/** @throws {never} */
+export declare function snapshot_in_oauthGrantIssuance<A>(value: A): A;

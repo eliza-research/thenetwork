@@ -8,30 +8,22 @@ export interface CrewOfferState { phase: CrewOfferPhase; offered: string[]; yes:
 
 /** One variant per transition in the spec. */
 export type Event =
-  | { type: "extendOffer"; memberId: string; enjoyedPlan: boolean }
   | { type: "openOffer"; invitees: string[] }
+  | { type: "extendOffer"; memberId: string; enjoyedPlan: boolean }
   | { type: "recordCrewAnswer"; memberId: string; accepted: boolean }
   | { type: "finishCrewAnswers" }
   | { type: "expireCrewOffer"; elapsedMs: number }
   | { type: "forgetCrewInvitee"; memberId: string };
 
-/** Story: Opt in to a recurring crew / An offer resolves after every reply or once more than three days pass (spec/crewOffer.md) */
-export const crewOfferWindowMs: number = 259200000;
 /** Story: Opt in to a recurring crew / An open offer records who was invited (spec/crewOffer.md) */
 export const initial: CrewOfferState = { phase: "Unopened", offered: ([] as string[]), yes: ([] as string[]), no: ([] as string[]) };
+/** Story: Opt in to a recurring crew / An offer resolves after every reply or once more than three days pass (spec/crewOffer.md) */
+export const crewOfferWindowMs: number = 259200000;
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: CrewOfferState): boolean {
   return alwaysAnswersComeFromInvitees(current);
-}
-
-/** Story: Opt in to a recurring crew / An open offer records who was invited (spec/crewOffer.md) */
-//@ pure
-export function extendOffer(offer: CrewOfferState, memberId: string, enjoyedPlan: boolean): CrewOfferState {
-  //@ ensures (inv(offer) && canExtendOffer(offer, memberId, enjoyedPlan)) ==> alwaysAnswersComeFromInvitees(\result)
-  //@ ensures (inv(offer) && canExtendOffer(offer, memberId, enjoyedPlan)) ==> stepResolvedOfferStaysClosed(offer, \result)
-  return { ...offer, offered: offer.offered.concat([memberId]) };
 }
 
 /** Story: Opt in to a recurring crew / An open offer records who was invited (spec/crewOffer.md) */
@@ -52,6 +44,14 @@ export function openOffer(offer: CrewOfferState, invitees: string[]): CrewOfferS
 //@ pure
 export function canExtendOffer(offer: CrewOfferState, memberId: string, enjoyedPlan: boolean): boolean {
   return offer.phase === "Open" && enjoyedPlan && !offer.offered.includes(memberId);
+}
+
+/** Story: Opt in to a recurring crew / An open offer records who was invited (spec/crewOffer.md) */
+//@ pure
+export function extendOffer(offer: CrewOfferState, memberId: string, enjoyedPlan: boolean): CrewOfferState {
+  //@ ensures (inv(offer) && canExtendOffer(offer, memberId, enjoyedPlan)) ==> alwaysAnswersComeFromInvitees(\result)
+  //@ ensures (inv(offer) && canExtendOffer(offer, memberId, enjoyedPlan)) ==> stepResolvedOfferStaysClosed(offer, \result)
+  return { ...offer, offered: offer.offered.concat([memberId]) };
 }
 
 /** Story: Opt in to a recurring crew / Each invited member can reply once (spec/crewOffer.md) */
@@ -175,8 +175,8 @@ export function crewHandoffDue(openSession: boolean, completedCount: number, req
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: CrewOfferState, event: Event): boolean {
-  if (event.type === "extendOffer") return canExtendOffer(current, event.memberId, event.enjoyedPlan);
   if (event.type === "openOffer") return canOpenOffer(current);
+  if (event.type === "extendOffer") return canExtendOffer(current, event.memberId, event.enjoyedPlan);
   if (event.type === "recordCrewAnswer") return canRecordCrewAnswer(current, event.memberId);
   if (event.type === "finishCrewAnswers") return canFinishCrewAnswers(current);
   if (event.type === "expireCrewOffer") return canExpireCrewOffer(current, event.elapsedMs);
@@ -189,8 +189,8 @@ export function enabled(current: CrewOfferState, event: Event): boolean {
 export function step(current: CrewOfferState, event: Event): CrewOfferState {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "extendOffer") return canExtendOffer(current, event.memberId, event.enjoyedPlan) ? extendOffer(current, event.memberId, event.enjoyedPlan) : current;
   if (event.type === "openOffer") return canOpenOffer(current) ? openOffer(current, event.invitees) : current;
+  if (event.type === "extendOffer") return canExtendOffer(current, event.memberId, event.enjoyedPlan) ? extendOffer(current, event.memberId, event.enjoyedPlan) : current;
   if (event.type === "recordCrewAnswer") return canRecordCrewAnswer(current, event.memberId) ? recordCrewAnswer(current, event.memberId, event.accepted) : current;
   if (event.type === "finishCrewAnswers") return canFinishCrewAnswers(current) ? finishCrewAnswers(current) : current;
   if (event.type === "expireCrewOffer") return canExpireCrewOffer(current, event.elapsedMs) ? expireCrewOffer(current, event.elapsedMs) : current;
@@ -212,8 +212,8 @@ export function parseEvent(x: unknown): Event | undefined {
     return undefined;
   }
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "extendOffer" && typeof raw.memberId === "string" && typeof raw.enjoyedPlan === "boolean") return { type: "extendOffer", memberId: raw.memberId, enjoyedPlan: raw.enjoyedPlan };
   if (raw.type === "openOffer" && Array.isArray(raw.invitees) && raw.invitees.every((x0: any) => typeof x0 === "string")) return { type: "openOffer", invitees: raw.invitees.map((x0: any) => x0) };
+  if (raw.type === "extendOffer" && typeof raw.memberId === "string" && typeof raw.enjoyedPlan === "boolean") return { type: "extendOffer", memberId: raw.memberId, enjoyedPlan: raw.enjoyedPlan };
   if (raw.type === "recordCrewAnswer" && typeof raw.memberId === "string" && typeof raw.accepted === "boolean") return { type: "recordCrewAnswer", memberId: raw.memberId, accepted: raw.accepted };
   if (raw.type === "finishCrewAnswers") return { type: "finishCrewAnswers" };
   if (raw.type === "expireCrewOffer" && Number.isSafeInteger(raw.elapsedMs)) return { type: "expireCrewOffer", elapsedMs: raw.elapsedMs };

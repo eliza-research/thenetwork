@@ -25,6 +25,12 @@ export function inv(current: RetryRun): boolean {
 
 /** Story: Finish a structured request within its budget / The configured attempt budget limits how many requests start (spec/chatRetry.md) */
 //@ pure
+export function canConfigure(r: RetryRun, attemptLimit: number): boolean {
+  return r.phase === "Unconfigured" && attemptLimit >= 0;
+}
+
+/** Story: Finish a structured request within its budget / The configured attempt budget limits how many requests start (spec/chatRetry.md) */
+//@ pure
 export function configure(r: RetryRun, attemptLimit: number, unbounded: boolean): RetryRun {
   //@ ensures (inv(r) && canConfigure(r, attemptLimit)) ==> alwaysRetriesBounded(\result)
   //@ ensures (inv(r) && canConfigure(r, attemptLimit)) ==> alwaysExhaustionUsesBudget(\result)
@@ -38,12 +44,6 @@ export function configure(r: RetryRun, attemptLimit: number, unbounded: boolean)
 //@ pure
 export function alwaysRetriesBounded(r: RetryRun): boolean {
   return r.attemptsStarted >= 0 && r.attemptLimit >= 0 && (r.unbounded || r.attemptsStarted <= r.attemptLimit) && (!(r.phase === "Unconfigured") || r.attemptsStarted === 0) && (!(r.phase === "Ready") || (r.unbounded || r.attemptsStarted < r.attemptLimit));
-}
-
-/** Story: Finish a structured request within its budget / The configured attempt budget limits how many requests start (spec/chatRetry.md) */
-//@ pure
-export function canConfigure(r: RetryRun, attemptLimit: number): boolean {
-  return r.phase === "Unconfigured" && attemptLimit >= 0;
 }
 
 /** Story: Finish a structured request within its budget / Only a positive configured timeout sets a deadline (spec/chatRetry.md) */

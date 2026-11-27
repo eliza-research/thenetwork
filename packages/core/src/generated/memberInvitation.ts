@@ -2,6 +2,10 @@
 //@ backend dafny
 
 
+/** Story: Forward an invitation for someone I know / A direct named vouch can use the adult member's allowance (spec/memberInvitation.md) */
+export const memberInviteWindowMs: number = 2592000000;
+/** Story: Forward an invitation for someone I know / A direct named vouch can use the adult member's allowance (spec/memberInvitation.md) */
+export const defaultMemberInviteCapacity: number = 3;
 /** Story: Forward an invitation for someone I know / Confirm private relationship evidence before issuance (spec/memberInvitation.md) */
 export const memberInviteDraftMs: number = 900000;
 /** Story: Forward an invitation for someone I know / Confirm private relationship evidence before issuance (spec/memberInvitation.md) */
@@ -10,16 +14,6 @@ export const memberInviteMaxMonths: number = 1500;
 export const memberInviteBurstWindowMs: number = 86400000;
 /** Story: Forward an invitation for someone I know / Hold weak or unusual invitations for staff (spec/memberInvitation.md) */
 export const memberInviteBurstPriorCount: number = 2;
-/** Story: Forward an invitation for someone I know / A direct named vouch can use the adult member's allowance (spec/memberInvitation.md) */
-export const memberInviteWindowMs: number = 2592000000;
-/** Story: Forward an invitation for someone I know / A direct named vouch can use the adult member's allowance (spec/memberInvitation.md) */
-export const defaultMemberInviteCapacity: number = 3;
-
-/** Story: Forward an invitation for someone I know / A direct named vouch can use the adult member's allowance (spec/memberInvitation.md) */
-//@ pure
-export function memberInviteUsesAllowance(status: string): boolean {
-  return status === "issued" || status === "review";
-}
 
 /** Story: Forward an invitation for someone I know / A direct named vouch can use the adult member's allowance (spec/memberInvitation.md) */
 //@ pure
@@ -31,6 +25,12 @@ export function memberInviteWithinWindow(ageMs: number): boolean {
 //@ pure
 export function memberInviteSourceCurrent(adult: boolean, accountEligible: boolean, consents: boolean, clearOfHolds: boolean, now: number, invitesBlockedUntil: number): boolean {
   return adult && accountEligible && consents && clearOfHolds && now >= invitesBlockedUntil;
+}
+
+/** Story: Forward an invitation for someone I know / A direct named vouch can use the adult member's allowance (spec/memberInvitation.md) */
+//@ pure
+export function memberMayRequestInvite(adult: boolean, accountEligible: boolean, consents: boolean, clearOfHolds: boolean, now: number, invitesBlockedUntil: number, used: number, limit: number): boolean {
+  return memberInviteSourceCurrent(adult, accountEligible, consents, clearOfHolds, now, invitesBlockedUntil) && used >= 0 && used < limit;
 }
 
 /** Story: Forward an invitation for someone I know / A direct named vouch can use the adult member's allowance (spec/memberInvitation.md) */
@@ -47,15 +47,8 @@ export function memberInviteCanIssue(directMemberRequest: boolean, eligible: boo
 
 /** Story: Forward an invitation for someone I know / A direct named vouch can use the adult member's allowance (spec/memberInvitation.md) */
 //@ pure
-export function lawUnavailableMemberInviteDoesNotSpend(status: string): boolean {
-  //@ ensures \result === true
-  return !(status === "unavailable") || !memberInviteUsesAllowance(status);
-}
-
-/** Story: Forward an invitation for someone I know / A direct named vouch can use the adult member's allowance (spec/memberInvitation.md) */
-//@ pure
-export function memberMayRequestInvite(adult: boolean, accountEligible: boolean, consents: boolean, clearOfHolds: boolean, now: number, invitesBlockedUntil: number, used: number, limit: number): boolean {
-  return memberInviteSourceCurrent(adult, accountEligible, consents, clearOfHolds, now, invitesBlockedUntil) && used >= 0 && used < limit;
+export function memberInviteUsesAllowance(status: string): boolean {
+  return status === "issued" || status === "review";
 }
 
 /** Story: Forward an invitation for someone I know / A direct named vouch can use the adult member's allowance (spec/memberInvitation.md) */
@@ -70,6 +63,13 @@ export function lawMemberInviteNeedsAdult(accountEligible: boolean, consents: bo
 export function lawMemberInviteNeedsDirectRequest(eligible: boolean, relationship: string): boolean {
   //@ ensures \result === true
   return !memberInviteCanIssue(false, eligible, relationship);
+}
+
+/** Story: Forward an invitation for someone I know / A direct named vouch can use the adult member's allowance (spec/memberInvitation.md) */
+//@ pure
+export function lawUnavailableMemberInviteDoesNotSpend(status: string): boolean {
+  //@ ensures \result === true
+  return !(status === "unavailable") || !memberInviteUsesAllowance(status);
 }
 
 /** Story: Forward an invitation for someone I know / Confirm private relationship evidence before issuance (spec/memberInvitation.md) */
@@ -123,18 +123,6 @@ export function memberInviteNeedsReview(weak: boolean, burst: boolean, riskLangu
 
 /** Story: Forward an invitation for someone I know / Hold weak or unusual invitations for staff (spec/memberInvitation.md) */
 //@ pure
-export function memberInviteHeldLinkMayRelease(signedOwner: boolean, currentApproval: boolean): boolean {
-  return signedOwner && currentApproval;
-}
-
-/** Story: Forward an invitation for someone I know / Hold weak or unusual invitations for staff (spec/memberInvitation.md) */
-//@ pure
-export function memberInviteHeldLinkReleased(needsReview: boolean, approvedInSignedTurn: boolean): boolean {
-  return !needsReview || approvedInSignedTurn;
-}
-
-/** Story: Forward an invitation for someone I know / Hold weak or unusual invitations for staff (spec/memberInvitation.md) */
-//@ pure
 export function lawUnusualMemberInviteRequiresReview(weak: boolean, burst: boolean, riskLanguage: boolean): boolean {
   //@ ensures \result === true
   return !(weak || burst || riskLanguage) || memberInviteNeedsReview(weak, burst, riskLanguage);
@@ -142,9 +130,21 @@ export function lawUnusualMemberInviteRequiresReview(weak: boolean, burst: boole
 
 /** Story: Forward an invitation for someone I know / Hold weak or unusual invitations for staff (spec/memberInvitation.md) */
 //@ pure
+export function memberInviteHeldLinkMayRelease(signedOwner: boolean, currentApproval: boolean): boolean {
+  return signedOwner && currentApproval;
+}
+
+/** Story: Forward an invitation for someone I know / Hold weak or unusual invitations for staff (spec/memberInvitation.md) */
+//@ pure
 export function lawMemberInviteHeldLinkNeedsSignedApproval(signedOwner: boolean, currentApproval: boolean): boolean {
   //@ ensures \result === true
   return !memberInviteHeldLinkMayRelease(signedOwner, currentApproval) || (signedOwner && currentApproval);
+}
+
+/** Story: Forward an invitation for someone I know / Hold weak or unusual invitations for staff (spec/memberInvitation.md) */
+//@ pure
+export function memberInviteHeldLinkReleased(needsReview: boolean, approvedInSignedTurn: boolean): boolean {
+  return !needsReview || approvedInSignedTurn;
 }
 
 /** Story: Forward an invitation for someone I know / Hold weak or unusual invitations for staff (spec/memberInvitation.md) */

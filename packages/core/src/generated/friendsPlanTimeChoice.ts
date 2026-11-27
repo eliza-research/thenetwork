@@ -8,8 +8,6 @@ export interface FriendsPlanWindowCheck { valid: boolean; previousStart: number 
 /** Story: Choose a time privately with my activity partner / Only explicit picks from the delivered invitation count (spec/friendsPlanTimeChoice.md) */
 export type FriendsPlanTimeReply = "AcceptTimeChoices" | "DeclineTimeChoices" | "ClarifyTimeChoices";
 
-/** Story: Choose a time privately with my activity partner / Only explicit picks from the delivered invitation count (spec/friendsPlanTimeChoice.md) */
-export const friendPlanProbeDeliveryPrefix: string = "friends-plan-probe:";
 /** Story: Choose a time privately with my activity partner / Review fixes the available windows (spec/friendsPlanTimeChoice.md) */
 export const noFriendsPlanWindow: FriendsPlanWindow = { start: -1, end: -1 };
 /** Story: Choose a time privately with my activity partner / Review fixes the available windows (spec/friendsPlanTimeChoice.md) */
@@ -20,6 +18,8 @@ export const latePlanWindow: FriendsPlanWindow = { start: 20, end: 22 };
 export const lastPlanWindow: FriendsPlanWindow = { start: 30, end: 31 };
 /** Story: Choose a time privately with my activity partner / Review fixes the available windows (spec/friendsPlanTimeChoice.md) */
 export const differentPlanWindow: FriendsPlanWindow = { start: 10, end: 13 };
+/** Story: Choose a time privately with my activity partner / Only explicit picks from the delivered invitation count (spec/friendsPlanTimeChoice.md) */
+export const friendPlanProbeDeliveryPrefix: string = "friends-plan-probe:";
 
 /** Story: Choose a time privately with my activity partner / Review fixes the available windows (spec/friendsPlanTimeChoice.md) */
 //@ pure
@@ -29,14 +29,14 @@ export function friendPlanWindowOrder(reviewed: FriendsPlanWindow[]): FriendsPla
 
 /** Story: Choose a time privately with my activity partner / Review fixes the available windows (spec/friendsPlanTimeChoice.md) */
 //@ pure
-export function friendPlanHasWindow(windows: FriendsPlanWindow[], startAt: number, endAt: number): boolean {
-  return windows.some((window: FriendsPlanWindow) => window.start === startAt && window.end === endAt);
+export function friendPlanReviewedWindowsValid(reviewed: FriendsPlanWindow[]): boolean {
+  return reviewed.length >= 2 && reviewed.length <= 3 && friendPlanWindowOrder(reviewed).valid;
 }
 
 /** Story: Choose a time privately with my activity partner / Review fixes the available windows (spec/friendsPlanTimeChoice.md) */
 //@ pure
-export function friendPlanReviewedWindowsValid(reviewed: FriendsPlanWindow[]): boolean {
-  return reviewed.length >= 2 && reviewed.length <= 3 && friendPlanWindowOrder(reviewed).valid;
+export function friendPlanHasWindow(windows: FriendsPlanWindow[], startAt: number, endAt: number): boolean {
+  return windows.some((window: FriendsPlanWindow) => window.start === startAt && window.end === endAt);
 }
 
 /** Story: Choose a time privately with my activity partner / Only explicit picks from the delivered invitation count (spec/friendsPlanTimeChoice.md) */

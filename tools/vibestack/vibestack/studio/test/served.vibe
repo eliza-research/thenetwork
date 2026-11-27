@@ -3,7 +3,7 @@
 // run directly, as the `start` script does for the explore stage, it serves the door until stopped.
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
 import * as NodeServices from "@effect/platform-node/NodeServices"
-import { NODE, TOOLS } from "../src/project.ts"
+import { NODE, REPO_ROOT } from "../src/project.ts"
 import { startStudio, type Agent } from "../src/server.vibe"
 
 /** A stand-in for an agent's command line, at its boundary: it runs `script` in the project with the prompt on standard input. */
@@ -30,7 +30,7 @@ export effect function scratch(files: Record<string, string>) {
 
 /** The door, from the fixtures, as a scratch project's only spec. */
 effect function scratchDoor(files: Record<string, string> = {}) {
-  return try scratch({ "spec/door.md": try (try FileSystem.FileSystem).readFileString(`${TOOLS}/fixtures/door.md`), ...files })
+  return try scratch({ "spec/door.md": try (try FileSystem.FileSystem).readFileString(`${REPO_ROOT}/vibestack/fixtures/door.md`), ...files })
 }
 
 if (import.meta.main) NodeRuntime.runMain(Effect.provide(scoped(effect {

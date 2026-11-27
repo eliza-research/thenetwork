@@ -7,17 +7,17 @@ export type OtpCostBasis = "OtpUnmetered" | "OtpSmsEstimate" | "OtpVerifyEstimat
 export type RelayCostBasis = "RelayUnmetered" | "RelayFixedPrice" | "RelayTokenPrice";
 
 /** Story: Know the cost of paid service work / Use the configured rates and the existing defaults (spec/costLedger.md) */
-export const defaultSmsMicros: number = 8300;
-/** Story: Know the cost of paid service work / Use the configured rates and the existing defaults (spec/costLedger.md) */
-export const defaultBlooioLines: number = 1;
-/** Story: Know the cost of paid service work / Use the configured rates and the existing defaults (spec/costLedger.md) */
-export const costAccrualDaysPerMonth: number = 30;
-/** Story: Know the cost of paid service work / Use the configured rates and the existing defaults (spec/costLedger.md) */
 export const costMicrosPerUsd: number = 1000000;
 /** Story: Know the cost of paid service work / Use the configured rates and the existing defaults (spec/costLedger.md) */
 export const defaultTwilioVerifyMicros: number = 58000;
 /** Story: Know the cost of paid service work / Use the configured rates and the existing defaults (spec/costLedger.md) */
 export const defaultClefPhotoMicros: number = 425;
+/** Story: Know the cost of paid service work / Use the configured rates and the existing defaults (spec/costLedger.md) */
+export const defaultSmsMicros: number = 8300;
+/** Story: Know the cost of paid service work / Use the configured rates and the existing defaults (spec/costLedger.md) */
+export const defaultBlooioLines: number = 1;
+/** Story: Know the cost of paid service work / Use the configured rates and the existing defaults (spec/costLedger.md) */
+export const costAccrualDaysPerMonth: number = 30;
 
 /** Story: Know the cost of paid service work / Use the configured rates and the existing defaults (spec/costLedger.md) */
 //@ pure
@@ -40,14 +40,8 @@ export function lawCostFloorIsNonnegative(amount: number): boolean {
 
 /** Story: Know the cost of paid service work / Charge code sends, photo tries, and priced model attempts (spec/costLedger.md) */
 //@ pure
-export function meteredPhotoQuantity(photos: number): number {
-  return photos > 1 ? photos : 1;
-}
-
-/** Story: Know the cost of paid service work / Charge code sends, photo tries, and priced model attempts (spec/costLedger.md) */
-//@ pure
-export function llmAttemptIsPriced(costMicro: number): boolean {
-  return costMicro > 0;
+export function otpCostBasis(provider: string, twilioProvider: boolean): OtpCostBasis {
+  return provider === "blooio" ? "OtpSmsEstimate" : (twilioProvider ? "OtpVerifyEstimate" : "OtpUnmetered");
 }
 
 /** Story: Know the cost of paid service work / Charge code sends, photo tries, and priced model attempts (spec/costLedger.md) */
@@ -64,8 +58,14 @@ export function photoResultIsBillable(refused: boolean): boolean {
 
 /** Story: Know the cost of paid service work / Charge code sends, photo tries, and priced model attempts (spec/costLedger.md) */
 //@ pure
-export function otpCostBasis(provider: string, twilioProvider: boolean): OtpCostBasis {
-  return provider === "blooio" ? "OtpSmsEstimate" : (twilioProvider ? "OtpVerifyEstimate" : "OtpUnmetered");
+export function meteredPhotoQuantity(photos: number): number {
+  return photos > 1 ? photos : 1;
+}
+
+/** Story: Know the cost of paid service work / Charge code sends, photo tries, and priced model attempts (spec/costLedger.md) */
+//@ pure
+export function llmAttemptIsPriced(costMicro: number): boolean {
+  return costMicro > 0;
 }
 
 /** Story: Know the cost of paid service work / Relay classification charges only a provider attempt (spec/costLedger.md) */

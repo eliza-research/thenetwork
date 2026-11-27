@@ -20,15 +20,15 @@ export type StepActor = "NamedReviewer" | "SharedToken";
 
 /** One variant per transition in the spec. */
 export type Event =
-  | { type: "enterHandler" }
-  | { type: "authorizeRoute"; routeFacts: RouteFacts; roles: string[]; requiredRoles: string[] };
+  | { type: "authorizeRoute"; routeFacts: RouteFacts; roles: string[]; requiredRoles: string[] }
+  | { type: "enterHandler" };
 
-/** Story: See only the detail my role permits / The server grants a reveal for 5, 10 or 15 minutes only (spec/staffPermissions.md) */
-export const staffRevealMinuteChoices: number[] = [5, 10, 15];
-/** Story: Work within my assigned staff role / Only an admitted route can reach its handler (spec/staffPermissions.md) */
-export const appRead: RouteFacts = { appRoute: true, roleRestricted: false, mutating: false, hasModeHeader: false, matchesMode: true };
 /** Story: Work within my assigned staff role / Only an admitted route can reach its handler (spec/staffPermissions.md) */
 export const initial: RouteCheck = { phase: "RouteUnchecked", decision: "NoAppRole" };
+/** Story: Work within my assigned staff role / Only an admitted route can reach its handler (spec/staffPermissions.md) */
+export const appRead: RouteFacts = { appRoute: true, roleRestricted: false, mutating: false, hasModeHeader: false, matchesMode: true };
+/** Story: See only the detail my role permits / The server grants a reveal for 5, 10 or 15 minutes only (spec/staffPermissions.md) */
+export const staffRevealMinuteChoices: number[] = [5, 10, 15];
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
@@ -74,6 +74,15 @@ export function canAuthorizeRoute(check: RouteCheck): boolean {
 
 /** Story: Work within my assigned staff role / Only an admitted route can reach its handler (spec/staffPermissions.md) */
 //@ pure
+export function authorizeRoute(check: RouteCheck, routeFacts: RouteFacts, roles: string[], requiredRoles: string[]): RouteCheck {
+  //@ ensures (inv(check) && canAuthorizeRoute(check)) ==> alwaysRunningRouteWasAdmitted(\result)
+  //@ ensures (inv(check) && canAuthorizeRoute(check)) ==> stepRefusedRouteStaysClosed(check, \result)
+  const local_0: Admission = routeAdmission(routeFacts, roles, requiredRoles);
+  return { phase: local_0 === "AdmitRoute" ? "RouteAdmitted" : "RouteRefused", decision: local_0 };
+}
+
+/** Story: Work within my assigned staff role / Only an admitted route can reach its handler (spec/staffPermissions.md) */
+//@ pure
 export function canEnterHandler(check: RouteCheck): boolean {
   return check.phase === "RouteAdmitted";
 }
@@ -108,15 +117,6 @@ export function sometimesHandlerRuns(check: RouteCheck): boolean {
 //@ pure
 export function sometimesRouteIsRefused(check: RouteCheck): boolean {
   return check.phase === "RouteRefused";
-}
-
-/** Story: Work within my assigned staff role / Only an admitted route can reach its handler (spec/staffPermissions.md) */
-//@ pure
-export function authorizeRoute(check: RouteCheck, routeFacts: RouteFacts, roles: string[], requiredRoles: string[]): RouteCheck {
-  //@ ensures (inv(check) && canAuthorizeRoute(check)) ==> alwaysRunningRouteWasAdmitted(\result)
-  //@ ensures (inv(check) && canAuthorizeRoute(check)) ==> stepRefusedRouteStaysClosed(check, \result)
-  const local_0: Admission = routeAdmission(routeFacts, roles, requiredRoles);
-  return { phase: local_0 === "AdmitRoute" ? "RouteAdmitted" : "RouteRefused", decision: local_0 };
 }
 
 /** Story: See only the detail my role permits / The analyst view shows counts and shapes rather than people (spec/staffPermissions.md) */
@@ -253,8 +253,8 @@ export function lawConsoleTokenDecidesOnlyForSharedToken(consoleConfigured: bool
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: RouteCheck, event: Event): boolean {
-  if (event.type === "enterHandler") return canEnterHandler(current);
   if (event.type === "authorizeRoute") return canAuthorizeRoute(current);
+  if (event.type === "enterHandler") return canEnterHandler(current);
   return false;
 }
 
@@ -263,8 +263,8 @@ export function enabled(current: RouteCheck, event: Event): boolean {
 export function step(current: RouteCheck, event: Event): RouteCheck {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "enterHandler") return canEnterHandler(current) ? enterHandler(current) : current;
   if (event.type === "authorizeRoute") return canAuthorizeRoute(current) ? authorizeRoute(current, event.routeFacts, event.roles, event.requiredRoles) : current;
+  if (event.type === "enterHandler") return canEnterHandler(current) ? enterHandler(current) : current;
   return current;
 }
 
@@ -283,8 +283,8 @@ export function parseEvent(x: unknown): Event | undefined {
   }
   const is_RouteFacts = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.appRoute === "boolean" && typeof v.roleRestricted === "boolean" && typeof v.mutating === "boolean" && typeof v.hasModeHeader === "boolean" && typeof v.matchesMode === "boolean";
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "enterHandler") return { type: "enterHandler" };
   if (raw.type === "authorizeRoute" && is_RouteFacts(raw.routeFacts) && Array.isArray(raw.roles) && raw.roles.every((x0: any) => typeof x0 === "string") && Array.isArray(raw.requiredRoles) && raw.requiredRoles.every((x0: any) => typeof x0 === "string")) return { type: "authorizeRoute", routeFacts: ({ appRoute: raw.routeFacts.appRoute, roleRestricted: raw.routeFacts.roleRestricted, mutating: raw.routeFacts.mutating, hasModeHeader: raw.routeFacts.hasModeHeader, matchesMode: raw.routeFacts.matchesMode }), roles: raw.roles.map((x0: any) => x0), requiredRoles: raw.requiredRoles.map((x0: any) => x0) };
+  if (raw.type === "enterHandler") return { type: "enterHandler" };
   return undefined;
 }
 

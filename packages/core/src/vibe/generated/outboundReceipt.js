@@ -15,10 +15,21 @@ export function receiptRank(phase) {
 }
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
 //@ pure
+export function canRecordAcceptance(outbound, providerPhase) {
+    return (outbound.phase === "Sending" || outbound.phase === "AcceptanceUnknown") && ((receiptRank(providerPhase) > 0 && providerPhase !== "QueuedBeforeAcceptance") || providerPhase === "ProviderFailed");
+}
+/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
+//@ pure
 export function recordAcceptance(outbound, providerPhase) {
     //@ ensures (inv(outbound) && canRecordAcceptance(outbound, providerPhase)) ==> stepReceiptsDoNotRegress(outbound, "recordAcceptance", \result)
     //@ ensures (inv(outbound) && canRecordAcceptance(outbound, providerPhase)) ==> stepUnrecordedReceiptWaits(outbound, "recordAcceptance", \result)
     return { phase: providerPhase };
+}
+/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
+//@ pure
+export function canApplyReceipt(outbound, providerPhase) {
+    const local_0 = receiptRank(outbound.phase);
+    return local_0 > 0 && (providerPhase === "ProviderFailed" ? outbound.phase === "ProviderAccepted" || outbound.phase === "ProviderSent" : receiptRank(providerPhase) > local_0);
 }
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
 //@ pure
@@ -29,19 +40,8 @@ export function applyReceipt(outbound, providerPhase) {
 }
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
 //@ pure
-export function canRecordAcceptance(outbound, providerPhase) {
-    return (outbound.phase === "Sending" || outbound.phase === "AcceptanceUnknown") && ((receiptRank(providerPhase) > 0 && providerPhase !== "QueuedBeforeAcceptance") || providerPhase === "ProviderFailed");
-}
-/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
-//@ pure
 export function stepReceiptsDoNotRegress(before, via, after) {
     return !(via === "applyReceipt" && after.phase !== "ProviderFailed") || receiptRank(after.phase) > receiptRank(before.phase);
-}
-/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
-//@ pure
-export function canApplyReceipt(outbound, providerPhase) {
-    const local_0 = receiptRank(outbound.phase);
-    return local_0 > 0 && (providerPhase === "ProviderFailed" ? outbound.phase === "ProviderAccepted" || outbound.phase === "ProviderSent" : receiptRank(providerPhase) > local_0);
 }
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
 //@ pure
@@ -187,6 +187,11 @@ export function lawFailedAcceptanceHasNoRecipientCount(receiptOwner, nonmember, 
 }
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
 //@ pure
+export function gatewayReplyPhase(pastLimit) {
+    return pastLimit ? "AcceptanceExpired" : "AcceptanceUnknown";
+}
+/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
+//@ pure
 export function gatewayReceiptApplies(replyStatus, delivery) {
     return replyStatus === "collected" || replyStatus === "send_unknown" || (replyStatus === "failed_unknown" && delivery !== "unknown");
 }
@@ -194,11 +199,6 @@ export function gatewayReceiptApplies(replyStatus, delivery) {
 //@ pure
 export function gatewayReplySendTime(replyStatus, collectedAt, receivedAt) {
     return replyStatus === "failed_unknown" ? collectedAt : receivedAt;
-}
-/** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
-//@ pure
-export function gatewayReplyPhase(pastLimit) {
-    return pastLimit ? "AcceptanceExpired" : "AcceptanceUnknown";
 }
 /** Story: Know whether a queued message reached the provider / A gateway reply with no final receipt ends after the receipt deadline (spec/outboundReceipt.md) */
 //@ pure
