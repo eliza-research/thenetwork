@@ -72,7 +72,7 @@ export function Drawer() {
   const s = useStore();
   const nav = navOf(s);
   const now = s.now();
-  const queued = [...s.opps.values()].filter(o => o.state === "IN_REVIEW");
+  const queued = [...s.opps.values()].filter(o => o.state === "IN_REVIEW" && o.review?.exceptionReason);
   const dueSoon = queued.some(o => o.review && o.review.deadline - now < 3_600_000);
   const counts: Partial<Record<NavTab, DrawerTabCount>> = {
     ReviewTab: { value: s.network?.review?.queued ?? queued.length, tone: dueSoon ? "warn" : undefined, label: "waiting" },

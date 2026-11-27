@@ -768,7 +768,7 @@ export class RealSource implements DataSource {
       const trust = new Map<string, "ok" | "watch" | "hold">(((typeof row.trust === "string" ? JSON.parse(row.trust) : row.trust) ?? []).map((t: any) => [t.id, t.level]));
       const counters = (typeof row.counters === "string" ? JSON.parse(row.counters) : row.counters) ?? {};
       const gate = (typeof row.gate === "string" ? JSON.parse(row.gate) : row.gate) ?? {};
-      const open = [...s.opps.values()].filter(o => o.state === "IN_REVIEW").length;
+      const open = [...s.opps.values()].filter(o => o.state === "IN_REVIEW" && o.review?.exceptionReason).length;
       const reqRows = reqs as any[];
       const info: NetworkInfo = {
         kind: "consent", counters, gateReasons: gate, matchingEnabled: row.matching !== false,

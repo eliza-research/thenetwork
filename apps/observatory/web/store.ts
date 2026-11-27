@@ -871,7 +871,7 @@ class ObsStore {
     const page: ConsolePage = this.page.kind === "all" ? "AllAppsPage" : this.page.kind === "person" ? "PersonPage" : "AppPage";
     const subject = subjectOf(this.ui.focus);
     let reviewItems = false;
-    for (const o of this.opps.values()) if (o.state === "IN_REVIEW") { reviewItems = true; break; }
+    for (const o of this.opps.values()) if (o.state === "IN_REVIEW" && o.review?.exceptionReason) { reviewItems = true; break; }
     const base: ConsoleNav = {
       page: me ? pageForViewer(page, appsHeld, crossApp, mode) : page,
       stage: this.ui.view === "graph" ? "GraphStage" : "MapStage",
@@ -1180,13 +1180,14 @@ class ObsStore {
   }
 
   /**
-   * Opportunities waiting for review, soonest deadline first (filters: borough, members, origin).
+   * Opportunities the review judge held for staff, soonest deadline first (filters: borough, members, origin).
+   * An item that still waits for the judge is not a staff queue item (spec/staffReview.md).
    * An opportunity focus selects its card but does not narrow the list, so j/k can step through it.
    */
   reviewPending(): Opp[] {
     const oppFocus = this.ui.focus?.kind === "opportunity";
     return [...this.opps.values()]
-      .filter(o => o.state === "IN_REVIEW" && this.matchOpp(o, { range: true, stateGroup: true }) && (oppFocus || this.focusOpp(o)))
+      .filter(o => o.state === "IN_REVIEW" && o.review?.exceptionReason && this.matchOpp(o, { range: true, stateGroup: true }) && (oppFocus || this.focusOpp(o)))
       .sort((a, b) => (a.review?.deadline ?? Infinity) - (b.review?.deadline ?? Infinity));
   }
   /** Review decisions (approve, reject, expired) in the range, newest first. */
