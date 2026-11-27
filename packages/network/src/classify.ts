@@ -1089,7 +1089,8 @@ const RELATIVE_DAY_GROUP = /\b(?:next|last|following)\s+weekends?\b/;
 const DAYPART_MENTION = /\b(mornings?|afternoons?|lunch|evenings?|nights?|after work)\b/g;
 const NAMED_EXCLUSION_RANGE = "(?:any(?: other)? (?:day(?: of the week)?|time)|anytime|(?:any|every)thing(?: else)?|(?:all|every|each) (?:days?|times?)|all|whichever|whatever)";
 const DAYPART_EXCLUSION = /\b(?:any|every|each)\s+(morning|afternoon|evening|night)s?\s+but\s+(?:(?:on|this|that)\s+)*/;
-const NAMED_EXCLUSION = new RegExp(String.raw`\b(?:${NAMED_EXCLUSION_RANGE} but|${NAMED_TIME_EXCLUSION}|${NAMED_EXCLUSION_RANGE}\s+(?:works?|will work)\s+(?:but|${NAMED_TIME_EXCLUSION}))\s+(?:(?:on|this|that|the)\s+)*$`);
+const NAMED_EXCLUSION = new RegExp(String.raw`\b(?:${NAMED_EXCLUSION_RANGE} but|${NAMED_TIME_EXCLUSION})\s+(?:(?:on|this|that|the)\s+)*$`);
+const NAMED_EXCLUSION_VERB_FIRST = new RegExp(String.raw`\b${NAMED_EXCLUSION_RANGE}\s+(?:works?|will work)\s+(?:but|${NAMED_TIME_EXCLUSION})\s+(?:(?:on|this|that|the)\s+)*$`);
 const INCIDENTAL_CLOCK = /\b(?:after|before|until|till|by|around)\s*$|\b(?:work|shift)\s+(?:at\s+|(?:starts?|ends?)\s+at\s+)$/;
 const CONNECTS_TIME = /^\s*(?:(?:at|on|in the)\s+)?$/;
 type ProbeSpan = { at: number; end: number };
@@ -1676,7 +1677,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     if (unresolvedLists.some(list => spanContains(list, m))) { unresolved.push(m); continue; }
     if (partExclusion && m.at >= partExclusion.index && m.at < partExclusionEnd) continue;
     const prefix = t.slice(0, m.at);
-    const exclusion = m.at === partExclusionEnd || NAMED_EXCLUSION.test(prefix);
+    const exclusion = m.at === partExclusionEnd || NAMED_EXCLUSION.test(prefix)
+      || NAMED_EXCLUSION_VERB_FIRST.test(prefix) && (!/[a-z0-9]/i.test(t.slice(m.end)) || refusalAfter(t, m.at, m.end));
     const currentAlternative = clarifiedTimes && exclusion && CLARIFIED_ALTERNATIVE_RANGE.test(prefix)
       && CURRENT_PROBE_CHOICE.test(t.slice(m.end).replace(/[.!]\s*$/, ""));
     if (clarifiedTimes && !currentAlternative && probeTimeIsRecurring(t, m.at, m.end)) continue;
