@@ -857,29 +857,36 @@ export function extractRedLineTags(body: string): string[] {
   return [...tags];
 }
 
-const OWN_DRINKING_CUE = /\b(?:i|i'm|im|i've|ive|my)\b/;
-const DRINKING_BLOCK = /\b(?:if|unless|would|could|should|maybe|might|wish|whether|suppose|hypothetically|thinking|considering|planning|used to|formerly|said|says|told|asked|texted|wrote|posted|friend|friends|sister|brother|mom|dad|mother|father|partner|wife|husband|son|daughter|kid|kids|child|children|roommate|coworker|he|she|they|him|her|them|his|hers|their)\b/;
+const OWN_DRINKING_CUE = /\b(?:i|i'm|im|i've|ive)\b/;
+const DRINKING_BLOCK = /\b(?:if|unless|would|could|should|maybe|might|wish|whether|suppose|hypothetically|thinking|considering|planning|used to|formerly|said|says|told|asked|texted|wrote|posted|friend|friends|sister|brother|mom|dad|mother|father|partner|wife|husband|son|daughter|kid|kids|child|children|roommate|coworker|boyfriend|girlfriend|fiance|fiancee|cousin|date|uncle|aunt|nephew|niece|buddy|neighbor|boss|he|she|they|him|her|them|his|hers|their)\b/;
+/** A condition, a joke, or a report qualifies the whole sentence: "I don't drink... unless it's free lol", "\"I don't drink,\" she said." */
+const DRINKING_SENTENCE_BLOCK = /\b(?:unless|except|said|says|told|asked|texted|wrote|posted|lol|haha+|jk|joking|kidding)\b/;
+/** A recovery from an injury is not a drinking fact: "I'm in recovery from knee surgery." */
+const DRINKING_MEDICAL = /\b(?:surgery|surgical|operation|injury|injured|knee|hip|shoulder|ankle|wrist|elbow|fracture|broken|accident|hospital|illness|pregnan\w*|childbirth)\b/;
+/** A hedge or an idiom is not a standing fact: "sober-ish", "sober-curious", "sober as a judge". */
+const DRINKING_HEDGE = /\bsober[-\s]?(?:ish|curious)\b|\bas a judge\b/;
 const DRINKING_NEGATED_SOBER = /\b(?:not|n't|no longer|never)\s+(?:strictly\s+)?sober\b|\bdrinking again\b|\bfell off\b/;
 /** A moment, not a standing fact: "sober now", "stayed sober last night", "don't drink on weeknights". */
 const DRINKING_SITUATIONAL = /\b(?:now|tonight|today|last night|this week|weeknights?|weekdays?|weekends?|before|while|enough|an hour ago)\b|\b(?:stayed|remained|got)\s+sober\b/;
-/** Standing sobriety: "I'm sober", "in recovery", "alcohol-free", "sober for 3 years". */
-const STANDING_SOBER = /\b(?:i'?m|i am|im|i'?ve been|ive been|i have been|been)\s+(?:strictly\s+)?sober\b|\bstrictly\s+sober\b|\bsober\s+(?:for\s+\d+|since|lifestyle|living|only)\b|\bin\s+recovery\b|\brecovering\s+alcoholic\b|\b12[- ]?step\b|\bin\s+aa\b|\balcohol[- ]?free\b|\bcan'?t\s+be\s+around\s+alcohol\b|\bavoid(?:ing)?\s+bars?\b|\bdon'?t\s+go\s+to\s+bars?\b|\bno\s+bars?\b|\bno\s+alcohol\b|\bzero\s+alcohol\b|\bnot\s+around\s+alcohol\b/;
+/** Standing sobriety: "I'm sober", "I'm in recovery", "alcohol-free", "sober for 3 years". A venue wish ("a zero alcohol bar") states no fact about the sender. */
+const STANDING_SOBER = /\b(?:i'?m|i am|im|i'?ve been|ive been|i have been|been)\s+(?:strictly\s+)?sober\b(?!-)|\bstrictly\s+sober\b(?!-)|\bsober\s+(?:for\s+\d+|since|lifestyle|living|only)\b|\b(?:i'?m|i am|im|i'?ve been|ive been|i have been)\s+in\s+recovery\b|\brecovering\s+alcoholic\b|\b12[- ]?step\b|\b(?:i'?m|i am|im|i'?ve been|ive been|i have been)\s+in\s+aa\b|\balcohol[- ]?free\b(?!\s+(?:bar|venue|place|spot|restaurant|menu))\b|\bcan'?t\s+be\s+around\s+alcohol\b|\bavoid(?:ing)?\s+bars?\b|\bdon'?t\s+go\s+to\s+bars?\b|\bno\s+bars?\b|\bno\s+alcohol\b(?!\s+(?:bar|venue|place|spot|restaurant|menu))|\bzero\s+alcohol\b(?!\s+(?:bar|venue|place|spot|restaurant|menu))|\bnot\s+around\s+alcohol\b/;
 /** Standing abstinence: "don't drink" said of alcohol itself, not of one drink or one evening. */
 const STANDING_NONDRINKER = /\bnon[- ]?drinker\b|\bteetotal(?:er)?\b|\b(?:don'?t|do\s+not|never)\s+drink(?:\s+(?:alcohol|booze|liquor|at\s+all|anymore|ever))?\s*$|\b(?:don'?t|do\s+not|never)\s+drink\s+(?:alcohol|booze|liquor)\s+(?:anymore|ever|at\s+all)\s*$|\bno\s+drinking\s*$/;
 
 /** Drinking tags the sender states about themselves in a member-initiated text. */
 export function ownDrinkingTags(body: string): string[] {
-  const t = normText(body);
+  const t = normText(body).replace(/\.{2,}/g, ", ");
   if (!t.trim()) return [];
   const tags = new Set<string>();
   for (const s of sentencesOf(t)) {
     if (/\?\s*$/.test(s.text.trim())) continue;
+    if (DRINKING_SENTENCE_BLOCK.test(s.text)) continue;
     let ownCueSeen = false;
     for (const clause of s.text.split(/[,;:]|\b(?:but|though|however)\b/)) {
       const own = OWN_DRINKING_CUE.test(clause);
       if (own) ownCueSeen = true;
       const continuation = ownCueSeen && /^\s*(?:and\s+)?(?:am|stay|keep)\b/.test(clause);
-      if ((!own && !continuation) || DRINKING_BLOCK.test(clause) || DRINKING_NEGATED_SOBER.test(clause) || DRINKING_SITUATIONAL.test(clause)) continue;
+      if ((!own && !continuation) || DRINKING_BLOCK.test(clause) || DRINKING_MEDICAL.test(clause) || DRINKING_HEDGE.test(clause) || DRINKING_NEGATED_SOBER.test(clause) || DRINKING_SITUATIONAL.test(clause)) continue;
       const c = clause.trim().replace(/[.!?]+$/, "");
       if (STANDING_SOBER.test(c)) tags.add("strict_sober");
       if (STANDING_NONDRINKER.test(c)) tags.add("non_drinker");

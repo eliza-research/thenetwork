@@ -73,10 +73,12 @@ describe("drinking fact texted after onboarding", () => {
     const from = w.mark();
     await w.say("a", "I don't drink.");
     expect(w.net.memberRedLines("a")).toContain("non_drinker");
-    expect(w.to("a", from).map(s => s.body).join(" ")).toMatch(/saved/);
+    expect(w.to("a", from).map(s => s.body).join(" ")).toMatch(/saved that you don't drink/);
 
+    const fromSober = w.mark();
     await w.say("a", "I'm sober.");
     expect(w.net.memberRedLines("a")).toContain("strict_sober");
+    expect(w.to("a", fromSober).map(s => s.body).join(" ")).toMatch(/saved that you're strictly sober/);
 
     w.restart();
     expect(w.net.memberRedLines("a")).toContain("non_drinker");
@@ -112,7 +114,65 @@ describe("drinking fact texted after onboarding", () => {
   test("a drinking fact stated with a request is stored before the search", async () => {
     const w = new Mini([climber("a", "Ana Diaz", "Greenpoint"), climber("b", "Ben Ito", "Astoria")]);
     await w.onboard("a", "b");
+    const from = w.mark();
     await w.say("b", "Find me a climbing partner, I don't drink alcohol.");
+    expect(w.net.memberRedLines("b")).toContain("non_drinker");
+    expect(w.to("b", from).map(s => s.body).join(" ")).toMatch(/saved that you don't drink/);
+  });
+
+  test("another person's recovery, a medical recovery, a venue wish, a hedge and a joke save nothing", async () => {
+    const w = new Mini([climber("a", "Ana Diaz", "Greenpoint"), climber("b", "Ben Ito", "Astoria")]);
+    await w.onboard("a", "b");
+
+    await w.say("a", "I'm in recovery from knee surgery.");
+    expect(w.net.memberRedLines("a")).not.toContain("strict_sober");
+
+    await w.say("a", "I'm in recovery after my surgery, so nothing too active.");
+    expect(w.net.memberRedLines("a")).not.toContain("strict_sober");
+
+    await w.say("a", "My boyfriend is in recovery.");
+    expect(w.net.memberRedLines("a")).not.toContain("strict_sober");
+
+    await w.say("a", "My fiance is in recovery.");
+    expect(w.net.memberRedLines("a")).not.toContain("strict_sober");
+
+    await w.say("a", "My cousin is in AA.");
+    expect(w.net.memberRedLines("a")).not.toContain("strict_sober");
+
+    await w.say("a", "My date is a non-drinker, pick somewhere else.");
+    expect(w.net.memberRedLines("a")).not.toContain("non_drinker");
+
+    await w.say("a", "I want to try a zero alcohol bar.");
+    expect(w.net.memberRedLines("a")).not.toContain("strict_sober");
+
+    await w.say("a", "I'm sober-ish.");
+    expect(w.net.memberRedLines("a")).not.toContain("strict_sober");
+
+    await w.say("a", "I'm sober-curious.");
+    expect(w.net.memberRedLines("a")).not.toContain("strict_sober");
+
+    await w.say("a", "I'm sober as a judge lol");
+    expect(w.net.memberRedLines("a")).not.toContain("strict_sober");
+
+    await w.say("a", "I don't drink... unless it's free lol");
+    expect(w.net.memberRedLines("a")).not.toContain("non_drinker");
+
+    await w.say("a", "I'm in recovery, please no bar meetups.");
+    expect(w.net.memberRedLines("a")).toContain("strict_sober");
+
+    await w.say("b", "I've been sober for two years.");
+    expect(w.net.memberRedLines("b")).toContain("strict_sober");
+
+    await w.say("b", "I'm in AA.");
+    expect(w.net.memberRedLines("b")).toContain("strict_sober");
+
+    await w.say("b", "I can't be around alcohol.");
+    expect(w.net.memberRedLines("b")).toContain("strict_sober");
+
+    await w.say("b", "I'm a recovering alcoholic.");
+    expect(w.net.memberRedLines("b")).toContain("strict_sober");
+
+    await w.say("b", "I'm teetotal.");
     expect(w.net.memberRedLines("b")).toContain("non_drinker");
   });
 });

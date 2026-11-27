@@ -2136,7 +2136,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (this.opts.onboardingRequests && c.kind === "people_request" && c.desireId && c.category !== "social" && !m.minor) this.openRequest(m, c, { quiet: true });
       return;
     }
-    this.learnDrinking(m, body, !isRequest);
+    this.learnDrinking(m, body);
     if (!isRequest && m.stage !== "active") this.activate(m); // onboarding stalled; carry on
     if (isRequest && m.stage !== "active") { this.activate(m); m.awaiting = undefined; }
     if (c.kind === "people_request" && (!m.minor || this.teenAdmitted(m.id))) return this.openRequest(m, c, {});
@@ -2663,7 +2663,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /** A drinking fact the member states in their own text joins the stored red lines the engine reads. */
-  private learnDrinking(m: MemberState, body: string, readBack: boolean): boolean {
+  private learnDrinking(m: MemberState, body: string): boolean {
     const tags = ownDrinkingTags(body);
     if (!tags.length) return false;
     m.learned.redLines ??= new Set();
@@ -2671,7 +2671,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!fresh.length) return false;
     fresh.forEach(t => m.learned.redLines!.add(t));
     this.dirty = true;
-    if (readBack) this.send(m, "Got it — I saved that to your profile and I'll keep it in mind for places I suggest.", { type: "info" }, "reply");
+    const fact = fresh.map(t => t === "strict_sober" ? "you're strictly sober" : "you don't drink").join(" and ");
+    this.send(m, `Got it — I saved that ${fact} to your profile and I'll keep it in mind for places I suggest.`, { type: "info" }, "reply");
     this.ctx.log("learned", { memberId: m.id, interests: [], skills: [], desires: [], redLines: fresh });
     return true;
   }
