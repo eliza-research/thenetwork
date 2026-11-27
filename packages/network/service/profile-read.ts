@@ -29,7 +29,7 @@ export function profileReadRequest(
   const read =
     /^(?:please )?(?:show|read)(?: me| back| me back)? (.+)$/u.exec(t) ??
     /^what does (.+) say$/u.exec(t) ??
-    /^what is (.+)$/u.exec(t);
+    /^what(?: is|'s) (.+)$/u.exec(t);
   const raw = read?.[1] ?? "";
   const ownSubject = raw.startsWith("my ") || (raw.startsWith("the ") && raw.endsWith(" i saved"));
   const subject = raw.replace(/^(?:my|the) /u, "").replace(/ (?:i saved|you saved|you have saved)$/u, "");
