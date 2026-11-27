@@ -23,7 +23,7 @@ test("the curated venue list covers the P6 range of 50 to 100 public places", ()
     expect(v.lat).toBeLessThanOrEqual(40.92);
     expect(v.lng).toBeGreaterThanOrEqual(-74.26);
     expect(v.lng).toBeLessThanOrEqual(-73.7);
-    expect(["park", "library", "plaza", "market", "museum", "waterfront", "courts", "cafe_district"]).toContain(v.kind);
+    expect(["park", "library", "plaza", "market", "museum", "waterfront", "courts", "cafe_district", "rec_center"]).toContain(v.kind);
     expect(NEIGHBORHOOD.has(v.neighborhood)).toBe(true);
     expect(v.tags.length).toBeGreaterThan(0);
   }

@@ -14,7 +14,7 @@
 //            reviews a blind summary, and the intro goes out only after both yeses (peonHooks below,
 //            src/jobs.ts). Managers post, update and close jobs by text (read back, saved on a yes).
 //   friends  friendsPack with its plans config (FRIENDS_PLANS).
-import { canBeMatched, CITY_TZ, DAY, HOUR, seedVenuesForCity, type City, type MemberId, type VenuePriceTier, type VenueRecord } from "@thenetwork/core";
+import { canBeMatched, DAY, extractMemberRedLines, HOUR, seedVenuesForCity, timeZoneOf, type City, type MemberId, type VenuePriceTier, type VenueRecord } from "@thenetwork/core";
 import {
   friendsPack, FRIENDS_PLANS, makeSlopPack, peonPack, PEON_ENGINE_CONFIG, peonSeatCapacity, planFromInput, SLOP_ENGINE_CONFIG, slopProfiles,
   type AppPack, type EngineConfigInput, type EngineInput, type PlansConfigInput, type World,
@@ -192,7 +192,7 @@ export function slopVenue(
   opts?: SlopVenueOptions,
 ): HookVenue | undefined {
   if (!cells.length) return undefined;
-  const timeZone = CITY_TZ[city] ?? CITY_TZ.nyc;
+  const timeZone = timeZoneOf(city);
   const want = new Set(ACTIVITY_TAGS[activity] ?? ["social"]);
   const hour = at === undefined ? 12 : Number(new Intl.DateTimeFormat("en-US", { timeZone, hourCycle: "h23", hour: "2-digit" }).format(at));
   const dark = hour >= 17 || hour < 9;
@@ -232,7 +232,36 @@ export function slopHooks(options: Parameters<typeof planFromInput>[4], city: Ci
   const plan = (o: HookOpp, input: EngineInput) => {
     const [a, b] = o.participants as [MemberId, MemberId];
     const first = o.first && o.participants.includes(o.first) ? o.first : a;
-    return planFromInput(input, first, first === a ? b : a, [city], options);
+    const second = first === a ? b : a;
+    const areaOf = (id: MemberId) => {
+      const home = input.presence.find(p => p.memberId === id && p.type === "home");
+      return home?.areas.find(area => !area.startsWith("zip:"));
+    };
+    const prefsOf = (id: MemberId) => {
+      const rl = extractMemberRedLines(input.facets.filter(f => f.memberId === id));
+      return {
+        ...(rl.strictSober ? { strictSober: true } : {}),
+        ...(rl.nonDrinker ? { drinksAlcohol: false } : {}),
+        ...(rl.vegetarian ? { vegetarian: true } : {}),
+        ...(rl.vegan ? { vegan: true } : {}),
+        ...(rl.halal ? { halal: true } : {}),
+        ...(rl.kosher ? { kosher: true } : {}),
+        ...(rl.glutenFree ? { glutenFree: true } : {}),
+        ...(rl.severeAllergen ? { severeAllergen: true } : {}),
+        ...(rl.wheelchairNeeded ? { wheelchairNeeded: true } : {}),
+        ...(rl.lowWalking ? { lowWalking: true } : {}),
+        ...(rl.smokeFree ? { smokeFree: true } : {}),
+        ...(rl.lowNoiseRequired ? { lowNoiseRequired: true } : {}),
+        ...(rl.daytimeOnly ? { daytimeOnly: true } : {}),
+      };
+    };
+    return planFromInput(input, first, second, [city], options, {
+      city,
+      memberAreas: [areaOf(first), areaOf(second)],
+      memberPrefs: [prefsOf(first), prefsOf(second)],
+      startMs: o.meetingAt ?? input.now,
+      nowMs: input.now,
+    });
   };
   return {
     engineInput(input) {
@@ -289,6 +318,16 @@ export function slopHooks(options: Parameters<typeof planFromInput>[4], city: Ci
         return !!prof && isNonDrinkerProfile(prof);
       });
       const p = plan(o, inp);
+      if (p?.venueRecord) {
+        return {
+          id: p.venueRecord.id,
+          name: p.venueRecord.name,
+          neighborhood: p.venueRecord.neighborhood,
+          lat: p.venueRecord.lat,
+          lng: p.venueRecord.lng,
+          timeZone: timeZoneOf(city),
+        };
+      }
       return slopVenue(cells, p?.activity ?? "coffee", o.meetingAt, city, nonDrinker ? { nonDrinker: true } : undefined);
     },
     booked(o, _id, ctx) {
