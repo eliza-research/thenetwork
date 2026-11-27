@@ -15,13 +15,16 @@ import { understandPrompt, validateUnderstood } from "../src/extract.ts";
 import { Mini } from "./mini.ts";
 
 describe("Track B safety, red lines, multi-city extraction, and external bridge", () => {
-  test("unknown-age member fails closed on 21+ bars and non-allAges venues", async () => {
+  test("unknown-age member fails closed on 21+ bars and venue picks, while verified teens get allAges venues only", async () => {
     const mini = new Mini([
       { id: "m-unk", name: "Alex", area: "West Village", interests: ["coffee"] },
       { id: "m-adult", name: "Jordan", age: 29, area: "East Village", interests: ["coffee"] },
+      { id: "m-teen-1", name: "Maya", age: 16, area: "West Village", interests: ["books"] },
+      { id: "m-teen-2", name: "Leo", age: 17, area: "East Village", interests: ["books"] },
     ]);
-    await mini.onboard("m-unk", "m-adult");
+    await mini.onboard("m-unk", "m-adult", "m-teen-1", "m-teen-2");
     const nycStart = fromLocal(2026, 11, 18, 20, timeZoneOf("nyc"));
+    const nycDay = fromLocal(2026, 11, 18, 14, timeZoneOf("nyc"));
     const barVenue: VenueRecord = {
       ...seedVenuesForCity("nyc")[0]!,
       id: "test-bar-21",
@@ -36,11 +39,17 @@ describe("Track B safety, red lines, multi-city extraction, and external bridge"
     };
     expect(mini.net.venuePassesRedLines(barVenue, ["m-unk", "m-adult"], nycStart)).toBe(false);
     const pick = mini.net.pickVenueWithRedLines(["m-unk", "m-adult"], nycStart, { city: "nyc", mode: "date" });
-    if (pick.primary) {
-      expect(pick.primary.venue.isBarOnly).toBe(false);
-      expect(pick.primary.venue.ageMin ?? 0).toBeLessThanOrEqual(13);
-      expect(pick.primary.venue.allAges).toBe(true);
-    }
+    expect(pick.primary).toBeUndefined();
+
+    expect(mini.net.venuePassesRedLines(barVenue, ["m-teen-1", "m-teen-2"], nycDay)).toBe(false);
+    const teenPick = mini.net.pickVenueWithRedLines(["m-teen-1", "m-teen-2"], nycDay, {
+      city: "nyc",
+      mode: "group",
+      teenFriendAllowed: true,
+    });
+    expect(teenPick.primary).toBeDefined();
+    expect(teenPick.primary!.venue.allAges).toBe(true);
+    expect(teenPick.primary!.venue.isBarOnly).toBe(false);
   });
 
   test("red-line venue selection enforces budget tiers (0..4), feedback exclusions, and fails closed when unsatisfiable", async () => {

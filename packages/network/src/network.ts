@@ -10538,10 +10538,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     const extraTags = (m.appTags ?? []).map(t => t.tag);
     const rl = extractMemberRedLines(snapFacets, extraTags);
     const hobbies = [...new Set(snapFacets.filter(f => f.kind === "interest").flatMap(f => f.tags))];
-    const age = m.minor || m.minorSignal || m.minorReported || m.ageUnknown || m.ageConflict
-      ? 13
+    const age = m.minorSignal || m.minorReported || m.ageUnknown || m.ageConflict
+      ? 0
       : validAge(m.age) ? m.age
-      : validAge(m.statedAge) ? m.statedAge
+      : !m.minor && validAge(m.statedAge) ? m.statedAge
       : 0;
     const allTags = [...snapFacets.flatMap(f => f.tags), ...extraTags];
     const maxBudgetTier: VenuePriceTier = this.budgetTierFromTags(allTags) ?? 2;
