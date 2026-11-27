@@ -366,7 +366,7 @@ export function parseReviewJudgeReply(text: string, rubric: ReviewPacket["rubric
   }
 }
 
-const REVIEW_JUDGE_MAX_TOKENS = 900;
+const REVIEW_JUDGE_MAX_TOKENS = 1600;
 
 export function modelReviewJudge(llm: LLM, model: string): ReviewJudge {
   return {

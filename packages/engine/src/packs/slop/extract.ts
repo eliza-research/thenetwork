@@ -1117,7 +1117,7 @@ export function validateSlopReading(raw: unknown, text: string): SlopLlmReading 
 export function llmSlopReader(llm: LLM, o: { maxTokens?: number; attempts?: number } = {}): SlopReader {
   return async (text, ctx) => {
     if (!text.trim() || text.length > 1200) return undefined;
-    const r = await tryChatJson(llm, slopReaderPrompt(maskPii(text), ctx), raw => validateSlopReading(raw, text), { attempts: o.attempts ?? 2, maxTokens: o.maxTokens ?? 500 });
+    const r = await tryChatJson(llm, slopReaderPrompt(maskPii(text), ctx), raw => validateSlopReading(raw, text), { attempts: o.attempts ?? 2, maxTokens: o.maxTokens ?? 1400 });
     return r.ok ? r.value : undefined;
   };
 }

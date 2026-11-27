@@ -42,7 +42,7 @@ const presenceOf = (p: Presence, now: number) => ({
   city: p.city, type: p.type, areas: [...p.areas],
   ...(p.from !== undefined ? { from_day: r1((p.from - now) / DAY) } : {}), ...(p.to !== undefined ? { to_day: r1((p.to - now) / DAY) } : {}),
 });
-const joinedDaysAgo = (joinedAt: number, now: number) => Math.max(0, Math.round((now - joinedAt) / DAY));
+const joinedDaysAgo = (joinedAt: number, now: number) => Math.max(0, Math.floor((now - joinedAt) / DAY));
 const roleOf = (id: MemberId, c: { via?: MemberId; roles: Record<MemberId, string> }) => (id === c.via ? CONNECTOR_ROLE : c.roles[id] ?? "peer");
 const everyone = (c: { participants: MemberId[]; via?: MemberId }) => [...c.participants, ...(c.via ? [c.via] : [])];
 
@@ -290,21 +290,29 @@ export function buildDeepContext(w: World, c: Candidate, o: DeepContextOptions =
     if (!mi) throw new Error(`unknown member ${id}`);
     const m = mi.m;
     const all = snap.facets.filter(f => w.canonical(f.memberId) === id && validityIncludes(f, now));
+    const seenFactKeys = new Set<string>();
     const facts: DeepFact[] = all.filter(f => f.scope === "shareable" || f.scope === "matchable")
       .map(f => {
         const x = f as FacetX;
         const at = typeof x.observedAt === "number" ? x.observedAt : f.validFrom;
-        const age = at !== undefined ? Math.max(0, Math.round((now - at) / DAY)) : undefined;
+        const age = at !== undefined ? Math.max(0, Math.floor((now - at) / DAY)) : undefined;
+        const val = scrub(f.value).trim().slice(0, 180);
+        const src = typeof x.source === "string" && x.source.trim().length > 0 ? x.source : undefined;
         return {
-          field: f.kind, value: scrub(f.value), visibility: f.scope === "shareable" ? "shareable" as const : "do_not_quote" as const,
-          basis: basisOf(f), ...(typeof x.source === "string" ? { source: x.source } : {}),
+          field: f.kind, value: val, visibility: f.scope === "shareable" ? "shareable" as const : "do_not_quote" as const,
+          basis: basisOf(f), ...(src !== undefined ? { source: src } : {}),
           confidence: Math.round(f.confidence * 100) / 100,
           ...(age !== undefined ? { age_days: age } : {}), ...(age !== undefined && age > STALE_DAYS ? { older_than_180_days: true } : {}),
           ...(v3 && isHypothesis(f) ? { hypothesis: true } : {}),
         };
       })
-      // Most useful first: shareable, then confident and fresh.
       .sort((a, b) => (a.visibility === b.visibility ? 0 : a.visibility === "shareable" ? -1 : 1) || (b.confidence - a.confidence) || ((a.age_days ?? 0) - (b.age_days ?? 0)))
+      .filter(f => {
+        const fk = `${f.field}|${f.value.toLowerCase()}`;
+        if (seenFactKeys.has(fk)) return false;
+        seenFactKeys.add(fk);
+        return true;
+      })
       .slice(0, MAX_FACTS);
     const budget = w.cfg.budgets[m.state];
     const declines = [...(w.memberCategoryDeclines.get(id)?.entries() ?? [])].map(([category, at]) => ({ category, days_ago: daysAgo(at) }));
@@ -383,7 +391,7 @@ export function buildDeepContext(w: World, c: Candidate, o: DeepContextOptions =
       configuration: {
         kind: c.kind, category: c.category, format: c.format, objective: scrub(c.objective), city: c.city ?? "unknown",
         window_days: { from: r1((window.start - now) / DAY), to: r1((window.end - now) / DAY) },
-        hard_filters: "Enforced by code before and after you (age 18+ for everyone in any role, blocks, safety holds, category and romance opt-ins, budgets). You cannot override them.",
+        hard_filters: "Code-enforced: 18+, blocks, holds, opt-ins, budgets.",
       },
       people, pairs,
       logistics: {

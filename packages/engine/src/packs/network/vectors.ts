@@ -1,4 +1,4 @@
-import type { Category, Facet, FacetKind, Intent, MemberId } from "@thenetwork/core";
+import { ADULT_AGE, type Category, type Facet, type FacetKind, type Intent, type MemberId } from "@thenetwork/core";
 import { cofounderIntentEligible } from "../../../../core/src/generated/cofounderDispatch.ts";
 import { cofounderIntentObjective } from "../../../../core/src/generated/cofounderIntent.ts";
 import { laneLimits, laneWeights, type LaneSide, type MatchLane } from "../../../../core/src/generated/matchLane.ts";
@@ -11,16 +11,18 @@ import {
   discretionGateOk,
   humanVectorOf,
   memberMayHavePositiveVectorBonus,
+  parentSupportSafe,
   spendTierCompatible,
   spendTierRank,
   stepAheadDeltaOk,
   type HumanVector,
 } from "../../humanVector.ts";
-import type { EntityStanding, EntityTags, MatchEntity, MatchProfile, Membership, PackVectors, TagSet } from "../../match/profile.ts";
+import { intersectCount } from "../../match/pair.ts";
+import type { EntityStanding, EntityTags, MatchEntity, MatchProfile, Membership, PackVectors } from "../../match/profile.ts";
 import type { World } from "../../world.ts";
 import { cofounderFactsOf, cofounderFactTags } from "./cofounderFacts.ts";
 import { parseOntologyTags } from "./ontology.ts";
-import { detailProse, detailTags, objectivesFor } from "./taxonomy.ts";
+import { connectionTypeForIntent, detailProse, detailTags, isFreeLowCostIntent, isMoonshotColdAsk, objectivesFor } from "./taxonomy.ts";
 import {
   ALL_INTERESTS,
   ALL_SKILLS,
@@ -351,40 +353,129 @@ function standing(w: World, entity: MatchEntity): EntityStanding {
   return { standing: standingFromEvidence(evidence), uncertainty: standingUncertainty(reviewedFacts.size), evidenceIds: [...evidenceIds] };
 }
 
-function sharesGuildContainer(va: HumanVector, vb: HumanVector): boolean {
-  if (va.exchange.guilds.length > 0 && vb.exchange.guilds.some(g => va.exchange.guilds.includes(g))) return true;
-  return va.exchange.slots.some(sa =>
-    CONNECTION_ONTOLOGY_SPECS[sa.connectionType].chettyMixedSesContainer
-    && vb.exchange.slots.some(sb => sb.connectionType === sa.connectionType && sb.domain === sa.domain));
+const HV_DOMAIN_RUNGS = 1;
+const HV_SPEND_TIER = 2;
+const HV_LIFE_STAGE = 4;
+const HV_DEPTH = 8;
+const HV_HUMOR = 16;
+const HV_TRANSITIONS = 32;
+const HV_LANGUAGES = 64;
+const HV_RELIABILITY = 128;
+const HV_EXTRACTION = 256;
+const HV_HIGH_DISCRETION_TARGET = 512;
+
+interface FlatAdultVector {
+  readonly vec: HumanVector;
+  readonly flags: number;
+  readonly age: number;
+  readonly econ100: number;
+  readonly pub100: number;
+  readonly disc100: number;
+  readonly ext100: number;
+  readonly extRisk: number;
+  readonly showUpRate: number;
+  readonly spendTier: HumanVector["horizontal"]["lifestyle"]["spendComfortTier"];
+  readonly spendRank: number;
+  readonly lifeStage: HumanVector["horizontal"]["lifeStage"];
+  readonly depthVal: number;
+  readonly topRung: number;
+  readonly guilds: ReadonlySet<string>;
+  readonly mixedSlotKeys: ReadonlySet<string>;
+  readonly humorSet: ReadonlySet<string>;
+  readonly transitionSet: ReadonlySet<string>;
+  readonly nativeLangs: ReadonlySet<string>;
+  readonly learningLangs: ReadonlySet<string>;
 }
 
-function topRungOf(v: HumanVector): number {
-  let best = 0;
-  for (const c of Object.values(v.capital.domainRungs)) if (c.value > best) best = c.value;
-  return best;
+const flatVectorCaches = new WeakMap<World, Map<MemberId, FlatAdultVector | null>>();
+
+function flatVectorOf(w: World, memberId: MemberId): FlatAdultVector | null {
+  let map = flatVectorCaches.get(w);
+  if (!map) {
+    map = new Map();
+    flatVectorCaches.set(w, map);
+  }
+  const existing = map.get(memberId);
+  if (existing !== undefined) return existing;
+  if (isMinor(w, memberId)) {
+    map.set(memberId, null);
+    return null;
+  }
+  const vec = humanVectorOf(w, memberId);
+  if (!vec) {
+    map.set(memberId, null);
+    return null;
+  }
+  const e = vec.explicitSignals;
+  let flags = 0;
+  if (e.domainRungs) flags |= HV_DOMAIN_RUNGS;
+  if (e.spendTier) flags |= HV_SPEND_TIER;
+  if (e.lifeStage) flags |= HV_LIFE_STAGE;
+  if (e.depth) flags |= HV_DEPTH;
+  if (e.humor) flags |= HV_HUMOR;
+  if (e.transitions) flags |= HV_TRANSITIONS;
+  if (e.languages) flags |= HV_LANGUAGES;
+  if (e.reliabilityPenalty) flags |= HV_RELIABILITY;
+  if (e.hypeOrExtraction) flags |= HV_EXTRACTION;
+  if (vec.capital.economic.value >= 0.9 || vec.capital.symbolic.publicityTier.value >= 0.65) flags |= HV_HIGH_DISCRETION_TARGET;
+
+  let topRung = 0;
+  for (const c of Object.values(vec.capital.domainRungs)) if (c.value > topRung) topRung = c.value;
+  const mixedSlotKeys = new Set<string>();
+  for (const s of vec.exchange.slots) {
+    if (CONNECTION_ONTOLOGY_SPECS[s.connectionType].chettyMixedSesContainer) {
+      mixedSlotKeys.add(`${s.connectionType}:${s.domain}`);
+    }
+  }
+  const flat: FlatAdultVector = {
+    vec,
+    flags,
+    age: vec.age,
+    econ100: vec.capital.economic.value * 100,
+    pub100: vec.capital.symbolic.publicityTier.value * 100,
+    disc100: vec.behavioral.discretionVouchScore * 100,
+    ext100: vec.behavioral.extractionRiskScore * 100,
+    extRisk: vec.behavioral.extractionRiskScore,
+    showUpRate: vec.behavioral.showUpRate,
+    spendTier: vec.horizontal.lifestyle.spendComfortTier,
+    spendRank: spendTierRank(vec.horizontal.lifestyle.spendComfortTier),
+    lifeStage: vec.horizontal.lifeStage,
+    depthVal: vec.horizontal.communication.depthPreference.value,
+    topRung,
+    guilds: new Set(vec.exchange.guilds),
+    mixedSlotKeys,
+    humorSet: new Set(vec.horizontal.communication.humorRegister),
+    transitionSet: new Set(vec.horizontal.activeTransitions),
+    nativeLangs: new Set(vec.exchange.nativeLanguages),
+    learningLangs: new Set(vec.exchange.learningLanguages),
+  };
+  map.set(memberId, flat);
+  return flat;
 }
 
-function sharedDomainRungPair(seeker: HumanVector, mentor: HumanVector): [number, number] | undefined {
-  for (const [dom, sCoord] of Object.entries(seeker.capital.domainRungs)) {
-    const mCoord = mentor.capital.domainRungs[dom];
+function setsOverlap(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  if (a.size === 0 || b.size === 0) return false;
+  const [small, large] = a.size <= b.size ? [a, b] : [b, a];
+  for (const x of small) if (large.has(x)) return true;
+  return false;
+}
+
+function sharesGuildContainerFlat(fa: FlatAdultVector, fb: FlatAdultVector): boolean {
+  return setsOverlap(fa.guilds, fb.guilds) || setsOverlap(fa.mixedSlotKeys, fb.mixedSlotKeys);
+}
+
+function sharedDomainRungPairFlat(seeker: FlatAdultVector, mentor: FlatAdultVector): [number, number] | undefined {
+  const sRungs = seeker.vec.capital.domainRungs;
+  const mRungs = mentor.vec.capital.domainRungs;
+  for (const [dom, sCoord] of Object.entries(sRungs)) {
+    const mCoord = mRungs[dom];
     if (mCoord) return [sCoord.value, mCoord.value];
   }
-  const sr = topRungOf(seeker);
-  const mr = topRungOf(mentor);
-  return sr > 0 && mr > 0 ? [sr, mr] : undefined;
+  return seeker.topRung > 0 && mentor.topRung > 0 ? [seeker.topRung, mentor.topRung] : undefined;
 }
 
 function clampScale(v: number): number {
   return Math.max(0, Math.min(pairValueScale, Math.round(v)));
-}
-
-function intersectCount(a: TagSet, b: TagSet): number {
-  let i = 0, j = 0, count = 0;
-  while (i < a.length && j < b.length) {
-    const x = a[i]!, y = b[j]!;
-    if (x === y) { count++; i++; j++; } else if (x < y) i++; else j++;
-  }
-  return count;
 }
 
 function baseDirectedUtility(a: MatchProfile, b: MatchProfile): number {
@@ -395,43 +486,62 @@ function baseDirectedUtility(a: MatchProfile, b: MatchProfile): number {
   return wSum > 0 ? Math.floor((weights.complement * comp + weights.affinity * aff) / wSum) : 0;
 }
 
+export function pairPassesVectorGuard(w: World, a: MemberId, b: MemberId, intent?: Intent): boolean {
+  const fa = flatVectorOf(w, a);
+  const fb = flatVectorOf(w, b);
+  if (!fa || !fb) return true;
+  if (intent && isMoonshotColdAsk(intent)) {
+    if (fb.topRung - fa.topRung > 3.5 || (fb.flags & HV_HIGH_DISCRETION_TARGET) !== 0) return false;
+  }
+  const cType = intent ? connectionTypeForIntent(intent) : undefined;
+  const spec = cType ? CONNECTION_ONTOLOGY_SPECS[cType] : undefined;
+  const objs = intent ? objectivesFor(intent.objective, intent.details, intent.category) : [];
+  if (cType === "parent_support_adult") {
+    const adultMin = Math.max(ADULT_AGE, w.pack.eligibility.minMatchAge);
+    if (!parentSupportSafe(fa.age, fb.age, adultMin, false)) return false;
+  }
+  const sharedGuild = (spec?.chettyMixedSesContainer ?? false)
+    || objs.some(o => o.crossClassGuild === true)
+    || setsOverlap(fa.guilds, fb.guilds);
+  if (((fa.flags | fb.flags) & (HV_EXTRACTION | HV_HIGH_DISCRETION_TARGET)) !== 0) {
+    if (!discretionGateOk(fb.pub100, fb.econ100, fa.disc100, fa.ext100, sharedGuild)) return false;
+    if (!discretionGateOk(fa.pub100, fa.econ100, fb.disc100, fb.ext100, sharedGuild)) return false;
+  }
+  const freeAnchor = sharedGuild
+    || (intent ? isFreeLowCostIntent(intent) : false)
+    || (spec?.defaultFreeAnchor ?? false)
+    || objs.some(o => o.freeAnchor === true);
+  if (!spendTierCompatible(fa.spendTier, fb.spendTier, freeAnchor)) {
+    return false;
+  }
+  return true;
+}
+
 function packValue(w: World, a: MatchProfile, b: MatchProfile): number {
   const base = baseDirectedUtility(a, b);
-  if (isMinor(w, a.memberId) || isMinor(w, b.memberId)) return base;
-  const va = humanVectorOf(w, a.memberId);
-  const vb = humanVectorOf(w, b.memberId);
-  if (!va || !vb) return base;
+  const fa = flatVectorOf(w, a.memberId);
+  const fb = flatVectorOf(w, b.memberId);
+  if (!fa || !fb) return base;
 
-  const ea = va.explicitSignals;
-  const eb = vb.explicitSignals;
-  const sharedGuild = sharesGuildContainer(va, vb);
-  const needsDiscretionCheck = ea.hypeOrExtraction || eb.hypeOrExtraction
-    || va.capital.economic.value >= 0.9 || vb.capital.economic.value >= 0.9
-    || va.capital.symbolic.publicityTier.value >= 0.65 || vb.capital.symbolic.publicityTier.value >= 0.65;
-  if (needsDiscretionCheck) {
-    const discAB = discretionGateOk(
-      vb.capital.symbolic.publicityTier.value * 100,
-      vb.capital.economic.value * 100,
-      va.behavioral.discretionVouchScore * 100,
-      va.behavioral.extractionRiskScore * 100,
-      sharedGuild,
-    );
-    const discBA = discretionGateOk(
-      va.capital.symbolic.publicityTier.value * 100,
-      va.capital.economic.value * 100,
-      vb.behavioral.discretionVouchScore * 100,
-      vb.behavioral.extractionRiskScore * 100,
-      sharedGuild,
-    );
-    if (!discAB || !discBA) return 0;
+  const anyFlags = fa.flags | fb.flags;
+  if (anyFlags === 0) return base;
+
+  const bothFlags = fa.flags & fb.flags;
+  let sharedGuild: boolean | undefined;
+  const isSharedGuild = () => (sharedGuild ??= sharesGuildContainerFlat(fa, fb));
+
+  if ((anyFlags & (HV_EXTRACTION | HV_HIGH_DISCRETION_TARGET)) !== 0) {
+    const sg = isSharedGuild();
+    if (!discretionGateOk(fb.pub100, fb.econ100, fa.disc100, fa.ext100, sg)) return 0;
+    if (!discretionGateOk(fa.pub100, fa.econ100, fb.disc100, fb.ext100, sg)) return 0;
   }
 
   let delta = 0;
 
-  if (a.lane === "Mentor" && (ea.domainRungs || eb.domainRungs)) {
-    const seeker = a.side === "Seeking" ? va : vb;
-    const mentor = a.side === "Seeking" ? vb : va;
-    const rungs = sharedDomainRungPair(seeker, mentor);
+  if (a.lane === "Mentor" && (anyFlags & HV_DOMAIN_RUNGS) !== 0) {
+    const seeker = a.side === "Seeking" ? fa : fb;
+    const mentor = a.side === "Seeking" ? fb : fa;
+    const rungs = sharedDomainRungPairFlat(seeker, mentor);
     if (rungs) {
       const [sr, mr] = rungs;
       if (mr - sr > 4.0) return 0;
@@ -440,40 +550,35 @@ function packValue(w: World, a: MatchProfile, b: MatchProfile): number {
     }
   }
 
-  if (ea.spendTier || eb.spendTier) {
-    const tierA = va.horizontal.lifestyle.spendComfortTier;
-    const tierB = vb.horizontal.lifestyle.spendComfortTier;
-    const tierDiff = Math.abs(spendTierRank(tierA) - spendTierRank(tierB));
-    const freeAnchor = sharedGuild || a.lane === "Mentor" || a.lane === "Intro";
-    if (!spendTierCompatible(tierA, tierB, freeAnchor)) {
+  if ((anyFlags & HV_SPEND_TIER) !== 0) {
+    const sg = isSharedGuild();
+    const tierDiff = Math.abs(fa.spendRank - fb.spendRank);
+    const freeAnchor = sg || a.lane === "Mentor" || a.lane === "Intro";
+    if (!spendTierCompatible(fa.spendTier, fb.spendTier, freeAnchor)) {
       return 0;
     }
-    if (sharedGuild && tierDiff >= 2) {
+    if (sg && tierDiff >= 2) {
       delta += 240;
-    } else if (ea.spendTier && eb.spendTier && tierDiff === 0) {
+    } else if ((bothFlags & HV_SPEND_TIER) !== 0 && tierDiff === 0) {
       delta += 80;
     }
   }
 
-  if (ea.lifeStage && eb.lifeStage && va.horizontal.lifeStage === vb.horizontal.lifeStage) delta += 110;
-  if (ea.depth && eb.depth) {
-    const depthDiff = Math.abs(va.horizontal.communication.depthPreference.value - vb.horizontal.communication.depthPreference.value);
-    delta += Math.round(120 * (1 - depthDiff));
+  if ((bothFlags & HV_LIFE_STAGE) !== 0 && fa.lifeStage === fb.lifeStage) delta += 110;
+  if ((bothFlags & HV_DEPTH) !== 0) {
+    delta += Math.round(120 * (1 - Math.abs(fa.depthVal - fb.depthVal)));
   }
-  if (ea.humor && eb.humor && va.horizontal.communication.humorRegister.some(h => vb.horizontal.communication.humorRegister.includes(h))) delta += 100;
-  if (ea.transitions && eb.transitions && va.horizontal.activeTransitions.some(t => vb.horizontal.activeTransitions.includes(t))) delta += 120;
-  if (ea.languages && eb.languages) {
-    const langSwap =
-      va.exchange.nativeLanguages.some(l => vb.exchange.learningLanguages.includes(l))
-      && vb.exchange.nativeLanguages.some(l => va.exchange.learningLanguages.includes(l));
-    if (langSwap) delta += 280;
+  if ((bothFlags & HV_HUMOR) !== 0 && setsOverlap(fa.humorSet, fb.humorSet)) delta += 100;
+  if ((bothFlags & HV_TRANSITIONS) !== 0 && setsOverlap(fa.transitionSet, fb.transitionSet)) delta += 120;
+  if ((bothFlags & HV_LANGUAGES) !== 0) {
+    if (setsOverlap(fa.nativeLangs, fb.learningLangs) && setsOverlap(fb.nativeLangs, fa.learningLangs)) delta += 280;
   }
-  if (ea.reliabilityPenalty || eb.reliabilityPenalty) {
-    const minShow = Math.min(va.behavioral.showUpRate, vb.behavioral.showUpRate);
+  if ((anyFlags & HV_RELIABILITY) !== 0) {
+    const minShow = Math.min(fa.showUpRate, fb.showUpRate);
     if (minShow < 0.75) delta -= Math.round(280 * (0.75 - minShow));
   }
-  if (ea.hypeOrExtraction || eb.hypeOrExtraction) {
-    const maxExt = Math.max(va.behavioral.extractionRiskScore, vb.behavioral.extractionRiskScore);
+  if ((anyFlags & HV_EXTRACTION) !== 0) {
+    const maxExt = Math.max(fa.extRisk, fb.extRisk);
     if (maxExt > 0.3) delta -= Math.round(450 * (maxExt - 0.3));
   }
 
@@ -483,20 +588,19 @@ function packValue(w: World, a: MatchProfile, b: MatchProfile): number {
 function networkPackBound(w: World, a: MatchProfile, b: MatchProfile): number {
   const base = baseDirectedUtility(a, b);
   if ((a.packClass ?? 0) === 0 && (b.packClass ?? 0) === 0) return base;
-  if (isMinor(w, a.memberId) || isMinor(w, b.memberId)) return base;
-  const va = humanVectorOf(w, a.memberId);
-  const vb = humanVectorOf(w, b.memberId);
-  if (!va || !vb) return base;
-  const ea = va.explicitSignals;
-  const eb = vb.explicitSignals;
+  const fa = flatVectorOf(w, a.memberId);
+  const fb = flatVectorOf(w, b.memberId);
+  if (!fa || !fb) return base;
+  const anyFlags = fa.flags | fb.flags;
+  const bothFlags = fa.flags & fb.flags;
   let bonus = 0;
-  if (a.lane === "Mentor" && (ea.domainRungs || eb.domainRungs)) bonus += 320;
-  if (ea.spendTier || eb.spendTier) bonus += 240;
-  if (ea.lifeStage && eb.lifeStage) bonus += 110;
-  if (ea.depth && eb.depth) bonus += 120;
-  if (ea.humor && eb.humor) bonus += 100;
-  if (ea.transitions && eb.transitions) bonus += 120;
-  if (ea.languages && eb.languages) bonus += 280;
+  if (a.lane === "Mentor" && (anyFlags & HV_DOMAIN_RUNGS) !== 0) bonus += 320;
+  if ((anyFlags & HV_SPEND_TIER) !== 0) bonus += 240;
+  if ((bothFlags & HV_LIFE_STAGE) !== 0) bonus += 110;
+  if ((bothFlags & HV_DEPTH) !== 0) bonus += 120;
+  if ((bothFlags & HV_HUMOR) !== 0) bonus += 100;
+  if ((bothFlags & HV_TRANSITIONS) !== 0) bonus += 120;
+  if ((bothFlags & HV_LANGUAGES) !== 0) bonus += 280;
   return bonus === 0 ? base : clampScale(base + bonus);
 }
 
@@ -507,23 +611,21 @@ function networkPackClass(w: World, entity: MatchEntity): number {
 function networkPackClassCap(w: World, a: MatchProfile, partnerClass: number, untouched: boolean): number {
   if (!untouched) return pairValueScale;
   if ((a.packClass ?? 0) === 0 && partnerClass === 0) return 0;
-  if (isMinor(w, a.memberId)) return 0;
-  const va = humanVectorOf(w, a.memberId);
-  if (!va) return 0;
-  const ea = va.explicitSignals;
+  const fa = flatVectorOf(w, a.memberId);
+  if (!fa) return 0;
   if (partnerClass === 0) {
     let bonus = 0;
-    if (a.lane === "Mentor" && ea.domainRungs) bonus += 320;
-    if (ea.spendTier) bonus += 240;
+    if (a.lane === "Mentor" && (fa.flags & HV_DOMAIN_RUNGS) !== 0) bonus += 320;
+    if ((fa.flags & HV_SPEND_TIER) !== 0) bonus += 240;
     return clampScale(bonus);
   }
   let bonus = 240;
   if (a.lane === "Mentor") bonus += 320;
-  if (ea.lifeStage) bonus += 110;
-  if (ea.depth) bonus += 120;
-  if (ea.humor) bonus += 100;
-  if (ea.transitions) bonus += 120;
-  if (ea.languages) bonus += 280;
+  if ((fa.flags & HV_LIFE_STAGE) !== 0) bonus += 110;
+  if ((fa.flags & HV_DEPTH) !== 0) bonus += 120;
+  if ((fa.flags & HV_HUMOR) !== 0) bonus += 100;
+  if ((fa.flags & HV_TRANSITIONS) !== 0) bonus += 120;
+  if ((fa.flags & HV_LANGUAGES) !== 0) bonus += 280;
   return clampScale(bonus);
 }
 

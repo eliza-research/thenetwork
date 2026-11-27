@@ -1,5 +1,5 @@
 import type { City, Facet, Member, MemberId, Presence } from "@thenetwork/core";
-import { ADULT_AGE, canBeMatched, DAY, EngineRng } from "@thenetwork/core";
+import { ADULT_AGE, canBeMatched, DAY, EngineRng, findNeighborhood, getCity } from "@thenetwork/core";
 import { tokenize } from "./embed.ts";
 import { hood } from "./packs/friends/geo.ts";
 import { MARKET_ANCHOR_ZIP, normalizeZip, zipCentroid, zipForArea } from "./packs/slop/zips.ts";
@@ -202,16 +202,26 @@ export function weeklyMaskOverlapHours(
   return hrs;
 }
 
-export interface SpatialMemberInput {
-  m: Member;
-  held: boolean;
-  tags: ReadonlySet<string>;
+export interface SpatialMemberVectors {
   profileEmb: readonly number[];
   capEmb: readonly number[];
   desireEmb: readonly number[];
   capFacetEmbs?: readonly (readonly number[])[];
   desireFacetEmbs?: readonly (readonly number[])[];
   matchFacetEmbs?: readonly (readonly number[])[];
+}
+
+export interface SpatialMemberInput {
+  m: Member;
+  held: boolean;
+  tags: ReadonlySet<string>;
+  profileEmb?: readonly number[];
+  capEmb?: readonly number[];
+  desireEmb?: readonly number[];
+  capFacetEmbs?: readonly (readonly number[])[];
+  desireFacetEmbs?: readonly (readonly number[])[];
+  matchFacetEmbs?: readonly (readonly number[])[];
+  resolveVectors?: () => SpatialMemberVectors;
   presence: readonly Presence[];
   allFacets: readonly Facet[];
   lowExposureOrNew: boolean;
@@ -276,6 +286,11 @@ function resolveMemberCoords(m: Member, presence: readonly Presence[], allFacets
         coords.push({ lat: zDirect.lat, lon: zDirect.lon });
         continue;
       }
+      const cityHood = findNeighborhood(p.city, area);
+      if (cityHood) {
+        coords.push({ lat: cityHood.lat, lon: cityHood.lng });
+        continue;
+      }
       const nh = hood(area);
       if (nh) {
         coords.push({ lat: nh.lat, lon: nh.lng });
@@ -288,6 +303,11 @@ function resolveMemberCoords(m: Member, presence: readonly Presence[], allFacets
 
   if (!coords.length) {
     for (const c of cities) {
+      const spec = getCity(c);
+      if (spec) {
+        coords.push({ lat: spec.center.lat, lon: spec.center.lng });
+        continue;
+      }
       const anchorZip = MARKET_ANCHOR_ZIP[c];
       const z = anchorZip ? zipCentroid(anchorZip) : undefined;
       if (z) coords.push({ lat: z.lat, lon: z.lon });
@@ -331,6 +351,8 @@ export class SpatialIndex {
   private readonly lshProfile: LshIndex;
   private readonly lshCap: LshIndex;
   private readonly lshDesire: LshIndex;
+  private readonly pendingVectors: (SpatialMemberInput | undefined)[];
+  private vectorsLoaded = false;
 
   constructor(members: readonly SpatialMemberInput[], opts: SpatialBuildOptions) {
     this.dim = opts.dim;
@@ -357,6 +379,7 @@ export class SpatialIndex {
     this.profileVecs = new Float32Array(M * this.dim);
     this.capVecs = new Float32Array(M * this.dim);
     this.desireVecs = new Float32Array(M * this.dim);
+    this.pendingVectors = new Array<SpatialMemberInput | undefined>(M);
 
     const rng = new EngineRng((opts.seed ^ 0x51a71a1) >>> 0);
     const totalPlanes = LSH_TABLES * LSH_BITS;
@@ -380,6 +403,7 @@ export class SpatialIndex {
     this.lshCap = makeEmptyLsh();
     this.lshDesire = makeEmptyLsh();
 
+    let anyDeferred = false;
     for (let slot = 0; slot < M; slot++) {
       const item = eligible[slot]!;
       const m = item.m;
@@ -430,22 +454,19 @@ export class SpatialIndex {
       }
       buildWeeklyAvailabilityMask(m.prefs.quietHours, availTexts, this.availMasks, slot * AVAIL_WORDS);
 
-      const base = slot * this.dim;
-      let pNorm = 0, cNorm = 0, dNorm = 0;
-      for (let d = 0; d < this.dim; d++) {
-        const pv = item.profileEmb[d] ?? 0;
-        const cv = item.capEmb[d] ?? 0;
-        const dv = item.desireEmb[d] ?? 0;
-        this.profileVecs[base + d] = pv;
-        this.capVecs[base + d] = cv;
-        this.desireVecs[base + d] = dv;
-        pNorm += pv * pv;
-        cNorm += cv * cv;
-        dNorm += dv * dv;
+      if (item.resolveVectors) {
+        this.pendingVectors[slot] = item;
+        anyDeferred = true;
+      } else {
+        this.loadSlotVectors(slot, {
+          profileEmb: item.profileEmb ?? [],
+          capEmb: item.capEmb ?? [],
+          desireEmb: item.desireEmb ?? [],
+          capFacetEmbs: item.capFacetEmbs,
+          desireFacetEmbs: item.desireFacetEmbs,
+          matchFacetEmbs: item.matchFacetEmbs,
+        });
       }
-      this.insertMemberLsh(this.lshProfile, pNorm > 0 ? this.profileVecs : undefined, base, item.matchFacetEmbs, slot);
-      this.insertMemberLsh(this.lshCap, cNorm > 0 ? this.capVecs : undefined, base, item.capFacetEmbs, slot);
-      this.insertMemberLsh(this.lshDesire, dNorm > 0 ? this.desireVecs : undefined, base, item.desireFacetEmbs, slot);
 
       const { cities, coords } = resolveMemberCoords(m, item.presence, item.allFacets, opts.now, windowEnd);
       for (const c of cities) {
@@ -493,6 +514,41 @@ export class SpatialIndex {
         pushMap(this.tagPostings, term, slot);
       }
     }
+    this.vectorsLoaded = !anyDeferred;
+  }
+
+  private loadSlotVectors(slot: number, v: SpatialMemberVectors): void {
+    const base = slot * this.dim;
+    let pNorm = 0, cNorm = 0, dNorm = 0;
+    for (let d = 0; d < this.dim; d++) {
+      const pv = v.profileEmb[d] ?? 0;
+      const cv = v.capEmb[d] ?? 0;
+      const dv = v.desireEmb[d] ?? 0;
+      this.profileVecs[base + d] = pv;
+      this.capVecs[base + d] = cv;
+      this.desireVecs[base + d] = dv;
+      pNorm += pv * pv;
+      cNorm += cv * cv;
+      dNorm += dv * dv;
+    }
+    this.insertMemberLsh(this.lshProfile, pNorm > 0 ? this.profileVecs : undefined, base, v.matchFacetEmbs, slot);
+    this.insertMemberLsh(this.lshCap, cNorm > 0 ? this.capVecs : undefined, base, v.capFacetEmbs, slot);
+    this.insertMemberLsh(this.lshDesire, dNorm > 0 ? this.desireVecs : undefined, base, v.desireFacetEmbs, slot);
+  }
+
+  private ensureSlotVectors(slot: number): void {
+    const item = this.pendingVectors[slot];
+    if (!item || !item.resolveVectors) return;
+    this.pendingVectors[slot] = undefined;
+    this.loadSlotVectors(slot, item.resolveVectors());
+  }
+
+  private ensureAllVectorsLoaded(): void {
+    if (this.vectorsLoaded) return;
+    for (let slot = 0; slot < this.pendingVectors.length; slot++) {
+      this.ensureSlotVectors(slot);
+    }
+    this.vectorsLoaded = true;
   }
 
   get indexedCount(): number {
@@ -513,6 +569,7 @@ export class SpatialIndex {
   fastDot(id: MemberId, q: readonly number[], channel: VectorChannel): number {
     const slot = this.idToSlot.get(id);
     if (slot === undefined) return 0;
+    this.ensureSlotVectors(slot);
     const buf = channel === "caps" ? this.capVecs : channel === "desires" ? this.desireVecs : this.profileVecs;
     const base = slot * this.dim;
     let dot = 0;
@@ -687,6 +744,7 @@ export class SpatialIndex {
       }
     }
 
+    this.ensureAllVectorsLoaded();
     const lsh = opts.channel === "caps" ? this.lshCap : opts.channel === "desires" ? this.lshDesire : this.lshProfile;
     const votes = new Uint8Array(M);
     const touched: number[] = [];

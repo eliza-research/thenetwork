@@ -3,7 +3,7 @@ import type { EngineRng as Rng, MemberId } from "@thenetwork/core";
 import { countPublishedQuestions, initial as initialAskRun, questionSubjectAllowed, step as stepAskRun } from "../../core/src/generated/engineAsks.ts";
 import {
   initial, selectionMemberFullAt, step,
-  type Event as SelectionEvent, type SelectionChoice, type SelectionMember, type SelectionRun,
+  type Event as SelectionEvent, type SelectionChoice, type SelectionMember, type SelectionPhase, type SelectionRefusal, type SelectionRun,
 } from "../../core/src/generated/selectionRun.ts";
 export { gini };
 import { isMinor } from "./filters.ts";
@@ -22,18 +22,154 @@ export interface SelectionResult { selected: Selected[]; budgetSkips: number }
 export interface SelectOptions {
   exclude?: ReadonlySet<MemberId>;
   extraProactive?: ReadonlyMap<MemberId, number>;
+  reuseEquilibrium?: boolean;
 }
 
 export const ASK_QUESTIONS: Record<AskReason, string> = NETWORK_ASK_QUESTIONS;
 
 export interface AskPlan { asks: EngineAsk[]; exclude: Set<MemberId>; extraProactive: Map<MemberId, number> }
 
+export class ProjectedAskRun {
+  private phase: "AwaitingOptions" | "PlanningQuestions" | "QuestionsPublished";
+  private readonly counts = new Map<string, number>();
+
+  constructor() {
+    this.phase = initialAskRun.phase;
+  }
+
+  get currentPhase() {
+    return this.phase;
+  }
+
+  apply(event: { type: "setAvailability"; configured: boolean } | { type: "reserveQuestion"; memberId: string; adult: boolean; supportedMarket: boolean } | { type: "publishQuestions" }): boolean {
+    if (event.type === "setAvailability" || event.type === "publishQuestions") {
+      const local = { phase: this.phase, counts: {} as Record<string, number> };
+      const next = stepAskRun(local, event);
+      if (next === local) return false;
+      this.phase = next.phase;
+      return true;
+    }
+    const prev = this.counts.get(event.memberId) ?? 0;
+    const localCounts: Record<string, number> = prev > 0 ? { ["$" + event.memberId]: prev } : {};
+    const local = { phase: this.phase, counts: localCounts };
+    const next = stepAskRun(local, event);
+    if (next === local) return false;
+    this.phase = next.phase;
+    this.counts.set(event.memberId, next.counts["$" + event.memberId] ?? prev + 1);
+    return true;
+  }
+
+  allowed(adult: boolean, supportedMarket: boolean): boolean {
+    return questionSubjectAllowed({ phase: this.phase, counts: {} }, adult, supportedMarket);
+  }
+
+  publishedCount(memberId: string): number {
+    const prev = this.counts.get(memberId) ?? 0;
+    const localCounts: Record<string, number> = prev > 0 ? { ["$" + memberId]: prev } : {};
+    return countPublishedQuestions({ phase: this.phase, counts: localCounts }, memberId);
+  }
+}
+
+export class ProjectedSelectionRun {
+  private phase: SelectionPhase = initial.phase;
+  private selectedCount = initial.selectedCount;
+  private greedyBound = initial.greedyBound;
+  private readonly selectedKeys = new Set<string>();
+  private readonly usedPairs = new Set<string>();
+  private readonly byCity = new Map<string, number>();
+  private readonly proactive = new Map<string, number>();
+  private readonly contribution = new Map<string, number>();
+  private readonly refusalsByMember = new Map<string, SelectionRefusal[]>();
+
+  get currentPhase(): SelectionPhase { return this.phase; }
+  get count(): number { return this.selectedCount; }
+  get bound(): number { return this.greedyBound; }
+
+  private projectFor(choice?: SelectionChoice, extraMember?: SelectionMember): SelectionRun {
+    const selectedKeys: Record<string, boolean> = {};
+    const usedPairs: Record<string, boolean> = {};
+    const byCity: Record<string, number> = {};
+    const proactive: Record<string, number> = {};
+    const contribution: Record<string, number> = {};
+    const refusals: SelectionRefusal[] = [];
+    if (choice) {
+      if (this.selectedKeys.has(choice.candidateKey)) selectedKeys["$" + choice.candidateKey] = true;
+      const cityUsed = this.byCity.get(choice.city);
+      if (cityUsed !== undefined) byCity["$" + choice.city] = cityUsed;
+      for (const p of choice.pairKeys) {
+        if (this.usedPairs.has(p)) usedPairs["$" + p] = true;
+      }
+      const seenMembers = new Set<string>();
+      for (const m of choice.members) {
+        if (seenMembers.has(m.id)) continue;
+        seenMembers.add(m.id);
+        const pUsed = this.proactive.get(m.id);
+        if (pUsed !== undefined) proactive["$" + m.id] = pUsed;
+        const cUsed = this.contribution.get(m.id);
+        if (cUsed !== undefined) contribution["$" + m.id] = cUsed;
+        const refs = this.refusalsByMember.get(m.id);
+        if (refs) for (const r of refs) refusals.push(r);
+      }
+      if (extraMember && !seenMembers.has(extraMember.id)) {
+        const pUsed = this.proactive.get(extraMember.id);
+        if (pUsed !== undefined) proactive["$" + extraMember.id] = pUsed;
+        const cUsed = this.contribution.get(extraMember.id);
+        if (cUsed !== undefined) contribution["$" + extraMember.id] = cUsed;
+        const refs = this.refusalsByMember.get(extraMember.id);
+        if (refs) for (const r of refs) refusals.push(r);
+      }
+    }
+    return {
+      phase: this.phase,
+      selectedCount: this.selectedCount,
+      selectedKeys,
+      usedPairs,
+      byCity,
+      proactive,
+      contribution,
+      greedyBound: this.greedyBound,
+      refusals,
+    };
+  }
+
+  apply(event: SelectionEvent): boolean {
+    const local = event.type === "reserveSelection"
+      ? this.projectFor(event.choice)
+      : event.type === "refuseSelection"
+        ? this.projectFor(event.choice, event.blockedMember)
+        : this.projectFor();
+    const next = step(local, event);
+    if (next === local) return false;
+    this.phase = next.phase;
+    this.selectedCount = next.selectedCount;
+    this.greedyBound = next.greedyBound;
+    if (event.type === "reserveSelection") {
+      this.selectedKeys.add(event.choice.candidateKey);
+      for (const p of event.choice.pairKeys) this.usedPairs.add(p);
+      this.byCity.set(event.choice.city, (this.byCity.get(event.choice.city) ?? 0) + 1);
+      for (const m of event.choice.members) {
+        this.proactive.set(m.id, (this.proactive.get(m.id) ?? 0) + 1);
+        if (m.contributor) this.contribution.set(m.id, (this.contribution.get(m.id) ?? 0) + 1);
+      }
+    } else if (event.type === "refuseSelection") {
+      const added = next.refusals[next.refusals.length - 1];
+      if (added) {
+        let list = this.refusalsByMember.get(added.member.id);
+        if (!list) { list = []; this.refusalsByMember.set(added.member.id, list); }
+        list.push(added);
+      }
+    }
+    return true;
+  }
+}
+
 export function planAsks(w: World, input: EngineInput): AskPlan {
   const cfg = w.cfg;
   const plan: AskPlan = { asks: [], exclude: new Set(), extraProactive: new Map() };
   const S = w.pack.selection;
-  let askRun = stepAskRun(initialAskRun, { type: "setAvailability", configured: !!S.extraAsksEnabled?.(cfg) });
-  if (askRun.phase !== "PlanningQuestions") return plan;
+  const askRun = new ProjectedAskRun();
+  askRun.apply({ type: "setAvailability", configured: !!S.extraAsksEnabled?.(cfg) });
+  if (askRun.currentPhase !== "PlanningQuestions") return plan;
   const lastAsk = new Map<string, number>();
   for (const a of input.recentAsks ?? []) {
     const k = `${w.canonical(a.memberId)}|${a.reason}`;
@@ -41,20 +177,18 @@ export function planAsks(w: World, input: EngineInput): AskPlan {
   }
   const anyAsk = (id: MemberId, reasons: AskReason[]) => Math.max(-Infinity, ...reasons.map(r => lastAsk.get(`${id}|${r}`) ?? -Infinity));
   const add = (id: MemberId, reason: AskReason, intentId: string | undefined, adult: boolean, supportedMarket: boolean) => {
-    const reserved = stepAskRun(askRun, { type: "reserveQuestion", memberId: id, adult, supportedMarket });
-    if (reserved === askRun) return;
-    askRun = reserved;
+    if (!askRun.apply({ type: "reserveQuestion", memberId: id, adult, supportedMarket })) return;
     plan.asks.push({ kind: "ask", id: `a_${sha256(`${id}|${reason}|${w.now}`).slice(0, 16)}`, memberId: id, reason, question: S.askQuestions[reason]!, createdAt: w.now, ...(intentId ? { intentId } : {}) });
   };
   for (const id of w.ids) {
     const mi = w.get(id)!;
     const adult = !isMinor(w, id);
     const supportedMarket = adult && w.pack.geo.markets(cfg).includes(mi.m.homeCity);
-    if (!questionSubjectAllowed(askRun, adult, supportedMarket)) continue;
+    if (!askRun.allowed(adult, supportedMarket)) continue;
     S.extraAsks?.(w, id, mi, reasons => anyAsk(id, reasons as AskReason[]), (reason, intentId) => add(id, reason as AskReason, intentId, adult, supportedMarket));
   }
-  askRun = stepAskRun(askRun, { type: "publishQuestions" });
-  for (const { memberId } of plan.asks) plan.extraProactive.set(memberId, countPublishedQuestions(askRun, memberId));
+  askRun.apply({ type: "publishQuestions" });
+  for (const { memberId } of plan.asks) plan.extraProactive.set(memberId, askRun.publishedCount(memberId));
   return plan;
 }
 
@@ -68,10 +202,12 @@ interface MarketContext {
   readonly world: World;
   readonly optsKey: string;
   readonly eq?: MarketEquilibrium;
+  readonly eqByCity: ReadonlyMap<string, MarketEquilibrium>;
   readonly values: Map<Scored, number>;
 }
 
 const marketCache = new WeakMap<readonly Scored[], MarketContext>();
+const worldEqCache = new WeakMap<World, { optsKey: string; eq?: MarketEquilibrium; eqByCity: ReadonlyMap<string, MarketEquilibrium> }>();
 
 function optionsFingerprint(opts: SelectOptions): string {
   const ex = opts.exclude && opts.exclude.size > 0 ? [...opts.exclude].sort().join(",") : "";
@@ -87,44 +223,103 @@ function marketContextFor(w: World, scored: readonly Scored[], opts: SelectOptio
   if (cached && cached.world === w && cached.optsKey === optsKey) return cached;
 
   const values = new Map<Scored, number>();
+  let eqByCity = new Map<string, MarketEquilibrium>();
   const adultCount = w.ids.length - w.minors.size;
   let eq: MarketEquilibrium | undefined;
 
-  if (adultCount >= 20) {
-    const budget = new Map<MemberId, number>();
+  const priorWorldEq = opts.reuseEquilibrium ? worldEqCache.get(w) : undefined;
+  if (priorWorldEq && priorWorldEq.optsKey === optsKey) {
+    eq = priorWorldEq.eq;
+    eqByCity = new Map(priorWorldEq.eqByCity);
+  } else if (adultCount >= 20) {
+    const budgetByCity = new Map<string, Map<MemberId, number>>();
     for (const id of w.ids) {
       if (w.minors.has(id)) continue;
       const mi = w.get(id)!;
       const rem = mi.inOpenOpportunity || opts.exclude?.has(id)
         ? 0
         : Math.max(0, w.cfg.budgets[mi.m.state].limit - mi.recentProactive - (opts.extraProactive?.get(id) ?? 0));
-      if (rem > 0) budget.set(id, rem);
+      if (rem > 0) {
+        const city = mi.m.homeCity;
+        let bMap = budgetByCity.get(city);
+        if (!bMap) { bMap = new Map(); budgetByCity.set(city, bMap); }
+        bMap.set(id, rem);
+      }
     }
 
-    const edges: SparsePairEdge[] = [];
+    const edgesByCity = new Map<string, SparsePairEdge[]>();
     for (const x of scored) {
       if (!x.eligible || x.c.exploration || !Number.isFinite(x.score) || x.c.participants.length !== 2) continue;
       const [a, b] = x.c.participants as [MemberId, MemberId];
       if (w.minors.has(a) || w.minors.has(b)) continue;
-      if (!(budget.get(a) ?? 0) || !(budget.get(b) ?? 0)) continue;
-      edges.push({ a, b, surplus: x.score, uA: x.c.benefit[a] ?? x.score, uB: x.c.benefit[b] ?? x.score });
+      const city = x.c.city ?? w.get(a)!.m.homeCity;
+      const bMap = budgetByCity.get(city);
+      if (!bMap) continue;
+      if (!(bMap.get(a) ?? 0) || !(bMap.get(b) ?? 0)) continue;
+      let list = edgesByCity.get(city);
+      if (!list) { list = []; edgesByCity.set(city, list); }
+      list.push({ a, b, surplus: x.score, uA: x.c.benefit[a] ?? x.score, uB: x.c.benefit[b] ?? x.score });
     }
-    if (edges.length > 0) eq = solveChooSiowIPFP(edges, budget, 0.25, 25, 0.5);
+
+    const mergedMu = new Map<string, number>();
+    const mergedUnmatched = new Map<MemberId, number>();
+    const mergedShadow = new Map<MemberId, number>();
+    const mergedPotential = new Map<MemberId, number>();
+    let maxIters = 0;
+    let maxDiff = 0;
+    const allLambdas: number[] = [];
+
+    for (const city of [...edgesByCity.keys()].sort()) {
+      const cityEdges = edgesByCity.get(city)!;
+      const cityBudget = budgetByCity.get(city)!;
+      if (cityEdges.length === 0) continue;
+      const cityEq = solveChooSiowIPFP(cityEdges, cityBudget, 0.25, 25, 0.5);
+      eqByCity.set(city, cityEq);
+      if (cityEq.iterations > maxIters) maxIters = cityEq.iterations;
+      if (cityEq.maxRelDiff > maxDiff) maxDiff = cityEq.maxRelDiff;
+      for (const [k, v] of cityEq.mu) mergedMu.set(k, v);
+      for (const [k, v] of cityEq.unmatchedMass) mergedUnmatched.set(k, v);
+      for (const [k, v] of cityEq.shadowPrice) {
+        mergedShadow.set(k, v);
+        allLambdas.push(v);
+      }
+      for (const [k, v] of cityEq.potentialA) mergedPotential.set(k, v);
+    }
+
+    if (eqByCity.size === 1) {
+      eq = eqByCity.values().next().value;
+    } else if (eqByCity.size > 1) {
+      allLambdas.sort((a, b) => a - b);
+      const nLam = allLambdas.length;
+      eq = {
+        mu: mergedMu,
+        unmatchedMass: mergedUnmatched,
+        shadowPrice: mergedShadow,
+        potentialA: mergedPotential,
+        p80ShadowPrice: allLambdas[Math.min(nLam - 1, Math.floor(0.8 * nLam))] ?? 0,
+        medianShadowPrice: allLambdas[Math.min(nLam - 1, Math.floor(0.5 * nLam))] ?? 0,
+        iterations: maxIters,
+        maxRelDiff: maxDiff,
+      };
+    }
+    worldEqCache.set(w, { optsKey, eq, eqByCity });
   }
 
   for (const x of scored) {
     if (!x.eligible || x.c.exploration || !Number.isFinite(x.score)) continue;
     let v = valueOf(x);
-    if (eq && x.c.participants.length >= 2 && x.c.participants.every(id => !w.minors.has(id))) {
+    const city = x.c.city ?? (x.c.participants[0] ? w.get(x.c.participants[0]!)?.m.homeCity : undefined);
+    const cityEq = (city ? eqByCity.get(city) : undefined) ?? eq;
+    if (cityEq && x.c.participants.length >= 2 && x.c.participants.every(id => !w.minors.has(id))) {
       let excess = 0;
-      for (const id of x.c.participants) excess += (eq.shadowPrice.get(id) ?? eq.medianShadowPrice) - eq.medianShadowPrice;
+      for (const id of x.c.participants) excess += (cityEq.shadowPrice.get(id) ?? cityEq.medianShadowPrice) - cityEq.medianShadowPrice;
       excess /= x.c.participants.length;
       v += Math.max(-50, Math.min(50, Math.round(-35 * excess)));
     }
     values.set(x, v);
   }
 
-  const ctx: MarketContext = { world: w, optsKey, eq, values };
+  const ctx: MarketContext = { world: w, optsKey, eq, eqByCity, values };
   marketCache.set(scored, ctx);
   return ctx;
 }
@@ -224,25 +419,21 @@ export function selectProposals(w: World, scored: Scored[], rng: Rng, debt: Reco
   const mkt = marketContextFor(w, scored, opts);
   const greedyVal = (x: Scored) => mkt.values.get(x) ?? valueOf(x);
   const shell = selectionShell(w, opts);
-  let run: SelectionRun = initial;
+  const run = new ProjectedSelectionRun();
   const use = emptyUse();
   const selected: Selected[] = [];
   const advance = (event: SelectionEvent) => {
-    const next = step(run, event);
-    if (next === run) throw new Error(`selectionRun refused ${event.type} that the shell allowed`);
-    run = next;
+    if (!run.apply(event)) throw new Error(`selectionRun refused ${event.type} that the shell allowed`);
   };
   const reservation = (x: Scored, exploring: boolean, value: number): ReserveEvent => ({
     type: "reserveSelection", choice: shell.choiceFor(x), timeFree: shell.timeFree(use, x), exploring, packAllows: shell.packAllows(use, x), value,
   });
   const tryReserve = (x: Scored, exploring: boolean, probability: number, value?: number): boolean => {
     const event = reservation(x, exploring, value ?? greedyVal(x));
-    const next = step(run, event);
-    if (next === run) {
+    if (!run.apply(event)) {
       if (event.timeFree && event.packAllows) throw new Error("selectionRun refused reserveSelection that the shell allowed");
       return false;
     }
-    run = next;
     shell.record(use, x);
     selected.push({ s: x, exploration: exploring, rank: selected.length, probability, ...(value === undefined ? {} : { value }) });
     return true;
@@ -275,23 +466,39 @@ export function selectProposals(w: World, scored: Scored[], rng: Rng, debt: Reco
   if (slots > 0) {
     const explore = rng.fork("explore");
     const beliefs = worldStatusBeliefs(w);
+    const eligibleExplore = scored.filter(x => Number.isFinite(x.score) && !use.keys.has(x.c.key) && (!x.reason || x.reason === "below_threshold")
+      && x.verdict?.verdict !== "no" && x.score >= explorationBar(w, x.c, x.threshold))
+      .sort(byKey);
     const tsSamples = new Map<MemberId, number[]>();
-    if (beliefs.size >= 20 && mkt.eq) {
-      const tsRng = explore.fork("ts");
-      const nextNormal = () => {
-        const u1 = Math.max(1e-12, tsRng.next());
-        const u2 = tsRng.next();
-        return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-      };
-      for (const id of [...beliefs.keys()].sort()) {
-        const b = beliefs.get(id)!;
-        tsSamples.set(id, b.mu.map((m, d) => Math.max(-3, Math.min(3, m + b.sigma[d]! * nextNormal()))));
+    if (beliefs.size >= 20 && mkt.eq && eligibleExplore.length > 0) {
+      const exploreMembers = new Set<MemberId>();
+      for (const x of eligibleExplore) {
+        if (x.c.participants.length !== 2) continue;
+        const [a, b] = x.c.participants as [MemberId, MemberId];
+        if (!w.minors.has(a) && !w.minors.has(b)) {
+          if (beliefs.has(a)) exploreMembers.add(a);
+          if (beliefs.has(b)) exploreMembers.add(b);
+        }
+      }
+      if (exploreMembers.size > 0) {
+        const tsRng = explore.fork("ts");
+        const nextNormal = () => {
+          const u1 = Math.max(1e-12, tsRng.next());
+          const u2 = tsRng.next();
+          return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+        };
+        for (const id of [...exploreMembers].sort()) {
+          const b = beliefs.get(id)!;
+          tsSamples.set(id, b.mu.map((m, d) => Math.max(-3, Math.min(3, m + b.sigma[d]! * nextNormal()))));
+        }
       }
     }
+    const p80ForMember = (id: MemberId): number => {
+      const city = w.get(id)?.m.homeCity;
+      return (city ? mkt.eqByCity.get(city)?.p80ShadowPrice : undefined) ?? mkt.eq?.p80ShadowPrice ?? 0;
+    };
     const K = VERTICAL_KERNELS[w.pack.id] ?? VERTICAL_KERNELS.ntwrk;
-    const all = scored.filter(x => Number.isFinite(x.score) && !use.keys.has(x.c.key) && (!x.reason || x.reason === "below_threshold")
-      && x.verdict?.verdict !== "no" && x.score >= explorationBar(w, x.c, x.threshold))
-      .sort(byKey)
+    const all = eligibleExplore
       .map(x => {
         const u = explore.next();
         let allowed = true;
@@ -303,7 +510,7 @@ export function selectProposals(w: World, scored: Scored[], rng: Rng, debt: Reco
               (x.c.roles[a] && w.pack.ontology.contributorRoles.has(x.c.roles[a]!))
               || (x.c.roles[b] && w.pack.ontology.contributorRoles.has(x.c.roles[b]!)),
             );
-            if (!contribPair && !explorationPairAllowed(w, a, b, mkt.eq.shadowPrice, mkt.eq.p80ShadowPrice)) allowed = false;
+            if (!contribPair && !explorationPairAllowed(w, a, b, mkt.eq.shadowPrice, p80ForMember)) allowed = false;
             if (allowed && tsSamples.size > 0) {
               const bA = beliefs.get(a), bB = beliefs.get(b);
               const sA = tsSamples.get(a), sB = tsSamples.get(b);

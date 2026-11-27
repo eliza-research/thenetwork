@@ -139,10 +139,13 @@ async function runJudgmentPasses(
 
   let nextScored = scored;
   const byScore = (xs: Scored[]) => [...xs].sort((a, b) => (b.score - a.score) || (a.c.key < b.c.key ? -1 : 1));
-  const pickTop = (xs: Scored[], k: number, gk: number) =>
-    targetKeys !== null
-      ? xs.filter(s => targetKeys.has(s.c.key))
-      : [...xs.filter(s => s.c.participants.length <= 2).slice(0, k), ...xs.filter(s => s.c.participants.length > 2).slice(0, gk)];
+  const pickTop = (xs: Scored[], k: number, gk: number) => {
+    const filtered = targetKeys !== null ? xs.filter(s => targetKeys.has(s.c.key)) : xs;
+    return [
+      ...filtered.filter(s => s.c.participants.length <= 2).slice(0, k),
+      ...filtered.filter(s => s.c.participants.length > 2).slice(0, gk),
+    ];
+  };
 
   let pool = byScore(nextScored.filter(s => (!s.reason || s.reason === "below_threshold") && (J.reviewCandidate?.(s.c) ?? true)));
   if (judgment.phase === "Screening" && screen) {
@@ -179,7 +182,7 @@ async function runJudgmentPasses(
   if (judgment.phase === "DeepReview" && J.deep) {
     const dc = cfg.judge.deep;
     const deepPool = byScore(nextScored.filter(s => s.eligible && s.verdict && s.verdict.verdict !== "no"));
-    const survivors = targetKeys !== null ? deepPool.filter(s => targetKeys.has(s.c.key)) : deepPool.slice(0, dc.topK);
+    const survivors = (targetKeys !== null ? deepPool.filter(s => targetKeys.has(s.c.key)) : deepPool).slice(0, dc.topK);
     const deepLog: { key: string; cacheKey: string; verdict: { verdict: DeepVerdict; refs: Record<MemberId, string> } | null; cached: boolean }[] = [];
     const stats = { calls: 0, cacheHits: 0, failures: 0 };
     const res = await runCachedPass(w, survivors.map(s => s.c), llm, deps.deepCache ?? new JudgeCache<{ verdict: DeepVerdict; refs: Record<MemberId, string> }>(cfg.judge.ttlMs),
@@ -356,26 +359,29 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
         return conf >= postSel.minConfidence && conf <= postSel.maxConfidence;
       };
       const backupsByMember = new Map<MemberId, Scored[]>();
+      const maxPerMemberBackups = Math.max(1, postSel.backups * 2);
       for (const s of [...scored].sort((a, b) => (b.score - a.score) || (a.c.key < b.c.key ? -1 : 1))) {
         if (!s.eligible || selectedKeys.has(s.c.key)) continue;
-        const p0 = s.c.participants[0];
-        if (!p0) continue;
-        let list = backupsByMember.get(p0);
-        if (!list) { list = []; backupsByMember.set(p0, list); }
-        if (list.length < Math.max(1, postSel.backups * 2)) list.push(s);
+        for (const p of s.c.participants) {
+          let list = backupsByMember.get(p);
+          if (!list) { list = []; backupsByMember.set(p, list); }
+          if (list.length < maxPerMemberBackups) list.push(s);
+        }
       }
       for (const sel of selected) {
         if (!needsEscalation(sel.s)) continue;
         targetKeys.add(sel.s.c.key);
         if (postSel.backups > 0) {
-          const p0 = sel.s.c.participants[0];
-          const alts = p0 ? backupsByMember.get(p0) ?? [] : [];
           let added = 0;
-          for (const b of alts) {
+          for (const participant of sel.s.c.participants) {
             if (added >= postSel.backups) break;
-            if (!targetKeys.has(b.c.key)) {
-              targetKeys.add(b.c.key);
-              added++;
+            const alts = backupsByMember.get(participant) ?? [];
+            for (const b of alts) {
+              if (added >= postSel.backups) break;
+              if (!targetKeys.has(b.c.key)) {
+                targetKeys.add(b.c.key);
+                added++;
+              }
             }
           }
         }
@@ -385,7 +391,7 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
         const res = await runJudgmentPasses(w, cfg, deps, llm, scored, targetKeys, runLog, lap, t);
         scored = res.scored;
         t = res.t;
-        selection = selectProposals(w, scored, selectRng.fork("pass2"), priorDebt, selectionOptions);
+        selection = selectProposals(w, scored, selectRng.fork("pass2"), priorDebt, { ...selectionOptions, reuseEquilibrium: true });
         selected = selection.selected.filter(x => candidateAgeReason(w, x.s.c) === null);
         afterSelRejected = selection.selected.length - selected.length;
       }
@@ -470,7 +476,81 @@ function roundAll<T extends object>(o: T): T {
   return Object.fromEntries(Object.entries(o).map(([k, v]) => [k, round(v as number)])) as T;
 }
 
-/** A pass-3 clarifying question is only logged if it passes the same leak gate as member-facing text. */
+export interface CitySupplyDemandSignal {
+  readonly city: string;
+  readonly activeAdults: number;
+  readonly openIntents: number;
+  readonly eligibleCandidates: number;
+  readonly selectedProposals: number;
+  readonly unmatchedIntents: number;
+  readonly fillRate: number;
+  readonly densityTier: "sparse" | "growing" | "dense";
+}
+
+export function computeCitySupplyDemand(
+  w: World,
+  scored: readonly Scored[],
+  selected: readonly { s: Scored }[],
+  unmatchedIntents: ReadonlySet<string> = new Set(),
+): CitySupplyDemandSignal[] {
+  const activeAdults = new Map<string, number>();
+  const openIntents = new Map<string, number>();
+  const unmatchedByCity = new Map<string, number>();
+  const eligibleByCity = new Map<string, number>();
+  const selectedByCity = new Map<string, number>();
+  const cities = new Set<string>(w.pack.geo.markets(w.cfg));
+
+  for (const id of w.ids) {
+    if (w.minors.has(id) || w.holds.has(id)) continue;
+    const mi = w.get(id);
+    if (!mi || mi.m.state === "paused") continue;
+    const city = mi.m.homeCity;
+    cities.add(city);
+    activeAdults.set(city, (activeAdults.get(city) ?? 0) + 1);
+    for (const it of mi.intents) {
+      openIntents.set(city, (openIntents.get(city) ?? 0) + 1);
+      if (unmatchedIntents.has(it.id)) {
+        unmatchedByCity.set(city, (unmatchedByCity.get(city) ?? 0) + 1);
+      }
+    }
+  }
+  for (const s of scored) {
+    if (!s.eligible) continue;
+    const city = s.c.city ?? (s.c.participants[0] ? w.get(s.c.participants[0]!)?.m.homeCity : undefined);
+    if (!city) continue;
+    cities.add(city);
+    eligibleByCity.set(city, (eligibleByCity.get(city) ?? 0) + 1);
+  }
+  for (const sel of selected) {
+    const city = sel.s.c.city ?? (sel.s.c.participants[0] ? w.get(sel.s.c.participants[0]!)?.m.homeCity : undefined);
+    if (!city) continue;
+    cities.add(city);
+    selectedByCity.set(city, (selectedByCity.get(city) ?? 0) + 1);
+  }
+
+  return [...cities].sort().map(city => {
+    const adults = activeAdults.get(city) ?? 0;
+    const intents = openIntents.get(city) ?? 0;
+    const eligible = eligibleByCity.get(city) ?? 0;
+    const picked = selectedByCity.get(city) ?? 0;
+    const unmatched = unmatchedByCity.get(city) ?? 0;
+    const denom = intents > 0 ? intents : Math.max(1, adults);
+    const fillRate = round(Math.min(1, picked / denom));
+    const densityTier: CitySupplyDemandSignal["densityTier"] =
+      adults < 80 ? "sparse" : adults < 400 ? "growing" : "dense";
+    return {
+      city,
+      activeAdults: adults,
+      openIntents: intents,
+      eligibleCandidates: eligible,
+      selectedProposals: picked,
+      unmatchedIntents: unmatched,
+      fillRate,
+      densityTier,
+    };
+  });
+}
+
 function gateQuestion(w: World, c: Candidate, q: string): boolean {
   return checkMemberFacing(q, privateVocabulary(w, [...c.participants, ...(c.via ? [c.via] : [])])).ok;
 }

@@ -1,17 +1,19 @@
-import { evaluateDateActivityAllowed } from "@thenetwork/core";
+import {
+  DAYTIME_ONLY_TOKENS,
+  DRINKING_VALUE_NON_DRINKER_TOKENS,
+  evaluateDateActivityAllowed,
+  LOW_WALKING_TOKENS,
+  STRICT_SOBER_TOKENS,
+  type MemberId,
+} from "@thenetwork/core";
 import {
   type DateGoal, type DateHabit, type DateKids, type DatePackAnswers, type DatePackCheap, type DatePackSeeker, type DatePolitics,
   datePackScale, datePackValue as datePackValueOf,
 } from "../../../../core/src/generated/datePackValue.ts";
+import { humanVectorOf, spendTierCompatible, spendTierRank } from "../../humanVector.ts";
+import type { World } from "../../world.ts";
 import type { SlopPackOptions } from "./options.ts";
-import type { SlopProfile } from "./profile.ts";
-
-const SOBER_TOKENS = new Set(["sober", "strict_sober", "recovery", "no_alcohol", "alcohol_free", "alcohol_boundary"]);
-const NON_DRINKER_TOKENS = new Set([
-  "never", "none", "non_drinker", "nondrinker", "sober", "strict_sober", "no_alcohol", "alcohol_free", "alcohol_boundary", "heavy_drinker",
-]);
-const LOW_WALKING_TOKENS = new Set(["low_walking", "wheelchair", "mobility", "no_hiking"]);
-const DAYTIME_ONLY_TOKENS = new Set(["daytime_only", "daytime", "no_after_dark"]);
+import type { SlopProfile, SlopProfileRedLines } from "./profile.ts";
 
 export interface DateActivityRedLines {
   anyStrictSober: boolean;
@@ -21,22 +23,30 @@ export interface DateActivityRedLines {
   isAfterDark: boolean;
 }
 
+function profileRedLinesOf(p: SlopProfile): SlopProfileRedLines {
+  if (p.redLines) return p.redLines;
+  const drink = p.values.drinking?.trim().toLowerCase() ?? "";
+  let strictSober = STRICT_SOBER_TOKENS.has(drink);
+  let nonDrinker = strictSober || DRINKING_VALUE_NON_DRINKER_TOKENS.has(drink);
+  let lowWalking = false;
+  let daytimeOnly = false;
+  for (let i = 0; i < p.dealbreakers.length; i++) {
+    const d = p.dealbreakers[i]!.trim().toLowerCase();
+    if (!strictSober && STRICT_SOBER_TOKENS.has(d)) { strictSober = true; nonDrinker = true; }
+    if (!nonDrinker && (d === "heavy_drinker" || DRINKING_VALUE_NON_DRINKER_TOKENS.has(d))) nonDrinker = true;
+    if (!lowWalking && LOW_WALKING_TOKENS.has(d)) lowWalking = true;
+    if (!daytimeOnly && DAYTIME_ONLY_TOKENS.has(d)) daytimeOnly = true;
+  }
+  return { strictSober, nonDrinker, lowWalking, daytimeOnly };
+}
+
 export function slopRedLinesOf(
   a: SlopProfile,
   b: SlopProfile,
   overrides: Partial<DateActivityRedLines> = {}
 ): DateActivityRedLines {
-  const check = (p: SlopProfile) => {
-    const drink = p.values.drinking?.trim().toLowerCase() ?? "";
-    const dbs = p.dealbreakers.map(d => d.trim().toLowerCase());
-    const strictSober = SOBER_TOKENS.has(drink) || dbs.some(d => SOBER_TOKENS.has(d));
-    const nonDrinker = strictSober || NON_DRINKER_TOKENS.has(drink) || dbs.some(d => NON_DRINKER_TOKENS.has(d));
-    const lowWalking = dbs.some(d => LOW_WALKING_TOKENS.has(d));
-    const daytimeOnly = dbs.some(d => DAYTIME_ONLY_TOKENS.has(d));
-    return { strictSober, nonDrinker, lowWalking, daytimeOnly };
-  };
-  const ra = check(a);
-  const rb = check(b);
+  const ra = profileRedLinesOf(a);
+  const rb = profileRedLinesOf(b);
   return {
     anyStrictSober: overrides.anyStrictSober ?? (ra.strictSober || rb.strictSober),
     anyNonDrinker: overrides.anyNonDrinker ?? (ra.nonDrinker || rb.nonDrinker),
@@ -92,8 +102,41 @@ function preferredActivity(current: string | undefined, activity: string): strin
 }
 
 export function isNonDrinkerProfile(p: SlopProfile): boolean {
+  if (p.redLines) return p.redLines.nonDrinker;
   const drink = p.values.drinking?.trim().toLowerCase() ?? "";
-  return drink === "never" || drink === "none" || drink === "sober";
+  return DRINKING_VALUE_NON_DRINKER_TOKENS.has(drink);
+}
+
+export function slopHorizontalCompatibility(w: World, a: MemberId, b: MemberId): number {
+  const va = humanVectorOf(w, a);
+  const vb = humanVectorOf(w, b);
+  if (!va || !vb) return 1;
+  const ea = va.explicitSignals;
+  const eb = vb.explicitSignals;
+  let mult = 1;
+  if (ea.spendTier || eb.spendTier) {
+    const tierA = va.horizontal.lifestyle.spendComfortTier;
+    const tierB = vb.horizontal.lifestyle.spendComfortTier;
+    if (!spendTierCompatible(tierA, tierB, false)) mult *= 0.85;
+    else if (ea.spendTier && eb.spendTier && Math.abs(spendTierRank(tierA) - spendTierRank(tierB)) === 0) mult *= 1.04;
+  }
+  if (ea.lifeStage && eb.lifeStage && va.horizontal.lifeStage === vb.horizontal.lifeStage) mult *= 1.04;
+  if (ea.depth && eb.depth) {
+    const diff = Math.abs(va.horizontal.communication.depthPreference.value - vb.horizontal.communication.depthPreference.value);
+    mult *= 0.96 + 0.08 * (1 - diff);
+  }
+  if (ea.humor && eb.humor && va.horizontal.communication.humorRegister.some(h => vb.horizontal.communication.humorRegister.includes(h))) {
+    mult *= 1.04;
+  }
+  if (ea.reliabilityPenalty || eb.reliabilityPenalty) {
+    const minShow = Math.min(va.behavioral.showUpRate, vb.behavioral.showUpRate);
+    if (minShow < 0.75) mult *= Math.max(0.75, 1 - 0.5 * (0.75 - minShow));
+  }
+  if (ea.hypeOrExtraction || eb.hypeOrExtraction) {
+    const maxExt = Math.max(va.behavioral.extractionRiskScore, vb.behavioral.extractionRiskScore);
+    if (maxExt > 0.3) mult *= Math.max(0.7, 1 - 0.6 * (maxExt - 0.3));
+  }
+  return Math.max(0.65, Math.min(1.15, mult));
 }
 
 export function dateActivity(a: SlopProfile, b: SlopProfile, overrides?: boolean | Partial<DateActivityRedLines>): string {

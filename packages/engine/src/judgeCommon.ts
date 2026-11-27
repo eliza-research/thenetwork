@@ -69,11 +69,54 @@ export class JudgeCache<V = JudgeVerdict> {
   clear() { this.entries.clear(); }
 }
 
-/** Prompt text stays out of the cache and run log. Ref and entity bindings stay out of the prompt. */
+const SUBDAY_AGE_KEYS: ReadonlySet<string> = new Set([
+  "from",
+  "from_day",
+  "created_days_ago",
+  "days_ago",
+  "proposed_together_days_ago",
+]);
+
+const SUBDAY_REMAINING_KEYS: ReadonlySet<string> = new Set([
+  "to",
+  "to_day",
+  "expires_in_days",
+]);
+
+function quantizeCacheValue(v: unknown, key?: string): unknown {
+  if (typeof v === "number") {
+    if (key !== undefined) {
+      if (SUBDAY_AGE_KEYS.has(key)) return Math.floor(v);
+      if (SUBDAY_REMAINING_KEYS.has(key)) return Math.ceil(v);
+    }
+    return v;
+  }
+  if (Array.isArray(v)) return v.map(x => quantizeCacheValue(x));
+  if (v && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(o)) out[k] = quantizeCacheValue(o[k], k);
+    return out;
+  }
+  return v;
+}
+
+function normalizeCacheMessages(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map(m => {
+    if (m.role !== "user" || !m.content.startsWith("{")) return m;
+    try {
+      const parsed = JSON.parse(m.content);
+      return { ...m, content: JSON.stringify(quantizeCacheValue(parsed)) };
+    } catch {
+      return m;
+    }
+  });
+}
+
 export function passCacheKey(w: World, c: Candidate, request: JudgeRequest<unknown>, model?: string): string {
   return sha256(stableStringify({
     app: w.pack.id, pack: w.pack.version, model, pass: request.pass, version: request.version,
-    messages: request.messages, settings: request.settings, refs: Object.entries(request.refs),
+    messages: normalizeCacheMessages(request.messages), settings: request.settings, refs: Object.entries(request.refs),
     participants: c.participants, via: c.via, lane: c.lane, entities: c.entities,
     anchor: c.anchor && { type: c.anchor.type, id: c.anchor.id }, cofounderIntents: c.cofounderIntents,
   }));
