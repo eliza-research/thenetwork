@@ -576,9 +576,9 @@ describe("Intent taxonomy and AnalyticsEngine", () => {
     expect(rollupFunnel.steps[4]?.count).toBe(20);
   });
 
-  it("registers migration 0102 cleanly without duplicate or reserved prefixes", () => {
+  it("registers migration 0103 cleanly without duplicate or reserved prefixes", () => {
     const list = migrations();
-    const m = list.find(entry => entry.id === "0102_trajectories_analytics_scale");
+    const m = list.find(entry => entry.id === "0103_trajectories_analytics_scale");
     expect(m).toBeDefined();
   });
 });
