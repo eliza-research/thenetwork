@@ -579,6 +579,45 @@ test("signed solo concierge uses the trip city while the member is away", async 
   }
 }, 60_000);
 
+test("signed solo concierge fallback spot uses the city at the requested start", async () => {
+  await server.stop(true);
+  await service.close();
+  await start(undefined, true);
+  try {
+    const later = "+12125550163", current = "+12125550164";
+    const join = async (phone: string) => {
+      await service.accounts.invite(APPS.friends, phone);
+      const person = (await service.accounts.personFor(phone))!;
+      const joined = await service.accounts.join(APPS.friends, { e164: phone, personId: person.id }, {
+        firstName: "Ari", age: 20, homeCity: "nyc", interests: ["nature"],
+        consent: { sms: true, wording: APPS.friends.consent.text },
+      });
+      if (!joined.ok) throw new Error("Concierge fallback fixture join failed");
+      return joined.membership.memberId;
+    };
+    const laterId = await join(later);
+    const currentId = await join(current);
+    const trip = (member: string, from: string, to: string) => sql`insert into network.presence (app_id, member_id, city, type, from_at, to_at)
+      values ('friends', ${member}, 'sf', 'temporary', ${new Date(from)}, ${new Date(to)})`;
+    await trip(laterId, "2026-10-13T04:00:00Z", "2026-10-16T04:00:00Z");
+    await trip(currentId, "2026-10-09T04:00:00Z", "2026-10-12T04:00:00Z");
+    await sql`delete from network.public_events`;
+    clock.advance(2 * MINUTE);
+    const laterAnswer = await (await post(turn("later-solo-events", later, "Find events", "friends"))).json();
+    expect(laterAnswer).toMatchObject({ outcome: "handled", app: "friends", reason: "solo_events" });
+    expect(laterAnswer.replies[0]).toContain("NYC Parks");
+    expect(laterAnswer.replies[0]).not.toContain("Ferry Building");
+    const currentAnswer = await (await post(turn("current-solo-events", current, "Find events", "friends"))).json();
+    expect(currentAnswer).toMatchObject({ outcome: "handled", app: "friends", reason: "solo_events" });
+    expect(currentAnswer.replies[0]).not.toContain("NYC Parks");
+    expect(currentAnswer.replies[0]).toContain("public spot to drop into");
+  } finally {
+    await server.stop(true);
+    await service.close();
+    await start();
+  }
+}, 60_000);
+
 // spec/contributionHistory.md, "Show verified acts a page at a time"
 test("signed contribution history scopes verified acts to the current adult and app", async () => {
   await server.stop(true);

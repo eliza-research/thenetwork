@@ -122,8 +122,7 @@ export async function soloConciergeReply(tx: SQL, accounts: Pick<Accounts, "acti
   if (picks.length) return { body: picks.join("\n"), publicLinks };
 
   const homeRequested = requestedByCity.get(city)!;
-  const spotCity = trips.find(p => p.window.from <= now && now < p.window.to)?.city
-    ?? trips.find(p => presenceWindowsOverlap(p.window, homeRequested))?.city ?? city;
+  const spotCity = trips.find(p => p.window.from <= homeRequested.from && homeRequested.from < p.window.to)?.city ?? city;
   const requested = requestedByCity.get(spotCity) ?? homeRequested;
   const emptyPrefix = spotCity === "nyc"
     ? "I couldn't find any current NYC Parks listings that fit your request."
