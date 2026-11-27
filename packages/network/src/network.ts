@@ -748,6 +748,13 @@ export function bookedTextDeclines(body: string, ordinaryDecline: boolean): bool
     swapWithdrawal && declinesAttendanceAlongsideSwap(body), bookedReplyKeepsMeeting(body));
 }
 
+const VENUE_CHANGE = /\b(?:meet|go|move|switch|change|pick|choose|find)\b[^.!?]*\b(?:somewhere (?:else|closer)|someplace (?:else|closer)|another (?:place|spot|venue|location)|different (?:place|spot|venue|location)|other (?:place|spot|venue|location))\b|\b(?:another|different|other) (?:place|spot|venue|location)\b[^.!?]*\binstead\b/i;
+
+/** A request to meet at another place keeps the booking: it declines the place, not attendance. */
+export function venueChangeKeepsBooking(body: string): boolean {
+  return VENUE_CHANGE.test(body) && !declinesAttendanceAlongsideSwap(body);
+}
+
 const PHASE_BY_STAGE = { review: "InReview", probing: "Probing", scheduled: "Scheduled", done: "Done", closed: "Closed" } as const;
 const STAGE_BY_PHASE = { InReview: "review", Probing: "probing", Scheduled: "scheduled", Done: "done", Closed: "closed" } as const satisfies Record<OpportunityPhase, keyof typeof PHASE_BY_STAGE>;
 
@@ -1746,8 +1753,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       } else {
         const yn = this.yesNoOf(body);
         // spec/opportunityLifecycle.md, "A number-swap refusal does not decline the booked meeting"
-        const declines = bookedTextDeclines(bookingText, cancellation !== undefined || c.kind === "cancel" || yn === "no");
-        const confirms = yn === "yes" || c.kind === "ack";
+        const venueChange = venueChangeKeepsBooking(bookingText);
+        const declines = !venueChange && bookedTextDeclines(bookingText, cancellation !== undefined || c.kind === "cancel" || yn === "no");
+        const confirms = !venueChange && (yn === "yes" || c.kind === "ack");
         if (checkIn && (declines || confirms)) {
           const receipt = this.ctx.initialInviteReceipt?.(bookedReminderKey("day-of-checkin", o.id, m.id, checkIn.revision));
           const acceptedAt = this.ctx.initialInviteReceipt ? (receipt?.kind === "accepted" ? receipt.at : undefined) : aw.at;

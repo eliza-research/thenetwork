@@ -1,0 +1,50 @@
+import { expect, test } from "vitest";
+import { Mini } from "./mini.ts";
+
+// spec/meetingReschedule.md, "Story: Change the time only when everyone agrees";
+// spec/opportunityLifecycle.md, "A number-swap refusal does not decline the booked meeting"
+const ids = ["a", "b"];
+async function booked() {
+  const w = new Mini(ids.map(id => ({
+    id, name: `${id.toUpperCase()}nton Q`, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"],
+    skills: ["belaying"], wants: [{ objective: "find climbing partners", category: "hobby" as const }],
+  })), { plans: false });
+  await w.onboard(...ids);
+  const id = w.propose(ids);
+  await w.answerProbes(ids);
+  expect(w.meetings).toHaveLength(1);
+  const booking = () => w.net.exportState().opps.find(item => item.id === id)!;
+  expect(booking().stage).toBe("scheduled");
+  return { w, booking };
+}
+
+test("a venue-change request keeps the booking and confirms nothing", async () => {
+  const { w, booking } = await booked();
+  await w.say("a", "That place is too far for me. Can we meet somewhere closer instead?");
+  expect(booking().stage).toBe("scheduled");
+  expect(booking().confirmed ?? []).not.toContain("a");
+  expect(w.log("booked_cancelled")).toEqual([]);
+  expect(w.to("b").map(m => m.body).join("\n")).not.toContain("off now");
+});
+
+test("a venue-change request after a friendly opener does not confirm the old place", async () => {
+  const { w, booking } = await booked();
+  await w.say("a", "Sounds good, but can we meet somewhere else instead?");
+  expect(booking().stage).toBe("scheduled");
+  expect(booking().confirmed ?? []).not.toContain("a");
+  expect(w.log("booked_cancelled")).toEqual([]);
+});
+
+test("a direct attendance decline still cancels the booking", async () => {
+  const { w, booking } = await booked();
+  await w.say("a", "I can't make it");
+  expect(booking().stage).toBe("closed");
+  expect(w.log("booked_cancelled")).toHaveLength(1);
+});
+
+test("a place objection with no alternative still cancels the booking", async () => {
+  const { w, booking } = await booked();
+  await w.say("a", "I can't make it to that place.");
+  expect(booking().stage).toBe("closed");
+  expect(w.log("booked_cancelled")).toHaveLength(1);
+});
