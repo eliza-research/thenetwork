@@ -5,6 +5,8 @@
 export interface PresenceWindow { from: number; to: number }
 /** Story: Tell the Network my travel dates / A signed travel statement saves only the member's own dates in that app (spec/travelPresence.md) */
 export type TravelEntry = "TravelUnavailable" | "TravelNeedsDates" | "TravelDateConflict" | "TravelAlreadySaved" | "TravelSave";
+/** Story: Tell the Network my travel dates / A signed travel cancellation removes one saved trip (spec/travelPresence.md) */
+export type TravelCancellation = "TravelCancelUnavailable" | "TravelCancelNone" | "TravelCancelOne";
 
 
 /** Story: Use my travel dates for matching / A temporary presence needs both dates in order (spec/travelPresence.md) */
@@ -101,4 +103,24 @@ export function lawUnavailableTravelNeverSaves(hasDates: boolean, window: Presen
 export function lawRepeatedTravelDoesNotSave(window: PresenceWindow, now: number, conflict: boolean): boolean {
   //@ ensures \result === true
   return decideTravelEntry(true, true, window, now, conflict, true) !== "TravelSave";
+}
+
+/** Story: Tell the Network my travel dates / A signed travel cancellation removes one saved trip (spec/travelPresence.md) */
+//@ pure
+export function decideTravelCancellation(authorized: boolean, savedTrips: number): TravelCancellation {
+  return !authorized ? "TravelCancelUnavailable" : (savedTrips > 0 ? "TravelCancelOne" : "TravelCancelNone");
+}
+
+/** Story: Tell the Network my travel dates / A signed travel cancellation removes one saved trip (spec/travelPresence.md) */
+//@ pure
+export function lawTravelCancellationRemovesOneOnlyWhenSaved(authorized: boolean, savedTrips: number): boolean {
+  //@ ensures \result === true
+  return !(decideTravelCancellation(authorized, savedTrips) === "TravelCancelOne") || (authorized && savedTrips > 0);
+}
+
+/** Story: Tell the Network my travel dates / A signed travel cancellation removes one saved trip (spec/travelPresence.md) */
+//@ pure
+export function lawUnauthorizedTravelCancellationRemovesNothing(savedTrips: number): boolean {
+  //@ ensures \result === true
+  return decideTravelCancellation(false, savedTrips) === "TravelCancelUnavailable";
 }

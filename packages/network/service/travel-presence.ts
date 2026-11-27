@@ -1,6 +1,6 @@
 import { CITY_TZ, fromLocal, isCity, localParts, resolveCity, temporaryPresenceWindow, type City } from "@thenetwork/core";
 import {
-  decideTravelEntry, presenceWindowsOverlap, samePresenceWindow, travelEntryReplyAllowed, type PresenceWindow,
+  decideTravelCancellation, decideTravelEntry, presenceWindowsOverlap, samePresenceWindow, travelEntryReplyAllowed, type PresenceWindow,
 } from "../../core/src/generated/travelPresence.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { homeCityOf, type Accounts } from "../../platform/src/accounts.ts";
@@ -167,16 +167,31 @@ export async function saveTravelPresence(tx: SQL, accounts: Pick<Accounts, "acti
   return `${decision === "TravelSave" ? "Saved" : "Already saved"} in ${app.domain}: ${name} from ${dates!.from} until ${dates!.to} (end date excluded).`;
 }
 
-/** Removes the owner's current or future trips to the named city in the routed app. */
+/** Removes the owner's earliest current or future trip to the named city in the routed app. */
 export async function cancelTravelPresence(tx: SQL, accounts: Pick<Accounts, "activeMembership">, owner: MemberCommandOwner, city: City, now: number): Promise<string | undefined> {
   const authorized = await travelOwner(tx, accounts, owner);
-  if (!authorized) return;
   const { app, memberId } = owner;
-  const removed = await tx`delete from network.presence
+  const current = authorized ? await tx`select member_id, city, type, from_at, to_at from network.presence
     where app_id=${app.id} and member_id=${memberId} and type='temporary' and city=${city} and to_at > ${new Date(now)}
-    returning city`;
+    order by from_at asc` : [];
+  const trips = current.map(presenceOf).flatMap(p => {
+    const window = temporaryPresenceWindow(p);
+    return window ? [window] : [];
+  });
   const name = CITY_NAME[city];
-  return removed.length
-    ? `Removed in ${app.domain}: ${name} trip.`
-    : `No saved ${name} trip in ${app.domain}.`;
+  switch (decideTravelCancellation(authorized, trips.length)) {
+    case "TravelCancelUnavailable": return;
+    case "TravelCancelNone": return `No saved ${name} trip in ${app.domain}.`;
+    case "TravelCancelOne": break;
+  }
+  await tx`delete from network.presence
+    where ctid in (select ctid from network.presence
+      where app_id=${app.id} and member_id=${memberId} and type='temporary' and city=${city} and to_at > ${new Date(now)}
+      order by from_at asc limit 1)`;
+  const trip = trips[0]!;
+  const fromParts = localParts(trip.from, CITY_TZ[city]);
+  const toParts = localParts(trip.to, CITY_TZ[city]);
+  const from = isoDate(fromParts.year, fromParts.month, fromParts.day);
+  const to = isoDate(toParts.year, toParts.month, toParts.day);
+  return `Removed in ${app.domain}: ${name} trip from ${from} until ${to} (end date excluded).`;
 }

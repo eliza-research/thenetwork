@@ -347,11 +347,19 @@ test("a trip cancellation text removes the saved trip", async () => {
   expect((await (await declare("travel-cancel-save", chicago)).json()).replies[0]).toContain("Saved in friends.help");
   expect((await (await post(turn("travel-cancel-other", otherPhone, chicago, "friends"))).json()).replies[0]).toContain("Saved in friends.help");
   expect((await (await declare("travel-cancel-sf", `I will be in San Francisco from ${day(30)} until ${day(32)}.`)).json()).replies[0]).toContain("Saved in friends.help");
-  expect(await tripsOf(memberId)).toEqual([{ city: "chicago" }, { city: "sf" }]);
+  expect((await (await declare("travel-cancel-chicago-again", `I will be in Chicago from ${day(40)} until ${day(42)}.`)).json()).replies[0]).toContain("Saved in friends.help");
+  expect(await tripsOf(memberId)).toEqual([{ city: "chicago" }, { city: "chicago" }, { city: "sf" }]);
   const cancelled = await declare("travel-cancel-text", "my trip to Chicago is cancelled");
   expect(cancelled.status).toBe(200);
+  expect(await tripsOf(memberId)).toEqual([{ city: "chicago" }, { city: "sf" }]);
+  const removedReply = (await cancelled.json()).replies[0];
+  expect(removedReply).toContain("Removed");
+  expect(removedReply).toContain(day(20));
+  expect(removedReply).toContain(day(22));
+  const cancelledAgain = await declare("travel-cancel-text-again", "my trip to Chicago is cancelled");
+  expect(cancelledAgain.status).toBe(200);
   expect(await tripsOf(memberId)).toEqual([{ city: "sf" }]);
-  expect((await cancelled.json()).replies[0]).toContain("Removed");
+  expect((await cancelledAgain.json()).replies[0]).toContain(day(40));
   expect(await tripsOf(otherId)).toEqual([{ city: "chicago" }]);
 }, 60_000);
 
