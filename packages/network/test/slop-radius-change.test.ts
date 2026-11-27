@@ -63,12 +63,24 @@ test("a radius change texted after onboarding is saved and matching uses the new
     "make my radius -5 miles",
     "my sister lives in Astoria",
     "the restaurant is at 11201",
+    "my radius is fine but the date was 30 miles away, too far",
+    "I'm looking for a gym, the last date was 30 miles away",
+    "I live in Greenpoint but the date was 30 miles away, too far",
+    "no more than 2 drinks on a first date, the bar was 12 miles away",
+    "I'd go up to 3 dates before deciding, he lived 20 miles away",
+    "my radius is fine, the restaurant is at 11201",
+    "I'm looking for a new apartment near 11201",
+    "keep it within 10 miles, my sister lives in Astoria",
+    "make my radius minus 5 miles",
+    "make my radius −5 miles",
+    "make my radius –5 miles",
   ];
   for (const remark of remarks) {
     await w.say("a", remark);
     const after = (w.net.exportState().members.find(m => m.id === "a")?.appTags ?? []).map(t => t.tag);
-    expect(after).toContain("slop:scope:radius:10");
+    expect(after, remark).toContain("slop:scope:radius:10");
     expect(after).toContain("slop:max_miles:10");
     expect(after.some(t => t.startsWith("slop:location:") && !t.includes("11222"))).toBe(false);
+    await w.say("a", "Yes");
   }
 });

@@ -784,11 +784,15 @@ function declinesAttendanceAlongsideSwap(body: string): boolean {
 }
 
 /** The source text for a booked reply, with independent transfer and attendance evidence. */
-const OWN_PREFERENCE_RX = /\b(?:my radius|keep it within|within \d+\s*(?:miles|mi|km|kilometers)|i'?d go up to|go up to \d+|up to \d+\s*(?:miles|mi|km|kilometers)|no (?:more|farther) than \d+|at most \d+\s*(?:miles|mi|km|kilometers)|make it \d+\s*(?:miles|mi|km|kilometers)|change (?:my )?(?:radius|distance)|anywhere in the city|my zip(?: code)? is \d{5}|i live in|i'?m looking for|looking for (?:men|women)|ages? \d+\s*(?:to|-|–)\s*\d+)\b/i;
-const NEGATIVE_DISTANCE_RX = /-\s*\d+\s*(?:miles|mi|km|kilometers)\b/i;
+const OWN_PREFERENCE_RX = /\b(?:my radius|keep it within|within \d+\s*(?:miles|mi|km|kilometers)|i'?d go up to|go up to \d+|up to \d+\s*(?:miles|mi|km|kilometers)|no (?:more|farther) than \d+|at most \d+\s*(?:miles|mi|km|kilometers)|make it \d+\s*(?:miles|mi|km|kilometers)|change (?:my )?(?:radius|distance)|anywhere in the city|my zip(?: code)? is \d{5}|i live in|looking for (?:men|women)|ages? \d+\s*(?:to|-|–)\s*\d+)\b/i;
+const NEGATIVE_DISTANCE_RX = /(?:-|−|–)\s*\d+\s*(?:miles|mi|km|kilometers)\b|\bminus\s+\d+\s*(?:miles|mi|km|kilometers)\b/i;
 
 export function statesOwnPreference(body: string): boolean {
   return OWN_PREFERENCE_RX.test(body) && !NEGATIVE_DISTANCE_RX.test(body);
+}
+
+export function ownPreferenceText(body: string): string {
+  return body.split(/(?<=[.!?;])\s+|,\s+|\s+but\s+/i).filter(clause => statesOwnPreference(clause)).join(". ");
 }
 
 export function bookedReplyKeepsMeeting(body: string): boolean {
@@ -1984,9 +1988,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     // the app loop reads it here too, so the stored tags and the next search use what they just said.
     // Only a clear statement of the member's own preference counts; remarks about trips, places
     // or other people must not rewrite the stored profile.
-    if (statesOwnPreference(body)) {
+    const preferenceText = ownPreferenceText(body);
+    if (preferenceText) {
       const before = JSON.stringify(m.onboarding ?? null);
-      this.learnAppTags(m, body, []);
+      this.learnAppTags(m, preferenceText, []);
       // A change clears confirmation: send the loop's read-back so the member can confirm it.
       if (JSON.stringify(m.onboarding ?? null) !== before && this.onboardNext(m, []) && !isRequest) return;
     }
