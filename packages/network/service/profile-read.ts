@@ -29,17 +29,19 @@ export function profileReadRequest(
   const read =
     /^(?:please )?(?:show|read)(?: me| back| me back)? (.+)$/u.exec(t) ??
     /^what does (.+) say$/u.exec(t) ??
-    /^what(?: is|'s) (.+)$/u.exec(t);
+    /^what(?: is|'s|s) (.+)$/u.exec(t);
   const raw = read?.[1] ?? "";
-  const ownSubject = raw.startsWith("my ") || (raw.startsWith("the ") && raw.endsWith(" i saved"));
-  const subject = raw.replace(/^(?:my|the) /u, "").replace(/ (?:i saved|you saved|you have saved)$/u, "");
+  const subjectPhrase = raw.replace(/^(?:saved\s+)?(?:on|in)\s+/u, "");
+  const wholeRead = !!read && /^(?:my|the|his|her|their|your|ur|[\p{L}][\p{L}'-]*'s)\s+(?:(?:saved|stored|current)\s+)*(?:[\p{L}\p{N}.'-]+(?:\s+(?:and|or)\s+[\p{L}\p{N}.'-]+)*\s+)?(?:(?:saved|stored|current)\s+)*profiles?(?:\s+(?:i saved|you saved|you have saved))?$/u.test(subjectPhrase);
+  const ownSubject = subjectPhrase.startsWith("my ") || (subjectPhrase.startsWith("the ") && subjectPhrase.endsWith(" i saved"));
+  const subject = subjectPhrase.replace(/^(?:my|the) /u, "").replace(/ (?:i saved|you saved|you have saved)$/u, "");
   const appText = subject
     .replace(/\bprofiles?$/u, "")
     .replace(/\b(?:saved|stored|current)\b/gu, "")
     .trim();
   const app = appText ? keywordApp(appText, apps) : undefined;
   const facts = {
-    readForm: !!read,
+    readForm: wholeRead,
     namesProfile: /\bprofiles?\b/u.test(raw),
     asksChange: /\b(?:edit|change|update|delete|remove|replace|set|save|join|leave|stop|start|add|enroll|suggest|introduce)\b/u.test(t),
     ownSubject,
