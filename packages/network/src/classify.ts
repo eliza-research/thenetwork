@@ -48,6 +48,8 @@ export interface Classified {
   desireId?: string; category?: Category; tags: string[];
   /** The member asks the Network to find people now, rather than stating a profile preference. */
   directPeopleAsk?: boolean;
+  /** The member asks to close their request without naming the want ("cancel my request"). */
+  closeRequest?: boolean;
   /** The member describes a past absence, without a separate cancellation. */
   pastAbsence?: true;
   /** The whole message is the speaker's own affirmative cofounder goal. */
@@ -231,6 +233,7 @@ export function classify(body: string): Classified {
   if (desire) desire.needsInterests.forEach(i => tags.add(i));
   out.tags = [...tags];
   if (x.notWanted.length) out.notWanted = x.notWanted;
+  if (x.closeRequest) out.closeRequest = true;
   if (desire) { out.desireId = desire.id; out.category = desire.category; }
   else if (!x.negatedAsk) out.category = CATEGORY_WORDS.find(([rx]) => rx.test(t))?.[1];
 
@@ -754,6 +757,8 @@ export interface Profile {
   notWanted: string[];
   /** The ask itself is negated ("I'm not looking for anyone right now"). */
   negatedAsk: boolean;
+  /** The member asks to close their request without naming the want ("cancel my request"). */
+  closeRequest?: boolean;
   eveningsOpen?: boolean; groups?: boolean; weekends?: boolean;
 }
 
@@ -787,7 +792,7 @@ export function areaOf(text: string, city?: City): { area?: string; unknown?: bo
 export function extractProfile(body: string): Profile {
   const t = normText(body);
   const interests = new Set<string>(), skills = new Set<string>(), desires = new Set<string>(), notWanted = new Set<string>();
-  let negatedAsk = false;
+  let negatedAsk = false, closeRequest = false;
   const kept: string[] = [];
   for (const s of sentencesOf(t)) {
     const x = s.text;
@@ -816,6 +821,10 @@ export function extractProfile(body: string): Profile {
       const effNegAt = excluded ? 0 : negAt;
       const wantCtx = WANT_CTX.test(part);
       if (neg && /\b(looking for|find|meet|anyone|anybody|someone|somebody|want|need|set me up|introduce|match|suggest)\w*\b/.test(part.slice(negAt))) negatedAsk = true;
+      // A close verb opening the part withdraws the want it names ("cancel my climbing partner
+      // request"); the possessive or request word between verb and want keeps "close friends" a want.
+      const closeVerb = /^\s*(?:(?:can|could) you\s+)?(?:please\s+)?(?:cancel|withdraw|close|drop|end|forget)\b/.exec(part);
+      if (closeVerb && /^\s*(?:(?:can|could) you\s+)?(?:please\s+)?(?:cancel|withdraw|close|drop|end|forget)\s+my\s+(?:standing\s+)?(?:request|search)\b/.test(part)) { closeRequest = true; negatedAsk = true; }
       // What is not under a negation: the taxonomy-label pass below reads only this.
       kept.push(part.slice(0, Number.isFinite(effNegAt) ? effNegAt : undefined));
       for (const [id, rxs] of Object.entries(WANT_LEX)) for (const rx of rxs) {
@@ -823,7 +832,9 @@ export function extractProfile(body: string): Profile {
         if (!m) continue;
         // Negated before the want ("I don't want to meet founders"), or right after it ("dating isn't for me").
         const after = part.slice(m.index + m[0].length);
-        if (excluded || NEG_WANT.test(part.slice(0, m.index)) || /^\s*(?:is|are|'s|'re)?\s*(?:n't|not|isn'?t|aren'?t)\b(?! only)/.test(after)) notWanted.add(id);
+        const closedWant = !!closeVerb && /\b(my|the|that|this|request|search)\b/.test(part.slice(closeVerb[0].length, m.index));
+        if (closedWant) negatedAsk = true;
+        if (excluded || closedWant || NEG_WANT.test(part.slice(0, m.index)) || /^\s*(?:is|are|'s|'re)?\s*(?:n't|not|isn'?t|aren'?t)\b(?! only)/.test(after)) notWanted.add(id);
         else if (wantCtx || SELF_WANTS.has(id)) desires.add(id);
         break;
       }
@@ -863,7 +874,7 @@ export function extractProfile(body: string): Profile {
   return {
     interests: [...interests], skills: [...skills], desireIds: DESIRES.map(d => d.id).filter(id => desires.has(id)),
     ...(where.area ? { area: where.area } : {}), ...(where.unknown ? { areaUnknown: true } : {}),
-    notWanted: [...notWanted], negatedAsk: negatedAsk && !desires.size,
+    notWanted: [...notWanted], negatedAsk: negatedAsk && !desires.size, ...(closeRequest ? { closeRequest: true } : {}),
     eveningsOpen: /evenings are (pretty )?open|free most evenings|evenings (are )?free|evenings work/i.test(body) ? true : /evenings are tight|evenings are busy|no evenings/i.test(body) ? false : undefined,
     groups: /small groups|groups are (good|great|better|my thing)|prefer groups/i.test(body) ? true : undefined,
     weekends: /weekends work best|weekends are best|prefer weekends/i.test(body) ? true : undefined,

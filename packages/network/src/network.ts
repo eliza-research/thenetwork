@@ -1815,6 +1815,9 @@ export class ConsentNetwork implements NetworkUnderTest {
 
     const closed = this.closeNegatedStanding(m, parsed.notWanted ?? [], msg.id);
     if (closed && c.kind !== "people_request" && c.kind !== "plans_request") return this.learnFrom(m, body);
+    // "Cancel my request" names no want: it closes the member's one waiting request, and only
+    // that one (spec/standingIntentManagement.md, "Only the member's own words close a standing thing").
+    if (parsed.closeRequest && this.closeSoleRequest(m, msg.id)) return this.learnFrom(m, body);
 
     const pendingReply = m.awaiting;
     const eligibleReply = !c.pastAbsence || pendingReply?.kind === "feedback";
@@ -3736,6 +3739,19 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.logStanding(m, e.key, "undo", "MemberThread", "applied", causeId);
     }
     return STANDING_COPY.resumed(summaries);
+  }
+
+  /** "Cancel my request": close the standing thing behind the member's one waiting request. */
+  private closeSoleRequest(m: MemberState, causeId: string): boolean {
+    const pending = this.requests.filter(r => r.memberId === m.id && r.kind === "people" && !r.withdrawn && !r.closed
+      && (r.outcome === undefined || r.outcome === "none" || r.outcome === "probing"));
+    if (pending.length !== 1) return false;
+    const r = pending[0]!;
+    const entry = this.standingEntries(m, this.now()).find(e => e.kind !== "posting"
+      && (e.requestId === r.id || (r.desireId !== undefined && e.desire === r.desireId) || e.objective === this.requestObjective(r)));
+    if (!entry) return false;
+    this.send(m, this.closeStanding(m, [entry], "MemberThread", false, causeId), { type: "info" }, "reply");
+    return true;
   }
 
   private closeNegatedStanding(m: MemberState, notWanted: readonly string[], causeId: string): boolean {
