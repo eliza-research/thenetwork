@@ -1,5 +1,6 @@
 // spec/authorizationPages.md, "The signup page is a step of the same request"
 import { chromeFor, offersFor, signupConsentStartsTicked, signupDraftNoteShown } from "../../../core/src/generated/authorizationPages.ts";
+import type { City } from "../../../core/src/types.ts";
 import { focusRing } from "../lib/cn.ts";
 import { AuthShell, type AuthShellProps } from "./AuthShell.tsx";
 import { Button } from "./Button.tsx";
@@ -21,7 +22,7 @@ export type AuthSignupViewProps = Omit<AuthShellProps, "title" | "chrome" | "chi
   /** The handler's user-facing error for a rejected signup. */
   error?: string;
   birthdateError?: string;
-  prefill?: { firstName: string; homeCity?: "nyc" | "sf" };
+  prefill?: { firstName: string; homeCity?: City };
 };
 
 /**
@@ -51,6 +52,9 @@ export function AuthSignupView({ rid, consent, requiresInvitation, signupView, e
             <option value="" disabled>Choose your city</option>
             <option value="nyc">New York City</option>
             <option value="sf">San Francisco</option>
+            <option value="la">Los Angeles</option>
+            <option value="chicago">Chicago</option>
+            <option value="miami">Miami</option>
           </select>
         </Field>
         <Field label={requiresInvitation ? "Invitation link" : "Invitation link (optional)"} controlId="signup-invitation">

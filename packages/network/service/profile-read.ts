@@ -1,3 +1,4 @@
+import { getCity } from "@thenetwork/core";
 import { initial, step as stepProfileRead, type ProfileRead } from "../../core/src/generated/savedProfileRead.ts";
 import { savedProfileFitsReply, savedProfileLocation } from "../../core/src/generated/savedProfileJourney.ts";
 import { APPS, keywordApp, type AppId, type AppInfo } from "../../platform/src/apps.ts";
@@ -59,7 +60,7 @@ export function savedProfileText(app: AppInfo, membership: Membership, age?: num
   const location = label === "NeighborhoodLabel" ? neighborhood
     : label === "BayAreaLabel" ? "San Francisco / Bay Area"
       : label === "NewYorkLabel" ? "New York City"
-        : undefined;
+        : typeof p.homeCity === "string" ? getCity(p.homeCity)?.name : undefined;
   const title = [membership.firstName, age === undefined ? undefined : String(age), location]
     .filter(Boolean)
     .join(" · ");

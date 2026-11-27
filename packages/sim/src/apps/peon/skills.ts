@@ -34,7 +34,7 @@ export const FAMILY = new Map(FAMILIES.map(f => [f.id, f]));
 
 export const LEVEL_TITLE = ["", "Associate", "", "Senior", "Lead", "Principal"];
 export const SENIORITY_PAY = [0, 0.72, 0.86, 1, 1.22, 1.45];
-export const MARKET_PAY: Record<City, number> = { sf: 1.12, nyc: 1.06, la: 1.08 }; // la: not modelled by the hiring world yet
+export const MARKET_PAY: Record<City, number> = { sf: 1.12, nyc: 1.06, la: 1.08, chicago: 1.02, miami: 0.98 };
 export const REMOTE_PAY = 1.0;
 
 /** Median pay ($k) for a family, seniority and market (remote = undefined). */
@@ -62,7 +62,25 @@ export const AREAS: Record<City, { id: string; jobWeight: number; neighbours: st
     { id: "peninsula", jobWeight: 0.12, neighbours: ["san_francisco", "south_bay"] },
     { id: "south_bay", jobWeight: 0.13, neighbours: ["peninsula"] },
   ],
-  la: [], // the hiring world does not model LA yet
+  la: [
+    { id: "westside", jobWeight: 0.35, neighbours: ["central_la"] },
+    { id: "central_la", jobWeight: 0.25, neighbours: ["westside", "dtla", "eastside"] },
+    { id: "dtla", jobWeight: 0.22, neighbours: ["central_la", "eastside"] },
+    { id: "eastside", jobWeight: 0.18, neighbours: ["dtla", "central_la"] },
+  ],
+  chicago: [
+    { id: "loop_west_loop", jobWeight: 0.52, neighbours: ["river_north", "wicker_logan", "lincoln_lakeview", "hyde_park"] },
+    { id: "river_north", jobWeight: 0.18, neighbours: ["loop_west_loop", "lincoln_lakeview"] },
+    { id: "wicker_logan", jobWeight: 0.12, neighbours: ["loop_west_loop"] },
+    { id: "lincoln_lakeview", jobWeight: 0.10, neighbours: ["river_north", "loop_west_loop"] },
+    { id: "hyde_park", jobWeight: 0.08, neighbours: ["loop_west_loop"] },
+  ],
+  miami: [
+    { id: "brickell_downtown", jobWeight: 0.46, neighbours: ["wynwood_midtown", "coral_gables_grove", "miami_beach"] },
+    { id: "wynwood_midtown", jobWeight: 0.20, neighbours: ["brickell_downtown", "miami_beach"] },
+    { id: "coral_gables_grove", jobWeight: 0.18, neighbours: ["brickell_downtown"] },
+    { id: "miami_beach", jobWeight: 0.16, neighbours: ["brickell_downtown", "wynwood_midtown"] },
+  ],
 };
 
 /** Zip codes per area (proxies only; never in a matchable or shareable facet). */
@@ -73,4 +91,10 @@ export const ZIPS: Record<string, string[]> = {
   san_francisco: ["94103", "94110", "94112", "94117", "94124"], oakland: ["94601", "94606", "94607", "94610", "94621"],
   east_bay: ["94530", "94544", "94545", "94577", "94804"], peninsula: ["94010", "94025", "94063", "94066", "94403"],
   south_bay: ["95014", "95035", "95111", "95122", "95127"],
+  westside: ["90401", "90232", "90291"], central_la: ["90046", "90036", "90020"],
+  dtla: ["90013", "90014", "90012"], eastside: ["90026", "90027", "90042"],
+  loop_west_loop: ["60601", "60602", "60606", "60607", "60661"], river_north: ["60611", "60654", "60610"],
+  wicker_logan: ["60622", "60647", "60642"], lincoln_lakeview: ["60614", "60657", "60640"], hyde_park: ["60615", "60637", "60653"],
+  brickell_downtown: ["33130", "33131", "33132", "33136"], wynwood_midtown: ["33127", "33137", "33138"],
+  coral_gables_grove: ["33133", "33134", "33135"], miami_beach: ["33139", "33140", "33141"],
 };

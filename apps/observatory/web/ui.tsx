@@ -1,7 +1,9 @@
 // spec/consoleNavigation.md, "The viewer answer selects a page that the roles cover"
 // spec/staffSignIn.md, "The server answer decides the sign-in phase"
 import { useEffect, type ReactNode, type RefObject } from "react";
-import type { ScoreComponents } from "@thenetwork/core";
+import type { City, ScoreComponents } from "@thenetwork/core";
+import { getCity } from "../../../packages/core/src/cities.ts";
+import { CITY_TZ } from "../../../packages/core/src/time.ts";
 import {
   AreaLink as AreaSubjectLink, Countdown as ClockCountdown, formatDuration, MemberLink as MemberSubjectLink, OpportunityLink, type MeterRow,
 } from "@thenetwork/ui";
@@ -14,15 +16,16 @@ import { navTab, store, STORE_TAB, type DrawerTab, type FilterKey } from "./stor
 export { navTab, STORE_TAB, subjectOf } from "./store.ts";
 
 const tf = new Map<string, Intl.DateTimeFormat>();
-function fmt(opts: Intl.DateTimeFormatOptions) {
-  const key = JSON.stringify(opts);
-  if (!tf.has(key)) tf.set(key, new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", ...opts }));
+function fmt(opts: Intl.DateTimeFormatOptions, city?: City) {
+  const tz = city ? (getCity(city)?.tz ?? CITY_TZ[city] ?? CITY_TZ.nyc) : store.activeTz();
+  const key = `${tz}|${JSON.stringify(opts)}`;
+  if (!tf.has(key)) tf.set(key, new Intl.DateTimeFormat("en-US", { timeZone: tz, ...opts }));
   return tf.get(key)!;
 }
-export const localTime = (t: number) => fmt({ hour: "numeric", minute: "2-digit" }).format(t);
-export const localDate = (t: number) => fmt({ weekday: "short", month: "short", day: "numeric" }).format(t).replace(",", "");
-export const shortDate = (t: number) => fmt({ month: "short", day: "numeric" }).format(t);
-export const stamp = (t: number) => fmt({ month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(t);
+export const localTime = (t: number, city?: City) => fmt({ hour: "numeric", minute: "2-digit" }, city).format(t);
+export const localDate = (t: number, city?: City) => fmt({ weekday: "short", month: "short", day: "numeric" }, city).format(t).replace(",", "");
+export const shortDate = (t: number, city?: City) => fmt({ month: "short", day: "numeric" }, city).format(t);
+export const stamp = (t: number, city?: City) => fmt({ month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }, city).format(t);
 export const pct = (x: number, d = 0) => `${(x * 100).toFixed(d)}%`;
 export const num = (x: number) => x.toLocaleString("en-US");
 export const humanize = (s: string) => s.replace(/_/g, " ").toLowerCase();

@@ -91,8 +91,14 @@ function preferredActivity(current: string | undefined, activity: string): strin
   return rank < 0 || (rank === 0 && activity < current) ? activity : current;
 }
 
-export function dateActivity(a: SlopProfile, b: SlopProfile, overrides?: Partial<DateActivityRedLines>): string {
-  const rl = slopRedLinesOf(a, b, overrides);
+export function isNonDrinkerProfile(p: SlopProfile): boolean {
+  const drink = p.values.drinking?.trim().toLowerCase() ?? "";
+  return drink === "never" || drink === "none" || drink === "sober";
+}
+
+export function dateActivity(a: SlopProfile, b: SlopProfile, overrides?: boolean | Partial<DateActivityRedLines>): string {
+  const normalizedOverrides = typeof overrides === "boolean" ? { anyNonDrinker: overrides } : overrides;
+  const rl = slopRedLinesOf(a, b, normalizedOverrides);
   const allowed = (act: string, afterDark = rl.isAfterDark) =>
     evaluateDateActivityAllowed(act, rl.anyStrictSober, rl.anyNonDrinker, rl.anyLowWalking, rl.anyDaytimeOnly, afterDark);
 

@@ -1,14 +1,15 @@
-// Shared domain contract (PRD Sections 13.1, 32.4, 32.10, 33). Keep small and generic.
+import type { WorkIntroChannel } from "./generated/workIntroChannel.ts";
+
+export type { WorkIntroChannel };
+
 export type MemberId = string;
-/** Market ids. "la" added for slop.date (additive: networkPack still runs on cfg.cities = ["sf", "nyc"]). */
-export type City = "sf" | "nyc" | "la";
-/** Five-city launch registry ids (superset of City; preserves exhaustive Record<City, ...> maps). */
 export const LAUNCH_CITIES = ["sf", "nyc", "la", "chicago", "miami"] as const;
-export type LaunchCity = (typeof LAUNCH_CITIES)[number];
-export const isLaunchCity = (v: unknown): v is LaunchCity =>
+export type City = (typeof LAUNCH_CITIES)[number];
+export type LaunchCity = City;
+export const isCity = (v: unknown): v is City =>
   typeof v === "string" && (LAUNCH_CITIES as readonly string[]).includes(v);
-/** The Network's own markets (its data tables, synthetic snapshots and simulators cover these two). */
-export type NetworkCity = "sf" | "nyc";
+export const isLaunchCity = isCity;
+export type NetworkCity = City;
 export type ParticipationState = "open" | "normal" | "quiet" | "receiving" | "paused";
 /**
  * The app a membership, fact or opportunity belongs to (PRD 40.3: one person, a membership per app).
@@ -163,6 +164,7 @@ export interface WorldSnapshot {
 // ---- Five-city registry, curated venues, arrival coordination, follow-ups and work intros ----
 
 export type VenueStatus = "active" | "suspect_closed" | "closed_temporary" | "closed_permanent";
+export type ProviderClosureSignal = "ProviderOpen" | "ProviderTemporaryClosed" | "ProviderPermanentClosed";
 export type VenueCategory =
   | "food_hall"
   | "coffee_shop"
@@ -191,6 +193,7 @@ export type VenueCategory =
 /** 0 = free, 1 = $, 2 = $$, 3 = $$$, 4 = $$$$. */
 export type VenuePriceTier = 0 | 1 | 2 | 3 | 4;
 export type VenueNoiseLevel = "quiet" | "conversational" | "lively" | "loud";
+export type NoiseLevel = VenueNoiseLevel;
 export type VenueFeedbackOutcome = "great" | "ok" | "too_loud" | "crowded" | "closed" | "bad_vibe" | "too_expensive";
 
 /** Structured weekly opening slot. `weekday`: Monday = 0 ... Sunday = 6; minutes from local midnight (closeMin > 1440 = past midnight). */
@@ -264,6 +267,7 @@ export interface VenueFeedbackReport {
   at: number;
   outcome: VenueFeedbackOutcome;
   reportedClosed: boolean;
+  providerCode?: ProviderClosureSignal;
   providerConfirmedStatus?: "operational" | "closed_temporary" | "closed_permanent";
 }
 
@@ -315,6 +319,7 @@ export type ArrivalState =
   | "venue_full"
   | "cannot_find";
 export type MeetupPhase = "before" | "pre_brief" | "active_arrival" | "closed";
+export type NoShowAction = "wait" | "ping_late" | "notify_waiting" | "done";
 
 export interface ArrivalUpdate {
   meetupId: string;
@@ -334,8 +339,6 @@ export interface FollowupSchedule {
   reminderAt: number;
   maxReminders: number;
 }
-
-export type WorkIntroChannel = "warm_email" | "scheduled_video" | "relay_share" | "blocked";
 
 export interface WorkIntroState {
   introId: string;

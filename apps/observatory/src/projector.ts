@@ -135,7 +135,7 @@ export class Projector {
         const source = r.source as OppSource;
         const prev = s.opps.get(p.id);
         const o: ObsOpportunity = {
-          origin: prev?.origin, venue: prev?.venue, review: prev?.review, ...(prev?.times ? { times: prev.times } : {}), ...(prev?.booked ? { booked: prev.booked } : {}),
+          origin: prev?.origin, venue: prev?.venue, ...(prev?.backupVenue ? { backupVenue: prev.backupVenue } : {}), ...(prev?.workIntroChannel ? { workIntroChannel: prev.workIntroChannel } : {}), review: prev?.review, ...(prev?.times ? { times: prev.times } : {}), ...(prev?.booked ? { booked: prev.booked } : {}),
           id: p.id, kind: p.kind, source, generator: p.generator, category: p.category, city: p.city,
           objective: p.objective, score: p.score, components: p.components, explanations: p.explanations ?? {},
           exploration: p.exploration, participants: [...p.participants], alternates: [...(p.alternates ?? [])],
@@ -507,7 +507,23 @@ export class Projector {
       }
       case "venue": {
         const o = s.opps.get(d.oppId);
-        if (o) { o.venue = { name: d.venue, lat: d.lat, lng: d.lng }; this.changed(o, r); }
+        if (o) {
+          o.venue = {
+            ...(typeof d.venueId === "string" ? { id: d.venueId } : {}),
+            name: d.venue, lat: d.lat, lng: d.lng,
+            ...(typeof d.neighborhood === "string" ? { neighborhood: d.neighborhood } : {}),
+            ...(typeof d.arrivalLandmark === "string" ? { arrivalLandmark: d.arrivalLandmark } : {}),
+          };
+          if (d.backupVenue && typeof d.backupVenue === "object" && typeof d.backupVenue.name === "string") {
+            o.backupVenue = {
+              ...(typeof d.backupVenue.id === "string" ? { id: d.backupVenue.id } : {}),
+              name: d.backupVenue.name, lat: Number(d.backupVenue.lat), lng: Number(d.backupVenue.lng),
+              ...(typeof d.backupVenue.neighborhood === "string" ? { neighborhood: d.backupVenue.neighborhood } : {}),
+              ...(typeof d.backupVenue.arrivalLandmark === "string" ? { arrivalLandmark: d.backupVenue.arrivalLandmark } : {}),
+            };
+          }
+          this.changed(o, r);
+        }
         return true;
       }
       case "request":

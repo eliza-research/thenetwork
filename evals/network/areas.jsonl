@@ -209,3 +209,11 @@
 {"text":"I'm visiting the East Village next week","area":null}
 {"text":"I live in the East Village","area":"East Village"}
 {"text":"I'm in the Upper West Side, I work in Midtown","area":"Upper West Side"}
+{"text":"I live in West Loop","area":"West Loop / Fulton Market"}
+{"text":"based in Wicker Park","area":"Wicker Park / Bucktown"}
+{"text":"I am in Brickell","area":"Brickell"}
+{"text":"live in Wynwood","area":"Wynwood"}
+{"text":"I live in Silver Lake","area":"Silver Lake"}
+{"text":"based in Culver City","area":"Culver City"}
+{"text":"I am in Hayes Valley","area":"Hayes Valley"}
+{"text":"live in Mission District","area":"Mission District"}

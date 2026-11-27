@@ -331,9 +331,9 @@ const OFFER = "For future plans, reply CALENDAR to allow free/busy from an autho
 /** The answer request that ends a probe: with time options, which one works; without, yes or no. */
 const tail = (times?: string) => (times ? ` I could do ${times}. Tell me which works, or no is completely fine.` : " Yes or no is all I need, and no is completely fine.");
 
-/** "Thursday 7pm"-style phrasing in New York time. */
-export function whenPhrase(t: number): string {
-  return new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "long", hour: "numeric", minute: "2-digit" }).format(t).replace(":00", "");
+/** "Thursday 7pm"-style phrasing in local city time (defaults to America/New_York). */
+export function whenPhrase(t: number, tz = "America/New_York"): string {
+  return new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "long", hour: "numeric", minute: "2-digit" }).format(t).replace(":00", "");
 }
 
 /** Copy style rules as code (PRD 12.4); the tests run every template through them. */

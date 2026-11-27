@@ -117,7 +117,7 @@ function defaultParticipationBudgets(): EngineConfig["budgets"] {
 export const DEFAULT_CONFIG: EngineConfig = {
   seed: 1,
   cities: ["sf", "nyc"],
-  timezones: { sf: "America/Los_Angeles", nyc: "America/New_York" },
+  timezones: { sf: "America/Los_Angeles", nyc: "America/New_York", la: "America/Los_Angeles", chicago: "America/Chicago", miami: "America/New_York" },
   windowDays: 7,
   minOverlapHours: 3,
   ageMin: 18,

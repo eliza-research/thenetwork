@@ -96,19 +96,23 @@ export async function startStack(o: {
   privateOpenAiApps?: readonly AppId[];
   slopCity?: "sf";
   extraNetwork?: "ntwrk:sf";
+  allFiveCities?: boolean;
   simulatedOutbound?: { provider: ChannelAdapter & { kind: "sim" }; line: string };
   reviewJudge?: ReviewJudge;
   staffTokens?: string;
   slopPhotoReviewer?: boolean;
 } = {}): Promise<Stack> {
   const url = await migratedDb(`e2e_${++stackSequence}`);
-  if (o.slopCity || o.extraNetwork) {
+  if (!o.allFiveCities || o.slopCity || o.extraNetwork) {
     const setup = new SQL({ url, max: 1 });
+    if (!o.allFiveCities) {
+      await setup`delete from platform.networks where city <> 'nyc' and matching_enabled = false`;
+    }
     if (o.slopCity) {
       await setup`update platform.networks set id='slop:sf', city='sf' where app_id='slop'`;
     }
     if (o.extraNetwork) {
-      await setup`insert into platform.networks (id,app_id,city,matching_enabled) values (${o.extraNetwork},'ntwrk','sf',false)`;
+      await setup`insert into platform.networks (id,app_id,city,matching_enabled) values (${o.extraNetwork},'ntwrk','sf',false) on conflict (id) do nothing`;
     }
     await setup.close();
   }

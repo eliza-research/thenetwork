@@ -21,7 +21,7 @@ import {
   type Workspace, type WorldEvent,
 } from "../../../packages/core/src/generated/consoleWorkspace.ts";
 import type { AppProfile360, BookedPlan, DeliveryReason, HealthAlert, MemberDetail, MemberPhoto, PeonProfile360, SlopProfile360, MemberTimeline, ObsFeedItem, ObsMember, ObsMessage, OpportunityDetail, SystemEvent, TimeChoice } from "../src/types.ts";
-import { historyBetween, isBusyElsewhere, ReviewActions, reviewLine, VenueLink, wantsOf } from "./review.tsx";
+import { historyBetween, isBusyElsewhere, ReviewActions, reviewLine, VenueLink, wantsOf, workChannelLabel } from "./review.tsx";
 import { isMemberActive, INACTIVE_PARTICIPANT_STATUS, OPEN, originLabel, originOf, store, useStore, type DrawerTab, type Fetched, type Focus, type Opp } from "./store.ts";
 import { ago, COMPONENT_SIGN, consoleNav, dur, hasScoreParts, humanize, jumpTo, num, pct, pickMember, sentence, shortDate, stamp } from "./ui.tsx";
 
@@ -327,7 +327,7 @@ function NeighborhoodPanel({ area }: { area: string }) {
     <>
       <div className={headClass}>
         <h2 className={titleClass}>{area}</h2>
-        <FactLine parts={[s.borough(area), `${members.length} members`, `${members.filter(isMemberActive).length} active`]} />
+        <FactLine parts={[s.borough(area, members[0]?.city ?? s.activeCity()), `${members.length} members`, `${members.filter(isMemberActive).length} active`]} />
       </div>
       <KpiGrid area={area} />
       <NeedsAttention area={area} />
@@ -953,7 +953,12 @@ function OpportunityPanel({ id }: { id: string }) {
       </InspectorSection>
       <InspectorSection title="Plan">
         <div className="text-sm">“{o.objective}”</div>
-        <FactLine parts={[o.venue && <VenueLink venue={o.venue} />, o.meetingAt && stamp(o.meetingAt)]} />
+        <FactLine parts={[
+          o.venue && <VenueLink venue={o.venue} />,
+          o.backupVenue && <span><span className="text-muted-foreground">Backup:</span> <VenueLink venue={o.backupVenue} /></span>,
+          o.workIntroChannel && <span><span className="text-muted-foreground">Channel:</span> {workChannelLabel(o.workIntroChannel)}</span>,
+          o.meetingAt && stamp(o.meetingAt, o.city),
+        ]} />
       </InspectorSection>
       {o.times && Object.keys(o.times).length > 0 && (
         <InspectorSection title="Times">

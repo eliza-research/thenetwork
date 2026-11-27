@@ -57,7 +57,7 @@ const LAPSE_MEAN_DAYS: Record<string, number> = { help: 45, romance: 240, defaul
 const R = new Rng(`${SEED}:post`);
 const other = (c: City): City => (c === "sf" ? "nyc" : "sf");
 const r2 = (x: number) => Math.round(x * 100) / 100;
-const CITY_NAME: Record<City, string> = { sf: "San Francisco", nyc: "New York City" };
+const CITY_NAME: Record<City, string> = { sf: "San Francisco", nyc: "New York City", la: "Los Angeles", chicago: "Chicago", miami: "Miami" };
 const label = (t: string) => INTERESTS.find(i => i.tag === t)?.label ?? t.replace(/_/g, " ");
 const skillLabel = (t: string) => SKILLS.find(s => s.tag === t)?.label ?? t.replace(/_/g, " ");
 const clusterOf = (t: string) => INTERESTS.find(i => i.tag === t)?.cluster ?? "other";

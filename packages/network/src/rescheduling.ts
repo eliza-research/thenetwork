@@ -21,37 +21,44 @@ export type RescheduleCommand =
   | { kind: "vote"; ref: string; accepted: boolean }
   | { kind: "format" };
 
-export function localBookingStart(at: number): string {
-  const { year, month, day, hour, minute } = localParts(at, NY);
+export function localBookingStart(at: number, tz: string = NY): string {
+  const { year, month, day, hour, minute } = localParts(at, tz);
   const twoDigits = (n: number) => String(n).padStart(2, "0");
   return `${year}-${twoDigits(month)}-${twoDigits(day)} ${twoDigits(hour)}:${twoDigits(minute)}`;
 }
 
-const meetingStartFormat = new Intl.DateTimeFormat("en-US", {
-  timeZone: NY, weekday: "long", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit",
-});
-export const describeBookingStart = (at: number): string => meetingStartFormat.format(at);
+const meetingStartFormats = new Map<string, Intl.DateTimeFormat>();
+export const describeBookingStart = (at: number, tz: string = NY): string => {
+  let fmt = meetingStartFormats.get(tz);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz, weekday: "long", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit",
+    });
+    meetingStartFormats.set(tz, fmt);
+  }
+  return fmt.format(at);
+};
 
 const LOCAL_START = "(\\d{4}-\\d{2}-\\d{2} (?:[01]\\d|2[0-3]):[0-5]\\d)";
 const REQUEST = new RegExp(`^RESCHEDULE ${LOCAL_START} TO ${LOCAL_START}$`, "i");
 const VOTE = /^RESCHEDULE (YES|NO) ([a-p]{16})$/i;
 
-/** A repeated or nonexistent New York wall time cannot identify an exact meeting start. */
-function exactLocalStart(value: string): number | undefined {
+/** A repeated or nonexistent local wall time cannot identify an exact meeting start. */
+function exactLocalStart(value: string, tz: string = NY): number | undefined {
   const [year, month, day, hour, minute] = value.split(/[- :]/).map(Number) as [number, number, number, number, number];
-  const at = fromLocal(year, month, day, hour, NY) + minute * MINUTE;
-  return localBookingStart(at) === value && localBookingStart(at - HOUR) !== value && localBookingStart(at + HOUR) !== value ? at : undefined;
+  const at = fromLocal(year, month, day, hour, tz) + minute * MINUTE;
+  return localBookingStart(at, tz) === value && localBookingStart(at - HOUR, tz) !== value && localBookingStart(at + HOUR, tz) !== value ? at : undefined;
 }
 
-export function parseRescheduleCommand(raw: string): RescheduleCommand | undefined {
+export function parseRescheduleCommand(raw: string, tz: string = NY): RescheduleCommand | undefined {
   const text = raw.trim().replace(/\s+/g, " ");
   if (!/^RESCHEDULE\b/i.test(text)) return;
   const vote = VOTE.exec(text);
   if (vote) return { kind: "vote", accepted: vote[1]!.toLowerCase() === "yes", ref: vote[2]!.toLowerCase() };
   const request = REQUEST.exec(text);
   if (request) {
-    const originalAt = exactLocalStart(request[1]!);
-    const proposedAt = exactLocalStart(request[2]!);
+    const originalAt = exactLocalStart(request[1]!, tz);
+    const proposedAt = exactLocalStart(request[2]!, tz);
     if (originalAt !== undefined && proposedAt !== undefined) return { kind: "request", originalAt, proposedAt };
   }
   return { kind: "format" };

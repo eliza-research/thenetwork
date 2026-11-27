@@ -12,6 +12,7 @@ import { defaultScopes, scopeName, scopeOfferedOn, scopes as connectorScopes, si
 import { codeExchangeMayCommit, type CodeExchangeResult, refreshStoredAuthorityCurrent, type RefreshRotationResult } from "../../core/src/generated/oauthTokenLifecycle.ts";
 import type { PhoneHandoff } from "../../core/src/generated/agentPhoneHandoff.ts";
 import type { CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
+import type { City } from "../../core/src/types.ts";
 import type { McpAppId, Surface } from "./apps.ts";
 
 export type Scope = "apps:read" | "membership:read" | "profile:write" | "profile:read" | "photos:use";
@@ -164,7 +165,7 @@ export function checkRefreshRotation(rotation: RefreshRotation, refresh: Token |
   return preparedTokensLive(rotation, at) ? "RefreshPairCommitted" : "RefreshNotCommitted";
 }
 
-export interface SignupDraftFields { firstName: string; homeCity?: "nyc" | "sf" }
+export interface SignupDraftFields { firstName: string; homeCity?: City }
 export interface SignupDraft { grantId: string; app: McpAppId; phoneKey: string; fields: SignupDraftFields; expiresAt: number }
 export interface SignupPrefillAsk { clientId: string; app: McpAppId; phoneKey: string; personId: string | null; ageAllowed: boolean }
 
