@@ -1,5 +1,5 @@
 import {
-  cityTimezone, fromLocal, isMinor, localParts, proposeTopOne, seedVenuesForCity, temporaryPresenceWindow, validAge,
+  cityTimezone, DAY, fromLocal, isMinor, localParts, proposeTopOne, seedVenuesForCity, temporaryPresenceWindow, validAge,
   type MemberVenuePrefs, type NetworkEvent,
 } from "@thenetwork/core";
 import {
@@ -65,10 +65,7 @@ export async function soloConciergeReply(tx: SQL, accounts: Pick<Accounts, "acti
   const { member } = binding;
   const app = owner.app.id, id = owner.memberId;
   const city = member.home_city || "nyc";
-  const tz = cityTimezone(city) ?? "America/New_York";
-  const when = formatWhen(tz);
-  const [events, rawPresence, facets] = await Promise.all([
-    readPublicEvents(tx, now, city),
+  const [rawPresence, facets] = await Promise.all([
     tx`select member_id, city, type, from_at, to_at from network.presence where app_id=${app} and member_id=${id} and type='temporary'`,
     tx<{ kind: "interest" | "availability_pattern"; tags: string[] }[]>`select kind, tags from network.facets where app_id=${app} and member_id=${id}
       and kind in ('interest','availability_pattern') and status='confirmed' and privacy_scope in ('matchable','shareable')
@@ -78,12 +75,19 @@ export async function soloConciergeReply(tx: SQL, accounts: Pick<Accounts, "acti
     const window = temporaryPresenceWindow(p);
     return window ? [{ city: p.city, window }] : [];
   });
+  // A trip away takes precedence over home city: read listings for every city the member may
+  // be in during the requested period, and judge each listing in its own city's time.
+  const horizon = { from: now, to: now + 8 * DAY };
+  const cities = [...new Set([city, ...trips.filter(p => presenceWindowsOverlap(p.window, horizon)).map(p => p.city)])];
+  const events = (await Promise.all(cities.map(c => readPublicEvents(tx, now, c)))).flat();
+  const tzOf = (c: string) => cityTimezone(c) ?? "America/New_York";
+  const requestedByCity = new Map(cities.map(c => [c, requestedWindow(request.period, now, tzOf(c))]));
+  const availabilityTags = facets.filter(f => f.kind === "availability_pattern").flatMap(f => f.tags);
+  const availableByCity = new Map(cities.map(c => [c, statedWindows(availabilityTags, now, tzOf(c))?.windows]));
   const interest = new Set(facets.filter(f => f.kind === "interest").flatMap(f => f.tags.map(like)).filter(Boolean));
-  const available = statedWindows(facets.filter(f => f.kind === "availability_pattern").flatMap(f => f.tags), now, tz)?.windows;
   const home = city === "nyc" && member.home_area ? NEIGHBORHOOD.get(member.home_area) : undefined;
   const travelLimit = member.prefs.maxTravelMinutes;
   const limit = typeof travelLimit === "number" && Number.isFinite(travelLimit) && travelLimit >= 0 ? travelLimit : undefined;
-  const requested = requestedWindow(request.period, now, tz);
   const options: Option[] = [];
 
   for (const event of events) {
@@ -93,6 +97,8 @@ export async function soloConciergeReply(tx: SQL, accounts: Pick<Accounts, "acti
     const away = trips.some(p => p.city !== event.city && presenceWindowsOverlap(p.window, eventWindow));
     const visiting = trips.some(p => p.city === event.city && presenceWindowCovers(p.window, eventWindow));
     const present = soloEventCityAllowed(member.home_city === event.city, visiting, away);
+    const available = availableByCity.get(event.city);
+    const requested = requestedByCity.get(event.city) ?? requestedWindow(request.period, now, tzOf(event.city));
     const scheduled = available?.some(s => presenceWindowCovers({ from: s.start, to: s.end }, eventWindow)) ?? false;
     const area = event.area ? NEIGHBORHOOD.get(event.area) : undefined;
     const minutes = home && area ? travelMinutes(home, area) : undefined;
@@ -108,18 +114,22 @@ export async function soloConciergeReply(tx: SQL, accounts: Pick<Accounts, "acti
   for (const { event, fit, minutes, scheduled } of options.sort((a, b) => precedes(a, b) ? -1 : precedes(b, a) ? 1 : a.event.id.localeCompare(b.event.id))) {
     if (!soloReplyHasRoom(picks.length)) break;
     const why = fit > 0 ? "Fits one of your interests." : scheduled ? "Fits your saved availability." : minutes !== undefined && limit !== undefined ? "Within your travel range." : "Within the time you asked about.";
-    const line = `${event.title} — ${when.format(event.start)} at ${event.listing.venue}. ${why} ${event.listing.url}`;
+    const line = `${event.title} — ${formatWhen(tzOf(event.city)).format(event.start)} at ${event.listing.venue}. ${why} ${event.listing.url}`;
     if ([...picks, line].join("\n").length > 1500) continue;
     picks.push(line);
     publicLinks.push(event.listing.url);
   }
   if (picks.length) return { body: picks.join("\n"), publicLinks };
 
-  const emptyPrefix = city === "nyc"
+  const homeRequested = requestedByCity.get(city)!;
+  const spotCity = trips.find(p => p.window.from <= now && now < p.window.to)?.city
+    ?? trips.find(p => presenceWindowsOverlap(p.window, homeRequested))?.city ?? city;
+  const requested = requestedByCity.get(spotCity) ?? homeRequested;
+  const emptyPrefix = spotCity === "nyc"
     ? "I couldn't find any current NYC Parks listings that fit your request."
     : "I couldn't find any current public listings that fit your request.";
-  const dbVenues = await listActiveVenues(tx, city).catch(() => []);
-  const venuePool = dbVenues.length ? dbVenues : city === "nyc" ? [] : seedVenuesForCity(city);
+  const dbVenues = await listActiveVenues(tx, spotCity).catch(() => []);
+  const venuePool = dbVenues.length ? dbVenues : spotCity === "nyc" ? [] : seedVenuesForCity(spotCity);
   if (venuePool.length) {
     const soloPrefs: MemberVenuePrefs = {
       memberId: id,
@@ -134,11 +144,11 @@ export async function soloConciergeReply(tx: SQL, accounts: Pick<Accounts, "acti
       rejectedVenueIds: [],
       hobbies: [...interest],
     };
-    const memberAreas = request.area ? [request.area] : member.home_area ? [member.home_area] : [];
+    const memberAreas = request.area ? [request.area] : spotCity === city && member.home_area ? [member.home_area] : [];
     const proposal = proposeTopOne(
       venuePool,
       {
-        city,
+        city: spotCity,
         memberAreas,
         members: [soloPrefs],
         startMs: requested.from,

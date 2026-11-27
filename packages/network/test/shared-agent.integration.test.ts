@@ -536,6 +536,49 @@ test("signed solo concierge offers current public listings without recruiting an
   }
 }, 60_000);
 
+// spec/soloConcierge.md, "Get ideas for my own time": a trip away takes precedence over home city.
+test("signed solo concierge uses the trip city while the member is away", async () => {
+  await server.stop(true);
+  await service.close();
+  await start(undefined, true);
+  try {
+    const visitor = "+12125550161", away = "+12125550162";
+    const join = async (phone: string, homeCity: "nyc" | "chicago") => {
+      await service.accounts.invite(APPS.friends, phone);
+      const person = (await service.accounts.personFor(phone))!;
+      const joined = await service.accounts.join(APPS.friends, { e164: phone, personId: person.id }, {
+        firstName: "Ari", age: 20, homeCity, interests: ["nature"],
+        consent: { sms: true, wording: APPS.friends.consent.text },
+      });
+      if (!joined.ok) throw new Error("Concierge trip fixture join failed");
+      return joined.membership.memberId;
+    };
+    const visitorId = await join(visitor, "chicago");
+    const awayId = await join(away, "nyc");
+    const trip = (member: string, city: string) => sql`insert into network.presence (app_id, member_id, city, type, from_at, to_at)
+      values ('friends', ${member}, ${city}, 'temporary', ${new Date("2026-10-09T04:00:00Z")}, ${new Date("2026-10-12T04:00:00Z")})`;
+    await trip(visitorId, "nyc");
+    await trip(awayId, "chicago");
+    clock.advance(2 * MINUTE);
+    expect(await importPublicEvents(sql, clock, async () => Response.json([{
+      guid: "210", title: "Harbor nature walk", categories: "Nature | All ages", location: "McCarren Park", coordinates: "40.7206,-73.9518",
+      starttime: "2026-10-10T14:00:00", endtime: "2026-10-10T15:00:00",
+      link: { url: "https://www.nycgovparks.org/events/2026/10/10/harbor-nature-walk-210" },
+    }]))).toEqual({ published: true, events: 1 });
+    const visiting = await (await post(turn("visiting-solo-events", visitor, "Anything fun this weekend?", "friends"))).json();
+    expect(visiting).toMatchObject({ outcome: "handled", app: "friends", reason: "solo_events" });
+    expect(visiting.replies[0]).toContain("Harbor nature walk");
+    const awayAnswer = await (await post(turn("away-solo-events", away, "Anything fun this weekend?", "friends"))).json();
+    expect(awayAnswer).toMatchObject({ outcome: "handled", app: "friends", reason: "solo_events" });
+    expect(awayAnswer.replies[0]).not.toContain("Harbor nature walk");
+    expect(awayAnswer.replies[0]).not.toContain("NYC Parks");
+  } finally {
+    await server.stop(true);
+    await service.close();
+    await start();
+  }
+}, 60_000);
+
 // spec/contributionHistory.md, "Show verified acts a page at a time"
 test("signed contribution history scopes verified acts to the current adult and app", async () => {
   await server.stop(true);
