@@ -857,11 +857,15 @@ export function extractRedLineTags(body: string): string[] {
   return [...tags];
 }
 
-const DRINKING_TAGS: ReadonlySet<string> = new Set(["strict_sober", "non_drinker"]);
 const OWN_DRINKING_CUE = /\b(?:i|i'm|im|i've|ive|my)\b/;
 const DRINKING_BLOCK = /\b(?:if|unless|would|could|should|maybe|might|wish|whether|suppose|hypothetically|thinking|considering|planning|used to|formerly|said|says|told|asked|texted|wrote|posted|friend|friends|sister|brother|mom|dad|mother|father|partner|wife|husband|son|daughter|kid|kids|child|children|roommate|coworker|he|she|they|him|her|them|his|hers|their)\b/;
 const DRINKING_NEGATED_SOBER = /\b(?:not|n't|no longer|never)\s+(?:strictly\s+)?sober\b|\bdrinking again\b|\bfell off\b/;
-const DRINK_NONALCOHOL = /\bdrink(?:s|ing)?\s+(?:much|often|coffee|tea|soda|milk|water|juice)\b|\bdrink\s+enough\b|\bdrink and drive\b/;
+/** A moment, not a standing fact: "sober now", "stayed sober last night", "don't drink on weeknights". */
+const DRINKING_SITUATIONAL = /\b(?:now|tonight|today|last night|this week|weeknights?|weekdays?|weekends?|before|while|enough|an hour ago)\b|\b(?:stayed|remained|got)\s+sober\b/;
+/** Standing sobriety: "I'm sober", "in recovery", "alcohol-free", "sober for 3 years". */
+const STANDING_SOBER = /\b(?:i'?m|i am|im|i'?ve been|ive been|i have been|been)\s+(?:strictly\s+)?sober\b|\bstrictly\s+sober\b|\bsober\s+(?:for\s+\d+|since|lifestyle|living|only)\b|\bin\s+recovery\b|\brecovering\s+alcoholic\b|\b12[- ]?step\b|\bin\s+aa\b|\balcohol[- ]?free\b|\bcan'?t\s+be\s+around\s+alcohol\b|\bavoid(?:ing)?\s+bars?\b|\bdon'?t\s+go\s+to\s+bars?\b|\bno\s+bars?\b|\bno\s+alcohol\b|\bzero\s+alcohol\b|\bnot\s+around\s+alcohol\b/;
+/** Standing abstinence: "don't drink" said of alcohol itself, not of one drink or one evening. */
+const STANDING_NONDRINKER = /\bnon[- ]?drinker\b|\bteetotal(?:er)?\b|\b(?:don'?t|do\s+not|never)\s+drink(?:\s+(?:alcohol|booze|liquor|at\s+all|anymore|ever))?\s*$|\b(?:don'?t|do\s+not|never)\s+drink\s+(?:alcohol|booze|liquor)\s+(?:anymore|ever|at\s+all)\s*$|\bno\s+drinking\s*$/;
 
 /** Drinking tags the sender states about themselves in a member-initiated text. */
 export function ownDrinkingTags(body: string): string[] {
@@ -875,12 +879,10 @@ export function ownDrinkingTags(body: string): string[] {
       const own = OWN_DRINKING_CUE.test(clause);
       if (own) ownCueSeen = true;
       const continuation = ownCueSeen && /^\s*(?:and\s+)?(?:am|stay|keep)\b/.test(clause);
-      if ((!own && !continuation) || DRINKING_BLOCK.test(clause) || DRINKING_NEGATED_SOBER.test(clause)) continue;
-      for (const tag of extractRedLineTags(clause)) {
-        if (!DRINKING_TAGS.has(tag)) continue;
-        if (tag === "non_drinker" && DRINK_NONALCOHOL.test(clause)) continue;
-        tags.add(tag);
-      }
+      if ((!own && !continuation) || DRINKING_BLOCK.test(clause) || DRINKING_NEGATED_SOBER.test(clause) || DRINKING_SITUATIONAL.test(clause)) continue;
+      const c = clause.trim().replace(/[.!?]+$/, "");
+      if (STANDING_SOBER.test(c)) tags.add("strict_sober");
+      if (STANDING_NONDRINKER.test(c)) tags.add("non_drinker");
     }
   }
   return [...tags];

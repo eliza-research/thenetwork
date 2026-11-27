@@ -2136,7 +2136,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (this.opts.onboardingRequests && c.kind === "people_request" && c.desireId && c.category !== "social" && !m.minor) this.openRequest(m, c, { quiet: true });
       return;
     }
-    if (this.learnDrinking(m, body, !isRequest) && !isRequest) return;
+    this.learnDrinking(m, body, !isRequest);
     if (!isRequest && m.stage !== "active") this.activate(m); // onboarding stalled; carry on
     if (isRequest && m.stage !== "active") { this.activate(m); m.awaiting = undefined; }
     if (c.kind === "people_request" && (!m.minor || this.teenAdmitted(m.id))) return this.openRequest(m, c, {});
