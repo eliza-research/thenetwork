@@ -542,6 +542,9 @@ export interface VipInviteValidationResult {
 export const MAX_VIP_INVITE_WORDS = 75;
 export const MIN_VIP_FOLLOWUP_DAYS = 14;
 
+const VIP_OPT_OUT_FOOTER = "Reply STOP to opt out.";
+const VIP_OPT_OUT_PATTERN = /\b(?:reply\s+stop|opt[\s-]?out|unsubscribe|don't\s+email|do\s+not\s+email)\b/i;
+
 const WEAK_HOOK_FALLBACK_PATTERN =
   /(open_data|dohmh|nys_sla|hn_show|arxiv_|manual_ui|public\s+discovery\s+slot|your\s+recent\s+work\s+at)/i;
 
@@ -825,6 +828,7 @@ export class VipDiscoveryEngine {
           : `Know ${peerDesc} in ${cityPack.label} you might genuinely enjoy 20 minutes with. ${archetype.antiAnnoyanceDisarm}`,
         `Happy to connect you two with zero strings — totally fine to pass.`,
         `— ${input.senderName}`,
+        VIP_OPT_OUT_FOOTER,
       ].join("\n\n");
     } else {
       subject =
@@ -839,6 +843,7 @@ export class VipDiscoveryEngine {
         `Hosting ${archetype.roomFraming} ${night} in ${neighborhood}${confirmedSeatClause}. ${archetype.antiAnnoyanceDisarm}`,
         `Happy to save you a seat if timing works — totally fine to pass.`,
         `— ${input.senderName}`,
+        VIP_OPT_OUT_FOOTER,
       ].join("\n\n");
     }
 
@@ -887,6 +892,10 @@ export class VipDiscoveryEngine {
       if (rule.re.test(fullText)) {
         errors.push(rule.label);
       }
+    }
+
+    if (!VIP_OPT_OUT_PATTERN.test(body)) {
+      errors.push("missing_can_spam_opt_out");
     }
 
     const leakReasons = this.leakGuard.check(fullText);
@@ -949,7 +958,7 @@ export class VipDiscoveryEngine {
       };
     }
     const name = firstName.trim() || "there";
-    const body = `Hi ${name} — quick final note in case last month was packed. Still happy to connect you on the ${topicLabel} intro if useful; otherwise I will leave you be. — ${senderName}`;
+    const body = `Hi ${name} — quick final note in case last month was packed. Still happy to connect you on the ${topicLabel} intro if useful; otherwise I will leave you be. — ${senderName}\n\n${VIP_OPT_OUT_FOOTER}`;
     return {
       allowed: true,
       touch: 2,

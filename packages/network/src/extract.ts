@@ -38,6 +38,68 @@ const AREAS = new Set<string>([
   ...allNeighborhoods().map(n => n.name),
   ...Object.values(CITIES).flatMap(c => c.neighborhoods.map(n => n.name)),
 ]);
+/** Longest member text sent to the model verbatim; longer texts are cleanly windowed (start + end). */
+export const MAX_UNDERSTAND_CHARS = 1200;
+const UNDERSTAND_CACHE_MAX_ENTRIES = 512;
+const UNDERSTAND_PROMPT_CACHE_KEY = "network_understand_v1";
+const understandCaches = new WeakMap<LLM, Map<string, Understood>>();
+
+function understandCacheGet(llm: LLM, key: string): Understood | undefined {
+  const map = understandCaches.get(llm);
+  if (!map) return undefined;
+  const hit = map.get(key);
+  if (!hit) return undefined;
+  map.delete(key);
+  map.set(key, hit);
+  return {
+    ...hit,
+    ...(hit.times ? { times: [...hit.times] } : {}),
+    wants: [...hit.wants],
+    notWanted: [...hit.notWanted],
+    interests: [...hit.interests],
+    skills: [...hit.skills],
+  };
+}
+
+function understandCacheSet(llm: LLM, key: string, value: Understood): void {
+  let map = understandCaches.get(llm);
+  if (!map) {
+    map = new Map();
+    understandCaches.set(llm, map);
+  }
+  map.delete(key);
+  map.set(key, {
+    ...value,
+    ...(value.times ? { times: [...value.times] } : {}),
+    wants: [...value.wants],
+    notWanted: [...value.notWanted],
+    interests: [...value.interests],
+    skills: [...value.skills],
+  });
+  while (map.size > UNDERSTAND_CACHE_MAX_ENTRIES) {
+    const oldest = map.keys().next().value;
+    if (oldest === undefined) break;
+    map.delete(oldest);
+  }
+}
+
+/** Safely window long voice-to-text ramblers while preserving start and end context. */
+export function excerptForUnderstand(body: string, maxChars = MAX_UNDERSTAND_CHARS): string {
+  const trimmed = body.trim();
+  if (trimmed.length <= maxChars) return trimmed;
+  const divider = "\n...\n";
+  const budget = Math.max(0, maxChars - divider.length);
+  const headBudget = Math.floor(budget * 0.65);
+  const tailBudget = budget - headBudget;
+  let head = trimmed.slice(0, headBudget);
+  const headBreak = head.lastIndexOf(" ");
+  if (headBreak > Math.floor(headBudget * 0.7)) head = head.slice(0, headBreak);
+  let tail = trimmed.slice(trimmed.length - tailBudget);
+  const tailBreak = tail.indexOf(" ");
+  if (tailBreak >= 0 && tailBreak < Math.floor(tailBudget * 0.3)) tail = tail.slice(tailBreak + 1);
+  return `${head.trimEnd()}${divider}${tail.trimStart()}`.slice(0, maxChars);
+}
+
 const SYSTEM_PREFIX_STATIC = [
   "You read one text message that a member sent to a matchmaking agent, and you report what it says as JSON.",
   UNTRUSTED_NOTE,
@@ -68,8 +130,6 @@ function systemPromptForCity(city?: City): string {
   }
   return prompt;
 }
-/** Longest member text sent to the model. Longer texts use the offline reading only. */
-export const MAX_UNDERSTAND_CHARS = 1200;
 
 /** The prompt. Exported for the prompt-injection tests. */
 export function understandPrompt(body: string, ctx: UnderstandContext): ChatMessage[] {
@@ -125,25 +185,39 @@ export function validateUnderstood(raw: unknown, ctx: UnderstandContext = {}): U
  */
 export function llmUnderstand(
   llm: LLM,
-  o: { maxTokens?: number; attempts?: number; deadlineMs?: number; cache?: LLMCacheOptions } = {},
+  o: { maxTokens?: number; attempts?: number; deadlineMs?: number; cache?: boolean | LLMCacheOptions } = {},
 ): Understand {
-  const baseClient: LLM = o.cache ? withLLMCache(llm, o.cache) : llm;
-  const tunedClient: LLM = {
-    chat: (messages, chatOpts) =>
-      baseClient.chat(messages, {
-        ...chatOpts,
-        reasoningEffort: "low",
-        promptCacheKey: "network-understand-v1",
-      }),
-  };
+  const hasExternalCache = typeof o.cache === "object" && o.cache !== null;
+  const baseClient: LLM = hasExternalCache ? withLLMCache(llm, o.cache as LLMCacheOptions) : llm;
+  const useLocalCache = !hasExternalCache && (o.cache ?? true);
   return async (body, ctx) => {
-    if (!body.trim() || body.length > MAX_UNDERSTAND_CHARS) return undefined;
-    const r = await tryChatJson(tunedClient, understandPrompt(maskPii(body), ctx), raw => validateUnderstood(raw, ctx), {
+    const trimmed = body.trim();
+    if (!trimmed) return undefined;
+    const masked = maskPii(excerptForUnderstand(trimmed, MAX_UNDERSTAND_CHARS));
+    const cacheKey = useLocalCache
+      ? JSON.stringify({
+        city: ctx.city ?? "nyc",
+        awaiting: (ctx.awaiting ?? "").trim().toLowerCase(),
+        options: (ctx.options ?? []).map(opt => `${opt.key}=${opt.label.trim().toLowerCase()}`),
+        body: masked.replace(/\s+/g, " ").trim(),
+      })
+      : undefined;
+    if (cacheKey) {
+      const hit = understandCacheGet(llm, cacheKey);
+      if (hit) return hit;
+    }
+    const r = await tryChatJson(baseClient, understandPrompt(masked, ctx), raw => validateUnderstood(raw, ctx), {
       attempts: o.attempts ?? 2,
       maxTokens: o.maxTokens ?? 800,
       deadlineMs: o.deadlineMs ?? 8_000,
+      reasoningEffort: "low",
+      promptCacheKey: UNDERSTAND_PROMPT_CACHE_KEY,
     });
-    return r.ok ? r.value : undefined;
+    if (r.ok) {
+      if (cacheKey) understandCacheSet(llm, cacheKey, r.value);
+      return r.value;
+    }
+    return undefined;
   };
 }
 

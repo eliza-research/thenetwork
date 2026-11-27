@@ -30,6 +30,7 @@ import {
   RENTAHUMAN_MCP_ENDPOINT,
   renderMarketingEmailTemplate,
 } from "./constants.ts";
+import { detectUnderageText } from "./llm-cache.ts";
 import type { NetworkCoreBridge } from "./network-bridge.ts";
 import { VETTED_NYC_AGENCIES } from "./nyc-seed.ts";
 import {
@@ -229,6 +230,21 @@ function formatUsd(cents: number): string {
   return (cents / 100).toFixed(2);
 }
 
+function splitShiftHours(shiftHours: string): { startTime: string; endTime: string } {
+  const withoutDuration = shiftHours.replace(/\s*\([^)]*\)\s*/g, " ").trim();
+  const rangeMatch = /^(.+?)\s*(?:–|—|-|\bto\b)\s*(.+)$/i.exec(withoutDuration);
+  if (rangeMatch?.[1] && rangeMatch[2]) {
+    return {
+      startTime: rangeMatch[1].trim(),
+      endTime: rangeMatch[2].trim(),
+    };
+  }
+  return {
+    startTime: withoutDuration || "1:00 PM",
+    endTime: "5:00 PM",
+  };
+}
+
 function defaultContractorMode(role: HiringRole): "1099_direct" | "w2_agency" | "creator_direct" {
   if (role === "agency_booking") return "w2_agency";
   if (role === "creator_video") return "creator_direct";
@@ -351,12 +367,18 @@ export class CrowdsourcingEngine {
           ? `$30/hr + Bonus — ${cityLabel} Live Event Activator (${neighborhood}, ${marketingAdultAge}+)`
           : `$22/hr + Bonus — ${cityLabel} Hand-to-Hand Flier Street Team (${neighborhood}, ${marketingAdultAge}+)`;
 
+    const { startTime, endTime } = splitShiftHours(shiftHours);
     const renderedCl = renderMarketingEmailTemplate("craigslist_gig_post", {
+      CITY_LABEL: cityLabel,
+      CITY_CODE: cityCode.toUpperCase(),
       NEIGHBORHOOD: neighborhood,
       SHIFT_DATE: shiftDate,
-      START_TIME: shiftHours,
-      END_TIME: "end of shift",
+      START_TIME: startTime,
+      END_TIME: endTime,
       LANDMARK_AND_NEIGHBORHOOD: `${neighborhood} (${cityLabel})`,
+      LOCAL_ANTI_POSTING: antiPostingNotice,
+      LOCAL_TRANSIT_RULE: mtaExclusionNotice,
+      LOCAL_LABOR_STATUTE: localLaborNote,
     });
 
     const craigslistBody = [
@@ -406,12 +428,16 @@ export class CrowdsourcingEngine {
     };
 
     const renderedAgency = renderMarketingEmailTemplate("agency_rfp", {
+      CITY_LABEL: cityLabel,
       AGENCY_NAME: `${cityLabel} Staffing Partner`,
       TARGET_DATES: shiftDate,
       HEADCOUNT: "2",
       NEIGHBORHOODS: `${neighborhood} (${cityLabel})`,
       SHIFT_HOURS: shiftHours,
       BUDGET_CAP: budgetUsd,
+      LOCAL_ANTI_POSTING: antiPostingNotice,
+      LOCAL_TRANSIT_RULE: mtaExclusionNotice,
+      LOCAL_LABOR_STATUTE: localLaborNote,
     });
     const targetAgencies =
       cityCode === "nyc"
@@ -433,6 +459,7 @@ export class CrowdsourcingEngine {
     ];
 
     const renderedCreator = renderMarketingEmailTemplate("creator_street_interview_brief", {
+      CITY_LABEL: cityLabel,
       CREATOR_NAME: "Creator",
       RECENT_VIDEO_TITLE: `your recent ${cityLabel} street video`,
       NEIGHBORHOOD: neighborhood,
@@ -443,6 +470,7 @@ export class CrowdsourcingEngine {
       RELEASE_FORM_URL: releaseFormUrl,
       CREATOR_CONTRACT_URL: contractUrl,
       TARGET_PUBLISH_DATE: shiftDate,
+      LOCAL_LABOR_STATUTE: localLaborNote,
     });
 
     const creatorBrief = {
@@ -556,12 +584,20 @@ export class CrowdsourcingEngine {
       }
     }
 
-    const effectiveAge = minAgeReading(input.statedAge, persistedHuman?.lowestAge);
-    if (!isAdultReading(effectiveAge)) {
-      if (persistedHuman && effectiveAge !== null && effectiveAge < marketingAdultAge) {
+    const detectedUnderage = detectUnderageText(input.replyText);
+    const effectiveAge = minAgeReading(
+      input.statedAge,
+      persistedHuman?.lowestAge,
+      detectedUnderage.statedAge,
+    );
+    if (detectedUnderage.isMinor || !isAdultReading(effectiveAge)) {
+      if (
+        persistedHuman &&
+        (detectedUnderage.isMinor || (effectiveAge !== null && effectiveAge < marketingAdultAge))
+      ) {
         await this.store.recordContactSuppression({
           contactHash: persistedHuman.handleOrEmailHmac,
-          reason: "underage_applicant",
+          reason: detectedUnderage.reason ?? "underage_applicant",
           sourceChannel: persistedHuman.channel,
           isMinor: true,
         });

@@ -1,4 +1,4 @@
-import { detectExternalPromptInjection } from "./externalEvents.ts";
+import { detectExternalPromptInjection, parseAdult18PlusAnswer, type ParseAdult18PlusOptions } from "./externalEvents.ts";
 import {
   canContactExternalProspect,
   canInviteExternalProspectToNetwork,
@@ -36,7 +36,8 @@ import {
   type RouteMatchmakerPersonaInput,
 } from "./generated/externalMatchmaker.ts";
 import { contactVariants, findContactKinds, textVariants } from "./guard.ts";
-import { ADULT_AGE, canBeMatched, isMinor } from "./policy.ts";
+import { ADULT_AGE, canBeMatched, isMinor, relayMinorAge, relayMinorEstimate } from "./policy.ts";
+import { parseOptOut, parseReply, type ReplyAnswer } from "./replies.ts";
 import { clampSms, cleanPhrase, validateOutboundSms } from "./smsCopy.ts";
 import type { AppId, CityId } from "./types.ts";
 
@@ -1075,23 +1076,253 @@ export function validateMatchmakerOutboundScript(
   return issues;
 }
 
+export type MatchmakerTone = "standard" | "casual";
+export type PronounSubject = "she's" | "he's" | "they're";
+
+export function possessiveFor(pronounSubject: PronounSubject): "her" | "his" | "their" {
+  if (pronounSubject === "she's") return "her";
+  if (pronounSubject === "he's") return "his";
+  return "their";
+}
+
+function capitalizeSubject(pronounSubject: PronounSubject, tone: MatchmakerTone): string {
+  if (tone === "casual") return pronounSubject;
+  return pronounSubject[0]!.toUpperCase() + pronounSubject.slice(1);
+}
+
+function formatAgeBandPhrase(pronounSubject: PronounSubject, rawAgeBand: string): string {
+  const band = cleanPhrase(rawAgeBand);
+  if (!band) return "";
+  if (/^(?:in\s+|aged\s+)/i.test(band)) return band;
+  if (/^\d{2}\s*[-–]\s*\d{2}$/.test(band)) return `aged ${band}`;
+  if (/^(?:(?:early|mid|late)\s+)?\d{2}s$/i.test(band)) {
+    return `in ${possessiveFor(pronounSubject)} ${band}`;
+  }
+  return band;
+}
+
+export type ExternalProspectIntent =
+  | "stop"
+  | "underage"
+  | "injection"
+  | "skepticism"
+  | "romantic_redirect"
+  | "photo_or_social_ask"
+  | "accept"
+  | "decline"
+  | "counter"
+  | "unclear";
+
+export interface ExternalProspectReplyReading {
+  intent: ExternalProspectIntent;
+  answer: ReplyAnswer;
+  optOut: boolean;
+  underage: boolean;
+  confirmedAdult18Plus: boolean;
+  injectionLabel: string | null;
+  phoneE164?: string;
+  counter: boolean;
+  reason: string;
+}
+
+const PROSPECT_UNDERAGE_RE =
+  /\b(?:under\s*18|underage|not\s+(?:yet\s+)?18|turning\s*18|almost\s*18|high\s+school|middle\s+school|soy\s+menor|menor\s+de\s+edad|tengo\s+(?:1[0-7]|[1-9])(?:\s*a[nñ]os?)?|(?:\b(?:1[0-7]|[1-9])\s*(?:y\/?o|y(?:ears?|rs?)[\s-]*old)))\b/i;
+const PROSPECT_SKEPTICISM_RE =
+  /\b(?:are\s+you\s+(?:a\s+)?(?:bot|ai|real|human|scam(?:mer)?)|is\s+this\s+(?:a\s+)?(?:bot|ai|scam|fake|spam|real)|you\s+(?:a\s+)?(?:bot|scam(?:mer)?|catfish)|sounds?\s+(?:like\s+a\s+)?(?:scam|fake|sketchy|spam)|selling\s+something|what'?s\s+the\s+catch)\b/i;
+const PROSPECT_PHOTO_OR_SOCIAL_RE =
+  /\b(?:send\s+(?:a\s+)?(?:pic|pics|photo|photos|picture|selfie)|see\s+(?:a\s+)?(?:pic|photo|picture)|what\s+(?:does|do)\s+(?:he|she|they)\s+look\s+like|instagram|insta\b|\big\b|snapchat|linkedin|socials?|last\s+name|full\s+name|their\s+(?:number|phone)|(?:his|her)\s+(?:number|phone))\b/i;
+const PROSPECT_ROMANTIC_REDIRECT_RE =
+  /\b(?:what\s+about\s+you|rather\s+(?:date|meet|go\s+out\s+with)\s+you|take\s+you\s+out|are\s+you\s+single|date\s+you\s+instead|just\s+you\s+and\s+me)\b/i;
+const PROSPECT_PHONE_RE = /(?:\+?1[\s.-]?)?\(?([2-9]\d{2})\)?[\s.-]?([2-9]\d{2})[\s.-]?(\d{4})\b/;
+
+function extractUsPhoneE164(text: string): string | undefined {
+  const m = PROSPECT_PHONE_RE.exec(text);
+  if (!m) return undefined;
+  return `+1${m[1]}${m[2]}${m[3]}`;
+}
+
+/** Parse a free-text reply from an external dating/friends prospect with fail-closed safety priority. */
+export function parseExternalProspectReply(
+  text: string,
+  opts: ParseAdult18PlusOptions = {}
+): ExternalProspectReplyReading {
+  const raw = (text ?? "").trim();
+  const injectionLabel = detectExternalPromptInjection(raw);
+  if (injectionLabel) {
+    return {
+      intent: "injection",
+      answer: "unsure",
+      optOut: false,
+      underage: false,
+      confirmedAdult18Plus: false,
+      injectionLabel,
+      counter: false,
+      reason: `injection:${injectionLabel}`,
+    };
+  }
+
+  const optOut = parseOptOut(raw).match !== "none";
+  if (optOut) {
+    return {
+      intent: "stop",
+      answer: "no",
+      optOut: true,
+      underage: false,
+      confirmedAdult18Plus: false,
+      injectionLabel: null,
+      counter: false,
+      reason: "opt_out",
+    };
+  }
+
+  const underage =
+    relayMinorAge(raw, true) !== undefined ||
+    relayMinorEstimate(raw) ||
+    PROSPECT_UNDERAGE_RE.test(raw);
+  if (underage) {
+    return {
+      intent: "underage",
+      answer: "no",
+      optOut: false,
+      underage: true,
+      confirmedAdult18Plus: false,
+      injectionLabel: null,
+      counter: false,
+      reason: "underage",
+    };
+  }
+
+  const confirmedAdult18Plus = parseAdult18PlusAnswer(raw, opts);
+  const phoneE164 = extractUsPhoneE164(raw);
+  const reply = parseReply(raw);
+
+  if (PROSPECT_SKEPTICISM_RE.test(raw)) {
+    return {
+      intent: "skepticism",
+      answer: reply.answer,
+      optOut: false,
+      underage: false,
+      confirmedAdult18Plus,
+      injectionLabel: null,
+      ...(phoneE164 ? { phoneE164 } : {}),
+      counter: reply.counter,
+      reason: "skepticism",
+    };
+  }
+
+  if (PROSPECT_PHOTO_OR_SOCIAL_RE.test(raw)) {
+    return {
+      intent: "photo_or_social_ask",
+      answer: reply.answer,
+      optOut: false,
+      underage: false,
+      confirmedAdult18Plus,
+      injectionLabel: null,
+      ...(phoneE164 ? { phoneE164 } : {}),
+      counter: reply.counter,
+      reason: "photo_or_social_ask",
+    };
+  }
+
+  if (PROSPECT_ROMANTIC_REDIRECT_RE.test(raw)) {
+    return {
+      intent: "romantic_redirect",
+      answer: reply.answer,
+      optOut: false,
+      underage: false,
+      confirmedAdult18Plus,
+      injectionLabel: null,
+      ...(phoneE164 ? { phoneE164 } : {}),
+      counter: reply.counter,
+      reason: "romantic_redirect",
+    };
+  }
+
+  if (reply.answer === "no") {
+    return {
+      intent: "decline",
+      answer: "no",
+      optOut: false,
+      underage: false,
+      confirmedAdult18Plus: false,
+      injectionLabel: null,
+      counter: reply.counter,
+      reason: reply.reason,
+    };
+  }
+
+  if (reply.counter) {
+    return {
+      intent: "counter",
+      answer: reply.answer,
+      optOut: false,
+      underage: false,
+      confirmedAdult18Plus,
+      injectionLabel: null,
+      ...(phoneE164 ? { phoneE164 } : {}),
+      counter: true,
+      reason: reply.reason,
+    };
+  }
+
+  if (reply.answer === "yes" || confirmedAdult18Plus || Boolean(phoneE164)) {
+    return {
+      intent: "accept",
+      answer: "yes",
+      optOut: false,
+      underage: false,
+      confirmedAdult18Plus,
+      injectionLabel: null,
+      ...(phoneE164 ? { phoneE164 } : {}),
+      counter: false,
+      reason: phoneE164 ? "phone_provided" : confirmedAdult18Plus && reply.answer !== "yes" ? "adult_confirmed" : reply.reason,
+    };
+  }
+
+  return {
+    intent: "unclear",
+    answer: "unsure",
+    optOut: false,
+    underage: false,
+    confirmedAdult18Plus: false,
+    injectionLabel: null,
+    counter: false,
+    reason: reply.reason,
+  };
+}
+
+export const parseMatchmakerReply = parseExternalProspectReply;
+
 export function buildDatingOpenerScript(params: {
   prospectFirstName: string;
   cityName: string;
   promptDetail?: string;
   isReplyFollowup?: boolean;
+  tone?: MatchmakerTone;
 }): string {
+  const tone = params.tone ?? "standard";
   const name = cleanPhrase(params.prospectFirstName.trim().split(/\s+/)[0] || "there");
   const city = cleanPhrase(params.cityName);
   if (params.isReplyFollowup) {
+    if (tone === "casual") {
+      return clampSms(
+        `haha fair — full disclosure i'm actually playing matchmaker in ${city} right now, not looking for myself. i've got someone great i'd love to connect you with if you're interested — mind if i set it up?`
+      );
+    }
     return clampSms(
-      `haha fair — full disclosure i'm actually playing matchmaker in ${city} right now, not looking for myself. i've got someone great i'd love to connect you with if you're interested — mind if i set it up?`
+      `Fair enough — full disclosure, I'm working as a local matchmaker in ${city}, not dating here myself. I have someone great I'd love to introduce you to — would you be open to me setting it up?`
     );
   }
   const detail = cleanPhrase(params.promptDetail || "your profile");
+  if (tone === "casual") {
+    return clampSms(
+      `hey ${name} — quick heads up so i'm not wasting your time: i'm actually a local matchmaker here in ${city} (not dating on here myself). saw your prompt about ${detail} and i've got someone great i'd love to connect you with — mind if i set it up?`,
+      `hey ${name} — full disclosure i'm a local matchmaker in ${city} (not dating on here myself) and i've got someone great to connect you with — mind if i set it up?`
+    );
+  }
   return clampSms(
-    `hey ${name} — quick heads up so i'm not wasting your time: i'm actually a local matchmaker here in ${city} (not dating on here myself). saw your prompt about ${detail} and i've got someone great i'd love to connect you with — mind if i set it up?`,
-    `hey ${name} — full disclosure i'm a local matchmaker in ${city} (not dating on here myself) and i've got someone great to connect you with — mind if i set it up?`
+    `Hi ${name} — quick heads up so I'm transparent: I'm a local matchmaker in ${city} (not dating here myself). I noticed your note about ${detail} and have someone great I'd love to introduce you to. Would you be open to me setting it up?`,
+    `Hi ${name} — full disclosure, I'm a local matchmaker in ${city} (not dating here myself) and have someone great to introduce you to. Would you be open to me setting it up?`
   );
 }
 
@@ -1102,44 +1333,90 @@ export function buildFriendsMeetupOpenerScript(params: {
   neighborhood: string;
   dayLabel: string;
   timeLabel: string;
+  tone?: MatchmakerTone;
 }): string {
+  const tone = params.tone ?? "standard";
   const name = cleanPhrase(params.prospectFirstName.trim().split(/\s+/)[0] || "there");
   const hobby = cleanPhrase(params.hobbyOrNeighborhood);
   const activity = cleanPhrase(params.activity);
   const hood = cleanPhrase(params.neighborhood);
   const day = cleanPhrase(params.dayLabel);
   const time = cleanPhrase(params.timeLabel);
+  if (tone === "casual") {
+    return clampSms(
+      `hey ${name} — saw you're into ${hobby}. i organize small 4-5 person ${activity} hangs in ${hood} for people new in town or looking to make new friends (platonic group). doing one ${day} around ${time} — want me to save you a spot?`,
+      `hey ${name} — i organize small 4-5 person ${activity} hangs in ${hood} (platonic group). doing one ${day} around ${time} — want me to save you a spot?`
+    );
+  }
   return clampSms(
-    `hey ${name} — saw you're into ${hobby}. i organize small 4-5 person ${activity} hangs in ${hood} for folks new-ish or looking to expand their circle (totally platonic). doing one ${day} around ${time} — want me to save you a spot?`,
-    `hey ${name} — i organize small 4-5 person ${activity} hangs in ${hood} (totally platonic). doing one ${day} around ${time} — want me to save you a spot?`
+    `Hi ${name} — I noticed you enjoy ${hobby}. I host small 4-5 person ${activity} meetups in ${hood} for people new in town or looking to make new friends (platonic group). We're meeting ${day} around ${time} — would you like me to save you a spot?`,
+    `Hi ${name} — I host small 4-5 person ${activity} meetups in ${hood} (platonic group). We're meeting ${day} around ${time} — would you like me to save you a spot?`
   );
 }
 
-export function buildQualificationAgeRedLineScript(): string {
-  return "awesome. quick sanity check so i don't waste your evening — can you confirm you're 18+ and share any hard dealbreakers (drinking/sober, smoking, dietary, or what you're looking for)?";
+export function buildQualificationAgeRedLineScript(
+  opts: { tone?: MatchmakerTone; step?: "age" | "preferences" } = {}
+): string {
+  const tone = opts.tone ?? "standard";
+  const step = opts.step ?? "age";
+  if (step === "preferences") {
+    if (tone === "casual") {
+      return "thanks! any hard dealbreakers i should keep in mind before i suggest someone (like drinking/sober, smoking, or dietary needs)?";
+    }
+    return "Thank you. Are there any dealbreakers I should know before I suggest someone — such as drinking, smoking, dietary needs, or what you're looking for?";
+  }
+  if (tone === "casual") {
+    return "awesome. quick check first — can you confirm you're 18 or older?";
+  }
+  return "Great — quick check before we go further: can you confirm you are 18 or older?";
+}
+
+export function buildQualificationPreferencesScript(opts: { tone?: MatchmakerTone } = {}): string {
+  return buildQualificationAgeRedLineScript({ tone: opts.tone, step: "preferences" });
 }
 
 export function buildAnonymizedMemberPitchScript(params: {
-  pronounSubject: "she's" | "he's" | "they're";
+  pronounSubject: PronounSubject;
   ageBand: string;
   neighborhood: string;
   interests: string;
   goal: string;
   activity: string;
+  tone?: MatchmakerTone;
 }): string {
-  const ageBand = cleanPhrase(params.ageBand);
+  const tone = params.tone ?? "standard";
+  const subject = capitalizeSubject(params.pronounSubject, tone);
+  const agePhrase = formatAgeBandPhrase(params.pronounSubject, params.ageBand);
   const hood = cleanPhrase(params.neighborhood);
   const interests = cleanPhrase(params.interests);
   const goal = cleanPhrase(params.goal);
   const activity = cleanPhrase(params.activity);
+  const agePart = agePhrase ? ` ${agePhrase},` : "";
+  if (tone === "casual") {
+    return clampSms(
+      `${subject}${agePart} lives near ${hood}, super into ${interests}, and looking for ${goal}. sound like someone you'd want to grab ${activity} with?`,
+      `${subject}${agePart} near ${hood}, into ${interests}. sound like someone you'd want to grab ${activity} with?`
+    );
+  }
   return clampSms(
-    `${params.pronounSubject} in ${ageBand}, lives near ${hood}, super into ${interests}, and looking for ${goal}. sound like someone you'd want to grab ${activity} with?`,
-    `${params.pronounSubject} in ${ageBand} near ${hood}, into ${interests}. sound like someone you'd want to grab ${activity} with?`
+    `${subject}${agePart} lives near ${hood}, enjoys ${interests}, and is looking for ${goal}. Does that sound like someone you'd enjoy meeting for ${activity}?`,
+    `${subject}${agePart} near ${hood} and enjoys ${interests}. Would you like to meet for ${activity}?`
   );
 }
 
-export function buildSmsOptInScript(memberPronoun: "she's" | "he's" | "they're"): string {
-  return `great — if ${memberPronoun} a yes too, i coordinate the spot and day-of check-in over text so neither of you shares numbers until you meet. what's the best cell number if you're cool getting setup texts from me (text STOP anytime)?`;
+export function buildSmsOptInScript(
+  memberPronoun: PronounSubject,
+  opts: { tone?: MatchmakerTone } = {}
+): string {
+  const tone = opts.tone ?? "standard";
+  if (tone === "casual") {
+    return clampSms(
+      `great — if ${memberPronoun} a yes too, i coordinate the spot and day-of check-in by text so neither of you shares numbers before meeting. reply STOP anytime to opt out; msg & data rates may apply. what's the best cell number for setup texts?`
+    );
+  }
+  return clampSms(
+    `Great — if ${memberPronoun} a yes too, I coordinate the spot and day-of check-in by text so neither of you shares numbers before meeting. Reply STOP anytime to opt out; msg & data rates may apply. What is the best cell number for setup texts?`
+  );
 }
 
 export function buildMemberExpectationScript(cityName: string): string {
@@ -1161,29 +1438,47 @@ export function buildMemberExternalProbeScript(params: {
   const activity = cleanPhrase(params.activity);
   const hood = cleanPhrase(params.neighborhood);
   const times = cleanPhrase(params.timeOptions);
-  const ageBand = cleanPhrase(params.ageBand);
+  const agePhrase = formatAgeBandPhrase("they're", params.ageBand);
   const dist = cleanPhrase(params.distancePhrase);
   const interest = cleanPhrase(params.shareableInterest);
   return clampSms(
-    `Found someone great outside our circle for a first date: ${activity} in ${hood}, ${times}. They're ${ageBand}, ${dist}, and into ${interest}. I'll only share first names and the exact spot if you're both a yes — which time works, or no?`,
-    `Found someone great for a first date: ${activity} in ${hood}, ${times}. They're ${ageBand} and into ${interest}. Which time works, or no?`
+    `Found someone great outside our circle for a first date: ${activity} in ${hood}, ${times}. They're ${agePhrase}, ${dist}, and into ${interest}. I'll only share first names and the exact spot if you're both a yes — which time works, or no?`,
+    `Found someone great for a first date: ${activity} in ${hood}, ${times}. They're ${agePhrase} and into ${interest}. Which time works, or no?`
   );
 }
 
-export function buildBotScamSkepticismScript(personaFirstName: string, cityName: string): string {
+export function buildBotScamSkepticismScript(
+  personaFirstName: string,
+  cityName: string,
+  opts: { tone?: MatchmakerTone } = {}
+): string {
+  const tone = opts.tone ?? "standard";
   const name = cleanPhrase(personaFirstName.trim().split(/\s+/)[0] || "your host");
   const city = cleanPhrase(cityName);
+  if (tone === "casual") {
+    return clampSms(
+      `totally fair to ask — i'm ${name}, a local matchmaker in ${city} using an intro service to set up real in-person meetups. nothing to buy, no links, nothing to sign up for. if it's not your thing, no worries at all and i'll leave you be.`
+    );
+  }
   return clampSms(
-    `totally fair to ask — nope, not a bot, not selling anything, no links, nothing to sign up for. i'm ${name}, a real local matchmaker helping someone in ${city} meet offline. if it sounds weird, no worries at all, i'll leave you be.`
+    `Fair question — I'm ${name}, a local matchmaker in ${city} using an intro service to set up real in-person meetups. Nothing to buy, no links, and nothing to sign up for. If it's not for you, no problem at all and I'll leave you be.`
   );
 }
 
-export function buildRomanticRedirectScript(): string {
-  return "haha i appreciate that! i'm strictly playing matchmaker on here (off the market / just setting people up), not dating myself. totally cool if you're not into blind setups — just let me know.";
+export function buildRomanticRedirectScript(opts: { tone?: MatchmakerTone } = {}): string {
+  const tone = opts.tone ?? "standard";
+  if (tone === "casual") {
+    return "haha i appreciate that! i'm strictly playing matchmaker on here (just setting people up), not dating myself. totally cool if you're not into blind setups — just let me know.";
+  }
+  return "Thank you, that's kind of you to say! I'm strictly working as a matchmaker here to set up introductions, not dating myself. Completely fine if you prefer not to do a setup — just let me know.";
 }
 
-export function buildPhotoOrSocialRefusalScript(): string {
-  return "i keep everyone's name, socials, and contact private until you're both a yes and actually meet — same goes for protecting your privacy too. you two can swap numbers or socials at the table if you click.";
+export function buildPhotoOrSocialRefusalScript(opts: { tone?: MatchmakerTone } = {}): string {
+  const tone = opts.tone ?? "standard";
+  if (tone === "casual") {
+    return "i keep everyone's name, socials, and contact private until you're both a yes and actually meet — same goes for protecting your privacy too. you two can swap numbers or socials at the table if you click.";
+  }
+  return "I keep everyone's name, social profiles, and contact details private until you've both agreed and met in person — the same protects your privacy too. You can always swap numbers at the table if you click.";
 }
 
 export function buildGhostOrFlakeScripts(params: {
@@ -1191,21 +1486,35 @@ export function buildGhostOrFlakeScripts(params: {
   prospectFirstName: string;
   memberFirstName: string;
   venueName: string;
+  memberArrived?: boolean;
+  tone?: MatchmakerTone;
 }): {
   midSetupNudgeToProspect: string;
   midSetupUpdateToMember: string;
   dayOfT12PingToProspect: string;
   dayOfT18ReleaseToMember: string;
 } {
+  const tone = params.tone ?? "standard";
   const day = cleanPhrase(params.dayLabel);
   const prospect = cleanPhrase(params.prospectFirstName.trim().split(/\s+/)[0] || "them");
   const member = cleanPhrase(params.memberFirstName.trim().split(/\s+/)[0] || "your match");
   const venue = cleanPhrase(params.venueName);
+  const dayOfT12 = params.memberArrived
+    ? tone === "casual"
+      ? `${member} is at ${venue} — still heading over?`
+      : `${member} has arrived at ${venue} — are you still on your way?`
+    : tone === "casual"
+      ? `quick check-in before ${venue} — still good to meet ${member}?`
+      : `Quick check-in before ${venue} — are you still on track to meet ${member}?`;
   return {
-    midSetupNudgeToProspect: clampSms(`no rush — still down for ${day} or should i release the slot?`),
+    midSetupNudgeToProspect: clampSms(
+      tone === "casual"
+        ? `no rush — still down for ${day} or should i release the slot?`
+        : `No rush — are you still interested in ${day}, or should I release the time?`
+    ),
     midSetupUpdateToMember:
       "Scheduling didn't line up on their end — I'm already scouting the next person for you.",
-    dayOfT12PingToProspect: clampSms(`${member} is at ${venue} — still heading over?`),
+    dayOfT12PingToProspect: clampSms(dayOfT12),
     dayOfT18ReleaseToMember: clampSms(
       `Haven't heard back from ${prospect} yet — feel free to grab a coffee or head out, no pressure.`
     ),
@@ -1214,20 +1523,31 @@ export function buildGhostOrFlakeScripts(params: {
 
 export function buildMemberDeclinedProspectScript(
   prospectFirstName: string,
-  memberPossessive: "her" | "his" | "their"
+  memberPossessive: "her" | "his" | "their",
+  opts: { tone?: MatchmakerTone } = {}
 ): string {
+  const tone = opts.tone ?? "standard";
   const name = cleanPhrase(prospectFirstName.trim().split(/\s+/)[0] || "there");
+  if (tone === "casual") {
+    return clampSms(
+      `hey ${name}, quick update — timing didn't line up on ${memberPossessive} end this week, so we'll hold off on this one. appreciate you being open to it! want me to keep you in mind for someone else? reply yes to stay on my list, or no and i won't text again.`
+    );
+  }
   return clampSms(
-    `hey ${name}, quick update — timing didn't end up lining up on ${memberPossessive} end this week, so we'll hold off on this one. appreciate you being open to it! want me to keep you in mind if someone else great comes up, or would you rather i not reach out again?`
+    `Hi ${name}, quick update — timing didn't line up on ${memberPossessive} end this week, so we'll hold off on this one. Appreciate you being open to it! Want me to keep you in mind for someone else? Reply yes to stay on my list, or no and I won't text again.`
   );
 }
 
-export function buildProspectDeclinedScripts(): {
+export function buildProspectDeclinedScripts(opts: { tone?: MatchmakerTone } = {}): {
   toProspect: string;
   toMemberIfAlreadyProbed: string;
 } {
+  const tone = opts.tone ?? "standard";
   return {
-    toProspect: "totally get it, thanks for being upfront — have a great week!",
+    toProspect:
+      tone === "casual"
+        ? "totally get it, thanks for being upfront — have a great week!"
+        : "Completely understand, thanks for letting me know — wishing you a great week!",
     toMemberIfAlreadyProbed: "Timing didn't work out on that one — keeping an eye out for the next fit.",
   };
 }
@@ -1255,11 +1575,13 @@ export function buildQualityGatedNetworkInviteScript(
     app?: "slop" | "friends";
     memberFirstName: string;
     cityName: string;
+    tone?: MatchmakerTone;
   }
 ): { ok: true; text: string } | { ok: false; reason: string } {
   if (!canInviteExternalProspectToNetwork(gateInput)) {
     return { ok: false, reason: "quality_gate_failed" };
   }
+  const tone = params.tone ?? "standard";
   const memberName = cleanPhrase(params.memberFirstName.trim().split(/\s+/)[0] || "your host");
   const city = cleanPhrase(params.cityName);
   const isFriends = params.app === "friends" || params.variant === "friends_hang";
@@ -1267,18 +1589,33 @@ export function buildQualityGatedNetworkInviteScript(
   let raw: string;
   let fallback: string;
   if (isFriends) {
-    raw = `so glad you and ${memberName} had a great time! i run a small vetted circle in ${city} where we put together low-key small-group hangs and hobby meetups. since you brought great energy, want an invite to join?`;
-    fallback = `glad you had a great time with ${memberName}! i run a small local circle in ${city} for low-key hangs — want an invite to join?`;
+    if (tone === "casual") {
+      raw = `so glad you and ${memberName} had a great time! i run a small vetted circle in ${city} for low-key group hangs and hobby meetups. reply YES and i'll send you an invite link, or reply STOP anytime to opt out.`;
+      fallback = `glad you had a great time with ${memberName}! reply YES for an invite link to our ${city} group hangs, or STOP anytime to opt out.`;
+    } else {
+      raw = `So glad you and ${memberName} had a great time! I run a small local circle in ${city} for relaxed small-group hangouts and hobby meetups. Reply YES and I'll text you an invite link, or reply STOP anytime to opt out.`;
+      fallback = `So glad you had a great time with ${memberName}! Reply YES and I'll text you an invite link for our ${city} local hangouts, or reply STOP anytime to opt out.`;
+    }
   } else if (params.variant === "mutual_spark") {
-    raw = `so glad you and ${memberName} hit it off! by the way, i run a small curated circle in ${city} where we set up vetted dates and small hangs without the swiping. since you're clearly one of the good ones, want an invite to join?`;
-    fallback = `so glad you and ${memberName} hit it off! i run a small curated circle in ${city} for vetted dates without the swiping — want an invite to join?`;
+    if (tone === "casual") {
+      raw = `so glad you and ${memberName} hit it off! i run a small curated circle in ${city} for vetted dates and small hangs without swiping. reply YES and i'll send you an invite link, or reply STOP anytime to opt out.`;
+      fallback = `so glad you and ${memberName} hit it off! reply YES for an invite link to our ${city} circle, or STOP anytime to opt out.`;
+    } else {
+      raw = `So glad you and ${memberName} hit it off! I run a small curated circle in ${city} for vetted dates and small hangouts without swiping. Reply YES and I'll text you an invite link, or reply STOP anytime to opt out.`;
+      fallback = `So glad you and ${memberName} hit it off! Reply YES and I'll text you an invite link for our ${city} circle, or reply STOP anytime to opt out.`;
+    }
   } else {
-    raw = `glad you two had a good convo even if it wasn't a romantic match — ${memberName} actually had really nice things to say about you. i run a small vetted circle in ${city} for curated dates and low-key hangs. want me to add you so i can set you up with a better fit?`;
-    fallback = `glad you two had a good convo — ${memberName} had great things to say about you. i run a small vetted circle in ${city}; want me to add you for a better fit?`;
+    if (tone === "casual") {
+      raw = `glad you two had a good convo even if it wasn't a romantic match — ${memberName} had really nice things to say about you. i run a small circle in ${city} for curated intros. reply YES and i'll send an invite link, or STOP anytime to opt out.`;
+      fallback = `glad you two had a good convo — ${memberName} spoke warmly of you. reply YES for an invite link to our ${city} circle, or STOP anytime to opt out.`;
+    } else {
+      raw = `Glad you two had a good conversation even if it wasn't a romantic match — ${memberName} had very kind things to say about you. I run a small circle in ${city} for curated introductions. Reply YES and I'll text you an invite link, or reply STOP anytime to opt out.`;
+      fallback = `Glad you two had a good conversation — ${memberName} spoke warmly of you. Reply YES and I'll text you an invite link for our ${city} circle, or reply STOP anytime to opt out.`;
+    }
   }
 
   const text = clampSms(raw, fallback);
-  const violations = validateOutboundSms(text);
+  const violations = validateOutboundSms(text, { firstContact: true });
   if (violations.length > 0) {
     return { ok: false, reason: `style_violation:${violations.join(",")}` };
   }

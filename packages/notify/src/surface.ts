@@ -5,7 +5,7 @@
 
 import { updateDeliveryFor, type Channel as UpdateChannel } from "../../core/src/generated/agentEntry.ts";
 import { deliverySurfaceScore, maxIgnoredStreak, surfaceHasClearLead, surfaceIsUsable, surfaceRecentMs } from "../../core/src/generated/notificationDelivery.ts";
-import { isAssistant, type Assistant, type Channel, type Surface } from "./types.ts";
+import { isAssistant, isLocalAgentSurface, type Assistant, type Channel, type Surface } from "./types.ts";
 
 export interface SurfaceSignal {
   surface: Surface;
@@ -48,6 +48,13 @@ const usable = (s: SurfaceSignal) => surfaceIsUsable(s.active, s.ignoredStreak);
 
 const UPDATE_CHANNEL = { imessage: "IMessage", sms: "Sms", telegram: "Telegram" } as const satisfies Record<Channel, UpdateChannel>;
 
+/** True when a local loopback/CLI/IDE agent (Codex CLI, Claude Code, Cursor, OpenClaw) has an active, usable grant. */
+export function hasActiveLocalAgent(signals: readonly SurfaceSignal[], now: number, recentWindowMs = RECENT_MS): boolean {
+  const sig = signals.find(s => isLocalAgentSurface(s.surface));
+  if (!sig || !usable(sig)) return false;
+  return sig.lastUsedAt === undefined ? true : now - sig.lastUsedAt <= recentWindowMs;
+}
+
 export function resolveDelivery(prefs: SurfacePrefs, signals: SurfaceSignal[], now: number): Delivery {
   const bySurface = new Map(signals.map(s => [s.surface, s]));
   const assistants = signals.filter(s => isAssistant(s.surface) && usable(s)).map(s => s.surface as Assistant);
@@ -60,6 +67,11 @@ export function resolveDelivery(prefs: SurfacePrefs, signals: SurfaceSignal[], n
 
   const explicit = prefs.explicit;
   if (explicit !== undefined) {
+    if (isLocalAgentSurface(explicit)) {
+      const sig = bySurface.get(explicit);
+      if (!sig?.active) return deliver("explicit_not_connected");
+      return sig.ignoredStreak >= MAX_IGNORED_STREAK ? deliver("explicit_link_unused") : deliver("explicit_local_agent");
+    }
     if (!isAssistant(explicit)) return deliver("explicit_thread");
     const sig = bySurface.get(explicit);
     if (!sig?.active) return deliver("explicit_not_connected");
@@ -72,7 +84,13 @@ export function resolveDelivery(prefs: SurfacePrefs, signals: SurfaceSignal[], n
     .map(a => ({ a, s: score(bySurface.get(a)!, now) }))
     .sort((x, y) => y.s - x.s || x.a.localeCompare(y.a));
   const top = ranked[0];
-  if (!top) return deliver("no_assistant");
+  if (!top) {
+    const localSig = bySurface.get("local_agent");
+    if (localSig && usable(localSig) && surfaceHasClearLead(score(localSig, now), channelScore)) {
+      return deliver("local_agent_active");
+    }
+    return deliver("no_assistant");
+  }
   const runnerUp = Math.max(ranked[1]?.s ?? -Infinity, channelScore);
   return surfaceHasClearLead(top.s, runnerUp) ? deliver("score", top.a) : deliver("no_clear_leader");
 }

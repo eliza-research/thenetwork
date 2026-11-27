@@ -218,8 +218,26 @@ export function checkInviteExternalEventAttendee(input: InviteExternalEventAtten
   return canInviteExternalEventAttendee(input);
 }
 
+function screeningPromptAction(interest: string): string {
+  const lower = interest.toLowerCase();
+  if (/\b(?:tcg|pokemon|mtg|magic|board|chess|game|games|tabletop|d&d|dnd|tennis|pickleball|basketball|volleyball|soccer|mahjong|poker|bridge|trivia)\b/.test(lower)) {
+    return "play or chat about";
+  }
+  if (/\b(?:hik|walk|run|climb|boulder|cycl|bik|trail|park|kayak|sail|surf|yoga|swim|outdoor)\b/.test(lower)) {
+    return "explore or try";
+  }
+  if (/\b(?:cook|bak|food|coffee|tea|din(?:e|ing)|restaurant|tasting|brunch|ramen|taco|pastry|espresso)\b/.test(lower)) {
+    return "make, taste, or chat about";
+  }
+  if (/\b(?:book|read|writ|poetry|film|movie|cinema|art|museum|gallery|photo|music|jazz|concert|ceramic|pottery|paint|knit|craft|theat(?:er|re))\b/.test(lower)) {
+    return "explore or discuss";
+  }
+  return "explore or chat about";
+}
+
 export function buildStandardScreeningQuestions(interest: string): ScreeningQuestionSpec[] {
-  const cleanInterest = interest.trim() || "this meetup";
+  const cleanInterest = interest.replace(/_/g, " ").trim() || "this meetup";
+  const action = screeningPromptAction(cleanInterest);
   return [
     {
       id: "adult_18_plus",
@@ -229,7 +247,7 @@ export function buildStandardScreeningQuestions(interest: string): ScreeningQues
     },
     {
       id: "interest_detail",
-      label: `What are you most into around ${cleanInterest}, or what are you hoping to play/chat about?`,
+      label: `What are you most into around ${cleanInterest}, or what are you hoping to ${action}?`,
       required: true,
       kind: "interest_screening",
     },
@@ -308,36 +326,81 @@ function extractFirstName(rawName: unknown): string {
   return cleaned.split(/\s+/)[0] ?? "";
 }
 
+const DEFAULT_ADULT_CHECK_YEAR = 2026;
+
+function isoYearOf(iso: string | undefined): number | undefined {
+  if (!iso) return undefined;
+  const m = /^(\d{4})-/.exec(iso.trim());
+  if (!m) return undefined;
+  const y = Number(m[1]);
+  return y >= 2020 && y <= 2100 ? y : undefined;
+}
+
 const MINOR_EXPLICIT_RE =
-  /\b(?:not\s+(?:yet\s+)?(?:18|an?\s+adult|of\s+age)|under\s*(?:18|age)|underage|minor|below\s*18|less\s+than\s*18|almost\s*18|nearly\s*18|turning\s*18|turn\s+18|be\s+18\s+(?:soon|next|in\b)|about\s+to\s+(?:be|turn)\s*18|high\s+school|middle\s+school|hs\s+(?:student|junior|senior|freshman|sophomore)|(?:\d{1,2}(?:st|nd|rd|th)|ninth|tenth|eleventh|twelfth)\s+grade)\b/i;
+  /\b(?:not\s+(?:yet\s+)?(?:18|an?\s+adult|of\s+age)|under\s*(?:18|age)|underage|minor|below\s*18|less\s+than\s*18|almost\s*18|nearly\s*18|turning\s*18|turn\s+18|be\s+18\s+(?:soon|next|in\b)|about\s+to\s+(?:be|turn)\s*18|high\s+school|middle\s+school|hs\s+(?:student|junior|senior|freshman|sophomore)|(?:\d{1,2}(?:st|nd|rd|th)|ninth|tenth|eleventh|twelfth)\s+grade|soy\s+menor|menor\s+de\s+edad|menos\s+de\s*18|no\s+tengo\s*18|no\s+soy\s+mayor|cumplo\s*18|por\s+cumplir\s*18|secundaria|preparatoria|prepa)\b/i;
 const SPELLED_MINOR_AGE_RE =
-  /\b(?:eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen)\b|(?:^|[\s,.:;-])(?:one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:y(?:ears?|rs?)?[\s-]*old|y\/?o)\b/i;
+  /\b(?:eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|trece|catorce|quince|dieciseis|diecisiete)\b|(?:^|[\s,.:;-])(?:one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:y(?:ears?|rs?)?[\s-]*old|y\/?o)\b|\btengo\s+(?:uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieciseis|diecisiete)\b|\b(?:once|doce)\s*anos\b/i;
 const FRACTIONAL_MINOR_AGE_RE = /(?:^|[^\d.])(?:1[0-7]|[1-9])\.\d+(?!\d)/;
 const NEGATIVE_ANSWER_RE =
-  /^(?:no|nope|nah|not\b|false\b|under\b)|\b(?:nope|nah)\b|\bno\b(?!\s+(?:dietary|allerg|problem|worries|issue|issues|restrictions|preference|preferences|limits|thanks|pressure|rush))/i;
+  /^(?:no|nope|nah|not\b|false\b|under\b|(?:absolutely|definitely|certainly|of\s+course|surely|claro\s+que)\s+not?\b)|\b(?:nope|nah|todavia\s+no|aun\s+no|no\s+soy|no\s+tengo)\b|\bno\b(?!\s+(?:dietary|allerg|problem|worries|issue|issues|restrictions|preference|preferences|limits|thanks|pressure|rush))/i;
 const NON_AGE_AFTER_RE =
   /^\s*(?:am\b|pm\b|:\d|\/\d|(?:st|nd|rd|th)\b|min(?:s|utes?)?\b|hr(?:s)?\b|hours?\b|miles?\b|km\b|blocks?\b|dollars?\b|bucks?\b|decks?\b|cards?\b|games?\b|spots?\b|tickets?\b|seats?\b|friends?\b|people\b|persons?\b|players?\b|guests?\b|books?\b|cups?\b|years?\s+(?:ago|in|of)\b)/i;
 const NON_AGE_BEFORE_RE =
   /(?:\$|#|@|\b(?:at|around|bringing|have|got|with|for|level|gen|edition|top|plus)\s*)$/i;
+const AGE_UNIT_AFTER_RE = /^\s*(?:y\/?o|y(?:ears?|rs?)?[\s-]*old|anos)\b/i;
+const TENGO_BEFORE_RE = /\btengo\s+$/i;
+
+export interface ParseAdult18PlusOptions {
+  /** Current calendar year from Clock (never new Date() without argument). */
+  nowYear?: number;
+}
 
 /**
  * Fail-closed adult 18+ screening parser backed by policy.ts (`canBeMatched`, `isMinor`,
  * `relayMinorAge`, `relayMinorEstimate`). Rejects minors, fractional/spelled minor ages,
- * negated/turning-18/high-school cues, and prompt injections while accepting `"18+"`/`"21+"`,
- * explicit adult ages (`"I'm 25"`), and benign tails like `"yes, no dietary restrictions"`.
+ * negated/turning-18/high-school/Spanish-minor cues, minor birth years, and prompt injections
+ * while accepting polite/formal/senior/ESL adult confirmations, birth years, `"I'm a 25yo ..."`,
+ * `"Turning 30 next week"`, `"Sí, tengo 28 años"`, `"18+"`/`"21+"`, and benign tails.
  */
-export function parseAdult18PlusAnswer(answer: unknown): boolean {
+export function parseAdult18PlusAnswer(answer: unknown, opts: ParseAdult18PlusOptions = {}): boolean {
   if (typeof answer === "boolean") return answer;
   if (typeof answer === "number") return Number.isInteger(answer) && canBeMatched(answer) && !isMinor(answer);
   if (typeof answer !== "string") return false;
-  const s = answer.trim().toLowerCase().replace(/[‘’ʼ`´]/g, "'");
+  const trimmed = answer.trim();
+  if (!trimmed) return false;
+  if (detectExternalPromptInjection(trimmed)) return false;
+  const s = trimmed
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[‘’ʼ`´]/g, "'")
+    .normalize("NFD")
+    .replace(/\p{Mn}/gu, "")
+    .normalize("NFC");
   if (!s) return false;
   if (detectExternalPromptInjection(s)) return false;
   if (relayMinorAge(s, true) !== undefined || relayMinorEstimate(s)) return false;
   if (MINOR_EXPLICIT_RE.test(s) || SPELLED_MINOR_AGE_RE.test(s) || FRACTIONAL_MINOR_AGE_RE.test(s)) return false;
   if (NEGATIVE_ANSWER_RE.test(s)) return false;
 
-  for (const match of s.matchAll(/(?<![a-z0-9.])(\d{1,3})(\+?)(?![a-z0-9.])/gi)) {
+  const nowYear = opts.nowYear ?? DEFAULT_ADULT_CHECK_YEAR;
+  let hasValidBirthYear = false;
+  for (const match of s.matchAll(/\b(?:(?:born(?:\s+in)?|naci(?:do|da)?(?:\s+en)?)\s+|birth\s*year\s*[:=]?\s*)(19\d{2}|20\d{2})\b/gi)) {
+    const birthYear = Number(match[1]);
+    // Conservative without birth month/day: someone born in (nowYear - 18) may still be 17.
+    const minAge = nowYear - birthYear - 1;
+    if (birthYear > nowYear || minAge < 18) return false;
+    if (canBeMatched(minAge) && !isMinor(minAge)) hasValidBirthYear = true;
+  }
+
+  let hasValidTurningAdult = false;
+  for (const match of s.matchAll(/\b(?:turning|turn|almost|nearly|cumplo)\s+(\d{1,3})\b/gi)) {
+    const upcoming = Number(match[1]);
+    const current = upcoming - 1;
+    if (current < 18) return false;
+    if (canBeMatched(current) && !isMinor(current)) hasValidTurningAdult = true;
+  }
+
+  for (const match of s.matchAll(/(?<![a-z0-9.])(\d{1,3})(\+?)(?=\s*(?:y\/?o|y(?:ears?|rs?)?[\s-]*old|anos)\b|(?![a-z0-9.]))/gi)) {
     const rawNum = Number(match[1]);
     const hasPlus = match[2] === "+";
     if (hasPlus) {
@@ -349,21 +412,38 @@ export function parseAdult18PlusAnswer(answer: unknown): boolean {
     const before = s.slice(Math.max(0, startIdx - 20), startIdx);
     const after = s.slice(endIdx, endIdx + 24);
     if (rawNum < 18) {
+      if (AGE_UNIT_AFTER_RE.test(after) || TENGO_BEFORE_RE.test(before)) return false;
       if (NON_AGE_AFTER_RE.test(after) || NON_AGE_BEFORE_RE.test(before)) continue;
       return false;
     }
   }
 
   if (
-    /^(?:yes|y|yeah|yep|yup|true|confirmed|adult|over\s*18|over\s*21|older\s+than\s*18|i(?:'m| am)\s+(?:over\s+)?(?:18\+|21\+|an?\s+adult)|yes,?\s*i(?:'m| am)\s+(?:over\s+)?(?:18\+|21\+)|(?:18|21)\+)(?=$|[\s,.:;!?)/-])/i.test(
+    /^(?:yes(?:\s+(?:ma'?am|sir|indeed|of\s+course|i\s+am|i'm))?|y|yeah|yep|yup|sure(?:\s+(?:am|thing|i\s+am|i'm))?|absolutely|of\s+course|certainly|indeed|definitely|totally|for\s+sure|si|claro|por\s+supuesto|true|confirmed|adult|mayor\s+de\s+edad|over\s*18|over\s*21|older\s+than\s*18|i(?:'m| am)\s+(?:over\s+)?(?:18\+|21\+|an?\s+adult)|(?:18|21)\+)(?=$|[\s,.:;!?)/-])/i.test(
       s
     )
   ) {
     return true;
   }
 
+  if (hasValidBirthYear || hasValidTurningAdult) return true;
+
+  const spanishAge = s.match(/\btengo\s+(\d{2,3})(?:\s*anos)?(?=$|[\s,.:;!?)/-])/i);
+  if (spanishAge) {
+    const n = Number(spanishAge[1]);
+    return canBeMatched(n) && !isMinor(n);
+  }
+
+  const selfAge = s.match(
+    /\b(?:i(?:'m| am)|im)\s+(?:an?\s+)?(\d{2,3})(?:\s*(?:y(?:ears?|rs?)?[\s-]*old|y\/?o|\+))?(?=$|[\s,.:;!?)/-])/i
+  );
+  if (selfAge) {
+    const n = Number(selfAge[1]);
+    return canBeMatched(n) && !isMinor(n);
+  }
+
   const explicitAge = s.match(
-    /(?:^(?:yes|y|yeah|yep|yup)?[\s,.:;-]*(?:i(?:'m| am)|im|age)?[\s:]*|^)(\d{2,3})(?:\s*(?:y(?:ears?|rs?)?[\s-]*old|y\/?o|\+))?(?=$|[\s,.:;!?)/-])/i
+    /(?:^(?:yes|y|yeah|yep|yup|si|claro|sure|absolutely|of\s+course|certainly|indeed)?[\s,.:;-]*(?:i(?:'m| am)|im|age)?[\s:]*|^)(\d{2,3})(?:\s*(?:y(?:ears?|rs?)?[\s-]*old|y\/?o|\+|anos))?(?=$|[\s,.:;!?)/-])/i
   );
   if (explicitAge) {
     const n = Number(explicitAge[1]);
@@ -536,7 +616,7 @@ export function normalizeLumaWebhookEvent(
         injectionDetected = true;
       }
       if (label.includes("18+") || label.includes("18 or older") || label.includes("adult_18_plus")) {
-        confirmedAdult18Plus = parseAdult18PlusAnswer(value);
+        confirmedAdult18Plus = parseAdult18PlusAnswer(value, { nowYear: isoYearOf(occurredAtIso) });
       } else if (typeof value === "string" && value.trim().length > 0) {
         interestAnswer = value.trim().slice(0, 240);
       }
@@ -715,11 +795,15 @@ export function normalizeMeetupRsvpPoll(
       : {}) as Record<string, unknown>;
     const rawAnswer = typeof qObj.answer === "string" ? qObj.answer.trim() : "";
     const injectionDetected = detectExternalPromptInjection(rawAnswer) !== null;
-    const confirmedAdult18Plus = !injectionDetected && parseAdult18PlusAnswer(rawAnswer);
+    const occurredAtIso = typeof node.updated === "string" ? node.updated : fallbackIso;
+    const confirmedAdult18Plus = !injectionDetected && parseAdult18PlusAnswer(rawAnswer, { nowYear: isoYearOf(occurredAtIso) });
     const hasHobbyDetail =
       rawAnswer
+        .normalize("NFD")
+        .replace(/\p{Mn}/gu, "")
+        .normalize("NFC")
         .replace(
-          /^(?:(?:yes|y|yeah|yep|yup|i(?:'m| am)\s+)(?:[\s,.:;-]+)?)?(?:18\+|21\+|\d{2,3}\s*(?:y(?:ears?|rs?)?[\s-]*old|y\/?o)?|yes|y|yeah|yep|yup)(?=$|[\s,.:;!?)/-])[\s,.:;!?)/-]*/i,
+          /^(?:(?:yes(?:\s+(?:ma'?am|sir))?|y|yeah|yep|yup|sure(?:\s+am)?|absolutely|of\s+course|certainly|indeed|definitely|si|claro|por\s+supuesto|i(?:'m| am)\s+(?:an?\s+)?|tengo\s+)(?:[\s,.:;!-]+)?)?(?:(?:i(?:'m| am)\s+(?:an?\s+)?|tengo\s+)?(?:18\+|21\+|over\s*18|over\s*21|\d{2,3}\s*(?:y(?:ears?|rs?)?[\s-]*old|y\/?o|anos)?)|yes|y|yeah|yep|yup|si|claro)(?=$|[\s,.:;!?)/-])[\s,.:;!?)/-]*/i,
           ""
         )
         .trim().length >= 3;
@@ -738,7 +822,7 @@ export function normalizeMeetupRsvpPoll(
       screeningAnswerText: safeAnswer,
       fencedScreeningAnswer: safeAnswer ? fenceExternalEventText(safeAnswer, "meetup_screening_answer") : undefined,
       ...(injectionDetected ? { injectionDetected: true } : {}),
-      occurredAtIso: typeof node.updated === "string" ? node.updated : fallbackIso,
+      occurredAtIso,
     });
   }
 
@@ -755,7 +839,11 @@ const PARTIFUL_TELECOM_REWRITES: Array<{ pattern: RegExp; replacement: string; l
   { pattern: /\bbeer\s*(?:hall|garden)\b/gi, replacement: "communal patio", label: "beer hall" },
   { pattern: /\b(?:brewery|breweries|taproom|taprooms)\b/gi, replacement: "neighborhood hangout", label: "brewery/taproom" },
   { pattern: /\b(?:cocktails?|mocktails?\s+and\s+cocktails?)\b/gi, replacement: "bites and refreshments", label: "cocktail" },
-  { pattern: /\b(?:alcohol|booze|boozy|liquor|spirits|tequila|whiskey|vodka|bourbon|gin|rum|shots|drunk|drinks|beer|wine)\b/gi, replacement: "refreshments", label: "alcohol" },
+  {
+    pattern: /\b(?:alcohol|booze|boozy|liquor|spirits|tequila|whiskey|vodka|bourbon|gin|rum|drunk|beer|wine)\b|(?<!\b(?:espresso|coffee|photo|camera|flu|booster|head|action|mug|long|moon|trick|jump|slap|free)\s+)\bshots\b|(?<!\b(?:soft|hot|cold|warm|non-?alcoholic|iced|coffee|tea|energy|sports)\s+)\bdrinks\b/gi,
+    replacement: "refreshments",
+    label: "alcohol",
+  },
   { pattern: /\b(?:cannabis|marijuana|weed|dispensary|edibles|thc|cbd|420|smoke\s*sesh|vape|vaping)\b/gi, replacement: "hangout", label: "cannabis" },
   { pattern: /\b(?:gambling|casino|sportsbook|betting|wager|poker|blackjack|roulette|slots)\b/gi, replacement: "tabletop games", label: "gambling" },
   { pattern: /\b(?:strip\s*club|lingerie|nsfw|xxx|hookup|hookups|fetish|bdsm|adult[\s-]*only)\b/gi, replacement: "18+ social", label: "adult_content" },
@@ -921,10 +1009,10 @@ export function buildPostEventExternalInviteMessage(
   const title = cleanPhrase(params.eventTitle).slice(0, 60);
   const venue = cleanPhrase(params.venueName).slice(0, 50);
   const url = params.inviteUrl.trim();
-  const full = `Hey ${firstName}, thanks for coming to ${title} at ${venue}! ${anchorName} said you brought great energy. We run small local hangouts through The Network — if you'd like an invite for future ones, here's your link: ${url}. No pressure either way.`;
-  const compact = `Hey ${firstName}, thanks for coming! ${anchorName} said you brought great energy. Here's your invite link for future small local hangouts: ${url}. No pressure either way.`;
+  const full = `Hey ${firstName}, thanks for coming to ${title} at ${venue}! ${anchorName} said you brought great energy. We run small local hangouts through The Network — if you'd like an invite for future ones, here's your link: ${url}. No pressure either way. Reply STOP anytime.`;
+  const compact = `Hey ${firstName}, thanks for coming! ${anchorName} said you brought great energy. Here's your invite link for future small local hangouts: ${url}. No pressure. Reply STOP anytime.`;
   const text = clampSms(full, compact);
-  const violations = validateOutboundSms(text, { contactAllow: url ? [url] : undefined });
+  const violations = validateOutboundSms(text, { firstContact: true, contactAllow: url ? [url] : undefined });
   if (violations.length > 0) {
     return { ok: false, reason: `style_violation:${violations.join(",")}` };
   }

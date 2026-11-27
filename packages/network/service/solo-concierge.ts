@@ -1,6 +1,6 @@
 import {
-  cityTimezone, fromLocal, isMinor, localParts, proposeTopOne, seedVenuesForCity, temporaryPresenceWindow, validAge,
-  type MemberVenuePrefs, type NetworkEvent,
+  cityTimezone, estimateTravelMinutes, findNeighborhood, fromLocal, isMinor, LAUNCH_CITIES, localParts, proposeTopOne, seedVenuesForCity, temporaryPresenceWindow, validAge,
+  type CityId, type MemberVenuePrefs, type NetworkEvent,
 } from "@thenetwork/core";
 import {
   soloReplyHasRoom, soloEventAgeAllowed, soloEventCityAllowed, soloEventEligible, soloEventPrecedes,
@@ -10,7 +10,7 @@ import { presenceWindowCovers, presenceWindowsOverlap, type PresenceWindow } fro
 import { listedEventMinimumAge } from "../../core/src/public-event-age.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { Accounts } from "../../platform/src/accounts.ts";
-import { plansPlaceQuestion, publicPlanLocation } from "../src/classify.ts";
+import { plansPlaceQuestionForCity, publicPlanLocation } from "../src/classify.ts";
 import { NEIGHBORHOOD, travelMinutes } from "../src/geo.ts";
 import { statedWindows } from "../src/plans.ts";
 import { memberCommandOwner, type MemberCommandOwner } from "./member-command.ts";
@@ -18,8 +18,8 @@ import { listActiveVenues } from "./meetup-store.ts";
 import { readPublicEvents } from "./public-events.ts";
 import { automatedFacetPredicate, presenceOf } from "./snapshot.ts";
 
-type Period = "today" | "tomorrow" | "this weekend" | "this week" | "next seven days";
-interface SoloRequest { period: Period; area?: string; mentioned?: boolean }
+type Period = "today" | "tonight" | "tomorrow" | "this weekend" | "this week" | "next seven days";
+interface SoloRequest { period: Period; area?: string; mentioned?: boolean; placeText?: string }
 type Option = { event: NetworkEvent & { listing: NonNullable<NetworkEvent["listing"]> }; fit: number; minutes?: number; scheduled: boolean };
 interface SoloReply { body: string; publicLinks: string[] }
 const formatWhen = (tz: string) =>
@@ -27,13 +27,24 @@ const formatWhen = (tz: string) =>
 const like = (text: string) => text.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
 /** Recognize a solo request without claiming arbitrary open conversation or proposal replies. */
-export function soloConciergeRequest(text: string): SoloRequest | undefined {
-  const request = /^(?:(?:anything fun|what(?:['’]s| is) happening) (today|tomorrow|this weekend|this week)|(?:find|show me|suggest|recommend) (?:some )?(?:public )?(?:events|things to do)(?: (today|tomorrow|this weekend|this week))?)[.!?]?$/i.exec(text.trim());
+export function soloConciergeRequest(text: string, city?: CityId): SoloRequest | undefined {
+  const request = /^(?:(?:anything fun|what(?:['’]s| is) happening) (today|tonight|tomorrow|this weekend|this week)|(?:find|show me|suggest|recommend) (?:some )?(?:public )?(?:events|things to do)(?: (today|tonight|tomorrow|this weekend|this week))?)[.!?]?$/i.exec(text.trim());
   if (request) return { period: (request[1] ?? request[2] ?? "next seven days").toLowerCase() as Period };
-  const localized = /^(?:any plans|anything fun|what(?:['’]s| is) happening|(?:find|show me|suggest|recommend) (?:some )?(?:public )?(?:events|things to do))(?: (today|tomorrow|this weekend|this week))? ((?:in|near|around|at|by) [^!?\r\n]+?)(?: (today|tomorrow|this weekend|this week))?[!?]?$/i.exec(text.trim());
+  const localized = /^(?:any plans|anything fun|what(?:['’]s| is) happening|(?:find|show me|suggest|recommend) (?:some )?(?:public )?(?:events|things to do))(?: (today|tonight|tomorrow|this weekend|this week))? ((?:in|near|around|at|by) [^!?\r\n]+?)(?: (today|tonight|tomorrow|this weekend|this week))?[!?]?$/i.exec(text.trim());
   if (!localized) return;
-  const place = publicPlanLocation(localized[2]!, true);
-  if (place.mentioned) return { period: (localized[1] ?? localized[3] ?? "next seven days").toLowerCase() as Period, ...place };
+  const placeText = localized[2]!;
+  let place = city ? publicPlanLocation(placeText, true, city) : publicPlanLocation(placeText, true);
+  if (!city && !place.area) {
+    for (const launchCity of LAUNCH_CITIES) {
+      if (launchCity === "nyc") continue;
+      const candidate = publicPlanLocation(placeText, true, launchCity);
+      if (candidate.area || candidate.mentioned) {
+        place = candidate;
+        if (candidate.area) break;
+      }
+    }
+  }
+  if (place.mentioned) return { period: (localized[1] ?? localized[3] ?? "next seven days").toLowerCase() as Period, ...place, placeText };
 }
 
 function requestedWindow(period: Period, now: number, tz: string): PresenceWindow {
@@ -45,6 +56,10 @@ function requestedWindow(period: Period, now: number, tz: string): PresenceWindo
   if (period === "this weekend") {
     const start = 5 - parts.weekday;
     return { from: Math.max(now, midnight(start)), to: midnight(start + 2) };
+  }
+  if (period === "tonight") {
+    const evening = fromLocal(parts.year, parts.month, parts.day, 17, tz);
+    return { from: Math.max(now, evening), to: midnight(1) };
   }
   if (period === "tomorrow") return { from: midnight(1), to: midnight(2) };
   const end = period === "today" ? 1 : period === "this week" ? 7 - parts.weekday : 7;
@@ -59,12 +74,15 @@ export async function soloConciergeReply(tx: SQL, accounts: Pick<Accounts, "acti
   if (!binding?.member) return;
   const age = await accounts.lowestAge(owner.e164, binding.person);
   if (!validAge(age)) return;
-  if (recommendationLocation(request.area !== undefined, request.mentioned === true) === "AskForArea") {
-    return { body: plansPlaceQuestion, publicLinks: [] };
-  }
   const { member } = binding;
   const app = owner.app.id, id = owner.memberId;
   const city = member.home_city || "nyc";
+  const resolvedPlace = request.placeText ? publicPlanLocation(request.placeText, true, city) : { area: request.area, mentioned: request.mentioned === true };
+  const requestedArea = resolvedPlace.area;
+  const placeMentioned = resolvedPlace.mentioned || request.mentioned === true;
+  if (recommendationLocation(requestedArea !== undefined, placeMentioned) === "AskForArea") {
+    return { body: plansPlaceQuestionForCity(city), publicLinks: [] };
+  }
   const tz = cityTimezone(city) ?? "America/New_York";
   const when = formatWhen(tz);
   const [events, rawPresence, facets] = await Promise.all([
@@ -81,6 +99,7 @@ export async function soloConciergeReply(tx: SQL, accounts: Pick<Accounts, "acti
   const interest = new Set(facets.filter(f => f.kind === "interest").flatMap(f => f.tags.map(like)).filter(Boolean));
   const available = statedWindows(facets.filter(f => f.kind === "availability_pattern").flatMap(f => f.tags), now, tz)?.windows;
   const home = city === "nyc" && member.home_area ? NEIGHBORHOOD.get(member.home_area) : undefined;
+  const multiCityHome = city !== "nyc" && member.home_area && findNeighborhood(city, member.home_area) ? member.home_area : undefined;
   const travelLimit = member.prefs.maxTravelMinutes;
   const limit = typeof travelLimit === "number" && Number.isFinite(travelLimit) && travelLimit >= 0 ? travelLimit : undefined;
   const requested = requestedWindow(request.period, now, tz);
@@ -88,14 +107,18 @@ export async function soloConciergeReply(tx: SQL, accounts: Pick<Accounts, "acti
 
   for (const event of events) {
     if (!event.listing) continue;
-    if (!requestedAreaAllowsEvent(request.area !== undefined, event.area === request.area)) continue;
+    if (!requestedAreaAllowsEvent(requestedArea !== undefined, event.area === requestedArea)) continue;
     const eventWindow = { from: event.start, to: event.end };
     const away = trips.some(p => p.city !== event.city && presenceWindowsOverlap(p.window, eventWindow));
     const visiting = trips.some(p => p.city === event.city && presenceWindowCovers(p.window, eventWindow));
     const present = soloEventCityAllowed(member.home_city === event.city, visiting, away);
     const scheduled = available?.some(s => presenceWindowCovers({ from: s.start, to: s.end }, eventWindow)) ?? false;
-    const area = event.area ? NEIGHBORHOOD.get(event.area) : undefined;
-    const minutes = home && area ? travelMinutes(home, area) : undefined;
+    const area = city === "nyc" && event.area ? NEIGHBORHOOD.get(event.area) : undefined;
+    const minutes = home && area
+      ? travelMinutes(home, area)
+      : multiCityHome && event.area && findNeighborhood(city, event.area)
+        ? estimateTravelMinutes(city, multiCityHome, event.area)
+        : undefined;
     const allAges = event.tags.some(tag => like(tag) === "all ages");
     if (!soloEventAgeAllowed(age, listedEventMinimumAge(event), allAges)
       || !soloEventEligible(true, presenceWindowCovers(requested, eventWindow), present, !!available, scheduled, minutes !== undefined && limit !== undefined, minutes ?? 0, limit ?? 0)) continue;
@@ -134,7 +157,7 @@ export async function soloConciergeReply(tx: SQL, accounts: Pick<Accounts, "acti
       rejectedVenueIds: [],
       hobbies: [...interest],
     };
-    const memberAreas = request.area ? [request.area] : member.home_area ? [member.home_area] : [];
+    const memberAreas = requestedArea ? [requestedArea] : member.home_area ? [member.home_area] : [];
     const proposal = proposeTopOne(
       venuePool,
       {

@@ -373,7 +373,15 @@ export function modelReviewJudge(llm: LLM, model: string): ReviewJudge {
   return {
     reviewer: REVIEW_JUDGE_REVIEWER,
     async judge(packet, o) {
-      const text = await llm.chat(reviewJudgeMessages(packet), { temperature: 0, maxTokens: REVIEW_JUDGE_MAX_TOKENS, json: true, deadlineMs: o.deadlineMs, signal: o.signal });
+      const text = await llm.chat(reviewJudgeMessages(packet), {
+        temperature: 0,
+        maxTokens: REVIEW_JUDGE_MAX_TOKENS,
+        json: true,
+        reasoningEffort: "low",
+        promptCacheKey: `${REVIEW_JUDGE_PROMPT_VERSION}:${packet.rubric}`,
+        deadlineMs: o.deadlineMs,
+        signal: o.signal,
+      });
       return { ...parseReviewJudgeReply(text, packet.rubric), model, promptVersion: REVIEW_JUDGE_PROMPT_VERSION };
     },
   };

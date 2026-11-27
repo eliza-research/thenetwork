@@ -903,6 +903,37 @@ export interface VenueLLMRerankResult {
   fallbackReason?: string;
 }
 
+const VENUE_RERANK_CACHE_MAX_ENTRIES = 512;
+const VENUE_RERANK_PROMPT_CACHE_KEY = "venue_rerank_v1";
+const venueRerankCaches = new WeakMap<LLM, Map<string, { pickedId: string; why: string }>>();
+
+function venueRerankCacheGet(llm: LLM, key: string): { pickedId: string; why: string } | undefined {
+  const map = venueRerankCaches.get(llm);
+  if (!map) return undefined;
+  const hit = map.get(key);
+  if (!hit) return undefined;
+  map.delete(key);
+  map.set(key, hit);
+  return hit;
+}
+
+function venueRerankCacheSet(llm: LLM, key: string, value: { pickedId: string; why: string }): void {
+  let map = venueRerankCaches.get(llm);
+  if (!map) {
+    map = new Map();
+    venueRerankCaches.set(llm, map);
+  }
+  map.delete(key);
+  map.set(key, value);
+  while (map.size > VENUE_RERANK_CACHE_MAX_ENTRIES) {
+    const oldest = map.keys().next().value;
+    if (oldest === undefined) break;
+    map.delete(oldest);
+  }
+}
+
+const bucketVenueScore = (score: number): number => Math.round(score / 5) * 5;
+
 const VENUE_RERANK_SYSTEM = [
   "You select ONE best public venue from a pre-verified Top-5 list and write one short, warm rationale.",
   UNTRUSTED_NOTE,
@@ -933,12 +964,13 @@ export async function rerankTopVenuesWithLLM(opts: VenueLLMRerankOptions): Promi
     neighborhood: c.venue.neighborhood,
     noiseLevel: c.venue.noiseLevel,
     priceTier: c.venue.priceTier,
-    hobbies: (c.venue.hobbies ?? []).slice(0, 4),
-    score: c.score,
+    hobbies: [...new Set((c.venue.hobbies ?? []).map(cleanPhrase).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b))
+      .slice(0, 4),
+    score: bucketVenueScore(c.score),
   }));
-  const shareableInterests = (opts.shareableInterests ?? [])
-    .map(cleanPhrase)
-    .filter(Boolean)
+  const shareableInterests = [...new Set((opts.shareableInterests ?? []).map(cleanPhrase).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b))
     .slice(0, 8);
   const payload = JSON.stringify({
     mode: opts.mode,
@@ -951,17 +983,22 @@ export async function rerankTopVenuesWithLLM(opts: VenueLLMRerankOptions): Promi
     contacts: true,
   });
 
-  const rerankClient: LLM = {
-    chat: (messages, chatOpts) =>
-      opts.llm!.chat(messages, {
-        ...chatOpts,
-        reasoningEffort: "low",
-        promptCacheKey: "venue-rerank-v1",
-      }),
-  };
+  const cached = venueRerankCacheGet(opts.llm, payload);
+  if (cached) {
+    const cachedCandidate = byId.get(cached.pickedId);
+    if (
+      cachedCandidate &&
+      !APPEARANCE_LANGUAGE_RE.test(cached.why) &&
+      !opts.extraLeakCheck?.(cached.why) &&
+      guard.check(cached.why).length === 0 &&
+      styleViolations(cached.why).length === 0
+    ) {
+      return { picked: cachedCandidate, why: cached.why, usedLLM: true };
+    }
+  }
 
   const res = await tryChatJson<{ pickedId: string; why: string }>(
-    rerankClient,
+    opts.llm,
     [
       { role: "system", content: VENUE_RERANK_SYSTEM },
       { role: "user", content: fenceUntrusted(payload, "venue_candidates") },
@@ -1002,6 +1039,8 @@ export async function rerankTopVenuesWithLLM(opts: VenueLLMRerankOptions): Promi
       attempts: 1,
       maxTokens: opts.maxTokens ?? 600,
       deadlineMs: opts.deadlineMs ?? 8_000,
+      reasoningEffort: "low",
+      promptCacheKey: VENUE_RERANK_PROMPT_CACHE_KEY,
     }
   );
 
@@ -1012,6 +1051,7 @@ export async function rerankTopVenuesWithLLM(opts: VenueLLMRerankOptions): Promi
       fallbackReason: res.error instanceof Error ? res.error.message : "llm_rerank_failed",
     };
   }
+  venueRerankCacheSet(opts.llm, payload, res.value);
   return {
     picked: byId.get(res.value.pickedId) ?? deterministicPick,
     why: res.value.why,

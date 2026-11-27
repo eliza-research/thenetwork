@@ -46,8 +46,8 @@
 //   five-city 5-city (sf, nyc, la, chicago, miami) conversation-script suite through ConsentNetwork, VenueManager & MeetupCoordinator (--transcripts prints transcripts)
 //   marketing global multi-city marketing growth engine: 30-day NYC+SF deterministic world, 7 adversarial storms,
 //             Dafny policy invariants, LLM cache/budget, core queue backpressure, and paired Bandit vs Uniform CPA
-//   journeys  broad-spectrum multi-channel journey suite: 14 speaking styles, 6 age brackets, 4 clarity bands, 14 channels,
-//             6 bad-actor classes, league-gap bilateral value, 0 leaks/ranking leaks, <2s offline + optional --llm friction rubric
+//   journeys  stratified 28-persona 5-channel suite + broad-spectrum 14-style / 6-age-bracket / 14-channel /
+//             6-bad-actor / league-gap journey suite (<3s offline + optional --llm friction rubric)
 //   capital   network capital: 32 paired seeds, 90 days (--with-capital or --only capital)
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";

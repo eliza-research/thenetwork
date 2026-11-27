@@ -46,3 +46,17 @@
 {"text":"yes, no allergies","want":true,"group":"adult","note":"yes with no allergies"}
 {"text":"34 y/o","want":true,"group":"adult","note":"34 y/o"}
 {"text":"yes, at 7pm","want":true,"group":"adult","note":"yes with clock time"}
+{"text":"Absolutely, I'm 35","want":true,"group":"adult","note":"formal opener with age"}
+{"text":"Yes ma'am, I am 67","want":true,"group":"adult","note":"senior polite confirmation"}
+{"text":"I'm a 25yo engineer","want":true,"group":"adult","note":"article plus yo shorthand"}
+{"text":"I was born in 1988","want":true,"group":"adult","note":"adult birth year"}
+{"text":"Sí, tengo 28 años","want":true,"group":"adult","note":"Spanish adult confirmation"}
+{"text":"Of course, 29","want":true,"group":"adult","note":"polite opener with age"}
+{"text":"Sure am! 42","want":true,"group":"adult","note":"casual polite confirmation"}
+{"text":"Indeed, over 18","want":true,"group":"adult","note":"formal over 18"}
+{"text":"Turning 30 next week","want":true,"group":"adult","note":"adult turning upcoming age"}
+{"text":"turning 18 next week","want":false,"group":"minor","note":"almost 18 still minor"}
+{"text":"tengo 16 años","want":false,"group":"minor","note":"Spanish minor age"}
+{"text":"high school senior","want":false,"group":"minor","note":"high school cue"}
+{"text":"born in 2010","want":false,"group":"minor","note":"minor birth year"}
+{"text":"17yo","want":false,"group":"minor","note":"17yo shorthand"}

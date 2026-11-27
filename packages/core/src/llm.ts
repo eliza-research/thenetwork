@@ -18,20 +18,22 @@
 // usage/cost and supply their own transport (e.g. a response cache) without patching global fetch.
 import { RealClock, type Clock } from "./clock.ts";
 
+export type ReasoningEffort = "minimal" | "low" | "medium" | "high";
 export interface ChatMessage { role: "system" | "user" | "assistant"; content: string }
 export interface ChatOptions {
   maxTokens?: number; temperature?: number; json?: boolean;
+  reasoningEffort?: ReasoningEffort;
+  promptCacheKey?: string;
   /** Total wall time for this call over all attempts, backoff and fallback, in ms (0 = none). Overrides ClientOptions.deadlineMs. */
   deadlineMs?: number;
   /** Caller cancellation: aborting stops the in-flight request and every later attempt. */
   signal?: AbortSignal;
   /** false: never fall back to a second provider on this call (default: ClientOptions.fallback, else true). */
   fallback?: boolean;
-  readonly promptCacheKey?: string;
-  readonly reasoningEffort?: "minimal" | "low" | "medium" | "high";
 }
 export interface LLM {
   chat(messages: ChatMessage[], opts?: ChatOptions): Promise<string>;
+  readonly cacheId?: string;
 }
 
 /** Machine-readable reason a call failed. */
@@ -74,12 +76,20 @@ export interface ResponseInfo {
   request: Record<string, unknown>;
   /** Parsed JSON response body when ok. */
   data?: any;
-  usage: { promptTokens: number; completionTokens: number; reasoningTokens: number; cachedTokens?: number; cacheWriteTokens?: number };
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    reasoningTokens: number;
+    cachedPromptTokens?: number;
+    cachedTokens?: number;
+    cacheWriteTokens?: number;
+  };
   /** Provider-reported cost in micro-USD (Surplus usage.buyer_cost_micro, or usage.cost in USD * 1e6), else priced from OPENAI_PRICES, else 0. */
   costMicro: number;
   /** false when tokens were used but neither the provider nor OPENAI_PRICES gave a price (costMicro is then 0). */
   costKnown: boolean;
   finishReason?: string;
+  fallback?: { from: string; to: string };
   headers?: Headers;
   /** Short code and lengths (e.g. "http 503 (body 120 chars)"); for a network failure also the transport's message. */
   error?: string;
@@ -176,14 +186,16 @@ export function usageOf(data: any, requestedModel?: string): Pick<ResponseInfo, 
   const p = priceFor(data?.model) ?? priceFor(requestedModel);
   const cached = u.prompt_tokens_details?.cached_tokens ?? 0, writes = u.prompt_tokens_details?.cache_write_tokens ?? 0;
   const priced = p ? Math.max(0, promptTokens - cached - writes) * p.input + cached * p.cachedInput + writes * p.cacheWrite + completionTokens * p.output : 0;
+  const usage: ResponseInfo["usage"] = {
+    promptTokens,
+    completionTokens,
+    reasoningTokens: u.completion_tokens_details?.reasoning_tokens ?? 0,
+    cachedPromptTokens: cached,
+    cacheWriteTokens: writes,
+  };
+  Object.defineProperty(usage, "cachedTokens", { value: cached, enumerable: false, configurable: true });
   return {
-    usage: {
-      promptTokens,
-      completionTokens,
-      reasoningTokens: u.completion_tokens_details?.reasoning_tokens ?? 0,
-      cachedTokens: cached,
-      cacheWriteTokens: writes,
-    },
+    usage,
     costMicro: Number(reported ?? priced) || 0,
     costKnown: reported !== undefined || p !== undefined || (promptTokens === 0 && completionTokens === 0),
     finishReason: data?.choices?.[0]?.finish_reason,
@@ -256,14 +268,16 @@ async function chatCompletions(
   const callerSignals = [opts.signal, hooks.signal].filter((s): s is AbortSignal => !!s);
   const signal = callerSignals.length > 1 ? AbortSignal.any(callerSignals) : callerSignals[0];
   const eps = (opts.fallback ?? hooks.fallback ?? true) ? endpoints : endpoints.slice(0, 1);
+  const hosts = eps.map(ep => new URL(ep.baseUrl).host);
   const emit = (info: ResponseInfo) => { try { hooks.onResponse?.(info); } catch { /* observer errors never break calls */ } };
   const remaining = () => deadlineAt - clock.now();
   const deadlineError = (host: string, why: string) =>
     new LLMError("deadline", `${host} ${why}: call deadline of ${deadlineMs} ms reached (after ${retries} retries)`, { host, retries });
   let e = 0, retries = 0, regrows = 0;
+  let fallback: { from: string; to: string } | undefined;
   for (let attempt = 0; ; attempt++) {
     const { baseUrl, apiKey } = eps[e]!;
-    const host = new URL(baseUrl).host;
+    const host = hosts[e]!;
     if (signal?.aborted) throw new LLMError("aborted", `${host} call aborted by caller`, { host, retries });
     if (remaining() <= 0) throw deadlineError(host, "no time left");
     hooks.budget?.take(host);
@@ -271,9 +285,10 @@ async function chatCompletions(
     // Retryable failure: try the next endpoint, else back off on the last one, else give up.
     const retry = async (code: LLMErrorCode, why: string, status?: number, retryAfterMs?: number, errorBody?: string) => {
       if (e < eps.length - 1) {
-        const to = new URL(eps[e + 1]!.baseUrl).host;
+        const to = hosts[e + 1]!;
         console.warn(`[llm] ${host} failed (${why}); falling back to ${to}`);
         try { hooks.onFallback?.({ model, from: host, to, reason: why, attempt }); } catch { /* observer errors never break calls */ }
+        fallback = { from: host, to };
         e++;
         return;
       }
@@ -287,7 +302,7 @@ async function chatCompletions(
     const signals = [...(Number.isFinite(perRequest) ? [AbortSignal.timeout(Math.max(1, Math.ceil(perRequest)))] : []), ...(signal ? [signal] : [])];
     const t0 = performance.now();
     const failed = (status: number, error: string, extra: Partial<ResponseInfo> = {}) =>
-      emit({ model, baseUrl, status, ok: false, latencyMs: performance.now() - t0, attempt, regrows, request: body, ...usageOf(undefined), error, ...extra });
+      emit({ model, baseUrl, status, ok: false, latencyMs: performance.now() - t0, attempt, regrows, request: body, ...usageOf(undefined), ...(fallback ? { fallback } : {}), error, ...extra });
     let res: Response, text: string;
     try {
       res = await doFetch(`${baseUrl}/chat/completions`, {
@@ -327,7 +342,7 @@ async function chatCompletions(
     const u = usageOf(data, model);
     hooks.budget?.charge(u.costMicro, u.costKnown);
     if (!u.costKnown) warnOnce(`unpriced:${data.model ?? model}`, `[llm] no price for model ${data.model ?? model}: its cost is recorded as 0`);
-    emit({ model, baseUrl, status: res.status, ok: true, latencyMs: performance.now() - t0, attempt, regrows, request: body, data, ...u, headers: res.headers });
+    emit({ model, baseUrl, status: res.status, ok: true, latencyMs: performance.now() - t0, attempt, regrows, request: body, data, ...u, ...(fallback ? { fallback } : {}), headers: res.headers });
     const choice = data.choices[0];
     const content = String(choice?.message?.content ?? "").trim();
     const truncated = choice?.finish_reason === "length";
@@ -409,24 +424,41 @@ function firstJsonValue(s: string): unknown {
   return firstArray;
 }
 
+function canonicalJson(v: unknown): string {
+  if (v === null || typeof v !== "object") return JSON.stringify(v) ?? "null";
+  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(",")}]`;
+  const o = v as Record<string, unknown>;
+  return `{${Object.keys(o).sort().filter(k => o[k] !== undefined).map(k => `${JSON.stringify(k)}:${canonicalJson(o[k])}`).join(",")}}`;
+}
+
 /**
  * OpenAI-compatible chat client (OpenAI, Surplus Intelligence). Temperature is not sent (reasoning
  * models ignore it). `fallbacks` are tried in order on 429 / 5xx / network errors.
  */
 export class OpenAILLM implements LLM {
+  readonly cacheId: string;
   constructor(
     private apiKey = process.env.OPENAI_API_KEY ?? "",
     private model = process.env.JUDGE_MODEL ?? "gpt-6-luna",
     private baseUrl = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
     private hooks: ClientOptions = {},
     private fallbacks: Endpoint[] = [],
-  ) { if (!this.apiKey) throw new Error("API key missing for OpenAI-compatible client (see .env.example)"); }
+  ) {
+    if (!this.apiKey) throw new Error("API key missing for OpenAI-compatible client (see .env.example)");
+    this.cacheId = canonicalJson({
+      model: this.model,
+      baseUrl: this.baseUrl,
+      fallbacks: this.fallbacks.map(f => f.baseUrl),
+      seed: this.hooks.seed,
+      extraBody: this.hooks.extraBody,
+    });
+  }
   chat(messages: ChatMessage[], opts: ChatOptions = {}) {
     return chatCompletions([{ baseUrl: this.baseUrl, apiKey: this.apiKey }, ...this.fallbacks], this.model, messages, opts, o => ({
       ...(o.maxTokens ? { max_completion_tokens: o.maxTokens } : {}),
       ...(o.json ? { response_format: { type: "json_object" } } : {}),
-      ...(o.promptCacheKey ? { prompt_cache_key: o.promptCacheKey } : {}),
       ...(o.reasoningEffort ? { reasoning_effort: o.reasoningEffort } : {}),
+      ...(o.promptCacheKey ? { prompt_cache_key: o.promptCacheKey } : {}),
     }), 4096, 32768, this.hooks);
   }
 }

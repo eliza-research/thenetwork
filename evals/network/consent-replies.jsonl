@@ -407,3 +407,24 @@
 {"text":"Saturday mornings don't work, Sunday either","label":"unclear"}
 {"text":"Saturday doesn't work, Sunday too either","label":"unclear"}
 {"text":"Saturday doesn't work, Sunday, either","label":"unclear"}
+{"text":"sí, claro","label":"yes"}
+{"text":"me apunto","label":"yes"}
+{"text":"dale, me apunto","label":"yes"}
+{"text":"no puedo","label":"no"}
+{"text":"paso esta vez","label":"no"}
+{"text":"otro día","label":"unclear"}
+{"text":"tal vez otro día","label":"unclear"}
+{"text":"I would be delighted","label":"yes"}
+{"text":"by all means","label":"yes"}
+{"text":"certainly","label":"yes"}
+{"text":"I accept","label":"yes"}
+{"text":"regrettably I cannot attend","label":"no"}
+{"text":"say less","label":"yes"}
+{"text":"lfg","label":"yes"}
+{"text":"fs","label":"yes"}
+{"text":"ofc","label":"yes"}
+{"text":"bet, Thursday works","label":"yes","keys":["a"]}
+{"text":"not not interested","label":"unclear"}
+{"text":"I wouldn't say no","label":"unclear"}
+{"text":"no yeah","label":"yes"}
+{"text":"all good, thanks","label":"no"}

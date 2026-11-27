@@ -67,5 +67,11 @@ export function ageBand(age: number): string {
   return `${r <= 3 ? "early" : r <= 6 ? "mid" : "late"} ${d}s`;
 }
 
+/** Grammatically natural age-band phrase ("aged 18-19" vs "in their late 20s"). */
+export function ageBandPhrase(age: number): string {
+  const band = ageBand(age);
+  return age < 20 ? `aged ${band}` : `in their ${band}`;
+}
+
 /** "about 2-5 mi away" / "under 2 mi away": a band, never a number of miles. */
 export const distancePhrase = (band: string) => (band.startsWith("under") ? `${band} away` : `about ${band} away`);

@@ -9,8 +9,8 @@ import type { Accounts } from "../../platform/src/accounts.ts";
 import { readFileSync } from "node:fs";
 import { clefRelayClassifierFromEnv, DEFAULT_RELAY_CLEF_WEIGHTS, validateRelayClefWeights, type ClefRelayOptions, type RelayClefWeights } from "../../engine/src/relayClef.ts";
 import type { ClefResult } from "../../engine/src/packs/slop/clef.ts";
-import { parseRelayRequest, type RelayClassifierHook } from "../../engine/src/relay.ts";
-import { withdrawsSwap, type RelayOutcome } from "../src/relay.ts";
+import { classifyRelayText, parseRelayRequest, relayGuard, RELAY_LIMITS, type RelayClassifierHook, type RelayClassifierInput, type RelayClassifierOutput } from "../../engine/src/relay.ts";
+import { isPanicHaltedState, withdrawsSwap, type RelayOutcome } from "../src/relay.ts";
 import type { NetworkRuntime } from "./runtime.ts";
 import type { CostLedger } from "./cost.ts";
 import { PHOTO_RELAY_TEXT, type PhotoRelayAnswer, type PhotoRelayFinish } from "./photoRelayFlow.ts";
@@ -40,6 +40,7 @@ export interface RelayEndpointDeps {
   hookFor: (app: AppId) => RelayClassifierHook;
 }
 
+const RELAY_CLEF_LRU_MAX = 512;
 export const RELAY_CLEF_CACHE_MAX = 2_000;
 export const RELAY_CLEF_CACHE_TTL_MS = 60 * 60 * 1000;
 
@@ -49,37 +50,63 @@ export interface RelayClefCacheOptions {
   now?: () => number;
 }
 
-export function createRelayClefCache(opts: RelayClefCacheOptions = {}) {
-  const maxEntries = opts.maxEntries ?? RELAY_CLEF_CACHE_MAX;
-  const ttlMs = opts.ttlMs ?? RELAY_CLEF_CACHE_TTL_MS;
-  const now = opts.now ?? (() => performance.now());
-  const entries = new Map<string, { result: ClefResult; expiresAt: number }>();
+class BoundedTtlLru<V> {
+  private readonly map = new Map<string, { value: V; expiresAt: number }>();
+  constructor(
+    private readonly maxEntries: number,
+    private readonly ttlMs: number,
+    private readonly now: () => number,
+  ) {}
+  get size(): number {
+    return this.map.size;
+  }
+  get(key: string): V | undefined {
+    const hit = this.map.get(key);
+    if (!hit) return undefined;
+    if (this.now() >= hit.expiresAt) {
+      this.map.delete(key);
+      return undefined;
+    }
+    this.map.delete(key);
+    this.map.set(key, hit);
+    return hit.value;
+  }
+  set(key: string, value: V): void {
+    this.map.delete(key);
+    this.map.set(key, { value, expiresAt: this.now() + this.ttlMs });
+    while (this.map.size > this.maxEntries) {
+      const oldest = this.map.keys().next().value;
+      if (oldest === undefined) break;
+      this.map.delete(oldest);
+    }
+  }
+}
 
+export function createRelayClefCache(opts: RelayClefCacheOptions = {}) {
+  const lru = new BoundedTtlLru<ClefResult>(
+    opts.maxEntries ?? RELAY_CLEF_CACHE_MAX,
+    opts.ttlMs ?? RELAY_CLEF_CACHE_TTL_MS,
+    opts.now ?? (() => performance.now()),
+  );
   return {
     get size(): number {
-      return entries.size;
+      return lru.size;
     },
     answers(key: string): ClefResult | undefined {
-      const hit = entries.get(key);
-      if (!hit) return undefined;
-      if (now() >= hit.expiresAt) {
-        entries.delete(key);
-        return undefined;
-      }
-      entries.delete(key);
-      entries.set(key, hit);
-      return hit.result;
+      return lru.get(key);
     },
     record(key: string, result: ClefResult): void {
-      entries.delete(key);
-      entries.set(key, { result, expiresAt: now() + ttlMs });
-      while (entries.size > maxEntries) {
-        const oldest = entries.keys().next().value;
-        if (oldest === undefined) break;
-        entries.delete(oldest);
-      }
+      lru.set(key, result);
     },
   };
+}
+
+function normalizeRoutineRelayText(text: string): string | undefined {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.length > 80) return undefined;
+  if (/[@$]|https?:\/\/|www\.|\d{4,}/i.test(trimmed)) return undefined;
+  const norm = trimmed.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").replace(/[.!?,]+$/g, "").trim();
+  return norm || undefined;
 }
 
 export function relayClassifierFromEnv(
@@ -95,13 +122,18 @@ export function relayClassifierFromEnv(
   }
   const weights = env.RELAY_CLEF_WEIGHTS_PATH ? validateRelayClefWeights(JSON.parse(readFileSync(env.RELAY_CLEF_WEIGHTS_PATH, "utf8")) as RelayClefWeights) : undefined;
   log(`relay classifier: rules + Clef (${env.RELAY_CLEF_MODEL === "clef" ? "clef" : "clef-flash"}, weights ${(weights ?? DEFAULT_RELAY_CLEF_WEIGHTS).version})`);
-  const cache = createRelayClefCache(opts);
+  const cache = createRelayClefCache({ maxEntries: RELAY_CLEF_LRU_MAX, ...opts });
+  const routineCache = new BoundedTtlLru<RelayClassifierOutput>(
+    Math.min(opts.maxEntries ?? RELAY_CLEF_LRU_MAX, RELAY_CLEF_LRU_MAX),
+    opts.ttlMs ?? RELAY_CLEF_CACHE_TTL_MS,
+    opts.now ?? (() => performance.now()),
+  );
   const hooks = new Map<AppId, RelayClassifierHook>();
   return app => {
     let h = hooks.get(app);
     if (!h) {
       const meter = cost?.relayClefEvent(app);
-      h = clefRelayClassifierFromEnv(env, {
+      const rawHook = clefRelayClassifierFromEnv(env, {
         ...(weights ? { weights } : {}),
         ...(opts.fetch ? { fetch: opts.fetch } : {}),
         ...(opts.clock ? { clock: opts.clock } : {}),
@@ -112,6 +144,21 @@ export function relayClassifierFromEnv(
           if (e.outcome === "error" || e.outcome === "timeout") log(`[relay] clef ${e.outcome}${e.status ? ` ${e.status}` : ""} (${e.ms} ms)`);
         },
       });
+      h = async (input: RelayClassifierInput): Promise<RelayClassifierOutput> => {
+        const norm = input.kind === "text" ? normalizeRoutineRelayText(input.text) : undefined;
+        const routineKey = norm
+          ? createHash("sha256").update(JSON.stringify([app, norm, (input.context ?? []).slice(-4), !!input.met])).digest("hex")
+          : undefined;
+        if (routineKey) {
+          const hit = routineCache.get(routineKey);
+          if (hit) return hit;
+        }
+        const out = await rawHook(input);
+        if (routineKey && !out.unavailable && out.flags.length === 0 && !(out.block?.length)) {
+          routineCache.set(routineKey, out);
+        }
+        return out;
+      };
       hooks.set(app, h);
     }
     return h;
@@ -243,12 +290,60 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
       const kind = request.kind;
       const body = request.kind === "text" ? request.body : undefined;
       const targetName = request.targetName;
+      type PrecomputedClassifier =
+        | { input: RelayClassifierInput; ok: true; output: RelayClassifierOutput }
+        | { input: RelayClassifierInput; ok: false; error: unknown };
+      let precomputed: PrecomputedClassifier | undefined;
+      if (kind === "text" && body !== undefined) {
+        const trimmed = body.trim();
+        const preInput = trimmed ? await rt.readState(net => {
+          const match = net.relayMatch(memberId as MemberId, itemId ?? undefined, targetName);
+          if (!match) return undefined;
+          const state = net.exportState();
+          if (state.relay?.log?.some(r => r.itemId === key)) return undefined;
+          if (isPanicHaltedState(state.relay, match.participants, match.id)) return undefined;
+          const members = net.memberList();
+          const sender = members.find(m => m.id === memberId);
+          const otherId = match.participants.find(p => p !== memberId);
+          const recipient = otherId ? members.find(m => m.id === otherId) : undefined;
+          if (!sender || !recipient || sender.optedOut || recipient.optedOut) return undefined;
+          const teenPair = Boolean(sender.minor || recipient.minor);
+          const met = !teenPair && match.metAt !== undefined && match.metAt <= d.clock.now();
+          if (trimmed.length > RELAY_LIMITS.maxChars) return undefined;
+          if (!teenPair) {
+            const ruled = classifyRelayText(trimmed);
+            const hasRuleBlock = ruled.minorSignal || ruled.codes.some(code => !(code.startsWith("offplatform:") && met));
+            if (hasRuleBlock || relayGuard().check(trimmed).length > 0) return undefined;
+          }
+          const thread = state.relay?.threads?.find(t => t.id === match.id);
+          const context = (thread?.messages ?? []).map(x => x.rendered).filter((x): x is string => !!x).slice(-4);
+          return { text: trimmed, kind: "text" as const, context, met };
+        }) : undefined;
+        if (preInput) {
+          try {
+            precomputed = { input: preInput, ok: true, output: await d.hookFor(app)(preInput) };
+          } catch (error) {
+            precomputed = { input: preInput, ok: false, error };
+          }
+        }
+      }
+      const sameClassifierInput = (a: RelayClassifierInput, b: RelayClassifierInput) =>
+        a.kind === b.kind && a.text === b.text && !!a.met === !!b.met
+        && (a.context?.length ?? 0) === (b.context?.length ?? 0)
+        && (a.context ?? []).every((line, i) => line === b.context?.[i]);
+      const hook: RelayClassifierHook = async input => {
+        if (precomputed && sameClassifierInput(precomputed.input, input)) {
+          if (precomputed.ok) return precomputed.output;
+          throw precomputed.error;
+        }
+        return d.hookFor(app)(input);
+      };
       result = await rt.unitOfWork(async net => {
         const match = net.relayMatch(memberId as MemberId, itemId ?? undefined, targetName);
         const canonical = match ? await rt.relayParties([...match.participants]) : undefined;
         const outcome = await net.relayRequest(
           { itemId: key, from: memberId as MemberId, kind, ...(body !== undefined ? { text: body } : {}), ...(targetName !== undefined ? { targetName } : {}), ...(itemId !== null ? { matchId: itemId } : {}) },
-          { hook: d.hookFor(app), contactOf: id => rt.addressOf(id), ...(canonical ? { canonical } : {}) },
+          { hook, contactOf: id => rt.addressOf(id), ...(canonical ? { canonical } : {}) },
         );
         const shared = stored(outcome);
         const r = photoNotice ? { ...shared, notice: `${photoNotice} ${shared.notice}`.trim() } : shared;

@@ -7,7 +7,7 @@
 //
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
-import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_LOOSE_TAIL, AGE_PART, AGE_STATED_BIRTHDAY, ARTICLE_AGE_END, CITIES, CITY_IDS, NOT_DISTANT_BIRTHDAY, ageBeforeConjunction, agePartEvidenceOf, findNeighborhood, quoteStillOpen, canJoin, directAgreementIdiom, isMinor, birthKeyOfParts, normalizeAgeInitialism, ownYouthCue, parseReply, readParticipationWithdrawal, relayMinorAge, unquotedOwnAgeEvidence, validAge, type Category, type City } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_LOOSE_TAIL, AGE_PART, AGE_STATED_BIRTHDAY, ARTICLE_AGE_END, CITIES, CITY_IDS, NOT_DISTANT_BIRTHDAY, SHARED_DOUBLE_NEGATIVE_RE, SPANISH_MONTHS, ageBeforeConjunction, agePartEvidenceOf, findNeighborhood, getCity, localParts, normalizeReplyText, quoteStillOpen, canJoin, directAgreementIdiom, isMinor, birthKeyOfParts, normalizeAgeInitialism, ownYouthCue, parseReply, readParticipationWithdrawal, relayMinorAge, seedVenuesForCity, unquotedOwnAgeEvidence, validAge, type Category, type City, type CityId } from "@thenetwork/core";
 import { ageOnDay, birthKeyUsable, precedingBirthdayAge } from "../../core/src/generated/memberAge.ts";
 import { attendanceAbsences, otherAgeStated } from "./reports.ts";
 import { hasOrElseThreat } from "../../core/src/abuse.ts";
@@ -18,7 +18,7 @@ import { profileSkillMayLearn } from "../../core/src/generated/profileSkillLearn
 import { numericDateAmbiguous } from "../../core/src/generated/textEnrollment.ts";
 import { contactExtractionRisk } from "../../core/src/generated/trustLevel.ts";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
-import { allNeighborhoods, NEIGHBORHOODS, VENUES } from "./geo.ts";
+import { allNeighborhoods, NEIGHBORHOODS, SF_NEIGHBORHOODS, VENUES } from "./geo.ts";
 
 export type Abuse = "sales_spam" | "scam_money" | "contact_extraction" | "prompt_injection" | "harassment" | "mass_recruit";
 export type InboundKind =
@@ -70,9 +70,12 @@ export interface Classified {
 export const normText = (s: string) => s.normalize("NFKC").toLowerCase().replace(/[‘’ʼ`´]/g, "'").replace(/[“”]/g, "\"");
 
 const COFOUNDER_WORD = /\bco[- ]?founders?\b/;
-const COFOUNDER_OBJECT = "a co[- ]?founder(?: for my (?:startup|company|business|project))?";
-const COFOUNDER_STATEMENT = new RegExp(`^(?:i (?:want|need)(?: to find)?|i(?:'d| would) (?:like|love)(?: to find)?|i(?:'m| am) (?:looking|searching) for) ${COFOUNDER_OBJECT}[.!]?$`);
-const COFOUNDER_ASK = new RegExp(`^(?:(?:can|could|would) you )?(?:please )?(?:find me|help me find) ${COFOUNDER_OBJECT}[.?!]?$`);
+const COFOUNDER_MOD = "(?:(?:technical|non[- ]?technical|engineering|design|product|business|ops|operations|growth|sales|gtm|ai|ml|hardware|software|biotech|fintech|climate|startup|founding|fullstack|full[- ]?stack|backend|frontend|senior|experienced|strong|great|good)\\s+){0,2}";
+const COFOUNDER_TAIL = "(?:\\s+(?:for\\s+(?:my|our|a|an)\\s+[^.?!\"']{1,60}|in\\s+[a-z0-9][a-z0-9 /&-]{1,50}|with\\s+[^.?!\"']{1,60}|who\\s+[^.?!\"']{1,60}))?";
+const COFOUNDER_OBJECT = `(?:a|an)\\s+${COFOUNDER_MOD}co[- ]?founder${COFOUNDER_TAIL}`;
+const COFOUNDER_STATEMENT = new RegExp(`^(?:i\\s+(?:want|need)(?:\\s+to\\s+find)?|i(?:'d|\\s+would)\\s+(?:like|love)(?:\\s+to\\s+find)?|(?:i(?:'m|\\s+am)\\s+)?(?:looking|searching)\\s+for)\\s+${COFOUNDER_OBJECT}[.!]?$`);
+const COFOUNDER_ASK = new RegExp(`^(?:(?:can|could|would)\\s+you\\s+)?(?:please\\s+)?(?:find\\s+me|help\\s+me\\s+find)\\s+${COFOUNDER_OBJECT}[.?!]?$`);
+const COFOUNDER_DISQUALIFIER = /\b(?:not|never|don't|do not|no longer|if|unless|whether)\b/;
 
 const RX = {
   link: /(https?:\/\/|www\.|bit\.ly|\b[a-z0-9-]+\.(co|com|io|ly|biz|net)\b)/i,
@@ -242,7 +245,11 @@ export function classify(body: string): Classified {
   if (COFOUNDER_WORD.test(low)) {
     // A whole-message grammar excludes quoted, negated, hypothetical and third-person claims.
     // Unclear mentions stay out of the generic people-request path.
-    return { ...out, kind: "cofounder_goal", cofounderAffirmed: COFOUNDER_STATEMENT.test(low) || COFOUNDER_ASK.test(low) };
+    return {
+      ...out,
+      kind: "cofounder_goal",
+      cofounderAffirmed: (COFOUNDER_STATEMENT.test(low) || COFOUNDER_ASK.test(low)) && !COFOUNDER_DISQUALIFIER.test(low),
+    };
   }
   const directPeopleAsk = !x.negatedAsk && sents.some(s => RX.directPeopleAsk.test(normText(s.text)));
   if (desire || directPeopleAsk || (RX.peopleAsk.test(t) && !x.negatedAsk)) {
@@ -271,6 +278,12 @@ const AGE_WORDS: Record<string, number> = {
   one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
   thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20,
 };
+const ES_AGE_WORDS: Record<string, number> = {
+  uno: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10,
+  once: 11, doce: 12, trece: 13, catorce: 14, quince: 15, dieciseis: 16, "dieciséis": 16,
+  diecisiete: 17, dieciocho: 18, diecinueve: 19, veinte: 20,
+};
+const ES_AGE_WORD = Object.keys(ES_AGE_WORDS).sort((a, b) => b.length - a.length).join("|");
 const ORDINAL: Record<string, number> = { sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10, eleventh: 11, twelfth: 12 };
 const ME = "(?:i'?m|i am|im)";
 /** "only 15", "just 15", "literally 15" are the age; "almost 16", "turning 16" are one less. */
@@ -320,7 +333,8 @@ const GRADE_AGE_END = String.raw`(?!\s*,\s*as\s+(?:a|the)\s+teacher(?=\s*(?:$|[.
 const ageNumber = (value: string) => /^\d/.test(value) ? Number(value) : AGE_WORDS[value] ?? NaN;
 
 const AGE_RX: AgeRule[] = [
-  // Explicit: "I am 12 years old", "im 15 y/o", "my age is 12", "15 y/o here", "age: 15".
+  // Explicit: "I am 12 years old", "im 15 y/o", "my age is 12", "15 y/o here", "age: 15", "tengo 11 años".
+  { rx: new RegExp(`\\b(?:yo\\s+)?tengo\\s+(\\d{1,2}|${ES_AGE_WORD})\\s+a[nñ]os\\b`), age: m => /^\d/.test(m[1]!) ? Number(m[1]) : ES_AGE_WORDS[m[1]!] ?? NaN, explicit: true },
   { rx: new RegExp(`(?:${SELF_CURRENT_AGE}|\\bmy age is\\s+)(\\d{1,2})${NOT_UPCOMING_AGE}\\s*${YEARS_OLD}`), age: m => Number(m[1]), explicit: true },
   { rx: new RegExp(`${SELF_CURRENT_AGE}(one|two|three|four|five|six|seven|eight|nine|${NUM_WORD})${NOT_UPCOMING_AGE}[\\s-]+${YEARS_OLD}`), age: m => AGE_WORDS[m[1]!]!, explicit: true },
   { rx: new RegExp(`${SELF_CURRENT_AGE}an?\\s+(\\d{1,2}|one|two|three|four|five|six|seven|eight|nine|${NUM_WORD})${NOT_UPCOMING_AGE}[\\s-]*${YEARS_OLD}${ARTICLE_AGE_END}`), age: m => ageNumber(m[1] ?? ""), explicit: true },
@@ -464,6 +478,11 @@ const AGE_ANSWER_RX = new RegExp(`^(?:${ME}\\s+)?(\\d{1,3}|(?:${TENS_WORD})(?:[\
  */
 export function ageAnswer(body: string): number | undefined {
   const t = normText(body).trim();
+  const es = new RegExp(`^(?:(?:yo\\s+)?tengo\\s+)?(\\d{1,3}|${ES_AGE_WORD})\\s+a[nñ]os\\s*[.!]*$`).exec(t);
+  if (es) {
+    const n = /^\d/.test(es[1]!) ? Number(es[1]) : ES_AGE_WORDS[es[1]!] ?? NaN;
+    return n > 0 && n < 120 ? n : undefined;
+  }
   const m = AGE_ANSWER_RX.exec(t);
   if (!m) return undefined;
   const [w, unit] = m[1]!.split(/[\s-]+/);
@@ -474,6 +493,7 @@ export function ageAnswer(body: string): number | undefined {
 const MONTHS: Record<string, number> = {
   january: 1, jan: 1, february: 2, feb: 2, march: 3, mar: 3, april: 4, apr: 4, may: 5, june: 6, jun: 6, july: 7, jul: 7,
   august: 8, aug: 8, september: 9, sept: 9, sep: 9, october: 10, oct: 10, november: 11, nov: 11, december: 12, dec: 12,
+  ...SPANISH_MONTHS,
 };
 const MONTH_NAME = Object.keys(MONTHS).sort((a, b) => b.length - a.length).join("|");
 type DateGroups = readonly (string | undefined)[];
@@ -483,14 +503,14 @@ const MONTH_WORDS = ["January", "February", "March", "April", "May", "June", "Ju
 const DATE_FORMS: DateForm[] = [
   { source: "(\\d{4})-(\\d{2})-(\\d{2})", numeric: false, parts: g => [Number(g[1]), Number(g[2]), Number(g[3])] },
   { source: "(\\d{1,2})[/-](\\d{1,2})[/-](\\d{4})", numeric: true, parts: g => [Number(g[3]), Number(g[1]), Number(g[2])] },
-  { source: `(${MONTH_NAME})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(\\d{4})`, numeric: false, parts: g => [Number(g[3]), monthOf(g[1]), Number(g[2])] },
-  { source: `(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(${MONTH_NAME})\\.?,?\\s+(\\d{4})`, numeric: false, parts: g => [Number(g[3]), monthOf(g[2]), Number(g[1])] },
+  { source: `(${MONTH_NAME})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(?:de\\s+)?(\\d{4})`, numeric: false, parts: g => [Number(g[3]), monthOf(g[1]), Number(g[2])] },
+  { source: `(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:(?:of|de)\\s+)?(${MONTH_NAME})\\.?,?\\s+(?:de\\s+)?(\\d{4})`, numeric: false, parts: g => [Number(g[3]), monthOf(g[2]), Number(g[1])] },
 ];
 const bounded = (source: string) => `(?<![\\w/.-])${source}(?![\\w/-]|\\.\\d)`;
-const BIRTH_WORD = "(?:birthday|bday|b-day|birth ?date|date of birth|dob)";
-const SELF_BORN = "(?:i\\s+was|i['’]?m|i\\s+am)\\s+born(?:\\s+on)?";
-const BIRTH_LEAD = `(?:(?:my\\s+)?${BIRTH_WORD}(?:\\s+is)?\\s*[:=-]?|${SELF_BORN}|born(?:\\s+on)?)`;
-const SELF_BIRTH_LEAD = `(?:my\\s+${BIRTH_WORD}(?:\\s+is)?\\s*[:=-]?|${BIRTH_WORD}\\s*[:=]|${SELF_BORN})`;
+const BIRTH_WORD = "(?:birthday|bday|b-day|birth ?date|date of birth|dob|cumplea[nñ]os|fecha de nacimiento)";
+const SELF_BORN = "(?:(?:i\\s+was|i['’]?m|i\\s+am)\\s+born(?:\\s+on)?|nac[ií](?:\\s+el)?)";
+const BIRTH_LEAD = `(?:(?:my\\s+|mi\\s+)?${BIRTH_WORD}(?:\\s+(?:is|es))?\\s*[:=-]?|${SELF_BORN}|born(?:\\s+on)?)`;
+const SELF_BIRTH_LEAD = `(?:(?:my|mi)\\s+${BIRTH_WORD}(?:\\s+(?:is|es))?\\s*[:=-]?|${BIRTH_WORD}\\s*[:=]|${SELF_BORN})`;
 const ANSWER_RX = DATE_FORMS.map(form => ({
   form, rx: new RegExp(`^\\s*(?:(?:hi|hey|hello|yo|ok|okay|sure)[\\s,!.]+)?(?:${BIRTH_LEAD}\\s*)?${bounded(form.source)}\\s*[.!]*\\s*$`, "i"),
 }));
@@ -676,7 +696,7 @@ const AREA_ALIASES: [RegExp, string][] = [
 ];
 const MULTI_CITY_ALIASES: [RegExp, string][] = (() => {
   const out: [RegExp, string][] = [];
-  const skip = new Set(["midtown", "downtown", "uptown", "westside", "loop", "grove", "chinatown", "fidi", "financial district", "arts district", "hyde park", "south beach"]);
+  const skip = new Set(["midtown", "downtown", "uptown", "westside", "grove"]);
   for (const city of CITY_IDS) {
     if (city === "nyc") continue;
     for (const n of CITIES[city].neighborhoods) {
@@ -684,7 +704,11 @@ const MULTI_CITY_ALIASES: [RegExp, string][] = (() => {
       for (const term of terms) {
         if (term.length < 4 || skip.has(term)) continue;
         const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
-        out.push([new RegExp(`\\b${escaped}\\b`), n.name]);
+        if (term === "loop") {
+          out.push([/(?<!reservoir\s)\bloop\b/, n.name]);
+        } else {
+          out.push([new RegExp(`\\b${escaped}\\b`), n.name]);
+        }
       }
     }
   }
@@ -697,20 +721,71 @@ const locationNames = [
   ...VENUES.flatMap(venue => [venue.name, venue.name.split(/,| \(| at /)[0]!].map(name => [locationText(name), venue.neighborhood] as const)),
   ...NEIGHBORHOODS.map(area => [locationText(area.name), area.name] as const),
 ].sort(([a], [b]) => b.length - a.length);
-const unspecifiedPlanPlace = /^(?:(?:a|one|two|three|four|few|couple|several|\d+)\s|(?:person|general|particular|advance|mind|the|my|our|your|their|town|nyc|new york(?: city)?|this|next|today|tomorrow|tonight|noon|midnight|morning|afternoon|evening|weekend|january|february|march|april|may|june|july|august|september|october|november|december|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b)/;
+const cityLocationCache = new Map<string, { names: [string, string][]; aliases: [RegExp, string][] }>();
+
+function cityLocationsFor(city: CityId): { names: [string, string][]; aliases: [RegExp, string][] } {
+  const key = city.trim().toLowerCase();
+  const cached = cityLocationCache.get(key);
+  if (cached) return cached;
+  const spec = getCity(key);
+  const namePairs: [string, string][] = [];
+  const aliasPairs: [RegExp, string][] = [];
+  if (spec) {
+    for (const v of seedVenuesForCity(spec.id)) {
+      for (const label of [v.name, v.name.split(/,| \(| at /)[0]!]) {
+        const norm = locationText(label);
+        if (norm) namePairs.push([norm, v.neighborhood]);
+      }
+    }
+    for (const n of spec.neighborhoods) {
+      const normName = locationText(n.name);
+      if (normName) namePairs.push([normName, n.name]);
+      for (const alias of [n.name, ...n.aliases]) {
+        const clean = locationText(alias);
+        if (!clean || clean.length < 2) continue;
+        namePairs.push([clean, n.name]);
+        const escaped = clean.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+        aliasPairs.push([new RegExp(`\\b${escaped}\\b`), n.name]);
+      }
+    }
+  }
+  if (key === "sf") {
+    for (const n of SF_NEIGHBORHOODS) {
+      const clean = locationText(n.name);
+      if (!clean) continue;
+      namePairs.push([clean, n.name]);
+      const escaped = clean.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+      aliasPairs.push([new RegExp(`\\b${escaped}\\b`), n.name]);
+    }
+  }
+  namePairs.sort(([a], [b]) => b.length - a.length);
+  const entry = { names: namePairs, aliases: aliasPairs };
+  cityLocationCache.set(key, entry);
+  return entry;
+}
+
+const unspecifiedPlanPlace = /^(?:(?:a|one|two|three|four|few|couple|several|\d+)\s|(?:person|general|particular|advance|mind|the|my|our|your|their|town|nyc|new york(?: city)?|sf|san francisco|la|los angeles|chicago|miami|this|next|today|tomorrow|tonight|noon|midnight|morning|afternoon|evening|weekend|january|february|march|april|may|june|july|august|september|october|november|december|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b)/;
 const vaguePlanArea = /^(?:the\s+)?(?:brooklyn|queens|manhattan|bronx|staten island|new jersey|jersey city|hoboken|forest hills)\b/;
 export const plansPlaceQuestion = "Which NYC neighborhood should I use? Ask again with the neighborhood name.";
 
-export function plansPlaceQuestionFor(city?: City): string {
-  if (city === "nyc") return plansPlaceQuestion;
-  const name = city ? CITIES[city]?.name : undefined;
-  return name
-    ? `Which ${name} neighborhood should I use? Ask again with the neighborhood name.`
+/** City-appropriate neighborhood follow-up prompt (defaults to NYC for backwards compatibility). */
+export function plansPlaceQuestionForCity(city?: CityId): string {
+  const key = city?.trim().toLowerCase();
+  if (!key || key === "nyc") return plansPlaceQuestion;
+  const spec = getCity(key);
+  return spec
+    ? `Which ${spec.name} neighborhood should I use? Ask again with the neighborhood name.`
     : "Which neighborhood should I use? Ask again with the neighborhood name.";
 }
 
+export const plansPlaceQuestionFor = plansPlaceQuestionForCity;
+
 /** Read one direct public recommendation location without copying a raw place into a reply. */
-export function publicPlanLocation(text: string, exact = false, city?: City): { area?: string; mentioned: boolean } {
+export function publicPlanLocation(text: string, exactOrCity: boolean | CityId = false, cityArg?: CityId): { area?: string; mentioned: boolean } {
+  const exact = typeof exactOrCity === "boolean" ? exactOrCity : false;
+  const city = (typeof exactOrCity === "string" ? exactOrCity : cityArg)?.trim().toLowerCase() || "nyc";
+  const isNyc = city === "nyc";
+  const cityLocs = isNyc ? undefined : cityLocationsFor(city);
   let mentioned = false;
   for (const cue of text.matchAll(/\b(?:in|near|around|at|by)\s+/gi)) {
     const before = normText(text.slice(0, cue.index));
@@ -719,17 +794,19 @@ export function publicPlanLocation(text: string, exact = false, city?: City): { 
     const phrase = locationText(original);
     const withoutArticle = phrase.replace(/^the\s+/, "");
     const candidates = phrase === withoutArticle ? [phrase] : [phrase, withoutArticle];
-    for (const [name, area] of locationNames) {
+    const names = isNyc ? locationNames : cityLocs!.names;
+    for (const [name, area] of names) {
       if (candidates.some(value => exact ? value === name : value.startsWith(name) && /^(?:$|[\s,?!:;)])/.test(value.slice(name.length)))) {
         return { area, mentioned: true };
       }
     }
-    if (city && city !== "nyc") {
-      const cityMatch = findNeighborhood(original, city);
+    if (!isNyc) {
+      const cityMatch = findNeighborhood(city as CityId, original);
       if (cityMatch) return { area: cityMatch.name, mentioned: true };
     }
-    for (const [pattern, area] of ALL_AREA_ALIASES) {
-      if (AREA_NAMES.has(area) && candidates.some(value => {
+    const aliases = isNyc ? AREA_ALIASES : cityLocs!.aliases;
+    for (const [pattern, area] of aliases) {
+      if ((!isNyc || AREA_NAMES.has(area)) && candidates.some(value => {
         const match = pattern.exec(value);
         return match?.index === 0 && (!exact || match[0] === value);
       })) return { area, mentioned: true };
@@ -747,8 +824,46 @@ const HOME_CTX = /\b(i live|i'?m living|living in|live in|based (in|out of)|i'?m
 /** Where a neighborhood is not home: "used to live in", "work in the", "moved from". Each can take "the". */
 const NOT_HOME = /\b(used to live(?: in)?|moved (?:away )?from|grew up in|work(ing)? in|office (is )?in|commute to|visiting|not in|never been to|far from)(?: the)?\s*$/;
 
+const RED_LINE_NEG_BEFORE = /\b(?:not|never|no longer|don't|do not|doesn't|does not|without needing|no need for)\s+(?:really\s+|strictly\s+|keep\s+|eat\s+|need\s+|use\s+|have\s+)?$/i;
+const RED_LINE_RULES: readonly [string, RegExp, boolean?][] = [
+  ["strict_sober", /\b(?:strictly\s+sober|in\s+recovery|recovering\s+alcoholic|sober(?:\s+(?:only|lifestyle|living|for\s+\d+|since))?|alcohol[- ]?free|no\s+alcohol|zero\s+alcohol|can'?t\s+be\s+around\s+alcohol|avoid(?:ing)?\s+bars?|no\s+bars?(?:\s+please)?|don'?t\s+go\s+to\s+bars?|not\s+around\s+alcohol|12[- ]?step|in\s+aa)\b/i, true],
+  ["non_drinker", /\b(?:non[- ]?drinker|teetotal(?:er)?|(?:i\s+)?(?:don'?t|do\s+not|never)\s+drink(?:\s+alcohol)?|doesn'?t\s+drink(?:\s+alcohol)?|no\s+drinking)\b/i, true],
+  ["halal", /\b(?:halal(?:\s+(?:only|food|friendly|diet|spots?|places?))?|keep(?:s|ing)?\s+halal|eat(?:s|ing)?\s+halal)\b/i],
+  ["kosher", /\b(?:(?:glatt\s+)?kosher(?:\s+(?:only|food|friendly|diet|spots?|places?))?|keep(?:s|ing)?\s+kosher|eat(?:s|ing)?\s+kosher)\b/i],
+  ["gluten_free", /\b(?:gluten[- ]?free|celiac|coeliac|no\s+gluten|gluten\s+(?:allergy|intoleran\w*))\b/i],
+  ["vegetarian", /\b(?:vegetarian|veggie\s+only|(?:don'?t|do\s+not|doesn'?t|never)\s+eat\s+meat|no\s+meat|meat[- ]?free)\b/i],
+  ["vegan", /\b(?:strictly\s+vegan|vegan|plant[- ]?based|no\s+animal\s+products?)\b/i],
+  ["severe_allergen", /\b(?:(?:severe|serious|deadly|life[- ]?threatening)\s+(?:food\s+)?allerg(?:y|ies|ic)|anaphylac\w*|epi[- ]?pen|(?:tree\s+)?(?:nut|peanut|shellfish)\s+allerg(?:y|ies)|allergic\s+to\s+(?:peanuts?|tree\s+nuts?|nuts|shellfish|sesame|dairy|eggs?|fish|soy))\b/i, true],
+  ["wheelchair", /\b(?:wheelchair(?:[- ]?accessible)?|ada\s+accessible|step[- ]?free|no\s+stairs|roll[- ]?in\s+access|mobility\s+aid|handicap\s+accessible|accessibility\s+required)\b/i],
+  ["smoke_free", /\b(?:smoke[- ]?free|non[- ]?smoker|no\s+smoking|no\s+smoke|avoid\s+smoke|allergic\s+to\s+smoke|no\s+smokers?|no\s+cigarettes?)\b/i, true],
+  ["low_noise", /\b(?:low[- ]?noise|quiet\s+(?:only|places?|spots?|venues?)|somewhere\s+quiet|nothing\s+loud|no\s+loud(?:\s+(?:places?|bars?|venues?|music))?|hate\s+loud|can'?t\s+do\s+loud|sensory[- ]?friendly|noise[- ]?sensitive|hard\s+of\s+hearing|hearing\s+(?:aid|accessible)|overstimulated\s+by\s+noise)\b/i, true],
+  ["daytime_only", /\b(?:daytime[- ]?only|only\s+daytime|no\s+after\s+dark|not\s+after\s+dark|before\s+dark|daylight\s+only|only\s+during\s+the\s+day|only\s+in\s+the\s+daytime|(?:don'?t|do\s+not|doesn'?t)\s+go\s+out\s+at\s+night|no\s+(?:late\s+)?nights?|mornings?\s+and\s+afternoons?\s+only)\b/i, true],
+];
+
+/** Extract canonical venue/dietary/accessibility red-line facet tags matching memberVenuePrefsOf(). */
+export function extractRedLineTags(body: string): string[] {
+  const t = normText(body);
+  if (!t.trim()) return [];
+  const tags = new Set<string>();
+  const noAllergies = /\bno\s+(?:food\s+)?allergies\b|\bno\s+dietary\s+restrictions\b/i.test(t);
+  for (const s of sentencesOf(t)) {
+    for (const [tag, rx, selfNegative] of RED_LINE_RULES) {
+      if (tag === "severe_allergen" && noAllergies && !/\b(?:peanut|nut|shellfish|anaphylac|epi[- ]?pen|allergic\s+to)\b/i.test(s.text)) continue;
+      const m = rx.exec(s.text);
+      if (!m) continue;
+      const before = s.text.slice(0, m.index).split(/[,;:]|\b(?:but|though|however)\b/).pop() ?? "";
+      if (!selfNegative && RED_LINE_NEG_BEFORE.test(before)) continue;
+      if (tag === "strict_sober" && /\bnot\s+(?:strictly\s+)?sober\b/i.test(s.text.slice(Math.max(0, m.index - 12), m.index + m[0].length))) continue;
+      tags.add(tag);
+    }
+  }
+  return [...tags];
+}
+
 export interface Profile {
   interests: string[]; skills: string[]; desireIds: string[];
+  /** Canonical venue/dietary/accessibility red-line facet tags extracted from the message. */
+  redLines: string[];
   /** A neighborhood the Network knows, said as where they are. Undefined when unknown. */
   area?: string;
   /** They said where they live, but not as a neighborhood the Network knows: ask, never guess. */
@@ -763,12 +878,24 @@ export interface Profile {
 }
 
 /** The neighborhood a text names as the sender's place, or { unknown } when it names a place the Network does not know. */
-export function areaOf(text: string, city?: City): { area?: string; unknown?: boolean } {
+export function areaOf(text: string, city?: CityId): { area?: string; unknown?: boolean } {
   const t = normText(text).replace(/\bst\.\s*/g, "st ").replace(/\bft\.\s*(?=greene\b)/g, "ft ");
-  if (city && city !== "nyc") {
+  const normalizedCity = city?.trim().toLowerCase();
+  if (normalizedCity && normalizedCity !== "nyc") {
+    const cityAliases = cityLocationsFor(normalizedCity).aliases;
     for (const s of sentencesOf(t)) {
-      const found = findNeighborhood(city, s.text);
-      if (found) return { area: found.name };
+      let best: { at: number; name: string } | undefined;
+      for (const [rx, name] of cityAliases) {
+        const m = rx.exec(s.text);
+        if (!m || NOT_HOME.test(s.text.slice(0, m.index))) continue;
+        if (!best || m.index < best.at) best = { at: m.index, name };
+      }
+      if (best) return { area: best.name };
+      const found = findNeighborhood(normalizedCity as City, s.text);
+      if (found) {
+        const idx = s.text.indexOf(found.name.toLowerCase());
+        if (idx < 0 || !NOT_HOME.test(s.text.slice(0, idx))) return { area: found.name };
+      }
     }
   }
   for (const s of sentencesOf(t)) {
@@ -789,7 +916,7 @@ export function areaOf(text: string, city?: City): { area?: string; unknown?: bo
 }
 
 /** Facet tags a member reveals when answering onboarding questions or asking for something. Never guesses. */
-export function extractProfile(body: string): Profile {
+export function extractProfile(body: string, city?: CityId): Profile {
   const t = normText(body);
   const interests = new Set<string>(), skills = new Set<string>(), desires = new Set<string>(), notWanted = new Set<string>();
   let negatedAsk = false, closeRequest = false;
@@ -887,13 +1014,14 @@ export function extractProfile(body: string): Profile {
   for (const d of DESIRES) if (plain.includes(d.text.toLowerCase()) && !notWanted.has(d.id)) desires.add(d.id);
   for (const i of INTERESTS) if (plain.includes(i.label.toLowerCase())) interests.add(i.tag);
   // A negated like is not an interest ("not into running"): drop interests named only after a negation.
-  const where = areaOf(body);
+  const where = areaOf(body, city);
   if (firstCloseAt !== Infinity && /\b(?:just kidding|actually,?\s+no|keep it|never ?mind|scratch that|take (?:it|that) back|disregard (?:it|that)|don'?t cancel|do not cancel)\b/.test(t.slice(firstCloseAt))) {
     for (const id of closedIds) notWanted.delete(id);
     closeRequest = false;
   }
   return {
     interests: [...interests], skills: [...skills], desireIds: DESIRES.map(d => d.id).filter(id => desires.has(id)),
+    redLines: extractRedLineTags(body),
     ...(where.area ? { area: where.area } : {}), ...(where.unknown ? { areaUnknown: true } : {}),
     notWanted: [...notWanted], negatedAsk: negatedAsk && !desires.size, ...(closeRequest ? { closeRequest: true } : {}),
     eveningsOpen: /evenings are (pretty )?open|free most evenings|evenings (are )?free|evenings work/i.test(body) ? true : /evenings are tight|evenings are busy|no evenings/i.test(body) ? false : undefined,
@@ -1003,25 +1131,29 @@ export interface Consent { answer: YesNo; why: ConsentWhy }
 /** A time word right after a refusal makes it a refusal of that time, not of the offer ("can't do Thursday"). */
 const TIME_AHEAD = /^\s*(?:(?:do|make|on|at|for|the|that|this|until|till|before|after)\s+)*(?:(?:sun|mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri|sat(?:ur)?)(?:day)?s?\b|first\b|second\b|third\b|last one\b|1st\b|2nd\b|3rd\b|option\b|\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b|mornings?\b|afternoons?\b|evenings?\b|nights?\b|weekends?\b|weekdays?\b|[abc]\b(?!\s+\w{3,}))/;
 /** "No" as a refusal: alone, before punctuation, or before these words. "No heavy networking" is not a refusal. */
-const NO_NEXT = "thanks|thank|thx|ty|sorry|i|i'm|im|i'd|i've|i'll|way|can|cannot|can't|cant|not|nope|lol|lmao|haha|unfortunately|wait|actually|really|man|dude|for|to that|to this|this|that|sunday|monday|tuesday|wednesday|thursday|friday|saturday|we|you|it|just|nah|sir|ma'am|go|chance|interest|deal";
+const NO_NEXT = "thanks|thank|thx|ty|gracias|sorry|lo siento|i|i'm|im|i'd|i've|i'll|way|can|cannot|can't|cant|not|nope|lol|lmao|haha|unfortunately|wait|actually|really|man|dude|for|to that|to this|this|that|sunday|monday|tuesday|wednesday|thursday|friday|saturday|we|you|it|just|nah|sir|ma'am|go|chance|interest|deal|puedo|quiero|voy|creo|me|por ahora|esta vez|hoy";
 const REFUSAL_RX: RegExp[] = [
   new RegExp(`(?:^|[^\\w'])no+(?=\\s*$|\\s*[^\\w\\s']|\\s+(?:${NO_NEXT})\\b)`),
   /\b(?:that'?s a|it'?s a|gonna be a|answer is a?|hard) no\b/,
-  /\bnope\b|\bnah+\b|\bnay\b|\bno can do\b/,
-  /\b(?:i'?ll|i will|gonna|going to|i'?m going to|i'?m gonna|i have to|i'?ve got to|i gotta|will have to|i'?d|i would|i think i'?ll)\s+(?:have to\s+)?(?:pass|skip|sit (?:this|that|it) out|decline|sit this one out)\b/,
+  /\bnope\b|\bnah+\b|\bnay\b|\bnel\b|\bno can do\b/,
+  /\b(?:i'?ll|i will|gonna|going to|i'?m going to|i'?m gonna|i have to|i'?ve got to|i gotta|will have to|i'?d|i would|i think i'?ll|i shall|i must)\s+(?:have to\s+)?(?:pass|skip|sit (?:this|that|it) out|decline|sit this one out)\b/,
   /\b(?:hard |gonna |i )?pass\b(?!\s+(?:the|it|along|by|me|on (?:the|my)|through))/,
   /\bno time\b(?! pressure)/,
   /\bnot (?:interested|down|for me|this (?:time|week|weekend|one)|right now|now|today|tonight|really|up for (?:it|that|this)|feeling it|my (?:thing|scene|vibe|cup of tea)|a fan|happening|gonna happen|going to happen|keen|into (?:it|that|this)|a good (?:time|week|fit)|available|possible|able to|the right time|at the moment|anytime soon|in the mood)\b/,
-  /\b(?:absolutely|definitely|certainly|probably|def|totally|hell|of course|surely|really|actually|sadly|unfortunately) not\b/,
+  /\b(?:absolutely|definitely|certainly|probably|def|totally|hell|of course|surely|really|actually|sadly|unfortunately|regrettably) (?:not|no)\b/,
+  /\b(?:claro|por supuesto|obvio|desde luego) que no\b/,
+  /\b(?:(?:i'?m|i am)\s+)?afraid not\b|\bregrettably\b|\bi cannot attend\b|\bunable to attend\b|\bi (?:will not|won'?t) be able to\b/,
   /\b(?:i'?d |i would )?rather not\b/,
   /\b(?:don'?t|do not) think (?:i can|i could|i'?ll make it|i'?ll be able)\b/,
   /\b(?:don'?t|do not|doesn'?t) (?:think so|want to|wanna|feel like it|really want|have (?:time|the time|room|the bandwidth)|need)\b/,
   /\b(?:i'?m|im|i am) (?:not|no longer) (?:in|down|up for (?:it|that)|interested|free|available|keen|able|looking)\b/,
-  /\b(?:i'?m|im|i am) (?:good|ok|okay|fine|all set)(?:,? (?:thanks?|thank you|tho|though|for now))?\s*$/,
+  /\b(?:i'?m|im|i am) (?:good|ok|okay|fine|all set|set)(?:,? (?:thanks?|thank you|ty|thx|tho|though|for now|for this|this time))?\s*$/,
+  /\ball (?:good|set)(?:,? (?:thanks?|thank you|ty|thx|tho|though|for now|for this|this time))\s*$/,
   /\bcount me out\b|\b(?:i'?m|im) out\b|\bskip(?:ping)? (?:this|it|that)\b|\bi'?ll sit (?:this|that) one out\b/,
   /\b(?:not gonna|won'?t|can'?t|cannot|couldn'?t|not going to) make it\b/,
   /(?<!not )\btoo (?:busy|swamped|slammed|far|tired)\b/,
   /\b(?:maybe|perhaps|some|next) (?:other |another )?time\b(?!s)|^\s*(?:another|other) time\s*$/,
+  /\b(?:no gracias|para nada|de ninguna manera|ni loc[oa]|ni hablar|mejor no|no puedo|no me interesa|no quiero|no voy|no creo|esta vez no|no podr(?:e|ia)|imposible|paso)\b/,
   /👎|🙅|❌/,
 ];
 /** "Can't", "won't" and "busy" refuse the offer unless a time follows (then they refuse that time). "Can't wait" is a yes. */
@@ -1029,14 +1161,16 @@ const CANT = /\b(?:can'?t|cannot|can not|won'?t be able to|unable to|not able to
 /** "Busy now, ask me later": a deferral, not a refusal of the offer. */
 const DEFER = /\b(?:ask|text|message|ping|try) me (?:later|again|tomorrow|tmrw|tonight|in a bit)\b|\bget back to you\b|\btalk later\b|\btext later\b/;
 const CANT_HARMLESS = /^\s*(?:wait|believe|say no|complain|go wrong|resist|beat|miss (?:it|this))/;
-const AFFIRM_RX = /(?:^|[^\w'])(?:yes+|yess+|yeah+|yea|yah|yep|yup|sure|surely|ok+|okay+|okey|kk?|alright|aight|absolutely|definitely|def|of course|for sure|fosho|bet|deal|perfect|great|awesome|amazing|love (?:to|that|it)|i'?d love|would love|i'?d like that|would like that|happy to|glad to|let'?s (?:do (?:it|this|that)|go)|lets (?:do it|go)|(?:i'?m|im|i am) (?:totally |so |definitely |all |fully )?in|count me in|sign me up|i'?m down|im down|i am down|down for (?:it|that|this)|down to\b|so down|totally down|i'?m game|im game|(?:i'?m |i am |i'?d be |i would be |would be )?up for (?:it|that|this)|works for me|that works|works|sounds (?:good|great|fun|lovely|perfect|nice|like a plan|amazing|awesome)|why not|please do|go for it|go ahead|yes please|can do|i can (?:make it|do (?:it|that))|that'?d be (?:great|nice|fun|lovely)|would be (?:great|nice|fun)|count on me|can'?t wait|^\s*down\s*[!.]*\s*$|good with (?:that|it|me|this)|that'?s (?:good|great|fine|perfect)|fine by me|fine with me)(?![\w'])|💯|👍|🙌|✅|👌|🤝/;
+const AFFIRM_RX = /(?:^|[^\w'])(?:yes+|yess+|yeah+|yea|yah|yep|yup|yessir|aye|sure|sure thing|surely|ok+|okay+|okie|okey|kk?|alright|all right|aight|absolutely|definitely|def|of course|ofc|for sure|fs|fosho|bet|deal|perfect|great|awesome|amazing|certainly|indeed|by all means|i accept|(?:i(?:'d| would)|would) be delighted|delighted(?: to)?|splendid|gladly|with pleasure|yes sir|yes ma'?am|say less|lfg|lessgo|lesgo|love (?:to|that|it)|i'?d love|would love|i'?d like that|would like that|happy to|i(?:'d| would) be happy to|glad to|i(?:'d| would) be glad to|let'?s (?:do (?:it|this|that)|go)|lets (?:do it|go)|(?:i'?m|im|i am) (?:totally |so |definitely |all |fully )?in|count me in|sign me up|i'?m down|im down|i am down|down for (?:it|that|this)|down to\b|so down|totally down|i'?m game|im game|(?:i'?m |i am |i'?d be |i would be |would be )?up for (?:it|that|this)|works for me|that works|works|sounds (?:good|great|fun|lovely|perfect|wonderful|nice|like a plan|amazing|awesome)|why not|please do|go for it|go ahead|yes please|can do|i can (?:make it|do (?:it|that))|that'?d be (?:great|nice|fun|lovely|wonderful)|would be (?:great|nice|fun|wonderful)|count on me|can'?t wait|^\s*down\s*[!.]*\s*$|good with (?:that|it|me|this)|that'?s (?:good|great|fine|perfect)|fine by me|fine with me|si claro|claro que si|por supuesto que si|claro|dale|vale|orale|por supuesto|de acuerdo|me apunto|cuenta conmigo|me encantaria|con gusto|encantad[oa]|excelente|perfecto|genial|listo|hecho)(?![\w'])|(?<=^|[\s,.!])si(?= *(?:$|[.,!;]|claro|gracias|porfa|por favor|me apunto|dale|va|perfecto|pero))|💯|👍|🙌|✅|👌|🤝/;
 /** A word just before a yes that negates it ("not ok", "never down", "don't love it"). "Not sure" is a hedge. */
 const AFFIRM_NEG_BEFORE = /\b(?:not|never|don'?t|didn'?t|wouldn'?t|won'?t|isn'?t)\s+(?:\w+\s+)?$/;
-const HEDGE_RX = /\b(?:maybe|perhaps|possibly|probably|might|could be|not sure|unsure|idk|i don'?t know|dunno|no idea|let me (?:check|think|see|get back|look)|i'?ll (?:check|think|see|let you know|get back)|who is (?:it|this|that|he|she|they)|who'?s (?:it|this|that)|what'?s (?:it|this) about|depends|kinda|sort of|i guess|we'?ll see|tbd|on the fence|torn|not certain|hard to say|remind me|need to check|have to check)\b|^\s*\?+\s*$/;
-const COND_RX = /\b(?:only if|only with|only when|only for|as long as|so long as|provided(?: that)?|unless|depends on|on (?:the )?condition|assuming|but only|if and only|as long|if (?:it'?s|its|it is|they|she|he|there|the|you|i|we|that|this|someone|nobody|no one|everyone|it|a|an|my|their|his|her))\b/;
-const COUNTER_RX = /\b(?:different (?:day|time|week)|another (?:day|time|week)|next week|later (?:in the week|this month|on)|reschedule|instead|rain ?check|some other (?:day|time)|(?:can|could) we find (?:a different|another) (?:day|time)|how about|what about|later date|the week after|push it)\b/;
+const HEDGE_RX = /\b(?:maybe|perhaps|possibly|probably|might|could be|not sure|unsure|idk|i don'?t know|dunno|no idea|let me (?:check|think|see|get back|look)|i'?ll (?:check|think|see|let you know|get back)|who is (?:it|this|that|he|she|they)|who'?s (?:it|this|that)|what'?s (?:it|this) about|depends|kinda|sort of|i guess|we'?ll see|tbd|on the fence|torn|not certain|hard to say|remind me|need to check|have to check|tal vez|talvez|quizas|quiza|a lo mejor|no se|puede ser|depende|lo pienso|dejame (?:ver|pensar)|ya veremos|no estoy segur[oa])\b|^\s*\?+\s*$/;
+const COND_RX = /\b(?:only if|only with|only when|only for|as long as|so long as|provided(?: that)?|unless|depends on|on (?:the )?condition|assuming|but only|if and only|as long|solo si|solo con|siempre que|siempre y cuando|con tal (?:de )?que|if (?:it'?s|its|it is|they|she|he|there|the|you|i|we|that|this|someone|nobody|no one|everyone|it|a|an|my|their|his|her))\b|(?:^|[\s,.!])si\s+(?!(?:claro|gracias|porfa|por favor|me apunto|dale|va|perfecto|pero)\b)[a-z]/;
+const COUNTER_RX = /\b(?:different (?:day|time|week)|another (?:day|time|week)|next week|later (?:in the week|this month|on)|reschedule|instead|rain ?check|some other (?:day|time)|(?:can|could) we find (?:a different|another) (?:day|time)|how about|what about|later date|the week after|push it|otro dia|otra fecha|otra hora|mas adelante|la proxima|otra vez|la semana que viene|la proxima semana)\b/;
 /** "No problem", "no worries", "no rush", "no plans", "no doubt": not refusals. */
-const HARMLESS_NO = /\bno (?:problem|prob|probs|worries|worry|rush|pressure|biggie|doubt|plans?|stress|sweat|complaints)\b/g;
+const HARMLESS_NO = /\bno (?:problem|prob|probs|worries|worry|rush|pressure|biggie|doubt|plans?|stress|sweat|complaints|te preocupes)\b/g;
+const POSITIVE_NO_YEAH = /\b(?:no|nah),?\s+yeah(?!\s*,?\s*(?:no|nah|nope)\b)\b/g;
+const DOUBLE_NEG_MASK = new RegExp(SHARED_DOUBLE_NEGATIVE_RE.source, "g");
 
 /** A counter is a separate scheduling request. A yes inside that request does not answer the offer. */
 function consentScan(body: string): Consent & { separateYes?: boolean } {
@@ -1044,17 +1178,26 @@ function consentScan(body: string): Consent & { separateYes?: boolean } {
   if (withdrawal.reading === "DirectWithdrawal") return { answer: "no", why: "refusal" };
   if (directAgreementIdiom(withdrawal.text)) return { answer: "yes", why: "affirm" };
   const qualifiedWithdrawal = withdrawal.reading === "QualifiedWithdrawal";
-  const t = normText(withdrawal.text).replace(HARMLESS_NO, " ");
+  const t = normalizeReplyText(withdrawal.text)
+    .replace(HARMLESS_NO, " ")
+    .replace(POSITIVE_NO_YEAH, " yes ");
   const wordsIn = (t.match(/[a-z]+/g) ?? []).length;
   let refusalAt = Infinity, affirmAt = Infinity, counterAt = Infinity, cond = false, hedge = false, question = false;
   for (const s of sentencesOf(t)) {
     // A question of the member's own ("Anyone around who'd want to meet someone to date?") is not an
     // answer: a yes elsewhere in the message ("Honestly this is great timing") is not consent to the probe.
     if (/\?/.test(s.text) && !/\b(?:can|could) we\b|\b(?:how|what) about\b/.test(s.text)) question = true;
+    const allGoodThanks = /\ball (?:good|set)(?:,? (?:thanks?|thank you|ty|thx|tho|though|for now|for this|this time))\b/.exec(s.text);
+    if (allGoodThanks) refusalAt = Math.min(refusalAt, s.at + allGoodThanks.index);
     // Clauses inside a sentence: "yes, but only with a woman" keeps "only with" in its own clause.
     for (const c of s.text.matchAll(/[^,]+/g)) {
-      const x = c[0];
+      let x = c[0];
       const at = s.at + c.index!;
+      // Double negatives ("not not interested", "I wouldn't say no") are hedges, never hard refusals.
+      if (SHARED_DOUBLE_NEGATIVE_RE.test(x)) {
+        hedge = true;
+        x = x.replace(DOUBLE_NEG_MASK, m => " ".repeat(m.length));
+      }
       // Refusal words are blanked before the yes words are read ("no deal" is not a "deal").
       let y = x;
       for (const rx of REFUSAL_RX) { const m = rx.exec(x); if (m) { refusalAt = Math.min(refusalAt, at + m.index); y = y.slice(0, m.index) + " ".repeat(m[0].length) + y.slice(m.index + m[0].length); } }
@@ -1140,7 +1283,7 @@ const DAY_NAMES = [
   ["Sunday", "sun|sundy|sundya"], ["Monday", "mon|mondy|mondya"], ["Tuesday", "tues?|tuesdy|teusday"], ["Wednesday", "weds?|wednesdy|wensday|wendsday"],
   ["Thursday", "thu|thur|thurs|thursdy|thrusday|thursay"], ["Friday", "fri|fridy|firday"], ["Saturday", "sat|satdy|satrday|saturdy"],
 ] as const;
-const DAY_ABBR_CONTEXT = String.raw`(?=\.?(?:\s*(?:\d|@|at\b|or\b|and\b|too\b|&|\/|works?\b|`
+const DAY_ABBR_CONTEXT = String.raw`(?=\.?(?:\s*(?:\d|@|at\b|after\b|around\b|before\b|from\b|or\b|and\b|too\b|&|\/|works?\b|`
   + String.raw`doesn'?t\b|does not\b|don'?t\b|do not\b|won'?t\b|will not\b|can'?t\b|cannot\b|wouldn'?t\b|would not\b|isn'?t\b|is not\b|aren'?t\b|are not\b|is bad\b|`
   + String.raw`is (?:good|fine|great|best|better)\b|morning|afternoon|evening|night|eve\b)|\s*[,;!?.]|\s*$))`;
 const DAY_WORDS: [RegExp, string][] = DAY_NAMES.map(([label, abbreviation]) => [
@@ -1240,6 +1383,8 @@ function refusalAfter(t: string, at: number, end: number): boolean {
 }
 
 const CLOCK_MENTION = /\b(\d{1,2})(?::([0-5]\d))?\s*([ap]m)\b|\b(noon|midnight)\b/g;
+const AFTER_CLOCK_MENTION = /\bafter\s+(\d{1,2})(?::([0-5]\d))?(?:\s*([ap]m))?\b/g;
+const ISH_CLOCK_MENTION = /\b(?:around\s+)?(\d{1,2})(?::([0-5]\d))?\s*(?:([ap]m)\s*)?-?ish\b/g;
 const PROBE_DAY_GROUP = /\b(?:weekdays?|weekends?|weeknights?|during the week)\b/g;
 const RELATIVE_DAY_GROUP = /\b(?:next|last|following)\s+weekends?\b/;
 const DAYPART_MENTION = /\b(mornings?|afternoons?|lunch|evenings?|nights?|after work)\b/g;
@@ -1250,9 +1395,26 @@ const INCIDENTAL_CLOCK = /\b(?:after|before|until|till|by|around)\s*$|\b(?:work|
 const CONNECTS_TIME = /^\s*(?:(?:at|on|in the)\s+)?$/;
 type ProbeSpan = { at: number; end: number };
 type TimeMention = ProbeSpan & {
-  day?: string; minute?: number; part?: "morning" | "afternoon" | "evening";
-  group?: "weekday" | "weekend"; nightsOnly?: boolean;
+  day?: string; minute?: number; afterMinute?: number; approxMinute?: number; part?: "morning" | "afternoon" | "evening";
+  group?: "weekday" | "weekend"; nightsOnly?: boolean; dateKey?: string;
 };
+
+function flexibleClockMinute(hourRaw: number, minuteRaw: number, meridiem?: string): number | undefined {
+  if (hourRaw > 23 || minuteRaw > 59) return undefined;
+  if (meridiem) {
+    if (hourRaw < 1 || hourRaw > 12) return undefined;
+    return ((hourRaw % 12) + (meridiem === "pm" ? 12 : 0)) * 60 + minuteRaw;
+  }
+  if (hourRaw >= 1 && hourRaw <= 11) return (hourRaw + 12) * 60 + minuteRaw;
+  return hourRaw * 60 + minuteRaw;
+}
+
+function localDateKey(ts: number, tz: string, dayOffset = 0): string {
+  const lp = localParts(ts, tz);
+  const d = new Date(Date.UTC(lp.year, lp.month - 1, lp.day + dayOffset));
+  const two = (n: number) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${two(d.getUTCMonth() + 1)}-${two(d.getUTCDate())}`;
+}
 
 function spanContains(outer: ProbeSpan, inner: ProbeSpan): boolean {
   return outer.at <= inner.at && inner.end <= outer.end;
@@ -1356,6 +1518,26 @@ function timeMentions(text: string, recoverTrailingPair = false): TimeMention[] 
   }
   days.sort((a, b) => a.at - b.at);
   const times: TimeMention[] = [...text.matchAll(CLOCK_MENTION)].map(m => ({ at: m.index!, end: m.index! + m[0].length, minute: clockMinute(m) }));
+  for (const m of text.matchAll(AFTER_CLOCK_MENTION)) {
+    const at = m.index!, end = at + m[0].length;
+    const afterMinute = flexibleClockMinute(Number(m[1]), Number(m[2] ?? 0), m[3]);
+    if (afterMinute !== undefined) {
+      for (let i = times.length - 1; i >= 0; i--) {
+        if (times[i]!.at >= at && times[i]!.end <= end) times.splice(i, 1);
+      }
+      times.push({ at, end, afterMinute });
+    }
+  }
+  for (const m of text.matchAll(ISH_CLOCK_MENTION)) {
+    const at = m.index!, end = at + m[0].length;
+    const approxMinute = flexibleClockMinute(Number(m[1]), Number(m[2] ?? 0), m[3]);
+    if (approxMinute !== undefined) {
+      for (let i = times.length - 1; i >= 0; i--) {
+        if (times[i]!.at >= at && times[i]!.end <= end) times.splice(i, 1);
+      }
+      times.push({ at, end, approxMinute });
+    }
+  }
   for (const m of text.matchAll(DAYPART_MENTION)) {
     const part = /^morning/.test(m[0]) ? "morning" : /^(?:afternoon|lunch)/.test(m[0]) ? "afternoon" : "evening";
     if (m[0] === "after work" && /\b(?:free|off)\s*$/.test(text.slice(0, m.index))) continue;
@@ -1681,11 +1863,42 @@ export function isProbeCounterTime(body: string, options: readonly TimeOption[] 
   return COUNTER_TIME_INTEREST_RX.test(t) || parsed.why === "slot" || parsed.answer === "unclear";
 }
 
-export function parseProbeReply(body: string, options: readonly TimeOption[] = [], mode: boolean | "clarified" = false): ProbeReply {
+export function parseProbeReply(
+  body: string,
+  options: readonly TimeOption[] = [],
+  mode: boolean | "clarified" = false,
+  ctx?: { now?: number; tz?: string },
+): ProbeReply {
   const explicitTimesOnly = mode !== false;
   const clarifiedTimes = mode === "clarified";
   const normalized = normText(body);
-  const historic = options.length ? separatePastProbeTimes(normalized) : { current: normalized, past: false };
+  const tz = ctx?.tz ?? "America/New_York";
+  const resolveRelative = ctx?.now !== undefined && options.some(o => typeof o.start === "number");
+  const relativeRewritten = (() => {
+    if (!resolveRelative) return { text: normalized, dateByDay: undefined as Map<string, string> | undefined };
+    const lp = localParts(ctx!.now!, tz);
+    const todayIdx = (lp.weekday + 1) % 7;
+    const tomorrowIdx = (todayIdx + 1) % 7;
+    const todayName = DAY_NAMES[todayIdx]![0].toLowerCase();
+    const tomorrowName = DAY_NAMES[tomorrowIdx]![0].toLowerCase();
+    const dateByDay = new Map<string, string>();
+    let text = normalized;
+    if (/\btonight\b/.test(text)) {
+      dateByDay.set(DAY_NAMES[todayIdx]![0], localDateKey(ctx!.now!, tz, 0));
+      text = text.replace(/\btonight\b/g, `${todayName} evening`);
+    }
+    if (/\btoday\b/.test(text)) {
+      dateByDay.set(DAY_NAMES[todayIdx]![0], localDateKey(ctx!.now!, tz, 0));
+      text = text.replace(/\btoday\b/g, todayName);
+    }
+    if (/\b(?:tomorrow|tmrw|tmr)\b/.test(text)) {
+      dateByDay.set(DAY_NAMES[tomorrowIdx]![0], localDateKey(ctx!.now!, tz, 1));
+      text = text.replace(/\b(?:tomorrow|tmrw|tmr)\b/g, tomorrowName);
+    }
+    return { text, dateByDay: dateByDay.size ? dateByDay : undefined };
+  })();
+  const workingNormalized = relativeRewritten.text;
+  const historic = options.length ? separatePastProbeTimes(workingNormalized) : { current: workingNormalized, past: false };
   const { past } = historic;
   const { current: t, unbound } = separateUnboundProbeTimes(historic.current);
   const original = consentScan(body);
@@ -1831,10 +2044,15 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     const clock = [...o.label.toLowerCase().matchAll(CLOCK_MENTION)].at(-1);
     const day = o.label.split(" ")[0];
     const minute = clock ? clockMinute(clock) : undefined;
+    const dateKey = resolveRelative && typeof o.start === "number" ? localDateKey(o.start, tz, 0) : undefined;
     return { key: o.key, day, knownDay: day !== undefined && DAY_WORDS.some(([, name]) => name === day),
-      weekend: day === "Saturday" || day === "Sunday", minute, part: minute === undefined ? undefined : partOf(minute) };
+      weekend: day === "Saturday" || day === "Sunday", minute, part: minute === undefined ? undefined : partOf(minute), dateKey };
   });
-  const matchingOffered = (m: TimeMention) => offered.filter(o => (!m.day || o.day === m.day) && (m.minute === undefined || o.minute === m.minute)
+  const matchingOffered = (m: TimeMention) => offered.filter(o => (!m.day || o.day === m.day)
+    && (!m.day || !relativeRewritten.dateByDay?.has(m.day) || !o.dateKey || o.dateKey === relativeRewritten.dateByDay.get(m.day))
+    && (m.minute === undefined || o.minute === m.minute)
+    && (m.afterMinute === undefined || (o.minute !== undefined && o.minute >= m.afterMinute))
+    && (m.approxMinute === undefined || (o.minute !== undefined && Math.abs(o.minute - m.approxMinute) <= 60))
     && (m.group ? o.knownDay && probeGroupIncludes(m.group === "weekend", o.weekend,
       m.nightsOnly === true, o.part === "evening", !!m.part, m.part === o.part) : !m.part || o.part === m.part)).map(o => o.key);
   const unresolvedLists = dayLists.filter(list => {
@@ -1926,7 +2144,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   for (const m of mentions) residue = residue.slice(0, m.at) + " ".repeat(m.end - m.at) + residue.slice(m.end);
   for (const [re] of DAY_WORDS) residue = residue.replace(re, " ");
   residue = residue.replace(PROBE_DAY_GROUP, " ");
-  residue = residue.replace(/\b\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b|\b(?:the|one|option|or|and|either|works?|please|pls|lol|at|on|in the|morning|evening|afternoon|night|[abc])\b|[\W_]+/g, " ").trim();
+  residue = residue.replace(/\b(?:after|around)\s+\d{1,2}(?::\d\d)?\s*(?:am|pm)?(?:-?ish)?\b|\b\d{1,2}(?::\d\d)?\s*(?:am|pm)?(?:-?ish)?\b|\b(?:the|one|option|or|and|either|works?|please|pls|lol|at|on|in the|morning|evening|afternoon|night|[abc])\b|[\W_]+/g, " ").trim();
   // A ", Day too" joins the named day when the reply also says yes in words ("Saturday is best,
   // Sunday too" books both): the affirmation must not hide the "too" the way "works" already does
   // not. A bare list ("Saturday, Sunday too") and "work" alone ("Saturday work, Sunday too") stay
@@ -2068,7 +2286,7 @@ const AVAILABILITY_TIME = new RegExp(`^(?:on\\s+)?(?:${DAY_WORDS.map(([re]) => r
  * when it comes first ("evenings on Tue and Thu"). A day with no part of its own gets the usual
  * default (a weekend day: the whole day; a weekday: the evening). Days and parts are never crossed.
  */
-export function availabilityTags(body: string): string[] {
+export function availabilityTags(body: string, now?: number, tz: string = "America/New_York"): string[] {
   // These exclusions have the same scope as "except". Require a time expression next so
   // "barring emergencies" does not refuse a later day; keep this out of booking consent.
   const t = body.toLowerCase().replace(AVAILABILITY_EXCLUSION,
@@ -2078,25 +2296,77 @@ export function availabilityTags(body: string): string[] {
   type Tok = { at: number; days?: number[]; part?: string; refused?: boolean };
   const toks: Tok[] = [];
   // A named refusal must not be restored when an offered day group is expanded.
+  // When a negated day is immediately qualified by a daypart ("except sun morning"),
+  // exclude only that daypart on that day instead of dropping the whole day.
   const refusedDays = new Set<number>();
+  const refusedDayParts = new Map<number, Set<string>>();
+  const consumedPartSpans: [number, number][] = [];
   const refusedDayEnds: number[] = [];
+  const IMMEDIATE_DAYPART = /^\s+(mornings?|afternoons?|lunch|evenings?|nights?)\b/;
+  const partNameOf = (word: string) => /^morning/.test(word) ? "morning" : /^(?:afternoon|lunch)/.test(word) ? "afternoon" : "evening";
+  const recordNegatedDay = (dayIdx: number, end: number) => {
+    const dp = IMMEDIATE_DAYPART.exec(t.slice(end));
+    if (dp) {
+      const part = partNameOf(dp[1]!);
+      (refusedDayParts.get(dayIdx) ?? refusedDayParts.set(dayIdx, new Set()).get(dayIdx)!).add(part);
+      const start = end + dp[0].indexOf(dp[1]!);
+      consumedPartSpans.push([start, start + dp[1]!.length]);
+    } else {
+      refusedDays.add(dayIdx);
+      refusedDayEnds.push(end);
+    }
+  };
   DAY_WORDS.forEach(([re], i) => { for (const m of t.matchAll(re)) {
-    if (negatedAt(t, m.index!, m[0].length)) { refusedDays.add(i); refusedDayEnds.push(m.index! + m[0].length); }
+    if (negatedAt(t, m.index!, m[0].length)) recordNegatedDay(i, m.index! + m[0].length);
     else toks.push({ at: m.index!, days: [i] });
   } });
+  if (now !== undefined) {
+    const lp = localParts(now, tz);
+    const todayIdx = (lp.weekday + 1) % 7;
+    const tomorrowIdx = (todayIdx + 1) % 7;
+    for (const m of t.matchAll(/\btonight\b/g)) {
+      if (negatedAt(t, m.index!, m[0].length)) {
+        (refusedDayParts.get(todayIdx) ?? refusedDayParts.set(todayIdx, new Set()).get(todayIdx)!).add("evening");
+      } else {
+        toks.push({ at: m.index!, days: [todayIdx] }, { at: m.index! + 1, part: "evening" });
+      }
+    }
+    for (const m of t.matchAll(/\btoday\b/g)) {
+      if (negatedAt(t, m.index!, m[0].length)) recordNegatedDay(todayIdx, m.index! + m[0].length);
+      else toks.push({ at: m.index!, days: [todayIdx] });
+    }
+    for (const m of t.matchAll(/\b(?:tomorrow|tmrw|tmr)\b/g)) {
+      if (negatedAt(t, m.index!, m[0].length)) recordNegatedDay(tomorrowIdx, m.index! + m[0].length);
+      else toks.push({ at: m.index!, days: [tomorrowIdx] });
+    }
+  }
   for (const m of t.matchAll(/\bweekends?\b/g)) if (!negatedAt(t, m.index!, m[0].length)) toks.push({ at: m.index!, days: [0, 6].filter(d => !refusedDays.has(d)) });
   for (const m of t.matchAll(/\bweekdays?\b/g)) if (!negatedAt(t, m.index!, m[0].length)) toks.push({ at: m.index!, days: [1, 2, 3, 4, 5].filter(d => !refusedDays.has(d)) });
   for (const m of t.matchAll(/\bweeknights?\b/g)) if (!negatedAt(t, m.index!, m[0].length)) toks.push({ at: m.index!, days: [1, 2, 3, 4, 5].filter(d => !refusedDays.has(d)) }, { at: m.index!, part: "evening" });
   for (const [re, part] of [[/\bmornings?\b/g, "morning"], [/\bafternoons?\b|\blunch\b/g, "afternoon"], [/\b(?:evenings?|nights?|after work)\b/g, "evening"]] as const) {
     for (const m of t.matchAll(re)) {
+      const mStart = m.index!, mEnd = mStart + m[0].length;
+      if (consumedPartSpans.some(([from, to]) => mStart >= from && mEnd <= to)) continue;
       // "Except Sunday mornings" qualifies the named-day exception, not every morning.
-      const namedException = refusedDayEnds.some(end => end <= m.index! && /^\s*$/.test(t.slice(end, m.index!)));
-      toks.push({ at: m.index!, part, refused: !namedException && negatedAt(t, m.index!, m[0].length) });
+      const namedException = refusedDayEnds.some(end => end <= mStart && /^\s*$/.test(t.slice(end, mStart)));
+      toks.push({ at: mStart, part, refused: !namedException && negatedAt(t, mStart, m[0].length) });
     }
+  }
+  // Natural clock cues ("tue after 6", "next thurs 7ish", "fri around 5pm") map to their daypart.
+  for (const m of t.matchAll(/\b(?:after|around|at|from)\s+(\d{1,2})(?::([0-5]\d))?\s*([ap]m)?(?:-?ish)?\b|\b(\d{1,2})(?::([0-5]\d))?\s*(?:([ap]m)\s*-?ish|-?ish)\b/g)) {
+    const hRaw = Number(m[1] ?? m[4]);
+    const minRaw = Number(m[2] ?? m[5] ?? 0);
+    const meridiem = m[3] ?? m[6];
+    const minute = flexibleClockMinute(hRaw, minRaw, meridiem);
+    if (minute === undefined) continue;
+    const part = partOf(minute);
+    if (!part) continue;
+    toks.push({ at: m.index!, part, refused: negatedAt(t, m.index!, m[0].length) });
   }
   toks.sort((a, b) => a.at - b.at || (a.days ? -1 : 1));
   const out = new Map<number, Set<string>>();
   const refused = new Map<number, Set<string>>(), refusedLead = new Set<string>();
+  for (const [d, parts] of refusedDayParts) refused.set(d, new Set(parts));
   const defaults = new Set<number>();
   const give = (ds: number[], p: string) => ds.forEach(d => (out.get(d) ?? out.set(d, new Set()).get(d)!).add(p));
   let pending: number[] = [], group: number[] = [], prevPart = false;
@@ -2128,9 +2398,16 @@ export function availabilityTags(body: string): string[] {
   }
   // Do not replace an explicitly offered but fully refused group with default weekdays.
   // The default also must not restore a weekday or group the member just refused.
-  if (!out.size && !toks.some(k => k.days) && lead.includes("evening") && /\b(most|any|all|every)\b/.test(t)) {
+  const bareDaypartGeneral = lead.length > 0 && (
+    /\b(most|any|all|every)\b/.test(t)
+    || /\b(?:mornings?|afternoons?|evenings?|nights?)\s+(?:work|works|are\s+(?:good|best|open|free|great|fine))\b/.test(t)
+    || /^\s*(?:usually\s+|generally\s+)?(?:mornings|afternoons|evenings|nights)[.!]*\s*$/.test(t)
+  );
+  if (!out.size && !toks.some(k => k.days) && bareDaypartGeneral) {
     const weekdayWords = [/\b(?:weekdays?|weeknights?)\b/g, ...DAY_WORDS.slice(1, 6).map(([re]) => re)];
-    if (!weekdayWords.some(re => [...t.matchAll(re)].some(m => negatedAt(t, m.index!, m[0].length)))) give([1, 2, 3, 4, 5], "evening");
+    if (!weekdayWords.some(re => [...t.matchAll(re)].some(m => negatedAt(t, m.index!, m[0].length)))) {
+      for (const p of lead) give([1, 2, 3, 4, 5], p);
+    }
   }
   // Subtract refusals after defaults, so an omitted part cannot restore a refused window.
   for (const [d, parts] of out) for (const p of [...refusedLead, ...(refused.get(d) ?? [])]) parts.delete(p);

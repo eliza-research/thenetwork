@@ -118,9 +118,26 @@ export interface ClefRaterOptions extends ClefCallOptions {
   weights?: ClefWeights;
   loadPhoto?: (p: PhotoRef) => Promise<{ bytes: Uint8Array; contentType?: string } | null>;
   maxPhotos?: number;
+  timeoutMs?: number;
+  retries?: number;
+  retryDelayMs?: number;
 }
 
 export class ClefError extends Error { constructor(msg: string, readonly status?: number) { super(msg); } }
+
+const CLEF_PHOTO_TIMEOUT_MS = 12_000;
+const CLEF_PHOTO_MAX_RETRIES = 0;
+const CLEF_PHOTO_RETRY_DELAY_MS = 150;
+const CLEF_PHOTO_CONCURRENCY = 4;
+
+function isRetryableClefError(err: unknown): boolean {
+  if (err instanceof ClefError) {
+    return err.status !== undefined && (err.status === 408 || err.status === 429 || err.status >= 500);
+  }
+  return true;
+}
+
+const delay = (ms: number) => ms > 0 ? new Promise<void>(resolve => { setTimeout(resolve, ms); }) : Promise.resolve();
 
 const b64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 function sniffType(bytes: Uint8Array): string {
@@ -143,27 +160,52 @@ export class WorkersAIClefRater implements AppearanceRater {
     return new WorkersAIClefRater({ token: env.CLOUDFLARE_AI_TOKEN ?? "", accountId: env.CLOUDFLARE_ACCOUNT_ID ?? "", model, ...o });
   }
 
-  async ask(image: { bytes: Uint8Array; contentType?: string }, signal: AbortSignal = AbortSignal.timeout(10_000)): Promise<ClefResult> {
+  async ask(image: { bytes: Uint8Array; contentType?: string }, signal?: AbortSignal): Promise<ClefResult> {
     if (image.bytes.byteLength > ratingMaxBytes) throw new ClefError("photo over Clef's 4 MiB limit: resize before rating");
+    const timeoutMs = this.o.timeoutMs ?? CLEF_PHOTO_TIMEOUT_MS;
+    const effectiveSignal = signal ?? (timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined);
     return clefRun(
       { ...this.o, model: this.o.model ?? "clef" },
       { state: CLEF_STATE, questions: CLEF_QUESTIONS, images: [`data:${image.contentType ?? sniffType(image.bytes)};base64,${b64(image.bytes)}`] },
-      signal,
+      effectiveSignal,
     );
+  }
+
+  private async askWithRetry(image: { bytes: Uint8Array; contentType?: string }): Promise<ClefResult> {
+    const maxRetries = Math.max(0, this.o.retries ?? CLEF_PHOTO_MAX_RETRIES);
+    const baseDelay = this.o.retryDelayMs ?? CLEF_PHOTO_RETRY_DELAY_MS;
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await this.ask(image);
+      } catch (err) {
+        lastError = err;
+        if (attempt >= maxRetries || !isRetryableClefError(err)) throw err;
+        await delay(baseDelay * (attempt + 1));
+      }
+    }
+    throw lastError;
   }
 
   async features(subject: RatingSubject, photos: readonly PhotoRef[]): Promise<{ photoId: string; x: Record<string, number>; confidence: number }[]> {
     if (!canRatePhotos(subject)) return [];
-    const batch = photos.slice(0, this.o.maxPhotos ?? ratingMaxPhotos);
-    const rows = await Promise.all(
-      batch.map(async p => {
+    const selected = photos.slice(0, this.o.maxPhotos ?? ratingMaxPhotos);
+    if (selected.length === 0) return [];
+    const results: ({ photoId: string; x: Record<string, number>; confidence: number } | null)[] = new Array(selected.length).fill(null);
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < selected.length) {
+        const idx = cursor++;
+        const p = selected[idx]!;
         const img = p.bytes ? { bytes: p.bytes } : (await this.o.loadPhoto?.(p)) ?? null;
-        if (!img) return null;
-        const r = await this.ask(img);
-        return { photoId: p.id, ...clefFeatures(r.answers) };
-      }),
-    );
-    return rows.filter((row): row is { photoId: string; x: Record<string, number>; confidence: number } => row !== null);
+        if (!img) continue;
+        const r = await this.askWithRetry(img);
+        results[idx] = { photoId: p.id, ...clefFeatures(r.answers) };
+      }
+    };
+    const concurrency = Math.min(CLEF_PHOTO_CONCURRENCY, selected.length);
+    await Promise.all(Array.from({ length: concurrency }, worker));
+    return results.filter((r): r is NonNullable<typeof r> => r !== null);
   }
 
   async rate(subject: RatingSubject, photos: readonly PhotoRef[]): Promise<AppearanceScore | null> {
