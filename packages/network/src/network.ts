@@ -850,8 +850,15 @@ export function bookedTextDeclines(body: string, ordinaryDecline: boolean): bool
 
 const VENUE_TARGET = /\b(?:somewhere (?:else|closer)|someplace (?:else|closer)|another (?:place|spot|venue|location)|different (?:place|spot|venue|location)|other (?:place|spot|venue|location))\b/i;
 const VENUE_JOINT = /\b(?:can|could|shall|should|will|would) we\b|\blet'?s\b|\bwe (?:could|can|should|might)\b|\bi'?d rather (?:meet|go)\b|\bi (?:want|would like|need) to (?:meet|go|move|switch|change)\b/i;
-const VENUE_REFUSAL = /\b(?:cancel (?:it|this|the meeting|our meeting)|call (?:it|this) off|i'?m out|i am out|count me out|won'?t be there|will not be there|not coming|can'?t (?:make it|come|attend)|cannot (?:make it|come|attend)|without me|someone else|somebody else|rather not meet|don'?t want to meet|do not want to meet)\b/i;
-const VENUE_ATTENDANCE_REFUSAL = /\bnot interested\b(?!\s+in\b)|\bnot happening\b(?!\s+(?:at|in|there)\b)|\bi'?m done\b|\bi am done\b|\bnot meeting\b|\bfor yourself\b|\bby yourself\b|\bon your own\b|(?:^|[.!?]\s*)(?:nah|no thanks|no|nope)[.!](?:\s|$)/i;
+const VENUE_REFUSAL = /\b(?:cancel (?:it|this|the meeting|our meeting)|call (?:it|this) off|i'?m out|i am out|count me out|won'?t be there|will not be there|not coming|can'?t (?:make it|come|attend)|cannot (?:make it|come|attend)|rather not meet|don'?t want to meet|do not want to meet)\b/i;
+const VENUE_ATTENDANCE_REFUSAL = /\bnot interested\b(?!\s+in\b)|\bnot happening\b(?!\s+(?:at|in|there)\b)|\bi'?m done\b|\bi am done\b|\bnot meeting\b(?!\s+(?:anyone|anybody|someone|somebody|others|other people)\b)|\bfor yourself\b|\bby yourself\b|\bon your own\b|(?:^|[.!?]\s*)(?:nah|no thanks|no|nope)[.!](?:\s|$)/i;
+const VENUE_EXCLUSION = /\b(?:without me|someone else|somebody else)\b/i;
+const CLAUSE_NEGATION = /\b(?:don'?t|do not|never|not)\b/i;
+
+function excludesSpeaker(body: string): boolean {
+  const clauses = body.split(/[.!;]+|[,—–]|\s+-\s+|\b(?:but|and)\b/i);
+  return clauses.some(clause => VENUE_EXCLUSION.test(clause) && !CLAUSE_NEGATION.test(clause));
+}
 
 function jointVenueRequest(body: string): boolean {
   return body.split(/(?<=[.!?])\s+/).some(sentence =>
@@ -859,7 +866,7 @@ function jointVenueRequest(body: string): boolean {
 }
 
 export function declinesBookedAttendance(body: string): boolean {
-  return declinesAttendanceAlongsideSwap(body) || VENUE_REFUSAL.test(body) || VENUE_ATTENDANCE_REFUSAL.test(body);
+  return declinesAttendanceAlongsideSwap(body) || VENUE_REFUSAL.test(body) || VENUE_ATTENDANCE_REFUSAL.test(body) || excludesSpeaker(body);
 }
 
 export function venueChangeKeepsBooking(body: string): boolean {

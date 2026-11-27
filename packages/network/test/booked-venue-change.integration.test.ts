@@ -69,6 +69,8 @@ test("a booked reply with a refusal word but no place request keeps the booking"
     "Don't start without me!",
     "Can't wait. I'm done with exams by then",
     "I'm in. Not meeting anyone else that day",
+    "Yes! Please don't switch to another place without me",
+    "I'm in! I don't drink, but I'm not meeting anyone else after, so take your time",
   ];
   for (const text of keeps) {
     const { w, booking } = await booked();
