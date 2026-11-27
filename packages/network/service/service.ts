@@ -538,6 +538,11 @@ export class NetworkService implements RuntimeHost {
     this.reviewJudgeWorker = new ReviewJudgeWorker({
       clock: this.clock, judgeFor, limits: reviewLimits, log: this.log,
       teenFacts: (rt, memberId) => this.teenAccountFacts(rt, memberId),
+      activeCitiesFor: app => {
+        let count = 0;
+        for (const rt of this.runtimes.values()) if (rt.app.id === app) count++;
+        return count;
+      },
     });
     this.accounts = new Accounts(this.people, { hashKey: this.hashKey, now: () => this.clock.now(), apps: id => this.apps[id], hooks: this.hooks() });
     if (o.notify !== false) this.notify = new Notifier(o.notify ?? new PgNotifyStore(this.sql), { get: personId => this.notifyRecipient(personId) });
@@ -1212,6 +1217,7 @@ export class NetworkService implements RuntimeHost {
       const stillCurrent = !!row && inboxOpportunityAllowsUpdate(row.bound, row.state !== null, row.state ?? "");
       const { status, minor } = (row?.opportunity_id ? teen.get(row.opportunity_id) : undefined) ?? { status: "unmarked", minor: false };
       const readerAgeAllowed = status === "current" || (readerMatchable && (status === "adult" || (status === "unmarked" && !minor)));
+      if (app === "slop" && !readerMatchable && !row?.bound) return [item.id, "InboxUpdateWithheld"];
       return [item.id, connectorUpdateOutcome(stillCurrent, readerAgeAllowed, !!row?.bound, passesLeakGate(item.summary))];
     }));
   }

@@ -1,7 +1,7 @@
 // Quiet hours in the recipient's local time zone (PRD 32.2, 32.9, 36.1).
 // Default window 21:00-09:00 local: the PRD's "not after 9pm" example, inside Blooio's suggested 8am-8pm-ish
 // sending window for new conversations. Replies to a member's own message and compliance replies are exempt.
-import { CITY_TZ as CORE_CITY_TZ, withinQuietHours } from "@thenetwork/core";
+import { CITY_TZ as CORE_CITY_TZ, getCity, withinQuietHours } from "@thenetwork/core";
 
 export interface QuietWindow {
   /** Local hour (0-23) quiet hours start. */
@@ -67,6 +67,8 @@ export function isValidTimeZone(tz: string | undefined | null): tz is string {
  */
 export function resolveTimeZone(tz: string | undefined, city?: string): string | null {
   if (isValidTimeZone(tz)) return tz;
-  const byCity = city ? CITY_TZ[city.toLowerCase()] : undefined;
+  if (!city) return null;
+  const normalized = city.toLowerCase();
+  const byCity = getCity(normalized)?.tz ?? CITY_TZ[normalized];
   return isValidTimeZone(byCity) ? byCity : null;
 }
