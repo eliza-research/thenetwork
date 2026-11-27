@@ -98,6 +98,8 @@ test.each([
   ["No thanks, I'm withdrawing from this and from swapping numbers", true],
   ["No, not anymore. I'm withdrawing and keeping my number", true],
   ["No, I withdraw. My number stays with me", true],
+  ["No, I'm out. Withdrawing my number too", true],
+  ["No, not anymore. Withholding my number as well", true],
   ["No, withhold my number", false],
   ["No, I revoke the number swap", false],
 ] as const)("a swap refusal with a plan refusal withdraws probe consent only when the plan is refused: %s", async (text, closes) => {

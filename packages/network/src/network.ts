@@ -736,7 +736,7 @@ function declinesAttendanceAlongsideSwap(body: string): boolean {
   return !quoteStillOpen(text.slice(0, start)) && ATTENDANCE_CLAUSE.test(text.slice(start).trim());
 }
 
-const PROBE_PLAN_CLAUSE = /^(?:sorry[,]?\s+)?(?:(?:i'?m\s+|i am\s+)?(?:withdrawing|withdraw|withdrew|withdrawn)\s+from\s+(?:this|that|it|the\s+(?:plan|meeting|proposal))|not\s+anymore|not\s+any\s+more|no\s+longer)[.,!]*$/i;
+const PROBE_PLAN_CLAUSE = /^(?:sorry[,]?\s+)?(?:(?:i'?m\s+|i am\s+)?(?:withdrawing|withdraw|withdrew|withdrawn)\s+from\s+(?:this|that|it|the\s+(?:plan|meeting|proposal))|not\s+anymore|not\s+any\s+more|no\s+longer|(?:i'?m|i\s+am)\s+(?:out|done|leaving|not\s+in)|count\s+me\s+out|leave\s+me\s+out|(?:drop|remove|take)\s+me\s+(?:out|off)(?:\s+(?:this|that|it|the\s+(?:plan|meeting|proposal|list)))?|forget\s+it|never\s+mind|i'?ll\s+pass)[.,!]*$/i;
 
 function declinesProbeAlongsideSwap(body: string): boolean {
   if (declinesAttendanceAlongsideSwap(body)) return true;
