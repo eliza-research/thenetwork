@@ -1,6 +1,5 @@
-import type { AppId, Facet, Intent, MemberId, PrivacyScope, Provenance, SourceKind } from "@thenetwork/core";
+import type { AppId, City, DensityTier, Facet, Intent, MemberId, PrivacyScope, Provenance } from "@thenetwork/core";
 import { ADULT_AGE, canBeMatched } from "@thenetwork/core";
-import { centroid } from "./embed.ts";
 import { parseOntologyTags } from "./packs/network/ontology.ts";
 import { connectionTypeForIntent, detailTags, isHypePitchIntent, objectivesFor } from "./packs/network/taxonomy.ts";
 import {
@@ -89,10 +88,7 @@ export function spendTierCompatible(
 
 export function venueCostFitsTier(tier: SpendComfortTier, costTier: number): boolean {
   if (!(costTier >= 0)) return false;
-  if (tier === "free") return costTier <= 0;
-  if (tier === "low") return costTier <= 1;
-  if (tier === "moderate") return costTier <= 3;
-  return true;
+  return costTier <= spendTierRank(tier);
 }
 
 export function parentSupportSafe(
@@ -105,17 +101,10 @@ export function parentSupportSafe(
   return vectorEligible(ageA, adultMin) && vectorEligible(ageB, adultMin);
 }
 
-export type CrossCapitalOpenness =
-  | "patronage"
-  | "step_ahead_mentoring"
-  | "mixed_ses_craft_guild"
-  | "local_mutual_aid";
-
 export interface ScoredCoordinate {
   value: number;
   confidence: number;
   provenance: Provenance;
-  sources: SourceKind[];
   observedAt: number;
   scope: PrivacyScope;
   appWall?: AppId;
@@ -123,14 +112,8 @@ export interface ScoredCoordinate {
 
 export interface CapitalProfile {
   economic: ScoredCoordinate;
-  cultural: {
-    embodied: ScoredCoordinate;
-    institutionalized: ScoredCoordinate;
-    omnivorousness: ScoredCoordinate;
-  };
   social: {
     vouchQuality: ScoredCoordinate;
-    brokerage: ScoredCoordinate;
     warmGraphDegree: number;
   };
   symbolic: {
@@ -149,11 +132,6 @@ export interface CapitalProfile {
 }
 
 export interface HorizontalProfile {
-  embeddings: {
-    interestsAndTaste: number[];
-    worldviewAndValues: number[];
-    conversationalStyle: number[];
-  };
   lifeStage: LifeStage;
   activeTransitions: string[];
   communication: {
@@ -161,20 +139,15 @@ export interface HorizontalProfile {
     humorRegister: HumorRegister[];
     extroversion: ScoredCoordinate;
     initiatorScore: ScoredCoordinate;
-    attachmentSecurity?: ScoredCoordinate;
   };
   lifestyle: {
     spendComfortTier: SpendComfortTier;
     fitnessIntensity: ScoredCoordinate;
     substanceProfile: { alcohol: "none" | "light" | "social" | "heavy"; soberProtected?: boolean };
     spontaneity: ScoredCoordinate;
-    workIntensity?: ScoredCoordinate;
   };
   geoAndTime: {
-    homeH3: string;
     maxTravelMinutes: number;
-    transitMode: "walk" | "transit" | "car" | "flexible_flight";
-    weeklySlotBitmap: number[];
   };
 }
 
@@ -193,7 +166,6 @@ export interface ExchangeSlot {
 
 export interface ExchangeProfile {
   slots: ExchangeSlot[];
-  crossCapitalOpenness: CrossCapitalOpenness[];
   nativeLanguages: string[];
   learningLanguages: string[];
   guilds: string[];
@@ -210,7 +182,6 @@ export interface BehavioralProfile {
     sympathy15Open: boolean;
     affinity50Open: boolean;
   };
-  revealedTasteVector?: number[];
 }
 
 export interface ExplicitSignalFlags {
@@ -241,7 +212,8 @@ export type EmptyStateStage =
   | "single_player_concierge"
   | "readiness_coaching"
   | "widen_constraints"
-  | "shared_purpose_guild";
+  | "shared_purpose_guild"
+  | "external_bridge";
 
 export type EmptyStateRemedyKind =
   | "local_public_events"
@@ -250,7 +222,17 @@ export type EmptyStateRemedyKind =
   | "widen_radius_or_schedule"
   | "step_ahead_recalibrate"
   | "free_local_guild_bridge"
-  | "wait_budget_cooldown";
+  | "wait_budget_cooldown"
+  | "external_open_event_bridge"
+  | "external_matchmaker_sourcing"
+  | "photo_readiness_coaching";
+
+export interface EmptyStateRemedyOptions {
+  readonly densityTier?: DensityTier;
+  readonly city?: City;
+  readonly appId?: AppId;
+  readonly photoReadinessIssues?: boolean;
+}
 
 export interface EmptyStateRemedy {
   readonly intentId: string;
@@ -272,14 +254,12 @@ function makeCoord(
   now: number,
   provenance: Provenance = "inferred",
   scope: PrivacyScope = "agent_private",
-  sources: SourceKind[] = [],
   appWall?: AppId,
 ): ScoredCoordinate {
   return {
     value,
     confidence: clamp01(confidence),
     provenance,
-    sources,
     observedAt: now,
     scope,
     ...(appWall ? { appWall } : {}),
@@ -294,13 +274,60 @@ interface WorldVectorCache {
   readonly allFacetsBy: Map<MemberId, Facet[]>;
   readonly fbStats: Map<MemberId, { pos: number; neg: number; explicitNeg: number; total: number }>;
   readonly attStats: Map<MemberId, { completed: number; noShow: number; resolved: number }>;
-  readonly brokerage: Map<MemberId, number>;
-  readonly vouchQuality: Map<MemberId, number>;
+  readonly vouchSeedBy: Map<MemberId, number>;
+  readonly vouchQualityBy: Map<MemberId, number>;
   readonly byMember: Map<MemberId, HumanVector | null>;
-  adultsOnly?: Map<MemberId, HumanVector>;
 }
 
 const worldCache = new WeakMap<World, WorldVectorCache>();
+
+function vouchSeedOf(cache: WorldVectorCache, id: MemberId): number {
+  const existing = cache.vouchSeedBy.get(id);
+  if (existing !== undefined) return existing;
+  const w = cache.w;
+  const mi = w.get(id);
+  if (!mi || w.minors.has(id) || !vectorEligible(mi.m.age, cache.adultMin)) {
+    cache.vouchSeedBy.set(id, 0.35);
+    return 0.35;
+  }
+  const nbrs = w.positive.get(id);
+  if (!nbrs || nbrs.size === 0) {
+    cache.vouchSeedBy.set(id, 0.35);
+    return 0.35;
+  }
+  let seed = Math.min(0.75, 0.35 + 0.08 * nbrs.size);
+  for (const j of nbrs.keys()) {
+    if (w.edgeHas(id, j, "vouched_for")) seed += 0.12;
+    else if (w.edgeHas(id, j, "invited_by")) seed += 0.06;
+  }
+  const clamped = clamp01(seed);
+  cache.vouchSeedBy.set(id, clamped);
+  return clamped;
+}
+
+function vouchQualityOf(cache: WorldVectorCache, id: MemberId): number {
+  const existing = cache.vouchQualityBy.get(id);
+  if (existing !== undefined) return existing;
+  const cur = vouchSeedOf(cache, id);
+  const w = cache.w;
+  const nbrs = w.positive.get(id);
+  if (!nbrs || nbrs.size === 0) {
+    cache.vouchQualityBy.set(id, cur);
+    return cur;
+  }
+  let wSum = 0;
+  let weightedVouch = 0;
+  for (const [j, s] of nbrs) {
+    const bonus = w.edgeHas(id, j, "vouched_for") ? 1.4 : w.edgeHas(id, j, "would_interact_again") ? 1.2 : 1.0;
+    const wgt = s * bonus;
+    wSum += wgt;
+    weightedVouch += wgt * vouchSeedOf(cache, j);
+  }
+  const propagated = wSum > 0 ? weightedVouch / wSum : cur;
+  const val = clamp01(0.45 * cur + 0.55 * propagated);
+  cache.vouchQualityBy.set(id, val);
+  return val;
+}
 
 function getOrCompileMember(cache: WorldVectorCache, id: MemberId): HumanVector | null {
   if (cache.byMember.has(id)) return cache.byMember.get(id) ?? null;
@@ -315,8 +342,7 @@ function getOrCompileMember(cache: WorldVectorCache, id: MemberId): HumanVector 
     cache.allFacetsBy.get(id) ?? [],
     cache.fbStats.get(id),
     cache.attStats.get(id),
-    cache.brokerage.get(id) ?? 0.2,
-    cache.vouchQuality.get(id) ?? 0.35,
+    vouchQualityOf(cache, id),
     cache.adultMin,
     cache.isSlop,
     cache.isPeon,
@@ -329,110 +355,12 @@ export function humanVectorOf(w: World, id: MemberId): HumanVector | null {
   return getOrCompileMember(ensureWorldVectors(w), id);
 }
 
-export function humanVectorsForWorld(w: World): ReadonlyMap<MemberId, HumanVector> {
-  const cache = ensureWorldVectors(w);
-  if (!cache.adultsOnly) {
-    const adultsOnly = new Map<MemberId, HumanVector>();
-    for (const id of w.ids) {
-      const vec = getOrCompileMember(cache, id);
-      if (vec) adultsOnly.set(id, vec);
-    }
-    cache.adultsOnly = adultsOnly;
-  }
-  return cache.adultsOnly;
-}
-
 function ensureWorldVectors(w: World): WorldVectorCache {
   let cached = worldCache.get(w);
   if (cached) return cached;
   cached = buildWorldVectorCache(w);
   worldCache.set(w, cached);
   return cached;
-}
-
-const DAYS3 = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
-const PARTS3 = ["morning", "afternoon", "evening"];
-
-function buildWeeklyBitmap(facets: readonly Facet[]): number[] {
-  const bits = new Array<number>(21).fill(0);
-  let anyExplicit = false;
-  for (const f of facets) {
-    for (const raw of f.tags) {
-      const t = raw.toLowerCase();
-      for (let p = 0; p < 3; p++) {
-        const prefix = `${PARTS3[p]}:`;
-        if (t.startsWith(prefix)) {
-          const dIdx = DAYS3.indexOf(t.slice(prefix.length, prefix.length + 3));
-          if (dIdx >= 0) { bits[dIdx * 3 + p] = 1; anyExplicit = true; }
-        }
-      }
-      if (t.startsWith("friends:free:")) {
-        const slot = t.slice(13);
-        const [dStr, pStr] = slot.split("_");
-        const dIdx = DAYS3.indexOf(dStr ?? "");
-        const pIdx = pStr === "am" ? 0 : pStr === "pm" ? 1 : pStr === "eve" ? 2 : -1;
-        if (dIdx >= 0 && pIdx >= 0) { bits[dIdx * 3 + pIdx] = 1; anyExplicit = true; }
-      }
-    }
-  }
-  if (!anyExplicit) {
-    for (let d = 1; d <= 5; d++) bits[d * 3 + 2] = 1;
-    bits[0 * 3 + 1] = 1; bits[0 * 3 + 2] = 1;
-    bits[6 * 3 + 0] = 1; bits[6 * 3 + 1] = 1; bits[6 * 3 + 2] = 1;
-  }
-  return bits;
-}
-
-function computeSocialGraphSignals(w: World, adultMin: number): {
-  brokerage: Map<MemberId, number>;
-  vouchQuality: Map<MemberId, number>;
-} {
-  const brokerage = new Map<MemberId, number>();
-  const vouchQuality = new Map<MemberId, number>();
-  if (w.positive.size === 0) return { brokerage, vouchQuality };
-  const worldBrokerage = w.brokerage;
-
-  for (const id of w.ids) {
-    const mi = w.get(id);
-    if (!mi || w.minors.has(id) || !vectorEligible(mi.m.age, adultMin)) continue;
-    const nbrs = w.positive.get(id);
-    if (!nbrs || nbrs.size === 0) {
-      brokerage.set(id, 0.2);
-      vouchQuality.set(id, 0.35);
-      continue;
-    }
-    if (nbrs.size === 1) {
-      brokerage.set(id, 0.25);
-    } else {
-      brokerage.set(id, clamp01(worldBrokerage.get(id) ?? 0));
-    }
-    let vouchSeed = Math.min(0.75, 0.35 + 0.08 * nbrs.size);
-    for (const j of nbrs.keys()) {
-      if (w.edgeHas(id, j, "vouched_for")) vouchSeed += 0.12;
-      else if (w.edgeHas(id, j, "invited_by")) vouchSeed += 0.06;
-    }
-    vouchQuality.set(id, clamp01(vouchSeed));
-  }
-
-  for (let iter = 0; iter < 2; iter++) {
-    const next = new Map<MemberId, number>();
-    for (const [id, cur] of vouchQuality) {
-      const nbrs = w.positive.get(id);
-      if (!nbrs || nbrs.size === 0) { next.set(id, cur); continue; }
-      let wSum = 0;
-      let weightedVouch = 0;
-      for (const [j, s] of nbrs) {
-        const bonus = w.edgeHas(id, j, "vouched_for") ? 1.4 : w.edgeHas(id, j, "would_interact_again") ? 1.2 : 1.0;
-        const wgt = s * bonus;
-        wSum += wgt;
-        weightedVouch += wgt * (vouchQuality.get(j) ?? 0.35);
-      }
-      const propagated = wSum > 0 ? weightedVouch / wSum : cur;
-      next.set(id, clamp01(0.45 * cur + 0.55 * propagated));
-    }
-    for (const [id, v] of next) vouchQuality.set(id, v);
-  }
-  return { brokerage, vouchQuality };
 }
 
 function buildWorldVectorCache(w: World): WorldVectorCache {
@@ -483,7 +411,6 @@ function buildWorldVectorCache(w: World): WorldVectorCache {
     }
   }
 
-  const { brokerage, vouchQuality } = computeSocialGraphSignals(w, adultMin);
   return {
     w,
     adultMin,
@@ -492,8 +419,8 @@ function buildWorldVectorCache(w: World): WorldVectorCache {
     allFacetsBy,
     fbStats,
     attStats,
-    brokerage,
-    vouchQuality,
+    vouchSeedBy: new Map(),
+    vouchQualityBy: new Map(),
     byMember: new Map(),
   };
 }
@@ -537,6 +464,7 @@ export function memberMayHavePositiveVectorBonus(w: World, id: MemberId, include
   }
   return false;
 }
+
 const LANGUAGE_PATTERNS = LANGUAGE_CODES.map(lang => ({
   lang,
   nativeRx: new RegExp(`\\b(native|fluent)\\s+${lang}\\b|\\b${lang}\\s+(native|mother tongue)\\b`),
@@ -561,7 +489,6 @@ function compileAdultVector(
   allFacets: readonly Facet[],
   fb: { pos: number; neg: number; explicitNeg: number; total: number } | undefined,
   att: { completed: number; noShow: number; resolved: number } | undefined,
-  brokerageVal: number,
   vouchVal: number,
   adultMin: number,
   isSlop: boolean,
@@ -632,20 +559,6 @@ function compileAdultVector(
     dunbarSaturation,
   };
 
-  const tasteFacets = mi.match.filter(f => f.kind === "interest" || f.kind === "desire");
-  const valueFacets = mi.match.filter(f => f.kind === "goal" || f.kind === "trait" || f.kind === "fact");
-  const styleFacets = mi.match.filter(f => f.kind === "trait");
-  const embOf = (fs: Facet[], fallback: number[]) => {
-    const vs = fs.map(f => mi.facetEmb.get(f.id)).filter((v): v is number[] => !!v);
-    return vs.length ? centroid(vs, w.dim) : fallback;
-  };
-
-  const clusters = new Set<string>();
-  for (const t of mi.tags) {
-    const cl = interestClusterByTag.get(t);
-    if (cl) clusters.add(cl);
-  }
-
   const lifeStage: LifeStage = parsedTags.lifeStage ?? (
     mi.tags.has("parenting") || mi.intents.some(i => /\bparent/i.test(i.objective))
       ? (age < 36 ? "young_family" : "established_family")
@@ -682,25 +595,7 @@ function compileAdultVector(
   const extroVal = clamp01(0.35 + (groupFmt ? 0.2 : -0.1) + Math.min(0.3, mi.degree * 0.05) + (mi.isHost ? 0.15 : 0));
   const initVal = clamp01(0.35 + (mi.isHost ? 0.45 : 0) + (mi.tags.has("hosting") ? 0.2 : 0) + Math.min(0.2, mi.recentContribution * 0.08));
 
-  const homePresence = mi.presence.find(p => p.type === "home");
-  const homeArea = homePresence?.areas[0] ?? "core";
-  const maxTravel = mi.m.prefs.maxTravelMinutes;
-
-  let cachedTasteEmb: number[] | undefined;
-  let cachedValueEmb: number[] | undefined;
-  let cachedStyleEmb: number[] | undefined;
   const horizontal: HorizontalProfile = {
-    embeddings: {
-      get interestsAndTaste() {
-        return cachedTasteEmb ??= embOf(tasteFacets, mi.desireEmb);
-      },
-      get worldviewAndValues() {
-        return cachedValueEmb ??= embOf(valueFacets, mi.profileEmb);
-      },
-      get conversationalStyle() {
-        return cachedStyleEmb ??= embOf(styleFacets, mi.profileEmb);
-      },
-    },
     lifeStage,
     activeTransitions: transitions,
     communication: {
@@ -719,10 +614,7 @@ function compileAdultVector(
       spontaneity: makeCoord(mi.m.state === "open" ? 0.65 : 0.45, 0.4, now, "inferred", "agent_private"),
     },
     geoAndTime: {
-      homeH3: `${mi.m.homeCity}:${homeArea.toLowerCase()}`,
-      maxTravelMinutes: maxTravel,
-      transitMode: maxTravel <= 20 ? "walk" : maxTravel >= 50 ? "car" : "transit",
-      weeklySlotBitmap: buildWeeklyBitmap(nonAppearanceFacets),
+      maxTravelMinutes: mi.m.prefs.maxTravelMinutes,
     },
   };
 
@@ -745,11 +637,21 @@ function compileAdultVector(
           domainRungs[dom] = makeCoord(baseRung, isVerifiedCap ? 0.78 : 0.55, now, f.provenance, "agent_private");
         }
       }
+    }
+  }
+  for (const f of mi.match) {
+    if (f.kind !== "fact" && f.kind !== "goal" && f.kind !== "skill" && f.kind !== "offer") continue;
+    const isVerifiedCap = f.provenance === "vouched" || f.provenance === "connected_source";
+    for (const raw of f.tags) {
+      const t = raw.toLowerCase();
       if (t.startsWith(PEON_TAG.seniority)) {
         const lvl = Number(t.slice(PEON_TAG.seniority.length));
         if (Number.isFinite(lvl) && peonCapitalAllowed("seniority")) {
           const rung = clampRung(lvl * 2);
-          domainRungs.career = makeCoord(rung, isVerifiedCap ? 0.8 : 0.6, now, f.provenance, "agent_private");
+          const cur = domainRungs.career?.value ?? 0;
+          if (rung >= cur) {
+            domainRungs.career = makeCoord(rung, isVerifiedCap ? 0.8 : 0.6, now, f.provenance, "agent_private");
+          }
         }
       }
     }
@@ -782,9 +684,6 @@ function compileAdultVector(
       + (mi.isHost && mi.degree >= 6 ? 0.15 : 0),
     );
 
-  const omnivorousVal = clamp01(clusters.size / 6);
-  const embodiedVal = clamp01(0.35 + 0.35 * omnivorousVal + 0.30 * depthVal);
-  const instVal = clamp01(0.35 + (topDomainRung / 10) * 0.55);
   const peerPrestigeVal = clamp01(0.45 * vouchVal + 0.35 * (topDomainRung / 10) + 0.20 * reciprocalApprovalRate);
 
   let aestheticSlopOnly: CapitalProfile["aestheticSlopOnly"];
@@ -794,9 +693,9 @@ function compileAdultVector(
       if (parsed && parsed.confidence > 0) {
         const normZ = (z: number) => clamp01((z + 3) / 6);
         aestheticSlopOnly = {
-          face: makeCoord(normZ(parsed.face), parsed.confidence, now, "inferred", "agent_private", [], "slop"),
-          body: makeCoord(normZ(parsed.body), parsed.confidence, now, "inferred", "agent_private", [], "slop"),
-          overall: makeCoord(normZ(parsed.overall), parsed.confidence, now, "inferred", "agent_private", [], "slop"),
+          face: makeCoord(normZ(parsed.face), parsed.confidence, now, "inferred", "agent_private", "slop"),
+          body: makeCoord(normZ(parsed.body), parsed.confidence, now, "inferred", "agent_private", "slop"),
+          overall: makeCoord(normZ(parsed.overall), parsed.confidence, now, "inferred", "agent_private", "slop"),
           ...(parsed.bodyType ? { bodyType: parsed.bodyType } : {}),
           appWall: "slop",
           scope: "agent_private",
@@ -808,14 +707,8 @@ function compileAdultVector(
 
   const capital: CapitalProfile = {
     economic: makeCoord(isPeon ? 0.5 : inferredEcon, isPeon ? 0 : (parsedTags.economicHint !== undefined || parsedTags.spendTier !== undefined ? 0.72 : 0.35), now, "inferred", "agent_private"),
-    cultural: {
-      embodied: makeCoord(isPeon ? 0.5 : embodiedVal, isPeon ? 0 : 0.5, now, "inferred", "agent_private"),
-      institutionalized: makeCoord(isPeon ? 0.5 : instVal, isPeon ? 0 : 0.45, now, "inferred", "agent_private"),
-      omnivorousness: makeCoord(isPeon ? 0.5 : omnivorousVal, isPeon ? 0 : 0.65, now, "inferred", "agent_private"),
-    },
     social: {
       vouchQuality: makeCoord(vouchVal, mi.degree > 0 ? 0.75 : 0.3, now, "inferred", "agent_private"),
-      brokerage: makeCoord(brokerageVal, mi.degree > 1 ? 0.75 : 0.25, now, "inferred", "agent_private"),
       warmGraphDegree: mi.degree,
     },
     symbolic: {
@@ -912,20 +805,6 @@ function compileAdultVector(
     }
   }
 
-  const crossCapitalOpenness: CrossCapitalOpenness[] = [];
-  if (mi.tags.has("angel_patron") || mi.tags.has("non_dilutive_patron") || slots.some(s => s.connectionType === "patronage_sponsorship")) {
-    crossCapitalOpenness.push("patronage");
-  }
-  if (mi.caps.length > 0 || topDomainRung >= 5) {
-    crossCapitalOpenness.push("step_ahead_mentoring");
-  }
-  if (parsedTags.guilds.length > 0 || slots.some(s => CONNECTION_ONTOLOGY_SPECS[s.connectionType].chettyMixedSesContainer)) {
-    crossCapitalOpenness.push("mixed_ses_craft_guild");
-  }
-  if (mi.m.prefs.categoriesOptIn.includes("help") || slots.some(s => s.connectionType === "local_mutual_aid")) {
-    crossCapitalOpenness.push("local_mutual_aid");
-  }
-
   const explicitSignals: ExplicitSignalFlags = {
     lifeStage: parsedTags.lifeStage !== undefined,
     spendTier: parsedTags.spendTier !== undefined || parsedTags.economicHint !== undefined,
@@ -946,7 +825,6 @@ function compileAdultVector(
     horizontal,
     exchange: {
       slots,
-      crossCapitalOpenness,
       nativeLanguages: [...nativeLanguages].sort(),
       learningLanguages: [...learningLanguages].sort(),
       guilds: [...parsedTags.guilds].sort(),
@@ -960,6 +838,7 @@ function compileAdultVector(
 export function classifyEmptyStateRemedy(
   w: World,
   empty: { intentId: string; memberId: MemberId; reason: string },
+  opts?: EmptyStateRemedyOptions,
 ): EmptyStateRemedy | null {
   const id = w.canonical(empty.memberId);
   const mi = w.get(id);
@@ -975,16 +854,20 @@ export function classifyEmptyStateRemedy(
       engineReason: empty.reason,
       stage: "single_player_concierge",
       remedyKind: "local_public_events",
-      connectionType: "event_travel_companion",
-      diagnosticCodes: ["minor_single_player_only"],
+      connectionType: "friendship",
+      diagnosticCodes: ["minor_single_player_only", "all_ages_public_only"],
       involvesOtherMembers: false,
     };
   }
 
+  const appId: AppId = opts?.appId ?? (w.pack.id === "slop" || w.pack.id === "peon" || w.pack.id === "friends" ? w.pack.id : "ntwrk");
+  const densityTier = opts?.densityTier;
   const vec = humanVectorOf(w, id);
   const codes: string[] = [];
+  if (opts?.city) codes.push(`city:${opts.city}`);
+  if (densityTier) codes.push(`density:${densityTier}`);
   if (mi.lowData) codes.push("low_facet_count");
-  if (intent && !w.pack.ontology.objectivesFor(intent.objective, intent.details, intent.category).length) {
+  if (appId === "ntwrk" && intent && !w.pack.ontology.objectivesFor(intent.objective, intent.details, intent.category).length) {
     codes.push("unstructured_want");
   }
   if (mi.m.prefs.maxTravelMinutes < 20) codes.push("narrow_travel_radius");
@@ -1001,6 +884,19 @@ export function classifyEmptyStateRemedy(
       remedyKind: "wait_budget_cooldown",
       connectionType: cType,
       diagnosticCodes: [...codes, "attention_cap_active"],
+      involvesOtherMembers: false,
+    };
+  }
+
+  if (appId === "slop" && opts?.photoReadinessIssues === true) {
+    return {
+      intentId: empty.intentId,
+      memberId: id,
+      engineReason: empty.reason,
+      stage: "readiness_coaching",
+      remedyKind: "photo_readiness_coaching",
+      connectionType: "dating",
+      diagnosticCodes: [...codes, "photo_readiness_issues"],
       involvesOtherMembers: false,
     };
   }
@@ -1045,7 +941,31 @@ export function classifyEmptyStateRemedy(
     };
   }
 
-  if (empty.reason === "density_gap" || empty.reason === "no_candidates") {
+  if (empty.reason === "density_gap" || empty.reason === "no_candidates" || densityTier === "sparse") {
+    if (appId === "friends" && (densityTier === "sparse" || densityTier === "medium")) {
+      return {
+        intentId: empty.intentId,
+        memberId: id,
+        engineReason: empty.reason,
+        stage: "external_bridge",
+        remedyKind: "external_open_event_bridge",
+        connectionType: cType,
+        diagnosticCodes: [...codes, "sparse_local_pool", "adult_external_event_eligible"],
+        involvesOtherMembers: false,
+      };
+    }
+    if (appId === "slop" && densityTier === "sparse") {
+      return {
+        intentId: empty.intentId,
+        memberId: id,
+        engineReason: empty.reason,
+        stage: "external_bridge",
+        remedyKind: "external_matchmaker_sourcing",
+        connectionType: "dating",
+        diagnosticCodes: [...codes, "sparse_local_pool", "adult_external_sourcing_eligible"],
+        involvesOtherMembers: false,
+      };
+    }
     if (CONNECTION_ONTOLOGY_SPECS[cType].chettyMixedSesContainer || codes.includes("spend_floor_protected")) {
       return {
         intentId: empty.intentId,

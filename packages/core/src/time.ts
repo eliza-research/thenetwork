@@ -1,9 +1,10 @@
 // Local wall-clock time in an IANA zone (DST-correct via Intl). Time is always a UTC epoch
 // millisecond value read from a Clock (clock.ts); these helpers only interpret it. The one home for
 // local-time parts, local-to-UTC conversion and quiet hours (engine, network, sim and worlds).
+import { getCity } from "./cities.ts";
 import { MINUTE } from "./clock.ts";
 import { withinQuietHours } from "./generated/quietHours.ts";
-import type { City } from "./types.ts";
+import { isCity, type City } from "./types.ts";
 
 export { withinQuietHours };
 
@@ -14,6 +15,12 @@ export const CITY_TZ: Record<City, string> = {
   chicago: "America/Chicago",
   miami: "America/New_York",
 };
+
+export function timeZoneOf(city: string): string {
+  const registered = getCity(city)?.tz;
+  if (registered) return registered;
+  return isCity(city) ? CITY_TZ[city] : "America/New_York";
+}
 
 /** Local date and time parts. `weekday`: Monday = 0 ... Sunday = 6. */
 export interface LocalParts { year: number; month: number; day: number; hour: number; minute: number; weekday: number }

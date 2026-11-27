@@ -20,12 +20,6 @@ export interface MarketEquilibrium {
   readonly maxRelDiff: number;
 }
 
-export interface MipsShadowVectors {
-  readonly dim: number;
-  readonly query: Map<MemberId, Float32Array>;
-  readonly item: Map<MemberId, Float32Array>;
-}
-
 function dampedPositiveStep(prev: number, target: number, damping: number, eps: number): number {
   const floor = eps > 0 ? eps : 1e-9;
   const p = Number.isFinite(prev) && prev > floor ? prev : floor;
@@ -188,47 +182,4 @@ export function solveChooSiowIPFP(
     iterations: usedIters,
     maxRelDiff: lastRelDiff,
   };
-}
-
-export function exportMipsShadowVectors(
-  ids: readonly MemberId[],
-  phi1: ReadonlyMap<MemberId, ArrayLike<number>>,
-  phi2: ReadonlyMap<MemberId, ArrayLike<number>>,
-  psi1: ReadonlyMap<MemberId, ArrayLike<number>>,
-  psi2: ReadonlyMap<MemberId, ArrayLike<number>>,
-  potentialA: ReadonlyMap<MemberId, number>,
-  beta = 0.25,
-): MipsShadowVectors {
-  const temp = Math.max(0.02, Number.isFinite(beta) ? beta : 0.25);
-  let d = 0;
-  for (const id of ids) {
-    const v = phi1.get(id);
-    if (v && v.length > 0) { d = v.length; break; }
-  }
-  const totalDim = 2 * d + 2;
-  const query = new Map<MemberId, Float32Array>();
-  const item = new Map<MemberId, Float32Array>();
-
-  for (const id of [...ids].sort()) {
-    const ai = Math.max(1e-9, potentialA.get(id) ?? 1);
-    const logTerm = 2 * temp * Math.log(ai);
-    const q = new Float32Array(totalDim);
-    const it = new Float32Array(totalDim);
-    const p1 = phi1.get(id), p2 = phi2.get(id);
-    const s1 = psi1.get(id), s2 = psi2.get(id);
-    for (let k = 0; k < d; k++) {
-      q[k] = p1 ? (p1[k] ?? 0) : 0;
-      q[d + k] = p2 ? (p2[k] ?? 0) : 0;
-      it[k] = s1 ? (s1[k] ?? 0) : 0;
-      it[d + k] = s2 ? (s2[k] ?? 0) : 0;
-    }
-    q[2 * d] = logTerm;
-    q[2 * d + 1] = 1;
-    it[2 * d] = 1;
-    it[2 * d + 1] = logTerm;
-    query.set(id, q);
-    item.set(id, it);
-  }
-
-  return { dim: totalDim, query, item };
 }

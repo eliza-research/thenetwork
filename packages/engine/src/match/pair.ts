@@ -7,7 +7,7 @@ import { pairReason } from "../filters.ts";
 import type { World } from "../world.ts";
 import { laneCategory, wholeNumber, type MatchProfile, type PackVectors, type TagSet } from "./profile.ts";
 
-function intersectCount(a: TagSet, b: TagSet): number {
+export function intersectCount(a: TagSet, b: TagSet): number {
   let i = 0, j = 0, count = 0;
   while (i < a.length && j < b.length) {
     const x = a[i], y = b[j];
