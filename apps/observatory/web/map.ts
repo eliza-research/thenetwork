@@ -111,7 +111,8 @@ export class MapView {
     if (ui.filters.borough !== this.lastBorough && store.members.size) {
       this.lastBorough = ui.filters.borough;
       const pts = [...store.members.values()].filter(m => store.inBorough(m)).map(m => this.point(m));
-      if (!f && pts.length > 1) this.map.flyToBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 14, duration: 0.6 });
+      if (!f && pts.length === 1) this.map.flyTo(pts[0]!, 14, { duration: 0.6 });
+      else if (!f && pts.length > 1) this.map.flyToBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 14, duration: 0.6 });
     }
     let pinsMoved = false;
     for (const m of store.members.values()) {
