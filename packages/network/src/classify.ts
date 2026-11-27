@@ -857,6 +857,29 @@ export function extractRedLineTags(body: string): string[] {
   return [...tags];
 }
 
+const OWN_LOW_NOISE_NEED = /\bi (?:need|require) (?:quiet|low[- ]noise) (?:places?|spots?|venues?)\b|\bi (?:need|require) somewhere quiet\b|\bi (?:need|require) low[- ]noise\b|\bi (?:can't|cannot|can not) do loud(?: places?| bars?| venues?| music)?\b|\bi(?:'m| am) noise[- ]sensitive\b|\bim noise[- ]sensitive\b|\bloud (?:places?|bars?|venues?|music) (?:don't|doesn't|do not) work for me\b/;
+const LOW_NOISE_BLOCK = /\b(?:if|unless|would|could|should|maybe|might|wish|whether|suppose|hypothetically|thinking|considering|planning|used to|formerly|friend|friends|sister|brother|mom|dad|mother|father|partner|wife|husband|son|daughter|kid|kids|child|children|roommate|coworker|he|she|they|him|her|them|his|hers|their)\b/;
+const LOW_NOISE_REPORTED = /\b(?:said|says|told|asked|texted|wrote|posted)\b/;
+const LOW_NOISE_NEGATED = /\b(?:don't|do not|doesn't|does not|never|not|no longer)\s+(?:really\s+)?(?:need|require)\b|\bno need (?:for|to)\b|\bnot noise[- ]sensitive\b/;
+const LOW_NOISE_OK = /\bloud (?:is|places are|bars are) fine\b|\b(?:don't|do not) mind loud\b|\bfine with loud\b|\bloud (?:places?|bars?) (?:are )?fine\b/;
+
+/** Low-noise tags the sender states about themselves in a member-initiated text. */
+export function ownLowNoiseTags(body: string): string[] {
+  const t = normText(body);
+  if (!t.trim()) return [];
+  const tags = new Set<string>();
+  for (const s of sentencesOf(t)) {
+    if (/\?\s*$/.test(s.text.trim())) continue;
+    if (LOW_NOISE_REPORTED.test(s.text) || LOW_NOISE_OK.test(s.text)) continue;
+    if (/\b(?:joking|kidding)\b/.test(s.text) && !/\bnot (?:joking|kidding)\b/.test(s.text)) continue;
+    for (const clause of s.text.split(/[,;:]|\b(?:but|though|however)\b/)) {
+      if (!OWN_LOW_NOISE_NEED.test(clause) || LOW_NOISE_BLOCK.test(clause) || LOW_NOISE_NEGATED.test(clause)) continue;
+      tags.add("low_noise");
+    }
+  }
+  return [...tags];
+}
+
 export interface Profile {
   interests: string[]; skills: string[]; desireIds: string[];
   /** Canonical venue/dietary/accessibility red-line facet tags extracted from the message. */
