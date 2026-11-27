@@ -176,7 +176,7 @@ export const SAFETY_RISK_PATTERNS: readonly string[] = [
   "\\b(guaranteed returns?|crypto (signals|opportunity)|forex (signals|opportunity)|investment opportunity)\\b",
   // Drugs (named substances; "diet coke", "mushroom foraging" and "joint venture" pass).
   "\\b(edibles?|molly|mdma|ecstasy|ketamine|shrooms|magic mushrooms?|psilocybin|lsd|adderall|xanax|oxy(codone|contin)?|percocet|opioids?|meth|heroin|fentanyl|thc|dabs?|blunts?|420|psychedelics?)\\b",
-  "\\b(marijuana|(meth)?amphetamines?|ritalin|opium|opiates?|morphine|codeine|hydrocodone|vicodin|valium|klonopin|benzos|benzodiazepines?|dmt|ayahuasca|mescaline)\\b",
+  "\\b(marijuana|(meth)?amphetamines?|ritalin|opiates?|morphine|codeine|hydrocodone|vicodin|valium|klonopin|benzos|benzodiazepines?|ayahuasca|mescaline)\\b",
   "(?<!diet |cherry |vanilla )\\b(coke|cocaine)\\b", "\\b(my|your|his|her|their) (meds|pills)\\b",
   // Medical escort / care.
   "\\b(ride|rides|lift|drive|take me|go with me|come with me|accompany me)\\b(\\W+\\w+){0,4}?\\W+(clinic|hospital|surgery|procedure|chemo|chemotherapy|dialysis)\\b",
