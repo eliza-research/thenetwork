@@ -354,3 +354,13 @@
 {"text":"Saturday works whenever","answer":"yes","keys":["b"]}
 {"text":"Saturday works when it suits you","answer":"yes","keys":["b"]}
 {"text":"Last time was great, Saturday works","answer":"yes","keys":["b"]}
+{"text":"Saturday and Sunday work, Thursday doesn't work","answer":"yes","keys":["b","c"]}
+{"text":"Saturday and Sunday work, Thursday is out","answer":"yes","keys":["b","c"]}
+{"text":"weekdays work, the weekend doesn't work","answer":"yes","keys":["a"]}
+{"text":"weekdays work, the weekend is out","answer":"yes","keys":["a"]}
+{"text":"Thursday and Saturday work, Sunday doesn't work","answer":"yes","keys":["a","b"]}
+{"text":"Thursday, Saturday and Sunday work, Monday is out","answer":"yes","keys":["a","b","c"]}
+{"text":"Thursday doesn't work, Saturday and Sunday work","answer":"yes","keys":["b","c"]}
+{"text":"Saturday work, Thursday doesn't work","answer":"unclear","keys":[]}
+{"text":"Saturday and Sunday work","answer":"yes","keys":["b","c"]}
+{"text":"Saturday and Sunday works, Thursday doesn't work","answer":"yes","keys":["b","c"]}

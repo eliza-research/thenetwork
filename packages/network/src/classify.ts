@@ -1571,7 +1571,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     else if (c.why === "refusal" || c.why === "mixed") qualifiedTimeRefusals.set(end, [end + refusal.length, keys, qualified]);
   };
   const onlyPick = (i: number, len: number) => /^[\s\W]*(?:the\s+)?$/.test(t.slice(0, i)) && /^[\s\W]*(?:one|option|works?|please|pls|lol)?[\s\W]*$/.test(t.slice(i + len));
-  const mark = (keys: string[], i: number, len: number, calendar = false, group = false) => {
+  const mark = (keys: string[], i: number, len: number, calendar = false, group = false, firm = false) => {
     if (!memberChoiceAt(i)) return;
     const cl = clauseAt(t, i, len);
     if (probeTimeIsRefused(t, i, i + len)) {
@@ -1582,7 +1582,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     for (const k of keys) {
       pos.add(k);
       (group ? grouped : individual).add(k);
-      if ((!unbound || !calendar) && onlyPick(i, len) || (POSITIVE_PICK.test(cl) && !/\?/.test(t.slice(i + len, i + len + 2)))) strong.add(k);
+      if ((!unbound || !calendar) && onlyPick(i, len) || ((POSITIVE_PICK.test(cl) || firm) && !/\?/.test(t.slice(i + len, i + len + 2)))) strong.add(k);
     }
   };
   // Option letters only where they cannot be the article "a": "a or b", "(b)", "option c", or alone.
@@ -1601,6 +1601,31 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // Ordinals only as a pick ("the first", "second one", or alone): "tell me about them first" is not option a.
   const dayLists = directProbeDayLists(t);
   const mentions = completeProbeTimeMentions(t, !explicitTimesOnly || clarifiedTimes, memberChoiceAt, dayLists);
+  const firmedByBareWork = new Set<TimeMention>();
+  {
+    const bySentence = new Map<number, TimeMention[]>();
+    for (const m of mentions) {
+      let from = 0;
+      for (const b of t.slice(0, m.at).matchAll(/[.;!?\n]|\bbut\b/g)) from = b.index! + b[0].length;
+      const list = bySentence.get(from) ?? [];
+      list.push(m);
+      bySentence.set(from, list);
+    }
+    for (const list of bySentence.values()) {
+      let run: TimeMention[] = [];
+      const flush = () => {
+        if ((run.length > 1 || (run.length === 1 && !!run[0]!.group)) && /^\s+work\b/.test(t.slice(run[run.length - 1]!.end))) {
+          for (const m of run) firmedByBareWork.add(m);
+        }
+        run = [];
+      };
+      for (const m of [...list].sort((a, b) => a.at - b.at)) {
+        if (run.length && !BARE_NAMED_TIME_JOIN.test(t.slice(run[run.length - 1]!.end, m.at))) flush();
+        run.push(m);
+      }
+      flush();
+    }
+  }
   const directOrdinals = readDirectProbeOrdinals(t, memberChoiceAt);
   const ordinals = completeProbeOrdinals(t, directOrdinals.refusals);
   const joinedRefusals = joinedProbeRefusals(t, [...mentions, ...ordinals], memberChoiceAt);
@@ -1715,7 +1740,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
         && !/^\s+(?:(?:work|works|will work)\b|(?:is|are) (?:good|fine|ok(?:ay)?|perfect)\b|for me\b)/.test(t.slice(m.end))) {
       // General availability can answer an earlier profile question. A bare daypart needs a direct pick.
       unresolved.push(m);
-    } else mark(matching, m.at, m.end - m.at, true, !!m.group);
+    } else mark(matching, m.at, m.end - m.at, true, !!m.group, firmedByBareWork.has(m));
   }
   if (conditionalTimeRefusal) {
     if (!hasDetachedProbeRefusal(t)) return { answer: "unclear", keys: [], why: "conditional" };
