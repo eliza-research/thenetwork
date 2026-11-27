@@ -62,6 +62,28 @@ test.each([
   expect(mini.meetings).toEqual([]);
 });
 
+test.each([
+  "Sorry, I'm busy this week.",
+  "I'm too busy this week.",
+])("a whole-week busy weekly reply %j records an empty week", async reply => {
+  // spec/planFormation.md, "The member's latest weekly answer takes precedence"
+  const tz = "America/New_York";
+  const clockDay = (day: number, hour: number) => fromLocal(2026, 10, day, hour, tz);
+  const mini = new Mini([{ id: "a", name: "Ana", age: 30 }], { growth: false, matchingEnabled: false });
+  mini.clock.set(clockDay(25, 13));
+  await mini.onboard("a");
+  await mini.say("a", "WEEKLY");
+  expect(await mini.runUntil(() => mini.to("a").some(message => message.meta.checkIn), 10 * HOUR)).toBe(true);
+
+  const now = clockDay(26, 13);
+  mini.clock.set(now);
+  await mini.say("a", reply);
+  const recorded = mini.net.exportState().members.find(member => member.id === "a")?.stated;
+  expect(recorded).toEqual({ windows: [], at: now, until: now + 7 * DAY });
+  const inside = { start: clockDay(27, 18), end: clockDay(27, 19) };
+  expect(plans.planWindowMatchesStated(recorded, inside, now)).toBe(false);
+});
+
 test("the generic planner checks availability through the end of a four-hour hike", () => {
   const venue = PLAN_VENUES.find(v => v.id === "inwood-hill");
   if (!venue) throw new Error("Missing the curated Inwood Hill Park venue");
