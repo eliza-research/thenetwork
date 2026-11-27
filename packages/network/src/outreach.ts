@@ -4,7 +4,7 @@
 // (audit P2-13). The send-time functions themselves come from the engine (@thenetwork/engine
 // attention.ts): learnSendProfile, inSendWindow, inMemberQuietHours, canInterrupt, canSendLogistics.
 import {
-  availabilityCheckInBudget, CITY_TZ, DAY, HOUR, initialInviteBudget, isCity, MINUTE, planInviteBudget, unsolicitedStateBudget,
+  availabilityCheckInBudget, DAY, HOUR, initialInviteBudget, MINUTE, planInviteBudget, timeZoneOf, unsolicitedStateBudget,
   withinQuietHours, type OutreachBudget, type ParticipationState,
 } from "@thenetwork/core";
 import { DEFAULT_ATTENTION } from "@thenetwork/engine";
@@ -13,7 +13,7 @@ import { reengagementSilenceMs, unansweredInviteLimit, unansweredInviteWaitMs } 
 export const NY = "America/New_York";
 
 export function tzForCity(city: string | undefined): string {
-  return city && isCity(city) ? CITY_TZ[city] : NY;
+  return city ? timeZoneOf(city) : NY;
 }
 
 function toSendBudget({ limit, periodDays }: OutreachBudget): { n: number; days: number } {

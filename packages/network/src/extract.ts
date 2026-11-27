@@ -1,55 +1,89 @@
-// The LLM layer of member-text understanding (gpt-6-luna through core's tryChatJson). It reads what
-// the offline rules (classify.ts) miss: paraphrased wants, interests and skills, a neighborhood said
-// in the member's own words, and a yes said in a way no rule lists. Rules for safety:
-//  - The member's words are data. They go inside a delimited block whose closing tag carries a
-//    nonce derived from the message, and the prompt says to ignore instructions inside it.
-//  - The reply must match a strict JSON shape and use only ids from the taxonomy and the
-//    neighborhood list. Anything else is rejected, and after the last attempt the layer returns
-//    nothing: the Network then uses the offline reading alone (fail closed).
-//  - The LLM can add a yes only where the offline reading found nothing ("none"). It can never
-//    override a refusal, a conditional, a hedge or a mixed reply (mergeConsent).
-//  - An age the LLM reads can only make the member younger (a minor), never decline them: a
-//    decline deletes data, so it needs the offline explicit form.
-import { maskPii, tryChatJson, type ChatMessage, type LLM } from "@thenetwork/core";
+import { listCities, maskPii, tryChatJson, VENUE_RED_LINE_TAGS, type ChatMessage, type LLM } from "@thenetwork/core";
 import { pickedTimes, probeReplyReading } from "../../core/src/generated/probeReply.ts";
-import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
+import {
+  ALL_DESIRES,
+  ALL_INTERESTS,
+  ALL_SKILLS,
+  CRAFT_GUILDS,
+  LIFE_TRANSITIONS,
+  SPEND_COMFORT_TIERS,
+} from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import type { ConsentWhy, TimeOption } from "./classify.ts";
 import { allNeighborhoods } from "./geo.ts";
 
-/** What the LLM read from one message (validated). */
 export interface Understood {
   consent?: "yes" | "no" | "unclear";
-  /** Offered time option keys the member picked (only with a yes). */
   times?: string[];
-  wants: string[]; notWanted: string[]; interests: string[]; skills: string[];
+  wants: string[];
+  notWanted: string[];
+  interests: string[];
+  skills: string[];
   area?: string;
-  /** An age the sender states about themselves. */
   selfAge?: number;
+  redLines?: string[];
+  spendTier?: string;
+  transitions?: string[];
+  guilds?: string[];
 }
-/** What the Network tells the reader about the message: what it asked last, and the offered times. */
+
 export interface UnderstandContext { awaiting?: string; options?: readonly TimeOption[] }
-/** The LLM reader. Resolves to undefined when the model failed or answered out of shape (fail closed). */
 export type Understand = (body: string, ctx: UnderstandContext) => Promise<Understood | undefined>;
 
-const DESIRE_IDS = new Set(DESIRES.map(d => d.id));
-const INTEREST_TAGS = new Set(INTERESTS.map(i => i.tag));
-const SKILL_TAGS = new Set(SKILLS.map(s => s.tag));
-const AREAS = new Set(allNeighborhoods().map(n => n.name));
-/** Longest member text sent to the model. Longer texts use the offline reading only. */
+const DESIRE_IDS = new Set(ALL_DESIRES.map(d => d.id));
+const INTEREST_TAGS = new Set(ALL_INTERESTS.map(i => i.tag));
+const SKILL_TAGS = new Set(ALL_SKILLS.map(s => s.tag));
+const RED_LINE_SET = new Set<string>(VENUE_RED_LINE_TAGS);
+const SPEND_TIER_SET = new Set<string>(SPEND_COMFORT_TIERS);
+const TRANSITION_SET = new Set<string>(LIFE_TRANSITIONS);
+const GUILD_SET = new Set<string>(CRAFT_GUILDS);
+
+function knownAreas(): Set<string> {
+  const out = new Set(allNeighborhoods().map(n => n.name));
+  for (const spec of listCities()) {
+    for (const n of spec.neighborhoods) out.add(n.name);
+  }
+  return out;
+}
+
+function resolveKnownArea(area: string): string | undefined {
+  const areas = knownAreas();
+  if (areas.has(area)) return area;
+  const low = area.trim().toLowerCase();
+  if (!low) return undefined;
+  for (const name of areas) {
+    if (name.toLowerCase() === low) return name;
+  }
+  for (const spec of listCities()) {
+    for (const n of spec.neighborhoods) {
+      if (n.aliases.some(a => a.trim().toLowerCase() === low)) return n.name;
+    }
+  }
+  return undefined;
+}
+
 export const MAX_UNDERSTAND_CHARS = 1200;
 
-/** A short id that depends on every character of the message (FNV-1a): the closing tag cannot be forged from inside it. */
 function nonceOf(text: string): string {
   let h = 0x811c9dc5;
   for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
   return h.toString(36);
 }
 
-/** The prompt. Exported for the prompt-injection tests. */
+const STATIC_VOCAB_LINES = [
+  `Want ids: ${ALL_DESIRES.map(d => `${d.id} (${d.text})`).join("; ")}.`,
+  `Interest ids: ${ALL_INTERESTS.map(i => `${i.tag} (${i.label})`).join("; ")}.`,
+  `Skill ids: ${ALL_SKILLS.map(s => `${s.tag} (${s.label})`).join("; ")}.`,
+  `Red-line ids: ${VENUE_RED_LINE_TAGS.join("; ")}.`,
+  `Spend tiers: ${SPEND_COMFORT_TIERS.join("; ")}.`,
+  `Life transitions: ${LIFE_TRANSITIONS.join("; ")}.`,
+  `Craft guilds: ${CRAFT_GUILDS.join("; ")}.`,
+];
+
 export function understandPrompt(body: string, ctx: UnderstandContext): ChatMessage[] {
   const clean = body.replace(/<\/?\s*member_message[^>]*>/gi, " ");
   const n = nonceOf(clean);
   const opts = ctx.options?.length ? ctx.options.map(o => `${o.key} = ${o.label}`).join("; ") : "none";
+  const areas = [...knownAreas()];
   return [
     {
       role: "system",
@@ -64,17 +98,19 @@ export function understandPrompt(body: string, ctx: UnderstandContext): ChatMess
         "interests and skills: only the member's own, said in the first person. A skill they look for in someone else is a want, not a skill.",
         "area: the member's own neighborhood, exactly as listed, or null. Never pick a neighborhood they did not name.",
         "selfAge: an age the member states about themselves now, as a number, or null.",
-        "Reply with only this JSON object: {\"consent\": \"yes\"|\"no\"|\"unclear\"|null, \"times\": [], \"wants\": [], \"notWanted\": [], \"interests\": [], \"skills\": [], \"area\": string|null, \"selfAge\": number|null}",
+        "redLines: venue or safety red-line ids the member states for themselves (e.g. strict_sober, halal, kosher, wheelchair, low_noise, daytime_only).",
+        "spendTier: the member's stated hangout spend comfort tier from Spend tiers, or null.",
+        "transitions: active life transitions from Life transitions the member states for themselves.",
+        "guilds: craft/hobby guild ids from Craft guilds the member wants to join or participates in.",
+        "Reply with only this JSON object: {\"consent\": \"yes\"|\"no\"|\"unclear\"|null, \"times\": [], \"wants\": [], \"notWanted\": [], \"interests\": [], \"skills\": [], \"area\": string|null, \"selfAge\": number|null, \"redLines\": [], \"spendTier\": string|null, \"transitions\": [], \"guilds\": []}",
+        ...STATIC_VOCAB_LINES,
+        `Neighborhoods: ${areas.join("; ")}.`,
       ].join("\n"),
     },
     {
       role: "user",
       content: [
         `Last question from the agent: ${ctx.awaiting ?? "none"}. Offered times: ${opts}.`,
-        `Want ids: ${DESIRES.map(d => `${d.id} (${d.text})`).join("; ")}.`,
-        `Interest ids: ${INTERESTS.map(i => `${i.tag} (${i.label})`).join("; ")}.`,
-        `Skill ids: ${SKILLS.map(s => `${s.tag} (${s.label})`).join("; ")}.`,
-        `Neighborhoods: ${[...AREAS].join("; ")}.`,
         `<member_message id="${n}">`,
         clean,
         `</member_message id="${n}">`,
@@ -85,11 +121,13 @@ export function understandPrompt(body: string, ctx: UnderstandContext): ChatMess
 
 const isStrList = (v: unknown): v is string[] => Array.isArray(v) && v.every(x => typeof x === "string");
 
-/** Strict shape check. Throws on anything out of shape or out of vocabulary (the caller retries, then fails closed). */
 export function validateUnderstood(raw: unknown, ctx: UnderstandContext = {}): Understood {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("not_object");
   const r = raw as Record<string, unknown>;
-  const allowed = new Set(["consent", "times", "wants", "notWanted", "interests", "skills", "area", "selfAge"]);
+  const allowed = new Set([
+    "consent", "times", "wants", "notWanted", "interests", "skills", "area", "selfAge",
+    "redLines", "spendTier", "transitions", "guilds",
+  ]);
   for (const k of Object.keys(r)) if (!allowed.has(k)) throw new Error(`unknown_key:${k}`);
   const list = (k: string, vocab: Set<string>): string[] => {
     const v = r[k] ?? [];
@@ -101,39 +139,50 @@ export function validateUnderstood(raw: unknown, ctx: UnderstandContext = {}): U
   if (consent !== null && consent !== undefined && consent !== "yes" && consent !== "no" && consent !== "unclear") throw new Error("bad_consent");
   const keys = new Set((ctx.options ?? []).map(o => o.key));
   const times = list("times", keys);
-  const area = r.area;
-  if (area !== null && area !== undefined && (typeof area !== "string" || !AREAS.has(area))) throw new Error("bad_area");
+  const areaRaw = r.area;
+  let resolvedArea: string | undefined;
+  if (areaRaw !== null && areaRaw !== undefined) {
+    if (typeof areaRaw !== "string") throw new Error("bad_area");
+    resolvedArea = resolveKnownArea(areaRaw);
+    if (!resolvedArea) throw new Error("bad_area");
+  }
   const age = r.selfAge;
   if (age !== null && age !== undefined && (typeof age !== "number" || !Number.isInteger(age) || age < 1 || age > 120)) throw new Error("bad_age");
+  const spendTier = r.spendTier;
+  if (spendTier !== null && spendTier !== undefined && (typeof spendTier !== "string" || !SPEND_TIER_SET.has(spendTier))) {
+    throw new Error("bad_spend_tier");
+  }
+  const redLines = list("redLines", RED_LINE_SET);
+  const transitions = list("transitions", TRANSITION_SET);
+  const guilds = list("guilds", GUILD_SET);
   return {
     ...(consent ? { consent: consent as Understood["consent"] } : {}),
     ...(times.length && consent === "yes" ? { times } : {}),
-    wants: list("wants", DESIRE_IDS), notWanted: list("notWanted", DESIRE_IDS), interests: list("interests", INTEREST_TAGS), skills: list("skills", SKILL_TAGS),
-    ...(typeof area === "string" ? { area } : {}), ...(typeof age === "number" ? { selfAge: age } : {}),
+    wants: list("wants", DESIRE_IDS),
+    notWanted: list("notWanted", DESIRE_IDS),
+    interests: list("interests", INTEREST_TAGS),
+    skills: list("skills", SKILL_TAGS),
+    ...(resolvedArea ? { area: resolvedArea } : {}),
+    ...(typeof age === "number" ? { selfAge: age } : {}),
+    ...(redLines.length ? { redLines } : {}),
+    ...(typeof spendTier === "string" ? { spendTier } : {}),
+    ...(transitions.length ? { transitions } : {}),
+    ...(guilds.length ? { guilds } : {}),
   };
 }
 
-/**
- * The LLM reader on a core client (defaultLLM() is gpt-6-luna on Surplus). Two attempts, then
- * undefined. Never throws.
- */
 export function llmUnderstand(llm: LLM, o: { maxTokens?: number; attempts?: number } = {}): Understand {
   return async (body, ctx) => {
     if (!body.trim() || body.length > MAX_UNDERSTAND_CHARS) return undefined;
-    const r = await tryChatJson(llm, understandPrompt(maskPii(body), ctx), raw => validateUnderstood(raw, ctx), { attempts: o.attempts ?? 2, maxTokens: o.maxTokens ?? 400 });
+    const r = await tryChatJson(llm, understandPrompt(maskPii(body), ctx), raw => validateUnderstood(raw, ctx), { attempts: o.attempts ?? 2, maxTokens: o.maxTokens ?? 1400 });
     return r.ok ? r.value : undefined;
   };
 }
 
-/**
- * The answer to a probe: the offline reading, with the LLM's yes taken only where the rules found no
- * signal at all ("none"). A refusal, a conditional, a hedge or a mixed reply is never turned into a yes.
- */
 export function mergeConsent(
   offline: { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy },
   u: Understood | undefined, options: readonly TimeOption[],
 ): { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy | "llm" } {
-  // spec/probeReply.md, "A model reading cannot replace a definite or qualified answer"
   const reading = probeReplyReading(offline.answer === "unclear", offline.why === "none", u?.consent ?? "");
   if (reading === "KeepOffline") return offline;
   if (reading === "HeardNo") return { answer: "no", keys: [], why: "llm" };

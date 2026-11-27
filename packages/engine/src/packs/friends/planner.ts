@@ -30,8 +30,8 @@
 //   likely free; the probe carries them and the group books the option most yes-sayers picked.
 //
 // Engine-visible inputs only (the World, availability evidence, the Network's own outcome records).
-import type { Category, City, MemberId } from "@thenetwork/core";
-import { ageSideOf, CITY_TZ, DAY, HOUR, MINUTE, fromLocal, localParts } from "@thenetwork/core";
+import type { Category, City, Facet, MemberId, MemberRedLines, VenueNoiseLevel, VenueRecord } from "@thenetwork/core";
+import { ageSideOf, DAY, evaluateVenueRedLines, extractMemberRedLines, HOUR, MINUTE, fromLocal, localParts, seedVenuesForCity, timeZoneOf } from "@thenetwork/core";
 import { teenRosterMaximum, teenSideFits } from "../../../../core/src/generated/friendIntroAge.ts";
 import {
   canReservePartner, type Event as WeekEvent, friendStandbyCanRemain, friendTableHasMinimumCandidates, friendTableTriesNextStarter, initial as initialWeek, newPlanAlternateCanRemain, newPlanAvailable,
@@ -186,7 +186,7 @@ function pairActivity(w: World, a: MemberId, b: MemberId, pcfg: PlansConfig, tee
 }
 
 /** The same local weekday and time as `at`, at least `minLeadHours` after now (weekly cadence). */
-export function nextSameSlot(at: number, now: number, pcfg: PlansConfig, tz = CITY_TZ.nyc): number {
+export function nextSameSlot(at: number, now: number, pcfg: PlansConfig, tz = timeZoneOf("nyc")): number {
   const lp = localParts(at, tz);
   let t = at, weeks = 0;
   // A local week can be 167 or 169 hours across DST. Keep the original wall-clock slot.
@@ -235,8 +235,95 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
   const info = friendsInfo(w);
   const city: City = inp.city ?? FRIENDS_CITY;
   const now = inp.now;
-  const tz = inp.tz ?? CITY_TZ[city] ?? CITY_TZ.nyc;
+  const tz = inp.tz ?? timeZoneOf(city);
   const zones = city === "nyc" ? ZONES : cityZones(city);
+  const seedVenueById = new Map<string, VenueRecord>(seedVenuesForCity(city).map(v => [v.id, v]));
+  let facetsByMember: Map<MemberId, Facet[]> | undefined;
+  const redLinesCache = new Map<MemberId, MemberRedLines>();
+  const redLinesOf = (id: MemberId): MemberRedLines => {
+    const cached = redLinesCache.get(id);
+    if (cached) return cached;
+    if (!facetsByMember) {
+      facetsByMember = new Map();
+      for (const f of w.input.facets) {
+        if (f.validFrom !== undefined && f.validFrom > now) continue;
+        if (f.validTo !== undefined && f.validTo < now) continue;
+        const cid = w.canonical(f.memberId);
+        let list = facetsByMember.get(cid);
+        if (!list) { list = []; facetsByMember.set(cid, list); }
+        list.push(f);
+      }
+    }
+    const rl = extractMemberRedLines(facetsByMember.get(id) ?? []);
+    redLinesCache.set(id, rl);
+    return rl;
+  };
+  const NOISE_TIER: Record<VenueNoiseLevel, number> = { quiet: 0, conversational: 1, lively: 2, loud: 3 };
+  const LOW_WALKING_BLOCKED_ACTIVITIES = new Set(["day_hike", "group_run", "group_ride", "pickup_basketball", "tennis", "pickleball"]);
+  const ALCOHOL_ACTIVITY_TAGS = new Set(["wine", "alcohol", "bar", "drinks", "brewery", "cocktails"]);
+  const venueFitsRedLines = (v: Venue, a: ActivityType, invited: readonly MemberId[], startMs: number): boolean => {
+    const memberLines = invited.map(redLinesOf);
+    if (!memberLines.some(rl => rl.hasVenueRedLines)) return true;
+    const anyStrictSober = memberLines.some(rl => rl.strictSober);
+    const anyNonDrinker = memberLines.some(rl => rl.nonDrinker);
+    const anyVegetarian = memberLines.some(rl => rl.vegetarian);
+    const anyVegan = memberLines.some(rl => rl.vegan);
+    const anyHalal = memberLines.some(rl => rl.halal);
+    const anyKosher = memberLines.some(rl => rl.kosher);
+    const anyGlutenFree = memberLines.some(rl => rl.glutenFree);
+    const anySevereAllergen = memberLines.some(rl => rl.severeAllergen);
+    const anyWheelchair = memberLines.some(rl => rl.wheelchairNeeded);
+    const anyLowWalking = memberLines.some(rl => rl.lowWalking);
+    const anySmokeFree = memberLines.some(rl => rl.smokeFree);
+    const anyLowNoise = memberLines.some(rl => rl.lowNoiseRequired);
+    const anyDaytimeOnly = memberLines.some(rl => rl.daytimeOnly);
+    const anyAllAges = memberLines.some(rl => rl.allAgesOnly);
+    const parts = localParts(startMs, tz);
+    const isAfterDark = parts.hour >= 19 || parts.hour < 7;
+    if (anyDaytimeOnly && isAfterDark) return false;
+    if (anyAllAges && !v.allAges) return false;
+    if ((anyLowWalking || anyWheelchair) && LOW_WALKING_BLOCKED_ACTIVITIES.has(a.id)) return false;
+    const rec = seedVenueById.get(v.id);
+    if (rec) {
+      if (anyWheelchair && !rec.wheelchairAccessible) return false;
+      if (anyVegetarian && !rec.servesVegetarian) return false;
+      if (anyVegan && !rec.servesVegan) return false;
+      if (anyAllAges && rec.allAges !== true) return false;
+      const isAlcoholCentric = rec.isAlcoholCentric ?? (rec.isBarOnly || ["brewery", "brewery_garden", "wine_bar", "cocktail_bar", "cocktail_lounge", "wine_beer_patio"].includes(rec.category));
+      return evaluateVenueRedLines({
+        anyStrictSober,
+        anyNonDrinker,
+        isAlcoholCentric,
+        isBarOnly: rec.isBarOnly,
+        alcoholOptional: rec.alcoholOptional,
+        anyHalal,
+        halalFriendly: rec.halalFriendly === true,
+        anyKosher,
+        kosherFriendly: rec.kosherFriendly === true,
+        anyGlutenFree,
+        glutenFreeFriendly: rec.glutenFreeFriendly === true,
+        anySevereAllergen,
+        severeAllergenSafe: rec.severeAllergenSafe === true,
+        anySmokeFree,
+        isSmokeFree: rec.isSmokeFree === true,
+        anyLowNoise,
+        noiseTier: NOISE_TIER[rec.noiseLevel],
+        anyDaytimeOnly,
+        isAfterDark,
+        isFirstMeet: invited.length === 2,
+        safetyScore: rec.safetyScore ?? 8,
+        transitScore: rec.transitScore ?? 4,
+        startLocalHour: parts.hour,
+        groupSize: Math.max(1, invited.length),
+        hasReservation: false,
+        openEventEligible: invited.length > 6 ? rec.openEventEligible === true : false,
+        concurrentHeadcount: 0,
+        walkInCapacity: rec.walkInGroupCapacity,
+      });
+    }
+    if ((anyStrictSober || anyNonDrinker) && (v.ageMin >= 21 || a.tags.some(t => ALCOHOL_ACTIVITY_TAGS.has(t)))) return false;
+    return true;
+  };
   const homeOf = (id: MemberId): Neighborhood | undefined => {
     const fi = info.get(id);
     if (!fi?.home) return undefined;
@@ -329,7 +416,8 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       }
       const baseOk = (v: Venue) => v.city === p.city && v.activities.includes(a.id) && planPlaceOffered(teen, a, v)
         && v.ageMin <= minimumAge && (maxBudget === undefined || v.priceTier <= maxBudget)
-        && !inp.venueExcluded?.(v.id, p.invited) && venueOpen(v, p.window, a.durationMin, tz, att);
+        && !inp.venueExcluded?.(v.id, p.invited) && venueOpen(v, p.window, a.durationMin, tz, att)
+        && venueFitsRedLines(v, a, p.invited, p.window.start);
       const best = (strictestBudget ? chooseVenueForCity(p.city, inp.venues, inv, v => baseOk(v) && venueCostFitsTier(strictestBudget!, v.priceTier), withinTravelLimit) : undefined)
         ?? chooseVenueForCity(p.city, inp.venues, inv, baseOk, withinTravelLimit);
       if (!best) return null;
