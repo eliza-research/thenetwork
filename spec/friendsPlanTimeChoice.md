@@ -38,7 +38,7 @@ pure def friendPlanHasWindow(windows: List[FriendsPlanWindow], startAt: int, end
 
 ### Only explicit picks from the delivered invitation count
 
-The first person sees the viable reviewed options. When they pick times, the second sees only the still-viable options they picked. Labels (A, B and C) keep their meaning even if an option disappears. Ordinals such as “the second one” use the order in the person's own delivered message. Accept explicit keys, unambiguous offered times, or an explicit choice of any offered option. Every positive key in a list must be present in the delivered invitation. An unqualified yes, an unoffered time, a counter or a reply without picks cannot accept any slot, even when the invitation presents a single remaining choice. A direct no or “none of those work” declines the invitation.
+The first person sees the viable reviewed options. When they pick times, the second sees only the still-viable options they picked. Labels (A, B and C) keep their meaning even if an option disappears. Ordinals such as “the second one” use the order in the person's own delivered message. Accept explicit keys, unambiguous offered times, or an explicit choice of any offered option. Every positive key in a list must be present in the delivered invitation. When the invitation offers more than one option, an unqualified yes cannot accept any slot. When the invitation offers a single remaining option (`singleOfferedSlot`), an unqualified yes without a negative or counter accepts that single slot. An unoffered time, a counter or a reply without picks cannot accept any slot. A direct no or “none of those work” declines the invitation. Changed (2026-11-27): an unqualified yes on a single remaining offered option now accepts that slot instead of asking the person to repeat it.
 
 ```quint
 pure val friendPlanProbeDeliveryPrefix = "friends-plan-probe:"
@@ -51,14 +51,17 @@ pure def lawSecondFriendOfferNeedsTheFirstPick(reviewedSlot: bool, viable: bool)
 
 type FriendsPlanTimeReply = AcceptTimeChoices | DeclineTimeChoices | ClarifyTimeChoices
 
-pure def friendPlanReplyChoice(affirmative: bool, negative: bool, explicitPick: bool, counter: bool, pickedCount: int): FriendsPlanTimeReply =
+pure def friendPlanReplyChoice(affirmative: bool, negative: bool, explicitPick: bool, counter: bool, pickedCount: int, singleOfferedSlot: bool): FriendsPlanTimeReply =
   if (counter) ClarifyTimeChoices
-  else if (affirmative and not(negative) and explicitPick and pickedCount > 0) AcceptTimeChoices
+  else if (affirmative and not(negative) and ((explicitPick and pickedCount > 0) or (singleOfferedSlot and pickedCount == 1))) AcceptTimeChoices
   else if (negative and not(affirmative)) DeclineTimeChoices
   else ClarifyTimeChoices
 
-pure def lawFriendPlanBareYesCannotPick(pickedCount: int): bool =
-  friendPlanReplyChoice(true, false, false, false, pickedCount) == ClarifyTimeChoices
+pure def lawMultiOptionBareYesCannotPick(pickedCount: int): bool =
+  friendPlanReplyChoice(true, false, false, false, pickedCount, false) == ClarifyTimeChoices
+
+pure def lawSingleOptionBareYesAccepts(explicitPick: bool): bool =
+  friendPlanReplyChoice(true, false, explicitPick, false, 1, true) == AcceptTimeChoices
 ```
 
 ### Book the earliest current window both chose

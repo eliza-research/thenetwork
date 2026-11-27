@@ -98,12 +98,18 @@ does in its name, it is a scam: tell the person to report it to help@ntwrk.party
    resend it. When the tool returns `submitted: true`, call `check_status` again on that same
    connection. Report a save only when it still says peon and `onboarding` or `active`.
    Otherwise say the save is unconfirmed. Do not claim a match, an introduction or a job.
-7. To show what peon.biz is looking for for the person, call `list_looking_for`.
-   Sending a profile only adds; leaving something out never removes it. If the
-   person asks to pause one thing, call `pause_looking_for` with its ref; to
-   turn a paused thing back on, call `resume_looking_for` with its ref; to
-   close it for good they reply CLOSE to the text they get. Never pause or
-   resume anything the person did not ask about.
+7. To inspect status and unseen updates in one call (plus saved profile and
+   active searches when `profile:read` is granted), call `get_context`. To save
+   recurring availability, windows, quiet hours or timezone, call
+   `set_availability`. To save private venue red lines (`strict_sober`,
+   `non_drinker`, `halal`, `kosher`, `gluten_free`, `vegetarian`, `vegan`,
+   `severe_allergen`, `wheelchair`, `smoke_free`, `low_noise`, `daytime_only`),
+   call `set_red_lines`. To show what peon.biz is looking for for the person,
+   call `list_looking_for`. Sending a profile only adds; leaving something out
+   never removes it. If the person asks to pause one thing, call
+   `pause_looking_for` with its ref; to turn a paused thing back on, call
+   `resume_looking_for` with its ref; to close it for good they reply CLOSE to
+   the text they get. Never pause or resume anything the person did not ask about.
 
 ## Safety, privacy and account controls
 

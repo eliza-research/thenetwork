@@ -48,6 +48,19 @@ export interface SavedProfileFields {
   redLines?: unknown;
 }
 
+export interface SetAvailabilityInput {
+  days?: string[];
+  windows?: string[];
+  quietHours?: { start: string; end: string };
+  timezone?: string;
+  notes?: string;
+}
+
+export interface SetRedLinesInput {
+  redLines: string[];
+  mode?: "merge" | "replace";
+}
+
 export interface LeakContext {
   forbidden?: string[];
   facts?: string[];
@@ -111,6 +124,8 @@ export interface PlatformHooks {
   readProfile(personId: string, app: McpAppId, phoneKey: string): Promise<SavedProfileFields | undefined>;
   leakContext?(personId: string, app: McpAppId, phoneKey: string): Promise<LeakContext | undefined>;
   submitProfile?(personId: string, app: McpAppId, phoneKey: string, text: string): Promise<"accepted" | "not_member" | "stopped" | { status: "accepted"; nextQuestion?: string }>;
+  setAvailability?(personId: string, app: McpAppId, phoneKey: string, input: SetAvailabilityInput): Promise<{ ok: boolean; summary?: string; error?: string }>;
+  setRedLines?(personId: string, app: McpAppId, phoneKey: string, input: SetRedLinesInput): Promise<{ ok: boolean; redLines?: string[]; error?: string }>;
   lookingFor?(personId: string, app: McpAppId, phoneKey: string): Promise<LookingForView | undefined>;
   changeLookingFor?(personId: string, app: McpAppId, phoneKey: string, grantId: string, ref: string, change: LookingForChange): Promise<LookingForResult>;
   photoHoldings?(personId: string, app: McpAppId, phoneKey: string): Promise<PhotoHoldingsView | undefined>;
@@ -147,6 +162,8 @@ export interface PlatformParts {
   sessionMaxAge?: number;
   secureCookie?: boolean;
   submitProfile?: (personId: string, app: McpAppId, e164: string, text: string) => Promise<"accepted" | "not_member" | { status: "accepted"; nextQuestion?: string }>;
+  setAvailability?: (personId: string, app: McpAppId, phoneKey: string, input: SetAvailabilityInput) => Promise<{ ok: boolean; summary?: string; error?: string }>;
+  setRedLines?: (personId: string, app: McpAppId, phoneKey: string, input: SetRedLinesInput) => Promise<{ ok: boolean; redLines?: string[]; error?: string }>;
   leakContext?: (personId: string, app: McpAppId, e164: string) => Promise<LeakContext | undefined>;
   lookingFor?: (personId: string, app: McpAppId, e164: string) => Promise<LookingForView | undefined>;
   minorNotice?: (personId: string, app: McpAppId, e164: string) => Promise<MinorNotice | undefined>;
@@ -229,6 +246,22 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
         if (!e164) return "not_member";
         if (resolveConsent(await p.store.lastConsent(e164, id)) === "opted_out") return "stopped";
         return p.submitProfile!(personId, id, e164, text);
+      },
+    } : {}),
+    ...(p.setAvailability ? {
+      setAvailability: async (personId: string, id: McpAppId, key: string, input: SetAvailabilityInput) => {
+        const e164 = await ownerE164(personId, key);
+        if (!e164) return { ok: false, error: "not_member" };
+        if (resolveConsent(await p.store.lastConsent(e164, id)) === "opted_out") return { ok: false, error: "stopped" };
+        return p.setAvailability!(personId, id, key, input);
+      },
+    } : {}),
+    ...(p.setRedLines ? {
+      setRedLines: async (personId: string, id: McpAppId, key: string, input: SetRedLinesInput) => {
+        const e164 = await ownerE164(personId, key);
+        if (!e164) return { ok: false, error: "not_member" };
+        if (resolveConsent(await p.store.lastConsent(e164, id)) === "opted_out") return { ok: false, error: "stopped" };
+        return p.setRedLines!(personId, id, key, input);
       },
     } : {}),
     ...(p.lookingFor ? {

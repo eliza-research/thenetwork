@@ -8,26 +8,34 @@ import {
 } from "../../core/src/generated/mcpSignupDraft.ts";
 import {
   type Connection, type GrantOwnerDecision, type MemberStatus, type NextStep, type Scope as ConnectorScope, type ToolName as ConnectorTool,
-  callLookingForTool, callPhotoTool, canCallCheckStatus, canCallGetUpdates, canCallLookingForTool, canCallPhotoTool, canCallPrepareSignup, canCallPublicTool, canCallReadProfile, canCallSubmitProfile, grantCovers,
-  decideGrantOwner, initial as connectionInitial, nextStepFor, resultShowsLookingFor, scopeFor, signInSite, toolAllowedFor, toolListed,
+  callGetContext, callLookingForTool, callPhotoTool, callPreferenceTool, canCallCheckStatus, canCallGetContext, canCallGetUpdates, canCallLookingForTool, canCallPhotoTool, canCallPreferenceTool, canCallPrepareSignup, canCallPublicTool, canCallReadProfile, canCallSubmitProfile, grantCovers,
+  decideGrantOwner, initial as connectionInitial, nextStepFor, resultShowsContextProfile, resultShowsLookingFor, scopeFor, signInSite, toolAllowedFor, toolListed,
 } from "../../core/src/generated/connectorTools.ts";
 import { publicSignupUsesBrowser } from "../../core/src/generated/siteEnrollment.ts";
 import { minorNoticeFor, type MinorNotice } from "../../core/src/generated/textEnrollment.ts";
 import { photoSlotsMax } from "../../core/src/generated/photoRelayItem.ts";
 import { profileSubmissionAccepted } from "../../core/src/generated/mcpProfileSubmission.ts";
 import { appsOn, connectorApp, connectorSurface, DATING_AGE_RULE, type McpApp, type McpAppId, type Surface, WORK_AGE_RULE } from "./apps.ts";
-import type { AssistantKind, LeakContext, LookingForEntry, LookingForResult, LookingForView, PhotoHoldingsView, PhotoRequestStatus, PlatformHooks, PublicStatus, PublicUpdate, SavedProfileFields } from "./hooks.ts";
+import type { AssistantKind, LeakContext, LookingForEntry, LookingForResult, LookingForView, PhotoHoldingsView, PhotoRequestStatus, PlatformHooks, PublicStatus, PublicUpdate, SavedProfileFields, SetAvailabilityInput, SetRedLinesInput } from "./hooks.ts";
 import type { Grant, Scope, OAuthStore, SignupDraftFields } from "./store.ts";
 import { CONTACT_PATTERNS, contactVariants } from "../../core/src/guard.ts";
 import { isCity, LAUNCH_CITIES } from "../../core/src/types.ts";
 import { outputLeaks, passesOutputGate } from "./leaks.ts";
 
-export const TOOL_NAMES = ["app_info", "start_signup", "check_status", "read_profile", "submit_profile", "get_updates", "prepare_signup",
+export const TOOL_NAMES = ["app_info", "start_signup", "check_status", "get_context", "read_profile", "submit_profile", "set_availability", "set_red_lines", "get_updates", "prepare_signup",
   "list_looking_for", "pause_looking_for", "resume_looking_for", "my_photos", "photo_request"] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
+export const CANONICAL_RED_LINES = [
+  "strict_sober", "non_drinker", "halal", "kosher", "gluten_free",
+  "vegetarian", "vegan", "severe_allergen", "wheelchair", "smoke_free",
+  "low_noise", "daytime_only",
+] as const;
+export type ContextInclude = "status" | "profile" | "looking_for" | "updates";
+const CONTEXT_INCLUDES: readonly ContextInclude[] = ["status", "profile", "looking_for", "updates"];
 export const connectorTool: Record<ToolName, ConnectorTool> = {
   app_info: "AppInfoTool", start_signup: "StartSignupTool", check_status: "CheckStatusTool",
-  read_profile: "ReadProfileTool", submit_profile: "SubmitProfileTool", get_updates: "GetUpdatesTool",
+  get_context: "GetContextTool", read_profile: "ReadProfileTool", submit_profile: "SubmitProfileTool",
+  set_availability: "SetAvailabilityTool", set_red_lines: "SetRedLinesTool", get_updates: "GetUpdatesTool",
   prepare_signup: "PrepareSignupTool", list_looking_for: "ListLookingForTool", pause_looking_for: "PauseLookingForTool",
   resume_looking_for: "ResumeLookingForTool", my_photos: "MyPhotosTool", photo_request: "PhotoRequestTool",
 };
@@ -50,9 +58,11 @@ export function canCallTool(c: Connection, tool: ToolName): boolean {
   switch (tool) {
     case "app_info": case "start_signup": return canCallPublicTool(c, connectorTool[tool]);
     case "check_status": return canCallCheckStatus(c);
+    case "get_context": return canCallGetContext(c);
     case "read_profile": return canCallReadProfile(c);
     case "get_updates": return canCallGetUpdates(c);
     case "submit_profile": return canCallSubmitProfile(c);
+    case "set_availability": case "set_red_lines": return canCallPreferenceTool(c, connectorTool[tool]);
     case "prepare_signup": return canCallPrepareSignup(c);
     case "list_looking_for": case "pause_looking_for": case "resume_looking_for": return canCallLookingForTool(c, connectorTool[tool]);
     case "my_photos": case "photo_request": return canCallPhotoTool(c, connectorTool[tool]);
@@ -69,11 +79,12 @@ export const PROFILE_MAX_CHARS = 1200;
 
 /** Server instructions. Compact <= 500 chars so OpenAI's 512-char cutoff never truncates rules. */
 export const INSTRUCTIONS =
-  "Apps powered by The Network. Never ask for, accept or relay a phone number or a verification code. " +
-  "Signup and consent happen in the browser. Never message others or expose other people or apps. " +
-  "Public: app_info, start_signup. Signed-in (this app only): check_status, read_profile (when asked), " +
-  "submit_profile (approved words, additive), get_updates (marks seen), prepare_signup (approved name/city; " +
-  "person types birthday and ticks the text consent in the browser), list/pause/resume_looking_for.";
+  "The Network apps. Never ask for, accept or relay a phone number or a verification code. " +
+  "Signup/consent happen in browser; never expose others. " +
+  "Public: app_info, start_signup. Signed-in: check_status, get_context, read_profile, " +
+  "submit_profile, set_availability, set_red_lines, get_updates, prepare_signup " +
+  "(approved name/city; person types birthday and ticks the text consent in the browser), " +
+  "list/pause/resume_looking_for.";
 
 const PHOTO_INSTRUCTIONS =
   "On slop.date, my_photos lists metadata only; photo_request passes their words (confirm on phone).";
@@ -88,8 +99,8 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
   const ids = appsOn(apps, surface, host.id).map(a => a.id);
   const signInApp = signInSite(connectorApp[site.id], connectorApp[host.id]);
   const signIn = Object.values(apps).find(a => connectorApp[a.id] === signInApp) ?? site;
-  const appProp = (description?: string) => (description ? { type: "string", enum: ids, description } : { type: "string", enum: ids });
-  const ownAppInput = { type: "string", enum: [host.id] };
+  const appProp = (description?: string) => (description ? { enum: ids, description } : { enum: ids });
+  const ownAppInput = { enum: [host.id] };
   // The security scheme of each tool, from its generated scope (spec/connectorTools.md, "Public tools need no sign-in").
   const schemes = (tool: ToolName) => {
     const scope = TOOL_SCOPE[tool];
@@ -152,9 +163,9 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
     },
     {
       name: "prepare_signup",
-      description: `After allows access on ${signIn.domain}, saves firstName/homeCity 10m; person opens signup_url, types birthday and ticks the text consent in browser.`,
-      inputSchema: { type: "object", properties: { app: ownAppInput, firstName: { type: "string", minLength: 1, maxLength: 50 }, homeCity: { type: "string", enum: [...LAUNCH_CITIES] } }, required: ["firstName"], additionalProperties: false },
-      outputSchema: object({ prepared: { type: "boolean", const: true }, app: ownApp, signup_url: text, next_step: text }),
+      description: `After allows access on ${signIn.domain}, saves firstName/homeCity 10m; person opens finish_signup_url, types birthday and ticks the text consent in browser.`,
+      inputSchema: { type: "object", properties: { app: ownAppInput, firstName: { type: "string", minLength: 1, maxLength: 50 }, homeCity: { enum: [...LAUNCH_CITIES] } }, required: ["firstName"], additionalProperties: false },
+      outputSchema: object({ prepared: { type: "boolean", const: true }, app: ownApp, signup_url: text, finish_signup_url: text, next_step: text }, ["prepared", "app", "signup_url", "next_step"]),
       annotations: { title: "Draft", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       ...schemes("prepare_signup"),
     },
@@ -162,9 +173,30 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
       name: "check_status",
       description: `After allows access on ${signIn.domain}, returns ${host.name} status.`,
       inputSchema: { type: "object", properties: { app: ownAppInput }, additionalProperties: false },
-      outputSchema: object({ app: ownApp, status, next_step: text, manage_url: text }),
+      outputSchema: object({ app: ownApp, status, next_step: text, manage_url: text, finish_signup_url: text }, ["app", "status", "next_step", "manage_url"]),
       annotations: annotations("Status"),
       ...schemes("check_status"),
+    },
+    {
+      name: "get_context",
+      description: `Status, updates and (with profile:read) profile/searches on ${signIn.domain}.`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          app: ownAppInput,
+          include: { type: "array", items: { enum: [...CONTEXT_INCLUDES] } },
+          update_token: { type: "string", pattern: UPDATE_TOKEN.source },
+        },
+        additionalProperties: false,
+      },
+      outputSchema: object({
+        app: ownApp, status, next_step: text, finish_signup_url: text, profile_read_granted: bool,
+        profile: { anyOf: [{ type: "null" }, obj] },
+        looking_for: { anyOf: [{ type: "null" }, arrObj] },
+        updates: arrObj,
+      }, ["app", "status", "next_step", "profile_read_granted", "profile", "looking_for", "updates"]),
+      annotations: { title: "Context", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      ...schemes("get_context"),
     },
     {
       name: "read_profile",
@@ -190,6 +222,42 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
       }, ["app", "submitted", "next_step"]),
       annotations: { title: "Submit", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       ...schemes("submit_profile"),
+    },
+    {
+      name: "set_availability",
+      description: `Save ${host.name} availability days, windows, quiet hours or timezone.`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          app: ownAppInput,
+          days: { type: "array", items: text },
+          windows: { type: "array", items: text },
+          quietHours: object({ start: text, end: text }),
+          timezone: text,
+          notes: text,
+        },
+        additionalProperties: false,
+      },
+      outputSchema: object({ saved: bool, app: ownApp, summary: text, next_step: text }),
+      annotations: changeAnnotations("Availability"),
+      ...schemes("set_availability"),
+    },
+    {
+      name: "set_red_lines",
+      description: `Save private ${host.name} venue red lines.`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          app: ownAppInput,
+          redLines: { type: "array", items: { enum: [...CANONICAL_RED_LINES] } },
+          mode: { enum: ["merge", "replace"] },
+        },
+        required: ["redLines"],
+        additionalProperties: false,
+      },
+      outputSchema: object({ saved: bool, app: ownApp, red_lines: { type: "array", items: text }, next_step: text }),
+      annotations: changeAnnotations("Red lines"),
+      ...schemes("set_red_lines"),
     },
     {
       name: "list_looking_for",
@@ -354,12 +422,33 @@ function withoutPhotoNumbers(text: string): string {
   });
 }
 
-export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host: McpApp): { ok: true; app?: string; about?: string; token?: string; ref?: string; words?: string; draft?: SignupDraftFields } | { ok: false; message: string } {
+const QUIET_HOUR_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+function formatAvailabilitySummary(input: SetAvailabilityInput): string {
+  const parts: string[] = [];
+  if (input.days?.length) parts.push(`days: ${input.days.join(", ")}`);
+  if (input.windows?.length) parts.push(`windows: ${input.windows.join(", ")}`);
+  if (input.quietHours) parts.push(`quiet hours ${input.quietHours.start}-${input.quietHours.end}`);
+  if (input.timezone) parts.push(`timezone ${input.timezone}`);
+  if (input.notes) parts.push(input.notes);
+  return parts.join("; ");
+}
+
+export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host: McpApp): { ok: true; app?: string; about?: string; token?: string; ref?: string; words?: string; draft?: SignupDraftFields; include?: ContextInclude[]; availability?: SetAvailabilityInput; redLines?: SetRedLinesInput } | { ok: false; message: string } {
   if (args === undefined || args === null) args = {};
   if (typeof args !== "object" || Array.isArray(args)) return { ok: false, message: "Arguments must be an object." };
   const a = args as Record<string, unknown>;
   const changesLookingFor = name === "pause_looking_for" || name === "resume_looking_for";
-  const extra = Object.keys(a).filter(k => k !== "app" && !(name === "submit_profile" && k === "about") && !(name === "get_updates" && k === "update_token") && !(name === "prepare_signup" && (k === "firstName" || k === "homeCity")) && !(changesLookingFor && k === "ref") && !(name === "photo_request" && k === "words"));
+  const extra = Object.keys(a).filter(k =>
+    k !== "app"
+    && !(name === "submit_profile" && k === "about")
+    && !(name === "get_updates" && k === "update_token")
+    && !(name === "get_context" && (k === "include" || k === "update_token"))
+    && !(name === "set_availability" && (k === "days" || k === "windows" || k === "quietHours" || k === "timezone" || k === "notes"))
+    && !(name === "set_red_lines" && (k === "redLines" || k === "mode"))
+    && !(name === "prepare_signup" && (k === "firstName" || k === "homeCity"))
+    && !(changesLookingFor && k === "ref")
+    && !(name === "photo_request" && k === "words"));
   if (extra.length) return { ok: false, message: `This tool does not take ${extra.map(k => `"${k.slice(0, 40)}"`).join(", ")}. It never takes phone numbers, codes or personal details.` };
   if (name === "prepare_signup") {
     if (!signupDraftRequestAllowed(host.id, a.app !== undefined, a.app === host.id)) return { ok: false, message: "This draft is not available for that app." };
@@ -373,6 +462,101 @@ export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host
     if (contactOrCode(about)) return { ok: false, message: "Leave out phone numbers, codes and email addresses: the app never takes them from an assistant." };
     if (a.app !== undefined && a.app !== host.id) return { ok: false, message: `This connection covers ${host.name} only.` };
     return { ok: true, app: host.id, about };
+  }
+  if (name === "set_availability") {
+    if (a.app !== undefined && a.app !== host.id) return { ok: false, message: `This connection covers ${host.name} only.` };
+    const availability: SetAvailabilityInput = {};
+    if (a.days !== undefined) {
+      if (!Array.isArray(a.days) || a.days.length === 0 || a.days.length > 7) return { ok: false, message: "days must list 1 to 7 day names." };
+      const days: string[] = [];
+      for (const item of a.days) {
+        const s = typeof item === "string" ? item.trim() : "";
+        if (!s || s.length > 24 || contactOrCode(s)) return { ok: false, message: "days must contain short day names with no contact details." };
+        days.push(s);
+      }
+      availability.days = days;
+    }
+    if (a.windows !== undefined) {
+      if (!Array.isArray(a.windows) || a.windows.length === 0 || a.windows.length > 10) return { ok: false, message: "windows must list 1 to 10 time windows." };
+      const windows: string[] = [];
+      for (const item of a.windows) {
+        const s = typeof item === "string" ? item.trim() : "";
+        if (!s || s.length > 80 || contactOrCode(s)) return { ok: false, message: "windows must contain short time windows with no contact details." };
+        windows.push(s);
+      }
+      availability.windows = windows;
+    }
+    if (a.quietHours !== undefined) {
+      if (!a.quietHours || typeof a.quietHours !== "object" || Array.isArray(a.quietHours)) return { ok: false, message: "quietHours must be an object with start and end (HH:MM)." };
+      const qh = a.quietHours as Record<string, unknown>;
+      const qk = Object.keys(qh);
+      if (qk.length !== 2 || !qk.includes("start") || !qk.includes("end")
+        || typeof qh.start !== "string" || typeof qh.end !== "string"
+        || !QUIET_HOUR_RE.test(qh.start) || !QUIET_HOUR_RE.test(qh.end)) {
+        return { ok: false, message: "quietHours requires start and end in 24-hour HH:MM format." };
+      }
+      availability.quietHours = { start: qh.start, end: qh.end };
+    }
+    if (a.timezone !== undefined) {
+      const tz = typeof a.timezone === "string" ? a.timezone.trim() : "";
+      if (!tz || tz.length > 64 || !/^[A-Za-z0-9_/+ -]+$/.test(tz) || contactOrCode(tz)) {
+        return { ok: false, message: "timezone must be a valid timezone identifier." };
+      }
+      availability.timezone = tz;
+    }
+    if (a.notes !== undefined) {
+      const notes = typeof a.notes === "string" ? a.notes.trim() : "";
+      if (!notes || notes.length > 300 || contactOrCode(notes)) {
+        return { ok: false, message: "notes must be 1 to 300 characters with no phone numbers, codes or emails." };
+      }
+      availability.notes = notes;
+    }
+    if (!availability.days && !availability.windows && !availability.quietHours && !availability.timezone && !availability.notes) {
+      return { ok: false, message: "Provide at least one of days, windows, quietHours, timezone or notes." };
+    }
+    return { ok: true, app: host.id, availability };
+  }
+  if (name === "set_red_lines") {
+    if (a.app !== undefined && a.app !== host.id) return { ok: false, message: `This connection covers ${host.name} only.` };
+    const mode = a.mode === undefined ? "merge" : a.mode;
+    if (mode !== "merge" && mode !== "replace") return { ok: false, message: "mode must be merge or replace." };
+    if (!Array.isArray(a.redLines) || a.redLines.length > CANONICAL_RED_LINES.length || (mode === "merge" && a.redLines.length === 0)) {
+      return { ok: false, message: `redLines must be an array of canonical tags (${CANONICAL_RED_LINES.join(", ")}).` };
+    }
+    const seen = new Set<string>();
+    const redLines: string[] = [];
+    for (const item of a.redLines) {
+      if (typeof item !== "string" || !(CANONICAL_RED_LINES as readonly string[]).includes(item)) {
+        return { ok: false, message: `Unknown red-line tag. Allowed: ${CANONICAL_RED_LINES.join(", ")}.` };
+      }
+      if (!seen.has(item)) { seen.add(item); redLines.push(item); }
+    }
+    return { ok: true, app: host.id, redLines: { redLines, mode } };
+  }
+  if (name === "get_context") {
+    if (a.app !== undefined && a.app !== host.id) return { ok: false, message: `This connection covers ${host.name} only.` };
+    let include: ContextInclude[] | undefined;
+    if (a.include !== undefined) {
+      if (!Array.isArray(a.include) || a.include.length === 0 || a.include.length > CONTEXT_INCLUDES.length) {
+        return { ok: false, message: "include must list one or more of status, profile, looking_for, updates." };
+      }
+      const seen = new Set<ContextInclude>();
+      include = [];
+      for (const item of a.include) {
+        if (typeof item !== "string" || !(CONTEXT_INCLUDES as readonly string[]).includes(item)) {
+          return { ok: false, message: "include values must be status, profile, looking_for or updates." };
+        }
+        const v = item as ContextInclude;
+        if (!seen.has(v)) { seen.add(v); include.push(v); }
+      }
+    }
+    if (a.update_token !== undefined && (typeof a.update_token !== "string" || !UPDATE_TOKEN.test(a.update_token.trim().toUpperCase())))
+      return { ok: false, message: "update_token must look like T-7F3K9Q." };
+    return {
+      ok: true, app: host.id,
+      ...(include ? { include } : {}),
+      ...(typeof a.update_token === "string" ? { token: a.update_token.trim().toUpperCase() } : {}),
+    };
   }
   if (name === "list_looking_for" || changesLookingFor) {
     if (a.app !== undefined && a.app !== host.id) return { ok: false, message: `This connection covers ${host.name} only.` };
@@ -467,7 +651,14 @@ const NEXT_TEXT: Record<NextStep, (a: McpApp, minor: MinorNotice | undefined) =>
 };
 
 /** The next-step text for a status (spec/connectorTools.md, "The member status decides which member tool can act"). */
-const nextStep = (status: PublicStatus, a: McpApp, minor?: MinorNotice): string => NEXT_TEXT[nextStepFor(memberStatus[status], a.joinMode === "invite")](a, minor);
+const nextStep = (status: PublicStatus, a: McpApp, minor?: MinorNotice, finishSignupUrl?: string): string => {
+  if (finishSignupUrl && (status === "not_joined" || status === "invited")) {
+    if (status === "invited") return `Invited. Reply to the invitation text or open ${finishSignupUrl} in your browser to Finish signup (no need to reconnect).`;
+    if (a.joinMode === "invite") return `Not joined. ${a.name} is invite-only. With an invitation, open ${finishSignupUrl} in your browser to Finish signup and enter the invitation there (no need to reconnect). Without one, ask a member who knows you, or the team, for an invitation.`;
+    return `Not joined. Open ${finishSignupUrl} in your browser to Finish signup (no need to reconnect).${textKeyword(a)}`;
+  }
+  return NEXT_TEXT[nextStepFor(memberStatus[status], a.joinMode === "invite")](a, minor);
+};
 
 export interface CallContext {
   apps: Record<McpAppId, McpApp>;
@@ -481,6 +672,8 @@ export interface CallContext {
   log: (line: string) => void;
   /** Which assistant the OAuth client is (by its redirect hosts): chatgpt, claude, grok, or web. */
   assistant?: AssistantKind;
+  /** Mints a short-lived, single-use, app-bound Finish signup URL for the current live grant. */
+  mintFinishSignupUrl?: () => Promise<string | undefined>;
 }
 
 /** Resolve the current credential owner before admission, then again at member-tool use. */
@@ -657,15 +850,19 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       }
       const a = c.apps[g.app];
       const signupUrl = publicSignupUrl(a);
-      const finishStep = publicSignupUsesBrowser(a.id)
-        ? `Open ${signupUrl} in your browser (or ${connectAgain(a)}) to Finish signup, check the approved details, type your own birthday and tick the text consent.`
-        : `To finish signup, ${connectAgain(a)} On that page, the person checks the approved details, types their own birthday and ticks the text consent.`;
+      const finishSignupUrl = await c.mintFinishSignupUrl?.();
+      const finishStep = finishSignupUrl
+        ? `Open ${finishSignupUrl} in your browser to Finish signup (no need to reconnect), check the approved details, type your own birthday and tick the text consent.`
+        : publicSignupUsesBrowser(a.id)
+          ? `Open ${signupUrl} in your browser (or ${connectAgain(a)}) to Finish signup, check the approved details, type your own birthday and tick the text consent.`
+          : `To finish signup, ${connectAgain(a)} On that page, the person checks the approved details, types their own birthday and ticks the text consent.`;
       return {
         kind: "ok",
         data: {
           prepared: true,
           app: g.app,
           signup_url: signupUrl,
+          ...(finishSignupUrl ? { finish_signup_url: finishSignupUrl } : {}),
           next_step: `The draft is saved for ${signupDraftLifetimeMs / 60_000} minutes. ${finishStep} The agent never approves text consent.`,
         },
       };
@@ -681,7 +878,76 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       const notice = personId !== null && await c.hooks.minorMember(personId, g.phoneKey)
         ? (await c.hooks.minorNotice?.(personId, g.app, g.phoneKey)) ?? minorNoticeFor(a.id, false, false, false, true)
         : undefined;
-      return { kind: "ok", data: { app: a.id, status, next_step: nextStep(status, a, notice), manage_url: a.links.support } };
+      const finishSignupUrl = status === "not_joined" || status === "invited" ? await c.mintFinishSignupUrl?.() : undefined;
+      return {
+        kind: "ok",
+        data: {
+          app: a.id, status,
+          next_step: nextStep(status, a, notice, finishSignupUrl),
+          manage_url: a.links.support,
+          ...(finishSignupUrl ? { finish_signup_url: finishSignupUrl } : {}),
+        },
+      };
+    }
+    case "get_context": {
+      const g = c.grant;
+      if (!g || g.app !== c.host.id) return { kind: "invalid_grant" };
+      const conn = connectionOf(c.host, c.surface, c.scopes);
+      if (!canCallGetContext(conn)) return { kind: "invalid_grant" };
+      const refusal = grantOwnerRefusal(await checkGrantOwner(c.hooks, g));
+      if (refusal) return refusal;
+      const include = chk.include ?? [...CONTEXT_INCLUDES];
+      const a = c.apps[g.app];
+      const personId = g.personId;
+      const status: PublicStatus = personId === null ? "not_joined" : await c.hooks.status(personId, g.app, g.phoneKey);
+      callGetContext({ ...conn, status: memberStatus[status] });
+      const notice = personId !== null && await c.hooks.minorMember(personId, g.phoneKey)
+        ? (await c.hooks.minorNotice?.(personId, g.app, g.phoneKey)) ?? minorNoticeFor(a.id, false, false, false, true)
+        : undefined;
+      const finishSignupUrl = status === "not_joined" || status === "invited" ? await c.mintFinishSignupUrl?.() : undefined;
+      // spec/connectorTools.md, lawContextProfileNeedsProfileRead: profile and looking_for require profile:read.
+      const profileReadGranted = resultShowsContextProfile(c.scopes.includes("profile:read"));
+      const lc = await resolveLeakContext(c, g);
+      let profile: ReturnType<typeof savedProfileResult> = null;
+      let lookingFor: ReturnType<typeof shownLookingFor>["looking_for"] | null = null;
+      if (profileReadGranted && personId !== null && status === "active") {
+        if (include.includes("profile")) {
+          try {
+            profile = savedProfileResult(await c.hooks.readProfile(personId, g.app, g.phoneKey), lc.forbidden);
+          } catch {
+            return { kind: "grant_unavailable" };
+          }
+        }
+        if (include.includes("looking_for") && c.hooks.lookingFor) {
+          try {
+            lookingFor = shownLookingFor(await c.hooks.lookingFor(personId, g.app, g.phoneKey), lc.forbidden).looking_for;
+          } catch (e) {
+            c.log(`[mcp] ${g.app} get_context looking_for read failed grant=${g.id}: ${(e as Error).message}`);
+            lookingFor = [];
+          }
+        }
+      }
+      let updates: Record<string, unknown>[] = [];
+      if (include.includes("updates") && c.hooks.updates && personId !== null) {
+        const gate = (summary: string) => passesOutputGate(summary, {
+          forbidden: lc.forbidden, facts: lc.facts, allow: lc.allow, contacts: true, canaryShapes: true,
+        });
+        const rawUpdates = await c.hooks.updates(personId, g.app, c.assistant ?? "web", chk.token, gate);
+        updates = rawUpdates.filter(u => gate(u.summary)).map(u => formatPublicUpdate(u, gate));
+      }
+      return {
+        kind: "ok",
+        data: {
+          app: a.id,
+          status,
+          next_step: nextStep(status, a, notice, finishSignupUrl),
+          ...(finishSignupUrl ? { finish_signup_url: finishSignupUrl } : {}),
+          profile_read_granted: profileReadGranted,
+          profile,
+          looking_for: lookingFor,
+          updates,
+        },
+      };
     }
     case "read_profile": {
       const g = c.grant;
@@ -763,6 +1029,82 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
         next_step: !shown.check_with_person.length ? `${a.name} has it. It will only text the person if anything is still missing or when a match is ready.`
           : reads ? `${a.name} has it. Some of it may not match what is active for the person: see check_with_person. Ask them about each one. Change nothing unless they ask.`
           : `${a.name} has it. Some of it may not match what is active for the person. Ask them to text “what am I looking for” to ${a.name} to check. Change nothing unless they ask.` } };
+    }
+    case "set_availability": {
+      const g = c.grant;
+      if (!g || g.app !== c.host.id) return { kind: "invalid_grant" };
+      const refusal = grantOwnerRefusal(await checkGrantOwner(c.hooks, g));
+      if (refusal) return refusal;
+      const a = c.apps[g.app];
+      const person = g.personId;
+      const status: PublicStatus = person === null ? "not_joined" : await c.hooks.status(person, g.app, g.phoneKey);
+      const conn = { ...connectionOf(c.host, c.surface, c.scopes), status: memberStatus[status] };
+      if (person === null || callPreferenceTool(conn, "SetAvailabilityTool", true).lastResult !== "PreferencesSaved") {
+        return { kind: "ok", data: { saved: false, app: a.id, summary: "", next_step: nextStep(status, a) } };
+      }
+      const input = chk.availability!;
+      const fallbackSummary = formatAvailabilitySummary(input);
+      if (c.hooks.setAvailability) {
+        try {
+          const res = await c.hooks.setAvailability(person, g.app, g.phoneKey, input);
+          if (!res.ok) {
+            if (res.error === "stopped") return { kind: "ok", data: { saved: false, app: a.id, summary: "", next_step: nextStep("stopped", a) } };
+            if (res.error === "not_member") return { kind: "ok", data: { saved: false, app: a.id, summary: "", next_step: nextStep(status, a) } };
+            return { kind: "error", message: res.error ?? "Availability could not be saved right now." };
+          }
+          const summary = res.summary && !outputLeaks(res.summary, { contacts: true, sensitiveTerms: false }).length ? res.summary : fallbackSummary;
+          return { kind: "ok", data: { saved: true, app: a.id, summary, next_step: `Saved availability for ${a.name}.` } };
+        } catch (e) {
+          c.log(`[mcp] ${g.app} set_availability failed grant=${g.id}: ${(e as Error).message}`);
+          return { kind: "error", message: "Availability could not be saved right now." };
+        }
+      }
+      if (c.hooks.submitProfile) {
+        const delivery = await c.hooks.submitProfile(person, g.app, g.phoneKey, `Availability: ${fallbackSummary}`);
+        const accepted = delivery === "accepted" || (typeof delivery === "object" && delivery.status === "accepted");
+        if (accepted) return { kind: "ok", data: { saved: true, app: a.id, summary: fallbackSummary, next_step: `Saved availability for ${a.name}.` } };
+        if (delivery === "stopped") return { kind: "ok", data: { saved: false, app: a.id, summary: "", next_step: nextStep("stopped", a) } };
+        return { kind: "ok", data: { saved: false, app: a.id, summary: "", next_step: nextStep(status, a) } };
+      }
+      return { kind: "error", message: "Availability updates are not available here." };
+    }
+    case "set_red_lines": {
+      const g = c.grant;
+      if (!g || g.app !== c.host.id) return { kind: "invalid_grant" };
+      const refusal = grantOwnerRefusal(await checkGrantOwner(c.hooks, g));
+      if (refusal) return refusal;
+      const a = c.apps[g.app];
+      const person = g.personId;
+      const status: PublicStatus = person === null ? "not_joined" : await c.hooks.status(person, g.app, g.phoneKey);
+      const conn = { ...connectionOf(c.host, c.surface, c.scopes), status: memberStatus[status] };
+      if (person === null || callPreferenceTool(conn, "SetRedLinesTool", true).lastResult !== "PreferencesSaved") {
+        return { kind: "ok", data: { saved: false, app: a.id, red_lines: [], next_step: nextStep(status, a) } };
+      }
+      const input = chk.redLines!;
+      if (c.hooks.setRedLines) {
+        try {
+          const res = await c.hooks.setRedLines(person, g.app, g.phoneKey, input);
+          if (!res.ok) {
+            if (res.error === "stopped") return { kind: "ok", data: { saved: false, app: a.id, red_lines: [], next_step: nextStep("stopped", a) } };
+            if (res.error === "not_member") return { kind: "ok", data: { saved: false, app: a.id, red_lines: [], next_step: nextStep(status, a) } };
+            return { kind: "error", message: res.error ?? "Red lines could not be saved right now." };
+          }
+          const savedLines = (res.redLines ?? input.redLines).filter(t => (CANONICAL_RED_LINES as readonly string[]).includes(t));
+          return { kind: "ok", data: { saved: true, app: a.id, red_lines: savedLines, next_step: `Saved private venue red lines for ${a.name}.` } };
+        } catch (e) {
+          c.log(`[mcp] ${g.app} set_red_lines failed grant=${g.id}: ${(e as Error).message}`);
+          return { kind: "error", message: "Red lines could not be saved right now." };
+        }
+      }
+      if (c.hooks.submitProfile) {
+        const text = `Private venue red lines (${input.mode ?? "merge"}): ${input.redLines.join(", ") || "none"}.`;
+        const delivery = await c.hooks.submitProfile(person, g.app, g.phoneKey, text);
+        const accepted = delivery === "accepted" || (typeof delivery === "object" && delivery.status === "accepted");
+        if (accepted) return { kind: "ok", data: { saved: true, app: a.id, red_lines: input.redLines, next_step: `Saved private venue red lines for ${a.name}.` } };
+        if (delivery === "stopped") return { kind: "ok", data: { saved: false, app: a.id, red_lines: [], next_step: nextStep("stopped", a) } };
+        return { kind: "ok", data: { saved: false, app: a.id, red_lines: [], next_step: nextStep(status, a) } };
+      }
+      return { kind: "error", message: "Red line updates are not available here." };
     }
     case "list_looking_for": {
       const g = c.grant;

@@ -280,8 +280,10 @@ describe.skipIf(!pgAvailable)("connector Finish signup through HTTP", () => {
     const skipped = await allow("friends", b, first, verified.html);
     const notJoined = await status("friends", skipped);
     expect(notJoined).toMatchObject({ app: "friends", status: "not_joined" });
-    expect(notJoined.next_step).toContain("disconnect friends.help in your agent's connector settings, then connect it again");
+    expect(notJoined.finish_signup_url).toMatch(/\/oauth\/finish-signup\?t=[A-Za-z0-9_-]{22}$/);
+    expect(notJoined.next_step).toContain(notJoined.finish_signup_url);
     expect(notJoined.next_step).toContain("Finish signup");
+    expect(notJoined.next_step).toContain("no need to reconnect");
 
     const again = await authorize("friends", b);
     expect(again.html).toContain('action="/oauth/authorize/signup"');
@@ -450,10 +452,28 @@ describe.skipIf(!pgAvailable)("connector Finish signup through HTTP", () => {
   });
 
   test("every link that any tool returns, on every app and surface, is a served route", async () => {
-    const links = new Set<string>();
+    const checked = new Set<string>();
+    const pending: string[] = [];
     const collect = (value: unknown) => {
       const text = JSON.stringify(value ?? null);
-      for (const m of text.matchAll(/(?:https?:\/\/|mailto:)[^\s"'<>)\\]+/g)) links.add(m[0].replace(/[.,;:]+$/, ""));
+      for (const m of text.matchAll(/(?:https?:\/\/|mailto:)[^\s"'<>)\\]+/g)) {
+        const link = m[0].replace(/[.,;:]+$/, "");
+        if (!checked.has(link)) { checked.add(link); pending.push(link); }
+      }
+    };
+    const verifyPending = async () => {
+      for (const link of pending.splice(0)) {
+        if (link.startsWith("mailto:")) { expect(link).toBe("mailto:help@ntwrk.party"); continue; }
+        const url = new URL(link);
+        const app = (Object.keys(DOMAINS) as AppId[]).find(id => DOMAINS[id] === url.host || new URL(st.sites[id].origin).host === url.host);
+        if (!app) { expect(url.host, link).toBe("ntwrk.party"); continue; }
+        let res = await st.site(app, url.pathname + url.search);
+        for (let hops = 0; hops < 3 && res.status >= 300 && res.status < 400; hops++) {
+          const next = new URL(res.headers.get("location")!, st.sites[app].origin);
+          res = await st.site(app, next.pathname + next.search);
+        }
+        expect(res.status, link).toBe(200);
+      }
     };
     for (const app of Object.keys(DOMAINS) as AppId[]) {
       for (const path of ["/mcp", "/mcp/openai"] as const) {
@@ -467,6 +487,7 @@ describe.skipIf(!pgAvailable)("connector Finish signup through HTTP", () => {
           collect(toolData(await rpc(st, app, path, "tools/call", { name: "app_info", arguments: { app: id } })));
           collect(toolData(await rpc(st, app, path, "tools/call", { name: "start_signup", arguments: { app: id } })));
         }
+        await verifyPending();
         for (const state of ["not_joined", "active", "stopped", "on_hold"] as const) {
           if (state !== "not_joined" && app === "ntwrk") continue;
           const phone = newPhone();
@@ -488,21 +509,10 @@ describe.skipIf(!pgAvailable)("connector Finish signup through HTTP", () => {
             const args = name === "submit_profile" ? { about: "I like long walks and board games." } : {};
             collect(toolData(await rpc(st, app, path, "tools/call", { name, arguments: args }, token)));
           }
+          await verifyPending();
         }
       }
     }
-    expect(links.size).toBeGreaterThan(0);
-    for (const link of links) {
-      if (link.startsWith("mailto:")) { expect(link).toBe("mailto:help@ntwrk.party"); continue; }
-      const url = new URL(link);
-      const app = (Object.keys(DOMAINS) as AppId[]).find(id => DOMAINS[id] === url.host);
-      if (!app) { expect(url.host, link).toBe("ntwrk.party"); continue; }
-      let res = await st.site(app, url.pathname + url.search);
-      for (let hops = 0; hops < 3 && res.status >= 300 && res.status < 400; hops++) {
-        const next = new URL(res.headers.get("location")!, st.sites[app].origin);
-        res = await st.site(app, next.pathname + next.search);
-      }
-      expect(res.status, link).toBe(200);
-    }
+    expect(checked.size).toBeGreaterThan(0);
   }, T * 2);
 });

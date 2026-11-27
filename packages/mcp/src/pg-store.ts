@@ -174,6 +174,13 @@ export class PgOAuthStore implements OAuthStore {
       return true;
     });
   }
+  async claimAuthRequestBrowser(id: string, browserHash: string, at: number) {
+    return this.sql.begin(async tx => {
+      const [row] = await tx`update oauth.auth_requests set browser_hash = ${browserHash}
+        where id = ${id} and browser_hash = '' and expires_at > ${ts(at)} returning *`;
+      return row ? request(row) : undefined;
+    });
+  }
   async commitConsentGrant(id: string, at: number, confirm: (approval: AuthRequest) => Promise<boolean>, writes: ConsentGrantWrites) {
     return this.sql.begin(async tx => {
       const [pending] = await tx`select * from oauth.auth_requests
@@ -193,6 +200,18 @@ export class PgOAuthStore implements OAuthStore {
   async getGrant(id: string) {
     const [r] = await this.sql`select * from oauth.grants where id = ${id}`;
     return r ? grant(r) : undefined;
+  }
+  async attachGrantPerson(grantId: string, personId: string, expectedPhoneKey: string, at: number) {
+    return this.sql.begin(async tx => {
+      const [g] = await tx`select id, phone_key, person_id, revoked_at, expires_at, cloud_authority from oauth.grants where id = ${grantId} for update`;
+      if (!g || g.revoked_at !== null || ms(g.expires_at)! <= at || g.phone_key !== expectedPhoneKey) return false;
+      if (g.person_id === personId) return true;
+      if (g.person_id !== null) return false;
+      if (String(g.id).startsWith("grant_cloud_") || g.cloud_authority != null) return false;
+      const rows = await tx`update oauth.grants set person_id = ${personId}
+        where id = ${grantId} and person_id is null and phone_key = ${expectedPhoneKey} and revoked_at is null and expires_at > ${ts(at)} returning id`;
+      return rows.length === 1;
+    });
   }
   async grantsFor(phoneKey: string, app: McpAppId, at: number) {
     return (await this.sql`select * from oauth.grants where phone_key = ${phoneKey} and app_id = ${app} and revoked_at is null and expires_at > ${ts(at)} order by created_at`).map(grant);

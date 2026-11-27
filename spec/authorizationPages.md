@@ -2,7 +2,7 @@
 
 This spec owns the view layer of connector authorization: the page that the browser shows for each server reply, the controls on each page, the field errors and the security check. The [connector browser authorization spec](oauthBrowserAuthorization.md) owns the server flow, the stored request and its phases. The [connector grant issuance spec](oauthGrantIssuance.md) owns what happens after an explicit approval. The handler decides each reply. The page shell gives that reply to this machine and renders the view that it selects. The app resolved by the router also owns the [brand](brandIdentity.md) shown on every configured host. Copy, brand colors and logos stay in the component library.
 
-The handler (`packages/mcp/src/handler.ts`) also uses the guards of this machine as gates on its form routes. It makes the page that sent a form from the route and from the stored request. The phone, code and consent forms are only on their own pages. Cancel is on the page of the stored step. A code was sent when the request holds a number. A posted phone form carries the answer to the security check, so the handler solves the check (`solveCheck`) and then verifies the answer. A failed answer is the reply that the check did not pass. Before the route acts, the guard of the form must allow the reply that the form asks for: a code for the phone form, the consent page for the code form, the approval for "Allow", and the refusal for "Cancel" and "Don't allow". Then each reply must pass the same guard before the handler sends it. The Cloud return uses `canReturnFromCloud`. A retry of the initial session check uses `canRetryConnection`. A refused form or reply gets "This page has expired". The checks that the handler makes before it reads the stored request (the origin, the live request and the client) keep their own replies.
+The handler (`packages/mcp/src/handler.ts`) also uses the guards of this machine as gates on its form routes. It makes the page that sent a form from the route and from the stored request. The phone, code, resend, change-phone and consent forms are only on their own pages. Cancel is on the page of the stored step. A code was sent when the request holds a number. A posted phone form carries the answer to the security check, so the handler solves the check (`solveCheck`) and then verifies the answer. A failed answer is the reply that the check did not pass. Before the route acts, the guard of the form must allow the reply that the form asks for: a code for the phone form, the consent page for the code form, a resent code for the resend form, the phone page for the change-phone form, the approval for "Allow", and the refusal for "Cancel" and "Don't allow". Then each reply must pass the same guard before the handler sends it. The Cloud return uses `canReturnFromCloud`. A retry of the initial session check uses `canRetryConnection`. A refused form or reply gets "This page has expired". The checks that the handler makes before it reads the stored request (the origin, the live request and the client) keep their own replies.
 
 ## Story: See one clear page at each step of connecting my assistant
 
@@ -20,10 +20,13 @@ type AuthView =
 type Reply =
   ReplyPhone | ReplyCode | ReplyConsent | ReplyConsentRetry | ReplyCloud | ReplyApproved | ReplyDeclined |
   ReplyCheckFailed | ReplyPhoneInvalid | ReplyTooManyCodes | ReplySendUnavailable | ReplyCodeRejected |
+  ReplyCodeResent | ReplyCodeResendRateLimited | ReplyCodeResendFailed |
   ReplyLinkInvalid | ReplyTooManyTries | ReplyNotAvailable | ReplyExpired | ReplyAlreadySignedIn |
   ReplyCheckNumber | ReplyConnectAgain | ReplyRetryLater | ReplySignInUnavailable | ReplyNotAllowed |
   ReplySignupForm | ReplySignupRefused | ReplySignupUnavailable
-type FieldError = NoFieldError | CheckNotPassed | PhoneNotValid | CodesRateLimited | CodeSendFailed | CodeNotAccepted
+type FieldError =
+  NoFieldError | CheckNotPassed | PhoneNotValid | CodesRateLimited | CodeSendFailed | CodeNotAccepted |
+  CodeResent | CodeResendRateLimited | CodeResendFailed
 type SecurityCheck = CheckOff | CheckWaiting | CheckSolved | CheckExpired
 type AuthPage = {
   view: AuthView,
@@ -31,23 +34,26 @@ type AuthPage = {
   securityCheck: SecurityCheck,
   turnstileOn: bool,
   codeSent: bool,
+  phoneChanged: bool,
   consentSeen: bool,
   approved: bool,
 }
 type Offers = {
-  sendCode: bool, continueCode: bool, allow: bool, retryAllow: bool, dontAllow: bool, cancel: bool, retryLink: bool,
+  sendCode: bool, continueCode: bool, resendCode: bool, changeNumber: bool,
+  allow: bool, retryAllow: bool, dontAllow: bool, cancel: bool, retryLink: bool,
   finishSignup: bool, backToConsent: bool,
 }
 
 pure val initial: AuthPage = {
   view: Opening, fieldError: NoFieldError, securityCheck: CheckOff, turnstileOn: false,
-  codeSent: false, consentSeen: false, approved: false,
+  codeSent: false, phoneChanged: false, consentSeen: false, approved: false,
 }
 
 pure def viewFor(reply: Reply): AuthView =
   if (reply == ReplyPhone or reply == ReplyCheckFailed or reply == ReplyPhoneInvalid
       or reply == ReplyTooManyCodes or reply == ReplySendUnavailable) PhoneView
-  else if (reply == ReplyCode or reply == ReplyCodeRejected) CodeView
+  else if (reply == ReplyCode or reply == ReplyCodeRejected
+      or reply == ReplyCodeResent or reply == ReplyCodeResendRateLimited or reply == ReplyCodeResendFailed) CodeView
   else if (reply == ReplyConsent) ConsentView
   else if (reply == ReplyConsentRetry) ConsentRetryView
   else if (reply == ReplyCloud) CloudView
@@ -72,6 +78,9 @@ pure def errorFor(reply: Reply): FieldError =
   else if (reply == ReplyTooManyCodes) CodesRateLimited
   else if (reply == ReplySendUnavailable) CodeSendFailed
   else if (reply == ReplyCodeRejected) CodeNotAccepted
+  else if (reply == ReplyCodeResent) CodeResent
+  else if (reply == ReplyCodeResendRateLimited) CodeResendRateLimited
+  else if (reply == ReplyCodeResendFailed) CodeResendFailed
   else NoFieldError
 
 pure def checkFor(view: AuthView, turnstileOn: bool): SecurityCheck =
@@ -94,13 +103,16 @@ pure def showsPhoneField(view: AuthView): bool = view == PhoneView
 pure def showsCodeField(view: AuthView): bool = view == CodeView
 
 pure val noOffers: Offers = {
-  sendCode: false, continueCode: false, allow: false, retryAllow: false, dontAllow: false, cancel: false, retryLink: false,
+  sendCode: false, continueCode: false, resendCode: false, changeNumber: false,
+  allow: false, retryAllow: false, dontAllow: false, cancel: false, retryLink: false,
   finishSignup: false, backToConsent: false,
 }
 
 pure def offersFor(view: AuthView): Offers = {
   sendCode: view == PhoneView,
   continueCode: view == CodeView,
+  resendCode: view == CodeView,
+  changeNumber: view == CodeView,
   allow: view == ConsentView,
   retryAllow: view == ConsentRetryView,
   dontAllow: isConsentView(view),
@@ -118,6 +130,7 @@ pure def showReply(reply: Reply, page: AuthPage): AuthPage =
     securityCheck: checkFor(shown, page.turnstileOn),
     turnstileOn: page.turnstileOn,
     codeSent: page.codeSent or reply == ReplyCode,
+    phoneChanged: page.phoneChanged,
     consentSeen: page.consentSeen or isConsentView(shown),
     approved: page.approved or reply == ReplyApproved,
   }
@@ -229,7 +242,8 @@ pure def stepPhoneSubmitNeedsSolvedCheck(before: AuthPage, via: str, after: Auth
   via == "submitPhone" implies (before.securityCheck == CheckOff or before.securityCheck == CheckSolved)
 
 pure def alwaysFieldErrorStaysOnItsPage(page: AuthPage): bool =
-  (page.fieldError == CodeNotAccepted implies page.view == CodeView)
+  ((page.fieldError == CodeNotAccepted or page.fieldError == CodeResent
+    or page.fieldError == CodeResendRateLimited or page.fieldError == CodeResendFailed) implies page.view == CodeView)
     and ((page.fieldError == CheckNotPassed or page.fieldError == PhoneNotValid
           or page.fieldError == CodesRateLimited or page.fieldError == CodeSendFailed) implies page.view == PhoneView)
     and (page.fieldError == CheckNotPassed implies page.turnstileOn)
@@ -237,7 +251,7 @@ pure def alwaysFieldErrorStaysOnItsPage(page: AuthPage): bool =
 
 ### The code page appears only after this request sent a code
 
-Only a sent code opens the code page, and only from the phone page. The page shows the last four digits of the number. A wrong code shows the code page again with a field error. A correct code opens the consent page. A number that needs a check gets "We need to check this number". The other replies are "This page has expired", "Not allowed" and "Not available".
+Only a sent code opens the code page, and only from the phone page. The page shows the last four digits of the number. A wrong code shows the code page again with a field error. A correct code opens the consent page. A number that needs a check gets "We need to check this number". The code page also offers "Resend code" and "Use a different number". "Resend code" sends a fresh code to the stored phone and stays on the code page with a resent notice, a rate-limit error or a send failure. "Use a different number" returns to the phone page, clears the sent-code state, and starts a new security check when the site has one. The other replies are "This page has expired", "Not allowed" and "Not available".
 
 ```quint
 pure def isCodeReply(reply: Reply): bool =
@@ -246,6 +260,21 @@ pure def isCodeReply(reply: Reply): bool =
 
 pure def canSubmitCode(page: AuthPage, reply: Reply): bool = page.view == CodeView and page.codeSent and isCodeReply(reply)
 pure def submitCode(page: AuthPage, reply: Reply): AuthPage = showReply(reply, page)
+
+pure def isCodeResendReply(reply: Reply): bool =
+  reply == ReplyCodeResent or reply == ReplyCodeResendRateLimited or reply == ReplyCodeResendFailed
+    or reply == ReplyExpired or reply == ReplyNotAllowed or reply == ReplyNotAvailable
+
+pure def canResendCode(page: AuthPage, reply: Reply): bool = page.view == CodeView and page.codeSent and isCodeResendReply(reply)
+pure def resendCode(page: AuthPage, reply: Reply): AuthPage = showReply(reply, page)
+
+pure def isChangePhoneReply(reply: Reply): bool =
+  reply == ReplyPhone or reply == ReplyExpired or reply == ReplyNotAllowed or reply == ReplyNotAvailable
+
+pure def canChangePhone(page: AuthPage, reply: Reply): bool = page.view == CodeView and isChangePhoneReply(reply)
+pure def changePhone(page: AuthPage, reply: Reply): AuthPage =
+  { ...showReply(reply, page), codeSent: if (reply == ReplyPhone) false else page.codeSent,
+    phoneChanged: page.phoneChanged or reply == ReplyPhone }
 
 pure def alwaysCodePageFollowsSentCode(page: AuthPage): bool = showsCodeField(page.view) implies page.codeSent
 
@@ -421,7 +450,7 @@ pure val laterValues = rValues
 
 ### The signup form takes the birthday and counts the age on the Clock date
 
-The signup form asks for the birthday (the label is "Birthday"), not for the age. The person types it in the browser as a date (`yyyy-mm-dd`). The form never shows a birthday before the person types it, and it never shows the sent birthday again after the server refuses the form. A hint below the field tells the person that a member under 18 is never matched for dates or for work and that today nobody under 18 is introduced to anyone. It also tells the person that friendship is the only kind of introduction that can open to people under 18, only with people within 2 years of their own age. The hint does not promise an introduction.
+The signup form asks for the birthday (the label is "Birthday"), not for the age. The person types it in the browser as a date (`yyyy-mm-dd`). The form never shows a birthday before the person types it, and it never shows the sent birthday again after the server refuses the form. A hint below the field tells the person that a member under 18 is never matched for dates or for work. It tells the person that friendship introductions on friends.help and the ntwrk Friend lane are only with people aged 13 to 18 within 2 years of their birthday, and that staff can pause those introductions at any time. The hint does not promise an introduction. Changed (2026-11-27, owner decision 2026-11-22): the hint used to say that nobody under 18 is introduced to anyone today; teen friendship introductions are now open on friends.help and the ntwrk Friend lane under the age rule and staff stop.
 
 The handler takes the year, the month and the day from the sent text, and it takes the date of today from the platform Clock. The date of today is the calendar date in the latest time zone (UTC-12), so the form never counts a person older than the calendar where the person is. The birthday is refused with an error on the birthday field when the date is missing, when the text is not `yyyy-mm-dd`, when the date does not exist (such as February 30, or February 29 in a year that is not a leap year), when the date is after today, or when the age on today's date is more than 120. The age on a date is the number of full years since the birthday: before the birthday of this year, it is one year less than the difference of the years. A person born on February 29 becomes one year older on March 1 in a year that is not a leap year. The handler gives that age to the join step. When the effective age is below 13, the join step refuses enrollment and retains the numeric age under the existing [site enrollment rule](siteEnrollment.md#the-effective-age-controls-the-result-of-a-new-or-repeated-join). The refusal stores no membership, submitted profile details, birthday or private eligibility date. For a member who is 13 through 17, the handler gives the join step the initial age and the private date they will turn 18 at the start of the UTC-12 day. A successful verified join can also store the exact birthday privately for the teen friendship age check when the person is aged 13 through 18. This updates the earlier browser rule that kept only the private adult eligibility date. An older person gives only a numeric age. A refused join keeps no birthday. The exact birth reading and date are not part of the approval page, grant or member profile. A February 29 birthday reaches adult eligibility on March 1 when the eighteenth year is not a leap year.
 
@@ -647,6 +676,10 @@ pure def sometimesDeclined(page: AuthPage): bool = page.view == DeclinedView
 pure def sometimesConsentRetry(page: AuthPage): bool = page.view == ConsentRetryView
 pure def sometimesCloudSignIn(page: AuthPage): bool = page.view == CloudView
 pure def sometimesCodeRejected(page: AuthPage): bool = page.view == CodeView and page.fieldError == CodeNotAccepted
+pure def sometimesCodeResent(page: AuthPage): bool = page.view == CodeView and page.fieldError == CodeResent
+pure def sometimesCodeResendRateLimited(page: AuthPage): bool = page.view == CodeView and page.fieldError == CodeResendRateLimited
+pure def sometimesCodeResendFailed(page: AuthPage): bool = page.view == CodeView and page.fieldError == CodeResendFailed
+pure def sometimesChangedPhone(page: AuthPage): bool = page.view == PhoneView and page.phoneChanged and not(page.codeSent)
 pure def sometimesCheckRejected(page: AuthPage): bool = page.view == PhoneView and page.fieldError == CheckNotPassed
 pure def sometimesCheckExpired(page: AuthPage): bool = page.securityCheck == CheckExpired
 pure def sometimesTooManyCodes(page: AuthPage): bool = page.fieldError == CodesRateLimited

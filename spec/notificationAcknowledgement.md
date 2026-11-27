@@ -37,9 +37,12 @@ pure def lawSharedThreadStillNeedsActiveAppOwner(sameRoutedApp: bool, activeAppO
 
 ### A delivered text can appear only once and its opportunity must still be current
 
-An accepted member-facing probe, plan probe, proposal, reminder, feedback
-request, cancellation or scheduling text can produce an inbox item. System
-replies do not produce one. Key a delivered text by its message ID, with the
+An accepted member-facing probe, plan probe, proposal, reveal, pre-brief,
+venue pivot, check-in, relay, reminder, feedback request, cancellation or
+scheduling text can produce an inbox item. System replies do not produce one.
+Changed (2026-11-27): reveal, pre-brief, venue pivot, check-in and relay texts
+also produce inbox items so a member's connected assistant sees live meetup
+updates too. Key a delivered text by its message ID, with the
 opportunity as context when there is one. A repeated projection uses the
 same durable delivery ID, including for a retained older subject, and skips
 an already recorded delivery. The item and its delivery are stored in one
@@ -60,6 +63,8 @@ pure val networkTextSummaryLimit: int = 500
 
 pure def networkTextCanProduceInboxItem(system: bool, messageType: str): bool =
   not(system) and (messageType == "probe" or messageType == "plan_probe" or messageType == "proposal"
+    or messageType == "reveal" or messageType == "pre_brief" or messageType == "venue_pivot"
+    or messageType == "checkin" or messageType == "relay"
     or messageType == "reminder" or messageType == "feedback_request" or messageType == "cancellation"
     or messageType == "scheduling")
 

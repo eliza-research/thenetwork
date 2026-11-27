@@ -6,7 +6,7 @@ export type AppId = "Ntwrk" | "Slop" | "Peon" | "Friends";
 /** Story: Use my app's connector from my agent / Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date (spec/connectorTools.md) */
 export type Surface = "FullSurface" | "OpenAiSurface";
 /** Story: Use my app's connector from my agent / Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date (spec/connectorTools.md) */
-export type ToolName = "AppInfoTool" | "StartSignupTool" | "PrepareSignupTool" | "CheckStatusTool" | "ReadProfileTool" | "SubmitProfileTool" | "GetUpdatesTool" | "ListLookingForTool" | "PauseLookingForTool" | "ResumeLookingForTool" | "MyPhotosTool" | "PhotoRequestTool";
+export type ToolName = "AppInfoTool" | "StartSignupTool" | "PrepareSignupTool" | "CheckStatusTool" | "ReadProfileTool" | "SubmitProfileTool" | "GetUpdatesTool" | "GetContextTool" | "SetAvailabilityTool" | "SetRedLinesTool" | "ListLookingForTool" | "PauseLookingForTool" | "ResumeLookingForTool" | "MyPhotosTool" | "PhotoRequestTool";
 /** Story: Use my app's connector from my agent / Public tools need no sign-in, and member tools need the person's own grant (spec/connectorTools.md) */
 export type Scope = "NoScope" | "MembershipRead" | "ProfileWrite" | "ProfileRead" | "PhotosUse";
 /** Story: Use my app's connector from my agent / The member status decides which member tool can act (spec/connectorTools.md) */
@@ -16,7 +16,7 @@ export type NextStep = "JoinOnSite" | "GetInvitation" | "AcceptInvitation" | "Re
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
 export type ConnectionPhase = "Unbound" | "Unavailable" | "Anonymous" | "Connected" | "Revoked";
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
-export type ToolResult = "NoResult" | "PublicFacts" | "AppNotAvailable" | "SignInNeeded" | "StatusShown" | "ProfileAccepted" | "ProfileNotForStatus" | "DraftSaved" | "DraftRefused" | "UpdatesShown" | "TooManyToday" | "SavedProfileShown" | "SavedProfileUnavailable" | "LookingForUnavailable" | "LookingForShown" | "LookingForChanged" | "LookingForUnchanged" | "PhotoListShown" | "PhotoRequestAnswered" | "PhotoToolUnavailable";
+export type ToolResult = "NoResult" | "PublicFacts" | "AppNotAvailable" | "SignInNeeded" | "StatusShown" | "ContextShown" | "ProfileAccepted" | "ProfileNotForStatus" | "PreferencesSaved" | "PreferencesNotForStatus" | "DraftSaved" | "DraftRefused" | "UpdatesShown" | "TooManyToday" | "SavedProfileShown" | "SavedProfileUnavailable" | "LookingForUnavailable" | "LookingForShown" | "LookingForChanged" | "LookingForUnchanged" | "PhotoListShown" | "PhotoRequestAnswered" | "PhotoToolUnavailable";
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
 export interface Connection { phase: ConnectionPhase; host: AppId; surface: Surface; hasWrite: boolean; hasProfileRead: boolean; hasPhotos: boolean; status: MemberStatus; profileApproved: boolean; profileSent: boolean; sentToday: number; draftPrepared: boolean; tokenUnseen: boolean; otherUnseen: boolean; lastShown: number; lastResult: ToolResult }
 /** Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection (spec/connectorTools.md) */
@@ -39,12 +39,14 @@ export type Event =
   | { type: "callAfterOwnerChange" }
   | { type: "callCheckStatus" }
   | { type: "changeMemberStatus"; newStatus: MemberStatus }
+  | { type: "callGetContext" }
   | { type: "callReadProfile"; currentMembership: boolean; safeFields: boolean }
   | { type: "callLookingForTool"; tool: ToolName; currentMembership: boolean; changed: boolean }
   | { type: "callPhotoTool"; tool: ToolName; currentMembership: boolean; adultMember: boolean }
   | { type: "approveProfile" }
   | { type: "callSubmitProfile"; accepted: boolean }
   | { type: "startNewDay" }
+  | { type: "callPreferenceTool"; tool: ToolName; accepted: boolean }
   | { type: "callPrepareSignup"; joinAgeAllowed: boolean }
   | { type: "callGetUpdates"; tokenGiven: boolean; tokenOwn: boolean }
   | { type: "receiveUpdate"; forReference: boolean };
@@ -105,6 +107,12 @@ export function lawConfiguredOptOutBlocksOpenAiHost(host: AppId): boolean {
 //@ pure
 export function photoTool(tool: ToolName): boolean {
   return tool === "MyPhotosTool" || tool === "PhotoRequestTool";
+}
+
+/** Story: Use my app's connector from my agent / Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date (spec/connectorTools.md) */
+//@ pure
+export function preferenceTool(tool: ToolName): boolean {
+  return tool === "SetAvailabilityTool" || tool === "SetRedLinesTool";
 }
 
 /** Story: Use my app's connector from my agent / Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date (spec/connectorTools.md) */
@@ -244,7 +252,7 @@ export function lawSignInSiteServesTheApp(site: AppId, app: AppId): boolean {
 /** Story: Use my app's connector from my agent / Public tools need no sign-in, and member tools need the person's own grant (spec/connectorTools.md) */
 //@ pure
 export function scopeFor(tool: ToolName): Scope {
-  return tool === "AppInfoTool" || tool === "StartSignupTool" ? "NoScope" : (tool === "CheckStatusTool" || tool === "GetUpdatesTool" ? "MembershipRead" : (tool === "ReadProfileTool" || tool === "ListLookingForTool" ? "ProfileRead" : (photoTool(tool) ? "PhotosUse" : "ProfileWrite")));
+  return tool === "AppInfoTool" || tool === "StartSignupTool" ? "NoScope" : (tool === "CheckStatusTool" || tool === "GetUpdatesTool" || tool === "GetContextTool" ? "MembershipRead" : (tool === "ReadProfileTool" || tool === "ListLookingForTool" ? "ProfileRead" : (photoTool(tool) ? "PhotosUse" : "ProfileWrite")));
 }
 
 /** Story: Use my app's connector from my agent / Public tools need no sign-in, and member tools need the person's own grant (spec/connectorTools.md) */
@@ -288,6 +296,13 @@ export function lawLookingForChangesNeedWrite(tool: ToolName): boolean {
   return !(tool === "PauseLookingForTool" || tool === "ResumeLookingForTool") || scopeFor(tool) === "ProfileWrite";
 }
 
+/** Story: Use my app's connector from my agent / Public tools need no sign-in, and member tools need the person's own grant (spec/connectorTools.md) */
+//@ pure
+export function lawPreferenceToolsNeedWrite(tool: ToolName): boolean {
+  //@ ensures \result === true
+  return !preferenceTool(tool) || scopeFor(tool) === "ProfileWrite";
+}
+
 /** Story: Use my app's connector from my agent / The member status decides which member tool can act (spec/connectorTools.md) */
 //@ pure
 export function liveMember(status: MemberStatus): boolean {
@@ -310,7 +325,7 @@ export function lawStoppedMembershipCannotSubmitProfile(storedStatus: string, re
 /** Story: Use my app's connector from my agent / The member status decides which member tool can act (spec/connectorTools.md) */
 //@ pure
 export function toolAllowedFor(tool: ToolName, status: MemberStatus): boolean {
-  return tool === "SubmitProfileTool" ? liveMember(status) : (tool === "ReadProfileTool" || tool === "ListLookingForTool" || tool === "PauseLookingForTool" || tool === "ResumeLookingForTool" || photoTool(tool) ? status === "Active" : (tool === "PrepareSignupTool" ? status === "NotJoined" || status === "Invited" : true));
+  return tool === "SubmitProfileTool" || preferenceTool(tool) ? liveMember(status) : (tool === "ReadProfileTool" || tool === "ListLookingForTool" || tool === "PauseLookingForTool" || tool === "ResumeLookingForTool" || photoTool(tool) ? status === "Active" : (tool === "PrepareSignupTool" ? status === "NotJoined" || status === "Invited" : true));
 }
 
 /** Story: Use my app's connector from my agent / The member status decides which member tool can act (spec/connectorTools.md) */
@@ -324,6 +339,13 @@ export function nextStepFor(status: MemberStatus, inviteOnly: boolean): NextStep
 export function lawSubmitOnlyForLiveMembers(status: MemberStatus): boolean {
   //@ ensures \result === true
   return toolAllowedFor("SubmitProfileTool", status) === (status === "Active" || status === "Onboarding");
+}
+
+/** Story: Use my app's connector from my agent / The member status decides which member tool can act (spec/connectorTools.md) */
+//@ pure
+export function lawPreferenceToolsOnlyForLiveMembers(tool: ToolName, status: MemberStatus): boolean {
+  //@ ensures \result === true
+  return !preferenceTool(tool) || toolAllowedFor(tool, status) === liveMember(status);
 }
 
 /** Story: Use my app's connector from my agent / The member status decides which member tool can act (spec/connectorTools.md) */
@@ -351,7 +373,7 @@ export function lawPhotoToolsOnlyForActiveMembers(status: MemberStatus): boolean
 //@ pure
 export function lawReadToolsServeEveryStatus(status: MemberStatus): boolean {
   //@ ensures \result === true
-  return toolAllowedFor("AppInfoTool", status) && toolAllowedFor("StartSignupTool", status) && toolAllowedFor("CheckStatusTool", status) && toolAllowedFor("GetUpdatesTool", status);
+  return toolAllowedFor("AppInfoTool", status) && toolAllowedFor("StartSignupTool", status) && toolAllowedFor("CheckStatusTool", status) && toolAllowedFor("GetUpdatesTool", status) && toolAllowedFor("GetContextTool", status);
 }
 
 /** Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser (spec/connectorTools.md) */
@@ -384,6 +406,7 @@ export function connect(c: Connection, host: AppId, surface: Surface, openAiEnab
   //@ ensures (inv(c) && canConnect(c)) ==> stepPhotoToolNeedsPhotosScopeAndActive(c, "connect", \result)
   //@ ensures (inv(c) && canConnect(c)) ==> stepSubmitOnlyForLiveMember(c, "connect", \result)
   //@ ensures (inv(c) && canConnect(c)) ==> stepNothingSentAtTheLimit(c, "connect", \result)
+  //@ ensures (inv(c) && canConnect(c)) ==> stepPreferencesSavedNeedsWriteAndLiveMember(c, "connect", \result)
   //@ ensures (inv(c) && canConnect(c)) ==> stepReadingNeverAddsUnseen(c, "connect", \result)
   return { ...c, host: host, surface: surface, phase: configuredHostServes(surface, host, openAiEnabled) ? "Anonymous" : "Unavailable" };
 }
@@ -419,6 +442,7 @@ export function authorize(c: Connection, withWrite: boolean, withProfileRead: bo
   //@ ensures (inv(c) && canAuthorize(c)) ==> stepPhotoToolNeedsPhotosScopeAndActive(c, "authorize", \result)
   //@ ensures (inv(c) && canAuthorize(c)) ==> stepSubmitOnlyForLiveMember(c, "authorize", \result)
   //@ ensures (inv(c) && canAuthorize(c)) ==> stepNothingSentAtTheLimit(c, "authorize", \result)
+  //@ ensures (inv(c) && canAuthorize(c)) ==> stepPreferencesSavedNeedsWriteAndLiveMember(c, "authorize", \result)
   //@ ensures (inv(c) && canAuthorize(c)) ==> stepReadingNeverAddsUnseen(c, "authorize", \result)
   return { ...c, phase: "Connected", hasWrite: withWrite, hasProfileRead: withProfileRead, hasPhotos: withPhotos, sentToday: 0, draftPrepared: false, lastResult: "NoResult" };
 }
@@ -447,6 +471,7 @@ export function callPublicTool(c: Connection, tool: ToolName, app: AppId, appReg
   //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepPhotoToolNeedsPhotosScopeAndActive(c, "callPublicTool", \result)
   //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepSubmitOnlyForLiveMember(c, "callPublicTool", \result)
   //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepNothingSentAtTheLimit(c, "callPublicTool", \result)
+  //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepPreferencesSavedNeedsWriteAndLiveMember(c, "callPublicTool", \result)
   //@ ensures (inv(c) && canCallPublicTool(c, tool)) ==> stepReadingNeverAddsUnseen(c, "callPublicTool", \result)
   return { ...c, lastResult: appRegistered && appListed(c.surface, c.host, app) ? "PublicFacts" : "AppNotAvailable" };
 }
@@ -489,6 +514,7 @@ export function callWithoutAccess(c: Connection, tool: ToolName): Connection {
   //@ ensures (inv(c) && canCallWithoutAccess(c, tool)) ==> stepPhotoToolNeedsPhotosScopeAndActive(c, "callWithoutAccess", \result)
   //@ ensures (inv(c) && canCallWithoutAccess(c, tool)) ==> stepSubmitOnlyForLiveMember(c, "callWithoutAccess", \result)
   //@ ensures (inv(c) && canCallWithoutAccess(c, tool)) ==> stepNothingSentAtTheLimit(c, "callWithoutAccess", \result)
+  //@ ensures (inv(c) && canCallWithoutAccess(c, tool)) ==> stepPreferencesSavedNeedsWriteAndLiveMember(c, "callWithoutAccess", \result)
   //@ ensures (inv(c) && canCallWithoutAccess(c, tool)) ==> stepReadingNeverAddsUnseen(c, "callWithoutAccess", \result)
   return { ...c, lastResult: "SignInNeeded" };
 }
@@ -554,6 +580,7 @@ export function callAfterOwnerChange(c: Connection): Connection {
   //@ ensures (inv(c) && canCallAfterOwnerChange(c)) ==> stepPhotoToolNeedsPhotosScopeAndActive(c, "callAfterOwnerChange", \result)
   //@ ensures (inv(c) && canCallAfterOwnerChange(c)) ==> stepSubmitOnlyForLiveMember(c, "callAfterOwnerChange", \result)
   //@ ensures (inv(c) && canCallAfterOwnerChange(c)) ==> stepNothingSentAtTheLimit(c, "callAfterOwnerChange", \result)
+  //@ ensures (inv(c) && canCallAfterOwnerChange(c)) ==> stepPreferencesSavedNeedsWriteAndLiveMember(c, "callAfterOwnerChange", \result)
   //@ ensures (inv(c) && canCallAfterOwnerChange(c)) ==> stepReadingNeverAddsUnseen(c, "callAfterOwnerChange", \result)
   return { ...c, phase: "Revoked", hasWrite: false, hasProfileRead: false, hasPhotos: false, lastResult: "SignInNeeded" };
 }
@@ -561,7 +588,7 @@ export function callAfterOwnerChange(c: Connection): Connection {
 /** Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection (spec/connectorTools.md) */
 //@ pure
 export function memberResult(r: ToolResult): boolean {
-  return r === "StatusShown" || r === "ProfileAccepted" || r === "ProfileNotForStatus" || r === "DraftSaved" || r === "DraftRefused" || r === "UpdatesShown" || r === "TooManyToday" || r === "SavedProfileShown" || r === "SavedProfileUnavailable" || r === "LookingForUnavailable" || r === "LookingForShown" || r === "LookingForChanged" || r === "LookingForUnchanged" || r === "PhotoListShown" || r === "PhotoRequestAnswered" || r === "PhotoToolUnavailable";
+  return r === "StatusShown" || r === "ContextShown" || r === "ProfileAccepted" || r === "ProfileNotForStatus" || r === "PreferencesSaved" || r === "PreferencesNotForStatus" || r === "DraftSaved" || r === "DraftRefused" || r === "UpdatesShown" || r === "TooManyToday" || r === "SavedProfileShown" || r === "SavedProfileUnavailable" || r === "LookingForUnavailable" || r === "LookingForShown" || r === "LookingForChanged" || r === "LookingForUnchanged" || r === "PhotoListShown" || r === "PhotoRequestAnswered" || r === "PhotoToolUnavailable";
 }
 
 /** Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection (spec/connectorTools.md) */
@@ -594,6 +621,7 @@ export function callCheckStatus(c: Connection): Connection {
   //@ ensures (inv(c) && canCallCheckStatus(c)) ==> stepPhotoToolNeedsPhotosScopeAndActive(c, "callCheckStatus", \result)
   //@ ensures (inv(c) && canCallCheckStatus(c)) ==> stepSubmitOnlyForLiveMember(c, "callCheckStatus", \result)
   //@ ensures (inv(c) && canCallCheckStatus(c)) ==> stepNothingSentAtTheLimit(c, "callCheckStatus", \result)
+  //@ ensures (inv(c) && canCallCheckStatus(c)) ==> stepPreferencesSavedNeedsWriteAndLiveMember(c, "callCheckStatus", \result)
   //@ ensures (inv(c) && canCallCheckStatus(c)) ==> stepReadingNeverAddsUnseen(c, "callCheckStatus", \result)
   return { ...c, lastResult: "StatusShown" };
 }
@@ -622,8 +650,51 @@ export function changeMemberStatus(c: Connection, newStatus: MemberStatus): Conn
   //@ ensures (inv(c) && canChangeMemberStatus(c, newStatus)) ==> stepPhotoToolNeedsPhotosScopeAndActive(c, "changeMemberStatus", \result)
   //@ ensures (inv(c) && canChangeMemberStatus(c, newStatus)) ==> stepSubmitOnlyForLiveMember(c, "changeMemberStatus", \result)
   //@ ensures (inv(c) && canChangeMemberStatus(c, newStatus)) ==> stepNothingSentAtTheLimit(c, "changeMemberStatus", \result)
+  //@ ensures (inv(c) && canChangeMemberStatus(c, newStatus)) ==> stepPreferencesSavedNeedsWriteAndLiveMember(c, "changeMemberStatus", \result)
   //@ ensures (inv(c) && canChangeMemberStatus(c, newStatus)) ==> stepReadingNeverAddsUnseen(c, "changeMemberStatus", \result)
   return { ...c, status: newStatus };
+}
+
+/** Story: Use my app's connector from my agent / Get context returns status and updates without bypassing profile read consent (spec/connectorTools.md) */
+//@ pure
+export function resultShowsContextProfile(hasProfileRead: boolean): boolean {
+  return grantCovers("ReadProfileTool", false, false, hasProfileRead, false);
+}
+
+/** Story: Use my app's connector from my agent / Get context returns status and updates without bypassing profile read consent (spec/connectorTools.md) */
+//@ pure
+export function lawContextProfileNeedsProfileRead(hasProfileRead: boolean): boolean {
+  //@ ensures \result === true
+  return resultShowsContextProfile(hasProfileRead) === hasProfileRead;
+}
+
+/** Story: Use my app's connector from my agent / Get context returns status and updates without bypassing profile read consent (spec/connectorTools.md) */
+//@ pure
+export function canCallGetContext(c: Connection): boolean {
+  return c.phase === "Connected";
+}
+
+/** Story: Use my app's connector from my agent / Get context returns status and updates without bypassing profile read consent (spec/connectorTools.md) */
+//@ pure
+export function callGetContext(c: Connection): Connection {
+  //@ ensures (inv(c) && canCallGetContext(c)) ==> alwaysBoundHostIsServed(\result)
+  //@ ensures (inv(c) && canCallGetContext(c)) ==> alwaysWriteNeedsConnection(\result)
+  //@ ensures (inv(c) && canCallGetContext(c)) ==> alwaysUnboundHasNoDraft(\result)
+  //@ ensures (inv(c) && canCallGetContext(c)) ==> alwaysPhotosNeedConnection(\result)
+  //@ ensures (inv(c) && canCallGetContext(c)) ==> alwaysMemberResultsNeedConnection(\result)
+  //@ ensures (inv(c) && canCallGetContext(c)) ==> alwaysSentProfileWasApproved(\result)
+  //@ ensures (inv(c) && canCallGetContext(c)) ==> alwaysDailyProfileCap(\result)
+  //@ ensures (inv(c) && canCallGetContext(c)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
+  //@ ensures (inv(c) && canCallGetContext(c)) ==> alwaysShownCountIsSmall(\result)
+  //@ ensures (inv(c) && canCallGetContext(c)) ==> stepSavedProfileNeedsReadAuthority(c, "callGetContext", \result)
+  //@ ensures (inv(c) && canCallGetContext(c)) ==> stepLookingForChangeNeedsWriteAndActive(c, "callGetContext", \result)
+  //@ ensures (inv(c) && canCallGetContext(c)) ==> stepLookingForListNeedsRead(c, "callGetContext", \result)
+  //@ ensures (inv(c) && canCallGetContext(c)) ==> stepPhotoToolNeedsPhotosScopeAndActive(c, "callGetContext", \result)
+  //@ ensures (inv(c) && canCallGetContext(c)) ==> stepSubmitOnlyForLiveMember(c, "callGetContext", \result)
+  //@ ensures (inv(c) && canCallGetContext(c)) ==> stepNothingSentAtTheLimit(c, "callGetContext", \result)
+  //@ ensures (inv(c) && canCallGetContext(c)) ==> stepPreferencesSavedNeedsWriteAndLiveMember(c, "callGetContext", \result)
+  //@ ensures (inv(c) && canCallGetContext(c)) ==> stepReadingNeverAddsUnseen(c, "callGetContext", \result)
+  return { ...c, lastResult: "ContextShown" };
 }
 
 /** Story: Use my app's connector from my agent / Read saved profile fields only for this app's active member (spec/connectorTools.md) */
@@ -650,6 +721,7 @@ export function callReadProfile(c: Connection, currentMembership: boolean, safeF
   //@ ensures (inv(c) && canCallReadProfile(c)) ==> stepPhotoToolNeedsPhotosScopeAndActive(c, "callReadProfile", \result)
   //@ ensures (inv(c) && canCallReadProfile(c)) ==> stepSubmitOnlyForLiveMember(c, "callReadProfile", \result)
   //@ ensures (inv(c) && canCallReadProfile(c)) ==> stepNothingSentAtTheLimit(c, "callReadProfile", \result)
+  //@ ensures (inv(c) && canCallReadProfile(c)) ==> stepPreferencesSavedNeedsWriteAndLiveMember(c, "callReadProfile", \result)
   //@ ensures (inv(c) && canCallReadProfile(c)) ==> stepReadingNeverAddsUnseen(c, "callReadProfile", \result)
   return { ...c, lastResult: toolAllowedFor("ReadProfileTool", c.status) && currentMembership && safeFields ? "SavedProfileShown" : "SavedProfileUnavailable" };
 }
@@ -709,6 +781,7 @@ export function callLookingForTool(c: Connection, tool: ToolName, currentMembers
   //@ ensures (inv(c) && canCallLookingForTool(c, tool)) ==> stepPhotoToolNeedsPhotosScopeAndActive(c, "callLookingForTool", \result)
   //@ ensures (inv(c) && canCallLookingForTool(c, tool)) ==> stepSubmitOnlyForLiveMember(c, "callLookingForTool", \result)
   //@ ensures (inv(c) && canCallLookingForTool(c, tool)) ==> stepNothingSentAtTheLimit(c, "callLookingForTool", \result)
+  //@ ensures (inv(c) && canCallLookingForTool(c, tool)) ==> stepPreferencesSavedNeedsWriteAndLiveMember(c, "callLookingForTool", \result)
   //@ ensures (inv(c) && canCallLookingForTool(c, tool)) ==> stepReadingNeverAddsUnseen(c, "callLookingForTool", \result)
   return { ...c, lastResult: !toolAllowedFor(tool, c.status) || !currentMembership ? "LookingForUnavailable" : (tool === "ListLookingForTool" ? "LookingForShown" : (changed ? "LookingForChanged" : "LookingForUnchanged")) };
 }
@@ -773,6 +846,7 @@ export function callPhotoTool(c: Connection, tool: ToolName, currentMembership: 
   //@ ensures (inv(c) && canCallPhotoTool(c, tool)) ==> stepPhotoToolNeedsPhotosScopeAndActive(c, "callPhotoTool", \result)
   //@ ensures (inv(c) && canCallPhotoTool(c, tool)) ==> stepSubmitOnlyForLiveMember(c, "callPhotoTool", \result)
   //@ ensures (inv(c) && canCallPhotoTool(c, tool)) ==> stepNothingSentAtTheLimit(c, "callPhotoTool", \result)
+  //@ ensures (inv(c) && canCallPhotoTool(c, tool)) ==> stepPreferencesSavedNeedsWriteAndLiveMember(c, "callPhotoTool", \result)
   //@ ensures (inv(c) && canCallPhotoTool(c, tool)) ==> stepReadingNeverAddsUnseen(c, "callPhotoTool", \result)
   return { ...c, lastResult: !toolAllowedFor(tool, c.status) || !currentMembership || !adultMember ? "PhotoToolUnavailable" : (tool === "MyPhotosTool" ? "PhotoListShown" : "PhotoRequestAnswered") };
 }
@@ -831,6 +905,7 @@ export function approveProfile(c: Connection): Connection {
   //@ ensures (inv(c) && canApproveProfile(c)) ==> stepPhotoToolNeedsPhotosScopeAndActive(c, "approveProfile", \result)
   //@ ensures (inv(c) && canApproveProfile(c)) ==> stepSubmitOnlyForLiveMember(c, "approveProfile", \result)
   //@ ensures (inv(c) && canApproveProfile(c)) ==> stepNothingSentAtTheLimit(c, "approveProfile", \result)
+  //@ ensures (inv(c) && canApproveProfile(c)) ==> stepPreferencesSavedNeedsWriteAndLiveMember(c, "approveProfile", \result)
   //@ ensures (inv(c) && canApproveProfile(c)) ==> stepReadingNeverAddsUnseen(c, "approveProfile", \result)
   return { ...c, profileApproved: true, profileSent: false };
 }
@@ -859,6 +934,7 @@ export function callSubmitProfile(c: Connection, accepted: boolean): Connection 
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> stepPhotoToolNeedsPhotosScopeAndActive(c, "callSubmitProfile", \result)
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> stepSubmitOnlyForLiveMember(c, "callSubmitProfile", \result)
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> stepNothingSentAtTheLimit(c, "callSubmitProfile", \result)
+  //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> stepPreferencesSavedNeedsWriteAndLiveMember(c, "callSubmitProfile", \result)
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> stepReadingNeverAddsUnseen(c, "callSubmitProfile", \result)
   return profileLimitReached(c.sentToday) ? ({ ...c, lastResult: "TooManyToday" } as Connection) : (liveMember(c.status) && accepted ? ({ ...c, sentToday: exact_connectorTools(c.sentToday + 1), profileSent: true, lastResult: "ProfileAccepted" } as Connection) : ({ ...c, sentToday: exact_connectorTools(c.sentToday + 1), lastResult: "ProfileNotForStatus" } as Connection));
 }
@@ -887,6 +963,7 @@ export function startNewDay(c: Connection): Connection {
   //@ ensures (inv(c) && canStartNewDay(c)) ==> stepPhotoToolNeedsPhotosScopeAndActive(c, "startNewDay", \result)
   //@ ensures (inv(c) && canStartNewDay(c)) ==> stepSubmitOnlyForLiveMember(c, "startNewDay", \result)
   //@ ensures (inv(c) && canStartNewDay(c)) ==> stepNothingSentAtTheLimit(c, "startNewDay", \result)
+  //@ ensures (inv(c) && canStartNewDay(c)) ==> stepPreferencesSavedNeedsWriteAndLiveMember(c, "startNewDay", \result)
   //@ ensures (inv(c) && canStartNewDay(c)) ==> stepReadingNeverAddsUnseen(c, "startNewDay", \result)
   return { ...c, sentToday: 0 };
 }
@@ -912,7 +989,42 @@ export function stepSubmitOnlyForLiveMember(before: Connection, via: string, aft
 /** Story: Use my app's connector from my agent / The agent sends an approved profile once, only for a live member, within the daily limit (spec/connectorTools.md) */
 //@ pure
 export function stepNothingSentAtTheLimit(before: Connection, via: string, after: Connection): boolean {
-  return !(before.sentToday >= profileDailyCap && (via === "callSubmitProfile" || via === "callPrepareSignup")) || (after.lastResult === "TooManyToday" && after.profileSent === before.profileSent && after.draftPrepared === before.draftPrepared && after.sentToday === before.sentToday);
+  return !(before.sentToday >= profileDailyCap && (via === "callSubmitProfile" || via === "callPrepareSignup" || via === "callPreferenceTool")) || (after.lastResult === "TooManyToday" && after.profileSent === before.profileSent && after.draftPrepared === before.draftPrepared && after.sentToday === before.sentToday);
+}
+
+/** Story: Use my app's connector from my agent / Structured availability and red-line tools save preferences for a live member within the daily limit (spec/connectorTools.md) */
+//@ pure
+export function canCallPreferenceTool(c: Connection, tool: ToolName): boolean {
+  return c.phase === "Connected" && c.hasWrite && preferenceTool(tool);
+}
+
+/** Story: Use my app's connector from my agent / Structured availability and red-line tools save preferences for a live member within the daily limit (spec/connectorTools.md) */
+//@ pure
+export function callPreferenceTool(c: Connection, tool: ToolName, accepted: boolean): Connection {
+  //@ ensures (inv(c) && canCallPreferenceTool(c, tool)) ==> alwaysBoundHostIsServed(\result)
+  //@ ensures (inv(c) && canCallPreferenceTool(c, tool)) ==> alwaysWriteNeedsConnection(\result)
+  //@ ensures (inv(c) && canCallPreferenceTool(c, tool)) ==> alwaysUnboundHasNoDraft(\result)
+  //@ ensures (inv(c) && canCallPreferenceTool(c, tool)) ==> alwaysPhotosNeedConnection(\result)
+  //@ ensures (inv(c) && canCallPreferenceTool(c, tool)) ==> alwaysMemberResultsNeedConnection(\result)
+  //@ ensures (inv(c) && canCallPreferenceTool(c, tool)) ==> alwaysSentProfileWasApproved(\result)
+  //@ ensures (inv(c) && canCallPreferenceTool(c, tool)) ==> alwaysDailyProfileCap(\result)
+  //@ ensures (inv(c) && canCallPreferenceTool(c, tool)) ==> alwaysDraftOnlyOnFriendsOrNtwrk(\result)
+  //@ ensures (inv(c) && canCallPreferenceTool(c, tool)) ==> alwaysShownCountIsSmall(\result)
+  //@ ensures (inv(c) && canCallPreferenceTool(c, tool)) ==> stepSavedProfileNeedsReadAuthority(c, "callPreferenceTool", \result)
+  //@ ensures (inv(c) && canCallPreferenceTool(c, tool)) ==> stepLookingForChangeNeedsWriteAndActive(c, "callPreferenceTool", \result)
+  //@ ensures (inv(c) && canCallPreferenceTool(c, tool)) ==> stepLookingForListNeedsRead(c, "callPreferenceTool", \result)
+  //@ ensures (inv(c) && canCallPreferenceTool(c, tool)) ==> stepPhotoToolNeedsPhotosScopeAndActive(c, "callPreferenceTool", \result)
+  //@ ensures (inv(c) && canCallPreferenceTool(c, tool)) ==> stepSubmitOnlyForLiveMember(c, "callPreferenceTool", \result)
+  //@ ensures (inv(c) && canCallPreferenceTool(c, tool)) ==> stepNothingSentAtTheLimit(c, "callPreferenceTool", \result)
+  //@ ensures (inv(c) && canCallPreferenceTool(c, tool)) ==> stepPreferencesSavedNeedsWriteAndLiveMember(c, "callPreferenceTool", \result)
+  //@ ensures (inv(c) && canCallPreferenceTool(c, tool)) ==> stepReadingNeverAddsUnseen(c, "callPreferenceTool", \result)
+  return profileLimitReached(c.sentToday) ? ({ ...c, lastResult: "TooManyToday" } as Connection) : (liveMember(c.status) && accepted ? ({ ...c, sentToday: exact_connectorTools(c.sentToday + 1), lastResult: "PreferencesSaved" } as Connection) : ({ ...c, sentToday: exact_connectorTools(c.sentToday + 1), lastResult: "PreferencesNotForStatus" } as Connection));
+}
+
+/** Story: Use my app's connector from my agent / Structured availability and red-line tools save preferences for a live member within the daily limit (spec/connectorTools.md) */
+//@ pure
+export function stepPreferencesSavedNeedsWriteAndLiveMember(before: Connection, via: string, after: Connection): boolean {
+  return !(after.lastResult === "PreferencesSaved" && before.lastResult !== "PreferencesSaved") || (via === "callPreferenceTool" && before.phase === "Connected" && before.hasWrite && liveMember(before.status));
 }
 
 /** Story: Use my app's connector from my agent / A Join draft holds only an approved first name and home city, once per grant (spec/connectorTools.md) */
@@ -939,6 +1051,7 @@ export function callPrepareSignup(c: Connection, joinAgeAllowed: boolean): Conne
   //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> stepPhotoToolNeedsPhotosScopeAndActive(c, "callPrepareSignup", \result)
   //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> stepSubmitOnlyForLiveMember(c, "callPrepareSignup", \result)
   //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> stepNothingSentAtTheLimit(c, "callPrepareSignup", \result)
+  //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> stepPreferencesSavedNeedsWriteAndLiveMember(c, "callPrepareSignup", \result)
   //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> stepReadingNeverAddsUnseen(c, "callPrepareSignup", \result)
   return profileLimitReached(c.sentToday) ? ({ ...c, lastResult: "TooManyToday" } as Connection) : (joinAgeAllowed && toolAllowedFor("PrepareSignupTool", c.status) && !c.draftPrepared ? ({ ...c, sentToday: exact_connectorTools(c.sentToday + 1), draftPrepared: true, lastResult: "DraftSaved" } as Connection) : ({ ...c, sentToday: exact_connectorTools(c.sentToday + 1), lastResult: "DraftRefused" } as Connection));
 }
@@ -979,6 +1092,7 @@ export function callGetUpdates(c: Connection, tokenGiven: boolean, tokenOwn: boo
   //@ ensures (inv(c) && canCallGetUpdates(c)) ==> stepPhotoToolNeedsPhotosScopeAndActive(c, "callGetUpdates", \result)
   //@ ensures (inv(c) && canCallGetUpdates(c)) ==> stepSubmitOnlyForLiveMember(c, "callGetUpdates", \result)
   //@ ensures (inv(c) && canCallGetUpdates(c)) ==> stepNothingSentAtTheLimit(c, "callGetUpdates", \result)
+  //@ ensures (inv(c) && canCallGetUpdates(c)) ==> stepPreferencesSavedNeedsWriteAndLiveMember(c, "callGetUpdates", \result)
   //@ ensures (inv(c) && canCallGetUpdates(c)) ==> stepReadingNeverAddsUnseen(c, "callGetUpdates", \result)
   const local_0: UpdateRead = readUpdates(c.tokenUnseen, c.otherUnseen, tokenGiven, tokenOwn);
   return { ...c, tokenUnseen: local_0.tokenLeft, otherUnseen: local_0.otherLeft, lastShown: local_0.shown, lastResult: "UpdatesShown" };
@@ -1008,6 +1122,7 @@ export function receiveUpdate(c: Connection, forReference: boolean): Connection 
   //@ ensures (inv(c) && canReceiveUpdate(c)) ==> stepPhotoToolNeedsPhotosScopeAndActive(c, "receiveUpdate", \result)
   //@ ensures (inv(c) && canReceiveUpdate(c)) ==> stepSubmitOnlyForLiveMember(c, "receiveUpdate", \result)
   //@ ensures (inv(c) && canReceiveUpdate(c)) ==> stepNothingSentAtTheLimit(c, "receiveUpdate", \result)
+  //@ ensures (inv(c) && canReceiveUpdate(c)) ==> stepPreferencesSavedNeedsWriteAndLiveMember(c, "receiveUpdate", \result)
   //@ ensures (inv(c) && canReceiveUpdate(c)) ==> stepReadingNeverAddsUnseen(c, "receiveUpdate", \result)
   return forReference ? ({ ...c, tokenUnseen: true } as Connection) : ({ ...c, otherUnseen: true } as Connection);
 }
@@ -1177,6 +1292,24 @@ export function sometimesStatusShown(c: Connection): boolean {
 
 /** Story: Use my app's connector from my agent / A connection can reach every tool result (spec/connectorTools.md) */
 //@ pure
+export function sometimesContextShown(c: Connection): boolean {
+  return c.lastResult === "ContextShown";
+}
+
+/** Story: Use my app's connector from my agent / A connection can reach every tool result (spec/connectorTools.md) */
+//@ pure
+export function sometimesPreferencesSaved(c: Connection): boolean {
+  return c.lastResult === "PreferencesSaved";
+}
+
+/** Story: Use my app's connector from my agent / A connection can reach every tool result (spec/connectorTools.md) */
+//@ pure
+export function sometimesPreferencesNotForStatus(c: Connection): boolean {
+  return c.lastResult === "PreferencesNotForStatus";
+}
+
+/** Story: Use my app's connector from my agent / A connection can reach every tool result (spec/connectorTools.md) */
+//@ pure
 export function sometimesSignInNeeded(c: Connection): boolean {
   return c.lastResult === "SignInNeeded";
 }
@@ -1209,12 +1342,14 @@ export function enabled(current: Connection, event: Event): boolean {
   if (event.type === "callAfterOwnerChange") return canCallAfterOwnerChange(current);
   if (event.type === "callCheckStatus") return canCallCheckStatus(current);
   if (event.type === "changeMemberStatus") return canChangeMemberStatus(current, event.newStatus);
+  if (event.type === "callGetContext") return canCallGetContext(current);
   if (event.type === "callReadProfile") return canCallReadProfile(current);
   if (event.type === "callLookingForTool") return canCallLookingForTool(current, event.tool);
   if (event.type === "callPhotoTool") return canCallPhotoTool(current, event.tool);
   if (event.type === "approveProfile") return canApproveProfile(current);
   if (event.type === "callSubmitProfile") return canCallSubmitProfile(current);
   if (event.type === "startNewDay") return canStartNewDay(current);
+  if (event.type === "callPreferenceTool") return canCallPreferenceTool(current, event.tool);
   if (event.type === "callPrepareSignup") return canCallPrepareSignup(current);
   if (event.type === "callGetUpdates") return canCallGetUpdates(current);
   if (event.type === "receiveUpdate") return canReceiveUpdate(current);
@@ -1233,12 +1368,14 @@ export function step(current: Connection, event: Event): Connection {
   if (event.type === "callAfterOwnerChange") return canCallAfterOwnerChange(current) ? callAfterOwnerChange(current) : current;
   if (event.type === "callCheckStatus") return canCallCheckStatus(current) ? callCheckStatus(current) : current;
   if (event.type === "changeMemberStatus") return canChangeMemberStatus(current, event.newStatus) ? changeMemberStatus(current, event.newStatus) : current;
+  if (event.type === "callGetContext") return canCallGetContext(current) ? callGetContext(current) : current;
   if (event.type === "callReadProfile") return canCallReadProfile(current) ? callReadProfile(current, event.currentMembership, event.safeFields) : current;
   if (event.type === "callLookingForTool") return canCallLookingForTool(current, event.tool) ? callLookingForTool(current, event.tool, event.currentMembership, event.changed) : current;
   if (event.type === "callPhotoTool") return canCallPhotoTool(current, event.tool) ? callPhotoTool(current, event.tool, event.currentMembership, event.adultMember) : current;
   if (event.type === "approveProfile") return canApproveProfile(current) ? approveProfile(current) : current;
   if (event.type === "callSubmitProfile") return canCallSubmitProfile(current) ? callSubmitProfile(current, event.accepted) : current;
   if (event.type === "startNewDay") return canStartNewDay(current) ? startNewDay(current) : current;
+  if (event.type === "callPreferenceTool") return canCallPreferenceTool(current, event.tool) ? callPreferenceTool(current, event.tool, event.accepted) : current;
   if (event.type === "callPrepareSignup") return canCallPrepareSignup(current) ? callPrepareSignup(current, event.joinAgeAllowed) : current;
   if (event.type === "callGetUpdates") return canCallGetUpdates(current) ? callGetUpdates(current, event.tokenGiven, event.tokenOwn) : current;
   if (event.type === "receiveUpdate") return canReceiveUpdate(current) ? receiveUpdate(current, event.forReference) : current;
@@ -1261,17 +1398,19 @@ export function parseEvent(x: unknown): Event | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "connect" && (raw.host === "Ntwrk" || raw.host === "Slop" || raw.host === "Peon" || raw.host === "Friends") && (raw.surface === "FullSurface" || raw.surface === "OpenAiSurface") && typeof raw.openAiEnabled === "boolean") return { type: "connect", host: raw.host, surface: raw.surface, openAiEnabled: raw.openAiEnabled };
   if (raw.type === "authorize" && typeof raw.withWrite === "boolean" && typeof raw.withProfileRead === "boolean" && typeof raw.withPhotos === "boolean") return { type: "authorize", withWrite: raw.withWrite, withProfileRead: raw.withProfileRead, withPhotos: raw.withPhotos };
-  if (raw.type === "callPublicTool" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "PrepareSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "ReadProfileTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool" || raw.tool === "ListLookingForTool" || raw.tool === "PauseLookingForTool" || raw.tool === "ResumeLookingForTool" || raw.tool === "MyPhotosTool" || raw.tool === "PhotoRequestTool") && (raw.app === "Ntwrk" || raw.app === "Slop" || raw.app === "Peon" || raw.app === "Friends") && typeof raw.appRegistered === "boolean") return { type: "callPublicTool", tool: raw.tool, app: raw.app, appRegistered: raw.appRegistered };
-  if (raw.type === "callWithoutAccess" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "PrepareSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "ReadProfileTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool" || raw.tool === "ListLookingForTool" || raw.tool === "PauseLookingForTool" || raw.tool === "ResumeLookingForTool" || raw.tool === "MyPhotosTool" || raw.tool === "PhotoRequestTool")) return { type: "callWithoutAccess", tool: raw.tool };
+  if (raw.type === "callPublicTool" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "PrepareSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "ReadProfileTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool" || raw.tool === "GetContextTool" || raw.tool === "SetAvailabilityTool" || raw.tool === "SetRedLinesTool" || raw.tool === "ListLookingForTool" || raw.tool === "PauseLookingForTool" || raw.tool === "ResumeLookingForTool" || raw.tool === "MyPhotosTool" || raw.tool === "PhotoRequestTool") && (raw.app === "Ntwrk" || raw.app === "Slop" || raw.app === "Peon" || raw.app === "Friends") && typeof raw.appRegistered === "boolean") return { type: "callPublicTool", tool: raw.tool, app: raw.app, appRegistered: raw.appRegistered };
+  if (raw.type === "callWithoutAccess" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "PrepareSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "ReadProfileTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool" || raw.tool === "GetContextTool" || raw.tool === "SetAvailabilityTool" || raw.tool === "SetRedLinesTool" || raw.tool === "ListLookingForTool" || raw.tool === "PauseLookingForTool" || raw.tool === "ResumeLookingForTool" || raw.tool === "MyPhotosTool" || raw.tool === "PhotoRequestTool")) return { type: "callWithoutAccess", tool: raw.tool };
   if (raw.type === "callAfterOwnerChange") return { type: "callAfterOwnerChange" };
   if (raw.type === "callCheckStatus") return { type: "callCheckStatus" };
   if (raw.type === "changeMemberStatus" && (raw.newStatus === "NotJoined" || raw.newStatus === "Invited" || raw.newStatus === "Onboarding" || raw.newStatus === "Active" || raw.newStatus === "Stopped" || raw.newStatus === "OnHold")) return { type: "changeMemberStatus", newStatus: raw.newStatus };
+  if (raw.type === "callGetContext") return { type: "callGetContext" };
   if (raw.type === "callReadProfile" && typeof raw.currentMembership === "boolean" && typeof raw.safeFields === "boolean") return { type: "callReadProfile", currentMembership: raw.currentMembership, safeFields: raw.safeFields };
-  if (raw.type === "callLookingForTool" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "PrepareSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "ReadProfileTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool" || raw.tool === "ListLookingForTool" || raw.tool === "PauseLookingForTool" || raw.tool === "ResumeLookingForTool" || raw.tool === "MyPhotosTool" || raw.tool === "PhotoRequestTool") && typeof raw.currentMembership === "boolean" && typeof raw.changed === "boolean") return { type: "callLookingForTool", tool: raw.tool, currentMembership: raw.currentMembership, changed: raw.changed };
-  if (raw.type === "callPhotoTool" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "PrepareSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "ReadProfileTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool" || raw.tool === "ListLookingForTool" || raw.tool === "PauseLookingForTool" || raw.tool === "ResumeLookingForTool" || raw.tool === "MyPhotosTool" || raw.tool === "PhotoRequestTool") && typeof raw.currentMembership === "boolean" && typeof raw.adultMember === "boolean") return { type: "callPhotoTool", tool: raw.tool, currentMembership: raw.currentMembership, adultMember: raw.adultMember };
+  if (raw.type === "callLookingForTool" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "PrepareSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "ReadProfileTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool" || raw.tool === "GetContextTool" || raw.tool === "SetAvailabilityTool" || raw.tool === "SetRedLinesTool" || raw.tool === "ListLookingForTool" || raw.tool === "PauseLookingForTool" || raw.tool === "ResumeLookingForTool" || raw.tool === "MyPhotosTool" || raw.tool === "PhotoRequestTool") && typeof raw.currentMembership === "boolean" && typeof raw.changed === "boolean") return { type: "callLookingForTool", tool: raw.tool, currentMembership: raw.currentMembership, changed: raw.changed };
+  if (raw.type === "callPhotoTool" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "PrepareSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "ReadProfileTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool" || raw.tool === "GetContextTool" || raw.tool === "SetAvailabilityTool" || raw.tool === "SetRedLinesTool" || raw.tool === "ListLookingForTool" || raw.tool === "PauseLookingForTool" || raw.tool === "ResumeLookingForTool" || raw.tool === "MyPhotosTool" || raw.tool === "PhotoRequestTool") && typeof raw.currentMembership === "boolean" && typeof raw.adultMember === "boolean") return { type: "callPhotoTool", tool: raw.tool, currentMembership: raw.currentMembership, adultMember: raw.adultMember };
   if (raw.type === "approveProfile") return { type: "approveProfile" };
   if (raw.type === "callSubmitProfile" && typeof raw.accepted === "boolean") return { type: "callSubmitProfile", accepted: raw.accepted };
   if (raw.type === "startNewDay") return { type: "startNewDay" };
+  if (raw.type === "callPreferenceTool" && (raw.tool === "AppInfoTool" || raw.tool === "StartSignupTool" || raw.tool === "PrepareSignupTool" || raw.tool === "CheckStatusTool" || raw.tool === "ReadProfileTool" || raw.tool === "SubmitProfileTool" || raw.tool === "GetUpdatesTool" || raw.tool === "GetContextTool" || raw.tool === "SetAvailabilityTool" || raw.tool === "SetRedLinesTool" || raw.tool === "ListLookingForTool" || raw.tool === "PauseLookingForTool" || raw.tool === "ResumeLookingForTool" || raw.tool === "MyPhotosTool" || raw.tool === "PhotoRequestTool") && typeof raw.accepted === "boolean") return { type: "callPreferenceTool", tool: raw.tool, accepted: raw.accepted };
   if (raw.type === "callPrepareSignup" && typeof raw.joinAgeAllowed === "boolean") return { type: "callPrepareSignup", joinAgeAllowed: raw.joinAgeAllowed };
   if (raw.type === "callGetUpdates" && typeof raw.tokenGiven === "boolean" && typeof raw.tokenOwn === "boolean") return { type: "callGetUpdates", tokenGiven: raw.tokenGiven, tokenOwn: raw.tokenOwn };
   if (raw.type === "receiveUpdate" && typeof raw.forReference === "boolean") return { type: "receiveUpdate", forReference: raw.forReference };
@@ -1292,7 +1431,7 @@ export function parseState(x: unknown): Connection | undefined {
   } catch {
     return undefined;
   }
-  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "Unbound" || raw.phase === "Unavailable" || raw.phase === "Anonymous" || raw.phase === "Connected" || raw.phase === "Revoked") && (raw.host === "Ntwrk" || raw.host === "Slop" || raw.host === "Peon" || raw.host === "Friends") && (raw.surface === "FullSurface" || raw.surface === "OpenAiSurface") && typeof raw.hasWrite === "boolean" && typeof raw.hasProfileRead === "boolean" && typeof raw.hasPhotos === "boolean" && (raw.status === "NotJoined" || raw.status === "Invited" || raw.status === "Onboarding" || raw.status === "Active" || raw.status === "Stopped" || raw.status === "OnHold") && typeof raw.profileApproved === "boolean" && typeof raw.profileSent === "boolean" && Number.isSafeInteger(raw.sentToday) && typeof raw.draftPrepared === "boolean" && typeof raw.tokenUnseen === "boolean" && typeof raw.otherUnseen === "boolean" && Number.isSafeInteger(raw.lastShown) && (raw.lastResult === "NoResult" || raw.lastResult === "PublicFacts" || raw.lastResult === "AppNotAvailable" || raw.lastResult === "SignInNeeded" || raw.lastResult === "StatusShown" || raw.lastResult === "ProfileAccepted" || raw.lastResult === "ProfileNotForStatus" || raw.lastResult === "DraftSaved" || raw.lastResult === "DraftRefused" || raw.lastResult === "UpdatesShown" || raw.lastResult === "TooManyToday" || raw.lastResult === "SavedProfileShown" || raw.lastResult === "SavedProfileUnavailable" || raw.lastResult === "LookingForUnavailable" || raw.lastResult === "LookingForShown" || raw.lastResult === "LookingForChanged" || raw.lastResult === "LookingForUnchanged" || raw.lastResult === "PhotoListShown" || raw.lastResult === "PhotoRequestAnswered" || raw.lastResult === "PhotoToolUnavailable") && Object.keys(raw).length === 15)) return undefined;
+  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "Unbound" || raw.phase === "Unavailable" || raw.phase === "Anonymous" || raw.phase === "Connected" || raw.phase === "Revoked") && (raw.host === "Ntwrk" || raw.host === "Slop" || raw.host === "Peon" || raw.host === "Friends") && (raw.surface === "FullSurface" || raw.surface === "OpenAiSurface") && typeof raw.hasWrite === "boolean" && typeof raw.hasProfileRead === "boolean" && typeof raw.hasPhotos === "boolean" && (raw.status === "NotJoined" || raw.status === "Invited" || raw.status === "Onboarding" || raw.status === "Active" || raw.status === "Stopped" || raw.status === "OnHold") && typeof raw.profileApproved === "boolean" && typeof raw.profileSent === "boolean" && Number.isSafeInteger(raw.sentToday) && typeof raw.draftPrepared === "boolean" && typeof raw.tokenUnseen === "boolean" && typeof raw.otherUnseen === "boolean" && Number.isSafeInteger(raw.lastShown) && (raw.lastResult === "NoResult" || raw.lastResult === "PublicFacts" || raw.lastResult === "AppNotAvailable" || raw.lastResult === "SignInNeeded" || raw.lastResult === "StatusShown" || raw.lastResult === "ContextShown" || raw.lastResult === "ProfileAccepted" || raw.lastResult === "ProfileNotForStatus" || raw.lastResult === "PreferencesSaved" || raw.lastResult === "PreferencesNotForStatus" || raw.lastResult === "DraftSaved" || raw.lastResult === "DraftRefused" || raw.lastResult === "UpdatesShown" || raw.lastResult === "TooManyToday" || raw.lastResult === "SavedProfileShown" || raw.lastResult === "SavedProfileUnavailable" || raw.lastResult === "LookingForUnavailable" || raw.lastResult === "LookingForShown" || raw.lastResult === "LookingForChanged" || raw.lastResult === "LookingForUnchanged" || raw.lastResult === "PhotoListShown" || raw.lastResult === "PhotoRequestAnswered" || raw.lastResult === "PhotoToolUnavailable") && Object.keys(raw).length === 15)) return undefined;
   const parsed: Connection = ({ phase: raw.phase, host: raw.host, surface: raw.surface, hasWrite: raw.hasWrite, hasProfileRead: raw.hasProfileRead, hasPhotos: raw.hasPhotos, status: raw.status, profileApproved: raw.profileApproved, profileSent: raw.profileSent, sentToday: raw.sentToday, draftPrepared: raw.draftPrepared, tokenUnseen: raw.tokenUnseen, otherUnseen: raw.otherUnseen, lastShown: raw.lastShown, lastResult: raw.lastResult });
   return inv(parsed) ? parsed : undefined;
 }

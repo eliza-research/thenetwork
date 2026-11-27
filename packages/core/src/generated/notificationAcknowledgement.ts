@@ -66,7 +66,7 @@ export function lawSharedThreadStillNeedsActiveAppOwner(sameRoutedApp: boolean, 
 /** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */
 //@ pure
 export function networkTextCanProduceInboxItem(system: boolean, messageType: string): boolean {
-  return !system && (messageType === "probe" || messageType === "plan_probe" || messageType === "proposal" || messageType === "reminder" || messageType === "feedback_request" || messageType === "cancellation" || messageType === "scheduling");
+  return !system && (messageType === "probe" || messageType === "plan_probe" || messageType === "proposal" || messageType === "reveal" || messageType === "pre_brief" || messageType === "venue_pivot" || messageType === "checkin" || messageType === "relay" || messageType === "reminder" || messageType === "feedback_request" || messageType === "cancellation" || messageType === "scheduling");
 }
 
 /** Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current (spec/notificationAcknowledgement.md) */

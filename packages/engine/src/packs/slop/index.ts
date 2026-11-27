@@ -104,7 +104,7 @@ export function makeSlopPack(over: DeepPartial<SlopPackOptions> = {}): AppPack &
       },
     },
     consent: {
-      default: { kind: "probe_first", order: "wanter_first", reveal: "opt_out", anonymousProbe: true },
+      default: { kind: "probe_first", order: "parallel", reveal: "opt_out", anonymousProbe: true },
       byKind: {},
     },
     attention: {

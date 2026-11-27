@@ -41,10 +41,26 @@ export function parseFriendsPlanTimeReply(body: string, offered: readonly TimeOp
     && offered.every(option => KEYS.some(key => key === option.key) && exactTimes(option) && option.start >= 0 && option.start < option.end);
   if (!validOffer) return { answer: "unclear", picks: [] };
   const parsed = parseProbeReply(body, offered, true);
-  const picks = offered.filter(option => parsed.keys.includes(option.key)).map(({ start, end }) => ({ start, end }));
-  const choice = friendPlanReplyChoice(parsed.answer === "yes", parsed.answer === "no", parsed.explicitTimeSelection === true,
-    parsed.why === "counter", picks.length);
-  if (choice === "AcceptTimeChoices") return { answer: "yes", picks };
+  const singleOfferedSlot = offered.length === 1;
+  let picks = offered.filter(option => parsed.keys.includes(option.key)).map(({ start, end }) => ({ start, end }));
+  let affirmative = parsed.answer === "yes";
+  const blockedBareSingleWhy = parsed.why === "slot" || parsed.why === "counter" || parsed.why === "mixed"
+    || parsed.why === "conditional" || parsed.why === "hedged" || parsed.why === "refusal";
+  if (singleOfferedSlot && !affirmative && parsed.answer === "unclear" && !blockedBareSingleWhy) {
+    const loose = parseProbeReply(body, offered, false);
+    if (loose.answer === "yes" && loose.why !== "counter" && loose.keys.length === 1 && loose.keys[0] === offered[0]!.key) {
+      affirmative = true;
+      picks = [{ start: offered[0]!.start, end: offered[0]!.end }];
+    }
+  }
+  const choice = friendPlanReplyChoice(affirmative, parsed.answer === "no", parsed.explicitTimeSelection === true,
+    parsed.why === "counter", picks.length, singleOfferedSlot);
+  if (choice === "AcceptTimeChoices") {
+    return {
+      answer: "yes",
+      picks: picks.length ? picks : singleOfferedSlot ? [{ start: offered[0]!.start, end: offered[0]!.end }] : [],
+    };
+  }
   return { answer: choice === "DeclineTimeChoices" ? "no" : "unclear", picks: [] };
 }
 

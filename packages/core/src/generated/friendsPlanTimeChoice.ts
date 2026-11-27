@@ -54,15 +54,22 @@ export function lawSecondFriendOfferNeedsTheFirstPick(reviewedSlot: boolean, via
 
 /** Story: Choose a time privately with my activity partner / Only explicit picks from the delivered invitation count (spec/friendsPlanTimeChoice.md) */
 //@ pure
-export function friendPlanReplyChoice(affirmative: boolean, negative: boolean, explicitPick: boolean, counter: boolean, pickedCount: number): FriendsPlanTimeReply {
-  return counter ? "ClarifyTimeChoices" : (affirmative && !negative && explicitPick && pickedCount > 0 ? "AcceptTimeChoices" : (negative && !affirmative ? "DeclineTimeChoices" : "ClarifyTimeChoices"));
+export function friendPlanReplyChoice(affirmative: boolean, negative: boolean, explicitPick: boolean, counter: boolean, pickedCount: number, singleOfferedSlot: boolean): FriendsPlanTimeReply {
+  return counter ? "ClarifyTimeChoices" : (affirmative && !negative && ((explicitPick && pickedCount > 0) || (singleOfferedSlot && pickedCount === 1)) ? "AcceptTimeChoices" : (negative && !affirmative ? "DeclineTimeChoices" : "ClarifyTimeChoices"));
 }
 
 /** Story: Choose a time privately with my activity partner / Only explicit picks from the delivered invitation count (spec/friendsPlanTimeChoice.md) */
 //@ pure
-export function lawFriendPlanBareYesCannotPick(pickedCount: number): boolean {
+export function lawMultiOptionBareYesCannotPick(pickedCount: number): boolean {
   //@ ensures \result === true
-  return friendPlanReplyChoice(true, false, false, false, pickedCount) === "ClarifyTimeChoices";
+  return friendPlanReplyChoice(true, false, false, false, pickedCount, false) === "ClarifyTimeChoices";
+}
+
+/** Story: Choose a time privately with my activity partner / Only explicit picks from the delivered invitation count (spec/friendsPlanTimeChoice.md) */
+//@ pure
+export function lawSingleOptionBareYesAccepts(explicitPick: boolean): boolean {
+  //@ ensures \result === true
+  return friendPlanReplyChoice(true, false, explicitPick, false, 1, true) === "AcceptTimeChoices";
 }
 
 /** Story: Choose a time privately with my activity partner / Book the earliest current window both chose (spec/friendsPlanTimeChoice.md) */

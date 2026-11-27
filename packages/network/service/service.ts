@@ -5,9 +5,10 @@ import { PROFILE_REVIEW_DISCONNECT_PATH, parseProfileReviewDisconnectProof } fro
 import { profileSuggestionDisconnectEndpoint, type SuggestionRevokedOwnerResolver } from "./profile-suggestion-disconnect-endpoint.ts";
 import { createHash, createSecretKey, hkdfSync, randomUUID, timingSafeEqual } from "node:crypto";
 import { SQL } from "../../core/src/runtime/postgres.ts";
+import { signCalendarToken, verifyCalendarToken } from "../../core/src/runtime/calendar-token.ts";
 import { isDeepStrictEqual } from "node:util";
 import {
-  checkExternalEventT24Quorum, DAY, formatAnchorOrQuorumCancel, getCityIds, isMinor, judgeLLM, judgeModelOf, LAUNCH_CITIES, LLMBudget, normalizeLumaWebhookEvent, providerKeyPresent, RealClock, recommenderLLM, verifyLumaWebhookSignature,
+  buildMeetupIcs, checkExternalEventT24Quorum, DAY, formatAnchorOrQuorumCancel, getCityIds, HOUR, isMinor, judgeLLM, judgeModelOf, LAUNCH_CITIES, LLMBudget, MeetupIcsLeakError, normalizeLumaWebhookEvent, providerKeyPresent, RealClock, recommenderLLM, verifyLumaWebhookSignature,
   type City, type CityId, type Clock, type Intent, type LLM, type MemberId, type PersonaHealthStatus, type VenueStatus,
 } from "@thenetwork/core";
 import { modelReviewJudge, REVIEW_JUDGE_REVIEWER, type ReviewJudge } from "../../engine/src/reviewJudge.ts";
@@ -321,6 +322,8 @@ export interface ServiceOptions {
    * (already delivered, never texted again); assistants read it through the MCP get_updates tool.
    */
   notify?: NotifyStore | false;
+  /** Append signed first-party /cal/<token>.ics links to booked reveals (default false unless NETWORK_CALENDAR_REVEAL_LINKS=1). */
+  calendarLinks?: boolean;
   log?: (line: string) => void;
 }
 
@@ -482,6 +485,7 @@ export class NetworkService implements RuntimeHost {
   private readonly seedInvitations: SeedInvitations;
   private readonly profileFactEdits: ProfileFactEdits;
   private readonly homeHelpVenueKey: ReturnType<typeof createSecretKey>;
+  private readonly calendarTokenKey: string;
   /** The inbound inbox: one row per provider message, handled once and in order per sender (inbox.ts). */
   readonly inbox: Inbox;
   private readonly cap: number;
@@ -541,6 +545,7 @@ export class NetworkService implements RuntimeHost {
     this.seedInvitations = new SeedInvitations(key, () => this.clock.now());
     this.profileFactEdits = new ProfileFactEdits(key, () => this.clock.now());
     this.homeHelpVenueKey = createSecretKey(Buffer.from(hkdfSync("sha256", key, "thenetwork", "private-home-help-venue-v1", 32)));
+    this.calendarTokenKey = Buffer.from(hkdfSync("sha256", key, "thenetwork", "meetup-ics-token-v1", 32)).toString("hex");
     const minLength = devShortcutsAllowed(this.env) ? undefined : MIN_SECRET_LENGTH;
     this.tokens = serviceTokenGrants(o.tokens, isProduction(this.env), minLength);
     if (minLength && this.consoleToken && this.consoleToken.length < minLength) throw new Error(`NETWORK_SERVICE_CONSOLE_TOKEN must be at least ${minLength} characters`);
@@ -609,8 +614,12 @@ export class NetworkService implements RuntimeHost {
       const devOn = (o.devMatching ?? []).includes(id);
       if (devOn && !devShortcutsAllowed(this.env)) throw new Error("devMatching is for PLATFORM_ENV=dev only: production matching is turned on by an admin in the console");
       const engineLLM = engineJudgeFor(app);
+      const calendarLinksEnabled = o.calendarLinks === true || this.env.NETWORK_CALENDAR_REVEAL_LINKS === "1";
       const network = { ...o.network,
         ...(engineLLM ? { engineLLM } : {}),
+        ...(calendarLinksEnabled && !o.network?.calendarLinkFor
+          ? { calendarLinkFor: (opp: Parameters<NonNullable<NetworkOptions["calendarLinkFor"]>>[0], recipient: MemberId) => this.calendarLinkFor(app, opp, recipient) }
+          : {}),
         judgeReviewer: judgeFor(app)?.reviewer ?? REVIEW_JUDGE_REVIEWER,
         ...(devOn ? { matchingEnabled: true } : {}),
       };
@@ -1354,7 +1363,7 @@ export class NetworkService implements RuntimeHost {
       const { status, minor } = (row?.opportunity_id ? teen.get(row.opportunity_id) : undefined) ?? { status: "unmarked", minor: false };
       const readerAgeAllowed = status === "current" || (readerMatchable && (status === "adult" || (status === "unmarked" && !minor)));
       if (!row?.bound && !readerMatchable) {
-        if (!teenFriendApp(app)) return [item.id, "InboxUpdateWithheld"];
+        if (app === "slop") return [item.id, "InboxUpdateWithheld"];
         if (unsafeUnboundForMinor(item)) return [item.id, "InboxUpdateRetired"];
       }
       return [item.id, connectorUpdateOutcome(stillCurrent, readerAgeAllowed, !!row?.bound, passesLeakGate(item.summary))];
@@ -2090,8 +2099,18 @@ export class NetworkService implements RuntimeHost {
     });
     return this.api;
   }
-  /** The public API handler for serveHttp: /api/* or 404. */
-  publicFetch = async (req: Request, server?: PeerInfo): Promise<Response> => (await this.publicApi.fetch(req, server)) ?? Response.json({ ok: false, error: "not_found" }, { status: 404 });
+  /** The public API handler for serveHttp: /cal/:token.ics, /api/* or 404. */
+  publicFetch = async (req: Request, server?: PeerInfo): Promise<Response> => {
+    const pathname = new URL(req.url).pathname;
+    const calMatch = /^\/cal\/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\.ics$/.exec(pathname);
+    if (calMatch) {
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        return Response.json({ ok: false, error: "method_not_allowed" }, { status: 405, headers: { "cache-control": "private, no-store" } });
+      }
+      return this.renderCalendarIcs(calMatch[1]!, this.clock.now());
+    }
+    return (await this.publicApi.fetch(req, server)) ?? Response.json({ ok: false, error: "not_found" }, { status: 404 });
+  };
 
   // ------------------------------------------------------------------ inbound
   private async route(ev: Extract<ChannelEvent, { kind: "message" }>, forced?: AppId, threadRead = false, reportReply = false): Promise<Route> {
@@ -2579,6 +2598,144 @@ export class NetworkService implements RuntimeHost {
       ? member.own.membership.profile.redLines.filter((x): x is string => typeof x === "string")
       : [];
     return [...new Set([...fromProfile, ...fromFacets])].sort();
+  }
+
+  async setMemberAvailability(
+    appId: AppId,
+    personId: string,
+    phoneKey: string,
+    input: { days?: string[]; windows?: string[]; quietHours?: { start: string; end: string }; timezone?: string; notes?: string },
+  ): Promise<{ ok: boolean; summary?: string; error?: string }> {
+    const who = await this.accounts.byPhoneHash(phoneKey);
+    if (!who || who.person.id !== personId) return { ok: false, error: "not_member" };
+    if (await this.accounts.banned(who.e164, who.person)) return { ok: false, error: "not_member" };
+    if (resolveConsent(await this.people.lastConsent(who.e164, appId)) === "opted_out") return { ok: false, error: "stopped" };
+    const member = await this.ownMember(personId, appId, who.e164);
+    if (!member) return { ok: false, error: "not_member" };
+    const now = this.clock.now();
+    const res = await member.rt.unitOfWork(net => net.setMemberAvailability(member.memberId, input, now));
+    if (!res.ok) return { ok: false, error: res.error ?? "invalid_availability" };
+    await member.rt.scoped(async tx => {
+      if (res.quietHours) {
+        const patch = { quietHours: res.quietHours };
+        const saved = await tx`update network.members set prefs=coalesce(prefs, '{}'::jsonb) || ${patch}::jsonb
+          where app_id=${appId} and id=${member.memberId} and (coalesce(prefs, '{}'::jsonb) || ${patch}::jsonb) is distinct from prefs returning id`;
+        if (saved.length) {
+          await tx`insert into network.events(app_id, at, actor_type, actor_id, type, object_type, object_id, payload)
+            values (${appId}, ${new Date(now)}, 'member', ${member.memberId}, 'member_preferences_changed', 'member', ${member.memberId}, ${patch}::jsonb)`;
+        }
+      }
+      if (res.tags?.length) {
+        const facetId = `${member.memberId}:mcp:availability`;
+        const summaryText = res.summary ?? res.tags.join(", ");
+        await tx`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, source, status, confidence, valid_from, observed_at)
+          values (${appId}, ${facetId}, ${member.memberId}, 'availability_pattern', ${summaryText}, ${tx.array(res.tags, "TEXT")}, 'agent_private', 'said', 'ai_memory', 'confirmed', 1, ${new Date(now)}, ${new Date(now)})
+          on conflict (id) do update set value=excluded.value, tags=excluded.tags, privacy_scope='agent_private', provenance='said', source='ai_memory', status='confirmed', valid_to=null, observed_at=${new Date(now)}`;
+      }
+    });
+    return { ok: true, ...(res.summary ? { summary: res.summary } : {}) };
+  }
+
+  async setMemberRedLines(
+    appId: AppId,
+    personId: string,
+    phoneKey: string,
+    input: { redLines: string[]; mode?: "merge" | "replace" },
+  ): Promise<{ ok: boolean; redLines?: string[]; error?: string }> {
+    const who = await this.accounts.byPhoneHash(phoneKey);
+    if (!who || who.person.id !== personId) return { ok: false, error: "not_member" };
+    if (await this.accounts.banned(who.e164, who.person)) return { ok: false, error: "not_member" };
+    if (resolveConsent(await this.people.lastConsent(who.e164, appId)) === "opted_out") return { ok: false, error: "stopped" };
+    const member = await this.ownMember(personId, appId, who.e164);
+    if (!member) return { ok: false, error: "not_member" };
+    const mode = input.mode === "replace" ? "replace" : "merge";
+    const now = this.clock.now();
+    const res = await member.rt.unitOfWork(net => net.setMemberRedLines(member.memberId, input.redLines ?? [], mode));
+    if (!res.ok) return { ok: false, error: res.error ?? "invalid_red_lines" };
+    const finalRedLines = res.redLines ?? [];
+    await member.rt.scoped(async tx => {
+      if (mode === "replace") {
+        await tx`delete from network.facets where app_id=${appId} and member_id=${member.memberId} and kind='boundary' and id like ${`${member.memberId}:mcp:redline:%`}`;
+      }
+      for (const tag of finalRedLines) {
+        const facetId = `${member.memberId}:mcp:redline:${tag}`;
+        await tx`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, source, status, confidence, valid_from, observed_at)
+          values (${appId}, ${facetId}, ${member.memberId}, 'boundary', ${tag}, ${tx.array([tag], "TEXT")}, 'agent_private', 'said', 'ai_memory', 'confirmed', 1, ${new Date(now)}, ${new Date(now)})
+          on conflict (id) do update set value=excluded.value, tags=excluded.tags, privacy_scope='agent_private', provenance='said', source='ai_memory', status='confirmed', valid_to=null, observed_at=${new Date(now)}`;
+      }
+    });
+    const m = member.own.membership;
+    const prior = Array.isArray(m.profile.redLines) ? m.profile.redLines.filter((x): x is string => typeof x === "string") : [];
+    const nextProfileRedLines = mode === "replace"
+      ? [...finalRedLines]
+      : [...new Set([...prior, ...finalRedLines])].sort();
+    await this.people.putMembership({ ...m, profile: { ...m.profile, redLines: nextProfileRedLines } });
+    return { ok: true, redLines: nextProfileRedLines };
+  }
+
+  calendarLinkFor(
+    appId: AppId,
+    opp: Pick<Parameters<NonNullable<NetworkOptions["calendarLinkFor"]>>[0], "id" | "stage" | "meetingAt" | "venue" | "workIntro" | "seat" | "scheduleRevision">,
+    recipientId: MemberId,
+  ): string | undefined {
+    const app = this.apps[appId];
+    if (!app || opp.stage !== "scheduled" || opp.meetingAt === undefined || !opp.venue?.trim() || opp.workIntro || opp.seat) return undefined;
+    const exp = Math.floor(opp.meetingAt) + 4 * HOUR;
+    const token = signCalendarToken({
+      app: appId,
+      oppId: opp.id,
+      memberId: recipientId,
+      exp,
+      rev: opp.scheduleRevision ?? 0,
+    }, this.calendarTokenKey);
+    return `${this.siteOrigin(app)}/cal/${token}.ics`;
+  }
+
+  async renderCalendarIcs(token: string, now = this.clock.now()): Promise<Response> {
+    const securityHeaders = {
+      "cache-control": "private, no-store",
+      "referrer-policy": "no-referrer",
+      "x-content-type-options": "nosniff",
+    };
+    const notFound = () => Response.json({ ok: false, error: "not_found" }, { status: 404, headers: securityHeaders });
+    const payload = verifyCalendarToken(token, this.calendarTokenKey, now);
+    if (!payload || !isAppId(payload.app)) return notFound();
+    const app = this.apps[payload.app];
+    const rt = await this.runtimeOfMember(payload.app, payload.memberId);
+    if (!app || !rt) return notFound();
+    const event = await rt.readState(net => net.calendarEventFor(payload.oppId, payload.memberId as MemberId));
+    if (!event) return notFound();
+    if (payload.rev !== undefined && event.revision !== payload.rev) return notFound();
+    if (now >= event.startMs + 4 * HOUR) return notFound();
+    const uid = `${createHash("sha256").update(`${payload.app}:${payload.oppId}:${payload.memberId}`).digest("hex").slice(0, 32)}@${app.domain}`;
+    const summary = `${app.name} meetup`;
+    const location = [event.venue, event.venueArea].filter(Boolean).join(", ");
+    const description = "Reply in your message thread if your plans change.";
+    let ics: string;
+    try {
+      ics = buildMeetupIcs({
+        uid,
+        dtstampMs: now,
+        startMs: event.startMs,
+        ...(event.endMs !== undefined ? { endMs: event.endMs } : {}),
+        summary,
+        location,
+        description,
+        sequence: event.revision,
+        leakOptions: { ...event.leakSources, allow: [location] },
+      });
+    } catch (err) {
+      if (err instanceof MeetupIcsLeakError) return notFound();
+      throw err;
+    }
+    return new Response(ics, {
+      status: 200,
+      headers: {
+        ...securityHeaders,
+        "content-type": "text/calendar; charset=utf-8",
+        "content-disposition": 'inline; filename="meetup.ics"',
+      },
+    });
   }
 
   async mcpLeakContext(personId: string, appId: AppId, e164: string): Promise<LeakContext | undefined> {
@@ -3346,7 +3503,8 @@ export class NetworkService implements RuntimeHost {
     if (welcomed.phase === "JoinedWithLookingFor") {
       const askText = lookingForAsk(Math.min(age, check.effective ?? age));
       const greeting = `Hi ${name}, welcome to ${app.name}.`;
-      await rt.unitOfWork(async () => {
+      await rt.unitOfWork(async n => {
+        n.registerJoined(membership.memberId as MemberId);
         rt.unit.inbound = { id: rowId, member_id: membership.memberId, direction: "inbound", channel: ev.transport === "sms" ? "sms" : "imessage", body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
         rt.system(membership.memberId, `welcome:${rowId}`, greeting, "reply", "info");
         rt.system(membership.memberId, `ask:${rowId}`, askText, "reply", "info");
@@ -3392,7 +3550,7 @@ export class NetworkService implements RuntimeHost {
           wording: asked, ref: `${rowId}:${id}`, at: this.consentAt(ev) }, key, null);
         if (!admitted || (m.state === "active" && !await this.createMember(art, m, { age: lowest, recordedAge: independent ?? null, firstName: ntwrk.firstName ?? "there", homeCity }))) continue;
         if (m.state === "active" && !turn) {
-          await art.unitOfWork(n => { n.welcomeJoined(m.memberId as MemberId); }).catch(e => this.log(`[enroll] child welcome deferred (${art.id}): ${(e as Error).message}`));
+          await art.unitOfWork(n => { n.registerJoined(m.memberId as MemberId); }).catch(e => this.log(`[enroll] child welcome deferred (${art.id}): ${(e as Error).message}`));
         }
         joined.push(app);
       }

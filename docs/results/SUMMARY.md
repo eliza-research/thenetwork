@@ -35,6 +35,7 @@ The latest per-topic reports stay in `docs/results/`:
 - [2026-10-08-friends-pack.md](2026-10-08-friends-pack.md)
 - [2026-11-27-meetup-pass2.md](2026-11-27-meetup-pass2.md)
 - [2026-11-27-pass3-journeys-and-llm.md](2026-11-27-pass3-journeys-and-llm.md)
+- [2026-11-27-pass4-deferred-decide.md](2026-11-27-pass4-deferred-decide.md)
 
 **How to validate today.** Validation is now `pnpm run sim` (`scripts/sim.ts`). The commands quoted in the old documents (`node --import tsx --env-file-if-exists=.env packages/evals/src/cli.ts ...`, `the former runtime packages/engine/experiments/*.ts`, `pnpm run prototypes/...`, the old sim CLI flags) ran code that has since been deleted (`packages/evals`, `packages/engine/experiments`, `prototypes`). They do not run on this tree. The numbers below are historical: they describe the code at the time, not the current tree.
 

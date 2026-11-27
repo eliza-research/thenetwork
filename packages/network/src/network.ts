@@ -24,7 +24,7 @@ import {
   ADULT_AGE, ALCOHOL_CENTRIC_CATEGORIES, ALL_SEED_VENUES, canBeMatched, canJoin, checkExternalEventT24Quorum, checkPublishExternalEvent,
   CITY_TZ, cityTimezone, computeFollowupTimestamp, DAY, directAgreementIdiom, evaluateArrivalRelaySafe, evaluateBackupPivotV2, evaluateDensityTier,
   evaluateExternalSourcingTrigger, evaluateFollowupSend, evaluateVenueQuarantine, evaluateVenueRedLines, fromLocal, HOUR, isCity, isLaunchCity, isMinor,
-  isVenueOpenAt, localParts, LeakGuard, MINUTE, pickPrimaryAndBackupVenue, proposeTopOne, quoteStillOpen, rejectAndPivot, rerankTopVenuesWithLLM,
+  isOwnCalendarIcsUrl, isVenueOpenAt, localParts, LeakGuard, MINUTE, pickPrimaryAndBackupVenue, proposeTopOne, quoteStillOpen, rejectAndPivot, rerankTopVenuesWithLLM,
   seedVenuesForCity, selectWorkIntroChannel, UNDER_MIN_AGE_DECLINE, validAge, venueHardEligible,
   type Category, type City, type CityId, type DensityTier, type ExternalEventDraft, type ExternalQuorumDecision, type Facet, type Intent,
   type LaunchCity, type LeakOptions, type LLM, type MemberId, type MemberVenuePrefs, type NetworkEvent,
@@ -435,7 +435,7 @@ const REPORT_PHASE = { open: "ReportOpen", held: "ReportHeld", banned: "ReportBa
 const READ_ONLY_METHODS = new Set<string | symbol>([
   "matchingEnabled", "reviewQueue", "safetyCases", "safetyReports", "memberList", "exportState",
   "snapshotCached", "knownProfiles", "engineInput", "packInput", "rescheduleReplyCurrent",
-  "approvedPublicEventLink", "approvedBookingLink", "densityTierFor", "canTriggerExternalSourcingFor",
+  "approvedPublicEventLink", "approvedBookingLink", "calendarEventFor", "probeOrderFor", "densityTierFor", "canTriggerExternalSourcingFor",
   "evaluateExternalEventPublish", "evaluateExternalEventQuorum", "reportRestrictionsForLeave",
   "stripNames", "findByName", "stats", "openOpps", "recentRequests", "standingFor", "standingEntries",
   "teenIntrosEnabled", "teenState", "relayState", "auditLog", "pendingCounts", "checkRecipient",
@@ -597,6 +597,32 @@ export interface NetworkOptions {
   venues?: readonly VenueRecord[];
   memberVenueHistory?: ReadonlyMap<MemberId, MemberVenueHistory>;
   concurrentHeadcountByVenue?: Record<string, number>;
+  /** Optional first-party .ics calendar link generator for booked reveals (undefined in offline sims). */
+  calendarLinkFor?: (o: Pick<Opp, "id" | "stage" | "meetingAt" | "venue" | "venueArea" | "workIntro" | "seat" | "scheduleRevision" | "plan" | "participants">, recipient: MemberId) => string | undefined;
+  /** Optional probe order override for symmetric non-requester 1:1 intros (defaults to pack.consent). */
+  probeOrder?: "parallel" | "wanter_first";
+}
+
+export interface MemberAvailabilityInput {
+  days?: readonly string[];
+  windows?: readonly string[];
+  quietHours?: { start: string; end: string };
+  timezone?: string;
+  notes?: string;
+}
+
+export interface MemberAvailabilityResult {
+  ok: boolean;
+  summary?: string;
+  quietHours?: [number, number];
+  tags?: string[];
+  error?: string;
+}
+
+export interface MemberRedLinesResult {
+  ok: boolean;
+  redLines?: string[];
+  error?: string;
 }
 
 export interface MemberVenueHistory {
@@ -1047,6 +1073,8 @@ type SendResult = "sent" | "deferred" | "refused";
 interface SendOpts {
   /** Verified public venue address from VenueManager allowed on pre_brief and backup_pivot sends. */
   publicVenueAddress?: string;
+  /** First-party signed .ics calendar link allowed on booked reveals. */
+  calendarLink?: string;
   /** Other members the message is about (send-time checks: minors, watch, blocks). */
   about?: MemberId[];
   /** Sent instead when the leak guard blocks the message (it is checked too). */
@@ -1345,8 +1373,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   readonly judgeReviewer: string;
   private flagged = new Map<string, { reason: JudgeReasonCode; at: number }>();
   private snapAvoid?: { snap: WorldSnapshot; set: Set<string> };
-  private opts: Required<Omit<NetworkOptions, "inlineJudge" | "judgeReviewer" | "app" | "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "plansConfig" | "understand" | "workIntroEmailOf" | "venueProvider" | "arrivalBriefs" | "onAgeStated" | "onMinorSignal" | "onTeenBar" | "onTeenPairAvoid" | "engineLLM" | "pack" | "allowedCategories" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "lateArrivalTurnAllowed" | "calendarFreeBusy" | "onPrivateInviteTurn" | "homeHelpIntakePrompt" | "venues" | "memberVenueHistory" | "concurrentHeadcountByVenue">>
-    & Pick<NetworkOptions, "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "understand" | "workIntroEmailOf" | "venueProvider" | "arrivalBriefs" | "onAgeStated" | "onMinorSignal" | "onTeenBar" | "onTeenPairAvoid" | "engineLLM" | "pack" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "lateArrivalTurnAllowed" | "calendarFreeBusy" | "onPrivateInviteTurn" | "homeHelpIntakePrompt">;
+  private opts: Required<Omit<NetworkOptions, "inlineJudge" | "judgeReviewer" | "app" | "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "plansConfig" | "understand" | "workIntroEmailOf" | "venueProvider" | "arrivalBriefs" | "onAgeStated" | "onMinorSignal" | "onTeenBar" | "onTeenPairAvoid" | "engineLLM" | "pack" | "allowedCategories" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "lateArrivalTurnAllowed" | "calendarFreeBusy" | "onPrivateInviteTurn" | "homeHelpIntakePrompt" | "venues" | "memberVenueHistory" | "concurrentHeadcountByVenue" | "calendarLinkFor" | "probeOrder">>
+    & Pick<NetworkOptions, "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "understand" | "workIntroEmailOf" | "venueProvider" | "arrivalBriefs" | "onAgeStated" | "onMinorSignal" | "onTeenBar" | "onTeenPairAvoid" | "engineLLM" | "pack" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "lateArrivalTurnAllowed" | "calendarFreeBusy" | "onPrivateInviteTurn" | "homeHelpIntakePrompt" | "calendarLinkFor" | "probeOrder">;
   private venueRuntimeCtx: VenueRuntimeContext = {};
   /** The categories this app may start opportunities in (ALLOWED_CATEGORIES). */
   readonly allowedCategories: ReadonlySet<Category>;
@@ -1375,6 +1403,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       lateArrivalTurnAllowed: opts.lateArrivalTurnAllowed,
       calendarFreeBusy: opts.calendarFreeBusy,
       homeHelpIntakePrompt: opts.homeHelpIntakePrompt,
+      calendarLinkFor: opts.calendarLinkFor,
+      probeOrder: opts.probeOrder,
     };
     this.venueRuntimeCtx = {
       ...(opts.venues !== undefined ? { venues: opts.venues } : {}),
@@ -5015,6 +5045,26 @@ export class ConsentNetwork implements NetworkUnderTest {
    * who asked for this exact thing (primed) needs no probe. Whoever's turn it is gets a probe now,
    * or in their send window (probe() defers it; tick() calls this again). Reveal when all said yes.
    */
+  private probeOrder(o: Opp): "parallel" | "wanter_first" {
+    if (o.requester || o.seat || o.plan || o.participants.length !== 2 || isGatheringRepeat(o)) return "wanter_first";
+    if (o.origin === "request" || o.origin === "newcomer_welcome" || o.origin === "player") return "wanter_first";
+    if (o.roles) {
+      const roles = Object.values(o.roles);
+      if (roles.some(role => role === "helper" || role === "host" || role === "newcomer")) return "wanter_first";
+    }
+    if (this.opts.probeOrder) return this.opts.probeOrder;
+    const pack = this.opts.pack ?? networkPack;
+    const policy = pack.consent.byKind[o.kind] ?? pack.consent.default;
+    if (policy.kind === "probe_first" && policy.order === "parallel") return "parallel";
+    if (policy.kind === "double_opt_in") return "parallel";
+    return "wanter_first";
+  }
+
+  probeOrderFor(oppId: string): "parallel" | "wanter_first" | undefined {
+    const opp = this.opps.get(oppId);
+    return opp ? this.probeOrder(opp) : undefined;
+  }
+
   private advanceProbes(o: Opp) {
     if (o.plan) return this.planLane(o, this.now());
     if (o.stage !== "probing") return;
@@ -5042,10 +5092,11 @@ export class ConsentNetwork implements NetworkUnderTest {
       const next = stepProbe(probe, { type: "usePriorIntent", primed, contacted, needsTimes: this.asksTimes(o, p) });
       if (next !== probe) storeProbe(o, p, next);
     }
+    const parallel = this.probeOrder(o) === "parallel";
     const firstIn = agreedToRoster(participantProbe(o, o.first), o.roster ?? 0);
     for (const p of [...o.participants]) {
       if (o.stage !== "probing") return;
-      const current = participantProbe(o, p), first = p === o.first;
+      const current = participantProbe(o, p), first = parallel || p === o.first;
       if (!turnReached(current, first, firstIn)) continue;
       const opened = stepProbe(current, { type: "openTurn", first, firstAvailable: firstIn });
       if (opened !== current) { storeProbe(o, p, opened); o.turnAt = { ...o.turnAt, [p]: now }; }
@@ -5945,10 +5996,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     const curatedLink = proactive ? undefined : venueBookingLink(o, id, true, this.now(), this.networkCity());
     const link = this.currentPublishedEvent(o)?.listing?.url ?? curatedLink;
     const source = link ? `\n${link}` : "";
-    this.send(m, text + source, {
+    const rawCalLink = !link && !o.workIntro && !o.seat ? this.opts.calendarLinkFor?.(o, id) : undefined;
+    const calLink = rawCalLink && isOwnCalendarIcsUrl(rawCalLink, this.app.domain) ? rawCalLink : undefined;
+    const calSuffix = calLink ? ` Add to calendar: ${calLink}` : "";
+    this.send(m, text + calSuffix + source, {
       type: "proposal", proposalId: o.id, participants: going, meetingAt: o.meetingAt,
       booked: { proposalId: o.id, at: o.meetingAt, optOutHours: OPT_OUT_HOURS }, proactive,
-    }, "reveal", { about: going, fallback: fallback + source,
+    }, "reveal", { about: going, fallback: fallback + calSuffix + source,
+      ...(calLink ? { calendarLink: calLink } : {}),
       hook: { t: "reveal", oppId: o.id, id }, ...(curatedLink && o.venueId ? { key: venueBookingNoticeKey(o.id, id, o.venueId) } : {}) });
   }
 
@@ -7343,7 +7398,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       now, city, tz, evidence, venues: planVenuesForCity(city), crews: [], outcomes, offered: [], lastPlannedAt: this.lastPlannedAt,
       venueExcluded: (venueId, ids) => this.venues.excludedIdsFor(ids).has(venueId),
       repeatAllowed: plan => this.friendsRepeatPlanCurrent(plan, now, world),
-    }, { ...DEFAULT_FRIENDS_POLICY, crews: false, mutualPositive: false, openTable: false, spreadNew: true }, this.pcfg);
+    }, { ...DEFAULT_FRIENDS_POLICY, crews: false, mutualPositive: false, openTable: true, spreadNew: true }, this.pcfg);
     for (const plan of week.repeats) {
       if (rosterHasMinor(plan.invited.map(id => this.rosterSideOf(id)))) continue;
       const ordered = [...plan.invited].sort();
@@ -9092,6 +9147,142 @@ export class ConsentNetwork implements NetworkUnderTest {
     return undefined;
   }
 
+  private static parseQuietHour(raw: string): number | undefined {
+    const cleaned = raw.trim().toLowerCase().replace(/\s+/g, " ");
+    const military = /^(\d{1,2}):(00|30)$/.exec(cleaned);
+    if (military) {
+      const h = Number(military[1]);
+      return h >= 0 && h < 24 ? h + (military[2] === "30" ? 0.5 : 0) : undefined;
+    }
+    const meridiem = /^(1[0-2]|[1-9])(?::(00|30))? ?(am|pm)$/.exec(cleaned);
+    if (meridiem) {
+      return (Number(meridiem[1]) % 12) + (meridiem[3] === "pm" ? 12 : 0) + (meridiem[2] === "30" ? 0.5 : 0);
+    }
+    if (/^\d{1,2}$/.test(cleaned)) {
+      const h = Number(cleaned);
+      return h >= 0 && h < 24 ? h : undefined;
+    }
+    return undefined;
+  }
+
+  private static normalizeRedLineEntry(raw: string): string[] {
+    const trimmed = raw.trim();
+    if (!trimmed) return [];
+    const extracted = extractRedLineTags(trimmed);
+    if (extracted.length) return extracted;
+    const slug = trimmed.toLowerCase().replace(/[\s-]+/g, "_");
+    return /^[a-z][a-z0-9_:-]{1,40}$/.test(slug) ? [slug] : [];
+  }
+
+  setMemberAvailability(memberId: MemberId, input: MemberAvailabilityInput, now = this.now()): MemberAvailabilityResult {
+    const m = this.members.get(memberId);
+    if (!m || this.declinedIds.has(memberId) || m.optedOut) return { ok: false, error: "not_member" };
+    let tz = this.cityTz();
+    if (input.timezone?.trim()) {
+      const candidate = input.timezone.trim();
+      try {
+        new Intl.DateTimeFormat("en-US", { timeZone: candidate });
+        tz = candidate;
+      } catch {
+        return { ok: false, error: "invalid_timezone" };
+      }
+    }
+    let quietHours: [number, number] | undefined;
+    if (input.quietHours) {
+      const start = ConsentNetwork.parseQuietHour(input.quietHours.start);
+      const end = ConsentNetwork.parseQuietHour(input.quietHours.end);
+      if (start === undefined || end === undefined) return { ok: false, error: "invalid_quiet_hours" };
+      quietHours = [start, end];
+    }
+    const days = (input.days ?? []).map(d => d.trim()).filter(Boolean);
+    const windows = (input.windows ?? []).map(w => w.trim()).filter(Boolean);
+    const notes = input.notes?.trim() ?? "";
+    const phrases: string[] = [];
+    if (days.length && windows.length) {
+      for (const windowText of windows) phrases.push(`${days.join(" and ")} ${windowText}`);
+    } else if (days.length) {
+      phrases.push(days.join(" and "));
+    } else if (windows.length) {
+      phrases.push(windows.join(" and "));
+    }
+    if (notes) phrases.push(notes);
+    const tagSet = new Set<string>();
+    for (const phrase of phrases) {
+      for (const tag of availabilityTags(phrase, now, tz)) tagSet.add(tag);
+    }
+    const tags = [...tagSet].sort();
+    if (!tags.length && !quietHours) return { ok: false, error: "no_availability_changes" };
+    if (tags.length) {
+      m.availability = [...(m.availability ?? []), { tags, at: now }].slice(-8);
+      m.standing = { tags, at: now };
+      const sw = statedWindows(tags, now, tz);
+      if (sw) m.stated = sw;
+    }
+    if (quietHours) {
+      m.quietHours = [quietHours[0], quietHours[1]];
+      this.profiles.delete(memberId);
+    }
+    this.dirty = true;
+    const summaryParts: string[] = [];
+    if (tags.length) summaryParts.push(`Availability saved (${tags.join(", ")})`);
+    if (quietHours) {
+      const fmt = (h: number) => `${String(Math.floor(h)).padStart(2, "0")}:${String(Math.round((h - Math.floor(h)) * 60)).padStart(2, "0")}`;
+      summaryParts.push(`Quiet hours ${fmt(quietHours[0])} to ${fmt(quietHours[1])}`);
+    }
+    const summary = summaryParts.join("; ");
+    this.ctx.log("availability_updated", { memberId, tagCount: tags.length, hasQuietHours: !!quietHours });
+    return {
+      ok: true,
+      summary,
+      ...(quietHours ? { quietHours } : {}),
+      ...(tags.length ? { tags } : {}),
+    };
+  }
+
+  setMemberRedLines(memberId: MemberId, redLines: readonly string[], mode: "merge" | "replace" = "merge"): MemberRedLinesResult {
+    const m = this.members.get(memberId);
+    if (!m || this.declinedIds.has(memberId) || m.optedOut) return { ok: false, error: "not_member" };
+    const normalized = new Set<string>();
+    for (const raw of redLines) {
+      if (typeof raw !== "string") continue;
+      for (const tag of ConsentNetwork.normalizeRedLineEntry(raw)) normalized.add(tag);
+    }
+    if (mode === "replace") {
+      m.learned.redLines = new Set(normalized);
+    } else {
+      m.learned.redLines ??= new Set();
+      for (const tag of normalized) m.learned.redLines.add(tag);
+    }
+    this.dirty = true;
+    const finalRedLines = [...(m.learned.redLines ?? [])].sort();
+    this.ctx.log("red_lines_updated", { memberId, count: finalRedLines.length, mode });
+    return { ok: true, redLines: finalRedLines };
+  }
+
+  calendarEventFor(oppId: string, memberId: MemberId): {
+    startMs: number;
+    endMs?: number;
+    venue: string;
+    venueArea?: string;
+    revision: number;
+    leakSources: LeakSources;
+  } | undefined {
+    const o = this.opps.get(oppId);
+    const m = this.members.get(memberId);
+    if (!o || !m || m.optedOut || m.account || this.declinedIds.has(memberId)) return undefined;
+    if (o.stage !== "scheduled" || o.meetingAt === undefined || !o.venue?.trim() || o.workIntro || o.seat) return undefined;
+    if (!o.participants.includes(memberId) || o.status.get(memberId) !== "yes") return undefined;
+    const endMs = o.plan?.window.end && o.plan.window.end > o.meetingAt ? o.plan.window.end : undefined;
+    return {
+      startMs: o.meetingAt,
+      ...(endMs !== undefined ? { endMs } : {}),
+      venue: o.venue,
+      ...(o.venueArea ? { venueArea: o.venueArea } : {}),
+      revision: o.scheduleRevision ?? 0,
+      leakSources: this.leakSources([memberId]),
+    };
+  }
+
   /** Used only by confirmation dispatch. Other URLs still go through the ordinary contact guard. */
   approvedPublicEventLink(oppId: string | undefined, recipient: MemberId | undefined, text: string): string | undefined {
     const opportunity = oppId ? this.opps.get(oppId) : undefined;
@@ -9104,13 +9295,26 @@ export class ConsentNetwork implements NetworkUnderTest {
       text.endsWith(`\n${link}`) && text.indexOf(link) === text.lastIndexOf(link)) ? link : undefined;
   }
 
+  approvedCalendarLink(oppId: string | undefined, recipient: MemberId | undefined, text: string): string | undefined {
+    const opportunity = oppId ? this.opps.get(oppId) : undefined;
+    if (!opportunity || !recipient || opportunity.stage !== "scheduled" || opportunity.workIntro || opportunity.seat) return undefined;
+    if (!opportunity.participants.includes(recipient) || opportunity.status.get(recipient) !== "yes") return undefined;
+    const match = / Add to calendar: (https?:\/\/[^\s]+\/cal\/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.ics)(?:$|\n)/.exec(text);
+    const link = match?.[1];
+    if (!link || !isOwnCalendarIcsUrl(link, this.app.domain)) return undefined;
+    return text.indexOf(link) === text.lastIndexOf(link) ? link : undefined;
+  }
+
   approvedBookingLink(oppId: string | undefined, recipient: MemberId | undefined, text: string, messageId?: string): string | undefined {
     const eventLink = this.approvedPublicEventLink(oppId, recipient, text);
     if (eventLink) return eventLink;
     const opportunity = oppId ? this.opps.get(oppId) : undefined;
-    if (!opportunity?.venueId || !recipient || !messageId) return;
-    const exactMessage = venueBookingNoticeBase(messageId) === venueBookingNoticeKey(opportunity.id, recipient, opportunity.venueId);
-    return approvedVenueBookingLink(opportunity, recipient, opportunity.status.get(recipient) === "yes", this.now(), text, exactMessage, this.networkCity());
+    if (opportunity?.venueId && recipient && messageId) {
+      const exactMessage = venueBookingNoticeBase(messageId) === venueBookingNoticeKey(opportunity.id, recipient, opportunity.venueId);
+      const curated = approvedVenueBookingLink(opportunity, recipient, opportunity.status.get(recipient) === "yes", this.now(), text, exactMessage, this.networkCity());
+      if (curated) return curated;
+    }
+    return this.approvedCalendarLink(oppId, recipient, text);
   }
 
   /** The engine's input: the public snapshot plus everything the Network has learned and observed. */
@@ -9712,11 +9916,20 @@ export class ConsentNetwork implements NetworkUnderTest {
       return memberInviteLinkCanBeShared(this.memberReply && this.replyTo === m.id && reply, true, isMemberInvitationLink(this.app, link), presentOnce) ? link : undefined;
     };
     const reviewReference = this.memberReply && this.replyTo === m.id && reply ? o.memberInviteReviewReference : undefined;
-    const approvedContact = (value: string) => approvedLink(value) ?? inviteReviewContactToken(value, reviewReference);
-    const leaks = this.guardCheck(o.relayContact ? text.split(o.relayContact).join(" ") : text, m.id, o.relayFrom, approvedContact(text), o.publicVenueAddress);
+    const approvedContacts = (value: string): string[] => {
+      const out: string[] = [];
+      const primary = approvedLink(value) ?? inviteReviewContactToken(value, reviewReference);
+      if (primary) out.push(primary);
+      if (kind === "reveal" && o.calendarLink && isOwnCalendarIcsUrl(o.calendarLink, this.app.domain)
+        && value.includes(o.calendarLink) && !out.includes(o.calendarLink)) {
+        out.push(o.calendarLink);
+      }
+      return out;
+    };
+    const leaks = this.guardCheck(o.relayContact ? text.split(o.relayContact).join(" ") : text, m.id, o.relayFrom, approvedContacts(text), o.publicVenueAddress);
     if (leaks.length) {
       const fallback = [deliveredInviteJoins.length ? baseBody : undefined, o.fallback].find(value =>
-        value !== undefined && !this.guardCheck(value, m.id, o.relayFrom, approvedContact(value), o.publicVenueAddress).length);
+        value !== undefined && !this.guardCheck(value, m.id, o.relayFrom, approvedContacts(value), o.publicVenueAddress).length);
       this.counters.guardBlocked++;
       this.ctx.log("guard_blocked", { memberId: m.id, kind, reasons: leaks, fallback: fallback !== undefined });
       if (fallback === undefined) { fns.onRefused?.(); return "refused"; }
@@ -10266,7 +10479,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** Leak guard: other members' private facts and every canary, compiled once per change in private facets. */
   private guardCache?: { snap: WorldSnapshot; key: string; guard: LeakGuard };
-  private guardCheck(text: string, recipient: MemberId, alsoOwner?: MemberId, approvedContact?: string, publicVenueAddress?: string): string[] {
+  private guardCheck(text: string, recipient: MemberId, alsoOwner?: MemberId, approvedContact?: string | readonly string[], publicVenueAddress?: string): string[] {
     const snap = this.snapshotCached();
     if (!this.guardCache || this.guardCache.snap !== snap) {
       const priv = snap.facets.filter(f => f.scope === "agent_private");
@@ -10279,7 +10492,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       });
       this.guardCache = { snap, key, guard };
     }
-    const contactAllow = approvedContact ? [approvedContact] : undefined;
+    const contactAllow = Array.isArray(approvedContact)
+      ? (approvedContact.length ? approvedContact : undefined)
+      : (approvedContact ? [approvedContact as string] : undefined);
     const checkWith = (candidate: string) => {
       const found = this.guardCache!.guard.check(candidate, { exceptOwner: recipient, contactAllow });
       // A relayed text: what the sender wrote about themselves may go to the person they wrote to.
@@ -11809,6 +12024,15 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   forgetMember(id: MemberId) { if (!this.declinedIds.has(id)) this.forget(id); }
+
+  registerJoined(id: MemberId): boolean {
+    if (this.declinedIds.has(id)) return false;
+    this.dirty = true;
+    const m = this.member(id);
+    this.syncMember(m);
+    if (validAge(m.age) && !this.canJoinApp(m.age)) { this.declineUnderMinAge(m); return false; }
+    return true;
+  }
 
   /**
    * A member who joined on the web (the platform's POST /api/join) has not written yet: send the

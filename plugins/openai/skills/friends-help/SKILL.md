@@ -91,17 +91,19 @@ phone number.
    connector. An existing membership goes to the status check below. If the
    person changed the approved details, cannot confirm signup or authorization,
    or sees a refusal, stop and report the actual result.
-7. Use the authorized connector's `check_status` and confirm its app is friends. <!-- agentSignup: checkSiteStatus -->
+7. Use the authorized connector's `check_status` (or `get_context`) and confirm its app is friends. <!-- agentSignup: checkSiteStatus -->
    If the browser recognized an existing membership, report its current status.
    Do not enroll them again or replace their profile. Stop for
    `not_joined`, `invited`, `stopped`, `on_hold` or the wrong app, and tell the
-   person the returned `next_step`: for `not_joined` it is to disconnect the connector, connect
-   it again and choose **Finish signup** on the connection page. Before that, for
+   person the returned `next_step`: for `not_joined` or `invited`, give the
+   returned `finish_signup_url` so the person can open **Finish signup** directly
+   in their browser without disconnecting or reconnecting. Before that, for
    `not_joined` or `invited`, you may call `prepare_signup` once with the approved
-   first name and home city. The server keeps them for 10 minutes. The person
-   still enters their details on the Finish signup page. It never joins anyone. For a new
-   signup confirmed in the browser, only `onboarding` or `active` allows the
-   approved draft to be submitted. Never submit across apps.
+   first name and home city; it keeps the draft for 10 minutes and returns a
+   single-use `finish_signup_url` that prefills those details once. The person
+   still enters their birthday and ticks the text consent on the Finish signup
+   page. It never joins anyone. For a new signup confirmed in the browser, only
+   `onboarding` or `active` allows the approved draft to be submitted. Never submit across apps.
 8. Call `submit_profile` once on this exact connection with the approved <!-- agentSignup: submitProfile -->
    profile as `about` (10–1200 characters). Do not include credentials, invitation
    secrets, a birthday, an age or details from another app. If there is a refusal, a timeout or
@@ -111,12 +113,18 @@ phone number.
    Then report that the approved profile was recorded. Otherwise report an
    unconfirmed save. Do not claim matching, an introduction or a profile update
    in another app.
-10. To show what friends.help is looking for for the person, call `list_looking_for`.
-   Sending a profile only adds; leaving something out never removes it. If the
-   person asks to pause one thing, call `pause_looking_for` with its ref; to
-   turn a paused thing back on, call `resume_looking_for` with its ref; to
-   close it for good they reply CLOSE to the text they get. Never pause or
-   resume anything the person did not ask about.
+10. To inspect status and unseen updates in one call (plus saved profile and
+    active searches when `profile:read` is granted), call `get_context`. To save
+    recurring availability, windows, quiet hours or timezone, call
+    `set_availability`. To save private venue red lines (`strict_sober`,
+    `non_drinker`, `halal`, `kosher`, `gluten_free`, `vegetarian`, `vegan`,
+    `severe_allergen`, `wheelchair`, `smoke_free`, `low_noise`, `daytime_only`),
+    call `set_red_lines`. To show what friends.help is looking for for the person,
+    call `list_looking_for`. Sending a profile only adds; leaving something out
+    never removes it. If the person asks to pause one thing, call
+    `pause_looking_for` with its ref; to turn a paused thing back on, call
+    `resume_looking_for` with its ref; to close it for good they reply CLOSE to
+    the text they get. Never pause or resume anything the person did not ask about.
 
 ## Safety, privacy and account controls
 

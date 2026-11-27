@@ -4,6 +4,7 @@ export * from "./llm.ts";
 export * from "./policy.ts";
 export * from "./birth-date.ts";
 export * from "./guard.ts";
+export * from "./ics.ts";
 export * from "./chatJson.ts";
 export * from "./replies.ts";
 export * from "./fence.ts";

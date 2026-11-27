@@ -99,6 +99,12 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
       // The same cookie as the platform API (packages/platform/src/api.ts): sid_<app> in dev, __Host-sid elsewhere.
       cookieName: id => (dev ? `sid_${id}` : "__Host-sid"), secureCookie: !dev,
       submitProfile: (personId, app, e164, text) => (isAppId(app) ? svc.submitProfile(personId, app, e164, text) : Promise.resolve("not_member" as const)),
+      setAvailability: (personId, app, phoneKey, input) => (isAppId(app)
+        ? svc.setMemberAvailability(app, personId, phoneKey, input)
+        : Promise.resolve({ ok: false, error: "not_member" })),
+      setRedLines: (personId, app, phoneKey, input) => (isAppId(app)
+        ? svc.setMemberRedLines(app, personId, phoneKey, input)
+        : Promise.resolve({ ok: false, error: "not_member" })),
       lookingFor: (personId, app, e164) => (isAppId(app) ? svc.lookingFor(personId, app, e164) : Promise.resolve(undefined)),
       minorNotice: (personId, app, e164) => (isAppId(app) ? svc.minorNotice(personId, app, e164) : Promise.resolve(undefined)),
       changeLookingFor: (personId, app, e164, grantId, ref, change) => (isAppId(app)
@@ -147,17 +153,32 @@ const MAX_PUBLIC_BODY_BYTES = 9 * 1024 * 1024;
 export const isBlooioWebhookPath = (path: string) => path === "/webhooks/blooio" || path.startsWith("/webhooks/blooio/");
 export const isLumaWebhookPath = (path: string) => path === "/webhooks/luma";
 
+function calendarIcsTokenFromPath(pathname: string): string | undefined {
+  const match = /^\/cal\/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\.ics$/.exec(pathname);
+  return match?.[1];
+}
+
 export async function serveService(svc: NetworkService, o: { host: string; port: number; apiPort: number; blooioWebhook: boolean; log?: (s: string) => void }) {
   const log = o.log ?? console.log;
-  const fetch = (req: Request) => !o.blooioWebhook && isBlooioWebhookPath(new URL(req.url).pathname)
+  const calendarOr = (req: Request, fallback: () => Promise<Response> | Response) => {
+    const token = calendarIcsTokenFromPath(new URL(req.url).pathname);
+    if (token !== undefined) {
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        return Response.json({ ok: false, error: "method_not_allowed" }, { status: 405, headers: { "cache-control": "private, no-store" } });
+      }
+      return svc.renderCalendarIcs(token, svc.clock.now());
+    }
+    return fallback();
+  };
+  const fetch = (req: Request) => calendarOr(req, () => !o.blooioWebhook && isBlooioWebhookPath(new URL(req.url).pathname)
     ? Response.json({ ok: false, error: "webhook_not_served" }, { status: 404 })
-    : svc.fetch(req);
+    : svc.fetch(req));
   // Bodies are checked before they are read (audit network-service-17): webhooks 256 KB, the public API 9 MB for photos.
   const server = await serveHttp({ hostname: o.host, port: o.port, fetch, maxRequestBodySize: 256 * 1024 });
-  log(`listening on http://${o.host}:${server.port} (${o.blooioWebhook ? "POST /webhooks/blooio[/:app], " : ""}POST /webhooks/luma, GET /health, GET /review, POST /review/:oppId, GET/POST /venues, GET/POST /external-events, GET/POST /matchmakers, GET /ops/cities, POST /safety/lift, POST /safety/close, POST /matching; ?app= or /apps/:app/...)`);
+  log(`listening on http://${o.host}:${server.port} (${o.blooioWebhook ? "POST /webhooks/blooio[/:app], " : ""}POST /webhooks/luma, GET /cal/:token.ics, GET /health, GET /review, POST /review/:oppId, GET/POST /venues, GET/POST /external-events, GET/POST /matchmakers, GET /ops/cities, POST /safety/lift, POST /safety/close, POST /matching; ?app= or /apps/:app/...)`);
   // The server is passed on: the client IP for the rate limits is the socket address unless a trusted proxy header is configured.
-  const api = await serveHttp({ hostname: o.host, port: o.apiPort, fetch: (req, server) => svc.publicFetch(req, server), maxRequestBodySize: MAX_PUBLIC_BODY_BYTES });
-  log(`public API on http://${o.host}:${api.port}/api/* (the app comes from the Host header)`);
+  const api = await serveHttp({ hostname: o.host, port: o.apiPort, fetch: (req, server) => calendarOr(req, () => svc.publicFetch(req, server)), maxRequestBodySize: MAX_PUBLIC_BODY_BYTES });
+  log(`public API on http://${o.host}:${api.port}/api/* and /cal/:token.ics (the app comes from the Host header)`);
   return { server, api, stop: () => { server.stop(); api.stop(); } };
 }
 
