@@ -397,3 +397,6 @@
 {"text":"he turned 16 last year","other":17}
 {"text":"He Turned 17 last year","other":null}
 {"text":"She Turns 18 Tomorrow","other":17}
+{"text":"tengo 11 años","teen":true,"age":11}
+{"text":"tengo 16 años","teen":true,"age":16}
+{"text":"tengo 28 años","teen":false,"age":28}

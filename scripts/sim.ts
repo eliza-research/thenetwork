@@ -42,6 +42,7 @@
 //   clef      P2 Clef weight fitting: synthetic labels from the slop world's hidden appearance (seed 1, 2,000 labels
 //             per dimension); ranking recovery, weights file round trip, extraction, bias audit, labelling page
 //   five-city 5-city (sf, nyc, la, chicago, miami) conversation-script suite through ConsentNetwork, VenueManager & MeetupCoordinator (--transcripts prints transcripts)
+//   journeys  28 stratified all-walks-of-life personas across all 5 real channels (imessage_direct, mcp_personal_agent, social_dm, dating_matchmaker, external_event)
 //   marketing global multi-city marketing growth engine: 30-day NYC+SF deterministic world, 7 adversarial storms,
 //             Dafny policy invariants, LLM cache/budget, core queue backpressure, and paired Bandit vs Uniform CPA
 //   capital   network capital: 32 paired seeds, 90 days (--with-capital or --only capital)
@@ -66,11 +67,12 @@ const BLOCKS: Record<string, (b: Block, o: Opts) => Promise<void>> = {
   ops: async (b) => (await import("./sim/ops.ts")).opsBlock(b),
   clef: async (b) => (await import("./sim/clef.ts")).clefBlock(b),
   "five-city": async (b, o) => (await import("./sim/five-city.ts")).fiveCityBlock(b, o),
+  journeys: async (b, o) => (await import("./sim/journeys.ts")).journeysBlock(b, o),
   audit: async (b) => (await import("./sim/audit.ts")).auditBlock(b),
   marketing: async (b, o) => (await import("./sim/marketing.ts")).marketingBlock(b, o),
   capital: async (b, o) => (await import("./sim/capital.ts")).capitalBlock(b, o),
 };
-const DEFAULT = ["evals", "onboard", "network", "matching", "slop", "relay", "peon", "peon-seats", "friends", "meetup", "clef", "five-city", "safety", "ops", "pipeline", "pipeline-slop", "audit", "marketing"];
+const DEFAULT = ["evals", "onboard", "network", "matching", "slop", "relay", "peon", "peon-seats", "friends", "meetup", "clef", "five-city", "journeys", "safety", "ops", "pipeline", "pipeline-slop", "audit", "marketing"];
 
 const argv = process.argv.slice(2);
 const values = (k: string) => argv.flatMap((x, i) => (x === `--${k}` ? (argv[i + 1] ?? "").split(",") : x.startsWith(`--${k}=`) ? x.slice(k.length + 3).split(",") : []));

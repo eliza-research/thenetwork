@@ -1,15 +1,21 @@
 // Shared types for the single inbox and the notification scheduler
 // (docs/research/2026-10-08-entry-flows.md, sections 4 and 5).
 
-/** Where a person can see an update. Channels can push; assistants and the web cannot. */
-export type Surface = "imessage" | "sms" | "telegram" | "chatgpt" | "claude" | "grok" | "web";
+/** Where a person can see an update. Channels can push; assistants, local agents and the web cannot. */
+export type Surface = "imessage" | "sms" | "telegram" | "chatgpt" | "claude" | "grok" | "local_agent" | "web";
 /** The push channels we control. Every notification goes out on exactly one of these. */
 export type Channel = "imessage" | "sms" | "telegram";
 /** Hosted assistants we can deep-link into with a prefilled prompt. */
 export type Assistant = "chatgpt" | "claude" | "grok";
+/** Local CLI/IDE/loopback AI agent surfaces (Codex CLI, Claude Code, Cursor, OpenClaw). */
+export type LocalAgentSurface = "local_agent";
+/** Any personal AI agent surface (hosted assistant or local loopback CLI/IDE agent). */
+export type AgentSurface = Assistant | LocalAgentSurface;
 
 export const ASSISTANTS: readonly Assistant[] = ["chatgpt", "claude", "grok"];
 export const isAssistant = (s: Surface): s is Assistant => (ASSISTANTS as readonly Surface[]).includes(s);
+export const isLocalAgentSurface = (s: Surface): s is LocalAgentSurface => s === "local_agent";
+export const isAgentSurface = (s: Surface): s is AgentSurface => isAssistant(s) || isLocalAgentSurface(s);
 
 /**
  * urgent: time-sensitive (a plan today, a match waiting for an answer); sent after a short delay.

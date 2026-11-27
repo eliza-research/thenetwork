@@ -88,7 +88,22 @@ const POLITE_AFRAID_AFTER = /^\s*(?:(?:not|so)\b|(?:that\s+)?(?:we\s+(?:didn'?t|
 const AFRAID_SAFETY_CONCERN = /\b(?:safe(?:ty)?|danger|get away|escape|leave|police|911|emergency|help|report|hurt|harm|follow(?:ing|ed)?|threat(?:en)?|stalk|attack|alone|cornered|trapped)\b/i;
 const NON_PERSON_FEAR_AFTER = /^\s+of\s+(?:heights|dogs|cats|spiders|bugs|insects|snakes|flying|planes|needles|water|the\s+dark|roller\s*coasters|(?:scary|horror)\s+movies?)\b/i;
 const CORRECTED_MARRIAGE = /\b(?:not married|isn't married|wasn't married)\s*[,;]?\s*but\s+(?:he|she|they)\s+(?:is|was|are|were)\s*(?:$|[.!?,;])/i;
-const CURRENT_DANGER = /^(?:(?:i am|i'm|we are|we're) (?:in (?:immediate )?danger(?: (?:right now|now))?|(?:not safe|being threatened) (?:right now|now))|(?:i |we )?need emergency help(?: (?:right now|now))?|(?:(?:he|she|they|someone) (?:is|are)|he's|she's|they're) (?:following|threatening|attacking) (?:me|us)(?: (?:right now|now))?)$/i;
+const CURRENT_DANGER_PATTERNS: RegExp[] = [
+  /\b(?:i(?:'m| am)|we(?:'re| are))\s+(?:in\s+(?:immediate\s+)?danger|(?:feeling\s+)?(?:unsafe|not\s+safe)\s+(?:right\s+now|now|here)|being\s+(?:threatened|attacked|followed|chased|held|cornered))\b/i,
+  /\b(?:in\s+immediate\s+danger|(?:unsafe|not\s+safe)\s+(?:right\s+now|here\s+right\s+now))\b/i,
+  /\b(?:need|send)\s+emergency\s+help\b/i,
+  /\b(?:call|dial)\s+(?:911|the\s+police|emergency\s+services)\b/i,
+  /\b(?:won't|will\s+not|isn't|is\s+not|aren't|are\s+not|refus(?:es|ing)\s+to)\s+let(?:ting)?\s+(?:me|us)\s+(?:leave|go|out)\b/i,
+  /\b(?:following|stalking|chasing|threatening|attacking|cornering)\s+(?:me|us)\b(?!\s+on\s+(?:ig|insta|instagram|twitter|x|tiktok|linkedin|threads|bluesky|facebook|social)\b)/i,
+  /\b(?:i(?:'m| am)|we(?:'re| are))\s+(?:currently\s+)?(?:hiding\s+(?:in|inside|behind|from)|trapped)\b/i,
+  /\bhiding\s+(?:in|inside)\s+(?:the\s+)?(?:bathroom|restroom|stall|car|closet|back|kitchen|corner|lobby)\b|\bhiding\s+from\s+(?:him|her|them|my\s+date)\b/i,
+  /^\s*(?:help[,!\s]+)?trapped\s*[!]*$/i,
+  /\btrapped\s+(?:in(?:side)?\s+(?:the\s+)?(?:bathroom|restroom|car|room|bar|alley|elevator|building|corner|here)|here\s+with\b|with\s+(?:him|her|them)\b)/i,
+  /\b(?:he|she|they|someone|somebody|my\s+date|this\s+(?:guy|man|dude|woman|girl|person))\s+(?:has\s+)?trapped\s+(?:me|us)\b/i,
+  /\b(?:he|she|they|someone|somebody|my\s+date|this\s+(?:guy|man|dude|woman|girl|person))(?:'s|'re|\s+(?:is|are))\s+(?:holding\s+(?:me|us)|blocking\s+(?:the\s+door|the\s+exit|me|us)|grabbing\s+(?:me|us)|hurting\s+(?:me|us)|trying\s+to\s+(?:hurt|grab|force)\s+(?:me|us))\b/i,
+  /\b(?:has|pulled|pointing)\s+(?:a\s+)?(?:gun|knife|weapon)\s+(?:on|at)\s+(?:me|us)\b/i,
+  /\b(?:llama\s+al\s+911|no\s+me\s+deja\s+salir|me\s+est[aá]\s+siguiendo|estoy\s+en\s+peligro)\b/i,
+];
 const COUNTERPART_SUBJECT = /^(?:he|she|they|my date|the person i met)\b/i;
 const DIRECT_CHOKING_REPORT = /^(?:he|she|they|my date|the person i met) choked me[.!]?$/i;
 
@@ -99,7 +114,19 @@ function directClauses(text: string): string[] {
 
 /** A direct present-tense disclosure, without treating a report category as proof of danger now. */
 export function statesImmediateDanger(text: string): boolean {
-  return directClauses(text).some(clause => CURRENT_DANGER.test(clause.replace(/!$/, "")));
+  for (const clause of directClauses(text)) {
+    const clean = clause.replace(/[!?]+$/, "").trim();
+    if (!clean) continue;
+    for (const pattern of CURRENT_DANGER_PATTERNS) {
+      const m = pattern.exec(clean);
+      if (!m) continue;
+      const before = clean.slice(0, m.index);
+      if (ACTIVE_DENIAL.test(before) || AGE_REPORT_CONDITION.test(before)) continue;
+      if (clause.endsWith("?") && !/\b(?:call|dial)\s+(?:911|the\s+police|emergency\s+services)\b/i.test(m[0])) continue;
+      return true;
+    }
+  }
+  return false;
 }
 
 /** Keep a first-person disclosure separate from an attributable reply about the meeting. */

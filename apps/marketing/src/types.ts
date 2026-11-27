@@ -119,6 +119,7 @@ export type OutreachChannel =
   | "tiktok"
   | "instagram"
   | "x"
+  | "linkedin"
   | "venue"
   | "sms_opted_in";
 

@@ -72,7 +72,7 @@ export const APPS: Record<AppId, AppInfo> = {
   },
   friends: {
     id: "friends", name: "friends", domain: "friends.help", joinMode: "open", minJoinAge: MIN_MEMBER_AGE, minMatchAge: ADULT_AGE,
-    brand: brand("friends", "friends.help", "friends.help's planner", "friends and plans in New York City that you asked for.", MIN_MEMBER_AGE),
+    brand: brand("friends", "friends.help", "friends.help's planner", "friends and local plans that you asked for.", MIN_MEMBER_AGE),
     consent: { version: CONSENT_VERSION, text: consentText("friends.help", "questions about what I like to do, invitations to plans, plan details and reminders") },
   },
 };

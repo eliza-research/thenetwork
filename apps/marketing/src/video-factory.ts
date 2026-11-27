@@ -138,8 +138,13 @@ const GLOBAL_FORBIDDEN_SCRIPT_PATTERNS: ReadonlyArray<{
   },
   {
     code: "minor_targeting_violation",
-    pattern: /\b(high\s*school(er)?s?|under\s*18|16[\s-]year[\s-]old|17[\s-]year[\s-]old|middle\s*school|prom\s*date|teen\s*dating)\b/i,
+    pattern: /\b(high\s*school(er)?s?|high\s*school\s*(?:freshman|sophomore|junior|senior|student)|under\s*18|1[3-7]\s*y\/?o|16[\s-]year[\s-]old|17[\s-]year[\s-]old|turning\s+18|middle\s*school(er)?s?|prom\s*date|teen\s*dating)\b/i,
     message: "Scripts must never target minors or high-school audiences (strict 18+ floor).",
+  },
+  {
+    code: "deceptive_ai_denial",
+    pattern: /\b(not\s+a\s+bot|not\s+an?\s+ai|100%\s+real\s+human|i\s+am\s+a\s+real\s+person)\b/i,
+    message: "Persona accounts must never deny being AI or pretend to be a real human.",
   },
   {
     code: "raw_phone_number_exposure",
@@ -432,7 +437,7 @@ export const STARTER_COMEDY_SCRIPTS: readonly VideoScriptManifest[] = [
       "Thursday 7 PM Williamsburg dumpling table locks in for 4 real people.",
     ],
     dialogue:
-      "It has been 118 days. Nobody is grabbing coffee. You are 27 on a Friday staring at a ceiling fan eating cold leftovers.",
+      "It has been 118 days. Nobody is grabbing coffee. It is Friday night and you are staring at a ceiling fan eating cold leftovers.",
     punchline:
       "So I matched you with three Williamsburg locals who like climbing and cheap dumplings and put a public table on the calendar Thursday at 7.",
     ctaText: "Comment FRIENDS or visit go.friends.help — solo or bring 2 friends.",
@@ -556,7 +561,11 @@ export function localizeVideoScriptForCity(
 
   const swapText = (text: string): string =>
     text
-      .replace(/New York City/g, pack.label)
+      .replace(
+        /We are building New York City first, then city by city/g,
+        `We started in New York City and are expanding to ${pack.label} next`,
+      )
+      .replace(/(?<!started in )New York City/g, pack.label)
       .replace(/West Village/g, primaryHood)
       .replace(/SoHo \/ Nolita/g, secondHood)
       .replace(/Williamsburg/g, thirdHood)
@@ -639,6 +648,17 @@ export function lintVideoScript(
     if (!hasTag) {
       errors.push(
         "missing_ftc_disclosure: Sponsored video must include explicit '#Ad', 'Paid Partnership', or 'Sponsored by' disclosure.",
+      );
+    }
+  } else {
+    const hasAffiliationCue =
+      combinedText.toLowerCase().includes(bible.domain) ||
+      /\b(ai\s+(?:matchmaker|agent|persona)|the\s+network|#ad|paid\s+partnership|sponsored\s+by)\b/i.test(
+        `${script.ftcDisclosureText ?? ""} ${combinedText}`,
+      );
+    if (!hasAffiliationCue) {
+      warnings.push(
+        `missing_ai_or_brand_disclosure: Persona video should disclose AI/brand affiliation (${bible.domain} or AI agent disclosure).`,
       );
     }
   }

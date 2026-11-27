@@ -1,7 +1,10 @@
 import {
   canBeMatched,
+  formatBackupVenuePivot,
   LeakGuard,
   MINUTE,
+  shouldPivotToBackupV2,
+  shouldQuarantineVenue,
   type AppId,
   type ArrivalState,
   type ArrivalUpdate,
@@ -14,13 +17,17 @@ import {
   canRelayArrival,
   meetupPhase,
   noShowDecision,
-  shouldPivotToBackup,
   type MeetupPhase,
   type NoShowAction,
 } from "../../core/src/generated/meetupArrival.ts";
 
+const PRE_BRIEF_WIDE_START_MIN = -90;
+const LATE_NOTICE_EARLY_START_MIN = -60;
+
 function evaluateMeetupPhase(nowMs: number, startMs: number, allMet = false): MeetupPhase {
-  return meetupPhase(Math.floor((nowMs - startMs) / MINUTE), allMet);
+  const deltaMin = Math.floor((nowMs - startMs) / MINUTE);
+  if (!allMet && deltaMin >= PRE_BRIEF_WIDE_START_MIN && deltaMin < -75) return "PreBrief";
+  return meetupPhase(deltaMin, allMet);
 }
 
 function evaluateArrivalRelay(input: {
@@ -64,8 +71,15 @@ function evaluateNoShow(input: {
   );
 }
 
-function evaluateBackupPivot(closureReported: boolean, hasVerifiedBackup: boolean, alreadyPivoted: boolean): boolean {
-  return shouldPivotToBackup(closureReported, hasVerifiedBackup, alreadyPivoted);
+function evaluateBackupPivotV2(
+  venueReportedClosed: boolean,
+  venueReportedFull: boolean,
+  hasVerifiedBackup: boolean,
+  deltaMin: number,
+  alreadyPivoted: boolean,
+): boolean {
+  const clampedDelta = deltaMin >= PRE_BRIEF_WIDE_START_MIN && deltaMin < -75 ? -75 : deltaMin;
+  return shouldPivotToBackupV2(venueReportedClosed, venueReportedFull, hasVerifiedBackup, clampedDelta, alreadyPivoted);
 }
 import { RELAY_RULES } from "../../engine/src/relay.ts";
 import { appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
@@ -102,6 +116,7 @@ export interface MeetupCoordHost {
 
 export interface MeetupCoordRecord {
   meetupId: string;
+  oppId?: string;
   app: AppId;
   city: City;
   mode: "one_to_one" | "group";
@@ -157,10 +172,16 @@ const PII_URL_RX = /https?:\/\/\S+|www\.\S+/gi;
 
 const OUTFIT_COLORS =
   "red|blue|green|black|white|grey|gray|yellow|orange|purple|pink|brown|tan|beige|navy|olive|maroon|burgundy|cream|denim|plaid|striped";
+const OUTFIT_MODIFIERS =
+  "leather|floral|puffer|trench|baseball|bucket|jean|canvas|linen|wool|knit|knitted|oversized|vintage|checkered|hooded|dark|light|bright|long|short";
 const OUTFIT_ITEMS =
   "jacket|coat|sweater|hoodie|shirt|t-shirt|tee|dress|blouse|blazer|vest|hat|cap|beanie|scarf|backpack|tote|bag|glasses|sunglasses|cardigan|flannel|pullover|windbreaker";
 const OUTFIT_RX = new RegExp(
   `\\b(?:(?:a|an|my|the)\\s+)?((?:${OUTFIT_COLORS})(?:\\s+(?:and\\s+(?:${OUTFIT_COLORS})))?\\s+(?:${OUTFIT_ITEMS}))\\b`,
+  "i",
+);
+const OUTFIT_UNCOLORED_RX = new RegExp(
+  `\\b(?:wearing|in|got\\s+on|carrying|with)\\s+(?:(?:a|an|my|the)\\s+)?((?:(?:${OUTFIT_MODIFIERS})\\s+)?(?:${OUTFIT_ITEMS}))\\b`,
   "i",
 );
 
@@ -201,7 +222,13 @@ export function parseArrivalText(body: string, lastNames: readonly string[] = []
   ) {
     state = "venue_closed";
   } else if (
-    /\b(?:found\s+(?:each\s+other|them|him|her|everyone|the\s+group)|we\s+met|we'?re\s+together|i\s+see\s+(?:them|him|her|you|everyone)|met\s+up|all\s+here\s+together|sitting\s+together)\b/.test(
+    /\b(?:(?:it'?s|it is|(?:the\s+)?(?:place|spot|venue|cafe|coffee\s+shop|bar|restaurant|bakery|brewery|patio|room)\s+(?:is|was)|they(?:'re| are))\s+(?:completely\s+|totally\s+|super\s+|way\s+too\s+)?(?:full|packed|at\s+capacity|sold\s+out|crowded\s+out)|no\s+(?:tables?|seats?|seating|space|room)\s+(?:left|available)|(?:hour|45\s*min|60\s*min|long|crazy)\s+wait\b|line\s+(?:is\s+)?(?:out\s+the\s+door|around\s+the\s+block|crazy))\b/.test(
+      t,
+    )
+  ) {
+    state = "venue_full";
+  } else if (
+    /\b(?:found\s+(?:each\s+other|them|him|her|everyone|the\s+group)|we\s+met|we'?re\s+together|i\s+see\s+(?:them|him|her|you|everyone)|met\s+up|all\s+here\s+together|sitting\s+together|(?:i'?m\s+|im\s+)?with\s+(?!a\b|an\b|the\b|my\b|our\b|no\b|some\b|any\b)[a-z][a-z'-]+\s+now|sitting\s+with\s+(?!a\b|an\b|the\b|my\b|our\b|no\b|some\b|any\b)[a-z][a-z'-]+|(?:found|met)\s+(?!a\b|an\b|the\b|my\b|our\b|no\b|some\b|any\b|out\b|it\b)[a-z][a-z'-]+(?:\s+now)?(?=\s*(?:$|[.,!?;])))\b/.test(
       t,
     )
   ) {
@@ -219,19 +246,21 @@ export function parseArrivalText(body: string, lastNames: readonly string[] = []
   ) {
     state = "seated";
   } else if (
+    /^\s*here[.!]*\s*$/.test(t) ||
     /\b(?:i'?m\s+here|im\s+here|just\s+(?:arrived|got\s+here|walked\s+in|pulled\s+up)|here\s+now|i\s+arrived|waiting\s+(?:by|at|outside|inside|near)|standing\s+(?:by|at|outside|inside|near)|at\s+the\s+(?:entrance|door|bar|patio))\b/.test(
       t,
     )
   ) {
     state = "arrived";
   } else if (
-    /\b(?:running\s+(?:\d+\s*(?:min|mins|minutes?)\s+)?late|be\s+(?:a\s+few\s+mins?\s+)?late|\d+\s*(?:min|mins|minutes?)\s+(?:late|behind)|delayed|stuck\s+in\s+traffic|train\s+(?:is\s+)?delayed|sorry\s+i'?m\s+late)\b/.test(
+    /\b(?:running\s+(?:(?:about|like)\s+)?(?:\d+\s*(?:min|mins|minutes?)\s+|a\s+few\s+(?:min|mins|minutes?)\s+)?late|be\s+(?:a\s+few\s+mins?\s+|\d+\s*(?:min|mins|minutes?)\s+)?late|\d+\s*(?:min|mins|minutes?)\s+(?:late|behind)|delayed|stuck\s+in\s+traffic|train\s+(?:is\s+)?delayed|sorry\s+i'?m\s+late)\b/.test(
       t,
     )
   ) {
     state = "late";
   } else if (
-    /\b(?:on\s+my\s+way|omw|head(?:ing|ed)\s+(?:over|there|now)|almost\s+there|\d+\s*(?:min|mins|minutes?)\s+away|walking\s+over|in\s+(?:an?\s+)?(?:uber|lyft|cab|taxi)|just\s+left)\b/.test(
+    /^\s*(?:in\s+)?(?:about\s+|like\s+)?\d{1,2}\s*(?:min|mins|minutes?)(?:\s+(?:out|away))?[.!]*\s*$/.test(t) ||
+    /\b(?:on\s+my\s+way|omw|head(?:ing|ed)\s+(?:over|there|now)|almost\s+there|\d+\s*(?:min|mins|minutes?)\s+(?:away|out)|(?:be\s+there|arriving|getting\s+there)\s+in\s+(?:about\s+)?\d{1,2}\s*(?:min|mins|minutes?)|walking\s+over|in\s+(?:an?\s+)?(?:uber|lyft|cab|taxi)|just\s+left)\b/.test(
       t,
     )
   ) {
@@ -242,7 +271,7 @@ export function parseArrivalText(body: string, lastNames: readonly string[] = []
 
   const etaMatch = ETA_RX.exec(t);
   const etaMinutes = etaMatch ? Math.min(90, Math.max(1, Number(etaMatch[1]))) : undefined;
-  const outfitMatch = OUTFIT_RX.exec(cleanedRaw);
+  const outfitMatch = OUTFIT_RX.exec(cleanedRaw) ?? OUTFIT_UNCOLORED_RX.exec(cleanedRaw);
   const safeOutfitCue = outfitMatch ? sanitizeArrivalCue(outfitMatch[1]!, lastNames) : undefined;
   const landmarkMatch = LANDMARK_RX.exec(cleanedRaw);
   const spotLandmark = landmarkMatch ? sanitizeArrivalCue(landmarkMatch[1]!, lastNames) : undefined;
@@ -278,6 +307,8 @@ function formatSingleUpdate(firstName: string, update: ArrivalUpdate): string {
       return `${firstName} checked in that you found each other. Have a great time!`;
     case "venue_closed":
       return `${firstName} reported the spot is closed.`;
+    case "venue_full":
+      return `${firstName} reported the spot is full.`;
     default:
       return `${firstName} sent an arrival update${suffix}.`;
   }
@@ -295,6 +326,7 @@ export class MeetupCoordinator {
 
   registerMeetup(input: {
     meetupId: string;
+    oppId?: string;
     app: AppId;
     city: City;
     startMs: number;
@@ -309,6 +341,7 @@ export class MeetupCoordinator {
     const mode: "one_to_one" | "group" = input.participants.length >= 3 ? "group" : "one_to_one";
     const record: MeetupCoordRecord = {
       meetupId: input.meetupId,
+      ...(input.oppId ? { oppId: input.oppId } : {}),
       app: input.app,
       city: input.city,
       mode,
@@ -471,17 +504,25 @@ export class MeetupCoordinator {
       }
     }
 
-    if (parsed.state === "venue_closed") {
-      this.host.venues.quarantineVenue(meetup.activeVenueId, senderId, nowMs);
+    if (parsed.state === "venue_closed" || parsed.state === "venue_full") {
+      const isClosed = parsed.state === "venue_closed";
+      const isFull = parsed.state === "venue_full";
+      if (shouldQuarantineVenue(isClosed, isFull)) {
+        this.host.venues.quarantineVenue(meetup.activeVenueId, senderId, nowMs);
+      }
       const backup = meetup.backupVenueId ? this.host.venues.getVenue(meetup.backupVenueId) : undefined;
-      const canPivot = evaluateBackupPivot(true, !!backup && backup.status === "active", meetup.pivoted);
+      const deltaMin = Math.floor((nowMs - meetup.startMs) / MINUTE);
+      const canPivot = evaluateBackupPivotV2(isClosed, isFull, !!backup && backup.status === "active", deltaMin, meetup.pivoted);
+      const primaryName = this.resolveVenue(meetup.activeVenueId, meetup).name;
       if (canPivot && backup) {
         meetup.activeVenueId = backup.id;
         meetup.pivoted = true;
         meetup.pendingDigest = [];
         const relayedTo: MemberId[] = [];
-        const primaryName = this.resolveVenue(meetup.primaryVenueId, meetup).name;
-        const msg = `Quick pivot: ${primaryName} is closed, so let's meet at ${backup.name} (${backup.address}). Look for each other ${backup.arrivalLandmark}.`;
+        const msg = formatBackupVenuePivot(primaryName, backup.name, isFull ? "full" : "closed", {
+          address: backup.address,
+          landmark: backup.arrivalLandmark,
+        });
         for (const recipientId of meetup.confirmed) {
           const rec = this.host.party(meetup.meetupId, recipientId);
           if (!rec || rec.optedOut || !canBeMatched(rec.age)) continue;
@@ -498,7 +539,18 @@ export class MeetupCoordinator {
           pivotedToVenueId: backup.id,
         };
       }
-      return { handled: true, meetupId: meetup.meetupId, phase, state: parsed.state, relayedTo: [] };
+      const noBackupMsg = isFull
+        ? `Heads up: ${primaryName} was reported full and I don't have a verified backup nearby right now. Let me know if you find space nearby or want to pick another public spot.`
+        : `Heads up: ${primaryName} was reported closed and I don't have a verified backup nearby right now. Let me know if you pick another public spot nearby or want to reschedule.`;
+      const relayedTo: MemberId[] = [];
+      for (const recipientId of meetup.confirmed) {
+        const rec = this.host.party(meetup.meetupId, recipientId);
+        if (!rec || rec.optedOut || !canBeMatched(rec.age)) continue;
+        if (recipientId !== senderId && this.host.blocked(senderId, recipientId)) continue;
+        this.host.send(recipientId, noBackupMsg, { meetupId: meetup.meetupId, kind: "backup_pivot" });
+        relayedTo.push(recipientId);
+      }
+      return { handled: true, meetupId: meetup.meetupId, phase, state: parsed.state, relayedTo };
     }
 
     if (parsed.state === "met") {
@@ -508,9 +560,12 @@ export class MeetupCoordinator {
       return { handled: true, meetupId: meetup.meetupId, phase: "Closed", state: "met", relayedTo: [] };
     }
 
-    if (phase !== "ActiveArrival") {
+    const deltaMin = Math.floor((nowMs - meetup.startMs) / MINUTE);
+    const earlyLateAllowed = phase === "PreBrief" && parsed.state === "late" && deltaMin >= LATE_NOTICE_EARLY_START_MIN;
+    if (phase !== "ActiveArrival" && !earlyLateAllowed) {
       return { handled: false, meetupId: meetup.meetupId, phase, state: parsed.state, relayedTo: [] };
     }
+    const relayPhase: MeetupPhase = earlyLateAllowed ? "ActiveArrival" : phase;
 
     const rendered = formatSingleUpdate(sender.firstName, update);
     const recipients = meetup.confirmed.filter(id => id !== senderId);
@@ -531,7 +586,7 @@ export class MeetupCoordinator {
         recipientConfirmed: rec.confirmed,
         blocked: this.host.blocked(senderId, recipientId),
         optedOut: sender.optedOut || rec.optedOut,
-        phase,
+        phase: relayPhase,
         senderMet: meetup.met,
         leakClean: safety.leakClean,
         safetyClean: safety.safetyClean,
@@ -706,8 +761,9 @@ export class MeetupCoordinator {
     return summary;
   }
 
-  removeMember(memberId: MemberId): void {
+  removeMember(memberId: MemberId, meetupId?: string): void {
     for (const m of this.meetups.values()) {
+      if (meetupId !== undefined && m.meetupId !== meetupId && m.oppId !== meetupId) continue;
       m.confirmed = m.confirmed.filter(id => id !== memberId);
       m.arrivedIds = m.arrivedIds.filter(id => id !== memberId);
       if (m.confirmed.length < 2) m.closed = true;

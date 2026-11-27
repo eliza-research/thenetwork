@@ -217,3 +217,20 @@
 {"text":"I can't see why not","label":"yes"}
 {"text":"why the heck not","label":"yes"}
 {"text":"that would be great if I can get a ride","label":"unsure"}
+{"text":"sí, claro","label":"yes"}
+{"text":"dale, me apunto","label":"yes"}
+{"text":"paso esta vez","label":"no"}
+{"text":"otro día","label":"unsure"}
+{"text":"tal vez otro día","label":"unsure"}
+{"text":"I would be delighted","label":"yes"}
+{"text":"by all means","label":"yes"}
+{"text":"certainly","label":"yes"}
+{"text":"I accept","label":"yes"}
+{"text":"regrettably I cannot attend","label":"no"}
+{"text":"lfg","label":"yes"}
+{"text":"fs","label":"yes"}
+{"text":"ofc","label":"yes"}
+{"text":"not not interested","label":"unsure"}
+{"text":"I wouldn't say no","label":"unsure"}
+{"text":"no yeah","label":"yes"}
+{"text":"all good, thanks","label":"no"}

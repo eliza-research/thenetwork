@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import { RealClock, type Clock } from "../../../packages/core/src/clock.ts";
 import { DEFAULT_MODEL, OPENAI_PRICES, priceFor } from "../../../packages/core/src/llm.ts";
+import {
+  normalizeAgeInitialism,
+  relayMinorAge,
+  relayMinorEstimate,
+} from "../../../packages/core/src/policy.ts";
 import { parseOptOut } from "../../../packages/core/src/replies.ts";
 import type { PersonaId, SubscriptionProvider } from "./types.ts";
 
@@ -10,6 +15,7 @@ export interface PromptCacheKeyInput {
   readonly systemPrompt: string;
   readonly prompt: string;
   readonly personaId?: PersonaId | (string & {});
+  readonly scope?: string;
 }
 
 export interface PromptCacheEntry {
@@ -96,15 +102,16 @@ export function hashPromptText(systemPrompt: string, prompt: string): string {
 }
 
 export function buildPromptCacheKey(input: PromptCacheKeyInput): string {
-  return sha256Hex(
-    JSON.stringify([
-      String(input.personaId ?? "").trim().toLowerCase(),
-      String(input.provider).trim().toLowerCase(),
-      input.model.trim().toLowerCase(),
-      normalizePromptWhitespace(input.systemPrompt),
-      normalizePromptWhitespace(input.prompt),
-    ]),
-  );
+  const scope = input.scope ? normalizePromptWhitespace(input.scope) : "";
+  const parts = [
+    String(input.personaId ?? "").trim().toLowerCase(),
+    String(input.provider).trim().toLowerCase(),
+    input.model.trim().toLowerCase(),
+    normalizePromptWhitespace(input.systemPrompt),
+    normalizePromptWhitespace(input.prompt),
+  ];
+  if (scope) parts.push(scope);
+  return sha256Hex(JSON.stringify(parts));
 }
 
 export function estimateTokens(text: string): number {
@@ -147,8 +154,16 @@ export class PromptCache {
 
   constructor(opts: PromptCacheOptions = {}) {
     this.clock = opts.clock ?? new RealClock();
-    this.maxEntries = Math.max(1, Math.floor(opts.maxEntries ?? DEFAULT_MAX_CACHE_ENTRIES));
-    this.defaultTtlMs = Math.max(1_000, Math.floor(opts.defaultTtlMs ?? DEFAULT_CACHE_TTL_MS));
+    const rawMax = opts.maxEntries;
+    this.maxEntries =
+      typeof rawMax === "number" && Number.isFinite(rawMax) && rawMax >= 1
+        ? Math.floor(rawMax)
+        : DEFAULT_MAX_CACHE_ENTRIES;
+    const rawTtl = opts.defaultTtlMs;
+    this.defaultTtlMs =
+      typeof rawTtl === "number" && Number.isFinite(rawTtl) && rawTtl >= 1_000
+        ? Math.floor(rawTtl)
+        : DEFAULT_CACHE_TTL_MS;
   }
 
   get(key: string): PromptCacheEntry | null {
@@ -275,7 +290,7 @@ const SCRIPT_FORBIDDEN_RULES: ReadonlyArray<{ readonly code: string; readonly re
   },
   {
     code: "minor_targeting_violation",
-    re: /\b(high\s*school(er)?s?|under\s*18|16[\s-]year[\s-]old|17[\s-]year[\s-]old|middle\s*school|prom\s*date|teen\s*dating)\b/i,
+    re: /\b(high\s*school(er)?s?|high\s*school\s*(?:freshman|sophomore|junior|senior|student)|under\s*18|1[3-7]\s*y\/?o|16[\s-]year[\s-]old|17[\s-]year[\s-]old|turning\s+18|middle\s*school(er)?s?|prom\s*date|teen\s*dating)\b/i,
   },
   {
     code: "raw_phone_number_exposure",
@@ -286,6 +301,67 @@ const SCRIPT_FORBIDDEN_RULES: ReadonlyArray<{ readonly code: string; readonly re
     re: /\b(wearable\s*billboard|portable\s*receipt\s*printer|thermal\s*printer\s*citation)\b/i,
   },
 ];
+
+export interface UnderageDetectionResult {
+  readonly isMinor: boolean;
+  readonly statedAge: number | null;
+  readonly reason: string | null;
+}
+
+const UNDERAGE_SHORTHAND_RE = /\b(\d{1,2})\s*(?:y\/?o|years?\s*old|yrs?\s*old)\b/gi;
+const UNDERAGE_EXPLICIT_RE = /\b(?:age\s*[:=]?\s*|i\s*(?:am|'m)\s*)(\d{1,3})\b/gi;
+const UNDERAGE_UPCOMING_RE = /\b(?:turning|almost|nearly|about\s+to\s+(?:be|turn))\s+18\b|\b(?:under\s*18|not\s+(?:yet\s+)?18)\b/i;
+const UNDERAGE_SCHOOL_RE = /\b(?:(?:high\s*school|hs)\s+(?:freshman|sophomore|junior|senior|student)|(?:high|middle)\s*schooler|middle\s*school\s+student)\b/i;
+const ADULT_SCHOOL_CONTEXT_RE = /\b(?:teacher|coach|counselor|principal|graduated|former|alumni|parent\s+of|kid\s+in|son\s+in|daughter\s+in)\b/i;
+
+export function detectUnderageText(text: string): UnderageDetectionResult {
+  const normalized = normalizeAgeInitialism(
+    text
+      .normalize("NFKC")
+      .trim()
+      .toLowerCase()
+      .replace(/[‘’ʼ`´]/g, "'")
+      .replace(/[“”]/g, '"'),
+  );
+  if (!normalized) {
+    return { isMinor: false, statedAge: null, reason: null };
+  }
+
+  const policyAge = relayMinorAge(text, true);
+  if (policyAge !== undefined && policyAge < 18) {
+    return { isMinor: true, statedAge: policyAge, reason: "policy_minor_age" };
+  }
+
+  if (relayMinorEstimate(text)) {
+    return { isMinor: true, statedAge: null, reason: "policy_minor_estimate" };
+  }
+
+  let youngest: number | null = null;
+  for (const re of [UNDERAGE_EXPLICIT_RE, UNDERAGE_SHORTHAND_RE]) {
+    re.lastIndex = 0;
+    for (const match of normalized.matchAll(re)) {
+      const raw = match[1];
+      if (!raw) continue;
+      const age = Number.parseInt(raw, 10);
+      if (Number.isInteger(age) && age >= 1 && age < 18) {
+        youngest = youngest === null ? age : Math.min(youngest, age);
+      }
+    }
+  }
+  if (youngest !== null) {
+    return { isMinor: true, statedAge: youngest, reason: "stated_under_18" };
+  }
+
+  if (UNDERAGE_UPCOMING_RE.test(normalized)) {
+    return { isMinor: true, statedAge: 17, reason: "turning_or_under_18" };
+  }
+
+  if (UNDERAGE_SCHOOL_RE.test(normalized) && !ADULT_SCHOOL_CONTEXT_RE.test(normalized)) {
+    return { isMinor: true, statedAge: null, reason: "high_or_middle_school_student" };
+  }
+
+  return { isMinor: false, statedAge: null, reason: null };
+}
 
 function stripPrefix(prompt: string, prefixRe: RegExp): string {
   return prompt.replace(prefixRe, "").trim();
@@ -355,14 +431,13 @@ export function tryDeterministicRoute(
         costCents: 0,
       };
     }
-    const ageMatch = /\b(?:age\s*[:=]?\s*|i\s*(?:am|'m)\s*)(\d{1,3})\b/i.exec(body);
-    const statedAge = ageMatch?.[1] ? Number.parseInt(ageMatch[1], 10) : null;
-    if (statedAge !== null && statedAge < 18) {
+    const underage = detectUnderageText(body);
+    if (underage.isMinor) {
       const data = {
         decision: "rejected_underage",
         score: 0,
-        statedAge,
-        reasons: ["worker_must_be_18_plus"],
+        statedAge: underage.statedAge,
+        reasons: ["worker_must_be_18_plus", ...(underage.reason ? [underage.reason] : [])],
       };
       return {
         handled: true,

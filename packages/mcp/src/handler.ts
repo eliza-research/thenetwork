@@ -223,19 +223,23 @@ export function redirectUriAllowed(raw: unknown): raw is string {
 
 const isOpenAiHost = (host: string) => OPENAI_REDIRECT_HOSTS.some(h => host === h || host.endsWith(`.${h}`));
 
-/** Redirect hosts per assistant, for the inbox's surface signals (packages/notify). Unknown clients are "web". */
-export const ASSISTANT_REDIRECT_HOSTS: Record<Exclude<AssistantKind, "web">, string[]> = {
+/** Redirect hosts per hosted assistant, for the inbox's surface signals (packages/notify). Loopback clients are "local_agent"; unknown clients are "web". */
+export const ASSISTANT_REDIRECT_HOSTS: Record<Exclude<AssistantKind, "web" | "local_agent">, string[]> = {
   chatgpt: OPENAI_REDIRECT_HOSTS,
   claude: ["claude.ai", "claude.com", "anthropic.com"],
   grok: ["grok.com", "x.ai"],
 };
 
-/** Which assistant an OAuth client is, from its redirect URIs. */
-export function assistantOf(client: Pick<OAuthClient, "redirectUris" | "surface">): AssistantKind {
+/** Which assistant surface an OAuth client represents, from its redirect URIs (loopback CLI/IDE clients map to "local_agent"). */
+export function assistantOf(client: Pick<OAuthClient, "redirectUris" | "surface"> & { name?: string | null }): AssistantKind {
   if (client.surface === "openai") return "chatgpt";
-  const hosts = client.redirectUris.flatMap(u => { try { return [new URL(u).hostname]; } catch { return []; } });
-  for (const [kind, list] of Object.entries(ASSISTANT_REDIRECT_HOSTS) as [Exclude<AssistantKind, "web">, string[]][])
+  const parsed = client.redirectUris.flatMap(u => { try { return [new URL(u)]; } catch { return []; } });
+  const hosts = parsed.map(u => u.hostname);
+  for (const [kind, list] of Object.entries(ASSISTANT_REDIRECT_HOSTS) as [Exclude<AssistantKind, "web" | "local_agent">, string[]][])
     if (hosts.some(h => list.some(d => h === d || h.endsWith(`.${d}`)))) return kind;
+  if (parsed.length > 0 && parsed.length === client.redirectUris.length && parsed.every(u => isLoopbackHost(u.hostname))) {
+    return "local_agent";
+  }
   return "web";
 }
 
@@ -442,7 +446,11 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const uris = b?.redirect_uris;
     const listed = Array.isArray(uris) && uris.length >= 1 && uris.length <= 5;
     const allowed = listed && uris.every(redirectUriAllowed);
-    const bucket = connectorRegisterBucket(allowed && (uris as string[]).every(uri => assistantOf({ redirectUris: [uri], surface: "full" }) !== "web"));
+    const isHostedAssistantUri = (uri: string) => {
+      const kind = assistantOf({ redirectUris: [uri], surface: "full" });
+      return kind !== "web" && kind !== "local_agent";
+    };
+    const bucket = connectorRegisterBucket(allowed && (uris as string[]).every(isHostedAssistantUri));
     if (await limited(`reg:${bucket}:${sha256hex(ipBucket(c.ip))}`, registerOverride[bucket] ?? connectorRegisterLimit(bucket), 3_600_000)) return tooMany(3600);
     const bad = (d: string, error = "invalid_client_metadata") => json(400, { error, error_description: d });
     if (!b) return bad("The body must be a JSON object.");

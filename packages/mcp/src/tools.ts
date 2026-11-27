@@ -16,7 +16,7 @@ import { minorNoticeFor, type MinorNotice } from "../../core/src/generated/textE
 import { photoSlotsMax } from "../../core/src/generated/photoRelayItem.ts";
 import { profileSubmissionAccepted } from "../../core/src/generated/mcpProfileSubmission.ts";
 import { appsOn, connectorApp, connectorSurface, DATING_AGE_RULE, type McpApp, type McpAppId, type Surface, WORK_AGE_RULE } from "./apps.ts";
-import type { AssistantKind, LookingForEntry, LookingForResult, LookingForView, PhotoHoldingsView, PhotoRequestStatus, PlatformHooks, PublicStatus, SavedProfileFields } from "./hooks.ts";
+import type { AssistantKind, LeakContext, LookingForEntry, LookingForResult, LookingForView, PhotoHoldingsView, PhotoRequestStatus, PlatformHooks, PublicStatus, PublicUpdate, SavedProfileFields } from "./hooks.ts";
 import type { Grant, Scope, OAuthStore, SignupDraftFields } from "./store.ts";
 import { CONTACT_PATTERNS, contactVariants } from "../../core/src/guard.ts";
 import { isCity, LAUNCH_CITIES } from "../../core/src/types.ts";
@@ -67,18 +67,16 @@ export const UPDATE_TOKEN = /^T-[2-9A-HJKMNP-TV-Z]{6}$/;
 /** The longest profile text the assistant may submit (a few short paragraphs). */
 export const PROFILE_MAX_CHARS = 1200;
 
-/** Server instructions. The rules are in the first 512 characters (OpenAI shows only those). */
-const INSTRUCTIONS =
-  "Helps a person learn about apps powered by The Network and sign themselves up. Never ask for, accept or relay a phone number or a verification code. " +
-  "The person completes signup and authorization themselves, in the browser. Never send a message on their behalf. No tool returns anything about other people or other apps. " +
-  "app_info and start_signup are public. start_signup points to the app's published signup instructions. " +
-  "The other tools work only after the person confirms their phone and allows access in the browser, on the sign-in page of the site that serves this connector, and they cover only this one app. " +
-  "check_status shows the person's own status. read_profile shows their saved profile, only when they ask. submit_profile sends what the person approved about themselves. " +
-  "get_updates shows their own new updates and marks them seen. prepare_signup saves only an approved first name and home city; the person types their birthday and ticks the text consent in the browser. " +
-  "list_looking_for shows what an app is looking for for the person; pause_looking_for and resume_looking_for change one thing only after the person asks.";
+/** Server instructions. Compact <= 500 chars so OpenAI's 512-char cutoff never truncates rules. */
+export const INSTRUCTIONS =
+  "Apps powered by The Network. Never ask for, accept or relay a phone number or a verification code. " +
+  "Signup and consent happen in the browser. Never message others or expose other people or apps. " +
+  "Public: app_info, start_signup. Signed-in (this app only): check_status, read_profile (when asked), " +
+  "submit_profile (approved words, additive), get_updates (marks seen), prepare_signup (approved name/city; " +
+  "person types birthday and ticks the text consent in the browser), list/pause/resume_looking_for.";
 
 const PHOTO_INSTRUCTIONS =
-  "On slop.date, my_photos lists the person's own photos without the photos, and photo_request passes their own words; only the person confirms a photo send, on their phone.";
+  "On slop.date, my_photos lists metadata only; photo_request passes their words (confirm on phone).";
 
 export function toolInstructions(apps: Record<McpAppId, McpApp>, surface: Surface, host: McpApp, site: McpApp = host): string {
   return toolDefs(apps, surface, host, site).some(tool => tool.name === "my_photos") ? `${INSTRUCTIONS} ${PHOTO_INSTRUCTIONS}` : INSTRUCTIONS;
@@ -90,176 +88,172 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
   const ids = appsOn(apps, surface, host.id).map(a => a.id);
   const signInApp = signInSite(connectorApp[site.id], connectorApp[host.id]);
   const signIn = Object.values(apps).find(a => connectorApp[a.id] === signInApp) ?? site;
-  const appProp = (description: string) => ({ type: "string", enum: ids, description });
+  const appProp = (description?: string) => (description ? { type: "string", enum: ids, description } : { type: "string", enum: ids });
+  const ownAppInput = { type: "string", enum: [host.id] };
   // The security scheme of each tool, from its generated scope (spec/connectorTools.md, "Public tools need no sign-in").
   const schemes = (tool: ToolName) => {
     const scope = TOOL_SCOPE[tool];
     const list = scope ? [{ type: "oauth2", scopes: [scope] }] : [{ type: "noauth" }];
-    return { securitySchemes: list, _meta: { securitySchemes: list } };
+    return surface === "openai" ? { securitySchemes: list, _meta: { securitySchemes: list } } : { securitySchemes: list };
   };
   const text = { type: "string" };
   const nullableText = { type: ["string", "null"] };
-  const object = (properties: Record<string, unknown>) => ({ type: "object", properties, required: Object.keys(properties), additionalProperties: false });
-  const appId = { type: "string", enum: ids };
-  const ownApp = { type: "string", enum: [host.id] };
-  const joinMode = { type: "string", enum: ["invite", "open", "waitlist"] };
-  const ages = object({ join: { type: "integer" }, matching: { type: "integer" } });
-  const status = { type: "string", enum: Object.keys(memberStatus) };
+  const obj = { type: "object" };
+  const arrObj = { type: "array", items: obj };
+  const arr = { type: "array" };
+  const bool = { type: "boolean" };
+  const object = (properties: Record<string, unknown>, required = Object.keys(properties)) =>
+    ({ type: "object", properties, required, additionalProperties: false });
+  const appId = { enum: ids };
+  const ownApp = { const: host.id };
+  const joinMode = { enum: ["invite", "open", "waitlist"] };
+  const status = { enum: Object.keys(memberStatus) };
   const publicApp = object({
     id: appId, name: text, site: text, what: text, powered_by: text,
-    join: object({ mode: joinMode, url: text, keyword: nullableText, how: text }),
-    ages, adults_only: { type: "array", items: text }, stop: text,
-    consent_rules: { type: "array", items: text },
-    links: object({ privacy: text, terms: text, sms_terms: nullableText, support: text }),
+    cities: arr, consent: obj, join: obj, ages: obj,
+    adults_only: arr, stop: text, consent_rules: arr, links: obj,
   });
-  const standingRef = { type: "string", pattern: STANDING_REF.source };
-  const lookingForSchema = object({
-    ref: standingRef, number: { type: "integer", minimum: 1 }, kind: { type: "string", enum: ["want", "intent", "request", "posting"] },
-    summary: text, status: { type: "string", enum: ["active", "paused", "waiting_on_you", "open"] }, in_progress: { type: "boolean" }, ends_on: nullableText,
-  });
-  const checkItem = object({ ref: standingRef, summary: text, reason: { type: "string", enum: ["said_not_wanted", "ended_recently"] } });
-  const lookingForInput = { type: "object", properties: { app: { type: "string", enum: [host.id], description: `Optional. Always ${host.id}.` },
-    ref: { type: "string", pattern: STANDING_INPUT_REF.source, description: "The ref of one thing from list_looking_for, like INT-DPJKAAMBLCNE." } }, required: ["ref"], additionalProperties: false };
+  const lookingForSchema = {
+    type: "object",
+    properties: { ref: text, status: { enum: ["active", "paused", "waiting_on_you", "open"] } },
+    required: ["ref", "status"],
+  };
+  const lookingForInput = {
+    type: "object",
+    properties: { app: ownAppInput, ref: { type: "string", pattern: STANDING_INPUT_REF.source } },
+    required: ["ref"], additionalProperties: false,
+  };
   const lookingForChangeOutput = object({
-    app: ownApp, changed: { type: "boolean" }, item: { anyOf: [{ type: "null" }, lookingForSchema] },
+    app: ownApp, changed: bool, item: { anyOf: [{ type: "null" }, obj] },
     reason: { enum: [null, "unknown_ref", "daily_limit", "closed", "posting", "adults_only", "texts_off", "not_member"] }, next_step: text,
   });
+  const updateItem = { type: "object", properties: { summary: text, at: text, kind: text }, required: ["summary", "at", "kind"] };
   const changeAnnotations = (title: string) => ({ title, readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false });
   return [
     {
       name: "app_info",
-      title: "About the apps",
-      description: "Public facts about one app powered by The Network, or about all of them: what it is for, who can join, how a person joins, and links to its privacy and terms pages. Never returns anything about a person.",
-      inputSchema: { type: "object", properties: { app: appProp("One app. Leave it out for all apps.") }, additionalProperties: false },
-      outputSchema: { type: "object", anyOf: [publicApp, object({ apps: { type: "array", items: publicApp } })] },
-      annotations: annotations("About the apps"),
+      description: "Public facts, cities, ages, consent and links.",
+      inputSchema: { type: "object", properties: { app: appProp() }, additionalProperties: false },
+      outputSchema: {
+        type: "object",
+        $defs: { a: publicApp },
+        anyOf: [{ $ref: "#/$defs/a" }, object({ apps: { type: "array", items: { $ref: "#/$defs/a" } } })],
+      },
+      annotations: annotations("App info"),
       ...schemes("app_info"),
     },
     {
       name: "start_signup",
-      title: "Get signup instructions",
-      description: "Returns one app's published signup instructions and text keyword. For a native connector, use the client's authorization link for browser signup. This tool takes no personal details.",
-      inputSchema: { type: "object", properties: { app: appProp("The app to join.") }, required: ["app"], additionalProperties: false },
-      outputSchema: object({ app: appId, join_mode: joinMode, url: text, keyword: nullableText, instructions_for_person: text, ages }),
-      annotations: annotations("Get signup instructions"),
+      description: "Public signup info, URL and keyword.",
+      inputSchema: { type: "object", properties: { app: appProp() }, required: ["app"], additionalProperties: false },
+      outputSchema: object({ app: appId, join_mode: joinMode, url: text, keyword: nullableText, instructions_for_person: text, ages: obj }),
+      annotations: annotations("Signup"),
       ...schemes("start_signup"),
     },
     {
-      name: "prepare_signup", title: "Save my signup draft",
-      description: `After the person confirms their phone and allows access on ${signIn.domain}, saves only the first name and optional home city that the person approved for this app. To finish signup, the person connects again, chooses Finish signup on the connection page, checks the approved details, types their own birthday and ticks the text consent. Never approve text consent for the person. Never creates a person, membership or text consent. One draft per grant; no age, phone, code, gender or match preferences.`,
-      inputSchema: { type: "object", properties: { app: { type: "string", enum: [host.id] }, firstName: { type: "string", minLength: 1, maxLength: 50 }, homeCity: { type: "string", enum: [...LAUNCH_CITIES] } }, required: ["firstName"], additionalProperties: false },
+      name: "prepare_signup",
+      description: `After allows access on ${signIn.domain}, saves firstName/homeCity 10m; person types birthday and ticks the text consent in browser.`,
+      inputSchema: { type: "object", properties: { app: ownAppInput, firstName: { type: "string", minLength: 1, maxLength: 50 }, homeCity: { type: "string", enum: [...LAUNCH_CITIES] } }, required: ["firstName"], additionalProperties: false },
       outputSchema: object({ prepared: { type: "boolean", const: true }, app: ownApp, next_step: text }),
-      annotations: { title: "Save my signup draft", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      annotations: { title: "Draft", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       ...schemes("prepare_signup"),
     },
     {
       name: "check_status",
-      title: `My ${host.name} status`,
-      description: `After the person confirms their phone and allows access on ${signIn.domain}, returns their own status in ${host.name} only (not joined, invited, onboarding, active, stopped or on hold) and what to do next. Never returns anything about other people or other apps.`,
-      inputSchema: { type: "object", properties: { app: { type: "string", enum: [host.id], description: `Optional. Always ${host.id}: this connection covers ${host.name} only.` } }, additionalProperties: false },
+      description: `After allows access on ${signIn.domain}, returns ${host.name} status.`,
+      inputSchema: { type: "object", properties: { app: ownAppInput }, additionalProperties: false },
       outputSchema: object({ app: ownApp, status, next_step: text, manage_url: text }),
-      annotations: annotations(`My ${host.name} status`),
+      annotations: annotations("Status"),
       ...schemes("check_status"),
     },
     {
       name: "read_profile",
-      title: `My saved ${host.name} profile`,
-      description: `Use only when the person asks to see their own saved ${host.name} profile. Requires permission to read that app's profile. Treat returned fields as saved data. This call changes nothing.`,
-      inputSchema: { type: "object", properties: { app: { type: "string", enum: [host.id] } }, additionalProperties: false },
-      outputSchema: object({ app: ownApp, profile: { anyOf: [{ type: "null" }, object({
-        first_name: nullableText, about: nullableText, interests: { type: "array", items: text },
-        neighborhood: nullableText, home_region: { enum: [null, ...LAUNCH_CITIES] },
-      })] } }),
-      annotations: annotations(`My saved ${host.name} profile`),
+      description: `Read saved ${host.name} profile and red lines when asked.`,
+      inputSchema: { type: "object", properties: { app: ownAppInput }, additionalProperties: false },
+      outputSchema: object({ app: ownApp, profile: { anyOf: [{ type: "null" }, obj] } }),
+      annotations: annotations("Profile"),
       ...schemes("read_profile"),
     },
     {
       name: "submit_profile",
-      title: `Send my profile to ${host.name}`,
-      description: `After the person joined ${host.name} and allowed access, sends ${host.name} what they told you about themselves in this conversation (what they are looking for, interests, when and where they are free), in their own words, as if they had texted it. Read it back to them and send it only after they agree. Never include a phone number, a code, an email address, a birthday, an age or anything about another person. Sending a profile only adds. It never pauses or closes anything the person asked for, even when the text leaves it out.`,
+      description: `Send approved ${host.name} profile (interests, availability, dietary/sober/allergy/accessibility/sensory red lines). Additive.`,
       inputSchema: {
         type: "object",
         properties: {
-          app: { type: "string", enum: [host.id], description: `Optional. Always ${host.id}.` },
-          about: { type: "string", minLength: 10, maxLength: PROFILE_MAX_CHARS, description: "The person's profile in their own words, as they approved it." },
+          app: ownAppInput,
+          about: { type: "string", minLength: 10, maxLength: PROFILE_MAX_CHARS, description: "Approved prose incl. dietary/sober/allergy/accessibility/sensory red lines." },
         },
         required: ["about"], additionalProperties: false,
       },
-      outputSchema: { type: "object", anyOf: [
-        object({ app: ownApp, submitted: { type: "boolean", const: true }, looking_for: { type: "array", items: lookingForSchema },
-          check_with_person: { type: "array", items: checkItem }, next_step: text }),
-        object({ app: ownApp, submitted: { type: "boolean", const: false }, status, next_step: text }),
-      ] },
-      annotations: { title: `Send my profile to ${host.name}`, readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      outputSchema: object({
+        app: ownApp, submitted: bool, status, looking_for: arrObj, check_with_person: arrObj, next_step: text, next_question: text,
+      }, ["app", "submitted", "next_step"]),
+      annotations: { title: "Submit", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       ...schemes("submit_profile"),
     },
     {
       name: "list_looking_for",
-      title: `What ${host.name} is looking for`,
-      description: `Use when the person asks what ${host.name} is looking for on their behalf. Returns their own active and paused wants, requests and posts in ${host.name}, each with a ref, and what they closed in the last 30 days. Changes nothing.`,
-      inputSchema: { type: "object", properties: { app: { type: "string", enum: [host.id], description: `Optional. Always ${host.id}.` } }, additionalProperties: false },
-      outputSchema: object({ app: ownApp, looking_for: { type: "array", items: lookingForSchema },
-        closed_recently: { type: "array", items: object({ ref: standingRef, summary: text, closed_on: text }) }, next_step: text }),
-      annotations: annotations(`What ${host.name} is looking for`),
+      description: `List active, paused and recent ${host.name} searches.`,
+      inputSchema: { type: "object", properties: { app: ownAppInput }, additionalProperties: false },
+      outputSchema: object({
+        app: ownApp, looking_for: { type: "array", items: lookingForSchema }, closed_recently: arrObj, next_step: text,
+      }),
+      annotations: annotations("Searches"),
       ...schemes("list_looking_for"),
     },
     {
       name: "pause_looking_for",
-      title: `Pause one ${host.name} search`,
-      description: `Use only after the person asks you, in this conversation, to pause one thing from list_looking_for. Pass its ref. ${host.name} texts them a confirmation with how to undo it. You cannot close anything: to close one for good, the person replies CLOSE to that text.`,
+      description: `Pause one ${host.name} ref after asked (SMS UNDO).`,
       inputSchema: lookingForInput,
       outputSchema: lookingForChangeOutput,
-      annotations: changeAnnotations(`Pause one ${host.name} search`),
+      annotations: changeAnnotations("Pause"),
       ...schemes("pause_looking_for"),
     },
     {
       name: "resume_looking_for",
-      title: `Turn one ${host.name} search back on`,
-      description: `Use only after the person asks you, in this conversation, to turn one paused thing from list_looking_for back on. Pass its ref. ${host.name} texts them a confirmation. A closed thing cannot be resumed here.`,
+      description: `Resume one paused ${host.name} ref after asked.`,
       inputSchema: lookingForInput,
       outputSchema: lookingForChangeOutput,
-      annotations: changeAnnotations(`Turn one ${host.name} search back on`),
+      annotations: changeAnnotations("Resume"),
       ...schemes("resume_looking_for"),
     },
     {
       name: "my_photos",
-      title: `My ${host.name} photos`,
-      description: `Use when the person asks which photos ${host.name} has or who has each. Returns each of their own photos by number, its name if they gave one and the day it was added, and the first name and state of each match who was offered it. It never returns a photo, an id or a link. Changes nothing.`,
-      inputSchema: { type: "object", properties: { app: { type: "string", enum: [host.id], description: `Optional. Always ${host.id}.` } }, additionalProperties: false },
-      outputSchema: object({ app: ownApp, text, photos: { type: "array", items: object({
-        number: { type: "integer", minimum: 1, maximum: photoSlotsMax }, name: nullableText, addedOn: { type: "string", pattern: ADDED_ON.source },
-        sharedWith: { type: "array", items: object({ firstName: text, state: { type: "string", enum: [...PHOTO_SHARE_STATES] } }) },
-      }) } }),
-      annotations: annotations(`My ${host.name} photos`),
+      description: `List ${host.name} photo metadata (no images/links).`,
+      inputSchema: { type: "object", properties: { app: ownAppInput }, additionalProperties: false },
+      outputSchema: object({ app: ownApp, text, photos: arrObj }),
+      annotations: annotations("Photos"),
       ...schemes("my_photos"),
     },
     {
       name: "photo_request",
-      title: `Ask ${host.name} to send, name or take back a photo`,
-      description: `Use only after the person asks you, in this conversation, to send one of their own photos to a match, to name a photo, or to take one back. Pass the person's own words, like "send Maya the beach one". Never pass a photo id, a code or a link. You cannot confirm a send; the person replies YES on their phone.`,
-      inputSchema: { type: "object", properties: {
-        app: { type: "string", enum: [host.id], description: `Optional. Always ${host.id}.` },
-        words: { type: "string", minLength: 1, maxLength: PHOTO_WORDS_MAX, description: "The person's own words about the photo." },
-      }, required: ["words"], additionalProperties: false },
-      outputSchema: object({ app: ownApp, status: { type: "string", enum: Object.keys(PHOTO_REQUEST_TEXT) }, text }),
-      annotations: { title: `Ask ${host.name} to send, name or take back a photo`, readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      description: `Pass words to send/name/take back a ${host.name} photo (SMS confirm).`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          app: ownAppInput,
+          words: { type: "string", minLength: 1, maxLength: PHOTO_WORDS_MAX },
+        },
+        required: ["words"], additionalProperties: false,
+      },
+      outputSchema: object({ app: ownApp, status: { enum: Object.keys(PHOTO_REQUEST_TEXT) }, text }),
+      annotations: { title: "Photo", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       ...schemes("photo_request"),
     },
     {
       name: "get_updates",
-      title: `My ${host.name} updates`,
-      description: `After the person confirms their phone and allows access on ${signIn.domain}, returns their own new updates from ${host.name} (introductions, plans, reminders, questions) and marks them seen. Use when they ask what's new, or when their message has an update reference from a text like T-7F3K9Q (pass it as update_token). It is not a password: never ask for it. Never returns anything about other apps.`,
+      description: `After allows access on ${signIn.domain}, returns unseen ${host.name} updates and marks seen.`,
       inputSchema: {
         type: "object",
         properties: {
-          app: { type: "string", enum: [host.id], description: `Optional. Always ${host.id}.` },
-          update_token: { type: "string", pattern: UPDATE_TOKEN.source, description: "Optional. The update reference from a text, like T-7F3K9Q. Shows only that update." },
+          app: ownAppInput,
+          update_token: { type: "string", pattern: UPDATE_TOKEN.source },
         },
         additionalProperties: false,
       },
-      outputSchema: object({ app: ownApp, updates: { type: "array", items: object({ summary: text, at: text, kind: text }) }, next_step: text }),
+      outputSchema: object({ app: ownApp, updates: { type: "array", items: updateItem }, next_step: text }),
       // Reading marks items seen and every call updates the assistant's last-used time.
-      annotations: { title: `My ${host.name} updates`, readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      annotations: { title: "Updates", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       ...schemes("get_updates"),
     },
   ].filter(t => toolListed(connectorApp[host.id], connectorSurface[surface], connectorTool[t.name as ToolName]));
@@ -412,6 +406,8 @@ function publicInfo(a: McpApp, dating: boolean) {
   return {
     id: a.id, name: a.name, site: a.links.site, what: a.what,
     powered_by: "All of these apps are powered by The Network (https://ntwrk.party).",
+    cities: [...a.cities],
+    consent: { text: a.consent.text, version: a.consent.version },
     join: {
       mode: a.joinMode,
       url: publicSignupUrl(a),
@@ -501,7 +497,7 @@ function savedProfileResult(fields: SavedProfileFields | undefined, forbidden: s
     const text = value.trim();
     const folded = digitFold(text);
     return text && !/\b\d{4,8}\b/.test(folded) && !contactOrCode(text)
-      && !outputLeaks(text, { forbidden, contacts: true }).length ? text : null;
+      && !outputLeaks(text, { forbidden, contacts: true, sensitiveTerms: false }).length ? text : null;
   };
   const first_name = safeText(fields.firstName, 50);
   const about = safeText(fields.about, PROFILE_MAX_CHARS);
@@ -510,7 +506,11 @@ function savedProfileResult(fields: SavedProfileFields | undefined, forbidden: s
   const interests = Array.isArray(fields.interests)
     ? fields.interests.slice(0, 20).flatMap(value => { const text = safeText(value, 100); return text ? [text] : []; })
     : [];
-  return first_name || about || neighborhood || home_region || interests.length ? { first_name, about, interests, neighborhood, home_region } : null;
+  const red_lines = Array.isArray(fields.redLines)
+    ? fields.redLines.slice(0, 20).flatMap(value => { const text = safeText(value, 60); return text ? [text] : []; })
+    : [];
+  if (!first_name && !about && !neighborhood && !home_region && !interests.length && !red_lines.length) return null;
+  return { first_name, about, interests, neighborhood, home_region, ...(red_lines.length ? { red_lines } : {}) };
 }
 
 const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
@@ -530,7 +530,7 @@ const PHOTO_REQUEST_TEXT: Record<PhotoRequestStatus, string> = {
 };
 
 function photoTextClean(value: string, forbidden: string[]): boolean {
-  return !PHOTO_PRIVATE.some(re => re.test(value)) && outputLeaks(value, { forbidden, contacts: true }).length === 0;
+  return !PHOTO_PRIVATE.some(re => re.test(value)) && outputLeaks(value, { forbidden, contacts: true, sensitiveTerms: false }).length === 0;
 }
 
 function shownPhotos(view: PhotoHoldingsView, forbidden: string[]) {
@@ -552,12 +552,36 @@ const lookingForItem = (e: LookingForEntry) => ({
 });
 
 function shownLookingFor(view: LookingForView | undefined, forbidden: string[]) {
-  const safe = (e: { ref: string; summary: string }) => STANDING_REF.test(e.ref) && outputLeaks(e.summary, { forbidden }).length === 0;
+  const safe = (e: { ref: string; summary: string }) => STANDING_REF.test(e.ref) && outputLeaks(e.summary, { forbidden, contacts: false, sensitiveTerms: false }).length === 0;
   return {
     looking_for: (view?.entries ?? []).filter(safe).map(lookingForItem),
     closed_recently: (view?.closedRecently ?? []).filter(safe).map(e => ({ ref: e.ref, summary: e.summary, closed_on: isoDay(e.closedAt) })),
     check_with_person: (view?.checkWithPerson ?? []).filter(safe).map(e => ({ ref: e.ref, summary: e.summary, reason: e.reason })),
   };
+}
+
+async function resolveLeakContext(c: CallContext, g: Grant): Promise<{ forbidden: string[]; facts: string[]; allow: string[] }> {
+  const base = [g.phoneKey, g.personId ?? ""].filter(Boolean);
+  let extra: LeakContext | undefined;
+  if (g.personId && c.hooks.leakContext) {
+    try { extra = await c.hooks.leakContext(g.personId, g.app, g.phoneKey); } catch { /* fall back to base */ }
+  }
+  return {
+    forbidden: [...new Set([...base, ...(extra?.forbidden ?? []).filter(Boolean)])],
+    facts: (extra?.facts ?? []).filter(Boolean),
+    allow: (extra?.allow ?? []).filter(Boolean),
+  };
+}
+
+function formatPublicUpdate(u: PublicUpdate, gate: (text: string) => boolean): Record<string, unknown> {
+  const out: Record<string, unknown> = { summary: u.summary, at: u.at, kind: u.kind };
+  if (typeof u.actionRequired === "boolean") out.action_required = u.actionRequired;
+  if (typeof u.deadlineAt === "string" && u.deadlineAt) out.deadline_at = u.deadlineAt;
+  if (typeof u.crowdType === "string" && u.crowdType && gate(u.crowdType)) out.crowd_type = u.crowdType;
+  if (typeof u.venueName === "string" && u.venueName && gate(u.venueName)) out.venue_name = u.venueName;
+  if (typeof u.pivotStatus === "string" && u.pivotStatus) out.pivot_status = u.pivotStatus;
+  if (typeof u.city === "string" && isCity(u.city)) out.city = u.city;
+  return out;
 }
 
 type LookingForRefusal = Extract<LookingForResult, { kind: "refused" }>["reason"];
@@ -643,8 +667,11 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       const refusal = grantOwnerRefusal(await checkGrantOwner(c.hooks, g));
       if (refusal) return refusal;
       try {
-        const fields = g.personId ? await c.hooks.readProfile(g.personId, g.app, g.phoneKey) : undefined;
-        return { kind: "ok", data: { app: g.app, profile: savedProfileResult(fields, [g.phoneKey, g.personId ?? ""]) } };
+        const [fields, lc] = await Promise.all([
+          g.personId ? c.hooks.readProfile(g.personId, g.app, g.phoneKey) : Promise.resolve(undefined),
+          resolveLeakContext(c, g),
+        ]);
+        return { kind: "ok", data: { app: g.app, profile: savedProfileResult(fields, lc.forbidden) } };
       } catch {
         return { kind: "grant_unavailable" };
       }
@@ -664,13 +691,15 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       if (person === null || !toolAllowedFor("SubmitProfileTool", memberStatus[status])) return { kind: "ok", data: { app: a.id, submitted: false, status, next_step: nextStep(status, a) } };
       const fingerprint = profileSubmissionFingerprint(g.app, g.id, chk.about!);
       const unresolved: ToolOutcome = { kind: "error", message: "The profile delivery is unconfirmed. Check your app status before making changes." };
+      let nextQuestion: string | undefined;
       try {
         const claim = await store.claimProfileSubmission(g, fingerprint, c.now);
         if (claim === "ProfileClaimRefused") return { kind: "invalid_grant" };
         if (claim === "ProfileClaimPending") return unresolved;
         if (claim === "ProfileClaimStart") {
           const delivery = await submitProfile(person, g.app, g.phoneKey, chk.about!);
-          const accepted = delivery === "accepted";
+          const accepted = delivery === "accepted" || (typeof delivery === "object" && delivery.status === "accepted");
+          if (typeof delivery === "object" && delivery.status === "accepted" && delivery.nextQuestion) nextQuestion = delivery.nextQuestion;
           const stored = await store.finishProfileSubmission(g.id, fingerprint, accepted);
           if (!accepted) {
             if (delivery === "stopped") {
@@ -696,16 +725,19 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
         return unresolved;
       }
       const reads = resultShowsLookingFor(c.scopes.includes("profile:read"));
+      const lc = await resolveLeakContext(c, g);
+      const safeQuestion = nextQuestion && passesOutputGate(nextQuestion, { forbidden: lc.forbidden, facts: lc.facts, allow: lc.allow, contacts: true, canaryShapes: true, sensitiveTerms: false })
+        ? nextQuestion : undefined;
       let view: LookingForView | undefined;
       try {
         view = await c.hooks.lookingFor?.(person, g.app, g.phoneKey);
       } catch (e) {
         c.log(`[mcp] ${g.app} submit_profile looking_for read failed grant=${g.id}: ${(e as Error).message}`);
-        return { kind: "ok", data: { app: a.id, submitted: true, looking_for: [], check_with_person: [],
+        return { kind: "ok", data: { app: a.id, submitted: true, status, looking_for: [], check_with_person: [], ...(safeQuestion ? { next_question: safeQuestion } : {}),
           next_step: `${a.name} has it. What is active for the person could not be read now: call list_looking_for later to check. Change nothing unless they ask.` } };
       }
-      const shown = shownLookingFor(view, [g.phoneKey, person]);
-      return { kind: "ok", data: { app: a.id, submitted: true, looking_for: reads ? shown.looking_for : [], check_with_person: reads ? shown.check_with_person : [],
+      const shown = shownLookingFor(view, lc.forbidden);
+      return { kind: "ok", data: { app: a.id, submitted: true, status, looking_for: reads ? shown.looking_for : [], check_with_person: reads ? shown.check_with_person : [], ...(safeQuestion ? { next_question: safeQuestion } : {}),
         next_step: !shown.check_with_person.length ? `${a.name} has it. It may text the person a short question or two.`
           : reads ? `${a.name} has it. Some of it may not match what is active for the person: see check_with_person. Ask them about each one. Change nothing unless they ask.`
           : `${a.name} has it. Some of it may not match what is active for the person. Ask them to text “what am I looking for” to ${a.name} to check. Change nothing unless they ask.` } };
@@ -733,7 +765,8 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
         const current: PublicStatus = await c.hooks.status(g.personId, g.app, g.phoneKey);
         return { kind: "ok", data: { app: a.id, looking_for: [], closed_recently: [], next_step: nextStep(current, a) } };
       }
-      const shown = shownLookingFor(view, [g.phoneKey, g.personId]);
+      const lc = await resolveLeakContext(c, g);
+      const shown = shownLookingFor(view, lc.forbidden);
       return { kind: "ok", data: { app: a.id, looking_for: shown.looking_for, closed_recently: shown.closed_recently,
         next_step: shown.looking_for.length
           ? `Tell the person what is active. To pause one, call pause_looking_for after they ask. To close one for good, the person texts “close <ref>” to ${a.name}.`
@@ -761,8 +794,9 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       }
       if (result.kind === "refused")
         return { kind: "ok", data: { app: a.id, changed: false, item: null, reason: result.reason, next_step: LOOKING_FOR_REFUSED[result.reason](a) } };
+      const lc = await resolveLeakContext(c, g);
       const [item] = resultShowsLookingFor(c.scopes.includes("profile:read"))
-        ? shownLookingFor({ entries: [result.entry], closedRecently: [], checkWithPerson: [] }, [g.phoneKey, g.personId]).looking_for : [];
+        ? shownLookingFor({ entries: [result.entry], closedRecently: [], checkWithPerson: [] }, lc.forbidden).looking_for : [];
       const changed = callLookingForTool(connection, connectorTool[name], true, result.kind === "applied").lastResult === "LookingForChanged";
       return { kind: "ok", data: { app: a.id, changed, item: item ?? null, reason: null,
         next_step: result.kind === "unchanged" ? "No change: it was already in that state."
@@ -779,7 +813,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       if (!hook) return { kind: "error", message: "Photos are not available here." };
       const status: PublicStatus = g.personId === null ? "not_joined" : await c.hooks.status(g.personId, g.app, g.phoneKey);
       const adult = g.personId !== null && !await c.hooks.minorMember(g.personId, g.phoneKey);
-      const forbidden = [g.phoneKey, g.personId ?? ""];
+      const { forbidden } = await resolveLeakContext(c, g);
       const called = callPhotoTool({ ...connectionOf(c.host, c.surface, c.scopes), status: memberStatus[status] }, connectorTool[name], g.personId !== null, adult);
       if (g.personId === null || called.lastResult === "PhotoToolUnavailable") {
         const unavailable = toolAllowedFor(connectorTool[name], memberStatus[status]) ? PHOTO_UNAVAILABLE_TEXT : nextStep(status, a);
@@ -812,8 +846,13 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       if (refusal) return refusal;
       const a = c.apps[g.app];
       if (!c.hooks.updates) return { kind: "error", message: "Updates are not available here yet." };
+      const lc = await resolveLeakContext(c, g);
+      const gate = (summary: string) => passesOutputGate(summary, {
+        forbidden: lc.forbidden, facts: lc.facts, allow: lc.allow, contacts: true, canaryShapes: true,
+      });
       // Someone else's reference, an unknown one or an expired one reads as "nothing new", like an empty inbox.
-      const updates = g.personId === null ? [] : (await c.hooks.updates(g.personId, g.app, c.assistant ?? "web", chk.token, passesOutputGate)).filter(u => passesOutputGate(u.summary));
+      const rawUpdates = g.personId === null ? [] : await c.hooks.updates(g.personId, g.app, c.assistant ?? "web", chk.token, gate);
+      const updates = rawUpdates.filter(u => gate(u.summary)).map(u => formatPublicUpdate(u, gate));
       return { kind: "ok", data: { app: a.id, updates, next_step: updates.length ? "Tell the person briefly. They answer by replying to the text." : `Nothing new from ${a.name}.` } };
     }
   }

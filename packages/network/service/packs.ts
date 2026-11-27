@@ -367,7 +367,9 @@ export function slopHooks(
       const P = slopProfiles(input);
       const fact = P.get(other)?.shareableInterests.find(t => P.get(id)?.interests.includes(t)) ?? P.get(other)?.shareableInterests[0];
       const activity = ACTIVITY_PHRASE[p?.activity ?? "coffee"] ?? "coffee";
-      const about = [age !== undefined && canBeMatched(age) ? `in their ${ageBand(age)}` : undefined, p ? distancePhrase(p.distance) : undefined].filter(Boolean).join(", ");
+      const band = age !== undefined && canBeMatched(age) ? ageBand(age) : undefined;
+      const agePhrase = band ? (/^\d/.test(band) ? `aged ${band}` : `in their ${band}`) : undefined;
+      const about = [agePhrase, p ? distancePhrase(p.distance) : undefined].filter(Boolean).join(", ");
       return slopProbeText({ when: ctx.times ?? ctx.when, times: !!ctx.times }, activity, fact?.replace(/_/g, " "), about || undefined);
     },
     venue(o, input) {

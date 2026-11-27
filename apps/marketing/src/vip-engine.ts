@@ -267,6 +267,9 @@ export interface VipInviteValidationResult {
 
 export const MAX_VIP_INVITE_WORDS = 75;
 
+const VIP_OPT_OUT_FOOTER = "Reply STOP to opt out.";
+const VIP_OPT_OUT_PATTERN = /\b(?:reply\s+stop|opt[\s-]?out|unsubscribe|don't\s+email|do\s+not\s+email)\b/i;
+
 const WEAK_HOOK_FALLBACK_PATTERN =
   /(open_data|dohmh|nys_sla|hn_show|arxiv_|manual_ui|public\s+discovery\s+slot|your\s+recent\s+work\s+at)/i;
 
@@ -433,36 +436,40 @@ export class VipDiscoveryEngine {
       body = [
         `Hi Chef ${firstName},`,
         `Still thinking about ${hook}.`,
-        `Hosting a quiet 6-seat off-duty dinner ${night} in ${neighborhood}${confirmedSeatClause} — people from outside hospitality, no press, no shop talk.`,
-        `Happy to save a seat if Mondays are open, and completely understand if they are sacred rest nights.`,
+        `Hosting a quiet 6-seat off-duty dinner ${night} in ${neighborhood}${confirmedSeatClause} — outside hospitality, no press, no shop talk.`,
+        `Happy to save a seat if Mondays work; no pressure if they are rest nights.`,
         `— ${input.senderName}, The Network`,
+        VIP_OPT_OUT_FOOTER,
       ].join("\n\n");
     } else if (archetype.slug === "oss_maintainer") {
       subject = `Quick note on your work (not recruiting)`;
       body = [
         `Hi ${firstName},`,
-        `Upfront: not recruiting, not selling tools. Read ${hook} and appreciated how clearly you laid out the design.`,
-        `I host small 6-seat craft dinners in ${neighborhood} (${night})${confirmedSeatClause}. Pure off-the-record conversation.`,
+        `Upfront: not recruiting or selling tools. Read ${hook} and appreciated the clear design.`,
+        `Hosting a 6-seat off-the-record craft dinner in ${neighborhood} (${night})${confirmedSeatClause}.`,
         `Want me to hold a seat? Zero pressure if the week is full.`,
         `— ${input.senderName}, The Network`,
+        VIP_OPT_OUT_FOOTER,
       ].join("\n\n");
     } else if (archetype.slug === "startup_founder") {
       subject = `${neighborhood} founder dinner ${night} (no VCs)`;
       body = [
         `Hi ${firstName},`,
         `Read ${hook} and wanted to reach out directly.`,
-        `Hosting a 6-seat off-the-record dinner ${night} in ${neighborhood}${confirmedSeatClause} for founders and builders in ${cityPack.label}. Strictly no pitching and no investors.`,
+        `Hosting a 6-seat off-the-record dinner ${night} in ${neighborhood}${confirmedSeatClause} for ${cityPack.label} builders. No pitching, no investors.`,
         `Happy to hold a seat if you are in town — zero pressure.`,
         `— ${input.senderName}, The Network`,
+        VIP_OPT_OUT_FOOTER,
       ].join("\n\n");
     } else {
       subject = `${neighborhood} 6-seat dinner ${night}`;
       body = [
         `Hi ${firstName},`,
-        `Read ${hook} and thought you would enjoy the conversation at our next ${cityPack.label} table.`,
+        `Read ${hook} and thought you would enjoy our next ${cityPack.label} table.`,
         `Six curious people off-the-record ${night} in ${neighborhood}${confirmedSeatClause}. No panels, no pitching.`,
-        `Happy to save you a seat if timing works — totally fine to pass.`,
+        `Happy to save a seat if timing works — fine to pass.`,
         `— ${input.senderName}, The Network`,
+        VIP_OPT_OUT_FOOTER,
       ].join("\n\n");
     }
 
@@ -505,6 +512,10 @@ export class VipDiscoveryEngine {
       }
     }
 
+    if (!VIP_OPT_OUT_PATTERN.test(body)) {
+      errors.push("missing_can_spam_opt_out");
+    }
+
     const leakReasons = this.leakGuard.check(fullText);
     for (const r of leakReasons) {
       errors.push(`leak_guard:${r}`);
@@ -532,8 +543,8 @@ export class VipDiscoveryEngine {
     const name = firstName.trim() || "there";
     const body =
       touch === 2
-        ? `Hi ${name} — quick follow-up in case last week was packed. Still happy to save you a seat at the ${topicLabel} dinner if you are free. — ${senderName}`
-        : `Hi ${name} — assuming timing is off this round. Happy to keep you on the quiet list for next month's ${topicLabel} dinner if useful. — ${senderName}`;
+        ? `Hi ${name} — quick follow-up in case last week was packed. Still happy to save you a seat at the ${topicLabel} dinner if you are free. — ${senderName}\n\n${VIP_OPT_OUT_FOOTER}`
+        : `Hi ${name} — assuming timing is off this round. Happy to keep you on the quiet list for next month's ${topicLabel} dinner if useful. — ${senderName}\n\n${VIP_OPT_OUT_FOOTER}`;
     return {
       touch,
       body,

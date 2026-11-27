@@ -2,7 +2,7 @@
 // concise, non-needy; one question at a time; an easy no; never another member's contact details
 // or private facts; opt-out language on first contact). Probes never name anyone.
 import {
-  cityTimezone, clampSms, cleanPhrase, formatAnchorOrQuorumCancel, formatBackupVenuePivot, formatCrowdExpectation,
+  cityTimezone, cityTzLabel, clampSms, cleanPhrase, formatAnchorOrQuorumCancel, formatBackupVenuePivot, formatCrowdExpectation,
   formatTopOneVenueSuggestion, SMS_MAX_CHARS, styleViolations, type Category, type CityId, type StyleViolationOptions,
   type TopOneVenueSuggestionOptions,
 } from "@thenetwork/core";
@@ -50,12 +50,19 @@ const minorScope = (notice: MinorNotice, singlePlayer: string): string => ({
 const REPORT_SAFETY_HINT = " If you're ever in danger, call 911 first.";
 
 /** Every member-facing text for one app. No text asks a member to reply "cancel" (a bare CANCEL is STOP). */
-export function copyFor(b: CopyBrand) {
+export function copyFor(b: CopyBrand, defaultCity?: CityId) {
+  const tzLabel = (city?: CityId) => cityTzLabel(city ?? defaultCity);
+  const cancelDateLabel = (city?: CityId) => (city ?? defaultCity) ? cityTzLabel(city ?? defaultCity) : "local";
   return {
   welcome: (first: string, inviter?: string) =>
     `Hi ${first}, I'm ${b.agent} (an AI)${inviter ? `; ${inviter} invited you` : ""}. Now and then I'll suggest a person or plan that seems worth your time, and you can always ask me for something. Reply STOP anytime to opt out. To start: what would you like more of in your life right now?`,
-  welcomeMinor: (first: string, notice: MinorNotice) =>
-    `Hi ${first}, I'm ${b.agent} (an AI). ${minorScope(notice, MINOR_SINGLE_PLAYER_WELCOME)} Reply STOP anytime to opt out. What are you into?`,
+  welcomeMinor: (first: string, notice: MinorNotice) => {
+    const scope = minorScope(notice, MINOR_SINGLE_PLAYER_WELCOME);
+    if (notice === "MinorSlopNotice" || notice === "MinorPeonNotice") {
+      return `Hi ${first}, I'm ${b.agent} (an AI) — ${scope} If you want local all-ages ideas, tell me a hobby or neighborhood, or reply STOP anytime to opt out.`;
+    }
+    return `Hi ${first}, I'm ${b.agent} (an AI). ${scope} Reply STOP anytime to opt out. What are you into?`;
+  },
   /** First contact when the member record has no valid age (6.3): ask once, before anything else. */
   welcomeAskAge: (first: string) =>
     `Hi ${first}, I'm ${b.agent} (an AI). Reply STOP anytime to opt out. One thing before we start: what's your birthday (month, day and year)?`,
@@ -77,7 +84,7 @@ export function copyFor(b: CopyBrand) {
   plansBuddyProbe: (venue: string, when: string, area: string | undefined, times?: string) =>
     `Quick check, no names yet: someone ${area ? `near ${area}` : "nearby"} is also looking for plans${times ? "" : ` ${when}`}. Would you be up for going to ${venue} together?${tail(times)}`,
   /** The one re-engagement after 30 days of silence (F28). */
-  reengage: "It's been a while, so I've kept quiet. Something came up that looks like a real fit for you. Want me to keep sending these?",
+  reengage: "It's been a while, so I've kept quiet. Something came up that looks like a real fit for you. Want me to keep sending these, or reply PAUSE anytime?",
   requestConfirm: (why: string, when: string, times?: string) => times
     ? `Closest match I found so far: someone nearby, and ${why}. Want me to check if they're up for it? I could do ${times}; tell me which works, or no.`
     : `Closest match I found so far: someone nearby, and ${why}. Want me to check if they're up for it ${when}?`,
@@ -102,17 +109,23 @@ export function copyFor(b: CopyBrand) {
   booked: (others: string[], why: string, venue: string, when: string, offer = false) =>
     `${others.length === 1 ? `You're both in: meet ${others[0]}` : `You're all in: ${others.join(", ")}`}, ${when} at ${venue}. ${why}. Reply if your plans change.${offer ? ` ${OFFER}` : ""}`,
   bookedThanks: "Great, see you there.",
-  bookingStartToCancel: "Which meeting should I cancel? Use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its New York date and 24-hour time.",
-  whichBookingToCancel: "I found more than one upcoming meeting. Which one should I cancel? Use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its New York date and 24-hour time.",
+  bookingStartToCancel: `Which meeting should I cancel? Use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its ${cancelDateLabel()} date and 24-hour time.`,
+  bookingStartToCancelFor: (city?: CityId) =>
+    `Which meeting should I cancel? Use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its ${tzLabel(city)} date and 24-hour time.`,
+  whichBookingToCancel: `I found more than one upcoming meeting. Which one should I cancel? Use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its ${cancelDateLabel()} date and 24-hour time.`,
+  whichBookingToCancelFor: (city?: CityId) =>
+    `I found more than one upcoming meeting. Which one should I cancel? Use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its ${tzLabel(city)} date and 24-hour time.`,
   noBookingToCancel: "I couldn't find a matching upcoming meeting.",
   whichBookingToReschedule: "More than one booking has that start. Which meeting did you mean?",
-  rescheduleFormat: "Use RESCHEDULE YYYY-MM-DD HH:MM TO YYYY-MM-DD HH:MM with the old and proposed New York starts in 24-hour time.",
+  rescheduleFormat: `Use RESCHEDULE YYYY-MM-DD HH:MM TO YYYY-MM-DD HH:MM with the old and proposed ${cancelDateLabel()} starts in 24-hour time.`,
+  rescheduleFormatFor: (city?: CityId) =>
+    `Use RESCHEDULE YYYY-MM-DD HH:MM TO YYYY-MM-DD HH:MM with the old and proposed ${tzLabel(city)} starts in 24-hour time.`,
   rescheduleUnavailable: "I couldn't apply that time change.",
   reschedulePending: "The time change needs everyone's acceptance.",
   rescheduleDeclined: "Thanks. I closed that time change request.",
-  rescheduleOffer: (original: string, proposed: string, ref: string) =>
-    `Could your meeting move from ${original} to ${proposed}, New York time? The original booking stays until everyone agrees. Reply RESCHEDULE YES ${ref} or RESCHEDULE NO ${ref}.`,
-  rescheduleUpdated: (proposed: string) => `Everyone agreed. Your meeting is now ${proposed}, New York time, at the same place.`,
+  rescheduleOffer: (original: string, proposed: string, ref: string, city?: CityId) =>
+    `Could your meeting move from ${original} to ${proposed}, ${tzLabel(city)}? The original booking stays until everyone agrees. Reply RESCHEDULE YES ${ref} or RESCHEDULE NO ${ref}.`,
+  rescheduleUpdated: (proposed: string, city?: CityId) => `Everyone agreed. Your meeting is now ${proposed}, ${tzLabel(city)}, at the same place.`,
   /** A probe reply that was neither a clear yes nor a clear no (a condition, a maybe): asked once more. */
   probeClarify: "Just to check: is that a yes or a no? Either is fine.",
   probeTimeClarify: "Which of the offered times work for you? Reply with the letters or the times.",
@@ -122,7 +135,7 @@ export function copyFor(b: CopyBrand) {
   /** Opt-in weekly check-in (founder decision 4d). */
   weeklyOptIn: "Done. Once a week I'll ask what your week looks like. Reply WEEKLY OFF anytime to stop.",
   weeklyOff: "Done, no more weekly check-ins.",
-  weeklyCheckin: "What's your week like? A couple of evenings or times you're free is plenty.",
+  weeklyCheckin: "What's your week like? A couple of evenings or times you're free is plenty, or reply PAUSE anytime.",
   /** A request in a category this app does not cover (slop is dating only, peon is work only). */
   requestOutOfScope: "That's not something I can help with here, so I won't look for it. Ask me anytime about something else.",
   /** A member on watch asked for an introduction: nothing starts until a person has looked. */
@@ -148,7 +161,7 @@ export function copyFor(b: CopyBrand) {
   dropNotice: (_first: string, keep: boolean) => keep
     ? `Quick update: one person can't make it now, sorry. The rest of you are still on.`
     : `Quick update: this one is off now, sorry about that. I'll look for another time.`,
-  feedbackAsk: (others: string) => `How did it go with ${others}?`,
+  feedbackAsk: (others: string) => `How did it go with ${others} — would you want to see them again?`,
   feedbackThanks: "Thanks, that's really helpful.",
   growthAsk: `Glad that went well. If you know someone who'd enjoy ${b.name}, reply with their first name and I'll send you an invite link to pass on.`,
   /** A member names a friend to invite where no invite link can be sent: nothing is promised. */

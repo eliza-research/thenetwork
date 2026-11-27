@@ -1,4 +1,4 @@
-import { fromLocal, HOUR, localParts, MINUTE, type MemberId } from "@thenetwork/core";
+import { classifyYesNo, DAY, fromLocal, HOUR, localParts, MINUTE, type MemberId } from "@thenetwork/core";
 import { sha256 } from "@thenetwork/engine/src/hash.ts";
 import { rescheduleDraftCurrent } from "../../core/src/generated/meetingReschedule.ts";
 import { NY } from "./outreach.ts";
@@ -43,6 +43,151 @@ const LOCAL_START = "(\\d{4}-\\d{2}-\\d{2} (?:[01]\\d|2[0-3]):[0-5]\\d)";
 const REQUEST = new RegExp(`^RESCHEDULE ${LOCAL_START} TO ${LOCAL_START}$`, "i");
 const VOTE = /^RESCHEDULE (YES|NO) ([a-p]{16})$/i;
 
+const NATURAL_DAY_TOKEN = "sunday|sun|monday|mon|tuesday|tues|tue|wednesday|weds|wed|thursday|thurs|thur|thu|friday|fri|saturday|sat|today|tomorrow|tmrw|tmr";
+const NATURAL_TIME_TOKEN = "\\d{1,2}(?::[0-5]\\d)?\\s*(?:a\\.?m\\.?|p\\.?m\\.?)?";
+const NATURAL_RESCHEDULE_WITH_ORIG = new RegExp(
+  `^(?:(?:can|could)\\s+we\\s+|please\\s+|let'?s\\s+)?(?:move|push|reschedule|shift|change)\\s+(?:(?:my|our|the)\\s+(?:meeting|meetup|date|plan)\\s+(?:on|from)\\s+)?(?<origDay>${NATURAL_DAY_TOKEN})(?:\\s+(?:at\\s+)?(?<origTime>${NATURAL_TIME_TOKEN}))?\\s+to\\s+(?<propDay>${NATURAL_DAY_TOKEN})(?:\\s+(?:at\\s+)?(?<propTime>${NATURAL_TIME_TOKEN}))?\\s*[.!?]*$`,
+  "i",
+);
+const NATURAL_RESCHEDULE_SINGLE = new RegExp(
+  `^(?:(?:can|could)\\s+we\\s+|please\\s+|let'?s\\s+)?(?:move|push|reschedule|shift|change)\\s+(?:my|our|the|it)(?:\\s+(?:meeting|meetup|date|plan))?\\s+to\\s+(?<propDay>${NATURAL_DAY_TOKEN})(?:\\s+(?:at\\s+)?(?<propTime>${NATURAL_TIME_TOKEN}))?\\s*[.!?]*$`,
+  "i",
+);
+
+const DAY_TO_LOCAL_WEEKDAY: Record<string, number> = {
+  mon: 0, monday: 0,
+  tue: 1, tues: 1, tuesday: 1,
+  wed: 2, weds: 2, wednesday: 2,
+  thu: 3, thur: 3, thurs: 3, thursday: 3,
+  fri: 4, friday: 4,
+  sat: 5, saturday: 5,
+  sun: 6, sunday: 6,
+};
+
+function parse12hClock(raw: string, preferEvening = true): { hour: number; minute: number } | undefined {
+  const m = /^(\d{1,2})(?::([0-5]\d))?\s*(a\.?m\.?|p\.?m\.?)?$/i.exec(raw.trim());
+  if (!m) return undefined;
+  let hour = Number(m[1]);
+  const minute = m[2] ? Number(m[2]) : 0;
+  const meridiem = m[3]?.replace(/\./g, "").toLowerCase();
+  if (meridiem) {
+    if (hour < 1 || hour > 12) return undefined;
+    hour = (hour % 12) + (meridiem === "pm" ? 12 : 0);
+  } else {
+    if (hour > 23) return undefined;
+    if (hour >= 1 && hour <= 7) hour += 12;
+    else if (preferEvening && hour >= 8 && hour <= 10) hour += 12;
+  }
+  return { hour, minute };
+}
+
+function resolveNaturalDayTarget(dayToken: string, now: number, tz: string): { weekday: number; dayOffset?: number } | undefined {
+  const key = dayToken.toLowerCase();
+  const lp = localParts(now, tz);
+  if (key === "today") return { weekday: lp.weekday, dayOffset: 0 };
+  if (key === "tomorrow" || key === "tmrw" || key === "tmr") return { weekday: (lp.weekday + 1) % 7, dayOffset: 1 };
+  const weekday = DAY_TO_LOCAL_WEEKDAY[key];
+  return weekday === undefined ? undefined : { weekday };
+}
+
+function nextLocalOccurrence(
+  dayToken: string,
+  clock: { hour: number; minute: number },
+  anchorMs: number,
+  tz: string,
+  minMs: number,
+): number | undefined {
+  const target = resolveNaturalDayTarget(dayToken, anchorMs, tz);
+  if (!target) return undefined;
+  const lp = localParts(anchorMs, tz);
+  const startOffset = target.dayOffset ?? ((target.weekday - lp.weekday + 7) % 7);
+  for (let step = startOffset; step <= 14; step += target.dayOffset !== undefined ? 15 : 7) {
+    const day = new Date(Date.UTC(lp.year, lp.month - 1, lp.day + step));
+    const two = (n: number) => String(n).padStart(2, "0");
+    const stamp = `${day.getUTCFullYear()}-${two(day.getUTCMonth() + 1)}-${two(day.getUTCDate())} ${two(clock.hour)}:${two(clock.minute)}`;
+    const at = exactLocalStart(stamp, tz);
+    if (at !== undefined && at > minMs) return at;
+  }
+  return undefined;
+}
+
+/** Parse a natural 12-hour reschedule request ("move Thursday to Friday at 7", "can we push Friday to Saturday at 6:30pm"). */
+export function parseNaturalRescheduleRequest(
+  raw: string,
+  now: number,
+  tz: string = NY,
+  bookings?: readonly { meetingAt?: number }[],
+): Extract<RescheduleCommand, { kind: "request" }> | undefined {
+  const text = raw.trim().replace(/[‘’ʼ]/g, "'").replace(/\s+/g, " ");
+  const withOrig = NATURAL_RESCHEDULE_WITH_ORIG.exec(text);
+  const single = withOrig ? undefined : NATURAL_RESCHEDULE_SINGLE.exec(text);
+  const match = withOrig ?? single;
+  if (!match?.groups?.propDay) return undefined;
+
+  const upcoming = (bookings ?? [])
+    .map(b => b.meetingAt)
+    .filter((at): at is number => typeof at === "number" && at > now);
+
+  let originalAt: number | undefined;
+  let origEvening = true;
+
+  if (withOrig?.groups?.origDay) {
+    const origTarget = resolveNaturalDayTarget(withOrig.groups.origDay, now, tz);
+    if (!origTarget) return undefined;
+    const origClock = withOrig.groups.origTime ? parse12hClock(withOrig.groups.origTime, true) : undefined;
+    if (withOrig.groups.origTime && !origClock) return undefined;
+    if (bookings) {
+      const matching = upcoming.filter(at => {
+        const lp = localParts(at, tz);
+        if (lp.weekday !== origTarget.weekday) return false;
+        if (origTarget.dayOffset !== undefined) {
+          const nowLp = localParts(now, tz);
+          const expected = new Date(Date.UTC(nowLp.year, nowLp.month - 1, nowLp.day + origTarget.dayOffset));
+          if (lp.year !== expected.getUTCFullYear() || lp.month !== expected.getUTCMonth() + 1 || lp.day !== expected.getUTCDate()) return false;
+        }
+        if (origClock && (lp.hour !== origClock.hour || lp.minute !== origClock.minute)) return false;
+        return true;
+      });
+      if (matching.length !== 1) return undefined;
+      originalAt = matching[0]!;
+    } else {
+      const fallbackClock = origClock ?? (match.groups.propTime ? parse12hClock(match.groups.propTime, true) : undefined) ?? { hour: 19, minute: 0 };
+      originalAt = nextLocalOccurrence(withOrig.groups.origDay, fallbackClock, now, tz, now);
+    }
+  } else {
+    if (upcoming.length !== 1) return undefined;
+    originalAt = upcoming[0]!;
+  }
+
+  if (originalAt === undefined) return undefined;
+  const origParts = localParts(originalAt, tz);
+  origEvening = origParts.hour >= 16;
+  const propClock = match.groups.propTime
+    ? parse12hClock(match.groups.propTime, origEvening)
+    : { hour: origParts.hour, minute: origParts.minute };
+  if (!propClock) return undefined;
+
+  const proposedAt = nextLocalOccurrence(match.groups.propDay, propClock, now, tz, now);
+  if (proposedAt === undefined || proposedAt === originalAt) return undefined;
+  // Keep natural proposals within a reasonable 14-day horizon from originalAt/now.
+  if (proposedAt > Math.max(now, originalAt) + 14 * DAY) return undefined;
+  return { kind: "request", originalAt, proposedAt };
+}
+
+/** Accept a bare YES/NO reply when a member has exactly one pending reschedule offer. */
+export function parseSingleOfferRescheduleVote(
+  raw: string,
+  pendingOfferRefs: readonly string[],
+): Extract<RescheduleCommand, { kind: "vote" }> | undefined {
+  if (pendingOfferRefs.length !== 1) return undefined;
+  const text = raw.trim();
+  if (!text || text.length > 40) return undefined;
+  const answer = classifyYesNo(text);
+  if (answer === "yes") return { kind: "vote", accepted: true, ref: pendingOfferRefs[0]! };
+  if (answer === "no") return { kind: "vote", accepted: false, ref: pendingOfferRefs[0]! };
+  return undefined;
+}
+
 /** A repeated or nonexistent local wall time cannot identify an exact meeting start. */
 function exactLocalStart(value: string, tz: string = NY): number | undefined {
   const [year, month, day, hour, minute] = value.split(/[- :]/).map(Number) as [number, number, number, number, number];
@@ -50,18 +195,38 @@ function exactLocalStart(value: string, tz: string = NY): number | undefined {
   return localBookingStart(at, tz) === value && localBookingStart(at - HOUR, tz) !== value && localBookingStart(at + HOUR, tz) !== value ? at : undefined;
 }
 
-export function parseRescheduleCommand(raw: string, tz: string = NY): RescheduleCommand | undefined {
+export interface RescheduleParseContext {
+  now?: number;
+  bookings?: readonly { meetingAt?: number }[];
+  pendingOfferRefs?: readonly string[];
+}
+
+export function parseRescheduleCommand(raw: string, tz: string = NY, ctx?: RescheduleParseContext): RescheduleCommand | undefined {
   const text = raw.trim().replace(/\s+/g, " ");
-  if (!/^RESCHEDULE\b/i.test(text)) return;
-  const vote = VOTE.exec(text);
-  if (vote) return { kind: "vote", accepted: vote[1]!.toLowerCase() === "yes", ref: vote[2]!.toLowerCase() };
-  const request = REQUEST.exec(text);
-  if (request) {
-    const originalAt = exactLocalStart(request[1]!, tz);
-    const proposedAt = exactLocalStart(request[2]!, tz);
-    if (originalAt !== undefined && proposedAt !== undefined) return { kind: "request", originalAt, proposedAt };
+  if (/^RESCHEDULE\b/i.test(text)) {
+    const vote = VOTE.exec(text);
+    if (vote) return { kind: "vote", accepted: vote[1]!.toLowerCase() === "yes", ref: vote[2]!.toLowerCase() };
+    const request = REQUEST.exec(text);
+    if (request) {
+      const originalAt = exactLocalStart(request[1]!, tz);
+      const proposedAt = exactLocalStart(request[2]!, tz);
+      if (originalAt !== undefined && proposedAt !== undefined) return { kind: "request", originalAt, proposedAt };
+    }
+    if (ctx?.now !== undefined) {
+      const natural = parseNaturalRescheduleRequest(text, ctx.now, tz, ctx.bookings);
+      if (natural) return natural;
+    }
+    return { kind: "format" };
   }
-  return { kind: "format" };
+  if (ctx?.pendingOfferRefs?.length === 1) {
+    const singleVote = parseSingleOfferRescheduleVote(text, ctx.pendingOfferRefs);
+    if (singleVote) return singleVote;
+  }
+  if (ctx?.now !== undefined) {
+    const natural = parseNaturalRescheduleRequest(text, ctx.now, tz, ctx.bookings);
+    if (natural) return natural;
+  }
+  return undefined;
 }
 
 export function rescheduleMemberRef(draft: RescheduleDraft, memberId: MemberId): string {
