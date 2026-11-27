@@ -354,3 +354,35 @@
 {"text":"Saturday works whenever","answer":"yes","keys":["b"]}
 {"text":"Saturday works when it suits you","answer":"yes","keys":["b"]}
 {"text":"Last time was great, Saturday works","answer":"yes","keys":["b"]}
+{"text":"after 6pm works","answer":"yes","keys":["a"]}
+{"text":"any time after 6pm works","answer":"yes","keys":["a"]}
+{"text":"after 12pm works","answer":"yes","keys":["a","c"]}
+{"text":"after 8pm works","answer":"unclear","keys":[]}
+{"text":"after noon works","answer":"yes","keys":["a","c"]}
+{"text":"after 6:30pm works","answer":"yes","keys":["a"]}
+{"text":"yes, after 6pm works","answer":"yes","keys":["a"]}
+{"text":"I can do after 6pm","answer":"yes","keys":["a"]}
+{"text":"anything after 6pm works","answer":"yes","keys":["a"]}
+{"text":"after 6pm works for me","answer":"yes","keys":["a"]}
+{"text":"any day after 6pm works","answer":"yes","keys":["a"]}
+{"text":"from 6pm works","answer":"yes","keys":["a"]}
+{"text":"from 12pm works","answer":"yes","keys":["a","c"]}
+{"text":"Saturday after 12pm works","answer":"unclear","keys":[]}
+{"text":"Saturday from 12pm works","answer":"unclear","keys":[]}
+{"text":"weekend after 12pm works","answer":"yes","keys":["c"]}
+{"text":"Saturday after 12pm works, Sunday works","answer":"yes","keys":["c"]}
+{"text":"after 6pm works, Saturday doesn't","answer":"yes","keys":["a"]}
+{"text":"all of them after 6pm work","answer":"yes","keys":["a"]}
+{"text":"after 10am works","answer":"yes","keys":["a","b","c"]}
+{"text":"Saturday after 10am works","answer":"yes","keys":["b"]}
+{"text":"Thursday after 6pm works","answer":"yes","keys":["a"]}
+{"text":"Sunday after 12pm works","answer":"yes","keys":["c"]}
+{"text":"after midnight works","answer":"yes","keys":["a","b","c"]}
+{"text":"I'm free after 6pm","answer":"unclear","keys":[]}
+{"text":"I can't do anything after 6pm","answer":"no","keys":[]}
+{"text":"after 6pm or Sunday works","answer":"yes","keys":["c"]}
+{"text":"Saturday works, I'm free after 12pm","answer":"yes","keys":["b"]}
+{"text":"the second one after 12pm works","answer":"unclear","keys":[]}
+{"text":"option b after 12pm works","answer":"unclear","keys":[]}
+{"text":"the first one after 6pm works","answer":"yes","keys":["a"]}
+{"text":"the second works after 12pm","answer":"unclear","keys":[]}

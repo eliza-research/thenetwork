@@ -1353,12 +1353,16 @@ type OrdinalMention = ProbeSpan & { index: number; choiceEnd?: number };
 
 function readDirectProbeOrdinals(text: string, memberChoiceAt?: (at: number) => boolean) {
   const choices: number[][] = BARE_LAST.test(text) ? [[-1]] : [];
+  const choiceSpans: OrdinalMention[] = [];
   const refusals: OrdinalMention[] = [];
   for (const item of text.matchAll(DIRECT_ORDINAL)) {
     if (quoteStillOpen(text.slice(0, item.index)) || memberChoiceAt?.(item.index + 1) === false) continue;
     const items = item.groups!.items!;
     if (item.groups!.affirmative) {
-      choices.push([...items.matchAll(new RegExp(`${ORDINAL_WORD}|\\blater(?=\\s+(?:one|option|time|slot)\\b)`, "g"))].map(word => word[0] === "later" ? -1 : ORDINAL_POSITION[word[0]]!));
+      const [start] = item.indices!.groups!.items!;
+      const words = [...items.matchAll(new RegExp(`${ORDINAL_WORD}|\\blater(?=\\s+(?:one|option|time|slot)\\b)`, "g"))];
+      choices.push(words.map(word => word[0] === "later" ? -1 : ORDINAL_POSITION[word[0]]!));
+      for (const word of words) choiceSpans.push({ at: start + word.index, end: start + word.index + word[0].length, index: word[0] === "later" ? -1 : ORDINAL_POSITION[word[0]]! });
     } else {
       const [start] = item.indices!.groups!.items!;
       for (const word of items.matchAll(new RegExp(ORDINAL_ITEM, "g"))) {
@@ -1369,7 +1373,7 @@ function readDirectProbeOrdinals(text: string, memberChoiceAt?: (at: number) => 
       }
     }
   }
-  return { choices, refusals };
+  return { choices, choiceSpans, refusals };
 }
 
 function completeProbeOrdinals(text: string, refusals: readonly OrdinalMention[]): OrdinalMention[] {
@@ -1543,6 +1547,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const pos = new Set<string>(), neg = new Set<string>(), strong = new Set<string>();
   const individual = new Set<string>(), grouped = new Set<string>();
   const pickedClauses = new Set<string>(), refusedClauses = new Set<string>();
+  const pickSpanByKey = new Map<string, ProbeSpan>();
   const qualifiedTimeRefusals = new Map<number, [number, readonly string[], boolean]>();
   const refusedTails = new Map<number, [number, string[]]>();
   let conditionalTimeRefusal = false;
@@ -1580,6 +1585,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     }
     pickedClauses.add(cl);
     for (const k of keys) {
+      pickSpanByKey.set(k, { at: i, end: i + len });
       pos.add(k);
       (group ? grouped : individual).add(k);
       if ((!unbound || !calendar) && onlyPick(i, len) || (POSITIVE_PICK.test(cl) && !/\?/.test(t.slice(i + len, i + len + 2)))) strong.add(k);
@@ -1642,6 +1648,10 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     pos.add(key);
     strong.add(key);
     individual.add(key);
+  }
+  for (const span of directOrdinals.choiceSpans) {
+    const key = options[probeOrdinalIndex(span.index, options.length)]?.key;
+    if (key !== undefined && pos.has(key)) pickSpanByKey.set(key, span);
   }
   const ordinalMissing = ordinalKeys.some(key => key === undefined);
   let namedExclusion = false, refusedGroup = false, explicitAlternative = false;
@@ -1716,6 +1726,50 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
       // General availability can answer an earlier profile question. A bare daypart needs a direct pick.
       unresolved.push(m);
     } else mark(matching, m.at, m.end - m.at, true, !!m.group);
+  }
+  // A stated lower bound ("after 6pm works", "Saturday after 12pm works") limits the
+  // offered times the member accepts: a slot at or before an "after" bound (before a
+  // "from" bound) is not booked. A named time whose offered slots all miss the bound
+  // matches no offered time, so it is unresolved like any other unmatched named time.
+  let lowerBoundApplied = false, lowerBoundConflict = false;
+  for (const bound of t.matchAll(/\b(after|from)\s+(?:(\d{1,2})(?::([0-5]\d))?\s*([ap]m)|(noon|midnight))\b/g)) {
+    const at = bound.index!, end = at + bound[0].length;
+    if (!memberChoiceAt(at) || inConditionalClause(t, at) || probeTimeIsRefused(t, at, end)) continue;
+    const minute = bound[5] ? (bound[5] === "noon" ? 12 * 60 : 0)
+      : ((Number(bound[2]) % 12) + (bound[4] === "pm" ? 12 : 0)) * 60 + Number(bound[3] ?? 0);
+    const satisfies = (slot: (typeof offered)[number]) => slot.minute === undefined
+      || (bound[1] === "after" ? slot.minute > minute : slot.minute >= minute);
+    const violating = offered.filter(slot => !satisfies(slot)).map(slot => slot.key);
+    if (!violating.length) continue;
+    lowerBoundApplied = true;
+    const boundClause = clauseAt(t, at, end - at);
+    for (let i = unresolved.length - 1; i >= 0; i--) {
+      if (unresolved[i]!.at >= at && unresolved[i]!.end <= end) unresolved.splice(i, 1);
+    }
+    for (const m of mentions) {
+      if (!memberChoiceAt(m.at) || (m.at >= at && m.end <= end)) continue;
+      if (clauseAt(t, m.at, m.end - m.at) !== boundClause) continue;
+      const between = m.end <= at ? t.slice(m.end, at) : t.slice(end, m.at);
+      if (/\bor\b/.test(between)) continue;
+      if (probeTimeIsRefused(t, m.at, m.end) || NAMED_EXCLUSION.test(t.slice(0, m.at))) continue;
+      const matching = matchingOffered(m);
+      if (!matching.length) continue;
+      const kept = matching.filter(key => !violating.includes(key));
+      for (const key of matching) {
+        if (kept.includes(key)) continue;
+        pos.delete(key); strong.delete(key); individual.delete(key); grouped.delete(key); neg.add(key);
+      }
+      if (!kept.length && !unresolved.includes(m)) unresolved.push(m);
+    }
+    for (const key of [...pos]) {
+      const span = pickSpanByKey.get(key);
+      if (!violating.includes(key) || !span || clauseAt(t, span.at, span.end - span.at) !== boundClause) continue;
+      const between = span.end <= at ? t.slice(span.end, at) : t.slice(end, span.at);
+      if (/\bor\b/.test(between)) continue;
+      pos.delete(key); strong.delete(key); individual.delete(key); grouped.delete(key); neg.add(key);
+      lowerBoundConflict = true;
+    }
+    for (const key of violating) neg.add(key);
   }
   if (conditionalTimeRefusal) {
     if (!hasDetachedProbeRefusal(t)) return { answer: "unclear", keys: [], why: "conditional" };
@@ -1873,6 +1927,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     return explicitYes(open);
   }
   if (past || refusedGroup && !/^\s*(?:yes|yep|yeah|sure|ok(?:ay)?)\b/.test(t)) return { ...unclear, why: "slot" };
+  if (lowerBoundApplied && open.length === 0 || lowerBoundConflict && picked.length === 0) return { ...unclear, why: "slot" };
   if (explicitTimesOnly) return unclear;
   const droppedNamedTime = mentions.some(m => !memberChoiceAt(m.at) && matchingOffered(m).length > 0);
   if (c.answer === "yes" && authoredYes(t) && !droppedNamedTime
