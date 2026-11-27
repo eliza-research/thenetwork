@@ -859,7 +859,8 @@ class ObsStore {
   private onPopState() {
     const appBackTarget = this.appBackTarget;
     this.appBackTarget = undefined;
-    const depth = this.readBrowserFocusDepth();
+    const rawDepth = (history.state as { obsDepth?: number } | null)?.obsDepth;
+    const depth = typeof rawDepth === "number" ? rawDepth : this.browserFocusDepth + 1;
     const stepsBack = this.browserFocusDepth - depth;
     this.browserFocusDepth = depth;
     const page = parsePage(), app = parseApp();
@@ -889,8 +890,6 @@ class ObsStore {
     if (!canFocusOn(nav, subjectOf(f), false)) return;
     const next = focusOn(nav, subjectOf(f), false);
     if (stepsBack > 0) {
-      // After reload (or a multi-entry Back), the target may not be the top
-      // in the in-memory history. Do not put the departed, newer subject in it.
       const prior = this.focusHistory.slice(0, Math.max(0, this.focusHistory.length - stepsBack));
       this.commitNav({ ...next, depth: prior.length }, { focus: f, history: prior });
       return;

@@ -101,7 +101,6 @@ test("browser Back after reload does not make the newer subject a prior focus", 
     expect(store.ui.focus).toEqual({ kind: "neighborhood", id: "Chelsea" });
     expect(store.focusHistory).toEqual([]);
 
-    // Forward is still allowed to build the actual prior focus.
     arrive("Harlem", 2);
     expect(store.ui.focus).toEqual({ kind: "neighborhood", id: "Harlem" });
     expect(store.focusHistory).toEqual([{ kind: "neighborhood", id: "Chelsea" }]);
@@ -109,13 +108,16 @@ test("browser Back after reload does not make the newer subject a prior focus", 
     expect(store.ui.focus).toEqual({ kind: "neighborhood", id: "Chelsea" });
     expect(store.focusHistory).toEqual([]);
 
-    // Forward to the same subject as the top of the Back stack is still Forward.
     store.focus({ kind: "neighborhood", id: "Harlem" });
     store.focus({ kind: "neighborhood", id: "Chelsea" });
     arrive("Harlem", 2);
     expect(store.focusHistory.map(f => f?.id)).toEqual(["Chelsea"]);
     arrive("Chelsea", 3);
     expect(store.focusHistory.map(f => f?.id)).toEqual(["Chelsea", "Harlem"]);
+    history.replaceState(null, "", "#n=Harlem");
+    window.dispatchEvent(new window.PopStateEvent("popstate", { state: null }));
+    expect(store.ui.focus).toEqual({ kind: "neighborhood", id: "Harlem" });
+    expect(store.focusHistory.map(f => f?.id)).toEqual(["Chelsea", "Harlem", "Chelsea"]);
   } finally {
     store.disconnect();
     await window.happyDOM.close();
