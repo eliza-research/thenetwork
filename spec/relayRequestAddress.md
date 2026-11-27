@@ -70,8 +70,9 @@ swap, retain only the preceding ordinary message addressed by the sender.
 A condition that begins the separate phone clause does not give consent.
 The retained message must contain no private transfer instruction or
 unfinished prior assent. The incoming turn withdraws the swap before the
-ordinary text relay. A refusal inside a literal text body does not withdraw
-the sender's swap. A separate request to share a photo or other contact
+ordinary text relay. A refusal of the sender's number inside a literal
+text body also withdraws the sender's swap, because the recipient reads that
+refusal. The body still goes as written. A separate request to share a photo or other contact
 information uses the existing text-envelope rules.
 
 ```quint
