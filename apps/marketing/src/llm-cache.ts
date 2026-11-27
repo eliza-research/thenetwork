@@ -3,6 +3,7 @@ import { RealClock, type Clock } from "../../../packages/core/src/clock.ts";
 import { DEFAULT_MODEL, OPENAI_PRICES, priceFor } from "../../../packages/core/src/llm.ts";
 import { parseOptOut } from "../../../packages/core/src/replies.ts";
 import type { PersonaId, SubscriptionProvider } from "./types.ts";
+import { VIP_ARCHETYPE_KEYWORDS } from "./vip-engine.ts";
 
 export interface PromptCacheKeyInput {
   readonly provider: SubscriptionProvider | (string & {});
@@ -247,27 +248,6 @@ export class PromptCache {
   }
 }
 
-const VIP_KEYWORDS: ReadonlyArray<readonly [string, readonly string[]]> = [
-  ["startup_founder", ["founder", "co-founder", "ceo", "seed", "series a", "form d", "yc"]],
-  ["vc_lp", ["venture", "general partner", "angel", "lp", "fund", "form adv"]],
-  ["patent_inventor", ["patent", "inventor", "uspto", "hardware prototype"]],
-  ["scientist_academic", ["professor", "openalex", "nsf", "nih", "h-index", "phd"]],
-  ["ai_biotech_researcher", ["arxiv", "biorxiv", "neurips", "icml", "iclr", "biotech", "robotics"]],
-  ["quant_finance", ["quant", "hedge fund", "13f", "portfolio manager", "macro strategist"]],
-  ["author_journalist", ["author", "journalist", "pulitzer", "substack", "essayist", "novelist"]],
-  ["filmmaker_artist", ["filmmaker", "director", "sundance", "musician", "biennial", "composer"]],
-  ["elite_athlete", ["olympian", "athlete", "marathon", "championship", "all-american"]],
-  ["michelin_chef_hospitality", ["chef", "michelin", "james beard", "sommelier", "restaurateur"]],
-  ["architect_designer", ["architect", "industrial designer", "aia", "pritzker"]],
-  ["oss_maintainer", ["open source", "maintainer", "principal engineer", "github", "committer"]],
-  ["policymaker_diplomat", ["policy", "diplomat", "senate", "think tank", "commissioner"]],
-  ["podcaster_curator", ["podcast", "curator", "super-host", "radio"]],
-  ["leading_physician", ["surgeon", "physician", "clinical trial", "longevity", "oncology"]],
-  ["philanthropist_foundation", ["foundation", "museum", "nonprofit", "990", "philanthropist"]],
-  ["legal_rainmaker", ["litigator", "appellate", "prosecutor", "general counsel", "courtlistener"]],
-  ["defense_space_energy", ["aerospace", "fusion", "sbir", "darpa", "orbital", "satellite"]],
-];
-
 const SCRIPT_FORBIDDEN_RULES: ReadonlyArray<{ readonly code: string; readonly re: RegExp }> = [
   {
     code: "clef_secrecy_violation",
@@ -408,7 +388,7 @@ export function tryDeterministicRoute(
     const body = stripPrefix(trimmed, /^CLASSIFY_VIP:/i).toLowerCase();
     let bestSlug = "startup_founder";
     let bestHits = 0;
-    for (const [slug, keywords] of VIP_KEYWORDS) {
+    for (const [slug, keywords] of VIP_ARCHETYPE_KEYWORDS) {
       let hits = 0;
       for (const kw of keywords) {
         if (body.includes(kw)) hits += 1;

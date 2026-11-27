@@ -153,6 +153,10 @@ export const DEFAULT_DAILY_OUTREACH_CAP = 50;
 export const DEFAULT_DAILY_TURN_CAP = 60;
 export const DEFAULT_OPERATOR_TURN_CAP = 80;
 export const DEFAULT_BANDIT_MAX_CPA_CENTS = 2_125;
+export const DEFAULT_APOLLO_DAILY_CREDIT_CAP = 50;
+export const DEFAULT_APOLLO_MONTHLY_CREDIT_CAP = 1_000;
+export const DEFAULT_APOLLO_DAILY_SEARCH_CAP = 100;
+export const DEFAULT_APOLLO_CENTS_PER_CREDIT = 10;
 
 export const DEFAULT_SLOP_CASH_REPO = "eliza-research/thenetwork";
 export const DEFAULT_SLOP_CASH_CHAIN = "base" as const;
@@ -451,22 +455,22 @@ export const MARKETING_EMAIL_TEMPLATES: Record<EmailTemplateId, AutomatedEmailTe
       "",
       'Loved the pacing and realness in "{{RECENT_VIDEO_TITLE}}"—you let real people surprise you instead of forcing a bit.',
       "",
-      "We are launching The Network in {{CITY_LABEL}}—an AI matchmaker that skips swipe apps and cold DMs to connect people to what they actually want in real life ({{DESIRE_PROMISE}}).",
+      "We are launching The Network in {{CITY_LABEL}}—connecting people in real life without swipe apps or cold DMs ({{DESIRE_PROMISE}}).",
       "",
       "THE IDEA (CANDID VOX-POP, ZERO ACTORS):",
       "- Location: Public sidewalk in {{NEIGHBORHOOD}} ({{LOCAL_FILMING_NOTE}}).",
       '- Question to explore: "{{CREATOR_QUESTION}}"',
-      "- On-camera moment: Have 3+ willing 18+ locals try your unique QR card ({{CREATOR_SHORTLINK}}) live on camera and capture their unfiltered reaction.",
+      "- On-camera moment: Have 3+ willing 18+ locals try your custom batch QR card live on camera and capture their unfiltered reaction.",
       "",
       "DELIVERABLES & PAY:",
-      "- 1 edited main piece (60-90s) on {{PRIMARY_PLATFORM}} + 2 short vertical cutdowns (20-35s) + raw clips, with your link pinned for 30 days.",
+      "- 1 edited main piece (60-90s) on {{PRIMARY_PLATFORM}} + 2 short vertical cutdowns (20-35s) + raw clips, with your short link pinned for 30 days.",
       "- ${{FLAT_FEE}} guaranteed flat fee paid within 48 hours of approved publish + $2.50 per verified 18+ local signup (capped at +${{BONUS_CAP}}, settled Day 14).",
       "- Target publish date: {{TARGET_PUBLISH_DATE}}.",
       "",
-      "CLEAN COMPLIANCE (HANDLED IN OUR 1-PAGE CLICKWRAP):",
-      "- 18+ interviewees only, standard #Ad / Paid Partnership disclosure, and our 10-second mobile release QR ({{RELEASE_FORM_URL}}) for recognizable interviewees ({{LOCAL_RELEASE_STATUTE}}).",
+      "CLEAN COMPLIANCE (SENT IN STAGE-2 CLICKWRAP ONCE YOU REPLY):",
+      "- 18+ interviewees only, standard #Ad / Paid Partnership disclosure, and our 10-second mobile release QR for recognizable interviewees ({{LOCAL_RELEASE_STATUTE}}).",
       "",
-      "If you're into this, lock the slot and review the 1-page agreement + instant payout setup here: {{CREATOR_CONTRACT_URL}}",
+      "If this fits your style, just reply with a quick yes and I will send over the 1-page agreement, custom short link ({{CREATOR_SHORTLINK}}), and mobile release QR right away. Zero pressure if your calendar is full.",
       "",
       "Best,",
       "Creator Partnerships | The Network ({{CITY_LABEL}})",

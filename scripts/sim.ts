@@ -12,6 +12,7 @@
 //   pnpm run sim --with-capital       also the network-capital block (slow: 32 paired seeds; nightly)
 //   pnpm run sim --json out.json      write every gate to a file
 //   pnpm run sim --only onboard --llm  also the onboarding LLM arm (keeps the provider keys; tracked only; never in CI)
+//   pnpm run sim --only journeys --llm --max-cost-usd 0.25 --max-requests 80  journeys live-LLM friction rubric (tracked only)
 //
 // Blocks and pinned seeds (see each block's header in scripts/sim/):
 //   evals     evals/ corpora: consent replies, abuse, teen ages, wants, areas, negations, core replies, opt-out, leak guard
@@ -44,11 +45,13 @@
 //   five-city 5-city (sf, nyc, la, chicago, miami) conversation-script suite through ConsentNetwork, VenueManager & MeetupCoordinator (--transcripts prints transcripts)
 //   marketing global multi-city marketing growth engine: 30-day NYC+SF deterministic world, 7 adversarial storms,
 //             Dafny policy invariants, LLM cache/budget, core queue backpressure, and paired Bandit vs Uniform CPA
+//   journeys  broad-spectrum multi-channel journey suite: 14 speaking styles, 6 age brackets, 4 clarity bands, 14 channels,
+//             6 bad-actor classes, league-gap bilateral value, 0 leaks/ranking leaks, <2s offline + optional --llm friction rubric
 //   capital   network capital: 32 paired seeds, 90 days (--with-capital or --only capital)
 import { writePath } from "../packages/core/src/runtime/files.ts";
 import { Block, type Gate } from "./sim/gate.ts";
 
-type Opts = { quick: boolean; llm: boolean; transcripts: boolean; matchingPack?: string };
+type Opts = { quick: boolean; llm: boolean; transcripts: boolean; matchingPack?: string; maxCostUsd?: number; maxRequests?: number };
 const BLOCKS: Record<string, (b: Block, o: Opts) => Promise<void>> = {
   evals: async (b) => (await import("./sim/evals.ts")).evalsBlock(b),
   network: async (b, o) => (await import("./sim/network.ts")).networkBlock(b, o),
@@ -68,9 +71,10 @@ const BLOCKS: Record<string, (b: Block, o: Opts) => Promise<void>> = {
   "five-city": async (b, o) => (await import("./sim/five-city.ts")).fiveCityBlock(b, o),
   audit: async (b) => (await import("./sim/audit.ts")).auditBlock(b),
   marketing: async (b, o) => (await import("./sim/marketing.ts")).marketingBlock(b, o),
+  journeys: async (b, o) => (await import("./sim/journeys.ts")).journeysBlock(b, o),
   capital: async (b, o) => (await import("./sim/capital.ts")).capitalBlock(b, o),
 };
-const DEFAULT = ["evals", "onboard", "network", "matching", "slop", "relay", "peon", "peon-seats", "friends", "meetup", "clef", "five-city", "safety", "ops", "pipeline", "pipeline-slop", "audit", "marketing"];
+const DEFAULT = ["evals", "onboard", "network", "matching", "slop", "relay", "peon", "peon-seats", "friends", "meetup", "clef", "five-city", "safety", "ops", "pipeline", "pipeline-slop", "audit", "marketing", "journeys"];
 
 const argv = process.argv.slice(2);
 const values = (k: string) => argv.flatMap((x, i) => (x === `--${k}` ? (argv[i + 1] ?? "").split(",") : x.startsWith(`--${k}=`) ? x.slice(k.length + 3).split(",") : []));
@@ -83,11 +87,20 @@ const run = only.length ? only : [...DEFAULT, ...(argv.includes("--with-capital"
 if (!run.length) { console.error("Select at least one simulation block."); process.exit(2); }
 const matchingPacks = values("matching-pack").filter(Boolean);
 const matchingPack = matchingPacks[0];
-const opts: Opts = { quick: argv.includes("--quick"), llm: argv.includes("--llm"), transcripts: argv.includes("--transcripts"), matchingPack };
+const parsePosNum = (flag: string): number | undefined => {
+  const raw = values(flag).find(Boolean);
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) { console.error(`--${flag} must be a positive number.`); process.exit(2); }
+  return n;
+};
+const maxCostUsd = parsePosNum("max-cost-usd");
+const maxRequests = parsePosNum("max-requests");
+const opts: Opts = { quick: argv.includes("--quick"), llm: argv.includes("--llm"), transcripts: argv.includes("--transcripts"), matchingPack, maxCostUsd, maxRequests };
 
-// Simulations never call a model: fail fast if any code path tries. The one exception is the
-// onboarding LLM arm, which runs only with --llm (and only in the onboard block).
-if (opts.llm) console.log("--llm: provider keys kept for the onboarding LLM arm (tracked gates only)");
+// Simulations never call a model: fail fast if any code path tries. The one exception is --llm
+// arms (onboard / journeys), which keep provider keys and emit tracked gates only.
+if (opts.llm) console.log("--llm: provider keys kept for --llm arms (tracked gates only)");
 else for (const k of ["OPENAI_API_KEY", "SURPLUS_API_KEY", "CLOUDFLARE_AI_TOKEN"]) delete process.env[k];
 
 if (argv.some(arg => arg === "--matching-pack" || arg.startsWith("--matching-pack="))) {

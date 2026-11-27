@@ -12,6 +12,28 @@ export const INTERNAL_ID = /\b(mem|opp|act|rcp|grt|prp|dcr)_[a-z0-9]+/i;
 /** An ISO timestamp in prose ("2026-10-08T19:30"): machine data, never model-visible text. */
 export const ISO_TIMESTAMP = /\b\d{4}-\d{2}-\d{2}t\d{2}:\d{2}/i;
 
+const DEFAULT_OUTPUT_GUARD = new LeakGuard({ contacts: false });
+const OUTPUT_GUARD_CACHE = new Map<string, LeakGuard>();
+const MAX_OUTPUT_GUARDS = 64;
+
+function outputGuardFor(forbidden: string[], facts: string[]): LeakGuard {
+  if (forbidden.length === 0 && facts.length === 0) return DEFAULT_OUTPUT_GUARD;
+  const key = JSON.stringify([forbidden, facts]);
+  const hit = OUTPUT_GUARD_CACHE.get(key);
+  if (hit) {
+    OUTPUT_GUARD_CACHE.delete(key);
+    OUTPUT_GUARD_CACHE.set(key, hit);
+    return hit;
+  }
+  const guard = new LeakGuard({ exact: forbidden, facts, contacts: false });
+  if (OUTPUT_GUARD_CACHE.size >= MAX_OUTPUT_GUARDS) {
+    const oldest = OUTPUT_GUARD_CACHE.keys().next().value;
+    if (oldest !== undefined) OUTPUT_GUARD_CACHE.delete(oldest);
+  }
+  OUTPUT_GUARD_CACHE.set(key, guard);
+  return guard;
+}
+
 /**
  * The violations in `text` (empty = clean). `forbidden` are exact strings (ids, names, contact values),
  * `facts` private facts matched fuzzily. `contacts` also runs the full core contact patterns
@@ -19,7 +41,9 @@ export const ISO_TIMESTAMP = /\b\d{4}-\d{2}-\d{2}t\d{2}:\d{2}/i;
  * member context sent to the assistant. Labels never contain the matched value.
  */
 export function outputLeaks(text: string, o: { forbidden?: string[]; facts?: string[]; contacts?: boolean } = {}): string[] {
-  const v = new LeakGuard({ exact: (o.forbidden ?? []).filter(Boolean), facts: (o.facts ?? []).filter(Boolean), contacts: o.contacts ?? false }).check(text);
+  const forbidden = (o.forbidden ?? []).filter(Boolean);
+  const facts = (o.facts ?? []).filter(Boolean);
+  const v = outputGuardFor(forbidden, facts).check(text, { contacts: o.contacts ?? false });
   if (v[0] === "too_long") return v;
   const contacts = findContactKinds(text, { kinds: PHONE_OR_EMAIL, phoneExemptions: false });
   if (contacts.includes("phone")) v.push("phone_pattern");

@@ -76,9 +76,9 @@ export function applyCorrection(p: SlopOnboarding, text: string, o: ExtractOptio
     reply.constraints.length > 0 || readbackQualified(text), BARE_AFFIRMATION.test(text));
   return finalize({ ...next, confirmed: confirmationAfterAnswer(changed, affirmed, next.minor || next.declined) });
 }
-const BARE_AFFIRMATION = /^\s*(?:right|correct|exactly|that['’]?s (?:it|right)|you got it|perfect|yup|yep|ya|ye|100|👍)[.!\s]*$/i;
+const BARE_AFFIRMATION = /^\s*(?:(?:yes|yeah|yep|yup|ya|ye)[,!\s]+)?(?:right|correct|exactly|that['’]?s (?:it|right)|you got it|perfect|spot on|nailed it|looks? (?:good|right)|sounds? (?:good|right)|pretty much|mostly|basically|yup|yep|ya|ye|100%?|👍)[.!\s]*$/i;
 const BENIGN_READBACK_NEGATION = /\b(?:why (?:the (?:hell|heck) )?not|not a problem|no (?:problem|probs?|worries|doubt|question))\b/g;
-const READBACK_QUALIFIER = /\?|\b(?:but|except|though|tho|although|however|actually|instead|other than|apart from|besides|minus|change|make it|more like|meant|almost|mostly|nearly|close|pretty much|more or less|maybe|mayb|perhaps|possibly|probably|prob|might|idk|dunno|unsure|uncertain|kinda|kind of|sort of|i guess|guess so|i think(?:\s+so)?|think so|i suppose|suppose so|let me (?:check|see|think)|if|unless|wait|hold on|both|a mix|my age)\b/;
+const READBACK_QUALIFIER = /\?|\b(?:but|except|though|tho|although|however|actually|instead|other than|apart from|besides|minus|change|make it|more like|meant|almost|nearly|close|more or less|maybe|mayb|perhaps|possibly|probably|prob|might|idk|dunno|unsure|uncertain|kinda|kind of|sort of|i guess|guess so|i think(?:\s+so)?|think so|i suppose|suppose so|let me (?:check|see|think)|if|unless|wait|hold on|both|a mix|my age)\b/;
 function readbackQualified(raw: string): boolean {
   const t = normText(raw);
   if (READBACK_QUALIFIER.test(t) || coarsePlace(t)) return true;
@@ -95,7 +95,7 @@ const view = (p: SlopOnboarding) => ({
 export const SLOP_ONBOARD_QUESTIONS: Record<string, { field: OnboardField; text: string }> = {
   slop_age: { field: "age", text: "First, how old are you?" },
   slop_orientation: { field: "orientation", text: SLOP_ASK_QUESTIONS.slop_orientation! },
-  slop_seeks: { field: "seeks", text: "Who are you hoping to meet: women, men, nonbinary people, or a mix? Name them so I get it right." },
+  slop_seeks: { field: "seeks", text: "Which genders are you open to dating: women, men, or nonbinary people? Name all that fit (for example, women and men)." },
   slop_seeks_genders: { field: "seeks", text: "Which genders are you open to dating: women, men, nonbinary people? You can name more than one." },
   slop_gender: { field: "gender", text: "And how do you describe yourself: a woman, a man, nonbinary, or something else?" },
   slop_age_range: { field: "ageRange", text: SLOP_ASK_QUESTIONS.slop_age_range! },

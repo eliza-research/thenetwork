@@ -40,6 +40,7 @@ import {
   evaluateSpendAuth,
   isAdultReading,
   isGlobalOptOutText,
+  isLocalQuietHours,
   keyedContactHash,
   minAgeReading,
   PolicyViolationError,
@@ -675,7 +676,7 @@ export class CrowdsourcingEngine {
       isKnownMinor,
       lockdown: campaign.riskDial === "lockdown",
       isCold,
-      isQuietHours: false,
+      isQuietHours: isLocalQuietHours(campaign.city, this.clock.now()),
       daysSinceCold: stats.daysSinceLastCold,
       coldTouches30d: stats.coldTouches30d,
       unansweredCold: stats.unansweredColdStreak,
@@ -701,7 +702,11 @@ export class CrowdsourcingEngine {
       this.store.getHuman(input.humanId),
     ]);
     if (campaign && human) {
-      const gate = await this.checkContactGate(human, campaign, (input.tier ?? 1) === 1);
+      const isCold =
+        ((input.tier ?? 1) === 1 || input.channel === "email") &&
+        human.role !== "street_worker" &&
+        human.role !== "creator";
+      const gate = await this.checkContactGate(human, campaign, isCold);
       if (!gate.allowed) {
         return this.store.createOutreachMessage({
           campaignId: input.campaignId,
@@ -712,8 +717,8 @@ export class CrowdsourcingEngine {
           tier: input.tier ?? 1,
           subject: input.subject ?? null,
           bodySummary: input.bodyText,
-          leakCheckPass: false,
-          desiredStatus: "queued",
+          leakCheckPass: leaks.length === 0,
+          desiredStatus: gate.blockedStatus ?? "blocked_policy",
           dailyOutreachCap: input.dailyOutreachCap,
         });
       }
@@ -763,7 +768,10 @@ export class CrowdsourcingEngine {
         continue;
       }
 
-      const isCold = msg.tier === 1 && human.role !== "street_worker" && human.role !== "creator";
+      const isCold =
+        (msg.tier === 1 || msg.channel === "email") &&
+        human.role !== "street_worker" &&
+        human.role !== "creator";
       const contactGate = await this.checkContactGate(human, campaign, isCold);
       if (!contactGate.allowed) {
         const blockedStatus = contactGate.blockedStatus ?? "blocked_policy";
@@ -850,7 +858,7 @@ export class CrowdsourcingEngine {
             "email",
             {
               to: recipientEmail,
-              subject: msg.subject ?? `The Network ${campaign.city.toUpperCase()} Opportunity`,
+              subject: msg.subject ?? `Quick note for ${campaign.city.toUpperCase()}`,
               text: msg.bodySummary,
             },
             {

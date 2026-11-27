@@ -13,15 +13,31 @@
 // Blocking when the dev Postgres is there; without it one tracked gate says so (CI's sim job has Postgres and fails on that skip).
 //
 // Fakes only: no Blooio, Twilio, Cloudflare, R2 or OpenAI call is possible. Phones are +1 212 555 01xx.
-import { DAY, HOUR, type MemberId } from "../../packages/core/src/index.ts";
+import { DAY, HOUR, type Facet, type Member, type MemberId } from "../../packages/core/src/index.ts";
+import {
+  confirmBeforeCommitRequired, lawFirstNoShowGrace, lawSingleAttendanceNeverClearsSerialFlaker,
+  reliabilityDownrankPermille, reliabilityEffectiveStrikes, reliabilityTier, reportRestrictsMatchingV2,
+} from "../../packages/core/src/generated/qualityAndLeague.ts";
 import { makeClefRater } from "../../packages/engine/src/packs/slop/clef.ts";
 import { appearanceFacet } from "../../packages/engine/src/packs/slop/appearance.ts";
 import { DEFAULT_CLEF_WEIGHTS } from "../../packages/engine/src/packs/slop/clefWeights.ts";
+import { resolveConfig } from "../../packages/engine/src/config.ts";
+import { localEmbed } from "../../packages/engine/src/embed.ts";
+import { memberReason, memberReliabilityTier } from "../../packages/engine/src/filters.ts";
+import { computeComponents } from "../../packages/engine/src/scoring.ts";
+import { baseMember, emptyInput } from "../../packages/engine/src/testkit.ts";
+import type { Candidate } from "../../packages/engine/src/types.ts";
+import { World as EngineWorld } from "../../packages/engine/src/world.ts";
+import { networkPack } from "../../packages/engine/src/packs/network/index.ts";
+import { makeSlopPack, SLOP_ENGINE_CONFIG } from "../../packages/engine/src/packs/slop/index.ts";
+import { friendsPack } from "../../packages/engine/src/packs/friends/index.ts";
+import { peonPack, PEON_ENGINE_CONFIG } from "../../packages/engine/src/packs/peon/index.ts";
 import { Accounts } from "../../packages/platform/src/accounts.ts";
 import { APPS, type AppId } from "../../packages/platform/src/apps.ts";
 import { keyedHash } from "../../packages/platform/src/phone.ts";
 import { MemoryPeopleStore } from "../../packages/platform/src/store.ts";
 import { LIVE_MEMBERSHIP, MemoryPhotoStore, PHOTO_APPS, PHOTO_CONSENT, PhotoService, photoRaterFromEnv, withRetry, type PhotoStorage, type PhotoType } from "../../packages/platform/src/photos.ts";
+import { loadSnapshot } from "../../packages/network/service/snapshot.ts";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
 import type { OtpProvider } from "../../packages/platform/src/otp.ts";
 import { platformHooks } from "../../packages/mcp/src/hooks.ts";
@@ -434,6 +450,156 @@ export async function safetyBlock(b: Block): Promise<void> {
     expect(biasReport("slop:nyc", "slop", [...members, { id: "kid", age: 16, joinedAt: T0, tags: [] }], even, now).members).toBe(60);
   });
 
+  // ------------------------------------------------------------------ Pass 4 quality & bad-actor safety gates
+  await b.run("creep_cross_app_quarantine: SD-072 held-reporter guard, quarantine number-change block, deleteAll signal survival, and banned photo hash refusal", async () => {
+    for (const urgent of [false, true]) {
+      for (const met of [false, true]) {
+        for (const severe of [false, true]) {
+          expect(reportRestrictsMatchingV2(urgent, met, true, 0, severe)).toBe(false);
+          expect(reportRestrictsMatchingV2(urgent, met, true, 1, severe)).toBe(false);
+        }
+      }
+    }
+    expect(reportRestrictsMatchingV2(true, true, false, 1, false)).toBe(true);
+    expect(reportRestrictsMatchingV2(true, false, false, 1, true)).toBe(true);
+    expect(reportRestrictsMatchingV2(false, false, false, 2, false)).toBe(true);
+    expect(reportRestrictsMatchingV2(true, false, false, 1, false)).toBe(false);
+
+    let now = T0;
+    const people = new MemoryPeopleStore();
+    const accounts = new Accounts(people, { hashKey: HASH_KEY, now: () => now, apps: id => APPS[id] });
+    const phoneA = PHONE(61), phoneB = PHONE(62), phoneNew = PHONE(63);
+    const joinA = await accounts.join(APPS.slop, { e164: phoneA, personId: null }, { firstName: "Vic", age: 30, consent: { sms: true, version: APPS.slop.consent.version } });
+    expect(joinA.ok).toBe(true);
+    const personA = (await accounts.personFor(phoneA))!.id;
+    const joinB = await accounts.join(APPS.slop, { e164: phoneB, personId: null }, { firstName: "Reupload", age: 29, consent: { sms: true, version: APPS.slop.consent.version } });
+    expect(joinB.ok).toBe(true);
+    const personB = (await accounts.personFor(phoneB))!.id;
+
+    await accounts.recordSafetyQuarantine(personA, "urgent_met_report", "slop", "rep-1", now);
+    expect(await accounts.hasActiveSafetyHoldOrQuarantine(personA)).toBe(true);
+    const blockedChange = await accounts.startNumberChange(APPS.slop, { e164: phoneA, personId: personA }, phoneNew, true, async () => true);
+    expect(blockedChange).toEqual({ ok: false, error: "review" });
+
+    const hashA = accounts.phoneHash(phoneA);
+    await accounts.recordBoundarySignal({ subjectPersonId: personA, subjectPhoneHash: hashA, reporterHash: "rep_hash_1", appId: "slop", kind: "post_meet_block", at: now });
+    await accounts.recordBoundarySignal({ subjectPersonId: personA, subjectPhoneHash: hashA, reporterHash: "rep_hash_2", appId: "friends", kind: "checkin_concern", at: now });
+    await accounts.deleteAll({ e164: phoneA, personId: personA });
+    const survived = await accounts.boundarySignalsForPhone(hashA, 0);
+    expect(survived.length).toBe(2);
+
+    await accounts.clearSafetyQuarantine(personA, now + 1000);
+    now += 2000;
+    const rejoin = await accounts.join(APPS.friends, { e164: phoneA, personId: null }, { firstName: "Vic", age: 30, consent: { sms: true, version: APPS.friends.consent.version } });
+    expect(rejoin.ok).toBe(true);
+    const rejoinedId = (await accounts.personFor(phoneA))!.id;
+    const relinked = await accounts.boundarySignalsForPhone(hashA, 0);
+    expect(relinked.every(s => s.subjectPersonId === rejoinedId)).toBe(true);
+
+    const storage = new MemoryStorage();
+    const meta = new MemoryPhotoStore();
+    const photos = new PhotoService({
+      people, meta, storage, signingKey: "sim-ban-hash-key", now: () => now,
+      eligible: async () => true,
+    });
+    const mA = await people.getMembership(rejoinedId, "friends");
+    expect(mA).toBeTruthy();
+    const mB = await people.getMembership(personB, "slop");
+    expect(mB).toBeTruthy();
+    await people.putMembership({ ...mB!, profile: { ...mB!.profile, photoConsent: PHOTO_CONSENT.version } });
+    const joinA2 = await accounts.join(APPS.slop, { e164: phoneA, personId: rejoinedId }, { firstName: "Vic", age: 30, consent: { sms: true, version: APPS.slop.consent.version } });
+    expect(joinA2.ok).toBe(true);
+    const mASlop = (await people.getMembership(rejoinedId, "slop"))!;
+    await people.putMembership({ ...mASlop, profile: { ...mASlop.profile, photoConsent: PHOTO_CONSENT.version } });
+
+    const upA = await photos.upload(rejoinedId, "slop", jpegWithExif(), PHOTO_CONSENT.version);
+    expect(upA.ok).toBe(true);
+    expect(await photos.banMediaForPerson(rejoinedId)).toBe(1);
+    const upB = await photos.upload(personB, "slop", jpegWithExif(), PHOTO_CONSENT.version);
+    expect(upB).toEqual({ ok: false, reason: "banned" });
+  });
+
+  await b.run("flake_escalation_and_confirm: first-no-show grace, confirm-before-commit, cross-pack cool-off holdout, and 2-clean decay", () => {
+    expect(lawFirstNoShowGrace(0)).toBe(true);
+    expect(lawSingleAttendanceNeverClearsSerialFlaker(5)).toBe(true);
+    expect(lawSingleAttendanceNeverClearsSerialFlaker(8)).toBe(true);
+
+    expect(reliabilityTier(2, false)).toBe("RelOk");
+    expect(reliabilityDownrankPermille("RelOk")).toBe(1000);
+    expect(confirmBeforeCommitRequired("RelOk")).toBe(false);
+
+    expect(reliabilityTier(4, false)).toBe("RelConfirmRequired");
+    expect(reliabilityDownrankPermille("RelConfirmRequired")).toBe(850);
+    expect(confirmBeforeCommitRequired("RelConfirmRequired")).toBe(true);
+
+    expect(reliabilityTier(5, false)).toBe("RelCoolOff");
+    expect(reliabilityDownrankPermille("RelCoolOff")).toBe(0);
+    expect(reliabilityTier(reliabilityEffectiveStrikes(5, 1), false)).toBe("RelCoolOff");
+    expect(reliabilityTier(reliabilityEffectiveStrikes(5, 2), false)).toBe("RelConfirmRequired");
+    expect(reliabilityTier(8, false)).toBe("RelSuspended");
+
+    const now = T0;
+    const mkMember = (id: string, extra: Record<string, unknown> = {}) => baseMember(id, {
+      age: 29, homeCity: "nyc", joinedAt: now - 40 * DAY,
+      prefs: { romanceOptIn: true, categoriesOptIn: ["social", "hobby", "professional", "romance", "help", "growth"], formats: ["one_to_one", "small_group", "event"], ...((extra.prefs as Record<string, unknown>) ?? {}) },
+      ...extra,
+    });
+    const baseMembers = [mkMember("ok"), mkMember("warn"), mkMember("flake"), mkMember("susp"), mkMember("peer")];
+    const sharedFacets: Facet[] = ["ok", "warn", "peer"].flatMap(id => [
+      { id: `f_${id}_1`, memberId: id, kind: "interest", value: "climbing", tags: ["climbing", "coffee"], confidence: 0.9, provenance: "said", observedAt: now - DAY, scope: "shareable" },
+      { id: `f_${id}_2`, memberId: id, kind: "skill", value: "photography", tags: ["photography", "hiking"], confidence: 0.9, provenance: "said", observedAt: now - DAY, scope: "shareable" },
+    ]);
+    const relMap = {
+      ok: { noShows: 1, completedSinceLastNoShow: 0, strikes: 2 },
+      warn: { noShows: 1, lateCancels4h: 1, completedSinceLastNoShow: 0, strikes: 4 },
+      flake: { noShows: 2, completedSinceLastNoShow: 1, strikes: 5 },
+      susp: { noShows: 3, completedSinceLastNoShow: 0, strikes: 8 },
+    };
+
+    const wNet = new EngineWorld({ ...emptyInput(now), members: baseMembers, facets: sharedFacets, reliability: relMap }, resolveConfig({ cities: ["nyc"] }), localEmbed, networkPack);
+    expect(memberReliabilityTier(wNet, "ok")).toBe("RelOk");
+    expect(memberReliabilityTier(wNet, "warn")).toBe("RelConfirmRequired");
+    expect(memberReliabilityTier(wNet, "flake")).toBe("RelCoolOff");
+    expect(memberReliabilityTier(wNet, "susp")).toBe("RelSuspended");
+
+    expect(memberReason(wNet, "ok", { category: "social", role: "peer", format: "one_to_one", timeSensitive: false })).toBe(null);
+    expect(memberReason(wNet, "warn", { category: "social", role: "peer", format: "one_to_one", timeSensitive: false })).toBe(null);
+    expect(memberReason(wNet, "flake", { category: "social", role: "peer", format: "one_to_one", timeSensitive: false })).toBe("reliability_holdout");
+    expect(memberReason(wNet, "susp", { category: "social", role: "peer", format: "one_to_one", timeSensitive: false })).toBe("reliability_holdout");
+
+    const candBase: Omit<Candidate, "key" | "participants"> = {
+      kind: "intro", category: "social", lane: "Friend",
+      generator: "intent_match", format: "one_to_one", city: "nyc",
+      objective: "coffee", channels: new Set(["sms"]), exploration: false, safetyClass: "low",
+      timeSensitive: false, riskText: "", alternates: [],
+      roles: { ok: "peer", warn: "peer", peer: "peer" },
+      fit: 0.8, benefit: { ok: 0.8, warn: 0.8, peer: 0.8 },
+      warm: 0, evidence: {},
+    };
+    const compOk = computeComponents(wNet, { ...candBase, key: "c1", participants: ["ok", "peer"] });
+    const compWarn = computeComponents(wNet, { ...candBase, key: "c2", participants: ["warn", "peer"] });
+    expect(compWarn.mutualBenefit).toBeLessThan(compOk.mutualBenefit);
+
+    const friendsFacets: Facet[] = [
+      { id: "f_flake_v", memberId: "flake", kind: "fact", value: "verified", tags: ["verify:age:pass", "verify:liveness:pass"], confidence: 1, provenance: "vouched", observedAt: now - DAY, scope: "matchable" },
+    ];
+    const wFriends = new EngineWorld({ ...emptyInput(now), members: baseMembers, facets: friendsFacets, reliability: relMap }, resolveConfig({ cities: ["nyc"] }), localEmbed, friendsPack);
+    expect(memberReason(wFriends, "flake", { category: "social", role: "peer", format: "one_to_one", timeSensitive: false })).toBe("reliability_holdout");
+
+    const slopPack = makeSlopPack();
+    const wSlop = new EngineWorld({ ...emptyInput(now), members: baseMembers, reliability: relMap }, resolveConfig(SLOP_ENGINE_CONFIG), localEmbed, slopPack);
+    expect(memberReason(wSlop, "flake", { lane: "Date", category: "romance", role: "peer", format: "one_to_one", timeSensitive: false })).toBe("reliability_holdout");
+
+    const peonFacets: Facet[] = [
+      { id: "f_flake_p", memberId: "flake", kind: "skill", value: "eng", tags: ["peon:entity:candidate", "peon:family:engineering", "peon:seniority:3", "peon:pay_floor:150", "peon:mode:hybrid"], confidence: 1, provenance: "said", observedAt: now - DAY, scope: "shareable" },
+    ];
+    const peonIntents = [
+      { id: "i_flake_p", memberId: "flake", objective: "engineering role", category: "professional" as const, details: "peon:search", horizonDays: 30, status: "active" as const, createdAt: now - DAY },
+    ];
+    const wPeon = new EngineWorld({ ...emptyInput(now), members: baseMembers, facets: peonFacets, intents: peonIntents, reliability: relMap }, resolveConfig(PEON_ENGINE_CONFIG), localEmbed, peonPack);
+    expect(memberReason(wPeon, "flake", { lane: "Hire", category: "professional", role: "seeker", format: "one_to_one", timeSensitive: false })).toBe("reliability_holdout");
+  });
+
   await pgPart(b);
 }
 
@@ -559,6 +725,30 @@ async function pgPart(b: Block): Promise<void> {
       const j = await res.json() as { ok: boolean; reports: { network: string; report: { groups: Record<string, unknown> } }[] };
       expect([res.status, j.ok, j.reports.length]).toEqual([200, true, 1]);
       expect(JSON.stringify(j)).not.toMatch(/slop_[0-9a-f-]{8}/);
+    });
+
+    await b.run("pg: creep_cross_app_quarantine — banned photo SHA-256 refuses re-upload by another account and safety quarantine propagates across apps", async () => {
+      expect(bPerson).toBeTruthy();
+      const [bannedHashes] = await svc.sql`select count(*)::int as n from platform.banned_media_hashes where person_id = ${bPerson!}`;
+      expect(bannedHashes.n).toBeGreaterThanOrEqual(1);
+      const C = PHONE(9);
+      await text(C, "slop");
+      expect(await text(C, "Taylor, 30")).toBe("joined");
+      await text(C, "", ["https://media.test/c0.jpg"]);
+      await text(C, "yes photos");
+      const cPerson = (await personOf(C))!;
+      const upRefused = await svc.photos.upload(cPerson, "slop", jpegWithExif(), PHOTO_CONSENT.version);
+      expect(upRefused).toEqual({ ok: false, reason: "banned" });
+
+      const slopMemberId = (await svc.people.getMembership(cPerson, "slop"))!.memberId;
+      await svc.accounts.recordSafetyQuarantine(cPerson, "cross_app_test", "friends", "rep-x", clock.now());
+      const snapRestricted = await loadSnapshot(svc.sql, clock.now(), { app: "slop" });
+      const mRest = snapRestricted.members.find(m => m.id === slopMemberId) as (Member & { accountStatus?: string }) | undefined;
+      expect(mRest?.accountStatus).toBe("restricted");
+      await svc.accounts.clearSafetyQuarantine(cPerson, clock.now() + 1000);
+      const snapCleared = await loadSnapshot(svc.sql, clock.now() + 1000, { app: "slop" });
+      const mClear = snapCleared.members.find(m => m.id === slopMemberId) as (Member & { accountStatus?: string }) | undefined;
+      expect(mClear?.accountStatus).toBe("active");
     });
   } finally {
     await svc.close().catch(() => {});

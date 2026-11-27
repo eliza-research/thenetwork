@@ -6,6 +6,7 @@
 import type { City, MemberId } from "@thenetwork/core";
 import { HOUR } from "@thenetwork/core";
 import type { CandidateRule, GeoModel, MemberRule, PairRule } from "../../pack.ts";
+import { memberQualityBandOf, memberReliabilityTier, memberVampireTierOf } from "../../filters.ts";
 import { pairKey, type World } from "../../world.ts";
 import type { Interval } from "../../interval.ts";
 import type { Candidate } from "../../types.ts";
@@ -39,6 +40,14 @@ export const PEON_MEMBER_RULES: readonly MemberRule[] = [
     },
   },
   { id: "active_intro_cap", check: (w, id) => (candidateOf(w, id) && historyOf(w, id).inFlight >= MAX_ACTIVE_INTROS ? "active_intro_cap" : null) },
+  {
+    id: "reliability_holdout", check: (w, id) => {
+      const tier = memberReliabilityTier(w, id);
+      return tier === "RelCoolOff" || tier === "RelSuspended" ? "reliability_holdout" : null;
+    },
+  },
+  { id: "quality_quarantine", check: (w, id) => (memberQualityBandOf(w, id) === "Q0Quarantine" ? "quality_quarantine" : null) },
+  { id: "vampire_quarantine", check: (w, id) => (memberVampireTierOf(w, id) === "VampireQuarantined" ? "vampire_quarantine" : null) },
 ];
 
 /** Work authorization: only the neutral yes/no questions are asked; sponsorship must be offered if needed. */

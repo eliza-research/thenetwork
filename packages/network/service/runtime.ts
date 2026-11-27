@@ -437,10 +437,20 @@ export class NetworkRuntime {
     const receipts = new Map<MemberId, number>();
     const roster = [...new Set(opp.participants)].filter(id => opp.bookedAt?.[id] !== undefined
       && opp.status.some(([member, status]) => member === id && status === "yes"));
-    for (const id of roster) {
-      const receipt = await currentBookingReceipt(tx, this.app.id, opp.id, id, opp.scheduleRevision ?? 0, opp.lane ?? null);
+    if (roster.length === 0) return receipts;
+    const revision = opp.scheduleRevision ?? 0;
+    const lane = opp.lane ?? null;
+    const batch = await currentBookingReceipts(
+      tx,
+      this.app.id,
+      roster.map(memberId => ({ oppId: opp.id, memberId, revision, lane })),
+    );
+    for (let i = 0; i < roster.length; i++) {
+      const receipt = batch.get(i);
       const sentAt = receipt?.sent_at?.getTime();
-      if (receipt && sentAt !== undefined && bookingNoticeReceived(receipt.status, sentAt, now)) receipts.set(id, sentAt);
+      if (receipt && sentAt !== undefined && bookingNoticeReceived(receipt.status, sentAt, now)) {
+        receipts.set(roster[i]!, sentAt);
+      }
     }
     return receipts;
   }
@@ -1236,8 +1246,28 @@ export class NetworkRuntime {
     return `${key}:${this.nonce}${++this.seq}`;
   }
 
+  private replyGuardCache = new Map<string, LeakGuard>();
+
+  private cachedReplyGuard(memberId: MemberId): LeakGuard {
+    const src = this.net.leakSources([memberId]);
+    const key = JSON.stringify([memberId, src.forbidden ?? [], src.facts ?? [], src.canaries ?? []]);
+    const hit = this.replyGuardCache.get(key);
+    if (hit) {
+      this.replyGuardCache.delete(key);
+      this.replyGuardCache.set(key, hit);
+      return hit;
+    }
+    const guard = new LeakGuard({ ...src, canaryShapes: true, contacts: true });
+    if (this.replyGuardCache.size >= 128) {
+      const oldest = this.replyGuardCache.keys().next().value;
+      if (oldest !== undefined) this.replyGuardCache.delete(oldest);
+    }
+    this.replyGuardCache.set(key, guard);
+    return guard;
+  }
+
   guardedSystemReply(memberId: MemberId, id: string, body: string, type: string): boolean {
-    if (new LeakGuard({ ...this.net.leakSources([memberId]), canaryShapes: true }).check(body).length) {
+    if (this.cachedReplyGuard(memberId).check(body, { exceptOwner: memberId, contacts: true }).length) {
       this.host.log(`[alert] a ${type} text failed the leak guard (${this.id}, ${id})`);
       return false;
     }
@@ -1251,7 +1281,7 @@ export class NetworkRuntime {
     const turn = this.host.inboundTurn?.();
     if (turn?.app !== this.app.id || turn.memberId !== memberId
       || normalizeAddress(this.addressOf(memberId) ?? "") !== normalizeAddress(turn.from)) return;
-    const reasons = new LeakGuard({ ...this.net.leakSources([memberId]), canaryShapes: true }).check(body, { contactAllow: publicLinks });
+    const reasons = this.cachedReplyGuard(memberId).check(body, { exceptOwner: memberId, contacts: true, contactAllow: publicLinks });
     if (reasons.length) {
       this.host.log(`[alert] a ${type} reply failed the leak guard (${this.id}, ${id})`);
       return;
@@ -1859,9 +1889,12 @@ export class NetworkRuntime {
       const matchingOpen = present && (this.matchingAllowed || this.city === "nyc");
       const ageEligible = canBeMatched(await accounts.lowestAge(e164, binding.person));
       await this.importStored();
-      const minor = this.net.exportState().members.find(m => m.id === memberId)?.minor === true;
+      const storedState = this.net.exportState();
+      const minor = storedState.members.find(m => m.id === memberId)?.minor === true;
+      const tz = CITY_TZ[isCity(this.city) ? this.city : "nyc"];
+      const dayFmt = new Intl.DateTimeFormat("en-US", { timeZone: tz, month: "short", day: "numeric" });
       const live = this.net.relayLiveMatches(memberId as MemberId).map(x => ({ ...x,
-        day: `${x.meeting ? "meeting" : "introduced"} ${new Intl.DateTimeFormat("en-US", { timeZone: CITY_TZ[this.city as City], month: "short", day: "numeric" }).format(x.match.at)}` }));
+        day: `${x.meeting ? "meeting" : "introduced"} ${dayFmt.format(x.match.at)}` }));
       const shown = live.flatMap(({ match, otherFirstName, day }) => {
         const sameName = live.filter(x => x.otherFirstName.toLowerCase() === otherFirstName.toLowerCase());
         const label = contextItemLabel(sameName.length, sameName.filter(x => x.day === day).length);
@@ -1870,6 +1903,25 @@ export class NetworkRuntime {
         const itemSafe = (text: string) => turnBaseSafe(text) && !leakIdx.otherNamesLeak(text, memberId as MemberId, firstName, otherFirstName);
         return contextMatchItemShown(true, this.net.teenItemListed(match.id, ageEligible), !!otherFirstName && itemSafe(summary) && itemSafe(match.id)) ? [{ id: match.id, kind: "match", summary }] : [];
       });
+      const listedIds = new Set(shown.map(item => item.id));
+      for (const opp of storedState.opps) {
+        if (listedIds.has(opp.id) || !opp.participants.includes(memberId as MemberId)) continue;
+        if (!this.net.teenItemListed(opp.id, ageEligible) || !turnBaseSafe(opp.id)) continue;
+        const statusEntry = opp.status.find(([id]) => id === memberId);
+        if (opp.stage === "probing" && opp.contacted.includes(memberId as MemberId) && statusEntry?.[1] === "probing") {
+          const summary = "Pending introduction waiting for your reply";
+          if (safe(summary)) {
+            shown.push({ id: opp.id, kind: "probe", summary });
+            listedIds.add(opp.id);
+          }
+        } else if (opp.stage === "scheduled" && opp.meetingAt !== undefined && opp.meetingAt > snapshot.now && statusEntry?.[1] === "yes") {
+          const summary = `Upcoming meetup (${dayFmt.format(opp.meetingAt)})`;
+          if (safe(summary)) {
+            shown.push({ id: opp.id, kind: "booking", summary });
+            listedIds.add(opp.id);
+          }
+        }
+      }
       const activeItems = shown.slice(0, contextActiveItemCount(shown.length));
       return {
         firstName, city: member.homeCity, state, stateFrom: participation.active?participation.window!.from:null, stateUntil: participation.active?participation.window!.until:null, facets,

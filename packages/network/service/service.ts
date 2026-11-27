@@ -235,7 +235,11 @@ export const LOOKING_FOR_ASK = `What are you looking for: friends, dating, work,
 export const LOOKING_FOR_ASK_MINOR = `What are you looking for? Since you're under 18, I can help you find friends. Reply FRIENDS to start. ${LOOKING_FOR_DISCLOSURE} ${POWERED_BY}`;
 export const lookingForAsk = (age: number | undefined) => (canBeMatched(age) ? LOOKING_FOR_ASK : LOOKING_FOR_ASK_MINOR);
 const listApps = (apps: AppInfo[]) => apps.map(a => a.domain).join(apps.length === 2 ? " and " : ", ");
-/** The Network's answer after it enrolled the person in the apps they named. */
+const SKEPTICAL_JOIN_RE = /\b(?:who is this|who are you|what is this|is this (?:a )?(?:scam|spam|bot|legit|real)|why do you need (?:my )?(?:age|birthday|dob|name)|what do you do with my (?:data|info|number)|how did you get my number|are you (?:a )?(?:bot|ai|real))\b/i;
+
+const SKEPTICAL_JOIN_PRIVACY_REPLY = "I'm Eliza, an AI matchmaker for real-world introductions—your details stay private, nothing is posted publicly, and you can text STOP anytime. If you'd like to join, reply with your first name and birthday.";
+
+const ALL_LAUNCH_CITIES_HOME_ASK = "Tell me your home city: New York, San Francisco / Bay Area, Los Angeles, Chicago, or Miami. Include your first name and birthday (month, day and year).";
 export const enrolledText = (apps: AppInfo[]) =>
   `Done: you're in ${listApps(apps)}. Text an app's name (like ${apps[0]!.domain}) to talk to it, or "leave ${apps[0]!.domain}" to leave one. ${POWERED_BY}`;
 /** Safety on every app (safety@* or admin@*): what a hold on other apps and a ban need. */
@@ -551,7 +555,7 @@ export class NetworkService implements RuntimeHost {
       clock: this.clock, judgeFor, limits: reviewLimits, log: this.log,
       teenFacts: (rt, memberId) => this.teenAccountFacts(rt, memberId),
     });
-    this.accounts = new Accounts(this.people, { hashKey: this.hashKey, now: () => this.clock.now(), apps: id => this.apps[id], hooks: this.hooks() });
+    this.accounts = new Accounts(this.people, { hashKey: this.hashKey, now: () => this.clock.now(), apps: id => this.apps[id], hooks: this.hooks(), sql: this.sql });
     if (o.notify !== false) this.notify = new Notifier(o.notify ?? new PgNotifyStore(this.sql), { get: personId => this.notifyRecipient(personId) });
     const ids = specs.map(spec => (spec.id.includes(":") ? spec.id : `ntwrk:${spec.id}`));
     for (const [i, spec] of specs.entries()) {
@@ -629,7 +633,7 @@ export class NetworkService implements RuntimeHost {
 
   /** Reuse canonical account policy inside the caller's existing PostgreSQL transaction. */
   accountsFor(tx: SQL): Accounts {
-    return new Accounts(new PgPeopleStore(tx), { hashKey: this.hashKey, now: () => this.clock.now(), apps: id => this.apps[id] });
+    return new Accounts(new PgPeopleStore(tx), { hashKey: this.hashKey, now: () => this.clock.now(), apps: id => this.apps[id], sql: tx });
   }
 
   private homeHelpAuthority(user?: StaffUser) {
@@ -1756,19 +1760,27 @@ export class NetworkService implements RuntimeHost {
   private async forget(app: AppInfo, memberId: MemberId, ordinaryLeavePersonId?: string) {
     const rt = await this.runtimeOfMember(app.id, memberId) ?? this.runtimeFor(app.id);
     if (!rt) return;
-    await rt.unitOfWork(n => {
+    let quarantineReason: string | undefined;
+    const at = this.clock.now();
+    await rt.unitOfWork(async n => {
       const carriesHold = carryTrustHoldOnAppLeave(ordinaryLeavePersonId !== undefined, n.trust.level(memberId));
       const reports = n.reportRestrictionsForLeave(memberId, ordinaryLeavePersonId !== undefined);
       if (ordinaryLeavePersonId && (carriesHold || reports.length)) {
-        const at = this.clock.now();
+        const existingHold = await rt.scoped(tx => currentStaffHold(tx, app.id, ordinaryLeavePersonId));
         rt.unit.memberCommand = async tx => {
           if (carriesHold) await recordCarriedTrustHold(tx, app.id, memberId, ordinaryLeavePersonId, at);
           if (reports.length) await carryReportRestrictions(tx, { app: app.id, runtime: rt.id }, memberId, ordinaryLeavePersonId, reports);
         };
+        if (existingHold.local === null) {
+          quarantineReason = carriesHold ? "trust_hold_carryover" : "report_restriction_carryover";
+        }
       }
       n.forgetMember(memberId);
       rt.unit.forget.add(memberId);
     });
+    if (ordinaryLeavePersonId && quarantineReason) {
+      await this.accounts.recordSafetyQuarantine(ordinaryLeavePersonId, quarantineReason, app.id, null, at);
+    }
   }
 
   /** spec/accountPrivacy.md, "An export includes the member's own facts and photo metadata" */
@@ -2449,6 +2461,9 @@ export class NetworkService implements RuntimeHost {
   private async memberMessage(rt: NetworkRuntime, memberId: MemberId, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, kw: ReturnType<typeof platformKeyword>, systemReply?: string, fromThread = true, reportReply?: SharedReportChoiceOwner): Promise<InboundOutcome> {
     // Not from the thread: a profile from the member's AI assistant, learned but never an answer (InboundMessage.source).
     const out = await this.memberUnit(rt, memberId, ev, rowId, kw, systemReply, !fromThread, reportReply);
+    if (out === "handled") {
+      await this.syncAutoSafetyQuarantine(rt, memberId).catch(e => this.log(`[safety] quarantine sync failed (${rt.id}): ${(e as Error).message}`));
+    }
     // The member wrote in the thread: pending notify deliveries count as acted on (an assistant's submit_profile does not).
     if ((out === "handled" || out === "member_invitation" || out === "member_invitation_review" || out === "member_invitation_delivery" || out === "bounded_home_help")
       && fromThread && this.notify && kw !== "stop" && kw !== "stop_all" && !profileReadRequest(ev.text, this.apps)) {
@@ -3056,7 +3071,7 @@ export class NetworkService implements RuntimeHost {
         floorRefused: floor !== undefined && !canJoinApp(floor, app) },
     });
     const requestHome = async (): Promise<InboundOutcome> => {
-      await this.direct(rt, ev.from, "Tell me your home city: New York or San Francisco / Bay Area. Include your first name and birthday (month, day and year).", `sys:${rowId}`, "reply");
+      await this.direct(rt, ev.from, ALL_LAUNCH_CITIES_HOME_ASK, `sys:${rowId}`, "reply");
       return "join_asked";
     };
     const declineAge = async (stated: boolean): Promise<InboundOutcome> => {
@@ -3072,7 +3087,11 @@ export class NetworkService implements RuntimeHost {
     if (answer.phase === "AskForAge") {
       await this.people.putPending({ phoneHash: key, kind: "join", app: app.id, name: name ?? null, age: null, ...(homeCity ? { homeCity: homeCity as City } : {}), at: t });
       const { count } = await this.people.hit(`join_ask:${app.id}:${key}`, DAY, t);
-      const again = said.unclearDate ? c.birthdayWhich(said.unclearDate.monthFirst, said.unclearDate.dayFirst) : ask;
+      const again = said.unclearDate
+        ? c.birthdayWhich(said.unclearDate.monthFirst, said.unclearDate.dayFirst)
+        : SKEPTICAL_JOIN_RE.test(ev.text)
+          ? SKEPTICAL_JOIN_PRIVACY_REPLY
+          : ask;
       if (count <= 3) await this.direct(rt, ev.from, again, `sys:${rowId}`, "reply");
       return "join_asked";
     }
@@ -3112,18 +3131,22 @@ export class NetworkService implements RuntimeHost {
     if (!await this.createMember(rt, membership, { age: Math.min(age, check.effective ?? age),
       recordedAge: Math.min(age, known.independent ?? age), firstName: name, homeCity })) return "held";
     if (!optedIn) { await this.stopped(app, who.id, "app", undefined, e164); return "joined"; }
-    // Their answer is their first message: the Network welcomes them as a reply to it.
-    await this.memberMessage(rt, membership.memberId, ev, rowId, undefined);
-    // A person who uses another app with this number: the link notice (never names the other app).
     const welcomed = stepTextJoin(stored, { type: "recordWelcome", hasOtherApp: others.length > 0, sharedNetwork, invited });
-    if (welcomed.phase === "JoinedWithShare") {
-      await rt.unitOfWork(() => { rt.system(membership.memberId, `link:${rowId}`, c.linkNotice, "reply", "info"); });
-      await this.people.putPending({ phoneHash: key, kind: "share", app: app.id, name: null, age: null, at: t });
-    } else if (welcomed.phase === "JoinedWithLookingFor") {
-      // No keyword: The Network asks what they are looking for, then enrolls them (founder decision 2).
+    if (welcomed.phase === "JoinedWithLookingFor") {
       const askText = lookingForAsk(Math.min(age, check.effective ?? age));
-      await rt.unitOfWork(() => { rt.system(membership.memberId, `ask:${rowId}`, askText, "reply", "info"); });
+      const greeting = `Hi ${name}, welcome to ${app.name}.`;
+      await rt.unitOfWork(async () => {
+        rt.unit.inbound = { id: rowId, member_id: membership.memberId, direction: "inbound", channel: ev.transport === "sms" ? "sms" : "imessage", body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
+        rt.system(membership.memberId, `welcome:${rowId}`, greeting, "reply", "info");
+        rt.system(membership.memberId, `ask:${rowId}`, askText, "reply", "info");
+      });
       await this.people.putPending({ phoneHash: key, kind: "looking_for", app: "ntwrk", name: null, age: null, at: t });
+    } else {
+      await this.memberMessage(rt, membership.memberId, ev, rowId, undefined);
+      if (welcomed.phase === "JoinedWithShare") {
+        await rt.unitOfWork(() => { rt.system(membership.memberId, `link:${rowId}`, c.linkNotice, "reply", "info"); });
+        await this.people.putPending({ phoneHash: key, kind: "share", app: app.id, name: null, age: null, at: t });
+      }
     }
     return "joined";
   }
@@ -3157,6 +3180,9 @@ export class NetworkService implements RuntimeHost {
         const admitted = await this.people.admitMembership(m, { e164, app: id, state: "opted_in", source: "looking_for",
           wording: asked, ref: `${rowId}:${id}`, at: this.consentAt(ev) }, key, null);
         if (!admitted || (m.state === "active" && !await this.createMember(art, m, { age: lowest, recordedAge: independent ?? null, firstName: ntwrk.firstName ?? "there", homeCity }))) continue;
+        if (m.state === "active" && !turn) {
+          await art.unitOfWork(n => { n.welcomeJoined(m.memberId as MemberId); }).catch(e => this.log(`[enroll] child welcome deferred (${art.id}): ${(e as Error).message}`));
+        }
         joined.push(app);
       }
     }
@@ -3279,19 +3305,75 @@ export class NetworkService implements RuntimeHost {
     return this.staffAction(rt, user, "review_stop", { type: "opportunity", id: oppId }, { revision }, n => n.stopApproved(oppId, user.id, revision));
   }
 
+  private async syncAutoSafetyQuarantine(rt: NetworkRuntime, actorMemberId: MemberId): Promise<void> {
+    const URGENT_KINDS = new Set(["harassment", "unsafe", "scam", "minor", "older_than_stated"]);
+    const flagged = await rt.readState(n => {
+      const quarantines: { memberId: MemberId; reason: string; ref: string | null }[] = [];
+      const selfPromos: { subjectId: MemberId; reporterId: MemberId }[] = [];
+      const actorHeld = n.trust.level(actorMemberId) === "hold";
+      if (actorHeld) {
+        quarantines.push({ memberId: actorMemberId, reason: "auto_trust_hold", ref: null });
+      }
+      for (const rep of n.safetyReports()) {
+        if (rep.status !== "open" || rep.reporterId !== actorMemberId) continue;
+        if (rep.kind === "self_promotion") {
+          selfPromos.push({ subjectId: rep.subjectId, reporterId: rep.reporterId });
+          continue;
+        }
+        const met = rep.opportunityId !== undefined || rep.source === "check_in";
+        if (!actorHeld && URGENT_KINDS.has(rep.kind) && met) {
+          quarantines.push({ memberId: rep.subjectId, reason: `urgent_report:${rep.kind}`, ref: rep.id });
+        }
+      }
+      return { quarantines, selfPromos };
+    });
+    const at = this.clock.now();
+    for (const item of flagged.quarantines) {
+      const pid = await this.personOfMember(rt, item.memberId);
+      if (pid) await this.accounts.recordSafetyQuarantine(pid, item.reason, rt.app.id, item.ref, at);
+    }
+    for (const sp of flagged.selfPromos) {
+      const subjectPid = await this.personOfMember(rt, sp.subjectId);
+      if (!subjectPid) continue;
+      const hashes = await this.people.phoneHashesOf(subjectPid);
+      const subjectPhoneHash = hashes[0];
+      if (!subjectPhoneHash) continue;
+      const reporterHash = this.accounts.phoneHash(`member:${sp.reporterId}`);
+      await this.accounts.recordBoundarySignal({
+        subjectPersonId: subjectPid,
+        subjectPhoneHash,
+        reporterHash,
+        appId: rt.app.id,
+        kind: "self_promotion",
+        at,
+      });
+    }
+  }
+
   liftHold(user: StaffUser, memberId: MemberId, note?: string, rt = this.main) {
     const everywhere = crossAppSafety(user);
     return this.audited(rt, user, { type: "member", id: memberId }, { safety: "lift_hold" }, async () => {
       try {
-        return await rt.unitOfWork(async n => {
+        let liftedPersonId: string | undefined;
+        const lifted = await rt.unitOfWork(async n => {
           const personId = await this.personOfMember(rt, memberId);
           if (!personId) return n.liftHold(memberId, user.id, note);
           const expected = await rt.scoped(tx => currentStaffHold(tx, rt.app.id, personId));
           if (!durableStaffHoldLiftAllowed(expected.global !== null, everywhere)) return { ok: false, reason: "needs_safety_everywhere" };
           const result = n.liftHold(memberId, user.id, note, expected.local !== null || expected.global !== null);
-          if (result.ok) rt.unit.memberCommand = tx => liftStaffHold(tx, rt.app.id, memberId, personId, expected, everywhere);
+          if (result.ok) {
+            liftedPersonId = personId;
+            rt.unit.memberCommand = tx => liftStaffHold(tx, rt.app.id, memberId, personId, expected, everywhere);
+          }
           return result;
         });
+        if (lifted.ok && liftedPersonId) {
+          const activeQ = await this.accounts.activeSafetyQuarantine(liftedPersonId);
+          if (activeQ && (everywhere || activeQ.originApp === rt.app.id)) {
+            await this.accounts.clearSafetyQuarantine(liftedPersonId, this.clock.now());
+          }
+        }
+        return lifted;
       } catch (error) {
         if (error instanceof StaffHoldStateChanged) return { ok: false, reason: "hold_changed" };
         throw error;
@@ -3495,6 +3577,9 @@ export class NetworkService implements RuntimeHost {
       }
       const hold = stepStaffSafety(initialStaffSafety, { type: "readPrimaryHold", applied: r.ok });
       if (hold.phase !== "HoldRemainingTargets") return r;
+      if (personId && scope === "*") {
+        await this.accounts.recordSafetyQuarantine(personId, `hold:${note}`, rt.app.id, decisionId, this.clock.now());
+      }
       const relatedReport = staffSafetyReportFor(false, reportId ?? "") || undefined;
       for (const x of members) {
         if (!personId || (x.rt === rt && x.memberId === memberId)) continue;
@@ -3597,6 +3682,8 @@ export class NetworkService implements RuntimeHost {
       if (!saved) return { ok: true };
       const bannedHashes = [...new Set([...hashes, ...pending.flatMap(ban => ban.phoneHash ? [ban.phoneHash] : [])])];
       for (const h of bannedHashes) await this.people.suppress(h, "banned", at);
+      await this.photos.banMediaForPerson(personId);
+      await this.accounts.recordSafetyQuarantine(personId, `ban:${saved.reason}`, rt.app.id, saved.id, at);
       await this.dropRatings(personId);
       await this.people.restrictBannedMemberships(personId);
       const { members } = await this.membersOfPerson(rt, memberId, personId);

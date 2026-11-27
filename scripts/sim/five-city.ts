@@ -1,4 +1,7 @@
-import { CITY_IDS } from "../../packages/core/src/index.ts";
+import { CITY_IDS, CITY_TZ, DAY, HOUR, MINUTE } from "../../packages/core/src/index.ts";
+import { copy, timezoneLabel } from "../../packages/network/src/copy.ts";
+import { describeBookingStart } from "../../packages/network/src/rescheduling.ts";
+import { Mini } from "../../packages/network/test/mini.ts";
 import { formatTranscripts, runFiveCitySuite } from "../../packages/sim/src/fiveCitySuite.ts";
 import { generatePersonas } from "../../packages/sim/src/generator.ts";
 import { buildSnapshot } from "../../packages/sim/src/snapshot.ts";
@@ -88,6 +91,78 @@ export async function fiveCityBlock(b: Block, opts: { quick?: boolean; transcrip
   b.gate("inclusivity: 0 non-drinker bar-only recommendations", inv.nonDrinkerBarRecs === 0, String(inv.nonDrinkerBarRecs));
   b.gate("attention: 0 quiet-hour violations and 0 daily-cap violations", inv.quietHourViolations === 0 && inv.dailyCapViolations === 0, `quiet=${inv.quietHourViolations}, cap=${inv.dailyCapViolations}`);
   b.gate("relay safety: all 4 unsafe arrival items stopped", inv.blockedOrHeldSafetyItems === 4, String(inv.blockedOrHeldSafetyItems));
+
+  await b.run("pass4 multi-city timezone copy: LA/SF/Chicago/Miami never say 'New York time'", () => {
+    const sampleAt = Date.UTC(2026, 9, 10, 19, 0);
+    expect(timezoneLabel("America/Los_Angeles")).toBe("Pacific time");
+    expect(timezoneLabel("America/Chicago")).toBe("Central time");
+    expect(timezoneLabel("sf")).toBe("San Francisco time");
+    expect(timezoneLabel("la")).toBe("Los Angeles time");
+    expect(timezoneLabel("chicago")).toBe("Chicago time");
+    expect(timezoneLabel("miami")).toBe("Miami time");
+    for (const city of CITY_IDS) {
+      const tz = CITY_TZ[city];
+      const label = timezoneLabel(city);
+      expect(label.length).toBeGreaterThan(0);
+      const when = describeBookingStart(sampleAt, tz);
+      const offer = copy.rescheduleOffer("Alex", when, "abcdabcdabcdabcd", label);
+      const updated = copy.rescheduleUpdated(when, label);
+      expect(offer).toContain(label);
+      expect(updated).toContain(label);
+      if (city !== "nyc") {
+        expect(offer).not.toContain("New York time");
+        expect(updated).not.toContain("New York time");
+      }
+    }
+  });
+
+  await b.run("pass4 live ConsentNetwork: natural reschedule auto-accept, venue swap without cancel, and arrival ack in SF", async () => {
+    const w = new Mini([], { city: "sf", engine: { cities: ["sf"] }, arrivalBriefs: true, plans: false });
+    for (const [id, name, area] of [["p1", "Maya Lin", "Mission"], ["p2", "Devon Park", "Hayes Valley"]] as const) {
+      w.members.push({
+        id, name, homeCity: "sf", state: "normal", joinedAt: w.clock.now(), age: 30, unansweredProactive: 0,
+        prefs: { categoriesOptIn: ["social", "hobby"], quietHours: [23, 7], romanceOptIn: false, formats: ["one_to_one"], maxTravelMinutes: 45, onlyWhenAsked: false },
+      });
+      w.presence.push({ memberId: id, city: "sf", type: "home", areas: [area] });
+    }
+    await w.onboard("p1", "p2");
+    const oppId = w.propose(["p1", "p2"], { category: "social", objective: "Coffee catch-up" });
+    await w.runUntil(() => w.net.opps.has(oppId), 2 * DAY);
+    await w.answerProbes(["p1", "p2"]);
+    const opp = w.net.opps.get(oppId)!;
+    expect(opp.stage).toBe("scheduled");
+    const oldVenueId = opp.venueId;
+    const oldMeetingAt = opp.meetingAt!;
+
+    // 1. Venue swap on a booked meeting without canceling the date
+    await w.say("p1", "That spot is too loud, somewhere quieter instead?");
+    expect(w.net.opps.get(oppId)!.stage).toBe("scheduled");
+    expect(w.net.opps.get(oppId)!.venueId).not.toBe(oldVenueId);
+    expect(w.log("venue_swapped").length).toBe(1);
+
+    // 2. Natural-language reschedule auto-accepts requester and offers San Francisco time (never New York time)
+    const beforeOfferCount = w.to("p2").length;
+    await w.say("p1", "Can we move it 1 hour later?");
+    await w.run(HOUR);
+    const p2Offers = w.to("p2").slice(beforeOfferCount);
+    const offerMsg = p2Offers.find(m => /San Francisco time/i.test(m.body));
+    expect(offerMsg).not.toBeUndefined();
+    expect(offerMsg!.body).not.toContain("New York time");
+    expect(w.net.exportState().opps.find(o => o.id === oppId)?.reschedule?.accepted).toEqual(["p1"]);
+    await w.say("p2", "yes");
+    const rescheduled = w.net.opps.get(oppId)!;
+    expect(rescheduled.meetingAt).toBe(oldMeetingAt + HOUR);
+    expect(rescheduled.scheduleRevision).toBe(1);
+
+    // 3. On-site arrival relay sends direct arrival_ack to sender + relay to partner with 0 guard_blocked
+    w.clock.set(rescheduled.meetingAt! - 15 * MINUTE);
+    const p1Before = w.to("p1").length;
+    const p2Before = w.to("p2").length;
+    await w.say("p1", "On my way, running 5 min behind!");
+    expect(w.to("p1").length).toBeGreaterThan(p1Before);
+    expect(w.to("p2").length).toBeGreaterThan(p2Before);
+    expect(w.log("guard_blocked").length).toBe(0);
+  });
 
   if (opts.transcripts) {
     console.log("\n" + formatTranscripts(res));

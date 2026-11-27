@@ -84,6 +84,13 @@ export interface MeetupPartyInfo {
   confirmed: boolean;
 }
 
+export interface ProvisionalNoShowEvent {
+  readonly oppId: string;
+  readonly missingMemberIds: readonly MemberId[];
+  readonly arrivedMemberIds: readonly MemberId[];
+  readonly at: number;
+}
+
 export interface MeetupCoordHost {
   venues: VenueManager;
   party(meetupId: string, id: MemberId): MeetupPartyInfo | undefined;
@@ -95,7 +102,7 @@ export interface MeetupCoordHost {
     body: string,
     meta: {
       meetupId: string;
-      kind: "pre_brief" | "arrival_relay" | "backup_pivot" | "no_show_ping" | "waiting_notice";
+      kind: "pre_brief" | "arrival_relay" | "arrival_ack" | "backup_pivot" | "no_show_ping" | "waiting_notice";
     },
   ): void;
 }
@@ -158,16 +165,16 @@ const PII_URL_RX = /https?:\/\/\S+|www\.\S+/gi;
 const OUTFIT_COLORS =
   "red|blue|green|black|white|grey|gray|yellow|orange|purple|pink|brown|tan|beige|navy|olive|maroon|burgundy|cream|denim|plaid|striped";
 const OUTFIT_ITEMS =
-  "jacket|coat|sweater|hoodie|shirt|t-shirt|tee|dress|blouse|blazer|vest|hat|cap|beanie|scarf|backpack|tote|bag|glasses|sunglasses|cardigan|flannel|pullover|windbreaker";
+  "jacket|coat|sweater|hoodie|shirt|t-shirt|tee|dress|blouse|blazer|vest|hat|cap|baseball\\s+cap|beanie|scarf|backpack|tote(?:\\s+bag)?|bag|glasses|sunglasses|cardigan|flannel|pullover|windbreaker|parka|trench";
 const OUTFIT_RX = new RegExp(
   `\\b(?:(?:a|an|my|the)\\s+)?((?:${OUTFIT_COLORS})(?:\\s+(?:and\\s+(?:${OUTFIT_COLORS})))?\\s+(?:${OUTFIT_ITEMS}))\\b`,
   "i",
 );
 
 const LANDMARK_RX =
-  /\b((?:by|near|at|outside|inside|in front of|next to|under)\s+(?:the\s+)?(?:main\s+|front\s+|back\s+|side\s+|corner\s+|window\s+|patio\s+)?(?:entrance|door|bar|counter|window|patio|tables?|benches?|clock|arch(?:way)?|fountain|stairs|steps|host\s+stand|awning|sign|gate|lobby|courtyard|atrium|garden|bridge|overlook|plaza))\b/i;
+  /\b((?:by|near|at|outside|inside|in front of|next to|under)\s+(?:the\s+)?(?:main\s+|front\s+|back\s+|side\s+|corner\s+|window\s+|patio\s+)?(?:entrance|door|bar|counter|window|patio|tables?|booths?|benches?|clock|arch(?:way)?|fountain|stairs|steps|host\s+stand|awning|sign|gate|lobby|courtyard|atrium|garden|bridge|overlook|plaza))\b/i;
 
-const ETA_RX = /\b(?:in\s+(?:about\s+|like\s+)?|about\s+)?(\d{1,2})\s*(?:min|mins|minutes?)\b/i;
+const ETA_RX = /\b(?:in\s+(?:about\s+|like\s+)?|about\s+|like\s+)?(\d{1,2})(?:\s*-\s*\d{1,2})?\s*(?:min|mins|minutes?|m(?=\s*(?:out|away|late|behind|$|[.,!?])))\b/i;
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -195,43 +202,43 @@ export function parseArrivalText(body: string, lastNames: readonly string[] = []
 
   let state: ArrivalState | undefined;
   if (
-    /\b(?:it'?s|it is|(?:the\s+)?(?:place|spot|venue|cafe|coffee\s+shop|bar|restaurant|bakery|brewery|shop|store|park)\s+(?:is|was)|they(?:'re| are))\s+(?:permanently\s+|temporarily\s+)?(?:closed|shut\s*down|locked\s*up|boarded\s*up|not\s+open)\b|\b(?:closed\s+for\s+a\s+private\s+event|doors?\s+(?:are|is)\s+locked|boarded\s*up)\b/.test(
+    /\b(?:it'?s|it is|(?:the\s+)?(?:place|spot|venue|cafe|coffee\s+shop|bar|restaurant|bakery|brewery|shop|store|park)\s+(?:is|was)|they(?:'re| are)?)\s+(?:permanently\s+|temporarily\s+)?(?:closed(?:\s+early|\s+today|\s+down)?|shut\s*down|shuttered|locked\s*up|boarded\s*up|not\s+open)\b|\b(?:closed\s+(?:for\s+a\s+private\s+event|early|today)|doors?\s+(?:are|is)\s+locked|sign\s+says\s+closed|boarded\s*up)\b/.test(
       t,
     )
   ) {
     state = "venue_closed";
   } else if (
-    /\b(?:found\s+(?:each\s+other|them|him|her|everyone|the\s+group)|we\s+met|we'?re\s+together|i\s+see\s+(?:them|him|her|you|everyone)|met\s+up|all\s+here\s+together|sitting\s+together)\b/.test(
+    /\b(?:found\s+(?:each\s+other|them|him|her|everyone|the\s+group|you)|spotted\s+(?:them|him|her|everyone)|we\s+met|we'?re\s+together|i'?m\s+with\s+(?:them|him|her)|im\s+with\s+(?:them|him|her)|i\s+see\s+(?:them|him|her|you|everyone)|met\s+up|all\s+here\s+together|sitting\s+together)\b/.test(
       t,
     )
   ) {
     state = "met";
   } else if (
-    /\b(?:can'?t\s+find|cannot\s+find|don'?t\s+see\s+(?:you|them|anyone)|where\s+are\s+(?:you|y'?all|everyone)|looking\s+for\s+(?:you|them|everyone)|which\s+entrance|lost\s+trying\s+to\s+find)\b/.test(
+    /\b(?:can'?t\s+(?:find|spot)|cant\s+(?:find|spot)|cannot\s+find|don'?t\s+see\s+(?:you|u|them|anyone)|dont\s+see\s+(?:you|u|them|anyone)|where\s+(?:are|r)\s+(?:you|u|y'?all|everyone)|looking\s+for\s+(?:you|u|them|everyone)|which\s+(?:entrance|table|door)|lost\s+trying\s+to\s+find)\b/.test(
       t,
     )
   ) {
     state = "cannot_find";
   } else if (
-    /\b(?:seated|got\s+a\s+table|grabbed\s+a\s+table|at\s+a\s+table|sitting\s+(?:at|by|near|on)|saved\s+a\s+table|found\s+a\s+table)\b/.test(
+    /\b(?:seated|got\s+(?:us\s+)?a\s+(?:table|booth|spot)|grabbed\s+(?:a\s+table|seats?|a\s+booth)|at\s+a\s+(?:table|booth)|sitting\s+(?:at|by|near|on|outside|inside)|saved\s+a\s+table|found\s+(?:a\s+table|seats?))\b/.test(
       t,
     )
   ) {
     state = "seated";
   } else if (
-    /\b(?:i'?m\s+here|im\s+here|just\s+(?:arrived|got\s+here|walked\s+in|pulled\s+up)|here\s+now|i\s+arrived|waiting\s+(?:by|at|outside|inside|near)|standing\s+(?:by|at|outside|inside|near)|at\s+the\s+(?:entrance|door|bar|patio))\b/.test(
+    /\b(?:i'?m\s+(?:here|outside|out\s+front)|im\s+(?:here|outside|out\s+front)|i\s+am\s+here|just\s+(?:arrived|got\s+here|walked\s+in|pulled\s+up|made\s+it)|made\s+it|here\s+now|i\s+arrived|waiting\s+(?:by|at|outside|inside|near|out\s+front)|standing\s+(?:by|at|outside|inside|near|out\s+front)|at\s+the\s+(?:entrance|door|bar|patio))\b|^\s*here[.!?\s]*$/.test(
       t,
     )
   ) {
     state = "arrived";
   } else if (
-    /\b(?:running\s+(?:\d+\s*(?:min|mins|minutes?)\s+)?late|be\s+(?:a\s+few\s+mins?\s+)?late|\d+\s*(?:min|mins|minutes?)\s+(?:late|behind)|delayed|stuck\s+in\s+traffic|train\s+(?:is\s+)?delayed|sorry\s+i'?m\s+late)\b/.test(
+    /\b(?:runn?i?n?g?\s+(?:a\s+few\s+mins?\s+|\d+\s*(?:min|mins|minutes?|m)\s+)?(?:late|behind)|(?:gonna|going\s+to|gunna|will)\s+be\s+(?:a\s+few\s+mins?\s+|\d+\s*(?:min|mins|minutes?|m)\s+)?late|be\s+(?:a\s+few\s+mins?\s+)?late|late\s+by\s+\d+|\d+\s*(?:min|mins|minutes?|m)\s+(?:late|behind)|delayed|stuck\s+in\s+traffic|traffic\s+is\s+(?:bad|crazy|awful)|(?:train|subway|bus)\s+(?:is\s+)?(?:delayed|stuck)|sorry\s+i'?m\s+late)\b/.test(
       t,
     )
   ) {
     state = "late";
   } else if (
-    /\b(?:on\s+my\s+way|omw|head(?:ing|ed)\s+(?:over|there|now)|almost\s+there|\d+\s*(?:min|mins|minutes?)\s+away|walking\s+over|in\s+(?:an?\s+)?(?:uber|lyft|cab|taxi)|just\s+left)\b/.test(
+    /\b(?:on\s+(?:my|the)\s+way|omw|otw|en\s*route|head(?:ing|ed)\s+(?:over|there|now)|leaving\s+now|almost\s+there|\d+\s*(?:min|mins|minutes?|m)\s+(?:away|out)|walking\s+(?:over|there)|in\s+(?:an?\s+)?(?:uber|lyft|cab|taxi)|just\s+left)\b/.test(
       t,
     )
   ) {
@@ -287,10 +294,15 @@ export class MeetupCoordinator {
   private meetups = new Map<string, MeetupCoordRecord>();
   private readonly host: MeetupCoordHost;
   private readonly digestDebounceMs: number;
+  private readonly onProvisionalNoShow?: (event: ProvisionalNoShowEvent) => void;
 
-  constructor(host: MeetupCoordHost, opts: { digestDebounceMs?: number } = {}) {
+  constructor(
+    host: MeetupCoordHost,
+    opts: { digestDebounceMs?: number; onProvisionalNoShow?: (event: ProvisionalNoShowEvent) => void } = {},
+  ) {
     this.host = host;
     this.digestDebounceMs = opts.digestDebounceMs ?? GROUP_DIGEST_DEBOUNCE_MS;
+    this.onProvisionalNoShow = opts.onProvisionalNoShow;
   }
 
   registerMeetup(input: {
@@ -364,6 +376,19 @@ export class MeetupCoordinator {
       if (!p || !canBeMatched(p.age)) return true;
     }
     return false;
+  }
+
+  /** True only when a teen meetup is on friends/ntwrk and every member is strictly aged 13-18 (zero adults 19+). */
+  private teenOnlyFriendMeetup(meetup: MeetupCoordRecord): boolean {
+    if (meetup.app !== "friends" && meetup.app !== "ntwrk") return false;
+    if (meetup.participants.length < 2) return false;
+    let hasMinor = false;
+    for (const id of meetup.participants) {
+      const age = this.host.party(meetup.meetupId, id)?.age;
+      if (age === undefined || age < 13 || age > 18) return false;
+      if (age < 18) hasMinor = true;
+    }
+    return hasMinor;
   }
 
   private lastNamesFor(meetup: MeetupCoordRecord): string[] {
@@ -442,7 +467,38 @@ export class MeetupCoordinator {
     const sender = this.host.party(meetup.meetupId, senderId);
     if (!sender || !sender.confirmed) return { handled: false, meetupId: meetup.meetupId, phase, relayedTo: [] };
 
-    if (this.meetupHasMinor(meetup)) {
+    const hasMinor = this.meetupHasMinor(meetup);
+    if (hasMinor) {
+      if (parsed.state === "venue_closed" && this.teenOnlyFriendMeetup(meetup)) {
+        this.host.venues.quarantineVenue(meetup.activeVenueId, senderId, nowMs);
+        const backup = meetup.backupVenueId ? this.host.venues.getVenue(meetup.backupVenueId) : undefined;
+        const teenSafeBackup = !!backup && backup.status === "active" && backup.ageMin === 0 && !backup.isBarOnly;
+        const canPivot = evaluateBackupPivot(true, teenSafeBackup, meetup.pivoted);
+        if (canPivot && backup) {
+          meetup.activeVenueId = backup.id;
+          meetup.pivoted = true;
+          meetup.pendingDigest = [];
+          const relayedTo: MemberId[] = [];
+          const primaryName = this.resolveVenue(meetup.primaryVenueId, meetup).name;
+          const msg = `Quick pivot: ${primaryName} is closed, so the meetup moved to ${backup.name} (${backup.address}). Look for each other ${backup.arrivalLandmark}.`;
+          for (const recipientId of meetup.confirmed) {
+            const rec = this.host.party(meetup.meetupId, recipientId);
+            if (!rec || rec.optedOut || rec.age === undefined || rec.age < 13 || rec.age > 18) continue;
+            if (recipientId !== senderId && this.host.blocked(senderId, recipientId)) continue;
+            this.host.send(recipientId, msg, { meetupId: meetup.meetupId, kind: "backup_pivot" });
+            relayedTo.push(recipientId);
+          }
+          return {
+            handled: true,
+            meetupId: meetup.meetupId,
+            phase,
+            state: parsed.state,
+            relayedTo,
+            pivotedToVenueId: backup.id,
+          };
+        }
+        return { handled: true, meetupId: meetup.meetupId, phase, state: parsed.state, relayedTo: [] };
+      }
       return {
         handled: false,
         meetupId: meetup.meetupId,
@@ -509,6 +565,15 @@ export class MeetupCoordinator {
     }
 
     if (phase !== "ActiveArrival") {
+      if (phase === "PreBrief") {
+        const note = parsed.state === "late"
+          ? `Got it — noted you're running${parsed.etaMinutes ? ` about ${parsed.etaMinutes} min` : ""} late. I'll keep everyone posted as meetup time gets closer.`
+          : "Got it — noted. I'll keep everyone posted as meetup time gets closer.";
+        if (!sender.optedOut) {
+          this.host.send(senderId, note, { meetupId: meetup.meetupId, kind: "arrival_ack" });
+        }
+        return { handled: true, meetupId: meetup.meetupId, phase, state: parsed.state, relayedTo: [] };
+      }
       return { handled: false, meetupId: meetup.meetupId, phase, state: parsed.state, relayedTo: [] };
     }
 
@@ -555,13 +620,29 @@ export class MeetupCoordinator {
       if (meetup.lastDigestAt === undefined) meetup.lastDigestAt = nowMs;
       if (nowMs - meetup.lastDigestAt >= this.digestDebounceMs) {
         const flushed = this.flushGroupDigest(meetup, nowMs);
+        if (!sender.optedOut && flushed.length > 0) {
+          this.host.send(senderId, "Got it — I've updated the group.", { meetupId: meetup.meetupId, kind: "arrival_ack" });
+        }
         return { handled: true, meetupId: meetup.meetupId, phase, state: parsed.state, relayedTo: flushed };
+      }
+      if (!sender.optedOut) {
+        this.host.send(senderId, "Got it — I'll pass that along to the group shortly.", { meetupId: meetup.meetupId, kind: "arrival_ack" });
       }
       return { handled: true, meetupId: meetup.meetupId, phase, state: parsed.state, relayedTo: [], queuedDigest: true };
     }
 
     for (const recipientId of allowedRecipients) {
       this.host.send(recipientId, rendered, { meetupId: meetup.meetupId, kind: "arrival_relay" });
+    }
+    if (!sender.optedOut) {
+      const ack = parsed.state === "late"
+        ? "Got it — I let them know you're running late."
+        : parsed.state === "arrived" || parsed.state === "seated"
+          ? "Got it — I let them know you're there."
+          : parsed.state === "cannot_find"
+            ? "Got it — I let them know you're looking for them."
+            : "Got it — I've passed that along.";
+      this.host.send(senderId, ack, { meetupId: meetup.meetupId, kind: "arrival_ack" });
     }
     return { handled: true, meetupId: meetup.meetupId, phase, state: parsed.state, relayedTo: allowedRecipients };
   }
@@ -628,6 +709,17 @@ export class MeetupCoordinator {
       const phase = evaluateMeetupPhase(nowMs, meetup.startMs, meetup.met);
 
       if (phase === "Closed" || meetup.met) {
+        if (!meetup.met && meetup.arrivedIds.length > 0) {
+          const missingMemberIds = meetup.confirmed.filter(id => !meetup.checkedInIds.includes(id));
+          if (missingMemberIds.length > 0) {
+            this.onProvisionalNoShow?.({
+              oppId: meetup.meetupId,
+              missingMemberIds,
+              arrivedMemberIds: [...meetup.arrivedIds],
+              at: nowMs,
+            });
+          }
+        }
         meetup.closed = true;
         meetup.pendingDigest = [];
         summary.closed.push(meetup.meetupId);

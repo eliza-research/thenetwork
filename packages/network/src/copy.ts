@@ -102,17 +102,28 @@ export function copyFor(b: CopyBrand) {
   booked: (others: string[], why: string, venue: string, when: string, offer = false) =>
     `${others.length === 1 ? `You're both in: meet ${others[0]}` : `You're all in: ${others.join(", ")}`}, ${when} at ${venue}. ${why}. Reply if your plans change.${offer ? ` ${OFFER}` : ""}`,
   bookedThanks: "Great, see you there.",
-  bookingStartToCancel: "Which meeting should I cancel? Use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its New York date and 24-hour time.",
-  whichBookingToCancel: "I found more than one upcoming meeting. Which one should I cancel? Use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its New York date and 24-hour time.",
+  bookingStartToCancel: "Which meeting should I cancel? Tell me the day and time, or use “Please cancel my meeting on YYYY-MM-DD at HH:MM” in local 24-hour time.",
+  whichBookingToCancel: "I found more than one upcoming meeting. Which one should I cancel? Tell me which one, or use “Please cancel my meeting on YYYY-MM-DD at HH:MM” in local 24-hour time.",
   noBookingToCancel: "I couldn't find a matching upcoming meeting.",
   whichBookingToReschedule: "More than one booking has that start. Which meeting did you mean?",
-  rescheduleFormat: "Use RESCHEDULE YYYY-MM-DD HH:MM TO YYYY-MM-DD HH:MM with the old and proposed New York starts in 24-hour time.",
+  rescheduleFormat: "Tell me which day and time you'd like to move it to (for example, “reschedule to Thursday 7pm”), or use RESCHEDULE YYYY-MM-DD HH:MM TO YYYY-MM-DD HH:MM in local 24-hour time.",
   rescheduleUnavailable: "I couldn't apply that time change.",
   reschedulePending: "The time change needs everyone's acceptance.",
   rescheduleDeclined: "Thanks. I closed that time change request.",
-  rescheduleOffer: (original: string, proposed: string, ref: string) =>
-    `Could your meeting move from ${original} to ${proposed}, New York time? The original booking stays until everyone agrees. Reply RESCHEDULE YES ${ref} or RESCHEDULE NO ${ref}.`,
-  rescheduleUpdated: (proposed: string) => `Everyone agreed. Your meeting is now ${proposed}, New York time, at the same place.`,
+  rescheduleRequested: (proposed: string, tzLabel = "local time") =>
+    `Got it — I've asked the others about moving to ${proposed} (${tzLabel}). Your original booking stays unless everyone agrees.`,
+  rescheduleOffer: (original: string, proposed: string, ref: string, tzLabel = "local time") =>
+    `Could your meeting move from ${original} to ${proposed} (${tzLabel})? The original booking stays until everyone agrees. Reply RESCHEDULE YES ${ref} or RESCHEDULE NO ${ref} (or just YES / NO if this is your only open change).`,
+  rescheduleUpdated: (proposed: string, tzLabel = "local time") =>
+    `Everyone agreed. Your meeting is now ${proposed} (${tzLabel}), at the same place.`,
+  arrivalRelayed: (summary?: string) => summary ? `Got it — I've updated them (${summary}).` : "Got it — I've passed that along.",
+  arrivalPreBriefNoted: (summary?: string) => summary
+    ? `Got it — noted (${summary}). I'll keep everyone posted as meetup time gets closer.`
+    : "Got it — noted. I'll keep everyone posted as meetup time gets closer.",
+  venueSwapProposed: (venue: string, area?: string) =>
+    `No problem — how about ${venue}${area ? ` in ${area}` : ""} instead? Still works for you?`,
+  confirmBeforeCommit: (when: string, venue: string) =>
+    `Quick check before I lock this in: are you 100% able to make ${when} at ${venue}? Reply YES to confirm.`,
   /** A probe reply that was neither a clear yes nor a clear no (a condition, a maybe): asked once more. */
   probeClarify: "Just to check: is that a yes or a no? Either is fine.",
   probeTimeClarify: "Which of the offered times work for you? Reply with the letters or the times.",
@@ -373,6 +384,26 @@ export function formatCrossDomainBridge(
 const OFFER = "For future plans, reply CALENDAR to allow free/busy from an authorized calendar, or WEEKLY for a short weekly check-in.";
 /** The answer request that ends a probe: with time options, which one works; without, yes or no. */
 const tail = (times?: string) => (times ? ` I could do ${times}. Tell me which works, or no is completely fine.` : " Yes or no is all I need, and no is completely fine.");
+
+const CITY_TZ_LABEL: Record<string, string> = {
+  nyc: "New York time",
+  sf: "San Francisco time",
+  la: "Los Angeles time",
+  chicago: "Chicago time",
+  miami: "Miami time",
+  "America/New_York": "New York time",
+  "America/Los_Angeles": "Pacific time",
+  "America/Chicago": "Central time",
+};
+
+export function timezoneLabel(cityOrTz?: CityId | string): string {
+  if (!cityOrTz) return "local time";
+  const direct = CITY_TZ_LABEL[cityOrTz];
+  if (direct) return direct;
+  const tz = cityTimezone(cityOrTz);
+  if (tz && CITY_TZ_LABEL[tz]) return CITY_TZ_LABEL[tz]!;
+  return "local time";
+}
 
 /** "Thursday 7pm"-style phrasing in a city's timezone (or explicit IANA timezone; defaults to America/New_York). */
 export function whenPhrase(t: number, cityOrTz?: CityId): string {

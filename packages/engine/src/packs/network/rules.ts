@@ -1,6 +1,6 @@
 import { budgetReached, DAY, inCooldown, pairInteractionCooling } from "@thenetwork/core";
 import { homeHelperSetAllowed } from "../../../../core/src/generated/boundedHelp.ts";
-import { isHomeEntry, riskTerms } from "../../filters.ts";
+import { isHomeEntry, memberQualityBandOf, memberReliabilityTier, memberVampireTierOf, riskTerms } from "../../filters.ts";
 import type { CandidateRule, MemberRule, PairRule } from "../../pack.ts";
 import { CONTRIBUTOR_ROLES } from "../../types.ts";
 import { pairKey, type MemberIndex } from "../../world.ts";
@@ -36,11 +36,13 @@ export const NETWORK_MEMBER_RULES: readonly MemberRule[] = [
     },
   },
   {
-    id: "reliability_holdout", check: (w, id, _mi, c) => {
-      const rel = w.reliability[id];
-      return rel && rel.noShows >= 2 && rel.completedSinceLastNoShow === 0 && (c.format !== "one_to_one" || c.timeSensitive) ? "reliability_holdout" : null;
+    id: "reliability_holdout", check: (w, id) => {
+      const tier = memberReliabilityTier(w, id);
+      return tier === "RelCoolOff" || tier === "RelSuspended" ? "reliability_holdout" : null;
     },
   },
+  { id: "quality_quarantine", check: (w, id) => (memberQualityBandOf(w, id) === "Q0Quarantine" ? "quality_quarantine" : null) },
+  { id: "vampire_quarantine", check: (w, id) => (memberVampireTierOf(w, id) === "VampireQuarantined" ? "vampire_quarantine" : null) },
 ];
 
 export function romanceCompatible(seeker: MemberIndex, other: MemberIndex): boolean {

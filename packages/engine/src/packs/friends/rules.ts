@@ -46,6 +46,8 @@ export const friendsMemberRules = (): readonly MemberRule[] => (memberRules ??= 
   { id: "safety_review", check: (w, id) => (friendsInfo(w).get(id)?.safetyCue ? "safety_review" : null) },
   net("only_when_asked"),
   net("reliability_holdout"),
+  net("quality_quarantine"),
+  net("vampire_quarantine"),
   { id: "group_first", check: (w, id, _mi, c) => (c.format === "one_to_one" && !attendedGroup(w, id) ? "group_first" : null) },
 ]);
 

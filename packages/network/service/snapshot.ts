@@ -4,7 +4,12 @@
 // src/sources/real.ts) use this one builder, so both see the same members. It never reads
 // network.channel_identities (phones and emails).
 import type { SQL } from "../../core/src/runtime/postgres.ts";
-import { ADULT_AGE, DAY, isAppId, temporaryPresenceWindow, type Edge, type EdgeType, type Facet, type Intent, type Member, type Presence, type Proposal, type ParticipationState, type WorldSnapshot } from "@thenetwork/core";
+import {
+  ADULT_AGE, DAY, isAppId, temporaryPresenceWindow,
+  type Edge, type EdgeType, type Facet, type Intent, type Member, type MemberId, type ParticipationState,
+  type Presence, type Proposal, type QualitySignals, type ReliabilityEvidence, type VampireTelemetry, type WorldSnapshot,
+} from "@thenetwork/core";
+import { isVoipLineType } from "../../platform/src/accounts.ts";
 
 import { participationOverride, participationWindowModeKnown, validWindow, windowIsActive } from "../../core/src/generated/participationWindow.ts";
 import { presenceWindowCurrentOrFuture } from "../../core/src/generated/travelPresence.ts";
@@ -140,9 +145,23 @@ export function presenceOf(r: any): Presence {
 }
 
 interface SnapshotMemberRow extends AgeRow {
-  id: string; name: string; home_city: Member["homeCity"]; prefs: Member["prefs"]; account_status: string; canonical_banned: boolean | null;
+  id: string; person_id: string | null; name: string; home_city: Member["homeCity"]; prefs: Member["prefs"]; account_status: string; canonical_banned: boolean | null;
   safety_held: boolean | null; matured_signup: boolean; person_minor_signal_at: Date | null; invited_by: string | null; joined_at: Date | null;
   unanswered_proactive: number; participation_state: ParticipationState; participation_window: unknown; opted_out: boolean;
+}
+
+function isOptionalTableError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === "42P01" || code === "42501" || code === "42703";
+}
+
+async function optionalQuery<T>(run: () => Promise<T[]>): Promise<T[]> {
+  try {
+    return await run();
+  } catch (e) {
+    if (isOptionalTableError(e)) return [];
+    throw e;
+  }
 }
 
 interface PairRow { from_id: string; to_id: string; created_at: Date }
@@ -172,9 +191,13 @@ export interface SnapshotScope { app: string; city?: string; homeCities?: readon
  * (audit engine-pipeline-17). The service calls it inside one app-scoped transaction (runtime.ts), so
  * a concurrent write is either fully in or fully out.
  */
-export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope = { app: "ntwrk" }): Promise<WorldSnapshot> {
+export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope = { app: "ntwrk" }): Promise<WorldSnapshot & { reliability?: Record<MemberId, ReliabilityEvidence> }> {
   const app = scope.app;
-  const [members, facets, intents, presence, edges, recent, parts, personBlocks, events, accepted, teenAvoid] = await Promise.all([
+  const signalCutoff = now - 90 * DAY;
+  const [
+    members, facets, intents, presence, edges, recent, parts, personBlocks, events, accepted, teenAvoid,
+    quarantinedRows, boundaryRows, reliabilityRows, lineTypeRows,
+  ] = await Promise.all([
     sql<SnapshotMemberRow[]>`select m.*, a.age as matching_age, a.banned as canonical_banned, (a.staff_held or a.report_held) as safety_held, a.minor_signal_at as person_minor_signal_at,
       ${scope.console ? consoleAgeColumns(sql) : birthColumns(sql)}, a.teen_pool_barred as ab_teen_pool_barred, a.teen_pool_held as ab_teen_pool_held,
       ${scope.includeMaturedSignup ? sql`exists (select 1 from platform.signup_eligibility s where s.person_id=m.person_id and s.eligible_at <= ${new Date(now)})` : sql`false`} as matured_signup
@@ -204,6 +227,37 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
       order by o.created_at, o.id, p.member_id`,
     teenFriendApp(app) ? sql<PairRow[]>`select a.from_id, a.to_id, a.at as created_at from platform.teen_pair_avoid_members a
       where a.app_id = ${app} order by a.from_id, a.to_id` : [],
+    scope.console ? [] : optionalQuery(() => sql<{ member_id: string }[]>`
+      select m.id as member_id
+      from network.members m
+      join platform.person_safety_quarantine q on q.person_id = m.person_id::text and q.active = true
+      where m.app_id = ${app} and m.account_status not in ('invited', 'removed')
+      order by m.id`),
+    scope.console ? [] : optionalQuery(() => sql<{ member_id: string; kind: string; reporter_hash: string }[]>`
+      select distinct m.id as member_id, s.kind, s.reporter_hash
+      from network.members m
+      left join platform.people p on p.id = m.person_id
+      join platform.person_boundary_signals s
+        on (s.subject_person_id = m.person_id::text or (p.phone_hash is not null and s.subject_phone_hash = p.phone_hash))
+      where m.app_id = ${app} and m.account_status not in ('invited', 'removed') and s.created_at >= ${signalCutoff}
+      order by m.id, s.kind, s.reporter_hash`),
+    scope.console ? [] : optionalQuery(() => sql<Record<string, any>[]>`
+      select distinct on (m.id) m.id as member_id, r.strikes, r.late_cancels_4h, r.late_cancels_24h,
+        r.reschedule_churn, r.clean_streak, r.resolved_90d, r.completed_90d, r.provisional_no_show
+      from network.members m
+      left join platform.people p on p.id = m.person_id
+      join platform.member_reliability r
+        on (r.person_id = m.person_id::text or (p.phone_hash is not null and r.phone_hash = p.phone_hash))
+      where m.app_id = ${app} and m.account_status not in ('invited', 'removed')
+        and (r.strikes > 0 or r.provisional_no_show = true)
+      order by m.id, r.strikes desc, r.updated_at desc`),
+    scope.console ? [] : optionalQuery(() => sql<{ member_id: string; line_type: string | null }[]>`
+      select m.id as member_id, ms.profile->>'phoneLineType' as line_type
+      from network.members m
+      join platform.memberships ms on ms.person_id = m.person_id and ms.app_id = m.app_id and ms.member_id = m.id
+      where m.app_id = ${app} and m.account_status not in ('invited', 'removed')
+        and ms.profile ? 'phoneLineType'
+      order by m.id`),
   ]);
   // Runtime conversation ownership takes precedence; it never creates or changes physical presence.
   const joined = new Set(members.map(r => r.id as string));
@@ -241,14 +295,75 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
     if (e.type === "blocked") blockedEdgeKeys.add(`${e.from_id}|${e.to_id}`);
     else if (e.type === "invited_by") invitedEdgeKeys.add(`${e.from_id}|${e.to_id}`);
   }
-  const snap: WorldSnapshot = {
+  const quarantinedMembers = new Set(quarantinedRows.map(r => r.member_id));
+  const boundaryConcernReporters = new Map<string, Set<string>>();
+  const selfPromoReporters = new Map<string, Set<string>>();
+  for (const b of boundaryRows) {
+    if (!keep(b.member_id)) continue;
+    if (b.kind === "self_promotion") {
+      let s = selfPromoReporters.get(b.member_id);
+      if (!s) { s = new Set(); selfPromoReporters.set(b.member_id, s); }
+      s.add(b.reporter_hash);
+    } else {
+      let s = boundaryConcernReporters.get(b.member_id);
+      if (!s) { s = new Set(); boundaryConcernReporters.set(b.member_id, s); }
+      s.add(b.reporter_hash);
+    }
+  }
+  for (const [mid, reporters] of boundaryConcernReporters) {
+    if (reporters.size >= 2) quarantinedMembers.add(mid);
+  }
+  const vampireByMember: Record<MemberId, VampireTelemetry> = {};
+  for (const [mid, reporters] of selfPromoReporters) {
+    vampireByMember[mid] = {
+      introsReceived90d: 0,
+      positiveCounterpartVotes90d: 0,
+      asymmetricNegativeVotes90d: 0,
+      pitchSignals90d: reporters.size,
+      distinctSelfPromoReports90d: reporters.size,
+    };
+  }
+  const qualityByMember: Record<MemberId, QualitySignals> = {};
+  for (const lr of lineTypeRows) {
+    if (!keep(lr.member_id) || !isVoipLineType(lr.line_type)) continue;
+    qualityByMember[lr.member_id] = {
+      provenanceScore: 5,
+      specificityScore: 10,
+      hygieneScore: 15,
+      completionScore: 5,
+      voipOrPumping: true,
+      sybilFlagged: false,
+      chronicLowEffort: false,
+      unverifiedHype: false,
+      newcomerDays: 0,
+    };
+  }
+  const reliabilityByMember: Record<MemberId, ReliabilityEvidence> = {};
+  for (const rr of reliabilityRows) {
+    if (!keep(rr.member_id)) continue;
+    reliabilityByMember[rr.member_id] = {
+      noShows: 0,
+      completedSinceLastNoShow: Number(rr.clean_streak),
+      strikes: Number(rr.strikes),
+      lateCancels4h: Number(rr.late_cancels_4h),
+      lateCancels24h: Number(rr.late_cancels_24h),
+      rescheduleChurn: Number(rr.reschedule_churn),
+      resolved90d: Number(rr.resolved_90d),
+      completed90d: Number(rr.completed_90d),
+      provisionalNoShow: Boolean(rr.provisional_no_show),
+    };
+  }
+  const snap: WorldSnapshot & { reliability?: Record<MemberId, ReliabilityEvidence> } = {
     now,
     ...(events.length ? { events } : {}),
+    ...(Object.keys(qualityByMember).length ? { qualityByMember } : {}),
+    ...(Object.keys(vampireByMember).length ? { vampireByMember } : {}),
+    ...(Object.keys(reliabilityByMember).length ? { reliability: reliabilityByMember } : {}),
     // The account status rides along (the Network reads it): a paused or restricted account is never matched and gets no
     // proactive message; replies to its own messages, compliance texts and safety notices still go (founder, 2026-10-11).
     members: members.filter(r => keep(r.id)).map((r): Member & { accountStatus: string; minorSignalAt?: number } => ({
       id: r.id, name: r.name, homeCity: r.home_city, state: effectiveParticipation(r,now).state, prefs: r.prefs,
-      accountStatus: durableStaffHoldSnapshotStatus(staffBanSnapshotStatus(r.account_status, r.canonical_banned === true), r.safety_held === true),
+      accountStatus: durableStaffHoldSnapshotStatus(staffBanSnapshotStatus(r.account_status, r.canonical_banned === true), r.safety_held === true || quarantinedMembers.has(r.id)),
       ...(isAppId(app) ? { apps: [app] } : {}),
       ...(r.person_minor_signal_at ? { minorSignalAt: ms(r.person_minor_signal_at)! } : {}),
       ...(r.matured_signup === true ? { maturedSignup: true } : {}),

@@ -88,11 +88,21 @@ const levelPoints = (level: number): number => Math.floor((Math.min(TOP_LEVEL, M
 function standing(w: World, e: MatchEntity): EntityStanding {
   if (e.lane === "Cofounder") return networkVectors.standing(w, e);
   const p = profileOf(w, e.memberId)!;
-  const level = [{ points: levelPoints(p.seniority!), reviewed: true }];
   const reviewed = p.kind === "job" ? new Set<string>() : new Set([
     p.seniorityReviewedIn,
     ...[...p.skills.values()].filter(s => s.level >= p.seniority!).map(s => s.reviewedIn),
   ].filter(id => id !== undefined));
+  const hasAnyReviewedSkill = p.kind === "candidate" && [...p.skills.values()].some(s => s.reviewedIn !== undefined);
+  const mi = w.get(e.memberId);
+  const explicitlyUnverified = p.kind === "candidate"
+    && p.seniorityReviewedIn === undefined
+    && reviewed.size === 0
+    && (p.fakeCue
+      || w.input.qualityByMember?.[e.memberId]?.unverifiedHype === true
+      || mi?.tags.has("hv:hype:pitch") === true
+      || mi?.tags.has("peon:seniority:unverified") === true
+      || (hasAnyReviewedSkill && (p.seniority ?? 0) >= 4));
+  const level = [{ points: levelPoints(p.seniority!), reviewed: !explicitlyUnverified }];
   const evidenceIds = [...new Set([p.seniorityFacetId, ...reviewed])].filter(id => id !== undefined);
   return { standing: standingFromEvidence(level), uncertainty: standingUncertaintyFor(reviewed.size, p.kind === "job"), evidenceIds };
 }
