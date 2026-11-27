@@ -995,6 +995,22 @@
         "14106ecc23db"
       ]
     },
+    "spec/cityTravel.md": {
+      "@document": [
+        "4f997636df1c"
+      ],
+      "## Story: Pick a fair meeting area within travel limits": [
+        "c5a53c67e81c"
+      ],
+      "Story: Pick a fair meeting area within travel limits / Travel time must stay within the positive limit plus bounded relaxation": [
+        "948bc00086b2",
+        "71a5a9163d74"
+      ],
+      "Story: Pick a fair meeting area within travel limits / Midpoint cost balances worst-case fairness and average travel time": [
+        "9d4cd8e21d76",
+        "7f301ef10b21"
+      ]
+    },
     "spec/cloudAuthority.md": {
       "@document": [
         "7035fd8f742a"
@@ -2238,6 +2254,25 @@
         "b19af0ea876a"
       ]
     },
+    "spec/encounterFollowup.md": {
+      "@document": [
+        "7ec7f136d70e"
+      ],
+      "## Story: Schedule follow-ups outside quiet hours": [
+        "6bebc0e5ef12"
+      ],
+      "Story: Schedule follow-ups outside quiet hours / Daytime encounters follow up two hours later and evening encounters wait until morning": [
+        "1dd99fc1c353",
+        "8c3f6b99c2ea"
+      ],
+      "## Story: Enforce opt-out, quiet hours, and message caps before sending": [
+        "258b0f783f99"
+      ],
+      "Story: Enforce opt-out, quiet hours, and message caps before sending / Follow-up dispatch enforces opt-out, quiet hours, daily cap of 3, and reminder cap of 2": [
+        "df895f3387b5",
+        "f3c980192daa"
+      ]
+    },
     "spec/opportunityLifecycle.md": {
       "@document": [
         "8ef0a1650c91"
@@ -3037,6 +3072,80 @@
         "d7cf9e9a5efa"
       ]
     },
+    "spec/marketingDevice.md": {
+      "@document": [
+        "819ff2a0c24b"
+      ],
+      "## Story: Protect attached phones from battery, thermal, and warm-up abuse": [
+        "0f6efcf25147"
+      ],
+      "Story: Protect attached phones from battery, thermal, and warm-up abuse / Safe device operation requires battery between 35 and 80 percent and temperature between 0 and 41 C": [
+        "12a7f771b0ba",
+        "c9b6a443f606"
+      ],
+      "Story: Protect attached phones from battery, thermal, and warm-up abuse / Daily warm-up action caps increase monotonically with warm-up day": [
+        "b4eeb8f01494",
+        "ce73d57e94e0"
+      ],
+      "Story: Protect attached phones from battery, thermal, and warm-up abuse / Device execution requires online status, exclusive lease, safe envelope, remaining warm-up quota, and no lockdown, STOP, or human takeover challenge": [
+        "233b59a2ffff",
+        "1b137d0c7a9c",
+        "70addb0f85d5"
+      ]
+    },
+    "spec/marketingPolicy.md": {
+      "@document": [
+        "2a0464638a63"
+      ],
+      "## Story: Hire and pay only verified adult participants within campaign limits": [
+        "d3426880c9c2"
+      ],
+      "Story: Hire and pay only verified adult participants within campaign limits / Only verified adults aged 18 through 120 may participate in paid marketing tasks": [
+        "23750d62516d",
+        "27fffefbce74"
+      ],
+      "Story: Hire and pay only verified adult participants within campaign limits / Campaign spend obeys per-task, daily, monthly, billing, lockdown, and slop.cash gates": [
+        "c2ba01cbbcac",
+        "4da1c4783892"
+      ],
+      "Story: Hire and pay only verified adult participants within campaign limits / Only open-source developer bounties may use the slop.cash payout rail": [
+        "5f5de8f04608",
+        "36db6ad6f01e",
+        "533ed5ca94b3"
+      ],
+      "Story: Hire and pay only verified adult participants within campaign limits / Human street-team and creator payouts require complete proof and verified adult status": [
+        "50a5f2aec7bb",
+        "4a401ebb8d32",
+        "c5964e5ceca2"
+      ],
+      "Story: Hire and pay only verified adult participants within campaign limits / Creator video proofs also require signed commercial likeness releases": [
+        "273980ebf999",
+        "fa80d0199403",
+        "34a522d66d1c"
+      ],
+      "## Story: Enforce anti-fraud payout caps, BD deal bounds, and bandit eligibility": [
+        "dfa14b84adb2"
+      ],
+      "Story: Enforce anti-fraud payout caps, BD deal bounds, and bandit eligibility / Anti-fraud payout checks block VoIP, cap prepaid/MVNO and lifetime consumer bonuses, enforce W-9 over $500, and block duplicates or quarantined clusters": [
+        "0f40a1c47a3c",
+        "a855aa5d9cd2"
+      ],
+      "Story: Enforce anti-fraud payout caps, BD deal bounds, and bandit eligibility / Automated BD venue deals stay inside venue budget bounds and require phone callback and signed contract": [
+        "dbd7687c50f5",
+        "70247c5b7f09"
+      ],
+      "Story: Enforce anti-fraud payout caps, BD deal bounds, and bandit eligibility / Bandit arms stay eligible only within CPA and STOP-rate ceilings": [
+        "73875cf24a88",
+        "5f820b44b85f"
+      ],
+      "## Story: Enforce agent subscription caps and the global STOP fence": [
+        "266ae1f5cb4c"
+      ],
+      "Story: Enforce agent subscription caps and the global STOP fence / Agent turns and direct outreach stop immediately on STOP, ban, lockdown, or cap exhaustion": [
+        "72872d969dea",
+        "6cc00aadaefe"
+      ]
+    },
     "spec/matchingBudgets.md": {
       "@document": [
         "de306100fea4"
@@ -3266,6 +3375,34 @@
       "Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes": [
         "f1272a7020ad",
         "6eb2d3f85bda"
+      ]
+    },
+    "spec/meetupArrival.md": {
+      "@document": [
+        "6f81833f8709"
+      ],
+      "## Story: Track arrival phases and gate arrival relays safely": [
+        "832e93df245f"
+      ],
+      "Story: Track arrival phases and gate arrival relays safely / Meetup arrival phases open 30 minutes before start and close 45 minutes after start": [
+        "ff88498458a7",
+        "aa1e63fa185e"
+      ],
+      "Story: Track arrival phases and gate arrival relays safely / Arrival relays require confirmed adults, active arrival phase, and clean safety checks": [
+        "f038d666081a",
+        "666af87dfd47",
+        "0444b90bccd3"
+      ],
+      "## Story: Escalate no-shows and pivot to a verified backup venue": [
+        "64af8536e207"
+      ],
+      "Story: Escalate no-shows and pivot to a verified backup venue / No-show escalation pings at 12 minutes and notifies the waiting attendee at 18 minutes": [
+        "6757b20b13e5",
+        "c70f76509625"
+      ],
+      "Story: Escalate no-shows and pivot to a verified backup venue / Backup venue pivot occurs at most once when closure is reported and a backup is verified": [
+        "c68533e61cb6",
+        "373f3b5bea92"
       ]
     },
     "spec/memberRequest.md": {
@@ -6679,6 +6816,46 @@
         "d819560a2bf7"
       ]
     },
+    "spec/venueSelection.md": {
+      "@document": [
+        "4b9b6d715ca2"
+      ],
+      "## Story: Recommend only safe, open, and suitable public venues": [
+        "e1482d065443"
+      ],
+      "Story: Recommend only safe, open, and suitable public venues / Hard venue eligibility enforces public safety, age, dietary, and group rules": [
+        "e857f1c0d1e4",
+        "76c05300bb51",
+        "7c89a67a7dd8"
+      ],
+      "## Story: Keep venue data fresh and avoid redundant external searches": [
+        "82199934974f"
+      ],
+      "Story: Keep venue data fresh and avoid redundant external searches / External venue search runs only when local supply is below threshold and budget remains": [
+        "e46c28120998",
+        "72a4d503551a"
+      ],
+      "Story: Keep venue data fresh and avoid redundant external searches / Pre-recommendation open check expires after 6 hours on weekends or 24 hours on weekdays": [
+        "c20926ca7340",
+        "2a1c8d8c0cab"
+      ],
+      "Story: Keep venue data fresh and avoid redundant external searches / Closure reports quarantine active venues immediately": [
+        "a24d172c291f",
+        "412ca6b3b86b",
+        "a587ca691e36"
+      ],
+      "## Story: Score eligible venues for group fit and budget alignment": [
+        "131cc66dd31a"
+      ],
+      "Story: Score eligible venues for group fit and budget alignment / Group venue rubric scores suitability from 0 to 100": [
+        "4d04c1f4f18a",
+        "60ce76f101d2"
+      ],
+      "Story: Score eligible venues for group fit and budget alignment / Budget fit scores alignment from 0 to 100 and rejects over-budget venues": [
+        "9c59c7eb2746",
+        "f6c3200395f6"
+      ]
+    },
     "spec/webhookInbox.md": {
       "@document": [
         "beb81805eb08"
@@ -6734,6 +6911,19 @@
       "Story: Stop using photo standing when it predicts nothing / The Date lane uses photo standing only while the standing gap predicts mutual interest": [
         "f35ca5723399",
         "8b89fa2e6407"
+      ]
+    },
+    "spec/workIntroChannel.md": {
+      "@document": [
+        "1f5ee81c7a9a"
+      ],
+      "## Story: Hand off a work introduction over the right digital channel": [
+        "05b7669e152c"
+      ],
+      "Story: Hand off a work introduction over the right digital channel / Work introductions select only WarmEmail, ScheduledVideo, RelayShare, or NoChannel": [
+        "5b706f0ab423",
+        "1c4b4c8019ee",
+        "7c89a67a7dd8"
       ]
     }
   },

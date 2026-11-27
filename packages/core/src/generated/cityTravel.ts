@@ -46,20 +46,6 @@ export function fairMidpointCostScaled(maxTravelMin: number, meanTravelMin: numb
 
 /** Story: Pick a fair meeting area within travel limits / Midpoint cost balances worst-case fairness and average travel time (spec/cityTravel.md) */
 //@ pure
-export function lawMidpointCostNonNegative(maxTravelMin: number, meanTravelMin: number): boolean {
-  //@ ensures \result === true
-  return !(maxTravelMin >= 0 && meanTravelMin >= 0) || fairMidpointCostScaled(maxTravelMin, meanTravelMin) >= 0;
-}
-
-/** Story: Pick a fair meeting area within travel limits / Midpoint cost balances worst-case fairness and average travel time (spec/cityTravel.md) */
-//@ pure
-export function lawMidpointCostWithinMinimaxBounds(maxTravelMin: number, meanTravelMin: number): boolean {
-  //@ ensures \result === true
-  return !(maxTravelMin >= 0 && meanTravelMin >= 0 && meanTravelMin <= maxTravelMin) || (fairMidpointCostScaled(maxTravelMin, meanTravelMin) >= exact_cityTravel(10 * meanTravelMin) && fairMidpointCostScaled(maxTravelMin, meanTravelMin) <= exact_cityTravel(10 * maxTravelMin));
-}
-
-/** Story: Pick a fair meeting area within travel limits / Midpoint cost balances worst-case fairness and average travel time (spec/cityTravel.md) */
-//@ pure
 export function fairMidpointNetCostScaled(maxTravelMin: number, meanTravelMin: number, supplyBonus: number): number {
   const local_0 = exact_cityTravel(fairMidpointCostScaled(maxTravelMin, meanTravelMin) - supplyBonus);
   return local_0 < 0 ? 0 : local_0;
@@ -67,9 +53,23 @@ export function fairMidpointNetCostScaled(maxTravelMin: number, meanTravelMin: n
 
 /** Story: Pick a fair meeting area within travel limits / Midpoint cost balances worst-case fairness and average travel time (spec/cityTravel.md) */
 //@ pure
+export function lawMidpointCostNonNegative(maxTravelMin: number, meanTravelMin: number): boolean {
+  //@ ensures \result === true
+  return !(maxTravelMin >= 0 && meanTravelMin >= 0) || fairMidpointCostScaled(maxTravelMin, meanTravelMin) >= 0;
+}
+
+/** Story: Pick a fair meeting area within travel limits / Midpoint cost balances worst-case fairness and average travel time (spec/cityTravel.md) */
+//@ pure
 export function lawMidpointNetCostNonNegative(maxTravelMin: number, meanTravelMin: number, supplyBonus: number): boolean {
   //@ ensures \result === true
   return fairMidpointNetCostScaled(maxTravelMin, meanTravelMin, supplyBonus) >= 0;
+}
+
+/** Story: Pick a fair meeting area within travel limits / Midpoint cost balances worst-case fairness and average travel time (spec/cityTravel.md) */
+//@ pure
+export function lawMidpointCostWithinMinimaxBounds(maxTravelMin: number, meanTravelMin: number): boolean {
+  //@ ensures \result === true
+  return !(maxTravelMin >= 0 && meanTravelMin >= 0 && meanTravelMin <= maxTravelMin) || (fairMidpointCostScaled(maxTravelMin, meanTravelMin) >= exact_cityTravel(10 * meanTravelMin) && fairMidpointCostScaled(maxTravelMin, meanTravelMin) <= exact_cityTravel(10 * maxTravelMin));
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
