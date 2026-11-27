@@ -1557,6 +1557,16 @@ export class NetworkRuntime {
       await tx`update network.members set opted_out = ${out} where app_id = ${app} and id = ${id}`;
       if (out) await this.host.homeHelpRecipientStopped?.(tx, app, id);
     }
+    const inboundId = u.inbound?.member_id as string | undefined;
+    if (inboundId && ok(inboundId)) {
+      const first = this.net.memberList().find(member => member.id === inboundId)?.first;
+      const [stored] = await tx`select name from network.members where app_id = ${app} and id = ${inboundId}`;
+      const storedFirst = typeof stored?.name === "string" ? stored.name.trim().split(/\s+/)[0] : undefined;
+      if (first && storedFirst && first !== storedFirst) {
+        await tx`update network.members set name = ${first} where app_id = ${app} and id = ${inboundId}`;
+        await tx`update platform.memberships set first_name = ${first} where app_id = ${app} and member_id = ${inboundId} and first_name is distinct from ${first}`;
+      }
+    }
     // The forget path (an under-age decline, leaving the app, deleting everything): keep only the id. Nothing that names the member stays.
     for (const id of u.forget) {
       // Seal old signed replay payloads in the same canonical removal transaction. Keep only dedupe metadata.

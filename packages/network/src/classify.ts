@@ -910,6 +910,30 @@ export function areaOf(text: string, city?: CityId): { area?: string; unknown?: 
   return {};
 }
 
+/** Words that follow a name cue without naming the sender ("call me at", "call me back"). */
+const NOT_STATED_NAME = new Set(["at", "back", "later", "maybe", "please", "when", "if", "tomorrow", "tonight", "anytime", "now", "again", "soon", "sometime", "whenever", "not", "never", "no", "yes", "ok", "okay", "sure", "thanks", "thank", "hi", "hey", "hello", "the", "a", "an", "my", "me", "it", "this", "that", "what", "who", "how", "why", "in", "on", "by", "for", "to", "and", "or", "but", "so", "just", "really", "actually", "well", "um", "uh", "hmm", "yeah", "yep", "yup", "nope", "nah", "lol", "sorry", "cool", "nice", "great", "done", "none", "nobody", "anyone", "someone", "everyone", "anybody", "somebody", "everybody", "home", "here", "there", "today", "yesterday", "first", "second", "third", "once", "twice", "more", "less", "much", "many", "any", "some", "all", "both", "either", "neither", "other", "another", "same", "new", "old", "good", "bad", "best", "right", "wrong", "true", "false"]);
+const NAME_CUE = /\b(?:call me|my name(?:'s| is)|i go by|i'm called|i am called|change my name to)\s+(\p{L}[\p{L}'-]*)/gu;
+const NAME_BLOCK = /\b(?:if|would|wish|maybe|might|thinking|planning|hoping|not|never|no longer|used to|friend|roommate|brother|sister|he|she|they|her|his|their|said|says|asked|told)\b|n't\b/;
+
+const formatStatedName = (word: string) =>
+  word.split("-").map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()).join("-");
+
+/** The first name the sender states as their own ("call me X", "my name is X"), for a member-initiated text. */
+export function statedNameOf(text: string): string | undefined {
+  const t = normText(text);
+  for (const s of sentencesOf(t)) {
+    for (const m of s.text.matchAll(NAME_CUE)) {
+      const token = m[1]!.replace(/['-]+$/u, "");
+      if (!/^\p{L}[\p{L}'-]{0,29}$/u.test(token) || token.includes("--") || NOT_STATED_NAME.has(token)) continue;
+      if (token.includes("-") && token.split("-").every(part => NOT_STATED_NAME.has(part))) continue;
+      const prefix = s.text.slice(0, m.index);
+      if (NAME_BLOCK.test(prefix) || quoteStillOpen(t.slice(0, s.at + m.index))) continue;
+      return formatStatedName(token);
+    }
+  }
+  return undefined;
+}
+
 /** Facet tags a member reveals when answering onboarding questions or asking for something. Never guesses. */
 export function extractProfile(body: string, city?: CityId): Profile {
   const t = normText(body);

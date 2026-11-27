@@ -1553,6 +1553,20 @@ test("explicit saved-profile reads select the app without consuming onboarding o
   ).toEqual(membershipBeforeGuards);
 }, 60_000);
 
+test("a name-change text updates the saved profile name", async () => {
+  const phone = "+12125550993";
+  await joinFriendsByText(phone, "name-change");
+  const person = (await service.accounts.personFor(phone))!;
+  expect((await service.accounts.store.getMembership(person.id, "friends"))?.firstName).toBe("Noa");
+  clock.advance(MINUTE);
+  expect((await post(turn("name-change-call", phone, "Please call me Bea.", "friends"))).status).toBe(200);
+  expect((await service.accounts.store.getMembership(person.id, "friends"))?.firstName).toBe("Bea");
+  clock.advance(MINUTE);
+  const read = (await (await post(turn("name-change-read", phone, "Show my Friends profile", "friends"))).json()) as any;
+  expect(read.replies.join("\n")).toContain("Bea");
+  expect(read.replies.join("\n")).not.toContain("Noa");
+}, 60_000);
+
 test("retention keeps a stuck signed turn until staff resolve it, then removes its tombstone", async () => {
   const id = "msg:blooio:fault-after-effects";
   const [before] = await sql`select status,sender_hash from platform.inbound where id=${id}`;
