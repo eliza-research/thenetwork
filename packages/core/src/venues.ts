@@ -10,7 +10,7 @@ import { km } from "./geo.ts";
 import { LeakGuard } from "./guard.ts";
 import type { LLM } from "./llm.ts";
 import { cleanPhrase, formatTopOneVenueSuggestion, styleViolations } from "./smsCopy.ts";
-import { cityTimezone, fromLocal, localParts } from "./time.ts";
+import { CITY_TZ, cityTimezone, fromLocal, localParts, type LocalParts } from "./time.ts";
 import { ALCOHOL_CENTRIC_CATEGORIES, chooseFairMidpoint, estimateTravelMinutes, getCity } from "./cities.ts";
 import {
   fairMidpointCostScaled,
@@ -354,14 +354,20 @@ function computeSafetyAcousticsScore(venue: VenueRecord, isNight: boolean): numb
  * Check whether a venue is open at `startMs` in timezone `tz` with at least `bufferMin` remaining
  * before closing. Handles past-midnight slots (`closeMin > 1440`) cleanly.
  */
-export function isVenueOpenAt(venue: VenueRecord, tz: string, startMs: number, bufferMin: number): VenueOpenCheck {
-  const parts = localParts(startMs, tz);
-  const minuteOfDay = parts.hour * 60 + parts.minute;
-  const prevWeekday = (parts.weekday + 6) % 7;
+export function isVenueOpenAt(
+  venue: VenueRecord,
+  tz: string,
+  startMs: number,
+  bufferMin: number,
+  parts?: LocalParts
+): VenueOpenCheck {
+  const resolvedParts = parts ?? localParts(startMs, tz);
+  const minuteOfDay = resolvedParts.hour * 60 + resolvedParts.minute;
+  const prevWeekday = (resolvedParts.weekday + 6) % 7;
 
   let bestRemaining = -1;
   for (const slot of venue.hours) {
-    if (slot.weekday === parts.weekday) {
+    if (slot.weekday === resolvedParts.weekday) {
       if (minuteOfDay >= slot.openMin && minuteOfDay < slot.closeMin) {
         const rem = slot.closeMin - minuteOfDay;
         if (rem > bestRemaining) bestRemaining = rem;
@@ -480,7 +486,7 @@ export function rankVenuesForMatch(
     const meanTravelMin = Math.round(travelTimes.reduce((s, x) => s + x, 0) / travelTimes.length);
     if (!isWithinTravelLimit(maxTravelMin, travelLimitMin)) continue;
 
-    const openCheck = isVenueOpenAt(venue, tz, request.startMs, requiredBuffer);
+    const openCheck = isVenueOpenAt(venue, tz, request.startMs, requiredBuffer, startParts);
     const eligible = venueHardEligible({
       isPublic: venue.public === true,
       venueStatus: venue.status,
@@ -887,6 +893,7 @@ export interface VenueLLMRerankOptions {
   extraLeakCheck?: (text: string) => string | null;
   deadlineMs?: number;
   maxTokens?: number;
+  clearWinnerMargin?: number;
 }
 
 export interface VenueLLMRerankResult {
@@ -944,6 +951,10 @@ export async function rerankTopVenuesWithLLM(opts: VenueLLMRerankOptions): Promi
   if (top5.length === 0) return { usedLLM: false, fallbackReason: "empty_candidates" };
   const deterministicPick = top5[0]!;
   if (!opts.llm) return { picked: deterministicPick, usedLLM: false, fallbackReason: "no_llm" };
+  const clearMargin = opts.clearWinnerMargin ?? 25;
+  if (top5.length === 1 || (clearMargin > 0 && top5[0]!.score - top5[1]!.score >= clearMargin)) {
+    return { picked: deterministicPick, usedLLM: false, fallbackReason: "clear_winner" };
+  }
 
   const byId = new Map<string, VenueCandidateResult>(top5.map(c => [c.venue.id, c]));
   const compactCandidates = top5.map(c => ({
@@ -1026,7 +1037,7 @@ export async function rerankTopVenuesWithLLM(opts: VenueLLMRerankOptions): Promi
     },
     {
       attempts: 1,
-      maxTokens: opts.maxTokens ?? 450,
+      maxTokens: opts.maxTokens ?? 600,
       deadlineMs: opts.deadlineMs ?? 8_000,
       reasoningEffort: "low",
       promptCacheKey: VENUE_RERANK_PROMPT_CACHE_KEY,

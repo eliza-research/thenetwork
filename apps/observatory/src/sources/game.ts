@@ -8,7 +8,7 @@ import { setTimeout as waitForMs } from "node:timers/promises";
 // ground truth; the judge scorer checks the run records for invariants, leaks and minor contacts.
 import { fileAt } from "../../../../packages/core/src/runtime/files.ts";
 import {
-  ALL_SEED_VENUES, CITIES, DAY, getCity, HOUR, listCities, MIN_MEMBER_AGE, MINUTE, seedVenuesForCity,
+  ALL_SEED_VENUES, CITIES, CITY_IDS, DAY, getCity, HOUR, listCities, MIN_MEMBER_AGE, MINUTE, seedVenuesForCity,
   type City, type MemberId, type Proposal, type ScoreComponents,
 } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
@@ -219,13 +219,20 @@ export class GameSource implements DataSource {
     this.records = [];
     this.judgeHour = -1; this.healthHour = -1;
     this.recent = []; this.stopHistory.clear(); this.inviters.clear(); this.guardFallback.clear(); this.configHistory = [];
-    const runCity: City = o.city === "all" ? "nyc" : o.city;
+    const activeCities: City[] = o.city === "all"
+      ? (() => {
+          const present = [...new Set(personas.map(p => p.homeCity))];
+          return present.length ? present : [...CITY_IDS];
+        })()
+      : [o.city];
+    const runCity: City | undefined = activeCities.length === 1 ? activeCities[0] : undefined;
+    const runCityLabel = runCity ? runCity.toUpperCase() : activeCities.map(c => c.toUpperCase()).join("+");
     this.consent = o.network === "consent" ? new ConsentNetwork({
-      seed: o.seed, inlineJudge: o.judge === "hold-every-item" ? holdEveryItem.inline : simulatedReviewJudge({ exceptions: true }), engine: { cities: [runCity] }, ...(o.engine === "off" ? { maxNewPerDay: 0 } : {}),
+      seed: o.seed, inlineJudge: o.judge === "hold-every-item" ? holdEveryItem.inline : simulatedReviewJudge({ exceptions: true }), engine: { cities: activeCities }, ...(o.engine === "off" ? { maxNewPerDay: 0 } : {}),
       onEngineRun: (log, proposals, at) => {
-        const sum = summarizeRun(log, proposals, { at, city: runCity, wallMs: Math.round(log.timingsMs.total ?? 0) });
+        const sum = summarizeRun(log, proposals, { at, ...(runCity ? { city: runCity } : {}), wallMs: Math.round(log.timingsMs.total ?? 0) });
         this.store.addRun(sum);
-        this.store.pushFeed({ t: at, kind: "engine", text: `engine-v1 · ${runCity.toUpperCase()}: ${proposals.length} candidates proposed from ${sum.funnel.generated}; the Network gates them (skeptical) and checks availability first` });
+        this.store.pushFeed({ t: at, kind: "engine", text: `engine-v1 · ${runCityLabel}: ${proposals.length} candidates proposed from ${sum.funnel.generated}; the Network gates them (skeptical) and checks availability first` });
       },
     }) : undefined;
     this.engine = o.engine === "engine-v1" && !this.consent

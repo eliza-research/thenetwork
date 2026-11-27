@@ -8,7 +8,12 @@ import { setLeakLabelKey } from "../../../packages/core/src/guard.ts";
 import { serveHttp, type HttpServer } from "../../../packages/core/src/runtime/http.ts";
 import { checkBackendHealth } from "../../../packages/core/src/vibe/backendHealthShell.js";
 import {
+  createApolloEnrichmentAdapter,
+  type ApolloEnrichmentAdapter,
+} from "./adapters/apollo.ts";
+import {
   createPaidAdapterRegistry,
+  spendAuthFromCampaign,
   type PaidAdapterRegistry,
 } from "./adapters/paid.ts";
 import {
@@ -70,6 +75,10 @@ import {
   type DiscoverySource,
 } from "./discovery.ts";
 import {
+  createIntakeBridge,
+  type IntakeBridge,
+} from "./intake-bridge.ts";
+import {
   createNetworkCoreBridge,
   type NetworkCoreBridge,
 } from "./network-bridge.ts";
@@ -82,6 +91,13 @@ import {
   SELF_SERVICE_PLATFORMS,
   VETTED_NYC_AGENCIES,
 } from "./nyc-seed.ts";
+import {
+  buildPlatformDraft,
+  CANONICAL_OUTREACH_PLATFORMS,
+  evaluatePlatformHealth,
+  evaluateReportRisk,
+  getPlatformPlaybook,
+} from "./platform-playbooks.ts";
 import {
   evaluateLlmBudget,
   keyedContactHash,
@@ -126,7 +142,10 @@ import {
 import {
   HttpValidationError,
   parseAgentTick,
+  parseApolloEnrich,
+  parseApolloSearch,
   parseBdUpdate,
+  parseCanonicalPlatform,
   parseCityParam,
   parseContactSuppression,
   parseCreateAgent,
@@ -142,13 +161,19 @@ import {
   parseCreateVipProspect,
   parseDeviceAction,
   parseDiscoveryRequest,
+  parseIntakePromote,
+  parseIntakeScore,
   parsePaginationQuery,
+  parsePlaybookDraft,
+  parsePlaybookLint,
   parseProofReview,
   parseRiskDialUpdate,
   parseSeedCity,
   parseSimRequest,
   parseSubmitProof,
   parseUpdateCampaign,
+  parseVipPipelineRun,
+  parseVipSend,
   readJsonBody,
 } from "./validation.ts";
 import {
@@ -159,9 +184,13 @@ import {
 } from "./video-factory.ts";
 import {
   classifyVipArchetype,
+  gateVipOutreach,
+  inferSourceAuthority,
   isWeakOrFallbackProofOfWorkHook,
+  recordVipOutreachTouch,
   scoreVipProspect,
   VipDiscoveryEngine,
+  type VipOfferMode,
 } from "./vip-engine.ts";
 
 export interface MarketingServerOptions {
@@ -360,6 +389,18 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
   const antiFraud = new AntiFraudEngine({ clock });
   const bdEngine = new BdPipelineEngine({ clock });
   const vipEngine = new VipDiscoveryEngine({ clock });
+  const apolloAdapter: ApolloEnrichmentAdapter = createApolloEnrichmentAdapter({
+    store: opts.store,
+    bridge,
+    clock,
+    env,
+  });
+  const intakeBridge: IntakeBridge = createIntakeBridge({
+    store: opts.store,
+    bridge,
+    clock,
+    env,
+  });
   const eventHub = new MarketingEventHub({ clock });
 
   const cssAsset = buildPrecompressedAsset(
@@ -1552,7 +1593,7 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
               : scoreVipProspect({
                   archetypeSlug: archetype,
                   bioOrSummary: `${body.name} ${body.organization ?? ""}`,
-                  primarySourceAuthority: "tier1_filing",
+                  primarySourceAuthority: inferSourceAuthority(body.publicSource),
                   recentWithin18Months: true,
                   inTargetCity: true,
                 }).score;
@@ -1563,6 +1604,101 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
           });
           eventHub.publish("vip_prospect", { action: "created", id: prospect.id });
           return jsonResponse({ prospect }, 201);
+        }
+        if (method === "POST" && path === "/api/vips/pipeline/run") {
+          const body = parseVipPipelineRun(await readJsonBody(request));
+          const result = await apolloAdapter.runApolloVipPipeline(body);
+          eventHub.publish("vip_prospect", {
+            action: "pipeline_run",
+            campaignId: result.campaignId,
+            persistedCount: result.persistedCount,
+          });
+          return jsonResponse(result);
+        }
+        const vipSendMatch = /^\/api\/(?:vip|vips|vip-prospects)\/([^/]+)\/send$/.exec(path);
+        if (method === "POST" && vipSendMatch?.[1]) {
+          const id = decodeURIComponent(vipSendMatch[1]);
+          const prospect = await opts.store.getVipProspect(id);
+          if (!prospect) throw new HttpValidationError(404, "NOT_FOUND", `VIP prospect not found: ${id}`);
+          const campaign = await opts.store.getCampaign(prospect.campaignId);
+          if (!campaign) {
+            throw new HttpValidationError(404, "NOT_FOUND", `Campaign not found: ${prospect.campaignId}`);
+          }
+          const body = parseVipSend(await readJsonBody(request));
+          const recipientEmail = body.recipientEmail ?? prospect.contactEmail ?? "";
+          if (!recipientEmail) {
+            return jsonResponse({ error: "VIP prospect has no verified contactEmail.", code: "MISSING_EMAIL" }, 400);
+          }
+          const draftText = body.body ?? prospect.inviteDraft ?? "";
+          if (!draftText.trim()) {
+            return jsonResponse({ error: "VIP invite draft is required before sending.", code: "MISSING_DRAFT" }, 400);
+          }
+          const gate = await gateVipOutreach({
+            prospect: { ...prospect, contactEmail: recipientEmail },
+            store: opts.store,
+            bridge,
+            clock,
+            env,
+            lockdown: campaign.riskDial === "lockdown",
+          });
+          if (!gate.allowed) {
+            return jsonResponse({ ok: false, blocked: true, reason: gate.reason ?? "vip_send_blocked" }, 403);
+          }
+          const risk = evaluateReportRisk({
+            platform: "luma",
+            text: draftText,
+            subject: body.subject,
+            hasRecipientSpecificReference: true,
+            isFirstTouch: !body.isFollowup,
+          });
+          if (!risk.pass) {
+            return jsonResponse({ ok: false, blocked: true, reason: "report_risk_exceeded", risk }, 400);
+          }
+          const liveAllowed =
+            !body.forceDryRun &&
+            env.MARKETING_LIVE_SEND === "1" &&
+            paidAdapters.isLiveBillingEnabled();
+          const receipt = liveAllowed
+            ? await paidAdapters.execute(
+                "email",
+                {
+                  to: recipientEmail,
+                  subject: body.subject ?? `Quick intro in ${prospect.city.toUpperCase()}`,
+                  text: draftText,
+                },
+                {
+                  spend: spendAuthFromCampaign(campaign, 1, { tier: 3, useSlopCash: false, env }),
+                  idempotencyKey: `vip:${prospect.id}:${body.isFollowup ? "followup" : "initial"}`,
+                },
+              )
+            : await paidAdapters.dryRun(
+                "email",
+                {
+                  to: recipientEmail,
+                  subject: body.subject ?? `Quick intro in ${prospect.city.toUpperCase()}`,
+                  text: draftText,
+                },
+                `vip:${prospect.id}:${body.isFollowup ? "followup" : "initial"}`,
+              );
+          if (gate.contactHash) {
+            await recordVipOutreachTouch(opts.store, {
+              contactHash: gate.contactHash,
+              campaignId: prospect.campaignId,
+              isCold: true,
+              answered: false,
+            });
+          }
+          const updated = await opts.store.updateVipProspect(prospect.id, {
+            contactEmail: recipientEmail,
+            inviteDraft: draftText,
+            status: "invited",
+          });
+          eventHub.publish("vip_prospect", {
+            action: "invited",
+            id: updated.id,
+            mode: receipt.mode,
+          });
+          return jsonResponse({ ok: receipt.ok, mode: receipt.mode, receipt, risk, prospect: updated });
         }
         const vipInviteMatch = /^\/api\/(?:vip|vips|vip-prospects)\/([^/]+)\/invite$/.exec(path);
         if (method === "POST" && vipInviteMatch?.[1]) {
@@ -1583,6 +1719,13 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
             );
           }
           const firstName = prospect.name.split(/\s+/)[0] ?? prospect.name;
+          const offerMode: VipOfferMode | undefined =
+            raw.offerMode === "bilateral_intro" || raw.offerMode === "curated_table"
+              ? raw.offerMode
+              : undefined;
+          const confirmedCoSeatedRoles = Array.isArray(raw.confirmedCoSeatedRoles)
+            ? raw.confirmedCoSeatedRoles.filter((x): x is string => typeof x === "string")
+            : undefined;
           const invite = vipEngine.buildAndValidateVipInvite({
             firstName,
             archetypeSlug: prospect.archetype,
@@ -1591,6 +1734,12 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
             proofOfWork1Line: proofHook,
             senderName: typeof raw.senderName === "string" && raw.senderName.trim() ? raw.senderName.trim() : "The Operator",
             dateLabel: typeof raw.dateLabel === "string" ? raw.dateLabel : undefined,
+            offerMode,
+            bilateralPeerSummary:
+              typeof raw.bilateralPeerSummary === "string" ? raw.bilateralPeerSummary : undefined,
+            sharedExactProblem:
+              typeof raw.sharedExactProblem === "string" ? raw.sharedExactProblem : undefined,
+            confirmedCoSeatedRoles,
           });
           if (!invite.valid) {
             return jsonResponse({ error: "VIP invite failed validation", invite }, 400);
@@ -1601,6 +1750,78 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
           });
           eventHub.publish("vip_prospect", { action: "invite_drafted", id: updated.id });
           return jsonResponse({ invite, prospect: updated });
+        }
+
+        // Pass 4: Apollo Enrichment & Credits
+        if (method === "POST" && path === "/api/apollo/search") {
+          const body = parseApolloSearch(await readJsonBody(request));
+          const result = await apolloAdapter.searchPeople(body);
+          return jsonResponse(result, result.ok ? 200 : 429);
+        }
+        if (method === "POST" && path === "/api/apollo/enrich") {
+          const body = parseApolloEnrich(await readJsonBody(request));
+          const result = await apolloAdapter.enrichPerson(body);
+          const status = result.ok ? 200 : result.blockedReason?.includes("minor") || result.blockedReason?.includes("suppressed") ? 403 : 400;
+          return jsonResponse(result, status);
+        }
+        if (method === "GET" && path === "/api/apollo/credits") {
+          const usage = await apolloAdapter.getCreditUsage();
+          return jsonResponse({ ok: true, usage });
+        }
+
+        // Pass 4: 10-Platform Helpful Agent Playbooks
+        const playbookDraftMatch = /^\/api\/playbooks\/([^/]+)\/draft$/.exec(path);
+        if (method === "POST" && playbookDraftMatch?.[1]) {
+          const platform = parseCanonicalPlatform(decodeURIComponent(playbookDraftMatch[1]), "platform");
+          const body = parsePlaybookDraft(await readJsonBody(request));
+          const draft = buildPlatformDraft({ platform, ...body });
+          return jsonResponse({ ok: draft.risk.pass, playbook: getPlatformPlaybook(platform), draft });
+        }
+        if (method === "POST" && path === "/api/playbooks/lint") {
+          const body = parsePlaybookLint(await readJsonBody(request));
+          const risk = evaluateReportRisk(body);
+          return jsonResponse(
+            { ok: risk.pass, platform: body.platform, risk },
+            risk.pass ? 200 : 400,
+          );
+        }
+        if (method === "GET" && path === "/api/playbooks/health") {
+          const platformParam = url.searchParams.get("platform");
+          const campaignId = url.searchParams.get("campaignId") ?? undefined;
+          const platforms = platformParam
+            ? [parseCanonicalPlatform(platformParam, "platform")]
+            : [...CANONICAL_OUTREACH_PLATFORMS];
+          const nowMs = clock.now();
+          const health = await Promise.all(
+            platforms.map(async (platform) => {
+              const interactions = await opts.store.listPlatformInteractions({
+                platform,
+                campaignId,
+                limit: 50,
+              });
+              return evaluatePlatformHealth(platform, interactions, nowMs);
+            }),
+          );
+          return jsonResponse({ ok: true, platforms: health });
+        }
+
+        // Pass 4: Out-of-Network -> In-Network Quality Intake Bridge
+        if (method === "POST" && path === "/api/intake/score") {
+          const body = parseIntakeScore(await readJsonBody(request));
+          const scored = await intakeBridge.scoreAndRecordCandidate(body);
+          return jsonResponse(scored, scored.isMinorSignal ? 403 : 200);
+        }
+        const intakePromoteMatch = /^\/api\/intake\/([^/]+)\/promote$/.exec(path);
+        if (method === "POST" && intakePromoteMatch?.[1]) {
+          const candidateId = decodeURIComponent(intakePromoteMatch[1]);
+          const body = parseIntakePromote(await readJsonBody(request));
+          const promoted = await intakeBridge.promoteCandidate(candidateId, body);
+          const status = promoted.allowed
+            ? 200
+            : promoted.blockedReason === "intake_candidate_not_found"
+              ? 404
+              : 403;
+          return jsonResponse(promoted, status);
         }
 
         // Video Factory (both /api/videos and /api/video-assets aliases)

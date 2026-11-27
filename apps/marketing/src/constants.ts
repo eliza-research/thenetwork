@@ -13,9 +13,13 @@ import {
   mvnoBonusCapCents,
   w9AnnualThresholdCents,
 } from "../../../packages/core/src/generated/marketingPolicy.ts";
+import {
+  normalizeAgeInitialism,
+  relayMinorAge,
+  relayMinorEstimate,
+} from "../../../packages/core/src/policy.ts";
 import { parseOptOut } from "../../../packages/core/src/replies.ts";
 import type { DesireLaneId } from "./desire-lanes.ts";
-import { detectUnderageText } from "./llm-cache.ts";
 import type {
   AgentAuthMode,
   BrandAppId,
@@ -69,6 +73,67 @@ export {
   mvnoBonusCapCents,
   w9AnnualThresholdCents,
 };
+
+export interface UnderageDetectionResult {
+  readonly isMinor: boolean;
+  readonly statedAge: number | null;
+  readonly reason: string | null;
+}
+
+const UNDERAGE_SHORTHAND_RE = /\b(\d{1,2})\s*(?:y\/?o|years?\s*old|yrs?\s*old)\b/gi;
+const UNDERAGE_EXPLICIT_RE = /\b(?:age\s*[:=]?\s*|i\s*(?:am|'m)\s*)(\d{1,3})\b/gi;
+const UNDERAGE_UPCOMING_RE = /\b(?:turning|almost|nearly|about\s+to\s+(?:be|turn))\s+18\b|\b(?:under\s*18|not\s+(?:yet\s+)?18)\b/i;
+const UNDERAGE_SCHOOL_RE = /\b(?:(?:high\s*school|hs)\s+(?:freshman|sophomore|junior|senior|student)|(?:high|middle)\s*schooler|middle\s*school\s+student)\b/i;
+const ADULT_SCHOOL_CONTEXT_RE = /\b(?:teacher|coach|counselor|principal|graduated|former|alumni|parent\s+of|kid\s+in|son\s+in|daughter\s+in)\b/i;
+
+export function detectUnderageText(text: string): UnderageDetectionResult {
+  const normalized = normalizeAgeInitialism(
+    text
+      .normalize("NFKC")
+      .trim()
+      .toLowerCase()
+      .replace(/[‘’ʼ`´]/g, "'")
+      .replace(/[“”]/g, '"'),
+  );
+  if (!normalized) {
+    return { isMinor: false, statedAge: null, reason: null };
+  }
+
+  const policyAge = relayMinorAge(text, true);
+  if (policyAge !== undefined && policyAge < 18) {
+    return { isMinor: true, statedAge: policyAge, reason: "policy_minor_age" };
+  }
+
+  if (relayMinorEstimate(text)) {
+    return { isMinor: true, statedAge: null, reason: "policy_minor_estimate" };
+  }
+
+  let youngest: number | null = null;
+  for (const re of [UNDERAGE_EXPLICIT_RE, UNDERAGE_SHORTHAND_RE]) {
+    re.lastIndex = 0;
+    for (const match of normalized.matchAll(re)) {
+      const raw = match[1];
+      if (!raw) continue;
+      const age = Number.parseInt(raw, 10);
+      if (Number.isInteger(age) && age >= 1 && age < 18) {
+        youngest = youngest === null ? age : Math.min(youngest, age);
+      }
+    }
+  }
+  if (youngest !== null) {
+    return { isMinor: true, statedAge: youngest, reason: "stated_under_18" };
+  }
+
+  if (UNDERAGE_UPCOMING_RE.test(normalized)) {
+    return { isMinor: true, statedAge: 17, reason: "turning_or_under_18" };
+  }
+
+  if (UNDERAGE_SCHOOL_RE.test(normalized) && !ADULT_SCHOOL_CONTEXT_RE.test(normalized)) {
+    return { isMinor: true, statedAge: null, reason: "high_or_middle_school_student" };
+  }
+
+  return { isMinor: false, statedAge: null, reason: null };
+}
 
 export const BRAND_DOMAINS: Readonly<Record<BrandAppId, string>> = {
   ntwrk: brandFor("Ntwrk").domain,
@@ -164,6 +229,10 @@ export const DEFAULT_DAILY_OUTREACH_CAP = 50;
 export const DEFAULT_DAILY_TURN_CAP = 60;
 export const DEFAULT_OPERATOR_TURN_CAP = 80;
 export const DEFAULT_BANDIT_MAX_CPA_CENTS = 2_125;
+export const DEFAULT_APOLLO_DAILY_CREDIT_CAP = 50;
+export const DEFAULT_APOLLO_MONTHLY_CREDIT_CAP = 1_000;
+export const DEFAULT_APOLLO_DAILY_SEARCH_CAP = 100;
+export const DEFAULT_APOLLO_CENTS_PER_CREDIT = 10;
 
 export const DEFAULT_SLOP_CASH_REPO = "eliza-research/thenetwork";
 export const DEFAULT_SLOP_CASH_CHAIN = "base" as const;
@@ -814,22 +883,22 @@ export const MARKETING_EMAIL_TEMPLATES: Record<EmailTemplateId, AutomatedEmailTe
       "",
       'Loved the pacing and realness in "{{RECENT_VIDEO_TITLE}}"—you let real people surprise you instead of forcing a bit.',
       "",
-      "We are launching The Network in {{CITY_LABEL}}—an AI matchmaker that skips swipe apps and cold DMs to connect people to what they actually want in real life ({{DESIRE_PROMISE}}).",
+      "We are launching The Network in {{CITY_LABEL}}—connecting people in real life without swipe apps or cold DMs ({{DESIRE_PROMISE}}).",
       "",
       "THE IDEA (CANDID VOX-POP, ZERO ACTORS):",
       "- Location: Public sidewalk in {{NEIGHBORHOOD}} ({{LOCAL_FILMING_NOTE}}).",
       '- Question to explore: "{{CREATOR_QUESTION}}"',
-      "- On-camera moment: Have 3+ willing 18+ locals try your unique QR card ({{CREATOR_SHORTLINK}}) live on camera and capture their unfiltered reaction.",
+      "- On-camera moment: Have 3+ willing 18+ locals try your custom batch QR card live on camera and capture their unfiltered reaction.",
       "",
       "DELIVERABLES & PAY:",
-      "- 1 edited main piece (60-90s) on {{PRIMARY_PLATFORM}} + 2 short vertical cutdowns (20-35s) + raw clips, with your link pinned for 30 days.",
+      "- 1 edited main piece (60-90s) on {{PRIMARY_PLATFORM}} + 2 short vertical cutdowns (20-35s) + raw clips, with your short link pinned for 30 days.",
       "- ${{FLAT_FEE}} guaranteed flat fee paid within 48 hours of approved publish + $2.50 per verified 18+ local signup (capped at +${{BONUS_CAP}}, settled Day 14).",
       "- Target publish date: {{TARGET_PUBLISH_DATE}}.",
       "",
-      "CLEAN COMPLIANCE (HANDLED IN OUR 1-PAGE CLICKWRAP):",
-      "- 18+ interviewees only, standard #Ad / Paid Partnership disclosure, and our 10-second mobile release QR ({{RELEASE_FORM_URL}}) for recognizable interviewees ({{LOCAL_RELEASE_STATUTE}}).",
+      "CLEAN COMPLIANCE (SENT IN STAGE-2 CLICKWRAP ONCE YOU REPLY):",
+      "- 18+ interviewees only, standard #Ad / Paid Partnership disclosure, and our 10-second mobile release QR for recognizable interviewees ({{LOCAL_RELEASE_STATUTE}}).",
       "",
-      "If you're into this, lock the slot and review the 1-page agreement + instant payout setup here: {{CREATOR_CONTRACT_URL}}",
+      "If this fits your style, just reply with a quick yes and I will send over the 1-page agreement, custom short link ({{CREATOR_SHORTLINK}}), and mobile release QR right away. Zero pressure if your calendar is full.",
       "",
       "Best,",
       "Creator Partnerships | The Network ({{CITY_LABEL}})",

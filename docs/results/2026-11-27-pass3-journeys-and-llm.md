@@ -133,3 +133,16 @@ pnpm run journey-eval -- --offline
 env -u SURPLUS_API_KEY -u OPENAI_API_KEY pnpm run journey-eval -- --live
 # PASS: clean exit 0 with explicit missing-key notice.
 ```
+
+## Post-Merge Verification (`origin/develop` `c413c2acd`)
+
+After committing Pass 3 (`3c94348aa`), `origin/develop` (`c413c2acd`, containing Pass 2 unify-and-optimize `0f7167fac` and Pass 4 `f500f0551`) was merged cleanly with zero edits to `spec/lock.json`, migrations `0098`–`0102`, or `packages/core/src/generated/*`, unifying both `journeys` suites (`26/26` blocking gates in `1.1s`) and preserving all Pass 3 and Pass 4 fixes:
+
+- `pnpm run typecheck`: **PASS** (`0` errors across all 15 workspace projects)
+- `pnpm run spec:check-generated`: **PASS** (`282/282` generated TypeScript and VibeLang artifacts)
+- `node --import tsx --env-file-if-exists=.env plugins/build.ts --check`: **PASS**
+- `pnpm run marketing:test`: **PASS** (`4/4` files, `39/39` tests)
+- `pnpm run security`: **PASS** (`12/12` files, `298/298` tests, `56.42s`)
+- Pass 3 targeted Vitest: **PASS** (`6/6` files, `57/57` tests)
+- `pnpm run journey-eval -- --offline`: **PASS** (`15/15` blocking gates, `775ms`)
+- Post-merge simulation blocks: `evals` **`48/48`**, `journeys` **`26/26`** (`1.1s`), `meetup` **`14/14`**, `five-city` **`31/31`** (`7.1s`), `marketing` **`15/15`**, `safety` **`21/21`** (`16.4s`), `pipeline-slop` **`14/14`** (`84.5s`), `slop` **`57/57`** (`272.7s`, `slop-live` style violations `0/410`).

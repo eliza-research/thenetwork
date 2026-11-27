@@ -307,6 +307,7 @@ function leakReasons(text: string, privateVocab: Set<string>, extraForbidden: st
     else if (r.startsWith("forbidden:")) reasons.add("forbidden_phrase");
     else if (r.startsWith("contact:")) reasons.add("contact");
     else if (r.startsWith("canary:")) reasons.add("canary");
+    else if (r.startsWith("internal:")) reasons.add("internal_ranking_leak");
   }
   return [...reasons];
 }

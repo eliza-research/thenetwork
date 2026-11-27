@@ -23,6 +23,7 @@ import { createNetworkCoreBridge } from "../src/network-bridge.ts";
 import { keyedContactHash } from "../src/policy.ts";
 import { createMarketingServer } from "../src/server.ts";
 import { PgMarketingStore, PolicyViolationError } from "../src/store.ts";
+import { VipDiscoveryEngine } from "../src/vip-engine.ts";
 import type { Clock, MarketingAutopilotDaemon } from "../src/index.ts";
 
 const execFileAsync = promisify(execFile);
@@ -1280,11 +1281,11 @@ describe.skipIf(!pgAvailable)("@thenetwork/marketing Postgres + HTTP Pass-2 inte
   );
 
   test(
-    "11. 18-Archetype VIP Engine (<75-word invite) & 5-Agent Video Factory (script linter + stage FSM)",
+    "11. 28-Archetype VIP Engine (<75-word invite) & 5-Agent Video Factory (script linter + stage FSM)",
     async () => {
       const vipList = await api<{ archetypes: Array<{ slug: string }> }>("GET", "/api/vips");
       expect(vipList.status).toBe(200);
-      expect(vipList.data.archetypes.length).toBe(18);
+      expect(vipList.data.archetypes.length).toBe(28);
 
       const createdVip = await api<{ prospect: { id: string; prestigeScore: number } }>(
         "POST",
@@ -2449,6 +2450,462 @@ describe.skipIf(!pgAvailable)("@thenetwork/marketing Postgres + HTTP Pass-2 inte
         const parsed = JSON.parse(stdout) as { ok?: boolean };
         expect(parsed.ok).toBe(true);
       }
+    },
+    TEST_TIMEOUT,
+  );
+
+  test(
+    "23. Pass-4 Apollo Enrichment API (/api/apollo/{search,enrich,credits}), D11 Cache Purge on Suppression, & VIP Pipeline/Send (D3/D4)",
+    async () => {
+      // 1. 0-credit Apollo search (dry-run deterministic fixtures)
+      const searchRes = await api<{
+        ok: boolean;
+        creditsSpent: number;
+        candidates: Array<{ apolloPersonId: string; fullName: string; archetypeSlug: string | null }>;
+      }>("POST", "/api/apollo/search", {
+        city: "nyc",
+        campaignId: seededCampaignId,
+        archetypeSlugs: ["startup_founder", "creative_director_tastemaker"],
+        perPage: 4,
+      });
+      expect(searchRes.status).toBe(200);
+      expect(searchRes.data.ok).toBe(true);
+      expect(searchRes.data.creditsSpent).toBe(0);
+      expect(searchRes.data.candidates.length).toBeGreaterThanOrEqual(2);
+
+      // 2. Apollo enrich persists in marketing.enrichment_cache + apollo_credit_ledger
+      const enrichRes = await api<{
+        ok: boolean;
+        cacheHit: boolean;
+        contactHash: string | null;
+        person: { workEmail: string | null; verifiedWorkEmail: boolean } | null;
+      }>("POST", "/api/apollo/enrich", {
+        campaignId: seededCampaignId,
+        city: "nyc",
+        firstName: "Claire",
+        lastName: "Mercer",
+        organizationName: "Atelier Mercer",
+        domain: "ateliermercer.studio",
+        title: "Creative Director",
+      });
+      expect(enrichRes.status).toBe(200);
+      expect(enrichRes.data.ok).toBe(true);
+      expect(enrichRes.data.person?.verifiedWorkEmail).toBe(true);
+      expect(enrichRes.data.person?.workEmail).toBe("claire.mercer@ateliermercer.studio");
+
+      // Second identical enrich call hits enrichment_cache
+      const enrichHit = await api<{ ok: boolean; cacheHit: boolean }>(
+        "POST",
+        "/api/apollo/enrich",
+        {
+          campaignId: seededCampaignId,
+          city: "nyc",
+          firstName: "Claire",
+          lastName: "Mercer",
+          organizationName: "Atelier Mercer",
+          domain: "ateliermercer.studio",
+          title: "Creative Director",
+        },
+      );
+      expect(enrichHit.status).toBe(200);
+      expect(enrichHit.data.cacheHit).toBe(true);
+
+      // 3. GET /api/apollo/credits reflects logged ledger entries
+      const creditsRes = await api<{
+        ok: boolean;
+        usage: { totalCallsToday: number; cacheHitsToday: number };
+      }>("GET", "/api/apollo/credits");
+      expect(creditsRes.status).toBe(200);
+      expect(creditsRes.data.ok).toBe(true);
+      expect(creditsRes.data.usage.totalCallsToday).toBeGreaterThanOrEqual(3);
+      expect(creditsRes.data.usage.cacheHitsToday).toBeGreaterThanOrEqual(1);
+
+      // 4. D11 regression: suppressing enriched contact immediately purges marketing.enrichment_cache in Postgres!
+      const suppRes = await api("POST", "/api/suppressions", {
+        email: "claire.mercer@ateliermercer.studio",
+        reason: "user_stop",
+        sourceChannel: "email",
+      });
+      expect(suppRes.status).toBe(201);
+      const cacheCountAfter = firstRow<{ n: number }>(
+        await sql`
+          select count(*)::int as n from marketing.enrichment_cache
+          where contact_hash = ${enrichRes.data.contactHash}
+        `,
+      );
+      expect(cacheCountAfter.n).toBe(0);
+
+      // Re-enriching the suppressed email fails closed with 403
+      const blockedEnrich = await api<{ ok: boolean; blockedReason?: string }>(
+        "POST",
+        "/api/apollo/enrich",
+        {
+          campaignId: seededCampaignId,
+          city: "nyc",
+          email: "claire.mercer@ateliermercer.studio",
+        },
+      );
+      expect(blockedEnrich.status).toBe(403);
+      expect(blockedEnrich.data.ok).toBe(false);
+
+      // 5. POST /api/vips/pipeline/run creates researched/drafted prospects + bilateral invite + gated send (D3/D4)
+      const pipeRes = await api<{
+        ok: boolean;
+        persistedCount: number;
+        items: Array<{ prospect: { id: string; contactEmail: string | null } | null }>;
+      }>("POST", "/api/vips/pipeline/run", {
+        campaignId: seededCampaignId,
+        city: "nyc",
+        archetypeSlugs: ["senior_staff_engineer"],
+        maxEnrich: 2,
+        offerMode: "bilateral_intro",
+        bilateralPeerSummary: "a principal distributed systems engineer at a NYC database startup",
+        sharedExactProblem: "low-latency Raft consensus tuning",
+      });
+      expect(pipeRes.status).toBe(200);
+      expect(pipeRes.data.ok).toBe(true);
+      expect(pipeRes.data.persistedCount).toBeGreaterThanOrEqual(1);
+      const createdProspect = pipeRes.data.items.find((it) => it.prospect !== null)?.prospect;
+      expect(createdProspect).toBeDefined();
+      if (!createdProspect) throw new Error("Expected pipeline VIP prospect");
+
+      // Bilateral offer mode invite validation
+      const bilatInvite = await api<{
+        invite: { valid: boolean; offerMode: string; wordCount: number; reportRiskScore: number };
+      }>("POST", `/api/vips/${createdProspect.id}/invite`, {
+        proofOfWork1Line: "your distributed storage benchmarks from last month",
+        offerMode: "bilateral_intro",
+        bilateralPeerSummary: "a principal storage engineer in Brooklyn",
+        sharedExactProblem: "zero-copy WAL compaction",
+      });
+      expect(bilatInvite.status).toBe(200);
+      expect(bilatInvite.data.invite.valid).toBe(true);
+      expect(bilatInvite.data.invite.offerMode).toBe("bilateral_intro");
+      expect(bilatInvite.data.invite.reportRiskScore).toBeLessThanOrEqual(24);
+
+      // Ensure daytime NYC clock (1pm EST) for first send
+      currentNow = Date.UTC(2026, 10, 27, 18, 0, 0);
+      const firstSend = await api<{ ok: boolean; mode: string; prospect: { status: string } }>(
+        "POST",
+        `/api/vips/${createdProspect.id}/send`,
+        { forceDryRun: true },
+      );
+      expect(firstSend.status).toBe(200);
+      expect(firstSend.data.ok).toBe(true);
+      expect(firstSend.data.prospect.status).toBe("invited");
+
+      // Verify surface='vip' touchpoint was recorded in Postgres
+      const vipTouchRow = firstRow<{ n: number }>(
+        await sql`select count(*)::int as n from marketing.contact_touchpoints where surface = 'vip'`,
+      );
+      expect(vipTouchRow.n).toBeGreaterThanOrEqual(1);
+
+      // D3/D4 regression: immediate second cold VIP send (< 14d cooldown) MUST be blocked with 403!
+      const secondSendTooSoon = await api<{ ok: boolean; blocked: boolean }>(
+        "POST",
+        `/api/vips/${createdProspect.id}/send`,
+        { isFollowup: true, forceDryRun: true },
+      );
+      expect(secondSendTooSoon.status).toBe(403);
+      expect(secondSendTooSoon.data.blocked).toBe(true);
+    },
+    TEST_TIMEOUT,
+  );
+
+  test(
+    "24. Pass-4 10-Platform Playbooks API (/api/playbooks/{:platform/draft,lint,health}) & Rolling-20 Circuit Breaker",
+    async () => {
+      for (const platform of ["reddit", "tinder", "partiful", "luma"] as const) {
+        const draftRes = await api<{
+          ok: boolean;
+          draft: { text: string; risk: { pass: boolean; score: number } };
+        }>("POST", `/api/playbooks/${platform}/draft`, {
+          city: "nyc",
+          recipientName: "Sam",
+          specificContext: "your neighborhood ceramics studio in Williamsburg",
+          peerSummary: "another local potter and coffee roaster",
+          senderName: "Alex",
+        });
+        expect(draftRes.status).toBe(200);
+        expect(draftRes.data.ok).toBe(true);
+        expect(draftRes.data.draft.risk.pass).toBe(true);
+        expect(draftRes.data.draft.risk.score).toBeLessThanOrEqual(24);
+      }
+
+      // High-risk pitch-slap + URL + Clef leak must fail /api/playbooks/lint with 400
+      const badLint = await api<{ ok: boolean; risk: { pass: boolean; score: number } }>(
+        "POST",
+        "/api/playbooks/lint",
+        {
+          platform: "hinge",
+          text: "Check out our app! Limited spots at https://evil.example.com — your Clef score is 9.1/10!",
+          isFirstTouch: true,
+          hasRecipientSpecificReference: false,
+        },
+      );
+      expect(badLint.status).toBe(400);
+      expect(badLint.data.ok).toBe(false);
+      expect(badLint.data.risk.score).toBeGreaterThan(24);
+
+      // Seed 20 rolling interactions in Postgres with 2 reports -> health circuit breaker trips to 'suspended'
+      for (let i = 0; i < 20; i += 1) {
+        await store.recordPlatformInteraction({
+          campaignId: seededCampaignId,
+          platform: "reddit",
+          channelAccountId: null,
+          contactHash: `pg-reddit-cb-${i}`,
+          direction: "outbound",
+          interactionKind: "public_reply",
+          reportRiskScore: 4,
+          outcome: i < 2 ? "reported" : "sent",
+        });
+      }
+      const healthRes = await api<{
+        ok: boolean;
+        platforms: Array<{ platform: string; status: string; reportedCount: number }>;
+      }>("GET", "/api/playbooks/health?platform=reddit");
+      expect(healthRes.status).toBe(200);
+      expect(healthRes.data.platforms[0]?.platform).toBe("reddit");
+      expect(healthRes.data.platforms[0]?.status).toBe("suspended");
+      expect(healthRes.data.platforms[0]?.reportedCount).toBeGreaterThanOrEqual(2);
+    },
+    TEST_TIMEOUT,
+  );
+
+  test(
+    "25. Pass-4 Quality Intake API (/api/intake/{score,:id/promote}), slop!=peon Air-Gap, Once-Only Invite & external_prospect_suppressions Fence",
+    async () => {
+      // 1. Slop rejected (score 0)
+      const slopRes = await api<{ qualityScore: number; recommendedStatus: string }>(
+        "POST",
+        "/api/intake/score",
+        {
+          campaignId: seededCampaignId,
+          city: "nyc",
+          targetAppId: "friends",
+          sourcePlatform: "reddit",
+          contactIdentifier: "slop_low_effort_user",
+          statedAge: 25,
+          replyOrBioText: "interested",
+        },
+      );
+      expect(slopRes.status).toBe(200);
+      expect(slopRes.data.qualityScore).toBe(0);
+      expect(slopRes.data.recommendedStatus).toBe("rejected_slop");
+
+      // 2. Minor rejected with 403 + suppressed in Postgres
+      const minorRes = await api<{ isMinorSignal: boolean; recommendedStatus: string }>(
+        "POST",
+        "/api/intake/score",
+        {
+          campaignId: seededCampaignId,
+          city: "nyc",
+          targetAppId: "friends",
+          sourcePlatform: "luma",
+          contactIdentifier: "minor_luma_user",
+          statedAge: 16,
+          replyOrBioText: "Excited for the Brooklyn robotics meetup this weekend!",
+        },
+      );
+      expect(minorRes.status).toBe(403);
+      expect(minorRes.data.isMinorSignal).toBe(true);
+
+      // 3. Cross-brand air-gap: Tinder dating prospect CANNOT promote into peon.biz
+      const airGapScore = await api<{ candidate: { id: string } }>(
+        "POST",
+        "/api/intake/score",
+        {
+          campaignId: seededCampaignId,
+          city: "nyc",
+          targetAppId: "peon",
+          sourcePlatform: "tinder",
+          contactIdentifier: "tinder_staff_eng",
+          statedAge: 30,
+          replyOrBioText:
+            "Staff distributed systems engineer in Brooklyn, loved the coffee shop rec and happy to meet Thursday at 6pm.",
+          verifiedWorkEmail: true,
+          tier1PublicProof: true,
+          confirmedTimeWithin24h: true,
+          memberOrAnchorVouched: true,
+          valueDelivered: true,
+          explicitPositiveSignal: true,
+        },
+      );
+      expect(airGapScore.status).toBe(200);
+      const airGapPromote = await api<{ allowed: boolean; blockedReason?: string }>(
+        "POST",
+        `/api/intake/${airGapScore.data.candidate.id}/promote`,
+        { recipientName: "Morgan" },
+      );
+      expect(airGapPromote.status).toBe(403);
+      expect(airGapPromote.data.allowed).toBe(false);
+      expect(airGapPromote.data.blockedReason).toBe("cross_brand_external_prospect_air_gap");
+
+      // 4. Verified high-signal adult promotes ONCE, writes surface='intake' touchpoint, second promote blocked!
+      const goodScore = await api<{ qualified: boolean; candidate: { id: string } }>(
+        "POST",
+        "/api/intake/score",
+        {
+          campaignId: seededCampaignId,
+          city: "nyc",
+          targetAppId: "ntwrk",
+          sourcePlatform: "luma",
+          contactIdentifier: "highsignal.builder@heliossystems.io",
+          identifierKind: "email",
+          statedAge: 31,
+          replyOrBioText:
+            "Thanks for introducing me to Maya at the SoHo hardware salon — confirmed for Thursday at 7pm. How do I stay in the loop for future Brooklyn intros?",
+          verifiedWorkEmail: true,
+          tier1PublicProof: true,
+          attendedIrlEvent: true,
+          confirmedTimeWithin24h: true,
+          memberOrAnchorVouched: true,
+          valueDelivered: true,
+          explicitPositiveSignal: true,
+        },
+      );
+      expect(goodScore.status).toBe(200);
+      expect(goodScore.data.qualified).toBe(true);
+
+      const firstPromote = await api<{
+        allowed: boolean;
+        inviteText: string | null;
+        entryUrl: string | null;
+        skillUrl: string | null;
+        candidate: { inviteAttempts: number; status: string };
+      }>("POST", `/api/intake/${goodScore.data.candidate.id}/promote`, {
+        recipientName: "Jordan",
+        senderName: "The Operator",
+      });
+      expect(firstPromote.status).toBe(200);
+      expect(firstPromote.data.allowed).toBe(true);
+      expect(firstPromote.data.entryUrl).toBe("https://ntwrk.party");
+      expect(firstPromote.data.skillUrl).toBe("https://ntwrk.party/SKILL.md");
+      expect(firstPromote.data.candidate.inviteAttempts).toBe(1);
+      expect(firstPromote.data.candidate.status).toBe("invited");
+
+      const intakeTouchRow = firstRow<{ n: number }>(
+        await sql`select count(*)::int as n from marketing.contact_touchpoints where surface = 'intake'`,
+      );
+      expect(intakeTouchRow.n).toBeGreaterThanOrEqual(1);
+
+      const secondPromote = await api<{ allowed: boolean; blockedReason?: string }>(
+        "POST",
+        `/api/intake/${goodScore.data.candidate.id}/promote`,
+        { recipientName: "Jordan" },
+      );
+      expect(secondPromote.status).toBe(403);
+      expect(secondPromote.data.allowed).toBe(false);
+      expect(secondPromote.data.blockedReason).toBe("candidate_already_invited");
+
+      // 5. Verify marketing.contact_fence blocks rows in platform.external_prospect_suppressions
+      const extHash = keyedContactHash("handle", "ext_suppressed_tinder_user") ?? "ext-hash-fallback";
+      const hasExtTable = firstRow<{ present: boolean }>(
+        await sql`select to_regclass('platform.external_prospect_suppressions') is not null as present`,
+      );
+      if (hasExtTable.present) {
+        await sql`
+          insert into platform.external_prospect_suppressions (
+            city, dedupe_hash, phone_hash, reason, permanent, created_at
+          ) values (
+            'nyc', ${extHash}, null, 'stopped', true, ${new Date(clock.now())}
+          )
+          on conflict do nothing
+        `;
+        const bridge = createNetworkCoreBridge({ sql, clock });
+        const extVerdict = await bridge.checkContactFence({ handleHash: extHash });
+        expect(extVerdict.allowed).toBe(false);
+        expect(extVerdict.globallyStopped).toBe(true);
+      }
+    },
+    TEST_TIMEOUT,
+  );
+
+  test(
+    "26. Pass-4 Defect Regressions: D1 Local Quiet Hours, D2 Tier-3 Cold Cooldown, D4 >=14d VIP Follow-up, D7 leakCheckPass Accuracy, & Source Authority",
+    async () => {
+      // D1 + D7: CrowdsourcingEngine at 11pm NYC EST blocks cold outreach with blocked_policy while preserving true leakCheckPass!
+      const nightClock: Clock = { now: () => Date.UTC(2026, 10, 27, 4, 0, 0) }; // 11pm EST
+      const nightEngine = new CrowdsourcingEngine({ store, clock: nightClock });
+      const nightHuman = await store.upsertHuman({
+        handleOrEmailHmac: "p4:d1-quiet-hours-target",
+        displayLabel: "Night Quiet Target",
+        contactEmail: "night-target@example.com",
+        channel: "email",
+        role: "applicant",
+        city: "nyc",
+        lowestAge: 28,
+      });
+      const quietMsg = await nightEngine.queueOutreach({
+        campaignId: seededCampaignId,
+        agentId: sloaneId,
+        humanId: nightHuman.id,
+        channel: "email",
+        tier: 1,
+        subject: "Quick note for NYC",
+        bodyText: "Clean 18+ local message with zero leaks via go.slop.date.",
+      });
+      expect(quietMsg.status).toBe("blocked_policy");
+      expect(quietMsg.leakCheckPass).toBe(true);
+
+      // D2: Tier-3 cold email is subject to 14-day cold cooldown (cannot bypass by bumping tier to 3!)
+      const dayClock: Clock = { now: () => Date.UTC(2026, 10, 27, 18, 0, 0) }; // 1pm EST
+      const dayEngine = new CrowdsourcingEngine({ store, clock: dayClock });
+      const t3Human = await store.upsertHuman({
+        handleOrEmailHmac: "p4:d2-tier3-cold-target",
+        displayLabel: "Tier 3 Cold Target",
+        contactEmail: "t3-cold@example.com",
+        channel: "email",
+        role: "applicant",
+        city: "nyc",
+        lowestAge: 29,
+      });
+      await store.recordContactTouchpoint({
+        contactHash: t3Human.handleOrEmailHmac,
+        campaignId: seededCampaignId,
+        surface: "outreach",
+        isCold: true,
+        answered: false,
+      });
+      const t3Blocked = await dayEngine.queueOutreach({
+        campaignId: seededCampaignId,
+        agentId: sloaneId,
+        humanId: t3Human.id,
+        channel: "email",
+        tier: 3,
+        subject: "Tier 3 cold follow-up too soon",
+        bodyText: "Clean 18+ local message via go.slop.date.",
+      });
+      expect(t3Blocked.status).toBe("blocked_policy");
+      expect(t3Blocked.leakCheckPass).toBe(true);
+
+      // D4: VIP follow-up requires >= 14 days (blocks at 7 days, allows at 14 days)
+      const vipEng = new VipDiscoveryEngine({ clock: dayClock });
+      const tooEarly = vipEng.buildVipFollowUp("Elena", 7, "NYC distributed systems", "The Operator");
+      expect(tooEarly.allowed).toBe(false);
+      const after14d = vipEng.buildVipFollowUp("Elena", 14, "NYC distributed systems", "The Operator");
+      expect(after14d.allowed).toBe(true);
+
+      // Source authority fix on POST /api/vips: sec_form_d outranks social_only reddit!
+      const socialVip = await api<{ prospect: { prestigeScore: number } }>("POST", "/api/vips", {
+        campaignId: seededCampaignId,
+        city: "nyc",
+        name: "Social Only Prospect",
+        archetype: "startup_founder",
+        publicSource: "reddit",
+      });
+      const filingVip = await api<{ prospect: { prestigeScore: number } }>("POST", "/api/vips", {
+        campaignId: seededCampaignId,
+        city: "nyc",
+        name: "Filing Verified Prospect",
+        archetype: "startup_founder",
+        publicSource: "sec_form_d",
+      });
+      expect(socialVip.status).toBe(201);
+      expect(filingVip.status).toBe(201);
+      expect(filingVip.data.prospect.prestigeScore).toBeGreaterThan(
+        socialVip.data.prospect.prestigeScore,
+      );
     },
     TEST_TIMEOUT,
   );

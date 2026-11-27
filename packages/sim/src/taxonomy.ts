@@ -36,4 +36,10 @@ export const BOUNDARIES = [
 ];
 
 export const STYLES = ["terse", "chatty", "warm", "sarcastic", "formal", "emoji-heavy", "lowercase-casual", "non-native English"] as const;
-export type WritingStyle = (typeof STYLES)[number];
+export const EXTRA_JOURNEY_STYLES = [
+  "genz-slang", "voice-to-text-runon", "boomer-email-sms",
+  "neurodivergent-literal", "defensive-skeptical", "typo-heavy-casual",
+] as const;
+export const JOURNEY_STYLES = [...STYLES, ...EXTRA_JOURNEY_STYLES] as const;
+export type JourneyWritingStyle = (typeof JOURNEY_STYLES)[number];
+export type WritingStyle = JourneyWritingStyle;

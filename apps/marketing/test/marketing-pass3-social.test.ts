@@ -34,7 +34,7 @@ import {
 import { getVipArchetype, VipDiscoveryEngine } from "../src/vip-engine.ts";
 
 describe("Pass 3 Wave 1: marketing cache isolation, retry accounting, deterministic router & X/LinkedIn social playbooks", () => {
-  const startMs = Date.parse("2026-11-27T12:00:00.000Z");
+  const startMs = Date.parse("2026-11-27T19:00:00.000Z");
 
   test("1. Zero cross-contact cache poisoning, sorted untrustedContext keys, channel isolation, and strict LRU cap", async () => {
     const clock = new SimClock(startMs);
@@ -475,7 +475,10 @@ describe("Pass 3 Wave 1: marketing cache isolation, retry accounting, determinis
       expect(invite.wordCount).toBeLessThanOrEqual(75);
       expect(invite.body).toMatch(/reply stop to opt out/i);
     }
-    const followUp = vipEngine.buildVipFollowUp("Elena", 2, "founder", "The Operator");
+    const earlyFollowUp = vipEngine.buildVipFollowUp("Elena", 2, "founder", "The Operator");
+    expect(earlyFollowUp.allowed).toBe(false);
+    const followUp = vipEngine.buildVipFollowUp("Elena", 14, "founder", "The Operator");
+    expect(followUp.allowed).toBe(true);
     expect(followUp.body).toMatch(/reply stop to opt out/i);
 
     // Custom VIP body without opt-out is rejected by validateVipInvite

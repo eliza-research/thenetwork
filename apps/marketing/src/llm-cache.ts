@@ -1,13 +1,12 @@
 import { createHash } from "node:crypto";
 import { RealClock, type Clock } from "../../../packages/core/src/clock.ts";
 import { DEFAULT_MODEL, OPENAI_PRICES, priceFor } from "../../../packages/core/src/llm.ts";
-import {
-  normalizeAgeInitialism,
-  relayMinorAge,
-  relayMinorEstimate,
-} from "../../../packages/core/src/policy.ts";
 import { parseOptOut } from "../../../packages/core/src/replies.ts";
+import { detectUnderageText, type UnderageDetectionResult } from "./constants.ts";
 import type { PersonaId, SubscriptionProvider } from "./types.ts";
+import { VIP_ARCHETYPE_KEYWORDS } from "./vip-engine.ts";
+
+export { detectUnderageText, type UnderageDetectionResult };
 
 export interface PromptCacheKeyInput {
   readonly provider: SubscriptionProvider | (string & {});
@@ -262,27 +261,6 @@ export class PromptCache {
   }
 }
 
-const VIP_KEYWORDS: ReadonlyArray<readonly [string, readonly string[]]> = [
-  ["startup_founder", ["founder", "co-founder", "ceo", "seed", "series a", "form d", "yc"]],
-  ["vc_lp", ["venture", "general partner", "angel", "lp", "fund", "form adv"]],
-  ["patent_inventor", ["patent", "inventor", "uspto", "hardware prototype"]],
-  ["scientist_academic", ["professor", "openalex", "nsf", "nih", "h-index", "phd"]],
-  ["ai_biotech_researcher", ["arxiv", "biorxiv", "neurips", "icml", "iclr", "biotech", "robotics"]],
-  ["quant_finance", ["quant", "hedge fund", "13f", "portfolio manager", "macro strategist"]],
-  ["author_journalist", ["author", "journalist", "pulitzer", "substack", "essayist", "novelist"]],
-  ["filmmaker_artist", ["filmmaker", "director", "sundance", "musician", "biennial", "composer"]],
-  ["elite_athlete", ["olympian", "athlete", "marathon", "championship", "all-american"]],
-  ["michelin_chef_hospitality", ["chef", "michelin", "james beard", "sommelier", "restaurateur"]],
-  ["architect_designer", ["architect", "industrial designer", "aia", "pritzker"]],
-  ["oss_maintainer", ["open source", "maintainer", "principal engineer", "github", "committer"]],
-  ["policymaker_diplomat", ["policy", "diplomat", "senate", "think tank", "commissioner"]],
-  ["podcaster_curator", ["podcast", "curator", "super-host", "radio"]],
-  ["leading_physician", ["surgeon", "physician", "clinical trial", "longevity", "oncology"]],
-  ["philanthropist_foundation", ["foundation", "museum", "nonprofit", "990", "philanthropist"]],
-  ["legal_rainmaker", ["litigator", "appellate", "prosecutor", "general counsel", "courtlistener"]],
-  ["defense_space_energy", ["aerospace", "fusion", "sbir", "darpa", "orbital", "satellite"]],
-];
-
 const SCRIPT_FORBIDDEN_RULES: ReadonlyArray<{ readonly code: string; readonly re: RegExp }> = [
   {
     code: "clef_secrecy_violation",
@@ -301,67 +279,6 @@ const SCRIPT_FORBIDDEN_RULES: ReadonlyArray<{ readonly code: string; readonly re
     re: /\b(wearable\s*billboard|portable\s*receipt\s*printer|thermal\s*printer\s*citation)\b/i,
   },
 ];
-
-export interface UnderageDetectionResult {
-  readonly isMinor: boolean;
-  readonly statedAge: number | null;
-  readonly reason: string | null;
-}
-
-const UNDERAGE_SHORTHAND_RE = /\b(\d{1,2})\s*(?:y\/?o|years?\s*old|yrs?\s*old)\b/gi;
-const UNDERAGE_EXPLICIT_RE = /\b(?:age\s*[:=]?\s*|i\s*(?:am|'m)\s*)(\d{1,3})\b/gi;
-const UNDERAGE_UPCOMING_RE = /\b(?:turning|almost|nearly|about\s+to\s+(?:be|turn))\s+18\b|\b(?:under\s*18|not\s+(?:yet\s+)?18)\b/i;
-const UNDERAGE_SCHOOL_RE = /\b(?:(?:high\s*school|hs)\s+(?:freshman|sophomore|junior|senior|student)|(?:high|middle)\s*schooler|middle\s*school\s+student)\b/i;
-const ADULT_SCHOOL_CONTEXT_RE = /\b(?:teacher|coach|counselor|principal|graduated|former|alumni|parent\s+of|kid\s+in|son\s+in|daughter\s+in)\b/i;
-
-export function detectUnderageText(text: string): UnderageDetectionResult {
-  const normalized = normalizeAgeInitialism(
-    text
-      .normalize("NFKC")
-      .trim()
-      .toLowerCase()
-      .replace(/[‘’ʼ`´]/g, "'")
-      .replace(/[“”]/g, '"'),
-  );
-  if (!normalized) {
-    return { isMinor: false, statedAge: null, reason: null };
-  }
-
-  const policyAge = relayMinorAge(text, true);
-  if (policyAge !== undefined && policyAge < 18) {
-    return { isMinor: true, statedAge: policyAge, reason: "policy_minor_age" };
-  }
-
-  if (relayMinorEstimate(text)) {
-    return { isMinor: true, statedAge: null, reason: "policy_minor_estimate" };
-  }
-
-  let youngest: number | null = null;
-  for (const re of [UNDERAGE_EXPLICIT_RE, UNDERAGE_SHORTHAND_RE]) {
-    re.lastIndex = 0;
-    for (const match of normalized.matchAll(re)) {
-      const raw = match[1];
-      if (!raw) continue;
-      const age = Number.parseInt(raw, 10);
-      if (Number.isInteger(age) && age >= 1 && age < 18) {
-        youngest = youngest === null ? age : Math.min(youngest, age);
-      }
-    }
-  }
-  if (youngest !== null) {
-    return { isMinor: true, statedAge: youngest, reason: "stated_under_18" };
-  }
-
-  if (UNDERAGE_UPCOMING_RE.test(normalized)) {
-    return { isMinor: true, statedAge: 17, reason: "turning_or_under_18" };
-  }
-
-  if (UNDERAGE_SCHOOL_RE.test(normalized) && !ADULT_SCHOOL_CONTEXT_RE.test(normalized)) {
-    return { isMinor: true, statedAge: null, reason: "high_or_middle_school_student" };
-  }
-
-  return { isMinor: false, statedAge: null, reason: null };
-}
 
 function stripPrefix(prompt: string, prefixRe: RegExp): string {
   return prompt.replace(prefixRe, "").trim();
@@ -483,7 +400,7 @@ export function tryDeterministicRoute(
     const body = stripPrefix(trimmed, /^CLASSIFY_VIP:/i).toLowerCase();
     let bestSlug = "startup_founder";
     let bestHits = 0;
-    for (const [slug, keywords] of VIP_KEYWORDS) {
+    for (const [slug, keywords] of VIP_ARCHETYPE_KEYWORDS) {
       let hits = 0;
       for (const kw of keywords) {
         if (body.includes(kw)) hits += 1;

@@ -53,6 +53,11 @@ const REPORT_SAFETY_HINT = " If you're ever in danger, call 911 first.";
 export function copyFor(b: CopyBrand, defaultCity?: CityId) {
   const tzLabel = (city?: CityId) => cityTzLabel(city ?? defaultCity);
   const cancelDateLabel = (city?: CityId) => (city ?? defaultCity) ? cityTzLabel(city ?? defaultCity) : "local";
+  const resolveTzLabel = (cityOrLabel?: CityId | string) => {
+    if (!cityOrLabel) return defaultCity ? cityTzLabel(defaultCity) : "local time";
+    if (cityTimezone(cityOrLabel)) return cityTzLabel(cityOrLabel as CityId);
+    return cityOrLabel;
+  };
   return {
   welcome: (first: string, inviter?: string) =>
     `Hi ${first}, I'm ${b.agent} (an AI)${inviter ? `; ${inviter} invited you` : ""}. Now and then I'll suggest a person or plan that seems worth your time, and you can always ask me for something. Reply STOP anytime to opt out. To start: what would you like more of in your life right now?`,
@@ -109,23 +114,34 @@ export function copyFor(b: CopyBrand, defaultCity?: CityId) {
   booked: (others: string[], why: string, venue: string, when: string, offer = false) =>
     `${others.length === 1 ? `You're both in: meet ${others[0]}` : `You're all in: ${others.join(", ")}`}, ${when} at ${venue}. ${why}. Reply if your plans change.${offer ? ` ${OFFER}` : ""}`,
   bookedThanks: "Great, see you there.",
-  bookingStartToCancel: `Which meeting should I cancel? Use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its ${cancelDateLabel()} date and 24-hour time.`,
+  bookingStartToCancel: `Which meeting should I cancel? Tell me the day and time, or use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its ${cancelDateLabel()} date and 24-hour time.`,
   bookingStartToCancelFor: (city?: CityId) =>
-    `Which meeting should I cancel? Use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its ${tzLabel(city)} date and 24-hour time.`,
-  whichBookingToCancel: `I found more than one upcoming meeting. Which one should I cancel? Use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its ${cancelDateLabel()} date and 24-hour time.`,
+    `Which meeting should I cancel? Tell me the day and time, or use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its ${tzLabel(city)} date and 24-hour time.`,
+  whichBookingToCancel: `I found more than one upcoming meeting. Which one should I cancel? Tell me which one, or use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its ${cancelDateLabel()} date and 24-hour time.`,
   whichBookingToCancelFor: (city?: CityId) =>
-    `I found more than one upcoming meeting. Which one should I cancel? Use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its ${tzLabel(city)} date and 24-hour time.`,
+    `I found more than one upcoming meeting. Which one should I cancel? Tell me which one, or use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its ${tzLabel(city)} date and 24-hour time.`,
   noBookingToCancel: "I couldn't find a matching upcoming meeting.",
   whichBookingToReschedule: "More than one booking has that start. Which meeting did you mean?",
-  rescheduleFormat: `Use RESCHEDULE YYYY-MM-DD HH:MM TO YYYY-MM-DD HH:MM with the old and proposed ${cancelDateLabel()} starts in 24-hour time.`,
+  rescheduleFormat: `Tell me which day and time you'd like to move it to (for example, “reschedule to Thursday 7pm”), or use RESCHEDULE YYYY-MM-DD HH:MM TO YYYY-MM-DD HH:MM with the old and proposed ${cancelDateLabel()} starts in 24-hour time.`,
   rescheduleFormatFor: (city?: CityId) =>
-    `Use RESCHEDULE YYYY-MM-DD HH:MM TO YYYY-MM-DD HH:MM with the old and proposed ${tzLabel(city)} starts in 24-hour time.`,
+    `Tell me which day and time you'd like to move it to (for example, “reschedule to Thursday 7pm”), or use RESCHEDULE YYYY-MM-DD HH:MM TO YYYY-MM-DD HH:MM with the old and proposed ${tzLabel(city)} starts in 24-hour time.`,
   rescheduleUnavailable: "I couldn't apply that time change.",
   reschedulePending: "The time change needs everyone's acceptance.",
   rescheduleDeclined: "Thanks. I closed that time change request.",
-  rescheduleOffer: (original: string, proposed: string, ref: string, city?: CityId) =>
-    `Could your meeting move from ${original} to ${proposed}, ${tzLabel(city)}? The original booking stays until everyone agrees. Reply RESCHEDULE YES ${ref} or RESCHEDULE NO ${ref}.`,
-  rescheduleUpdated: (proposed: string, city?: CityId) => `Everyone agreed. Your meeting is now ${proposed}, ${tzLabel(city)}, at the same place.`,
+  rescheduleRequested: (proposed: string, cityOrTzLabel?: CityId | string) =>
+    `Got it — I've asked the others about moving to ${proposed} (${resolveTzLabel(cityOrTzLabel)}). Your original booking stays unless everyone agrees.`,
+  rescheduleOffer: (original: string, proposed: string, ref: string, cityOrTzLabel?: CityId | string) =>
+    `Could your meeting move from ${original} to ${proposed} (${resolveTzLabel(cityOrTzLabel)})? The original booking stays until everyone agrees. Reply RESCHEDULE YES ${ref} or RESCHEDULE NO ${ref} (or just YES / NO if this is your only open change).`,
+  rescheduleUpdated: (proposed: string, cityOrTzLabel?: CityId | string) =>
+    `Everyone agreed. Your meeting is now ${proposed} (${resolveTzLabel(cityOrTzLabel)}), at the same place.`,
+  arrivalRelayed: (summary?: string) => summary ? `Got it — I've updated them (${summary}).` : "Got it — I've passed that along.",
+  arrivalPreBriefNoted: (summary?: string) => summary
+    ? `Got it — noted (${summary}). I'll keep everyone posted as meetup time gets closer.`
+    : "Got it — noted. I'll keep everyone posted as meetup time gets closer.",
+  venueSwapProposed: (venue: string, area?: string) =>
+    `No problem — how about ${venue}${area ? ` in ${area}` : ""} instead? Still works for you?`,
+  confirmBeforeCommit: (when: string, venue: string) =>
+    `Quick check before I lock this in: are you 100% able to make ${when} at ${venue}? Reply YES to confirm.`,
   /** A probe reply that was neither a clear yes nor a clear no (a condition, a maybe): asked once more. */
   probeClarify: "Just to check: is that a yes or a no? Either is fine.",
   probeTimeClarify: "Which of the offered times work for you? Reply with the letters or the times.",
@@ -387,12 +403,43 @@ const OFFER = "For future plans, reply CALENDAR to allow free/busy from an autho
 /** The answer request that ends a probe: with time options, which one works; without, yes or no. */
 const tail = (times?: string) => (times ? ` I could do ${times}. Tell me which works, or no is completely fine.` : " Yes or no is all I need, and no is completely fine.");
 
+const CITY_TZ_LABEL: Record<string, string> = {
+  nyc: "New York time",
+  sf: "San Francisco time",
+  la: "Los Angeles time",
+  chicago: "Chicago time",
+  miami: "Miami time",
+  "America/New_York": "New York time",
+  "America/Los_Angeles": "Pacific time",
+  "America/Chicago": "Central time",
+};
+
+export function timezoneLabel(cityOrTz?: CityId | string): string {
+  if (!cityOrTz) return "local time";
+  const direct = CITY_TZ_LABEL[cityOrTz];
+  if (direct) return direct;
+  const tz = cityTimezone(cityOrTz);
+  if (tz && CITY_TZ_LABEL[tz]) return CITY_TZ_LABEL[tz]!;
+  return "local time";
+}
+
+const WHEN_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
+
+function whenFormatter(tz: string): Intl.DateTimeFormat {
+  let fmt = WHEN_FORMATTERS.get(tz);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "long", hour: "numeric", minute: "2-digit" });
+    WHEN_FORMATTERS.set(tz, fmt);
+  }
+  return fmt;
+}
+
 /** "Thursday 7pm"-style phrasing in a city's timezone (or explicit IANA timezone; defaults to America/New_York). */
 export function whenPhrase(t: number, cityOrTz?: CityId): string {
   const timeZone = cityOrTz
     ? (cityTimezone(cityOrTz) ?? (cityOrTz === "UTC" || cityOrTz.includes("/") ? cityOrTz : "America/New_York"))
     : "America/New_York";
-  return new Intl.DateTimeFormat("en-US", { timeZone, weekday: "long", hour: "numeric", minute: "2-digit" }).format(t).replace(":00", "");
+  return whenFormatter(timeZone).format(t).replace(":00", "");
 }
 
 /**

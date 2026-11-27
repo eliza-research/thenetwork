@@ -589,6 +589,30 @@ export function buildStarterScriptsForCity(cityCode: string): VideoScriptManifes
   return STARTER_COMEDY_SCRIPTS.map((script) => localizeVideoScriptForCity(script, pack.code));
 }
 
+const VIDEO_CTA_REGEX_CACHE = new Map<string, RegExp>();
+let defaultVideoLeakGuard: LeakGuard | null = null;
+
+function getDefaultVideoLeakGuard(): LeakGuard {
+  if (!defaultVideoLeakGuard) {
+    defaultVideoLeakGuard = new LeakGuard({
+      contacts: true,
+      canaryShapes: true,
+      allow: [...marketingLeakAllowlist()],
+    });
+  }
+  return defaultVideoLeakGuard;
+}
+
+function getCtaKeywordRegex(keyword: string): RegExp {
+  let cached = VIDEO_CTA_REGEX_CACHE.get(keyword);
+  if (!cached) {
+    const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    cached = new RegExp(`\\b${escaped}\\b`, "i");
+    VIDEO_CTA_REGEX_CACHE.set(keyword, cached);
+  }
+  return cached;
+}
+
 export function lintVideoScript(
   script: VideoScriptManifest,
   leakGuard?: LeakGuard,
@@ -666,20 +690,14 @@ export function lintVideoScript(
   const hasCta =
     combinedText.toLowerCase().includes(bible.domain) ||
     combinedText.includes("SKILL.md") ||
-    new RegExp(`\\b${bible.primaryCtaKeyword}\\b`, "i").test(script.ctaText);
+    getCtaKeywordRegex(bible.primaryCtaKeyword).test(script.ctaText);
   if (!hasCta) {
     warnings.push(
       `missing_primary_cta: CTA does not mention ${bible.domain}, SKILL.md, or keyword '${bible.primaryCtaKeyword}'.`,
     );
   }
 
-  const guard =
-    leakGuard ??
-    new LeakGuard({
-      contacts: true,
-      canaryShapes: true,
-      allow: [...marketingLeakAllowlist()],
-    });
+  const guard = leakGuard ?? getDefaultVideoLeakGuard();
   const leakReasons = guard.check(combinedText);
   for (const reason of leakReasons) {
     errors.push(`leak_guard: ${reason}`);

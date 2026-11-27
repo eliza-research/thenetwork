@@ -6,13 +6,26 @@ import { isDeepStrictEqual } from "node:util";
 import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { spawnProcessSync } from "../../packages/core/src/runtime/process.ts";
 import { readdirSync } from "node:fs";
-import { canBeMatched, classifyYesNo, DAY, earliestDayKeyOf, hash32, HOUR, latestDayKeyOf, MINUTE, Rng as SimRng, SimClock, type MemberId, type NetworkContext, type NetworkUnderTest, type SimMessage, type SimMeta } from "../../packages/core/src/index.ts";
+import { canBeMatched, classifyYesNo, DAY, earliestDayKeyOf, EngineRng, hash32, HOUR, latestDayKeyOf, MINUTE, Rng as SimRng, SimClock, type Facet, type MemberId, type NetworkContext, type NetworkUnderTest, type QualitySignals, type SimMessage, type SimMeta } from "../../packages/core/src/index.ts";
 import { bookedCancellationPrefix } from "../../packages/core/src/generated/outboundAdmission.ts";
 import { resolveConfig } from "../../packages/engine/src/config.ts";
 import { availabilityProb, standingFromFacets } from "../../packages/engine/src/attention.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
 import { DEFAULT_ATTENTION } from "../../packages/engine/src/index.ts";
+import { memberQualityBandOf, memberReason, memberVampireTierOf, pairLeagueAndVampireReason } from "../../packages/engine/src/filters.ts";
+import { exposureFloor } from "../../packages/engine/src/policy.ts";
+import { computeComponents } from "../../packages/engine/src/scoring.ts";
 import { networkPack } from "../../packages/engine/src/packs/network/index.ts";
+import { makeSlopPack, SLOP_ENGINE_CONFIG } from "../../packages/engine/src/packs/slop/index.ts";
+import { UNRATED_PREDICTIVE_DATE_STANDING } from "../../packages/engine/src/packs/slop/standing.ts";
+import { friendsPack } from "../../packages/engine/src/packs/friends/index.ts";
+import { peonPack, PEON_ENGINE_CONFIG } from "../../packages/engine/src/packs/peon/index.ts";
+import { peonVectors } from "../../packages/engine/src/packs/peon/match.ts";
+import {
+  bilateralValueCompensates, lawAestheticWalledToDateOnly, lawMinorsNeverLeagueGated,
+  lawPeonFirewallZeroesProtectedAxes, lawQuietHighStatusNotPenalized, leaguePairAllowed,
+  type LeagueAxisProfile, type LeagueLane,
+} from "../../packages/core/src/generated/qualityAndLeague.ts";
 import { baseMember, emptyInput, randomWorld } from "../../packages/engine/src/testkit.ts";
 import { World as EngineWorld } from "../../packages/engine/src/world.ts";
 import type { RunRecord } from "../../packages/core/src/index.ts";
@@ -35,7 +48,7 @@ import { DEFAULT_START } from "../../packages/sim/src/world.ts";
 import { ageOnDay } from "../../packages/core/src/generated/memberAge.ts";
 import { teenFriendCandidate, teenFriendMaxAge, teenPartnerAge, teenReady, teenRosterSizeAllowed } from "../../packages/core/src/generated/friendIntroAge.ts";
 import { teenFriendApp, teenFriendCategory } from "../../packages/core/src/generated/matchLane.ts";
-import type { EngineInput } from "../../packages/engine/src/types.ts";
+import type { Candidate, EngineInput } from "../../packages/engine/src/types.ts";
 import { Block, digest, expect } from "./gate.ts";
 import { meanInterval, overlap, pairedLine } from "../../packages/sim/src/paired.ts";
 import { teenShape } from "../../packages/sim/src/teen.ts";
@@ -1126,6 +1139,204 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
   await teenConformance(b, networkPack, { world: ntwrkTeenWorld, seeds: o.quick ? [1, 2] : [1, 2, 3, 4] });
   await ntwrkTeenGates(b, o);
   await teenJudgeGates(b);
+  await pass4QualityLeagueGates(b);
+}
+
+export async function pass4QualityLeagueGates(b: Block): Promise<void> {
+  const now = START;
+
+  await b.run("quality_quiet_vip_vs_slop: quiet high-signal member enters exposure floor while VoIP/Sybil and probationary slop are excluded; unverified peon seniority discounted; unrated slop capped", () => {
+    expect(lawQuietHighStatusNotPenalized(30, 20, 25, 12)).toBe(true);
+    expect(UNRATED_PREDICTIVE_DATE_STANDING).toEqual({ standing: 50, uncertainty: 10 });
+
+    const mk = (id: string, joinedDaysAgo = 45) => baseMember(id, {
+      age: 32, homeCity: "nyc", joinedAt: now - joinedDaysAgo * DAY,
+      prefs: { romanceOptIn: true, categoriesOptIn: ["social", "hobby", "professional", "romance", "help", "growth"], formats: ["one_to_one", "small_group", "event"] },
+    });
+    const members = [mk("vip"), mk("voip"), mk("sybil"), mk("slop_low"), mk("hype")];
+    const facets: Facet[] = [
+      { id: "f_vip_1", memberId: "vip", kind: "interest", value: "distributed systems", tags: ["distributed_systems", "climbing"], confidence: 0.95, provenance: "said", observedAt: now - DAY, scope: "shareable" },
+      { id: "f_vip_2", memberId: "vip", kind: "skill", value: "infrastructure", tags: ["infrastructure", "rust"], confidence: 0.95, provenance: "vouched", observedAt: now - DAY, scope: "shareable" },
+      { id: "f_hype_1", memberId: "hype", kind: "skill", value: "growth guru", tags: ["hv:hype:pitch"], confidence: 0.8, provenance: "said", observedAt: now - DAY, scope: "shareable" },
+    ];
+    const qualityByMember: Record<MemberId, QualitySignals> = {
+      vip: { provenanceScore: 30, specificityScore: 20, hygieneScore: 25, completionScore: 12, voipOrPumping: false, sybilFlagged: false, chronicLowEffort: false, unverifiedHype: false, newcomerDays: 45 },
+      voip: { provenanceScore: 5, specificityScore: 10, hygieneScore: 10, completionScore: 5, voipOrPumping: true, sybilFlagged: false, chronicLowEffort: false, unverifiedHype: false, newcomerDays: 45 },
+      sybil: { provenanceScore: 25, specificityScore: 18, hygieneScore: 20, completionScore: 12, voipOrPumping: false, sybilFlagged: true, chronicLowEffort: false, unverifiedHype: false, newcomerDays: 45 },
+      slop_low: { provenanceScore: 15, specificityScore: 8, hygieneScore: 15, completionScore: 5, voipOrPumping: false, sybilFlagged: false, chronicLowEffort: true, unverifiedHype: false, newcomerDays: 45 },
+      hype: { provenanceScore: 15, specificityScore: 12, hygieneScore: 20, completionScore: 10, voipOrPumping: false, sybilFlagged: false, chronicLowEffort: false, unverifiedHype: true, newcomerDays: 45 },
+    };
+
+    const wNet = new EngineWorld({ ...emptyInput(now), members, facets, qualityByMember }, resolveConfig({ cities: ["nyc"] }), localEmbed, networkPack);
+    expect(memberQualityBandOf(wNet, "vip")).toBe("Q3HighSignal");
+    expect(memberQualityBandOf(wNet, "voip")).toBe("Q0Quarantine");
+    expect(memberQualityBandOf(wNet, "sybil")).toBe("Q0Quarantine");
+    expect(memberQualityBandOf(wNet, "slop_low")).toBe("Q1Probationary");
+    expect(memberQualityBandOf(wNet, "hype")).toBe("Q1Probationary");
+
+    const floor = exposureFloor(wNet, new EngineRng(7), {});
+    expect(floor.members).toContain("vip");
+    expect(floor.members).not.toContain("voip");
+    expect(floor.members).not.toContain("sybil");
+    expect(floor.members).not.toContain("slop_low");
+    expect(floor.members).not.toContain("hype");
+
+    expect(memberReason(wNet, "vip", { category: "social", role: "peer", format: "one_to_one", timeSensitive: false })).toBe(null);
+    expect(memberReason(wNet, "voip", { category: "social", role: "peer", format: "one_to_one", timeSensitive: false })).toBe("quality_quarantine");
+    expect(memberReason(wNet, "sybil", { category: "social", role: "peer", format: "one_to_one", timeSensitive: false })).toBe("quality_quarantine");
+
+    const friendsFacets: Facet[] = [
+      ...facets,
+      { id: "f_voip_v", memberId: "voip", kind: "fact", value: "verified", tags: ["verify:age:pass", "verify:liveness:pass"], confidence: 1, provenance: "vouched", observedAt: now - DAY, scope: "matchable" },
+    ];
+    const wFriends = new EngineWorld({ ...emptyInput(now), members, facets: friendsFacets, qualityByMember }, resolveConfig({ cities: ["nyc"] }), localEmbed, friendsPack);
+    expect(memberReason(wFriends, "voip", { category: "social", role: "peer", format: "one_to_one", timeSensitive: false })).toBe("quality_quarantine");
+    const wSlop = new EngineWorld({ ...emptyInput(now), members, facets, qualityByMember }, resolveConfig(SLOP_ENGINE_CONFIG), localEmbed, makeSlopPack());
+    expect(memberReason(wSlop, "voip", { lane: "Date", category: "romance", role: "peer", format: "one_to_one", timeSensitive: false })).toBe("quality_quarantine");
+    const peonQFacets: Facet[] = [
+      ...facets,
+      { id: "f_voip_p", memberId: "voip", kind: "skill", value: "eng", tags: ["peon:entity:candidate", "peon:family:engineering", "peon:seniority:3", "peon:pay_floor:150", "peon:mode:hybrid"], confidence: 1, provenance: "said", observedAt: now - DAY, scope: "shareable" },
+    ];
+    const peonQIntents = [
+      { id: "i_voip_p", memberId: "voip", objective: "engineering role", category: "professional" as const, details: "peon:search", horizonDays: 30, status: "active" as const, createdAt: now - DAY },
+    ];
+    const wPeonQ = new EngineWorld({ ...emptyInput(now), members, facets: peonQFacets, intents: peonQIntents, qualityByMember }, resolveConfig(PEON_ENGINE_CONFIG), localEmbed, peonPack);
+    expect(memberReason(wPeonQ, "voip", { lane: "Hire", category: "professional", role: "seeker", format: "one_to_one", timeSensitive: false })).toBe("quality_quarantine");
+
+    const candVerified = mk("cand_ver");
+    const candUnver = mk("cand_unver");
+    const peonFacets: Facet[] = [
+      { id: "pv_kind", memberId: "cand_ver", kind: "skill", value: "eng", tags: ["peon:entity:candidate", "peon:family:engineering", "peon:seniority:5", "peon:pay_floor:200", "peon:mode:hybrid"], confidence: 1, provenance: "vouched", observedAt: now - DAY, scope: "shareable" },
+      { id: "pu_kind", memberId: "cand_unver", kind: "skill", value: "eng", tags: ["peon:entity:candidate", "peon:family:engineering", "peon:seniority:5", "peon:pay_floor:200", "peon:mode:hybrid", "hv:hype:pitch"], confidence: 1, provenance: "said", observedAt: now - DAY, scope: "shareable" },
+    ];
+    const peonCandIntents = [
+      { id: "i_cver", memberId: "cand_ver", objective: "principal eng", category: "professional" as const, details: "peon:search", horizonDays: 30, status: "active" as const, createdAt: now - DAY },
+      { id: "i_cunver", memberId: "cand_unver", objective: "principal eng", category: "professional" as const, details: "peon:search", horizonDays: 30, status: "active" as const, createdAt: now - DAY },
+    ];
+    const wPeon = new EngineWorld({
+      ...emptyInput(now),
+      members: [candVerified, candUnver],
+      facets: peonFacets,
+      intents: peonCandIntents,
+      qualityByMember: { cand_unver: qualityByMember.hype! },
+    }, resolveConfig(PEON_ENGINE_CONFIG), localEmbed, peonPack);
+    const sVer = peonVectors.standing(wPeon, { id: "cand_ver", memberId: "cand_ver", lane: "Hire", side: "Seeking", market: "nyc", capacity: 3 });
+    const sUnver = peonVectors.standing(wPeon, { id: "cand_unver", memberId: "cand_unver", lane: "Hire", side: "Seeking", market: "nyc", capacity: 3 });
+    expect(sUnver.standing).toBeLessThan(sVer.standing);
+  });
+
+  await b.run("league_gap_bilateral_value: wide uncompensated gaps block, verified bilateral value compensates, Date blocks aesthetic gap without wealth bypass, Peon & non-Date firewalls hold", () => {
+    const founderUnverified: LeagueAxisProfile = {
+      economic: 25, socialCapital: 30, domainRung: 85, aesthetic: 50, discretion: 85,
+      extractionRisk: 10, publicity: 10, verifiedEvidence: false, trajectory: 85, crossCapitalOpen: true, sharedGuild: false,
+    };
+    const founderVerified: LeagueAxisProfile = { ...founderUnverified, verifiedEvidence: true };
+    const patron: LeagueAxisProfile = {
+      economic: 95, socialCapital: 88, domainRung: 70, aesthetic: 55, discretion: 90,
+      extractionRisk: 5, publicity: 75, verifiedEvidence: true, trajectory: 70, crossCapitalOpen: true, sharedGuild: false,
+    };
+    expect(leaguePairAllowed("LeagueInvest", false, founderUnverified, patron)).toBe(false);
+    expect(bilateralValueCompensates("LeagueInvest", founderVerified, patron)).toBe(true);
+    expect(leaguePairAllowed("LeagueInvest", false, founderVerified, patron)).toBe(true);
+    expect(leaguePairAllowed("LeagueIntro", false, founderVerified, patron)).toBe(true);
+
+    const lowDiscretionStranger: LeagueAxisProfile = {
+      economic: 30, socialCapital: 35, domainRung: 50, aesthetic: 50, discretion: 50,
+      extractionRisk: 35, publicity: 10, verifiedEvidence: true, trajectory: 50, crossCapitalOpen: true, sharedGuild: false,
+    };
+    const sharedGuildPeer: LeagueAxisProfile = {
+      economic: 35, socialCapital: 40, domainRung: 60, aesthetic: 50, discretion: 85,
+      extractionRisk: 10, publicity: 10, verifiedEvidence: true, trajectory: 60, crossCapitalOpen: true, sharedGuild: true,
+    };
+    expect(leaguePairAllowed("LeagueFriend", false, lowDiscretionStranger, patron)).toBe(false);
+    expect(leaguePairAllowed("LeagueFriend", false, sharedGuildPeer, { ...patron, sharedGuild: true })).toBe(true);
+
+    const dateRichLowAes: LeagueAxisProfile = {
+      economic: 98, socialCapital: 95, domainRung: 90, aesthetic: 45, discretion: 95,
+      extractionRisk: 0, publicity: 40, verifiedEvidence: true, trajectory: 90, crossCapitalOpen: true, sharedGuild: true,
+    };
+    const dateHighAes: LeagueAxisProfile = {
+      economic: 40, socialCapital: 45, domainRung: 55, aesthetic: 88, discretion: 90,
+      extractionRisk: 5, publicity: 30, verifiedEvidence: true, trajectory: 60, crossCapitalOpen: true, sharedGuild: true,
+    };
+    expect(leaguePairAllowed("LeagueDate", false, dateRichLowAes, dateHighAes)).toBe(false);
+    expect(leaguePairAllowed("LeagueDate", false, { ...dateRichLowAes, aesthetic: 72 }, dateHighAes)).toBe(true);
+
+    for (const [eA, eB, sA, sB, aA, aB, pA, pB] of [[0, 100, 0, 100, 0, 100, 0, 100], [95, 10, 90, 5, 85, 15, 80, 0]] as const) {
+      expect(lawPeonFirewallZeroesProtectedAxes(founderVerified, patron, eA, eB, sA, sB, aA, aB, pA, pB)).toBe(true);
+    }
+    const nonDateLanes: LeagueLane[] = ["LeagueFriend", "LeagueHire", "LeagueCofounder", "LeagueMentor", "LeagueInvest", "LeagueIntro"];
+    for (const lane of nonDateLanes) {
+      expect(lawAestheticWalledToDateOnly(lane, founderVerified, patron, 5, 98)).toBe(true);
+      expect(lawAestheticWalledToDateOnly(lane, sharedGuildPeer, { ...patron, sharedGuild: true }, 99, 1)).toBe(true);
+    }
+
+    const mPatron = baseMember("patron", { age: 42, homeCity: "nyc", joinedAt: now - 90 * DAY });
+    const mFounder = baseMember("founder", { age: 28, homeCity: "nyc", joinedAt: now - 30 * DAY });
+    const mStranger = baseMember("stranger", { age: 27, homeCity: "nyc", joinedAt: now - 30 * DAY });
+    const worldFacets: Facet[] = [
+      { id: "fp1", memberId: "patron", kind: "skill", value: "vc", tags: ["econ_tier:95", "publicity_tier:75", "discretion:90", "extraction_risk:5", "angel_patron", "guild:founders"], confidence: 1, provenance: "vouched", observedAt: now - DAY, scope: "shareable" },
+      { id: "ff1", memberId: "founder", kind: "skill", value: "ml", tags: ["econ_tier:25", "hv:rung:ai:9", "discretion:90", "extraction_risk:5", "angel_patron", "guild:founders"], confidence: 1, provenance: "vouched", observedAt: now - DAY, scope: "shareable" },
+      { id: "fs1", memberId: "stranger", kind: "skill", value: "biz", tags: ["econ_tier:20", "discretion:45", "extraction_risk:40", "hv:hype:pitch"], confidence: 1, provenance: "said", observedAt: now - DAY, scope: "shareable" },
+    ];
+    const wLive = new EngineWorld({
+      ...emptyInput(now),
+      members: [mPatron, mFounder, mStranger],
+      facets: worldFacets,
+      qualityByMember: {
+        patron: { provenanceScore: 32, specificityScore: 22, hygieneScore: 25, completionScore: 14, voipOrPumping: false, sybilFlagged: false, chronicLowEffort: false, unverifiedHype: false, newcomerDays: 90 },
+        founder: { provenanceScore: 28, specificityScore: 22, hygieneScore: 24, completionScore: 13, voipOrPumping: false, sybilFlagged: false, chronicLowEffort: false, unverifiedHype: false, newcomerDays: 30 },
+        stranger: { provenanceScore: 10, specificityScore: 8, hygieneScore: 15, completionScore: 8, voipOrPumping: false, sybilFlagged: false, chronicLowEffort: false, unverifiedHype: true, newcomerDays: 30 },
+      },
+    }, resolveConfig({ cities: ["nyc"] }), localEmbed, networkPack);
+    expect(pairLeagueAndVampireReason(wLive, "patron", "stranger", "Invest")).not.toBe(null);
+    expect(pairLeagueAndVampireReason(wLive, "patron", "founder", "Invest")).toBe(null);
+  });
+
+  await b.run("teen_league_invariance: minors are never league-gated, vampire-tiered, or penalized by adult status/reliability multipliers", () => {
+    const extremeA: LeagueAxisProfile = {
+      economic: 100, socialCapital: 100, domainRung: 100, aesthetic: 100, discretion: 0,
+      extractionRisk: 100, publicity: 100, verifiedEvidence: false, trajectory: 0, crossCapitalOpen: false, sharedGuild: false,
+    };
+    const extremeB: LeagueAxisProfile = {
+      economic: 0, socialCapital: 0, domainRung: 0, aesthetic: 0, discretion: 0,
+      extractionRisk: 100, publicity: 0, verifiedEvidence: false, trajectory: 0, crossCapitalOpen: false, sharedGuild: false,
+    };
+    const allLanes: LeagueLane[] = ["LeagueFriend", "LeagueDate", "LeagueHire", "LeagueCofounder", "LeagueMentor", "LeagueInvest", "LeagueIntro"];
+    for (const lane of allLanes) {
+      expect(lawMinorsNeverLeagueGated(lane, extremeA, extremeB)).toBe(true);
+      expect(leaguePairAllowed(lane, true, extremeA, extremeB)).toBe(true);
+    }
+
+    const teenRng = new SimRng(11);
+    const teenA = baseMember("teenA", { age: 16, homeCity: "nyc", joinedAt: now - 20 * DAY, birthKey: birthKeyForAgeOn(16, earliestDayKeyOf(now), teenRng), birthExact: true });
+    const teenB = baseMember("teenB", { age: 17, homeCity: "nyc", joinedAt: now - 20 * DAY, birthKey: birthKeyForAgeOn(17, earliestDayKeyOf(now), teenRng), birthExact: true });
+    const wClean = new EngineWorld({ ...emptyInput(now), members: [teenA, teenB] }, resolveConfig({ cities: ["nyc"] }), localEmbed, networkPack);
+    const wNoisy = new EngineWorld({
+      ...emptyInput(now),
+      members: [teenA, teenB],
+      reliability: { teenA: { noShows: 3, completedSinceLastNoShow: 0, strikes: 8 } },
+      vampireByMember: {
+        teenA: { introsReceived90d: 10, positiveCounterpartVotes90d: 0, asymmetricNegativeVotes90d: 5, pitchSignals90d: 5, distinctSelfPromoReports90d: 3 },
+      },
+    }, resolveConfig({ cities: ["nyc"] }), localEmbed, networkPack);
+
+    expect(memberVampireTierOf(wNoisy, "teenA")).toBe("VampireClean");
+    expect(pairLeagueAndVampireReason(wNoisy, "teenA", "teenB", "Friend", 10, 95)).toBe(null);
+
+    const cand: Candidate = {
+      key: "teen-c1", kind: "intro", category: "social", lane: "Friend",
+      generator: "intent_match", format: "one_to_one", city: "nyc",
+      objective: "hang out", channels: new Set(["sms"]), exploration: false, safetyClass: "low",
+      timeSensitive: false, riskText: "",
+      participants: ["teenA", "teenB"], alternates: [],
+      roles: { teenA: "peer", teenB: "peer" }, fit: 0.75, benefit: { teenA: 0.75, teenB: 0.75 },
+      warm: 0, evidence: {},
+    };
+    const compClean = computeComponents(wClean, cand);
+    const compNoisy = computeComponents(wNoisy, cand);
+    expect(compNoisy.mutualBenefit).toBe(compClean.mutualBenefit);
+  });
 }
 
 async function ntwrkTeenGates(b: Block, o: { quick: boolean }): Promise<void> {

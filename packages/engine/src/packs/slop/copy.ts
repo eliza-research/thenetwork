@@ -11,10 +11,10 @@ export const SLOP_LANE_ACTIVITY: Record<string, string> = { romance: "a first da
 
 /** Ask-before-proposing questions (reason -> text). One question per message, about the member only. */
 export const SLOP_ASK_QUESTIONS: Record<string, string> = {
-  slop_orientation: "Before I suggest anyone: who are you hoping to meet (women, men, nonbinary people, or a mix), and how do you describe yourself?",
+  slop_orientation: "Before I suggest anyone: who are you hoping to meet (name any of women, men, or nonbinary people), and how do you describe yourself?",
   slop_age_range: "What age range feels right for the people I suggest?",
   slop_distance: "How far would you go for a first date? Just your city, or within 2, 5, 10, 25, 50 or 100 miles of your zip?",
-  slop_basics: "Quick one so I don't waste your evenings: anything that's a dealbreaker for you (smoking, kids, faith, politics), and what are you looking for right now, casual or something longer?",
+  slop_basics: "Quick one so I don't waste your evenings: any dealbreakers (smoking, kids, faith, politics), and are you looking for something casual or longer-term?",
   slop_location: "What's your zip code or neighborhood? It's only used to work out rough distances.",
   slop_zip: "I don't recognize that zip code yet. What's a nearby zip, or which neighborhood are you in? It's only used to work out rough distances.",
   slop_widen: "Not many people match your distance right now. Would you consider people up to 25 miles away?",

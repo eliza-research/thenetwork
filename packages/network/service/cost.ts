@@ -240,8 +240,9 @@ export class CostLedger {
         pendingFallbacks = 0;
         lastFallbackFrom = undefined;
         lastFallbackTo = undefined;
-        const cachedPromptTokens = i.usage.cachedPromptTokens;
-        const cacheWriteTokens = i.usage.cacheWriteTokens;
+        const usage = i.usage as ResponseInfo["usage"] & { cachedPromptTokens?: number; cachedTokens?: number };
+        const cachedPromptTokens = usage.cachedPromptTokens ?? usage.cachedTokens;
+        const cacheWriteTokens = usage.cacheWriteTokens;
         const hasExtendedTelemetry = cachedPromptTokens !== undefined
           || cacheWriteTokens !== undefined
           || i.usage.reasoningTokens > 0
@@ -255,6 +256,8 @@ export class CostLedger {
           model: i.model,
           promptTokens: i.usage.promptTokens,
           completionTokens: i.usage.completionTokens,
+          ...(cachedPromptTokens ? { cachedTokens: cachedPromptTokens } : {}),
+          ...(cacheWriteTokens ? { cacheWriteTokens } : {}),
           attempt: i.attempt,
           ...(hasExtendedTelemetry ? {
             cachedPromptTokens: cachedPromptTokens ?? 0,

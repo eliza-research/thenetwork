@@ -77,6 +77,11 @@ async function metInSlop(s: NetworkService, clock: SimClock) {
   const anaSlop = await memberIdOf("slop", ana), benSlop = await memberIdOf("slop", ben);
   await s.runtimeFor("slop")!.unitOfWork(n => {
     const state = n.exportState();
+    const anaMember = state.members.find(m => m.id === anaSlop);
+    if (anaMember) {
+      anaMember.stage = "active";
+      delete anaMember.awaiting;
+    }
     state.interactions.push({ id: "routing-met", kind: "group", category: "social", at: clock.now() - DAY, outcome: "completed", participants: [anaSlop, benSlop] });
     n.importState(state);
   });

@@ -39,6 +39,7 @@ export interface VenueManagerState {
   rejected: [MemberId, string[]][];
   externalFetchCount: number;
   openCheckCount: number;
+  customCatalog?: boolean;
 }
 
 function normalizeProviderCode(code: ExternalOpenResult | undefined): ProviderClosureSignal | undefined {
@@ -64,8 +65,94 @@ function cloneVenue(v: VenueRecord): VenueRecord {
   return {
     ...v,
     hours: v.hours.map(h => ({ ...h })),
+    ...(v.hobbies !== undefined ? { hobbies: [...v.hobbies] } : {}),
+    ...(v.cuisineTags !== undefined ? { cuisineTags: [...v.cuisineTags] } : {}),
     personaPriors,
   };
+}
+
+function stringArraysEqual(a: readonly string[] | undefined, b: readonly string[] | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+function hoursEqual(a: readonly VenueRecord["hours"][number][], b: readonly VenueRecord["hours"][number][]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const ha = a[i]!;
+    const hb = b[i]!;
+    if (ha.weekday !== hb.weekday || ha.openMin !== hb.openMin || ha.closeMin !== hb.closeMin) return false;
+  }
+  return true;
+}
+
+function personaPriorsEqual(a: VenueRecord["personaPriors"], b: VenueRecord["personaPriors"]): boolean {
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  for (const k of keysA) {
+    if (!Object.prototype.hasOwnProperty.call(b, k)) return false;
+    const pa = a[k];
+    const pb = b[k];
+    if (!pa || !pb || pa.alpha !== pb.alpha || pa.beta !== pb.beta) return false;
+  }
+  return true;
+}
+
+function venuesEqual(a: VenueRecord, b: VenueRecord): boolean {
+  return (
+    a.id === b.id &&
+    a.name === b.name &&
+    a.city === b.city &&
+    a.neighborhood === b.neighborhood &&
+    a.address === b.address &&
+    a.lat === b.lat &&
+    a.lng === b.lng &&
+    a.category === b.category &&
+    a.public === b.public &&
+    a.status === b.status &&
+    a.priceTier === b.priceTier &&
+    a.ageMin === b.ageMin &&
+    a.allAges === b.allAges &&
+    a.isBarOnly === b.isBarOnly &&
+    a.alcoholOptional === b.alcoholOptional &&
+    a.servesVegetarian === b.servesVegetarian &&
+    a.servesVegan === b.servesVegan &&
+    a.wheelchairAccessible === b.wheelchairAccessible &&
+    a.separateChecks === b.separateChecks &&
+    a.walkInGroupCapacity === b.walkInGroupCapacity &&
+    a.reservationRequired === b.reservationRequired &&
+    a.noiseLevel === b.noiseLevel &&
+    a.liveMusicAtNight === b.liveMusicAtNight &&
+    a.indoor === b.indoor &&
+    a.outdoor === b.outdoor &&
+    a.weatherSensitive === b.weatherSensitive &&
+    a.arrivalLandmark === b.arrivalLandmark &&
+    a.yelpRating === b.yelpRating &&
+    a.externalPlaceId === b.externalPlaceId &&
+    a.source === b.source &&
+    a.lastVerifiedAt === b.lastVerifiedAt &&
+    a.geoExpiresAt === b.geoExpiresAt &&
+    a.closureReports === b.closureReports &&
+    a.quarantinedUntil === b.quarantinedUntil &&
+    a.safetyScore === b.safetyScore &&
+    a.transitScore === b.transitScore &&
+    a.isAlcoholCentric === b.isAlcoholCentric &&
+    a.halalFriendly === b.halalFriendly &&
+    a.kosherFriendly === b.kosherFriendly &&
+    a.glutenFreeFriendly === b.glutenFreeFriendly &&
+    a.severeAllergenSafe === b.severeAllergenSafe &&
+    a.isSmokeFree === b.isSmokeFree &&
+    a.openEventEligible === b.openEventEligible &&
+    hoursEqual(a.hours, b.hours) &&
+    stringArraysEqual(a.hobbies, b.hobbies) &&
+    stringArraysEqual(a.cuisineTags, b.cuisineTags) &&
+    personaPriorsEqual(a.personaPriors, b.personaPriors)
+  );
 }
 
 function slugify(text: string): string {
@@ -92,8 +179,14 @@ function issueToOutcome(
   return "ok";
 }
 
+const SEED_BY_ID = new Map<string, VenueRecord>(
+  ALL_SEED_VENUES.filter(v => v.public === true).map(v => [v.id, v]),
+);
+
 export class VenueManager {
   private catalog = new Map<string, VenueRecord>();
+  private mutatedVenueIds = new Set<string>();
+  private defaultSeedMode: boolean;
   private visited = new Map<MemberId, Set<string>>();
   private rejected = new Map<MemberId, Set<string>>();
   private externalFetchCount = 0;
@@ -113,10 +206,28 @@ export class VenueManager {
     this.provider = opts.provider;
     this.sufficiencyThreshold = opts.sufficiencyThreshold ?? defaultLocalSufficiencyThreshold;
     this.apiBudgetRemaining = opts.apiBudgetRemaining ?? 100;
+    this.defaultSeedMode = opts.seedVenues === undefined;
     const seeds = opts.seedVenues ?? ALL_SEED_VENUES;
     for (const v of seeds) {
-      if (v.public === true) this.catalog.set(v.id, cloneVenue(v));
+      if (v.public === true) {
+        this.catalog.set(v.id, cloneVenue(v));
+      }
     }
+  }
+
+  private markMutation(v: VenueRecord): void {
+    if (!this.defaultSeedMode) return;
+    const seed = SEED_BY_ID.get(v.id);
+    if (seed !== undefined && venuesEqual(v, seed)) {
+      this.mutatedVenueIds.delete(v.id);
+    } else {
+      this.mutatedVenueIds.add(v.id);
+    }
+  }
+
+  private putCatalog(v: VenueRecord): void {
+    this.catalog.set(v.id, v);
+    this.markMutation(v);
   }
 
   count(city?: CityId): number {
@@ -149,7 +260,7 @@ export class VenueManager {
 
   upsertVenue(v: VenueRecord): boolean {
     if (v.public !== true) return false;
-    this.catalog.set(v.id, cloneVenue(v));
+    this.putCatalog(cloneVenue(v));
     return true;
   }
 
@@ -255,7 +366,7 @@ export class VenueManager {
           },
           nowMs,
         );
-        this.catalog.set(updated.id, updated);
+        this.putCatalog(updated);
         if (!closed) {
           pick = this.pickForMatch(request, nowMs);
           break;
@@ -299,7 +410,7 @@ export class VenueManager {
     }
 
     const updated = applyVenueFeedback(existing, memberArchetypes, report, nowMs);
-    this.catalog.set(venueId, updated);
+    this.putCatalog(updated);
     if (shouldReject) this.recordRejection(memberId, venueId);
     else this.recordVisit(memberId, venueId);
     return cloneVenue(updated);
@@ -327,7 +438,7 @@ export class VenueManager {
       },
       nowMs,
     );
-    this.catalog.set(venueId, updated);
+    this.putCatalog(updated);
     this.recordRejection(memberId, venueId);
     return cloneVenue(updated);
   }
@@ -387,7 +498,7 @@ export class VenueManager {
       transitScore: partial.transitScore ?? 4,
       personaPriors: partial.personaPriors ?? { default: { alpha: 6, beta: 2 } },
     };
-    this.catalog.set(record.id, record);
+    this.putCatalog(record);
     return cloneVenue(record);
   }
 
@@ -397,22 +508,39 @@ export class VenueManager {
   }
 
   exportState(): VenueManagerState {
-    return JSON.parse(
-      JSON.stringify({
-        venues: [...this.catalog.values()],
-        visited: [...this.visited.entries()].map(([id, set]) => [id, [...set]]),
-        rejected: [...this.rejected.entries()].map(([id, set]) => [id, [...set]]),
-        externalFetchCount: this.externalFetchCount,
-        openCheckCount: this.openCheckCount,
-      }),
-    ) as VenueManagerState;
+    const venues: VenueRecord[] = [];
+    if (this.defaultSeedMode) {
+      for (const id of this.mutatedVenueIds) {
+        const v = this.catalog.get(id);
+        if (v) venues.push(cloneVenue(v));
+      }
+    } else {
+      for (const v of this.catalog.values()) {
+        venues.push(cloneVenue(v));
+      }
+    }
+    return {
+      venues,
+      visited: [...this.visited.entries()].map(([id, set]) => [id, [...set]]),
+      rejected: [...this.rejected.entries()].map(([id, set]) => [id, [...set]]),
+      externalFetchCount: this.externalFetchCount,
+      openCheckCount: this.openCheckCount,
+      ...(this.defaultSeedMode ? {} : { customCatalog: true }),
+    };
   }
 
   importState(state: VenueManagerState | undefined): void {
     if (!state) return;
     this.catalog.clear();
+    this.mutatedVenueIds.clear();
+    this.defaultSeedMode = state.customCatalog !== true;
+    if (this.defaultSeedMode) {
+      for (const v of ALL_SEED_VENUES) {
+        if (v.public === true) this.catalog.set(v.id, cloneVenue(v));
+      }
+    }
     for (const v of state.venues ?? []) {
-      if (v.public === true) this.catalog.set(v.id, cloneVenue(v));
+      if (v.public === true) this.putCatalog(cloneVenue(v));
     }
     this.visited.clear();
     for (const [id, list] of state.visited ?? []) this.visited.set(id, new Set(list));

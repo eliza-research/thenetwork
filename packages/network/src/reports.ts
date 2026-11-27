@@ -6,7 +6,7 @@ import { classifyYesNo, type MemberId } from "@thenetwork/core";
 import { ADULT_AGE, isMinor, quoteStillOpen, validAge } from "@thenetwork/core";
 import { acceptsMinorReportEvidence, acceptsReportEvidence } from "../../core/src/generated/safetyCase.ts";
 
-export type ReportKind = "harassment" | "lying" | "no_show" | "unsafe" | "scam" | "minor" | "older_than_stated" | "other";
+export type ReportKind = "harassment" | "lying" | "no_show" | "unsafe" | "scam" | "minor" | "older_than_stated" | "self_promotion" | "other";
 export type ReportStatus = "open" | "held" | "banned" | "dismissed";
 export interface SafetyReport {
   id: string; kind: ReportKind; reporterId: MemberId; subjectId: MemberId; opportunityId?: string; at: number; status: ReportStatus;
@@ -74,6 +74,7 @@ const KINDS: [ReportKind, RegExp][] = [
   ["harassment", /\b(harass(ed|ing|ment)?|creep(y)?|kept (texting|messaging|calling)|(?:wouldn'?t|would not|refused to) stop|rude|insult(ed|ing)?|aggressive|hostile|abusive|slur|pushy|inappropriate|sexual comments?)\b/i],
   ["scam", /\b(scam(mer|med)?|(?:asked|demanded|requested)(?: me| that i)? (?:for |to (?:send|wire|transfer|buy) |(?:send|wire|transfer|buy) )(?:some |a |the )?(?:money|cash|gift cards?|crypto|bitcoin)|asked to borrow money|wire (?:me|money))\b/i],
   ["lying", /\b(lied|lying|liar|fake|catfish(ed)?|not (who|what) (they|he|she) said|(didn'?t|doesn'?t) look like (their|his|her) (photos?|pics?|pictures?)|old photos?|(lied|lying) about (their|his|her) age|older than|younger than (they|he|she) said|married|has a (girlfriend|boyfriend|wife|husband|partner))\b/i],
+  ["self_promotion", /\b(?:pitched\s+(?:me|us)\s+(?:their|his|her|a)\s+(?:product|startup|agency|coaching|course|business|services?|saas|fund|app|consulting)|tried\s+to\s+(?:sell|pitch)\s+(?:me|us)|kept\s+pitching|just\s+(?:a\s+)?sales\s+pitch|turned\s+(?:it|coffee|the\s+meetup|dinner|drinks)\s+into\s+a\s+(?:sales\s+)?pitch|only\s+(?:wanted|showed\s+up)\s+to\s+(?:pitch|sell)|recruited\s+me\s+for\s+(?:their|his|her|an?)\s+(?:mlm|agency|coaching|mastermind)|self[- ]?promot(?:ion|ing)|pitch[- ]?slapp?(?:ed|ing))\b/i],
 ];
 
 const ACTIVE_DENIAL = /\b(?:not(?! only\b)|neither|never|nothing|without|no(?! way\b)|(?:is|are|was|were|did|do|would)n't|(?:no|don't|do not) need to)\s+(?:(?:at all|really|very|even|remotely|a bit|make me feel|feel|an?|be) +)*(?:[a-z]+ (?:or|nor) +)?$/i;

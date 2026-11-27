@@ -225,7 +225,7 @@ export function meetingSpot(
     const rawPool = (opts?.venues ? opts.venues.filter(v => v.city === city) : seedVenuesForCity(city)).filter(v => {
       if (v.status !== "active" || !v.public) return false;
       if (opts?.excludeIds?.has(v.id)) return false;
-      if (rosterHasMinor && ((v.ageMin ?? 0) > teenFriendMinAge || v.isBarOnly || !v.alcoholOptional)) return false;
+      if (rosterHasMinor && (v.allAges !== true || v.isAlcoholCentric === true || (v.ageMin ?? 0) > teenFriendMinAge || v.isBarOnly || !v.alcoholOptional)) return false;
       if (opts?.nonDrinker && (v.isBarOnly || !v.alcoholOptional)) return false;
       if (opts?.maxBudgetTier !== undefined && v.priceTier > opts.maxBudgetTier) return false;
       return true;
@@ -347,7 +347,7 @@ export function seedVenueToGeoVenue(v: VenueRecord): Venue {
   if (v.category === "museum_gallery") { tags.add("museums"); tags.add("arts"); }
   if (v.category === "climbing_gym") { tags.add("sports"); }
   if (v.category === "brewery" || v.category === "brewery_garden" || v.category === "wine_beer_patio") { tags.add("food"); tags.add("outdoors"); }
-  const allAges = (v.ageMin ?? 0) <= teenFriendMinAge && !v.isBarOnly && v.alcoholOptional;
+  const allAges = v.allAges === true && !v.isAlcoholCentric && (v.ageMin ?? 0) <= teenFriendMinAge && !v.isBarOnly && v.alcoholOptional;
   return {
     id: v.id,
     name: v.name,

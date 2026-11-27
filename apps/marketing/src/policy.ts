@@ -13,6 +13,7 @@ import {
   deviceTempMinC,
   warmupDailyCap,
 } from "../../../packages/core/src/generated/marketingDevice.ts";
+import * as generatedMarketingPolicy from "../../../packages/core/src/generated/marketingPolicy.ts";
 import {
   adultParticipantAge,
   antiFraudPayoutAllowed,
@@ -37,6 +38,7 @@ import {
 } from "../../../packages/core/src/generated/marketingPolicy.ts";
 import { LeakGuard, setLeakLabelKey, type LeakOptions } from "../../../packages/core/src/guard.ts";
 import { keywordKey, optOutPhrase, parseOptOut } from "../../../packages/core/src/replies.ts";
+import { getCityPack } from "./city-registry.ts";
 import { DEFAULT_BANDIT_MAX_CPA_CENTS, DEFAULT_DAILY_OUTREACH_CAP } from "./constants.ts";
 import type {
   Campaign,
@@ -840,4 +842,267 @@ export function isGlobalOptOutText(text: string): boolean {
   if (optOutPhrase(trimmed)) return true;
   const parsed = parseOptOut(trimmed);
   return parsed.match !== "none" && parsed.scope === "all";
+}
+
+export const MAX_PLATFORM_REPORT_RISK = 24;
+export const MIN_INTAKE_QUALITY_SCORE = 70;
+
+type GeneratedPolicyExtensions = {
+  canAuthorizeApolloCredits?: (
+    creditsUsedToday: number,
+    requestedCredits: number,
+    dailyCreditCap: number,
+    creditsUsedMonth: number,
+    monthlyCreditCap: number,
+    billingArmed: boolean,
+    lockdown: boolean,
+    isSuppressed: boolean,
+    isKnownMinor: boolean,
+  ) => boolean;
+  canDispatchPlatformTouch?: (
+    sentToday: number,
+    effectiveDailyCap: number,
+    reportRiskScore: number,
+    hasUnsolicitedUrl: boolean,
+    requiresLinkFree: boolean,
+    contactSafe: boolean,
+    cooldownAllowed: boolean,
+    channelSuspended: boolean,
+  ) => boolean;
+  canPromoteOutOfNetworkCandidate?: (
+    statedAge: number,
+    qualityScore: number,
+    valueDelivered: boolean,
+    explicitPositiveSignal: boolean,
+    contactSafe: boolean,
+    queuePaused: boolean,
+    priorInviteCount: number,
+  ) => boolean;
+};
+
+const generatedExt = generatedMarketingPolicy as unknown as GeneratedPolicyExtensions;
+
+const tzHourFormatterCache = new Map<string, Intl.DateTimeFormat>();
+
+function getTzHourFormatter(timezone: string): Intl.DateTimeFormat {
+  let fmt = tzHourFormatterCache.get(timezone);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      hour: "numeric",
+      hourCycle: "h23",
+    });
+    tzHourFormatterCache.set(timezone, fmt);
+  }
+  return fmt;
+}
+
+export function isLocalQuietHours(
+  city: string | null | undefined,
+  nowMs: number,
+): boolean {
+  const pack = getCityPack(city ?? "nyc") ?? getCityPack("nyc");
+  const timezone = pack?.timezone ?? "America/New_York";
+  const startHour = pack?.legal.quietHoursLocal.startHour ?? 21;
+  const endHour = pack?.legal.quietHoursLocal.endHour ?? 9;
+  let localHour = 12;
+  try {
+    const raw = getTzHourFormatter(timezone).format(new Date(nowMs));
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isInteger(parsed) && parsed >= 0 && parsed <= 23) {
+      localHour = parsed;
+    }
+  } catch {
+    localHour = new Date(nowMs).getUTCHours();
+  }
+  if (startHour === endHour) return false;
+  if (startHour > endHour) {
+    return localHour >= startHour || localHour < endHour;
+  }
+  return localHour >= startHour && localHour < endHour;
+}
+
+export interface ApolloCreditsPolicyInput {
+  creditsUsedToday: number;
+  requestedCredits: number;
+  dailyCreditCap: number;
+  creditsUsedMonth: number;
+  monthlyCreditCap: number;
+  billingArmed: boolean;
+  lockdown: boolean;
+  isSuppressed: boolean;
+  isKnownMinor: boolean;
+}
+
+export interface ApolloCreditsPolicyDecision {
+  allowed: boolean;
+  reason?: string;
+}
+
+export function evaluateApolloCredits(
+  input: ApolloCreditsPolicyInput,
+): ApolloCreditsPolicyDecision {
+  const nums = [
+    input.creditsUsedToday,
+    input.requestedCredits,
+    input.dailyCreditCap,
+    input.creditsUsedMonth,
+    input.monthlyCreditCap,
+  ];
+  if (!nums.every((v) => Number.isSafeInteger(v))) {
+    return { allowed: false, reason: "invalid_apollo_credit_value" };
+  }
+  const allowed = generatedExt.canAuthorizeApolloCredits
+    ? generatedExt.canAuthorizeApolloCredits(
+        input.creditsUsedToday,
+        input.requestedCredits,
+        input.dailyCreditCap,
+        input.creditsUsedMonth,
+        input.monthlyCreditCap,
+        input.billingArmed,
+        input.lockdown,
+        input.isSuppressed,
+        input.isKnownMinor,
+      )
+    : input.requestedCredits >= 0 &&
+      input.creditsUsedToday >= 0 &&
+      input.creditsUsedMonth >= 0 &&
+      input.dailyCreditCap >= 0 &&
+      input.monthlyCreditCap >= 0 &&
+      !input.lockdown &&
+      !input.isSuppressed &&
+      !input.isKnownMinor &&
+      (input.requestedCredits === 0 ||
+        (input.billingArmed &&
+          input.creditsUsedToday + input.requestedCredits <= input.dailyCreditCap &&
+          input.creditsUsedMonth + input.requestedCredits <= input.monthlyCreditCap));
+
+  if (allowed) return { allowed: true };
+  if (input.isKnownMinor) return { allowed: false, reason: "apollo_known_minor_blocked" };
+  if (input.isSuppressed) return { allowed: false, reason: "apollo_contact_suppressed" };
+  if (input.lockdown) return { allowed: false, reason: "campaign_lockdown" };
+  if (input.requestedCredits > 0 && !input.billingArmed) {
+    return { allowed: false, reason: "apollo_billing_not_armed" };
+  }
+  if (input.creditsUsedToday + input.requestedCredits > input.dailyCreditCap) {
+    return { allowed: false, reason: "apollo_daily_credit_cap_exceeded" };
+  }
+  if (input.creditsUsedMonth + input.requestedCredits > input.monthlyCreditCap) {
+    return { allowed: false, reason: "apollo_monthly_credit_cap_exceeded" };
+  }
+  return { allowed: false, reason: "apollo_credit_policy_blocked" };
+}
+
+export interface PlatformTouchPolicyInput {
+  sentToday: number;
+  effectiveDailyCap: number;
+  reportRiskScore: number;
+  hasUnsolicitedUrl: boolean;
+  requiresLinkFree: boolean;
+  contactSafe: boolean;
+  cooldownAllowed: boolean;
+  channelSuspended: boolean;
+}
+
+export interface PlatformTouchPolicyDecision {
+  allowed: boolean;
+  reason?: string;
+}
+
+export function evaluatePlatformTouchPolicy(
+  input: PlatformTouchPolicyInput,
+): PlatformTouchPolicyDecision {
+  if (
+    !Number.isSafeInteger(input.sentToday) ||
+    !Number.isSafeInteger(input.effectiveDailyCap) ||
+    !Number.isSafeInteger(input.reportRiskScore)
+  ) {
+    return { allowed: false, reason: "invalid_platform_touch_metric" };
+  }
+  const allowed = generatedExt.canDispatchPlatformTouch
+    ? generatedExt.canDispatchPlatformTouch(
+        input.sentToday,
+        input.effectiveDailyCap,
+        input.reportRiskScore,
+        input.hasUnsolicitedUrl,
+        input.requiresLinkFree,
+        input.contactSafe,
+        input.cooldownAllowed,
+        input.channelSuspended,
+      )
+    : !input.channelSuspended &&
+      input.contactSafe &&
+      input.cooldownAllowed &&
+      input.sentToday >= 0 &&
+      input.effectiveDailyCap > 0 &&
+      input.sentToday < input.effectiveDailyCap &&
+      input.reportRiskScore >= 0 &&
+      input.reportRiskScore <= MAX_PLATFORM_REPORT_RISK &&
+      (!input.requiresLinkFree || !input.hasUnsolicitedUrl);
+
+  if (allowed) return { allowed: true };
+  if (input.channelSuspended) return { allowed: false, reason: "platform_channel_suspended" };
+  if (!input.contactSafe) return { allowed: false, reason: "contact_safety_blocked" };
+  if (!input.cooldownAllowed) return { allowed: false, reason: "contact_cooldown_blocked" };
+  if (input.requiresLinkFree && input.hasUnsolicitedUrl) {
+    return { allowed: false, reason: "unsolicited_url_blocked_on_platform" };
+  }
+  if (input.reportRiskScore > MAX_PLATFORM_REPORT_RISK || input.reportRiskScore < 0) {
+    return { allowed: false, reason: "report_risk_threshold_exceeded" };
+  }
+  return { allowed: false, reason: "platform_daily_cap_reached" };
+}
+
+export interface OutOfNetworkPromotionInput {
+  statedAge: number;
+  qualityScore: number;
+  valueDelivered: boolean;
+  explicitPositiveSignal: boolean;
+  contactSafe: boolean;
+  queuePaused: boolean;
+  priorInviteCount: number;
+}
+
+export interface OutOfNetworkPromotionDecision {
+  allowed: boolean;
+  reason?: string;
+}
+
+export function evaluateOutOfNetworkPromotion(
+  input: OutOfNetworkPromotionInput,
+): OutOfNetworkPromotionDecision {
+  if (
+    !Number.isSafeInteger(input.statedAge) ||
+    !Number.isSafeInteger(input.qualityScore) ||
+    !Number.isSafeInteger(input.priorInviteCount)
+  ) {
+    return { allowed: false, reason: "invalid_intake_metric" };
+  }
+  const allowed = generatedExt.canPromoteOutOfNetworkCandidate
+    ? generatedExt.canPromoteOutOfNetworkCandidate(
+        input.statedAge,
+        input.qualityScore,
+        input.valueDelivered,
+        input.explicitPositiveSignal,
+        input.contactSafe,
+        input.queuePaused,
+        input.priorInviteCount,
+      )
+    : adultParticipantAge(input.statedAge) &&
+      input.qualityScore >= MIN_INTAKE_QUALITY_SCORE &&
+      input.qualityScore <= 100 &&
+      input.valueDelivered &&
+      input.explicitPositiveSignal &&
+      input.contactSafe &&
+      !input.queuePaused &&
+      input.priorInviteCount === 0;
+
+  if (allowed) return { allowed: true };
+  if (!adultParticipantAge(input.statedAge)) return { allowed: false, reason: "candidate_underage_or_unknown" };
+  if (!input.contactSafe) return { allowed: false, reason: "candidate_contact_fence_blocked" };
+  if (input.queuePaused) return { allowed: false, reason: "platform_queue_pressure_paused" };
+  if (input.priorInviteCount !== 0) return { allowed: false, reason: "candidate_already_invited" };
+  if (!input.valueDelivered) return { allowed: false, reason: "value_not_yet_delivered" };
+  if (!input.explicitPositiveSignal) return { allowed: false, reason: "missing_explicit_positive_signal" };
+  return { allowed: false, reason: "intake_quality_below_floor" };
 }

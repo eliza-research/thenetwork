@@ -242,6 +242,7 @@ export class NetworkRuntime {
   private initialInviteReceipts = new Map<string, InitialInviteReceipt>();
   private addrToMember = new Map<string, MemberId>();
   private memberToAddr = new Map<MemberId, string>();
+  private memberToEmail = new Map<MemberId, string>();
   /** The unit being built. The service adds system sends (keyword confirmations) to it. */
   unit = newUnit();
   /** Sends committed with their state, waiting to be delivered (in commit order). */
@@ -288,6 +289,7 @@ export class NetworkRuntime {
       // The app's pack and the engine config it was tuned with (options may override single fields).
       ...(w.pack ? { pack: w.pack } : {}), ...(w.hooks ? { hooks: w.hooks } : {}), ...(w.plansConfig ? { plansConfig: w.plansConfig } : {}), ...(w.plans !== undefined ? { plans: w.plans } : {}),
       ...o.network,
+      workIntroEmailOf: o.network?.workIntroEmailOf ?? (id => this.emailOf(id)),
       ...(this.calendarScheduling ? { calendarFreeBusy: scope => scope.app === this.app.id && scope.purpose === calendarSchedulingPurpose ? this.calendarViews.getStore()?.get(scope.memberId) : undefined } : {}),
       engine: this.engineConfig,
       app: o.app, city: o.city, inlineJudge: undefined, store: this.store,
@@ -437,10 +439,20 @@ export class NetworkRuntime {
     const receipts = new Map<MemberId, number>();
     const roster = [...new Set(opp.participants)].filter(id => opp.bookedAt?.[id] !== undefined
       && opp.status.some(([member, status]) => member === id && status === "yes"));
-    for (const id of roster) {
-      const receipt = await currentBookingReceipt(tx, this.app.id, opp.id, id, opp.scheduleRevision ?? 0, opp.lane ?? null);
+    if (roster.length === 0) return receipts;
+    const revision = opp.scheduleRevision ?? 0;
+    const lane = opp.lane ?? null;
+    const batch = await currentBookingReceipts(
+      tx,
+      this.app.id,
+      roster.map(memberId => ({ oppId: opp.id, memberId, revision, lane })),
+    );
+    for (let i = 0; i < roster.length; i++) {
+      const receipt = batch.get(i);
       const sentAt = receipt?.sent_at?.getTime();
-      if (receipt && sentAt !== undefined && bookingNoticeReceived(receipt.status, sentAt, now)) receipts.set(id, sentAt);
+      if (receipt && sentAt !== undefined && bookingNoticeReceived(receipt.status, sentAt, now)) {
+        receipts.set(roster[i]!, sentAt);
+      }
     }
     return receipts;
   }
@@ -1141,7 +1153,7 @@ export class NetworkRuntime {
    * platform keep their channel_identities rows (one per app and address).
    */
   async identities() {
-    const [legacy, platform] = await this.scoped(async tx => [
+    const [legacy, platform, emails] = await this.scoped(async tx => [
       await tx`select ci.member_id, ci.address, m.home_city from network.channel_identities ci
         join network.members m on m.app_id = ci.app_id and m.id = ci.member_id
         where ci.app_id = ${this.app.id} and ci.channel in ('imessage', 'sms') and m.person_id is null
@@ -1150,8 +1162,12 @@ export class NetworkRuntime {
       // A number on hold (it may have a new owner) is nobody's address until staff decide.
       await tx`select m.id as member_id, ph.e164 as address, m.home_city from network.members m join platform.phone_identities ph on ph.person_id = m.person_id
         where m.app_id = ${this.app.id} and m.account_status not in ('invited', 'removed') and ph.hold is null order by m.id`,
+      await tx`select ci.member_id, ci.address, m.home_city from network.channel_identities ci
+        join network.members m on m.app_id = ci.app_id and m.id = ci.member_id
+        where ci.app_id = ${this.app.id} and ci.channel = 'email'
+          and m.account_status not in ('invited', 'removed') order by ci.is_primary desc, ci.member_id`,
     ]);
-    this.addrToMember.clear(); this.memberToAddr.clear();
+    this.addrToMember.clear(); this.memberToAddr.clear(); this.memberToEmail.clear();
     for (const r of [...platform, ...legacy] as any[]) {
       if (!this.cities.includes(r.home_city)) continue;
       const a = normalizeAddress(r.address);
@@ -1159,11 +1175,17 @@ export class NetworkRuntime {
       if (!this.addrToMember.has(a)) this.addrToMember.set(a, r.member_id);
       if (!this.memberToAddr.has(r.member_id)) this.memberToAddr.set(r.member_id, a);
     }
+    for (const r of emails as any[]) {
+      if (!this.cities.includes(r.home_city)) continue;
+      const email = typeof r.address === "string" ? r.address.trim() : "";
+      if (email.includes("@") && !this.memberToEmail.has(r.member_id)) this.memberToEmail.set(r.member_id, email);
+    }
   }
 
   /** Address to member of this app (E.164 or Apple ID, normalized), from the last refresh. */
   memberOf = (address: string): MemberId | undefined => this.addrToMember.get(normalizeAddress(address));
   addressOf = (id: MemberId): string | undefined => this.memberToAddr.get(id);
+  emailOf = (id: MemberId): string | undefined => this.memberToEmail.get(id);
 
   signedMemberTurn(memberId: MemberId, messageId?: string): boolean {
     const turn = this.host.inboundTurn?.();
@@ -1236,8 +1258,28 @@ export class NetworkRuntime {
     return `${key}:${this.nonce}${++this.seq}`;
   }
 
+  private replyGuardCache = new Map<string, LeakGuard>();
+
+  private cachedReplyGuard(memberId: MemberId): LeakGuard {
+    const src = this.net.leakSources([memberId]);
+    const key = JSON.stringify([memberId, src.forbidden ?? [], src.facts ?? [], src.canaries ?? []]);
+    const hit = this.replyGuardCache.get(key);
+    if (hit) {
+      this.replyGuardCache.delete(key);
+      this.replyGuardCache.set(key, hit);
+      return hit;
+    }
+    const guard = new LeakGuard({ ...src, canaryShapes: true, contacts: true });
+    if (this.replyGuardCache.size >= 128) {
+      const oldest = this.replyGuardCache.keys().next().value;
+      if (oldest !== undefined) this.replyGuardCache.delete(oldest);
+    }
+    this.replyGuardCache.set(key, guard);
+    return guard;
+  }
+
   guardedSystemReply(memberId: MemberId, id: string, body: string, type: string): boolean {
-    if (new LeakGuard({ ...this.net.leakSources([memberId]), canaryShapes: true }).check(body).length) {
+    if (this.cachedReplyGuard(memberId).check(body, { exceptOwner: memberId, contacts: true }).length) {
       this.host.log(`[alert] a ${type} text failed the leak guard (${this.id}, ${id})`);
       return false;
     }
@@ -1251,7 +1293,7 @@ export class NetworkRuntime {
     const turn = this.host.inboundTurn?.();
     if (turn?.app !== this.app.id || turn.memberId !== memberId
       || normalizeAddress(this.addressOf(memberId) ?? "") !== normalizeAddress(turn.from)) return;
-    const reasons = new LeakGuard({ ...this.net.leakSources([memberId]), canaryShapes: true }).check(body, { contactAllow: publicLinks });
+    const reasons = this.cachedReplyGuard(memberId).check(body, { exceptOwner: memberId, contacts: true, contactAllow: publicLinks });
     if (reasons.length) {
       this.host.log(`[alert] a ${type} reply failed the leak guard (${this.id}, ${id})`);
       return;
@@ -1859,9 +1901,12 @@ export class NetworkRuntime {
       const matchingOpen = present && (this.matchingAllowed || this.city === "nyc");
       const ageEligible = canBeMatched(await accounts.lowestAge(e164, binding.person));
       await this.importStored();
-      const minor = this.net.exportState().members.find(m => m.id === memberId)?.minor === true;
+      const storedState = this.net.exportState();
+      const minor = storedState.members.find(m => m.id === memberId)?.minor === true;
+      const tz = CITY_TZ[isCity(this.city) ? this.city : "nyc"];
+      const dayFmt = new Intl.DateTimeFormat("en-US", { timeZone: tz, month: "short", day: "numeric" });
       const live = this.net.relayLiveMatches(memberId as MemberId).map(x => ({ ...x,
-        day: `${x.meeting ? "meeting" : "introduced"} ${new Intl.DateTimeFormat("en-US", { timeZone: CITY_TZ[this.city as City], month: "short", day: "numeric" }).format(x.match.at)}` }));
+        day: `${x.meeting ? "meeting" : "introduced"} ${dayFmt.format(x.match.at)}` }));
       const shown = live.flatMap(({ match, otherFirstName, day }) => {
         const sameName = live.filter(x => x.otherFirstName.toLowerCase() === otherFirstName.toLowerCase());
         const label = contextItemLabel(sameName.length, sameName.filter(x => x.day === day).length);
@@ -1870,6 +1915,25 @@ export class NetworkRuntime {
         const itemSafe = (text: string) => turnBaseSafe(text) && !leakIdx.otherNamesLeak(text, memberId as MemberId, firstName, otherFirstName);
         return contextMatchItemShown(true, this.net.teenItemListed(match.id, ageEligible), !!otherFirstName && itemSafe(summary) && itemSafe(match.id)) ? [{ id: match.id, kind: "match", summary }] : [];
       });
+      const listedIds = new Set(shown.map(item => item.id));
+      for (const opp of storedState.opps) {
+        if (listedIds.has(opp.id) || !opp.participants.includes(memberId as MemberId)) continue;
+        if (!this.net.teenItemListed(opp.id, ageEligible) || !turnBaseSafe(opp.id)) continue;
+        const statusEntry = opp.status.find(([id]) => id === memberId);
+        if (opp.stage === "probing" && opp.contacted.includes(memberId as MemberId) && statusEntry?.[1] === "probing") {
+          const summary = "Pending introduction waiting for your reply";
+          if (safe(summary)) {
+            shown.push({ id: opp.id, kind: "probe", summary });
+            listedIds.add(opp.id);
+          }
+        } else if (opp.stage === "scheduled" && opp.meetingAt !== undefined && opp.meetingAt > snapshot.now && statusEntry?.[1] === "yes") {
+          const summary = `Upcoming meetup (${dayFmt.format(opp.meetingAt)})`;
+          if (safe(summary)) {
+            shown.push({ id: opp.id, kind: "booking", summary });
+            listedIds.add(opp.id);
+          }
+        }
+      }
       const activeItems = shown.slice(0, contextActiveItemCount(shown.length));
       return {
         firstName, city: member.homeCity, state, stateFrom: participation.active?participation.window!.from:null, stateUntil: participation.active?participation.window!.until:null, facets,

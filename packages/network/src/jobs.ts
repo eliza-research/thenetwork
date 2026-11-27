@@ -562,6 +562,12 @@ export const SEAT_COPY = {
     `Confirmed: you and ${other} are set for a cofounder video intro on ${when}. Reply here if you need to reschedule.`,
   cofounderRelayIntro: (other: string) =>
     `Good news: you and ${other} both said yes to a cofounder intro. Write here and I'll pass it on, or ask me to share your number.`,
+  workWarmEmailIntro: (other: string) =>
+    `Good news: you and ${other} both said yes to an intro. I sent a warm email intro so you can take it from there.`,
+  workVideoSlotIntro: (other: string, when: string) =>
+    `Confirmed: you and ${other} are set for a video intro on ${when}. Reply here if you need to reschedule.`,
+  workRelayIntro: (other: string) =>
+    `Good news: you and ${other} both said yes to an intro. Write here and I'll pass it on, or ask me to share your number.`,
   workBounceCheck: (j: SeatJob, other: string) =>
     `Quick check: did the intro with ${other} about ${j.title} come through cleanly?`,
   workOutcomeCheckIn: (j: SeatJob, other: string) =>

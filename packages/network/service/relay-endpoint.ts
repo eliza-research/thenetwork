@@ -7,7 +7,7 @@ import { isAppId, type AppId } from "../../platform/src/apps.ts";
 import { readCapped } from "../../platform/src/body.ts";
 import type { Accounts } from "../../platform/src/accounts.ts";
 import { readFileSync } from "node:fs";
-import { clefRelayClassifierFromEnv, DEFAULT_RELAY_CLEF_WEIGHTS, validateRelayClefWeights, type RelayClefWeights } from "../../engine/src/relayClef.ts";
+import { clefRelayClassifierFromEnv, DEFAULT_RELAY_CLEF_WEIGHTS, validateRelayClefWeights, type ClefRelayOptions, type RelayClefWeights } from "../../engine/src/relayClef.ts";
 import type { ClefResult } from "../../engine/src/packs/slop/clef.ts";
 import { classifyRelayText, parseRelayRequest, relayGuard, RELAY_LIMITS, type RelayClassifierHook, type RelayClassifierInput, type RelayClassifierOutput } from "../../engine/src/relay.ts";
 import { isPanicHaltedState, withdrawsSwap, type RelayOutcome } from "../src/relay.ts";
@@ -41,25 +41,64 @@ export interface RelayEndpointDeps {
 }
 
 const RELAY_CLEF_LRU_MAX = 512;
+export const RELAY_CLEF_CACHE_MAX = 2_000;
+export const RELAY_CLEF_CACHE_TTL_MS = 60 * 60 * 1000;
 
-class BoundedLru<V> {
-  private readonly map = new Map<string, V>();
-  constructor(private readonly maxEntries: number) {}
+export interface RelayClefCacheOptions {
+  maxEntries?: number;
+  ttlMs?: number;
+  now?: () => number;
+}
+
+class BoundedTtlLru<V> {
+  private readonly map = new Map<string, { value: V; expiresAt: number }>();
+  constructor(
+    private readonly maxEntries: number,
+    private readonly ttlMs: number,
+    private readonly now: () => number,
+  ) {}
+  get size(): number {
+    return this.map.size;
+  }
   get(key: string): V | undefined {
     const hit = this.map.get(key);
-    if (hit === undefined) return undefined;
+    if (!hit) return undefined;
+    if (this.now() >= hit.expiresAt) {
+      this.map.delete(key);
+      return undefined;
+    }
     this.map.delete(key);
     this.map.set(key, hit);
-    return hit;
+    return hit.value;
   }
   set(key: string, value: V): void {
-    if (this.map.has(key)) this.map.delete(key);
-    this.map.set(key, value);
-    if (this.map.size > this.maxEntries) {
+    this.map.delete(key);
+    this.map.set(key, { value, expiresAt: this.now() + this.ttlMs });
+    while (this.map.size > this.maxEntries) {
       const oldest = this.map.keys().next().value;
-      if (oldest !== undefined) this.map.delete(oldest);
+      if (oldest === undefined) break;
+      this.map.delete(oldest);
     }
   }
+}
+
+export function createRelayClefCache(opts: RelayClefCacheOptions = {}) {
+  const lru = new BoundedTtlLru<ClefResult>(
+    opts.maxEntries ?? RELAY_CLEF_CACHE_MAX,
+    opts.ttlMs ?? RELAY_CLEF_CACHE_TTL_MS,
+    opts.now ?? (() => performance.now()),
+  );
+  return {
+    get size(): number {
+      return lru.size;
+    },
+    answers(key: string): ClefResult | undefined {
+      return lru.get(key);
+    },
+    record(key: string, result: ClefResult): void {
+      lru.set(key, result);
+    },
+  };
 }
 
 function normalizeRoutineRelayText(text: string): string | undefined {
@@ -70,7 +109,12 @@ function normalizeRoutineRelayText(text: string): string | undefined {
   return norm || undefined;
 }
 
-export function relayClassifierFromEnv(env: Record<string, string | undefined>, log: (s: string) => void, cost?: CostLedger): (app: AppId) => RelayClassifierHook {
+export function relayClassifierFromEnv(
+  env: Record<string, string | undefined>,
+  log: (s: string) => void,
+  cost?: CostLedger,
+  opts: RelayClefCacheOptions & Pick<ClefRelayOptions, "fetch" | "clock"> = {},
+): (app: AppId) => RelayClassifierHook {
   if (!env.CLOUDFLARE_AI_TOKEN || !env.CLOUDFLARE_ACCOUNT_ID) {
     log("relay classifier: Workers AI not configured; every relayed text is blocked");
     const closed: RelayClassifierHook = async () => { throw new Error("relay classifier not configured"); };
@@ -78,8 +122,12 @@ export function relayClassifierFromEnv(env: Record<string, string | undefined>, 
   }
   const weights = env.RELAY_CLEF_WEIGHTS_PATH ? validateRelayClefWeights(JSON.parse(readFileSync(env.RELAY_CLEF_WEIGHTS_PATH, "utf8")) as RelayClefWeights) : undefined;
   log(`relay classifier: rules + Clef (${env.RELAY_CLEF_MODEL === "clef" ? "clef" : "clef-flash"}, weights ${(weights ?? DEFAULT_RELAY_CLEF_WEIGHTS).version})`);
-  const clefCache = new BoundedLru<ClefResult>(RELAY_CLEF_LRU_MAX);
-  const routineCache = new BoundedLru<RelayClassifierOutput>(RELAY_CLEF_LRU_MAX);
+  const cache = createRelayClefCache({ maxEntries: RELAY_CLEF_LRU_MAX, ...opts });
+  const routineCache = new BoundedTtlLru<RelayClassifierOutput>(
+    Math.min(opts.maxEntries ?? RELAY_CLEF_LRU_MAX, RELAY_CLEF_LRU_MAX),
+    opts.ttlMs ?? RELAY_CLEF_CACHE_TTL_MS,
+    opts.now ?? (() => performance.now()),
+  );
   const hooks = new Map<AppId, RelayClassifierHook>();
   return app => {
     let h = hooks.get(app);
@@ -87,8 +135,10 @@ export function relayClassifierFromEnv(env: Record<string, string | undefined>, 
       const meter = cost?.relayClefEvent(app);
       const rawHook = clefRelayClassifierFromEnv(env, {
         ...(weights ? { weights } : {}),
-        answers: key => clefCache.get(key),
-        record: (key, result) => { clefCache.set(key, result); },
+        ...(opts.fetch ? { fetch: opts.fetch } : {}),
+        ...(opts.clock ? { clock: opts.clock } : {}),
+        answers: key => cache.answers(key),
+        record: (key, result) => cache.record(key, result),
         onEvent: e => {
           meter?.(e);
           if (e.outcome === "error" || e.outcome === "timeout") log(`[relay] clef ${e.outcome}${e.status ? ` ${e.status}` : ""} (${e.ms} ms)`);

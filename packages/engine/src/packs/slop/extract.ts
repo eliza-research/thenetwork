@@ -1,7 +1,7 @@
 import type { City, Facet, LLM, ChatMessage } from "@thenetwork/core";
 import { precedingBirthdayAge } from "../../../../core/src/generated/memberAge.ts";
 import { slopRadiusContextAllowed, slopRadiusMilesInBounds, slopSelfShorthandAllowed } from "../../../../core/src/generated/slopOnboarding.ts";
-import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_LOOSE_TAIL, AGE_NUMBER_END, AGE_PART, AGE_STATED_BIRTHDAY, ARTICLE_AGE_END, NOT_DISTANT_BIRTHDAY, UNTRUSTED_NOTE, ageBeforeConjunction, agePartEvidenceOf, canBeMatched, canJoin, fenceUntrusted, maskPii, MIN_MEMBER_AGE, normalizeAgeInitialism, ownYouthCue, tryChatJson, unquotedOwnAgeEvidence } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_LOOSE_TAIL, AGE_NUMBER_END, AGE_PART, AGE_STATED_BIRTHDAY, ARTICLE_AGE_END, CITY_IDS, NOT_DISTANT_BIRTHDAY, UNTRUSTED_NOTE, ageBeforeConjunction, agePartEvidenceOf, canBeMatched, canJoin, fenceUntrusted, maskPii, MIN_MEMBER_AGE, normalizeAgeInitialism, ownYouthCue, tryChatJson, unquotedOwnAgeEvidence } from "@thenetwork/core";
 import { INTERESTS } from "../network/vocabulary.ts";
 import type { Gender, Goal, Slot } from "./profile.ts";
 import { SLOTS } from "./profile.ts";
@@ -297,7 +297,7 @@ const SEEK_WORD: [RegExp, Gender][] = [
   [/^(?:nonbinary|nonbinery|non-binary|nb|nbs|enby|enbies|genderqueer)$/, "nonbinary"],
 ];
 const SEEK_FILLER = /^(?:a|an|the|some|cute|nice|tall|older|younger|mostly|mainly|only|just|also|too|and|or|&|\+|plus|n|\/|people|folks|ppl|persons|humans|of|kind|really|primarily|other|fellow|queer|straight|bi|gay|lesbian|single|hot|cool|smart|funny|interesting|ish|lol|tbh|honestly|pls|please|preferably|ideally|i guess|non|binary|people's|masc|femme|fem|feminine|masculine|good|great|decent|real|genuine|sweet|honest|handsome|pretty|beautiful|new|special|right|solid|kind-hearted|caring|both|either)$/;
-const ALL_GENDERS = /^\s*(?:(?:a|the)\s+)?(?:anyone|any1|anybody|everyone|everybody|whoever|all genders|any genders?|people of (?:all|any) genders?|all of the above|all of them|any of them|all three|everyone really|literally anyone|all(?=\s*(?:$|[,.!?;)]|lol\b|tbh\b|really\b|please\b|pls\b|honestly\b|i guess\b))|anyone really)\b/;
+const ALL_GENDERS = /^\s*(?:(?:a|the)\s+)?(?:anyone|any1|anybody|everyone|everybody|whoever|all genders|any genders?|people of (?:all|any) genders?|all of the above|all of them|any of them|all (?:three|3)|everyone really|literally anyone|all(?=\s*(?:$|[,.!?;)]|lol\b|tbh\b|really\b|please\b|pls\b|honestly\b|i guess\b))|anyone really)\b/;
 const ALL_BUT = /^\s*(?:but|except|besides|other than|apart from|excluding|minus)\b/;
 const SEEK_TRIGGER = /\b(?:look(?:ing|in'?|ng)?\s+(?:for|4)|lokking for|loking for|lookign for|lf|seeking|searching for|into|interested in|attracted to|dat(?:e|ing|in)|meet(?:ing)?|want(?:ing)?|wanna (?:date|meet)|prefer|preferably|open to|down for|tryna (?:meet|date|find)|hoping (?:to meet|for)|after|only|just|exclusively|strictly|(?<!i'?m |im )likes?|loves?)\b/;
 
@@ -1080,7 +1080,7 @@ export function slopReaderPrompt(text: string, ctx: { asked?: OnboardField; miss
       "Every field you report is {\"value\": ..., \"quote\": \"<exact words from the message that state it>\"}.",
       "Fields: gender (\"woman\"|\"man\"|\"nonbinary\", the sender's own); seeks (array of those, who the sender wants to date);",
       "Location means the member's home, never an office or a place where they only visited.",
-      "ageRange ([lo, hi] integers 18-99); distance ({\"mode\":\"city\"} or {\"mode\":\"radius\",\"miles\":n} or {\"mode\":\"multi\",\"markets\":[\"nyc\",\"sf\"],\"miles\":n}); multi needs at least two distinct markets from nyc/sf/la; omit optional miles unless explicitly stated, 1-200; location ({\"zip\":\"5 digits\"} or {\"area\":\"neighborhood name\"});",
+      `ageRange ([lo, hi] integers 18-99); distance ({"mode":"city"} or {"mode":"radius","miles":n} or {"mode":"multi","markets":["nyc","sf"],"miles":n}); multi needs at least two distinct markets from ${CITY_IDS.join("/")}; omit optional miles unless explicitly stated, 1-200; location ({"zip":"5 digits"} or {"area":"neighborhood name"});`,
       `goal ("casual"|"long_term"|"unsure"); dealbreakers (array of ${DEALBREAKER_IDS.join(", ")}); interests (array of ${[...INTEREST_TAGS].join(", ")});`,
       `activities (first-date ideas, array of ${DATE_ACTIVITY_IDS.join(", ")}); selfAge (the sender's own age now, integer).`,
       "Reply with only one JSON object holding the fields you found.",
@@ -1110,7 +1110,7 @@ export function validateSlopReading(raw: unknown, text: string): SlopLlmReading 
         || ((value as Distance).mode === "radius" && isMiles((value as { miles: unknown }).miles))
         || ((value as Distance).mode === "multi" && Array.isArray((value as { markets: unknown }).markets)
           && (value as { markets: unknown[] }).markets.length >= 2
-          && (value as { markets: unknown[] }).markets.every(m => ["nyc", "sf", "la", "chicago", "miami"].includes(m as string))
+          && (value as { markets: unknown[] }).markets.every(m => (CITY_IDS as readonly unknown[]).includes(m))
           && new Set((value as { markets: unknown[] }).markets).size === (value as { markets: unknown[] }).markets.length
           && ((value as { miles?: unknown }).miles === undefined || isMiles((value as { miles: unknown }).miles))))
       : k === "location" ? !!value && typeof value === "object" && ((typeof (value as Location).zip === "string" && /^\d{5}$/.test((value as Location).zip!)) || (typeof (value as Location).area === "string" && AREA_INDEX.has(ALIAS.get(areaNorm((value as Location).area!)) ?? areaNorm((value as Location).area!))))
@@ -1125,16 +1125,42 @@ export function validateSlopReading(raw: unknown, text: string): SlopLlmReading 
   return out;
 }
 
-export function llmSlopReader(llm: LLM, o: { maxTokens?: number; attempts?: number } = {}): SlopReader {
+const SLOP_READER_DEFAULT_DEADLINE_MS = 15_000;
+const TRIVIAL_SLOP_TURN = /^\s*(?:yes|yeah|yep|yup|ya|ye|no|nope|nah|ok|okay|k|kk|cool|great|nice|thanks|thx|ty|got it|sounds good|sure|perfect|right|correct|exactly|pretty much|mostly|basically|will do|all good|👍|👌)[.!\s]*$/i;
+const SOFT_FIELD_CUE = /\b(?:casual|serious|long[- ]?term|relationship|marriage|fling|hookup|smok|drink|sober|kid|child|parent|relig|faith|church|politic|conserv|liberal|democrat|republican|coffee|drink|bar|dinner|walk|museum|music|concert|comedy|climb|hik|cook|book|movie|film|game|art|run|gym|yoga|bike|travel|food|jazz|rock|tech|ai|free|evening|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
+
+export function llmSlopReader(llm: LLM, o: { maxTokens?: number; attempts?: number; deadlineMs?: number } = {}): SlopReader {
+  const cachedClient: LLM = {
+    chat: (messages, opts) => llm.chat(messages, {
+      ...opts,
+      reasoningEffort: "low",
+      promptCacheKey: "slop-onboard-reader-v1",
+    }),
+  };
   return async (text, ctx) => {
     if (!text.trim() || text.length > 1200) return undefined;
-    const r = await tryChatJson(llm, slopReaderPrompt(maskPii(text), ctx), raw => validateSlopReading(raw, text), { attempts: o.attempts ?? 2, maxTokens: o.maxTokens ?? 900 });
+    const r = await tryChatJson(cachedClient, slopReaderPrompt(maskPii(text), ctx), raw => validateSlopReading(raw, text), {
+      attempts: o.attempts ?? 2,
+      maxTokens: o.maxTokens ?? 900,
+      deadlineMs: o.deadlineMs ?? SLOP_READER_DEFAULT_DEADLINE_MS,
+    });
     return r.ok ? r.value : undefined;
   };
 }
 
 export const LLM_FILL_BELOW = 0.75, LLM_CONFIDENCE = 0.7;
 const SELF_AGE_CUE = /\b(?:\d{1,2}|age|old|y\/?o|y\.o\.|years?|born|birthday|bday|turning|turned|minor|underage|teen|high ?school|middle ?school|freshman|sophomore|junior|senior|grade|homeroom|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty)\b/i;
+
+function shouldShortCircuitSlopLlm(text: string, p: SlopOnboarding, asked: OnboardField | undefined): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return true;
+  const hasAgeCue = SELF_AGE_CUE.test(trimmed);
+  if (!hasAgeCue && (trimmed.length < 4 || TRIVIAL_SLOP_TURN.test(trimmed))) return true;
+  if (hardFilled(p) === HARD_FIELDS.length && (!asked || hasField(p, asked)) && !hasAgeCue && !SOFT_FIELD_CUE.test(trimmed)) {
+    return true;
+  }
+  return false;
+}
 
 export async function extractSlopProfileLLM(
   messages: (string | { text: string; asked?: OnboardField })[], prior: SlopOnboarding | undefined,
@@ -1146,11 +1172,12 @@ export async function extractSlopProfileLLM(
     const asked = typeof msg === "string" ? o.asked : msg.asked ?? o.asked;
     p = extractSlopProfile([{ text, asked }], p, o);
     if (!o.llm?.enabled || p.declined || p.minor) continue;
+    if (shouldShortCircuitSlopLlm(text, p, asked)) continue;
     const low = (f?: Field<unknown>) => !f || f.confidence < LLM_FILL_BELOW;
     const missing = LLM_FIELDS.filter(k =>
       k === "gender" ? low(p.gender) : k === "seeks" ? p.seeks?.source !== "llm" && low(p.seeks) : k === "ageRange" ? low(p.ageRange) : k === "distance" ? low(p.distance)
       : k === "location" ? !p.location?.value.known : k === "goal" ? low(p.goal) : k === "dealbreakers" ? !hasField(p, "dealbreakers")
-      : k === "interests" ? !p.interests.length : k === "activities" ? !p.activities.length : k === "selfAge" ? (!p.age || SELF_AGE_CUE.test(text)) : false);
+      : k === "interests" ? !p.interests.length : k === "activities" ? !p.activities.length : k === "selfAge" ? (!p.age || p.age.confidence < LLM_FILL_BELOW || SELF_AGE_CUE.test(text)) : false);
     if (!missing.length) continue;
     const r = await o.llm.reader(text, { asked, missing });
     if (!r) continue;

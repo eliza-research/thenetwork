@@ -50,6 +50,43 @@ const DEFAULT_GUARD = new LeakGuard({
   canaryShapes: true,
 });
 
+const OUTPUT_GUARD_CACHE = new Map<string, LeakGuard>();
+const MAX_OUTPUT_GUARDS = 64;
+
+function outputGuardFor(
+  forbidden: string[],
+  facts: string[],
+  allow: string[],
+  contacts: boolean,
+  canaryShapes: boolean,
+  sensitiveTerms: boolean,
+): LeakGuard {
+  if (!forbidden.length && !facts.length && !allow.length && contacts && canaryShapes && sensitiveTerms) {
+    return DEFAULT_GUARD;
+  }
+  const key = JSON.stringify([forbidden, facts, allow, contacts, canaryShapes, sensitiveTerms]);
+  const hit = OUTPUT_GUARD_CACHE.get(key);
+  if (hit) {
+    OUTPUT_GUARD_CACHE.delete(key);
+    OUTPUT_GUARD_CACHE.set(key, hit);
+    return hit;
+  }
+  const guard = new LeakGuard({
+    exact: forbidden,
+    facts,
+    privateVocab: sensitiveTerms ? DEFAULT_PRIVATE_VOCAB : [],
+    allow,
+    contacts,
+    canaryShapes,
+  });
+  if (OUTPUT_GUARD_CACHE.size >= MAX_OUTPUT_GUARDS) {
+    const oldest = OUTPUT_GUARD_CACHE.keys().next().value;
+    if (oldest !== undefined) OUTPUT_GUARD_CACHE.delete(oldest);
+  }
+  OUTPUT_GUARD_CACHE.set(key, guard);
+  return guard;
+}
+
 export interface OutputLeakOptions {
   forbidden?: string[];
   facts?: string[];
@@ -81,18 +118,7 @@ export function outputLeaks(text: string, o: OutputLeakOptions = {}): string[] {
   const promptInjection = o.promptInjection ?? true;
   const allowOwnAppUrls = o.allowOwnAppUrls ?? true;
 
-  const useDefault = !forbidden.length && !facts.length && !allow.length && contactsOn && canaryShapes && sensitiveTerms;
-  const guard = useDefault
-    ? DEFAULT_GUARD
-    : new LeakGuard({
-        exact: forbidden,
-        facts,
-        privateVocab: sensitiveTerms ? DEFAULT_PRIVATE_VOCAB : [],
-        allow,
-        contacts: contactsOn,
-        canaryShapes,
-      });
-
+  const guard = outputGuardFor(forbidden, facts, allow, contactsOn, canaryShapes, sensitiveTerms);
   const contactAllow = contactsOn && allowOwnAppUrls ? ownAppContactTokens(text) : undefined;
   const v = guard.check(text, contactAllow?.length ? { contactAllow } : undefined);
   if (v[0] === "too_long") return v;

@@ -4,7 +4,7 @@ import { runArm } from "../harness/experiment.ts";
 
 test("experiment acceptance reports count only accepted invitations", async () => {
   let records: RunRecord[] = [];
-  const report = await runArm("push_v2", { days: 7, seed: 1, onRecords: run => records = run });
+  const report = await runArm("push_v2", { days: 7, seed: 3, onRecords: run => records = run });
   const replies = records.filter((r): r is Extract<RunRecord, { type: "decision" }> =>
     r.type === "decision" && r.messageType === "proposal");
   const proposals = records.flatMap(r => r.type === "proposal" && r.source !== "scenario" ? [r.proposal.id] : []);

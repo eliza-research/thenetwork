@@ -1,5 +1,5 @@
 import type { City, Facet, Member, MemberId, Presence } from "@thenetwork/core";
-import { ADULT_AGE, canBeMatched, DAY, EngineRng } from "@thenetwork/core";
+import { ADULT_AGE, canBeMatched, DAY, EngineRng, findNeighborhood } from "@thenetwork/core";
 import { tokenize } from "./embed.ts";
 import { hood } from "./packs/friends/geo.ts";
 import { MARKET_ANCHOR_ZIP, normalizeZip, zipCentroid, zipForArea } from "./packs/slop/zips.ts";
@@ -276,7 +276,9 @@ function resolveMemberCoords(m: Member, presence: readonly Presence[], allFacets
         coords.push({ lat: zDirect.lat, lon: zDirect.lon });
         continue;
       }
-      const nh = hood(area);
+      const nh = p.city === "nyc"
+        ? (hood(area) ?? findNeighborhood("nyc", area))
+        : findNeighborhood(p.city, area);
       if (nh) {
         coords.push({ lat: nh.lat, lon: nh.lng });
         continue;

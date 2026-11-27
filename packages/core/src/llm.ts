@@ -81,6 +81,7 @@ export interface ResponseInfo {
     completionTokens: number;
     reasoningTokens: number;
     cachedPromptTokens?: number;
+    cachedTokens?: number;
     cacheWriteTokens?: number;
   };
   /** Provider-reported cost in micro-USD (Surplus usage.buyer_cost_micro, or usage.cost in USD * 1e6), else priced from OPENAI_PRICES, else 0. */
@@ -185,14 +186,16 @@ export function usageOf(data: any, requestedModel?: string): Pick<ResponseInfo, 
   const p = priceFor(data?.model) ?? priceFor(requestedModel);
   const cached = u.prompt_tokens_details?.cached_tokens ?? 0, writes = u.prompt_tokens_details?.cache_write_tokens ?? 0;
   const priced = p ? Math.max(0, promptTokens - cached - writes) * p.input + cached * p.cachedInput + writes * p.cacheWrite + completionTokens * p.output : 0;
+  const usage: ResponseInfo["usage"] = {
+    promptTokens,
+    completionTokens,
+    reasoningTokens: u.completion_tokens_details?.reasoning_tokens ?? 0,
+    cachedPromptTokens: cached,
+    cacheWriteTokens: writes,
+  };
+  Object.defineProperty(usage, "cachedTokens", { value: cached, enumerable: false, configurable: true });
   return {
-    usage: {
-      promptTokens,
-      completionTokens,
-      reasoningTokens: u.completion_tokens_details?.reasoning_tokens ?? 0,
-      cachedPromptTokens: cached,
-      cacheWriteTokens: writes,
-    },
+    usage,
     costMicro: Number(reported ?? priced) || 0,
     costKnown: reported !== undefined || p !== undefined || (promptTokens === 0 && completionTokens === 0),
     finishReason: data?.choices?.[0]?.finish_reason,
@@ -531,4 +534,12 @@ export function judgeLLM(hooks: ClientOptions = {}): LLM {
 export function recommenderLLM(hooks: ClientOptions = {}): LLM {
   return llmFor(parseProvider(process.env.RECOMMENDER_PROVIDER || DEFAULT_PROVIDER), process.env.RECOMMENDER_MODEL ?? DEFAULT_MODEL, hooks);
 }
+
+export {
+  defaultLLMCacheKey,
+  withLLMCache,
+  type CachedLLM,
+  type LLMCacheOptions,
+  type LLMCacheStats,
+} from "./llmCache.ts";
 

@@ -108,7 +108,7 @@ export function serviceFromEnv(env: Record<string, string | undefined> = process
 export const STAFF_HEADER = "x-network-staff-id";
 export const APP_HEADER = "x-network-app";
 export const REASON_HEADER = "x-network-reason";
-const REPORT_KINDS = new Set<ReportKind>(["harassment", "lying", "no_show", "unsafe", "scam", "minor", "older_than_stated", "other"]);
+const REPORT_KINDS = new Set<ReportKind>(["harassment", "lying", "no_show", "unsafe", "scam", "minor", "older_than_stated", "self_promotion", "other"]);
 export type ServiceReport = Pick<SafetyReport, "id" | "kind" | "reporterId" | "subjectId" | "opportunityId" | "at" | "status"> & { priorReports?: number };
 
 export class ServiceClient {

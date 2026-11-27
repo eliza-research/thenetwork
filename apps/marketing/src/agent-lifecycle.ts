@@ -1648,6 +1648,7 @@ export class AgentLifecycleManager {
           completionTokens?: number;
           reasoningTokens?: number;
           cachedPromptTokens?: number;
+          cachedTokens?: number;
           cacheWriteTokens?: number;
         };
         const rawPromptDetails = (
@@ -1658,7 +1659,7 @@ export class AgentLifecycleManager {
         acc.promptTokens += Math.max(0, Number(usage.promptTokens ?? 0));
         acc.cachedPromptTokens += Math.max(
           0,
-          Number(usage.cachedPromptTokens ?? rawPromptDetails?.cached_tokens ?? 0),
+          Number(usage.cachedPromptTokens ?? usage.cachedTokens ?? rawPromptDetails?.cached_tokens ?? 0),
         );
         acc.cacheWriteTokens += Math.max(
           0,
