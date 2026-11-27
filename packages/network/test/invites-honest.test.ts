@@ -53,6 +53,31 @@ test("a withheld join receipt rides the next real reply once, after restart and 
   expect(receipts()).toHaveLength(1);
 });
 
+// spec/outreachPolicy.md, "An eligible join receipt can ride on a current reply": the receipt
+// stays pending until it goes out or goes stale, so a paused inviter still hears on a reply.
+test("a join receipt survives the inviter's paused account and rides a reply", async () => {
+  const w = new Mini([{ id: "r", name: "Rae Kim", age: 30, area: "Greenpoint" }], { growth: true });
+  w.net.init({ ...w.ctx(), invite: (_inviter, first) => first.toLowerCase() });
+  await w.onboard("r");
+  w.add({ id: "maya", name: "Maya Lee", age: 30 });
+  w.members.find(member => member.id === "maya")!.invitedBy = "r";
+  const rae = w.members.find(member => member.id === "r")!;
+  const quiet = rae.prefs!.quietHours;
+  const hour = Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hourCycle: "h23", hour: "2-digit" }).format(w.clock.now()));
+  rae.prefs!.quietHours = [hour, (hour + 22) % 24];
+  expect(w.net.welcomeJoined("maya", "r")).toBe(true);
+  rae.prefs!.quietHours = quiet;
+  expect(w.net.memberList().find(m => m.id === "r")?.pendingInviteJoins?.map(n => n.inviteeId)).toEqual(["maya"]);
+  const from = w.mark();
+  Object.assign(rae, { accountStatus: "paused" });
+  await w.say("r", "Anything fun near Williamsburg this weekend?");
+  expect(w.to("r", from).filter(message => /Maya just joined/.test(message.body))).toEqual([
+    expect.objectContaining({ reply: true, body: expect.stringContaining("Maya just joined.") }),
+  ]);
+  await w.say("r", "Anything fun near Williamsburg tonight?");
+  expect(w.to("r", from).filter(message => /Maya just joined/.test(message.body))).toHaveLength(1);
+});
+
 // spec/memberInvitation.md, "Forward an invitation for someone I know".
 test("only a direct adult vouch gets an app-owned link and a new verified acceptance can tell its inviter", async () => {
   const token = "A".repeat(43);
