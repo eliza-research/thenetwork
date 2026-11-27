@@ -97,6 +97,14 @@ test("a requester can withdraw an accepted probe while the other reply is pendin
 // spec/memberRequest.md, "Only the member's pending request for a withdrawn desire closes";
 // spec/standingIntentManagement.md, "Only the member's own words close a standing thing"
 test("a close verb naming the want or the sole request withdraws the waiting request", async () => {
+  const waiting = async (interests: string[] = ["climbing"]) => {
+    const x = new Mini([{ id: "a", name: "Alice Able", age: 30, interests }], { seed: 1, onboardingRequests: true });
+    await x.onboard("a");
+    await x.say("a", "Find me a climbing partner.");
+    const request = x.net.exportState().requests.at(-1)!;
+    expect(request.outcome).toBe("none");
+    return { x, request };
+  };
   const phrases = [
     "Cancel my request for a climbing partner.",
     "Cancel my climbing partner request.",
@@ -106,13 +114,13 @@ test("a close verb naming the want or the sole request withdraws the waiting req
     "Please cancel my request.",
     "Withdraw my request.",
     "Close my request, please.",
+    "Cancel the climbing partner search.",
+    "Forget the climbing partner, I found one.",
+    "End my search, I found someone.",
+    "Close my request.",
   ];
   for (const phrase of phrases) {
-    const x = new Mini([{ id: "a", name: "Alice Able", age: 30, interests: ["climbing"] }], { seed: 1, onboardingRequests: true });
-    await x.onboard("a");
-    await x.say("a", "Find me a climbing partner.");
-    const request = x.net.exportState().requests.at(-1)!;
-    expect(request.outcome).toBe("none");
+    const { x, request } = await waiting();
     await x.say("a", phrase);
     x.add({ id: "b", name: "Boris Bell", age: 32, interests: ["climbing"], skills: ["climbing_belay"], shareable: true });
     await x.onboard("b");
@@ -126,14 +134,47 @@ test("a close verb naming the want or the sole request withdraws the waiting req
     expect(x.net.exportState().requests.at(-1)!.id).not.toBe(request.id);
     expect(x.net.exportState().requests.at(-1)!.outcome).toBe("probing");
   }
+  // A close verb withdraws only its own object: a want after a clause break, a question, an
+  // adjective or noun "close"/"end", and "cancel my request" with another object all keep it.
+  const keptPhrases = [
+    "cancel my gym membership, still want a climbing partner",
+    "Close to the office is best for a climbing partner.",
+    "Drop the formalities, just find me a climbing partner.",
+    "End of the day works best for my climbing partner.",
+    "Forget the weather, my climbing partner search is what matters.",
+    "Drop the climbing partner request? Not yet, keep it.",
+    "Cancel my request for a refund.",
+    "Please cancel my request to change my number.",
+  ];
+  for (const phrase of keptPhrases) {
+    const { x, request } = await waiting();
+    await x.say("a", phrase);
+    x.add({ id: "b", name: "Boris Bell", age: 32, interests: ["climbing"], skills: ["climbing_belay"], shareable: true });
+    await x.onboard("b");
+    await x.run(2 * DAY);
+    const old = x.net.exportState().requests.find(r => r.id === request.id)!;
+    expect(old.closed ?? false).toBe(false);
+    expect(old.withdrawn ?? false).toBe(false);
+    expect(x.sent.some(s => s.to === "a" && s.body === CLOSED_REPLY)).toBe(false);
+  }
+  // With two waiting requests, a close verb closes only the want it names.
+  const twoWaiting = async (phrase: string) => {
+    const { x } = await waiting(["climbing", "tennis"]);
+    await x.say("a", "Find me a tennis partner.");
+    expect(x.net.exportState().requests.filter(r => r.outcome === "none")).toHaveLength(2);
+    await x.say("a", phrase);
+    return x.net.exportState().requests;
+  };
   // "Cancel my request" names no want: with two waiting requests it closes neither.
-  const x = new Mini([{ id: "a", name: "Alice Able", age: 30, interests: ["climbing", "tennis"] }], { seed: 1, onboardingRequests: true });
-  await x.onboard("a");
-  await x.say("a", "Find me a climbing partner.");
-  await x.say("a", "Find me a tennis partner.");
-  expect(x.net.exportState().requests.filter(r => r.outcome === "none")).toHaveLength(2);
-  await x.say("a", "Please cancel my request.");
-  expect(x.net.exportState().requests.every(r => !r.closed && !r.withdrawn)).toBe(true);
+  expect((await twoWaiting("Please cancel my request.")).every(r => !r.closed && !r.withdrawn)).toBe(true);
+  expect((await twoWaiting("cancel my gym membership, still want a tennis partner")).every(r => !r.closed && !r.withdrawn)).toBe(true);
+  const mixed = await twoWaiting("Forget the climbing partner, find me a tennis partner instead.");
+  const mixedClimbing = mixed.find(r => r.desireId === "climbing_partner")!;
+  const mixedTennis = mixed.find(r => r.desireId === "tennis_partner")!;
+  expect(mixedClimbing.closed ?? false).toBe(true);
+  expect(mixedClimbing.withdrawn ?? false).toBe(true);
+  expect(mixedTennis.closed ?? false).toBe(false);
+  expect(mixedTennis.withdrawn ?? false).toBe(false);
   // A close word inside a want is still a want.
   const y = new Mini([{ id: "a", name: "Alice Able", age: 30, interests: ["climbing"] }], { seed: 1, onboardingRequests: true });
   await y.onboard("a");

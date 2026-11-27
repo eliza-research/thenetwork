@@ -821,10 +821,14 @@ export function extractProfile(body: string): Profile {
       const effNegAt = excluded ? 0 : negAt;
       const wantCtx = WANT_CTX.test(part);
       if (neg && /\b(looking for|find|meet|anyone|anybody|someone|somebody|want|need|set me up|introduce|match|suggest)\w*\b/.test(part.slice(negAt))) negatedAsk = true;
-      // A close verb opening the part withdraws the want it names ("cancel my climbing partner
-      // request"); the possessive or request word between verb and want keeps "close friends" a want.
-      const closeVerb = /^\s*(?:(?:can|could) you\s+)?(?:please\s+)?(?:cancel|withdraw|close|drop|end|forget)\b/.exec(part);
-      if (closeVerb && /^\s*(?:(?:can|could) you\s+)?(?:please\s+)?(?:cancel|withdraw|close|drop|end|forget)\s+my\s+(?:standing\s+)?(?:request|search)\b/.test(part)) { closeRequest = true; negatedAsk = true; }
+      // A close verb opening the part withdraws only the want that is its own object ("cancel my
+      // climbing partner request"). A question never closes, and "close to" / "end of" are not verbs.
+      const closeVerb = x.includes("?") ? null
+        : /^\s*(?:(?:can|could) you\s+)?(?:please\s+)?(?:cancel|withdraw|close(?!\s+to\b)|drop|end(?!\s+of\b)|forget)\b/.exec(part);
+      const soleClose = closeVerb && /^\s*(?:(?:can|could) you\s+)?(?:please\s+)?(?:cancel|withdraw|close|drop|end|forget)\s+my\s+(?:standing\s+)?(?:request|search)\b/.exec(part);
+      // "Cancel my request" closes the sole request only when no other object follows it
+      // ("for a refund", "to change my number"); a trailing comma clause is not an object.
+      if (soleClose && /^\s*(?:[.!;]+\s*)?$|^\s*,(?!\s*(?:for|to)\b)|^\s+(?:please|now|thanks|thank you)\b(?!\s+(?:for|to)\b)/.test(part.slice(soleClose[0].length))) { closeRequest = true; negatedAsk = true; }
       // What is not under a negation: the taxonomy-label pass below reads only this.
       kept.push(part.slice(0, Number.isFinite(effNegAt) ? effNegAt : undefined));
       for (const [id, rxs] of Object.entries(WANT_LEX)) for (const rx of rxs) {
@@ -832,7 +836,10 @@ export function extractProfile(body: string): Profile {
         if (!m) continue;
         // Negated before the want ("I don't want to meet founders"), or right after it ("dating isn't for me").
         const after = part.slice(m.index + m[0].length);
-        const closedWant = !!closeVerb && /\b(my|the|that|this|request|search)\b/.test(part.slice(closeVerb[0].length, m.index));
+        // The want must be the verb's own object: only a determiner, or "my request for a",
+        // may stand between them. A want after a clause break ("cancel my gym membership,
+        // still want a climbing partner") stays a want.
+        const closedWant = !!closeVerb && /^\s+(?:about\s+)?(?:my|the|that|this)\s+(?:(?:standing\s+)?(?:request|search)\s+for\s+(?:a\s+|an\s+|the\s+)?)?$/.test(part.slice(closeVerb[0].length, m.index));
         if (closedWant) negatedAsk = true;
         if (excluded || closedWant || NEG_WANT.test(part.slice(0, m.index)) || /^\s*(?:is|are|'s|'re)?\s*(?:n't|not|isn'?t|aren'?t)\b(?! only)/.test(after)) notWanted.add(id);
         else if (wantCtx || SELF_WANTS.has(id)) desires.add(id);
