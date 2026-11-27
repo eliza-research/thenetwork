@@ -1,4 +1,5 @@
 import {
+  ALL_SEED_VENUES,
   CITY_IDS,
   CITY_TZ,
   DAY,
@@ -41,12 +42,17 @@ import {
   MeetupCoordinator,
   VenueManager,
   feedbackOf,
+  meetingSpot,
+  seedVenueToGeoVenue,
   type MeetupCoordHost,
 } from "../../network/src/index.ts";
 import { postingFacts, type JobPosting } from "../../network/src/jobs.ts";
 import { appWiring } from "../../network/service/packs.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { detectKeyword, leaveTarget } from "../../platform/src/consent.ts";
+import { friendsOutboundLog } from "./apps/friends/metrics.ts";
+import { runFriendsWorldAsync } from "./apps/friends/world.ts";
+import { friendsTeenMatcher } from "./apps/friends/packMatcher.ts";
 import {
   LiveConsentHarness,
   SimVenueProvider,
@@ -295,8 +301,8 @@ export async function runFiveCitySuite(
         detail: `brief=${briefSent}, relays=${arrRelays.length}, met=${metAfter}`,
       },
       {
-        name: "evening date follow-up deferred to next-morning 09:00",
-        pass: followup.nextDay && fuParts.hour === 9 && fuParts.minute === 0 && canSendFu,
+        name: "evening date follow-up deferred to next-morning 09:30",
+        pass: followup.nextDay && fuParts.hour === 9 && fuParts.minute === 30 && canSendFu,
         detail: `local ${fuParts.hour}:${String(fuParts.minute).padStart(2, "0")} nextDay=${followup.nextDay}`,
       },
       {
@@ -420,6 +426,38 @@ export async function runFiveCitySuite(
       fu.scheduledAt + HOUR
     )!;
 
+    // Verify heavy_drinker is NOT classified as nonDrinker while strict_sober IS blocked from alcohol-centric venues
+    const hDrink = new LiveConsentHarness({
+      app: "friends",
+      city: "nyc",
+      startMs: fromLocal(2026, 11, 26, 10, tz),
+      networkOptions: {
+        app: "friends",
+        city: "nyc",
+        seed: 1021,
+        inlineJudge: simulatedReviewJudge({ exceptions: false }),
+        maxNewPerDay: 0,
+        plans: false,
+        engine: { cities: ["nyc"] },
+      },
+    });
+    const heavyMember: FiveCityMember = { ...group[0]!, id: "nyc-s2-heavy", drinksAlcohol: true };
+    const soberMember: FiveCityMember = { ...group[1]!, id: "nyc-s2-sober", drinksAlcohol: false };
+    const peerMember: FiveCityMember = { ...group[2]!, id: "nyc-s2-peer", drinksAlcohol: true };
+    hDrink.addMember(heavyMember, {
+      quietHours: [23, 7],
+      extraFacets: [{ kind: "trait", value: "heavy_drinker", tags: ["heavy_drinker"], scope: "matchable", provenance: "said", confidence: 1 }],
+    });
+    hDrink.addMember(soberMember, {
+      quietHours: [23, 7],
+      extraFacets: [{ kind: "boundary", value: "strict_sober", tags: ["strict_sober"], scope: "agent_private", provenance: "said", confidence: 1 }],
+    });
+    hDrink.addMember(peerMember, { quietHours: [23, 7] });
+    await hDrink.onboard(heavyMember.id, soberMember.id, peerMember.id);
+    const alcoholVenue = ALL_SEED_VENUES.find(v => v.city === "nyc" && v.isAlcoholCentric)!;
+    const heavyAllowed = hDrink.net.venuePassesRedLines(alcoholVenue, [heavyMember.id, peerMember.id], startMs);
+    const soberBlocked = !hDrink.net.venuePassesRedLines(alcoholVenue, [soberMember.id, peerMember.id], startMs);
+
     invariants.canaryLeaks += h.scanCanaries(group);
     scanTranscriptCanaries(h.transcript, group);
 
@@ -433,6 +471,11 @@ export async function runFiveCitySuite(
           primary.venue.servesVegan &&
           primary.rubricScore >= 90,
         detail: `${primary.venue.name} (${primary.venue.category}, rubric=${primary.rubricScore})`,
+      },
+      {
+        name: "heavy_drinker is not classified as nonDrinker while strict_sober rejects alcohol-centric venues",
+        pass: heavyAllowed && soberBlocked,
+        detail: `venue=${alcoholVenue.id}, heavyAllowed=${heavyAllowed}, soberBlocked=${soberBlocked}`,
       },
       {
         name: "all 5 attendees confirmed through ConsentNetwork and scheduled",
@@ -449,7 +492,7 @@ export async function runFiveCitySuite(
         pass:
           fu.nextDay &&
           fuParts.hour === 9 &&
-          fuParts.minute === 0 &&
+          fuParts.minute === 30 &&
           updated.personaPriors.default!.alpha > primary.venue.personaPriors.default!.alpha,
         detail: `alpha ${primary.venue.personaPriors.default!.alpha} -> ${updated.personaPriors.default!.alpha}`,
       },
@@ -1083,7 +1126,7 @@ export async function runFiveCitySuite(
     const b: FiveCityMember = { ...sfAdults[1]!, id: "sf-s7-b", neighborhood: "Mission District", maxBudgetTier: 2, drinksAlcohol: true, vegetarian: false, vegan: false, wheelchairNeeded: false, visitedVenueIds: [], rejectedVenueIds: [] };
     const req = { city: "sf" as const, memberAreas: [a.neighborhood, b.neighborhood], members: [toVenuePrefs(a), toVenuePrefs(b)], startMs, mode: "date" as const, isWeekendOrHoliday: true };
 
-    const vm = new VenueManager({ provider });
+    const vm = new VenueManager({ provider, sufficiencyThreshold: 1 });
     const initial = vm.pickForMatch(req, nowMs);
     const topVenue = initial.primary!.venue;
     vm.upsertVenue({ ...topVenue, lastVerifiedAt: nowMs - 10 * HOUR });
@@ -1182,6 +1225,32 @@ export async function runFiveCitySuite(
     const meetupAfter = h.net.meetups.getMeetup("nyc-s8-meetup")!;
     const secondPivot = evaluateBackupPivot(true, true, startMs - 10 * MINUTE, startMs, meetupAfter.pivoted);
 
+    // Also verify venue_full pivots to backup WITHOUT quarantining the primary venue
+    const vmFull = new VenueManager();
+    const fullSent: { to: string; body: string; kind: string }[] = [];
+    const fullCoord = new MeetupCoordinator({
+      venues: vmFull,
+      ratesPhotos: false,
+      party: (_mid, id) => {
+        const person = id === a.id ? a : id === b.id ? b : undefined;
+        return person ? { id: person.id, firstName: person.firstName, age: person.age, optedOut: false, confirmed: true } : undefined;
+      },
+      blocked: () => false,
+      privateFacts: () => ({ forbidden: [], canaries: [] }),
+      send: (to, body, meta) => { fullSent.push({ to, body, kind: meta.kind }); },
+    });
+    fullCoord.registerMeetup({
+      meetupId: "nyc-s8-full",
+      app: "slop",
+      city: "nyc",
+      startMs,
+      participants: [a.id, b.id],
+      primaryVenueId: primary.id,
+      backupVenueId: backup.id,
+    });
+    const fullRes = fullCoord.handleInbound(a.id, "The cafe is completely full, no tables left!", startMs - 10 * MINUTE);
+    const fullPrimaryAfter = vmFull.getVenue(primary.id)!;
+
     invariants.canaryLeaks += h.scanCanaries([a, b]);
 
     const checks: ScenarioCheck[] = [
@@ -1194,6 +1263,18 @@ export async function runFiveCitySuite(
         name: "MeetupCoordinator broadcasts one-shot backup pivot to both parties and blocks duplicate pivot",
         pass: meetupAfter.pivoted && meetupAfter.activeVenueId === backup.id && pivotMsgs.length === 2 && !secondPivot,
         detail: `active=${meetupAfter.activeVenueId}, broadcasts=${pivotMsgs.length}, secondPivot=${secondPivot}`,
+      },
+      {
+        name: "venue_full arrival pivots to backup without quarantining primary venue",
+        pass:
+          fullRes.handled &&
+          fullRes.state === "venue_full" &&
+          fullRes.pivotedToVenueId === backup.id &&
+          fullPrimaryAfter.status === "active" &&
+          fullPrimaryAfter.closureReports === 0 &&
+          fullSent.filter(s => s.kind === "backup_pivot").length === 2 &&
+          fullSent[0]!.body.includes("is full"),
+        detail: `pivoted=${fullRes.pivotedToVenueId}, primaryStatus=${fullPrimaryAfter.status}, closureReports=${fullPrimaryAfter.closureReports}, broadcasts=${fullSent.length}`,
       },
     ];
     scenarios.push(
@@ -1446,6 +1527,7 @@ export async function runFiveCitySuite(
         { owner: recip.id, text: recip.privateDisclosure },
       ],
     });
+    let panicked = false;
     const host: MeetupCoordHost = {
       venues: vm,
       ratesPhotos: true,
@@ -1454,6 +1536,7 @@ export async function runFiveCitySuite(
         return m ? { id: m.id, firstName: m.firstName, lastName: m.name.split(" ")[1], age: m.age, optedOut: false, confirmed: true } : undefined;
       },
       blocked: () => false,
+      panicTriggered: () => panicked,
       privateFacts: () => ({
         forbidden: [
           { owner: sender.id, text: sender.privateDisclosure },
@@ -1524,6 +1607,13 @@ export async function runFiveCitySuite(
     t.push({ atMs: arrMs + 10_000, atLabel: formatLocalTime(arrMs + 10_000, "sf"), from: sender.firstName, to: "Eliza", app: "slop", text: cleanText });
     t.push({ atMs: arrMs + 10_000, atLabel: formatLocalTime(arrMs + 10_000, "sf"), from: "Eliza", to: recip.firstName, app: "slop", text: cleanSent?.body ?? "", tag: "clean_pass" });
 
+    // Panic halt blocks arrival relay immediately
+    const sentBeforePanic = sent.length;
+    panicked = true;
+    const panicCoord = coord.handleInbound(sender.id, "I'm here by the front entrance wearing a blue coat!", arrMs + 20_000);
+    const panicBlocked = panicCoord.relayedTo.length === 0 && panicCoord.blockedReason === "panic_triggered" && sent.length === sentBeforePanic;
+    t.push({ atMs: arrMs + 20_000, atLabel: formatLocalTime(arrMs + 20_000, "sf"), from: "Eliza", to: sender.firstName, app: "slop", text: `Panic halt blocked arrival relay (reason=${panicCoord.blockedReason ?? "none"}).`, tag: "panic_halt" });
+
     scanTranscriptCanaries(t, [sender, recip]);
 
     const checks: ScenarioCheck[] = [
@@ -1536,6 +1626,11 @@ export async function runFiveCitySuite(
         name: "clean arrival cue passes MeetupCoordinator with outfit & landmark cue preserved",
         pass: cleanCoord.handled && cleanCoord.relayedTo.includes(recip.id) && !!cleanSent?.body.includes("denim jacket"),
         detail: `relayed=${cleanCoord.relayedTo.length}, body=${cleanSent?.body}`,
+      },
+      {
+        name: "panic halt blocks arrival relay in MeetupCoordinator",
+        pass: panicBlocked,
+        detail: `relayed=${panicCoord.relayedTo.length}, reason=${panicCoord.blockedReason}, sentDelta=${sent.length - sentBeforePanic}`,
       },
     ];
     scenarios.push(
@@ -1692,8 +1787,8 @@ export async function runFiveCitySuite(
 
     const checks: ScenarioCheck[] = [
       {
-        name: "10 PM Chicago end schedules next-morning 09:00 and blocks 22:30 quiet-hours send",
-        pass: !allowLate && proactiveSentInQuiet === 0 && fu.nextDay && fuParts.hour === 9 && fuParts.minute === 0,
+        name: "10 PM Chicago end schedules next-morning 09:30 and blocks 22:30 quiet-hours send",
+        pass: !allowLate && proactiveSentInQuiet === 0 && fu.nextDay && fuParts.hour === 9 && fuParts.minute === 30,
         detail: `allow22:30=${allowLate}, proactiveInQuiet=${proactiveSentInQuiet}, scheduled=${fuParts.hour}:${String(fuParts.minute).padStart(2, "0")}`,
       },
       {
@@ -1724,13 +1819,64 @@ export async function runFiveCitySuite(
     const t: ConversationTurn[] = [];
     let minorsTested = 0;
     let soloMinorChecks = 0;
+    let soloVenuesNonEmpty = 0;
+    let failClosedSoloChecks = 0;
     let stoppedCityChecks = 0;
+    const namedBreweries = ["sf-biergarten-hayes", "sf-cellarmaker-mission", "nyc-threes-brewing"] as const;
+    let breweryExcludedOk = namedBreweries.every(id => {
+      const rec = ALL_SEED_VENUES.find(v => v.id === id);
+      return !!rec && rec.isAlcoholCentric === true && rec.allAges === false && seedVenueToGeoVenue(rec).allAges === false;
+    });
+    let teenParityCities = 0;
+    let teenOnCleanCities = 0;
 
     for (const city of CITY_IDS) {
       const tz = CITY_TZ[city];
       const startMs = fromLocal(2026, 11, 28, 14, tz);
       const cityMinors = members.filter(m => m.city === city && m.isMinor);
       const cityAdult = members.find(m => m.city === city && !m.isMinor)!;
+
+      // Verify teen brewery exclusion in meetingSpot across all 5 cities
+      const citySeedVenues = ALL_SEED_VENUES.filter(v => v.city === city);
+      const teenSpot = meetingSpot([], "social", ["food", "outdoors", "social"], true, city, { venues: citySeedVenues });
+      const teenSpotRec = citySeedVenues.find(v => v.id === teenSpot.venue.id);
+      if (
+        !teenSpotRec ||
+        teenSpotRec.allAges !== true ||
+        teenSpotRec.isAlcoholCentric === true ||
+        teenSpotRec.isBarOnly ||
+        (namedBreweries as readonly string[]).includes(teenSpotRec.id)
+      ) {
+        breweryExcludedOk = false;
+        invariants.teenPlaceContact++;
+      }
+
+      // Verify 5-city teenStop=false vs teenStop=true parity against pre-feature reference world
+      const worldSeed = 700 + CITY_IDS.indexOf(city);
+      const worldOpts = { seed: worldSeed, city, n: 40, weeks: 1, minorShare: 0.25, teenBirthDates: true, matcher: friendsTeenMatcher() };
+      const teenOnWorld = await runFriendsWorldAsync({ ...worldOpts, teenStop: false });
+      const teenStopWorld = await runFriendsWorldAsync({ ...worldOpts, teenStop: true });
+      const refWorld = await runFriendsWorldAsync({ ...worldOpts, teenBirthDates: false });
+      const onBroken = teenOnWorld.flows.filter(f => f.ageRuleBroken).length;
+      if (onBroken === 0) teenOnCleanCities++;
+      else invariants.teenPlaceContact += onBroken;
+      const stopMinorIds = new Set(teenStopWorld.world.personas.filter(p => p.hidden.trueAge < 18).map(p => p.id));
+      const stopMinorContacts = teenStopWorld.contacts.filter(c => stopMinorIds.has(c.a) || stopMinorIds.has(c.b)).length;
+      const stopBroken = teenStopWorld.flows.filter(f => f.ageRuleBroken).length;
+      const stopContacts = stopMinorContacts + stopBroken;
+      if (stopContacts > 0) {
+        invariants.teenSwitchOffContact += stopContacts;
+        invariants.minorContacts += stopContacts;
+      }
+      const worldSnap = (r: Awaited<ReturnType<typeof runFriendsWorldAsync>>) =>
+        JSON.stringify({
+          flows: r.flows.map(f => ({ key: f.key, stage: f.stage, invited: f.invited, booked: f.booked, attended: f.attended, ageRuleBroken: f.ageRuleBroken })),
+          meetups: r.meetups,
+          contacts: r.contacts,
+          outbound: friendsOutboundLog(r),
+        });
+      const stopEqualsRef = worldSnap(teenStopWorld) === worldSnap(refWorld);
+      if (stopContacts === 0 && stopEqualsRef) teenParityCities++;
 
       // Verify real ConsentNetwork with teenStop=true produces 0 minor contacts in every city
       const hTeen = new LiveConsentHarness({
@@ -1875,16 +2021,33 @@ export async function runFiveCitySuite(
           invariants.minorContacts++;
         }
 
-        // Solo venues for minor -> ONLY all-ages, non-bar, alcohol-optional, ageMin <= 13
+        // Multi-person venue pick with a minor is fail-closed when teenFriendAllowed is omitted
+        const failClosedVenues = vm.pickForMatch(
+          { city, memberAreas: [minor.neighborhood, cityAdult.neighborhood], members: [toVenuePrefs(minor), toVenuePrefs(cityAdult)], startMs, mode: "date" },
+          startMs - HOUR
+        ).candidates;
+        if (failClosedVenues.length === 0) failClosedSoloChecks++;
+
+        // Solo single-player venues for minor -> non-empty, all-ages, non-bar, non-alcohol-centric, ageMin <= 13
         const soloVenues = vm.pickForMatch(
           { city, memberAreas: [minor.neighborhood], members: [toVenuePrefs(minor)], startMs, mode: "solo" },
           startMs - HOUR
         ).candidates;
         soloMinorChecks++;
+        if (soloVenues.length > 0) soloVenuesNonEmpty++;
         for (const c of soloVenues) {
-          if (c.venue.isBarOnly || !c.venue.alcoholOptional || (c.venue.ageMin ?? 0) > 13 || !c.venue.public) {
+          if (
+            c.venue.isBarOnly ||
+            c.venue.isAlcoholCentric ||
+            c.venue.allAges !== true ||
+            !c.venue.alcoholOptional ||
+            (c.venue.ageMin ?? 0) > 13 ||
+            !c.venue.public ||
+            (namedBreweries as readonly string[]).includes(c.venue.id)
+          ) {
             invariants.minorBarRecs++;
             invariants.teenPlaceContact++;
+            breweryExcludedOk = false;
           }
         }
       }
@@ -1895,7 +2058,7 @@ export async function runFiveCitySuite(
         from: "Eliza",
         to: `${cityMinors.length} minors`,
         app: "ntwrk",
-        text: `Verified ${cityMinors.length} minors (ages ${cityMinors.map(m => m.age).join(",")}) in ${city.toUpperCase()}: 0 matches, 0 relays, 0 work intros, 0 bar/21+ solo venues, teenStop=on -> 0 contacts.`,
+        text: `Verified ${cityMinors.length} minors (ages ${cityMinors.map(m => m.age).join(",")}) in ${city.toUpperCase()}: 0 matches, 0 relays, 0 work intros, 0 bar/21+/brewery solo venues, teenStop=on -> 0 contacts and pre-feature parity.`,
         tag: `minor_guard_${city}`,
       });
     }
@@ -1917,9 +2080,19 @@ export async function runFiveCitySuite(
         detail: `tested=${minorsTested}, contacts=${invariants.minorContacts}, teenGateSum=${teenGateSum}`,
       },
       {
-        name: "solo single-player suggestions for minors contain 0 bar/21+ venues",
-        pass: soloMinorChecks === 15 && invariants.minorBarRecs === 0,
-        detail: `soloChecks=${soloMinorChecks}, barRecs=${invariants.minorBarRecs}`,
+        name: "solo single-player suggestions for minors are non-empty (fail-closed by default) with 0 bar/21+/brewery venues",
+        pass: soloMinorChecks === 15 && soloVenuesNonEmpty === 15 && failClosedSoloChecks === 15 && invariants.minorBarRecs === 0,
+        detail: `soloChecks=${soloMinorChecks}, nonEmpty=${soloVenuesNonEmpty}, failClosed=${failClosedSoloChecks}, barRecs=${invariants.minorBarRecs}`,
+      },
+      {
+        name: "named breweries (sf-biergarten-hayes, sf-cellarmaker-mission, nyc-threes-brewing) never admitted for minors",
+        pass: breweryExcludedOk,
+        detail: `breweryExcludedOk=${breweryExcludedOk}`,
+      },
+      {
+        name: "5-city teenStop=false vs teenStop=true yields 0 minor contacts when stopped and matches pre-feature reference",
+        pass: teenOnCleanCities === 5 && teenParityCities === 5,
+        detail: `teenOnCleanCities=${teenOnCleanCities}/5, teenParityCities=${teenParityCities}/5`,
       },
     ];
     scenarios.push(
