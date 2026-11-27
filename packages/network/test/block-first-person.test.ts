@@ -1,16 +1,24 @@
-// A first-person block request ("I want to block him") reaches the same block as "block him"
-// (spec/safetyCase.md, "Block or report a person directly"; F23: a block takes effect now).
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { copy } from "../src/copy.ts";
 import { Mini } from "./mini.ts";
 
 const climber = (id: string, name: string) => ({ id, name, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"], skills: ["belaying"], wants: [{ objective: "find a regular climbing partner", category: "hobby" as const }] });
 
 async function bookedPair() {
-  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
   await w.onboard("a", "b");
   const id = w.propose(["a", "b"]);
   await w.answerProbes(["a", "b"]);
+  const opp = () => w.net.exportState().opps.find(o => o.id === id);
+  expect(opp()?.stage).toBe("scheduled");
+  return { w, opp };
+}
+
+async function bookedGroup() {
+  const w = new Mini([climber("m", "Max Reed"), climber("s", "Sam Ortiz"), climber("a", "Ana Diaz"), climber("j", "Jordan Lee")]);
+  await w.onboard("m", "s", "a", "j");
+  const id = w.propose(["m", "s", "a"]);
+  await w.answerProbes(["m", "s", "a"]);
   const opp = () => w.net.exportState().opps.find(o => o.id === id);
   expect(opp()?.stage).toBe("scheduled");
   return { w, opp };
@@ -21,7 +29,6 @@ describe("first-person block requests", () => {
     const { w, opp } = await bookedPair();
     const from = w.mark();
     await w.say("a", "I want to block him");
-    // spec/safetyCase.md, "Block or report a person directly"
     expect(w.net.exportState().blocks).toEqual(["a|b"]);
     expect(opp()?.stage).toBe("closed");
     expect(w.to("a", from).map(s => s.body)).toEqual([copy.blocked]);
@@ -42,6 +49,13 @@ describe("first-person block requests", () => {
     expect(opp()?.stage).toBe("closed");
   });
 
+  test("'I'd like to block Sam' blocks Sam and nobody else", async () => {
+    const { w } = await bookedGroup();
+    await w.say("m", "I'd like to block Sam");
+    expect(w.net.exportState().blocks).toEqual(["m|s"]);
+    expect(w.net.safetyReports()).toEqual([]);
+  });
+
   test("conditional and non-person first-person forms do not block", async () => {
     const { w, opp } = await bookedPair();
     for (const text of ["I want to block him if he texts again", "I want to block out Saturday"]) {
@@ -51,5 +65,29 @@ describe("first-person block requests", () => {
     }
     await w.say("a", "I don't want to block him");
     expect(w.net.exportState().blocks).toEqual([]);
+  });
+
+  test.each([
+    "I want to block Saturday for Sam",
+    "I'd like to block lunch with Sam on Friday",
+    "I need to block an hour with Ana",
+    "I'd like to report some feedback about Sam's plan",
+  ])("a non-person first-person object blocks and reports nobody: %s", async text => {
+    const { w, opp } = await bookedGroup();
+    await w.say("m", text);
+    expect(w.net.exportState().blocks).toEqual([]);
+    expect(w.net.safetyReports()).toEqual([]);
+    expect(opp()?.stage).toBe("scheduled");
+  });
+
+  test.each([
+    "I want to block Jordan, Sam is fine",
+    "I'd like to block Jordan, not Sam",
+  ])("a name in a later clause is not the target: %s", async text => {
+    const { w, opp } = await bookedGroup();
+    await w.say("m", text);
+    expect(w.net.exportState().blocks).toEqual(["j|m"]);
+    expect(w.net.safetyReports()).toEqual([]);
+    expect(opp()?.stage).toBe("scheduled");
   });
 });

@@ -153,6 +153,19 @@ export function sentencesOf(t: string, preserveDecimals = false): { text: string
 
 const POLITE_SAFETY_REQUEST = /^(?:please\s+)?(?:can|could)\s+you\s+(?:please\s+)?(?=(?:block|report)\s)/i;
 const FIRST_PERSON_SAFETY_REQUEST = /^(?:please\s+)?i(?:\s+(?:want|need)|'d like)\s+to\s+(?=(?:block|report)\s)/i;
+const FIRST_PERSON_NON_PERSON_HEAD = /^(?:a|an|the|some|any|all|every|this|that|it|one|two|three|four|five|six|seven|eight|nine|ten|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun|today|tomorrow|tonight|weekend|weekday|lunch|dinner|breakfast|brunch|coffee|hour|hours|minute|minutes|min|mins|second|seconds|day|days|week|weeks|month|months|year|years|time|afternoon|morning|evening|night|noon|midnight|moment|calendar|schedule|agenda|plan|plans|event|events|meeting|meetings|appointment|appointments|session|sessions|class|classes|date|feedback|bug|bugs|issue|issues|problem|problems|complaint|complaints|review|reviews)$/i;
+const FIRST_PERSON_OBJECT_END = /^(?:for|with|on|about|at|in|from|after|before|during|over|to|is|was|are|were|not|but)$/i;
+
+function firstPersonTarget(raw: string): string | undefined {
+  const clause = raw.split(/[,;:!?.]/)[0]!.split(/\s+[-—]\s+/)[0]!;
+  const tokens = clause.trim().replace(/\s+please$/i, "").split(/\s+/).filter(Boolean);
+  const end = tokens.findIndex(token => FIRST_PERSON_OBJECT_END.test(token));
+  const object = end === -1 ? tokens : tokens.slice(0, end);
+  if (!object.length) return undefined;
+  const head = object[0]!.toLowerCase().replace(/'s$/, "").replace(/[^a-z0-9'-]/g, "");
+  if (/^\d/.test(head) || FIRST_PERSON_NON_PERSON_HEAD.test(head)) return undefined;
+  return object.join(" ");
+}
 const COUNTERPART_SAFETY_REQUEST = /^(?:please\s+)?(block|report)\s+(my\s+(?:date|match))\b(?:\s+please)?\s*(?:[.!?]*$|[,;:])/i;
 const SAFETY_REQUEST_CONDITION = /\b(?:if|unless|whenever|suppose|assuming|hypothetically|in case|in the event)\b/i;
 const SAFETY_REQUEST_DELAY = /(?:^[^,;:]*|[,;:]\s*)\b(?:when|after|later|tomorrow|maybe|possibly|perhaps)\b/i;
@@ -207,7 +220,9 @@ export function classify(body: string): Classified {
   if (other !== undefined) out.otherAge = other;
 
   // spec/safetyCase.md, "Direct polite safety requests use the existing counterpart chooser"
-  const polite = POLITE_SAFETY_REQUEST.exec(t) ?? FIRST_PERSON_SAFETY_REQUEST.exec(t);
+  const politeRequest = POLITE_SAFETY_REQUEST.exec(t);
+  const firstPersonRequest = politeRequest ? null : FIRST_PERSON_SAFETY_REQUEST.exec(t);
+  const polite = politeRequest ?? firstPersonRequest;
   const command = polite ? t.slice(polite[0].length) : t;
   const counterpart = COUNTERPART_SAFETY_REQUEST.exec(command);
   const directCommand = !!polite || !!counterpart;
@@ -218,8 +233,15 @@ export function classify(body: string): Classified {
   }
   const safetyText = useNewForm && polite ? command.replace(/\s+please[.!?]*$/i, "") : t;
   const blk = RX.block.exec(safetyText), rep = RX.report.exec(safetyText);
-  if (blk) return { ...out, kind: "block", target: blk[1]!.trim() };
-  if (rep) return { ...out, kind: "report", target: rep[1]!.replace(/[,;:.!?].*$/, "").trim() };
+  if (blk) {
+    const target = firstPersonRequest ? firstPersonTarget(blk[1]!) : blk[1]!.trim();
+    if (target !== undefined) return { ...out, kind: "block", target };
+  }
+  if (rep) {
+    const raw = rep[1]!.replace(/[,;:.!?].*$/, "").trim();
+    const target = firstPersonRequest ? firstPersonTarget(raw) : raw;
+    if (target !== undefined) return { ...out, kind: "report", target };
+  }
   const absence = attendanceAbsences(t);
   const mentionsAbsence = absence.self || absence.other;
   if (RX.cancel.test(t) || (!mentionsAbsence && /\bsomething came up\b/i.test(t))) return { ...out, kind: "cancel" };
