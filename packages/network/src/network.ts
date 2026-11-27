@@ -738,16 +738,21 @@ function declinesAttendanceAlongsideSwap(body: string): boolean {
 
 const PROBE_PLAN_CLAUSE = /^(?:sorry[,]?\s+)?(?:(?:i'?m\s+|i am\s+)?(?:withdrawing|withdraw|withdrew|withdrawn)\s+from\s+(?:this|that|it|the\s+(?:plan|meeting|proposal))|not\s+anymore|not\s+any\s+more|no\s+longer|(?:i'?m|i\s+am)\s+(?:out|done|leaving|not\s+in)|count\s+me\s+out|leave\s+me\s+out|(?:drop|remove|take)\s+me\s+(?:out|off)(?:\s+(?:this|that|it|the\s+(?:plan|meeting|proposal|list)))?|forget\s+it|never\s+mind|i'?ll\s+pass)[.,!]*$/i;
 
+const BARE_REFUSAL_CLAUSE = /^(?:no+|nope|nah|sorry|thanks|thank you|please)[.,!]*$/i;
+
 function declinesProbeAlongsideSwap(body: string): boolean {
   if (declinesAttendanceAlongsideSwap(body)) return true;
   const text = body.toLowerCase().replace(/[‘’ʼ`´]/g, "'").replace(/[“”]/g, '"');
   const boundaries = [...text.matchAll(ATTENDANCE_JOIN)];
+  const clauses: string[] = [];
   let start = 0;
   for (const end of boundaries) {
-    if (!quoteStillOpen(text.slice(0, start)) && PROBE_PLAN_CLAUSE.test(text.slice(start, end.index).trim())) return true;
+    if (!quoteStillOpen(text.slice(0, start))) clauses.push(text.slice(start, end.index).trim());
     start = end.index + end[0].length;
   }
-  return !quoteStillOpen(text.slice(0, start)) && PROBE_PLAN_CLAUSE.test(text.slice(start).trim());
+  if (!quoteStillOpen(text.slice(0, start))) clauses.push(text.slice(start).trim());
+  return clauses.some(clause => clause !== "" && !BARE_REFUSAL_CLAUSE.test(clause) && !withdrawsSwap(clause)
+    && (PROBE_PLAN_CLAUSE.test(clause) || consentOf(clause).answer === "no"));
 }
 
 /** The source text for a booked reply, with independent transfer and attendance evidence. */
