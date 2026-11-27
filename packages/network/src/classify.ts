@@ -857,6 +857,35 @@ export function extractRedLineTags(body: string): string[] {
   return [...tags];
 }
 
+const DRINKING_TAGS: ReadonlySet<string> = new Set(["strict_sober", "non_drinker"]);
+const OWN_DRINKING_CUE = /\b(?:i|i'm|im|i've|ive|my)\b/;
+const DRINKING_BLOCK = /\b(?:if|unless|would|could|should|maybe|might|wish|whether|suppose|hypothetically|thinking|considering|planning|used to|formerly|said|says|told|asked|texted|wrote|posted|friend|friends|sister|brother|mom|dad|mother|father|partner|wife|husband|son|daughter|kid|kids|child|children|roommate|coworker|he|she|they|him|her|them|his|hers|their)\b/;
+const DRINKING_NEGATED_SOBER = /\b(?:not|n't|no longer|never)\s+(?:strictly\s+)?sober\b|\bdrinking again\b|\bfell off\b/;
+const DRINK_NONALCOHOL = /\bdrink(?:s|ing)?\s+(?:much|often|coffee|tea|soda|milk|water|juice)\b|\bdrink\s+enough\b|\bdrink and drive\b/;
+
+/** Drinking tags the sender states about themselves in a member-initiated text. */
+export function ownDrinkingTags(body: string): string[] {
+  const t = normText(body);
+  if (!t.trim()) return [];
+  const tags = new Set<string>();
+  for (const s of sentencesOf(t)) {
+    if (/\?\s*$/.test(s.text.trim())) continue;
+    let ownCueSeen = false;
+    for (const clause of s.text.split(/[,;:]|\b(?:but|though|however)\b/)) {
+      const own = OWN_DRINKING_CUE.test(clause);
+      if (own) ownCueSeen = true;
+      const continuation = ownCueSeen && /^\s*(?:and\s+)?(?:am|stay|keep)\b/.test(clause);
+      if ((!own && !continuation) || DRINKING_BLOCK.test(clause) || DRINKING_NEGATED_SOBER.test(clause)) continue;
+      for (const tag of extractRedLineTags(clause)) {
+        if (!DRINKING_TAGS.has(tag)) continue;
+        if (tag === "non_drinker" && DRINK_NONALCOHOL.test(clause)) continue;
+        tags.add(tag);
+      }
+    }
+  }
+  return [...tags];
+}
+
 export interface Profile {
   interests: string[]; skills: string[]; desireIds: string[];
   /** Canonical venue/dietary/accessibility red-line facet tags extracted from the message. */
