@@ -10,10 +10,11 @@
 // really accepted (a simulator decision record).
 import { gini } from "@thenetwork/core";
 export { gini };
-import { CITY_TZ, classifyYesNo, DAY, earliestDayKeyOf, HOUR, isAppId, isMinor as isMinorAge, latestDayKeyOf, type AgeSide, type AppId, type MemberId, type ParticipationState } from "@thenetwork/core";
+import { CITY_TZ, canBeMatched, classifyYesNo, DAY, earliestDayKeyOf, hash32, HOUR, isAppId, isMinor as isMinorAge, latestDayKeyOf, type AgeSide, type AppId, type MemberId, type ParticipationState } from "@thenetwork/core";
 import { ageOnDay } from "../../../core/src/generated/memberAge.ts";
 import { groupAgeAllowed, teenReady, teenRosterSizeAllowed } from "../../../core/src/generated/friendIntroAge.ts";
 import { teenMeetingFirstMinute, teenMeetingLastMinute } from "../../../core/src/generated/teenIntroSwitch.ts";
+import { ensurePersonaStrata, type Persona } from "../persona.ts";
 import { teenWindowAllowed } from "../teen.ts";
 import { teenFriendApp, teenFriendCategory, teenGenerator } from "../../../core/src/generated/matchLane.ts";
 import { copy } from "../../../network/src/copy.ts";
@@ -38,6 +39,18 @@ export interface MetricsOptions {
   valueThreshold?: number;
   /** Check review-before-contact even if the run logs no review events (fail closed when the network is configured with a review gate). */
   requireReview?: boolean;
+  personas?: readonly Persona[];
+}
+
+export interface QualityBreakdown {
+  statusMismatchRate: number;
+  griftExposureCount: number;
+  stepAheadHitRate: number;
+  crossClassGuildCount: number;
+  groupLeastMiseryMean: number;
+  topDecileOverloadShare: number;
+  bottom40AcceptRate: number;
+  acceptanceByTierQuartile: { q1: number; q2: number; q3: number; q4: number };
 }
 
 export interface Metrics {
@@ -61,6 +74,7 @@ export interface Metrics {
   };
   meetings: { scheduled: number; held: number; slots: number; showRate: number; noShowRate: number; cancelWithNoticeRate: number; flakeRate: number; meanEnjoyment: number };
   fairness: { top10Share: number; gini: number; zeroProposalShare: number };
+  qualityBreakdown: QualityBreakdown;
   privacy: {
     /** Canaries of one member in a message (any delivery status) or explanation for another member. */
     canaryLeaks: number;
@@ -342,7 +356,7 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
   let total = 0, compatible = 0, qualitySum = 0;
   const bySource: Record<string, number> = {};
   const unsafe = { minor: 0, adversarial: 0, cityMismatch: 0, romanceMismatch: 0, exPartners: 0 };
-  const proposalQuality: { participants: MemberId[]; quality: number; compatible: boolean }[] = [];
+  const proposalQuality: { id: string; source: string; participants: MemberId[]; quality: number; minEnjoyment: number; compatible: boolean; flags: string[]; oracleAccept: Record<MemberId, boolean> }[] = [];
   const startedOpps = new Set<string>();
 
   const REVIEW_LOGS = new Set(["review_queued", "review_decision", "review_judgment", "review_exception", "review_stopped", "probe_started"]);
@@ -466,8 +480,13 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
       const p = r.proposal;
       total++; bySource[r.source] = (bySource[r.source] ?? 0) + 1;
       if (r.oracle.compatible) compatible++;
-      qualitySum += r.oracle.quality;
-      proposalQuality.push({ participants: p.participants, quality: r.oracle.quality, compatible: r.oracle.compatible });
+      qualitySum += r.oracle.quality ?? 0;
+      const oAcc: Record<MemberId, boolean> = {};
+      for (const [pid, po] of Object.entries(r.oracle.participants ?? {})) oAcc[pid] = !!po.wouldAccept;
+      proposalQuality.push({
+        id: p.id, source: r.source, participants: p.participants, quality: r.oracle.quality ?? 0,
+        minEnjoyment: r.oracle.minEnjoyment ?? 0, compatible: !!r.oracle.compatible, flags: [...(r.oracle.flags ?? [])], oracleAccept: oAcc,
+      });
       const f = new Set(r.oracle.flags);
       if (f.has("minor_included")) unsafe.minor++;
       if (f.has("adversarial_participant")) unsafe.adversarial++;
@@ -775,6 +794,107 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
   const advByKind: Record<string, number> = {};
   for (const a of attempts) advByKind[a.kind] = (advByKind[a.kind] ?? 0) + 1;
 
+  const nonScenarioProps = proposalQuality.filter(p => p.source !== "scenario");
+  const statusMismatchCount = nonScenarioProps.filter(p => p.flags.includes("status_mismatch")).length;
+  const griftExposureCount = nonScenarioProps.filter(p => p.flags.includes("grift_risk")).length;
+  const mentorProps = nonScenarioProps.filter(p => p.flags.includes("step_ahead_hit") || p.flags.includes("mentorship_gap_fail"));
+  const stepAheadHits = mentorProps.filter(p => p.flags.includes("step_ahead_hit")).length;
+  const crossClassGuildCount = nonScenarioProps.filter(p => p.compatible && p.participants.length >= 3 && p.flags.includes("cross_class_guild")).length;
+  const groupProps = nonScenarioProps.filter(p => p.participants.length >= 3);
+  const groupLeastMiseryMean = r3(safeDiv(groupProps.reduce((s, p) => s + p.minEnjoyment, 0), groupProps.length));
+
+  const configTiers = (start?.config?.memberTiers && typeof start.config.memberTiers === "object")
+    ? (start.config.memberTiers as Record<string, number>) : {};
+  const tierByMember = new Map<MemberId, number>();
+  if (opts.personas?.length) {
+    const seedVal = start?.seed ?? 1;
+    for (const p of opts.personas) {
+      if (canBeMatched(p.hidden.trueAge)) tierByMember.set(p.id, ensurePersonaStrata(p, seedVal).compositeTier);
+    }
+  }
+  for (const id of members) {
+    if (!tierByMember.has(id)) {
+      const ct = configTiers[id];
+      tierByMember.set(id, typeof ct === "number" && Number.isFinite(ct) ? ct : (hash32("tier-fallback", id) % 1000) / 1000);
+    }
+  }
+  const rankedAdults = [...members].sort((a, b) => (tierByMember.get(a)! - tierByMember.get(b)!) || (a < b ? -1 : 1));
+  const M = rankedAdults.length;
+  const topDecileSet = new Set(M ? rankedAdults.slice(Math.max(0, M - Math.max(1, Math.round(M * 0.10)))) : []);
+  const bottom40Set = new Set(M ? rankedAdults.slice(0, Math.max(1, Math.round(M * 0.40))) : []);
+  const quartileOf = new Map<MemberId, "q1" | "q2" | "q3" | "q4">();
+  rankedAdults.forEach((id, idx) => {
+    const frac = M > 1 ? idx / M : 0.5;
+    quartileOf.set(id, frac < 0.25 ? "q1" : frac < 0.50 ? "q2" : frac < 0.75 ? "q3" : "q4");
+  });
+
+  const totalHonestSlots = members.reduce((s, id) => s + (proposalCount.get(id) ?? 0), 0);
+  const topDecileSlots = [...topDecileSet].reduce((s, id) => s + (proposalCount.get(id) ?? 0), 0);
+  const topDecileOverloadShare = r3(safeDiv(topDecileSlots, totalHonestSlots));
+
+  const oppDecisions = new Map<string, Map<MemberId, boolean>>();
+  for (const r of records) {
+    if (r.type !== "decision" || (r.messageType !== "proposal" && r.messageType !== "probe")) continue;
+    const opp = r.proposalId ?? msgOpp.get(r.messageId)?.oppId;
+    if (!opp || r.intent === "ignore" || !reachedNetwork(r)) continue;
+    const yes = r.decision === "accept" || r.decision === "counter" || r.intent === "accept" || r.intent === "probe_yes";
+    const no = r.decision === "decline" || r.intent === "decline" || r.intent === "probe_no";
+    if (!yes && !no) continue;
+    if (!oppDecisions.has(opp)) oppDecisions.set(opp, new Map());
+    oppDecisions.get(opp)!.set(r.memberId, yes);
+  }
+
+  let b40Yes = 0, b40Total = 0;
+  const qStats = { q1: { y: 0, n: 0 }, q2: { y: 0, n: 0 }, q3: { y: 0, n: 0 }, q4: { y: 0, n: 0 } };
+  const allEvalOpps = new Map<string, { participants: MemberId[]; oracleAccept?: Record<MemberId, boolean> }>();
+  for (const [oid, set] of oppRoster) allEvalOpps.set(oid, { participants: [...set] });
+  for (const pq of nonScenarioProps) allEvalOpps.set(pq.id, { participants: pq.participants, oracleAccept: pq.oracleAccept });
+
+  for (const [oid, info] of allEvalOpps) {
+    const decs = oppDecisions.get(oid);
+    const getAccepted = (uid: MemberId): boolean | undefined => {
+      if (decs?.has(uid)) return decs.get(uid);
+      if (info.oracleAccept && uid in info.oracleAccept) return info.oracleAccept[uid];
+      return undefined;
+    };
+    const parts = info.participants;
+    const hasB40 = parts.some(id => bottom40Set.has(id));
+    if (hasB40) {
+      const nonB40 = parts.filter(id => !bottom40Set.has(id));
+      const targets = nonB40.length ? nonB40 : parts;
+      for (const tid of targets) {
+        const a = getAccepted(tid);
+        if (a !== undefined) { b40Total++; if (a) b40Yes++; }
+      }
+    }
+    for (const uid of parts) {
+      const q = quartileOf.get(uid);
+      if (!q) continue;
+      const others = parts.filter(x => x !== uid);
+      const checkIds = others.length ? others : [uid];
+      for (const cid of checkIds) {
+        const a = getAccepted(cid);
+        if (a !== undefined) { qStats[q].n++; if (a) qStats[q].y++; }
+      }
+    }
+  }
+
+  const qualityBreakdown: QualityBreakdown = {
+    statusMismatchRate: r3(safeDiv(statusMismatchCount, nonScenarioProps.length)),
+    griftExposureCount,
+    stepAheadHitRate: r3(safeDiv(stepAheadHits, mentorProps.length)),
+    crossClassGuildCount,
+    groupLeastMiseryMean,
+    topDecileOverloadShare,
+    bottom40AcceptRate: r3(safeDiv(b40Yes, b40Total)),
+    acceptanceByTierQuartile: {
+      q1: r3(safeDiv(qStats.q1.y, qStats.q1.n)),
+      q2: r3(safeDiv(qStats.q2.y, qStats.q2.n)),
+      q3: r3(safeDiv(qStats.q3.y, qStats.q3.n)),
+      q4: r3(safeDiv(qStats.q4.y, qStats.q4.n)),
+    },
+  };
+
   return {
     run: {
       runId: start?.runId ?? "?", seed: start?.seed ?? "?", days: Number(start?.config?.days ?? 0), personas: personas.size,
@@ -800,6 +920,7 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
       cancelWithNoticeRate: r3(safeDiv(notice, slots)), flakeRate: r3(safeDiv(slots - showed - cancelledByNetwork, slots)), meanEnjoyment: r3(safeDiv(enjoySum, enjoyN)),
     },
     fairness: { top10Share: r3(topShare(counts)), gini: r3(gini(counts)), zeroProposalShare: r3(safeDiv(counts.filter(c => c === 0).length, counts.length)) },
+    qualityBreakdown,
     privacy: { canaryLeaks: leaks.length, leaks: leaks.slice(0, 20), selfEcho, logCanaries },
     safety: {
       adversarialAttempts: attempts.length, byKind: advByKind, blocks: records.filter(r => r.type === "block").length,
@@ -830,6 +951,7 @@ export function formatMetrics(m: Metrics): string {
     `  time-to-first-value median=${m.experience.timeToFirstValueDaysMedian ?? "n/a"} days  members with value=${m.experience.membersWithValue}  share with nothing=${pct(m.experience.shareWithNothing)}  opt-outs=${m.experience.optOuts}`,
     `Meetings: scheduled=${m.meetings.scheduled} held=${m.meetings.held} showRate=${pct(m.meetings.showRate)} noShow=${pct(m.meetings.noShowRate)} cancelWithNotice=${pct(m.meetings.cancelWithNoticeRate)} meanEnjoyment=${m.meetings.meanEnjoyment}`,
     `Fairness: top10%share=${pct(m.fairness.top10Share)} gini=${m.fairness.gini} zeroProposals=${pct(m.fairness.zeroProposalShare)}`,
+    `Strata quality: statusMismatch=${pct(m.qualityBreakdown.statusMismatchRate)} griftExposures=${m.qualityBreakdown.griftExposureCount} stepAheadHit=${pct(m.qualityBreakdown.stepAheadHitRate)} crossClassGuilds=${m.qualityBreakdown.crossClassGuildCount} groupLeastMisery=${m.qualityBreakdown.groupLeastMiseryMean} topDecileLoad=${pct(m.qualityBreakdown.topDecileOverloadShare)} bottom40Accept=${pct(m.qualityBreakdown.bottom40AcceptRate)} acceptByQuartile=${kv(m.qualityBreakdown.acceptanceByTierQuartile)}`,
     `Privacy: canaryLeaks=${m.privacy.canaryLeaks}  selfEcho=${m.privacy.selfEcho}  logCanaries=${m.privacy.logCanaries}`,
     `Safety: adversarialAttempts=${m.safety.adversarialAttempts} (${kv(m.safety.byKind)}) blocks=${m.safety.blocks}`,
     `  minorContacts=${m.safety.minorContacts} (must be 0)  undisclosedMinorProposals=${m.safety.undisclosedMinorProposals} (age-lying adversaries)`,

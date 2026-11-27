@@ -1,19 +1,30 @@
-# Venue lifecycle, discovery, and quarantine
+# Venue catalog, red lines, and suggestion pivots
 
-## Story: Recommend only verified open public venues that fit every attendee
+## Story: Recommend only safe, verified public venues within member red lines and pivot bounds
 
-The venue catalog serves five launch cities (`sf`, `nyc`, `la`, `chicago`, `miami`). Local qualified supply stops external venue search once at least 10 candidates qualify (`SUFFICIENCY_THRESHOLD = 10`). Every recommended venue must be public, active, freshly verified open with an opening-hours buffer, within the city's travel limit, within the minimum attendee budget, unvisited and unrejected by every attendee, and safe for dietary, sobriety, safety, capacity, and minor all-ages rules. Any member closure report immediately quarantines the venue out of `active`.
+A member needs every venue suggestion to be a public, verified-open place that obeys every participant's hard red lines, respects walk-in capacity, keeps teen friend venues strictly all-ages, and stops proposing after three rejections.
 
-### Safety rules, teen all-ages policy, and bounds
+### Safety rules and reachability
 
-The generated rules in [city travel](../cityTravel.md) and [venue selection](../venueSelection.md) provide the pure eligibility, sufficiency, open-check, and closure-quarantine decisions. This whole-flow model checks their composition across external discovery, concurrent walk-in bookings, suggestion pivots (capped at 3 per scheduling round), member preference or age changes, the one-staff `teenStop` switch ([teen introduction stop](../teenIntroSwitch.md)), clock advancement past the open-check TTL, post-visit taste feedback, and closure quarantine.
+Check venue discovery sufficiency, live open verification, closure quarantine, hard red lines (`strictSober`, halal/kosher/gluten-free/severe allergens, after-dark and first-meet safety and transit floors), unreserved group size caps, concurrent walk-in capacity, top-1 suggestion pivot bounds (`MAX_SUGGESTION_PIVOTS = 3`), and the `allAges` rule for in-network teen friend rosters ([friend introductions with a minor](../friendIntroAge.md)). The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-Teen venue rules (owner decision 2026-11-22): when any attendee is a minor (`age < 18`), only an active all-ages public venue (`ageMin <= 13`, not bar-only, `alcoholOptional`, not alcohol-centric) with `groupSize <= 6` is eligible (`teenAllAgesPublicVenueOnly`), and no recommendation with a minor occurs while `teenStopped` is true (`teenSwitchOffNoMinor`).
+The [venue selection spec](../venueSelection.md) generates pure venue eligibility, open-freshness, closure transition, and group rubric decisions. The [suggestion flow spec](../suggestionFlow.md) generates pure suggestion pivot bounds, density tiers, activity red-line checks, and mode-specific venue scores. The [friend introductions spec](../friendIntroAge.md) governs `allAges` places (`teenPlaceAllowed`, `teenRosterSizeAllowed`) for in-network teen friendship groups on `friends.help` and the `ntwrk` Friend lane; bars, alcohol-centric venues, and dating remain strictly adult-only.
 
-Bounds: 2 tracked members (`m1`, `m2`), 9 tracked venues (all-ages cafe, all-ages open-event food hall, 21+ brewery, 21+ bar-only spot, low-safety dim venue, 18+ upscale venue, private home, and 2 external candidates), `localQualifiedCount` starting at 8 (`< 10`), and integer hour ticks with a 24-hour open-check TTL.
+See [model index](README.md) for scope and commands.
 
 ```quint
+// -*- mode: Bluespec; -*-
 // quint-check: max-steps=30 max-samples=4000 verify-steps=8
+//
+// Venue catalog, discovery, open verification, red-line eligibility, top-1 suggestion pivot loop,
+// concurrent walk-in capacity, teen all-ages friend venue guard, feedback, and closure quarantine
+// lifecycle (docs/design/2026-11-26-meetup-setup-and-external-matchmaking.md;
+// spec/venueSelection.md, spec/suggestionFlow.md, spec/friendIntroAge.md).
+//
+// Bounds: 2 matched members (m1, m2), 9 tracked venues (including a brewery with alcoholOptional=true,
+// a low-safety/low-transit dim venue, a large open-event food hall, a private home, a bar-only spot,
+// an upscale venue, and 2 external candidates), plus tracked localQualifiedCount starting at 8 (< 10).
+// Time unit: 1 hour; open verification TTL = 24 hours.
 module venue_lifecycle {
 
   // ------------------------------------------------------------------------------------------ constants
@@ -30,6 +41,7 @@ module venue_lifecycle {
   pure val MAX_SUGGESTION_PIVOTS = 3
   pure val UNRESERVED_STD_GROUP_CAP = 6
   pure val OPEN_EVENT_GROUP_CAP = 15
+  pure val TEEN_ROSTER_MAX = 6
   pure val MIN_SAFETY_FLOOR = 7
   pure val MIN_TRANSIT_FLOOR = 3
   pure val FIRST_MEET_MAX_START_HOUR = 21
@@ -39,9 +51,9 @@ module venue_lifecycle {
     inPool: bool,
     status: str,              // active | suspect_closed | closed_temporary | closed_permanent
     verifiedOpenAt: int,      // -1 if never verified, else hour timestamp of last fresh open check
-    openBufferOk: bool,       // open >= 90m (pair) / >= 120m (group) past proposed start
+    openBufferOk: bool,       // open >= 90m (date) / >= 120m (group) past proposed start
     isPublic: bool,
-    ageMin: int,              // 13 (all-ages), 18, or 21
+    allAges: bool,            // spec/friendIntroAge.md allAgesMarkValid: public, <= 13+, not bar/alcohol-centric
     isBarOnly: bool,
     alcoholOptional: bool,
     isAlcoholCentric: bool,   // bars, breweries, wine bars, cocktail lounges, taprooms
@@ -55,7 +67,7 @@ module venue_lifecycle {
     transitScore: int,        // 0..5
     priceTier: int,           // 0..4 ($..$$$$)
     groupSuitable: bool,      // separate checks, no reservation required, conversational
-    openEventEligible: bool,  // large walk-in space eligible up to 15 (adults only)
+    openEventEligible: bool,  // mega food hall / large walk-in space eligible up to 15
     walkInCapacity: int,      // physical walk-in capacity in a 2h window
     concurrentHeadcount: int, // currently booked Network headcount in overlapping 2h window
     travelMin: int,
@@ -66,7 +78,6 @@ module venue_lifecycle {
   }
 
   type Member = {
-    age: int,                 // 16 (teen-ready minor) or 25 (adult)
     visited: Set[str],
     rejected: Set[str],
     isNonDrinker: bool,
@@ -85,10 +96,7 @@ module venue_lifecycle {
   type RecEvent = {
     venue: str,
     isPublic: bool,
-    venueAgeMin: int,
-    hasMinor: bool,
-    minMemberAge: int,
-    teenStoppedAtOffer: bool,
+    allAges: bool,
     status: str,
     verifiedFresh: bool,
     openBufferOk: bool,
@@ -115,6 +123,7 @@ module venue_lifecycle {
     priceTier: int,
     minBudget: int,
     forGroup: bool,
+    isTeenFriendRoster: bool,
     groupSize: int,
     hasReservation: bool,
     openEventEligible: bool,
@@ -130,7 +139,6 @@ module venue_lifecycle {
   var now: int
   var venues: str -> Venue
   var members: str -> Member
-  var teenStopped: bool
   var externalApiCalls: int
   var apiBudget: int
   var localQualifiedCount: int
@@ -149,7 +157,7 @@ module venue_lifecycle {
   pure def mkVenue(
     inPool: bool,
     isPublic: bool,
-    ageMin: int,
+    allAges: bool,
     isBarOnly: bool,
     alcoholOptional: bool,
     isAlcoholCentric: bool,
@@ -171,7 +179,7 @@ module venue_lifecycle {
     verifiedOpenAt: verifiedAt,
     openBufferOk: verifiedAt >= 0,
     isPublic: isPublic,
-    ageMin: ageMin,
+    allAges: allAges,
     isBarOnly: isBarOnly,
     alcoholOptional: alcoholOptional,
     isAlcoholCentric: isAlcoholCentric,
@@ -199,12 +207,6 @@ module venue_lifecycle {
 
   pure def minMemberBudget(ms: str -> Member): int =
     minInt(ms.get("m1").budgetTier, ms.get("m2").budgetTier)
-
-  pure def minMemberAge(ms: str -> Member): int =
-    minInt(ms.get("m1").age, ms.get("m2").age)
-
-  pure def anyMemberMinor(ms: str -> Member): bool =
-    MEMBERS.exists(m => ms.get(m).age < 18)
 
   pure def anyMemberNonDrinker(ms: str -> Member): bool =
     MEMBERS.exists(m => ms.get(m).isNonDrinker or ms.get(m).isStrictSober)
@@ -245,39 +247,31 @@ module venue_lifecycle {
   pure def travelLimitFor(forGroup: bool): int =
     if (forGroup) GROUP_TRAVEL_LIMIT else DATE_TRAVEL_LIMIT
 
-  // Mirrors spec/venueSelection.md venueHardEligible + teen all-ages public venue gate.
+  // Mirrors spec/venueSelection.md venueHardEligible + venueRedLinesEligible
+  // and spec/friendIntroAge.md teenPlaceAllowed + teenRosterSizeAllowed.
   pure def venueEligible(
     vn: Venue,
     vId: str,
     ms: str -> Member,
-    tStopped: bool,
     t: int,
     forGroup: bool,
+    isTeenFriendRoster: bool,
     groupSize: int,
     hasReservation: bool,
     startLocalHour: int,
     isFirstMeet: bool
   ): bool = {
     val isAfterDark = startLocalHour >= 19 or startLocalHour < 7
-    val hasMinor = anyMemberMinor(ms)
     and {
       vn.inPool,
       vn.isPublic,
       vn.status == "active",
       isFreshOpen(vn, t),
-      vn.ageMin <= minMemberAge(ms),
-      hasMinor implies not(tStopped),
-      hasMinor implies (
-        vn.ageMin <= 13 and
-        not(vn.isBarOnly) and
-        vn.alcoholOptional and
-        not(vn.isAlcoholCentric) and
-        groupSize <= UNRESERVED_STD_GROUP_CAP
-      ),
       not(anyMemberVisited(ms, vId)),
       not(anyMemberRejected(ms, vId)),
       anyMemberNonDrinker(ms) implies (not(vn.isBarOnly) and vn.alcoholOptional),
       anyMemberStrictSober(ms) implies (not(vn.isAlcoholCentric) and not(vn.isBarOnly)),
+      isTeenFriendRoster implies (vn.allAges and not(vn.isBarOnly) and not(vn.isAlcoholCentric) and groupSize >= 2 and groupSize <= TEEN_ROSTER_MAX),
       anyMemberHalal(ms) implies vn.halalFriendly,
       anyMemberKosher(ms) implies vn.kosherFriendly,
       anyMemberGlutenFree(ms) implies vn.glutenFreeFriendly,
@@ -302,19 +296,18 @@ module venue_lifecycle {
   action init = all {
     now' = 0,
     venues' = Map(
-      "v_cafe"    -> mkVenue(true,  true,  13, false, true,  false, true,  true,  true,  true,  9, 5, 1, true,  false, 8,  15, 0),
-      "v_hall"    -> mkVenue(true,  true,  13, false, true,  false, true,  true,  true,  true,  8, 4, 2, true,  true,  15, 20, 0),
-      "v_brewery" -> mkVenue(true,  true,  21, false, true,  true,  false, false, true,  true,  8, 4, 2, true,  true,  12, 16, 0),
-      "v_bar"     -> mkVenue(true,  true,  21, true,  false, true,  false, false, false, false, 7, 4, 2, false, false, 4,  15, 0),
-      "v_dim"     -> mkVenue(true,  true,  13, false, true,  false, true,  true,  true,  true,  5, 2, 1, true,  false, 6,  12, 0),
-      "v_upscale" -> mkVenue(true,  true,  18, false, true,  false, true,  false, true,  true,  9, 4, 4, false, false, 4,  18, 0),
-      "v_home"    -> mkVenue(true,  false, 13, false, true,  false, true,  true,  true,  true,  9, 5, 0, true,  false, 10, 10, 0),
-      "v_ext1"    -> mkVenue(false, true,  13, false, true,  false, true,  true,  true,  true,  8, 4, 1, true,  false, 10, 12, -1),
-      "v_ext2"    -> mkVenue(false, true,  13, false, true,  false, true,  true,  true,  true,  8, 4, 2, true,  true,  14, 22, -1),
+      "v_cafe"    -> mkVenue(true,  true,  true,  false, true,  false, true,  true,  true,  true,  9, 5, 1, true,  false, 8,  15, 0),
+      "v_hall"    -> mkVenue(true,  true,  true,  false, true,  false, true,  true,  true,  true,  8, 4, 2, true,  true,  15, 20, 0),
+      "v_brewery" -> mkVenue(true,  true,  false, false, true,  true,  false, false, true,  true,  8, 4, 2, true,  true,  12, 16, 0),
+      "v_bar"     -> mkVenue(true,  true,  false, true,  false, true,  false, false, false, false, 7, 4, 2, false, false, 4,  15, 0),
+      "v_dim"     -> mkVenue(true,  true,  false, false, true,  false, true,  true,  true,  true,  5, 2, 1, true,  false, 6,  12, 0),
+      "v_upscale" -> mkVenue(true,  true,  true,  false, true,  false, true,  false, true,  true,  9, 4, 4, false, false, 4,  18, 0),
+      "v_home"    -> mkVenue(true,  false, false, false, true,  false, true,  true,  true,  true,  9, 5, 0, true,  false, 10, 10, 0),
+      "v_ext1"    -> mkVenue(false, true,  true,  false, true,  false, true,  true,  true,  true,  8, 4, 1, true,  false, 10, 12, -1),
+      "v_ext2"    -> mkVenue(false, true,  true,  false, true,  false, true,  true,  true,  true,  8, 4, 2, true,  true,  14, 22, -1),
     ),
     members' = Map(
       "m1" -> {
-        age: 25,
         visited: Set(), rejected: Set(),
         isNonDrinker: false, isStrictSober: false,
         needsHalal: false, needsKosher: false, needsGlutenFree: false, hasSevereAllergen: false,
@@ -322,7 +315,6 @@ module venue_lifecycle {
         budgetTier: 2,
       },
       "m2" -> {
-        age: 25,
         visited: Set(), rejected: Set(),
         isNonDrinker: false, isStrictSober: false,
         needsHalal: false, needsKosher: false, needsGlutenFree: false, hasSevereAllergen: false,
@@ -330,7 +322,6 @@ module venue_lifecycle {
         budgetTier: 3,
       },
     ),
-    teenStopped' = false,
     externalApiCalls' = 0,
     apiBudget' = INITIAL_API_BUDGET,
     localQualifiedCount' = 8,
@@ -360,7 +351,7 @@ module venue_lifecycle {
       apiBudget' = apiBudget - 1,
       localQualifiedCount' = localQualifiedCount + 2,
       apiCallWhenSufficient' = (apiCallWhenSufficient or localQualifiedCount >= SUFFICIENCY_THRESHOLD),
-      now' = now, members' = members, teenStopped' = teenStopped, recommendedVenue' = recommendedVenue,
+      now' = now, members' = members, recommendedVenue' = recommendedVenue,
       recommendedForGroup' = recommendedForGroup, recommendedGroupSize' = recommendedGroupSize,
       pivotsUsed' = pivotsUsed, roundState' = roundState, roundRejected' = roundRejected,
       recHistory' = recHistory, skippedWhenSufficient' = skippedWhenSufficient,
@@ -371,8 +362,8 @@ module venue_lifecycle {
   action skipExternalSearchWhenSufficient: bool = all {
     localQualifiedCount >= SUFFICIENCY_THRESHOLD,
     skippedWhenSufficient' = true,
-    now' = now, venues' = venues, members' = members, teenStopped' = teenStopped,
-    externalApiCalls' = externalApiCalls, apiBudget' = apiBudget, localQualifiedCount' = localQualifiedCount,
+    now' = now, venues' = venues, members' = members, externalApiCalls' = externalApiCalls,
+    apiBudget' = apiBudget, localQualifiedCount' = localQualifiedCount,
     recommendedVenue' = recommendedVenue, recommendedForGroup' = recommendedForGroup,
     recommendedGroupSize' = recommendedGroupSize, pivotsUsed' = pivotsUsed,
     roundState' = roundState, roundRejected' = roundRejected,
@@ -413,8 +404,7 @@ module venue_lifecycle {
         roundState' = if (clearsRec) "idle" else roundState,
         localQualifiedCount' = if (localQualifiedCount > 0) localQualifiedCount - 1 else 0,
       },
-      now' = now, members' = members, teenStopped' = teenStopped,
-      externalApiCalls' = externalApiCalls, apiBudget' = apiBudget,
+      now' = now, members' = members, externalApiCalls' = externalApiCalls, apiBudget' = apiBudget,
       recommendedForGroup' = recommendedForGroup, pivotsUsed' = pivotsUsed,
       roundRejected' = roundRejected, recHistory' = recHistory,
       apiCallWhenSufficient' = apiCallWhenSufficient, skippedWhenSufficient' = skippedWhenSufficient,
@@ -431,8 +421,7 @@ module venue_lifecycle {
       headcount >= 2,
       vn.concurrentHeadcount + headcount <= vn.walkInCapacity,
       venues' = venues.set(v, { ...vn, concurrentHeadcount: vn.concurrentHeadcount + headcount }),
-      now' = now, members' = members, teenStopped' = teenStopped,
-      externalApiCalls' = externalApiCalls, apiBudget' = apiBudget,
+      now' = now, members' = members, externalApiCalls' = externalApiCalls, apiBudget' = apiBudget,
       localQualifiedCount' = localQualifiedCount, recommendedVenue' = recommendedVenue,
       recommendedForGroup' = recommendedForGroup, recommendedGroupSize' = recommendedGroupSize,
       pivotsUsed' = pivotsUsed, roundState' = roundState, roundRejected' = roundRejected,
@@ -441,10 +430,12 @@ module venue_lifecycle {
     }
   }
 
-  // Recommend Top-1 venue for a pair (groupSize=2), 3-6 group, or adult 6-15 open impromptu event.
+  // Recommend Top-1 venue for a 1:1 date/friend (groupSize=2), 3-6 small group (adult or teen all-ages),
+  // or 6-15 adult open impromptu event.
   action recommendVenue(
     v: str,
     forGroup: bool,
+    isTeenFriendRoster: bool,
     groupSize: int,
     hasReservation: bool,
     startLocalHour: int,
@@ -455,10 +446,7 @@ module venue_lifecycle {
     val ev: RecEvent = {
       venue: v,
       isPublic: vn.isPublic,
-      venueAgeMin: vn.ageMin,
-      hasMinor: anyMemberMinor(members),
-      minMemberAge: minMemberAge(members),
-      teenStoppedAtOffer: teenStopped,
+      allAges: vn.allAges,
       status: vn.status,
       verifiedFresh: vn.verifiedOpenAt >= 0 and now - vn.verifiedOpenAt <= OPEN_CHECK_TTL,
       openBufferOk: vn.openBufferOk,
@@ -485,6 +473,7 @@ module venue_lifecycle {
       priceTier: vn.priceTier,
       minBudget: minMemberBudget(members),
       forGroup: forGroup,
+      isTeenFriendRoster: isTeenFriendRoster,
       groupSize: groupSize,
       hasReservation: hasReservation,
       openEventEligible: vn.openEventEligible,
@@ -501,22 +490,22 @@ module venue_lifecycle {
       roundState == "idle",
       pivotsUsed < MAX_SUGGESTION_PIVOTS,
       not(roundRejected.contains(v)),
-      venueEligible(vn, v, members, teenStopped, now, forGroup, groupSize, hasReservation, startLocalHour, isFirstMeet),
+      venueEligible(vn, v, members, now, forGroup, isTeenFriendRoster, groupSize, hasReservation, startLocalHour, isFirstMeet),
       venues' = venues.set(v, { ...vn, concurrentHeadcount: vn.concurrentHeadcount + groupSize }),
       recommendedVenue' = v,
       recommendedForGroup' = forGroup,
       recommendedGroupSize' = groupSize,
       roundState' = "offered",
       recHistory' = recHistory.union(Set(ev)),
-      now' = now, members' = members, teenStopped' = teenStopped,
-      externalApiCalls' = externalApiCalls, apiBudget' = apiBudget,
-      localQualifiedCount' = localQualifiedCount, pivotsUsed' = pivotsUsed,
-      roundRejected' = roundRejected, apiCallWhenSufficient' = apiCallWhenSufficient,
-      skippedWhenSufficient' = skippedWhenSufficient,
+      now' = now, members' = members, externalApiCalls' = externalApiCalls,
+      apiBudget' = apiBudget, localQualifiedCount' = localQualifiedCount,
+      pivotsUsed' = pivotsUsed, roundRejected' = roundRejected,
+      apiCallWhenSufficient' = apiCallWhenSufficient, skippedWhenSufficient' = skippedWhenSufficient,
     }
   }
 
-  // Member rejects the current Top-1 suggestion: persists rejection, releases capacity, increments pivotsUsed.
+  // Member rejects the current Top-1 suggestion: persists rejection, releases reserved capacity,
+  // increments pivotsUsed; when pivotsUsed hits MAX_SUGGESTION_PIVOTS (3), stops proposing and asks user/pauses.
   action rejectCurrentSuggestion(m: str): bool = {
     val v = recommendedVenue
     val vn = venues.get(v)
@@ -537,7 +526,7 @@ module venue_lifecycle {
       pivotsUsed' = nextPivots,
       roundState' = if (nextPivots >= MAX_SUGGESTION_PIVOTS) "asked_user_or_paused" else "idle",
       roundRejected' = roundRejected.union(Set(v)),
-      now' = now, teenStopped' = teenStopped, externalApiCalls' = externalApiCalls, apiBudget' = apiBudget,
+      now' = now, externalApiCalls' = externalApiCalls, apiBudget' = apiBudget,
       localQualifiedCount' = localQualifiedCount, recommendedForGroup' = recommendedForGroup,
       recHistory' = recHistory, apiCallWhenSufficient' = apiCallWhenSufficient,
       skippedWhenSufficient' = skippedWhenSufficient,
@@ -551,15 +540,15 @@ module venue_lifecycle {
     pivotsUsed' = 0,
     roundState' = "idle",
     roundRejected' = Set(),
-    now' = now, venues' = venues, members' = members, teenStopped' = teenStopped,
-    externalApiCalls' = externalApiCalls, apiBudget' = apiBudget,
-    localQualifiedCount' = localQualifiedCount, recommendedVenue' = recommendedVenue,
-    recommendedForGroup' = recommendedForGroup, recommendedGroupSize' = recommendedGroupSize,
-    recHistory' = recHistory, apiCallWhenSufficient' = apiCallWhenSufficient,
-    skippedWhenSufficient' = skippedWhenSufficient,
+    now' = now, venues' = venues, members' = members, externalApiCalls' = externalApiCalls,
+    apiBudget' = apiBudget, localQualifiedCount' = localQualifiedCount,
+    recommendedVenue' = recommendedVenue, recommendedForGroup' = recommendedForGroup,
+    recommendedGroupSize' = recommendedGroupSize, recHistory' = recHistory,
+    apiCallWhenSufficient' = apiCallWhenSufficient, skippedWhenSufficient' = skippedWhenSufficient,
   }
 
-  // Record a completed visit and post-encounter taste feedback.
+  // Record a completed visit and post-encounter taste feedback (marks visited for both members,
+  // releases concurrent walk-in capacity, resets suggestion round).
   action recordVisitAndFeedback(v: str, liked: bool): bool = {
     val vn = venues.get(v)
     val m1 = members.get("m1")
@@ -584,7 +573,7 @@ module venue_lifecycle {
       pivotsUsed' = 0,
       roundState' = "idle",
       roundRejected' = Set(),
-      now' = now, teenStopped' = teenStopped, externalApiCalls' = externalApiCalls, apiBudget' = apiBudget,
+      now' = now, externalApiCalls' = externalApiCalls, apiBudget' = apiBudget,
       localQualifiedCount' = localQualifiedCount, recommendedForGroup' = recommendedForGroup,
       recHistory' = recHistory, apiCallWhenSufficient' = apiCallWhenSufficient,
       skippedWhenSufficient' = skippedWhenSufficient,
@@ -614,8 +603,7 @@ module venue_lifecycle {
       recommendedGroupSize' = if (clearsRec) 0 else recommendedGroupSize,
       roundState' = if (clearsRec) "idle" else roundState,
       localQualifiedCount' = if (wasActive and localQualifiedCount > 0) localQualifiedCount - 1 else localQualifiedCount,
-      now' = now, members' = members, teenStopped' = teenStopped,
-      externalApiCalls' = externalApiCalls, apiBudget' = apiBudget,
+      now' = now, members' = members, externalApiCalls' = externalApiCalls, apiBudget' = apiBudget,
       recommendedForGroup' = recommendedForGroup, pivotsUsed' = pivotsUsed,
       roundRejected' = roundRejected, recHistory' = recHistory,
       apiCallWhenSufficient' = apiCallWhenSufficient, skippedWhenSufficient' = skippedWhenSufficient,
@@ -640,15 +628,14 @@ module venue_lifecycle {
       recommendedGroupSize' = if (clearsRec) 0 else recommendedGroupSize,
       roundState' = if (clearsRec) "idle" else roundState,
       localQualifiedCount' = if (wasActive and localQualifiedCount > 0) localQualifiedCount - 1 else localQualifiedCount,
-      now' = now, members' = members, teenStopped' = teenStopped,
-      externalApiCalls' = externalApiCalls, apiBudget' = apiBudget,
+      now' = now, members' = members, externalApiCalls' = externalApiCalls, apiBudget' = apiBudget,
       recommendedForGroup' = recommendedForGroup, pivotsUsed' = pivotsUsed,
       roundRejected' = roundRejected, recHistory' = recHistory,
       apiCallWhenSufficient' = apiCallWhenSufficient, skippedWhenSufficient' = skippedWhenSufficient,
     }
   }
 
-  // Confirm temporary closure from provider check.
+  // Confirm temporary closure (e.g., renovation/seasonal) from provider check.
   action confirmClosureTemporary(v: str): bool = {
     val vn = venues.get(v)
     val wasActive = vn.status == "active"
@@ -665,8 +652,7 @@ module venue_lifecycle {
       recommendedGroupSize' = if (clearsRec) 0 else recommendedGroupSize,
       roundState' = if (clearsRec) "idle" else roundState,
       localQualifiedCount' = if (wasActive and localQualifiedCount > 0) localQualifiedCount - 1 else localQualifiedCount,
-      now' = now, members' = members, teenStopped' = teenStopped,
-      externalApiCalls' = externalApiCalls, apiBudget' = apiBudget,
+      now' = now, members' = members, externalApiCalls' = externalApiCalls, apiBudget' = apiBudget,
       recommendedForGroup' = recommendedForGroup, pivotsUsed' = pivotsUsed,
       roundRejected' = roundRejected, recHistory' = recHistory,
       apiCallWhenSufficient' = apiCallWhenSufficient, skippedWhenSufficient' = skippedWhenSufficient,
@@ -691,7 +677,7 @@ module venue_lifecycle {
       recommendedVenue' = if (clearsRec) "" else recommendedVenue,
       recommendedGroupSize' = if (clearsRec) 0 else recommendedGroupSize,
       roundState' = if (clearsRec) "idle" else roundState,
-      now' = now, teenStopped' = teenStopped, externalApiCalls' = externalApiCalls, apiBudget' = apiBudget,
+      now' = now, externalApiCalls' = externalApiCalls, apiBudget' = apiBudget,
       localQualifiedCount' = localQualifiedCount, recommendedForGroup' = recommendedForGroup,
       pivotsUsed' = pivotsUsed, roundRejected' = roundRejected,
       recHistory' = recHistory, apiCallWhenSufficient' = apiCallWhenSufficient,
@@ -699,7 +685,7 @@ module venue_lifecycle {
     }
   }
 
-  // Member updates red-line preferences (alcohol, strict sober, dietary, budget) between recommendations.
+  // Member updates red-line preferences (alcohol, strict sober, halal/kosher/GF/allergen, budget) between recommendations.
   action updateMemberPrefs(
     m: str,
     nonDrinker: bool,
@@ -725,70 +711,13 @@ module venue_lifecycle {
         hasSevereAllergen: severeAllergen,
         budgetTier: tier,
       }),
-      now' = now, venues' = venues, teenStopped' = teenStopped,
-      externalApiCalls' = externalApiCalls, apiBudget' = apiBudget,
+      now' = now, venues' = venues, externalApiCalls' = externalApiCalls, apiBudget' = apiBudget,
       localQualifiedCount' = localQualifiedCount, recommendedVenue' = recommendedVenue,
       recommendedForGroup' = recommendedForGroup, recommendedGroupSize' = recommendedGroupSize,
       pivotsUsed' = pivotsUsed, roundState' = roundState, roundRejected' = roundRejected,
       recHistory' = recHistory, apiCallWhenSufficient' = apiCallWhenSufficient,
       skippedWhenSufficient' = skippedWhenSufficient,
     }
-  }
-
-  // Configure member age between recommendations (16 = teen-ready minor, 25 = adult).
-  action setMemberAge(m: str, ageVal: int): bool = {
-    val mem = members.get(m)
-    all {
-      MEMBERS.contains(m),
-      recommendedVenue == "",
-      ageVal == 16 or ageVal == 25,
-      members' = members.set(m, { ...mem, age: ageVal }),
-      now' = now, venues' = venues, teenStopped' = teenStopped,
-      externalApiCalls' = externalApiCalls, apiBudget' = apiBudget,
-      localQualifiedCount' = localQualifiedCount, recommendedVenue' = recommendedVenue,
-      recommendedForGroup' = recommendedForGroup, recommendedGroupSize' = recommendedGroupSize,
-      pivotsUsed' = pivotsUsed, roundState' = roundState, roundRejected' = roundRejected,
-      recHistory' = recHistory, apiCallWhenSufficient' = apiCallWhenSufficient,
-      skippedWhenSufficient' = skippedWhenSufficient,
-    }
-  }
-
-  // One staff member stops teen introductions across every app (spec/teenIntroSwitch.md),
-  // immediately clearing any active recommendation for a minor roster.
-  action teenStop: bool = {
-    val clearsRec = recommendedVenue != "" and anyMemberMinor(members)
-    val nextVenues = if (clearsRec) {
-      val vn = venues.get(recommendedVenue)
-      val nextConcurrent = if (vn.concurrentHeadcount >= recommendedGroupSize)
-        vn.concurrentHeadcount - recommendedGroupSize
-      else 0
-      venues.set(recommendedVenue, { ...vn, concurrentHeadcount: nextConcurrent })
-    } else venues
-    all {
-      not(teenStopped),
-      teenStopped' = true,
-      venues' = nextVenues,
-      recommendedVenue' = if (clearsRec) "" else recommendedVenue,
-      recommendedGroupSize' = if (clearsRec) 0 else recommendedGroupSize,
-      roundState' = if (clearsRec) "idle" else roundState,
-      now' = now, members' = members, externalApiCalls' = externalApiCalls, apiBudget' = apiBudget,
-      localQualifiedCount' = localQualifiedCount, recommendedForGroup' = recommendedForGroup,
-      pivotsUsed' = pivotsUsed, roundRejected' = roundRejected, recHistory' = recHistory,
-      apiCallWhenSufficient' = apiCallWhenSufficient, skippedWhenSufficient' = skippedWhenSufficient,
-    }
-  }
-
-  // Admin resumes teen introductions.
-  action teenResume: bool = all {
-    teenStopped,
-    teenStopped' = false,
-    now' = now, venues' = venues, members' = members,
-    externalApiCalls' = externalApiCalls, apiBudget' = apiBudget,
-    localQualifiedCount' = localQualifiedCount, recommendedVenue' = recommendedVenue,
-    recommendedForGroup' = recommendedForGroup, recommendedGroupSize' = recommendedGroupSize,
-    pivotsUsed' = pivotsUsed, roundState' = roundState, roundRejected' = roundRejected,
-    recHistory' = recHistory, apiCallWhenSufficient' = apiCallWhenSufficient,
-    skippedWhenSufficient' = skippedWhenSufficient,
   }
 
   // Time advances (hours), causing old open checks to go stale past OPEN_CHECK_TTL and clearing stale reservations.
@@ -809,11 +738,11 @@ module venue_lifecycle {
       recommendedVenue' = if (staleRec) "" else recommendedVenue,
       recommendedGroupSize' = if (staleRec) 0 else recommendedGroupSize,
       roundState' = if (staleRec) "idle" else roundState,
-      members' = members, teenStopped' = teenStopped, externalApiCalls' = externalApiCalls,
-      apiBudget' = apiBudget, localQualifiedCount' = localQualifiedCount,
-      recommendedForGroup' = recommendedForGroup, pivotsUsed' = pivotsUsed,
-      roundRejected' = roundRejected, recHistory' = recHistory,
-      apiCallWhenSufficient' = apiCallWhenSufficient, skippedWhenSufficient' = skippedWhenSufficient,
+      members' = members, externalApiCalls' = externalApiCalls, apiBudget' = apiBudget,
+      localQualifiedCount' = localQualifiedCount, recommendedForGroup' = recommendedForGroup,
+      pivotsUsed' = pivotsUsed, roundRejected' = roundRejected,
+      recHistory' = recHistory, apiCallWhenSufficient' = apiCallWhenSufficient,
+      skippedWhenSufficient' = skippedWhenSufficient,
     }
   }
 
@@ -830,11 +759,12 @@ module venue_lifecycle {
     reserveConcurrentCapacity(v, hc),
     nondet v = VENUES.oneOf()
     nondet grp = Set(false, true).oneOf()
+    nondet teen = Set(false, true).oneOf()
     nondet sz = Set(2, 5, 10, 16).oneOf()
     nondet res = Set(false, true).oneOf()
     nondet hr = Set(14, 19, 22).oneOf()
     nondet fm = Set(true, false).oneOf()
-    recommendVenue(v, grp, sz, res, hr, fm),
+    recommendVenue(v, grp, teen, sz, res, hr, fm),
     all {
       recommendedVenue != "",
       nondet m = MEMBERS.oneOf()
@@ -865,72 +795,47 @@ module venue_lifecycle {
     nondet al = Set(false, true).oneOf()
     nondet tier = Set(1, 2, 3, 4).oneOf()
     updateMemberPrefs(m, nd, ss, hl, ks, gf, al, tier),
-    nondet m = MEMBERS.oneOf()
-    nondet a = Set(16, 25).oneOf()
-    setMemberAge(m, a),
-    teenStop,
-    teenResume,
     nondet dt = Set(6, 25).oneOf()
     advanceClock(dt),
   }
 
   // ------------------------------------------------------------------------------------------ invariants
-  // Only public venues are ever recommended, never homes.
+  // spec/venueSelection.md venueHardEligible: only public venues are ever recommended, never homes.
   val noPrivateHomeRecommended =
     recHistory.forall(e => e.isPublic) and
     (recommendedVenue != "" implies venues.get(recommendedVenue).isPublic)
 
-  // Closed, temporary-closed, or suspect-closed venues are never recommended.
+  // spec/venueSelection.md venueHardEligible: closed, temporary-closed, or suspect-closed venues are never recommended.
   val noClosedOrSuspectVenueRecommended =
     recHistory.forall(e => e.status == "active") and
     (recommendedVenue != "" implies venues.get(recommendedVenue).status == "active")
 
-  // Venues already visited or rejected by either member are never recommended.
+  // spec/venueSelection.md venueHardEligible: venues already visited or rejected by either member are never recommended.
   val noVisitedOrRejectedRecommended =
     recHistory.forall(e => not(e.anyVisited) and not(e.anyRejected)) and
     (recommendedVenue != "" implies (not(anyMemberVisited(members, recommendedVenue)) and not(anyMemberRejected(members, recommendedVenue))))
 
-  // Non-drinker is never sent to a bar-only or non-alcohol-optional venue.
+  // spec/venueSelection.md venueHardEligible: a non-drinker is never sent to a bar-only or non-alcohol-optional venue.
   val nonDrinkerNeverBar =
     recHistory.forall(e => e.anyNonDrinker implies (not(e.isBarOnly) and e.alcoholOptional)) and
     ((recommendedVenue != "" and anyMemberNonDrinker(members)) implies
       (not(venues.get(recommendedVenue).isBarOnly) and venues.get(recommendedVenue).alcoholOptional))
 
-  // Strict sober member is never sent to an alcohol-centric venue even if alcoholOptional is true.
+  // spec/venueSelection.md venueRedLinesEligible (D-1): strict sober member is never sent to an alcohol-centric venue
+  // (bars, breweries, wine bars, cocktail lounges, taprooms) even if alcoholOptional is true.
   val strictSoberNeverAlcoholCentric =
     recHistory.forall(e => e.anyStrictSober implies (not(e.isAlcoholCentric) and not(e.isBarOnly))) and
     ((recommendedVenue != "" and anyMemberStrictSober(members)) implies
       (not(venues.get(recommendedVenue).isAlcoholCentric) and not(venues.get(recommendedVenue).isBarOnly)))
 
-  // Owner decision 2026-11-22: minors only ever get all-ages public venues (ageMin <= 13, non-bar,
-  // alcohol-optional, non-alcohol-centric) with groupSize <= 6; venue ageMin <= minMemberAge always.
-  val teenAllAgesPublicVenueOnly =
+  // spec/friendIntroAge.md teenPlaceAllowed + teenRosterSizeAllowed:
+  // An in-network teen friend roster meets only at an all-ages public non-alcohol-centric venue with <= 6 people.
+  val teenFriendPlaceIsAllAges =
     recHistory.forall(e =>
-      e.venueAgeMin <= e.minMemberAge and
-      (e.hasMinor implies (
-        e.isPublic and
-        e.venueAgeMin <= 13 and
-        not(e.isBarOnly) and
-        e.alcoholOptional and
-        not(e.isAlcoholCentric) and
-        e.groupSize <= UNRESERVED_STD_GROUP_CAP
-      ))
-    ) and
-    ((recommendedVenue != "" and anyMemberMinor(members)) implies (
-      venues.get(recommendedVenue).isPublic and
-      venues.get(recommendedVenue).ageMin <= 13 and
-      not(venues.get(recommendedVenue).isBarOnly) and
-      venues.get(recommendedVenue).alcoholOptional and
-      not(venues.get(recommendedVenue).isAlcoholCentric) and
-      recommendedGroupSize <= UNRESERVED_STD_GROUP_CAP
-    ))
+      e.isTeenFriendRoster implies (e.allAges and e.isPublic and not(e.isBarOnly) and not(e.isAlcoholCentric) and e.groupSize >= 2 and e.groupSize <= TEEN_ROSTER_MAX)
+    )
 
-  // Owner decision 2026-11-22 / teenIntroSwitch: while teenStopped is true, no minor roster gets a recommendation.
-  val teenSwitchOffNoMinor =
-    recHistory.forall(e => e.hasMinor implies not(e.teenStoppedAtOffer)) and
-    ((teenStopped and anyMemberMinor(members)) implies recommendedVenue == "")
-
-  // Halal, kosher, gluten-free, and severe allergen red lines fail closed.
+  // spec/venueSelection.md venueRedLinesEligible (D-2): halal, kosher, gluten-free, and severe allergen red lines fail closed.
   val allergenAndReligiousDietRespected =
     recHistory.forall(e => and {
       e.anyHalal implies e.halalFriendly,
@@ -945,26 +850,27 @@ module venue_lifecycle {
       anyMemberSevereAllergen(members) implies venues.get(recommendedVenue).severeAllergenSafe,
     })
 
-  // After-dark and first-meet safety/transit hard floors + first-meet start cap <= 21:00.
+  // spec/venueSelection.md venueRedLinesEligible (D-3): after-dark and first-meet safety/transit hard floors + first-meet start cap <= 21:00.
   val afterDarkSafetyAndTransitFloor =
     recHistory.forall(e =>
       ((e.isAfterDark or e.isFirstMeet) implies (e.safetyScore >= MIN_SAFETY_FLOOR and e.transitScore >= MIN_TRANSIT_FLOOR)) and
       (e.isFirstMeet implies e.startLocalHour <= FIRST_MEET_MAX_START_HOUR)
     )
 
-  // Unreserved standard groups capped at <= 6; open impromptu events capped at <= 15.
+  // spec/venueSelection.md venueRedLinesEligible (E-2): unreserved standard groups capped at <= 6; open impromptu events capped at <= 15.
   val unreservedGroupSizeCapped =
     recHistory.forall(e =>
       ((not(e.hasReservation) and not(e.openEventEligible)) implies e.groupSize <= UNRESERVED_STD_GROUP_CAP) and
       (e.openEventEligible implies e.groupSize <= OPEN_EVENT_GROUP_CAP)
     )
 
-  // Concurrent Network headcount + new group never exceeds walkInCapacity.
+  // spec/venueSelection.md venueRedLinesEligible (E-2): concurrent Network headcount + new group never exceeds walkInCapacity.
   val venueConcurrentCapacityRespected =
     recHistory.forall(e => e.concurrentBefore + e.groupSize <= e.walkInCapacity) and
     VENUES.forall(v => venues.get(v).concurrentHeadcount >= 0 and venues.get(v).concurrentHeadcount <= venues.get(v).walkInCapacity)
 
-  // Suggestion pivots bounded at MAX_SUGGESTION_PIVOTS = 3 and rejected venues are never re-proposed.
+  // spec/suggestionFlow.md canPivotSuggestion / nextSuggestionAction: pivots bounded at MAX_SUGGESTION_PIVOTS = 3
+  // and rejected venues are never re-proposed.
   val suggestionPivotsBounded =
     pivotsUsed >= 0 and
     pivotsUsed <= MAX_SUGGESTION_PIVOTS and
@@ -972,20 +878,21 @@ module venue_lifecycle {
     (pivotsUsed >= MAX_SUGGESTION_PIVOTS implies (recommendedVenue == "" and roundState == "asked_user_or_paused")) and
     (recommendedVenue != "" implies not(roundRejected.contains(recommendedVenue)))
 
-  // Recommended venue price tier never exceeds the minimum member budget.
+  // spec/venueSelection.md venueHardEligible: recommended venue price tier never exceeds the minimum member budget.
   val budgetCeilingRespected =
     recHistory.forall(e => e.priceTier <= e.minBudget) and
     (recommendedVenue != "" implies venues.get(recommendedVenue).priceTier <= minMemberBudget(members))
 
-  // No external search API call when localQualifiedCount >= 10.
+  // spec/venueSelection.md shouldFetchExternalVenues: no external search API call when localQualifiedCount >= 10.
   val noExternalSearchWhenSufficient =
     not(apiCallWhenSufficient) and apiBudget >= 0 and externalApiCalls <= INITIAL_API_BUDGET
 
-  // Any user closure report immediately quarantines the venue out of active.
+  // spec/venueSelection.md nextVenueStatusOnReport: any user closure report immediately quarantines the venue out of active.
   val closureQuarantinesImmediately =
     VENUES.forall(v => venues.get(v).closureReports > 0 implies venues.get(v).status != "active")
 
-  // Every recommended venue has a fresh verified-open check with buffer, group suitability, and travel bound.
+  // spec/venueSelection.md venueHardEligible: every recommended venue has a fresh verified-open check with buffer,
+  // satisfies group suitability when recommended for a group, and stays within the travel bound.
   val recommendedMustBeVerifiedOpen =
     recHistory.forall(e => e.verifiedFresh and e.openBufferOk and (e.forGroup implies e.groupSuitable) and e.travelMin <= e.travelLimit) and
     (recommendedVenue != "" implies isFreshOpen(venues.get(recommendedVenue), now))
@@ -996,8 +903,7 @@ module venue_lifecycle {
     noVisitedOrRejectedRecommended,
     nonDrinkerNeverBar,
     strictSoberNeverAlcoholCentric,
-    teenAllAgesPublicVenueOnly,
-    teenSwitchOffNoMinor,
+    teenFriendPlaceIsAllAges,
     allergenAndReligiousDietRespected,
     afterDarkSafetyAndTransitFloor,
     unreservedGroupSizeCapped,
@@ -1028,6 +934,10 @@ module venue_lifecycle {
     recHistory.exists(e => e.anyStrictSober and (e.anyHalal or e.anySevereAllergen))
   )
 
+  val witness_teenFriendAllAgesRec = not(
+    recHistory.exists(e => e.isTeenFriendRoster and e.allAges)
+  )
+
   val witness_pivotLimitReached = not(
     pivotsUsed == MAX_SUGGESTION_PIVOTS and roundState == "asked_user_or_paused"
   )
@@ -1036,15 +946,11 @@ module venue_lifecycle {
     recHistory.exists(e => e.openEventEligible and e.groupSize > UNRESERVED_STD_GROUP_CAP and e.groupSize <= OPEN_EVENT_GROUP_CAP)
   )
 
-  val witness_teenAllAgesVenueRecommended = not(
-    recHistory.exists(e => e.hasMinor and e.venueAgeMin <= 13 and not(e.isBarOnly))
-  )
-
   // ------------------------------------------------------------------------------------------ run tests
   run happyRecommendationAndVisitTest =
     init
       .then(verifyVenueOpen("v_cafe", true, true))
-      .then(recommendVenue("v_cafe", false, 2, false, 14, true))
+      .then(recommendVenue("v_cafe", false, false, 2, false, 14, true))
       .expect(recommendedVenue == "v_cafe" and venues.get("v_cafe").concurrentHeadcount == 2 and safety)
       .then(recordVisitAndFeedback("v_cafe", true))
       .expect(
@@ -1075,7 +981,7 @@ module venue_lifecycle {
       .then(verifyVenueOpen("v_cafe", false, false))
       .expect(venues.get("v_cafe").status == "suspect_closed" and safety)
       .then(verifyVenueOpen("v_hall", true, true))
-      .then(recommendVenue("v_hall", true, 5, false, 14, true))
+      .then(recommendVenue("v_hall", true, false, 5, false, 14, true))
       .expect(recommendedVenue == "v_hall" and noClosedOrSuspectVenueRecommended and safety)
 
   run userClosureQuarantineTest =
@@ -1089,13 +995,13 @@ module venue_lifecycle {
   run strictSoberBreweryRejectedTest =
     init
       .then(updateMemberPrefs("m1", true, true, false, false, false, false, 2))
-      .then(recommendVenue("v_brewery", false, 2, false, 14, true))
+      .then(recommendVenue("v_brewery", false, false, 2, false, 14, true))
       .fail()
 
   run strictSoberCafeAllowedTest =
     init
       .then(updateMemberPrefs("m1", true, true, true, true, true, true, 2))
-      .then(recommendVenue("v_cafe", false, 2, false, 14, true))
+      .then(recommendVenue("v_cafe", false, false, 2, false, 14, true))
       .expect(
         recommendedVenue == "v_cafe" and
         strictSoberNeverAlcoholCentric and
@@ -1103,104 +1009,88 @@ module venue_lifecycle {
         safety
       )
 
+  run teenFriendAllAgesCafeAllowedTest =
+    init
+      .then(recommendVenue("v_cafe", true, true, 5, false, 14, true))
+      .expect(recommendedVenue == "v_cafe" and teenFriendPlaceIsAllAges and safety)
+
+  run teenFriendBreweryRejectedTest =
+    init
+      .then(recommendVenue("v_brewery", true, true, 5, false, 14, true))
+      .fail()
+
+  run teenFriendOverSixRejectedTest =
+    init
+      .then(recommendVenue("v_hall", true, true, 10, false, 14, true))
+      .fail()
+
   run halalRedLineRejectedTest =
     init
       .then(updateMemberPrefs("m2", false, false, true, false, false, false, 2))
-      .then(recommendVenue("v_brewery", false, 2, false, 14, true))
+      .then(recommendVenue("v_brewery", false, false, 2, false, 14, true))
       .fail()
 
   run afterDarkLowSafetyRejectedTest =
     init
-      .then(recommendVenue("v_dim", false, 2, false, 19, true))
+      .then(recommendVenue("v_dim", false, false, 2, false, 19, true))
       .fail()
 
   run firstMeetLateHourRejectedTest =
     init
-      .then(recommendVenue("v_cafe", false, 2, false, 22, true))
+      .then(recommendVenue("v_cafe", false, false, 2, false, 22, true))
       .fail()
 
   run unreservedStandardGroupOverCapRejectedTest =
     init
-      .then(recommendVenue("v_cafe", true, 10, false, 14, true))
+      .then(recommendVenue("v_cafe", true, false, 10, false, 14, true))
       .fail()
 
   run openImpromptuEventWithinCapAllowedTest =
     init
-      .then(recommendVenue("v_hall", true, 10, false, 14, true))
+      .then(recommendVenue("v_hall", true, false, 10, false, 14, true))
       .expect(recommendedVenue == "v_hall" and unreservedGroupSizeCapped and safety)
 
   run concurrentCapacityOverflowRejectedTest =
     init
       .then(reserveConcurrentCapacity("v_cafe", 4))
-      .then(recommendVenue("v_cafe", true, 5, false, 14, true))
+      .then(recommendVenue("v_cafe", true, false, 5, false, 14, true))
       .fail()
 
   run suggestionPivotBoundEnforcedTest =
     init
       .then(discoverExternalVenues("v_ext1"))
-      .then(recommendVenue("v_cafe", false, 2, false, 14, true))
+      .then(recommendVenue("v_cafe", false, false, 2, false, 14, true))
       .then(rejectCurrentSuggestion("m1"))
-      .then(recommendVenue("v_hall", false, 2, false, 14, true))
+      .then(recommendVenue("v_hall", false, false, 2, false, 14, true))
       .then(rejectCurrentSuggestion("m1"))
-      .then(recommendVenue("v_brewery", false, 2, false, 14, true))
+      .then(recommendVenue("v_brewery", false, false, 2, false, 14, true))
       .then(rejectCurrentSuggestion("m1"))
       .expect(pivotsUsed == 3 and roundState == "asked_user_or_paused" and suggestionPivotsBounded and safety)
-      .then(recommendVenue("v_ext1", false, 2, false, 14, true))
+      .then(recommendVenue("v_ext1", false, false, 2, false, 14, true))
       .fail()
 
   run privateHomeRejectedTest =
     init
-      .then(recommendVenue("v_home", false, 2, false, 14, true))
+      .then(recommendVenue("v_home", false, false, 2, false, 14, true))
       .fail()
 
   run visitedVenueRejectedTest =
     init
-      .then(recommendVenue("v_cafe", false, 2, false, 14, true))
+      .then(recommendVenue("v_cafe", false, false, 2, false, 14, true))
       .then(recordVisitAndFeedback("v_cafe", true))
-      .then(recommendVenue("v_cafe", false, 2, false, 14, true))
+      .then(recommendVenue("v_cafe", false, false, 2, false, 14, true))
       .fail()
 
   run rejectedVenueExcludedTest =
     init
       .then(recordVenueRejection("m2", "v_hall"))
-      .then(recommendVenue("v_hall", false, 2, false, 14, true))
+      .then(recommendVenue("v_hall", false, false, 2, false, 14, true))
       .fail()
 
   run staleOpenCheckRejectedTest =
     init
       .then(advanceClock(25))
-      .then(recommendVenue("v_cafe", false, 2, false, 14, true))
-      .fail()
-
-  // Teen roster: allowed at all-ages public venue with groupSize <= 6.
-  run teenAllAgesPublicVenueAllowedTest =
-    init
-      .then(setMemberAge("m1", 16))
-      .then(setMemberAge("m2", 16))
-      .then(recommendVenue("v_cafe", true, 5, false, 14, true))
-      .expect(recommendedVenue == "v_cafe" and teenAllAgesPublicVenueOnly and safety)
-
-  // Teen roster: rejected at 21+ brewery/bar and rejected for groupSize > 6.
-  run teenBreweryRejectedTest =
-    init
-      .then(setMemberAge("m1", 16))
-      .then(recommendVenue("v_brewery", false, 2, false, 14, true))
-      .fail()
-
-  run teenOverSixGroupRejectedTest =
-    init
-      .then(setMemberAge("m1", 16))
-      .then(recommendVenue("v_hall", true, 10, false, 14, true))
-      .fail()
-
-  // One-staff teenStop clears an active minor recommendation and blocks new ones.
-  run teenStopBlocksMinorRecommendationTest =
-    init
-      .then(setMemberAge("m1", 16))
-      .then(recommendVenue("v_cafe", false, 2, false, 14, true))
-      .then(teenStop)
-      .expect(recommendedVenue == "" and teenSwitchOffNoMinor and safety)
-      .then(recommendVenue("v_cafe", false, 2, false, 14, true))
+      .then(recommendVenue("v_cafe", false, false, 2, false, 14, true))
       .fail()
 }
 ```

@@ -235,6 +235,12 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
       introducedEdges.push({ from, to, type: "introduced", strength: 0.3, explicit: false, createdAt });
     }
   }
+  const blockedEdgeKeys = new Set<string>();
+  const invitedEdgeKeys = new Set<string>();
+  for (const e of edges as any[]) {
+    if (e.type === "blocked") blockedEdgeKeys.add(`${e.from_id}|${e.to_id}`);
+    else if (e.type === "invited_by") invitedEdgeKeys.add(`${e.from_id}|${e.to_id}`);
+  }
   const snap: WorldSnapshot = {
     now,
     ...(events.length ? { events } : {}),
@@ -255,10 +261,10 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
     presence: matchingPresence.filter(p => keep(p.memberId)),
     edges: [
       ...(edges as any[]).filter(e => CORE_EDGES.has(e.type) && keep(e.from_id) && keep(e.to_id)).map((e): Edge => ({ from: e.from_id, to: e.to_id, type: e.type, strength: e.strength, explicit: e.explicit, createdAt: ms(e.created_at) ?? 0 })),
-      ...(personBlocks as any[]).filter(e => keep(e.from_id) && keep(e.to_id) && !(edges as any[]).some(x => x.type === "blocked" && x.from_id === e.from_id && x.to_id === e.to_id))
+      ...(personBlocks as any[]).filter(e => keep(e.from_id) && keep(e.to_id) && !blockedEdgeKeys.has(`${e.from_id}|${e.to_id}`))
         .map((e): Edge => ({ from: e.from_id, to: e.to_id, type: "blocked", strength: 1, explicit: true, createdAt: ms(e.created_at) ?? 0 })),
       ...(members.filter(r => r.invited_by && keep(r.invited_by) && keep(r.id)
-        && !(edges as any[]).some(x => x.type === "invited_by" && x.from_id === r.invited_by && x.to_id === r.id))
+        && !invitedEdgeKeys.has(`${r.invited_by}|${r.id}`))
         .map((r): Edge => ({ from: r.invited_by!, to: r.id, type: "invited_by", strength: 0.7, explicit: true, createdAt: ms(r.joined_at) ?? 0 }))),
       ...introducedEdges,
       ...teenAvoid.filter(e => keep(e.from_id) && keep(e.to_id))

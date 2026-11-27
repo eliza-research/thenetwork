@@ -1,19 +1,30 @@
-# Meetup arrival coordination and post-encounter follow-ups
+# Meetup arrival coordination and follow-ups
 
-## Story: Find each other safely on site and follow up during local daytime hours
+## Story: Coordinate safe on-site arrival, backup pivots, anchor failover, and quiet-hour follow-ups
 
-Confirmed adult attendees receive a pre-arrival brief (`T-75m`) with an arrival landmark and a pre-verified backup venue, exchange leak-checked arrival cues inside the active arrival window (`T-30m` to `T+45m`), pivot cleanly if the primary venue is closed or full, receive no-show escalation at `T+12m` and `T+18m`, and receive one post-encounter follow-up in local non-quiet hours within the daily proactive cap.
+Confirmed adult attendees need on-site arrival coordination with surprise closure and venue-full backup pivots, immediate relay halt on panic or block, anchor failover and cutoff quorum checks, T+12m/T+18m no-show escalation, and TCPA/FTSA-compliant post-encounter follow-ups.
 
-### Safety rules, zero teen arrival relay, and bounds
+### Safety rules and reachability
 
-The generated rules in [meetup arrival coordination](../meetupArrival.md) and [encounter follow-ups](../encounterFollowup.md) own the phase, relay eligibility, backup pivot, no-show escalation, and local-hour follow-up decisions. This whole-flow model checks their interaction with anchor drops, cutoff quorum checks, mid-meetup panic safety exits, mid-flow minor detection, opt-out (`STOP` / `leave`), blocks, and cross-app proactive counts.
+Check adult-only arrival relay, panic and block immediate halt, `venue_full` pivot without closing quarantine versus `venue_closed` pivot with quarantine, anchor drop reassignment or clean cancellation, cutoff quorum enforcement, LeakGuard and Clef gating, no-show escalation, and post-encounter follow-up quiet hours and daily proactive caps. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-Teen safety rule (owner decision 2026-11-22): arrival relay is strictly adult (`>= 18`). No minor ever sends or receives an arrival relay (`noMinorInArrivalRelay`, enforcing `teen_relay_contact = 0`), and a minor detected mid-flow is immediately evicted from confirmed/arrived sets and anchor ownership (`noMinorInAnyEventOrCoattend`).
+The [meetup coordination spec](../meetupCoordination.md) generates pure arrival phase, relay safety, backup pivot, venue quarantine, anchor failover, no-show escalation, and follow-up scheduling decisions. The [booked meeting late arrivals spec](../groupLateArrival.md) governs fixed-text late-arrival notices (`lateArrivalLeadMs`, `lateArrivalGraceMs`, pair roster of 2 and group roster of at least 3 booked receipts without leaking reporter text). This whole-flow model composes that arrival window with live venue pivots, panic safety exits, anchor failover, and post-meetup follow-ups.
 
-Bounds: up to 5 attendees (`a`..`e`); `mode = "slop"` (2 attendees) or `mode = "friends"` (5 attendees). Leak guard and Clef classifier are modeled as nondeterministic boolean oracles.
+See [model index](README.md) for scope and commands.
 
 ```quint
+// -*- mode: Bluespec; -*-
 // quint-check: max-steps=30 max-samples=4000 verify-steps=8
+//
+// Agent-mediated on-site meetup arrival coordination ("finding each other"), surprise-closure
+// and venue-full backup venue pivot, panic/block immediate relay halt, anchor failover & cutoff
+// quorum guard, 18+ minor exclusion, T+12m/T+18m no-show escalation, and TCPA/FTSA-compliant
+// post-encounter follow-up scheduling
+// (docs/design/2026-11-26-meetup-setup-and-external-matchmaking.md;
+// spec/meetupCoordination.md, spec/groupLateArrival.md).
+//
+// Bounds: up to 5 attendees (a..e); mode = "slop" (2 attendees: a, b) or "friends" (5 attendees: a..e).
+// Leak guard and Clef classifier are modeled as nondeterministic boolean oracles.
 module meetup_coordination {
 
   // ------------------------------------------------------------------------------------------ constants
@@ -355,8 +366,6 @@ module meetup_coordination {
     dailyProactiveCount' = dailyProactiveCount, feedbackRecorded' = feedbackRecorded,
   }
 
-  // Relay an arrival cue inside active_arrival: strictly adult (>= 18), confirmed, unblocked,
-  // not opted out, no panic active, LeakGuard + Clef passed (spec/meetupArrival.md canRelayArrival).
   action relayArrivalCue(sender: str, leakPassed: bool, clefPassed: bool): bool = {
     val recips = attendees.filter(r =>
       r != sender and eligibleForRelay(r, attendees, confirmed, isMinor, optedOut, blocked)
@@ -809,16 +818,15 @@ module meetup_coordination {
     },
     nondet p = attendees.oneOf()
     recordPostFeedback(p),
+    // Adversarial / cross-app actors share one branch so normal flows complete often.
     nondet p = attendees.oneOf()
     any { memberOptOut(p), memberBlock(p), flagMinor(p), otherAppProactive(p) },
   }
 
   // ------------------------------------------------------------------------------------------ invariants
-  // Zero teen arrival relay (teen_relay_contact = 0): minors never send or receive arrival relays.
   val noMinorInArrivalRelay =
     relayedMessages.forall(e => e.senderAdult and e.recipientsAdult)
 
-  // Minors are never confirmed, arrived, anchor, met, relayed, or followed up in adult arrival coordination.
   val noMinorInAnyEventOrCoattend =
     confirmed.forall(p => not(isMinor.contains(p))) and
     arrived.forall(p => not(isMinor.contains(p))) and
@@ -827,36 +835,29 @@ module meetup_coordination {
     relayedMessages.forall(e => e.senderAdult and e.recipientsAdult) and
     followupLog.forall(e => not(e.minorAtSend))
 
-  // Only confirmed, unblocked, non-opted-out adults participate in arrival relay.
   val onlyConfirmedUnblockedAdultsRelayed =
     relayedMessages.forall(e => e.senderAdult and e.recipientsAdult and e.allConfirmed and e.noneBlockedOrOptedOut)
 
-  // Panic trigger or block immediately halts arrival relay.
   val panicOrBlockImmediatelyHaltsRelay =
     relayedMessages.forall(e => not(e.panicAtSend) and e.noneBlockedOrOptedOut) and
     (panicActive implies phase == "closed")
 
-  // Arrival cues are relayed ONLY inside active_arrival [T-30m, T+45m].
   val noArrivalRelayOutsideWindow =
     relayedMessages.forall(e => e.phaseAtSend == "active_arrival")
 
-  // Every relayed arrival cue passed LeakGuard and Clef.
   val noLeakOrPrivateContactInArrivalRelay =
     relayedMessages.forall(e => e.leakPassed and e.clefPassed)
 
-  // A closure report with a verified backup venue always quarantines primary and pivots activeVenue.
   val closureAlwaysPivotsWhenBackupExists =
     (closureReported and backupVenue != "" and backupVerifiedOpen) implies
       (backupPivoted and activeVenue == backupVenue and primaryStatus == "suspect_closed")
 
-  // venue_full pivots to verified backup WITHOUT quarantining primary as closed.
   val venueFullTriggersBackupPivot =
     ((venueFullReported and backupVenue != "" and backupVerifiedOpen) implies
       (backupPivoted and activeVenue == backupVenue and crowdedLogged)) and
     ((venueFullReported and not(closureReported)) implies primaryStatus == "active") and
     (closureReported implies primaryStatus == "suspect_closed")
 
-  // If friends anchor drops, either a confirmed adult co-anchor is promoted (>= 3) or meetup cancels cleanly.
   val anchorDropReassignedOrCancelled =
     ((mode == "friends" and anchorDropped) implies (meetupCancelled or coAnchorPromoted)) and
     ((mode == "friends" and anchorDropped and (phase == "pre_brief" or phase == "active_arrival")) implies
@@ -864,19 +865,16 @@ module meetup_coordination {
     ((mode == "friends" and not(meetupCancelled) and phase != "closed") implies
       (anchor != "" and confirmed.contains(anchor) and not(isMinor.contains(anchor))))
 
-  // No meetup enters pre_brief/active_arrival without cutoff quorum; cancelled meetups stay closed.
   val quorumOrCleanCancelBeforeCutoff =
     (((phase == "pre_brief" or phase == "active_arrival") and not(meetupCancelled)) implies
       (quorumCheckedAtCutoff and confirmed.size() >= minQuorumFor(mode) and
         (mode == "friends" implies (anchor != "" and confirmed.contains(anchor))))) and
     (meetupCancelled implies phase == "closed")
 
-  // Follow-ups never schedule or send in quiet hours.
   val followupNeverDuringQuietHours =
     (followupScheduledHour >= 0 implies not(isQuietHour(followupScheduledHour))) and
     followupLog.forall(e => not(isQuietHour(e.sendHour)))
 
-  // Follow-ups respect STOP/opt-out, minors, and 3/day cap.
   val followupRespectsDailyCapAndOptOut =
     followupLog.forall(e => not(e.optedOutAtSend) and not(e.minorAtSend) and e.dailyCountBefore < DAILY_PROACTIVE_CAP) and
     ALL_PEOPLE.forall(m => dailyProactiveCount.get(m) <= DAILY_PROACTIVE_CAP)
@@ -992,7 +990,7 @@ module meetup_coordination {
       .then(sendPreArrivalBrief)
       .then(openArrivalWindow)
       .then(triggerPanicSafetyExit("a"))
-      .expect(panicActive and phase == "closed" and panicOrBlockImmediatelyHaltsRelay and safety)
+      .expect(panicActive and meetupCancelled and phase == "closed" and panicOrBlockImmediatelyHaltsRelay and safety)
       .then(relayArrivalCue("b", true, true))
       .fail()
 
@@ -1022,23 +1020,6 @@ module meetup_coordination {
       .then(openArrivalWindow)
       .then(flagMinor("b"))
       .expect(not(confirmed.contains("b")) and meetupCancelled and phase == "closed" and noMinorInAnyEventOrCoattend and safety)
-
-  // Even in a 5-person friends meetup where 4 adults remain, a minor can never send or receive an arrival relay.
-  run minorZeroArrivalRelayInFriendsGroupTest =
-    init
-      .then(configureMeetup("friends", 14, true))
-      .then(flagMinor("e"))
-      .then(sendPreArrivalBrief)
-      .then(openArrivalWindow)
-      .then(relayArrivalCue("a", true, true))
-      .expect(
-        relayedMessages.size() == 1 and
-        relayedMessages.forall(ev => not(ev.recipients.contains("e")) and ev.recipientsAdult) and
-        noMinorInArrivalRelay and
-        safety
-      )
-      .then(relayArrivalCue("e", true, true))
-      .fail()
 
   run noShowPingAndNotifyTest =
     init

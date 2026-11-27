@@ -733,69 +733,73 @@ Acceptance:
 
 Spec: [console analysis panels](../consolePanels.md).
 
-## Story F53 — Match and travel fairly across five launch cities
+## Story F53 — [DECIDE] Match across five launch cities, suggest one red-line-safe venue, and pivot cleanly
 
-> As a member in San Francisco, New York, Los Angeles, Chicago, or Miami, I want matching, scheduling, quiet hours, and meeting places to use my city's neighborhoods, transit barriers, and local time zone, so that I never receive an unfair cross-city commute or a nighttime message.
+> As a matched member in San Francisco, New York, Los Angeles, Chicago, or Miami, I want one verified open public venue near a fair midpoint that honors my hard boundaries and lets me swap cleanly without endless back-and-forth.
 
-### One city registry drives travel limits, fair midpoints, and local time
+### One five-city registry enforces barrier-aware midpoints, hard boundaries before ranking, and at most three venue pivots
 
-One shared registry (`packages/core/src/cities.ts`) holds each launch city (`sf`, `nyc`, `la`, `chicago`, `miami`), its IANA time zone (`CITY_TZ`), travel limits, zone barrier penalties, neighborhoods, and seed venues. Matching stays gated per `<app>:<city>` by the `platform.networks` registry row and the admin switch.
-
-Acceptance:
-
-- Signup, profile home-city selection, MCP tools, Postgres (`platform.cities`, `platform.networks`), the matching engine, and the staff console support all five cities without NYC-only branches.
-- Quiet hours, scheduling windows, and post-encounter follow-ups run in each city's local time zone from `Clock` time.
-- Midpoint selection uses discrete neighborhood minimax plus supply weighting, not a raw geographic centroid. Every attendee stays within the city's one-way travel limit (25–35 min for 1-on-1 dates; 35–45 min for groups), with relaxation capped at `+10` minutes in `+5` minute steps.
-- When city barriers (rivers, the 405, Bay Bridge, Miami causeways, Chicago L diagonals) push any attendee past the relaxed cap, the system declines to form an unfair meetup.
-- Adding a sixth city requires only a city spec entry and a database migration, with zero engine or pack rewrites.
-
-Spec: [city travel and fair midpoints](../cityTravel.md). Design: [five-city venues and matching](../../docs/design/2026-11-26-five-city-venues-and-matching.md).
-
-## Story F54 — Choose verified open venues from a growing catalog
-
-> As a member meeting someone in person, I want the agent to pick an open public venue that fits our constraints, budget, and past visits without burning external search calls once my neighborhood has enough local options.
-
-### Every recommended venue is public, freshly verified open, safe for every attendee, and never closed or repeated
+Expand launch venue intelligence across `sf`, `nyc`, `la`, `chicago`, and `miami` in one shared registry (`packages/core/src/cities.ts`) with local IANA time zones (`CITY_TZ`), barrier-aware minimax midpoints (`+5m/+10m` bounded relaxation), and Google Places API (New). Stop external search calls when at least ten qualified local venues exist. Enforce the union of all attendees' hard red lines before ranking. Check three-level alcohol boundaries (`drinks_ok`, `alcohol_optional`, `strict_sober`), severe allergens, religious diets, accessibility, low noise, and after-dark safety floors. Keep private red lines hidden from other attendees. Use strong interest-biased hobby venues for `friends` and classic low-commitment venues for `slop`. Keep all-ages public venue marks aligned with [teen friend introductions](../friendIntroAge.md) for in-network teen friend rosters.
 
 Acceptance:
 
-- Only active public venues (`is_public = true`) are ever eligible. Private homes are refused at the generated rule layer and by database constraints.
-- Hard member exclusions run before ranking: minors (`13`–`17`) on `friends.help` or the `ntwrk` Friend lane receive only all-ages public venues (`ageMin <= 13`, not bar-only, alcohol-optional, not alcohol-centric) while teen introductions are not stopped; non-drinkers never get bar-only venues; strict sober members never get alcohol-centric venues; vegan, vegetarian, halal, kosher, allergen, and wheelchair constraints fail closed; price tier never exceeds the minimum attendee budget; and previously visited or rejected venues are excluded.
-- When at least 10 qualified local venues match the query, the service makes zero external venue search calls. Below 10, it runs selective discovery within budget and obeys provider caching limits (Google `lat`/`lng` expires at 30 days; Yelp responses expire within 24 hours; Google reviews and photos are never persisted).
-- Before proposing a primary or backup venue, the service verifies open status and opening-hour buffer (`>= 90` minutes for pairs, `>= 120` minutes for groups) whenever the last check is older than 24 hours on weekdays or 6 hours on weekends and holidays.
-- Any user closure report immediately quarantines the venue to `suspect_closed` in the same transaction so no other member receives it; two independent user reports or provider confirmation moves it to `closed_permanent`.
+- Present one top-ranked verified open public venue per match rather than a multi-option menu, with opening-hour verification (`24h` weekdays, `6h` weekends/holidays) and `>= 90m` (pair) / `>= 120m` (group) open buffer.
+- Never propose an alcohol-centric venue to a `strict_sober` member or an unverified kitchen to a member with severe allergen or religious-diet red lines.
+- Limit venue swaps to at most three pivots per scheduling round (`MAX_SUGGESTION_PIVOTS = 3`), then ask for a member-chosen public spot or pause.
+- Record rejected venues immediately, update newly revealed red lines, and never tell another attendee who rejected a spot.
+- Quarantine closed venues immediately and enforce overlapping two-hour concurrent walk-in capacity locks.
 
-Spec: [venue selection and quarantine](../venueSelection.md). Model: [venue lifecycle](../models/venue_lifecycle.md).
+Models: [city travel and fair midpoints](../cityTravel.md), [venue selection](../venueSelection.md), [suggestion flow](../suggestionFlow.md), [venue lifecycle](../models/venue_lifecycle.md), [friend introductions with a minor](../friendIntroAge.md).
 
-## Story F55 — Host impromptu group meetups and coordinate arrival on site
+## Story F54 — [DECIDE] Keep meetups on track with arrival pivots, panic halt, and quiet-hour follow-ups
 
-> As a member joining a walk-in group hangout or arriving at a meetup, I want a venue that handles walk-ins cleanly and safe on-site arrival updates with backup venue recovery if the spot is closed or full.
+> As a booked meetup participant, I want safe arrival coordination, instant backup pivots if a venue is closed or full, a private safety exit, and respectful follow-up timing.
 
-### Walk-in groups use a 100-point rubric, and on-site arrival relay stays strictly adult, timed, and leak-checked
+### Arrival coordination stays inside its timed window and halts immediately on panic or block
 
-Acceptance:
-
-- Impromptu group venues (`groupSize >= 3`) require counter ordering or separate checks, no mandatory reservation, sufficient walk-in capacity for concurrent bookings, weather and after-dark safety compliance, and scoring across the 8-dimension 100-point rubric. Teen groups remain capped at 2 to 6 people on all-ages public venues.
-- At `T-75m` (`PreBrief`), confirmed attendees receive one pre-arrival brief with the venue address, arrival landmark, quiet safety exit line, and a pre-verified nearby backup venue. Before `PreBrief`, a `friends` group checks cutoff quorum and promotes a confirmed adult co-anchor if the anchor drops (or cancels cleanly if fewer than 3 remain).
-- Inside `ActiveArrival` (`T-30m` to `T+45m`), confirmed adult (`>= 18`) attendees can exchange self-described arrival cues (`arrived`, `late`, clothing/landmark cue) through `LeakGuard`, `RELAY_RULES`, and Clef (fail-closed in production). Group updates batch every 60 to 90 seconds. Minors (`< 18`) never send or receive arrival relays (`teen_relay_contact = 0`).
-- A surprise `venue_closed` report immediately quarantines the primary venue and broadcasts the verified backup venue; a `venue_full` report pivots to the verified backup venue and logs crowding without marking the primary venue closed.
-- A panic safety exit or block immediately closes the arrival window and halts all relays. If one attendee arrives and a partner is silent, the no-show guard pings the late partner at `T+12m` and updates the waiting attendee at `T+18m`. The relay closes automatically when attendees mark `met` or at `T+45m`.
-
-Spec: [meetup arrival coordination](../meetupArrival.md). Model: [meetup coordination](../models/meetup_coordination.md).
-
-## Story F56 — Follow up after encounters and learn venue taste
-
-> As a member who finished a date or hangout, I want one timely, quiet-hours-safe follow-up that checks how the encounter and the venue went, so future recommendations match my taste without spamming me.
-
-### One local-time follow-up captures match and venue signals within daily caps and quiet hours
+Extend [booked meeting late arrivals](../groupLateArrival.md) with a `T-75m` pre-brief carrying an explicit arrival landmark and a pre-verified nearby backup venue. Open arrival relay from `T-30m` to `T+45m` for confirmed unblocked participants through the leak guard and Clef classifier. Keep teen friend threads strictly on moderated text-only rules. Trigger an immediate backup venue broadcast when a venue is reported closed or full, quarantining the venue only when closed. Check late arrivals at `T+12m` and release waiting participants at `T+18m`. Run a `T-3h` anchor check-in and promote a co-anchor or cancel cleanly if quorum fails.
 
 Acceptance:
 
-- Encounters ending at or before `16:00` local time schedule one follow-up the same day (`endLocalHour + 2`, strictly before `20:00` local). Encounters ending after `16:00` local defer the follow-up to the next morning (`09:00`–`09:30` local in `CITY_TZ`).
-- Proactive follow-ups never send during local quiet hours (`20:30`–`09:00`), never exceed the person-level proactive daily cap (`<= 3` across all apps), send at most one gentle nudge (`remindersSent < 2`), and stop immediately on `STOP` or per-app `leave`.
-- A single combined reply records attendance, interest in seeing the person or group again, venue vibe feedback (updating first-party Bayesian archetype priors in `platform.venues`), and any venue closure report (triggering immediate quarantine).
+- Halt arrival relay immediately on any panic signal, block, `STOP`, or `leave`, and never alert the other party to a safety exit.
+- Keep `venue_full` spots active while logging crowded feedback; mark `venue_closed` spots `suspect_closed` immediately.
+- Send post-encounter follow-ups outside `20:30–09:00` local quiet hours within the three-per-day proactive cap and at most two attempts, updating first-party Bayesian venue priors on feedback.
 
-Spec: [encounter follow-ups](../encounterFollowup.md). Model: [meetup coordination](../models/meetup_coordination.md).
+Models: [meetup coordination](../meetupCoordination.md), [meetup arrival coordination](../meetupArrival.md), [encounter follow-ups](../encounterFollowup.md), [late arrival in a booked meeting](../groupLateArrival.md), [meetup coordination flow](../models/meetup_coordination.md).
+
+## Story F55 — [DECIDE] Spin up density-aware impromptu friend meetups on sanctioned external event platforms
+
+> As an adult member in a sparse interest cluster, I want the Network to organize a walk-in public meetup with screened local guests so I still get a real group hangout.
+
+### External syndication uses sanctioned channels, adult screening, confirmed anchors, and post-event invite gating
+
+Route `friends` groups by local density. Dense zones stay 100% in-network, medium zones run small in-network groups first, and sparse adult zones may host walk-in interest meetups. Allow only sanctioned channels: Luma Plus official API, Meetup Pro official GraphQL API, and a human-assisted Partiful Event Kit. Scrub telecom-filtered terms from Partiful copy. Never scrape guest lists or run unofficial bots. Require at least one confirmed adult Network anchor, review approval, upfront external-crowd disclosure, hidden guest lists, and 18+ approval screening. Never admit a minor into any external syndicated event or external co-attendance.
+
+Acceptance:
+
+- Clamp approved external RSVPs so total confirmed plus approved headcount never exceeds `min(15, venueWalkInCapacity)`.
+- Cancel a single-anchor sparse event cleanly at `T-24h` if fewer than three external RSVPs are approved.
+- Invite an external guest to join The Network at most once, only after completed attendance, positive Network member feedback, and zero safety flags.
+
+Models: [external event bridge](../externalEventBridge.md), [public event catalog](../publicEventCatalog.md), [automated review](../automatedReview.md), [external event bridge flow](../models/external_event_bridge.md).
+
+## Story F56 — [DECIDE] Match sparse adult dating supply through per-city dual-persona matchmakers
+
+> As an opted-in adult dating member in a sparse local pool, I want a real city matchmaker to vet an outside match safely while protecting everyone's privacy and consent.
+
+### Human-operated city personas follow strict disclosure, single-persona locks, bounded caching, and quality-gated invites
+
+Register one female and one male human-operated matchmaker persona per launch city to serve sparse adult `slop` supply and adult `friends` hosting. Enforce an upfront matchmaker bio, review approval before outreach, zero URLs or brand spam on dating platforms, and low daily human caps. Lock each external prospect exclusively to one city persona (`singlePersonaPerProspect`). Trip an automatic kill-switch on any ban or verification signal without burner evasion and without stranding booked SMS dates. Require logged off-app SMS consent on a dedicated channel and never cold-text scraped numbers.
+
+Acceptance:
+
+- Cache only minimal 18+ conversation facets for the five launch cities with hard TTLs (`14d` uncontacted, `60d` explicit `intro_future_optin`).
+- Purge all prospect PII immediately on `STOP`, decline, block, underage disclosure, red flag, or deletion request, keeping only a keyed HMAC suppression tombstone.
+- Never reuse a cached prospect for another member without explicit `intro_future_optin`, review approval, and a 30-day cooldown.
+- Send at most one Network join invite only after a completed meetup with positive or vouched member feedback and zero safety flags.
+- Enforce a schema, RLS, and formal-core firewall so `peon.biz` never reads `slop` appearance ratings or external prospect data.
+
+Models: [external matchmaker](../externalMatchmaker.md), [automated review](../automatedReview.md), [external matchmaker flow](../models/external_matchmaker.md).
 
 ## Story F57 — Deliver non-in-person work introductions on peon.biz
 

@@ -1,14 +1,14 @@
-import type { NoiseLevel, ProviderClosureSignal, VenueStatus } from "./generated/venueSelection.ts";
-import type { MeetupPhase, NoShowAction } from "./generated/meetupArrival.ts";
 import type { WorkIntroChannel } from "./generated/workIntroChannel.ts";
 
-export type { MeetupPhase, NoiseLevel, NoShowAction, ProviderClosureSignal, VenueStatus, WorkIntroChannel };
+export type { WorkIntroChannel };
 
 export type MemberId = string;
 export const LAUNCH_CITIES = ["sf", "nyc", "la", "chicago", "miami"] as const;
 export type City = (typeof LAUNCH_CITIES)[number];
+export type LaunchCity = City;
 export const isCity = (v: unknown): v is City =>
   typeof v === "string" && (LAUNCH_CITIES as readonly string[]).includes(v);
+export const isLaunchCity = isCity;
 export type NetworkCity = City;
 export type ParticipationState = "open" | "normal" | "quiet" | "receiving" | "paused";
 /**
@@ -161,6 +161,10 @@ export interface WorldSnapshot {
   teenIntros?: boolean;
 }
 
+// ---- Five-city registry, curated venues, arrival coordination, follow-ups and work intros ----
+
+export type VenueStatus = "active" | "suspect_closed" | "closed_temporary" | "closed_permanent";
+export type ProviderClosureSignal = "ProviderOpen" | "ProviderTemporaryClosed" | "ProviderPermanentClosed";
 export type VenueCategory =
   | "food_hall"
   | "coffee_shop"
@@ -186,24 +190,20 @@ export type VenueCategory =
   | "community_space"
   | "casual_bistro"
   | "dessert_cafe";
-
+/** 0 = free, 1 = $, 2 = $$, 3 = $$$, 4 = $$$$. */
 export type VenuePriceTier = 0 | 1 | 2 | 3 | 4;
-export type VenueNoiseLevel = NoiseLevel;
-export type VenueFeedbackOutcome =
-  | "great"
-  | "ok"
-  | "too_loud"
-  | "crowded"
-  | "closed"
-  | "bad_vibe"
-  | "too_expensive";
+export type VenueNoiseLevel = "quiet" | "conversational" | "lively" | "loud";
+export type NoiseLevel = VenueNoiseLevel;
+export type VenueFeedbackOutcome = "great" | "ok" | "too_loud" | "crowded" | "closed" | "bad_vibe" | "too_expensive";
 
+/** Structured weekly opening slot. `weekday`: Monday = 0 ... Sunday = 6; minutes from local midnight (closeMin > 1440 = past midnight). */
 export interface VenueHoursSlot {
   weekday: number;
   openMin: number;
   closeMin: number;
 }
 
+/** Beta distribution parameters for per-archetype venue taste learning. */
 export interface VenuePersonaPrior {
   alpha: number;
   beta: number;
@@ -212,16 +212,19 @@ export interface VenuePersonaPrior {
 export interface VenueRecord {
   id: string;
   name: string;
-  city: City;
+  city: LaunchCity;
   neighborhood: string;
   address: string;
   lat: number;
   lng: number;
   category: VenueCategory;
+  /** Public third-party venues only; never private residences. */
   public: true;
   status: VenueStatus;
   priceTier: VenuePriceTier;
-  ageMin: number;
+  ageMin?: number;
+  /** All-ages mark for teenFriendAgeRule compliance (true only for non-bar, non-alcohol-centric places open at <= 13). */
+  allAges?: boolean;
   isBarOnly: boolean;
   alcoholOptional: boolean;
   servesVegetarian: boolean;
@@ -230,7 +233,7 @@ export interface VenueRecord {
   separateChecks: boolean;
   walkInGroupCapacity: number;
   reservationRequired: boolean;
-  noiseLevel: NoiseLevel;
+  noiseLevel: VenueNoiseLevel;
   liveMusicAtNight: boolean;
   indoor: boolean;
   outdoor: boolean;
@@ -265,15 +268,26 @@ export interface VenueFeedbackReport {
   outcome: VenueFeedbackOutcome;
   reportedClosed: boolean;
   providerCode?: ProviderClosureSignal;
+  providerConfirmedStatus?: "operational" | "closed_temporary" | "closed_permanent";
 }
 
 export interface MemberVenuePrefs {
   memberId: MemberId;
   age: number;
   drinksAlcohol: boolean;
+  strictSober?: boolean;
   vegetarian: boolean;
   vegan: boolean;
+  halal?: boolean;
+  kosher?: boolean;
+  glutenFree?: boolean;
+  severeAllergen?: boolean;
   wheelchairNeeded: boolean;
+  lowWalking?: boolean;
+  smokingFriendly?: boolean;
+  smokeFree?: boolean;
+  lowNoiseRequired?: boolean;
+  daytimeOnly?: boolean;
   maxBudgetTier: VenuePriceTier;
   maxTravelMinutes?: number;
   visitedVenueIds: string[];
@@ -281,6 +295,7 @@ export interface MemberVenuePrefs {
   archetype?: string;
   hobbies?: string[];
   cuisinePrefs?: string[];
+  optedIntoActivityDates?: boolean;
 }
 
 export interface VenueCandidateResult {
@@ -303,6 +318,8 @@ export type ArrivalState =
   | "venue_closed"
   | "venue_full"
   | "cannot_find";
+export type MeetupPhase = "before" | "pre_brief" | "active_arrival" | "closed";
+export type NoShowAction = "wait" | "ping_late" | "notify_waiting" | "done";
 
 export interface ArrivalUpdate {
   meetupId: string;
@@ -336,4 +353,47 @@ export interface WorkIntroState {
   videoUrl?: string;
   followupDueAt?: number;
   completedAt?: number;
+}
+
+export interface CityZone {
+  id: string;
+  name: string;
+}
+
+export interface NeighborhoodSpec {
+  name: string;
+  zone: string;
+  lat: number;
+  lng: number;
+  aliases: string[];
+  /** Relative venue hub density (1..10) used as a tie-breaking supply bonus for fair midpoints. */
+  hubSupply: number;
+}
+
+export type CityNeighborhood = NeighborhoodSpec;
+
+export interface CityBarrier {
+  fromZone: string;
+  toZone: string;
+  penaltyMinutes: number;
+  reason: string;
+}
+
+export interface CitySpec {
+  id: LaunchCity;
+  name: string;
+  shortName: string;
+  tz: string;
+  primaryMode: "transit" | "car" | "hybrid";
+  anchorZip: string;
+  aliases: string[];
+  center: { lat: number; lng: number };
+  dateMaxMinutes: number;
+  groupMaxMinutes: number;
+  kmPerMinute: number;
+  baseMinutes: number;
+  zones: CityZone[];
+  neighborhoods: NeighborhoodSpec[];
+  barriers: CityBarrier[];
+  seedVenues: VenueRecord[];
 }

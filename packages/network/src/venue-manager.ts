@@ -185,7 +185,7 @@ export class VenueManager {
       for (const vid of this.rejected.get(id) ?? []) out.add(vid);
     }
     for (const v of this.catalog.values()) {
-      if (v.status !== "Active") out.add(v.id);
+      if (v.status !== "active") out.add(v.id);
     }
     return out;
   }
@@ -202,13 +202,7 @@ export class VenueManager {
       members: request.members.map(m => this.enrichMemberPrefs(m)),
     };
     const pool = this.listVenues(request.city);
-    return pickPrimaryAndBackupVenue(
-      pool,
-      enriched,
-      nowMs,
-      this.apiBudgetRemaining,
-      this.sufficiencyThreshold,
-    );
+    return pickPrimaryAndBackupVenue(pool, enriched, nowMs);
   }
 
   async pickForMatchAsync(request: VenueRankRequest, nowMs: number): Promise<PrimaryBackupVenuePick> {
@@ -216,11 +210,9 @@ export class VenueManager {
 
     if (
       this.provider &&
-      shouldFetchExternalVenues(
-        pick.candidates.length,
-        this.sufficiencyThreshold,
-        this.apiBudgetRemaining,
-      )
+      this.apiBudgetRemaining > 0 &&
+      pick.candidates.length < this.sufficiencyThreshold &&
+      shouldFetchExternalVenues(pick.candidates.length)
     ) {
       const midpoint = chooseFairMidpoint(
         request.city,
@@ -242,9 +234,9 @@ export class VenueManager {
     if (this.provider?.checkOpen) {
       const maxChecks = 3;
       for (let attempt = 0; attempt < maxChecks && pick.primary; attempt++) {
-        const ageMinutes = Math.floor((nowMs - pick.primary.venue.lastVerifiedAt) / MINUTE);
+        const ageHours = Math.floor((nowMs - pick.primary.venue.lastVerifiedAt) / (60 * MINUTE));
         const isWeekend = request.isWeekendOrHoliday ?? false;
-        if (!pick.primary.needsOpenCheck && !needsPreRecommendOpenCheck(ageMinutes, isWeekend)) break;
+        if (!pick.primary.needsOpenCheck && !needsPreRecommendOpenCheck(ageHours, isWeekend)) break;
         this.openCheckCount++;
         const rawStatus = await this.provider.checkOpen(pick.primary.venue, nowMs);
         const providerCode = normalizeProviderCode(rawStatus) ?? "ProviderOpen";
@@ -367,7 +359,7 @@ export class VenueManager {
       lng: partial.lng ?? hood?.lng ?? spec?.center.lng ?? 0,
       category: partial.category ?? "coffee_shop",
       public: true,
-      status: "Active",
+      status: "active",
       priceTier: partial.priceTier ?? 2,
       ageMin: partial.ageMin ?? (isBarOnly ? 21 : 0),
       isBarOnly,
@@ -378,7 +370,7 @@ export class VenueManager {
       separateChecks: partial.separateChecks ?? true,
       walkInGroupCapacity: partial.walkInGroupCapacity ?? 6,
       reservationRequired: partial.reservationRequired ?? false,
-      noiseLevel: partial.noiseLevel ?? "Conversational",
+      noiseLevel: partial.noiseLevel ?? "conversational",
       liveMusicAtNight: partial.liveMusicAtNight ?? false,
       indoor: partial.indoor ?? true,
       outdoor: partial.outdoor ?? false,

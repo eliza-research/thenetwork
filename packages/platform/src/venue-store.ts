@@ -28,31 +28,31 @@ const json = <T>(v: unknown, fallback: T): T => {
 };
 
 const STATUS_TO_DB: Record<VenueStatus, string> = {
-  Active: "active",
-  SuspectClosed: "suspect_closed",
-  ClosedTemporary: "closed_temporary",
-  ClosedPermanent: "closed_permanent",
+  active: "active",
+  suspect_closed: "suspect_closed",
+  closed_temporary: "closed_temporary",
+  closed_permanent: "closed_permanent",
 };
 
 const STATUS_FROM_DB: Record<string, VenueStatus> = {
-  active: "Active",
-  suspect_closed: "SuspectClosed",
-  closed_temporary: "ClosedTemporary",
-  closed_permanent: "ClosedPermanent",
+  active: "active",
+  suspect_closed: "suspect_closed",
+  closed_temporary: "closed_temporary",
+  closed_permanent: "closed_permanent",
 };
 
 const NOISE_TO_DB: Record<NoiseLevel, string> = {
-  Quiet: "quiet",
-  Conversational: "conversational",
-  Lively: "lively",
-  Loud: "loud",
+  quiet: "quiet",
+  conversational: "conversational",
+  lively: "lively",
+  loud: "loud",
 };
 
 const NOISE_FROM_DB: Record<string, NoiseLevel> = {
-  quiet: "Quiet",
-  conversational: "Conversational",
-  lively: "Lively",
-  loud: "Loud",
+  quiet: "quiet",
+  conversational: "conversational",
+  lively: "lively",
+  loud: "loud",
 };
 
 export type PersistedWorkIntroChannel = "warm_email" | "scheduled_video" | "relay_share";
@@ -68,21 +68,21 @@ const WORK_CHANNEL_TO_DB: Record<WorkIntroChannelValue, PersistedWorkIntroChanne
 };
 
 export function venueStatusToDb(status: VenueStatus): string {
-  return STATUS_TO_DB[status];
+  return STATUS_TO_DB[status] ?? "active";
 }
 
 export function venueStatusFromDb(raw: unknown): VenueStatus {
   const key = String(raw ?? "active");
-  return STATUS_FROM_DB[key] ?? "Active";
+  return STATUS_FROM_DB[key] ?? "active";
 }
 
 export function noiseLevelToDb(noise: NoiseLevel): string {
-  return NOISE_TO_DB[noise];
+  return NOISE_TO_DB[noise] ?? "conversational";
 }
 
 export function noiseLevelFromDb(raw: unknown): NoiseLevel {
   const key = String(raw ?? "conversational");
-  return NOISE_FROM_DB[key] ?? "Conversational";
+  return NOISE_FROM_DB[key] ?? "conversational";
 }
 
 export function workIntroChannelToDb(channel: WorkIntroChannelValue): PersistedWorkIntroChannel {
@@ -217,20 +217,20 @@ export interface WorkIntroRecord {
 }
 
 function computeDefaultGroupScore(v: VenueRecord): number {
-  return groupVenueRubricScore(
-    v.separateChecks,
-    v.walkInGroupCapacity,
-    v.noiseLevel,
-    v.liveMusicAtNight,
-    v.alcoholOptional,
-    v.servesVegetarian,
-    v.servesVegan,
-    v.safetyScore ?? 9,
-    v.indoor,
-    v.weatherSensitive,
-    v.arrivalLandmark.trim().length > 0,
-    v.transitScore ?? 4,
-  );
+  return groupVenueRubricScore({
+    separateChecks: v.separateChecks,
+    walkInCapacity: v.walkInGroupCapacity,
+    noiseLevel: v.noiseLevel,
+    liveMusicAtNight: v.liveMusicAtNight,
+    alcoholOptional: v.alcoholOptional,
+    servesVegetarian: v.servesVegetarian,
+    servesVegan: v.servesVegan,
+    safetyScore: v.safetyScore ?? 9,
+    indoor: v.indoor,
+    weatherSensitive: v.weatherSensitive,
+    hasArrivalLandmark: v.arrivalLandmark.trim().length > 0,
+    transitScore: v.transitScore ?? 4,
+  });
 }
 
 function rowToVenue(r: Row): VenueRecord {

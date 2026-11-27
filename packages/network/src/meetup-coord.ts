@@ -1,19 +1,72 @@
 import {
   canBeMatched,
-  evaluateArrivalRelay,
-  evaluateBackupPivot,
-  evaluateMeetupPhase,
-  evaluateNoShow,
   LeakGuard,
+  MINUTE,
   type AppId,
   type ArrivalState,
   type ArrivalUpdate,
   type City,
-  type MeetupPhase,
   type MemberId,
   type Owned,
   type VenueRecord,
 } from "@thenetwork/core";
+import {
+  canRelayArrival,
+  meetupPhase,
+  noShowDecision,
+  shouldPivotToBackup,
+  type MeetupPhase,
+  type NoShowAction,
+} from "../../core/src/generated/meetupArrival.ts";
+
+function evaluateMeetupPhase(nowMs: number, startMs: number, allMet = false): MeetupPhase {
+  return meetupPhase(Math.floor((nowMs - startMs) / MINUTE), allMet);
+}
+
+function evaluateArrivalRelay(input: {
+  senderAge: number;
+  recipientAge: number;
+  senderConfirmed: boolean;
+  recipientConfirmed: boolean;
+  blocked: boolean;
+  optedOut: boolean;
+  phase: MeetupPhase;
+  senderMet: boolean;
+  leakClean: boolean;
+  safetyClean: boolean;
+}): boolean {
+  return canRelayArrival(
+    input.senderAge,
+    input.recipientAge,
+    input.senderConfirmed,
+    input.recipientConfirmed,
+    input.blocked,
+    input.optedOut,
+    input.phase,
+    input.senderMet,
+    input.leakClean,
+    input.safetyClean,
+  );
+}
+
+function evaluateNoShow(input: {
+  nowMs: number;
+  arrivedAtMs: number;
+  partnerCheckedIn: boolean;
+  pingedLate: boolean;
+  notifiedWaiting: boolean;
+}): NoShowAction {
+  return noShowDecision(
+    Math.floor((input.nowMs - input.arrivedAtMs) / MINUTE),
+    input.partnerCheckedIn,
+    input.pingedLate,
+    input.notifiedWaiting,
+  );
+}
+
+function evaluateBackupPivot(closureReported: boolean, hasVerifiedBackup: boolean, alreadyPivoted: boolean): boolean {
+  return shouldPivotToBackup(closureReported, hasVerifiedBackup, alreadyPivoted);
+}
 import { RELAY_RULES } from "../../engine/src/relay.ts";
 import { appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
 import { whenPhrase } from "./copy.ts";

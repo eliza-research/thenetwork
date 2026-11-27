@@ -20,7 +20,7 @@
 //   Harms              romance seeker: unwanted advance on one attendee; MLM: sales pitch to everyone;
 //                      harasser: one attendee harassed; bot: a fake account in the group thread; a lying
 //                      minor in contact with adults. Victims report with p by kind -> hold + block.
-import type { MemberId } from "@thenetwork/core";
+import { canBeMatched, type MemberId } from "@thenetwork/core";
 import { activityById } from "@thenetwork/engine/src/packs/network/activities.ts";
 import { hood, hoodForCity, transitMinutes, transitMinutesInCity } from "@thenetwork/engine/src/packs/friends/index.ts";
 import { h01 } from "../../coins.ts";
@@ -33,6 +33,7 @@ export const ORACLE_PARAMS = {
   /** Hall (2018): casual friend, friend, close friend. */
   hall: { casual: 50, friend: 90, close: 200 },
   backout: 0.04, travelNoise: 0.15,
+  strataEffects: false,
 };
 export type OracleParams = typeof ORACLE_PARAMS;
 
@@ -86,9 +87,15 @@ export class FriendsOracle {
   chem(a: MemberId, b: MemberId): number { const [x, y] = a < b ? [a, b] : [b, a]; return this.P.chemSd * this.n("chem", x, y); }
   /** Similarity: shared loves, life stage, age closeness. */
   sim(a: MemberId, b: MemberId): number {
-    const A = this.p(a).hidden, B = this.p(b).hidden;
+    const pa = this.p(a), pb = this.p(b);
+    const A = pa.hidden, B = pb.hidden;
     const shared = A.loves.filter(x => B.loves.includes(x)).length;
-    return 0.12 * Math.min(2, shared) + (A.lifeStage === B.lifeStage ? 0.1 : 0) - 0.012 * Math.min(25, Math.abs(A.trueAge - B.trueAge));
+    const adultPair = this.P.strataEffects && canBeMatched(pa.stated.claimedAge) && canBeMatched(pb.stated.claimedAge)
+      && !A.isMinor && !B.isMinor && !A.poser && !B.poser && !A.planted && !B.planted;
+    const humor = adultPair && !A.adversary && !B.adversary && A.humorRegister && B.humorRegister
+      ? (A.humorRegister === B.humorRegister ? 0.02 : -0.005)
+      : 0;
+    return 0.12 * Math.min(2, shared) + (A.lifeStage === B.lifeStage ? 0.1 : 0) - 0.012 * Math.min(25, Math.abs(A.trueAge - B.trueAge)) + humor;
   }
   travel(id: MemberId, hoodId: string): number {
     const p = this.p(id);
@@ -179,11 +186,21 @@ export class FriendsOracle {
     for (const a of ids.filter(id => this.p(id).hidden.poser))
       for (const v of ids.filter(id => this.p(id).hidden.isMinor))
         harms.push({ kind: "poser_contact", offender: a, victim: v, reported: this.u("report", key, a, v, "poser_contact") < REPORT_P.poser_contact });
+    const adultTable = this.P.strataEffects && ids.every(x => {
+      const px = this.p(x);
+      return canBeMatched(px.stated.claimedAge) && !px.hidden.isMinor && !px.hidden.poser && !px.hidden.planted;
+    });
+    const paidVenue = ["restaurant_dinner", "wine_bar", "comedy_show", "climbing_gym"].includes(activity);
     for (const i of ids) {
       const h = this.p(i).hidden;
       const others = ids.filter(j => j !== i);
-      let pair = 0, b = 0;
-      for (const j of others) { pair += chem(i, j) + this.sim(i, j) + 0.4 * this.p(j).hidden.likability; b += Math.min(1, bond(i, j) / 10); }
+      let pair = 0, b = 0, maxOtherExtract = 0;
+      for (const j of others) {
+        const hj = this.p(j).hidden;
+        pair += chem(i, j) + this.sim(i, j) + 0.4 * hj.likability;
+        b += Math.min(1, bond(i, j) / 10);
+        maxOtherExtract = Math.max(maxOtherExtract, hj.extractionPropensity ?? 0);
+      }
       pair /= Math.max(1, others.length); b /= Math.max(1, others.length);
       const t = this.travel(i, venueHood);
       const travel = P.wTravel * (h.travelCost * (t / 30) + Math.max(0, t - h.tolerance) / h.tolerance);
@@ -191,7 +208,11 @@ export class FriendsOracle {
       if (h.groupPref === "one_to_one" && n > 3) size += 0.3 * (1 - h.energy);
       if (h.groupPref === "group" && n === 2) size += 0.2;
       size += 0.06 * Math.max(0, n - 4) * (1 - h.energy);
-      const L = P.c0 + P.wA * ((h.likes[activity] ?? 0.3) - 0.5) + pair + h.warmth + balance + P.wF * b - travel - size + P.sideSd * (draw === undefined ? this.n("side", key, i) : this.n("mc-side", draw, i))
+      const spendTerm = adultTable && !advs.length && h.spendComfortTier === "free"
+        ? (paidVenue ? -0.10 : 0.06)
+        : adultTable && !advs.length && h.spendComfortTier === "low" && !paidVenue ? 0.03 : 0;
+      const extractTerm = adultTable && maxOtherExtract >= 0.65 && (h.extractionPropensity ?? 0) < 0.45 ? -0.18 : 0;
+      const L = P.c0 + P.wA * ((h.likes[activity] ?? 0.3) - 0.5) + pair + h.warmth + balance + P.wF * b - travel - size + spendTerm + extractTerm + P.sideSd * (draw === undefined ? this.n("side", key, i) : this.n("mc-side", draw, i))
         + (act && act.durationMin >= 180 && h.energy < 0.3 ? -0.1 : 0);
       enjoy[i] = sig(L) * (hit.get(i) ?? 1);
     }
@@ -200,8 +221,9 @@ export class FriendsOracle {
       seeAgain[i] = [];
       for (const j of ids) {
         if (i === j) continue;
-        const adv = this.p(j).hidden.adversary ? -2.5 : 0;
-        const x = P.kE * (enjoy[i]! - 0.55) + P.kC * chem(i, j) + 1.5 * this.sim(i, j) + 0.5 * this.p(j).hidden.likability + 0.8 * Math.min(1, bond(i, j) / 10) + P.seeAgainBias + adv;
+        const hj = this.p(j).hidden;
+        const adv = hj.adversary ? -2.5 : adultTable && (hj.extractionPropensity ?? 0) >= 0.65 ? -0.6 : 0;
+        const x = P.kE * (enjoy[i]! - 0.55) + P.kC * chem(i, j) + 1.5 * this.sim(i, j) + 0.5 * hj.likability + 0.8 * Math.min(1, bond(i, j) / 10) + P.seeAgainBias + adv;
         if (this.u("see", key, i, j) < sig(x)) seeAgain[i]!.push(j);
       }
     }

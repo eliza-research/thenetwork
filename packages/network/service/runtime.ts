@@ -1748,7 +1748,8 @@ export class NetworkRuntime {
       const membership = stepContext(account, { type: "checkMembership", exactMember: binding?.membership.memberId === memberId });
       if (membership.phase !== "CheckingMember" || !binding) return null;
       const snapshot = this.snap!;
-      const member = snapshot.members.find(m => m.id === memberId);
+      const leakIdx = this.turnLeakIndex(snapshot);
+      const member = leakIdx.memberById.get(memberId as MemberId);
       if (!member) return null;
       const [canonical] = await this.scoped(tx => tx`select participation_state,participation_window,opted_out from network.members where app_id=${this.app.id} and id=${memberId}`);
       if (!canonical) return null;
@@ -1760,20 +1761,17 @@ export class NetworkRuntime {
       const memberContext = stepContext(membership, { type: "checkMember", memberAndModeExist: state !== null });
       if (memberContext.phase !== "CheckingLabels" || state === null) return null;
       const firstName = member.name.trim().split(/\s+/)[0] ?? "";
-      const ids = [e164, binding.person.id, ...snapshot.facets.map(f => f.id), ...snapshot.members.map(m => m.id)];
-      const forbidden = [...ids, ...snapshot.members.flatMap(m => {
-        const first = m.name.trim().split(/\s+/)[0] ?? "";
-        // A shared first name is also the caller's own public name. Keep other full names private.
-        const otherName = m.name.trim().toLowerCase() !== firstName.toLowerCase() ? [m.name] : [];
-        return m.id === memberId ? [] : [...otherName, ...(first.toLowerCase() !== firstName.toLowerCase() ? [first] : [])];
-      })];
-      const facts = [...snapshot.facets.filter(f => f.scope === "agent_private").map(f => f.value),...(participation.window?.note?[participation.window.note]:[])];
-      const safe = (text: string) => outputLeaks(text, {forbidden, facts, contacts: true}).length === 0;
+      const turnFacts = participation.window?.note ? [participation.window.note] : [];
+      const turnBaseSafe = (text: string) =>
+        outputLeaks(text, { forbidden: [e164, binding.person.id], facts: turnFacts, contacts: true }).length === 0
+        && leakIdx.snapshotIdAndFactGuard.check(text).length === 0;
+      const safe = (text: string) => turnBaseSafe(text) && !leakIdx.otherNamesLeak(text, memberId as MemberId, firstName);
       // spec/sharedContext.md, "Check the public labels and each confirmed shareable fact"
-      const labels = stepContext(memberContext, { type: "checkLabels", labelsSafe: outputLeaks(firstName, { forbidden: ids, facts, contacts: true }).length === 0 });
+      const labels = stepContext(memberContext, { type: "checkLabels", labelsSafe: turnBaseSafe(firstName) });
       if (labels.phase !== "CheckingFacets") return null;
       const newest = (f: { observedAt?: number; validFrom?: number }) => f.observedAt ?? f.validFrom ?? 0;
-      const facets = snapshot.facets.filter(f => contextFacetEligible(f.memberId === memberId, f.scope === "shareable", f.confirmedByMember === true,
+      const candidateFacets = leakIdx.shareableConfirmedByMember.get(memberId as MemberId) ?? [];
+      const facets = candidateFacets.filter(f => contextFacetEligible(f.memberId === memberId, f.scope === "shareable", f.confirmedByMember === true,
         !!f.sensitive, (f.validFrom === undefined || f.validFrom <= snapshot.now) && (f.validTo === undefined || f.validTo > snapshot.now)) && safe(f.value))
         .filter(f => f.value.length <= contextFacetSizeLimit)
         .sort((a, b) => newest(b) - newest(a) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
@@ -1794,7 +1792,7 @@ export class NetworkRuntime {
         const label = contextItemLabel(sameName.length, sameName.filter(x => x.day === day).length);
         if (label === "ItemLabelLeftOut") return [];
         const summary = label === "ItemLabelName" ? `Match with ${otherFirstName}` : `Match with ${otherFirstName} (${day})`;
-        const itemSafe = (text: string) => outputLeaks(text, { forbidden: forbidden.filter(x => x.toLowerCase() !== otherFirstName.toLowerCase()), facts, contacts: true }).length === 0;
+        const itemSafe = (text: string) => turnBaseSafe(text) && !leakIdx.otherNamesLeak(text, memberId as MemberId, firstName, otherFirstName);
         return contextMatchItemShown(true, this.net.teenItemListed(match.id, ageEligible), !!otherFirstName && itemSafe(summary) && itemSafe(match.id)) ? [{ id: match.id, kind: "match", summary }] : [];
       });
       const activeItems = shown.slice(0, contextActiveItemCount(shown.length));
@@ -1803,6 +1801,95 @@ export class NetworkRuntime {
         activeItems: activeItems.length ? activeItems : null, singlePlayer: contextSinglePlayer(matchingOpen, matchingOpen && !minor && ageEligible),
       };
     });
+  }
+
+  private cachedLeakSig = "";
+  private cachedLeakIdx?: {
+    memberById: Map<MemberId, WorldSnapshot["members"][number]>;
+    shareableConfirmedByMember: Map<MemberId, WorldSnapshot["facets"]>;
+    snapshotIdAndFactGuard: LeakGuard;
+    otherNamesLeak: (text: string, callerId: MemberId, callerFirstName: string, allowedOtherFirstName?: string) => boolean;
+  };
+
+  private turnLeakIndex(snapshot: WorldSnapshot) {
+    let h1 = 0x811c9dc5, h2 = 0x811c9dc5;
+    const mix = (s: string) => {
+      for (let i = 0; i < s.length; i++) {
+        const c = s.charCodeAt(i);
+        h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+        h2 = Math.imul(h2 ^ (c + i), 0x85ebca6b) >>> 0;
+      }
+    };
+    for (let i = 0; i < snapshot.members.length; i++) {
+      const m = snapshot.members[i]!;
+      mix(m.id); mix("|"); mix(m.name); mix("\n");
+    }
+    for (let i = 0; i < snapshot.facets.length; i++) {
+      const f = snapshot.facets[i]!;
+      mix(f.id); mix("|"); mix(f.scope);
+      if (f.scope === "agent_private" || (f.scope === "shareable" && f.confirmedByMember === true && !f.sensitive)) {
+        mix("|"); mix(f.value);
+        mix("|"); mix(String(f.validFrom ?? "")); mix("|"); mix(String(f.validTo ?? ""));
+      }
+      mix("\n");
+    }
+    const sig = `${snapshot.members.length}:${snapshot.facets.length}:${h1.toString(16)}:${h2.toString(16)}`;
+    if (this.cachedLeakIdx && this.cachedLeakSig === sig) return this.cachedLeakIdx;
+
+    const memberById = new Map<MemberId, WorldSnapshot["members"][number]>();
+    const allIds: string[] = [];
+    const allNamesSet = new Set<string>();
+    for (let i = 0; i < snapshot.members.length; i++) {
+      const m = snapshot.members[i]!;
+      memberById.set(m.id, m);
+      allIds.push(m.id);
+      const trimmed = m.name.trim();
+      if (trimmed) allNamesSet.add(trimmed);
+      const first = trimmed.split(/\s+/)[0] ?? "";
+      if (first) allNamesSet.add(first);
+    }
+    const privateFacts: string[] = [];
+    const shareableConfirmedByMember = new Map<MemberId, WorldSnapshot["facets"]>();
+    for (let i = 0; i < snapshot.facets.length; i++) {
+      const f = snapshot.facets[i]!;
+      allIds.push(f.id);
+      if (f.scope === "agent_private" && f.value) privateFacts.push(f.value);
+      if (f.scope === "shareable" && f.confirmedByMember === true && !f.sensitive) {
+        let arr = shareableConfirmedByMember.get(f.memberId);
+        if (!arr) { arr = []; shareableConfirmedByMember.set(f.memberId, arr); }
+        arr.push(f);
+      }
+    }
+    const snapshotIdAndFactGuard = new LeakGuard({ exact: allIds, facts: privateFacts, contacts: false });
+    const allNamesGuard = new LeakGuard({ exact: [...allNamesSet], contacts: false });
+    const perCallerNameGuards = new Map<string, LeakGuard>();
+
+    const otherNamesLeak = (text: string, callerId: MemberId, callerFirstName: string, allowedOtherFirstName = ""): boolean => {
+      if (allNamesGuard.check(text).length === 0) return false;
+      const firstLower = callerFirstName.toLowerCase();
+      const allowLower = allowedOtherFirstName.toLowerCase();
+      const cacheKey = `${callerId}|${firstLower}|${allowLower}`;
+      let callerGuard = perCallerNameGuards.get(cacheKey);
+      if (!callerGuard) {
+        const otherNames: string[] = [];
+        for (let i = 0; i < snapshot.members.length; i++) {
+          const m = snapshot.members[i]!;
+          if (m.id === callerId) continue;
+          const trimmed = m.name.trim();
+          const first = trimmed.split(/\s+/)[0] ?? "";
+          if (trimmed && trimmed.toLowerCase() !== firstLower && trimmed.toLowerCase() !== allowLower) otherNames.push(trimmed);
+          if (first && first.toLowerCase() !== firstLower && first.toLowerCase() !== allowLower) otherNames.push(first);
+        }
+        callerGuard = new LeakGuard({ exact: otherNames, contacts: false });
+        if (perCallerNameGuards.size > 256) perCallerNameGuards.clear();
+        perCallerNameGuards.set(cacheKey, callerGuard);
+      }
+      return callerGuard.check(text).length > 0;
+    };
+
+    this.cachedLeakSig = sig;
+    this.cachedLeakIdx = { memberById, shareableConfirmedByMember, snapshotIdAndFactGuard, otherNamesLeak };
+    return this.cachedLeakIdx;
   }
 
   /** Health for the heartbeat alert (PRD 35.2): last tick, lock holder, backlog, refusals. Reads the stored state; changes nothing. */

@@ -174,7 +174,7 @@ export class YelpFusionProvider implements VenueExternalProvider {
         lng,
         category: cat.category,
         public: true,
-        status: "Active",
+        status: "active",
         priceTier: mapYelpPrice(b.price),
         ageMin: cat.ageMin,
         isBarOnly: cat.isBarOnly,
@@ -185,7 +185,7 @@ export class YelpFusionProvider implements VenueExternalProvider {
         separateChecks: true,
         walkInGroupCapacity: cat.category === "food_hall" || cat.category === "brewery" || cat.category === "park" ? 10 : 6,
         reservationRequired: false,
-        noiseLevel: "Conversational",
+        noiseLevel: "conversational",
         liveMusicAtNight: false,
         indoor: cat.category !== "park",
         outdoor: cat.category === "park",
@@ -359,7 +359,7 @@ export class GooglePlacesProvider implements VenueExternalProvider {
         lng: Number(p.location?.longitude ?? query.lng),
         category: cat.category,
         public: true,
-        status: "Active",
+        status: "active",
         priceTier: mapGooglePrice(p.priceLevel),
         ageMin: cat.ageMin,
         isBarOnly: cat.isBarOnly,
@@ -370,7 +370,7 @@ export class GooglePlacesProvider implements VenueExternalProvider {
         separateChecks: true,
         walkInGroupCapacity: cat.category === "park" ? 12 : 6,
         reservationRequired: false,
-        noiseLevel: "Conversational",
+        noiseLevel: "conversational",
         liveMusicAtNight: false,
         indoor: cat.category !== "park",
         outdoor: Boolean(p.outdoorSeating) || cat.category === "park",
@@ -563,12 +563,12 @@ export class CompositeVenueProvider {
   }
 
   async findAndRankVenues(request: VenueRankRequest, nowMs = this.nowFn()): Promise<VenueDiscoveryResult> {
-    const localVenues = await listVenues(this.pool, { city: request.city, status: "Active" });
+    const localVenues = await listVenues(this.pool, { city: request.city, status: "active" });
     const localCandidates = rankVenuesForMatch(localVenues, request, nowMs);
     const localQualifiedBeforeFetch = localCandidates.length;
     const budgetRemaining = Math.max(0, this.maxExternalSearchCalls - this.externalSearchCallsUsed);
 
-    if (!shouldFetchExternalVenues(localQualifiedBeforeFetch, this.sufficiencyThreshold, budgetRemaining)) {
+    if (budgetRemaining <= 0 || localQualifiedBeforeFetch >= this.sufficiencyThreshold || !shouldFetchExternalVenues(localQualifiedBeforeFetch)) {
       return {
         candidates: localCandidates,
         localQualifiedBeforeFetch,
@@ -647,7 +647,7 @@ export class CompositeVenueProvider {
       expiresAt: nowMs + this.cacheTtlMs,
     });
 
-    const refreshedVenues = await listVenues(this.pool, { city: request.city, status: "Active" });
+    const refreshedVenues = await listVenues(this.pool, { city: request.city, status: "active" });
     const candidates = rankVenuesForMatch(refreshedVenues, request, nowMs);
     return {
       candidates,
@@ -667,9 +667,9 @@ export class CompositeVenueProvider {
     const tz = getCity(venue.city)?.tz ?? CITY_TZ[venue.city] ?? "America/New_York";
     const refMs = opts.startMs ?? nowMs;
     const isWeekendOrHoliday = opts.isWeekendOrHoliday ?? (localParts(refMs, tz).weekday >= 5);
-    const ageMinutes = Math.floor((nowMs - venue.lastVerifiedAt) / MINUTE);
+    const ageHours = Math.floor((nowMs - venue.lastVerifiedAt) / (60 * MINUTE));
 
-    if (!needsPreRecommendOpenCheck(ageMinutes, isWeekendOrHoliday)) {
+    if (!needsPreRecommendOpenCheck(ageHours, isWeekendOrHoliday)) {
       return { ok: true, venue, verifiedViaProvider: false };
     }
 
@@ -684,7 +684,7 @@ export class CompositeVenueProvider {
 
       if (check.status === "closed_permanent" || check.status === "closed_temporary") {
         const providerCode = check.status === "closed_permanent" ? "ProviderPermanentClosed" : "ProviderTemporaryClosed";
-        const fallbackStatus = check.status === "closed_permanent" ? "ClosedPermanent" : "ClosedTemporary";
+        const fallbackStatus = check.status === "closed_permanent" ? "closed_permanent" : "closed_temporary";
         const updated = await applyVenueFeedbackPg(
           this.pool,
           opts.appId ?? "ntwrk",

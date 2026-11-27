@@ -36,6 +36,14 @@ const cityOfRoster = (w: World, ids: readonly MemberId[]) => {
 const positiveAbout = (ctx: GenCtx, from: MemberId, about: MemberId, opp: string) =>
   ctx.w.feedback.some(f => f.from === from && f.about === about && f.opportunityId === opp && f.wouldMeetAgain === true);
 
+function positiveSeeIndex(w: World): ReadonlySet<string> {
+  const index = new Set<string>();
+  for (const f of w.feedback) {
+    if (f.wouldMeetAgain === true) index.add(`${f.from}|${f.about}|${f.opportunityId ?? ""}`);
+  }
+  return index;
+}
+
 const byStanding = (a: MatchProfile, b: MatchProfile): number => a.standing - b.standing || a.ordinal - b.ordinal;
 
 /**
@@ -80,10 +88,11 @@ export function sameTableAgain(ctx: GenCtx): Candidate[] {
   const { w } = ctx;
   const out: Candidate[] = [];
   const seen = new Set<string>();
+  const seeAgain = positiveSeeIndex(w);
   const recent = w.interactions.filter(r => r.outcome === "completed" && w.now - r.at < 21 * DAY && r.participants.length >= 2)
     .sort((a, b) => (b.at - a.at) || (a.id < b.id ? -1 : 1));
   for (const r of recent) {
-    const mutual = (a: MemberId, b: MemberId) => positiveAbout(ctx, a, b, r.id) && positiveAbout(ctx, b, a, r.id);
+    const mutual = (a: MemberId, b: MemberId) => seeAgain.has(`${a}|${b}|${r.id}`) && seeAgain.has(`${b}|${a}|${r.id}`);
     // Attendees with a mutual "see again" with at least one other attendee.
     const ids = r.participants.filter(a => r.participants.some(b => b !== a && mutual(a, b)));
     const startsAsGroup = ids.length >= 3;

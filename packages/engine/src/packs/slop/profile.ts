@@ -78,6 +78,24 @@ export function slopProfiles(input: EngineInput, canonical?: MemberIdResolver): 
   return profiles;
 }
 
+function indexTagsByPrefix(tags: readonly string[]): (prefix: string) => readonly string[] {
+  const byPrefix = new Map<string, string[]>();
+  const add = (prefix: string, rest: string) => {
+    let list = byPrefix.get(prefix);
+    if (!list) { list = []; byPrefix.set(prefix, list); }
+    list.push(rest);
+  };
+  for (const t of tags) {
+    const first = t.indexOf(":");
+    if (first < 0) continue;
+    const second = t.indexOf(":", first + 1);
+    if (second >= 0) add(t.slice(0, second + 1), t.slice(second + 1));
+    add(t.slice(0, first + 1), t);
+  }
+  const empty: readonly string[] = [];
+  return prefix => byPrefix.get(prefix) ?? empty;
+}
+
 function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<MemberId, SlopProfile> {
   const now = input.now;
   const facetsBy = new Map<MemberId, Facet[]>();
@@ -85,9 +103,9 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
     if (f.validTo !== undefined && f.validTo < now) continue;
     if (f.validFrom !== undefined && f.validFrom > now) continue;
     const id = C(f.memberId);
-    const l = facetsBy.get(id) ?? [];
+    let l = facetsBy.get(id);
+    if (!l) { l = []; facetsBy.set(id, l); }
     l.push(f);
-    facetsBy.set(id, l);
   }
   const visitsByMember = new Map<MemberId, Set<City>>();
   const visitAt = now + 2 * DAY;
@@ -119,19 +137,34 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
     silent.set(id, l.sort());
   }
   const out = new Map<MemberId, SlopProfile>();
-  for (const m of [...input.members].sort((a, b) => (a.id < b.id ? -1 : 1))) {
+  const sortedMembers = [...input.members].sort((a, b) => (a.id < b.id ? -1 : 1));
+  for (const m of sortedMembers) {
     const fs = (facetsBy.get(m.id) ?? []).slice().sort((a, b) => (a.id < b.id ? -1 : 1));
-    const appearanceFacets = fs.filter(f => f.tags.some(t => t.startsWith(APPEARANCE_PREFIX)));
-    const tags = fs.flatMap(f => f.tags.filter(t => !NEVER_USED.test(t)).map(t => ({ t, f })));
-    const ageVerified = tags.some(x => x.t === "verify:age:pass") ? true : tags.some(x => x.t === "verify:age:fail") ? false : undefined;
-    const appearance = canRatePhotos({ age: m.age, ageVerified: tags.some(x => x.t === "verify:age:fail") ? false : undefined })
+    const appearanceFacets: Facet[] = [];
+    const cleanTags: string[] = [];
+    let verifyPass = false, verifyFail = false, reviewConfirmed = false, reviewCleared = false;
+    for (const f of fs) {
+      let hasApp = false;
+      for (const t of f.tags) {
+        if (t.startsWith(APPEARANCE_PREFIX)) hasApp = true;
+        if (NEVER_USED.test(t)) continue;
+        cleanTags.push(t);
+        if (t === "verify:age:pass") verifyPass = true;
+        else if (t === "verify:age:fail") verifyFail = true;
+        else if (t === "review:confirmed") reviewConfirmed = true;
+        else if (t === "review:cleared") reviewCleared = true;
+      }
+      if (hasApp) appearanceFacets.push(f);
+    }
+    const ageVerified = verifyPass ? true : verifyFail ? false : undefined;
+    const appearance = canRatePhotos({ age: m.age, ageVerified: verifyFail ? false : undefined })
       ? parseAppearance(appearanceFacets.flatMap(f => f.tags)) : undefined;
     const appearanceSources = new Map<string, string>();
     if (appearance) for (const facet of appearanceFacets) for (const tag of facet.tags) {
       const key = /^appearance:(face|body|overall|conf|photos|spread)=/.exec(tag)?.[1];
       if (key && (key !== "photos" || appearance.photos !== undefined) && (key !== "spread" || appearance.spread !== undefined)) appearanceSources.set(key, facet.id);
     }
-    const has = (prefix: string) => tags.filter(x => x.t.startsWith(prefix)).map(x => x.t.slice(prefix.length));
+    const has = indexTagsByPrefix(cleanTags);
     const one = (prefix: string) => has(prefix)[0];
     const zips = has("slop:zip:");
     const zip = zips.find(isKnownZip) ?? zips[0];
@@ -146,14 +179,23 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
     const ri = one("slop:religion_importance:");
     const num = (t: string) => Number(t.slice(t.indexOf("=") + 1));
     const wants = has("slop:wants:"), self = has("slop:self:");
+    const freeSet = new Set(has("slop:free:"));
     const interestFacets = fs.filter(f => f.kind === "interest" && f.tags[0] && f.tags[0].trim().length > 0 && !NEVER_USED.test(f.tags[0]));
     const interestFacet = new Map<string, string>();
     for (const f of interestFacets) if (f.scope === "shareable") interestFacet.set(f.tags[0]!, f.id);
     const visiting = [...(visitsByMember.get(m.id) ?? [])].filter(city => city !== m.homeCity).sort();
+    const trans = one("romance:trans:"), openTrans = one("romance:open_trans:"), isRaw = one("romance:is:");
+    const datingFacts: DatingFacts = {
+      is: isRaw !== undefined && isGender(isRaw) ? isRaw : undefined,
+      seeks: [...new Set(has("romance:seeks:"))].filter(isGender).sort(),
+      trans: trans !== undefined && isTransStatus(trans) ? trans : undefined,
+      transOpenness: openTrans !== undefined && isTransOpenness(openTrans) ? openTrans : undefined,
+      shownTo: [...new Set(has("romance:shown_to:"))].filter((g): g is Gender => g === "woman" || g === "man").sort(),
+    };
     out.set(m.id, {
       id: m.id, age: m.age, adult: canBeMatched(m.age), optedIn: m.prefs.romanceOptIn && m.prefs.categoriesOptIn.includes("romance"), paused: m.state === "paused",
       zip: zip && isKnownZip(zip) ? normalizeZip(zip) : zip, homeMarket: m.homeCity, cell, zipUnknown: !!zip && !cell,
-      ...datingFactsOf(tags.map(x => x.t)),
+      ...datingFacts,
       ageRange: age ? (age.split("-").map(Number) as [number, number]) : undefined,
       scope, maxMiles: mm !== undefined ? Number(mm) : undefined,
       goal: one("slop:goal:") as Goal | undefined,
@@ -165,17 +207,17 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
       interests: [...new Set(interestFacets.map(f => f.tags[0]!))].sort(),
       shareableInterests: [...new Set(interestFacets.filter(f => f.scope === "shareable").map(f => f.tags[0]!))].sort(),
       activities: [...new Set(has("slop:activity:"))].sort(),
-      free: SLOTS.filter(s => has("slop:free:").includes(s)),
+      free: SLOTS.filter(s => freeSet.has(s)),
       wants: wants.length === 5 ? wants.map(num) : undefined,
       wantsBody: [...new Set(has("slop:wants_body:"))].sort(),
       self: self.length === 5 ? self.map(num) : undefined,
       identity: one("slop:identity:"), orientation: one("slop:orientation:"),
-      safety: [...new Set(tags.filter(x => x.t.startsWith("safety:")).map(x => x.t))].sort(),
-      verification: [...new Set(tags.filter(x => x.t.startsWith("verify:")).map(x => x.t))].sort(),
+      safety: [...new Set(has("safety:"))].sort(),
+      verification: [...new Set(has("verify:"))].sort(),
       ageVerified,
       appearance, appearanceEvidenceIds: [...new Set(appearanceSources.values())],
       visiting, interestFacet, silentAsks: silent.get(m.id) ?? [], openAsks: open.get(m.id) ?? [], askCounts: counts.get(m.id) ?? {},
-      review: tags.some(x => x.t === "review:confirmed") ? "confirmed" : tags.some(x => x.t === "review:cleared") ? "cleared" : undefined,
+      review: reviewConfirmed ? "confirmed" : reviewCleared ? "cleared" : undefined,
       history: hist.get(m.id) ?? emptyHistory(),
     });
   }
@@ -199,7 +241,7 @@ const isTransOpenness = (x: string): x is NonNullable<SlopProfile["transOpenness
 
 export type DatingFacts = Pick<SlopProfile, "is" | "seeks" | "trans" | "transOpenness" | "shownTo">;
 export function datingFactsOf(tags: readonly string[]): DatingFacts {
-  const has = (prefix: string) => tags.filter(t => t.startsWith(prefix)).map(t => t.slice(prefix.length));
+  const has = indexTagsByPrefix(tags);
   const one = (prefix: string) => has(prefix)[0];
   const trans = one("romance:trans:"), open = one("romance:open_trans:"), is = one("romance:is:");
   return {
@@ -271,7 +313,6 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
     for (const id of absent) h(id).noShows++;
     if (!completed) continue;
 
-    // Pacing accepts the feedback reference on older direct engine inputs that lack a saved opportunity.
     const marker = completed.id.lastIndexOf(":fb:");
     const opportunityId = completed.opportunityId ?? (marker < 0 ? completed.id : completed.id.slice(0, marker));
     const booked = completed.bookedMeeting;

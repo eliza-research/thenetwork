@@ -11,9 +11,15 @@ import { noPairValue } from "../../../../core/src/generated/pairValue.ts";
 import { directIntentKeepsHobby } from "../../../../core/src/generated/networkIntentLane.ts";
 import { recentRepeatSource, repeatEventMayAnchor, sameEncounterConsent } from "../../../../core/src/generated/repeatEncounter.ts";
 import type { Category, Facet, Intent, MemberId } from "@thenetwork/core";
-import { DAY } from "@thenetwork/core";
+import { ADULT_AGE, DAY } from "@thenetwork/core";
 import type { GeneratorName } from "../../config.ts";
 import { isHomeEntry, isMinor, memberReason, pairReason } from "../../filters.ts";
+import {
+  discretionGateOk,
+  humanVectorOf,
+  parentSupportSafe,
+  spendTierCompatible,
+} from "../../humanVector.ts";
 import {
   circleCandidate, eventMembers, eventRiskText, label, makeCandidate, pairCandidate, searchFor, warmPathValue, type GenCtx, type MatchedFields,
 } from "../../genkit.ts";
@@ -22,6 +28,8 @@ import { compareText, laneCategory, type MatchProfile } from "../../match/profil
 import type { Anchor, Candidate, Format, NetworkEvent, Role } from "../../types.ts";
 import { intentText, pairKey, type World } from "../../world.ts";
 import { CATEGORY_LABEL } from "./copy.ts";
+import { connectionTypeForIntent, isFreeLowCostIntent, isMoonshotColdAsk, objectivesFor } from "./taxonomy.ts";
+import { CONNECTION_ONTOLOGY_SPECS } from "./vocabulary.ts";
 import { intentWant, MATCH_LANES, memberTags, networkCofounderIntentOf, wantHas } from "./vectors.ts";
 
 function roleOf(p: MatchProfile): Role {
@@ -81,6 +89,56 @@ const anchoredRuns = new WeakMap<World, AnchoredRun>();
  * the partner's offers cover best (first intent by id on a tie). At most maxPerIntent pairs per
  * intent, best value first, and one pair per two members.
  */
+function maxDomainRung(rungs: Readonly<Record<string, { value: number }>>): number {
+  let best = 0;
+  for (const coord of Object.values(rungs)) if (coord.value > best) best = coord.value;
+  return best;
+}
+
+function pairPassesVectorGuard(w: World, a: MemberId, b: MemberId, intent?: Intent): boolean {
+  if (isMinor(w, a) || isMinor(w, b)) return true;
+  const va = humanVectorOf(w, a);
+  const vb = humanVectorOf(w, b);
+  if (!va || !vb) return true;
+  if (intent && isMoonshotColdAsk(intent)) {
+    const rA = maxDomainRung(va.capital.domainRungs);
+    const rB = maxDomainRung(vb.capital.domainRungs);
+    if (rB - rA > 3.5 || vb.capital.symbolic.publicityTier.value >= 0.65 || vb.capital.economic.value >= 0.9) return false;
+  }
+  const cType = intent ? connectionTypeForIntent(intent) : undefined;
+  const spec = cType ? CONNECTION_ONTOLOGY_SPECS[cType] : undefined;
+  const objs = intent ? objectivesFor(intent.objective, intent.details, intent.category) : [];
+  if (cType === "parent_support_adult") {
+    const adultMin = Math.max(ADULT_AGE, w.pack.eligibility.minMatchAge);
+    if (!parentSupportSafe(va.age, vb.age, adultMin, false)) return false;
+  }
+  const sharedGuild = (spec?.chettyMixedSesContainer ?? false)
+    || objs.some(o => o.crossClassGuild === true)
+    || (va.exchange.guilds.length > 0 && vb.exchange.guilds.some(g => va.exchange.guilds.includes(g)));
+  if (!discretionGateOk(
+    vb.capital.symbolic.publicityTier.value * 100,
+    vb.capital.economic.value * 100,
+    va.behavioral.discretionVouchScore * 100,
+    va.behavioral.extractionRiskScore * 100,
+    sharedGuild,
+  )) return false;
+  if (!discretionGateOk(
+    va.capital.symbolic.publicityTier.value * 100,
+    va.capital.economic.value * 100,
+    vb.behavioral.discretionVouchScore * 100,
+    vb.behavioral.extractionRiskScore * 100,
+    sharedGuild,
+  )) return false;
+  const freeAnchor = sharedGuild
+    || (intent ? isFreeLowCostIntent(intent) : false)
+    || (spec?.defaultFreeAnchor ?? false)
+    || objs.some(o => o.freeAnchor === true);
+  if (!spendTierCompatible(va.horizontal.lifestyle.spendComfortTier, vb.horizontal.lifestyle.spendComfortTier, freeAnchor)) {
+    return false;
+  }
+  return true;
+}
+
 function anchoredPairs(ctx: GenCtx): AnchoredRun {
   const { w } = ctx;
   const done = anchoredRuns.get(w);
@@ -102,6 +160,7 @@ function anchoredPairs(ctx: GenCtx): AnchoredRun {
       if (signed) {
         const peer = networkCofounderIntentOf(w, partner.memberId);
         if (!peer) continue;
+        if (!pairPassesVectorGuard(w, profile.memberId, partner.memberId, signed)) continue;
         const used = perIntent.get(signed.id) ?? 0;
         const peerUsed = perIntent.get(peer.id) ?? 0;
         if (used >= w.cfg.maxPerIntent || peerUsed >= w.cfg.maxPerIntent) continue;
@@ -114,6 +173,7 @@ function anchoredPairs(ctx: GenCtx): AnchoredRun {
       const offers = memberTags(w, partner.memberId).offers;
       const covered = (i: Intent) => coverage(intentWant(w, i).seeks, offers);
       const intent = intents.reduce((best, i) => (covered(i) > covered(best) ? i : best));
+      if (!pairPassesVectorGuard(w, profile.memberId, partner.memberId, intent)) continue;
       const used = perIntent.get(intent.id) ?? 0;
       if (used >= w.cfg.maxPerIntent) continue;
       perIntent.set(intent.id, used + 1);

@@ -1,4 +1,4 @@
-import type { MemberId, Owned } from "@thenetwork/core";
+import { evaluateArrivalRelaySafe, isMinor, MIN_MEMBER_AGE, type MemberId, type Owned } from "@thenetwork/core";
 import { initial as initialRelay, step as stepRelay, type DeliveryResult, type RelayVerdict } from "../../core/src/generated/relayLifecycle.ts";
 import { relayAgeStatementRead, relayAgeStatementRefuses, relaySevereBlockCaseEvent, relayStartsMinorPolicy, relayTarget, relayThreadOpen, type RelayTargetChoice } from "../../core/src/generated/relayDecision.ts";
 import { relayNameCollisionRefuses, relayTextRecipientAllowed } from "../../core/src/generated/relayRequestAddress.ts";
@@ -48,6 +48,7 @@ export interface RelayHost {
   saysYounger?(id: MemberId, text: string): boolean;
   severeBlock(id: MemberId): void;
   teenPair?(matchId: string): boolean;
+  onPanicExit?(id: MemberId, matchIds: string[]): void;
   classifierFailed(itemId: string, error: string): void;
 }
 
@@ -56,8 +57,10 @@ interface RelayTargetResult { choice: RelayTargetChoice | "RelayAmbiguousName"; 
 export interface RelayThreadState { id: string; app: string; members: [MemberId, MemberId]; openedAt: number; messages: RelayThreadMessage[] }
 export interface RelaySwap { itemId: string; matchId: string; from: MemberId; to: MemberId; at: number }
 
+export interface RelayPanicHalt { memberId: MemberId; matchId: string; at: number }
+
 export { withdrawsRelaySwap as withdrawsSwap } from "../../engine/src/relay.ts";
-export interface RelayState { threads: RelayThreadState[]; log: RelayRecord[]; swaps: RelaySwap[] }
+export interface RelayState { threads: RelayThreadState[]; log: RelayRecord[]; swaps: RelaySwap[]; panics?: RelayPanicHalt[] }
 export const emptyRelayState = (): RelayState => ({ threads: [], log: [], swaps: [] });
 
 export interface RelayAsk {
@@ -92,6 +95,8 @@ const NOTICE = {
   undelivered: "I couldn't pass that on right now.",
   swapFailed: "I can't swap numbers right now.",
   late: "I'll pass that on when it's a reasonable hour for them.",
+  panicHalted: "Messaging for this meetup has been stopped.",
+  panicExitConfirm: "Got it — I've stopped messaging for this meetup right away. If you're ever in danger, call 911 first.",
 };
 const SEND_REFUSED = "send:refused";
 const undeliveredNotice = (kind: RelayItem["kind"]) => (kind === "contact_share" ? NOTICE.swapFailed : NOTICE.undelivered);
@@ -108,10 +113,80 @@ export class RelayDesk {
   private s: RelayState = emptyRelayState();
   constructor(private readonly host: RelayHost) {}
 
-  exportState(): RelayState { return JSON.parse(JSON.stringify(this.s)) as RelayState; }
+  exportState(): RelayState {
+    const base: RelayState = { threads: this.s.threads, log: this.s.log, swaps: this.s.swaps };
+    if (this.s.panics?.length) base.panics = this.s.panics;
+    return JSON.parse(JSON.stringify(base)) as RelayState;
+  }
   importState(s: RelayState | undefined) {
     const x = s ? (JSON.parse(JSON.stringify(s)) as RelayState) : emptyRelayState();
-    this.s = { threads: x.threads ?? [], log: x.log ?? [], swaps: x.swaps ?? [] };
+    this.s = {
+      threads: x.threads ?? [],
+      log: x.log ?? [],
+      swaps: x.swaps ?? [],
+      ...(x.panics?.length ? { panics: x.panics } : {}),
+    };
+  }
+
+  isPanicTriggered(memberId: MemberId, matchId?: string): boolean {
+    return (this.s.panics ?? []).some(
+      p => p.memberId === memberId && (matchId === undefined || p.matchId === "*" || p.matchId === matchId)
+    );
+  }
+
+  triggerPanicExit(memberId: MemberId, matchId?: string): { haltedMatches: string[]; cancelledSwaps: number; notice: string } {
+    const now = this.host.now();
+    const matches = this.host.matchesOf(memberId).filter(m => matchId === undefined || m.id === matchId);
+    const targetIds = matches.length ? matches.map(m => m.id) : [matchId ?? "*"];
+    const panics = (this.s.panics ??= []);
+    for (const id of targetIds) {
+      if (!panics.some(p => p.memberId === memberId && p.matchId === id)) {
+        panics.push({ memberId, matchId: id, at: now });
+      }
+    }
+    const before = this.s.swaps.length;
+    this.s.swaps = this.s.swaps.filter(x => x.from !== memberId && x.to !== memberId);
+    const cancelledSwaps = (before - this.s.swaps.length) + this.cancelSwaps(memberId);
+    this.host.onPanicExit?.(memberId, targetIds);
+    return { haltedMatches: targetIds, cancelledSwaps, notice: NOTICE.panicExitConfirm };
+  }
+
+  canRelayArrivalSafe(params: {
+    matchId: string;
+    senderId: MemberId;
+    recipientId: MemberId;
+    senderConfirmed: boolean;
+    recipientConfirmed: boolean;
+    anyMinorInEvent?: boolean;
+    panicTriggered?: boolean;
+    startMs: number;
+    alreadyMet: boolean;
+    passedSafetyAndLeakCheck: boolean;
+  }): boolean {
+    const sender = this.host.member(params.senderId);
+    const recipient = this.host.member(params.recipientId);
+    const panicTriggered =
+      Boolean(params.panicTriggered) ||
+      this.isPanicTriggered(params.senderId, params.matchId) ||
+      this.isPanicTriggered(params.recipientId, params.matchId);
+    const senderAge = sender?.markedMinor ? MIN_MEMBER_AGE : (sender?.age ?? 0);
+    const recipientAge = recipient?.markedMinor ? MIN_MEMBER_AGE : (recipient?.age ?? 0);
+    const anyMinorInEvent = Boolean(params.anyMinorInEvent) || isMinor(senderAge) || isMinor(recipientAge);
+    return evaluateArrivalRelaySafe({
+      senderAge,
+      recipientAge,
+      anyMinorInEvent,
+      senderConfirmed: params.senderConfirmed,
+      recipientConfirmed: params.recipientConfirmed,
+      blocked: this.host.blocked(params.senderId, params.recipientId),
+      panicTriggered,
+      senderOptedOut: sender ? sender.optedOut || sender.held : true,
+      recipientOptedOut: recipient ? recipient.optedOut || recipient.held : true,
+      nowMs: this.host.now(),
+      startMs: params.startMs,
+      alreadyMet: params.alreadyMet,
+      passedSafetyAndLeakCheck: params.passedSafetyAndLeakCheck,
+    });
   }
 
   liveMatches(from: MemberId): RelayMatch[] {
@@ -150,6 +225,9 @@ export class RelayDesk {
     if (choice === "RelayAmbiguousName") return { itemId: ask.itemId, decision: "refused", reason: RELAY_AMBIGUOUS_NAME };
     if (!match) return { itemId: ask.itemId, decision: "refused", reason: choice === "RelayNamedNotLive" ? NOTICE.matchClosed : NOTICE.noMatch };
     const to = counterpart(match, ask.from);
+    if (this.isPanicTriggered(ask.from, match.id) || this.isPanicTriggered(to, match.id)) {
+      return { itemId: ask.itemId, decision: "refused", reason: NOTICE.panicHalted };
+    }
     const now = this.host.now();
     const pair = this.host.teenPair?.(match.id) === true;
     if (ask.kind !== "text" && pair) return { itemId: ask.itemId, decision: "refused", reason: NOTICE.textOnly };
@@ -314,6 +392,11 @@ export class RelayDesk {
 
   forget(id: MemberId) {
     this.s.swaps = this.s.swaps.filter(x => x.from !== id && x.to !== id);
+    this.s.panics = (this.s.panics ?? []).filter(p => p.memberId !== id);
     for (const t of this.s.threads) if (t.members.includes(id)) t.messages = [];
   }
+}
+
+export function checkArrivalRelaySafety(input: Parameters<typeof evaluateArrivalRelaySafe>[0]): boolean {
+  return evaluateArrivalRelaySafe(input);
 }

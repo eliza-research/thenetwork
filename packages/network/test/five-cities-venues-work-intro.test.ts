@@ -283,7 +283,7 @@ describe("VenueManager intelligence", () => {
     // Immediate quarantine on closure report + persistence across export/import
     const targetId = third.primary!.venue.id;
     vm.quarantineVenue(targetId, "m1", START);
-    expect(vm.getVenue(targetId)?.status).toBe("SuspectClosed");
+    expect(vm.getVenue(targetId)?.status).toBe("suspect_closed");
     const afterQuarantine = vm.pickForMatch({
       city: "sf",
       mode: "date",
@@ -300,7 +300,7 @@ describe("VenueManager intelligence", () => {
 
     const restored = new VenueManager();
     restored.importState(vm.exportState());
-    expect(restored.getVenue(targetId)?.status).toBe("SuspectClosed");
+    expect(restored.getVenue(targetId)?.status).toBe("suspect_closed");
     expect(restored.getVenue(added.id)?.name).toBe("Tartine Manufactory");
     expect(restored.excludedIdsFor(["m1", "m2"]).has(firstId)).toBe(true);
     expect(restored.excludedIdsFor(["m1", "m2"]).has(secondId)).toBe(true);
@@ -482,7 +482,7 @@ describe("MeetupCoordinator on-site arrival and safety", () => {
     // Surprise closure quarantines primary and pivots to backup
     const closeRes = coord.handleInbound("a", "The cafe is closed today!", startMs + 20 * MINUTE);
     expect(closeRes.pivotedToVenueId).toBe(backup.id);
-    expect(vm.getVenue(primary.id)?.status).toBe("SuspectClosed");
+    expect(vm.getVenue(primary.id)?.status).toBe("suspect_closed");
     expect(sent.filter(s => s.kind === "backup_pivot").length).toBe(2);
 
     // Met closes the window immediately

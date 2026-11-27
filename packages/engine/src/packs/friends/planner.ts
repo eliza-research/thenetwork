@@ -45,6 +45,7 @@ import { candidateSlots, type TimeSlot } from "../../attention.ts";
 import { DEFAULT_ATTENTION, DEFAULT_PLANS, type AttentionConfig, type PlansConfig } from "../../config.ts";
 import { isMinor, memberReason, pairReason, teenGroupReason } from "../../filters.ts";
 import { sha256 } from "../../hash.ts";
+import { humanVectorOf, spendTierRank, venueCostFitsTier, type SpendComfortTier } from "../../humanVector.ts";
 import { circleEvidence, type Circle } from "../../match/circles.ts";
 import { compareText } from "../../match/profile.ts";
 import {
@@ -317,10 +318,20 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       const inv = new Map(p.invited.filter(id => homes.has(id)).map(id => [id, homes.get(id)!]));
       const minimumAge = Math.min(...p.invited.map(id => w.get(id)!.m.age));
       const maxBudget = inp.maxBudgetTierOf?.(p.invited);
-      const best = chooseVenueForCity(p.city, inp.venues, inv, v => v.city === p.city && v.activities.includes(a.id) && planPlaceOffered(teen, a, v)
+      let strictestBudget: SpendComfortTier | undefined;
+      if (!teen) {
+        for (const id of p.invited) {
+          const tier = humanVectorOf(w, id)?.horizontal.lifestyle.spendComfortTier;
+          if (tier === "free" || tier === "low") {
+            if (!strictestBudget || spendTierRank(tier) < spendTierRank(strictestBudget)) strictestBudget = tier;
+          }
+        }
+      }
+      const baseOk = (v: Venue) => v.city === p.city && v.activities.includes(a.id) && planPlaceOffered(teen, a, v)
         && v.ageMin <= minimumAge && (maxBudget === undefined || v.priceTier <= maxBudget)
-        && !inp.venueExcluded?.(v.id, p.invited) && venueOpen(v, p.window, a.durationMin, tz, att), withinTravelLimit);
-      // A new plan without an open venue is not offered, so it holds no seats.
+        && !inp.venueExcluded?.(v.id, p.invited) && venueOpen(v, p.window, a.durationMin, tz, att);
+      const best = (strictestBudget ? chooseVenueForCity(p.city, inp.venues, inv, v => baseOk(v) && venueCostFitsTier(strictestBudget!, v.priceTier), withinTravelLimit) : undefined)
+        ?? chooseVenueForCity(p.city, inp.venues, inv, baseOk, withinTravelLimit);
       if (!best) return null;
       venue = best.venue;
     }
@@ -412,8 +423,12 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
   // 2. crew offers (after one great plan) and 3. same table again
   // "Would do it again" = rated it positively, or (mutualPositive) said "see again" about someone who
   // said it back: the private answers after the meetup (domain research C4 consent flow step 5).
+  const seeAgainSet = new Set<string>();
+  for (const f of w.feedback) {
+    if (f.wouldMeetAgain === true) seeAgainSet.add(`${f.from}|${f.about}|${f.opportunityId ?? ""}`);
+  }
   const mutualSee = (o: PlanOutcomeRecord) => {
-    const said = (a: MemberId, b: MemberId) => w.feedback.some(f => f.from === a && f.about === b && f.opportunityId === o.planId && f.wouldMeetAgain === true);
+    const said = (a: MemberId, b: MemberId) => seeAgainSet.has(`${a}|${b}|${o.planId}`);
     return o.attended.filter(a => o.attended.some(b => b !== a && said(a, b) && said(b, a)));
   };
   const recent = inp.outcomes.filter(o => now - o.at < pol.repeatWindowDays * DAY && o.at <= now)

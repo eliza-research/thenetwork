@@ -1,60 +1,13 @@
+// Modular 5-city geographic registry (sf, nyc, la, chicago, miami) + 75 verified seed venues
+// (including hobby-native LGS, board-game cafes, climbing gyms, tea houses, and museums).
+// Adding city #6+ is a single registerCity(spec) call. Core travel bounds and minimax+mean
+// midpoint costs delegate to the Vibespec-proved generated/venueSelection.ts.
+
 import { km, type LatLng } from "./geo.ts";
-import {
-  fairMidpointCostScaled,
-  fairMidpointNetCostScaled,
-  isValidMidpoint,
-  isWithinTravelLimit,
-  maxRelaxStepMin,
-} from "./generated/cityTravel.ts";
-import { LAUNCH_CITIES, type City, type VenueHoursSlot, type VenuePersonaPrior, type VenueRecord } from "./types.ts";
+import { fairMidpointCostScaled, fairMidpointNetCostScaled, isValidMidpoint, isWithinTravelLimit } from "./generated/venueSelection.ts";
+import type { CityBarrier, CityNeighborhood, CitySpec, CityZone, LaunchCity, NeighborhoodSpec, VenueHoursSlot, VenuePersonaPrior, VenueRecord } from "./types.ts";
 
-export {
-  fairMidpointCostScaled,
-  fairMidpointNetCostScaled,
-  isValidMidpoint,
-  isWithinTravelLimit,
-  maxRelaxStepMin,
-};
-
-export interface CityZone {
-  id: string;
-  name: string;
-}
-
-export interface CityNeighborhood {
-  name: string;
-  zone: string;
-  lat: number;
-  lng: number;
-  aliases: string[];
-  hubSupply: number;
-}
-
-export interface CityBarrier {
-  fromZone: string;
-  toZone: string;
-  penaltyMinutes: number;
-  reason: string;
-}
-
-export interface CitySpec {
-  id: City;
-  name: string;
-  shortName: string;
-  tz: string;
-  primaryMode: "transit" | "car" | "hybrid";
-  anchorZip: string;
-  aliases: string[];
-  center: LatLng;
-  dateMaxMinutes: number;
-  groupMaxMinutes: number;
-  kmPerMinute: number;
-  baseMinutes: number;
-  zones: CityZone[];
-  neighborhoods: CityNeighborhood[];
-  barriers: CityBarrier[];
-  seedVenues: VenueRecord[];
-}
+export type { CityBarrier, CityNeighborhood, CitySpec, CityZone, LaunchCity, NeighborhoodSpec };
 
 export interface FairMidpointResult {
   neighborhood: CityNeighborhood;
@@ -82,8 +35,7 @@ function defaultPriors(rating: number, overrides: Record<string, VenuePersonaPri
   return { default: { alpha, beta }, ...overrides };
 }
 
-type SeedInput = Omit<VenueRecord, "public" | "status" | "source" | "lastVerifiedAt" | "closureReports" | "personaPriors" | "ageMin"> & {
-  ageMin?: number;
+type SeedInput = Omit<VenueRecord, "public" | "status" | "source" | "lastVerifiedAt" | "closureReports" | "personaPriors"> & {
   personaPriors?: Record<string, VenuePersonaPrior>;
 };
 
@@ -111,26 +63,27 @@ const OPEN_EVENT_CATEGORIES = new Set<VenueRecord["category"]>([
 ]);
 
 function seedVenue(v: SeedInput): VenueRecord {
-  const { personaPriors, ageMin, ...rest } = v;
+  const { personaPriors, ...rest } = v;
   const isAlcoholCentric = v.isAlcoholCentric ?? (v.isBarOnly || ALCOHOL_CENTRIC_CATEGORIES.has(v.category));
-  const resolvedAgeMin = ageMin ?? (v.isBarOnly || isAlcoholCentric ? 21 : 0);
   const openEventEligible =
     v.openEventEligible ??
     (v.walkInGroupCapacity >= 10 && !v.reservationRequired && OPEN_EVENT_CATEGORIES.has(v.category));
   return {
     ...rest,
-    ageMin: resolvedAgeMin,
     public: true,
-    status: "Active",
+    status: "active",
     source: "curated",
     lastVerifiedAt: SEED_VERIFIED_AT,
     closureReports: 0,
+    allAges: v.allAges ?? (!v.isBarOnly && !isAlcoholCentric && (v.ageMin ?? 0) <= 13),
     isAlcoholCentric,
     isSmokeFree: v.isSmokeFree ?? true,
     openEventEligible,
     personaPriors: defaultPriors(v.yelpRating ?? 4.3, personaPriors),
   };
 }
+
+// ---- 1. San Francisco (sf) ----
 
 const SF_SPEC: CitySpec = {
   id: "sf",
@@ -178,7 +131,7 @@ const SF_SPEC: CitySpec = {
       address: "1 Ferry Building, San Francisco, CA 94111", lat: 37.7955, lng: -122.3937, category: "food_hall",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 12, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "Inside the main nave under the Ferry Building central clock archway",
       hours: dailyHours(7 * 60, 20 * 60), yelpRating: 4.5, safetyScore: 10, transitScore: 5,
       halalFriendly: true, glutenFreeFriendly: true, severeAllergenSafe: true, openEventEligible: true,
@@ -190,7 +143,7 @@ const SF_SPEC: CitySpec = {
       address: "270 7th St, San Francisco, CA 94103", lat: 37.7769, lng: -122.4085, category: "coffee_shop",
       priceTier: 1, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 8, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "By the main roasting-floor espresso bar straight ahead from the 7th St entrance",
       hours: dailyHours(7 * 60, 17 * 60), yelpRating: 4.4, safetyScore: 9, transitScore: 4,
       personaPriors: { builder: { alpha: 9, beta: 2 }, creative: { alpha: 8, beta: 2 } },
@@ -200,7 +153,7 @@ const SF_SPEC: CitySpec = {
       address: "600 Guerrero St, San Francisco, CA 94110", lat: 37.7614, lng: -122.4241, category: "bakery_cafe",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 4, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "Under the corner awning at 18th & Guerrero St",
       hours: dailyHours(7 * 60 + 30, 17 * 60), yelpRating: 4.4, safetyScore: 9, transitScore: 4,
       personaPriors: { foodie: { alpha: 9, beta: 2 } },
@@ -210,7 +163,7 @@ const SF_SPEC: CitySpec = {
       address: "2340 Polk St, San Francisco, CA 94109", lat: 37.7985, lng: -122.4220, category: "coffee_shop",
       priceTier: 1, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 4, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "By the front Polk St window bench near the pastry counter",
       hours: dailyHours(7 * 60, 17 * 60), yelpRating: 4.6, safetyScore: 9, transitScore: 4,
       personaPriors: { creative: { alpha: 9, beta: 2 }, minimalist: { alpha: 9, beta: 2 } },
@@ -220,7 +173,7 @@ const SF_SPEC: CitySpec = {
       address: "200 Columbus Ave, San Francisco, CA 94133", lat: 37.7972, lng: -122.4055, category: "coffee_shop",
       priceTier: 1, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 6, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "At the Columbus Ave sidewalk corner patio tables",
       hours: dailyHours(7 * 60, 17 * 60), yelpRating: 4.4, safetyScore: 9, transitScore: 4,
     }),
@@ -229,7 +182,7 @@ const SF_SPEC: CitySpec = {
       address: "424 Octavia St, San Francisco, CA 94102", lat: 37.7762, lng: -122.4244, category: "brewery_garden",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: false,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 12, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: false, outdoor: true, weatherSensitive: true,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: false, outdoor: true, weatherSensitive: true,
       arrivalLandmark: "Just inside the Octavia St wooden garden entrance gate",
       hours: splitHours(15 * 60, 21 * 60, 11 * 60 + 30, 21 * 60), yelpRating: 4.3, safetyScore: 9, transitScore: 5,
       personaPriors: { social: { alpha: 9, beta: 2 }, outdoorsy: { alpha: 8, beta: 2 } },
@@ -239,7 +192,7 @@ const SF_SPEC: CitySpec = {
       address: "3193 Mission St, San Francisco, CA 94110", lat: 37.7460, lng: -122.4193, category: "brewery",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 10, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "By the main taproom counter just inside the Mission St entrance",
       hours: splitHours(16 * 60, 22 * 60, 12 * 60, 23 * 60), yelpRating: 4.5, safetyScore: 8, transitScore: 4,
       personaPriors: { social: { alpha: 8, beta: 2 }, foodie: { alpha: 8, beta: 2 } },
@@ -249,7 +202,7 @@ const SF_SPEC: CitySpec = {
       address: "Dolores St & 19th St, San Francisco, CA 94114", lat: 37.7596, lng: -122.4269, category: "park",
       priceTier: 0, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 15, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: false, outdoor: true, weatherSensitive: true,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: false, outdoor: true, weatherSensitive: true,
       arrivalLandmark: "At the 19th & Dolores St J-Church pedestrian bridge overlook",
       hours: dailyHours(6 * 60, 21 * 60), yelpRating: 4.6, safetyScore: 8, transitScore: 5,
       personaPriors: { outdoorsy: { alpha: 9, beta: 2 }, budget: { alpha: 9, beta: 1 } },
@@ -259,7 +212,7 @@ const SF_SPEC: CitySpec = {
       address: "210 Lincoln Blvd, San Francisco, CA 94129", lat: 37.8027, lng: -122.4581, category: "waterfront_park",
       priceTier: 0, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 15, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: false, outdoor: true, weatherSensitive: true,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: false, outdoor: true, weatherSensitive: true,
       arrivalLandmark: "By the Presidio Tunnel Tops main Golden Gate overlook benches",
       hours: dailyHours(6 * 60, 21 * 60), yelpRating: 4.8, safetyScore: 10, transitScore: 3,
       personaPriors: { outdoorsy: { alpha: 10, beta: 1 }, budget: { alpha: 9, beta: 1 } },
@@ -269,7 +222,7 @@ const SF_SPEC: CitySpec = {
       address: "384 Hayes St, San Francisco, CA 94102", lat: 37.7768, lng: -122.4225, category: "wine_bar",
       priceTier: 3, ageMin: 21, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: false,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 4, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "At the back courtyard patio entrance behind the Hayes St wine shop",
       hours: dailyHours(12 * 60, 21 * 60), yelpRating: 4.5, safetyScore: 9, transitScore: 5,
       personaPriors: { romantic: { alpha: 9, beta: 2 }, foodie: { alpha: 8, beta: 2 } },
@@ -279,7 +232,7 @@ const SF_SPEC: CitySpec = {
       address: "3200 16th St, San Francisco, CA 94103", lat: 37.7648, lng: -122.4241, category: "cocktail_bar",
       priceTier: 2, ageMin: 21, isBarOnly: true, alcoholOptional: false, servesVegetarian: false, servesVegan: false,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 6, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "By the front antique wooden bar inside the 16th & Guerrero St corner door",
       hours: dailyHours(14 * 60, 26 * 60), yelpRating: 4.4, safetyScore: 8, transitScore: 5,
       personaPriors: { nightowl: { alpha: 9, beta: 2 } },
@@ -289,7 +242,7 @@ const SF_SPEC: CitySpec = {
       address: "780 Mission St, 39th Floor, San Francisco, CA 94103", lat: 37.7850, lng: -122.4041, category: "cocktail_lounge",
       priceTier: 4, ageMin: 21, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: false,
       wheelchairAccessible: true, separateChecks: false, walkInGroupCapacity: 4, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "By the 39th-floor elevator foyer facing the panoramic arched window",
       hours: dailyHours(16 * 60, 24 * 60), yelpRating: 4.4, safetyScore: 10, transitScore: 5,
       personaPriors: { romantic: { alpha: 10, beta: 1 }, upscale: { alpha: 9, beta: 2 } },
@@ -300,7 +253,7 @@ const SF_SPEC: CitySpec = {
       priceTier: 1, isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       halalFriendly: true, kosherFriendly: true, glutenFreeFriendly: true, severeAllergenSafe: true, isSmokeFree: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 15, openEventEligible: true, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "Inside the Divisadero St front entrance by the open-play card tables",
       hours: splitHours(11 * 60, 21 * 60, 11 * 60, 20 * 60), yelpRating: 4.7, safetyScore: 9, transitScore: 4,
       hobbies: ["pokemon_tcg", "mtg", "board_games", "tabletop", "tcg"],
@@ -312,7 +265,7 @@ const SF_SPEC: CitySpec = {
       priceTier: 2, isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       halalFriendly: true, kosherFriendly: true, glutenFreeFriendly: true, severeAllergenSafe: true, isSmokeFree: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 15, openEventEligible: true, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "By the 3rd St front check-in desk beside the seating benches",
       hours: dailyHours(7 * 60, 22 * 60), yelpRating: 4.7, safetyScore: 9, transitScore: 4,
       hobbies: ["bouldering", "climbing", "fitness"],
@@ -324,7 +277,7 @@ const SF_SPEC: CitySpec = {
       priceTier: 1, isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       halalFriendly: true, kosherFriendly: true, glutenFreeFriendly: true, severeAllergenSafe: true, isSmokeFree: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 6, openEventEligible: false, reservationRequired: false,
-      noiseLevel: "Quiet", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "quiet", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "At the Kearny St front window tables next to the loose-leaf tea bar",
       hours: dailyHours(10 * 60, 20 * 60), yelpRating: 4.6, safetyScore: 10, transitScore: 5,
       hobbies: ["tea", "reading", "chess", "quiet_chat"], cuisineTags: ["tea", "matcha", "taiwanese"],
@@ -332,6 +285,8 @@ const SF_SPEC: CitySpec = {
     }),
   ],
 };
+
+// ---- 2. New York City (nyc) ----
 
 const NYC_SPEC: CitySpec = {
   id: "nyc",
@@ -384,7 +339,7 @@ const NYC_SPEC: CitySpec = {
       address: "421 8th Ave, New York, NY 10001", lat: 40.7517, lng: -73.9960, category: "food_hall",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 12, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "By the central circular bar inside the Moynihan Food Hall atrium",
       hours: dailyHours(8 * 60, 22 * 60), yelpRating: 4.4, safetyScore: 10, transitScore: 5,
       halalFriendly: true, glutenFreeFriendly: true, severeAllergenSafe: true, openEventEligible: true,
@@ -395,7 +350,7 @@ const NYC_SPEC: CitySpec = {
       address: "200 5th Ave, New York, NY 10010", lat: 40.7421, lng: -73.9899, category: "food_hall",
       priceTier: 3, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 10, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "Just inside the 5th Ave main entrance beside the Lavazza espresso bar",
       hours: dailyHours(8 * 60, 22 * 60), yelpRating: 4.3, safetyScore: 10, transitScore: 5,
       personaPriors: { foodie: { alpha: 9, beta: 2 } },
@@ -405,7 +360,7 @@ const NYC_SPEC: CitySpec = {
       address: "225 Liberty St, New York, NY 10281", lat: 40.7130, lng: -74.0154, category: "food_hall",
       priceTier: 3, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 10, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "By the Brookfield Place waterfront entrance next to the pastry counter",
       hours: dailyHours(8 * 60, 21 * 60), yelpRating: 4.3, safetyScore: 10, transitScore: 5,
     }),
@@ -414,7 +369,7 @@ const NYC_SPEC: CitySpec = {
       address: "6 Hanover St, New York, NY 10005", lat: 40.7048, lng: -74.0094, category: "coffee_shop",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 10, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "Inside the grand banking hall directly in front of the central espresso counter",
       hours: dailyHours(7 * 60 + 30, 19 * 60), yelpRating: 4.6, safetyScore: 10, transitScore: 5,
       personaPriors: { creative: { alpha: 9, beta: 2 }, builder: { alpha: 9, beta: 2 } },
@@ -424,7 +379,7 @@ const NYC_SPEC: CitySpec = {
       address: "69 Grand St, Brooklyn, NY 11249", lat: 40.7161, lng: -73.9647, category: "coffee_shop",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 8, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "Under the living plant wall in the sunlit skylight atrium",
       hours: dailyHours(8 * 60, 19 * 60), yelpRating: 4.6, safetyScore: 9, transitScore: 4,
       personaPriors: { creative: { alpha: 9, beta: 2 }, romantic: { alpha: 9, beta: 2 } },
@@ -434,7 +389,7 @@ const NYC_SPEC: CitySpec = {
       address: "333 Douglass St, Brooklyn, NY 11217", lat: 40.6799, lng: -73.9822, category: "brewery",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 12, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "By the main taproom bar near the archway to the back yard patio",
       hours: splitHours(12 * 60, 23 * 60, 11 * 60, 24 * 60), yelpRating: 4.5, safetyScore: 9, transitScore: 4,
       personaPriors: { social: { alpha: 9, beta: 2 } },
@@ -444,7 +399,7 @@ const NYC_SPEC: CitySpec = {
       address: "30 Rockefeller Plaza, Concourse, New York, NY 10112", lat: 40.7587, lng: -73.9787, category: "brewery",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: false,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 10, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "By the Rockefeller Center taproom entrance beside the rink plaza",
       hours: dailyHours(12 * 60, 22 * 60), yelpRating: 4.5, safetyScore: 10, transitScore: 5,
       personaPriors: { social: { alpha: 9, beta: 2 } },
@@ -454,7 +409,7 @@ const NYC_SPEC: CitySpec = {
       address: "15 River St, Brooklyn, NY 11249", lat: 40.7155, lng: -73.9673, category: "waterfront_park",
       priceTier: 0, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 15, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: false, outdoor: true, weatherSensitive: true,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: false, outdoor: true, weatherSensitive: true,
       arrivalLandmark: "By the elevated artifact walkway stairs next to Tacocina",
       hours: dailyHours(6 * 60, 22 * 60), yelpRating: 4.7, safetyScore: 9, transitScore: 4,
       personaPriors: { outdoorsy: { alpha: 9, beta: 2 }, budget: { alpha: 9, beta: 1 } },
@@ -464,7 +419,7 @@ const NYC_SPEC: CitySpec = {
       address: "Pier 55 at Hudson River Park, New York, NY 10014", lat: 40.7421, lng: -74.0103, category: "park",
       priceTier: 0, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 12, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: false, outdoor: true, weatherSensitive: true,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: false, outdoor: true, weatherSensitive: true,
       arrivalLandmark: "At the Little Island south bridge entry plaza on Pier 55",
       hours: dailyHours(7 * 60, 22 * 60), yelpRating: 4.6, safetyScore: 10, transitScore: 4,
       personaPriors: { outdoorsy: { alpha: 9, beta: 2 }, budget: { alpha: 9, beta: 1 } },
@@ -474,7 +429,7 @@ const NYC_SPEC: CitySpec = {
       address: "4 Fulton St, New York, NY 10038", lat: 40.7068, lng: -74.0033, category: "bookstore_cafe",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 8, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "At the upstairs cafe bar overlooking the cobblestones on Fulton St",
       hours: dailyHours(10 * 60, 21 * 60), yelpRating: 4.6, safetyScore: 10, transitScore: 5,
       personaPriors: { intellectual: { alpha: 10, beta: 1 }, creative: { alpha: 9, beta: 2 } },
@@ -484,7 +439,7 @@ const NYC_SPEC: CitySpec = {
       address: "144 2nd Ave, New York, NY 10003", lat: 40.7290, lng: -73.9871, category: "diner",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 6, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "Outside the 9th St & 2nd Ave corner entrance by the Veselka neon sign",
       hours: dailyHours(8 * 60, 23 * 60), yelpRating: 4.4, safetyScore: 9, transitScore: 5,
       personaPriors: { foodie: { alpha: 9, beta: 2 }, social: { alpha: 8, beta: 2 } },
@@ -494,7 +449,7 @@ const NYC_SPEC: CitySpec = {
       address: "70 Pine St, 64th Floor, New York, NY 10005", lat: 40.7064, lng: -74.0077, category: "cocktail_lounge",
       priceTier: 4, ageMin: 21, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: false,
       wheelchairAccessible: true, separateChecks: false, walkInGroupCapacity: 2, reservationRequired: true,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "At the 70 Pine St Art Deco lobby elevator host desk",
       hours: dailyHours(17 * 60, 24 * 60), yelpRating: 4.7, safetyScore: 10, transitScore: 5,
       personaPriors: { romantic: { alpha: 10, beta: 1 }, upscale: { alpha: 10, beta: 1 } },
@@ -505,7 +460,7 @@ const NYC_SPEC: CitySpec = {
       priceTier: 2, isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       halalFriendly: true, kosherFriendly: true, glutenFreeFriendly: true, severeAllergenSafe: true, isSmokeFree: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 15, openEventEligible: true, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "Just inside the Broadway entrance beside the wall-to-wall game library",
       hours: splitHours(12 * 60, 23 * 60, 11 * 60, 23 * 60), yelpRating: 4.6, safetyScore: 10, transitScore: 5,
       hobbies: ["pokemon_tcg", "mtg", "board_games", "tabletop", "tcg", "chess"],
@@ -518,7 +473,7 @@ const NYC_SPEC: CitySpec = {
       priceTier: 2, isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       halalFriendly: true, kosherFriendly: true, glutenFreeFriendly: true, severeAllergenSafe: true, isSmokeFree: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 15, openEventEligible: true, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "Inside the N 14th St lobby beside the front check-in counter",
       hours: dailyHours(7 * 60, 23 * 60), yelpRating: 4.8, safetyScore: 9, transitScore: 4,
       hobbies: ["bouldering", "climbing", "fitness"],
@@ -530,7 +485,7 @@ const NYC_SPEC: CitySpec = {
       priceTier: 2, isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       halalFriendly: true, kosherFriendly: true, glutenFreeFriendly: true, severeAllergenSafe: true, isSmokeFree: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 4, openEventEligible: false, reservationRequired: false,
-      noiseLevel: "Quiet", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "quiet", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "Down the short W 10th St garden steps right inside the tearoom counter",
       hours: dailyHours(12 * 60, 20 * 60), yelpRating: 4.7, safetyScore: 10, transitScore: 5,
       hobbies: ["tea", "reading", "quiet_chat"], cuisineTags: ["tea", "oolong", "taiwanese", "pastry"],
@@ -538,6 +493,8 @@ const NYC_SPEC: CitySpec = {
     }),
   ],
 };
+
+// ---- 3. Los Angeles (la) ----
 
 const LA_SPEC: CitySpec = {
   id: "la",
@@ -581,7 +538,7 @@ const LA_SPEC: CitySpec = {
       address: "317 S Broadway, Los Angeles, CA 90013", lat: 34.0508, lng: -118.2487, category: "food_hall",
       priceTier: 1, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 12, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "Inside the Broadway entrance under the neon Grand Central Market arch",
       hours: dailyHours(8 * 60, 21 * 60), yelpRating: 4.5, safetyScore: 9, transitScore: 5,
       halalFriendly: true, glutenFreeFriendly: true, severeAllergenSafe: true, openEventEligible: true,
@@ -593,7 +550,7 @@ const LA_SPEC: CitySpec = {
       address: "9355 Culver Blvd, Culver City, CA 90232", lat: 34.0235, lng: -118.3935, category: "food_hall",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 12, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "At the main courtyard plaza fountain off Culver Blvd",
       hours: dailyHours(11 * 60, 22 * 60), yelpRating: 4.5, safetyScore: 10, transitScore: 4,
     }),
@@ -602,7 +559,7 @@ const LA_SPEC: CitySpec = {
       address: "500 Mateo St, Los Angeles, CA 90013", lat: 34.0412, lng: -118.2329, category: "coffee_shop",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 10, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "By the shaded outdoor patio deck along Mateo St",
       hours: dailyHours(7 * 60, 18 * 60), yelpRating: 4.6, safetyScore: 9, transitScore: 3,
       personaPriors: { creative: { alpha: 9, beta: 2 }, builder: { alpha: 9, beta: 2 } },
@@ -612,7 +569,7 @@ const LA_SPEC: CitySpec = {
       address: "970 N Broadway #112, Los Angeles, CA 90012", lat: 34.0658, lng: -118.2367, category: "cafe_tea_bar",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 6, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "In the Mandarin Plaza courtyard right outside Steep's tea bar window",
       hours: splitHours(11 * 60, 22 * 60, 11 * 60, 23 * 60), yelpRating: 4.7, safetyScore: 9, transitScore: 4,
       personaPriors: { creative: { alpha: 9, beta: 2 }, romantic: { alpha: 9, beta: 2 } },
@@ -622,7 +579,7 @@ const LA_SPEC: CitySpec = {
       address: "828 Traction Ave, Los Angeles, CA 90013", lat: 34.0439, lng: -118.2351, category: "brewery",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 14, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "Inside the Traction Ave main entrance by the long communal tables",
       hours: splitHours(15 * 60, 23 * 60, 12 * 60, 24 * 60), yelpRating: 4.3, safetyScore: 9, transitScore: 3,
       personaPriors: { social: { alpha: 9, beta: 2 } },
@@ -632,7 +589,7 @@ const LA_SPEC: CitySpec = {
       address: "1219 N Main St, Los Angeles, CA 90012", lat: 34.0672, lng: -118.2314, category: "brewery",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 12, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "By the main taproom bar near the sunlit back patio doors",
       hours: splitHours(15 * 60, 23 * 60, 12 * 60, 23 * 60), yelpRating: 4.6, safetyScore: 9, transitScore: 3,
       personaPriors: { social: { alpha: 9, beta: 2 }, creative: { alpha: 8, beta: 2 } },
@@ -642,7 +599,7 @@ const LA_SPEC: CitySpec = {
       address: "1716 Sunset Blvd, Los Angeles, CA 90026", lat: 34.0771, lng: -118.2586, category: "bookstore_cafe",
       priceTier: 1, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 8, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "Out on the tree-shaded back patio behind the bookstore",
       hours: dailyHours(9 * 60, 21 * 60), yelpRating: 4.6, safetyScore: 9, transitScore: 3,
       personaPriors: { intellectual: { alpha: 10, beta: 1 }, creative: { alpha: 9, beta: 2 } },
@@ -652,7 +609,7 @@ const LA_SPEC: CitySpec = {
       address: "9900 Culver Blvd, Culver City, CA 90232", lat: 34.0209, lng: -118.3976, category: "bookstore_cafe",
       priceTier: 1, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 8, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "By the indoor coffee counter at the front of the bookstore",
       hours: dailyHours(8 * 60, 20 * 60), yelpRating: 4.7, safetyScore: 10, transitScore: 4,
       personaPriors: { intellectual: { alpha: 10, beta: 1 } },
@@ -662,7 +619,7 @@ const LA_SPEC: CitySpec = {
       address: "2300 Silver Lake Blvd, Los Angeles, CA 90039", lat: 34.0933, lng: -118.2624, category: "park",
       priceTier: 0, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 15, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: false, outdoor: true, weatherSensitive: true,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: false, outdoor: true, weatherSensitive: true,
       arrivalLandmark: "At the Silver Lake Meadow main gate on Silver Lake Blvd",
       hours: dailyHours(6 * 60, 21 * 60), yelpRating: 4.6, safetyScore: 9, transitScore: 3,
       personaPriors: { outdoorsy: { alpha: 9, beta: 2 }, budget: { alpha: 9, beta: 1 } },
@@ -672,7 +629,7 @@ const LA_SPEC: CitySpec = {
       address: "877 S Figueroa St, Los Angeles, CA 90017", lat: 34.0462, lng: -118.2638, category: "diner",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: false,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 6, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "Outside the Figueroa & 9th St corner entrance under the vintage marquee",
       hours: [
         { weekday: 0, openMin: 7 * 60, closeMin: 21 * 60 },
@@ -690,7 +647,7 @@ const LA_SPEC: CitySpec = {
       address: "5052 York Blvd, Los Angeles, CA 90042", lat: 34.1211, lng: -118.2063, category: "wine_beer_patio",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 10, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "At the back string-lit patio entrance through the main bar",
       hours: splitHours(16 * 60, 23 * 60, 13 * 60, 24 * 60), yelpRating: 4.5, safetyScore: 9, transitScore: 3,
       personaPriors: { social: { alpha: 9, beta: 2 } },
@@ -700,7 +657,7 @@ const LA_SPEC: CitySpec = {
       address: "1712 N Vermont Ave, Los Angeles, CA 90027", lat: 34.1021, lng: -118.2917, category: "cocktail_lounge",
       priceTier: 4, ageMin: 21, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: false, walkInGroupCapacity: 2, reservationRequired: true,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "By the Vermont Ave host stand under the skylit indoor tree",
       hours: dailyHours(17 * 60, 23 * 60), yelpRating: 4.6, safetyScore: 10, transitScore: 3,
       personaPriors: { romantic: { alpha: 10, beta: 1 }, upscale: { alpha: 9, beta: 2 } },
@@ -711,7 +668,7 @@ const LA_SPEC: CitySpec = {
       priceTier: 1, isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       halalFriendly: true, kosherFriendly: true, glutenFreeFriendly: true, severeAllergenSafe: true, isSmokeFree: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 15, openEventEligible: true, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "Just inside the front tea counter beside the open tabletop play room",
       hours: dailyHours(11 * 60, 22 * 60), yelpRating: 4.8, safetyScore: 10, transitScore: 3,
       hobbies: ["pokemon_tcg", "mtg", "board_games", "tabletop", "tcg", "tea"],
@@ -724,7 +681,7 @@ const LA_SPEC: CitySpec = {
       priceTier: 2, isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       halalFriendly: true, kosherFriendly: true, glutenFreeFriendly: true, severeAllergenSafe: true, isSmokeFree: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 15, openEventEligible: true, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "By the E 6th St lobby check-in counter next to the lounge tables",
       hours: dailyHours(7 * 60, 22 * 60), yelpRating: 4.7, safetyScore: 9, transitScore: 3,
       hobbies: ["bouldering", "climbing", "fitness"],
@@ -736,7 +693,7 @@ const LA_SPEC: CitySpec = {
       priceTier: 1, isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       halalFriendly: true, kosherFriendly: true, glutenFreeFriendly: true, severeAllergenSafe: true, isSmokeFree: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 6, openEventEligible: false, reservationRequired: false,
-      noiseLevel: "Quiet", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "quiet", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "Outside the Little Tokyo Plaza courtyard benches beside the Tea Master window",
       hours: dailyHours(11 * 60, 20 * 60), yelpRating: 4.8, safetyScore: 9, transitScore: 4,
       hobbies: ["tea", "reading", "quiet_chat"], cuisineTags: ["japanese", "matcha", "tea", "dessert"],
@@ -744,6 +701,8 @@ const LA_SPEC: CitySpec = {
     }),
   ],
 };
+
+// ---- 4. Chicago (chicago) ----
 
 const CHICAGO_SPEC: CitySpec = {
   id: "chicago",
@@ -786,7 +745,7 @@ const CHICAGO_SPEC: CitySpec = {
       address: "916 W Fulton Market, Chicago, IL 60607", lat: 41.8867, lng: -87.6502, category: "food_hall",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 14, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "Inside the Fulton Market main entrance beside the central ground-floor bar",
       hours: dailyHours(11 * 60, 22 * 60), yelpRating: 4.4, safetyScore: 10, transitScore: 5,
       halalFriendly: true, glutenFreeFriendly: true, severeAllergenSafe: true, openEventEligible: true,
@@ -798,7 +757,7 @@ const CHICAGO_SPEC: CitySpec = {
       address: "131 N Clinton St, Chicago, IL 60661", lat: 41.8842, lng: -87.6410, category: "food_hall",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 12, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "By the main seating tables inside the Clinton St entrance",
       hours: splitHours(8 * 60, 19 * 60, 9 * 60, 17 * 60), yelpRating: 4.5, safetyScore: 10, transitScore: 5,
     }),
@@ -807,7 +766,7 @@ const CHICAGO_SPEC: CitySpec = {
       address: "646 N Michigan Ave, Chicago, IL 60611", lat: 41.8944, lng: -87.6246, category: "coffee_shop",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 12, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "On the 2nd-floor Princi bakery level right at the top of the curved escalator",
       hours: dailyHours(7 * 60, 21 * 60), yelpRating: 4.5, safetyScore: 10, transitScore: 5,
     }),
@@ -816,7 +775,7 @@ const CHICAGO_SPEC: CitySpec = {
       address: "1462 N Milwaukee Ave, Chicago, IL 60622", lat: 41.9082, lng: -87.6746, category: "coffee_shop",
       priceTier: 1, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 4, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "Inside right next to the DeLorean display near the front counter",
       hours: dailyHours(7 * 60, 18 * 60), yelpRating: 4.6, safetyScore: 9, transitScore: 5,
       personaPriors: { creative: { alpha: 9, beta: 2 }, nerd: { alpha: 10, beta: 1 } },
@@ -826,7 +785,7 @@ const CHICAGO_SPEC: CitySpec = {
       address: "2521 W Chicago Ave, Chicago, IL 60622", lat: 41.8957, lng: -87.6901, category: "coffee_shop",
       priceTier: 1, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 6, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "By the main espresso counter inside the Chicago Ave entrance",
       hours: dailyHours(7 * 60, 17 * 60), yelpRating: 4.6, safetyScore: 9, transitScore: 4,
     }),
@@ -835,7 +794,7 @@ const CHICAGO_SPEC: CitySpec = {
       address: "2140 N Milwaukee Ave, Chicago, IL 60647", lat: 41.9203, lng: -87.6929, category: "brewery",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 12, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "Inside the Milwaukee Ave taproom near the tasting bar",
       hours: splitHours(12 * 60, 22 * 60, 11 * 60, 23 * 60), yelpRating: 4.6, safetyScore: 9, transitScore: 5,
       personaPriors: { social: { alpha: 9, beta: 2 }, builder: { alpha: 8, beta: 2 } },
@@ -845,7 +804,7 @@ const CHICAGO_SPEC: CitySpec = {
       address: "2050 W Balmoral Ave, Chicago, IL 60625", lat: 41.9797, lng: -87.6812, category: "brewery",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 12, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "By the main taproom entrance off Balmoral Ave next to the beer garden gate",
       hours: splitHours(15 * 60, 22 * 60, 12 * 60, 22 * 60), yelpRating: 4.6, safetyScore: 9, transitScore: 4,
       personaPriors: { social: { alpha: 9, beta: 2 } },
@@ -855,7 +814,7 @@ const CHICAGO_SPEC: CitySpec = {
       address: "Chicago Riverwalk at Michigan Ave, Chicago, IL 60601", lat: 41.8884, lng: -87.6244, category: "waterfront_park",
       priceTier: 0, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 15, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: false, outdoor: true, weatherSensitive: true,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: false, outdoor: true, weatherSensitive: true,
       arrivalLandmark: "At the bottom of the southwest Michigan Ave Bridge staircase on the Riverwalk",
       hours: dailyHours(6 * 60, 23 * 60), yelpRating: 4.8, safetyScore: 10, transitScore: 5,
       personaPriors: { outdoorsy: { alpha: 9, beta: 2 }, budget: { alpha: 9, beta: 1 } },
@@ -865,7 +824,7 @@ const CHICAGO_SPEC: CitySpec = {
       address: "201 E Randolph St, Chicago, IL 60602", lat: 41.8826, lng: -87.6226, category: "park",
       priceTier: 0, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 15, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: false, outdoor: true, weatherSensitive: true,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: false, outdoor: true, weatherSensitive: true,
       arrivalLandmark: "By the north steps of Cloud Gate Plaza facing Michigan Ave",
       hours: dailyHours(6 * 60, 23 * 60), yelpRating: 4.7, safetyScore: 10, transitScore: 5,
       personaPriors: { outdoorsy: { alpha: 9, beta: 2 }, budget: { alpha: 9, beta: 1 } },
@@ -875,7 +834,7 @@ const CHICAGO_SPEC: CitySpec = {
       address: "83 N Wacker Dr, Chicago, IL 60606", lat: 41.8832, lng: -87.6371, category: "wine_bar",
       priceTier: 3, ageMin: 21, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 4, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "Just inside the Wacker Dr front window tables next to the wine shelf",
       hours: dailyHours(16 * 60, 23 * 60), yelpRating: 4.6, safetyScore: 10, transitScore: 5,
       personaPriors: { romantic: { alpha: 9, beta: 2 }, foodie: { alpha: 9, beta: 2 } },
@@ -885,7 +844,7 @@ const CHICAGO_SPEC: CitySpec = {
       address: "1518 E 53rd St, Chicago, IL 60615", lat: 41.7996, lng: -87.5886, category: "diner",
       priceTier: 1, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: false,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 8, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "Inside the 53rd St entrance beside the cafeteria line rail",
       hours: dailyHours(7 * 60, 20 * 60), yelpRating: 4.4, safetyScore: 9, transitScore: 4,
       personaPriors: { budget: { alpha: 9, beta: 1 }, intellectual: { alpha: 8, beta: 2 } },
@@ -895,7 +854,7 @@ const CHICAGO_SPEC: CitySpec = {
       address: "630 W Lake St, Chicago, IL 60661", lat: 41.8856, lng: -87.6442, category: "cocktail_lounge",
       priceTier: 4, ageMin: 21, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: false,
       wheelchairAccessible: true, separateChecks: false, walkInGroupCapacity: 2, reservationRequired: true,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "At the wooden Lake St front host vestibule",
       hours: dailyHours(17 * 60, 24 * 60), yelpRating: 4.8, safetyScore: 10, transitScore: 5,
       personaPriors: { romantic: { alpha: 10, beta: 1 }, upscale: { alpha: 10, beta: 1 } },
@@ -906,7 +865,7 @@ const CHICAGO_SPEC: CitySpec = {
       priceTier: 1, isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       halalFriendly: true, kosherFriendly: true, glutenFreeFriendly: true, severeAllergenSafe: true, isSmokeFree: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 15, openEventEligible: true, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "Inside the N Broadway entrance by the main open-play game room tables",
       hours: splitHours(12 * 60, 22 * 60, 11 * 60, 22 * 60), yelpRating: 4.8, safetyScore: 9, transitScore: 5,
       hobbies: ["pokemon_tcg", "mtg", "board_games", "tabletop", "tcg"],
@@ -918,7 +877,7 @@ const CHICAGO_SPEC: CitySpec = {
       priceTier: 2, isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       halalFriendly: true, kosherFriendly: true, glutenFreeFriendly: true, severeAllergenSafe: true, isSmokeFree: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 14, openEventEligible: true, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "By the Milwaukee Ave host counter facing the board-game wall",
       hours: dailyHours(11 * 60, 23 * 60), yelpRating: 4.5, safetyScore: 9, transitScore: 5,
       hobbies: ["board_games", "pokemon_tcg", "tabletop", "chess"], cuisineTags: ["cafe", "coffee", "tea", "casual"],
@@ -930,7 +889,7 @@ const CHICAGO_SPEC: CitySpec = {
       priceTier: 2, isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       halalFriendly: true, kosherFriendly: true, glutenFreeFriendly: true, severeAllergenSafe: true, isSmokeFree: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 15, openEventEligible: true, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "At the 4th-floor Block 37 climbing gym front check-in desk",
       hours: dailyHours(7 * 60, 22 * 60), yelpRating: 4.7, safetyScore: 10, transitScore: 5,
       hobbies: ["bouldering", "climbing", "fitness"],
@@ -938,6 +897,8 @@ const CHICAGO_SPEC: CitySpec = {
     }),
   ],
 };
+
+// ---- 5. Miami (miami) ----
 
 const MIAMI_SPEC: CitySpec = {
   id: "miami",
@@ -981,7 +942,7 @@ const MIAMI_SPEC: CitySpec = {
       address: "143 NW 23rd St, Miami, FL 33127", lat: 25.7995, lng: -80.1980, category: "food_hall",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 14, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "Just past the record-shop entrance by the main indoor bar",
       hours: dailyHours(12 * 60, 24 * 60), yelpRating: 4.4, safetyScore: 9, transitScore: 3,
       halalFriendly: true, glutenFreeFriendly: true, severeAllergenSafe: true, openEventEligible: true,
@@ -993,7 +954,7 @@ const MIAMI_SPEC: CitySpec = {
       address: "1601 Drexel Ave, Miami Beach, FL 33139", lat: 25.7903, lng: -80.1322, category: "food_hall",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 12, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "Inside the Drexel Ave main entrance beside the central bar island",
       hours: dailyHours(11 * 60, 22 * 60), yelpRating: 4.3, safetyScore: 9, transitScore: 4,
     }),
@@ -1002,7 +963,7 @@ const MIAMI_SPEC: CitySpec = {
       address: "1035 N Miami Ave, Miami, FL 33136", lat: 25.7844, lng: -80.1932, category: "coffee_shop",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 6, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "By the bright front espresso counter off N Miami Ave",
       hours: dailyHours(7 * 60 + 30, 17 * 60), yelpRating: 4.7, safetyScore: 9, transitScore: 4,
       personaPriors: { creative: { alpha: 9, beta: 2 }, builder: { alpha: 9, beta: 2 } },
@@ -1012,7 +973,7 @@ const MIAMI_SPEC: CitySpec = {
       address: "3501 SW 8th St, Miami, FL 33135", lat: 25.7649, lng: -80.2524, category: "coffee_casual",
       priceTier: 1, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: false,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 6, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "By the covered bakery sidewalk tables right next to the Calle Ocho ventanita",
       hours: dailyHours(8 * 60, 22 * 60), yelpRating: 4.5, safetyScore: 9, transitScore: 3,
       personaPriors: { foodie: { alpha: 9, beta: 2 }, budget: { alpha: 9, beta: 1 } },
@@ -1022,7 +983,7 @@ const MIAMI_SPEC: CitySpec = {
       address: "55 NW 25th St, Miami, FL 33127", lat: 25.8012, lng: -80.1959, category: "brewery",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 14, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "By the shaded front patio archway off NW 25th St",
       hours: splitHours(14 * 60, 23 * 60, 12 * 60, 24 * 60), yelpRating: 4.5, safetyScore: 9, transitScore: 3,
       personaPriors: { social: { alpha: 9, beta: 2 } },
@@ -1032,7 +993,7 @@ const MIAMI_SPEC: CitySpec = {
       address: "265 Aragon Ave, Coral Gables, FL 33134", lat: 25.7506, lng: -80.2591, category: "bookstore_cafe",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 10, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "In the central courtyard cafe right past the Aragon Ave bookstore archway",
       hours: dailyHours(10 * 60, 21 * 60), yelpRating: 4.7, safetyScore: 10, transitScore: 3,
       personaPriors: { intellectual: { alpha: 10, beta: 1 }, creative: { alpha: 9, beta: 2 } },
@@ -1042,7 +1003,7 @@ const MIAMI_SPEC: CitySpec = {
       address: "1075 Biscayne Blvd, Miami, FL 33132", lat: 25.7851, lng: -80.1862, category: "waterfront_park",
       priceTier: 0, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 15, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: false, outdoor: true, weatherSensitive: true,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: false, outdoor: true, weatherSensitive: true,
       arrivalLandmark: "Under the shaded PAMM waterfront porch overhang facing Biscayne Bay",
       hours: dailyHours(7 * 60, 22 * 60), yelpRating: 4.6, safetyScore: 9, transitScore: 5,
       personaPriors: { outdoorsy: { alpha: 9, beta: 2 }, budget: { alpha: 9, beta: 1 } },
@@ -1052,7 +1013,7 @@ const MIAMI_SPEC: CitySpec = {
       address: "SW 8th St & SW 1st Ave, Miami, FL 33130", lat: 25.7662, lng: -80.1951, category: "park",
       priceTier: 0, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 12, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: false, outdoor: true, weatherSensitive: true,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: false, outdoor: true, weatherSensitive: true,
       arrivalLandmark: "By the Brickell Backyard Sound Stage promenade steps under the Metrorail",
       hours: dailyHours(7 * 60, 22 * 60), yelpRating: 4.5, safetyScore: 9, transitScore: 5,
       personaPriors: { outdoorsy: { alpha: 9, beta: 2 }, budget: { alpha: 9, beta: 1 } },
@@ -1062,7 +1023,7 @@ const MIAMI_SPEC: CitySpec = {
       address: "260 NW 27th St, Miami, FL 33127", lat: 25.8022, lng: -80.2006, category: "wine_bar",
       priceTier: 3, ageMin: 21, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 4, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "By the NW 27th St front courtyard host entrance",
       hours: dailyHours(16 * 60, 24 * 60), yelpRating: 4.6, safetyScore: 9, transitScore: 3,
       personaPriors: { romantic: { alpha: 9, beta: 2 }, foodie: { alpha: 9, beta: 2 } },
@@ -1072,7 +1033,7 @@ const MIAMI_SPEC: CitySpec = {
       address: "157 Collins Ave, Miami Beach, FL 33139", lat: 25.7706, lng: -80.1325, category: "diner",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: false,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 8, reservationRequired: false,
-      noiseLevel: "Lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "Outside the Collins Ave covered patio corner by the pink neon sign",
       hours: dailyHours(8 * 60, 24 * 60), yelpRating: 4.2, safetyScore: 9, transitScore: 4,
     }),
@@ -1081,7 +1042,7 @@ const MIAMI_SPEC: CitySpec = {
       address: "2727 Indian Creek Dr, Miami Beach, FL 33140", lat: 25.8041, lng: -80.1264, category: "cocktail_lounge",
       priceTier: 3, ageMin: 21, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 6, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "Just inside the Freehand poolside garden gate facing the main cocktail bar",
       hours: dailyHours(17 * 60, 25 * 60), yelpRating: 4.5, safetyScore: 9, transitScore: 3,
       personaPriors: { romantic: { alpha: 9, beta: 2 }, creative: { alpha: 9, beta: 2 } },
@@ -1091,7 +1052,7 @@ const MIAMI_SPEC: CitySpec = {
       address: "398 NE 5th St, Miami, FL 33132", lat: 25.7793, lng: -80.1879, category: "cocktail_lounge",
       priceTier: 4, ageMin: 21, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: false,
       wheelchairAccessible: true, separateChecks: false, walkInGroupCapacity: 2, reservationRequired: true,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "Inside The Elser hotel lobby at the ViceVersa aperitivo bar entrance",
       hours: dailyHours(17 * 60, 24 * 60), yelpRating: 4.7, safetyScore: 10, transitScore: 5,
       personaPriors: { romantic: { alpha: 10, beta: 1 }, upscale: { alpha: 10, beta: 1 } },
@@ -1102,7 +1063,7 @@ const MIAMI_SPEC: CitySpec = {
       priceTier: 1, isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       halalFriendly: true, kosherFriendly: true, glutenFreeFriendly: true, severeAllergenSafe: true, isSmokeFree: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 15, openEventEligible: true, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "Inside the main entrance beside the open tabletop play tables",
       hours: dailyHours(12 * 60, 22 * 60), yelpRating: 4.7, safetyScore: 9, transitScore: 3,
       hobbies: ["pokemon_tcg", "mtg", "board_games", "tabletop", "tcg"],
@@ -1114,7 +1075,7 @@ const MIAMI_SPEC: CitySpec = {
       priceTier: 1, isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       halalFriendly: true, kosherFriendly: true, glutenFreeFriendly: true, severeAllergenSafe: true, isSmokeFree: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 12, openEventEligible: true, reservationRequired: false,
-      noiseLevel: "Conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "conversational", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "Inside the main tea lounge beside the front loose-leaf tea counter",
       hours: dailyHours(11 * 60, 22 * 60), yelpRating: 4.7, safetyScore: 9, transitScore: 4,
       hobbies: ["tea", "board_games", "reading", "poetry", "chess"], cuisineTags: ["tea", "matcha", "boba", "dessert"],
@@ -1126,7 +1087,7 @@ const MIAMI_SPEC: CitySpec = {
       priceTier: 2, isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       halalFriendly: true, kosherFriendly: true, glutenFreeFriendly: true, severeAllergenSafe: true, isSmokeFree: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 12, openEventEligible: true, reservationRequired: false,
-      noiseLevel: "Quiet", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
+      noiseLevel: "quiet", liveMusicAtNight: false, indoor: true, outdoor: true, weatherSensitive: false,
       arrivalLandmark: "Under the hanging gardens porch overlooking Biscayne Bay beside the main entrance",
       hours: dailyHours(11 * 60, 21 * 60), yelpRating: 4.7, safetyScore: 10, transitScore: 5,
       hobbies: ["art", "museums", "photography", "quiet_chat"], cuisineTags: ["cafe", "mediterranean"],
@@ -1134,6 +1095,8 @@ const MIAMI_SPEC: CitySpec = {
     }),
   ],
 };
+
+// ---- Registry ----
 
 const registry = new Map<string, CitySpec>([
   [SF_SPEC.id, SF_SPEC],
@@ -1143,7 +1106,7 @@ const registry = new Map<string, CitySpec>([
   [MIAMI_SPEC.id, MIAMI_SPEC],
 ]);
 
-export const CITIES: Record<City, CitySpec> = {
+export const CITIES: Record<LaunchCity, CitySpec> = {
   sf: SF_SPEC,
   nyc: NYC_SPEC,
   la: LA_SPEC,
@@ -1151,13 +1114,15 @@ export const CITIES: Record<City, CitySpec> = {
   miami: MIAMI_SPEC,
 };
 
-export const CITY_IDS: readonly City[] = LAUNCH_CITIES;
+export const CITY_IDS: readonly LaunchCity[] = ["sf", "nyc", "la", "chicago", "miami"];
+
+/** Register a new city spec (or override an existing one) so expanding to city #6+ is a single call. */
 export function registerCity(spec: CitySpec): void {
   registry.set(spec.id, spec);
   (CITIES as Record<string, CitySpec>)[spec.id] = spec;
 }
 
-export function getCity(id: City | string): CitySpec | undefined {
+export function getCity(id: LaunchCity | string): CitySpec | undefined {
   return registry.get(id.trim().toLowerCase());
 }
 
@@ -1165,7 +1130,7 @@ export function listCities(): CitySpec[] {
   return [...registry.values()];
 }
 
-export function seedVenuesForCity(city: City | string): VenueRecord[] {
+export function seedVenuesForCity(city: LaunchCity): VenueRecord[] {
   return [...(getCity(city)?.seedVenues ?? [])];
 }
 
@@ -1174,10 +1139,12 @@ export const ALL_SEED_VENUES: readonly VenueRecord[] = listCities().flatMap(c =>
 function normText(text: string): string {
   return text.trim().toLowerCase().replace(/[^a-z0-9\s/-]+/g, " ").replace(/\s+/g, " ");
 }
-export function resolveCity(text: string): City | undefined {
+
+/** Resolve free-form city text, abbreviation, or neighborhood name to a registered City id. */
+export function resolveCity(text: string): LaunchCity | undefined {
   const q = normText(text);
   if (!q) return undefined;
-  if (registry.has(q)) return q as City;
+  if (registry.has(q)) return q as LaunchCity;
   for (const spec of registry.values()) {
     if (normText(spec.name) === q || normText(spec.shortName) === q) return spec.id;
     if (spec.aliases.some(a => normText(a) === q)) return spec.id;
@@ -1187,6 +1154,7 @@ export function resolveCity(text: string): City | undefined {
       return spec.id;
     }
   }
+  // Substring fallback for multi-word descriptions (e.g., "living in downtown chicago").
   for (const spec of registry.values()) {
     if (q.includes(normText(spec.name))) return spec.id;
     for (const a of spec.aliases) {
@@ -1196,7 +1164,9 @@ export function resolveCity(text: string): City | undefined {
   }
   return undefined;
 }
-export function findNeighborhood(city: City | string, area: string): CityNeighborhood | undefined {
+
+/** Resolve a neighborhood name or alias within a city; returns undefined if unknown. */
+export function findNeighborhood(city: LaunchCity, area: string): CityNeighborhood | undefined {
   const spec = getCity(city);
   if (!spec) return undefined;
   const q = normText(area);
@@ -1219,12 +1189,18 @@ function zoneBarrierPenalty(spec: CitySpec, zoneA: string, zoneB: string): numbe
   }
   return 0;
 }
-export function estimateTravelMinutes(city: City | string, fromArea: string, toArea: string): number {
+
+/**
+ * Estimate door-to-door travel minutes between two areas in a city, incorporating
+ * haversine distance, primary mode speed, and geographic barrier penalties.
+ */
+export function estimateTravelMinutes(city: LaunchCity, fromArea: string, toArea: string): number {
   const spec = getCity(city);
   if (!spec) return 30;
   const a = findNeighborhood(city, fromArea);
   const b = findNeighborhood(city, toArea);
   if (!a || !b) {
+    // Unknown neighborhood falls back to city center estimate.
     const pa = a ?? { lat: spec.center.lat, lng: spec.center.lng, zone: spec.zones[0]?.id ?? "central", name: fromArea };
     const pb = b ?? { lat: spec.center.lat, lng: spec.center.lng, zone: spec.zones[0]?.id ?? "central", name: toArea };
     const dist = km(pa, pb);
@@ -1235,8 +1211,14 @@ export function estimateTravelMinutes(city: City | string, fromArea: string, toA
   const barrier = zoneBarrierPenalty(spec, a.zone, b.zone);
   return Math.max(5, Math.round(spec.baseMinutes + dist / spec.kmPerMinute + barrier));
 }
+
+/**
+ * Discrete neighborhood minimax + efficiency midpoint selection.
+ * Delegates travel-limit validation and integer-scaled cost (6*max + 4*mean) to proved cityCore.ts.
+ * Relaxes limit in +5m steps up to +10m if no strict candidate exists; returns undefined if none fits.
+ */
 export function chooseFairMidpoint(
-  city: City,
+  city: LaunchCity,
   areas: string[],
   mode: "date" | "group" = "date"
 ): FairMidpointResult | undefined {
@@ -1244,14 +1226,14 @@ export function chooseFairMidpoint(
   if (!spec || areas.length === 0) return undefined;
   const baseLimit = mode === "group" ? spec.groupMaxMinutes : spec.dateMaxMinutes;
 
-  for (const relax of [0, 5, maxRelaxStepMin]) {
+  for (const relax of [0, 5, 10]) {
     let best: FairMidpointResult | undefined;
     for (const candidate of spec.neighborhoods) {
       const times = areas.map(a => estimateTravelMinutes(city, a, candidate.name));
+      if (!isValidMidpoint(times, baseLimit, relax)) continue;
       const maxMin = Math.max(...times);
       const meanMin = Math.round(times.reduce((s, x) => s + x, 0) / times.length);
-      if (!isValidMidpoint(maxMin, baseLimit, relax)) continue;
-      if (!isWithinTravelLimit(maxMin, baseLimit, relax)) continue;
+      if (!isWithinTravelLimit(maxMin, baseLimit + relax)) continue;
       const supplyBonus = Math.max(0, Math.round(candidate.hubSupply * 2));
       const baseCost = fairMidpointCostScaled(maxMin, meanMin);
       const netCost = fairMidpointNetCostScaled(maxMin, meanMin, supplyBonus);

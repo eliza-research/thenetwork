@@ -32,6 +32,8 @@ export type GroupPref = "one_to_one" | "group" | "either";
 export type AdversaryKind = "romance_seeker" | "mlm" | "bot" | "harasser" | "age_liar";
 export const ADVERSARY_KINDS: readonly AdversaryKind[] = ["romance_seeker", "mlm", "bot", "harasser", "age_liar"];
 export type VerifyResult = "passed" | "failed" | "pending";
+export type FriendsSpendTier = "free" | "low" | "moderate" | "high" | "unconstrained";
+export type FriendsHumor = "dry_ironic" | "absurdist" | "warm_earnest" | "nerdy_wordplay" | "roast_banter";
 
 export interface FriendsHidden {
   trueAge: number;
@@ -67,6 +69,12 @@ export interface FriendsHidden {
   canary: string;
   /** Planted circle and standing (only with FriendsGenOptions.planted). */
   planted?: PlantedMark;
+  economicCapital?: number;
+  spendComfortTier?: FriendsSpendTier;
+  humorRegister?: FriendsHumor;
+  depthPreference?: number;
+  extractionPropensity?: number;
+  dunbarOpenSlots?: { inner5: boolean; sympathy15: boolean; affinity50: boolean };
 }
 
 export interface FriendsStated {
@@ -234,6 +242,31 @@ export function generateFriendsPersonas(o: FriendsGenOptions): FriendsPersona[] 
     // Adversaries: bots and promoters want reach; romance seekers and harassers look like anyone.
     if (adversary === "bot" || adversary === "mlm") { hidden.appetite = 0.95; hidden.replyProb = 0.97; }
     if (adversary === "romance_seeker") hidden.appetite = 0.9;
+    const fr = root.fork("friends-strata-v2", i);
+    if (isMinor) {
+      hidden.economicCapital = 0;
+      hidden.spendComfortTier = "free";
+      hidden.extractionPropensity = adversary ? 0.5 : 0.02;
+      hidden.dunbarOpenSlots = { inner5: false, sympathy15: false, affinity50: false };
+    } else {
+      const econBase = lifeStage === "student" ? 0.22 : lifeStage === "early_career" ? 0.42 : lifeStage === "established" ? 0.62 : 0.48;
+      const econ = clamp01(econBase + fr.normal(0, 0.22));
+      hidden.economicCapital = Math.round(econ * 1000) / 1000;
+      hidden.spendComfortTier = econ < 0.22 ? "free" : econ < 0.42 ? "low" : econ < 0.68 ? "moderate" : econ < 0.86 ? "high" : "unconstrained";
+      hidden.humorRegister = fr.weighted<FriendsHumor>([
+        ["dry_ironic", 0.24], ["warm_earnest", 0.28], ["nerdy_wordplay", 0.18], ["absurdist", 0.16], ["roast_banter", 0.14],
+      ]);
+      hidden.depthPreference = Math.round(clamp01(0.45 + 0.2 * (0.5 - energy) + fr.normal(0, 0.18)) * 1000) / 1000;
+      hidden.extractionPropensity = adversary === "mlm" || adversary === "bot" ? 0.92
+        : adversary === "romance_seeker" || adversary === "harasser" ? 0.76
+        : !adversary && hidden.honesty < 0.78 && fr.bool(0.30) ? fr.range(0.26, 0.42)
+        : fr.range(0.02, 0.16);
+      hidden.dunbarOpenSlots = {
+        inner5: newToCity || loneliness >= 0.45 || fr.bool(0.35),
+        sympathy15: newToCity || loneliness >= 0.28 || appetite >= 0.55,
+        affinity50: appetite >= 0.35 || energy >= 0.30,
+      };
+    }
     // Stated side: true loves (85% each), one aspirational activity (40%), noisy energy, free slots, tolerance.
     const sr = new Rng(hash32("friends-stated", o.seed, i));
     const stated = loves.filter(() => sr.bool(0.85));

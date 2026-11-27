@@ -218,11 +218,114 @@ export function copyFor(b: CopyBrand) {
   /** "leave <app>": this app only; the member's data in it is deleted. */
   leftApp: `Done. You've left ${b.name} and I deleted what you shared here. Other apps you use with this number are not affected.`,
   notInApp: `You're not in ${b.name}, so there is nothing to leave and nothing changed. Other apps you use with this number are not affected.`,
+  topOneVenueSuggestion: (venue: string, area: string, when: string, opts?: { partner?: string; why?: string; pivot?: number }) =>
+    formatTopOneVenueSuggestion(venue, area, when, opts),
+  crowdExpectation: (mode: "network_curated" | "external_open", opts?: { interest?: string; platforms?: string; sparseAnchor?: boolean }) =>
+    formatCrowdExpectation(mode, { ...opts, brandName: b.name }),
+  backupVenuePivot: (primaryVenue: string, backupVenue: string, reason: "full" | "closed", opts?: { address?: string; landmark?: string }) =>
+    formatBackupVenuePivot(primaryVenue, backupVenue, reason, opts),
+  anchorOrQuorumCancel: (reason: "anchor_drop" | "low_quorum" | "co_anchor_promoted", opts?: { activity?: string; when?: string; venue?: string }) =>
+    formatAnchorOrQuorumCancel(reason, opts),
   };
 }
 export type Copy = ReturnType<typeof copyFor>;
 /** The Network's copy (ntwrk). Other apps: copyFor(brandOf(app)). */
 export const copy: Copy = copyFor(NTWRK_BRAND);
+
+const cleanPhrase = (s: string) => s.replace(/_/g, " ").replace(/\?/g, "").replace(/\s+/g, " ").trim();
+const clampSms = (text: string, fallback: string) => (text.length <= 360 ? text : fallback.length <= 360 ? fallback : `${fallback.slice(0, 357).replace(/\?+$/, "")}...`);
+
+export function formatTopOneVenueSuggestion(
+  venue: string,
+  area: string,
+  when: string,
+  opts: { partner?: string; why?: string; pivot?: number } = {}
+): string {
+  const v = cleanPhrase(venue);
+  const a = cleanPhrase(area);
+  const w = cleanPhrase(when);
+  const partner = opts.partner ? cleanPhrase(opts.partner) : undefined;
+  const why = opts.why ? ` (${cleanPhrase(opts.why)})` : "";
+  const pivot = opts.pivot ?? 0;
+  let text: string;
+  if (pivot <= 0) {
+    text = partner
+      ? `You're both in: meet ${partner} ${w} at ${v} in ${a}${why}. Works for you, or want to swap the spot or vibe?`
+      : `Top pick for ${w}: ${v} in ${a}${why}. Works for you, or want to swap the spot?`;
+  } else if (pivot >= 2) {
+    text = `Got it. How about ${v} in ${a} for ${w}${why}, or want to name a public spot you prefer?`;
+  } else {
+    text = `Fair call. How about ${v} in ${a} for ${w}${why} instead?`;
+  }
+  return clampSms(text, `How about ${v} in ${a} for ${w}?`);
+}
+
+export function formatCrowdExpectation(
+  mode: "network_curated" | "external_open",
+  opts: { interest?: string; platforms?: string; sparseAnchor?: boolean; brandName?: string } = {}
+): string {
+  const brand = cleanPhrase(opts.brandName || "the Network");
+  if (mode === "network_curated") {
+    return clampSms(
+      `This is a curated ${brand} meetup — everyone coming is a vetted member.`,
+      "This is a curated meetup — everyone coming is a vetted member."
+    );
+  }
+  const interest = cleanPhrase(opts.interest || "this meetup");
+  const platforms = cleanPhrase(opts.platforms || "Luma/Meetup");
+  if (opts.sparseAnchor) {
+    return clampSms(
+      `Heads up: you'll help anchor ${interest} with local guests screened from ${platforms}. If RSVPs stay under 3 by 24h out, I'll call it early so you don't waste a trip.`,
+      "Heads up: this is an open meetup with screened local guests. If RSVPs stay under 3 by 24h out, I'll call it early."
+    );
+  }
+  return clampSms(
+    `Heads up: this is an open ${interest} meetup with ${brand} members plus local ${platforms} guests we screened. Free public events can see last-minute drops, so we invite a few extra.`,
+    "Heads up: this is an open meetup with members plus screened local guests, so we invite a few extra."
+  );
+}
+
+export function formatBackupVenuePivot(
+  primaryVenue: string,
+  backupVenue: string,
+  reason: "full" | "closed",
+  opts: { address?: string; landmark?: string } = {}
+): string {
+  const p = cleanPhrase(primaryVenue);
+  const b = cleanPhrase(backupVenue);
+  const why = reason === "full" ? "is full" : "is closed";
+  const addr = opts.address ? ` (${cleanPhrase(opts.address)})` : "";
+  const landmark = opts.landmark ? ` Meet ${cleanPhrase(opts.landmark)}.` : "";
+  return clampSms(
+    `Quick pivot: ${p} ${why}, so let's meet at ${b}${addr} instead.${landmark} Reply if your plans change.`,
+    `Quick pivot: ${p} ${why}, so let's meet at ${b} instead. Reply if your plans change.`
+  );
+}
+
+export function formatAnchorOrQuorumCancel(
+  reason: "anchor_drop" | "low_quorum" | "co_anchor_promoted",
+  opts: { activity?: string; when?: string; venue?: string } = {}
+): string {
+  const act = cleanPhrase(opts.activity || "this meetup");
+  const when = opts.when ? ` ${cleanPhrase(opts.when)}` : "";
+  const venue = opts.venue ? ` at ${cleanPhrase(opts.venue)}` : "";
+  if (reason === "co_anchor_promoted") {
+    return clampSms(
+      `Quick update: our host changed, so ${act}${when}${venue} is still on as planned. Reply if your plans change.`,
+      `Quick update: our host changed, so ${act} is still on. Reply if your plans change.`
+    );
+  }
+  if (reason === "anchor_drop") {
+    return clampSms(
+      `Quick update: ${act}${when} is off since the host can't make it, sorry about that. I'll look for another time soon.`,
+      "Quick update: this meetup is off since the host can't make it, sorry about that. I'll look for another time."
+    );
+  }
+  return clampSms(
+    `Quick update: not enough people came together for ${act}${when}, so I'm calling it early so you don't waste a trip. I'll keep an eye out for next week.`,
+    "Quick update: not enough people came together this time, so I'm calling it early. I'll keep an eye out for next week."
+  );
+}
 
 const OFFER = "For future plans, reply CALENDAR to allow free/busy from an authorized calendar, or WEEKLY for a short weekly check-in.";
 /** The answer request that ends a probe: with time options, which one works; without, yes or no. */

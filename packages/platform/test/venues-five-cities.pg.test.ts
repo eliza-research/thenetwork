@@ -250,7 +250,7 @@ describe.skipIf(!pgAvailable)("5-city venues, sufficiency cutoff, open checks, f
       separateChecks: true,
       walkInGroupCapacity: 8,
       reservationRequired: false,
-      noiseLevel: "Conversational",
+      noiseLevel: "conversational",
       liveMusicAtNight: false,
       indoor: true,
       outdoor: false,
@@ -344,7 +344,7 @@ describe.skipIf(!pgAvailable)("5-city venues, sufficiency cutoff, open checks, f
     expect(rec.externalVerifyCalls).toBeGreaterThanOrEqual(2);
 
     const quarantined = await getVenue(sql, topId);
-    expect(quarantined?.status).toBe("ClosedPermanent");
+    expect(quarantined?.status).toBe("closed_permanent");
 
     simProvider.resetCounters();
     const rec2 = await composite.pickVerifiedPrimaryAndBackup(sfRequest, { appId: "slop", nowMs: nowMs + HOUR });
@@ -367,7 +367,7 @@ describe.skipIf(!pgAvailable)("5-city venues, sufficiency cutoff, open checks, f
       { venueId: targetId, memberId: "m1", at: nowMs, outcome: "closed", reportedClosed: true },
       nowMs,
     );
-    expect(after1?.status).toBe("SuspectClosed");
+    expect(after1?.status).toBe("suspect_closed");
     expect(after1?.closureReports).toBe(1);
     expect(after1?.quarantinedUntil).toBe(nowMs + 7 * DAY);
 
@@ -389,7 +389,7 @@ describe.skipIf(!pgAvailable)("5-city venues, sufficiency cutoff, open checks, f
       { venueId: targetId, memberId: "m2", at: nowMs + HOUR, outcome: "closed", reportedClosed: true },
       nowMs + HOUR,
     );
-    expect(after2?.status).toBe("ClosedPermanent");
+    expect(after2?.status).toBe("closed_permanent");
     expect(after2?.closureReports).toBe(2);
 
     const learnId = "chi-wormhole-coffee";
