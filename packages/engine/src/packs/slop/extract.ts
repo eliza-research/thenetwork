@@ -281,7 +281,7 @@ const SEEK_WORD: [RegExp, Gender][] = [
   [/^(?:nonbinary|nonbinery|non-binary|nb|nbs|enby|enbies|genderqueer)$/, "nonbinary"],
 ];
 const SEEK_FILLER = /^(?:a|an|the|some|cute|nice|tall|older|younger|mostly|mainly|only|just|also|too|and|or|&|\+|plus|n|\/|people|folks|ppl|persons|humans|of|kind|really|primarily|other|fellow|queer|straight|bi|gay|lesbian|single|hot|cool|smart|funny|interesting|ish|lol|tbh|honestly|pls|please|preferably|ideally|i guess|non|binary|people's|masc|femme|fem|feminine|masculine|good|great|decent|real|genuine|sweet|honest|handsome|pretty|beautiful|new|special|right|solid|kind-hearted|caring|both|either)$/;
-const ALL_GENDERS = /^\s*(?:(?:a|the)\s+)?(?:anyone|any1|anybody|everyone|everybody|whoever|all genders|any genders?|people of (?:all|any) genders?|all of the above|all of them|any of them|all three|everyone really|literally anyone|all(?=\s*(?:$|[,.!?;)]|lol\b|tbh\b|really\b|please\b|pls\b|honestly\b|i guess\b))|anyone really)\b/;
+const ALL_GENDERS = /^\s*(?:(?:a|the)\s+)?(?:anyone|any1|anybody|everyone|everybody|whoever|all genders|any genders?|people of (?:all|any) genders?|all of the above|all of them|any of them|all (?:three|3)|everyone really|literally anyone|all(?=\s*(?:$|[,.!?;)]|lol\b|tbh\b|really\b|please\b|pls\b|honestly\b|i guess\b))|anyone really)\b/;
 const ALL_BUT = /^\s*(?:but|except|besides|other than|apart from|excluding|minus)\b/;
 const SEEK_TRIGGER = /\b(?:look(?:ing|in'?|ng)?\s+(?:for|4)|lokking for|loking for|lookign for|lf|seeking|searching for|into|interested in|attracted to|dat(?:e|ing|in)|meet(?:ing)?|want(?:ing)?|wanna (?:date|meet)|prefer|preferably|open to|down for|tryna (?:meet|date|find)|hoping (?:to meet|for)|after|only|just|exclusively|strictly|(?<!i'?m |im )likes?|loves?)\b/;
 
@@ -1107,16 +1107,42 @@ export function validateSlopReading(raw: unknown, text: string): SlopLlmReading 
   return out;
 }
 
-export function llmSlopReader(llm: LLM, o: { maxTokens?: number; attempts?: number } = {}): SlopReader {
+const SLOP_READER_DEFAULT_DEADLINE_MS = 15_000;
+const TRIVIAL_SLOP_TURN = /^\s*(?:yes|yeah|yep|yup|ya|ye|no|nope|nah|ok|okay|k|kk|cool|great|nice|thanks|thx|ty|got it|sounds good|sure|perfect|right|correct|exactly|pretty much|mostly|basically|will do|all good|👍|👌)[.!\s]*$/i;
+const SOFT_FIELD_CUE = /\b(?:casual|serious|long[- ]?term|relationship|marriage|fling|hookup|smok|drink|sober|kid|child|parent|relig|faith|church|politic|conserv|liberal|democrat|republican|coffee|drink|bar|dinner|walk|museum|music|concert|comedy|climb|hik|cook|book|movie|film|game|art|run|gym|yoga|bike|travel|food|jazz|rock|tech|ai|free|evening|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
+
+export function llmSlopReader(llm: LLM, o: { maxTokens?: number; attempts?: number; deadlineMs?: number } = {}): SlopReader {
+  const cachedClient: LLM = {
+    chat: (messages, opts) => llm.chat(messages, {
+      ...opts,
+      reasoningEffort: "low",
+      promptCacheKey: "slop-onboard-reader-v1",
+    }),
+  };
   return async (text, ctx) => {
     if (!text.trim() || text.length > 1200) return undefined;
-    const r = await tryChatJson(llm, slopReaderPrompt(maskPii(text), ctx), raw => validateSlopReading(raw, text), { attempts: o.attempts ?? 2, maxTokens: o.maxTokens ?? 900 });
+    const r = await tryChatJson(cachedClient, slopReaderPrompt(maskPii(text), ctx), raw => validateSlopReading(raw, text), {
+      attempts: o.attempts ?? 2,
+      maxTokens: o.maxTokens ?? 900,
+      deadlineMs: o.deadlineMs ?? SLOP_READER_DEFAULT_DEADLINE_MS,
+    });
     return r.ok ? r.value : undefined;
   };
 }
 
 export const LLM_FILL_BELOW = 0.75, LLM_CONFIDENCE = 0.7;
 const SELF_AGE_CUE = /\b(?:\d{1,2}|age|old|y\/?o|y\.o\.|years?|born|birthday|bday|turning|turned|minor|underage|teen|high ?school|middle ?school|freshman|sophomore|junior|senior|grade|homeroom|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty)\b/i;
+
+function shouldShortCircuitSlopLlm(text: string, p: SlopOnboarding, asked: OnboardField | undefined): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return true;
+  const hasAgeCue = SELF_AGE_CUE.test(trimmed);
+  if (!hasAgeCue && (trimmed.length < 4 || TRIVIAL_SLOP_TURN.test(trimmed))) return true;
+  if (hardFilled(p) === HARD_FIELDS.length && (!asked || hasField(p, asked)) && !hasAgeCue && !SOFT_FIELD_CUE.test(trimmed)) {
+    return true;
+  }
+  return false;
+}
 
 export async function extractSlopProfileLLM(
   messages: (string | { text: string; asked?: OnboardField })[], prior: SlopOnboarding | undefined,
@@ -1128,6 +1154,7 @@ export async function extractSlopProfileLLM(
     const asked = typeof msg === "string" ? o.asked : msg.asked ?? o.asked;
     p = extractSlopProfile([{ text, asked }], p, o);
     if (!o.llm?.enabled || p.declined || p.minor) continue;
+    if (shouldShortCircuitSlopLlm(text, p, asked)) continue;
     const low = (f?: Field<unknown>) => !f || f.confidence < LLM_FILL_BELOW;
     const missing = LLM_FIELDS.filter(k =>
       k === "gender" ? low(p.gender) : k === "seeks" ? p.seeks?.source !== "llm" && low(p.seeks) : k === "ageRange" ? low(p.ageRange) : k === "distance" ? low(p.distance)

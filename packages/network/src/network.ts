@@ -29,7 +29,7 @@ import {
   type Category, type City, type CityId, type DensityTier, type ExternalEventDraft, type ExternalQuorumDecision, type Facet, type Intent,
   type LaunchCity, type LeakOptions, type LLM, type MemberId, type MemberVenuePrefs, type NetworkEvent,
   type ParticipationState, type PivotFilterOptions, type Preferences, type Presence, type PrimaryBackupVenuePick, type Proposal,
-  type ScoreComponents, type TopOneSuggestionState, type VenueLLMRerankResult, type VenueNoiseLevel, type VenuePriceTier, type VenueRecord,
+  type ScoreComponents, type TopOneSuggestionState, type VampireTelemetry, type VenueLLMRerankResult, type VenueNoiseLevel, type VenuePriceTier, type VenueRecord,
   type VenueRejectionReason, type WorkIntroState, type WorldSnapshot,
 } from "@thenetwork/core";
 import {
@@ -68,7 +68,7 @@ import { slopFirstIntroductionAt, slopPairContactAllowed } from "../../core/src/
 import { bookReplacementPlan, canTryGroupReplacement, mayOfferReviewedAlternate, recoveryPlanCanProceed, replacementAnswerAllowed, viableReplacementSlot } from "../../core/src/generated/bookedGroupReplacement.ts";
 import { bookingNoticeRosterCurrent, rescheduleAnswerAfterReceipt, rescheduleBookingSelected, rescheduleDeadline, rescheduleDraftCurrent, rescheduleTimeEligible, rescheduleVote } from "../../core/src/generated/meetingReschedule.ts";
 import {
-  describeBookingStart, localBookingStart, parseRescheduleCommand, rescheduleMemberRef, rescheduleNoticeCurrent, rescheduleOfferKey,
+  describeBookingStart, localBookingStart, parseNaturalReschedule, parseRescheduleCommand, rescheduleMemberRef, rescheduleNoticeCurrent, rescheduleOfferKey,
   rescheduleUpdateKey, RESCHEDULE_QUEUE_PREFIX, sameRescheduleRoster, type RescheduleCommand, type RescheduleDraft,
 } from "./rescheduling.ts";
 import {
@@ -165,13 +165,17 @@ import { draftUsesMatchingSlot, newMatchCategoryAllowed, newMatchParticipationAl
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS, type DesireDef } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
 import { birthdayRecorded, minorNoticeFor, minorScopeNoticeDue, scopeNoticeTurnOpens, soloTeenApp, statedAgeNow, teenBirthDateContradicted, type MinorNotice } from "../../core/src/generated/textEnrollment.ts";
-import { ageAnswer, agesStated, availabilityTags, birthDateAnswer, birthDateStated, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, feedbackOf, isCompleteParticipationRefusal, isNamedProbeTime, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, plansPlaceQuestion, publicPlanLocation, sentencesOf, statedAge, unclearBirthDateAnswer, type Classified, type TimeOption } from "./classify.ts";
+import { ageAnswer, agesStated, availabilityTags, birthDateAnswer, birthDateStated, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, feedbackOf, isCompleteParticipationRefusal, isNamedProbeTime, isProbeCounterTime, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, plansPlaceQuestionFor, publicPlanLocation, sentencesOf, statedAge, unclearBirthDateAnswer, type Classified, type TimeOption } from "./classify.ts";
 import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import {
   directInviteVouch, inviteReviewContactToken, inviteReviewReference, inviteVouchEvidence, inviteVouchRisk, isMemberInvitationLink,
   type InviteReviewReason, type MemberInviteEvidence, type MemberInviteRequest, type MemberInviteResult,
 } from "./invitation.ts";
-import { brandOf, copy, copyFor, type Copy, whenPhrase } from "./copy.ts";
+import { brandOf, copy, copyFor, timezoneLabel, type Copy, whenPhrase } from "./copy.ts";
+import {
+  confirmBeforeCommitRequired, firstNoShowStrikes, lateCancel24hStrikes, lateCancel4hStrikes,
+  reliabilityEffectiveStrikes, reliabilityTier, repeatNoShowStrikes, reportRestrictsMatchingV2,
+} from "../../core/src/generated/qualityAndLeague.ts";
 import { APPS, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { lowestAge } from "../../platform/src/age.ts";
 import { allNeighborhoods, findCityNeighborhood, meetingSpot, nearbyVenues, NEIGHBORHOOD, NEIGHBORHOODS, neighborhood, travelMinutes, travelMinutesInCity, VENUES, venuesForCity, type Venue } from "./geo.ts";
@@ -428,8 +432,34 @@ const CASE_PHASE = { open: "CaseOpen", held: "CaseHeld", lifted: "CaseLifted", c
 const CASE_STATUS = { CaseOpen: "open", CaseHeld: "held", CaseLifted: "lifted", CaseClosed: "closed", NoCase: "open" } as const satisfies Record<CasePhase, SafetyCase["status"]>;
 const REPORT_PHASE = { open: "ReportOpen", held: "ReportHeld", banned: "ReportBanned", dismissed: "ReportDismissed" } as const;
 
-function pendingReportHold(reports: NetworkState["reports"], id: MemberId): boolean {
-  return (reports ?? []).some(r => r.subjectId === id && reportRestrictsMatching(REPORT_PHASE[r.status], r.met, URGENT_REPORTS.has(r.kind)));
+const READ_ONLY_METHODS = new Set<string | symbol>([
+  "matchingEnabled", "reviewQueue", "safetyCases", "safetyReports", "memberList", "exportState",
+  "snapshotCached", "knownProfiles", "engineInput", "packInput", "rescheduleReplyCurrent",
+  "approvedPublicEventLink", "approvedBookingLink", "densityTierFor", "canTriggerExternalSourcingFor",
+  "evaluateExternalEventPublish", "evaluateExternalEventQuorum", "reportRestrictionsForLeave",
+  "stripNames", "findByName", "stats", "openOpps", "recentRequests", "standingFor", "standingEntries",
+  "teenIntrosEnabled", "teenState", "relayState", "auditLog", "pendingCounts", "checkRecipient",
+]);
+
+const VENUE_SWAP_INTENT_RX = /\b(?:different (?:place|spot|venue|cafe|bar|restaurant)|another (?:place|spot|venue|cafe)|too (?:loud|noisy|far|expensive|pricey|crowded)|rather not (?:go to )?a bar|don'?t drink|no bars?|somewhere (?:quieter|closer|cheaper)|swap (?:the )?(?:venue|spot|place)|change (?:the )?(?:venue|spot|place))\b/i;
+const CANCEL_INTENT_OVERRIDE_RX = /\b(?:can'?t make it|cannot make it|cancel|bail|call it off|not coming|won'?t make it)\b/i;
+
+function pendingReportHold(
+  reports: NetworkState["reports"],
+  id: MemberId,
+  reporterHeld?: (reporterId: MemberId) => boolean,
+): boolean {
+  const openOrHeld = (reports ?? []).filter(r => r.subjectId === id && (r.status === "open" || r.status === "held"));
+  if (!openOrHeld.length) return false;
+  const distinctCleanReporters = new Set(
+    openOrHeld.filter(r => URGENT_REPORTS.has(r.kind) && !reporterHeld?.(r.reporterId)).map(r => r.reporterId),
+  ).size;
+  return openOrHeld.some(r => {
+    const urgent = URGENT_REPORTS.has(r.kind);
+    if (!reportRestrictsMatching(REPORT_PHASE[r.status], r.met, urgent)) return false;
+    const isReporterHeld = reporterHeld ? reporterHeld(r.reporterId) : false;
+    return reportRestrictsMatchingV2(urgent, r.met, isReporterHeld, distinctCleanReporters, false);
+  });
 }
 const REPORT_STATUS = { ReportOpen: "open", ReportHeld: "held", ReportBanned: "banned", ReportDismissed: "dismissed" } as const satisfies Record<ReportPhase, SafetyReport["status"]>;
 const SAFETY_REFUSAL = {
@@ -689,6 +719,14 @@ interface MemberState {
   /** Latest statement time for which this member already received a committed empty-intent notice. */
   emptyIntentNotices?: Record<string, number>;
   noShows: number; completedSinceNoShow: number; msgsIn: number;
+  /** Pass-4 rolling reliability strikes and vampire/pitch-slap telemetry. */
+  strikes?: number;
+  lateCancels4h?: number;
+  lateCancels24h?: number;
+  rescheduleChurn?: number;
+  provisionalNoShow?: boolean;
+  pitchSignals?: number[];
+  selfPromoReports?: { from: MemberId; at: number }[];
   /** Probes/questions/invitations we sent that wanted an answer, and how many got one. */
   asked: number; answered: number;
   /** Venues suggested to this member (venue id -> when), so a repeat ask gets new ideas or nothing. */
@@ -1325,17 +1363,39 @@ export class ConsentNetwork implements NetworkUnderTest {
       ...(opts.concurrentHeadcountByVenue !== undefined ? { concurrentHeadcountByVenue: opts.concurrentHeadcountByVenue } : {}),
     };
     this.venues = new VenueManager({ provider: opts.venueProvider });
-    this.meetups = new MeetupCoordinator(this.meetupHost());
+    this.meetups = new MeetupCoordinator(this.meetupHost(), {
+      onProvisionalNoShow: ev => {
+        for (const missingId of ev.missingMemberIds) {
+          const mm = this.members.get(missingId);
+          if (!mm) continue;
+          const hadNoShow = mm.noShows > 0 || (mm.strikes ?? 0) > 0;
+          mm.provisionalNoShow = true;
+          mm.strikes = (mm.strikes ?? 0) + (hadNoShow ? repeatNoShowStrikes : firstNoShowStrikes);
+          mm.completedSinceNoShow = 0;
+          this.dirty = true;
+          this.ctx?.log("provisional_no_show", { oppId: ev.oppId, memberId: missingId, at: ev.at });
+        }
+      },
+    });
     this.allowedCategories = new Set(opts.allowedCategories ?? ALLOWED_CATEGORIES[this.app.id] ?? ALLOWED_CATEGORIES.ntwrk!);
     this.inlineJudge = opts.inlineJudge;
     this.judgeReviewer = opts.judgeReviewer ?? (opts.inlineJudge ? SIM_REVIEW_JUDGE : REVIEW_JUDGE_REVIEWER);
     this.pcfg = resolvePlans(opts.plansConfig ?? {});
     this.trust.onChange = (id, from, to, why) => this.onTrustChange(id, from, to, why);
     this.trust.onEvent = (id, e) => this.caseEvent(id, e);
+    const wrappedMethods = new Map<string | symbol, { fn: (...args: unknown[]) => unknown; wrapped: (...args: unknown[]) => unknown }>();
     return new Proxy(this, {
       get: (target, key) => {
         const value: unknown = Reflect.get(target, key);
-        return typeof value === "function" ? (...args: unknown[]) => { target.beginUnit(); return value.apply(target, args); } : value;
+        if (typeof value !== "function") return value;
+        const fn = value as (...args: unknown[]) => unknown;
+        const cached = wrappedMethods.get(key);
+        if (cached && cached.fn === fn) return cached.wrapped;
+        const wrapped = READ_ONLY_METHODS.has(key)
+          ? fn.bind(target)
+          : (...args: unknown[]) => { target.beginUnit(); return fn.apply(target, args); };
+        wrappedMethods.set(key, { fn, wrapped });
+        return wrapped;
       },
     });
   }
@@ -1384,6 +1444,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     this.replyTo = m.id;
     this.memberReply = fromThread && !msg.keyword;
+    this.sentThisTurn = false;
     this.turnSource = msg.source ?? "thread";
     this.turnCause = msg.id;
     this.understood = u;
@@ -1392,11 +1453,12 @@ export class ConsentNetwork implements NetworkUnderTest {
       const turnOpen = this.handleInbound(m, msg, privateInviteTurn, replyOpen, currentDanger, priorInboundAt, queueCofounderIntent, reportChoice) === "open";
       return scopeNoticeTurnOpens(turnOpen, m.minorScopeToldAt !== toldBefore) ? "open" : "handled";
     }
-    finally { this.replyTo = undefined; this.memberReply = false; this.turnSource = undefined; this.turnCause = undefined; this.understood = undefined; this.invitesBeforeReply.clear(); }
+    finally { this.replyTo = undefined; this.memberReply = false; this.sentThisTurn = false; this.turnSource = undefined; this.turnCause = undefined; this.understood = undefined; this.invitesBeforeReply.clear(); }
   }
 
   /** How many messages we had sent since the member's previous message, when this one came in. */
   private outboundBefore = 0;
+  private sentThisTurn = false;
   private invitesBeforeReply = new Set<string>();
 
   private handleLateArrival(member: MemberState, now: number, receivedAt: number): boolean {
@@ -1471,7 +1533,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   private static readonly BARE_CONSENT_RE = /^(?:yes|yeah|yep|yup|ya|no|nope|nah|ok|okay|sure)[.!?]*$/i;
 
-  /** Short-circuit LLM understanding ONLY for active members sending trivial <=40-char ack/option-key/yes-no replies to structured prompts. */
+  /** Short-circuit LLM understanding ONLY for active members sending trivial <=50-char ack/option-key/yes-no replies. */
   private canShortCircuitUnderstand(
     m: MemberState | undefined,
     body: string,
@@ -1480,14 +1542,15 @@ export class ConsentNetwork implements NetworkUnderTest {
   ): boolean {
     if (!m || m.stage !== "active") return false;
     const trimmed = body.trim();
-    if (!trimmed || trimmed.length > 40) return false;
+    if (!trimmed || trimmed.length > 50) return false;
     if (ConsentNetwork.BARE_CONSENT_RE.test(trimmed)) return true;
-    if (!aw || !SHORT_CIRCUIT_AWAITING.has(String(aw.kind))) return false;
-    const isBareOption = Boolean(options?.length) && BARE_OPTION_KEYS_RE.test(trimmed);
-    const isPureShort = isBareOption || (!EXTRA_CLAUSE_RE.test(trimmed) && (ACK_ONLY.test(trimmed) || BARE_YES_NO_RE.test(trimmed)));
+    const structured = !!aw && SHORT_CIRCUIT_AWAITING.has(String(aw.kind));
+    const isBareOption = structured && Boolean(options?.length) && BARE_OPTION_KEYS_RE.test(trimmed);
+    const isPureAck = !EXTRA_CLAUSE_RE.test(trimmed) && ACK_ONLY.test(trimmed);
+    const isPureShort = isBareOption || isPureAck || (structured && !EXTRA_CLAUSE_RE.test(trimmed) && BARE_YES_NO_RE.test(trimmed));
     if (!isPureShort) return false;
     const c = classify(trimmed);
-    if (c.abuse.length || c.minorSignal || c.statedAge !== undefined || c.tags.length || c.desireId || c.notWanted?.length) return false;
+    if (c.abuse.length || c.minorSignal || c.statedAge !== undefined || c.tags.length || c.desireId || c.notWanted?.length || c.pitchSlap) return false;
     const profile = extractProfile(trimmed);
     if (profile.interests.length || profile.skills.length || profile.desireIds.length || profile.notWanted.length || profile.area) return false;
     return true;
@@ -1642,7 +1705,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!currentDanger && !m.optedOut && m.stage !== "new" && m.stage !== "age"
       && minorScopeNoticeDue(m.minor, soloTeenApp(this.app.id), m.minorScopeToldAt !== undefined)) this.sendMinorNotice(m, "safety");
     if (currentDanger) return this.handleImmediateDanger(m, msg, c);
-    if (m.stage === "new") return this.welcome(m);
+    if (m.stage === "new") {
+      if (body.trim() && !msg.keyword) this.learnFrom(m, body);
+      return this.welcome(m);
+    }
     if (m.stage === "age" && this.afterAgeQuestion(m, known !== undefined)) return;
 
     // Blocks and reports first: their words describe someone else, so they are never scored as the
@@ -1686,6 +1752,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     // contact_share, then both must say yes), never the sender's abuse: it goes to the agent unscored.
     if (c.abuse.length && command && !privateInviteTurn && this.swapAsk(m, c, body)) return "open" as const;
     if (c.abuse.length && !this.handleAbuse(m, c, body)) return;
+    if (c.pitchSlap && !m.minor) {
+      const cutoff = now - 90 * DAY;
+      m.pitchSignals = [...(m.pitchSignals ?? []).filter(t => t >= cutoff), now].slice(-20);
+      if (!(m.appTags ?? []).some(t => t.tag === "hv:hype:pitch")) {
+        m.appTags = [...(m.appTags ?? []), { tag: "hv:hype:pitch", kind: "trait", scope: "agent_private", at: now }];
+      }
+      this.dirty = true;
+    }
 
     if (privateInviteTurn) {
       if (!c.abuse.length && this.opts.memberInviteTurnAllowed?.(m.id, msg.id)) this.handleInviteVouchTurn(m, msg.id, body);
@@ -1746,14 +1820,34 @@ export class ConsentNetwork implements NetworkUnderTest {
     const eligibleReply = !c.pastAbsence || pendingReply?.kind === "feedback";
     const aw = pendingReply?.kind === "interview" || eligibleReply ? pendingReply : undefined;
     const tz = this.cityTz();
-    const reschedule = this.memberReply && !msg.reaction ? parseRescheduleCommand(body, tz) : undefined;
-    if (reschedule) return this.handleMeetingReschedule(m, reschedule, msg.id, msg.signedReceivedAt ?? msg.ts, now);
+    const upcomingBookings = this.memberReply && !msg.reaction
+      ? [...this.opps.values()].filter(o => o.meetingAt !== undefined && upcomingCancellationEligible(
+        opportunityLifecycle(o), o.participants.includes(m.id), o.status.get(m.id) === "yes", true, o.meetingAt, now))
+      : [];
+    const openRescheduleOffers = this.memberReply && !msg.reaction
+      ? [...this.opps.values()].filter(o => o.reschedule?.offered.includes(m.id) && !o.reschedule.accepted.includes(m.id) && this.currentReschedule(o, o.reschedule, now))
+      : [];
+    const strictReschedule = /^RESCHEDULE\b/i.test(body.trim());
+    const openOfferRef = openRescheduleOffers.length === 1 ? rescheduleMemberRef(openRescheduleOffers[0]!.reschedule!, m.id) : undefined;
+    const singleOriginalAt = upcomingBookings.length === 1 ? upcomingBookings[0]!.meetingAt : undefined;
+    const reschedule = this.memberReply && !msg.reaction
+      ? (strictReschedule
+        ? parseRescheduleCommand(body, tz)
+        : (aw?.kind === "probe" || aw?.kind === "feedback" || aw?.kind === "interview"
+          ? undefined
+          : parseNaturalReschedule(body, { nowMs: now, tz, originalAt: singleOriginalAt, openRef: openOfferRef })))
+      : undefined;
+    if (reschedule) return this.handleMeetingReschedule(m, reschedule, msg.id, msg.signedReceivedAt ?? msg.ts, now, !strictReschedule);
     const directBookingReply = this.memberReply && !msg.reaction;
     const bookingText = directBookingReply ? body : "";
     const cancellation = explicitBookingCancellation(bookingText);
     const cancelDay = cancellation?.day ? bookingCancellationDay(cancellation.day, msg.signedReceivedAt ?? msg.ts, tz) : undefined;
     // spec/opportunityLifecycle.md, "An explicit cancellation selects the named upcoming meeting"
     if (cancellation?.needsExactStart) {
+      if (upcomingBookings.length === 1 && aw?.kind !== "booked") {
+        this.handleDrop(m, upcomingBookings[0]!, true, true);
+        return;
+      }
       this.send(m, this.copy.bookingStartToCancel, { type: "info" }, "reply");
       return;
     }
@@ -1836,6 +1930,10 @@ export class ConsentNetwork implements NetworkUnderTest {
         }
       }
       if (r.answer !== "unclear") { m.awaiting = undefined; return this.onProbeAnswer(m, aw.oppId!, r.answer === "yes", r.keys); }
+      if (o && options.length > 0 && !o.timeRetry?.includes(m.id) && isProbeCounterTime(body, options)) {
+        m.awaiting = undefined;
+        return this.onProbeAnswer(m, aw.oppId!, true, []);
+      }
       const askForTimes = probeNeedsExplicitTimeChoice(options.length > 0, aw.timeChoice === true, legacyClarified, r.why === "slot");
       if (askForTimes ? this.clarify(m, aw, c, copy.probeTimeClarify, true) : this.clarify(m, aw, c)) return;
     }
@@ -1878,13 +1976,41 @@ export class ConsentNetwork implements NetworkUnderTest {
             return;
           }
         }
+        if (!checkIn && directBookingReply && !o.plan && !o.workIntro && !o.publicEventRevision && o.meetingAt !== undefined && o.meetingAt > now
+          && !cancellation && !CANCEL_INTENT_OVERRIDE_RX.test(bookingText) && VENUE_SWAP_INTENT_RX.test(bookingText)) {
+          const initialState = this.proposeTopOneVenueFor(o.participants, o.meetingAt, {
+            city: this.networkCity(),
+            teenFriendAllowed: o.teenRuleAt !== undefined,
+          });
+          const pivoted = this.pivotVenueSuggestion(initialState, body);
+          const nextSpot = pivoted.state.current?.venue && pivoted.state.current.venue.id !== o.venueId
+            ? pivoted.state.current.venue
+            : pivoted.state.backup?.venue && pivoted.state.backup.venue.id !== o.venueId
+              ? pivoted.state.backup.venue
+              : undefined;
+          if (nextSpot) {
+            const oldVenueId = o.venueId;
+            o.venueId = nextSpot.id;
+            o.venue = nextSpot.name;
+            o.venueArea = nextSpot.neighborhood;
+            this.ctx.log("venue_swapped", { oppId: o.id, memberId: m.id, fromVenueId: oldVenueId ?? null, toVenueId: nextSpot.id, reason: pivoted.reason });
+            this.send(m, this.copy.venueSwapProposed(nextSpot.name, nextSpot.neighborhood), { type: "scheduling", proposalId: o.id }, "reply");
+            const whenStr = whenPhrase(o.meetingAt, o.meetingTimeZone ?? tz);
+            for (const otherId of o.participants) {
+              if (otherId === m.id || o.status.get(otherId) !== "yes" || !o.bookedTold?.includes(otherId)) continue;
+              this.send(this.member(otherId), this.copy.silentPartnerVenueSwap(whenStr, nextSpot.name, { area: nextSpot.neighborhood }),
+                { type: "scheduling", proposalId: o.id }, "scheduling", { about: o.participants });
+            }
+            return;
+          }
+        }
         if (declines) {
           return this.handleDrop(m, o, true, !msg.reaction && bookedTextDeclines(bookingText, cancellation !== undefined || c.kind === "cancel" || consentOf(body).answer === "no"));
         }
         if (confirms) {
           m.awaiting = undefined;
           this.confirmPlan(o, m.id, true);
-          this.ack(m, copy.bookedThanks);
+          this.ack(m, copy.bookedThanks, { direct: !whoQuestion });
           return;
         }
       }
@@ -1906,7 +2032,7 @@ export class ConsentNetwork implements NetworkUnderTest {
           m.hints = evidence === "RecordWindows" ? activityHints(extractProfile(body).interests) : [];
         }
         this.ctx.log("availability_stated", { memberId: m.id, tags, windows: stated?.windows.length ?? 0 });
-        if (c.kind !== "people_request" && c.kind !== "plans_request") { this.ack(m, "Got it, thanks."); return; }
+        if (c.kind !== "people_request" && c.kind !== "plans_request") { this.ack(m, "Got it, thanks.", { direct: true }); return; }
       }
     }
     const isRequest = c.kind === "people_request" || c.kind === "plans_request";
@@ -2040,11 +2166,20 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (o.publicEventRevision || o.plan?.eventId || o.anchor?.type === "event" || o.seat || o.workIntro || roster.length < 2
       || start > now + DEFAULT_ATTENTION.availability.horizonDays * DAY) return false;
     const city = this.networkCity(), tz = this.cityTz();
-    const venue = planVenuesForCity(city).find(place => o.plan?.venueId ? place.id === o.plan.venueId : place.name === o.venue && place.area === o.venueArea);
+    const planVenue = planVenuesForCity(city).find(place => o.plan?.venueId ? place.id === o.plan.venueId : place.name === o.venue && place.area === o.venueArea);
+    const curatedVenue = !planVenue && o.venueId ? this.venues.getVenue(o.venueId) : undefined;
     const duration = o.plan ? o.plan.window.end - o.plan.window.start : DEFAULT_ATTENTION.availability.slotHours * HOUR;
     const slot = { start, end: start + duration };
-    if (!venue || duration <= 0 || !plans.venueOpenForSlot(venue, slot, duration / MINUTE, tz)) return false;
-    if (!this.teenSlotAllowed(o, slot, venue.id)) return false;
+    if (duration <= 0) return false;
+    if (planVenue) {
+      if (!plans.venueOpenForSlot(planVenue, slot, duration / MINUTE, tz)) return false;
+      if (!this.teenSlotAllowed(o, slot, planVenue.id)) return false;
+    } else if (curatedVenue) {
+      if (curatedVenue.status !== "active" || !isVenueOpenAt(curatedVenue, tz, start, Math.round(duration / MINUTE)).open) return false;
+      if (!this.teenSlotAllowed(o, slot, curatedVenue.id)) return false;
+    } else {
+      return false;
+    }
     return roster.every(id => {
       const member = this.members.get(id);
       if (!member || !this.checkRecipient(id, "scheduling", { about: [...roster], reply: false, opp: o }).ok
@@ -2063,7 +2198,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       now, draft.expiresAt);
   }
 
-  private handleMeetingReschedule(m: MemberState, command: RescheduleCommand, messageId: string, receivedAt: number, now: number) {
+  private handleMeetingReschedule(m: MemberState, command: RescheduleCommand, messageId: string, receivedAt: number, now: number, natural = false) {
     const reply = (body: string) => this.send(m, body, { type: "info" }, "reply");
     if (command.kind === "format") return reply(this.copy.rescheduleFormat);
     if (command.kind === "request") {
@@ -2081,13 +2216,17 @@ export class ConsentNetwork implements NetworkUnderTest {
       const draft: RescheduleDraft = {
         ref: sha256(stableStringify([this.app.id, o.id, m.id, messageId, command.originalAt, command.proposedAt])),
         revision: o.scheduleRevision ?? 0, originalAt: command.originalAt, proposedAt: command.proposedAt,
-        expiresAt, roster, offered: [], accepted: [],
+        expiresAt, roster, offered: natural ? [m.id] : [], accepted: natural ? [m.id] : [],
       };
       o.reschedule = draft;
-      const tz = this.cityTz();
+      const tz = this.cityTz(), tzLabel = timezoneLabel(this.networkCity());
+      if (natural) {
+        reply(this.copy.rescheduleRequested(describeBookingStart(draft.proposedAt, tz), tzLabel));
+      }
       for (const id of roster) {
+        if (natural && id === m.id) continue;
         const recipient = this.member(id), key = rescheduleOfferKey(draft, id);
-        this.send(recipient, this.copy.rescheduleOffer(describeBookingStart(draft.originalAt, tz), describeBookingStart(draft.proposedAt, tz), rescheduleMemberRef(draft, id)),
+        this.send(recipient, this.copy.rescheduleOffer(describeBookingStart(draft.originalAt, tz), describeBookingStart(draft.proposedAt, tz), rescheduleMemberRef(draft, id), tzLabel),
           { type: "scheduling", proposalId: o.id }, "scheduling", { about: roster, key, hook: { t: "reschedule_offer", oppId: o.id, key } });
       }
       return;
@@ -2145,9 +2284,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     o.followupAt = computeFollowupTimestamp(o.plan ? o.plan.window.end : draft.proposedAt + HOUR, tz).scheduledAt;
     this.ctx.recordMeeting({ proposalId: o.id, participants: draft.roster, at: draft.proposedAt, previousAt: draft.originalAt, city, kind: o.kind });
     this.ctx.log("meeting_rescheduled", { oppId: o.id, revision: o.scheduleRevision, previousAt: draft.originalAt, at: draft.proposedAt, changedAt: now });
+    const tzLabel = timezoneLabel(city);
     for (const id of draft.roster) {
       const key = rescheduleUpdateKey(o.id, o.scheduleRevision, id);
-      this.send(this.member(id), this.copy.rescheduleUpdated(describeBookingStart(draft.proposedAt, tz)), {
+      this.send(this.member(id), this.copy.rescheduleUpdated(describeBookingStart(draft.proposedAt, tz), tzLabel), {
         type: "scheduling", proposalId: o.id, bookingUpdate: { at: draft.proposedAt, revision: o.scheduleRevision },
       },
         "scheduling", { about: draft.roster, key, hook: { t: "reschedule_updated", oppId: o.id, key } });
@@ -2547,17 +2687,30 @@ export class ConsentNetwork implements NetworkUnderTest {
     // An app with its own onboarding loop takes over after the first answer.
     if (m.stage === "q1" && this.opts.hooks?.onboarding && !m.minor) {
       this.activate(m);
-      if (!this.onboardNext(m, [])) this.ack(m, copy.ackLearned);
+      if (!this.onboardNext(m, [])) this.ack(m, copy.ackLearned, { direct: true });
       return;
     }
     const ask = (next: "q2" | "q3", text: string) => {
       m.stage = next;
       this.send(m, text, { type: "question", proactive: false }, "interview", { hook: { t: "interview" } });
     };
-    if (m.stage === "q1") return ask("q2", copy.interview.availability);
-    if (m.stage === "q2") return ask("q3", copy.interview.format);
+    const hasQ2 = Boolean(m.area) && (m.learned.eveningsOpen !== undefined || (m.availability?.length ?? 0) > 0);
+    const hasQ3 = m.learned.groups !== undefined;
+    if (m.stage === "q1") {
+      if (!hasQ2) return ask("q2", copy.interview.availability);
+      if (!hasQ3) return ask("q3", copy.interview.format);
+      this.activate(m);
+      this.ack(m, copy.ackLearned, { direct: true });
+      return;
+    }
+    if (m.stage === "q2") {
+      if (!hasQ3) return ask("q3", copy.interview.format);
+      this.activate(m);
+      this.ack(m, copy.ackLearned, { direct: true });
+      return;
+    }
     if (m.stage === "q3") this.activate(m);
-    this.ack(m, copy.ackLearned);
+    this.ack(m, copy.ackLearned, { direct: true });
   }
 
   /**
@@ -2569,6 +2722,16 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (aw?.kind === "interview" && aw.ask) return this.onAskAnswer(m, aw.ask, c, body);
     if (aw?.kind === "interview" && m.stage !== "active") return this.onInterviewAnswer(m, body);
     this.learnFrom(m, body);
+    if (m.stage !== "active" && m.stage !== "new" && m.stage !== "age" && !this.opts.hooks?.onboarding) {
+      const hasQ2 = Boolean(m.area) && (m.learned.eveningsOpen !== undefined || (m.availability?.length ?? 0) > 0);
+      const hasQ3 = m.learned.groups !== undefined;
+      if (hasQ2 && hasQ3) {
+        m.awaiting = undefined;
+        this.activate(m);
+      } else if (hasQ2 && m.stage === "q1") {
+        m.stage = "q2";
+      }
+    }
   }
 
   /**
@@ -2621,7 +2784,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Privacy (P3): what kind of abuse and how long the message was, never the text itself.
     this.ctx.log("abuse", { memberId: m.id, kinds: c.abuse, risk: c.risk, length: body.length });
     const clean = this.trust.get(m.id).score <= 0;
-    this.trust.add(m.id, now, c.abuse[0]!, clean ? Math.min(c.risk, HOLD - 1) : c.risk);
+    const severeOffense = c.abuse.includes("scam_money") || (c.abuse.includes("harassment") && c.risk >= HOLD);
+    this.trust.add(m.id, now, c.abuse[0]!, clean && !severeOffense ? Math.min(c.risk, HOLD - 1) : c.risk);
     if (this.trust.level(m.id) === "hold") return false; // onTrustChange already told them
     const reply = c.abuse.includes("scam_money") ? copy.noMoney
       : c.abuse.includes("prompt_injection") ? copy.noInjection
@@ -2772,7 +2936,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    * question the member was answering. A report by someone they never met holds nobody.
    */
   private reportHeld(id: MemberId): boolean {
-    return pendingReportHold(this.reports, id);
+    return pendingReportHold(this.reports, id, reporterId => this.trust.level(reporterId) === "hold");
   }
 
   reportRestrictionsForLeave(id: MemberId, ordinaryLeave: boolean): string[] {
@@ -4073,11 +4237,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     const now = this.now();
     const city = this.networkCity();
     if (!this.inNyc(m.id, now, now + 1)) return "open" as const;
-    const place = publicPlanLocation(c.text ?? "");
+    const place = publicPlanLocation(c.text ?? "", false, city);
     const location = recommendationLocation(place.area !== undefined, place.mentioned);
     if (location === "AskForArea") {
       this.ctx.log("plans_unknown_place", { memberId: m.id });
-      this.send(m, plansPlaceQuestion, { type: "question", proactive: false }, "reply");
+      this.send(m, plansPlaceQuestionFor(city), { type: "question", proactive: false }, "reply");
       return;
     }
     this.counters.plansAnswered++;
@@ -4091,7 +4255,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     const venues = nearbyVenues(place.area ?? m.area, tags, this.effort(m.id).planBuildingOptions, exclude, city, m.minor);
     // spec/newMatchParticipation.md, "Recheck the member and category before a new contact"
     const offer = !m.minor && this.eligible(m.id) && this.opts.matchingEnabled && this.allowsMatchCategory(m.id, "events");
-    if (venues.length) this.send(m, (offer ? this.copy.plans : this.copy.plansNoOffer)(venues.map(v => v.name)), { type: "concierge", proactive: false }, "reply", { hook: { t: "suggested", venues: venues.map(v => v.id) } });
+    if (venues.length) {
+      this.send(m, (offer ? this.copy.plans : this.copy.plansNoOffer)(venues.map(v => v.name)), { type: "concierge", proactive: false }, "reply", { hook: { t: "suggested", venues: venues.map(v => v.id) } });
+    } else {
+      this.send(m, "I've already shared my best nearby spots for this week — tell me another neighborhood or vibe and I'll dig up fresh ideas.", { type: "concierge", proactive: false }, "reply");
+    }
     if (!offer) return;
     // Plans buddy: someone else who asked for plans in the last 3 days, nearby. Asking for plans is
     // not consent to meet a stranger, so neither is primed: both are asked first (and it is reviewed).
@@ -5047,6 +5215,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const picked = offered.filter(x => keys.includes(x.key));
     if (!retry) m.answered++;
     this.ctx.log(retry ? "time_answer" : "probe_answer", { oppId, memberId: m.id, yes, ...(offered.length ? { picked: picked.map(x => x.key) } : {}) });
+    let pendingAck: { text: string; direct: boolean } | undefined;
     if (answered.phase === "Available") {
       if (!retry) this.counters.probeYes++;
       o.status.set(m.id, "available"); o.primed.add(m.id);
@@ -5065,7 +5234,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       // of them is gone, there is nothing to offer and no time to book: the opportunity closes.
       const offeredTimes = offered.length > 0, pickedTimes = picked.length > 0;
       if (needsOtherTimes(offeredTimes, pickedTimes) && this.commonTimeGone(o, m.id, this.now())) {
-        this.ack(m, "No problem.");
+        this.ack(m, "No problem.", { direct: true });
         if (o.participants.length <= 2) return this.closeNoCommonTime(o, m.id);
         // A group goes on without this member, as after a no (docs/network.md 4.1). The times only
         // they turned down are not held against the others.
@@ -5086,7 +5255,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         return;
       }
       if (isGatheringRepeat(o) && needsOtherTimes(offeredTimes, pickedTimes)) return this.closeNoCommonTime(o, m.id);
-      this.ack(m, "Great, thanks.");
+      pendingAck = { text: "Great, thanks.", direct: false };
     } else if (answered.phase === "Unavailable") {
       this.counters.probeNo++; this.emit({ type: "declined", member: m.id, planId: o.id }, `${o.id}:${m.id}`);
       // A no is remembered for the pair (network-consent-5): never probed again for a while, from any path.
@@ -5096,16 +5265,19 @@ export class ConsentNetwork implements NetworkUnderTest {
         const r = this.requests.find(x => x.oppId === o.id && x.memberId === m.id);
         if (r) { r.noCount = (r.noCount ?? 0) + 1; if (r.noCount >= 2) r.closed = true; }
       }
-      o.status.set(m.id, "unavailable"); this.ack(m, "No problem."); this.replaceOrClose(o, m.id);
+      o.status.set(m.id, "unavailable"); pendingAck = { text: "No problem.", direct: true }; this.replaceOrClose(o, m.id);
     }
     this.advanceProbes(o);
+    if (pendingAck && !this.sentThisTurn) this.ack(m, pendingAck.text, { direct: pendingAck.direct });
   }
 
   /** The answer to a plan probe. "Can't make that time" is a no, and a time this member is not free (availability evidence). */
   private onPlanProbeAnswer(m: MemberState, o: Opp, yes: boolean, body: string, picks?: readonly attention.TimeSlot[]) {
     // spec/planDecision.md, "Only a pending member can change an open plan": a reply at or after the
     // probe deadline is not counted, not kept as availability evidence and not acknowledged.
+    let answeredPlan = false;
     const outcome = this.planAnswer(o, m.id, yes, false, () => {
+      answeredPlan = true;
       m.answered++;
       // Check the plan receipt independently of the unanswered ledger, which an earlier message can clear.
       this.sampleInterruption(m, o.id, true);
@@ -5118,8 +5290,8 @@ export class ConsentNetwork implements NetworkUnderTest {
         const notThen = !yes && /\b(that time|then|that day|make it)\b/i.test(body);
         if (yes || notThen) m.availHistory = [...(m.availHistory ?? []), { at: o.plan!.window.start, outcome: yes ? "accepted" as const : "declined_time" as const }].slice(-availabilityHistoryLimit);
       }
-      this.ack(m, yes ? "Great, thanks. I'll tell you once enough people are in." : "No problem.");
     });
+    if (answeredPlan && !this.sentThisTurn) this.ack(m, yes ? "Great, thanks. I'll tell you once enough people are in." : "No problem.", { direct: !yes });
     // A yes that the deadline turned away, here or in an earlier tick, still hears how the plan ended.
     const closedPending = outcome === undefined && o.planRun?.stage === "closed" && o.planRun.answers[m.id] === "pending";
     if (yes && (outcome === "expired" || closedPending)) this.noteFor(m.id, copy.planNotTogether);
@@ -5556,7 +5728,16 @@ export class ConsentNetwork implements NetworkUnderTest {
     const going = o.participants.filter(seat => o.status.get(seat) === "yes");
     const others = going.filter(seat => seat !== id).map(seat => this.member(seat).display);
     const unchangedRoster = going.length === o.participants.length;
-    const { text, fallback } = this.revealCopy(o, id, others, `${o.venue} (${o.venueArea})`, whenPhrase(o.meetingAt, o.meetingTimeZone ?? this.cityTz()), unchangedRoster);
+    const venueRec = o.venueId ? this.venues.getVenue(o.venueId) : undefined;
+    const whereBase = `${o.venue} (${o.venueArea})`;
+    const where = venueRec?.arrivalLandmark ? `${whereBase} — ${venueRec.arrivalLandmark}` : whereBase;
+    const when = whenPhrase(o.meetingAt, o.meetingTimeZone ?? this.cityTz());
+    const { text: baseText, fallback: baseFallback } = this.revealCopy(o, id, others, where, when, unchangedRoster);
+    const effStrikes = reliabilityEffectiveStrikes(m.strikes ?? 0, m.completedSinceNoShow);
+    const relTier = reliabilityTier(effStrikes, !!m.provisionalNoShow);
+    const confirmSuffix = confirmBeforeCommitRequired(relTier) ? ` ${this.copy.confirmBeforeCommit(when, whereBase)}` : "";
+    const text = baseText + confirmSuffix;
+    const fallback = baseFallback + confirmSuffix;
     const proactive = !this.opts.probes && !o.primed.has(id);
     const curatedLink = proactive ? undefined : venueBookingLink(o, id, true, this.now());
     const link = this.currentPublishedEvent(o)?.listing?.url ?? curatedLink;
@@ -5570,7 +5751,8 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   private revealCopy(o: Opp, id: MemberId, others: string[], where: string, when: string, unchangedRoster = true): { text: string; fallback: string } {
     const m = this.member(id);
-    const offer = !m.offerMade && !m.minor;
+    const priorCompleted = m.completedSinceNoShow > 0 || this.interactions.some(x => x.participants.includes(id) && x.outcome === "completed");
+    const offer = !m.offerMade && !m.minor && priorCompleted;
     const why = capitalize((unchangedRoster ? o.explanations[id] : undefined) ?? GOOD_FIT);
     const text = (unchangedRoster && o.teenRuleAt === undefined ? this.opts.hooks?.booked?.(this.hookOpp(o), id, { others, where, when }) : undefined) ?? copy.booked(others, why, where, when, offer);
     return { text, fallback: copy.booked(others, capitalize(GOOD_FIT), where, when, offer) };
@@ -5636,6 +5818,17 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.counters.bookedCancelled++;
     // The member called it off (they told us, or opted out): plan_cancelled. Free with notice (NC flake rules).
     if (o.bookedAt?.[m.id] !== undefined && (ack || m.optedOut)) this.emit({ type: "plan_cancelled", member: m.id, planId: o.id }, `${o.id}:${m.id}`);
+    if (!minorClose && o.meetingAt !== undefined && o.meetingAt > now && acceptedAndTold) {
+      const leadMs = o.meetingAt - now;
+      if (leadMs < 4 * HOUR) {
+        m.lateCancels4h = (m.lateCancels4h ?? 0) + 1;
+        m.strikes = (m.strikes ?? 0) + lateCancel4hStrikes;
+        m.completedSinceNoShow = 0;
+      } else if (leadMs < 24 * HOUR) {
+        m.lateCancels24h = (m.lateCancels24h ?? 0) + 1;
+        m.strikes = (m.strikes ?? 0) + lateCancel24hStrikes;
+      }
+    }
     if (o.planRun) o.planRun = { ...o.planRun, answers: { ...o.planRun.answers, [m.id]: "no" } };
     this.ctx.log("booked_cancelled", { oppId: o.id, memberId: m.id, told: ack });
     if (bookingWithdrawalAcknowledgmentAllowed(ack, m.bookingWithdrawalAckAt !== undefined, now - (m.bookingWithdrawalAckAt ?? now))) {
@@ -5966,8 +6159,17 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (this.app.id === "friends" && o.plan && own.again) own.repeatProof = { revision: o.scheduleRevision ?? 0 };
       }
       if (!counterpartAbsence) this.helpFeedback(m, o, f);
-      if (f.selfNoShow) { if (!o.noShowCounted?.includes(m.id)) m.noShows++; m.completedSinceNoShow = 0; }
-      else m.completedSinceNoShow++;
+      if (f.selfNoShow) {
+        if (!o.noShowCounted?.includes(m.id)) {
+          const hadNoShow = m.noShows > 0 || (m.strikes ?? 0) > 0;
+          m.noShows++;
+          m.strikes = (m.strikes ?? 0) + (hadNoShow ? repeatNoShowStrikes : firstNoShowStrikes);
+        }
+        m.completedSinceNoShow = 0;
+      } else {
+        m.completedSinceNoShow++;
+        if (m.provisionalNoShow && m.completedSinceNoShow >= 2) m.provisionalNoShow = false;
+      }
       this.interactions.push({
         id: `${o.id}:fb:${m.id}`, kind: o.kind, category: o.category, participants: going,
         at: this.now(), outcome: f.selfNoShow ? "no_show" : "completed", contributors: [],
@@ -5986,6 +6188,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const safety = checkInSafetyStep(checkInReading(cue !== undefined, cue !== undefined && URGENT_REPORTS.has(cue), checkInConcern(body)),
       !!o.plan, !!subject && !this.notKnownAdult(m) && !this.notKnownAdult(subject),
       !!subject && this.teenFeedbackAllowed(o, [m.id, subject.id]));
+    let shouldAckFeedback = false;
     if (safety === "CheckInFileNow" && cue) {
       for (const other of others) this.recordMeetingSafetyReport(m.id, o, other, cue);
       this.send(m, copy.reported(), { type: "info" }, "reply");
@@ -5994,7 +6197,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     } else if (crewId) {
       const a = plans.activityById.get(o.plan!.activityId)!;
       this.send(m, `${copy.feedbackThanks} ${copy.crewOffer(a.label)}`, { type: "crew_offer", crew: { crewId, activity: a.id } }, "reply", { about: others, hook: { t: "crew_offer", crewId } });
-    } else this.ack(m, copy.feedbackThanks);
+    } else shouldAckFeedback = true;
     for (const other of others) {
       this.feedback.push({ id: `fb${this.feedback.length + 1}`, from: m.id, about: other, opportunityId: o.id, at: this.now(), sentiment: f.sentiment, wouldMeetAgain: f.again, ...(repeatConsent ? { repeatConsent: true } : {}) });
       const k = pairKey(m.id, other);
@@ -6015,6 +6218,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       m.lastGrowthAsk = this.now();
       this.growthAsk(m, this.copy.growthAsk, "after_good_meeting");
     }
+    if (shouldAckFeedback) this.ack(m, copy.feedbackThanks, { direct: true });
   }
 
   private askCheckInSafety(m: MemberState, o: Opp, subject: MemberState, kind: ReportKind) {
@@ -6085,6 +6289,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     const target = this.members.get(subject);
     if (filed === "minor" && target) this.minorReported(target, reporter);
     if (filed === "older_than_stated") this.teenAgeContradicted(subject, reporter);
+    if (filed === "self_promotion" && target) {
+      const cutoff = now - 90 * DAY;
+      const existing = (target.selfPromoReports ?? []).filter(r => r.at >= cutoff && r.from !== reporter);
+      existing.push({ from: reporter, at: now });
+      target.selfPromoReports = existing.slice(-32);
+    }
   }
 
   private closePairOpportunities(a: MemberId, b: MemberId, o: { actorKnown: boolean }) {
@@ -8666,7 +8876,66 @@ export class ConsentNetwork implements NetworkUnderTest {
       ...[...this.members.values()].filter(m => !this.trust.ok(m.id) || m.minor || m.minorSignal || this.reportHeld(m.id)).map(m => m.id),
       ...snap.members.filter(x => !this.members.has(x.id) && recordMinorSignalOpen(minorSignalOf(x))).map(x => x.id),
     ].map(memberId => ({ memberId, from: now - HOUR }));
-    const reliability = Object.fromEntries([...this.members.values()].filter(m => m.noShows > 0).map(m => [m.id, { noShows: m.noShows, completedSinceLastNoShow: m.completedSinceNoShow }]));
+    const reliability = Object.fromEntries(
+      [...this.members.values()]
+        .filter(m => m.noShows > 0 || (m.strikes ?? 0) > 0 || m.provisionalNoShow)
+        .map(m => [m.id, {
+          noShows: m.noShows,
+          completedSinceLastNoShow: m.completedSinceNoShow,
+          ...(m.strikes !== undefined ? { strikes: m.strikes } : {}),
+          ...(m.lateCancels4h !== undefined ? { lateCancels4h: m.lateCancels4h } : {}),
+          ...(m.lateCancels24h !== undefined ? { lateCancels24h: m.lateCancels24h } : {}),
+          ...(m.rescheduleChurn !== undefined ? { rescheduleChurn: m.rescheduleChurn } : {}),
+          ...(m.provisionalNoShow !== undefined ? { provisionalNoShow: m.provisionalNoShow } : {}),
+        }]),
+    );
+    const vampireCutoff = now - 90 * DAY;
+    const introsByMember = new Map<MemberId, number>();
+    for (const o of this.opps.values()) {
+      if (o.createdAt < vampireCutoff || (o.stage !== "scheduled" && o.stage !== "done")) continue;
+      for (const pid of o.participants) {
+        if (local.has(pid)) introsByMember.set(pid, (introsByMember.get(pid) ?? 0) + 1);
+      }
+    }
+    const posAbout = new Map<MemberId, number>();
+    const asymNegAbout = new Map<MemberId, number>();
+    const fbByOpp = new Map<string, typeof this.feedback>();
+    for (const fb of this.feedback) {
+      if (fb.at < vampireCutoff) continue;
+      if (fb.sentiment === "positive") posAbout.set(fb.about, (posAbout.get(fb.about) ?? 0) + 1);
+      if (fb.opportunityId) {
+        const list = fbByOpp.get(fb.opportunityId) ?? [];
+        list.push(fb);
+        fbByOpp.set(fb.opportunityId, list);
+      }
+    }
+    for (const list of fbByOpp.values()) {
+      for (const fb of list) {
+        if (fb.sentiment !== "negative") continue;
+        const reciprocal = list.find(other => other.from === fb.about && other.about === fb.from);
+        if (!reciprocal || reciprocal.sentiment !== "negative") {
+          asymNegAbout.set(fb.about, (asymNegAbout.get(fb.about) ?? 0) + 1);
+        }
+      }
+    }
+    const vampireByMember: Record<MemberId, VampireTelemetry> = {};
+    for (const m of this.members.values()) {
+      if (!local.has(m.id) || m.minor || m.minorSignal) continue;
+      const pitchSignals90d = (m.pitchSignals ?? []).filter(at => at >= vampireCutoff).length;
+      const distinctSelfPromoReports90d = new Set((m.selfPromoReports ?? []).filter(r => r.at >= vampireCutoff).map(r => r.from)).size;
+      const introsReceived90d = introsByMember.get(m.id) ?? 0;
+      if (pitchSignals90d === 0 && distinctSelfPromoReports90d === 0 && introsReceived90d < 3) continue;
+      vampireByMember[m.id] = {
+        introsReceived90d,
+        positiveCounterpartVotes90d: posAbout.get(m.id) ?? 0,
+        asymmetricNegativeVotes90d: asymNegAbout.get(m.id) ?? 0,
+        pitchSignals90d,
+        distinctSelfPromoReports90d,
+      };
+    }
+    const qualityByMember = snap.qualityByMember
+      ? Object.fromEntries(Object.entries(snap.qualityByMember).filter(([id]) => local.has(id)))
+      : undefined;
     const recentDrafts = [...this.opps.values()].filter(o => now - o.createdAt < 30 * DAY
       && !closedPublicEventIsUnsent(!!o.publicEventRevision, o.stage === "closed", o.contacted.size > 0));
     const unsentProposalIds = recentDrafts
@@ -8690,6 +8959,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       ],
       recentProposals: recentDrafts.map(o => this.toProposal(o)), unsentProposalIds,
       safetyHolds: holds, feedback: this.feedback, interactions: this.interactions, reliability,
+      ...(qualityByMember && Object.keys(qualityByMember).length ? { qualityByMember } : {}),
+      ...(Object.keys(vampireByMember).length ? { vampireByMember } : {}),
       recentAsks: this.asks.map(a => ({ ...a })),
       exposureDebt: { ...this.exposureDebt },
     };
@@ -8742,6 +9013,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       feedback: (input.feedback ?? []).filter(f => both(f.from, f.about)),
       interactions: (input.interactions ?? []).filter(x => x.participants.every(id => adult.has(id))),
       reliability: Object.fromEntries(Object.entries(input.reliability ?? {}).filter(([id]) => admitted.has(id))),
+      ...(input.qualityByMember ? { qualityByMember: Object.fromEntries(Object.entries(input.qualityByMember).filter(([id]) => adult.has(id))) } : {}),
+      ...(input.vampireByMember ? { vampireByMember: Object.fromEntries(Object.entries(input.vampireByMember).filter(([id]) => adult.has(id))) } : {}),
       recentAsks: (input.recentAsks ?? []).filter(a => admitted.has(a.memberId)),
       exposureDebt: Object.fromEntries(Object.entries(input.exposureDebt ?? {}).filter(([id]) => admitted.has(id))),
       ...(teenIntros ? { teenIntros: true } : {}),
@@ -9012,7 +9285,13 @@ export class ConsentNetwork implements NetworkUnderTest {
    * member within OUTREACH.ackFoldMs, or dropped. Standalone acks count on the channel's unanswered
    * streak and pause members (attention-budget results, 2026-10-07).
    */
-  private ack(m: MemberState, text: string) { m.pendingAck = { text, at: this.now() }; }
+  private ack(m: MemberState, text: string, opts?: { direct?: boolean }) {
+    if (opts?.direct && this.replyTo === m.id && this.memberReply) {
+      if (this.sentThisTurn) return;
+      if (this.send(m, text, { type: "info" }, "reply") === "sent") return;
+    }
+    m.pendingAck = { text, at: this.now() };
+  }
 
   /**
    * The only way a message leaves the Network. In order:
@@ -9213,6 +9492,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const consentProbe = hook?.t === "probe" || hook?.t === "plan_probe" || hook?.t === "times" ? hook.oppId : null;
     m.lastSent = { body: storedText, at: now, consentProbe };
     if (!standaloneNotice || sentStandaloneNotice) fns.onSent?.(delivery.id);
+    if (m.id === this.replyTo) this.sentThisTurn = true;
     return "sent";
   }
 
@@ -10492,6 +10772,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         const opp = this.opps.get(opts.meetupId);
         const about = opp?.participants.filter(p => p !== to) ?? [];
         const sendKind: SendKind = opts.kind === "arrival_relay" ? "relay"
+          : opts.kind === "arrival_ack" ? "reply"
           : opts.kind === "pre_brief" || opts.kind === "no_show_ping" ? "reminder" : "info";
         const msgType = opts.kind === "arrival_relay" ? "relay"
           : opts.kind === "pre_brief" || opts.kind === "no_show_ping" ? "reminder" : "info";

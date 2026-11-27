@@ -56,6 +56,7 @@ export interface ContactFenceInput {
   phone?: string | null;
   phoneHash?: string | null;
   email?: string | null;
+  handleHash?: string | null;
   todayIso?: string;
 }
 
@@ -294,30 +295,57 @@ export class PgNetworkCoreBridge implements NetworkCoreBridge {
       input.phoneHash?.trim() ||
       (e164 ? keyedContactHash("phone", e164, this.env) : null);
     const emailHash = input.email ? keyedContactHash("email", input.email, this.env) : null;
+    const handleHash = input.handleHash?.trim() || null;
 
     const rawEnv = (this.env.MARKETING_ENV ?? this.env.NODE_ENV ?? "dev").trim().toLowerCase();
     const failClosedOnMissingBridge = rawEnv === "production" || rawEnv === "staging";
 
     if (!phoneHash && !e164) {
-      if (emailHash) {
+      const lookupHashes = [emailHash, handleHash].filter((h): h is string => Boolean(h));
+      if (lookupHashes.length > 0) {
         try {
           const rows = (await this.sql`
             select reason, is_minor
             from marketing.contact_suppression
-            where contact_hash = ${emailHash}
+            where contact_hash = any(${lookupHashes})
             limit 1
           `) as Array<{ reason: string; is_minor: boolean }>;
           const suppressed = rows[0];
           if (suppressed) {
             return {
               allowed: false,
-              banned: !suppressed.is_minor,
+              banned: !suppressed.is_minor && !suppressed.reason.includes("stop"),
               globallyStopped: suppressed.reason.includes("stop"),
               knownMinor: suppressed.is_minor,
               recycledHold: false,
               reason: suppressed.reason,
               source: "platform_pg",
             };
+          }
+          const extReg = (await this.sql`
+            select to_regclass('platform.external_prospect_suppressions') as rel
+          `) as Array<{ rel: string | null }>;
+          if (extReg[0]?.rel) {
+            const nowDate = new Date(this.clock.now());
+            const extRows = (await this.sql`
+              select reason
+              from platform.external_prospect_suppressions
+              where (dedupe_hash = any(${lookupHashes}) or phone_hash = any(${lookupHashes}))
+                and (permanent = true or suppress_until is null or suppress_until > ${nowDate})
+              limit 1
+            `) as Array<{ reason: string }>;
+            const ext = extRows[0];
+            if (ext) {
+              return {
+                allowed: false,
+                banned: ext.reason !== "underage" && ext.reason !== "stopped",
+                globallyStopped: ext.reason === "stopped",
+                knownMinor: ext.reason === "underage",
+                recycledHold: false,
+                reason: `external_prospect_suppressed:${ext.reason}`,
+                source: "platform_pg",
+              };
+            }
           }
         } catch (err) {
           if (!isPgUndefinedObjectError(err) || failClosedOnMissingBridge) {

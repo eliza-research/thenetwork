@@ -893,6 +893,7 @@ export interface VenueLLMRerankOptions {
   extraLeakCheck?: (text: string) => string | null;
   deadlineMs?: number;
   maxTokens?: number;
+  clearWinnerMargin?: number;
 }
 
 export interface VenueLLMRerankResult {
@@ -919,6 +920,10 @@ export async function rerankTopVenuesWithLLM(opts: VenueLLMRerankOptions): Promi
   if (top5.length === 0) return { usedLLM: false, fallbackReason: "empty_candidates" };
   const deterministicPick = top5[0]!;
   if (!opts.llm) return { picked: deterministicPick, usedLLM: false, fallbackReason: "no_llm" };
+  const clearMargin = opts.clearWinnerMargin ?? 25;
+  if (top5.length === 1 || (clearMargin > 0 && top5[0]!.score - top5[1]!.score >= clearMargin)) {
+    return { picked: deterministicPick, usedLLM: false, fallbackReason: "clear_winner" };
+  }
 
   const byId = new Map<string, VenueCandidateResult>(top5.map(c => [c.venue.id, c]));
   const compactCandidates = top5.map(c => ({
@@ -946,8 +951,17 @@ export async function rerankTopVenuesWithLLM(opts: VenueLLMRerankOptions): Promi
     contacts: true,
   });
 
+  const rerankClient: LLM = {
+    chat: (messages, chatOpts) =>
+      opts.llm!.chat(messages, {
+        ...chatOpts,
+        reasoningEffort: "low",
+        promptCacheKey: "venue-rerank-v1",
+      }),
+  };
+
   const res = await tryChatJson<{ pickedId: string; why: string }>(
-    opts.llm,
+    rerankClient,
     [
       { role: "system", content: VENUE_RERANK_SYSTEM },
       { role: "user", content: fenceUntrusted(payload, "venue_candidates") },
@@ -986,7 +1000,7 @@ export async function rerankTopVenuesWithLLM(opts: VenueLLMRerankOptions): Promi
     },
     {
       attempts: 1,
-      maxTokens: opts.maxTokens ?? 450,
+      maxTokens: opts.maxTokens ?? 600,
       deadlineMs: opts.deadlineMs ?? 8_000,
     }
   );

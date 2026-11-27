@@ -546,7 +546,7 @@ export interface SafetyInfo {
   canBan?: boolean;
 }
 /** What a post-date report says happened. "other" when the reporter's words did not fit a kind. */
-export type ReportKind = "harassment" | "lying" | "no_show" | "unsafe" | "scam" | "minor" | "older_than_stated" | "other";
+export type ReportKind = "harassment" | "lying" | "no_show" | "unsafe" | "scam" | "minor" | "older_than_stated" | "self_promotion" | "other";
 export interface SafetyReport {
   id: string;
   kind: ReportKind;

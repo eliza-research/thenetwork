@@ -29,6 +29,11 @@ interface ParsedCli {
   task?: string;
   port?: string;
   host?: string;
+  platform?: string;
+  text?: string;
+  email?: string;
+  domain?: string;
+  linkedin?: string;
 }
 
 function parseCliArgs(rawArgv: string[]): ParsedCli {
@@ -60,6 +65,11 @@ function parseCliArgs(rawArgv: string[]): ParsedCli {
       task: { type: "string" },
       port: { type: "string" },
       host: { type: "string" },
+      platform: { type: "string" },
+      text: { type: "string" },
+      email: { type: "string" },
+      domain: { type: "string" },
+      linkedin: { type: "string" },
     },
   });
 
@@ -88,6 +98,11 @@ function parseCliArgs(rawArgv: string[]): ParsedCli {
     task: values.task,
     port: values.port,
     host: values.host,
+    platform: values.platform,
+    text: values.text,
+    email: values.email,
+    domain: values.domain,
+    linkedin: values.linkedin,
   };
 }
 
@@ -117,8 +132,12 @@ function printUsage(): void {
       "  bandit              Run Thompson-Sampling Bandit rebalance preview (--city nyc --seed s1)",
       "  video-lint          Lint starter short-form video scripts (--city nyc)",
       "  vip-invite          Generate & validate a <75-word VIP salon invite (--name ... --archetype ... --city nyc)",
+      "  playbook-lint       Lint a draft against one of the 10 platform playbooks (--platform reddit --text ...)",
       "",
       "Store / runtime commands:",
+      "  apollo-search       Run 0-credit Apollo people search (--city nyc --archetype startup_founder --limit 10)",
+      "  apollo-enrich       Enrich a single work-email VIP contact via Apollo (--name ... --domain ... --linkedin ...)",
+      "  intake-audit        List out-of-network intake candidates and quality scores (--city nyc)",
       "  seed                Seed any registered CityPack (--city nyc|sf|la|chicago|miami|austin|london)",
       "  seed-nyc            Alias for `seed --city nyc`",
       "  discover            Run Tier-1 $0 open-web multi-city discovery (--city nyc --limit 10 [--vip-bd])",
@@ -349,6 +368,25 @@ async function runOfflineCommand(cli: ParsedCli, clock: RealClock): Promise<bool
     return true;
   }
 
+  if (cli.command === "playbook-lint") {
+    const [{ evaluateReportRisk, getPlatformPlaybook }, { parseCanonicalPlatform }] = await Promise.all([
+      import("./platform-playbooks.ts"),
+      import("./validation.ts"),
+    ]);
+    const platform = parseCanonicalPlatform(cli.platform ?? "reddit", "platform");
+    const text = cli.text ?? "Saw your note on the Brooklyn run club — happy to introduce you to two regulars if helpful.";
+    const risk = evaluateReportRisk({
+      platform,
+      text,
+      hasRecipientSpecificReference: true,
+      isFirstTouch: true,
+    });
+    const playbook = getPlatformPlaybook(platform);
+    console.log(JSON.stringify({ mode: "offline", platform, category: playbook.category, risk }, null, 2));
+    if (!risk.pass) process.exitCode = 1;
+    return true;
+  }
+
   if (cli.command === "discover" || cli.command === "discover-nyc") {
     const [{ discoverCityLeads }, { requireCityPack }] = await Promise.all([
       import("./discovery.ts"),
@@ -526,6 +564,43 @@ async function main(): Promise<void> {
       const bridge = new SlopCashBridge({ store, clock, configEnabled: false });
       const preview = bridge.previewHook(task);
       console.log(JSON.stringify({ mode, status: bridge.status(), preview }, null, 2));
+      return;
+    }
+
+    if (cli.command === "apollo-search") {
+      const { createApolloEnrichmentAdapter } = await import("./adapters/apollo.ts");
+      const apollo = createApolloEnrichmentAdapter({ store, clock });
+      const res = await apollo.searchPeople({
+        city,
+        archetypeSlugs: cli.archetype ? [cli.archetype] : undefined,
+        perPage: cli.limit ? Number(cli.limit) : 10,
+      });
+      console.log(JSON.stringify({ mode, ...res }, null, 2));
+      return;
+    }
+
+    if (cli.command === "apollo-enrich") {
+      const { createApolloEnrichmentAdapter } = await import("./adapters/apollo.ts");
+      const apollo = createApolloEnrichmentAdapter({ store, clock });
+      const parts = (cli.name ?? "Elena Vance").trim().split(/\s+/);
+      const res = await apollo.enrichPerson({
+        city,
+        firstName: parts[0],
+        lastName: parts.slice(1).join(" ") || undefined,
+        domain: cli.domain,
+        linkedinUrl: cli.linkedin,
+        email: cli.email,
+      });
+      console.log(JSON.stringify({ mode, ...res }, null, 2));
+      return;
+    }
+
+    if (cli.command === "intake-audit") {
+      const candidates = await store.listIntakeCandidates({
+        city: cli.city ? city : undefined,
+        limit: cli.limit ? Number(cli.limit) : 50,
+      });
+      console.log(JSON.stringify({ mode, city: cli.city ? city : "all", count: candidates.length, candidates }, null, 2));
       return;
     }
 

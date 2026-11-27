@@ -605,14 +605,48 @@ export class OutboundQueue {
     return this.send(row, isNew, conversation.reengage, conv?.last_inbound_at);
   }
 
+  private leakGuardCache = new Map<string, LeakGuard>();
+
+  private cachedLeakGuard(src: LeakSources): LeakGuard {
+    const allow = [...(this.o.leakAllow ?? []), ...(src.allow ?? [])];
+    const key = createHash("sha256")
+      .update(JSON.stringify([
+        src.forbidden ?? [],
+        src.privateVocab ?? [],
+        src.canaries ?? [],
+        src.facts ?? [],
+        src.fuzzy === true,
+        src.publicPhrases ?? [],
+        allow,
+      ]))
+      .digest("hex");
+    const hit = this.leakGuardCache.get(key);
+    if (hit) {
+      this.leakGuardCache.delete(key);
+      this.leakGuardCache.set(key, hit);
+      return hit;
+    }
+    const guard = new LeakGuard({ ...src, canaryShapes: true, allow, contacts: true });
+    if (this.leakGuardCache.size >= 64) {
+      const oldest = this.leakGuardCache.keys().next().value;
+      if (oldest !== undefined) this.leakGuardCache.delete(oldest);
+    }
+    this.leakGuardCache.set(key, guard);
+    return guard;
+  }
+
   private async leakReasons(row: QueueRow, db: SQL = this.sql, contactAllow?: readonly string[]): Promise<string[]> {
     let src: LeakSources = {};
     if (this.o.checks.leaks) {
       try { src = await this.o.checks.leaks(row); } catch { return ["leak_check_error"]; }
     }
     const own = row.memberId ?? row.to;
-    const reasons = new LeakGuard({ ...src, canaryShapes: true, allow: [...(this.o.leakAllow ?? []), ...(src.allow ?? [])], contacts: row.kind !== "compliance" })
-      .check(row.text, { exceptOwner: own, contactAllow: [...(src.contactAllow ?? []), ...(contactAllow ?? [])] });
+    const guard = this.cachedLeakGuard(src);
+    const reasons = guard.check(row.text, {
+      exceptOwner: own,
+      contacts: row.kind !== "compliance",
+      contactAllow: [...(src.contactAllow ?? []), ...(contactAllow ?? [])],
+    });
     // core-14: the new text together with the recent thread to this address (any app on the line), so a
     // value split across messages ("212 555" then "0102") is caught. The generic contact patterns run on
     // the new text alone (two ordinary messages joined can look like a number); another member's own
@@ -620,7 +654,7 @@ export class OutboundQueue {
     if (row.kind === "compliance") return reasons;
     const recent = await this.threadOf(row, db);
     if (!recent.length) return reasons;
-    const thread = new LeakGuard({ ...src, canaryShapes: true, allow: [...(this.o.leakAllow ?? []), ...(src.allow ?? [])], contacts: false }).checkThread([...recent, row.text], { exceptOwner: own });
+    const thread = guard.checkThread([...recent, row.text], { exceptOwner: own, contacts: false });
     return [...new Set([...reasons, ...thread.map(r => `thread:${r}`)])];
   }
 

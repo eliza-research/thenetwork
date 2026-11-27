@@ -1,7 +1,8 @@
 import type { Facet, MemberId, ScoreComponents } from "@thenetwork/core";
 import { DAY, HOUR } from "@thenetwork/core";
 import { pairValueScale } from "../../core/src/generated/pairValue.ts";
-import { isMinor, requiredPairValues } from "./filters.ts";
+import { reliabilityDownrankPermille } from "../../core/src/generated/qualityAndLeague.ts";
+import { isMinor, memberReliabilityTier, memberVampireTierOf, requiredPairValues } from "./filters.ts";
 import { mfhgGeometricNsw } from "./group.ts";
 import { worldStatusPairMultipliers } from "./status.ts";
 import type { Candidate, JudgeVerdict } from "./types.ts";
@@ -39,7 +40,20 @@ function pairTerms(w: World, c: Candidate): { fit: number; mutualBenefit: number
   } else if (m === 2 && !w.minors.has(ids[0]!) && !w.minors.has(ids[1]!) && !isMinor(w, ids[0]!) && !isMinor(w, ids[1]!)) {
     const { ab, ba } = worldStatusPairMultipliers(w, ids[0]!, ids[1]!);
     const hMult = (2 * ab * ba) / Math.max(1e-6, ab + ba);
-    mb = clamp(mb * (0.90 + 0.10 * hMult));
+    mb = clamp(mb * (0.84 + 0.16 * hMult));
+  }
+  if (!ids.some(id => w.minors.has(id) || isMinor(w, id))) {
+    let relScale = 1;
+    let vampScale = 1;
+    for (const id of ids) {
+      const rTier = memberReliabilityTier(w, id);
+      if (rTier !== "RelOk") relScale = Math.min(relScale, reliabilityDownrankPermille(rTier) / 1000);
+      const vTier = memberVampireTierOf(w, id);
+      if (vTier === "VampireWatch") vampScale = Math.min(vampScale, 0.85);
+      else if (vTier === "VampireThrottled") vampScale = Math.min(vampScale, 0.65);
+      else if (vTier === "VampireQuarantined") vampScale = 0;
+    }
+    if (relScale !== 1 || vampScale !== 1) mb = clamp(mb * relScale * vampScale);
   }
   return { fit, mutualBenefit: mb };
 }

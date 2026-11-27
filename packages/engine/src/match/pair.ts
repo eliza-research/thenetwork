@@ -76,7 +76,7 @@ export function eligiblePair(w: World, a: MatchProfile, b: MatchProfile): string
   if (a.market !== b.market) return "market_mismatch";
   if (!segmentPairAllowed(segmentReaches(a, b), segmentReaches(b, a))) return "segment_unreachable";
   if (!masksAdmit(a, b)) return "mask_refused";
-  return pairReason(w, a.memberId, b.memberId, laneCategory(a.lane), a.lane);
+  return pairReason(w, a.memberId, b.memberId, laneCategory(a.lane), a.lane, [a.standing, b.standing]);
 }
 
 export function vectorsOf(w: World): PackVectors {

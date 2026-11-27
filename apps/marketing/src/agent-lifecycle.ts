@@ -502,6 +502,14 @@ export class AgentLifecycleManager {
   private readonly localDailyUsage = new Map<string, DailyLlmUsage>();
   private readonly lastIdleFingerprint = new Map<string, string>();
   private deterministicSkips = 0;
+  private readonly surplusClientPool = new Map<
+    string,
+    Array<{
+      client: LLM;
+      onResponse: ((info: ResponseInfo) => void) | null;
+      onFallback: ((info: FallbackInfo) => void) | null;
+    }>
+  >();
 
   constructor(opts: AgentLifecycleOptions) {
     this.store = opts.store;
@@ -777,11 +785,11 @@ export class AgentLifecycleManager {
       untrustedContext: opts.untrustedContext,
     });
 
-    if (this.enableDeterministicRouter && opts.deterministicTaskHint) {
+    if (this.enableDeterministicRouter) {
       const routed = tryDeterministicRoute({
         prompt,
         personaId: agent.personaId,
-        taskHint: opts.deterministicTaskHint,
+        taskHint: opts.deterministicTaskHint ?? "auto",
       });
       if (routed && routed.handled) {
         this.deterministicSkips += 1;
@@ -1144,7 +1152,7 @@ export class AgentLifecycleManager {
         provider: activeProvider,
         model: resolvedModel,
         systemPrompt,
-        prompt,
+        prompt: fencedPrompt,
       });
       this.promptCache.set(
         finalCacheKey,
@@ -1566,19 +1574,41 @@ export class AgentLifecycleManager {
 
     let lastResponse: ResponseInfo | null = null;
     const fallbackNotes: string[] = [];
-    const client = llmFor("surplus", model, {
-      clock: this.clock,
-      timeoutMs: this.cliTimeoutMs,
-      onResponse: (info: ResponseInfo) => {
-        lastResponse = info;
-      },
-      onFallback: (info: FallbackInfo) => {
-        fallbackNotes.push(`${info.from}->${info.to}`);
-      },
-    });
+    const poolKey = `${model}:${this.cliTimeoutMs}`;
+    const idleList = this.surplusClientPool.get(poolKey);
+    const slot =
+      idleList?.pop() ??
+      (() => {
+        const created: {
+          client: LLM;
+          onResponse: ((info: ResponseInfo) => void) | null;
+          onFallback: ((info: FallbackInfo) => void) | null;
+        } = {
+          client: null as unknown as LLM,
+          onResponse: null,
+          onFallback: null,
+        };
+        created.client = llmFor("surplus", model, {
+          clock: this.clock,
+          timeoutMs: this.cliTimeoutMs,
+          onResponse: (info: ResponseInfo) => {
+            created.onResponse?.(info);
+          },
+          onFallback: (info: FallbackInfo) => {
+            created.onFallback?.(info);
+          },
+        });
+        return created;
+      })();
+    slot.onResponse = (info: ResponseInfo) => {
+      lastResponse = info;
+    };
+    slot.onFallback = (info: FallbackInfo) => {
+      fallbackNotes.push(`${info.from}->${info.to}`);
+    };
 
     try {
-      const text = await client.chat(messages, {
+      const text = await slot.client.chat(messages, {
         maxTokens: opts.maxTokens ?? 700,
         temperature: opts.temperature ?? 0.4,
       });
@@ -1618,6 +1648,14 @@ export class AgentLifecycleManager {
         fallbackNotes,
         error: msg,
       };
+    } finally {
+      slot.onResponse = null;
+      slot.onFallback = null;
+      const bucket = this.surplusClientPool.get(poolKey) ?? [];
+      if (bucket.length < 4) {
+        bucket.push(slot);
+        this.surplusClientPool.set(poolKey, bucket);
+      }
     }
   }
 

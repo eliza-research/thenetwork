@@ -58,6 +58,8 @@ export interface Classified {
   friendName?: string;
   /** For block/report: the name they gave. */
   target?: string;
+  /** Deterministic self-promotion / pitch-slap cue detected in the member's own words. */
+  pitchSlap?: boolean;
   /** The original text. */
   text?: string;
 }
@@ -151,6 +153,18 @@ const COUNTERPART_SAFETY_REQUEST = /^(?:please\s+)?(block|report)\s+(my\s+(?:dat
 const SAFETY_REQUEST_CONDITION = /\b(?:if|unless|whenever|suppose|assuming|hypothetically|in case|in the event)\b/i;
 const SAFETY_REQUEST_DELAY = /(?:^[^,;:]*|[,;:]\s*)\b(?:when|after|later|tomorrow|maybe|possibly|perhaps)\b/i;
 
+const PITCH_SLAP_RX = /\b(?:book\s+(?:a\s+)?(?:\d{1,2}[- ]?min(?:ute)?\s+)?(?:demo|discovery\s+call|sales\s+call|intro\s+call)|hop\s+on\s+a\s+(?:quick\s+)?(?:demo|discovery\s+call|sales\s+call)|here'?s\s+my\s+(?:calendly|cal\.com|pitch\s+deck|sales\s+deck)|(?:looking|hunting)\s+for\s+(?:b2b\s+)?(?:leads|clients|customers|buyers)|sign\s+up\s+for\s+my\s+(?:course|cohort|mastermind|coaching|newsletter|agency)|buy\s+my\s+(?:course|product|program|book|service)|use\s+(?:my\s+)?(?:promo|discount|referral)\s+code|\d+%\s+off\s+for\s+(?:network\s+)?members|pitch(?:ing)?\s+my\s+(?:agency|services|saas|coaching|product)|selling\s+(?:my|our)\s+(?:b2b|saas|agency|coaching|services?))\b/i;
+
+export function isPitchSlapMessage(body: string): boolean {
+  const t = body.trim().replace(/[‘’ʼ`´]/g, "'");
+  if (!t) return false;
+  for (const s of sentencesOf(t)) {
+    if (describesAnotherPerson(s.text)) continue;
+    if (PITCH_SLAP_RX.test(s.text) || RX.sales.test(s.text)) return true;
+  }
+  return false;
+}
+
 export function classify(body: string): Classified {
   // The RX patterns spell an apostrophe as "'": a phone's curly one ("can’t", "what’s") must match too.
   const t = body.trim().replace(/[‘’ʼ`´]/g, "'");
@@ -180,6 +194,10 @@ export function classify(body: string): Classified {
   const { age, explicit, oldest } = agesStated(t);
   const minorSignal = minorSignOf(low) || (validAge(age) && isMinor(age));
   const out: Classified = { kind: "other", abuse, risk, minorSignal, statedAge: age, explicitAge: explicit, oldestAge: oldest, tags: [], text: t };
+  if (isPitchSlapMessage(t)) {
+    out.pitchSlap = true;
+    out.tags.push("hv:hype:pitch");
+  }
   if (disclosed.length) out.disclosure = disclosed;
   const other = otherAgeStated(t);
   if (other !== undefined) out.otherAge = other;
@@ -434,6 +452,8 @@ const TENS: Record<string, number> = { twenty: 20, thirty: 30, forty: 40, fifty:
 const TENS_WORD = Object.keys(TENS).join("|");
 const UNIT_WORD = "one|two|three|four|five|six|seven|eight|nine";
 
+const AGE_ANSWER_RX = new RegExp(`^(?:${ME}\\s+)?(\\d{1,3}|(?:${TENS_WORD})(?:[\\s-]+(?:${UNIT_WORD}))?|${Object.keys(AGE_WORDS).join("|")})(?:\\s*${YEARS_OLD})?\\s*[.!]*$`);
+
 /**
  * The answer to "How old are you?": the whole message is an age ("34", "I'm 34.", "15 years old",
  * "fifteen", "thirty-two"). Anything more is not read as an answer here (classify() reads ages in
@@ -441,7 +461,7 @@ const UNIT_WORD = "one|two|three|four|five|six|seven|eight|nine";
  */
 export function ageAnswer(body: string): number | undefined {
   const t = normText(body).trim();
-  const m = new RegExp(`^(?:${ME}\\s+)?(\\d{1,3}|(?:${TENS_WORD})(?:[\\s-]+(?:${UNIT_WORD}))?|${Object.keys(AGE_WORDS).join("|")})(?:\\s*${YEARS_OLD})?\\s*[.!]*$`).exec(t);
+  const m = AGE_ANSWER_RX.exec(t);
   if (!m) return undefined;
   const [w, unit] = m[1]!.split(/[\s-]+/);
   const n = /^\d/.test(w!) ? Number(w) : (TENS[w!] ?? AGE_WORDS[w!]!) + (unit ? AGE_WORDS[unit]! : 0);
@@ -678,8 +698,16 @@ const unspecifiedPlanPlace = /^(?:(?:a|one|two|three|four|few|couple|several|\d+
 const vaguePlanArea = /^(?:the\s+)?(?:brooklyn|queens|manhattan|bronx|staten island|new jersey|jersey city|hoboken|forest hills)\b/;
 export const plansPlaceQuestion = "Which NYC neighborhood should I use? Ask again with the neighborhood name.";
 
+export function plansPlaceQuestionFor(city?: City): string {
+  if (city === "nyc") return plansPlaceQuestion;
+  const name = city ? CITIES[city]?.name : undefined;
+  return name
+    ? `Which ${name} neighborhood should I use? Ask again with the neighborhood name.`
+    : "Which neighborhood should I use? Ask again with the neighborhood name.";
+}
+
 /** Read one direct public recommendation location without copying a raw place into a reply. */
-export function publicPlanLocation(text: string, exact = false): { area?: string; mentioned: boolean } {
+export function publicPlanLocation(text: string, exact = false, city?: City): { area?: string; mentioned: boolean } {
   let mentioned = false;
   for (const cue of text.matchAll(/\b(?:in|near|around|at|by)\s+/gi)) {
     const before = normText(text.slice(0, cue.index));
@@ -693,7 +721,11 @@ export function publicPlanLocation(text: string, exact = false): { area?: string
         return { area, mentioned: true };
       }
     }
-    for (const [pattern, area] of AREA_ALIASES) {
+    if (city && city !== "nyc") {
+      const cityMatch = findNeighborhood(original, city);
+      if (cityMatch) return { area: cityMatch.name, mentioned: true };
+    }
+    for (const [pattern, area] of ALL_AREA_ALIASES) {
       if (AREA_NAMES.has(area) && candidates.some(value => {
         const match = pattern.exec(value);
         return match?.index === 0 && (!exact || match[0] === value);
@@ -904,7 +936,7 @@ export function feedbackOf(body: string): {
   const t = body.toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'");
   const { self: selfNoShow, other: otherNoShow } = attendanceAbsences(t);
   const negative = otherNoShow || NEGATIVE_FEEDBACK.test(t);
-  const positive = /great|clicked|loved|amazing|nice|easy to talk/.test(t) || /^we hit it off[.!]*$/.test(t.trim());
+  const positive = POSITIVE_FEEDBACK.test(t) || /^we hit it off[.!]*$/.test(t.trim());
   const sentiment = negative ? "negative" : positive ? "positive" : "neutral";
   const again = !negative && /again|clicked/.test(t) && !/\b(wouldn'?t|won'?t|not|never)\b[^.!?]*\bagain\b/.test(t);
   const venue = venueFeedbackOf(body);
@@ -920,7 +952,8 @@ export function feedbackOf(body: string): {
     ...(venue.venueSentiment ? { venueSentiment: venue.venueSentiment } : {}),
   };
 }
-const NEGATIVE_FEEDBACK = /\b((was|is|it's|that's)?\s*(not|n't|wasn't|isn't)\s+(that |very |really |so |too |super )?(great|good|fun|nice|amazing)|not much in common|nothing in common|didn't (really |quite )?(click|connect|enjoy)|didn't have much|not (really )?for me|not my (thing|type)|awkward|terrible|rude|creepy|bummer|uncomfortable)/;
+const POSITIVE_FEEDBACK = /\b(?:great|clicked|loved|amazing|nice|easy to talk|had a blast|super fun|so fun|super chill|went well|went great|really enjoyed|good vibes|vibes? were (?:great|good|immaculate)|lowkey great|slapped|10\/10)\b|\b(?:it was|that was)\s+fire\b/;
+const NEGATIVE_FEEDBACK = /\b((was|is|it's|that's)?\s*(not|n't|wasn't|isn't)\s+(that |very |really |so |too |super )?(great|good|fun|nice|amazing)|not much in common|nothing in common|didn't (really |quite )?(click|connect|enjoy|vibe)|didn't have much|not (really )?for me|not my (thing|type)|awkward|terrible|rude|creepy|bummer|uncomfortable|cringe|no chemistry|zero chemistry|(?:weird|bad|off) vibes?|felt off|super awkward|kind of boring|kinda mid|pretty mid|was mid)/;
 
 
 // ------------------------------------------------------------------ consent: yes, no or unclear
@@ -1072,8 +1105,8 @@ export type { TimeOption };
 // day context (before a time, a daypart, "or", "and", a comma or the end), so "if the sun's out",
 // "sat down" or "c'mon" never pick a day.
 const DAY_NAMES = [
-  ["Sunday", "sun"], ["Monday", "mon"], ["Tuesday", "tues?"], ["Wednesday", "weds?"],
-  ["Thursday", "thu|thur|thurs"], ["Friday", "fri"], ["Saturday", "sat"],
+  ["Sunday", "sun|sundy|sundya"], ["Monday", "mon|mondy|mondya"], ["Tuesday", "tues?|tuesdy|teusday"], ["Wednesday", "weds?|wednesdy|wensday|wendsday"],
+  ["Thursday", "thu|thur|thurs|thursdy|thrusday|thursay"], ["Friday", "fri|fridy|firday"], ["Saturday", "sat|satdy|satrday|saturdy"],
 ] as const;
 const DAY_ABBR_CONTEXT = String.raw`(?=\.?(?:\s*(?:\d|@|at\b|or\b|and\b|too\b|&|\/|works?\b|`
   + String.raw`doesn'?t\b|does not\b|don'?t\b|do not\b|won'?t\b|will not\b|can'?t\b|cannot\b|wouldn'?t\b|would not\b|isn'?t\b|is not\b|aren'?t\b|are not\b|is bad\b|`
@@ -1134,6 +1167,7 @@ const RELATIVE_PROBE_DURATION = new RegExp(String.raw`\b(?:in|within)\s+${PROBE_
 const UNBOUND_PROBE_WINDOW = /\bthis\s+(?:morning|afternoon|evening|night)\b|\b(?:next|following)\s+(?:week|month|year)\b|\bafter next\b/;
 const PROBE_DURATION_ONLY = new RegExp(String.raw`^\s*(?:(?:for\s+)?${PROBE_DURATION}\s+(?:works?|(?:will|would) work|is (?:fine|good|ok(?:ay)?|perfect))\b|(?:i )?can do\s+${PROBE_DURATION}\s*$)`);
 const UNBOUND_OFFER_CLOCK = /\bat\s+\d{1,2}(?::[0-5]\d)?(?![\d:]|\s*[ap]m)\b/;
+const UNBOUND_OFFER_CLOCK_GLOBAL = new RegExp(UNBOUND_OFFER_CLOCK.source, "g");
 /**
  * A negation cue earlier in the same clause ("can't do Thursday or Saturday", "not Sunday", "busy
  * Thursday"). "No plans", "no problem", "not sure", "can't wait" and "don't mind" are not refusals.
@@ -1441,6 +1475,10 @@ const VAGUE_ORDINAL_TIME = /^\s*(?:the\s+)?(?:later|last time)\s+(?:works?|will 
 
 type OrdinalMention = ProbeSpan & { index: number; choiceEnd?: number };
 
+const ORDINAL_AFFIRM_WORD_RX = new RegExp(`${ORDINAL_WORD}|\\blater(?=\\s+(?:one|option|time|slot)\\b)`, "g");
+const ORDINAL_ITEM_GLOBAL_RX = new RegExp(ORDINAL_ITEM, "g");
+const ORDINAL_WORD_OR_LATER_RX = new RegExp(`${ORDINAL_WORD}|\\blater\\b`);
+
 function readDirectProbeOrdinals(text: string, memberChoiceAt?: (at: number) => boolean) {
   const choices: number[][] = BARE_LAST.test(text) ? [[-1]] : [];
   const refusals: OrdinalMention[] = [];
@@ -1448,12 +1486,12 @@ function readDirectProbeOrdinals(text: string, memberChoiceAt?: (at: number) => 
     if (quoteStillOpen(text.slice(0, item.index)) || memberChoiceAt?.(item.index + 1) === false) continue;
     const items = item.groups!.items!;
     if (item.groups!.affirmative) {
-      choices.push([...items.matchAll(new RegExp(`${ORDINAL_WORD}|\\blater(?=\\s+(?:one|option|time|slot)\\b)`, "g"))].map(word => word[0] === "later" ? -1 : ORDINAL_POSITION[word[0]]!));
+      choices.push([...items.matchAll(ORDINAL_AFFIRM_WORD_RX)].map(word => word[0] === "later" ? -1 : ORDINAL_POSITION[word[0]]!));
     } else {
       const [start] = item.indices!.groups!.items!;
-      for (const word of items.matchAll(new RegExp(ORDINAL_ITEM, "g"))) {
+      for (const word of items.matchAll(ORDINAL_ITEM_GLOBAL_RX)) {
         const at = start + word.index;
-        const matched = word[0].match(new RegExp(`${ORDINAL_WORD}|\\blater\\b`))![0];
+        const matched = word[0].match(ORDINAL_WORD_OR_LATER_RX)![0];
         const index = matched === "later" ? -1 : ORDINAL_POSITION[matched]!;
         refusals.push({ at, end: at + word[0].length, index });
       }
@@ -1597,6 +1635,20 @@ interface ProbeReply {
   explicitTimeSelection?: true;
 }
 
+const OFFERED_TIME_REJECTION_GLOBAL = new RegExp(OFFERED_TIME_REJECTION.source, "g");
+const FOLLOWED_BY_DAY_TOKEN_RX = new RegExp(`^\\s+(?:(?:and|or)\\s+)?(?:${DAY_TOKEN})\\b`);
+const COUNTER_TIME_INTEREST_RX = /\b(?:interested|down|up for|love to|would like|sounds (?:good|great|fun)|yes|yeah|yep|sure|i'?m in|count me in)\b/i;
+const COUNTER_TIME_ALT_RX = /\b(?:next week|different (?:day|time|evening|weekend)|another (?:day|time|evening|weekend)|how about|what about|could we do|can we do|instead|better for me|works? better|other times?)\b/i;
+
+/** True when a probe reply expresses interest while proposing an alternative day/time not among the offered slots. */
+export function isProbeCounterTime(body: string, options: readonly TimeOption[] = []): boolean {
+  const t = normText(body);
+  if (!t || !COUNTER_TIME_ALT_RX.test(t)) return false;
+  const parsed = parseProbeReply(body, options);
+  if (parsed.answer === "yes" && parsed.keys.length > 0) return false;
+  return COUNTER_TIME_INTEREST_RX.test(t) || parsed.why === "slot" || parsed.answer === "unclear";
+}
+
 export function parseProbeReply(body: string, options: readonly TimeOption[] = [], mode: boolean | "clarified" = false): ProbeReply {
   const explicitTimesOnly = mode !== false;
   const clarifiedTimes = mode === "clarified";
@@ -1610,7 +1662,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   if (past && c.answer !== "no" && normalized.split(PROBE_CLAUSE_BOUNDARY).some(clause => /^\s*if\b/.test(clause))) {
     return { answer: "unclear", keys: [], why: "conditional" };
   }
-  const rejectedTimes = [...t.matchAll(new RegExp(OFFERED_TIME_REJECTION.source, "g"))].some(m => !neitherFramed(t, m.index));
+  const rejectedTimes = [...t.matchAll(OFFERED_TIME_REJECTION_GLOBAL)].some(m => !neitherFramed(t, m.index));
   const bareGroupRejection = BARE_GROUP_REJECTION.test(t);
   // spec/probeReply.md, "An untimed probe needs an answer to the opportunity"
   const untimedOrdinals = options.length ? undefined : readDirectProbeOrdinals(t);
@@ -1712,7 +1764,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     const trailing = /^\s*,?\s*(?:(?:too|also|as\s+well)\s*,?\s*)?either\b(?!\s+(?:way|one|option|time|or)\b)/.exec(t.slice(m.end));
     if (trailing) return m.end + trailing.index + trailing[0].lastIndexOf("either");
     const leading = /\beither\s*$/.exec(t.slice(0, m.at));
-    if (leading && !new RegExp(`^\\s+(?:(?:and|or)\\s+)?(?:${DAY_TOKEN})\\b`).test(t.slice(m.end))) return leading.index;
+    if (leading && !FOLLOWED_BY_DAY_TOKEN_RX.test(t.slice(m.end))) return leading.index;
     return -1;
   };
   let weakOrdinalMissing = false;
@@ -1871,7 +1923,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     if (EXPLICIT_NO_OFFERED_TIMES.test(t)) return { answer: "no", keys: [], why: "refusal" };
     if (t.includes("?") || unresolved.length || [...pos].some(key => !all.includes(key)) || UNBOUND_OFFER_DATE.test(t) || UNBOUND_OFFER_CLOCK.test(t)) return { ...unclear, why: "slot" };
   }
-  const bareClocks = [...t.matchAll(new RegExp(UNBOUND_OFFER_CLOCK.source, "g"))].map(m => { const [h, mm] = m[0].replace(/^at\s+/, "").split(":"); return (Number(h) % 12) * 60 + Number(mm ?? 0); });
+  const bareClocks = [...t.matchAll(UNBOUND_OFFER_CLOCK_GLOBAL)].map(m => { const [h, mm] = m[0].replace(/^at\s+/, "").split(":"); return (Number(h) % 12) * 60 + Number(mm ?? 0); });
   if (bareClocks.length && (!picked.length || picked.some(k => { const o = offered.find(s => s.key === k); return o?.minute === undefined || !bareClocks.includes(o.minute % 720); }))) return { ...unclear, why: "slot" };
   if (ordinalMissing) return { ...unclear, why: "slot" };
   if (unbound) {

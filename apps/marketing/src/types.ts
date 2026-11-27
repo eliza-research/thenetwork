@@ -15,7 +15,15 @@ export type CoreDesireLaneId =
   | "money_work"
   | "ideal_friends"
   | "soulmate_dating"
-  | "elite_serendipity";
+  | "elite_serendipity"
+  | "cofounder_venture"
+  | "investors_patrons"
+  | "mentorship_mastery"
+  | "creative_collab"
+  | "sport_wellness_crew"
+  | "shared_living_home"
+  | "travel_expedition"
+  | "bespoke_irl_experience";
 
 export type ExtensibleDesireLaneId =
   | "cofounder_venture"
@@ -55,6 +63,21 @@ export function normalizeCityLaunchStage(stage: string | null | undefined): Cano
   return "researching";
 }
 
+export const CANONICAL_OUTREACH_PLATFORMS = [
+  "reddit",
+  "x",
+  "linkedin",
+  "tinder",
+  "bumble",
+  "hinge",
+  "meetup",
+  "eventbrite",
+  "luma",
+  "partiful",
+] as const;
+
+export type CanonicalOutreachPlatform = (typeof CANONICAL_OUTREACH_PLATFORMS)[number];
+
 export type LlmTrajectoryStatus =
   | "ok"
   | "cached"
@@ -63,7 +86,7 @@ export type LlmTrajectoryStatus =
   | "leak_blocked"
   | "error";
 
-export type ContactTouchSurface = "outreach" | "vip" | "bd" | "agent";
+export type ContactTouchSurface = "outreach" | "vip" | "bd" | "agent" | "platform" | "intake";
 
 export type RiskZone = "zone_1_green" | "zone_2_amber" | "zone_3_red";
 export type RiskDial = "conservative" | "balanced" | "blitz" | "lockdown";
@@ -145,6 +168,13 @@ export type OutreachChannel =
   | "reddit"
   | "linkedin"
   | "discord"
+  | "tinder"
+  | "bumble"
+  | "hinge"
+  | "meetup"
+  | "eventbrite"
+  | "luma"
+  | "partiful"
   | "venue"
   | "sms_opted_in";
 
@@ -706,4 +736,105 @@ export interface BdVenueCandidate {
   contractHash: string;
   qrBatchId: string | null;
   createdAt: string;
+}
+
+export type ApolloOperationKind =
+  | "people_search"
+  | "people_match"
+  | "people_bulk_match"
+  | "org_enrich";
+
+export interface EnrichmentCacheEntry {
+  cacheKey: string;
+  provider: string;
+  operation: "people_search" | "people_match" | "org_enrich";
+  contactHash: string | null;
+  payload: Record<string, unknown>;
+  verifiedEmail: boolean;
+  creditsSpent: number;
+  fetchedAt: string;
+  expiresAt: string;
+}
+
+export interface ApolloCreditLedgerEntry {
+  id: string;
+  campaignId: string | null;
+  operation: ApolloOperationKind;
+  credits: number;
+  costCents: number;
+  cacheHit: boolean;
+  dryRun: boolean;
+  idempotencyKey: string;
+  createdAt: string;
+}
+
+export interface ApolloCreditUsageSummary {
+  day: string;
+  month: string;
+  creditsUsedToday: number;
+  creditsUsedMonth: number;
+  searchCallsToday: number;
+  cacheHitsToday: number;
+  totalCallsToday: number;
+  cacheHitRate: number;
+}
+
+export type PlatformInteractionOutcome =
+  | "dry_run"
+  | "sent"
+  | "replied_positive"
+  | "declined"
+  | "unmatched"
+  | "stopped"
+  | "reported"
+  | "blocked_risk"
+  | "blocked_policy";
+
+export interface PlatformInteractionRecord {
+  id: string;
+  campaignId: string | null;
+  platform: CanonicalOutreachPlatform | "email";
+  channelAccountId: string | null;
+  contactHash: string;
+  direction: "outbound" | "inbound";
+  interactionKind: string;
+  reportRiskScore: number;
+  outcome: PlatformInteractionOutcome;
+  createdAt: string;
+}
+
+export type IntakeCandidateStatus =
+  | "spotted"
+  | "value_delivered"
+  | "qualified"
+  | "invited"
+  | "admitted"
+  | "rejected_slop"
+  | "suppressed";
+
+export interface IntakeScoreBreakdown {
+  specificityEffort: number;
+  proofOfWorkAnchoring: number;
+  reliabilityFollowThrough: number;
+  bilateralValueFit: number;
+  disqualifiers: string[];
+}
+
+export interface IntakeCandidateRecord {
+  id: string;
+  campaignId: string | null;
+  city: string;
+  targetAppId: BrandAppId;
+  desireLane: DesireLaneId | null;
+  sourcePlatform: string;
+  contactHash: string;
+  statedAge: number | null;
+  qualityScore: number;
+  scoreBreakdown: IntakeScoreBreakdown;
+  valueDelivered: boolean;
+  explicitPositiveSignal: boolean;
+  inviteAttempts: number;
+  status: IntakeCandidateStatus;
+  createdAt: string;
+  updatedAt: string;
 }

@@ -82,19 +82,41 @@ function fmtFor(tz: string): Intl.DateTimeFormat {
   return f;
 }
 export function localDateParts(t: number, tz: string = NY) {
-  const p = Object.fromEntries(fmtFor(tz).formatToParts(t).map(x => [x.type, x.value]));
-  return { day: `${p.year}-${p.month}-${p.day}`, hour: Number(p.hour) % 24 + Number(p.minute) / 60, weekday: p.weekday as string };
+  let year = "", month = "", day = "", hour = 0, minute = 0, weekday = "";
+  for (const part of fmtFor(tz).formatToParts(t)) {
+    switch (part.type) {
+      case "year": year = part.value; break;
+      case "month": month = part.value; break;
+      case "day": day = part.value; break;
+      case "hour": hour = Number(part.value); break;
+      case "minute": minute = Number(part.value); break;
+      case "weekday": weekday = part.value; break;
+    }
+  }
+  return { day: `${year}-${month}-${day}`, hour: (hour % 24) + minute / 60, weekday };
 }
 export function nyParts(t: number) {
   return localDateParts(t, NY);
 }
 
+const STEP_15M = 15 * MINUTE;
+
 /** Next time (>= t) at local hour h in timezone `tz` (default NY) on a day accepted by `dayOk`. */
 export function nextAt(t: number, h: number, dayOk: (wd: string) => boolean = () => true, tz: string = NY): number {
-  let x = Math.ceil(t / (15 * MINUTE)) * 15 * MINUTE;
-  for (let i = 0; i < 24 * 4 * 9; i++, x += 15 * MINUTE) {
+  const start = Math.ceil(t / STEP_15M) * STEP_15M;
+  const end = start + 24 * 4 * 9 * STEP_15M;
+  let x = start;
+  while (x < end) {
     const p = localDateParts(x, tz);
     if (Math.abs(p.hour - h) < 0.01 && dayOk(p.weekday)) return x;
+    const deltaHours = ((h - p.hour) % 24 + 24) % 24;
+    if (deltaHours < 0.01) {
+      x += 23 * HOUR;
+    } else if (deltaHours > 2) {
+      x += Math.floor((deltaHours - 1) * 4) * STEP_15M;
+    } else {
+      x += STEP_15M;
+    }
   }
   return t + DAY;
 }

@@ -30,6 +30,8 @@ export interface ChatOptions {
   signal?: AbortSignal;
   /** false: never fall back to a second provider on this call (default: ClientOptions.fallback, else true). */
   fallback?: boolean;
+  readonly promptCacheKey?: string;
+  readonly reasoningEffort?: "minimal" | "low" | "medium" | "high";
 }
 export interface LLM {
   chat(messages: ChatMessage[], opts?: ChatOptions): Promise<string>;
@@ -75,7 +77,7 @@ export interface ResponseInfo {
   request: Record<string, unknown>;
   /** Parsed JSON response body when ok. */
   data?: any;
-  usage: { promptTokens: number; completionTokens: number; reasoningTokens: number };
+  usage: { promptTokens: number; completionTokens: number; reasoningTokens: number; cachedTokens?: number; cacheWriteTokens?: number };
   /** Provider-reported cost in micro-USD (Surplus usage.buyer_cost_micro, or usage.cost in USD * 1e6), else priced from OPENAI_PRICES, else 0. */
   costMicro: number;
   /** false when tokens were used but neither the provider nor OPENAI_PRICES gave a price (costMicro is then 0). */
@@ -204,7 +206,13 @@ export function usageOf(data: any, requestedModel?: string): Pick<ResponseInfo, 
   const cached = u.prompt_tokens_details?.cached_tokens ?? 0, writes = u.prompt_tokens_details?.cache_write_tokens ?? 0;
   const priced = p ? Math.max(0, promptTokens - cached - writes) * p.input + cached * p.cachedInput + writes * p.cacheWrite + completionTokens * p.output : 0;
   return {
-    usage: { promptTokens, completionTokens, reasoningTokens: u.completion_tokens_details?.reasoning_tokens ?? 0 },
+    usage: {
+      promptTokens,
+      completionTokens,
+      reasoningTokens: u.completion_tokens_details?.reasoning_tokens ?? 0,
+      cachedTokens: cached,
+      cacheWriteTokens: writes,
+    },
     costMicro: Number(reported ?? priced) || 0,
     costKnown: reported !== undefined || p !== undefined || (promptTokens === 0 && completionTokens === 0),
     finishReason: data?.choices?.[0]?.finish_reason,
@@ -557,6 +565,8 @@ export class OpenAILLM implements LLM {
     return chatCompletions([{ baseUrl: this.baseUrl, apiKey: this.apiKey }, ...this.fallbacks], this.model, messages, opts, o => ({
       ...(o.maxTokens ? { max_completion_tokens: o.maxTokens } : {}),
       ...(o.json ? { response_format: { type: "json_object" } } : {}),
+      ...(o.promptCacheKey ? { prompt_cache_key: o.promptCacheKey } : {}),
+      ...(o.reasoningEffort ? { reasoning_effort: o.reasoningEffort } : {}),
     }), 4096, 32768, this.hooks);
   }
 }
@@ -632,4 +642,12 @@ export function judgeLLM(hooks: ClientOptions = {}): LLM {
 export function recommenderLLM(hooks: ClientOptions = {}): LLM {
   return llmFor(parseProvider(process.env.RECOMMENDER_PROVIDER || DEFAULT_PROVIDER), process.env.RECOMMENDER_MODEL ?? DEFAULT_MODEL, hooks);
 }
+
+export {
+  defaultLLMCacheKey,
+  withLLMCache,
+  type CachedLLM,
+  type LLMCacheOptions,
+  type LLMCacheStats,
+} from "./llmCache.ts";
 

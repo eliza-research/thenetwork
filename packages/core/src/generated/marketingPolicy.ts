@@ -22,6 +22,10 @@ export const maxColdTouches30d: number = 2;
 export const maxUnansweredCold: number = 2;
 /** Story: Enforce daily LLM budgets, queue backpressure, and cross-surface contact hygiene / Cross-surface contact safety and cooldowns block minors, opt-outs, bans, quiet hours, and spam streaks (spec/marketingPolicy.md) */
 export const maxOpTouchesPerDay: number = 3;
+/** Story: Gate Apollo enrichment credits, 10-platform outreach risk, and out-of-network quality intake / Apollo enrichment credits obey daily and monthly caps, billing arming, lockdown, suppression, and adult-only safety (spec/marketingPolicy.md) */
+export const maxPlatformReportRisk: number = 24;
+/** Story: Gate Apollo enrichment credits, 10-platform outreach risk, and out-of-network quality intake / Apollo enrichment credits obey daily and monthly caps, billing arming, lockdown, suppression, and adult-only safety (spec/marketingPolicy.md) */
+export const minIntakeQualityScore: number = 70;
 
 /** Story: Hire and pay only verified adult participants within campaign limits / Only verified adults aged 18 through 120 may participate in paid marketing tasks (spec/marketingPolicy.md) */
 //@ pure
@@ -278,6 +282,45 @@ export function lawColdCooldownBlocksEarlyTouch(isQuietHours: boolean, daysSince
 export function lawUnansweredStreakStopsCold(isQuietHours: boolean, daysSinceCold: number, coldTouches30d: number, unansweredCold: number, opTouchesToday: number): boolean {
   //@ ensures \result === true
   return !(unansweredCold >= maxUnansweredCold) || !contactCooldownAllowed(true, isQuietHours, daysSinceCold, coldTouches30d, unansweredCold, opTouchesToday);
+}
+
+/** Story: Gate Apollo enrichment credits, 10-platform outreach risk, and out-of-network quality intake / Apollo enrichment credits obey daily and monthly caps, billing arming, lockdown, suppression, and adult-only safety (spec/marketingPolicy.md) */
+//@ pure
+export function canAuthorizeApolloCredits(creditsUsedToday: number, requestedCredits: number, dailyCreditCap: number, creditsUsedMonth: number, monthlyCreditCap: number, billingArmed: boolean, lockdown: boolean, isSuppressed: boolean, isKnownMinor: boolean): boolean {
+  return requestedCredits >= 0 && creditsUsedToday >= 0 && creditsUsedMonth >= 0 && dailyCreditCap >= 0 && monthlyCreditCap >= 0 && !lockdown && !isSuppressed && !isKnownMinor && (requestedCredits === 0 || (billingArmed && exact_marketingPolicy(creditsUsedToday + requestedCredits) <= dailyCreditCap && exact_marketingPolicy(creditsUsedMonth + requestedCredits) <= monthlyCreditCap));
+}
+
+/** Story: Gate Apollo enrichment credits, 10-platform outreach risk, and out-of-network quality intake / Apollo enrichment credits obey daily and monthly caps, billing arming, lockdown, suppression, and adult-only safety (spec/marketingPolicy.md) */
+//@ pure
+export function lawApolloCreditsRespectCapsAndSafety(creditsUsedToday: number, requestedCredits: number, dailyCreditCap: number, creditsUsedMonth: number, monthlyCreditCap: number, billingArmed: boolean, lockdown: boolean, isSuppressed: boolean, isKnownMinor: boolean): boolean {
+  //@ ensures \result === true
+  return !canAuthorizeApolloCredits(creditsUsedToday, requestedCredits, dailyCreditCap, creditsUsedMonth, monthlyCreditCap, billingArmed, lockdown, isSuppressed, isKnownMinor) || (!lockdown && !isSuppressed && !isKnownMinor && (requestedCredits === 0 || (billingArmed && exact_marketingPolicy(creditsUsedToday + requestedCredits) <= dailyCreditCap && exact_marketingPolicy(creditsUsedMonth + requestedCredits) <= monthlyCreditCap)));
+}
+
+/** Story: Gate Apollo enrichment credits, 10-platform outreach risk, and out-of-network quality intake / Platform outreach fails closed on suspended channels, high report risk, or unsolicited links on link-free platforms (spec/marketingPolicy.md) */
+//@ pure
+export function canDispatchPlatformTouch(sentToday: number, effectiveDailyCap: number, reportRiskScore: number, hasUnsolicitedUrl: boolean, requiresLinkFree: boolean, contactSafe: boolean, cooldownAllowed: boolean, channelSuspended: boolean): boolean {
+  return !channelSuspended && contactSafe && cooldownAllowed && sentToday >= 0 && effectiveDailyCap > 0 && sentToday < effectiveDailyCap && reportRiskScore >= 0 && reportRiskScore <= maxPlatformReportRisk && (!requiresLinkFree || !hasUnsolicitedUrl);
+}
+
+/** Story: Gate Apollo enrichment credits, 10-platform outreach risk, and out-of-network quality intake / Platform outreach fails closed on suspended channels, high report risk, or unsolicited links on link-free platforms (spec/marketingPolicy.md) */
+//@ pure
+export function lawHighReportRiskOrSuspendedBlocked(sentToday: number, effectiveDailyCap: number, reportRiskScore: number, hasUnsolicitedUrl: boolean, requiresLinkFree: boolean, contactSafe: boolean, cooldownAllowed: boolean, channelSuspended: boolean): boolean {
+  //@ ensures \result === true
+  return !(channelSuspended || reportRiskScore > maxPlatformReportRisk || (requiresLinkFree && hasUnsolicitedUrl)) || !canDispatchPlatformTouch(sentToday, effectiveDailyCap, reportRiskScore, hasUnsolicitedUrl, requiresLinkFree, contactSafe, cooldownAllowed, channelSuspended);
+}
+
+/** Story: Gate Apollo enrichment credits, 10-platform outreach risk, and out-of-network quality intake / Out-of-network quality intake invites verified high-signal adults at most once after delivering value (spec/marketingPolicy.md) */
+//@ pure
+export function canPromoteOutOfNetworkCandidate(statedAge: number, qualityScore: number, valueDelivered: boolean, explicitPositiveSignal: boolean, contactSafe: boolean, queuePaused: boolean, priorInviteCount: number): boolean {
+  return adultParticipantAge(statedAge) && qualityScore >= minIntakeQualityScore && qualityScore <= 100 && valueDelivered && explicitPositiveSignal && contactSafe && !queuePaused && priorInviteCount === 0;
+}
+
+/** Story: Gate Apollo enrichment credits, 10-platform outreach risk, and out-of-network quality intake / Out-of-network quality intake invites verified high-signal adults at most once after delivering value (spec/marketingPolicy.md) */
+//@ pure
+export function lawIntakeRequiresAdultQualityValueAndOnceOnly(statedAge: number, qualityScore: number, valueDelivered: boolean, explicitPositiveSignal: boolean, contactSafe: boolean, queuePaused: boolean, priorInviteCount: number): boolean {
+  //@ ensures \result === true
+  return !canPromoteOutOfNetworkCandidate(statedAge, qualityScore, valueDelivered, explicitPositiveSignal, contactSafe, queuePaused, priorInviteCount) || (adultParticipantAge(statedAge) && qualityScore >= minIntakeQualityScore && valueDelivered && explicitPositiveSignal && contactSafe && !queuePaused && priorInviteCount === 0);
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */

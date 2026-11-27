@@ -146,9 +146,9 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
     },
     {
       name: "prepare_signup", title: "Save my signup draft",
-      description: `After the person confirms their phone and allows access on ${signIn.domain}, saves only the first name and optional home city that the person approved for this app. To finish signup, the person connects again, chooses Finish signup on the connection page, checks the approved details, types their own birthday and ticks the text consent. Never approve text consent for the person. Never creates a person, membership or text consent. One draft per grant; no age, phone, code, gender or match preferences.`,
+      description: `After the person confirms their phone and allows access on ${signIn.domain}, saves only the first name and optional home city that the person approved for this app. To finish signup, the person opens the returned app-bound signup_url in their browser (or connects again and chooses Finish signup on the connection page), checks the approved details, types their own birthday and ticks the text consent. Never approve text consent for the person. Never creates a person, membership or text consent. One draft per grant; no age, phone, code, gender or match preferences.`,
       inputSchema: { type: "object", properties: { app: { type: "string", enum: [host.id] }, firstName: { type: "string", minLength: 1, maxLength: 50 }, homeCity: { type: "string", enum: [...LAUNCH_CITIES] } }, required: ["firstName"], additionalProperties: false },
-      outputSchema: object({ prepared: { type: "boolean", const: true }, app: ownApp, next_step: text }),
+      outputSchema: object({ prepared: { type: "boolean", const: true }, app: ownApp, signup_url: text, next_step: text }),
       annotations: { title: "Save my signup draft", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       ...schemes("prepare_signup"),
     },
@@ -280,6 +280,8 @@ const PHONE_PATTERNS = CONTACT_PATTERNS.filter(p => p.name === "phone");
 const EMAIL_PATTERNS = CONTACT_PATTERNS.filter(p => p.name === "email" || p.name === "email_spelled");
 const EMAIL_CUE = /[@＠﹫]|[\[\(\{<]\s*(?:at|\.)\s*[\]\)\}>]|(?:^|[\s_\[\(\{<])(?:dot|punto)(?:$|[\s_\]\)\}>])/i;
 const SPELLED_CODE = /(?:\b(?:zero|oh|one|two|three|four|five|six|seven|eight|nine|cero|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve)\b[\s.,/\-_]*){4,}/i;
+const CODE_CONTEXT_CUE = /\b(?:code|otp|pin|passcode|verif(?:y|ication)|token|auth|2fa|mfa|login|sign[- ]?in|texted|sms)\b/i;
+const BENIGN_FOUR_DIGIT_UNIT = /^\s*(?:elo|rating|sqft|sq\.?\s*ft\.?|ft|feet|meters?|m\b|km|kcal|cal|lbs?|words?|pages?|rpm|cc|hp|watts?|usd|dollars?|bucks?|\/mo|\/month|\/yr|\/year)\b/i;
 
 function digitFold(text: string): string {
   return text
@@ -334,6 +336,14 @@ export function contactOrCode(text: string): boolean {
       const range = /^(\d{1,3})-(\d{1,3})$/.exec(run);
       if (range && Number(range[1]) >= 1 && Number(range[1]) <= Number(range[2]) && Number(range[2]) <= 120) continue;
       const alone = !/\w/.test(s[m.index! - 1] ?? "") && !/\w/.test(s[m.index! + run.length] ?? "");
+      if (alone && digits === 4 && /^\d{4}$/.test(run) && text.includes(run)) {
+        const before = s.slice(Math.max(0, m.index! - 32), m.index!);
+        const after = s.slice(m.index! + run.length, m.index! + run.length + 24);
+        if (!CODE_CONTEXT_CUE.test(before) && !CODE_CONTEXT_CUE.test(after)) {
+          const num = Number(run);
+          if ((num >= 1920 && num <= 2039) || /[$€£]\s*$/.test(before) || BENIGN_FOUR_DIGIT_UNIT.test(after)) continue;
+        }
+      }
       if (alone && digits >= 4) return true;
     }
     if (/(?<![\w])(?:\d[\s/_]*){5}\d(?![\w])/.test(s)) return true;
@@ -500,7 +510,7 @@ function savedProfileResult(fields: SavedProfileFields | undefined, forbidden: s
     if (typeof value !== "string" || value.length > maxLength) return null;
     const text = value.trim();
     const folded = digitFold(text);
-    return text && !/\b\d{4,8}\b/.test(folded) && !contactOrCode(text)
+    return text && !/\b\d{5,8}\b/.test(folded) && !contactOrCode(text)
       && !outputLeaks(text, { forbidden, contacts: true }).length ? text : null;
   };
   const first_name = safeText(fields.firstName, 50);
@@ -622,7 +632,19 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
         return { kind: "error", message: "We cannot save the signup draft. Check the joining requirements in this app's signup instructions." };
       }
       const a = c.apps[g.app];
-      return { kind: "ok", data: { prepared: true, app: g.app, next_step: `The draft is saved for ${signupDraftLifetimeMs / 60_000} minutes. To finish signup, ${connectAgain(a)} On that page, the person checks the approved details, types their own birthday and ticks the text consent. The agent never approves text consent.` } };
+      const signupUrl = publicSignupUrl(a);
+      const finishStep = publicSignupUsesBrowser(a.id)
+        ? `Open ${signupUrl} in your browser (or ${connectAgain(a)}) to Finish signup, check the approved details, type your own birthday and tick the text consent.`
+        : `To finish signup, ${connectAgain(a)} On that page, the person checks the approved details, types their own birthday and ticks the text consent.`;
+      return {
+        kind: "ok",
+        data: {
+          prepared: true,
+          app: g.app,
+          signup_url: signupUrl,
+          next_step: `The draft is saved for ${signupDraftLifetimeMs / 60_000} minutes. ${finishStep} The agent never approves text consent.`,
+        },
+      };
     }
     case "check_status": {
       const g = c.grant;
@@ -706,7 +728,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       }
       const shown = shownLookingFor(view, [g.phoneKey, person]);
       return { kind: "ok", data: { app: a.id, submitted: true, looking_for: reads ? shown.looking_for : [], check_with_person: reads ? shown.check_with_person : [],
-        next_step: !shown.check_with_person.length ? `${a.name} has it. It may text the person a short question or two.`
+        next_step: !shown.check_with_person.length ? `${a.name} has it. It will only text the person if anything is still missing or when a match is ready.`
           : reads ? `${a.name} has it. Some of it may not match what is active for the person: see check_with_person. Ask them about each one. Change nothing unless they ask.`
           : `${a.name} has it. Some of it may not match what is active for the person. Ask them to text “what am I looking for” to ${a.name} to check. Change nothing unless they ask.` } };
     }

@@ -6,7 +6,7 @@ import type { City } from "@thenetwork/core";
 import { Rng, canBeMatched, clamp01, earliestDayKeyOf, getCity, hash32 } from "@thenetwork/core";
 import { teenFriendMaxAge, teenFriendMinAge } from "../../core/src/generated/friendIntroAge.ts";
 import {
-  BOUNDARIES, DESIRES, FIRST_NAMES, INTERESTS, LAST_NAMES, NEIGHBORHOODS, PRIVATE_DISCLOSURES,
+  BOUNDARIES, DESIRES, FIRST_NAMES, INTERESTS, JOURNEY_STYLES, LAST_NAMES, NEIGHBORHOODS, PRIVATE_DISCLOSURES,
   SKILLS, STYLES, desireById, type WritingStyle,
 } from "./taxonomy.ts";
 import { DEFAULT_RICHNESS_MIX, assignRichness, simulateKnowledge, type RichnessTier } from "./sources.ts";
@@ -71,6 +71,11 @@ export interface GeneratorOptions {
    * hidden truth.
    */
   planted?: PlantedSpec;
+  /**
+   * Opt-in broad demographics & 14-style speaking diversity (ages 13-17, 18-22, 23-34, 35-54, 55-75+;
+   * all 14 JOURNEY_STYLES). Off by default so pinned baseline seeds stay bit-identical.
+   */
+  broadDemographics?: boolean;
 }
 
 /** Sim epoch (same as world.ts DEFAULT_START), duplicated to avoid an import cycle. */
@@ -167,7 +172,11 @@ function generateWorld(opts: GeneratorOptions): { personas: Persona[]; latent?: 
     : undefined;
   const usedNames = new Set<string>();
   const personas: Persona[] = drafts.map(({ r, ...d }) =>
-    buildPersona(r, { ...d, activeCities, disclosureRate, spread, usedNames, interests: latent?.marks.get(d.id)?.topics }));
+    buildPersona(r, {
+      ...d, activeCities, disclosureRate, spread, usedNames,
+      interests: latent?.marks.get(d.id)?.topics,
+      broadDemographics: opts.broadDemographics,
+    }));
   wireRelationships(root.fork("relationships"), personas);
   if (opts.intentLapse) {
     const o = opts.intentLapse === true ? {} : opts.intentLapse;
@@ -266,6 +275,7 @@ function buildPersona(r: Rng, a: {
   disclosureRate: number; spread: number; usedNames: Set<string>; minor?: boolean;
   /** Planted interests (planted.ts); absent = drawn from the taxonomy. */
   interests?: readonly string[];
+  broadDemographics?: boolean;
 }): Persona {
   const { id, archetype, homeCity, adversarial } = a;
   const P = PARAMS[archetype];
@@ -374,7 +384,29 @@ function buildPersona(r: Rng, a: {
   }
   applyAdversarialTraits(r, hidden);
 
-  const pub = buildPublic(r, name, claimedAge, routine.homeArea, hidden);
+  if (a.broadDemographics) {
+    const bd = r.fork("broad-demo");
+    if (!a.minor && adversarial !== "minor") {
+      const bracket = bd.weighted<readonly [number, number]>([
+        [[18, 22], 0.16],
+        [[23, 34], 0.28],
+        [[35, 54], 0.30],
+        [[55, 75], 0.26],
+      ]);
+      const broadAge = bd.int(bracket[0], bracket[1]);
+      hidden.trueAge = broadAge;
+      hidden.romance.ageRange = [Math.max(18, broadAge - 7), Math.min(85, broadAge + 9)];
+    }
+    const age = hidden.trueAge;
+    const stylePool: readonly WritingStyle[] = age <= 22
+      ? ["genz-slang", "lowercase-casual", "emoji-heavy", "typo-heavy-casual", "terse", "warm", "neurodivergent-literal"]
+      : age >= 55
+        ? ["boomer-email-sms", "formal", "warm", "voice-to-text-runon", "defensive-skeptical", "chatty", "non-native English"]
+        : JOURNEY_STYLES;
+    hidden.style = bd.pick(stylePool);
+  }
+  const effectiveClaimedAge = a.broadDemographics && !a.minor && adversarial !== "minor" ? hidden.trueAge : claimedAge;
+  const pub = buildPublic(r, name, effectiveClaimedAge, routine.homeArea, hidden);
   const joinDay = archetype === "newcomer" ? r.int(Math.floor(a.spread / 2), a.spread - 1)
     : r.bool(0.6) ? r.int(0, 1) : r.int(0, a.spread - 1);
 
@@ -442,6 +474,12 @@ function voiceSample(style: WritingStyle, interests: string[]): string {
     case "emoji-heavy": return `${i} 🙌🔥 always down!!`;
     case "lowercase-casual": return `honestly mostly ${i} these days lol`;
     case "non-native English": return `I like very much ${i}, I do it since some years.`;
+    case "genz-slang": return `lowkey obsessed w ${i} rn fr no cap`;
+    case "voice-to-text-runon": return `yeah so basically ive been really into ${i} lately and um trying to meet more people who do that too sorry using voice to text`;
+    case "boomer-email-sms": return `Hello, I enjoy ${i} very much and would love to meet nice people in the area. Thank you!`;
+    case "neurodivergent-literal": return `My primary interest is ${i}. Please specify exact locations and start times when suggesting plans.`;
+    case "defensive-skeptical": return `Wait how does this work? I'm into ${i}, as long as my info stays private.`;
+    case "typo-heavy-casual": return `im defintely into ${i} mostyl on weeknds sry for typos`;
   }
 }
 

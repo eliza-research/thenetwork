@@ -10,7 +10,7 @@
 //    override a refusal, a conditional, a hedge or a mixed reply (mergeConsent).
 //  - An age the LLM reads can only make the member younger (a minor), never decline them: a
 //    decline deletes data, so it needs the offline explicit form.
-import { CITIES, fenceUntrusted, getCity, maskPii, tryChatJson, UNTRUSTED_NOTE, type ChatMessage, type City, type LLM } from "@thenetwork/core";
+import { CITIES, fenceUntrusted, getCity, maskPii, tryChatJson, UNTRUSTED_NOTE, withLLMCache, type ChatMessage, type City, type LLM, type LLMCacheOptions } from "@thenetwork/core";
 import { pickedTimes, probeReplyReading } from "../../core/src/generated/probeReply.ts";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import type { ConsentWhy, TimeOption } from "./classify.ts";
@@ -123,10 +123,22 @@ export function validateUnderstood(raw: unknown, ctx: UnderstandContext = {}): U
  * The LLM reader on a core client (defaultLLM() is gpt-6-luna on Surplus). Two attempts, then
  * undefined. Never throws.
  */
-export function llmUnderstand(llm: LLM, o: { maxTokens?: number; attempts?: number; deadlineMs?: number } = {}): Understand {
+export function llmUnderstand(
+  llm: LLM,
+  o: { maxTokens?: number; attempts?: number; deadlineMs?: number; cache?: LLMCacheOptions } = {},
+): Understand {
+  const baseClient: LLM = o.cache ? withLLMCache(llm, o.cache) : llm;
+  const tunedClient: LLM = {
+    chat: (messages, chatOpts) =>
+      baseClient.chat(messages, {
+        ...chatOpts,
+        reasoningEffort: "low",
+        promptCacheKey: "network-understand-v1",
+      }),
+  };
   return async (body, ctx) => {
     if (!body.trim() || body.length > MAX_UNDERSTAND_CHARS) return undefined;
-    const r = await tryChatJson(llm, understandPrompt(maskPii(body), ctx), raw => validateUnderstood(raw, ctx), {
+    const r = await tryChatJson(tunedClient, understandPrompt(maskPii(body), ctx), raw => validateUnderstood(raw, ctx), {
       attempts: o.attempts ?? 2,
       maxTokens: o.maxTokens ?? 800,
       deadlineMs: o.deadlineMs ?? 8_000,

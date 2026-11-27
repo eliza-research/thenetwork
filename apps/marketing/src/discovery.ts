@@ -1,3 +1,4 @@
+import { MEETUP_GRAPHQL_ENDPOINT } from "../../../packages/core/src/externalEvents.ts";
 import {
   evaluateComplianceGate,
 } from "../../../packages/core/src/pacing/compliance.ts";
@@ -17,7 +18,9 @@ import {
   inferDesireLanesFromText,
   type DesireLaneId,
 } from "./desire-lanes.ts";
-import type { BrandAppId, Clock, DiscoveredLead as BaseDiscoveredLead } from "./types.ts";
+import type { MarketingStore } from "./store.ts";
+import type { BrandAppId, Clock, DiscoveredLead as BaseDiscoveredLead, VipProspect } from "./types.ts";
+import { classifyVipArchetypeOrNull, inferSourceAuthority } from "./vip-engine.ts";
 
 export type MarketingVertical = BrandAppId;
 export type LeadCategory = "venue" | "event" | "creator" | "vip" | "community";
@@ -35,10 +38,14 @@ export type DiscoverySource =
   | "luma"
   | "eventbrite"
   | "partiful"
+  | "meetup"
+  | "apollo_search"
   | "sec_form_d"
   | "openalex"
   | "irs_990"
   | "clinical_trials";
+
+export type DiscoverySourceTrust = "official_api" | "public_filing" | "public_html";
 
 export type DiscoveryClock = Clock;
 
@@ -52,6 +59,7 @@ export type FetchLike = (
 export interface DiscoveredLead extends BaseDiscoveredLead {
   neighborhood?: string;
   source: DiscoverySource;
+  sourceTrust?: DiscoverySourceTrust;
   summary: string;
   handleOrContact?: string;
   desireLane: DesireLaneId;
@@ -85,6 +93,8 @@ export interface DiscoveryOptions {
   redditSubreddits?: readonly string[];
   youtubeChannelIds?: readonly string[];
   partifulUrls?: readonly string[];
+  meetupOAuthToken?: string;
+  meetupQuery?: string;
   hnQuery?: string;
   githubQuery?: string;
   arxivQuery?: string;
@@ -108,6 +118,7 @@ export const PUBLIC_DISCOVERY_ENDPOINTS = {
   lumaNycUrl: "https://lu.ma/nyc",
   eventbriteNycUrl: "https://www.eventbrite.com/d/ny--new-york/events/",
   partifulBase: "https://partiful.com",
+  meetupGraphqlEndpoint: MEETUP_GRAPHQL_ENDPOINT,
   secFormDSearchBase: "https://efts.sec.gov/LATEST/search-index",
   openAlexAuthorsBase: "https://api.openalex.org/authors",
   proPublicaNonprofitsBase: "https://projects.propublica.org/nonprofits/api/v2/search.json",
@@ -2159,6 +2170,11 @@ export async function discoverCityLeads(options: DiscoveryOptions): Promise<Disc
       run: () => fetchPartifulEvents(opts.partifulUrls ?? [], { ...opts, city }),
     });
   }
+  if (enabled.has("meetup") && options.meetupOAuthToken?.trim()) {
+    addSingle("meetup", PUBLIC_DISCOVERY_ENDPOINTS.meetupGraphqlEndpoint, () =>
+      fetchMeetupOfficialEvents({ ...options, city }),
+    );
+  }
   addSingle("sec_form_d", PUBLIC_DISCOVERY_ENDPOINTS.secFormDSearchBase, () =>
     fetchSecFormDVips({ ...opts, city }),
   );
@@ -2223,4 +2239,184 @@ export function discoverVipAndBdLeads(
     includeSources: options.includeSources ?? VIP_BD_DISCOVERY_SOURCES,
     includeVipBdSources: true,
   });
+}
+
+export interface MeetupGraphqlEdgeNode {
+  readonly id?: string;
+  readonly title?: string;
+  readonly eventUrl?: string;
+  readonly dateTime?: string;
+  readonly description?: string;
+  readonly going?: number;
+  readonly group?: {
+    readonly name?: string;
+    readonly urlname?: string;
+    readonly city?: string;
+  };
+  readonly venue?: {
+    readonly name?: string;
+    readonly city?: string;
+  };
+}
+
+export interface MeetupGraphqlResponse {
+  readonly data?: {
+    readonly keywordSearch?: {
+      readonly edges?: ReadonlyArray<{ readonly node?: { readonly result?: MeetupGraphqlEdgeNode } }>;
+    };
+  };
+}
+
+export function parseMeetupGraphqlEvents(
+  payload: MeetupGraphqlResponse,
+  discoveredAt: string,
+  city = "nyc",
+): DiscoveredLead[] {
+  const edges = payload.data?.keywordSearch?.edges ?? [];
+  const profile = resolveCityProfile(city);
+  const out: DiscoveredLead[] = [];
+
+  for (const edge of edges) {
+    const ev = edge.node?.result;
+    if (!ev?.title) continue;
+    const title = ev.title.trim();
+    const groupName = ev.group?.name?.trim() ?? "";
+    const venueName = ev.venue?.name?.trim() ?? "";
+    const summaryText = [groupName, venueName, ev.description?.slice(0, 200) ?? ""]
+      .filter(Boolean)
+      .join(" — ");
+    const combined = `${title} ${summaryText}`;
+    const desires = resolveDesireTagging(combined, "friends");
+    const going = typeof ev.going === "number" ? ev.going : 0;
+    const dedupeKey = `meetup:${profile.code}:${ev.id ?? title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+    out.push({
+      dedupeKey,
+      source: "meetup",
+      sourceTrust: "official_api",
+      category: "event",
+      vertical: "friends",
+      city: profile.code,
+      title,
+      summary: summaryText || `Meetup event in ${profile.displayName}`,
+      sourceUrl: ev.eventUrl?.trim() || PUBLIC_DISCOVERY_ENDPOINTS.meetupGraphqlEndpoint,
+      contactHint: groupName || null,
+      handleOrContact: ev.group?.urlname || undefined,
+      score: clampScore(68 + Math.min(20, Math.floor(going / 3))),
+      discoveredAt,
+      desireLane: desires.desireLane,
+      desireLanes: desires.desireLanes,
+      tags: ["meetup", "official-api", "event", profile.code],
+      rawMeta: {
+        meetupEventId: ev.id ?? null,
+        dateTime: ev.dateTime ?? null,
+        going,
+        groupName,
+        venueName,
+      },
+    });
+  }
+
+  return out;
+}
+
+export async function fetchMeetupOfficialEvents(
+  opts: Pick<
+    DiscoveryOptions,
+    "fetchImpl" | "clock" | "city" | "limitPerSource" | "timeoutMs" | "userAgent" | "meetupOAuthToken" | "meetupQuery"
+  >,
+): Promise<DiscoveredLead[]> {
+  const token = opts.meetupOAuthToken?.trim();
+  if (!token) return [];
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const discoveredAt = readClockIso(opts.clock);
+  const profile = resolveCityProfile(opts.city);
+  const limit = clampLimit(opts.limitPerSource, 15);
+  const queryText = opts.meetupQuery?.trim() || `${profile.displayName} founders tech social`;
+
+  const gqlQuery = `
+    query SearchEvents($query: String!, $first: Int!) {
+      keywordSearch(filter: { query: $query, source: EVENTS }, input: { first: $first }) {
+        edges {
+          node {
+            result {
+              ... on Event {
+                id
+                title
+                eventUrl
+                dateTime
+                description
+                going
+                group { name urlname city }
+                venue { name city }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const res = await fetchImpl(PUBLIC_DISCOVERY_ENDPOINTS.meetupGraphqlEndpoint, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${token}`,
+      "user-agent": opts.userAgent ?? DEFAULT_USER_AGENT,
+    },
+    body: JSON.stringify({
+      query: gqlQuery,
+      variables: { query: queryText, first: limit },
+    }),
+    signal: AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new Error(`Meetup GraphQL HTTP ${res.status}`);
+  }
+  const text = await res.text();
+  if (Buffer.byteLength(text, "utf8") > MAX_RESPONSE_BYTES) {
+    throw new Error(`Meetup GraphQL response exceeded ${MAX_RESPONSE_BYTES} byte limit`);
+  }
+  const parsed = JSON.parse(text) as MeetupGraphqlResponse;
+  return parseMeetupGraphqlEvents(parsed, discoveredAt, profile.code);
+}
+
+export interface PersistDiscoveredVipsResult {
+  readonly persisted: VipProspect[];
+  readonly skippedCount: number;
+}
+
+export async function persistDiscoveredVips(
+  store: MarketingStore,
+  campaignId: string,
+  result: DiscoveryRunResult,
+  opts: { readonly minScore?: number; readonly limit?: number } = {},
+): Promise<PersistDiscoveredVipsResult> {
+  const minScore = opts.minScore ?? 65;
+  const limit = Math.max(1, Math.min(50, opts.limit ?? 20));
+  const vipLeads = result.leads
+    .filter((lead) => lead.category === "vip" && lead.score >= minScore)
+    .slice(0, limit);
+
+  const persisted: VipProspect[] = [];
+
+  for (const lead of vipLeads) {
+    const archetype =
+      classifyVipArchetypeOrNull(`${lead.title} ${lead.summary} ${lead.tags.join(" ")}`)?.slug ??
+      "startup_founder";
+    const authority = inferSourceAuthority(lead.source);
+    const created = await store.createVipProspect({
+      campaignId,
+      city: lead.city,
+      name: lead.title.slice(0, 180),
+      archetype,
+      organization: lead.contactHint ?? null,
+      publicSource: `${lead.source}:${authority}`,
+      sourceUrl: lead.sourceUrl ?? null,
+      prestigeScore: lead.score,
+      status: "discovered",
+    });
+    persisted.push(created);
+  }
+  const skippedCount = result.leads.filter((l) => l.category === "vip").length - persisted.length;
+  return { persisted, skippedCount: Math.max(0, skippedCount) };
 }
