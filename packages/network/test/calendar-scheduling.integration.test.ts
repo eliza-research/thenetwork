@@ -11,6 +11,7 @@ import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
 import { NetworkService } from "../service/service.ts";
 import { localBookingStart, rescheduleMemberRef, type RescheduleCommand, type RescheduleDraft } from "../src/rescheduling.ts";
 import { Mini, START } from "./mini.ts";
+import { REVIEW_JUDGE_PROMPT_VERSION, SIM_REVIEW_JUDGE, type ReviewJudge } from "../../engine/src/reviewJudge.ts";
 
 const turnSecret = "synthetic-calendar-bridge-fixture-turn-secret";
 const calendarSecret = "synthetic-calendar-bridge-fixture-scope-secret";
@@ -203,6 +204,102 @@ test.skipIf(!pgAvailable)("a signed owner proof and fresh Cloud preload bind act
     expect(reads).toEqual([]);
     await setBookings({ ...booked, reschedule: draft }, unrelated);
     expect((await turn("calendar-reschedule-vote", `RESCHEDULE YES ${code}`, phones[1])).status).toBe(200);
+    expect(reads.map(request => request.memberId)).toEqual([first.id]);
+  } finally {
+    await service.close();
+    await dropDb(url);
+  }
+});
+
+test.skipIf(!pgAvailable)("a judge approval preloads calendar busy time before the first probe offers times", async () => {
+  // spec/calendarFreeBusy.md, "A known busy interval excludes the slot and incomplete coverage cannot make it free"
+  const url = await migratedDb("calendar_judge_approval");
+  const clock = new SimClock(START);
+  const app = APPS.friends;
+  const phones = ["+12125550191", "+12125550192"] as const;
+  const reads: CalendarPreloadRequest[] = [];
+  let busy: { start: number; end: number } | undefined;
+  const judge: ReviewJudge = { reviewer: SIM_REVIEW_JUDGE, judge: async () => ({
+    verdict: "approve", reason: "none", explanation: "Both members climb near Greenpoint and asked for a regular partner.",
+    model: "scripted", promptVersion: REVIEW_JUDGE_PROMPT_VERSION,
+  }) };
+  const service = new NetworkService({
+    url, clock, photoStorage: null, log: () => {}, notify: false, reviewJudge: judge,
+    tokens: `safety@friends:${safetyToken}`,
+    env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: turnSecret, NETWORK_CALENDAR_FREE_BUSY_SECRET: calendarSecret,
+      NETWORK_CLOUD_DELIVERY_ORIGIN: "https://calendar.invalid" },
+    networks: [{ id: "friends:nyc", matchingEnabled: true }],
+    devMatching: ["friends:nyc"],
+    network: { maxNewPerDay: 0, plans: false, growth: false },
+    calendarFreeBusyFetch: async (destination, init) => {
+      const req = new Request(destination, init);
+      const raw = await req.text();
+      const request = JSON.parse(raw) as CalendarPreloadRequest;
+      const now = clock.now();
+      const id = `calendar-read:${request.nonce}`;
+      reads.push(request);
+      if (!busy) return new Response(null, { status: 403 });
+      const { app, personId, memberId, purpose, coverage } = request;
+      const source = { app, memberId, purpose, provider: calendarSource, connectionId };
+      const body = JSON.stringify({
+        app, personId, memberId, purpose, requestSha256: hash(raw), issuedAt: now, expiresAt: now + 29_000,
+        grant: { ...source, active: true, grantedAt: START, expiresAt: now + 5 * MINUTE },
+        observation: { ...source, observedAt: now, coverage, busy: [busy] },
+      });
+      const headers = await svcSign(calendarSecret, { method: "POST", path: calendarPreloadPath, id: `${id}:proof`, body, nowS: Math.floor(now / 1000) });
+      return new Response(body, { headers });
+    },
+  });
+  const post = async (path: string, id: string, body: string, key: string) => {
+    const auth = await svcSign(key, { method: "POST", path, id, body, nowS: Math.floor(clock.now() / 1000) });
+    return service.fetch(new Request(`http://localhost${path}`, { method: "POST", headers: { "Content-Type": "application/json", ...auth }, body }));
+  };
+  const turn = (id: string, text: string, from: string) => {
+    const input: TurnRequest = { app: app.id, from, messageId: id, text, channel: "blooio", transport: "imessage", receivedAt: clock.now(), to: null };
+    return post(TURN_PATH, id, JSON.stringify(input), turnSecret);
+  };
+
+  try {
+    await service.start();
+    const profiles = [];
+    for (const [i, e164] of phones.entries()) {
+      const name = ["Ari", "Blair"][i]!;
+      const joined = await service.accounts.join(app, { e164, personId: null }, { firstName: name, age: 30, consent: { sms: true, wording: app.consent.text } });
+      if (!joined.ok) throw new Error(`Fixture join refused for ${name}`);
+      const id = joined.membership.memberId;
+      for (const check of ["age", "liveness"]) {
+        const verified = await service.fetch(new Request(`http://localhost/apps/friends/members/${encodeURIComponent(id)}/verify`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${safetyToken}`, "content-type": "application/json" },
+          body: JSON.stringify({ check, result: "pass", note: "Adult calendar scheduling fixture" }),
+        }));
+        expect(await verified.json()).toEqual({ ok: true });
+      }
+      profiles.push({ id, personId: joined.membership.personId, name, age: 30, area: "Greenpoint",
+        interests: ["climbing", "hiking"], skills: ["belaying"], wants: [{ objective: "find a regular climbing partner", category: "hobby" as const }] });
+    }
+    const [first, second] = profiles as [typeof profiles[number], typeof profiles[number]];
+    const ids = [first.id, second.id];
+    const rt = service.runtimes.get("friends:nyc")!;
+    const world = new Mini(profiles, { app: app.id, growth: false, plans: false, inlineJudge: () => null });
+    world.verify(...ids);
+    await world.onboard(...ids);
+    const oppId = world.propose(ids);
+    expect(await world.runUntil(() => world.net.reviewQueue().some(item => item.oppId === oppId))).toBe(true);
+    clock.set(START);
+    const fixture = world.net.exportState();
+    const reviewOpp = fixture.opps.find(item => item.id === oppId)!;
+    delete reviewOpp.review!.exception;
+    reviewOpp.review!.judgeWaitFrom = START;
+    await rt.unitOfWork(n => n.importState({ ...n.exportState(), members: fixture.members, opps: fixture.opps }));
+    expect((await turn("calendar-judge-enable", "CALENDAR", phones[0])).status).toBe(200);
+    busy = { start: clock.now(), end: clock.now() + 8 * DAY };
+    reads.length = 0;
+    await service.reviewJudgeTick();
+    const state = (await rt.pg.load())!;
+    const opp = state.opps.find(item => item.id === oppId)!;
+    expect(opp.stage).toBe("probing");
+    expect(opp.offered?.[first.id] ?? []).toEqual([]);
     expect(reads.map(request => request.memberId)).toEqual([first.id]);
   } finally {
     await service.close();

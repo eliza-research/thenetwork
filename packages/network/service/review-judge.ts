@@ -244,7 +244,10 @@ export class ReviewJudgeWorker {
         basePacketHash: row.base_packet_hash, packetHash: row.packet_hash,
       });
     }
-    if (judgments.length) await rt.unitOfWork(n => n.recordJudgments(judgments));
+    for (const judgment of judgments) {
+      await rt.unitOfWork(n => n.recordJudgment(judgment),
+        judgment.verdict === "approve" ? { kind: "review", opportunityId: judgment.oppId } : undefined);
+    }
   }
 
   private async purge(rt: NetworkRuntime, now: number, openCaseMembers: ReadonlySet<string>): Promise<void> {

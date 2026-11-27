@@ -4052,8 +4052,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       ref: refOf(p.memberId), text: p.text === null ? null : packetText(p.text), ...(p.fallback !== undefined ? { fallback: packetText(p.fallback) } : {}),
       reveal: { text: packetText(p.reveal.text), ...(p.reveal.fallback !== undefined ? { fallback: packetText(p.reveal.fallback) } : {}) },
     });
-    const preview = this.reviewProbePreview(o.id, revision, this.judgeRenderedAt(o));
-    const planPreview = this.reviewPlanPreview(o.id, revision);
+    const preview = this.withoutCalendar(() => this.reviewProbePreview(o.id, revision, this.judgeRenderedAt(o)));
+    const planPreview = this.withoutCalendar(() => this.reviewPlanPreview(o.id, revision));
     const rosterHasMinor = this.teenRoster(o);
     const ages = members.map(m => m.age).filter((a): a is number => a !== null);
     const codeChecks: CodeCheck[] = rosterHasMinor && this.teenItemOk(o)
@@ -4824,6 +4824,12 @@ export class ConsentNetwork implements NetworkUnderTest {
   private calendarOwnerEligible(m: MemberState): boolean {
     const view = relayMemberOf(m, !this.trust.ok(m.id) || this.reportHeld(m.id), earliestDayKeyOf(this.now()));
     return canBeMatched(view.age) && !view.optedOut && !view.held && m.state !== "paused";
+  }
+
+  private withoutCalendar<T>(fn: () => T): T {
+    const authority = this.opts.calendarFreeBusy;
+    this.opts.calendarFreeBusy = undefined;
+    try { return fn(); } finally { this.opts.calendarFreeBusy = authority; }
   }
 
   private calendarEvidence(m: MemberState, now: number) {
