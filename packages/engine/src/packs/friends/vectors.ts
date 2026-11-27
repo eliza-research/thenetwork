@@ -4,8 +4,9 @@ import { friendAdmits, friendOpennessUnanswered, type FriendStatement, type Stat
 import { standingMiddle } from "../../../../core/src/generated/memberStanding.ts";
 import { directedUtility, pairValueScale } from "../../../../core/src/generated/pairValue.ts";
 import { isMinor, memberReason } from "../../filters.ts";
-import { discretionGateOk, humanVectorOf, memberMayHavePositiveVectorBonus, spendTierCompatible, spendTierRank } from "../../humanVector.ts";
-import type { EntitySegment, MatchEntity, MatchProfile, PackVectors, TagSet } from "../../match/profile.ts";
+import { discretionGateOk, humanVectorOf, memberMayHavePositiveVectorBonus, spendTierCompatible, spendTierRank, type HumanVector } from "../../humanVector.ts";
+import { intersectCount } from "../../match/pair.ts";
+import type { EntitySegment, MatchEntity, MatchProfile, PackVectors } from "../../match/profile.ts";
 import type { World } from "../../world.ts";
 import { ACTIVITIES } from "../network/activities.ts";
 import { cityNeighborhoods, FRIENDS_CITY, FRIENDS_EXCLUDED_ACTIVITIES, transitMinutesInCity, withinTransitTolerance, type Neighborhood } from "./geo.ts";
@@ -57,13 +58,9 @@ function friendsSegment(w: World, city: City, home: Neighborhood, tolerance: num
   return segment;
 }
 
-function intersectCount(a: TagSet, b: TagSet): number {
-  let i = 0, j = 0, count = 0;
-  while (i < a.length && j < b.length) {
-    const x = a[i]!, y = b[j]!;
-    if (x === y) { count++; i++; j++; } else if (x < y) i++; else j++;
-  }
-  return count;
+function lifeStageKey(w: World, id: MemberId, v: HumanVector): string | undefined {
+  if (v.explicitSignals.lifeStage) return v.horizontal.lifeStage;
+  return friendsInfo(w).get(id)?.lifeStage?.trim().toLowerCase() || undefined;
 }
 
 function baseFriendUtility(a: MatchProfile, b: MatchProfile): number {
@@ -122,7 +119,9 @@ function friendsPackValue(w: World, a: MatchProfile, b: MatchProfile): number {
     else if (ea.spendTier && eb.spendTier && tierDiff === 0) delta += 100;
   }
 
-  if (ea.lifeStage && eb.lifeStage && va.horizontal.lifeStage === vb.horizontal.lifeStage) delta += 110;
+  const lsA = lifeStageKey(w, a.memberId, va);
+  const lsB = lifeStageKey(w, b.memberId, vb);
+  if (lsA && lsB && lsA === lsB) delta += 110;
   if (ea.depth && eb.depth) {
     const depthDiff = Math.abs(va.horizontal.communication.depthPreference.value - vb.horizontal.communication.depthPreference.value);
     delta += Math.round(100 * (1 - depthDiff));
@@ -154,7 +153,7 @@ function friendsPackBound(w: World, a: MatchProfile, b: MatchProfile): number {
   const eb = vb.explicitSignals;
   let bonus = 0;
   if (ea.spendTier || eb.spendTier) bonus += 240;
-  if (ea.lifeStage && eb.lifeStage) bonus += 110;
+  if (lifeStageKey(w, a.memberId, va) && lifeStageKey(w, b.memberId, vb)) bonus += 110;
   if (ea.depth && eb.depth) bonus += 100;
   if (ea.humor && eb.humor) bonus += 100;
   if (ea.transitions && eb.transitions) bonus += 100;
@@ -163,7 +162,9 @@ function friendsPackBound(w: World, a: MatchProfile, b: MatchProfile): number {
 }
 
 function friendsPackClass(w: World, entity: MatchEntity): number {
-  return memberMayHavePositiveVectorBonus(w, entity.memberId, false) ? 1 : 0;
+  if (isMinor(w, entity.memberId)) return 0;
+  if (memberMayHavePositiveVectorBonus(w, entity.memberId, false)) return 1;
+  return friendsInfo(w).get(entity.memberId)?.lifeStage ? 1 : 0;
 }
 
 function friendsPackClassCap(w: World, a: MatchProfile, partnerClass: number, untouched: boolean): number {
@@ -177,7 +178,7 @@ function friendsPackClassCap(w: World, a: MatchProfile, partnerClass: number, un
     return Math.min(pairValueScale, FRIEND_UNTOUCHED_BASE_CAP + (ea.spendTier ? 240 : 0));
   }
   let bonus = 240;
-  if (ea.lifeStage) bonus += 110;
+  if (lifeStageKey(w, a.memberId, va)) bonus += 110;
   if (ea.depth) bonus += 100;
   if (ea.humor) bonus += 100;
   if (ea.transitions) bonus += 100;
