@@ -93,3 +93,36 @@ test("a requester can withdraw an accepted probe while the other reply is pendin
   expect(x.meetings.some(meeting => meeting.proposalId === oppId)).toBe(false);
   expect(x.sent.some(message => message.meta.type === "proposal" && message.meta.proposalId === oppId)).toBe(false);
 });
+
+test.each([
+  ["No thanks, I'm withdrawing from this and from swapping numbers", true],
+  ["No, not anymore. I'm withdrawing and keeping my number", true],
+  ["No, I withdraw. My number stays with me", true],
+  ["No, withhold my number", false],
+  ["No, I revoke the number swap", false],
+] as const)("a swap refusal with a plan refusal withdraws probe consent only when the plan is refused: %s", async (text, closes) => {
+  const x = new Mini([
+    { id: "a", name: "Alice Able", age: 30, interests: ["climbing"] },
+    { id: "b", name: "Boris Bell", age: 32, interests: ["climbing"], skills: ["climbing_belay"], shareable: true },
+  ], { inlineJudge: holdEveryItem.inline, onboardingRequests: false });
+  await x.onboard("a", "b");
+  await x.say("a", "Find me a climbing partner.");
+  const oppId = x.net.exportState().requests.at(-1)!.oppId!;
+  await x.net.tick(x.clock.now());
+  expect(x.net.review(oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
+  expect(await x.runUntil(() => x.probed("a"))).toBe(true);
+  await x.say("a", "Yes, that works for me.");
+  const opportunity = () => x.net.exportState().opps.find(o => o.id === oppId)!;
+  expect(opportunity().status).toContainEqual(["a", "available"]);
+  await x.say("a", text);
+  if (closes) {
+    expect(opportunity()).toMatchObject({ stage: "closed", closedReason: "consent withdrawn" });
+    expect(opportunity().status).toContainEqual(["a", "no"]);
+  } else {
+    expect(opportunity().stage).toBe("probing");
+    expect(opportunity().status).toContainEqual(["a", "available"]);
+  }
+  await x.say("b", "Yes, that works for me.");
+  await x.run(2 * DAY);
+  expect(x.meetings.some(meeting => meeting.proposalId === oppId)).toBe(!closes);
+});

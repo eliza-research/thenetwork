@@ -736,6 +736,20 @@ function declinesAttendanceAlongsideSwap(body: string): boolean {
   return !quoteStillOpen(text.slice(0, start)) && ATTENDANCE_CLAUSE.test(text.slice(start).trim());
 }
 
+const PROBE_PLAN_CLAUSE = /^(?:sorry[,]?\s+)?(?:(?:i'?m\s+|i am\s+)?(?:withdrawing|withdraw|withdrew|withdrawn)\s+from\s+(?:this|that|it|the\s+(?:plan|meeting|proposal))|not\s+anymore|not\s+any\s+more|no\s+longer)[.,!]*$/i;
+
+function declinesProbeAlongsideSwap(body: string): boolean {
+  if (declinesAttendanceAlongsideSwap(body)) return true;
+  const text = body.toLowerCase().replace(/[‘’ʼ`´]/g, "'").replace(/[“”]/g, '"');
+  const boundaries = [...text.matchAll(ATTENDANCE_JOIN)];
+  let start = 0;
+  for (const end of boundaries) {
+    if (!quoteStillOpen(text.slice(0, start)) && PROBE_PLAN_CLAUSE.test(text.slice(start, end.index).trim())) return true;
+    start = end.index + end[0].length;
+  }
+  return !quoteStillOpen(text.slice(0, start)) && PROBE_PLAN_CLAUSE.test(text.slice(start).trim());
+}
+
 /** The source text for a booked reply, with independent transfer and attendance evidence. */
 export function bookedReplyKeepsMeeting(body: string): boolean {
   const text = body.trim().replace(/[‘’ʼ`´]/g, "'");
@@ -1769,7 +1783,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         }
       }
     }
-    if (!msg.reaction && !c.pastAbsence && !withdrawsSwap(body) && !bookedReplyKeepsMeeting(bookingText)
+    if (!msg.reaction && !c.pastAbsence && (!withdrawsSwap(body) || declinesProbeAlongsideSwap(body)) && !bookedReplyKeepsMeeting(bookingText)
       && this.withdrawAcceptedProbe(m, body, replyOpen || !!aw)) return;
     if (cancellation && this.handleExplicitCancellation(m, cancellation, now)) return;
     if (aw?.kind === "checkin") {

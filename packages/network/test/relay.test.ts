@@ -8,7 +8,7 @@ import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {TURN_PATH,RELAY_PATH,type RelaySendRequest,type TurnRequest} from "../../core/src/svc/contract.ts";
 import {DryRunAdapter} from "../service/channel.ts";
 import {NetworkService} from "../service/service.ts";
-import {simulatedRelayClassifier} from "../../engine/src/relay.ts";
+import {simulatedRelayClassifier, withdrawsRelaySwap} from "../../engine/src/relay.ts";
 import {ServiceClient} from "../../../apps/observatory/src/sources/service.ts";
 import type {NetworkState} from "../src/network.ts";
 
@@ -496,6 +496,7 @@ test.each([
   "Withhold my number",
   "Withdraw my number",
   "Revoke my consent to share my number",
+  "I revoked my consent to share my number",
 ])("the signed turn withdraws a pending swap after %s", async (text) => {
   const id = "withdrawn-swap-" + randomUUID();
   const before = await sharesQueued();
@@ -506,6 +507,27 @@ test.each([
   expect({ pending, action, newShares: await sharesQueued() - before })
     .toMatchObject({ pending: 0, action: { decision: "hold", delivered: false }, newShares: 0 });
 }, 60_000);
+
+test("new swap verbs withdraw only their own swap object", () => {
+  for (const text of [
+    "Withhold my number",
+    "Withdraw my number",
+    "Revoke my consent to share my number",
+    "I revoked my consent to share my number",
+    "I'd like to withdraw from the number swap",
+    "No thanks, I'm withdrawing from this and from swapping numbers",
+    "No, withhold my number",
+    "No, I revoke the number swap",
+  ]) expect(withdrawsRelaySwap(text)).toBe(true);
+  for (const text of [
+    "The bank revoked my card so text me at my number later",
+    "Revoking my gym membership has nothing to do with swapping numbers",
+    "He withdrew his complaint so swapping numbers is fine now",
+    "He withdrew my number",
+    "withdraw it",
+    "revoke my consent",
+  ]) expect(withdrawsRelaySwap(text)).toBe(false);
+});
 
 test.each([
   "I won't lie, send Ari my number",
