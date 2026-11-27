@@ -906,7 +906,7 @@ function OpportunityPanel({ id }: { id: string }) {
   if (!o) return <p className={quiet}>Opportunity not found.</p>;
   const resolved = !OPEN.has(o.state);
   const shadow = o.source === "shadow";
-  const showActions = o.state === "IN_REVIEW" && !!o.review?.exceptionReason && s.canReview();
+  const showActions = o.state === "IN_REVIEW" && s.canReview();
   const hist = historyBetween(o);
   const items: TimelineItem[] = [
     ...(d?.messages ?? []).map(m => ({ t: m.ts, key: `m${m.memberId}-${m.id}`, msg: m })),

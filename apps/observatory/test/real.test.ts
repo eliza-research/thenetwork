@@ -180,7 +180,8 @@ describe.skipIf(!pgAvailable)("RealSource (Postgres)", () => {
     const now = new Date();
     const opp = (id: string) => ({ id, kind: "intro", state: "IN_REVIEW", source: "engine", city: "nyc", objective: "a coffee", explanations: {}, exploration: false, created_at: now, updated_at: now });
     const rows = {
-      members: [], channel_identities: [], facets: [], intents: [], presence: [], edges: [], messages: [], feedback: [], events: [], matching_runs: [], requests: [], network_state: [],
+      members: [], channel_identities: [], facets: [], intents: [], presence: [], edges: [], messages: [], feedback: [], events: [], matching_runs: [], requests: [],
+      network_state: [{ id: "nyc", version: 1, saved_at: now, state: { matchingEnabled: true, deferred: [], members: [] } }],
       opportunities: [opp("awaiting"), opp("held")], participations: [],
       review_items: [{ opportunity_id: "held", queued_at: now, deadline: new Date(now.getTime() + 3_600_000), exception_reason: "other_concern" }],
     };

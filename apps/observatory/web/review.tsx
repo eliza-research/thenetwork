@@ -204,6 +204,7 @@ function useReviewCtl(cardKey: string): ReviewDraft {
 /** Why approval is blocked for this opportunity, if it is. */
 export function approveBlock(o: Opp, preview?: PlanPreview): string | undefined {
   if (!store.canAct()) return "Read-only source";
+  if (!o.review?.exceptionReason) return "Waiting for the judge";
   if (realPlanUnderReview(o) && (typeof preview !== "object" || !o.review || !planPreviewMatchesCard(store.app, preview.app,
     o.id, preview.opportunityId, o.review.rerolls ?? 0, preview.revision, o.review.deadline, preview.deadline))) return "Open the current plan preview before approving";
   if (o.participants.some(id => store.members.get(id)?.minor)) return "Members under 18 are never introduced";
@@ -254,6 +255,7 @@ export function ReviewActions({ o, ctl, onDone, planPreview }: { o: Opp; ctl?: R
   return (
     <>{!ctl && <PlanPreviewFacts preview={preview} />}<ReviewActionsView
       ctl={c.state}
+      rejectOnly={!o.review?.exceptionReason}
       approveBlock={block}
       edited={!!edits}
       reasons={store.reasons().map(([code, label]) => ({ code, label }))}

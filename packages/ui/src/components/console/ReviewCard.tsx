@@ -110,6 +110,8 @@ export type ReviewActionsProps = Omit<ComponentProps<"div">, "children"> & {
   ctl: ReviewCtl;
   /** Why approval is blocked, when it is. */
   approveBlock?: string;
+  /** True for an open item the judge has not held: staff may reject it, and Approve, Edit and Re-roll stay hidden. */
+  rejectOnly?: boolean;
   /** True when an edit differs from the texts: Approve then sends the edits. */
   edited?: boolean;
   /** The app's reject reasons, in key order 1 to 8. */
@@ -150,6 +152,7 @@ export type ReviewActionsProps = Omit<ComponentProps<"div">, "children"> & {
 export function ReviewActions({
   ctl,
   approveBlock,
+  rejectOnly = false,
   edited = false,
   reasons,
   noteReasonCode = "other",
@@ -214,6 +217,7 @@ export function ReviewActions({
         </div>
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
+        {!rejectOnly && <>
         <Button disabled={!!approveBlock} loading={loading} title={approveBlock ?? "Approve (a)"} onClick={onApprove}>
           {edited ? "Approve with edits" : "Approve"}
         </Button>
@@ -223,6 +227,7 @@ export function ReviewActions({
         <Button variant="outline" aria-pressed={mode === "RerollReview"} disabled={!modes || !swaps.length} title={swaps.length ? "Swap a participant for an alternate (s)" : "Nobody can be swapped"} onClick={() => onToggleMode("RerollReview")}>
           Re-roll
         </Button>
+        </>}
         <Button variant="outline" aria-pressed={mode === "RejectReview"} aria-expanded={mode === "RejectReview"} disabled={!modes} title="Reject with a reason (r)" onClick={() => onToggleMode("RejectReview")}>
           Reject
           <Icon name="chevronDown" />

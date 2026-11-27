@@ -80,6 +80,7 @@ test("pending queue and detail actions cover only judge-held items; the pipeline
   const drawerText = () => drawerBox.textContent ?? "";
   const inspectorText = () => inspectorBox.textContent ?? "";
   const approveButton = () => [...inspectorBox.querySelectorAll("button")].find(b => (b.textContent ?? "").trim() === "Approve");
+  const buttonText = (label: string) => [...inspectorBox.querySelectorAll("button")].find(b => (b.textContent ?? "").trim() === label);
   const inReviewKpiText = () => [...inspectorBox.querySelectorAll("button")].find(b => (b.textContent ?? "").includes("In review"))?.textContent ?? "";
   try {
     await act(async () => {
@@ -104,6 +105,9 @@ test("pending queue and detail actions cover only judge-held items; the pipeline
     await wait(() => inspectorText().includes("In review"), "awaiting detail");
     await act(async () => { await sleep(60); });
     expect(approveButton()).toBeUndefined();
+    expect(buttonText("Edit")).toBeUndefined();
+    expect(buttonText("Re-roll")).toBeUndefined();
+    expect([...inspectorBox.querySelectorAll("button")].some(b => (b.textContent ?? "").includes("Reject"))).toBe(true);
     await act(async () => { store.focus({ kind: "opportunity", id: "oppHeld" }); await sleep(20); });
     await wait(() => !!approveButton(), "held detail Approve");
     expect(approveButton()).toBeTruthy();
