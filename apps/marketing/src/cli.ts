@@ -3,8 +3,14 @@
 import { RealClock } from "../../../packages/core/src/clock.ts";
 import { createPaidAdapterRegistry } from "./adapters/paid.ts";
 import { AgentLifecycleManager } from "./agent-lifecycle.ts";
-import { computeBanditAllocations, createDefaultNycBanditArms } from "./bandit.ts";
-import { normalizeCityCode } from "./cities.ts";
+import { computeBanditAllocations, createDefaultBanditArms } from "./bandit.ts";
+import {
+  getCityConfig,
+  isSupportedCity,
+  normalizeCityCode,
+  SUPPORTED_CITIES,
+  type SupportedCity,
+} from "./cities.ts";
 import { DEFAULT_MARKETING_HOST, DEFAULT_MARKETING_PORT } from "./constants.ts";
 import { CrowdsourcingEngine, type HiringRole } from "./crowdsourcing.ts";
 import { DeviceBridge } from "./devices/bridge.ts";
@@ -58,6 +64,35 @@ function parseCliArgs(argv: string[]): {
   };
 }
 
+function resolveOptionalCity(
+  flagVal: string | boolean | undefined,
+  env: Record<string, string | undefined> = process.env,
+): SupportedCity | undefined {
+  const raw =
+    typeof flagVal === "string" && flagVal.trim().length > 0
+      ? flagVal.trim()
+      : env.MARKETING_CITY?.trim();
+  if (!raw) return undefined;
+  if (!isSupportedCity(raw)) {
+    throw new Error(`Unsupported city "${raw}". Expected one of: ${SUPPORTED_CITIES.join(", ")}`);
+  }
+  return normalizeCityCode(raw);
+}
+
+function requireCity(
+  flagVal: string | boolean | undefined,
+  fallback?: SupportedCity,
+  env: Record<string, string | undefined> = process.env,
+): SupportedCity {
+  const resolved = resolveOptionalCity(flagVal, env) ?? fallback;
+  if (!resolved) {
+    throw new Error(
+      `Missing required --city <${SUPPORTED_CITIES.join("|")}> flag (or MARKETING_CITY env var).`,
+    );
+  }
+  return resolved;
+}
+
 async function openStore(
   dbUrl?: string,
 ): Promise<{ store: MarketingStore; mode: "postgres" | "memory" }> {
@@ -81,16 +116,16 @@ function printUsage(): void {
       "  scan-devices        Probe USB-attached Android & iPhone devices on this MacBook",
       "  discover            Run Tier-1 $0 open-web multi-city discovery (--city nyc|sf|la|chicago|miami|austin|london)",
       "  tick                Run one autonomous agent orchestration tick",
-      "  bandit              Run Thompson-Sampling Bandit rebalance preview (--seed <n>)",
-      "  hire-batch          Generate a compliant Tier-4 hiring packet (--role ... --city nyc --budget 25000)",
-      "  bd-list             List BD venue and event-host deals",
-      "  vip-invite          Generate & validate a <75-word VIP salon invite (--name ... --archetype ... --city nyc)",
+      "  bandit              Run Thompson-Sampling Bandit rebalance preview (--city <code> --seed <n>)",
+      "  hire-batch          Generate a compliant Tier-4 hiring packet (--role ... --city <code> --budget 25000)",
+      "  bd-list             List BD venue and event-host deals (optional --city <code>)",
+      "  vip-invite          Generate & validate a <75-word VIP salon invite (--name ... --archetype ... --city <code>)",
       "  video-lint          Lint all 10 starter short-form video scripts",
       "  slop-cash-preview   Preview disabled slop.cash hook schema without settling (--task <id>)",
       "  serve               Start the local HTTP Command Center & REST API (--port 4949)",
       "",
       "Options:",
-      "  --city <code >      City code (nyc, sf, la, chicago, miami, austin, london)",
+      "  --city <code>       City code (nyc, sf, la, chicago, miami, austin, london; or MARKETING_CITY env)",
       "  --db <url>          Postgres connection string (defaults to NETWORK_DATABASE_URL, else in-memory)",
     ].join("\n"),
   );
@@ -104,7 +139,6 @@ async function main(): Promise<void> {
   }
 
   const dbFlag = typeof flags.db === "string" ? flags.db : process.env.NETWORK_DATABASE_URL;
-  const city = normalizeCityCode(typeof flags.city === "string" ? flags.city : "nyc");
   const { store, mode } = await openStore(dbFlag);
   const clock = store.clock;
 
@@ -137,6 +171,7 @@ async function main(): Promise<void> {
     }
 
     if (command === "discover" || command === "discover-nyc") {
+      const city = requireCity(flags.city, command === "discover-nyc" ? "nyc" : undefined);
       const limit = typeof flags.limit === "string" ? Number(flags.limit) : 10;
       const result = await discoverNycLeads({
         clock,
@@ -164,23 +199,33 @@ async function main(): Promise<void> {
     }
 
     if (command === "bandit") {
+      const city = requireCity(flags.city);
+      const cityCfg = getCityConfig(city);
       const nowIso = new Date(clock.now()).toISOString();
-      const seed = typeof flags.seed === "string" ? flags.seed : "nyc-cli-1";
-      const arms = createDefaultNycBanditArms(NYC_LAUNCH_CAMPAIGN.id, nowIso);
+      const campaignId =
+        typeof flags.campaign === "string"
+          ? flags.campaign
+          : city === "nyc"
+            ? NYC_LAUNCH_CAMPAIGN.id
+            : `${city}-launch-m1`;
+      const seed = typeof flags.seed === "string" ? flags.seed : `${city}-cli-1`;
+      const arms = createDefaultBanditArms(campaignId, city, nowIso);
       const rebalance = computeBanditAllocations({
-        campaignId: NYC_LAUNCH_CAMPAIGN.id,
+        campaignId,
         arms,
-        availableCents: 1_000_000,
+        availableCents: cityCfg.defaultMonthlyBudgetCents,
         seed,
         nowIso,
         riskDial: "balanced",
         billingArmed: true,
       });
-      console.log(JSON.stringify({ mode, rebalance }, null, 2));
+      console.log(JSON.stringify({ mode, city, rebalance }, null, 2));
       return;
     }
 
     if (command === "hire-batch") {
+      const city = requireCity(flags.city);
+      const cityCfg = getCityConfig(city);
       const role = (
         typeof flags.role === "string" ? flags.role : "street_fliering"
       ) as HiringRole;
@@ -189,7 +234,9 @@ async function main(): Promise<void> {
       const engine = new CrowdsourcingEngine({ store, clock });
       const packet = engine.buildHiringPacket(role, city, budgetCents, {
         neighborhood:
-          typeof flags.neighborhood === "string" ? flags.neighborhood : "West Village",
+          typeof flags.neighborhood === "string"
+            ? flags.neighborhood
+            : cityCfg.corridors[0]?.neighborhood ?? cityCfg.label,
         boroughLicenceRef:
           typeof flags.licence === "string" ? flags.licence : undefined,
       });
@@ -198,21 +245,27 @@ async function main(): Promise<void> {
     }
 
     if (command === "bd-list") {
+      const city = resolveOptionalCity(flags.city);
       if ((await store.listCampaigns()).length === 0 && mode === "memory") {
         await seedNycLaunch(store);
       }
-      const deals = await store.listBdDeals({ city });
-      console.log(JSON.stringify({ mode, city, deals }, null, 2));
+      const deals = await store.listBdDeals(city ? { city } : {});
+      console.log(JSON.stringify({ mode, ...(city ? { city } : {}), deals }, null, 2));
       return;
     }
 
     if (command === "vip-invite") {
+      const city = requireCity(flags.city);
+      const cityCfg = getCityConfig(city);
       const vipEngine = new VipDiscoveryEngine({ clock });
       const invite = vipEngine.buildAndValidateVipInvite({
         firstName: typeof flags.name === "string" ? flags.name : "Maya",
         archetypeSlug: typeof flags.archetype === "string" ? flags.archetype : "oss_maintainer",
         city,
-        neighborhood: typeof flags.neighborhood === "string" ? flags.neighborhood : "West Village",
+        neighborhood:
+          typeof flags.neighborhood === "string"
+            ? flags.neighborhood
+            : cityCfg.corridors[0]?.neighborhood ?? cityCfg.label,
         proofOfWork1Line:
           typeof flags.hook === "string"
             ? flags.hook

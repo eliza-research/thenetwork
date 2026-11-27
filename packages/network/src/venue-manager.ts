@@ -91,8 +91,13 @@ function issueToOutcome(
   return "ok";
 }
 
+const SEED_JSON_BY_ID = new Map<string, string>(
+  ALL_SEED_VENUES.filter(v => v.public === true).map(v => [v.id, JSON.stringify(v)]),
+);
+
 export class VenueManager {
   private catalog = new Map<string, VenueRecord>();
+  private mutatedVenueIds = new Set<string>();
   private visited = new Map<MemberId, Set<string>>();
   private rejected = new Map<MemberId, Set<string>>();
   private externalFetchCount = 0;
@@ -113,9 +118,28 @@ export class VenueManager {
     this.sufficiencyThreshold = opts.sufficiencyThreshold ?? defaultLocalSufficiencyThreshold;
     this.apiBudgetRemaining = opts.apiBudgetRemaining ?? 100;
     const seeds = opts.seedVenues ?? ALL_SEED_VENUES;
+    const customSeeds = opts.seedVenues !== undefined;
     for (const v of seeds) {
-      if (v.public === true) this.catalog.set(v.id, cloneVenue(v));
+      if (v.public === true) {
+        const cloned = cloneVenue(v);
+        this.catalog.set(v.id, cloned);
+        if (customSeeds) this.markMutation(cloned);
+      }
     }
+  }
+
+  private markMutation(v: VenueRecord): void {
+    const seedJson = SEED_JSON_BY_ID.get(v.id);
+    if (seedJson !== undefined && seedJson === JSON.stringify(v)) {
+      this.mutatedVenueIds.delete(v.id);
+    } else {
+      this.mutatedVenueIds.add(v.id);
+    }
+  }
+
+  private putCatalog(v: VenueRecord): void {
+    this.catalog.set(v.id, v);
+    this.markMutation(v);
   }
 
   count(city?: City): number {
@@ -148,7 +172,7 @@ export class VenueManager {
 
   upsertVenue(v: VenueRecord): boolean {
     if (v.public !== true) return false;
-    this.catalog.set(v.id, cloneVenue(v));
+    this.putCatalog(cloneVenue(v));
     return true;
   }
 
@@ -254,7 +278,7 @@ export class VenueManager {
           },
           nowMs,
         );
-        this.catalog.set(updated.id, updated);
+        this.putCatalog(updated);
         if (!closed) {
           pick = this.pickForMatch(request, nowMs);
           break;
@@ -298,7 +322,7 @@ export class VenueManager {
     }
 
     const updated = applyVenueFeedback(existing, memberArchetypes, report, nowMs);
-    this.catalog.set(venueId, updated);
+    this.putCatalog(updated);
     if (shouldReject) this.recordRejection(memberId, venueId);
     else this.recordVisit(memberId, venueId);
     return cloneVenue(updated);
@@ -326,7 +350,7 @@ export class VenueManager {
       },
       nowMs,
     );
-    this.catalog.set(venueId, updated);
+    this.putCatalog(updated);
     this.recordRejection(memberId, venueId);
     return cloneVenue(updated);
   }
@@ -386,7 +410,7 @@ export class VenueManager {
       transitScore: partial.transitScore ?? 4,
       personaPriors: partial.personaPriors ?? { default: { alpha: 6, beta: 2 } },
     };
-    this.catalog.set(record.id, record);
+    this.putCatalog(record);
     return cloneVenue(record);
   }
 
@@ -396,22 +420,29 @@ export class VenueManager {
   }
 
   exportState(): VenueManagerState {
-    return JSON.parse(
-      JSON.stringify({
-        venues: [...this.catalog.values()],
-        visited: [...this.visited.entries()].map(([id, set]) => [id, [...set]]),
-        rejected: [...this.rejected.entries()].map(([id, set]) => [id, [...set]]),
-        externalFetchCount: this.externalFetchCount,
-        openCheckCount: this.openCheckCount,
-      }),
-    ) as VenueManagerState;
+    const venues: VenueRecord[] = [];
+    for (const id of this.mutatedVenueIds) {
+      const v = this.catalog.get(id);
+      if (v) venues.push(cloneVenue(v));
+    }
+    return {
+      venues,
+      visited: [...this.visited.entries()].map(([id, set]) => [id, [...set]]),
+      rejected: [...this.rejected.entries()].map(([id, set]) => [id, [...set]]),
+      externalFetchCount: this.externalFetchCount,
+      openCheckCount: this.openCheckCount,
+    };
   }
 
   importState(state: VenueManagerState | undefined): void {
     if (!state) return;
     this.catalog.clear();
-    for (const v of state.venues ?? []) {
+    this.mutatedVenueIds.clear();
+    for (const v of ALL_SEED_VENUES) {
       if (v.public === true) this.catalog.set(v.id, cloneVenue(v));
+    }
+    for (const v of state.venues ?? []) {
+      if (v.public === true) this.putCatalog(cloneVenue(v));
     }
     this.visited.clear();
     for (const [id, list] of state.visited ?? []) this.visited.set(id, new Set(list));

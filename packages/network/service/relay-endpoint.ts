@@ -7,7 +7,8 @@ import { isAppId, type AppId } from "../../platform/src/apps.ts";
 import { readCapped } from "../../platform/src/body.ts";
 import type { Accounts } from "../../platform/src/accounts.ts";
 import { readFileSync } from "node:fs";
-import { clefRelayClassifierFromEnv, DEFAULT_RELAY_CLEF_WEIGHTS, validateRelayClefWeights, type RelayClefWeights } from "../../engine/src/relayClef.ts";
+import { clefRelayClassifierFromEnv, DEFAULT_RELAY_CLEF_WEIGHTS, validateRelayClefWeights, type ClefRelayOptions, type RelayClefWeights } from "../../engine/src/relayClef.ts";
+import type { ClefResult } from "../../engine/src/packs/slop/clef.ts";
 import { parseRelayRequest, type RelayClassifierHook } from "../../engine/src/relay.ts";
 import { withdrawsSwap, type RelayOutcome } from "../src/relay.ts";
 import type { NetworkRuntime } from "./runtime.ts";
@@ -39,7 +40,54 @@ export interface RelayEndpointDeps {
   hookFor: (app: AppId) => RelayClassifierHook;
 }
 
-export function relayClassifierFromEnv(env: Record<string, string | undefined>, log: (s: string) => void, cost?: CostLedger): (app: AppId) => RelayClassifierHook {
+export const RELAY_CLEF_CACHE_MAX = 2_000;
+export const RELAY_CLEF_CACHE_TTL_MS = 60 * 60 * 1000;
+
+export interface RelayClefCacheOptions {
+  maxEntries?: number;
+  ttlMs?: number;
+  now?: () => number;
+}
+
+export function createRelayClefCache(opts: RelayClefCacheOptions = {}) {
+  const maxEntries = opts.maxEntries ?? RELAY_CLEF_CACHE_MAX;
+  const ttlMs = opts.ttlMs ?? RELAY_CLEF_CACHE_TTL_MS;
+  const now = opts.now ?? (() => performance.now());
+  const entries = new Map<string, { result: ClefResult; expiresAt: number }>();
+
+  return {
+    get size(): number {
+      return entries.size;
+    },
+    answers(key: string): ClefResult | undefined {
+      const hit = entries.get(key);
+      if (!hit) return undefined;
+      if (now() >= hit.expiresAt) {
+        entries.delete(key);
+        return undefined;
+      }
+      entries.delete(key);
+      entries.set(key, hit);
+      return hit.result;
+    },
+    record(key: string, result: ClefResult): void {
+      entries.delete(key);
+      entries.set(key, { result, expiresAt: now() + ttlMs });
+      while (entries.size > maxEntries) {
+        const oldest = entries.keys().next().value;
+        if (oldest === undefined) break;
+        entries.delete(oldest);
+      }
+    },
+  };
+}
+
+export function relayClassifierFromEnv(
+  env: Record<string, string | undefined>,
+  log: (s: string) => void,
+  cost?: CostLedger,
+  opts: RelayClefCacheOptions & Pick<ClefRelayOptions, "fetch" | "clock"> = {},
+): (app: AppId) => RelayClassifierHook {
   if (!env.CLOUDFLARE_AI_TOKEN || !env.CLOUDFLARE_ACCOUNT_ID) {
     log("relay classifier: Workers AI not configured; every relayed text is blocked");
     const closed: RelayClassifierHook = async () => { throw new Error("relay classifier not configured"); };
@@ -47,15 +95,23 @@ export function relayClassifierFromEnv(env: Record<string, string | undefined>, 
   }
   const weights = env.RELAY_CLEF_WEIGHTS_PATH ? validateRelayClefWeights(JSON.parse(readFileSync(env.RELAY_CLEF_WEIGHTS_PATH, "utf8")) as RelayClefWeights) : undefined;
   log(`relay classifier: rules + Clef (${env.RELAY_CLEF_MODEL === "clef" ? "clef" : "clef-flash"}, weights ${(weights ?? DEFAULT_RELAY_CLEF_WEIGHTS).version})`);
+  const cache = createRelayClefCache(opts);
   const hooks = new Map<AppId, RelayClassifierHook>();
   return app => {
     let h = hooks.get(app);
     if (!h) {
       const meter = cost?.relayClefEvent(app);
-      h = clefRelayClassifierFromEnv(env, { ...(weights ? { weights } : {}), onEvent: e => {
-        meter?.(e);
-        if (e.outcome === "error" || e.outcome === "timeout") log(`[relay] clef ${e.outcome}${e.status ? ` ${e.status}` : ""} (${e.ms} ms)`);
-      } });
+      h = clefRelayClassifierFromEnv(env, {
+        ...(weights ? { weights } : {}),
+        ...(opts.fetch ? { fetch: opts.fetch } : {}),
+        ...(opts.clock ? { clock: opts.clock } : {}),
+        answers: key => cache.answers(key),
+        record: (key, result) => cache.record(key, result),
+        onEvent: e => {
+          meter?.(e);
+          if (e.outcome === "error" || e.outcome === "timeout") log(`[relay] clef ${e.outcome}${e.status ? ` ${e.status}` : ""} (${e.ms} ms)`);
+        },
+      });
       hooks.set(app, h);
     }
     return h;

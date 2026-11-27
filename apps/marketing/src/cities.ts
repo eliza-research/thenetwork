@@ -1,4 +1,26 @@
+import { getCity, LAUNCH_CITIES, type LaunchCity } from "@thenetwork/core";
 import type { BrandAppId } from "./types.ts";
+
+const LAUNCH_CITY_SET = new Set<string>(LAUNCH_CITIES);
+
+function coreLaunchMeta(
+  code: string,
+  fallback: { readonly label: string; readonly timezone: string },
+): { readonly label: string; readonly timezone: string; readonly isPrimaryLaunch: boolean } {
+  const spec = LAUNCH_CITY_SET.has(code) ? getCity(code as LaunchCity) : undefined;
+  if (spec) {
+    return {
+      label: spec.name,
+      timezone: spec.tz,
+      isPrimaryLaunch: true,
+    };
+  }
+  return {
+    label: fallback.label,
+    timezone: fallback.timezone,
+    isPrimaryLaunch: false,
+  };
+}
 
 export const SUPPORTED_CITIES = [
   "nyc",
@@ -113,11 +135,9 @@ export interface CityActivationReadiness {
 export const CITY_CONFIGS: Readonly<Record<SupportedCity, CityLaunchConfig>> = {
   nyc: {
     code: "nyc",
-    label: "New York City",
+    ...coreLaunchMeta("nyc", { label: "New York City", timezone: "America/New_York" }),
     country: "US",
     currency: "USD",
-    timezone: "America/New_York",
-    isPrimaryLaunch: true,
     defaultMonthlyBudgetCents: 1_000_000,
     defaultDailyCapCents: 100_000,
     defaultMaxTaskCents: 150_000,
@@ -264,16 +284,14 @@ export const CITY_CONFIGS: Readonly<Record<SupportedCity, CityLaunchConfig>> = {
 
   sf: {
     code: "sf",
-    label: "San Francisco",
+    ...coreLaunchMeta("sf", { label: "San Francisco", timezone: "America/Los_Angeles" }),
     country: "US",
     currency: "USD",
-    timezone: "America/Los_Angeles",
-    isPrimaryLaunch: false,
     defaultMonthlyBudgetCents: 750_000,
     defaultDailyCapCents: 75_000,
     defaultMaxTaskCents: 150_000,
-    activationWaitlistMinAdults: 150,
-    activationMinSignedVenues: 10,
+    activationWaitlistMinAdults: 0,
+    activationMinSignedVenues: 0,
     corridors: [
       {
         neighborhood: "Mission / Dolores",
@@ -364,16 +382,14 @@ export const CITY_CONFIGS: Readonly<Record<SupportedCity, CityLaunchConfig>> = {
 
   la: {
     code: "la",
-    label: "Los Angeles",
+    ...coreLaunchMeta("la", { label: "Los Angeles", timezone: "America/Los_Angeles" }),
     country: "US",
     currency: "USD",
-    timezone: "America/Los_Angeles",
-    isPrimaryLaunch: false,
     defaultMonthlyBudgetCents: 750_000,
     defaultDailyCapCents: 75_000,
     defaultMaxTaskCents: 150_000,
-    activationWaitlistMinAdults: 150,
-    activationMinSignedVenues: 10,
+    activationWaitlistMinAdults: 0,
+    activationMinSignedVenues: 0,
     corridors: [
       {
         neighborhood: "Silver Lake / Echo Park",
@@ -461,16 +477,14 @@ export const CITY_CONFIGS: Readonly<Record<SupportedCity, CityLaunchConfig>> = {
 
   chicago: {
     code: "chicago",
-    label: "Chicago",
+    ...coreLaunchMeta("chicago", { label: "Chicago", timezone: "America/Chicago" }),
     country: "US",
     currency: "USD",
-    timezone: "America/Chicago",
-    isPrimaryLaunch: false,
     defaultMonthlyBudgetCents: 600_000,
     defaultDailyCapCents: 60_000,
     defaultMaxTaskCents: 120_000,
-    activationWaitlistMinAdults: 150,
-    activationMinSignedVenues: 10,
+    activationWaitlistMinAdults: 0,
+    activationMinSignedVenues: 0,
     corridors: [
       {
         neighborhood: "West Loop / Fulton Market",
@@ -552,16 +566,14 @@ export const CITY_CONFIGS: Readonly<Record<SupportedCity, CityLaunchConfig>> = {
 
   miami: {
     code: "miami",
-    label: "Miami",
+    ...coreLaunchMeta("miami", { label: "Miami", timezone: "America/New_York" }),
     country: "US",
     currency: "USD",
-    timezone: "America/New_York",
-    isPrimaryLaunch: false,
     defaultMonthlyBudgetCents: 600_000,
     defaultDailyCapCents: 60_000,
     defaultMaxTaskCents: 120_000,
-    activationWaitlistMinAdults: 150,
-    activationMinSignedVenues: 10,
+    activationWaitlistMinAdults: 0,
+    activationMinSignedVenues: 0,
     corridors: [
       {
         neighborhood: "Wynwood",
@@ -640,11 +652,9 @@ export const CITY_CONFIGS: Readonly<Record<SupportedCity, CityLaunchConfig>> = {
 
   austin: {
     code: "austin",
-    label: "Austin",
+    ...coreLaunchMeta("austin", { label: "Austin", timezone: "America/Chicago" }),
     country: "US",
     currency: "USD",
-    timezone: "America/Chicago",
-    isPrimaryLaunch: false,
     defaultMonthlyBudgetCents: 500_000,
     defaultDailyCapCents: 50_000,
     defaultMaxTaskCents: 100_000,
@@ -730,11 +740,9 @@ export const CITY_CONFIGS: Readonly<Record<SupportedCity, CityLaunchConfig>> = {
 
   london: {
     code: "london",
-    label: "London",
+    ...coreLaunchMeta("london", { label: "London", timezone: "Europe/London" }),
     country: "UK",
     currency: "GBP",
-    timezone: "Europe/London",
-    isPrimaryLaunch: false,
     defaultMonthlyBudgetCents: 650_000,
     defaultDailyCapCents: 65_000,
     defaultMaxTaskCents: 130_000,

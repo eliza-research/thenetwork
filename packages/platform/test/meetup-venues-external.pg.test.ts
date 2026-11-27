@@ -65,15 +65,20 @@ describe.skipIf(!pgAvailable)("0098 five-city venues, external events, matchmake
     if (url) await dropDb(url);
   });
 
-  test("0001..0098 migrates cleanly and idempotently; seeds 5 launch cities, preserves 4 nyc networks, seeds 10 matchmaker personas, and 75 venues (15/city)", async () => {
-    // Re-running migrate on the same DB proves idempotency of 0098.
+  test("0001..0100 migrates cleanly and idempotently; seeds 5 launch cities, 20 app-city networks, 10 matchmaker personas, and 75 venues (15/city)", async () => {
+    // Re-running migrate on the same DB proves idempotency of 0098..0100.
     await migrate(url, { lockTimeout: "5s" });
 
     const cities = ((await sql`select id from platform.cities order by id`) as Array<{ id: string }>).map(r => r.id);
     expect(cities).toEqual(["chicago", "la", "miami", "nyc", "sf"]);
 
     const networks = ((await sql`select id from platform.networks order by id`) as Array<{ id: string }>).map(r => r.id);
-    expect(networks).toEqual(["friends:nyc", "ntwrk:nyc", "peon:nyc", "slop:nyc"]);
+    expect(networks).toEqual([
+      "friends:chicago", "friends:la", "friends:miami", "friends:nyc", "friends:sf",
+      "ntwrk:chicago", "ntwrk:la", "ntwrk:miami", "ntwrk:nyc", "ntwrk:sf",
+      "peon:chicago", "peon:la", "peon:miami", "peon:nyc", "peon:sf",
+      "slop:chicago", "slop:la", "slop:miami", "slop:nyc", "slop:sf",
+    ]);
 
     const personas = (await sql`
       select id, city, gender, first_name, human_operated, status, daily_outbound_cap

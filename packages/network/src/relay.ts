@@ -113,13 +113,13 @@ export class RelayDesk {
   private s: RelayState = emptyRelayState();
   constructor(private readonly host: RelayHost) {}
 
-  exportState(): RelayState {
+  exportState(clone = true): RelayState {
     const base: RelayState = { threads: this.s.threads, log: this.s.log, swaps: this.s.swaps };
     if (this.s.panics?.length) base.panics = this.s.panics;
-    return JSON.parse(JSON.stringify(base)) as RelayState;
+    return clone ? (JSON.parse(JSON.stringify(base)) as RelayState) : base;
   }
-  importState(s: RelayState | undefined) {
-    const x = s ? (JSON.parse(JSON.stringify(s)) as RelayState) : emptyRelayState();
+  importState(s: RelayState | undefined, clone = true) {
+    const x = s ? (clone ? (JSON.parse(JSON.stringify(s)) as RelayState) : s) : emptyRelayState();
     this.s = {
       threads: x.threads ?? [],
       log: x.log ?? [],

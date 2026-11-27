@@ -101,7 +101,7 @@ export class MapView {
         : ALL_SEED_VENUES.map(v => ({ id: v.id, name: v.name, city: v.city, neighborhood: v.neighborhood, lat: v.lat, lng: v.lng, status: v.status }));
       for (const v of list) {
         if (store.selectedCity !== "all" && v.city !== store.selectedCity) continue;
-        const active = v.status === "Active";
+        const active = v.status === "active";
         const marker = L.circleMarker([v.lat, v.lng], { renderer: this.renderer, radius: 3.5, weight: 1, fillOpacity: 0.25 })
           .bindTooltip(textNode(`${v.name} · ${v.neighborhood}`), { direction: "top" }).addTo(this.venueLayer);
         this.venues.push({ marker, active });

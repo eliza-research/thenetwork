@@ -5,6 +5,7 @@ import {
   DAY,
   HOUR,
   LAUNCH_CITIES,
+  MINUTE,
   fromLocal,
   rankVenuesForMatch,
   type City,
@@ -28,6 +29,7 @@ import {
   seedCuratedVenues,
   upsertMeetupArrival,
   upsertVenue,
+  upsertVenues,
   upsertWorkIntro,
 } from "../src/venue-store.ts";
 import {
@@ -99,17 +101,17 @@ describe("5-city platform & MCP validation (offline)", () => {
     let calls = 0;
     const mockFetch = (async () => { calls += 1; return new Response("{}", { status: 200 }); }) as unknown as typeof fetch;
 
+    const nowMs = Date.UTC(2026, 10, 26, 16, 0, 0);
     const yelpOff = new YelpFusionProvider({ apiKey: "", env: {}, fetchImpl: mockFetch });
     const gOff = new GooglePlacesProvider({ apiKey: "", env: {}, fetchImpl: mockFetch });
     expect(yelpOff.isConfigured()).toBe(false);
     expect(gOff.isConfigured()).toBe(false);
-    expect(await yelpOff.searchVenues({ city: "chicago", lat: 41.88, lng: -87.63 })).toEqual([]);
-    expect((await yelpOff.verifyVenueOpen(ALL_SEED_VENUES[0]!)).status).toBe("unknown");
-    expect(await gOff.searchVenues({ city: "miami", lat: 25.77, lng: -80.19 })).toEqual([]);
-    expect((await gOff.verifyVenueOpen(ALL_SEED_VENUES[0]!)).status).toBe("unknown");
+    expect(await yelpOff.searchVenues({ city: "chicago", lat: 41.88, lng: -87.63 }, nowMs)).toEqual([]);
+    expect((await yelpOff.verifyVenueOpen(ALL_SEED_VENUES[0]!, nowMs)).status).toBe("unknown");
+    expect(await gOff.searchVenues({ city: "miami", lat: 25.77, lng: -80.19 }, nowMs)).toEqual([]);
+    expect((await gOff.verifyVenueOpen(ALL_SEED_VENUES[0]!, nowMs)).status).toBe("unknown");
     expect(calls).toBe(0);
 
-    const nowMs = Date.UTC(2026, 10, 26, 16, 0, 0);
     let capturedFieldMask = "";
     const gFetch = (async (url: string | URL | Request, init?: RequestInit) => {
       const headers = new Headers(init?.headers);
@@ -197,21 +199,90 @@ describe.skipIf(!pgAvailable)("5-city venues, sufficiency cutoff, open checks, f
     expect(networks).toHaveLength(20);
 
     const expectedTotal = ALL_SEED_VENUES.length;
-    expect(expectedTotal).toBeGreaterThanOrEqual(60);
+    expect(expectedTotal).toBe(75);
 
     const first = await seedCuratedVenues(sql);
-    expect(first.seeded).toBe(expectedTotal);
+    expect(first.seeded).toBe(75);
     const second = await seedCuratedVenues(sql);
-    expect(second.seeded).toBe(expectedTotal);
+    expect(second.seeded).toBe(75);
 
     const all = await listVenues(sql);
-    expect(all).toHaveLength(expectedTotal);
+    expect(all).toHaveLength(75);
     for (const c of LAUNCH_CITIES) {
       const expectedPerCity = ALL_SEED_VENUES.filter(v => v.city === c).length;
       const perCity = await listVenues(sql, { city: c });
       expect(perCity).toHaveLength(expectedPerCity);
-      expect(perCity.length).toBeGreaterThanOrEqual(12);
+      expect(perCity.length).toBe(15);
     }
+
+    // Full 12-column 0098 + safetyScore/transitScore round-trip on curated venues.
+    const ferry = await getVenue(sql, "sf-ferry-building");
+    expect(ferry?.allAges).toBe(true);
+    expect(ferry?.isAlcoholCentric).toBe(false);
+    expect(ferry?.ageMin).toBe(0);
+    expect(ferry?.halalFriendly).toBe(true);
+    expect(ferry?.glutenFreeFriendly).toBe(true);
+    expect(ferry?.severeAllergenSafe).toBe(true);
+    expect(ferry?.isSmokeFree).toBe(true);
+    expect(ferry?.openEventEligible).toBe(true);
+    expect(ferry?.safetyScore).toBe(10);
+    expect(ferry?.transitScore).toBe(5);
+    expect(ferry?.cuisineTags).toEqual(["artisan", "california", "seafood", "bakery", "coffee"]);
+
+    // 21+ bar persists all_ages=false and is_alcohol_centric=true in DB.
+    const elixir = await getVenue(sql, "sf-elixir-mission");
+    expect(elixir?.ageMin).toBe(21);
+    expect(elixir?.allAges).toBe(false);
+    expect(elixir?.isAlcoholCentric).toBe(true);
+    const [elixirDb] = await sql`
+      select all_ages, is_alcohol_centric, age_min, safety_score, transit_score
+      from platform.venues where id = 'sf-elixir-mission'
+    `;
+    expect(elixirDb.all_ages).toBe(false);
+    expect(elixirDb.is_alcohol_centric).toBe(true);
+    expect(Number(elixirDb.age_min)).toBe(21);
+    expect(Number(elixirDb.safety_score)).toBe(elixir?.safetyScore);
+    expect(Number(elixirDb.transit_score)).toBe(elixir?.transitScore);
+
+    // Batched upsertVenues round-trips all 12 capability columns + coalesces undefined ageMin -> 0.
+    const customVenue: VenueRecord = {
+      ...ALL_SEED_VENUES.find(v => v.id === "sf-sightglass-soma")!,
+      id: "sf-roundtrip-12col",
+      name: "Roundtrip 12-Col Test Venue",
+      ageMin: undefined,
+      allAges: true,
+      isBarOnly: false,
+      isAlcoholCentric: false,
+      halalFriendly: true,
+      kosherFriendly: true,
+      glutenFreeFriendly: true,
+      severeAllergenSafe: true,
+      isSmokeFree: false,
+      openEventEligible: true,
+      safetyScore: 7,
+      transitScore: 3,
+      hobbies: ["chess", "board_games"],
+      cuisineTags: ["deli", "bakery"],
+    };
+    const [savedCustom] = await upsertVenues(sql, [customVenue]);
+    expect(savedCustom?.ageMin).toBe(0);
+    const reloadedCustom = await getVenue(sql, "sf-roundtrip-12col");
+    expect(reloadedCustom).toMatchObject({
+      ageMin: 0,
+      allAges: true,
+      isAlcoholCentric: false,
+      halalFriendly: true,
+      kosherFriendly: true,
+      glutenFreeFriendly: true,
+      severeAllergenSafe: true,
+      isSmokeFree: false,
+      openEventEligible: true,
+      safetyScore: 7,
+      transitScore: 3,
+      hobbies: ["chess", "board_games"],
+      cuisineTags: ["deli", "bakery"],
+    });
+    await sql`delete from platform.venues where id = 'sf-roundtrip-12col'`;
   }, T);
 
   test("sufficiency cutoff: >= 10 local matches makes ZERO external calls; < 10 discovers, caches & grows local catalog", async () => {
@@ -351,6 +422,61 @@ describe.skipIf(!pgAvailable)("5-city venues, sufficiency cutoff, open checks, f
     expect(rec2.primary?.venue.id).toBe(secondId);
     expect(rec2.quarantinedIds).toEqual([]);
     expect(simProvider.verifyCalls).toBe(0);
+  }, T);
+
+  test("maxVerifyCalls cap (default 5) and unknown-status cooldown bound external verification calls", async () => {
+    await seedCuratedVenues(sql);
+    const nowMs = SAT_15_SF;
+    await sql`update platform.venues set verified_open_at = ${new Date(nowMs - 10 * HOUR)}, status = 'active', closure_reports = 0 where city = 'sf'`;
+
+    const sfRequest: VenueRankRequest = {
+      city: "sf",
+      memberAreas: ["Hayes Valley", "SoMa / Yerba Buena"],
+      members: [adultPrefs({ memberId: "cap1" }), adultPrefs({ memberId: "cap2" })],
+      startMs: SAT_15_SF,
+      mode: "date",
+    };
+    const sfActive = await listVenues(sql, { city: "sf", status: "active" });
+    const ranked = rankVenuesForMatch(sfActive, sfRequest, nowMs);
+    expect(ranked.length).toBeGreaterThanOrEqual(7);
+
+    // Mark first 7 candidates as closed_permanent; default maxVerifyCalls=5 must cap verify calls at 5.
+    const closedStatuses: Record<string, "closed_permanent"> = {};
+    for (const c of ranked.slice(0, 7)) closedStatuses[c.venue.id] = "closed_permanent";
+    const cappedProvider = new SimulatedVenueProvider({ closedStatuses });
+    const cappedComposite = new CompositeVenueProvider({ pool: sql, providers: [cappedProvider], now: () => nowMs });
+
+    const cappedRec = await cappedComposite.pickVerifiedPrimaryAndBackup(sfRequest, { appId: "slop", nowMs });
+    expect(cappedProvider.verifyCalls).toBe(5);
+    expect(cappedRec.externalVerifyCalls).toBe(5);
+    expect(cappedRec.quarantinedIds).toHaveLength(5);
+    expect(cappedRec.primary).toBeDefined();
+
+    // Reset SF venues and verify short cooldown when provider returns "unknown".
+    await sql`update platform.venues set verified_open_at = ${new Date(nowMs - 10 * HOUR)}, status = 'active', closure_reports = 0 where city = 'sf'`;
+    const unknownStatuses: Record<string, "unknown"> = {};
+    for (const c of ranked) unknownStatuses[c.venue.id] = "unknown";
+    const unknownProvider = new SimulatedVenueProvider({ closedStatuses: unknownStatuses });
+    const cooldownComposite = new CompositeVenueProvider({
+      pool: sql,
+      providers: [unknownProvider],
+      unknownCooldownMs: 15 * MINUTE,
+      now: () => nowMs,
+    });
+
+    const firstUnknown = await cooldownComposite.pickVerifiedPrimaryAndBackup(sfRequest, { appId: "slop", nowMs });
+    expect(firstUnknown.primary).toBeDefined();
+    expect(firstUnknown.backup).toBeDefined();
+    expect(unknownProvider.verifyCalls).toBe(2);
+
+    // Within 15m cooldown: zero external verify calls for the same venues.
+    unknownProvider.resetCounters();
+    await cooldownComposite.pickVerifiedPrimaryAndBackup(sfRequest, { appId: "slop", nowMs: nowMs + 5 * MINUTE });
+    expect(unknownProvider.verifyCalls).toBe(0);
+
+    // After 15m cooldown expires: retries verification.
+    await cooldownComposite.pickVerifiedPrimaryAndBackup(sfRequest, { appId: "slop", nowMs: nowMs + 20 * MINUTE });
+    expect(unknownProvider.verifyCalls).toBe(2);
   }, T);
 
   test("user closure feedback quarantines immediately (SuspectClosed -> ClosedPermanent) and persona taste learning persists", async () => {
@@ -543,5 +669,52 @@ describe.skipIf(!pgAvailable)("5-city venues, sufficiency cutoff, open checks, f
     expect((await asRole("network_observatory_friends", undefined, tx => tx`select count(*)::int as n from platform.venues`))[0].n).toBeGreaterThanOrEqual(60);
     const cacheReadErr = await asRole("network_observatory_friends", undefined, tx => tx`select 1 from platform.venue_api_cache`).then(() => "ok", e => String(e.message));
     expect(cacheReadErr).toContain("permission denied");
+  }, T);
+
+  test("0100 meetup_arrivals enforces UNIQUE (app_id, opportunity_id, member_id) and state CHECK constraint", async () => {
+    const nowMs = WED_14_SF;
+
+    const first = await upsertMeetupArrival(sql, "friends", {
+      id: "arr-0100-first",
+      opportunityId: "opp-0100-uniq",
+      memberId: "m-0100",
+      state: "en_route",
+      etaMins: 10,
+      safeCue: "blue coat",
+      updatedAt: nowMs,
+    });
+    expect(first.state).toBe("en_route");
+
+    // Upserting the same (app_id, opportunity_id, member_id) with a different id updates in place via ON CONFLICT.
+    const second = await upsertMeetupArrival(sql, "friends", {
+      id: "arr-0100-second",
+      opportunityId: "opp-0100-uniq",
+      memberId: "m-0100",
+      state: "venue_full",
+      etaMins: 0,
+      safeCue: "moving to backup",
+      backupVenueId: "sf-ferry-building",
+      updatedAt: nowMs + 5 * MINUTE,
+    });
+    expect(second.state).toBe("venue_full");
+    expect(second.backupVenueId).toBe("sf-ferry-building");
+
+    const listed = await listMeetupArrivals(sql, "friends", "opp-0100-uniq");
+    expect(listed).toHaveLength(1);
+    expect(listed[0]!.state).toBe("venue_full");
+
+    // Raw duplicate INSERT violating UNIQUE (app_id, opportunity_id, member_id) fails.
+    const dupErr = await sql`
+      insert into network.meetup_arrivals (id, app_id, opportunity_id, member_id, state, updated_at)
+      values ('arr-0100-raw-dup', 'friends', 'opp-0100-uniq', 'm-0100', 'arrived', ${new Date(nowMs)})
+    `.then(() => "ok", e => String(e.message));
+    expect(dupErr).not.toBe("ok");
+
+    // Invalid state fails CHECK constraint from migration 0100.
+    const badStateErr = await sql`
+      insert into network.meetup_arrivals (id, app_id, opportunity_id, member_id, state, updated_at)
+      values ('arr-0100-bad-state', 'friends', 'opp-0100-bad', 'm-0100', 'teleporting', ${new Date(nowMs)})
+    `.then(() => "ok", e => String(e.message));
+    expect(badStateErr).not.toBe("ok");
   }, T);
 });

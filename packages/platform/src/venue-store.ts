@@ -7,6 +7,7 @@ import {
   type AppId,
   type ArrivalState,
   type City,
+  type Clock,
   type NoiseLevel,
   type VenueCategory,
   type VenueFeedbackReport,
@@ -200,7 +201,7 @@ export interface WorkIntroRecordInput {
   followupDueAt?: number | null;
   followupSentAt?: number | null;
   stage?: string;
-  updatedAt?: number;
+  updatedAt: number;
 }
 
 export interface WorkIntroRecord {
@@ -216,6 +217,8 @@ export interface WorkIntroRecord {
   updatedAt: number;
 }
 
+const VENUE_BATCH_SIZE = 200;
+
 function computeDefaultGroupScore(v: VenueRecord): number {
   return groupVenueRubricScore({
     separateChecks: v.separateChecks,
@@ -225,7 +228,7 @@ function computeDefaultGroupScore(v: VenueRecord): number {
     alcoholOptional: v.alcoholOptional,
     servesVegetarian: v.servesVegetarian,
     servesVegan: v.servesVegan,
-    safetyScore: v.safetyScore ?? 9,
+    safetyScore: v.safetyScore ?? 8,
     indoor: v.indoor,
     weatherSensitive: v.weatherSensitive,
     hasArrivalLandmark: v.arrivalLandmark.trim().length > 0,
@@ -233,8 +236,88 @@ function computeDefaultGroupScore(v: VenueRecord): number {
   });
 }
 
+function venueToDbRow(tx: SQL, venue: VenueRecord, extra: VenueExtraMeta = {}): Record<string, unknown> {
+  const ageMin = venue.ageMin ?? 0;
+  const isBarOnly = Boolean(venue.isBarOnly);
+  const isAlcoholCentric = venue.isAlcoholCentric ?? isBarOnly;
+  const allAges = venue.allAges ?? (!isBarOnly && !isAlcoholCentric && ageMin <= 0);
+  const googlePlaceId = extra.googlePlaceId ?? (venue.source === "google_places" ? (venue.externalPlaceId ?? null) : null);
+  const yelpId = extra.yelpId ?? (venue.source === "listing" && venue.externalPlaceId ? venue.externalPlaceId : null);
+  const groupScore = extra.groupScore ?? computeDefaultGroupScore(venue);
+  const dateScore = extra.dateScore ?? Math.min(100, Math.max(0, Math.round((venue.yelpRating ?? 4.3) * 20)));
+  const priors = venue.personaPriors ?? {};
+  const stats = extra.personaStats ?? priors;
+
+  return {
+    id: venue.id,
+    city: venue.city,
+    neighborhood: venue.neighborhood,
+    name: venue.name,
+    address: venue.address ?? "",
+    lat: venue.lat,
+    lon: venue.lng,
+    is_public: true,
+    all_ages: allAges,
+    category: venue.category,
+    price_tier: venue.priceTier,
+    age_min: ageMin,
+    is_bar_only: isBarOnly,
+    is_alcohol_centric: isAlcoholCentric,
+    alcohol_optional: Boolean(venue.alcoholOptional),
+    serves_vegetarian: Boolean(venue.servesVegetarian),
+    serves_vegan: Boolean(venue.servesVegan),
+    halal_friendly: Boolean(venue.halalFriendly ?? false),
+    kosher_friendly: Boolean(venue.kosherFriendly ?? false),
+    gluten_free_friendly: Boolean(venue.glutenFreeFriendly ?? false),
+    severe_allergen_safe: Boolean(venue.severeAllergenSafe ?? false),
+    wheelchair_accessible: Boolean(venue.wheelchairAccessible),
+    is_smoke_free: venue.isSmokeFree ?? true,
+    separate_checks: Boolean(venue.separateChecks),
+    walk_in_group_capacity: venue.walkInGroupCapacity,
+    reservation_required: Boolean(venue.reservationRequired),
+    open_event_eligible: Boolean(venue.openEventEligible ?? false),
+    noise_level: noiseLevelToDb(venue.noiseLevel),
+    live_music_at_night: Boolean(venue.liveMusicAtNight),
+    indoor: Boolean(venue.indoor),
+    outdoor: Boolean(venue.outdoor),
+    weather_sensitive: Boolean(venue.weatherSensitive),
+    safety_score: venue.safetyScore ?? 8,
+    transit_score: venue.transitScore ?? 4,
+    arrival_landmark: venue.arrivalLandmark ?? "",
+    hours: tx.json(venue.hours ?? []),
+    hobbies: tx.json(venue.hobbies ?? []),
+    cuisine_tags: tx.json(venue.cuisineTags ?? []),
+    group_score: groupScore,
+    date_score: dateScore,
+    source: venue.source,
+    yelp_id: yelpId,
+    yelp_rating: venue.yelpRating ?? null,
+    yelp_review_count: extra.yelpReviewCount ?? null,
+    google_place_id: googlePlaceId,
+    status: venueStatusToDb(venue.status),
+    closure_reports: venue.closureReports ?? 0,
+    verified_open_at: ts(venue.lastVerifiedAt),
+    geo_expires_at: ts(venue.geoExpiresAt),
+    recheck_after: ts(venue.quarantinedUntil),
+    persona_priors: tx.json(priors),
+    persona_stats: tx.json(stats),
+    overall_likes: extra.overallLikes ?? 0,
+    overall_dislikes: extra.overallDislikes ?? 0,
+    visit_count: extra.visitCount ?? 0,
+  };
+}
+
 function rowToVenue(r: Row): VenueRecord {
   const ageMin = Number(r.age_min ?? 0);
+  const isBarOnly = Boolean(r.is_bar_only);
+  const isAlcoholCentric =
+    r.is_alcohol_centric !== null && r.is_alcohol_centric !== undefined
+      ? Boolean(r.is_alcohol_centric)
+      : isBarOnly;
+  const allAges =
+    r.all_ages !== null && r.all_ages !== undefined
+      ? Boolean(r.all_ages)
+      : !isBarOnly && !isAlcoholCentric && ageMin <= 0;
   const externalPlaceId = (r.google_place_id ?? r.yelp_id ?? undefined) as string | undefined;
   const lastVerifiedAt = ms(r.verified_open_at) ?? ms(r.updated_at) ?? ms(r.created_at) ?? 0;
   const geoExpiresAt = ms(r.geo_expires_at) ?? undefined;
@@ -252,14 +335,22 @@ function rowToVenue(r: Row): VenueRecord {
     status: venueStatusFromDb(r.status),
     priceTier: Number(r.price_tier) as VenuePriceTier,
     ageMin,
-    isBarOnly: Boolean(r.is_bar_only),
+    allAges,
+    isBarOnly,
+    isAlcoholCentric,
     alcoholOptional: Boolean(r.alcohol_optional),
     servesVegetarian: Boolean(r.serves_vegetarian),
     servesVegan: Boolean(r.serves_vegan),
+    halalFriendly: Boolean(r.halal_friendly ?? false),
+    kosherFriendly: Boolean(r.kosher_friendly ?? false),
+    glutenFreeFriendly: Boolean(r.gluten_free_friendly ?? false),
+    severeAllergenSafe: Boolean(r.severe_allergen_safe ?? false),
     wheelchairAccessible: Boolean(r.wheelchair_accessible),
+    isSmokeFree: r.is_smoke_free !== null && r.is_smoke_free !== undefined ? Boolean(r.is_smoke_free) : true,
     separateChecks: Boolean(r.separate_checks),
     walkInGroupCapacity: Number(r.walk_in_group_capacity),
     reservationRequired: Boolean(r.reservation_required),
+    openEventEligible: Boolean(r.open_event_eligible ?? false),
     noiseLevel: noiseLevelFromDb(r.noise_level),
     liveMusicAtNight: Boolean(r.live_music_at_night),
     indoor: Boolean(r.indoor),
@@ -267,6 +358,8 @@ function rowToVenue(r: Row): VenueRecord {
     weatherSensitive: Boolean(r.weather_sensitive),
     arrivalLandmark: String(r.arrival_landmark ?? ""),
     hours: json<VenueHoursSlot[]>(r.hours, []),
+    hobbies: json<string[]>(r.hobbies, []),
+    cuisineTags: json<string[]>(r.cuisine_tags, []),
     ...(r.yelp_rating !== null && r.yelp_rating !== undefined ? { yelpRating: Number(r.yelp_rating) } : {}),
     ...(externalPlaceId ? { externalPlaceId } : {}),
     source: r.source as VenueRecord["source"],
@@ -274,8 +367,8 @@ function rowToVenue(r: Row): VenueRecord {
     ...(geoExpiresAt !== undefined ? { geoExpiresAt } : {}),
     closureReports: Number(r.closure_reports ?? 0),
     ...(quarantinedUntil !== undefined ? { quarantinedUntil } : {}),
-    safetyScore: 9,
-    transitScore: 4,
+    safetyScore: r.safety_score !== null && r.safety_score !== undefined ? Number(r.safety_score) : 8,
+    transitScore: r.transit_score !== null && r.transit_score !== undefined ? Number(r.transit_score) : 4,
     personaPriors: json<Record<string, VenuePersonaPrior>>(r.persona_priors, {}),
   };
 }
@@ -337,29 +430,11 @@ function rowToWorkIntro(r: Row): WorkIntroRecord {
 
 export async function seedCuratedVenues(pool: SQL): Promise<{ seeded: number }> {
   return withTx(pool, async tx => {
-    for (const v of ALL_SEED_VENUES) {
-      const groupScore = computeDefaultGroupScore(v);
-      const dateScore = Math.min(100, Math.max(0, Math.round((v.yelpRating ?? 4.3) * 20)));
-      const hoursJson = JSON.stringify(v.hours);
-      const priorsJson = JSON.stringify(v.personaPriors);
+    const rows = ALL_SEED_VENUES.map(v => venueToDbRow(tx, v));
+    for (let i = 0; i < rows.length; i += VENUE_BATCH_SIZE) {
+      const batch = rows.slice(i, i + VENUE_BATCH_SIZE);
       await tx`
-        insert into platform.venues (
-          id, city, neighborhood, name, address, lat, lon, is_public, category, price_tier,
-          age_min, is_bar_only, alcohol_optional, serves_vegetarian, serves_vegan,
-          wheelchair_accessible, separate_checks, walk_in_group_capacity, reservation_required,
-          noise_level, live_music_at_night, indoor, outdoor, weather_sensitive, arrival_landmark,
-          hours, group_score, date_score, source, yelp_rating, status, closure_reports,
-          verified_open_at, geo_expires_at, recheck_after, persona_priors, persona_stats
-        ) values (
-          ${v.id}, ${v.city}, ${v.neighborhood}, ${v.name}, ${v.address}, ${v.lat}, ${v.lng},
-          true, ${v.category}, ${v.priceTier}, ${v.ageMin}, ${v.isBarOnly}, ${v.alcoholOptional},
-          ${v.servesVegetarian}, ${v.servesVegan}, ${v.wheelchairAccessible}, ${v.separateChecks},
-          ${v.walkInGroupCapacity}, ${v.reservationRequired}, ${noiseLevelToDb(v.noiseLevel)}, ${v.liveMusicAtNight},
-          ${v.indoor}, ${v.outdoor}, ${v.weatherSensitive}, ${v.arrivalLandmark},
-          ${hoursJson}::jsonb, ${groupScore}, ${dateScore}, ${v.source}, ${v.yelpRating ?? null},
-          ${venueStatusToDb(v.status)}, ${v.closureReports}, ${ts(v.lastVerifiedAt)}, ${ts(v.geoExpiresAt)},
-          ${ts(v.quarantinedUntil)}, ${priorsJson}::jsonb, ${priorsJson}::jsonb
-        )
+        insert into platform.venues ${tx(batch)}
         on conflict (id) do update set
           city = excluded.city,
           neighborhood = excluded.neighborhood,
@@ -367,24 +442,36 @@ export async function seedCuratedVenues(pool: SQL): Promise<{ seeded: number }> 
           address = excluded.address,
           lat = excluded.lat,
           lon = excluded.lon,
+          all_ages = excluded.all_ages,
           category = excluded.category,
           price_tier = excluded.price_tier,
           age_min = excluded.age_min,
           is_bar_only = excluded.is_bar_only,
+          is_alcohol_centric = excluded.is_alcohol_centric,
           alcohol_optional = excluded.alcohol_optional,
           serves_vegetarian = excluded.serves_vegetarian,
           serves_vegan = excluded.serves_vegan,
+          halal_friendly = excluded.halal_friendly,
+          kosher_friendly = excluded.kosher_friendly,
+          gluten_free_friendly = excluded.gluten_free_friendly,
+          severe_allergen_safe = excluded.severe_allergen_safe,
           wheelchair_accessible = excluded.wheelchair_accessible,
+          is_smoke_free = excluded.is_smoke_free,
           separate_checks = excluded.separate_checks,
           walk_in_group_capacity = excluded.walk_in_group_capacity,
           reservation_required = excluded.reservation_required,
+          open_event_eligible = excluded.open_event_eligible,
           noise_level = excluded.noise_level,
           live_music_at_night = excluded.live_music_at_night,
           indoor = excluded.indoor,
           outdoor = excluded.outdoor,
           weather_sensitive = excluded.weather_sensitive,
+          safety_score = excluded.safety_score,
+          transit_score = excluded.transit_score,
           arrival_landmark = excluded.arrival_landmark,
           hours = excluded.hours,
+          hobbies = excluded.hobbies,
+          cuisine_tags = excluded.cuisine_tags,
           group_score = excluded.group_score,
           date_score = excluded.date_score,
           yelp_rating = coalesce(platform.venues.yelp_rating, excluded.yelp_rating),
@@ -418,88 +505,94 @@ export async function listVenues(pool: SQL, filter: VenueListFilter = {}): Promi
   return (rows as Row[]).map(rowToVenue);
 }
 
-export async function upsertVenue(pool: SQL, venue: VenueRecord, extra: VenueExtraMeta = {}): Promise<VenueRecord> {
-  if (venue.public !== true) {
-    throw new Error("Only public third-party venues may be stored in platform.venues");
+export async function upsertVenues(
+  pool: SQL,
+  venues: readonly VenueRecord[],
+  extraById?: Readonly<Record<string, VenueExtraMeta>>,
+): Promise<VenueRecord[]> {
+  if (venues.length === 0) return [];
+  const deduped = new Map<string, VenueRecord>();
+  for (const venue of venues) {
+    if (venue.public !== true) {
+      throw new Error("Only public third-party venues may be stored in platform.venues");
+    }
+    deduped.set(venue.id, venue);
   }
-  const googlePlaceId = extra.googlePlaceId ?? (venue.source === "google_places" ? (venue.externalPlaceId ?? null) : null);
-  const yelpId = extra.yelpId ?? (venue.source === "listing" && venue.externalPlaceId ? venue.externalPlaceId : null);
-  const groupScore = extra.groupScore ?? computeDefaultGroupScore(venue);
-  const dateScore = extra.dateScore ?? Math.min(100, Math.max(0, Math.round((venue.yelpRating ?? 4.3) * 20)));
-  const hoursJson = JSON.stringify(venue.hours);
-  const priorsJson = JSON.stringify(venue.personaPriors ?? {});
-  const statsJson = JSON.stringify(extra.personaStats ?? venue.personaPriors ?? {});
+  const uniqueVenues = [...deduped.values()];
 
-  const [r] = await pool`
-    insert into platform.venues (
-      id, city, neighborhood, name, address, lat, lon, is_public, category, price_tier,
-      age_min, is_bar_only, alcohol_optional, serves_vegetarian, serves_vegan,
-      wheelchair_accessible, separate_checks, walk_in_group_capacity, reservation_required,
-      noise_level, live_music_at_night, indoor, outdoor, weather_sensitive, arrival_landmark,
-      hours, group_score, date_score, source, yelp_id, yelp_rating, yelp_review_count,
-      google_place_id, status, closure_reports, verified_open_at, geo_expires_at,
-      recheck_after, persona_priors, persona_stats, overall_likes, overall_dislikes, visit_count,
-      updated_at
-    ) values (
-      ${venue.id}, ${venue.city}, ${venue.neighborhood}, ${venue.name}, ${venue.address},
-      ${venue.lat}, ${venue.lng}, true, ${venue.category}, ${venue.priceTier},
-      ${venue.ageMin}, ${venue.isBarOnly}, ${venue.alcoholOptional},
-      ${venue.servesVegetarian}, ${venue.servesVegan}, ${venue.wheelchairAccessible},
-      ${venue.separateChecks}, ${venue.walkInGroupCapacity}, ${venue.reservationRequired},
-      ${noiseLevelToDb(venue.noiseLevel)}, ${venue.liveMusicAtNight}, ${venue.indoor}, ${venue.outdoor},
-      ${venue.weatherSensitive}, ${venue.arrivalLandmark}, ${hoursJson}::jsonb,
-      ${groupScore}, ${dateScore}, ${venue.source}, ${yelpId}, ${venue.yelpRating ?? null},
-      ${extra.yelpReviewCount ?? null}, ${googlePlaceId}, ${venueStatusToDb(venue.status)}, ${venue.closureReports},
-      ${ts(venue.lastVerifiedAt)}, ${ts(venue.geoExpiresAt)}, ${ts(venue.quarantinedUntil)},
-      ${priorsJson}::jsonb, ${statsJson}::jsonb, ${extra.overallLikes ?? 0},
-      ${extra.overallDislikes ?? 0}, ${extra.visitCount ?? 0}, now()
-    )
-    on conflict (id) do update set
-      city = excluded.city,
-      neighborhood = excluded.neighborhood,
-      name = excluded.name,
-      address = excluded.address,
-      lat = excluded.lat,
-      lon = excluded.lon,
-      category = excluded.category,
-      price_tier = excluded.price_tier,
-      age_min = excluded.age_min,
-      is_bar_only = excluded.is_bar_only,
-      alcohol_optional = excluded.alcohol_optional,
-      serves_vegetarian = excluded.serves_vegetarian,
-      serves_vegan = excluded.serves_vegan,
-      wheelchair_accessible = excluded.wheelchair_accessible,
-      separate_checks = excluded.separate_checks,
-      walk_in_group_capacity = excluded.walk_in_group_capacity,
-      reservation_required = excluded.reservation_required,
-      noise_level = excluded.noise_level,
-      live_music_at_night = excluded.live_music_at_night,
-      indoor = excluded.indoor,
-      outdoor = excluded.outdoor,
-      weather_sensitive = excluded.weather_sensitive,
-      arrival_landmark = excluded.arrival_landmark,
-      hours = excluded.hours,
-      group_score = excluded.group_score,
-      date_score = excluded.date_score,
-      source = excluded.source,
-      yelp_id = coalesce(excluded.yelp_id, platform.venues.yelp_id),
-      yelp_rating = coalesce(excluded.yelp_rating, platform.venues.yelp_rating),
-      yelp_review_count = coalesce(excluded.yelp_review_count, platform.venues.yelp_review_count),
-      google_place_id = coalesce(excluded.google_place_id, platform.venues.google_place_id),
-      status = excluded.status,
-      closure_reports = excluded.closure_reports,
-      verified_open_at = coalesce(excluded.verified_open_at, platform.venues.verified_open_at),
-      geo_expires_at = coalesce(excluded.geo_expires_at, platform.venues.geo_expires_at),
-      recheck_after = excluded.recheck_after,
-      persona_priors = excluded.persona_priors,
-      persona_stats = excluded.persona_stats,
-      updated_at = now()
-    returning *
-  `;
-  return rowToVenue(r!);
+  return withTx(pool, async tx => {
+    const savedRows: Row[] = [];
+    const dbRows = uniqueVenues.map(v => venueToDbRow(tx, v, extraById?.[v.id]));
+    for (let i = 0; i < dbRows.length; i += VENUE_BATCH_SIZE) {
+      const batch = dbRows.slice(i, i + VENUE_BATCH_SIZE);
+      const returned = await tx`
+        insert into platform.venues ${tx(batch)}
+        on conflict (id) do update set
+          city = excluded.city,
+          neighborhood = excluded.neighborhood,
+          name = excluded.name,
+          address = excluded.address,
+          lat = excluded.lat,
+          lon = excluded.lon,
+          all_ages = excluded.all_ages,
+          category = excluded.category,
+          price_tier = excluded.price_tier,
+          age_min = excluded.age_min,
+          is_bar_only = excluded.is_bar_only,
+          is_alcohol_centric = excluded.is_alcohol_centric,
+          alcohol_optional = excluded.alcohol_optional,
+          serves_vegetarian = excluded.serves_vegetarian,
+          serves_vegan = excluded.serves_vegan,
+          halal_friendly = excluded.halal_friendly,
+          kosher_friendly = excluded.kosher_friendly,
+          gluten_free_friendly = excluded.gluten_free_friendly,
+          severe_allergen_safe = excluded.severe_allergen_safe,
+          wheelchair_accessible = excluded.wheelchair_accessible,
+          is_smoke_free = excluded.is_smoke_free,
+          separate_checks = excluded.separate_checks,
+          walk_in_group_capacity = excluded.walk_in_group_capacity,
+          reservation_required = excluded.reservation_required,
+          open_event_eligible = excluded.open_event_eligible,
+          noise_level = excluded.noise_level,
+          live_music_at_night = excluded.live_music_at_night,
+          indoor = excluded.indoor,
+          outdoor = excluded.outdoor,
+          weather_sensitive = excluded.weather_sensitive,
+          safety_score = excluded.safety_score,
+          transit_score = excluded.transit_score,
+          arrival_landmark = excluded.arrival_landmark,
+          hours = excluded.hours,
+          hobbies = excluded.hobbies,
+          cuisine_tags = excluded.cuisine_tags,
+          group_score = excluded.group_score,
+          date_score = excluded.date_score,
+          source = excluded.source,
+          yelp_id = coalesce(excluded.yelp_id, platform.venues.yelp_id),
+          yelp_rating = coalesce(excluded.yelp_rating, platform.venues.yelp_rating),
+          yelp_review_count = coalesce(excluded.yelp_review_count, platform.venues.yelp_review_count),
+          google_place_id = coalesce(excluded.google_place_id, platform.venues.google_place_id),
+          status = excluded.status,
+          closure_reports = excluded.closure_reports,
+          verified_open_at = coalesce(excluded.verified_open_at, platform.venues.verified_open_at),
+          geo_expires_at = coalesce(excluded.geo_expires_at, platform.venues.geo_expires_at),
+          recheck_after = excluded.recheck_after,
+          persona_priors = excluded.persona_priors,
+          persona_stats = excluded.persona_stats,
+          updated_at = now()
+        returning *
+      `;
+      savedRows.push(...(returned as Row[]));
+    }
+    return savedRows.map(rowToVenue);
+  });
 }
 
-export async function getCachedSearch(pool: SQL, cacheKey: string, nowMs = Date.now()): Promise<VenueCacheEntry | undefined> {
+export async function upsertVenue(pool: SQL, venue: VenueRecord, extra: VenueExtraMeta = {}): Promise<VenueRecord> {
+  const [saved] = await upsertVenues(pool, [venue], { [venue.id]: extra });
+  return saved!;
+}
+
+export async function getCachedSearch(pool: SQL, cacheKey: string, nowMs: number): Promise<VenueCacheEntry | undefined> {
   const [r] = await pool`
     select * from platform.venue_api_cache
     where cache_key = ${cacheKey} and expires_at > ${ts(nowMs)}
@@ -585,7 +678,7 @@ export async function applyVenueFeedbackPg(
   venueId: string,
   memberArchetypes: string[],
   feedback: VenueFeedbackReport,
-  nowMs = Date.now(),
+  nowMs: number,
 ): Promise<VenueRecord | undefined> {
   return withTx(pool, async tx => {
     const [cur] = await tx`select * from platform.venues where id = ${venueId} for update`;
@@ -625,7 +718,7 @@ export async function upsertMeetupArrival(
   appId: AppId,
   arrival: MeetupArrivalInput,
 ): Promise<MeetupArrivalRecord> {
-  const id = arrival.id ?? `${arrival.opportunityId}:${arrival.memberId}`;
+  const id = arrival.id ?? `${appId}:${arrival.opportunityId}:${arrival.memberId}`;
   return withApp(pool, appId, async tx => {
     const [r] = await tx`
       insert into network.meetup_arrivals (
@@ -635,7 +728,7 @@ export async function upsertMeetupArrival(
         ${arrival.etaMins ?? null}, ${arrival.safeCue ?? ""}, ${arrival.backupVenueId ?? null},
         ${ts(arrival.updatedAt)}
       )
-      on conflict (id) do update set
+      on conflict (app_id, opportunity_id, member_id) do update set
         state = excluded.state,
         eta_mins = excluded.eta_mins,
         safe_cue = excluded.safe_cue,
@@ -667,7 +760,6 @@ export async function upsertWorkIntro(
   appId: AppId,
   intro: WorkIntroRecordInput,
 ): Promise<WorkIntroRecord> {
-  const updatedAt = intro.updatedAt ?? Date.now();
   const channel = workIntroChannelToDb(intro.channel);
   return withApp(pool, appId, async tx => {
     const [r] = await tx`
@@ -677,7 +769,7 @@ export async function upsertWorkIntro(
       ) values (
         ${intro.opportunityId}, ${appId}, ${channel}, ${ts(intro.introSentAt)},
         ${ts(intro.slotConfirmedAt)}, ${intro.meetUrl ?? null}, ${ts(intro.followupDueAt)},
-        ${ts(intro.followupSentAt)}, ${intro.stage ?? "introduced"}, ${ts(updatedAt)}
+        ${ts(intro.followupSentAt)}, ${intro.stage ?? "introduced"}, ${ts(intro.updatedAt)}
       )
       on conflict (opportunity_id) do update set
         channel = excluded.channel,
@@ -711,10 +803,18 @@ export async function getWorkIntro(
 export class PgVenueStore {
   readonly sql: SQL;
   private readonly owned: boolean;
+  private readonly clock?: Clock;
 
-  constructor(db: string | SQL) {
+  constructor(db: string | SQL, clock?: Clock) {
     this.owned = typeof db === "string";
     this.sql = typeof db === "string" ? new SQL({ url: db, max: 4 }) : db;
+    this.clock = clock;
+  }
+
+  private resolveNow(nowMs?: number): number {
+    if (nowMs !== undefined) return nowMs;
+    if (this.clock) return this.clock.now();
+    throw new Error("PgVenueStore requires explicit nowMs or a Clock");
   }
 
   async close(): Promise<void> {
@@ -725,14 +825,17 @@ export class PgVenueStore {
   getVenue(id: string) { return getVenue(this.sql, id); }
   listVenues(filter?: VenueListFilter) { return listVenues(this.sql, filter); }
   upsertVenue(venue: VenueRecord, extra?: VenueExtraMeta) { return upsertVenue(this.sql, venue, extra); }
-  getCachedSearch(cacheKey: string, nowMs?: number) { return getCachedSearch(this.sql, cacheKey, nowMs); }
+  upsertVenues(venues: readonly VenueRecord[], extraById?: Readonly<Record<string, VenueExtraMeta>>) {
+    return upsertVenues(this.sql, venues, extraById);
+  }
+  getCachedSearch(cacheKey: string, nowMs?: number) { return getCachedSearch(this.sql, cacheKey, this.resolveNow(nowMs)); }
   putCachedSearch(entry: VenueCacheEntry) { return putCachedSearch(this.sql, entry); }
   recordVenueVisit(appId: AppId, visit: VenueVisitInput) { return recordVenueVisit(this.sql, appId, visit); }
   listVisitedVenueIds(appId: AppId, memberIds: string[]) { return listVisitedVenueIds(this.sql, appId, memberIds); }
   recordVenueRejection(appId: AppId, rejection: VenueRejectionInput) { return recordVenueRejection(this.sql, appId, rejection); }
   listRejectedVenueIds(appId: AppId, memberIds: string[]) { return listRejectedVenueIds(this.sql, appId, memberIds); }
   applyVenueFeedback(appId: AppId, venueId: string, memberArchetypes: string[], feedback: VenueFeedbackReport, nowMs?: number) {
-    return applyVenueFeedbackPg(this.sql, appId, venueId, memberArchetypes, feedback, nowMs);
+    return applyVenueFeedbackPg(this.sql, appId, venueId, memberArchetypes, feedback, this.resolveNow(nowMs));
   }
   upsertMeetupArrival(appId: AppId, arrival: MeetupArrivalInput) { return upsertMeetupArrival(this.sql, appId, arrival); }
   listMeetupArrivals(appId: AppId, opportunityId: string) { return listMeetupArrivals(this.sql, appId, opportunityId); }

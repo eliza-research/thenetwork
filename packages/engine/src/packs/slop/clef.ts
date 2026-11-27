@@ -143,21 +143,27 @@ export class WorkersAIClefRater implements AppearanceRater {
     return new WorkersAIClefRater({ token: env.CLOUDFLARE_AI_TOKEN ?? "", accountId: env.CLOUDFLARE_ACCOUNT_ID ?? "", model, ...o });
   }
 
-  async ask(image: { bytes: Uint8Array; contentType?: string }): Promise<ClefResult> {
+  async ask(image: { bytes: Uint8Array; contentType?: string }, signal: AbortSignal = AbortSignal.timeout(10_000)): Promise<ClefResult> {
     if (image.bytes.byteLength > ratingMaxBytes) throw new ClefError("photo over Clef's 4 MiB limit: resize before rating");
-    return clefRun({ ...this.o, model: this.o.model ?? "clef" }, { state: CLEF_STATE, questions: CLEF_QUESTIONS, images: [`data:${image.contentType ?? sniffType(image.bytes)};base64,${b64(image.bytes)}`] });
+    return clefRun(
+      { ...this.o, model: this.o.model ?? "clef" },
+      { state: CLEF_STATE, questions: CLEF_QUESTIONS, images: [`data:${image.contentType ?? sniffType(image.bytes)};base64,${b64(image.bytes)}`] },
+      signal,
+    );
   }
 
   async features(subject: RatingSubject, photos: readonly PhotoRef[]): Promise<{ photoId: string; x: Record<string, number>; confidence: number }[]> {
     if (!canRatePhotos(subject)) return [];
-    const out: { photoId: string; x: Record<string, number>; confidence: number }[] = [];
-    for (const p of photos.slice(0, this.o.maxPhotos ?? ratingMaxPhotos)) {
-      const img = p.bytes ? { bytes: p.bytes } : (await this.o.loadPhoto?.(p)) ?? null;
-      if (!img) continue;
-      const r = await this.ask(img);
-      out.push({ photoId: p.id, ...clefFeatures(r.answers) });
-    }
-    return out;
+    const batch = photos.slice(0, this.o.maxPhotos ?? ratingMaxPhotos);
+    const rows = await Promise.all(
+      batch.map(async p => {
+        const img = p.bytes ? { bytes: p.bytes } : (await this.o.loadPhoto?.(p)) ?? null;
+        if (!img) return null;
+        const r = await this.ask(img);
+        return { photoId: p.id, ...clefFeatures(r.answers) };
+      }),
+    );
+    return rows.filter((row): row is { photoId: string; x: Record<string, number>; confidence: number } => row !== null);
   }
 
   async rate(subject: RatingSubject, photos: readonly PhotoRef[]): Promise<AppearanceScore | null> {

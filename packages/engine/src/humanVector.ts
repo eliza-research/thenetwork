@@ -1,6 +1,7 @@
 import type { AppId, Facet, Intent, MemberId, PrivacyScope, Provenance, SourceKind } from "@thenetwork/core";
-import { ADULT_AGE, canBeMatched } from "@thenetwork/core";
+import { ADULT_AGE, canBeMatched, findNeighborhood, getCity } from "@thenetwork/core";
 import { centroid } from "./embed.ts";
+import { hood } from "./packs/friends/geo.ts";
 import { parseOntologyTags } from "./packs/network/ontology.ts";
 import { connectionTypeForIntent, detailTags, isHypePitchIntent, objectivesFor } from "./packs/network/taxonomy.ts";
 import {
@@ -15,6 +16,7 @@ import {
 } from "./packs/network/vocabulary.ts";
 import { T as PEON_TAG } from "./packs/peon/schema.ts";
 import { parseAppearance, type BodyType } from "./packs/slop/appearance.ts";
+import { latLonToHex } from "./spatialIndex.ts";
 import type { MemberIndex, World } from "./world.ts";
 
 export type { ConnectionOntologyType, HumorRegister, LifeStage, SpendComfortTier };
@@ -683,8 +685,32 @@ function compileAdultVector(
   const initVal = clamp01(0.35 + (mi.isHost ? 0.45 : 0) + (mi.tags.has("hosting") ? 0.2 : 0) + Math.min(0.2, mi.recentContribution * 0.08));
 
   const homePresence = mi.presence.find(p => p.type === "home");
-  const homeArea = homePresence?.areas[0] ?? "core";
+  const homeCity = homePresence?.city ?? mi.m.homeCity;
+  const rawHomeArea = homePresence?.areas[0];
+  const citySpec = getCity(homeCity);
+  const homeNeighborhood = rawHomeArea
+    ? (findNeighborhood(homeCity, rawHomeArea) ?? (homeCity === "nyc" ? hood(rawHomeArea) : undefined))
+    : undefined;
+  const homeCoord = homeNeighborhood
+    ? { lat: homeNeighborhood.lat, lon: homeNeighborhood.lng }
+    : citySpec
+      ? { lat: citySpec.center.lat, lon: citySpec.center.lng }
+      : undefined;
+  const homeH3 = homeCoord
+    ? latLonToHex(homeCoord.lat, homeCoord.lon, 6).key
+    : `${homeCity}:${(rawHomeArea ?? "core").toLowerCase()}`;
   const maxTravel = mi.m.prefs.maxTravelMinutes;
+  const primaryMode = citySpec?.primaryMode;
+  const transitMode: HorizontalProfile["geoAndTime"]["transitMode"] =
+    primaryMode === "car"
+      ? "car"
+      : primaryMode === "transit" || primaryMode === "hybrid"
+        ? "transit"
+        : maxTravel <= 20
+          ? "walk"
+          : maxTravel >= 50
+            ? "car"
+            : "transit";
 
   let cachedTasteEmb: number[] | undefined;
   let cachedValueEmb: number[] | undefined;
@@ -719,9 +745,9 @@ function compileAdultVector(
       spontaneity: makeCoord(mi.m.state === "open" ? 0.65 : 0.45, 0.4, now, "inferred", "agent_private"),
     },
     geoAndTime: {
-      homeH3: `${mi.m.homeCity}:${homeArea.toLowerCase()}`,
+      homeH3,
       maxTravelMinutes: maxTravel,
-      transitMode: maxTravel <= 20 ? "walk" : maxTravel >= 50 ? "car" : "transit",
+      transitMode,
       weeklySlotBitmap: buildWeeklyBitmap(nonAppearanceFacets),
     },
   };
