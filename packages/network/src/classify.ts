@@ -793,6 +793,8 @@ export function extractProfile(body: string): Profile {
   const t = normText(body);
   const interests = new Set<string>(), skills = new Set<string>(), desires = new Set<string>(), notWanted = new Set<string>();
   let negatedAsk = false, closeRequest = false;
+  const closedIds = new Set<string>();
+  let firstCloseAt = Infinity;
   const kept: string[] = [];
   for (const s of sentencesOf(t)) {
     const x = s.text;
@@ -828,7 +830,7 @@ export function extractProfile(body: string): Profile {
       const soleClose = closeVerb && /^\s*(?:(?:can|could) you\s+)?(?:please\s+)?(?:cancel|withdraw|close|drop|end|forget)\s+my\s+(?:standing\s+)?(?:request|search)\b/.exec(part);
       // "Cancel my request" closes the sole request only when no other object follows it
       // ("for a refund", "to change my number"); a trailing comma clause is not an object.
-      if (soleClose && /^\s*(?:[.!;]+\s*)?$|^\s*,(?!\s*(?:for|to)\b)|^\s+(?:please|now|thanks|thank you)\b(?!\s+(?:for|to)\b)/.test(part.slice(soleClose[0].length))) { closeRequest = true; negatedAsk = true; }
+      if (soleClose && /^\s*(?:[.!;]+\s*)?$|^\s*,(?!\s*(?:for|to)\b)|^\s+(?:please|now|thanks|thank you)\b(?!\s+(?:for|to)\b)/.test(part.slice(soleClose[0].length))) { closeRequest = true; negatedAsk = true; firstCloseAt = Math.min(firstCloseAt, s.at + partOffset); }
       // What is not under a negation: the taxonomy-label pass below reads only this.
       kept.push(part.slice(0, Number.isFinite(effNegAt) ? effNegAt : undefined));
       for (const [id, rxs] of Object.entries(WANT_LEX)) for (const rx of rxs) {
@@ -839,9 +841,17 @@ export function extractProfile(body: string): Profile {
         // The want must be the verb's own object: only a determiner, or "my request for a",
         // may stand between them. A want after a clause break ("cancel my gym membership,
         // still want a climbing partner") stays a want.
-        const closedWant = !!closeVerb && /^\s+(?:about\s+)?(?:my|the|that|this)\s+(?:(?:standing\s+)?(?:request|search)\s+for\s+(?:a\s+|an\s+|the\s+)?)?$/.test(part.slice(closeVerb[0].length, m.index));
-        if (closedWant) negatedAsk = true;
-        if (excluded || closedWant || NEG_WANT.test(part.slice(0, m.index)) || /^\s*(?:is|are|'s|'re)?\s*(?:n't|not|isn'?t|aren'?t)\b(?! only)/.test(after)) notWanted.add(id);
+        let wantEnd = m.index + m[0].length;
+        if (closeVerb) {
+          const anchored = new RegExp(`^(?:${rx.source})$`);
+          for (let end = m.index + 1; end < wantEnd; end++) if (anchored.test(part.slice(m.index, end))) { wantEnd = end; break; }
+        }
+        const closedWant = !!closeVerb && /^\s+(?:about\s+)?(?:my|the|that|this)\s+(?:(?:standing\s+)?(?:request|search)\s+for\s+(?:a\s+|an\s+|the\s+)?)?$/.test(part.slice(closeVerb[0].length, m.index))
+          && /^(?:[a-z]|\s*(?:$|[.!;,]|(?:request|search|thing|one|instead|please|now)\b))/.test(part.slice(wantEnd));
+        if (closedWant) { negatedAsk = true; firstCloseAt = Math.min(firstCloseAt, s.at + partOffset); }
+        const negatedWant = excluded || NEG_WANT.test(part.slice(0, m.index)) || /^\s*(?:is|are|'s|'re)?\s*(?:n't|not|isn'?t|aren'?t)\b(?! only)/.test(after);
+        if (closedWant && !negatedWant) closedIds.add(id);
+        if (closedWant || negatedWant) notWanted.add(id);
         else if (wantCtx || SELF_WANTS.has(id)) desires.add(id);
         break;
       }
@@ -878,6 +888,10 @@ export function extractProfile(body: string): Profile {
   for (const i of INTERESTS) if (plain.includes(i.label.toLowerCase())) interests.add(i.tag);
   // A negated like is not an interest ("not into running"): drop interests named only after a negation.
   const where = areaOf(body);
+  if (firstCloseAt !== Infinity && /\b(?:just kidding|actually,?\s+no|keep it|never ?mind|scratch that|take (?:it|that) back|disregard (?:it|that)|don'?t cancel|do not cancel)\b/.test(t.slice(firstCloseAt))) {
+    for (const id of closedIds) notWanted.delete(id);
+    closeRequest = false;
+  }
   return {
     interests: [...interests], skills: [...skills], desireIds: DESIRES.map(d => d.id).filter(id => desires.has(id)),
     ...(where.area ? { area: where.area } : {}), ...(where.unknown ? { areaUnknown: true } : {}),

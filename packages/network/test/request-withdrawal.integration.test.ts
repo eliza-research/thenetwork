@@ -143,6 +143,9 @@ test("a close verb naming the want or the sole request withdraws the waiting req
     "End of the day works best for my climbing partner.",
     "Forget the weather, my climbing partner search is what matters.",
     "Drop the climbing partner request? Not yet, keep it.",
+    "Cancel the climbing partner meetup Friday, I still want a partner.",
+    "Cancel my request, just kidding.",
+    "Drop the climbing partner request. Actually no, keep it.",
     "Cancel my request for a refund.",
     "Please cancel my request to change my number.",
   ];
