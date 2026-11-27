@@ -1973,6 +1973,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     if (!isRequest && m.stage !== "active") this.activate(m); // onboarding stalled; carry on
     if (isRequest && m.stage !== "active") { this.activate(m); m.awaiting = undefined; }
+    // A member-initiated message can restate a profile preference (a dating radius, an age range):
+    // the app loop reads it here too, so the stored tags and the next search use what they just said.
+    this.learnAppTags(m, body, []);
     if (c.kind === "people_request" && (!m.minor || this.teenAdmitted(m.id))) return this.openRequest(m, c, {});
     if (c.kind === "plans_request" || c.kind === "people_request") return this.onPlans(m, c);
     if (m.minor && c.kind === "other" && body.length > 12) return this.concierge(m);
