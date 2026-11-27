@@ -152,6 +152,7 @@ export function sentencesOf(t: string, preserveDecimals = false): { text: string
 }
 
 const POLITE_SAFETY_REQUEST = /^(?:please\s+)?(?:can|could)\s+you\s+(?:please\s+)?(?=(?:block|report)\s)/i;
+const FIRST_PERSON_SAFETY_REQUEST = /^(?:please\s+)?i(?:\s+(?:want|need)|'d like)\s+to\s+(?=(?:block|report)\s)/i;
 const COUNTERPART_SAFETY_REQUEST = /^(?:please\s+)?(block|report)\s+(my\s+(?:date|match))\b(?:\s+please)?\s*(?:[.!?]*$|[,;:])/i;
 const SAFETY_REQUEST_CONDITION = /\b(?:if|unless|whenever|suppose|assuming|hypothetically|in case|in the event)\b/i;
 const SAFETY_REQUEST_DELAY = /(?:^[^,;:]*|[,;:]\s*)\b(?:when|after|later|tomorrow|maybe|possibly|perhaps)\b/i;
@@ -206,7 +207,7 @@ export function classify(body: string): Classified {
   if (other !== undefined) out.otherAge = other;
 
   // spec/safetyCase.md, "Direct polite safety requests use the existing counterpart chooser"
-  const polite = POLITE_SAFETY_REQUEST.exec(t);
+  const polite = POLITE_SAFETY_REQUEST.exec(t) ?? FIRST_PERSON_SAFETY_REQUEST.exec(t);
   const command = polite ? t.slice(polite[0].length) : t;
   const counterpart = COUNTERPART_SAFETY_REQUEST.exec(command);
   const directCommand = !!polite || !!counterpart;
