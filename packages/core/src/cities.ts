@@ -64,18 +64,21 @@ const OPEN_EVENT_CATEGORIES = new Set<VenueRecord["category"]>([
 
 function seedVenue(v: SeedInput): VenueRecord {
   const { personaPriors, ...rest } = v;
+  const ageMin = v.ageMin ?? 0;
   const isAlcoholCentric = v.isAlcoholCentric ?? (v.isBarOnly || ALCOHOL_CENTRIC_CATEGORIES.has(v.category));
   const openEventEligible =
     v.openEventEligible ??
     (v.walkInGroupCapacity >= 10 && !v.reservationRequired && OPEN_EVENT_CATEGORIES.has(v.category));
+  const allAges = !v.isBarOnly && !isAlcoholCentric && ageMin <= 0 ? (v.allAges ?? true) : false;
   return {
     ...rest,
+    ageMin,
     public: true,
     status: "active",
     source: "curated",
     lastVerifiedAt: SEED_VERIFIED_AT,
     closureReports: 0,
-    allAges: v.allAges ?? (!v.isBarOnly && !isAlcoholCentric && (v.ageMin ?? 0) <= 13),
+    allAges,
     isAlcoholCentric,
     isSmokeFree: v.isSmokeFree ?? true,
     openEventEligible,
@@ -1096,7 +1099,113 @@ const MIAMI_SPEC: CitySpec = {
   ],
 };
 
-// ---- Registry ----
+// ---- Registry & Pre-Indexed Lookup Tables ----
+
+function normText(text: string): string {
+  return text.trim().toLowerCase().replace(/[^a-z0-9\s/-]+/g, " ").replace(/\s+/g, " ");
+}
+
+interface NeighborhoodSubstringEntry {
+  normName: string;
+  normAliases: string[];
+  neighborhood: CityNeighborhood;
+}
+
+interface CityIndex {
+  spec: CitySpec;
+  normName: string;
+  normShortName: string;
+  normAliasSet: Set<string>;
+  longNormAliases: string[];
+  byExactName: Map<string, CityNeighborhood>;
+  byNormArea: Map<string, CityNeighborhood>;
+  substringEntries: NeighborhoodSubstringEntry[];
+  barriers: Map<string, number>;
+  neighborhoodIdx: Map<CityNeighborhood, number>;
+  pairMinutes: Int32Array;
+  centerMinutes: Int32Array;
+  centerToCenterMinutes: number;
+}
+
+function buildCityIndex(spec: CitySpec): CityIndex {
+  const normName = normText(spec.name);
+  const normShortName = normText(spec.shortName);
+  const normAliasSet = new Set<string>();
+  const longNormAliases: string[] = [];
+  for (const a of spec.aliases) {
+    const na = normText(a);
+    if (!na) continue;
+    normAliasSet.add(na);
+    if (na.length >= 4) longNormAliases.push(na);
+  }
+
+  const byNormArea = new Map<string, CityNeighborhood>();
+  const substringEntries: NeighborhoodSubstringEntry[] = [];
+  const neighborhoodIdx = new Map<CityNeighborhood, number>();
+  const n = spec.neighborhoods.length;
+
+  for (let i = 0; i < n; i++) {
+    const hood = spec.neighborhoods[i]!;
+    neighborhoodIdx.set(hood, i);
+    const nn = normText(hood.name);
+    if (nn && !byNormArea.has(nn)) byNormArea.set(nn, hood);
+    const normAliases: string[] = [];
+    for (const a of hood.aliases) {
+      const na = normText(a);
+      if (na && !byNormArea.has(na)) byNormArea.set(na, hood);
+      if (a.length >= 4 && na) normAliases.push(na);
+    }
+    substringEntries.push({ normName: nn, normAliases, neighborhood: hood });
+  }
+
+  const byExactName = new Map<string, CityNeighborhood>();
+  for (const hood of spec.neighborhoods) {
+    if (byNormArea.get(normText(hood.name)) === hood) {
+      byExactName.set(hood.name, hood);
+    }
+  }
+
+  const barriers = new Map<string, number>();
+  for (const b of spec.barriers) {
+    const k1 = `${b.fromZone}\0${b.toZone}`;
+    const k2 = `${b.toZone}\0${b.fromZone}`;
+    if (!barriers.has(k1)) barriers.set(k1, b.penaltyMinutes);
+    if (!barriers.has(k2)) barriers.set(k2, b.penaltyMinutes);
+  }
+
+  const pairMinutes = new Int32Array(n * n);
+  const centerMinutes = new Int32Array(n);
+  const centerToCenterMinutes = Math.max(5, Math.round(spec.baseMinutes));
+  for (let i = 0; i < n; i++) {
+    const a = spec.neighborhoods[i]!;
+    centerMinutes[i] = Math.max(5, Math.round(spec.baseMinutes + km(spec.center, a) / spec.kmPerMinute));
+    for (let j = 0; j < n; j++) {
+      const b = spec.neighborhoods[j]!;
+      if (a.name === b.name) {
+        pairMinutes[i * n + j] = 5;
+      } else {
+        const barrier = a.zone === b.zone ? 0 : (barriers.get(`${a.zone}\0${b.zone}`) ?? 0);
+        pairMinutes[i * n + j] = Math.max(5, Math.round(spec.baseMinutes + km(a, b) / spec.kmPerMinute + barrier));
+      }
+    }
+  }
+
+  return {
+    spec,
+    normName,
+    normShortName,
+    normAliasSet,
+    longNormAliases,
+    byExactName,
+    byNormArea,
+    substringEntries,
+    barriers,
+    neighborhoodIdx,
+    pairMinutes,
+    centerMinutes,
+    centerToCenterMinutes,
+  };
+}
 
 const registry = new Map<string, CitySpec>([
   [SF_SPEC.id, SF_SPEC],
@@ -1104,6 +1213,14 @@ const registry = new Map<string, CitySpec>([
   [LA_SPEC.id, LA_SPEC],
   [CHICAGO_SPEC.id, CHICAGO_SPEC],
   [MIAMI_SPEC.id, MIAMI_SPEC],
+]);
+
+const indexRegistry = new Map<string, CityIndex>([
+  [SF_SPEC.id, buildCityIndex(SF_SPEC)],
+  [NYC_SPEC.id, buildCityIndex(NYC_SPEC)],
+  [LA_SPEC.id, buildCityIndex(LA_SPEC)],
+  [CHICAGO_SPEC.id, buildCityIndex(CHICAGO_SPEC)],
+  [MIAMI_SPEC.id, buildCityIndex(MIAMI_SPEC)],
 ]);
 
 export const CITIES: Record<LaunchCity, CitySpec> = {
@@ -1116,14 +1233,19 @@ export const CITIES: Record<LaunchCity, CitySpec> = {
 
 export const CITY_IDS: readonly LaunchCity[] = ["sf", "nyc", "la", "chicago", "miami"];
 
+function getCityIndex(id: LaunchCity | string): CityIndex | undefined {
+  return indexRegistry.get(id) ?? indexRegistry.get(id.trim().toLowerCase());
+}
+
 /** Register a new city spec (or override an existing one) so expanding to city #6+ is a single call. */
 export function registerCity(spec: CitySpec): void {
   registry.set(spec.id, spec);
+  indexRegistry.set(spec.id, buildCityIndex(spec));
   (CITIES as Record<string, CitySpec>)[spec.id] = spec;
 }
 
 export function getCity(id: LaunchCity | string): CitySpec | undefined {
-  return registry.get(id.trim().toLowerCase());
+  return registry.get(id) ?? registry.get(id.trim().toLowerCase());
 }
 
 export function listCities(): CitySpec[] {
@@ -1136,8 +1258,21 @@ export function seedVenuesForCity(city: LaunchCity): VenueRecord[] {
 
 export const ALL_SEED_VENUES: readonly VenueRecord[] = listCities().flatMap(c => c.seedVenues);
 
-function normText(text: string): string {
-  return text.trim().toLowerCase().replace(/[^a-z0-9\s/-]+/g, " ").replace(/\s+/g, " ");
+function findNeighborhoodInIndex(idx: CityIndex, area: string): CityNeighborhood | undefined {
+  const exact = idx.byExactName.get(area);
+  if (exact) return exact;
+  const q = normText(area);
+  if (!q) return undefined;
+  const hit = idx.byNormArea.get(q);
+  if (hit) return hit;
+  for (let i = 0; i < idx.substringEntries.length; i++) {
+    const entry = idx.substringEntries[i]!;
+    if (q.includes(entry.normName)) return entry.neighborhood;
+    for (let j = 0; j < entry.normAliases.length; j++) {
+      if (q.includes(entry.normAliases[j]!)) return entry.neighborhood;
+    }
+  }
+  return undefined;
 }
 
 /** Resolve free-form city text, abbreviation, or neighborhood name to a registered City id. */
@@ -1145,21 +1280,16 @@ export function resolveCity(text: string): LaunchCity | undefined {
   const q = normText(text);
   if (!q) return undefined;
   if (registry.has(q)) return q as LaunchCity;
-  for (const spec of registry.values()) {
-    if (normText(spec.name) === q || normText(spec.shortName) === q) return spec.id;
-    if (spec.aliases.some(a => normText(a) === q)) return spec.id;
+  for (const idx of indexRegistry.values()) {
+    if (idx.normName === q || idx.normShortName === q || idx.normAliasSet.has(q)) return idx.spec.id;
   }
-  for (const spec of registry.values()) {
-    if (spec.neighborhoods.some(n => normText(n.name) === q || n.aliases.some(a => normText(a) === q))) {
-      return spec.id;
-    }
+  for (const idx of indexRegistry.values()) {
+    if (idx.byNormArea.has(q)) return idx.spec.id;
   }
-  // Substring fallback for multi-word descriptions (e.g., "living in downtown chicago").
-  for (const spec of registry.values()) {
-    if (q.includes(normText(spec.name))) return spec.id;
-    for (const a of spec.aliases) {
-      const na = normText(a);
-      if (na.length >= 4 && q.includes(na)) return spec.id;
+  for (const idx of indexRegistry.values()) {
+    if (q.includes(idx.normName)) return idx.spec.id;
+    for (let i = 0; i < idx.longNormAliases.length; i++) {
+      if (q.includes(idx.longNormAliases[i]!)) return idx.spec.id;
     }
   }
   return undefined;
@@ -1167,27 +1297,37 @@ export function resolveCity(text: string): LaunchCity | undefined {
 
 /** Resolve a neighborhood name or alias within a city; returns undefined if unknown. */
 export function findNeighborhood(city: LaunchCity, area: string): CityNeighborhood | undefined {
-  const spec = getCity(city);
-  if (!spec) return undefined;
-  const q = normText(area);
-  if (!q) return undefined;
-  for (const n of spec.neighborhoods) {
-    if (normText(n.name) === q || n.aliases.some(a => normText(a) === q)) return n;
-  }
-  for (const n of spec.neighborhoods) {
-    if (q.includes(normText(n.name)) || n.aliases.some(a => a.length >= 4 && q.includes(normText(a)))) return n;
-  }
-  return undefined;
+  const idx = getCityIndex(city);
+  if (!idx) return undefined;
+  return findNeighborhoodInIndex(idx, area);
 }
 
-function zoneBarrierPenalty(spec: CitySpec, zoneA: string, zoneB: string): number {
-  if (zoneA === zoneB) return 0;
-  for (const b of spec.barriers) {
-    if ((b.fromZone === zoneA && b.toZone === zoneB) || (b.fromZone === zoneB && b.toZone === zoneA)) {
-      return b.penaltyMinutes;
+function estimateTravelInIndex(
+  idx: CityIndex,
+  a: CityNeighborhood | undefined,
+  b: CityNeighborhood | undefined
+): number {
+  const n = idx.spec.neighborhoods.length;
+  if (!a || !b) {
+    if (a) {
+      const ai = idx.neighborhoodIdx.get(a);
+      if (ai !== undefined) return idx.centerMinutes[ai]!;
     }
+    if (b) {
+      const bi = idx.neighborhoodIdx.get(b);
+      if (bi !== undefined) return idx.centerMinutes[bi]!;
+    }
+    return idx.centerToCenterMinutes;
   }
-  return 0;
+  const ai = idx.neighborhoodIdx.get(a);
+  const bi = idx.neighborhoodIdx.get(b);
+  if (ai !== undefined && bi !== undefined) {
+    return idx.pairMinutes[ai * n + bi]!;
+  }
+  if (a.name === b.name) return 5;
+  const dist = km(a, b);
+  const barrier = a.zone === b.zone ? 0 : (idx.barriers.get(`${a.zone}\0${b.zone}`) ?? 0);
+  return Math.max(5, Math.round(idx.spec.baseMinutes + dist / idx.spec.kmPerMinute + barrier));
 }
 
 /**
@@ -1195,21 +1335,11 @@ function zoneBarrierPenalty(spec: CitySpec, zoneA: string, zoneB: string): numbe
  * haversine distance, primary mode speed, and geographic barrier penalties.
  */
 export function estimateTravelMinutes(city: LaunchCity, fromArea: string, toArea: string): number {
-  const spec = getCity(city);
-  if (!spec) return 30;
-  const a = findNeighborhood(city, fromArea);
-  const b = findNeighborhood(city, toArea);
-  if (!a || !b) {
-    // Unknown neighborhood falls back to city center estimate.
-    const pa = a ?? { lat: spec.center.lat, lng: spec.center.lng, zone: spec.zones[0]?.id ?? "central", name: fromArea };
-    const pb = b ?? { lat: spec.center.lat, lng: spec.center.lng, zone: spec.zones[0]?.id ?? "central", name: toArea };
-    const dist = km(pa, pb);
-    return Math.max(5, Math.round(spec.baseMinutes + dist / spec.kmPerMinute));
-  }
-  if (a.name === b.name) return 5;
-  const dist = km(a, b);
-  const barrier = zoneBarrierPenalty(spec, a.zone, b.zone);
-  return Math.max(5, Math.round(spec.baseMinutes + dist / spec.kmPerMinute + barrier));
+  const idx = getCityIndex(city);
+  if (!idx) return 30;
+  const a = findNeighborhoodInIndex(idx, fromArea);
+  const b = findNeighborhoodInIndex(idx, toArea);
+  return estimateTravelInIndex(idx, a, b);
 }
 
 /**
@@ -1222,25 +1352,60 @@ export function chooseFairMidpoint(
   areas: string[],
   mode: "date" | "group" = "date"
 ): FairMidpointResult | undefined {
-  const spec = getCity(city);
-  if (!spec || areas.length === 0) return undefined;
+  const idx = getCityIndex(city);
+  if (!idx || areas.length === 0) return undefined;
+  const { spec } = idx;
   const baseLimit = mode === "group" ? spec.groupMaxMinutes : spec.dateMaxMinutes;
+
+  const nAreas = areas.length;
+  const resolvedIdx = new Int32Array(nAreas);
+  for (let i = 0; i < nAreas; i++) {
+    const hood = findNeighborhoodInIndex(idx, areas[i]!);
+    resolvedIdx[i] = hood ? (idx.neighborhoodIdx.get(hood) ?? -1) : -1;
+  }
+
+  const candidates = spec.neighborhoods;
+  const nCandidates = candidates.length;
+  const pairMinutes = idx.pairMinutes;
+  const centerMinutes = idx.centerMinutes;
+  const candidateTimes: number[][] = new Array(nCandidates);
+  const candidateMax = new Int32Array(nCandidates);
+  const candidateMean = new Int32Array(nCandidates);
+
+  for (let c = 0; c < nCandidates; c++) {
+    const times: number[] = new Array(nAreas);
+    let maxMin = 0;
+    let sum = 0;
+    const cCenter = centerMinutes[c]!;
+    for (let i = 0; i < nAreas; i++) {
+      const ai = resolvedIdx[i]!;
+      const t = ai >= 0 ? pairMinutes[ai * nCandidates + c]! : cCenter;
+      times[i] = t;
+      if (t > maxMin) maxMin = t;
+      sum += t;
+    }
+    candidateTimes[c] = times;
+    candidateMax[c] = maxMin;
+    candidateMean[c] = Math.round(sum / nAreas);
+  }
 
   for (const relax of [0, 5, 10]) {
     let best: FairMidpointResult | undefined;
-    for (const candidate of spec.neighborhoods) {
-      const times = areas.map(a => estimateTravelMinutes(city, a, candidate.name));
+    let bestBaseCost = 0;
+    for (let c = 0; c < nCandidates; c++) {
+      const times = candidateTimes[c]!;
       if (!isValidMidpoint(times, baseLimit, relax)) continue;
-      const maxMin = Math.max(...times);
-      const meanMin = Math.round(times.reduce((s, x) => s + x, 0) / times.length);
+      const maxMin = candidateMax[c]!;
       if (!isWithinTravelLimit(maxMin, baseLimit + relax)) continue;
+      const candidate = candidates[c]!;
+      const meanMin = candidateMean[c]!;
       const supplyBonus = Math.max(0, Math.round(candidate.hubSupply * 2));
       const baseCost = fairMidpointCostScaled(maxMin, meanMin);
       const netCost = fairMidpointNetCostScaled(maxMin, meanMin, supplyBonus);
       if (
         !best ||
         netCost < best.costScaled ||
-        (netCost === best.costScaled && baseCost < fairMidpointCostScaled(best.maxMinutes, best.meanMinutes))
+        (netCost === best.costScaled && baseCost < bestBaseCost)
       ) {
         best = {
           neighborhood: candidate,
@@ -1249,6 +1414,7 @@ export function chooseFairMidpoint(
           costScaled: netCost,
           relaxedBy: relax,
         };
+        bestBaseCost = baseCost;
       }
     }
     if (best) return best;

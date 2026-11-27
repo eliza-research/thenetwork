@@ -5,7 +5,7 @@
 
 import { HOUR, MINUTE } from "./clock.ts";
 import { km } from "./geo.ts";
-import { CITY_TZ, fromLocal, localParts } from "./time.ts";
+import { CITY_TZ, fromLocal, localParts, type LocalParts } from "./time.ts";
 import { chooseFairMidpoint, estimateTravelMinutes, getCity } from "./cities.ts";
 import {
   fairMidpointCostScaled,
@@ -311,14 +311,20 @@ function computeSafetyAcousticsScore(venue: VenueRecord, isNight: boolean): numb
  * Check whether a venue is open at `startMs` in timezone `tz` with at least `bufferMin` remaining
  * before closing. Handles past-midnight slots (`closeMin > 1440`) cleanly.
  */
-export function isVenueOpenAt(venue: VenueRecord, tz: string, startMs: number, bufferMin: number): VenueOpenCheck {
-  const parts = localParts(startMs, tz);
-  const minuteOfDay = parts.hour * 60 + parts.minute;
-  const prevWeekday = (parts.weekday + 6) % 7;
+export function isVenueOpenAt(
+  venue: VenueRecord,
+  tz: string,
+  startMs: number,
+  bufferMin: number,
+  parts?: LocalParts
+): VenueOpenCheck {
+  const resolvedParts = parts ?? localParts(startMs, tz);
+  const minuteOfDay = resolvedParts.hour * 60 + resolvedParts.minute;
+  const prevWeekday = (resolvedParts.weekday + 6) % 7;
 
   let bestRemaining = -1;
   for (const slot of venue.hours) {
-    if (slot.weekday === parts.weekday) {
+    if (slot.weekday === resolvedParts.weekday) {
       if (minuteOfDay >= slot.openMin && minuteOfDay < slot.closeMin) {
         const rem = slot.closeMin - minuteOfDay;
         if (rem > bestRemaining) bestRemaining = rem;
@@ -431,7 +437,7 @@ export function rankVenuesForMatch(
     const meanTravelMin = Math.round(travelTimes.reduce((s, x) => s + x, 0) / travelTimes.length);
     if (!isWithinTravelLimit(maxTravelMin, travelLimitMin)) continue;
 
-    const openCheck = isVenueOpenAt(venue, tz, request.startMs, requiredBuffer);
+    const openCheck = isVenueOpenAt(venue, tz, request.startMs, requiredBuffer, startParts);
     const eligible = venueHardEligible({
       isPublic: venue.public === true,
       venueStatus: venue.status,
