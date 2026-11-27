@@ -1126,7 +1126,7 @@ const EXPLICIT_PAIR_ALL = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)[,\s]+)?(?:eith
 const EXPLICIT_KEY = /^\s*(?:(?:yes|yeah|yep|sure|ok(?:ay)?)[,\s]+)?([abc])(?: (?:works?(?: for me)?|is (?:fine|good|perfect)|for me|please))?[\s.!,)]*$/;
 const EXPLICIT_KEY_LIST = /\b[abc]\b(?:\s*(?:,\s*(?:(?:or|and)\b)?|\b(?:or|and)\b|[&/])\s*(?:option\s+)?[abc]\b)+/g;
 const EXPLICIT_KEY_CLAUSE = /(^\s*|[,;.!\n]\s*|\b(?:and|or)\s+)([abc])\s+(?:works?(?: for me)?|is (?:fine|good|perfect)|for me|please)\b/g;
-const EXPLICIT_NO_OFFERED_TIMES = /^\s*none of (?:(?:those|these)(?: times| options)?|them|the (?:times|options)) works?(?: for me)?[.!\s]*$/;
+const EXPLICIT_NO_OFFERED_TIMES = /^\s*(?:(?:sorry|thanks|thank you)[, ]+)?none of (?:(?:those|these)(?: times| options)?|them|the (?:times|options)) works?(?: for me)?(?:[, ]+(?:sorry|thanks|thank you))?[.!\s]*$/;
 // A day and clock label cannot establish consent to a relative or separately named date.
 const UNBOUND_OFFER_DATE = /\b(?:today|tonight|tomorrow|tmr|yesterday)\b|\b(?:next|last|following)\s+(?:mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}\b|\b\d{1,4}[-/]\d{1,2}(?:[-/]\d{1,4})?\b/;
 const PROBE_DURATION = String.raw`(?:\d+|a|an|one|two|three|four|a few|a couple(?: of)?|half an?)\s+(?:seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`;
