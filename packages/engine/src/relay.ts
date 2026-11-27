@@ -478,11 +478,12 @@ export function relayAffirmsIt(text: string): boolean {
   return RELAY_AFFIRMED_IT.test(text.replace(/[’‘`´]/g, "'"));
 }
 
+const CONTACT_ITEM_END = String.raw`(?!\s+(?!(?:number|address|info|information|details|to|with|and|or|so|because|please|pls|now|asap|too|also|again|tonight|today|tomorrow|later|soon|right|first|if|when|whenever|once|after|before|but|then|thanks|thank|he|she|they|i|we|you|it|as|in|on|at|for|by|via|unless|until|till|already|over|only|just|instead|every|each|any|anytime|this|next|since|ok|okay|lol|here|there|though)\b)\p{L})`;
 const CONTACT_REQ = new RegExp(
-  String.raw`\b(?:send|give|share|pass|forward|text)\s+(?<leadingRecipient>${PRIVATE_RELAY_RECIPIENT})\s+my\s+(?:${CONTACT_SWAP_NAME}|email)\b`
+  String.raw`\b(?:send|give|share|pass|forward|text)\s+(?<leadingRecipient>${PRIVATE_RELAY_RECIPIENT})\s+my\s+(?:${CONTACT_SWAP_NAME}|email)\b${CONTACT_ITEM_END}`
   + String.raw`|\b(?:share|send|give|pass|forward|text)\s+my\s+(?:${CONTACT_SWAP_NAME}|email)\s+(?:with|to)\s+(?<trailingRecipient>${PRIVATE_RELAY_RECIPIENT})`
   + String.raw`|${RELAY_AFFIRMED_SEND}(?:it|my number|them my number)\b(?:${RELAY_DESTINATION}\s+(?<affirmedRecipient>${PRIVATE_RELAY_RECIPIENT})|(?!${RELAY_DESTINATION}))`
-  + String.raw`|\b(?:they|she|he) can have my (?:number|digits|phone number)\b`,
+  + String.raw`|\b(?:they|she|he) can have my (?:number|digits|phone number)\b${CONTACT_ITEM_END}`,
   "giu",
 );
 const PHOTO_REQ = new RegExp(
@@ -713,7 +714,8 @@ const RENEW_PRIVATE_ITEM = new RegExp(String.raw`\bsend\s+(it|${CONTACT_RELAY_IT
 const PRIVATE_RELAY_COURTESY = /^(?:[,\s]+(?:now|please|pls|kindly|thanks|thank you|no (?:rush|worries|problem)))*\s*$/i;
 const FLEXIBLE_PRIVATE_TIMING = String.raw`whenever|any\s*time`;
 const RECURRING_PRIVATE_CONDITION = String.raw`${FLEXIBLE_PRIVATE_TIMING}|(?:(?:each\s+and\s+)?every(?:\s+single)?|each)\s*time`;
-const PRIVATE_CONDITION_MARKER = String.raw`if|when|${RECURRING_PRIVATE_CONDITION}|unless|once|after|until|provided|as\s+long\s+as|in\s+case`;
+const CONDITION_SUBJECT = String.raw`(?!(?:be|been|have|probably|definitely|also|really|just|not|never|i|we|you|u|it|going|able)\b)${OTHER}`;
+const PRIVATE_CONDITION_MARKER = String.raw`if|when|${RECURRING_PRIVATE_CONDITION}|unless|once|after|until|provided|as\s+long\s+as|in\s+case|in\s+the\s+event|on\s+(?:the\s+)?condition|subject\s+to|assuming|supposing|as\s+soon\s+as(?!\s+(?:you|u|possible)\b)|(?:should|were)\s+${CONDITION_SUBJECT}\s+(?=\p{L})`;
 const TRAILING_PRIVATE_CONDITION = new RegExp(
   String.raw`^[\s,:–—-]*(?:(?:and|but|now|please|kindly|pls|just|thanks)[\s,:–—-]+)*(?:(?:wait|hold(?:\s+(?:it|off|on))?)\s+(?=(?:until|till)\b))?(\(\s*)?((?:only\s+)?(?:${PRIVATE_CONDITION_MARKER}|till)\b.*)$`,
   "iu",
@@ -1210,13 +1212,15 @@ function evaluatePrivateRequest(
   const clauses = relayClauses(low);
   const question = relayIsIndirectQuestion(spoken.endsWith("?"), /^(?:please\s+)?(?:can|could|would)\s+(?:you|u)\b/i.test(spoken),
     privateModal?.[0].length === privateRequest.index, /^(?:should|would\s+it|could\s+i|is it|do you|can i)\b/i.test(spoken));
+  const statementQuestion = !!/^[^.!?;…\n]*[.!?;…\n]*/u.exec(spoken.slice(privateRequest.index! + privateRequest[0].length))![0].includes("?")
+    && !/\b(?:can|could|would|will)\s+(?:you|u)\b/i.test(relayClauseLead(spoken.slice(0, privateRequest.index)));
   const priorCondition = priorSentenceConditionsShare(t.slice(start, start + privateRequest.index!), privateRequest, contact);
   const envelopeCondition = !!envelope.independentNumber && envelope.ordinaryText !== undefined
     && priorSentenceConditionsShare(envelope.ordinaryText.body + ".", privateRequest, true, true);
   const uncertain = !!envelope.leadingCondition || HEDGE.test(low) || privateRelayTimingIsUncertain(spoken, envelope.ordinaryBody) || uncertainPrivateTransfer(clauses)
     || envelopeCondition
     || conditionsPrivateRequest(own.slice(start), t.slice(start), privateRequest.index! + privateRequest[0].length, privateRequest, contact)
-    || question || privateShareQualified(spoken, privateRequest)
+    || question || statementQuestion || privateShareQualified(spoken, privateRequest)
     || priorCondition;
   // spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
   const refused = refusesPrivateItem(low, contact ? PHOTO_ITEM_REFUSAL : CONTACT_ITEM_REFUSAL)

@@ -45,7 +45,9 @@ pure def lawNameCollisionRefusesOnlyAnUnselectedRelay(selectedItem: bool, otherC
 
 A modal question can request a private item only if it directly asks the
 agent to send that item. Asking about whether to send it leaves it
-unapproved. Existing refusal, condition and timing rules still apply.
+unapproved. A statement that ends in a question mark, such as "He can
+have my number?", also leaves it unapproved. Existing refusal, condition
+and timing rules still apply.
 
 ```quint
 pure def relayIsIndirectQuestion(question: bool, modalRequest: bool, directAction: bool, adviceQuestion: bool): bool =
