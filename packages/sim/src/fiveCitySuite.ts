@@ -295,8 +295,8 @@ export async function runFiveCitySuite(
         detail: `brief=${briefSent}, relays=${arrRelays.length}, met=${metAfter}`,
       },
       {
-        name: "evening date follow-up deferred to next-morning 09:00",
-        pass: followup.nextDay && fuParts.hour === 9 && fuParts.minute === 0 && canSendFu,
+        name: "evening date follow-up deferred to next-morning 09:30",
+        pass: followup.nextDay && fuParts.hour === 9 && fuParts.minute === 30 && canSendFu,
         detail: `local ${fuParts.hour}:${String(fuParts.minute).padStart(2, "0")} nextDay=${followup.nextDay}`,
       },
       {
@@ -449,7 +449,7 @@ export async function runFiveCitySuite(
         pass:
           fu.nextDay &&
           fuParts.hour === 9 &&
-          fuParts.minute === 0 &&
+          fuParts.minute === 30 &&
           updated.personaPriors.default!.alpha > primary.venue.personaPriors.default!.alpha,
         detail: `alpha ${primary.venue.personaPriors.default!.alpha} -> ${updated.personaPriors.default!.alpha}`,
       },
@@ -1692,8 +1692,8 @@ export async function runFiveCitySuite(
 
     const checks: ScenarioCheck[] = [
       {
-        name: "10 PM Chicago end schedules next-morning 09:00 and blocks 22:30 quiet-hours send",
-        pass: !allowLate && proactiveSentInQuiet === 0 && fu.nextDay && fuParts.hour === 9 && fuParts.minute === 0,
+        name: "10 PM Chicago end schedules next-morning 09:30 and blocks 22:30 quiet-hours send",
+        pass: !allowLate && proactiveSentInQuiet === 0 && fu.nextDay && fuParts.hour === 9 && fuParts.minute === 30,
         detail: `allow22:30=${allowLate}, proactiveInQuiet=${proactiveSentInQuiet}, scheduled=${fuParts.hour}:${String(fuParts.minute).padStart(2, "0")}`,
       },
       {

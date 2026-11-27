@@ -441,6 +441,11 @@ export function rankVenuesForMatch(
 
   const maxBudgetTier =
     request.members.length > 0 ? Math.min(...request.members.map(m => m.maxBudgetTier)) : 2;
+  const activityCtx = buildHoistedActivityContext(request.members, request.targetHobbies);
+  const midpoint =
+    request.memberAreas.length > 0
+      ? chooseFairMidpoint(cityKey, request.memberAreas, request.mode === "group" ? "group" : "date")
+      : undefined;
   const defaultLimit =
     request.overrideTravelLimitMin ??
     (request.mode === "group" ? citySpec?.groupMaxMinutes ?? 35 : citySpec?.dateMaxMinutes ?? 25);
@@ -448,7 +453,11 @@ export function rankVenuesForMatch(
     .map(m => m.maxTravelMinutes)
     .filter((v): v is number => typeof v === "number" && v > 0);
   const travelLimitMin =
-    memberMaxTravel.length > 0 ? Math.min(defaultLimit, ...memberMaxTravel) : defaultLimit;
+    memberMaxTravel.length > 0
+      ? Math.min(defaultLimit, ...memberMaxTravel)
+      : request.overrideTravelLimitMin !== undefined
+        ? defaultLimit
+        : defaultLimit + (midpoint?.relaxedBy ?? 0);
 
   const visitedSet = new Set<string>();
   const rejectedSet = new Set<string>();
@@ -458,12 +467,6 @@ export function rankVenuesForMatch(
     for (const id of m.rejectedVenueIds) rejectedSet.add(id);
     if (m.archetype) archetypes.push(m.archetype);
   }
-
-  const activityCtx = buildHoistedActivityContext(request.members, request.targetHobbies);
-  const midpoint =
-    request.memberAreas.length > 0
-      ? chooseFairMidpoint(cityKey, request.memberAreas, request.mode === "group" ? "group" : "date")
-      : undefined;
 
   const ranked: VenueCandidateResult[] = [];
   for (const venue of venues) {

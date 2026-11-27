@@ -243,7 +243,7 @@ const SF_SPEC: CitySpec = {
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 6, reservationRequired: false,
       noiseLevel: "lively", liveMusicAtNight: false, indoor: true, outdoor: false, weatherSensitive: false,
       arrivalLandmark: "By the front antique wooden bar inside the 16th & Guerrero St corner door",
-      hours: dailyHours(14 * 60, 26 * 60), yelpRating: 4.4, safetyScore: 8, transitScore: 5,
+      hours: splitHours(14 * 60, 26 * 60, 12 * 60, 26 * 60), yelpRating: 4.4, safetyScore: 8, transitScore: 5,
       personaPriors: { nightowl: { alpha: 9, beta: 2 } },
     }),
     seedVenue({
