@@ -16,7 +16,7 @@ export function isLateArrivalPairBooking(booking: { kind: OpportunityKind; parti
 
 /** Accept an explicit report, leaving named requests to the existing relay conversation. */
 export function isLateArrivalReport(body: string): boolean {
-  return /^(?:(?:i['’]m|i am) )?running late[.!]?$/i.test(body.trim());
+  return /^(?:(?:i'?m|i am) )?running late[.!]?$/i.test(body.trim().replace(/[‘’ʼ`´]/g, "'"));
 }
 
 export function lateArrivalDeliveryId(delivery: LateArrivalDelivery): string {

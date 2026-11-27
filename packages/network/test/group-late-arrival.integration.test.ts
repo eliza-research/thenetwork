@@ -50,7 +50,9 @@ test("one exact signed report reaches only booked group recipients and survives 
   await report(world, "signed:a:request", "tell them I'm running late");
   expect(lateNotices(world, mark)).toHaveLength(0);
 
-  await expect(report(world, "signed:a:report")).resolves.toBe("handled");
+  // spec/groupLateArrival.md, "Relay one direct report for one current booked meeting": the same
+  // report with an apostrophe-less contraction is still the member's direct report.
+  await expect(report(world, "signed:a:report", "im running late.")).resolves.toBe("handled");
   const notices = lateNotices(world, mark);
   expect(notices.map(notice => notice.to).sort()).toEqual(["b", "c"]);
   expect(notices.every(notice => !notice.reply && notice.meta.proposalId === oppId)).toBe(true);
