@@ -87,15 +87,19 @@ test("reset invalidates a pending level check and clears a completed check when 
     await act(async () => { newCheck.resolve(checkResult("Fresh world result")); });
     await wait(() => (box.textContent ?? "").includes("Fresh world result"), "fresh result rendered");
 
-    // The sibling “New world” button (or another console) does not call Levels.reset.
-    // Its accepted world reset reaches this mounted Levels via the server reset delta.
     const reload = vi.spyOn(store, "load").mockImplementation(async () => { store.notify(); });
     try {
+      await act(async () => {
+        store["applyDelta"]({ version: 0, clock: { now: 0, start: 0, day: 1, playing: false, speed: 0, waitingForPlayer: false } });
+        await sleep(40);
+      });
+      expect(reload).toHaveBeenCalledOnce();
+      expect(box.textContent).toContain("Fresh world result");
       await act(async () => {
         store["applyDelta"]({ reset: true, version: 0, clock: { now: 0, start: 0, day: 1, playing: false, speed: 0, waitingForPlayer: false } });
         await sleep(40);
       });
-      expect(reload).toHaveBeenCalledOnce();
+      expect(reload).toHaveBeenCalledTimes(2);
       expect(box.textContent).not.toContain("Fresh world result");
     } finally {
       reload.mockRestore();

@@ -32,7 +32,7 @@ export function Levels() {
   useEffect(() => { store.getJSON<Level[]>("/api/levels").then(setLevels).catch(() => {}); }, []);
   const checkGeneration = useRef(0);
   const current = s.network?.scenario;
-  const panels = gamePanelsOf(s, result !== null && !!current);
+  const panels = gamePanelsOf(s, result !== undefined && !!current);
   const reset = (scenario: string | null) => {
     if (!canResetWorld(panels, scenario !== null)) return;
     if (!resetWorld(panels, scenario !== null).game.levelChecked) {
