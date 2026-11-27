@@ -581,9 +581,9 @@ export class AntiFraudEngine {
     ) {
       status = "quarantined";
       adjudicationDueIso = new Date(nowMs + OP_Q_ADJUDICATION_SLA_MS).toISOString();
-    } else if (input.vestingTier <= 1) {
+    } else if (input.vestingTier === 0) {
       status = "vesting";
-      reasons.push("tier0_tier1_zero_instant_release");
+      reasons.push("tier0_zero_instant_release");
     } else if (input.vestingTier === 2 && nowMs < unlockMs) {
       status = "vesting";
       reasons.push("tier2_vesting_hold_active");
