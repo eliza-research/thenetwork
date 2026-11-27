@@ -27,7 +27,7 @@ const makeDiff = (a: EngineRunSummary, b: EngineRunSummary): RunDiff => ({
 
 test("Runs compare drops hidden picks on a same-count filter swap and closes with fewer than two visible runs", async () => {
   const runOldA = makeRun("old-a", NOW - 3 * DAY, 4);
-  const runShared = makeRun("shared", NOW - 2 * DAY, 5);
+  const runShared = { ...makeRun("shared", runOldA.at, runOldA.proposals), city: "sf" as const };
   const runNewA = makeRun("new-a", NOW - 1 * DAY, 6);
   const runNewB = makeRun("new-b", NOW - 6 * 3_600_000, 7);
   const byId = new Map([runOldA, runShared, runNewA, runNewB].map(r => [r.id, r]));
@@ -76,15 +76,17 @@ test("Runs compare drops hidden picks on a same-count filter swap and closes wit
   store.setFilters({ range: "7d", borough: "all", members: "all", origin: "all", stateGroup: "all" });
   store.setUI({ drawer: "engine", drawerOpen: true, focus: null });
   const btn = (label: string) => [...box.querySelectorAll("button")].find(b => (b.textContent ?? "").includes(label));
-  const checkbox = (proposals: number) =>
-    [...box.querySelectorAll("label")].find(l => (l.textContent ?? "").includes(`${proposals} proposals`))?.querySelector('button[role="checkbox"]') as HTMLButtonElement | null;
+  const checkbox = (city: string) =>
+    [...box.querySelectorAll("label")].find(l => (l.textContent ?? "").includes(`· ${city} · 4 proposals`))?.querySelector('button[role="checkbox"]') as HTMLButtonElement | null;
   try {
     await act(async () => { root.render(createElement(Drawer)); });
     await wait(() => !!btn("Compare two"), "Compare two button");
+    expect(btn("· NYC · 4 proposals")).toBeDefined();
+    expect(btn("· SF · 4 proposals")).toBeDefined();
     await act(async () => { btn("Compare two")!.click(); });
     await wait(() => (box.textContent ?? "").includes("Pick two runs."), "Pick two prompt");
-    await act(async () => { checkbox(4)!.click(); });
-    await act(async () => { checkbox(5)!.click(); });
+    await act(async () => { checkbox("NYC")!.click(); });
+    await act(async () => { checkbox("SF")!.click(); });
     await wait(() => (box.textContent ?? "").includes("4 proposals") && (box.textContent ?? "").includes("A:"), "diff shown");
 
     await act(async () => {

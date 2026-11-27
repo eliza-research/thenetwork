@@ -304,7 +304,7 @@ function Engine() {
   };
   const answer = (loaded: boolean) => setCompare(c => (canReceiveDiff(panelsWith(c.model)) ? { ...c, model: receiveDiff(panelsWith(c.model), loaded).runs } : c));
   const pair = compare.ids.length === maxRunPicks ? compare.ids.map(id => runs.find(r => r.id === id)!).filter(Boolean).sort((a, b) => a.at - b.at) : [];
-  const runText = (r: EngineRunSummary) => <>{stamp(r.at)} <span className="text-muted-foreground">· {r.proposals} proposals{r.shadow ? " · shadow" : ""}</span></>;
+  const runText = (r: EngineRunSummary) => <>{stamp(r.at)} <span className="text-muted-foreground">{r.city ? `· ${r.city.toUpperCase()} ` : ""}· {r.proposals} proposals{r.shadow ? " · shadow" : ""}</span></>;
   return (
     <div className="flex gap-4">
       <div className="flex w-60 shrink-0 flex-col gap-1">
