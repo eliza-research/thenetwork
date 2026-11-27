@@ -1727,11 +1727,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
       unresolved.push(m);
     } else mark(matching, m.at, m.end - m.at, true, !!m.group);
   }
-  // A stated lower bound ("after 6pm works", "Saturday after 12pm works") limits the
-  // offered times the member accepts: a slot at or before an "after" bound (before a
-  // "from" bound) is not booked. A named time whose offered slots all miss the bound
-  // matches no offered time, so it is unresolved like any other unmatched named time.
-  let lowerBoundApplied = false, lowerBoundConflict = false;
+  let lowerBoundApplied = false, lowerBoundConflict = false, lowerBoundBlocked = false;
   for (const bound of t.matchAll(/\b(after|from)\s+(?:(\d{1,2})(?::([0-5]\d))?\s*([ap]m)|(noon|midnight))\b/g)) {
     const at = bound.index!, end = at + bound[0].length;
     if (!memberChoiceAt(at) || inConditionalClause(t, at) || probeTimeIsRefused(t, at, end)) continue;
@@ -1741,6 +1737,15 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
       || (bound[1] === "after" ? slot.minute > minute : slot.minute >= minute);
     const violating = offered.filter(slot => !satisfies(slot)).map(slot => slot.key);
     if (!violating.length) continue;
+    let segFrom = 0;
+    for (const m of t.slice(0, at).matchAll(/[.,;!?\n]|\bbut\b/g)) segFrom = m.index! + m[0].length;
+    const segEndRel = t.slice(end).search(/[.!?\n]/);
+    const segment = t.slice(segFrom, segEndRel < 0 ? t.length : end + segEndRel);
+    if (/\b(?:until|till|before|by|to)\s+(?:\d{1,2}(?::[0-5]\d)?\s*[ap]m|noon|midnight)\b|\bno later than\b/.test(segment)
+      || /\b(?:at work|i work|working|booked|shift|meeting|plans|away|busy|unavailable)\b/.test(segment)) {
+      lowerBoundBlocked = true;
+      continue;
+    }
     lowerBoundApplied = true;
     const boundClause = clauseAt(t, at, end - at);
     for (let i = unresolved.length - 1; i >= 0; i--) {
@@ -1831,6 +1836,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     && open.length && !unresolved.length && exceptSpan !== undefined
     && exceptSpanIsOnlyExcludedTimes(exceptSpan)) return explicitYes(open);
   if (c.why === "mixed" || c.why === "conditional" || c.why === "hedged") return unclear;
+  if (lowerBoundBlocked) return { ...unclear, why: "slot" };
   if (explicitTimesOnly) {
     if (EXPLICIT_NO_OFFERED_TIMES.test(t)) return { answer: "no", keys: [], why: "refusal" };
     if (t.includes("?") || unresolved.length || [...pos].some(key => !all.includes(key)) || UNBOUND_OFFER_DATE.test(t) || UNBOUND_OFFER_CLOCK.test(t)) return { ...unclear, why: "slot" };
