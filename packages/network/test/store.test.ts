@@ -185,7 +185,10 @@ test("bounded help holds a home request privately and refuses an out-of-scope ta
   expect(w.net.exportState().requests).toContainEqual(expect.objectContaining({ category: "social", desireId: "parent_friends" }));
   const ordinary = ["looking for other parents to chat with at school pickup", "I used to babysit, looking for new friends",
     "I'm a sitter, looking for new friends", "looking for a coke float buddy",
-    "looking for someone to go with me to volunteer at the hospital", "looking for a rabbit sitter"];
+    "looking for someone to go with me to volunteer at the hospital", "looking for a rabbit sitter",
+    "looking for someone to watch my son's soccer game with", "I drop off my daughter at school every morning, looking for a running partner after",
+    "I have to pick up my kids at 3, looking for people to grab coffee with before", "looking for someone to drive with me to my daughter's graduation",
+    "Find someone to watch movies with my kids and me.", "I will drive my kids to camp this summer, looking for new friends in August"];
   const refusedOrdinary: string[] = [];
   for (const request of ordinary) {
     await w.say("requester", request);

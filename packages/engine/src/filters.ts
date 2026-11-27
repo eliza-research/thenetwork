@@ -190,10 +190,11 @@ export const HOME_ENTRY_PATTERNS: readonly string[] = [
 ];
 
 const SAFETY_RES = SAFETY_RISK_PATTERNS.map(p => new RegExp(p));
+const ASKED_OF_OTHER = "\\b(?:(?<!\\b(?:i|we)\\s+(?:\\w+\\s+)?(?:need|have|had|want|used|like|love|try|plan|get|got|going)\\s+)to|(?<!\\b(?:i|we)\\s+)(?:can|could|would|will))\\s+";
 const CHILD_TASK_RES = [
-  ...SAFETY_RES.filter((_, i) => SAFETY_RISK_PATTERNS[i]!.includes(CHILD)),
-  new RegExp(`\\b(baby[\\s-]?sit\\w*|driv(e|ing))\\b(\\W+\\w+){0,3}?\\W+(my|our|your|their|his|her)\\s+${CHILD}`),
-];
+  `${ASKED_OF_OTHER}(?:watch|baby[\\s-]?sit|mind|look after|care for|stay with|pick up|drop off|drive|tutor|teach|coach|mentor)\\b(?:\\W+(?!(?:to|with|at|for|from)\\b)\\w+){0,2}?\\W+(?:my|our|your|their|his|her)\\s+${CHILD}(?!')`,
+  `${ASKED_OF_OTHER}(?:pick\\s+${CHILD_PICKUP}(?!')\\s+up|drop\\s+${CHILD_PICKUP}(?!')\\s+off)\\b`,
+].map(p => new RegExp(p));
 const normalized = (text: string) => text.toLowerCase().replace(/_/g, " ").replace(/[\u2018\u2019]/g, "'");
 const riskCache = new WeakMap<EngineConfig, RegExp[]>();
 const escapeRe = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
