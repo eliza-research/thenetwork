@@ -2136,7 +2136,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (this.opts.onboardingRequests && c.kind === "people_request" && c.desireId && c.category !== "social" && !m.minor) this.openRequest(m, c, { quiet: true });
       return;
     }
-    this.learnDietary(m, body, !isRequest);
+    this.learnDietary(m, body);
     if (!isRequest && m.stage !== "active") this.activate(m); // onboarding stalled; carry on
     if (isRequest && m.stage !== "active") { this.activate(m); m.awaiting = undefined; }
     if (c.kind === "people_request" && (!m.minor || this.teenAdmitted(m.id))) return this.openRequest(m, c, {});
@@ -2663,7 +2663,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /** A dietary or allergen fact the member states in their own text joins the stored red lines the engine reads. */
-  private learnDietary(m: MemberState, body: string, readBack: boolean): boolean {
+  private learnDietary(m: MemberState, body: string): boolean {
     const tags = ownDietaryTags(body);
     if (!tags.length) return false;
     m.learned.redLines ??= new Set();
@@ -2671,7 +2671,16 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!fresh.length) return false;
     fresh.forEach(t => m.learned.redLines!.add(t));
     this.dirty = true;
-    if (readBack) this.send(m, "Got it — I saved that to your profile and I'll keep it in mind for places I suggest.", { type: "info" }, "reply");
+    const fact: Record<string, string> = {
+      severe_allergen: "that you have a severe allergy",
+      gluten_free: "that you're gluten-free",
+      vegetarian: "that you're vegetarian",
+      vegan: "that you're vegan",
+      halal: "that you keep halal",
+      kosher: "that you keep kosher",
+    };
+    const named = fresh.map(t => fact[t] ?? "that").join(" and ");
+    this.send(m, `Got it — I saved to your profile ${named}, and I'll keep it in mind for places I suggest.`, { type: "info" }, "reply");
     this.ctx.log("learned", { memberId: m.id, interests: [], skills: [], desires: [], redLines: fresh });
     return true;
   }

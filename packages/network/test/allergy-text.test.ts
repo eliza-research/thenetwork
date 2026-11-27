@@ -42,7 +42,7 @@ describe("allergy texted after onboarding", () => {
     const from = w.mark();
     await w.say("a", "I'm allergic to peanuts.");
     expect(w.net.memberRedLines("a")).toContain("severe_allergen");
-    expect(w.to("a", from).map(s => s.body).join(" ")).toMatch(/saved/);
+    expect(w.to("a", from).map(s => s.body).join(" ")).toMatch(/saved to your profile that you have a severe allergy/);
 
     await w.say("a", "I keep halal.");
     expect(w.net.memberRedLines("a")).toContain("halal");
@@ -66,6 +66,11 @@ describe("allergy texted after onboarding", () => {
       "I heard the new place is vegan.",
       "She is vegan and I eat with her often.",
       "My coworker keeps kosher.",
+      "I'm vegan-ish.",
+      "I'm vegan-curious.",
+      "I'm kosher-style, not strict.",
+      "I'm vegetarian on Mondays.",
+      "I'm allergic to nuts lol jk",
     ]) {
       await w.say("a", text);
       expect(w.net.memberRedLines("a")).toEqual([]);
@@ -86,5 +91,10 @@ describe("allergy texted after onboarding", () => {
 
     await w.say("b", "I keep kosher, have a shellfish allergy.");
     expect(w.net.memberRedLines("b")).toContain("kosher");
+
+    const from = w.mark();
+    await w.say("b", "Find me a climbing partner, I'm vegetarian.");
+    expect(w.net.memberRedLines("b")).toContain("vegetarian");
+    expect(w.to("b", from).map(s => s.body).join(" ")).toMatch(/saved to your profile that you're vegetarian/);
   });
 });

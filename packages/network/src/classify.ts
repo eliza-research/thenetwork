@@ -859,6 +859,10 @@ export function extractRedLineTags(body: string): string[] {
 
 const DIETARY_BLOCK = /\b(?:if|unless|would|could|should|maybe|might|wish|whether|suppose|hypothetically|thinking|considering|planning|used to|formerly|outgrew|grew out|no longer|said|says|told|asked|texted|wrote|posted|friend|friends|sister|brother|mom|dad|mother|father|partner|wife|husband|son|daughter|kid|kids|child|children|roommate|coworker|he|she|they|him|her|them|his|hers|their)\b/;
 const DIETARY_NEGATED = /\b(?:not|n't|never|no)\b[^,;]{0,24}\b(?:allerg\w*|celiac|coeliac)\b|\bnot\b[^,;]{0,24}\banymore\b|\bno\s+(?:food\s+)?allergies\b|\bno\s+dietary\s+restrictions\b/;
+/** A hedge, a weekday-only diet or a joke in the sentence keeps it from saving a standing tag. */
+const DIETARY_HEDGE = /\b(?:jk|just\s+kidding|just\s+joking|joking|not\s+strict|not\s+strictly)\b|\bj\/k\b|\bon\s+(?:mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|sundays?|weekdays?|weekends?)\b|\b(?:mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|sundays?|weekdays?|weekends?)\s+only\b/;
+/** A hyphen hedge right after the diet word ("vegan-ish", "kosher-style") is not the diet itself. */
+const DIETARY_HYPHEN_HEDGE = /^\s*-\s*(?:ish|curious|style)\b/;
 const OWN_DIETARY_RULES: readonly [string, RegExp][] = [
   ["severe_allergen", /\b(?:i(?:'m| am)\s+(?:severely\s+|seriously\s+)?allergic\s+to\s+(?:peanuts?|tree\s+nuts?|nuts|shellfish|sesame|dairy|eggs?|fish|soy)|i\s+(?:have|carry)\s+an?\s+(?:severe\s+|serious\s+|deadly\s+|life[- ]?threatening\s+)?(?:peanut|tree\s+nut|nut|shellfish|food)?\s*allerg(?:y|ies)|i(?:'m| am)\s+anaphylactic|i\s+carry\s+an?\s+epi[- ]?pen)\b/],
   ["gluten_free", /\b(?:i(?:'m| am)\s+(?:strictly\s+)?(?:gluten[- ]?free|celiac|coeliac)|i\s+eat\s+(?:only\s+)?gluten[- ]?free|i\s+have\s+(?:celiac|coeliac)(?:\s+disease)?|i\s+have\s+an?\s+gluten\s+(?:allergy|intoleran\w*))\b/],
@@ -875,13 +879,17 @@ export function ownDietaryTags(body: string): string[] {
   const tags = new Set<string>();
   for (const s of sentencesOf(t)) {
     if (/\?\s*$/.test(s.text.trim())) continue;
+    if (DIETARY_HEDGE.test(s.text)) continue;
     let ownSeen = false;
     for (const clause of s.text.split(/[,;:]|\b(?:but|though|however)\b/)) {
       const continuation = ownSeen && /^\s*(?:and\s+)?(?:have|keep|eat|need|carry|am)\b/.test(clause);
       if (DIETARY_BLOCK.test(clause) || DIETARY_NEGATED.test(clause)) continue;
       const text = continuation ? `i ${clause.trim().replace(/^and\s+/, "")}` : clause;
       let matched = false;
-      for (const [tag, rx] of OWN_DIETARY_RULES) if (rx.test(text)) { tags.add(tag); matched = true; }
+      for (const [tag, rx] of OWN_DIETARY_RULES) {
+        const m = rx.exec(text);
+        if (m && !DIETARY_HYPHEN_HEDGE.test(text.slice(m.index + m[0].length))) { tags.add(tag); matched = true; }
+      }
       if (matched) ownSeen = true;
     }
   }
