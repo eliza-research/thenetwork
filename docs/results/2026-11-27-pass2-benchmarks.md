@@ -132,7 +132,7 @@ Measured output:
   - `packages/core/src/generated/friendIntroAge.ts` (`groupAgeAllowed`, `teenPlaceAllowed`, `teenRosterSizeAllowed`)
   - `packages/core/src/generated/memberAge.ts`, `matchLane.ts`, `probeReply.ts`, `candidateSearch.ts`, `pairValue.ts`, `mutualOpenness.ts`, `cofounderIntent.ts`, `workIntroChannel.ts`
 - **Hand-written code (Pass 2 runtime shells, indexing, caching, tests, and simulation runner):**
-  - `packages/core/src/{cities,venues,time}.ts`, `packages/db/migrations/0100_venues_and_arrivals_hardening.sql`
+  - `packages/core/src/{cities,venues,time}.ts`, `packages/db/migrations/0101_venues_and_arrivals_hardening.sql`
   - `packages/network/src/{geo,venue-manager,meetup-coord,network,store,extract,copy}.ts`, `packages/network/service/{service,serve,relay-endpoint,review-judge}.ts`
   - `packages/engine/src/{spatialIndex,humanVector}.ts`, `packages/engine/src/packs/slop/{extract,clef}.ts`, `packages/engine/src/packs/network/judgeContext.ts`
   - `packages/platform/src/{venue-store,venue-provider,apps}.ts`, `apps/marketing/src/{cities,bandit,cli}.ts`, `apps/observatory/**`
