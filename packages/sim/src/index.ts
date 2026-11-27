@@ -1,4 +1,9 @@
 export { clamp01, hash32, Rng } from "@thenetwork/core";
+export { median, medianOrNull, pairKey, safeDiv, sigmoid, topShare } from "./stats.ts";
+export {
+  extractiveGroupDrag, HUMOR_REGISTERS, SPEND_TIERS, spendTierIndex,
+  type DunbarOpenSlots, type HumorRegister, type SpendComfortTier,
+} from "./strata-shared.ts";
 export * from "./time.ts";
 export * from "./taxonomy.ts";
 export * from "./persona.ts";

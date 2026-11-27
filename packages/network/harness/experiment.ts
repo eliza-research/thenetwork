@@ -93,25 +93,31 @@ export function fairnessOf(population: readonly string[], proposals: ReadonlyMap
   };
 }
 
-export async function nycPersonas(dir = DATA_DIR): Promise<Persona[]> {
-  const ps = (await loadPersonas(dir)).filter(p => p.homeCity === "nyc");
-  for (const p of ps) ensurePersonaStrata(p, "nyc-v1");
+export async function cityPersonas(city: import("@thenetwork/core").City, dir = DATA_DIR): Promise<Persona[]> {
+  const ps = (await loadPersonas(dir)).filter(p => p.homeCity === city);
+  for (const p of ps) ensurePersonaStrata(p, `${city}-v1`);
   return ps;
+}
+
+export async function nycPersonas(dir = DATA_DIR): Promise<Persona[]> {
+  return cityPersonas("nyc", dir);
 }
 
 const EXPERIMENT_ARMS = ["push_baseline", "push_v2", "consent"] as const;
 type ExperimentArm = typeof EXPERIMENT_ARMS[number];
 
-export async function runArm(arm: ExperimentArm, o: { days: number; seed: number; network?: NetworkOptions; liveAsks?: boolean; timeAware?: boolean; simPlans?: boolean; capital?: boolean; paraphrase?: boolean; onRecords?: (records: RunRecord[]) => void }): Promise<ArmResult> {
-  const personas = await nycPersonas();
+export async function runArm(arm: ExperimentArm, o: { days: number; seed: number; cities?: import("@thenetwork/core").City[]; personas?: Persona[]; network?: NetworkOptions; liveAsks?: boolean; timeAware?: boolean; simPlans?: boolean; capital?: boolean; paraphrase?: boolean; onRecords?: (records: RunRecord[]) => void }): Promise<ArmResult> {
+  const activeCities = o.cities && o.cities.length > 0 ? o.cities : ["nyc" as const];
+  const personas = o.personas ?? (activeCities.length === 1 && activeCities[0] === "nyc"
+    ? await nycPersonas()
+    : (await loadPersonas(DATA_DIR)).filter(p => activeCities.includes(p.homeCity)).map(p => { ensurePersonaStrata(p, "multi-v1"); return p; }));
   const manifest = await fileAt(`${DATA_DIR}/manifest.json`).json();
   const start = manifest.snapshotNow as number;
   const cap = arm === "consent" && o.capital ? capitalWiring() : undefined;
   const consent = arm === "push_baseline" ? undefined : new ConsentNetwork({
     seed: o.seed, inlineJudge: simulatedReviewJudge({ exceptions: false }), ...(arm === "push_v2" ? { probes: false, selective: false, growth: false, plans: false } : {}), ...o.network,
     ...(cap ? { onLedger: cap.onLedger, capital: cap.capital } : {}),
-    // The NYC world is one market.
-    engine: { cities: ["nyc"], ...o.network?.engine },
+    engine: { cities: activeCities, ...o.network?.engine },
   });
   const simPlans = o.simPlans ?? (arm === "consent" && o.network?.plans !== false);
   const matchingEnabled = simulatedMatchingMode(true, o.network?.matchingEnabled === false) === "SimulationMatchingOpen";

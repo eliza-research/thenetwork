@@ -299,7 +299,8 @@ function decideProposal(ctx: PersonaContext, msg: SimMessage, worldStart: number
     const same = (xs: MemberId[]) => xs.length === others.length && xs.every(x => others.includes(x));
     if (Object.values(mem.proposals).some(x => x.decision === "decline" && x.category === category && x.decidedAt !== undefined && ctx.now - x.decidedAt < DECLINE_MEMORY_DAYS * DAY && same(x.others))) decision = "decline";
   }
-  if (decision === "accept" && p.hidden.capacity < 0.4 && rng.bool(0.15)) decision = "counter";
+  const timeConstrained = p.hidden.capacity < 0.4 || (!p.hidden.scripted && (p.hidden.workIntensity ?? 0) >= 0.78);
+  if (decision === "accept" && timeConstrained && rng.bool(0.15)) decision = "counter";
   // Scenario hook: a forced flaker says yes now and cancels later.
   if (mem.forceFlake && !mem.forceFlakeFor) decision = "accept";
   const plannedShow = decision !== "decline" && mine.wouldShow;

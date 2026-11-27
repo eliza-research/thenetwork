@@ -18,6 +18,7 @@ import { ACTIVITIES, activityById, type ActivityType } from "../../engine/src/pa
 import { candidateSlots, type TimeSlot } from "../../engine/src/attention.ts";
 import { PAIR_CHEMISTRY_SD, type Oracle } from "./oracle.ts";
 import { ensurePersonaStrata, type Persona } from "./persona.ts";
+import { extractiveGroupDrag } from "./strata-shared.ts";
 import { Rng, clamp01, hash32 } from "@thenetwork/core";
 import { desireById, INTERESTS } from "./taxonomy.ts";
 import { CITY_TZ, localParts } from "./time.ts";
@@ -129,7 +130,7 @@ export function planEnjoyment(oracle: Oracle, seed: number | string, plan: { id:
     const sp = strata.get(p.id)!;
     const chemI = others.length ? others.reduce((s, o) => s + oracle.pairEnjoyment(p, o, "social", allAdults ? { groupSize: ps.length, sharedGuild: ps.length >= 3 && ps.length <= 6, objective: plan.activity } : {}).e + chem(p.id, o.id), 0) / others.length : 0;
     const maxOtherExtract = others.reduce((m, o) => Math.max(m, strata.get(o.id)!.extractionPropensity), 0);
-    const extractDrag = allAdults && ps.length >= 3 && maxOtherExtract >= 0.65 && sp.extractionPropensity < 0.4 ? 0.18 : 0;
+    const extractDrag = allAdults ? extractiveGroupDrag(sp.extractionPropensity, maxOtherExtract, ps.length, 0.65, 0.4, 0.18) : 0;
     const A = 0.4 + 0.6 * activityLike(p, plan.activity);
     const C = Math.max(0.2, Math.min(1.1, 0.35 + chemI));
     const fam = others.some(o => p.relationships.some(r => r.to === o.id && r.type !== "ex"));

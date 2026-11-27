@@ -1,47 +1,8 @@
-// pnpm run sim: the single validation command. Offline and deterministic: no LLM, no network, and no
-// Postgres except the safety block's Postgres scenarios, which run on a database of their own on the
-// dev cluster (:54339) when it is there and are tracked as skipped when it is not. Each block runs
-// simulations (or scores hand-written corpora) and checks named gates; the run exits 1 when any
-// BLOCKING gate fails. Tracked gates are printed and never fail the run.
-//
-//   pnpm run sim                      evals, onboard, network, slop, relay, peon, friends, clef (the CI run)
-//   pnpm run sim --only slop          one block (repeatable or comma-separated: --only network,peon)
-//   pnpm run sim --skip matching     run the default blocks except matching, which CI runs in parallel
-//   pnpm run sim --only matching --matching-pack friends  run one matching pack with the pinned workload
-//   pnpm run sim --quick              fewer seeds and shorter runs; quality gates become tracked
-//   pnpm run sim --with-capital       also the network-capital block (slow: 32 paired seeds; nightly)
-//   pnpm run sim --json out.json      write every gate to a file
-//   pnpm run sim --only onboard --llm  also the onboarding LLM arm (keeps the provider keys; tracked only; never in CI)
-//
-// Blocks and pinned seeds (see each block's header in scripts/sim/):
-//   evals     evals/ corpora: consent replies, abuse, teen ages, wants, areas, negations, core replies, opt-out, leak guard
-//   network   ConsentNetwork in the NYC world: invariants (seed 3, 10 days), consent vs push (seeds 1-3, 21 days) with the
-//             attention and plans invariants, NYC scenarios, sim scenarios at pass^3, networkPack conformance
-//   slop      slop.date: seeds 13-16, 4 weeks, 300 per city; safety + passing quality gates block, known-failing gates tracked;
-//             the relay inside the world (adversary personas after the reveal) and the photo in the probe; the slop-live arm (the
-//             service's slop wiring and onboarding loop in the sim World, the stand-in review judge, seeds 21-22, 30 days)
-//   relay     the relay policy (engine relay.ts): evals/relay/ corpora and scripted scenarios; photo-in-probe rule
-//   peon      peon.biz: seeds 13-16, 8 weeks; the official gates block
-//   peon-seats peon job postings to seats to hiring managers through the ConsentNetwork (#9): intake, routing, double opt-in, exclusions, restart, close
-//   friends   friends.help: seeds 5-8, 8 weeks, 400 personas; the official gates block
-//   safety    slop.date photos (adults only, consent, rater), bans on every rejoin path, report -> hold -> ban, the reviewer
-//             of record, SLA alerts and the bias monitor; its Postgres scenarios block when the dev Postgres runs, else tracked
-//   ops       monitoring, alerts, cost, the console's deploy guards and image contents; on the dev Postgres (tracked):
-//             the ops tables under row-level security and the backup drill (dump, restore, equal row counts)
-//   pipeline  the real message path: signed Blooio webhook -> NetworkService -> Postgres (a throwaway database on the dev
-//             cluster, :54339) -> persisted queue -> Blooio adapter -> fake provider, simulated clock; skipped (tracked) without Postgres
-//   pipeline-slop the slop world on that path: 30 simulated days of joins, review, probes, dates, STOP, leave, a restart,
-//             quiet hours, the person cap and a ban mid-relay through signed webhooks; skipped (tracked) without Postgres
-//   audit     regression gates for the 2026-10-08 audit's P0/P1 fixes that lost their tests in the cleanup
-//             (docs/audit/2026-10-09-platform-status.md): NYC world (seed 3, 9 days), trust, plans, the four
-//             site builds, the sites' API client and the Cloudflare deploy guard (refused commands only)
-//   matching  the generic match core on planted worlds, engine only, per pack and lane: exactness against brute force
-//             (seeds 1-10, N 100/200/400), pair-check cost (N 1k/10k/100k), parity, reciprocity, stability, circles
-//   onboard   slop.date onboarding: evals/slop-onboarding corpus gates (rules only) and the persona onboarding sim (seeds 13-14)
-//   clef      P2 Clef weight fitting: synthetic labels from the slop world's hidden appearance (seed 1, 2,000 labels
-//             per dimension); ranking recovery, weights file round trip, extraction, bias audit, labelling page
-//   five-city 5-city (sf, nyc, la, chicago, miami) conversation-script suite through ConsentNetwork, VenueManager & MeetupCoordinator (--transcripts prints transcripts)
-//   capital   network capital: 32 paired seeds, 90 days (--with-capital or --only capital)
+import { spawn } from "node:child_process";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { availableParallelism, tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { writePath } from "../packages/core/src/runtime/files.ts";
 import { Block, type Gate } from "./sim/gate.ts";
 
@@ -66,6 +27,7 @@ const BLOCKS: Record<string, (b: Block, o: Opts) => Promise<void>> = {
   capital: async (b, o) => (await import("./sim/capital.ts")).capitalBlock(b, o),
 };
 const DEFAULT = ["evals", "onboard", "network", "matching", "slop", "relay", "peon", "peon-seats", "friends", "clef", "five-city", "safety", "ops", "pipeline", "pipeline-slop", "audit"];
+const PG_BLOCKS = new Set(["safety", "ops", "pipeline", "pipeline-slop", "audit"]);
 
 const argv = process.argv.slice(2);
 const values = (k: string) => argv.flatMap((x, i) => (x === `--${k}` ? (argv[i + 1] ?? "").split(",") : x.startsWith(`--${k}=`) ? x.slice(k.length + 3).split(",") : []));
@@ -78,12 +40,11 @@ const run = only.length ? only : [...DEFAULT, ...(argv.includes("--with-capital"
 if (!run.length) { console.error("Select at least one simulation block."); process.exit(2); }
 const matchingPacks = values("matching-pack").filter(Boolean);
 const matchingPack = matchingPacks[0];
+const isWorker = argv.includes("--worker");
 const opts: Opts = { quick: argv.includes("--quick"), llm: argv.includes("--llm"), transcripts: argv.includes("--transcripts"), matchingPack };
 
-// Simulations never call a model: fail fast if any code path tries. The one exception is the
-// onboarding LLM arm, which runs only with --llm (and only in the onboard block).
-if (opts.llm) console.log("--llm: provider keys kept for the onboarding LLM arm (tracked gates only)");
-else for (const k of ["OPENAI_API_KEY", "SURPLUS_API_KEY", "CLOUDFLARE_AI_TOKEN"]) delete process.env[k];
+if (opts.llm && !isWorker) console.log("--llm: provider keys kept for the onboarding LLM arm (tracked gates only)");
+if (!opts.llm) for (const k of ["OPENAI_API_KEY", "SURPLUS_API_KEY", "CLOUDFLARE_AI_TOKEN"]) delete process.env[k];
 
 if (argv.some(arg => arg === "--matching-pack" || arg.startsWith("--matching-pack="))) {
   const { MATCHING_PACKS } = await import("./sim/matching.ts");
@@ -93,24 +54,178 @@ if (argv.some(arg => arg === "--matching-pack" || arg.startsWith("--matching-pac
   }
 }
 
+interface ShardSpec {
+  readonly block: string;
+  readonly matchingPack?: string;
+  readonly pg: boolean;
+}
+
+interface ShardResult {
+  readonly spec: ShardSpec;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly gates: Gate[];
+  readonly elapsedSec: number;
+  readonly exitCode: number;
+}
+
+function workerCount(): number {
+  if (isWorker) return 1;
+  const raw = process.env.SIM_WORKERS;
+  if (raw !== undefined) {
+    const parsed = Number(raw);
+    if (Number.isInteger(parsed) && parsed >= 1) return parsed;
+  }
+  return Math.min(4, Math.max(1, availableParallelism() - 1));
+}
+
+async function buildShards(blocks: readonly string[]): Promise<ShardSpec[]> {
+  const shards: ShardSpec[] = [];
+  for (const name of blocks) {
+    if (name === "matching" && opts.matchingPack === undefined) {
+      const { MATCHING_PACKS } = await import("./sim/matching.ts");
+      for (const pack of MATCHING_PACKS) shards.push({ block: "matching", matchingPack: pack, pg: false });
+    } else {
+      shards.push({ block: name, ...(name === "matching" && opts.matchingPack ? { matchingPack: opts.matchingPack } : {}), pg: PG_BLOCKS.has(name) });
+    }
+  }
+  return shards;
+}
+
+function runChildShard(spec: ShardSpec, scriptPath: string, jsonPath: string): Promise<ShardResult> {
+  const childArgs = [
+    "--import", "tsx", "--conditions", "eliza-source", scriptPath,
+    "--worker", "--only", spec.block,
+    ...(spec.matchingPack ? ["--matching-pack", spec.matchingPack] : []),
+    ...(opts.quick ? ["--quick"] : []),
+    ...(opts.llm ? ["--llm"] : []),
+    ...(opts.transcripts ? ["--transcripts"] : []),
+    "--json", jsonPath,
+  ];
+  const t0 = performance.now();
+  return new Promise(resolve => {
+    const child = spawn(process.execPath, childArgs, {
+      cwd: process.cwd(),
+      env: { ...process.env, SIM_WORKERS: "1" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const outChunks: Buffer[] = [];
+    const errChunks: Buffer[] = [];
+    child.stdout.on("data", chunk => outChunks.push(chunk));
+    child.stderr.on("data", chunk => errChunks.push(chunk));
+    child.on("close", async code => {
+      const elapsedSec = Math.round((performance.now() - t0) / 100) / 10;
+      let gates: Gate[] = [];
+      try {
+        const parsed = JSON.parse(await readFile(jsonPath, "utf8")) as { gates?: Gate[] };
+        if (Array.isArray(parsed.gates)) gates = parsed.gates;
+      } catch (err) {
+        gates = [{
+          block: spec.block,
+          name: `${spec.block}${spec.matchingPack ? ` (${spec.matchingPack})` : ""} worker completed`,
+          pass: false,
+          blocking: true,
+          detail: `exit ${code ?? -1}: ${String(err)}`,
+        }];
+      }
+      resolve({
+        spec,
+        stdout: Buffer.concat(outChunks).toString("utf8"),
+        stderr: Buffer.concat(errChunks).toString("utf8"),
+        gates,
+        elapsedSec,
+        exitCode: code ?? 1,
+      });
+    });
+  });
+}
+
+async function runPooled(shards: readonly ShardSpec[], limit: number): Promise<Map<ShardSpec, ShardResult>> {
+  const results = new Map<ShardSpec, ShardResult>();
+  const scriptPath = fileURLToPath(import.meta.url);
+  const workDir = await mkdtemp(join(tmpdir(), "sim-pool-"));
+  try {
+    const nonPg = shards.filter(s => !s.pg);
+    const pg = shards.filter(s => s.pg);
+    let nextIdx = 0;
+    const workers = Array.from({ length: Math.min(limit, Math.max(1, nonPg.length)) }, async () => {
+      while (nextIdx < nonPg.length) {
+        const idx = nextIdx++;
+        const spec = nonPg[idx]!;
+        const jsonPath = join(workDir, `nonpg-${idx}.json`);
+        results.set(spec, await runChildShard(spec, scriptPath, jsonPath));
+      }
+    });
+    const pgLane = (async () => {
+      for (let i = 0; i < pg.length; i++) {
+        const spec = pg[i]!;
+        const jsonPath = join(workDir, `pg-${i}.json`);
+        results.set(spec, await runChildShard(spec, scriptPath, jsonPath));
+      }
+    })();
+    await Promise.all([...workers, pgLane]);
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
+  return results;
+}
+
 const all: Gate[] = [];
 const timings: Record<string, number> = {};
 const t0 = performance.now();
-for (const name of run) {
-  console.log(`\n== ${name}${opts.quick ? " (quick)" : ""}`);
-  const b = new Block(name);
-  const t = performance.now();
-  try { await BLOCKS[name]!(b, opts); } catch (e) { b.gate(`${name} block ran to completion`, false, (e as Error)?.stack ?? String(e)); }
-  timings[name] = Math.round((performance.now() - t) / 100) / 10;
-  all.push(...b.gates);
-  const failed = b.gates.filter(g => g.blocking && !g.pass).length, tracked = b.gates.filter(g => !g.blocking).length;
-  console.log(`-- ${name}: ${b.gates.length - tracked - failed}/${b.gates.length - tracked} blocking gates pass${tracked ? `, ${tracked} tracked` : ""} (${timings[name]}s)`);
+const workers = workerCount();
+const shards = workers > 1 ? await buildShards(run) : [];
+const usePool = workers > 1 && shards.length > 1;
+
+if (usePool) {
+  const results = await runPooled(shards, workers);
+  for (const name of run) {
+    const blockShards = shards.filter(s => s.block === name);
+    console.log(`\n== ${name}${opts.quick ? " (quick)" : ""}`);
+    let blockGates: Gate[] = [];
+    let blockSec = 0;
+    for (const s of blockShards) {
+      const r = results.get(s)!;
+      const cleanedOut = r.stdout
+        .split("\n")
+        .filter(line => !line.startsWith(`== ${name}`) && !line.startsWith(`-- ${name}:`) && !/^(?:PASS|FAIL): \d+\/\d+ blocking gates/.test(line))
+        .join("\n")
+        .trim();
+      if (cleanedOut) console.log(cleanedOut);
+      const cleanedErr = r.stderr
+        .split("\n")
+        .filter(line => !line.startsWith(`  FAIL [${name}]`))
+        .join("\n")
+        .trim();
+      if (cleanedErr) console.error(cleanedErr);
+      blockGates.push(...r.gates);
+      blockSec = Math.max(blockSec, r.elapsedSec);
+    }
+    timings[name] = Math.round(blockSec * 10) / 10;
+    all.push(...blockGates);
+    const failed = blockGates.filter(g => g.blocking && !g.pass).length;
+    const tracked = blockGates.filter(g => !g.blocking).length;
+    console.log(`-- ${name}: ${blockGates.length - tracked - failed}/${blockGates.length - tracked} blocking gates pass${tracked ? `, ${tracked} tracked` : ""} (${timings[name]}s)`);
+  }
+} else {
+  for (const name of run) {
+    if (!isWorker) console.log(`\n== ${name}${opts.quick ? " (quick)" : ""}`);
+    const b = new Block(name);
+    const t = performance.now();
+    try { await BLOCKS[name]!(b, opts); } catch (e) { b.gate(`${name} block ran to completion`, false, (e as Error)?.stack ?? String(e)); }
+    timings[name] = Math.round((performance.now() - t) / 100) / 10;
+    all.push(...b.gates);
+    const failed = b.gates.filter(g => g.blocking && !g.pass).length, tracked = b.gates.filter(g => !g.blocking).length;
+    if (!isWorker) console.log(`-- ${name}: ${b.gates.length - tracked - failed}/${b.gates.length - tracked} blocking gates pass${tracked ? `, ${tracked} tracked` : ""} (${timings[name]}s)`);
+  }
 }
 
 const failed = all.filter(g => g.blocking && !g.pass);
 const total = Math.round((performance.now() - t0) / 100) / 10;
-console.log(`\n${failed.length ? "FAIL" : "PASS"}: ${all.filter(g => g.blocking).length - failed.length}/${all.filter(g => g.blocking).length} blocking gates, ${all.filter(g => !g.blocking && !g.pass).length} tracked off target, ${total}s (${Object.entries(timings).map(([k, v]) => `${k} ${v}s`).join(", ")})`);
-for (const g of failed) console.error(`  FAIL [${g.block}] ${g.name}${g.detail ? `: ${g.detail.split("\n")[0]}` : ""}`);
+if (!isWorker) {
+  console.log(`\n${failed.length ? "FAIL" : "PASS"}: ${all.filter(g => g.blocking).length - failed.length}/${all.filter(g => g.blocking).length} blocking gates, ${all.filter(g => !g.blocking && !g.pass).length} tracked off target, ${total}s (${Object.entries(timings).map(([k, v]) => `${k} ${v}s`).join(", ")})`);
+  for (const g of failed) console.error(`  FAIL [${g.block}] ${g.name}${g.detail ? `: ${g.detail.split("\n")[0]}` : ""}`);
+}
 const out = values("json").find(Boolean);
 if (out) await writePath(out, JSON.stringify({ quick: opts.quick, blocks: run, timings, total, gates: all }, null, 1));
 process.exit(failed.length ? 1 : 0);
