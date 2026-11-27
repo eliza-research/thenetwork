@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CITY_TZ,
+  DRINKING_VALUE_NON_DRINKER_TOKENS,
   extractMemberRedLines,
   LAUNCH_CITIES,
   registerCity,
@@ -73,5 +74,21 @@ describe("core foundation: timeZoneOf and canonical red lines", () => {
 
     const clean = extractMemberRedLines([{ tags: ["coffee", "books"], value: "likes cafes" }]);
     expect(clean.hasVenueRedLines).toBe(false);
+
+    const unrelatedNeverNone = extractMemberRedLines([
+      { tags: ["slop:smoking:never", "slop:has_kids:none", "slop:wants_kids:never"], value: "none" },
+    ]);
+    expect(unrelatedNeverNone.strictSober).toBe(false);
+    expect(unrelatedNeverNone.nonDrinker).toBe(false);
+    expect(unrelatedNeverNone.alcoholOptional).toBe(false);
+    expect(unrelatedNeverNone.hasVenueRedLines).toBe(false);
+
+    const qualifiedDrink = extractMemberRedLines([
+      { tags: ["drinking:none", "slop:dealbreaker:heavy_drinker"], value: "" },
+    ]);
+    expect(qualifiedDrink.strictSober).toBe(false);
+    expect(qualifiedDrink.nonDrinker).toBe(true);
+    expect(DRINKING_VALUE_NON_DRINKER_TOKENS.has("never")).toBe(true);
+    expect(DRINKING_VALUE_NON_DRINKER_TOKENS.has("none")).toBe(true);
   });
 });

@@ -32,10 +32,21 @@ export const STRICT_SOBER_TOKENS: ReadonlySet<string> = new Set([
 export const NON_DRINKER_TOKENS: ReadonlySet<string> = new Set([
   "non_drinker",
   "nondrinker",
+  "slop:drinking:never",
+  "slop:drinking:none",
+  "drinking:never",
+  "drinking:none",
+  "alcohol:none",
+  "slop:dealbreaker:heavy_drinker",
+  "dealbreaker:heavy_drinker",
+  ...STRICT_SOBER_TOKENS,
+]);
+
+export const DRINKING_VALUE_NON_DRINKER_TOKENS: ReadonlySet<string> = new Set([
   "never",
   "none",
-  "slop:drinking:never",
-  "heavy_drinker",
+  "non_drinker",
+  "nondrinker",
   ...STRICT_SOBER_TOKENS,
 ]);
 
