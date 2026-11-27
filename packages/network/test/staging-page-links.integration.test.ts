@@ -55,6 +55,16 @@ test.skipIf(!pgAvailable)("a staging backend links the photo upload page and the
     const res = await service.fetch(new Request(`http://localhost${TURN_PATH}`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body }));
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ outcome: "handled", replies: [expect.stringContaining(`open ${ORIGIN}/phone and sign in`)] });
+
+    const reportId = "staging-phone-link-2";
+    const report: TurnRequest = { app: "slop", from: phone, messageId: reportId, text: "I changed my number to 415-555-0199.", channel: "blooio", transport: "imessage", receivedAt: clock.now(), to: null };
+    const reportBody = JSON.stringify(report);
+    const reportHeaders = await svcSign(SECRET, { method: "POST", path: TURN_PATH, id: reportId, body: reportBody, nowS: Math.floor(clock.now() / 1000) });
+    const reportRes = await service.fetch(new Request(`http://localhost${TURN_PATH}`, { method: "POST", headers: { ...reportHeaders, "content-type": "application/json" }, body: reportBody }));
+    expect(reportRes.status).toBe(200);
+    expect(await reportRes.json()).toMatchObject({ outcome: "handled", replies: [expect.stringContaining(`open ${ORIGIN}/phone and sign in`)] });
+    expect((await service.accounts.personFor(phone))?.id).toBe(joined.membership.personId);
+    expect(await service.accounts.personFor("+14155550199")).toBeUndefined();
   } finally {
     await service.close();
     await sql.close();
