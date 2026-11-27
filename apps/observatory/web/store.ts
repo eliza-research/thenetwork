@@ -179,6 +179,7 @@ export const OPEN = new Set(["PROPOSED", "IN_REVIEW", "INVITING", "PARTIALLY_ACC
 export const INACTIVE_PARTICIPANT_STATUS: ReadonlySet<ParticipantStatus> = new Set(["unavailable", "declined", "cancelled_with_notice"]);
 import { DAY, HOUR } from "../../../packages/core/src/clock.ts";
 export { DAY, HOUR };
+const DEFAULT_CITY_FILTER = "all";
 export const DEFAULT_FILTERS: Filters = { range: "7d", borough: "all", members: "all", origin: "all", stateGroup: "all" };
 
 export function cityDayStart(t: number, city: City = "nyc"): number {
@@ -321,7 +322,7 @@ class ObsStore {
   requests: ObsRequest[] = [];
   citiesList: ObsCitySummary[] = [];
   venuesList: ObsVenue[] = [];
-  selectedCity: City | "all" = "all";
+  selectedCity: City | "all" = DEFAULT_CITY_FILTER;
   /** The signed-in staff member (GET /api/me). Undefined until it answers. */
   me?: Me;
   /** This viewer's active PII reveals (wall-clock expiry). */
@@ -410,8 +411,14 @@ class ObsStore {
     this.setUI({ filters: { ...this.ui.filters, ...patch } });
     writeJSON(`obs.filters.v1.${this.mode}`, this.ui.filters);
   }
-  resetFilters() { this.setFilters({ ...DEFAULT_FILTERS }); }
-  filtersChanged() { const f = this.ui.filters; return (Object.keys(DEFAULT_FILTERS) as FilterKey[]).some(k => f[k] !== DEFAULT_FILTERS[k]); }
+  resetFilters() {
+    this.selectedCity = DEFAULT_CITY_FILTER;
+    this.setFilters({ ...DEFAULT_FILTERS });
+  }
+  filtersChanged() {
+    const f = this.ui.filters;
+    return this.selectedCity !== DEFAULT_CITY_FILTER || (Object.keys(DEFAULT_FILTERS) as FilterKey[]).some(k => f[k] !== DEFAULT_FILTERS[k]);
+  }
   toast(text: string, tone: "info" | "good" | "bad" = "info") { this.setUI({ toast: { text, tone, at: Date.now() } }); }
 
   /** Every request names the app (the server checks the role for it). */
