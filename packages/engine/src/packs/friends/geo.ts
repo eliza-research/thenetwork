@@ -15,13 +15,13 @@
 // ferry, +25). Venues are chosen to minimize the group's LONGEST trip, not the average (fairer to the
 // outer boroughs; domain research C4). Copied in spirit from packages/network/src/geo.ts
 // (travelMinutes, meetingSpot), which the engine cannot import.
-import type { City, MemberId } from "@thenetwork/core";
+import { CITIES, estimateTravelMinutes, findNeighborhood, getCity, type City, type MemberId } from "@thenetwork/core";
 import { preferPlanVenue } from "../../../../core/src/generated/planFormation.ts";
 import { km, type Borough } from "@thenetwork/core/src/geo.ts";
 export { km, type Borough };
 import type { Venue } from "../network/activities.ts";
 
-/** friends.help's one market (NYC first). */
+/** Default friends.help market when a caller omits a city. */
 export const FRIENDS_CITY: City = "nyc";
 
 export interface Neighborhood {
@@ -33,6 +33,8 @@ export interface Neighborhood {
   weight: number;
   /** Minutes from a door here to a moving train (walk + wait). */
   access: number;
+  /** City id (absent defaults to "nyc"). */
+  city?: City;
 }
 
 const N = (name: string, borough: Borough, lat: number, lng: number, zone: string, weight: number, access: number): Neighborhood =>
@@ -185,6 +187,127 @@ export function chooseVenue(venues: readonly Venue[], homes: ReadonlyMap<MemberI
     let fitsEveryone = true;
     for (const [id, home] of homes) {
       const travel = transitMinutes(home, at);
+      minutes[id] = travel;
+      worst = Math.max(worst, travel);
+      sum += travel;
+      fitsEveryone &&= withinLimit(id, travel);
+    }
+    const mean = homes.size ? sum / homes.size : 0;
+    const winsTieBreak = !best || worst < best.worst || (worst === best.worst && (mean < best.mean || (mean === best.mean && v.id < best.venue.id)));
+    if (!best || preferPlanVenue(fitsEveryone, bestFitsEveryone, winsTieBreak)) {
+      best = { venue: v, minutes, worst, mean };
+      bestFitsEveryone = fitsEveryone;
+    }
+  }
+  return best;
+}
+
+const slugId = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+
+export function cityNeighborhoods(city: City): readonly Neighborhood[] {
+  if (city === "nyc") return NEIGHBORHOODS;
+  const spec = getCity(city);
+  if (!spec) return [];
+  return spec.neighborhoods.map(n => ({
+    id: `${city}_${slugId(n.name)}`,
+    name: n.name,
+    borough: "Manhattan" as Borough,
+    lat: n.lat,
+    lng: n.lng,
+    zone: n.zone,
+    weight: Math.max(1, n.hubSupply / 2),
+    access: Math.max(4, Math.min(12, spec.baseMinutes)),
+    city,
+  }));
+}
+
+export function cityZones(city: City): readonly string[] {
+  if (city === "nyc") return [...new Set(NEIGHBORHOODS.map(n => n.zone))];
+  return getCity(city)?.zones.map(z => z.id) ?? [];
+}
+
+export function hoodForCity(city: City, x: string | undefined): Neighborhood | undefined {
+  if (!x) return undefined;
+  if (city === "nyc") {
+    const exact = hood(x);
+    if (exact) return exact;
+  }
+  const found = findNeighborhood(city, x);
+  if (!found) return city === "nyc" ? undefined : cityNeighborhoods(city).find(n => n.id === x || n.name.toLowerCase() === x.toLowerCase());
+  const spec = getCity(city);
+  return {
+    id: city === "nyc" ? slugId(found.name) : `${city}_${slugId(found.name)}`,
+    name: found.name,
+    borough: "Manhattan" as Borough,
+    lat: found.lat,
+    lng: found.lng,
+    zone: found.zone,
+    weight: Math.max(1, found.hubSupply / 2),
+    access: Math.max(4, Math.min(12, spec?.baseMinutes ?? 8)),
+    city,
+  };
+}
+
+export function transitMinutesInCity(city: City, a: Neighborhood, b: Neighborhood): number {
+  if (city === "nyc" && NEIGHBORHOOD.has(a.id) && NEIGHBORHOOD.has(b.id)) {
+    return transitMinutes(a, b);
+  }
+  return estimateTravelMinutes(city, a.name, b.name);
+}
+
+export function cityVenues(
+  city: City,
+  activities: readonly { id: string; family: string; label: string; setting: string; ageMin: number; costTier: 0 | 1 | 2 | 3; allAges: boolean; adultPlans: boolean }[],
+): Venue[] {
+  if (city === "nyc") return nycVenues(activities);
+  const spec = CITIES[city] ?? getCity(city);
+  if (!spec) return [];
+  const hoods = cityNeighborhoods(city);
+  const out: Venue[] = [];
+  for (const a of activities) {
+    if (FRIENDS_EXCLUDED_ACTIVITIES.has(a.id)) continue;
+    const dens = FAMILY_DENSITY[a.family] ?? 0.4;
+    for (const n of hoods) {
+      const p = Math.min(0.95, dens * (n.weight >= 3 ? 1.5 : 1));
+      if ((h32(`${city}|${a.id}|${n.id}`) % 1000) / 1000 >= p) continue;
+      out.push({
+        id: `v_${city}_${a.id}_${n.id}`,
+        city,
+        area: n.name,
+        name: `${a.label.replace(/^(a|an) /, "")} spot in ${n.name}`,
+        activities: [a.id],
+        priceTier: a.costTier,
+        ageMin: a.ageMin,
+        hours: HOURS[a.setting === "outdoor" ? "outdoor" : "indoor"]!,
+        public: true,
+        source: "curated",
+        allAges: a.allAges,
+        adultPlans: a.adultPlans,
+      });
+    }
+  }
+  return out;
+}
+
+export function chooseVenueForCity(
+  city: City,
+  venues: readonly Venue[],
+  homes: ReadonlyMap<MemberId, Neighborhood>,
+  ok: (v: Venue) => boolean = () => true,
+  withinLimit: (id: MemberId, minutes: number) => boolean = () => true,
+): { venue: Venue; minutes: Record<MemberId, number>; worst: number; mean: number } | undefined {
+  if (city === "nyc") return chooseVenue(venues, homes, ok, withinLimit);
+  let best: { venue: Venue; minutes: Record<MemberId, number>; worst: number; mean: number } | undefined;
+  let bestFitsEveryone = false;
+  for (const v of venues) {
+    if (v.city !== city || !ok(v)) continue;
+    const at = hoodForCity(city, v.area);
+    if (!at) continue;
+    const minutes: Record<MemberId, number> = {};
+    let worst = 0, sum = 0;
+    let fitsEveryone = true;
+    for (const [id, home] of homes) {
+      const travel = transitMinutesInCity(city, home, at);
       minutes[id] = travel;
       worst = Math.max(worst, travel);
       sum += travel;

@@ -28,9 +28,14 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
     try {
       const apps = await sql`select id, join_mode, min_join_age, min_match_age from platform.apps order by id`;
       expect(apps.map((a: any) => `${a.id}:${a.join_mode}:${a.min_join_age}:${a.min_match_age}`)).toEqual(["friends:open:13:18", "ntwrk:invite:13:18", "peon:open:13:18", "slop:open:13:18"]);
-      // Migration 0011: the slop and peon packs are wired, so an admin may switch their matching on (the stored switch still starts off).
+      // Migration 0011 + 0098: 4 apps x 5 launch cities; NYC rows keep matching_enabled = true, new city rows start false.
       const nets = await sql`select id, matching_enabled from platform.networks order by id`;
-      expect(nets.map((n: any) => `${n.id}:${n.matching_enabled}`)).toEqual(["friends:nyc:true", "ntwrk:nyc:true", "peon:nyc:true", "slop:nyc:true"]);
+      expect(nets.map((n: any) => `${n.id}:${n.matching_enabled}`)).toEqual([
+        "friends:chicago:false", "friends:la:false", "friends:miami:false", "friends:nyc:true", "friends:sf:false",
+        "ntwrk:chicago:false", "ntwrk:la:false", "ntwrk:miami:false", "ntwrk:nyc:true", "ntwrk:sf:false",
+        "peon:chicago:false", "peon:la:false", "peon:miami:false", "peon:nyc:true", "peon:sf:false",
+        "slop:chicago:false", "slop:la:false", "slop:miami:false", "slop:nyc:true", "slop:sf:false",
+      ]);
       // A write with no app.app_id lands in the legacy app (ntwrk) until that setting is removed; then it fails.
       await sql`insert into network.members (id, name, home_city) values ('legacy', 'L', 'nyc')`;
       expect((await sql`select app_id from network.members where id = 'legacy'`)[0].app_id).toBe("ntwrk");
@@ -104,7 +109,9 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
       expect(await appIds(db`select app_id from network.staff_audit`)).toEqual(["friends"]);
       expect((await db`select id, app_id from network.network_state`).map((x: any) => `${x.id}/${x.app_id}`)).toEqual(["friends:nyc/friends"]);
       expect((await db`select id from platform.apps order by id`).map((x: any) => x.id)).toEqual(["friends", "ntwrk", "peon", "slop"]);
-      expect((await db`select id from platform.networks where app_id = 'friends'`).map((x: any) => x.id)).toEqual(["friends:nyc"]);
+      expect((await db`select id from platform.networks where app_id = 'friends' order by id`).map((x: any) => x.id)).toEqual([
+        "friends:chicago", "friends:la", "friends:miami", "friends:nyc", "friends:sf",
+      ]);
       // Nothing in the catalog of this database still names buddies: roles' grants, policies, views.
       const left = await db`select 'policy ' || policyname as x from pg_policies where policyname like '%buddies%'
         union all select 'view ' || viewname from pg_views where viewname like '%buddies%'
@@ -170,7 +177,7 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
       const catalog = ["network.public_events", "network.public_event_imports"];
       const personAgeView = "platform.observatory_person_ages";
       const allowed = (role: string, rel: string): boolean => {
-        if (["platform.apps", "platform.cities", "platform.networks"].includes(rel)) return true;
+        if (["platform.apps", "platform.cities", "platform.networks", "platform.venues"].includes(rel)) return true;
         const app = role === "network_observatory" ? "ntwrk" : role.slice("network_observatory_".length);
         if (apps.includes(app) && [
           `network.network_state_console_${app}`, `network.outbound_evidence_${app}`, `network.booking_receipts_${app}`,

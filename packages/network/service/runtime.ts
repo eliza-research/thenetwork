@@ -17,7 +17,7 @@
 //    network-service-2).
 //  - Nothing here reads another app's rows; the person cap across apps (service.ts) goes through a
 //    SECURITY DEFINER function that returns ids only.
-import { CITY_TZ, DAY, LeakGuard } from "@thenetwork/core";
+import { CITY_TZ, DAY, isCity, LeakGuard } from "@thenetwork/core";
 import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { calendarBridgeOwnerAllowed, calendarSchedulingPurpose } from "../../core/src/generated/calendarFreeBusy.ts";
@@ -48,7 +48,7 @@ import {
   contextActiveItemCount, contextFacetEligible, contextFacetKept, contextFacetSizeLimit, contextItemLabel, contextMatchItemShown, contextMode, contextSinglePlayer,
   initial as initialContext, step as stepContext, type ContextMode,
 } from "../../core/src/generated/sharedContext.ts";
-import { bookedReminderKey, bookingNoticeReceiptKey, ConsentNetwork, gatheringRepeatOppPrefix, gatheringRepeatProbeKey, meetingFeedbackKey, pendingSlopIntroductions, presentInNyc, relayDispatchCheck, replacementProbeKey, reviewApproved, reviewStateOf, storedTeenStop, storedCalendarOwnerOptedIn, storedInviteNoticePartyCurrent, storedLateArrivalCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
+import { bookedReminderKey, bookingNoticeReceiptKey, ConsentNetwork, gatheringRepeatOppPrefix, gatheringRepeatProbeKey, meetingFeedbackKey, pendingSlopIntroductions, presentInCity, presentInNyc, relayDispatchCheck, replacementProbeKey, reviewApproved, reviewStateOf, storedTeenStop, storedCalendarOwnerOptedIn, storedInviteNoticePartyCurrent, storedLateArrivalCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
 import { interruptionFeedbackKey } from "../src/interruption-feedback.ts";
 import { planProbeReceiptSlot, probeReplyReceiptKey } from "../src/network.ts";
 import { appTagFacet } from "../src/apphooks.ts";
@@ -264,7 +264,7 @@ export class NetworkRuntime {
     this.pg = new PgStore(host.sql, o.id);
     this.view = new StateView(o.id);
     this.store = this.serviceStore();
-    this.wiring = appWiring(o.app.id);
+    this.wiring = appWiring(o.app.id, isCity(o.city) ? o.city : "nyc");
     this.calendarScheduling = o.network?.calendarFreeBusy ? undefined : o.calendarScheduling;
     const w = this.wiring;
     this.engineConfig = { cities: o.cities.filter(c => c === o.city), ...w.engine, ...o.network?.engine };
@@ -490,7 +490,12 @@ export class NetworkRuntime {
     if (!managerQuestionDeliveryCurrent(managerProbe, slot?.kind === "probe" && slot.oppId === opp.id, slot?.probeReceiptId === contact.id)) return false;
     const original = opp.sentAt?.[memberId];
     const deadline = managerProbe ? managerQuestionDeadline(opp.deadline, original !== undefined, original ?? 0, probeResponseMs(false, false)) : opp.deadline;
-    const phase = reveal ? opp.stage === "scheduled" && now < (opp.meetingAt ?? 0) && opp.bookedTold?.includes(memberId) === true
+    const phase = reveal
+      ? opp.stage === "scheduled" && (opp.workIntro
+        ? (opp.workIntro.videoSlotAt !== undefined
+          ? now < opp.workIntro.videoSlotAt
+          : !opp.feedbackSent && now < (opp.workIntro.followupDueAt ?? (opp.meetingAt ?? 0) + 7 * DAY))
+        : now < (opp.meetingAt ?? 0)) && opp.bookedTold?.includes(memberId) === true
       : opp.stage === "probing" && now < deadline && opp.contacted.includes(memberId) && statuses.get(memberId) === "probing";
     const accepted = (id: MemberId) => statuses.get(id) === (reveal ? "yes" : "available") && opp.contacted.includes(id);
     const approved = reviewApproved(review);
@@ -1775,7 +1780,8 @@ export class NetworkRuntime {
         oversized: facets.some(f => f.length > contextFacetSizeLimit),
       });
       if (ready.phase !== "ContextReady") return null;
-      const present = presentInNyc(snapshot, member.id, snapshot.now, snapshot.now + 6 * DAY);
+      const present = presentInCity(snapshot, member.id, isCity(this.city) ? this.city : "nyc", snapshot.now, snapshot.now + 6 * DAY);
+      const matchingOpen = present && (this.matchingAllowed || this.city === "nyc");
       const ageEligible = canBeMatched(await accounts.lowestAge(e164, binding.person));
       await this.importStored();
       const minor = this.net.exportState().members.find(m => m.id === memberId)?.minor === true;
@@ -1792,7 +1798,7 @@ export class NetworkRuntime {
       const activeItems = shown.slice(0, contextActiveItemCount(shown.length));
       return {
         firstName, city: member.homeCity, state, stateFrom: participation.active?participation.window!.from:null, stateUntil: participation.active?participation.window!.until:null, facets,
-        activeItems: activeItems.length ? activeItems : null, singlePlayer: contextSinglePlayer(present, present && !minor && ageEligible),
+        activeItems: activeItems.length ? activeItems : null, singlePlayer: contextSinglePlayer(matchingOpen, matchingOpen && !minor && ageEligible),
       };
     });
   }

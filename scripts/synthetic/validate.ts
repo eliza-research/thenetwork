@@ -130,7 +130,13 @@ const H = new Map(hidden.map(h => [h.memberId, h]));
 // ---- 5. city / neighborhood validity -------------------------------------------------------------
 {
   const e: string[] = [];
-  const valid = { sf: neighborhoodSet("sf"), nyc: neighborhoodSet("nyc") };
+  const valid: Record<City, Set<string>> = {
+    sf: neighborhoodSet("sf"),
+    nyc: neighborhoodSet("nyc"),
+    la: neighborhoodSet("la"),
+    chicago: neighborhoodSet("chicago"),
+    miami: neighborhoodSet("miami"),
+  };
   for (const m of members) {
     if (!valid[m.homeCity].has(m.profile.neighborhood)) e.push(`${m.id}: neighborhood ${m.profile.neighborhood} not in ${m.homeCity}`);
     const b = NEIGHBORHOODS[m.homeCity].find(n => n.name === m.profile.neighborhood)?.borough;

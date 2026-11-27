@@ -11,7 +11,7 @@
 // Random and greedy read only the snapshot (via visible.ts) for filters and planning.
 import type { MemberId } from "@thenetwork/core";
 import type { Rng } from "@thenetwork/core";
-import type { SlopCity } from "./geo.ts";
+import { SLOP_CITIES, type SlopCity } from "./geo.ts";
 import { isSafe } from "./oracle.ts";
 import { SLOTS, type DateActivity } from "./persona.ts";
 import { slotIndex, visibleDealbreakerHit, visibleMutualCities, type VisibleProfile } from "./visible.ts";
@@ -112,7 +112,7 @@ export function oracleOptimalMatcher(w: SlopWorld, opts: { draws?: number } = {}
       for (let i = 0; i < pool.length; i++) for (let j = i + 1; j < pool.length; j++) {
         const a = pool[i]!, b = pool[j]!;
         if (ex.pairBlocked(a.id, b.id) || !O.trueEligible(a, b, ctx.week)) continue;
-        const city = (["sf", "nyc", "la"] as SlopCity[]).find(c => O.presentIn(a, c, ctx.week) && O.presentIn(b, c, ctx.week));
+        const city = SLOP_CITIES.find(c => O.presentIn(a, c, ctx.week) && O.presentIn(b, c, ctx.week));
         if (!city) continue;
         const acts = a.hidden.activities.filter(x => b.hidden.activities.includes(x));
         const activity: DateActivity = acts[0] ?? a.hidden.activities[0]!;

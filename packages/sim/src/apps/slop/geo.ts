@@ -7,22 +7,28 @@
 // five boroughs, San Francisco and Greater Los Angeles; source and coverage documented there), so
 // the world and the engine always agree. Personas draw their home zip from SIM_HOME_ZIPS (the
 // original 53-zip table), which keeps seeded worlds unchanged as the lookup table grows.
+import { getCity, type City } from "@thenetwork/core";
 import { SIM_HOME_ZIPS, ZIPS as ENGINE_ZIPS } from "@thenetwork/engine/src/packs/slop/zips.ts";
 
-export type SlopCity = "sf" | "nyc" | "la";
-export const SLOP_CITIES: readonly SlopCity[] = ["sf", "nyc", "la"];
+export type SlopCity = City;
+export const SLOP_CITIES: readonly SlopCity[] = ["sf", "nyc", "la", "chicago", "miami"];
+export const SLOP_DEFAULT_CITIES: readonly SlopCity[] = ["sf", "nyc", "la"];
 
 export interface ZipInfo { zip: string; city: SlopCity; area: string; lat: number; lon: number }
 
 export const ZIPS: readonly ZipInfo[] = ENGINE_ZIPS.map(z => ({ zip: z.zip, city: z.market as SlopCity, area: z.area, lat: z.lat, lon: z.lon }));
 
 export const zipInfo = new Map(ZIPS.map(z => [z.zip, z]));
-/** The home zips personas in `city` are drawn from (SIM_HOME_ZIPS, in their original order). */
-export const zipsIn = (city: SlopCity): ZipInfo[] => SIM_HOME_ZIPS.map(z => zipInfo.get(z)!).filter(z => z.city === city);
-/** Every known zip in `city` (the full lookup table). */
+export const zipsIn = (city: SlopCity): ZipInfo[] => {
+  const sim = SIM_HOME_ZIPS.map(z => zipInfo.get(z)!).filter(z => z && z.city === city);
+  if (sim.length > 0) return sim;
+  const all = allZipsIn(city);
+  if (all.length > 0) return all;
+  const spec = getCity(city);
+  return spec ? [{ zip: spec.anchorZip, city, area: spec.neighborhoods[0]?.name ?? spec.name, lat: spec.center.lat, lon: spec.center.lng }] : [];
+};
 export const allZipsIn = (city: SlopCity): ZipInfo[] => ZIPS.filter(z => z.city === city);
-/** The zip a visitor to `city` is assumed to meet in (downtown core); used for multi-city members and travelers. */
-export const CITY_ANCHOR_ZIP: Record<SlopCity, string> = { sf: "94103", nyc: "10003", la: "90026" };
+export const CITY_ANCHOR_ZIP: Record<SlopCity, string> = { sf: "94103", nyc: "10003", la: "90026", chicago: "60607", miami: "33131" };
 
 /** Great-circle distance in miles between two zip centroids (Infinity for an unknown zip). */
 export function zipMiles(a: string, b: string): number {

@@ -3,7 +3,7 @@
 // mode builds it from network.* rows. See docs/observatory.md.
 import type {
   Category, City, EdgeType, Facet, Intent, MemberId, OpportunityKind, OpportunityState,
-  ParticipationState, Presence, ScoreComponents,
+  ParticipationState, Presence, ScoreComponents, VenueCategory, VenuePriceTier, VenueStatus, WorkIntroChannel,
 } from "@thenetwork/core";
 import type { OracleSummary } from "@thenetwork/core";
 import type { SearchOutcome, SearchTally } from "@thenetwork/engine";
@@ -127,8 +127,17 @@ export interface ObsOpportunity {
   /** Engine run that produced it. */
   runId?: string;
   feedback?: { memberId: MemberId; text: string }[];
-  /** Where they'll meet (public NYC venue). */
-  venue?: { name: string; lat: number; lng: number };
+  venue?: {
+    id?: string; name: string; lat: number; lng: number;
+    neighborhood?: string; arrivalLandmark?: string; status?: VenueStatus;
+    category?: VenueCategory | string; priceTier?: VenuePriceTier;
+  };
+  backupVenue?: {
+    id?: string; name: string; lat: number; lng: number;
+    neighborhood?: string; arrivalLandmark?: string; status?: VenueStatus;
+  };
+  workIntroChannel?: WorkIntroChannel;
+  cityInfo?: { name: string; shortName: string; tz: string };
   /** Where it came from in the consent network (engine, request, plans, second_encounter...). */
   origin?: string;
   review?: ReviewInfo;
@@ -771,4 +780,44 @@ export interface BiasReportView {
     min: Record<BiasMetric, { group: string; ratio: number }>;
     alerts: { group: string; metric: BiasMetric; ratio: number }[];
   };
+}
+
+export interface ObsVenue {
+  id: string;
+  city: City;
+  neighborhood: string;
+  name: string;
+  address: string;
+  lat: number;
+  lng: number;
+  category: VenueCategory | string;
+  priceTier: VenuePriceTier;
+  status: VenueStatus;
+  yelpRating?: number;
+  yelpReviewCount?: number;
+  groupScore: number;
+  dateScore: number;
+  visitCount: number;
+  overallLikes: number;
+  overallDislikes: number;
+  closureReports: number;
+  arrivalLandmark: string;
+  personaStats: Record<string, { alpha: number; beta: number }>;
+  source?: string;
+  verifiedOpenAt?: number;
+}
+
+export interface ObsCitySummary {
+  id: City;
+  name: string;
+  shortName: string;
+  tz: string;
+  center: { lat: number; lng: number };
+  primaryMode: "transit" | "car" | "hybrid";
+  zones: { id: string; name: string }[];
+  neighborhoodCount: number;
+  memberCount: number;
+  opportunityCount: number;
+  venueCount: number;
+  activeVenueCount: number;
 }

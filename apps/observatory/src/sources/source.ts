@@ -1,7 +1,8 @@
 // A data source feeds the observatory: the simulated world (game mode) or Postgres (real mode).
+import type { City } from "@thenetwork/core";
 import type {
-  BiasReportView, ConfigInfo, ControlCommand, ControlResult, HeldQueue, HeldText, MemberDetail, MemberPhoto, MemberTimeline, Mode, ObsDelta, ObsState, OpportunityDetail, SafetyAction,
-  SafetyInfo, SearchHit,
+  BiasReportView, ConfigInfo, ControlCommand, ControlResult, HeldQueue, HeldText, MemberDetail, MemberPhoto, MemberTimeline, Mode,
+  ObsCitySummary, ObsDelta, ObsState, ObsVenue, OpportunityDetail, SafetyAction, SafetyInfo, SearchHit,
 } from "../types.ts";
 
 /**
@@ -65,6 +66,8 @@ export interface DataSource {
   heldDecision?(queue: HeldQueue, id: string, decision: "release" | "reject", reason: string, actor: string, photoReviewToken?:string): Promise<ControlResult>;
   /** Outbound agent messages and system events only; never what a member wrote (gap 18). */
   search(q: string, limit?: number): Promise<SearchHit[]>;
+  loadVenues?(city?: City): Promise<ObsVenue[]>;
+  loadCities?(): Promise<ObsCitySummary[]>;
   /** Deltas pushed as the source changes (about 4 per second while anything changes). */
   subscribe(fn: (d: ObsDelta) => void): () => void;
   dispose(): Promise<void>;

@@ -7,7 +7,7 @@
 //
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
-import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_LOOSE_TAIL, AGE_PART, AGE_STATED_BIRTHDAY, ARTICLE_AGE_END, NOT_DISTANT_BIRTHDAY, ageBeforeConjunction, agePartEvidenceOf, quoteStillOpen, canJoin, directAgreementIdiom, isMinor, birthKeyOfParts, normalizeAgeInitialism, ownYouthCue, parseReply, readParticipationWithdrawal, relayMinorAge, unquotedOwnAgeEvidence, validAge, type Category } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_LOOSE_TAIL, AGE_PART, AGE_STATED_BIRTHDAY, ARTICLE_AGE_END, CITIES, CITY_IDS, NOT_DISTANT_BIRTHDAY, ageBeforeConjunction, agePartEvidenceOf, findNeighborhood, quoteStillOpen, canJoin, directAgreementIdiom, isMinor, birthKeyOfParts, normalizeAgeInitialism, ownYouthCue, parseReply, readParticipationWithdrawal, relayMinorAge, unquotedOwnAgeEvidence, validAge, type Category, type City } from "@thenetwork/core";
 import { ageOnDay, birthKeyUsable, precedingBirthdayAge } from "../../core/src/generated/memberAge.ts";
 import { attendanceAbsences, otherAgeStated } from "./reports.ts";
 import { hasOrElseThreat } from "../../core/src/abuse.ts";
@@ -18,7 +18,7 @@ import { profileSkillMayLearn } from "../../core/src/generated/profileSkillLearn
 import { numericDateAmbiguous } from "../../core/src/generated/textEnrollment.ts";
 import { contactExtractionRisk } from "../../core/src/generated/trustLevel.ts";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
-import { NEIGHBORHOODS, VENUES } from "./geo.ts";
+import { allNeighborhoods, NEIGHBORHOODS, VENUES } from "./geo.ts";
 
 export type Abuse = "sales_spam" | "scam_money" | "contact_extraction" | "prompt_injection" | "harassment" | "mass_recruit";
 export type InboundKind =
@@ -651,7 +651,24 @@ const AREA_ALIASES: [RegExp, string][] = [
   [/\b(?<!east |spanish )harlem\b/, "Harlem"], [/\bchelsea\b/, "Chelsea"], [/\bgramercy\b/, "Gramercy"], [/\bflatiron\b/, "Flatiron"], [/\bmurray hill\b/, "Murray Hill"],
   [/\bmidtown\b/, "Midtown"], [/\btribeca\b/, "Tribeca"], [/\bchinatown\b/, "Chinatown"],
 ];
-const AREA_NAMES = new Set(NEIGHBORHOODS.map(n => n.name));
+const MULTI_CITY_ALIASES: [RegExp, string][] = (() => {
+  const out: [RegExp, string][] = [];
+  const skip = new Set(["midtown", "downtown", "uptown", "westside", "loop", "grove", "chinatown", "fidi", "financial district", "arts district", "hyde park", "south beach"]);
+  for (const city of CITY_IDS) {
+    if (city === "nyc") continue;
+    for (const n of CITIES[city].neighborhoods) {
+      const terms = [n.name.toLowerCase(), ...n.aliases.map(a => a.toLowerCase())];
+      for (const term of terms) {
+        if (term.length < 4 || skip.has(term)) continue;
+        const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+        out.push([new RegExp(`\\b${escaped}\\b`), n.name]);
+      }
+    }
+  }
+  return out;
+})();
+const ALL_AREA_ALIASES: [RegExp, string][] = [...AREA_ALIASES, ...MULTI_CITY_ALIASES];
+const AREA_NAMES = new Set(allNeighborhoods().map(n => n.name));
 const locationText = (text: string) => normText(text).replace(/[.\p{Pd}]/gu, " ").replace(/\s+/g, " ").trim();
 const locationNames = [
   ...VENUES.flatMap(venue => [venue.name, venue.name.split(/,| \(| at /)[0]!].map(name => [locationText(name), venue.neighborhood] as const)),
@@ -709,12 +726,18 @@ export interface Profile {
 }
 
 /** The neighborhood a text names as the sender's place, or { unknown } when it names a place the Network does not know. */
-export function areaOf(text: string): { area?: string; unknown?: boolean } {
+export function areaOf(text: string, city?: City): { area?: string; unknown?: boolean } {
   const t = normText(text).replace(/\bst\.\s*/g, "st ").replace(/\bft\.\s*(?=greene\b)/g, "ft ");
+  if (city && city !== "nyc") {
+    for (const s of sentencesOf(t)) {
+      const found = findNeighborhood(city, s.text);
+      if (found) return { area: found.name };
+    }
+  }
   for (const s of sentencesOf(t)) {
     // The first neighborhood named as home in the sentence ("between Greenpoint and Williamsburg": Greenpoint).
     let best: { at: number; name: string } | undefined;
-    for (const [rx, name] of AREA_ALIASES) {
+    for (const [rx, name] of ALL_AREA_ALIASES) {
       const m = rx.exec(s.text);
       if (!m || NOT_HOME.test(s.text.slice(0, m.index)) || !AREA_NAMES.has(name)) continue;
       // "Chelsea" is also a first name: only as a place ("in Chelsea", "near Chelsea").
@@ -817,18 +840,85 @@ export function extractProfile(body: string): Profile {
 
 export { explicitRepeatRequest, planAgainOf } from "@thenetwork/core";
 
+export type VenueIssue = "too_loud" | "too_crowded" | "too_expensive" | "bad_seating" | "wrong_vibe";
+
+export interface VenueFeedbackExtracted {
+  venueSentiment?: "liked" | "neutral" | "disliked";
+  venueClosed: boolean;
+  venueIssues: VenueIssue[];
+  notInterested: boolean;
+  mentionedVenue?: string;
+}
+
+const VENUE_CLOSED_RX = /\b(?:(?:it'?s|it is|it was|the place|the spot|the venue|they(?:'re| are| were)|bar|cafe|coffee shop|restaurant|bakery|brewery)\s+(?:is\s+|was\s+|were\s+)?(?:permanently\s+|temporarily\s+)?(?:closed|shut\s*down|boarded\s*up|out\s+of\s+business|locked\s*up|gone|shuttered)|(?:permanently|temporarily)\s+closed|shut\s*down|boarded\s*up|out\s+of\s+business|lights\s+were\s+off|closed\s+for\s+(?:a\s+private\s+event|renovations?))\b/;
+const VENUE_ISSUE_RX: [RegExp, VenueIssue][] = [
+  [/\b(?:too\s+loud|way\s+too\s+loud|couldn'?t\s+hear|could\s+not\s+hear|deafening|blasting\s+music|super\s+loud|really\s+loud|too\s+noisy)\b/, "too_loud"],
+  [/\b(?:too\s+crowded|way\s+too\s+crowded|super\s+crowded|crowded|packed|shoulder\s+to\s+shoulder|no\s+space|crazy\s+wait|hour\s+wait|long\s+line)\b/, "too_crowded"],
+  [/\b(?:too\s+expensive|overpriced|way\s+too\s+pricey|super\s+pricey|rip\s*-?\s*off|cost\s+a\s+fortune)\b/, "too_expensive"],
+  [/\b(?:bad\s+seating|nowhere\s+to\s+sit|no\s+seating|no\s+tables|standing\s+room\s+only|couldn'?t\s+get\s+a\s+table|uncomfortable\s+chairs)\b/, "bad_seating"],
+  [/\b(?:wrong\s+vibe|weird\s+vibe|bad\s+vibe|off\s+vibe|sketchy\s+(?:spot|place|area|bar)|dead\s+in\s+there|awkward\s+(?:spot|place|venue))\b/, "wrong_vibe"],
+];
+const VENUE_REJECT_RX = /\b(?:not\s+interested(?:\s+in\s+(?:that|this)\s+(?:spot|place|venue|bar|cafe))?|don'?t\s+like\s+(?:that|this)\s+(?:spot|place|venue|bar|cafe)|skip\s+(?:that|this)\s+(?:spot|place|venue)|never\s+going\s+back|wouldn'?t\s+go\s+back|rather\s+go\s+somewhere\s+else|different\s+(?:spot|place|venue)\s+next\s+time)\b/;
+const VENUE_LIKED_RX = /\b(?:(?:loved|liked|great|amazing|awesome|cool|nice|good|cozy|solid)\s+(?:the\s+)?(?:place|spot|venue|bar|cafe|patio|coffee\s+shop|brewery|food\s+hall)|(?:the\s+)?(?:place|spot|venue|bar|cafe|patio|brewery)\s+(?:was|is)\s+(?:great|amazing|awesome|nice|cool|good|cozy|solid|lovely))\b/;
+const VENUE_DISLIKED_RX = /\b(?:(?:hated|terrible|awful|horrible|worst)\s+(?:the\s+)?(?:place|spot|venue|bar|cafe|restaurant)|(?:the\s+)?(?:place|spot|venue|bar|cafe|restaurant)\s+(?:was|is)\s+(?:terrible|awful|horrible|bad|rough|meh|not\s+great|wasn'?t\s+great))\b/;
+const VENUE_MENTION_RX = /\b(?:went\s+to|checked\s+out|tried|met\s+at|loved|recommend)\s+([A-Z][A-Za-z0-9'&-]+(?:\s+[A-Z][A-Za-z0-9'&-]+){0,3})\b/;
+
+export function venueFeedbackOf(body: string): VenueFeedbackExtracted {
+  const t = body.toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'");
+  const venueClosed = VENUE_CLOSED_RX.test(t);
+  const venueIssues: VenueIssue[] = [];
+  for (const [rx, issue] of VENUE_ISSUE_RX) {
+    if (rx.test(t)) venueIssues.push(issue);
+  }
+  const notInterested = VENUE_REJECT_RX.test(t);
+  const disliked = venueClosed || venueIssues.length > 0 || notInterested || VENUE_DISLIKED_RX.test(t);
+  const liked = !disliked && VENUE_LIKED_RX.test(t);
+  const mentionsPlace = /\b(?:place|spot|venue|bar|cafe|coffee\s+shop|brewery|patio|food\s+hall|restaurant|park)\b/.test(t);
+  const venueSentiment: VenueFeedbackExtracted["venueSentiment"] =
+    disliked ? "disliked" : liked ? "liked" : mentionsPlace ? "neutral" : undefined;
+  const mention = VENUE_MENTION_RX.exec(body)?.[1]?.trim();
+  return {
+    ...(venueSentiment ? { venueSentiment } : {}),
+    venueClosed,
+    venueIssues,
+    notInterested,
+    ...(mention ? { mentionedVenue: mention } : {}),
+  };
+}
+
 /**
  * Sentiment of a feedback reply (for edges and reliability). Negations are checked first: "not
  * great", "wasn't great" and "didn't click" contain positive words but are bad meetings.
  */
-export function feedbackOf(body: string): { sentiment: "positive" | "neutral" | "negative"; selfNoShow: boolean; otherNoShow: boolean; again: boolean } {
+export function feedbackOf(body: string): {
+  sentiment: "positive" | "neutral" | "negative";
+  selfNoShow: boolean;
+  otherNoShow: boolean;
+  again: boolean;
+  venue: VenueFeedbackExtracted;
+  venueClosed: boolean;
+  venueIssues: VenueIssue[];
+  notInterested: boolean;
+  venueSentiment?: "liked" | "neutral" | "disliked";
+} {
   const t = body.toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'");
   const { self: selfNoShow, other: otherNoShow } = attendanceAbsences(t);
   const negative = otherNoShow || NEGATIVE_FEEDBACK.test(t);
   const positive = /great|clicked|loved|amazing|nice|easy to talk/.test(t) || /^we hit it off[.!]*$/.test(t.trim());
   const sentiment = negative ? "negative" : positive ? "positive" : "neutral";
   const again = !negative && /again|clicked/.test(t) && !/\b(wouldn'?t|won'?t|not|never)\b[^.!?]*\bagain\b/.test(t);
-  return { sentiment, selfNoShow, otherNoShow, again };
+  const venue = venueFeedbackOf(body);
+  return {
+    sentiment,
+    selfNoShow,
+    otherNoShow,
+    again,
+    venue,
+    venueClosed: venue.venueClosed,
+    venueIssues: venue.venueIssues,
+    notInterested: venue.notInterested,
+    ...(venue.venueSentiment ? { venueSentiment: venue.venueSentiment } : {}),
+  };
 }
 const NEGATIVE_FEEDBACK = /\b((was|is|it's|that's)?\s*(not|n't|wasn't|isn't)\s+(that |very |really |so |too |super )?(great|good|fun|nice|amazing)|not much in common|nothing in common|didn't (really |quite )?(click|connect|enjoy)|didn't have much|not (really )?for me|not my (thing|type)|awkward|terrible|rude|creepy|bummer|uncomfortable)/;
 

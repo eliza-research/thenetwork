@@ -3,7 +3,7 @@
 // free slots and tolerance, energy, holds and feedback. Unknown fields are undefined.
 import type { MemberId } from "@thenetwork/core";
 import { canBeMatched } from "@thenetwork/core";
-import { DEFAULT_TOLERANCE, FT, hood } from "@thenetwork/engine/src/packs/friends/index.ts";
+import { DEFAULT_TOLERANCE, FT, hoodForCity } from "@thenetwork/engine/src/packs/friends/index.ts";
 import { SLOTS, planActivitiesFor, type FriendsSlot } from "./persona.ts";
 import type { FriendsSnapshot } from "./snapshot.ts";
 
@@ -23,7 +23,7 @@ export function visibleProfiles(s: FriendsSnapshot): Map<MemberId, VisibleProfil
   const liked = new Map<MemberId, number>();
   for (const f of s.feedback) if (f.wouldMeetAgain) liked.set(f.about, (liked.get(f.about) ?? 0) + 1);
   for (const m of s.members) {
-    const h = hood(s.presence.find(p => p.memberId === m.id && p.type === "home")?.areas[0]);
+    const h = hoodForCity(m.homeCity, s.presence.find(p => p.memberId === m.id && p.type === "home")?.areas[0]);
     out.set(m.id, { id: m.id, claimedAge: m.age, adult: canBeMatched(m.age), home: h?.id, zone: h?.zone, borough: h?.borough, activities: [], free: [], tolerance: DEFAULT_TOLERANCE, held: held.has(m.id), liked: liked.get(m.id) ?? 0 });
   }
   for (const f of s.facets) {

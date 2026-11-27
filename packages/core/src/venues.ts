@@ -43,6 +43,14 @@ import {
   type ArrivalRelaySafeInput,
   type FollowupSendInput,
 } from "./generated/meetupCoordination.ts";
+import {
+  canSendFollowup as canSendFollowupLegacy,
+  computeFollowupLocalHour as computeFollowupLocalHourLegacy,
+  followupIsNextDay,
+  maxFollowupDailyCap,
+  maxFollowupReminders,
+} from "./generated/encounterFollowup.ts";
+import { chooseWorkIntroChannel } from "./generated/workIntroChannel.ts";
 import type {
   FollowupSchedule,
   LaunchCity,
@@ -53,9 +61,22 @@ import type {
   VenueFeedbackReport,
   VenueNoiseLevel,
   VenueRecord,
+  WorkIntroChannel,
 } from "./types.ts";
 
 export const MAX_SUGGESTION_PIVOTS = maxSuggestionPivots;
+export const defaultLocalSufficiencyThreshold = 10;
+
+export interface WorkIntroChannelInput {
+  candAge: number;
+  mgrAge: number;
+  candOptedIn: boolean;
+  mgrOptedIn: boolean;
+  candHasEmail: boolean;
+  mgrHasEmail: boolean;
+  mutualSlotConfirmed: boolean;
+  wantsVideo: boolean;
+}
 
 export interface VenueOpenCheck {
   open: boolean;
@@ -703,8 +724,10 @@ export function applyVenueFeedback(
   feedback: VenueFeedbackReport,
   nowMs: number
 ): VenueRecord {
-  const providerPermanent = feedback.providerConfirmedStatus === "closed_permanent";
-  const providerTemporary = feedback.providerConfirmedStatus === "closed_temporary";
+  const providerPermanent =
+    feedback.providerConfirmedStatus === "closed_permanent" || feedback.providerCode === "ProviderPermanentClosed";
+  const providerTemporary =
+    feedback.providerConfirmedStatus === "closed_temporary" || feedback.providerCode === "ProviderTemporaryClosed";
   const nextStatus = nextVenueStatusOnReport(
     venue.status,
     feedback.reportedClosed,
@@ -758,7 +781,7 @@ export function applyVenueFeedback(
     status: nextStatus,
     closureReports,
     quarantinedUntil,
-    lastVerifiedAt: feedback.providerConfirmedStatus ? nowMs : venue.lastVerifiedAt,
+    lastVerifiedAt: feedback.providerConfirmedStatus || feedback.providerCode ? nowMs : venue.lastVerifiedAt,
     personaPriors: nextPriors,
   };
 }
@@ -767,8 +790,22 @@ export function applyVenueFeedback(
  * Compute UTC dispatch schedule for a post-event/post-date follow-up using `computeFollowupLocalHour`.
  * Daytime end <= 16:00 -> same-day end + 2h; evening end > 16:00 -> next morning 9:30 local.
  */
-export function computeFollowupTimestamp(eventEndMs: number, tz: string): FollowupSchedule {
+export function computeFollowupTimestamp(eventEndMs: number, tz: string, isWorkIntro = false): FollowupSchedule {
   const endParts = localParts(eventEndMs, tz);
+  if (isWorkIntro) {
+    const localHour = computeFollowupLocalHourLegacy(endParts.hour, true);
+    const nextDay = endParts.hour >= localHour;
+    const dayParts = nextDay ? localParts(eventEndMs + 24 * HOUR, tz) : endParts;
+    const scheduledAt = fromLocal(dayParts.year, dayParts.month, dayParts.day, localHour, tz);
+    return {
+      scheduledAt,
+      localHour,
+      localMinute: 0,
+      nextDay,
+      reminderAt: scheduledAt + 36 * HOUR,
+      maxReminders: maxFollowupReminders,
+    };
+  }
   const slot = computeFollowupLocalHour(endParts.hour);
   const dayParts = slot.nextDay ? localParts(eventEndMs + 24 * HOUR, tz) : endParts;
   const scheduledAt = fromLocal(dayParts.year, dayParts.month, dayParts.day, slot.localHour, tz) + slot.localMinute * MINUTE;
@@ -842,8 +879,29 @@ export function evaluateModeVenueScore(input: ModeVenueScoreInput): number {
   return modeVenueScore(input);
 }
 
-/** Thin wrapper around generated `canSendFollowup`. */
-export function evaluateFollowupSend(input: FollowupSendInput): boolean {
+export type FollowupSendCompatInput =
+  | FollowupSendInput
+  | {
+      optedOut: boolean;
+      isQuietHours: boolean;
+      dailyProactiveCount: number;
+      dailyCap?: number;
+      remindersSent: number;
+      maxReminders?: number;
+    };
+
+/** Thin wrapper around generated `canSendFollowup` (supports both meetupCoordination and encounterFollowup callers). */
+export function evaluateFollowupSend(input: FollowupSendCompatInput): boolean {
+  if ("isQuietHours" in input) {
+    return canSendFollowupLegacy(
+      input.optedOut,
+      input.isQuietHours,
+      input.dailyProactiveCount,
+      input.dailyCap ?? maxFollowupDailyCap,
+      input.remindersSent,
+      input.maxReminders ?? maxFollowupReminders
+    );
+  }
   return canSendFollowup(input);
 }
 
@@ -959,4 +1017,18 @@ export function evaluateVenueQuarantine(venueReportedClosed: boolean, venueRepor
 /** Thin wrapper around generated `anchorFailoverDecision`. */
 export function evaluateAnchorFailover(input: AnchorFailoverInput): AnchorFailoverAction {
   return anchorFailoverDecision(input) as AnchorFailoverAction;
+}
+
+/** Thin wrapper around generated `chooseWorkIntroChannel`. */
+export function selectWorkIntroChannel(input: WorkIntroChannelInput): WorkIntroChannel {
+  return chooseWorkIntroChannel(
+    input.candAge,
+    input.mgrAge,
+    input.candOptedIn,
+    input.mgrOptedIn,
+    input.candHasEmail,
+    input.mgrHasEmail,
+    input.mutualSlotConfirmed,
+    input.wantsVideo
+  );
 }

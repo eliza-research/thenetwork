@@ -1,6 +1,7 @@
 #!/usr/bin/env -S node --import=tsx
 import { randomBytes } from "node:crypto";
 import { parseArgs } from "node:util";
+import { CITY_IDS, isCity, type City } from "@thenetwork/core";
 import { serveHttp, type HttpServer as Server, type ServerWebSocket } from "../../../packages/core/src/runtime/http.ts";
 import { buildWebRoutes } from "./web-assets.ts";
 import { initial as initialRoute, staffMemberAccess, staffRevealMinutesAccepted, staffStepAdmitted, staffStepRoles, step as stepStaffRoute, type StaffStep } from "../../../packages/core/src/generated/staffPermissions.ts";
@@ -548,6 +549,22 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         const truth = truthFor(u, app);
         return json(withAuth(shapeState((await source(mode, app)).state({ truth }), viewClass(rolesFor(u, app, mode)), truth)));
       }),
+      "/api/cities": guard(async (_r, _u, app) => {
+        const src = await source(mode, app);
+        const cities = src.loadCities ? await src.loadCities() : [];
+        return json({ cities });
+      }),
+      "/api/venues": guard(async (req, _u, app) => {
+        const rawCity = new URL(req.url).searchParams.get("city")?.trim().toLowerCase() ?? "";
+        let city: City | undefined;
+        if (rawCity && rawCity !== "all") {
+          if (!isCity(rawCity)) return json({ error: `unknown city "${rawCity}" (one of ${CITY_IDS.join(", ")})`, code: "unknown_city" }, 400);
+          city = rawCity;
+        }
+        const src = await source(mode, app);
+        const venues = src.loadVenues ? await src.loadVenues(city) : [];
+        return json({ city: city ?? "all", venues });
+      }),
       "/api/ws-ticket": {
         POST: guard((_r, u, app) => {
           const now = Date.now();
@@ -1078,9 +1095,10 @@ if (import.meta.main) {
     city: { type: "string", default: "nyc" }, level: { type: "string" },
     "time-aware": { type: "boolean", default: false },
   } });
+  if (a.city !== "all" && !isCity(a.city)) { console.error(`--city must be all or one of ${CITY_IDS.join(", ")}`); process.exit(1); }
   const obs = await createServer({
     port: Number(a.port), mode: a.mode as Mode,
-    game: { seed: Number(a.seed), personas: Number(a.personas), engine: a.engine as GameOptions["engine"], days: Number(a.days), network: a.network as "consent" | "stub", city: a.city as "nyc" | "all", scenario: a.level ?? null, timeAware: a["time-aware"] },
+    game: { seed: Number(a.seed), personas: Number(a.personas), engine: a.engine as GameOptions["engine"], days: Number(a.days), network: a.network as "consent" | "stub", city: a.city as City | "all", scenario: a.level ?? null, timeAware: a["time-aware"] },
     real: { url: a["db-url"] },
   });
   console.log(`The Network Observatory → ${obs.openUrl}  (mode: ${obs.mode()}${process.env.OBSERVATORY_REAL_ONLY === "1" ? ", real only" : ""})`);

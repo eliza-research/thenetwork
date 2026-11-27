@@ -22,7 +22,7 @@
 //                      minor in contact with adults. Victims report with p by kind -> hold + block.
 import { canBeMatched, type MemberId } from "@thenetwork/core";
 import { activityById } from "@thenetwork/engine/src/packs/network/activities.ts";
-import { hood, transitMinutes } from "@thenetwork/engine/src/packs/friends/index.ts";
+import { hood, hoodForCity, transitMinutes, transitMinutesInCity } from "@thenetwork/engine/src/packs/friends/index.ts";
 import { h01 } from "../../coins.ts";
 import { friendsStatedOpen, hoodOf, type AdversaryKind, type FriendsPersona } from "./persona.ts";
 
@@ -97,10 +97,13 @@ export class FriendsOracle {
       : 0;
     return 0.12 * Math.min(2, shared) + (A.lifeStage === B.lifeStage ? 0.1 : 0) - 0.012 * Math.min(25, Math.abs(A.trueAge - B.trueAge)) + humor;
   }
-  /** True door-to-door minutes from a member's home to a neighborhood (the estimate x a fixed per-route error). */
   travel(id: MemberId, hoodId: string): number {
-    const h = this.p(id).hidden.home;
-    const est = transitMinutes(hoodOf(h), hood(hoodId) ?? hoodOf(h));
+    const p = this.p(id);
+    const city = p.city ?? "nyc";
+    const h = p.hidden.home;
+    const fromHood = hoodOf(h, city);
+    const toHood = (city === "nyc" ? hood(hoodId) : hoodForCity(city, hoodId)) ?? fromHood;
+    const est = city === "nyc" ? transitMinutes(fromHood, toHood) : transitMinutesInCity(city, fromHood, toHood);
     const [x, y] = h < hoodId ? [h, hoodId] : [hoodId, h];
     return est * Math.exp(this.P.travelNoise * this.n("route", x, y));
   }
@@ -256,11 +259,13 @@ export class FriendsOracle {
     return (durMin / 60) * (n <= 4 ? 1 : 3 / (n - 1)) + (ea >= 0.65 && eb >= 0.65 ? this.P.lingerHours : 0);
   }
 
-  /** A pair who both want to see each other again meets on its own this week (hidden). */
   selfHangout(a: MemberId, b: MemberId, week: number, meetups: number): boolean {
-    const A = this.p(a).hidden, B = this.p(b).hidden;
+    const pA = this.p(a), pB = this.p(b);
+    const A = pA.hidden, B = pB.hidden;
     if (A.adversary || B.adversary || A.isMinor || B.isMinor) return false;
-    const t = transitMinutes(hoodOf(A.home), hoodOf(B.home));
+    const city = pA.city ?? "nyc";
+    const hA = hoodOf(A.home, city), hB = hoodOf(B.home, city);
+    const t = city === "nyc" ? transitMinutes(hA, hB) : transitMinutesInCity(city, hA, hB);
     const prox = Math.exp(-Math.max(0, t - 15) / 20);
     const p = this.P.selfRate * Math.min(1, meetups / 2) * prox * Math.sqrt(this.appetite(a, week) * this.appetite(b, week));
     return this.u("self", a < b ? a : b, a < b ? b : a, week) < p;
