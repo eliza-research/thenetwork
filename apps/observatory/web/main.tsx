@@ -16,7 +16,7 @@ import {
 } from "@thenetwork/ui";
 import { ntwrkBrand } from "../../../packages/core/src/generated/brandIdentity.ts";
 import {
-  backShown, canTypeQuery, type ConsoleNav, conversationSearchShown, type HitGroups, hitGroups, modeSwitchShown, searchShown, switcherShown, tabNow, viewFor,
+  backShown, canTypeQuery, type ConsoleNav, conversationSearchShown, type HitGroups, hitGroups, modeSwitchShown, onAppPage, searchShown, switcherShown, tabNow, viewFor,
 } from "../../../packages/core/src/generated/consoleNavigation.ts";
 import { canReceiveProposalAnswer, canSubmitProposal, groupProposal, initial as initialWorkspace, proposalFormShown, receiveProposalAnswer, submitProposal, trayShown, type TrayPhase } from "../../../packages/core/src/generated/consoleWorkspace.ts";
 import { signInView } from "../../../packages/core/src/generated/staffSignIn.ts";
@@ -53,12 +53,12 @@ export function App() {
       if (e.key === "/") { e.preventDefault(); document.getElementById("obs-search")?.focus(); }
       else if (e.key === "?") store.toggleHelp();
       else if (e.key === "g") store.showStage(store.ui.view === "map" ? "graph" : "map");
-      else if (e.key === " " && canStep) {
+      else if (e.key === " " && canStep && onAppPage(store.nav())) {
         if ((e.target as Element | null)?.closest?.("button, [role=button]")) return;
         e.preventDefault(); store.control({ type: store.clock?.playing ? "pause" : "play" });
       }
-      else if (e.key === "n" && canStep) store.control({ type: "step", ms: HOUR });
-      else if (e.key === "d" && canStep) store.control({ type: "step", ms: DAY });
+      else if (e.key === "n" && canStep && onAppPage(store.nav())) store.control({ type: "step", ms: HOUR });
+      else if (e.key === "d" && canStep && onAppPage(store.nav())) store.control({ type: "step", ms: DAY });
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -109,6 +109,8 @@ function ConsoleTopBar({ nav }: { nav: ConsoleNav }) {
   const s = useStore();
   const c = s.clock;
   const canStep = !!s.env?.capabilities.canStep;
+  // A simulation clock belongs to one workspace, not the All Apps summary.
+  const showTransport = !canStep || onAppPage(nav);
   const b = s.page.kind === "app" ? banner(s.env) : { text: `ALL APPS · ${s.mode === "real" ? "real data" : "simulation"}`, title: "Every app you hold a role for" };
   const me = s.me;
   const onApp = searchShown(nav);
@@ -138,8 +140,8 @@ function ConsoleTopBar({ nav }: { nav: ConsoleNav }) {
         <Segments aria-label="Mode" value={s.mode} onValueChange={v => store.setMode(v as Mode)} options={[{ value: "game", label: "Game" }, { value: "real", label: "Real" }]} />
       )}
       <ModeIndicator mode={nav.viewer.mode} label={b.text} details={b.title} connected={s.connected} />
-      {c && <span className="text-sm font-semibold whitespace-nowrap tabular-nums">{canStep ? `Day ${c.day} · ` : ""}{localDate(c.now)} · {localTime(c.now)}</span>}
-      <Transport />
+      {showTransport && c && <span className="text-sm font-semibold whitespace-nowrap tabular-nums">{canStep ? `Day ${c.day} · ` : ""}{localDate(c.now)} · {localTime(c.now)}</span>}
+      {showTransport && <Transport />}
     </TopBar>
   );
 }
@@ -282,7 +284,7 @@ function HelpPopover({ nav }: { nav: ConsoleNav }) {
   const game = !!s.env?.capabilities.canIntervene;
   const keys: [string, string][] = [
     ["/", "Search"], ["Esc", "Close, clear search, clear picks, clear focus"], ["g", "Map or graph"], ["?", "This help"],
-    ...(s.env?.capabilities.canStep && s.canSim() ? [["space", "Play or pause"], ["n", "+1 hour"], ["d", "+1 day"]] as [string, string][] : []),
+    ...(s.env?.capabilities.canStep && s.canSim() && onAppPage(nav) ? [["space", "Play or pause"], ["n", "+1 hour"], ["d", "+1 day"]] as [string, string][] : []),
     ["j / k", "Review: next, previous"], ["a", "Review: approve"], ["r 1-8", "Review: reject with a reason"], ["e", "Review: edit what each person is told"],
     ["s 1-6", "Review: re-roll (swap that person)"], ["n · x · Enter", "Review: note, score, open"],
   ];
