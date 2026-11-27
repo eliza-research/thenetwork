@@ -121,7 +121,7 @@ function friendsPackValue(w: World, a: MatchProfile, b: MatchProfile): number {
 
   const lsA = lifeStageKey(w, a.memberId, va);
   const lsB = lifeStageKey(w, b.memberId, vb);
-  if (lsA && lsB && lsA === lsB) delta += 110;
+  if (lsA && lsB && lsA === lsB) delta += ea.lifeStage && eb.lifeStage ? 110 : 25;
   if (ea.depth && eb.depth) {
     const depthDiff = Math.abs(va.horizontal.communication.depthPreference.value - vb.horizontal.communication.depthPreference.value);
     delta += Math.round(100 * (1 - depthDiff));

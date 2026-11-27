@@ -228,4 +228,5 @@ if (!isWorker) {
 }
 const out = values("json").find(Boolean);
 if (out) await writePath(out, JSON.stringify({ quick: opts.quick, blocks: run, timings, total, gates: all }, null, 1));
+await new Promise<void>(resolve => process.stdout.write("", () => process.stderr.write("", () => resolve())));
 process.exit(failed.length ? 1 : 0);

@@ -2,7 +2,7 @@
 // engine, a SimClock and a recording channel. Members only say what a test makes them say, so one
 // flow (a meeting, a request retry, a decline) can be driven step by step in a second. The full
 // simulated world (network.test.ts) stays the end-to-end check.
-import { DAY, HOUR, SimClock, type Category, type Edge, type Facet, type Intent, type Member, type MemberId, type ParticipationState, type Presence, type Proposal } from "@thenetwork/core";
+import { DAY, HOUR, isCity, SimClock, type Category, type City, type Edge, type Facet, type Intent, type Member, type MemberId, type ParticipationState, type Presence, type Proposal } from "@thenetwork/core";
 import type { MeetingReport, NetworkContext, SimMessage, SimMeta } from "@thenetwork/sim";
 import { ConsentNetwork, simulatedReviewJudge, type NetworkOptions } from "../src/index.ts";
 
@@ -37,10 +37,9 @@ export class Mini {
   private readonly opts: NetworkOptions;
 
   constructor(specs: Spec[], opts: NetworkOptions = {}) {
+    const city: City = isCity(opts.city) ? opts.city : "nyc";
+    this.opts = { seed: 1, inlineJudge: simulatedReviewJudge({ exceptions: false }), maxNewPerDay: 0, ...opts, engine: { cities: [city], ...opts.engine } };
     for (const s of specs) this.add(s);
-    // No engine opportunities unless a test asks for them: flows here are driven explicitly.
-    // The mini world is one market (NYC) unless a test names others.
-    this.opts = { seed: 1, inlineJudge: simulatedReviewJudge({ exceptions: false }), maxNewPerDay: 0, ...opts, engine: { cities: ["nyc"], ...opts.engine } };
     this.net = new ConsentNetwork(this.opts);
     this.net.init(this.ctx());
   }
@@ -55,11 +54,12 @@ export class Mini {
 
   add(s: Spec) {
     const now = this.clock.now();
+    const city: City = isCity(this.opts.city) ? this.opts.city : "nyc";
     this.members.push({
-      id: s.id, name: s.name, homeCity: "nyc", state: s.state ?? "normal", joinedAt: now, age: s.age as number, unansweredProactive: 0, // a missing age is allowed here (6.3)
+      id: s.id, name: s.name, homeCity: city, state: s.state ?? "normal", joinedAt: now, age: s.age as number, unansweredProactive: 0,
       prefs: { categoriesOptIn: ["social", "hobby", "professional", "events", "growth", "help", ...(s.romance ? ["romance" as const] : [])], quietHours: s.quietHours ?? [21, 9], romanceOptIn: !!s.romance, formats: ["one_to_one", "small_group", "event"], maxTravelMinutes: 45, onlyWhenAsked: false },
     });
-    this.presence.push({ memberId: s.id, city: "nyc", type: "home", areas: [s.area ?? "Williamsburg"] });
+    this.presence.push({ memberId: s.id, city, type: "home", areas: [s.area ?? "Williamsburg"] });
     const facet = (kind: Facet["kind"], tag: string): Facet => ({
       id: `${s.id}:${kind}:${tag}`, memberId: s.id, kind, value: tag.replace(/_/g, " "), tags: [tag], scope: s.shareable ? "shareable" : "matchable", provenance: "said", confidence: 0.9,
       validFrom: now, source: "chat", observedAt: now, inferred: false, confirmedByMember: true,

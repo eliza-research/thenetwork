@@ -70,6 +70,7 @@ function seedVenue(v: SeedInput): VenueRecord {
     (v.walkInGroupCapacity >= 10 && !v.reservationRequired && OPEN_EVENT_CATEGORIES.has(v.category));
   return {
     ...rest,
+    ageMin: v.ageMin ?? (v.isBarOnly ? 21 : 0),
     public: true,
     status: "active",
     source: "curated",

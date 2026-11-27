@@ -2998,7 +2998,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       }
     }
     const named = reply.acceptsName && matches.size === 1 ? matches.values().next().value : undefined;
-    const competing = Boolean(m.awaiting && (m.awaiting.at >= p.at || ["probe", "booked", "crew", "checkin"].includes(m.awaiting.kind)));
+    const pronounOnly = reply.names.some(name => SAFETY_PRONOUN_CONFIRMATION.test(name));
+    const competing = Boolean(m.awaiting && (m.awaiting.at >= p.at || ["probe", "booked", "crew", "checkin"].includes(m.awaiting.kind) || (m.awaiting.kind === "interview" && pronounOnly)));
     const sole = p.targets?.length === 1 ? this.members.get(p.targets[0]!) : undefined;
     const exactConfirmation = !reply.explicitlyNamed && !text.normalize("NFKC").includes("?") && reply.names.some(isSafetyConfirmation);
     const confirmed = safetyQuestionUsesSoleOffer(!!sole, competing, exactConfirmation, matches.size > 0) ? sole : undefined;
