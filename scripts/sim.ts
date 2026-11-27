@@ -41,11 +41,14 @@
 //   onboard   slop.date onboarding: evals/slop-onboarding corpus gates (rules only) and the persona onboarding sim (seeds 13-14)
 //   clef      P2 Clef weight fitting: synthetic labels from the slop world's hidden appearance (seed 1, 2,000 labels
 //             per dimension); ranking recovery, weights file round trip, extraction, bias audit, labelling page
+//   five-city 5-city (sf, nyc, la, chicago, miami) conversation-script suite through ConsentNetwork, VenueManager & MeetupCoordinator (--transcripts prints transcripts)
+//   marketing global multi-city marketing growth engine: 30-day NYC+SF deterministic world, 7 adversarial storms,
+//             Dafny policy invariants, LLM cache/budget, core queue backpressure, and paired Bandit vs Uniform CPA
 //   capital   network capital: 32 paired seeds, 90 days (--with-capital or --only capital)
 import { writePath } from "../packages/core/src/runtime/files.ts";
 import { Block, type Gate } from "./sim/gate.ts";
 
-type Opts = { quick: boolean; llm: boolean; matchingPack?: string };
+type Opts = { quick: boolean; llm: boolean; transcripts: boolean; matchingPack?: string };
 const BLOCKS: Record<string, (b: Block, o: Opts) => Promise<void>> = {
   evals: async (b) => (await import("./sim/evals.ts")).evalsBlock(b),
   network: async (b, o) => (await import("./sim/network.ts")).networkBlock(b, o),
@@ -62,10 +65,12 @@ const BLOCKS: Record<string, (b: Block, o: Opts) => Promise<void>> = {
   safety: async (b) => (await import("./sim/safety.ts")).safetyBlock(b),
   ops: async (b) => (await import("./sim/ops.ts")).opsBlock(b),
   clef: async (b) => (await import("./sim/clef.ts")).clefBlock(b),
+  "five-city": async (b, o) => (await import("./sim/five-city.ts")).fiveCityBlock(b, o),
   audit: async (b) => (await import("./sim/audit.ts")).auditBlock(b),
+  marketing: async (b, o) => (await import("./sim/marketing.ts")).marketingBlock(b, o),
   capital: async (b, o) => (await import("./sim/capital.ts")).capitalBlock(b, o),
 };
-const DEFAULT = ["evals", "onboard", "network", "matching", "slop", "relay", "peon", "peon-seats", "friends", "meetup", "clef", "safety", "ops", "pipeline", "pipeline-slop", "audit"];
+const DEFAULT = ["evals", "onboard", "network", "matching", "slop", "relay", "peon", "peon-seats", "friends", "meetup", "clef", "five-city", "safety", "ops", "pipeline", "pipeline-slop", "audit", "marketing"];
 
 const argv = process.argv.slice(2);
 const values = (k: string) => argv.flatMap((x, i) => (x === `--${k}` ? (argv[i + 1] ?? "").split(",") : x.startsWith(`--${k}=`) ? x.slice(k.length + 3).split(",") : []));
@@ -78,7 +83,7 @@ const run = only.length ? only : [...DEFAULT, ...(argv.includes("--with-capital"
 if (!run.length) { console.error("Select at least one simulation block."); process.exit(2); }
 const matchingPacks = values("matching-pack").filter(Boolean);
 const matchingPack = matchingPacks[0];
-const opts: Opts = { quick: argv.includes("--quick"), llm: argv.includes("--llm"), matchingPack };
+const opts: Opts = { quick: argv.includes("--quick"), llm: argv.includes("--llm"), transcripts: argv.includes("--transcripts"), matchingPack };
 
 // Simulations never call a model: fail fast if any code path tries. The one exception is the
 // onboarding LLM arm, which runs only with --llm (and only in the onboard block).

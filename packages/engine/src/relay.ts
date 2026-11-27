@@ -124,7 +124,7 @@ const SPELLED_AMT = `(?:${NUMWORD}[-\\s]+){1,3}(?:dollars?|bucks?|usd)`;
 
 const otherThreats = R("\\bi(?:'?ll| will| am going to|'?m gonna| gonna| m gonna)\\s+(?:kill|hurt|find|ruin|destroy|beat|end|stab|shoot|expose|leak|post)\\b|\\bi know where (?:you|u) (?:live|work|sleep)\\b|\\b(?:you|u)(?:'?ll| will) (?:regret|pay for)\\b|\\b(?:make|making) (?:you|u) (?:regret|pay|sorry)\\b|\\bwatch (?:your|ur) back\\b|\\b(?:you|u)(?:'d| had)? better (?:answer|reply|respond|show|text)\\b|\\b(?:i'?ll |i will )?(?:make sure|let) everyone know|\\b(?:wait|show up|be waiting|come by|turn up)\\s+(?:for (?:you|u) )?(?:outside|at) (?:your|ur) (?:work|office|home|place|apartment|building|job|door)\\b");
 
-const RELAY_RULES: { code: string; re: RegExp; matches?: (text: string) => boolean }[] = [
+export const RELAY_RULES: { code: string; re: RegExp; matches?: (text: string) => boolean }[] = [
   { code: "scam:money", re: R(`\\b${PAY}\\s+(?:me|us)\\b[^.?!]{0,50}${MONEY}`) },
   { code: "scam:money", re: R("\\b(?:can|could|would)\\s+(?:you|u)\\s+(?:please\\s+)?(?:help(?: me)?(?: out)?(?: with)?|cover|spot|lend|loan|pay(?: for)?)\\b[^.?!]{0,40}\\b(?:rent|bills?|fees?|ticket|flight|hospital|medical|money|cash|\\$|bucks|loan|deposit|customs|visa|tuition|phone bill|gas money)\\b") },
   { code: "scam:money", re: R(`\\b(?:i|we)(?:\\s+(?:really\\s+|just\\s+)?(?:need|am short|are short|m short|owe)|'m short|'re short)\\b[^.?!]{0,30}(?:\\$\\s?\\d+|\\d+\\s?(?:dollars?|bucks?|usd)|${SPELLED_AMT}|\\bmoney\\b|\\bcash\\b)`) },

@@ -524,8 +524,14 @@ function readAgeRange(t: string, asked: OnboardField | undefined, selfAge?: numb
   return { range, rel: range ? undefined : rel };
 }
 
-const MARKET_WORDS: [RegExp, City][] = [[/^(?:nyc|new york|ny|new york city)$/, "nyc"], [/^(?:sf|san francisco|the bay|bay area|the bay area|frisco)$/, "sf"], [/^(?:la|los angeles|l\.a\.?)$/, "la"]];
-const MARKET_RX = "(nyc|new york city|new york|ny|sf|san francisco|the bay area|the bay|bay area|la|los angeles|l\\.a\\.?)";
+const MARKET_WORDS: [RegExp, City][] = [
+  [/^(?:nyc|new york|ny|new york city)$/, "nyc"],
+  [/^(?:sf|san francisco|the bay|bay area|the bay area|frisco)$/, "sf"],
+  [/^(?:la|los angeles|l\.a\.?)$/, "la"],
+  [/^(?:chicago|chi|chicagoland|windy city)$/, "chicago"],
+  [/^(?:miami|mia|miami beach|south beach|sobe)$/, "miami"],
+];
+const MARKET_RX = "(nyc|new york city|new york|ny|sf|san francisco|the bay area|the bay|bay area|la|los angeles|l\\.a\\.?|chicago|chicagoland|chi|miami beach|miami|mia)";
 const MULTI_MARKET_RX = new RegExp(`\\b${MARKET_RX}\\s*(?:and|&|\\+|or|\\/|,)\\s*${MARKET_RX}(?:\\s*(?:and|&|\\+|or|\\/|,)\\s*${MARKET_RX})?\\b`);
 const marketOf = (w: string) => MARKET_WORDS.find(([rx]) => rx.test(w.trim()))?.[1];
 
@@ -560,7 +566,7 @@ function readDistance(t: string, asked: OnboardField | undefined): Cand<Distance
       if (!slopRadiusMilesInBounds(n)) continue;
       best = cand<Distance>(mergeDistance(best?.value, { mode: "radius", miles: Math.round(n) }), s, m, /^k/.test(m[3]!) ? 0.85 : 0.95);
     }
-    for (const m of all(/\b(?:anywhere|any where|all over|wherever)\s+(?:in\s+)?(?:the\s+)?(?:city|nyc|new york|sf|san francisco|la|los angeles|town)\b|\b(?:the\s+)?(?:whole|entire)\s+(?:city|nyc|town|bay)\b|\bcity\s*-?\s*wide\b|\b(?:just|only)\s+(?:the\s+)?(?:city|nyc|sf|la)\b(?!\s+(?:for|to))|\b(?:all|any of the|any)\s+(?:5|five)\s+boroughs\b|\b(?:the\s+)?(?:city|nyc)\s+is\s+(?:fine|good|ok|okay|cool)\b|\bdistance (?:doesn'?t|does not|dont) (?:really )?matter\b|\b(?:i'?ll|i will|happy to|can|could) (?:go|travel) anywhere\b|\bdon'?t care (?:about|how) (?:the )?(?:distance|far)\b|\banywhere is fine\b/, s.text)) {
+    for (const m of all(/\b(?:anywhere|any where|all over|wherever)\s+(?:in\s+)?(?:the\s+)?(?:city|nyc|new york|sf|san francisco|la|los angeles|chicago|chi|miami|mia|town)\b|\b(?:the\s+)?(?:whole|entire)\s+(?:city|nyc|chicago|miami|town|bay)\b|\bcity\s*-?\s*wide\b|\b(?:just|only)\s+(?:the\s+)?(?:city|nyc|sf|la|chicago|chi|miami|mia)\b(?!\s+(?:for|to))|\b(?:all|any of the|any)\s+(?:5|five)\s+boroughs\b|\b(?:the\s+)?(?:city|nyc|chicago|miami)\s+is\s+(?:fine|good|ok|okay|cool)\b|\bdistance (?:doesn'?t|does not|dont) (?:really )?matter\b|\b(?:i'?ll|i will|happy to|can|could) (?:go|travel) anywhere\b|\bdon'?t care (?:about|how) (?:the )?(?:distance|far)\b|\banywhere is fine\b/, s.text)) {
       best = cand<Distance>({ mode: "city" }, s, m, 0.9);
     }
     for (const m of all(MULTI_MARKET_RX, s.text)) {
@@ -571,7 +577,7 @@ function readDistance(t: string, asked: OnboardField | undefined): Cand<Distance
     if (asked === "distance" && !best) {
       const m = /^\s*(?:within\s+|about\s+|around\s+|up to\s+|like\s+|maybe\s+|prob(?:ably)?\s+|max\s+)?(\d{1,3})\s*(?:ish|max|tops|or so)?\s*[?!.]*\s*$/.exec(s.text);
       if (m && slopRadiusMilesInBounds(Number(m[1]))) best = cand<Distance>({ mode: "radius", miles: Number(m[1]) }, s, m, 0.9);
-      const c = /^\s*(?:the\s+|just\s+(?:the\s+)?|only\s+(?:the\s+)?)?(?:city|nyc|anywhere|the whole city|new york|sf|la)\s*(?:is fine|works|lol|tbh)?\s*[?!.]*\s*$/.exec(s.text);
+      const c = /^\s*(?:the\s+|just\s+(?:the\s+)?|only\s+(?:the\s+)?)?(?:city|nyc|anywhere|the whole city|new york|sf|la|chicago|chi|miami|mia)\s*(?:is fine|works|lol|tbh)?\s*[?!.]*\s*$/.exec(s.text);
       if (c) best = cand<Distance>({ mode: "city" }, s, c, 0.9);
     }
   }
@@ -594,6 +600,8 @@ const ALIASES: [string, string][] = [
   ["crown hts", "crown heights"], ["prospect hts", "prospect heights"], ["washington hts", "washington heights"], ["wash heights", "washington heights"], ["bk heights", "brooklyn heights"],
   ["ktown", "koreatown"], ["k town", "koreatown"], ["weho", "west hollywood"], ["dtla", "downtown la"], ["silverlake", "silver lake"], ["the mission", "mission"], ["jc", "jersey city"],
   ["ridgewood", "ridgewood"], ["noe", "noe valley"], ["the castro", "castro"], ["the marina", "marina"], ["ditmars", "ditmars"], ["east village", "east village"], ["west village", "west village"],
+  ["loop", "the loop"], ["fulton market", "fulton market"], ["west loop", "west loop"], ["wicker", "wicker park"], ["logan sq", "logan square"],
+  ["sobe", "south beach miami"], ["miami beach", "south beach miami"], ["the grove", "coconut grove"], ["gables", "coral gables"], ["calle ocho", "little havana"],
 ];
 const ALIAS = new Map(ALIASES);
 const AREA_KEYS = [...new Set([...AREA_INDEX.keys(), ...ALIAS.keys()])].sort((a, b) => b.length - a.length);
@@ -1084,7 +1092,7 @@ export function validateSlopReading(raw: unknown, text: string): SlopLlmReading 
         || ((value as Distance).mode === "radius" && isMiles((value as { miles: unknown }).miles))
         || ((value as Distance).mode === "multi" && Array.isArray((value as { markets: unknown }).markets)
           && (value as { markets: unknown[] }).markets.length >= 2
-          && (value as { markets: unknown[] }).markets.every(m => ["nyc", "sf", "la"].includes(m as string))
+          && (value as { markets: unknown[] }).markets.every(m => ["nyc", "sf", "la", "chicago", "miami"].includes(m as string))
           && new Set((value as { markets: unknown[] }).markets).size === (value as { markets: unknown[] }).markets.length
           && ((value as { miles?: unknown }).miles === undefined || isMiles((value as { miles: unknown }).miles))))
       : k === "location" ? !!value && typeof value === "object" && ((typeof (value as Location).zip === "string" && /^\d{5}$/.test((value as Location).zip!)) || (typeof (value as Location).area === "string" && AREA_INDEX.has(ALIAS.get(areaNorm((value as Location).area!)) ?? areaNorm((value as Location).area!))))

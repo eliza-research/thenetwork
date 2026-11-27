@@ -1,20 +1,33 @@
 import { RealClock } from "../../../packages/core/src/clock.ts";
-import {
-  computeBanditAllocations,
-  type BanditArm as AllocatorBanditArm,
-  type BanditTrack,
-} from "./bandit.ts";
+import { computeBanditAllocations, toAllocatorBanditArm } from "./bandit.ts";
 import { banditMaxStopRateBps } from "./constants.ts";
-import { isDeviceLeaseHeldByOther } from "./policy.ts";
+import type { NetworkCoreBridge } from "./network-bridge.ts";
+import { evaluateQueuePressure, isDeviceLeaseHeldByOther } from "./policy.ts";
 import type {
   BanditArm,
+  BrandAppId,
   Campaign,
+  CityAppDemandSignal,
   Clock,
   DeviceNode,
   HumanPartner,
   OutreachMessage,
   RiskDial,
 } from "./types.ts";
+
+export interface CampaignStopStats {
+  contactedHumans: number;
+  stoppedHumans: number;
+  stopRateBps: number;
+}
+
+export interface BanditArmBatchUpdate {
+  id: string;
+  alpha: number;
+  beta: number;
+  weight: number;
+  status: BanditArm["status"];
+}
 
 export interface AutopilotStore {
   listCampaigns(filter?: { status?: Campaign["status"] }): Promise<Campaign[]>;
@@ -24,8 +37,10 @@ export interface AutopilotStore {
   listOutreachMessages(filter?: { campaignId?: string }): Promise<OutreachMessage[]>;
   listHumans(filter?: { city?: string }): Promise<HumanPartner[]>;
   resetDailyCounters(): Promise<void>;
+  getCampaignStopStats?(campaignId: string): Promise<CampaignStopStats>;
   listBanditArms?(campaignId: string): Promise<BanditArm[]>;
   upsertBanditArm?(arm: Omit<BanditArm, "id" | "updatedAt"> & { id?: string }): Promise<BanditArm>;
+  updateBanditArmsBatch?(updates: readonly BanditArmBatchUpdate[]): Promise<BanditArm[]>;
 }
 
 export type DaemonEventType =
@@ -36,6 +51,8 @@ export type DaemonEventType =
   | "risk_dial_lockdown"
   | "device_lease_swept"
   | "bandit_rebalanced"
+  | "queue_pressure_paused"
+  | "queue_pressure_resumed"
   | "tick_error";
 
 export interface DaemonEvent {
@@ -49,6 +66,8 @@ export interface DaemonCampaignTickSummary {
   readonly slug: string;
   readonly stopRateBps: number;
   readonly stopSpikeTriggeredLockdown: boolean;
+  readonly queuePressurePaused: boolean;
+  readonly queuePressureReason: string | null;
   readonly banditArmsRebalanced: number;
   readonly customTickExecuted: boolean;
 }
@@ -60,6 +79,7 @@ export interface DaemonTickReport {
   readonly utcDay: string;
   readonly dailyResetExecuted: boolean;
   readonly expiredLeasesSwept: number;
+  readonly queuePressurePausedCount: number;
   readonly campaignsProcessed: readonly DaemonCampaignTickSummary[];
   readonly errors: readonly string[];
 }
@@ -72,83 +92,49 @@ export interface DaemonStatusSnapshot {
   readonly lastResetUtcDay: string | null;
   readonly startedAt: string | null;
   readonly lastTickAt: string | null;
+  readonly pausedQueues: Readonly<Record<string, string>>;
   readonly lastTickReport: DaemonTickReport | null;
 }
 
 export interface MarketingAutopilotDaemonOptions {
   readonly store: AutopilotStore;
   readonly clock?: Clock;
+  readonly bridge?: Pick<NetworkCoreBridge, "getDemandAndPressure">;
   readonly intervalMs?: number;
   readonly minStopSamples?: number;
   readonly maxStopRateBps?: number;
+  readonly reviewBacklogLimit?: number;
+  readonly outboundBacklogLimit?: number;
+  readonly hysteresisResumeRatio?: number;
   readonly runCampaignTick?: (campaign: Campaign) => Promise<void>;
   readonly onEvent?: (event: DaemonEvent) => void;
 }
 
 const DEFAULT_INTERVAL_MS = 60_000;
 const DEFAULT_MIN_STOP_SAMPLES = 20;
-
-const VALID_BANDIT_TRACKS: ReadonlySet<string> = new Set<BanditTrack>([
-  "street_fliering",
-  "creator_video",
-  "event_activation",
-  "print_qr",
-  "agency_reserve",
-  "bd_venue",
-  "vip_salon",
-  "video_factory",
-  "organic_play",
-]);
+const DEFAULT_REVIEW_BACKLOG_LIMIT = 50;
+const DEFAULT_OUTBOUND_BACKLOG_LIMIT = 250;
+const DEFAULT_HYSTERESIS_RESUME_RATIO = 0.8;
+const ALL_BRAND_APPS: readonly BrandAppId[] = ["slop", "peon", "friends", "ntwrk"];
 
 function utcDayFromMs(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
 
-function toBanditTrack(track: string): BanditTrack {
-  return VALID_BANDIT_TRACKS.has(track) ? (track as BanditTrack) : "organic_play";
-}
-
-function toAllocatorArm(arm: BanditArm, campaign: Campaign): AllocatorBanditArm {
-  const allocatedShareBps = Math.max(0, Math.min(10_000, Math.round(arm.weight * 10_000)));
-  const remaining = Math.max(0, campaign.monthlyBudgetCents - campaign.spentCents - campaign.reservedCents);
-  return {
-    id: arm.id,
-    campaignId: arm.campaignId,
-    armKey: arm.armKey,
-    label: arm.label,
-    track: toBanditTrack(arm.track),
-    playCode: null,
-    city: campaign.city,
-    appId: campaign.appId,
-    alpha: Math.max(0.01, arm.alpha),
-    beta: Math.max(0.01, arm.beta),
-    decayGamma: 0.92,
-    exposures: Math.max(0, arm.totalContacts),
-    verifiedT2Joins: Math.max(0, arm.signups),
-    verifiedT3Matches: 0,
-    stopCount: Math.max(0, arm.stopEvents),
-    ftcFailCount: 0,
-    spentCents: Math.max(0, arm.spendCents),
-    targetCpaCents: 858,
-    allocatedShareBps,
-    allocatedCents: Math.round((remaining * allocatedShareBps) / 10_000),
-    state:
-      arm.status === "killed"
-        ? "auto_killed"
-        : arm.status === "paused"
-          ? "paused_low_roi"
-          : "active",
-    killReason: null,
-    updatedAt: arm.updatedAt,
-  };
+function queueKey(city: string, appId: BrandAppId): string {
+  return `${city.trim().toLowerCase()}:${appId}`;
 }
 
 export class MarketingAutopilotDaemon {
   private readonly store: AutopilotStore;
   private readonly clock: Clock;
+  private readonly bridge?: Pick<NetworkCoreBridge, "getDemandAndPressure">;
   private readonly intervalMs: number;
   private readonly minStopSamples: number;
   private readonly maxStopRateBps: number;
+  private readonly reviewBacklogLimit: number;
+  private readonly outboundBacklogLimit: number;
+  private readonly hysteresisResumeRatio: number;
   private readonly runCampaignTick?: (campaign: Campaign) => Promise<void>;
   private readonly onEvent?: (event: DaemonEvent) => void;
 
@@ -160,13 +146,27 @@ export class MarketingAutopilotDaemon {
   private startedAt: string | null = null;
   private lastTickAt: string | null = null;
   private lastTickReport: DaemonTickReport | null = null;
+  private readonly pausedQueues = new Map<string, string>();
 
   constructor(opts: MarketingAutopilotDaemonOptions) {
     this.store = opts.store;
     this.clock = opts.clock ?? new RealClock();
+    this.bridge = opts.bridge;
     this.intervalMs = Math.max(250, Math.floor(opts.intervalMs ?? DEFAULT_INTERVAL_MS));
     this.minStopSamples = Math.max(1, Math.floor(opts.minStopSamples ?? DEFAULT_MIN_STOP_SAMPLES));
     this.maxStopRateBps = Math.max(1, Math.floor(opts.maxStopRateBps ?? banditMaxStopRateBps));
+    this.reviewBacklogLimit = Math.max(
+      1,
+      Math.floor(opts.reviewBacklogLimit ?? DEFAULT_REVIEW_BACKLOG_LIMIT),
+    );
+    this.outboundBacklogLimit = Math.max(
+      1,
+      Math.floor(opts.outboundBacklogLimit ?? DEFAULT_OUTBOUND_BACKLOG_LIMIT),
+    );
+    const ratio = opts.hysteresisResumeRatio ?? DEFAULT_HYSTERESIS_RESUME_RATIO;
+    this.hysteresisResumeRatio = Number.isFinite(ratio)
+      ? Math.max(0.1, Math.min(0.99, ratio))
+      : DEFAULT_HYSTERESIS_RESUME_RATIO;
     this.runCampaignTick = opts.runCampaignTick;
     this.onEvent = opts.onEvent;
   }
@@ -189,8 +189,22 @@ export class MarketingAutopilotDaemon {
       lastResetUtcDay: this.lastResetUtcDay,
       startedAt: this.startedAt,
       lastTickAt: this.lastTickAt,
+      pausedQueues: Object.fromEntries(this.pausedQueues.entries()),
       lastTickReport: this.lastTickReport,
     };
+  }
+
+  isQueuePaused(city: string, appId: Campaign["appId"]): { paused: boolean; reason: string | null } {
+    const normalizedCity = city.trim().toLowerCase();
+    if (appId === "all") {
+      for (const brand of ALL_BRAND_APPS) {
+        const reason = this.pausedQueues.get(queueKey(normalizedCity, brand));
+        if (reason) return { paused: true, reason };
+      }
+      return { paused: false, reason: null };
+    }
+    const reason = this.pausedQueues.get(queueKey(normalizedCity, appId));
+    return reason ? { paused: true, reason } : { paused: false, reason: null };
   }
 
   start(): void {
@@ -254,6 +268,59 @@ export class MarketingAutopilotDaemon {
     }
   }
 
+  private updateQueueBackpressure(signals: readonly CityAppDemandSignal[]): void {
+    const reviewResumeCeiling = Math.floor(this.reviewBacklogLimit * this.hysteresisResumeRatio);
+    const outboundResumeCeiling = Math.floor(
+      this.outboundBacklogLimit * this.hysteresisResumeRatio,
+    );
+
+    for (const signal of signals) {
+      const key = queueKey(signal.city, signal.appId);
+      const wasPaused = this.pausedQueues.has(key);
+      const decision = evaluateQueuePressure({
+        lineRestricted: signal.lineRestricted,
+        reviewOverdue: signal.overdueReviewCount,
+        reviewOpen: signal.openReviewCount,
+        reviewBacklogLimit: this.reviewBacklogLimit,
+        outboundWaiting: signal.outboundWaitingCount,
+        outboundBacklogLimit: this.outboundBacklogLimit,
+      });
+
+      if (signal.queuePressurePaused || decision.paused) {
+        const reason = decision.reason ?? "queue_pressure_paused";
+        this.pausedQueues.set(key, reason);
+        if (!wasPaused) {
+          this.emit("queue_pressure_paused", {
+            city: signal.city,
+            appId: signal.appId,
+            reason,
+            openReviewCount: signal.openReviewCount,
+            overdueReviewCount: signal.overdueReviewCount,
+            outboundWaitingCount: signal.outboundWaitingCount,
+            lineRestricted: signal.lineRestricted,
+          });
+        }
+      } else if (wasPaused) {
+        const belowHysteresis =
+          !signal.lineRestricted &&
+          signal.overdueReviewCount === 0 &&
+          signal.openReviewCount < reviewResumeCeiling &&
+          signal.outboundWaitingCount < outboundResumeCeiling;
+        if (belowHysteresis) {
+          this.pausedQueues.delete(key);
+          this.emit("queue_pressure_resumed", {
+            city: signal.city,
+            appId: signal.appId,
+            openReviewCount: signal.openReviewCount,
+            outboundWaitingCount: signal.outboundWaitingCount,
+            reviewResumeCeiling,
+            outboundResumeCeiling,
+          });
+        }
+      }
+    }
+  }
+
   private async executeTick(): Promise<DaemonTickReport> {
     const startMs = this.clock.now();
     const startedAt = new Date(startMs).toISOString();
@@ -273,6 +340,15 @@ export class MarketingAutopilotDaemon {
       }
     } else if (this.lastResetUtcDay === null) {
       this.lastResetUtcDay = utcDay;
+    }
+
+    if (this.bridge) {
+      try {
+        const signals = await this.bridge.getDemandAndPressure();
+        this.updateQueueBackpressure(signals);
+      } catch (err) {
+        errors.push(`queue_pressure: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     try {
@@ -308,6 +384,9 @@ export class MarketingAutopilotDaemon {
 
     this.tickCount += 1;
     const finishedAt = new Date(this.clock.now()).toISOString();
+    const queuePressurePausedCount = campaignsProcessed.filter(
+      (c) => c.queuePressurePaused,
+    ).length;
     const report: DaemonTickReport = {
       tickNumber: this.tickCount,
       startedAt,
@@ -315,6 +394,7 @@ export class MarketingAutopilotDaemon {
       utcDay,
       dailyResetExecuted,
       expiredLeasesSwept,
+      queuePressurePausedCount,
       campaignsProcessed,
       errors,
     };
@@ -325,10 +405,43 @@ export class MarketingAutopilotDaemon {
       tickNumber: report.tickNumber,
       dailyResetExecuted,
       expiredLeasesSwept,
+      queuePressurePausedCount,
       campaignsCount: campaignsProcessed.length,
       errorsCount: errors.length,
     });
     return report;
+  }
+
+  private async computeCampaignStopRate(
+    campaign: Campaign,
+  ): Promise<{ sampleCount: number; stopRateBps: number }> {
+    if (typeof this.store.getCampaignStopStats === "function") {
+      const stats = await this.store.getCampaignStopStats(campaign.id);
+      return {
+        sampleCount: stats.contactedHumans,
+        stopRateBps: stats.stopRateBps,
+      };
+    }
+
+    const [messages, humans] = await Promise.all([
+      this.store.listOutreachMessages({ campaignId: campaign.id }),
+      this.store.listHumans({ city: campaign.city }),
+    ]);
+    const sentOrBlocked = messages.filter(
+      (m) =>
+        m.status === "sent" ||
+        m.status === "delivered" ||
+        m.status === "replied" ||
+        m.status === "blocked_stop",
+    );
+    const stoppedMessages = messages.filter((m) => m.status === "blocked_stop").length;
+    const stoppedHumans = humans.filter((h) => h.stopped).length;
+    const denominator = Math.max(sentOrBlocked.length, humans.length);
+    const numerator = Math.max(stoppedMessages, stoppedHumans);
+    return {
+      sampleCount: denominator,
+      stopRateBps: denominator > 0 ? Math.round((numerator / denominator) * 10_000) : 0,
+    };
   }
 
   private async processCampaign(
@@ -343,25 +456,12 @@ export class MarketingAutopilotDaemon {
     let banditArmsRebalanced = 0;
     let customTickExecuted = false;
 
-    try {
-      const [messages, humans] = await Promise.all([
-        this.store.listOutreachMessages({ campaignId: campaign.id }),
-        this.store.listHumans({ city: campaign.city }),
-      ]);
-      const sentOrBlocked = messages.filter(
-        (m) =>
-          m.status === "sent" ||
-          m.status === "delivered" ||
-          m.status === "replied" ||
-          m.status === "blocked_stop",
-      );
-      const stoppedMessages = messages.filter((m) => m.status === "blocked_stop").length;
-      const stoppedHumans = humans.filter((h) => h.stopped).length;
-      const denominator = Math.max(sentOrBlocked.length, humans.length);
-      const numerator = Math.max(stoppedMessages, stoppedHumans);
+    const pressure = this.isQueuePaused(currentCampaign.city, currentCampaign.appId);
 
-      if (denominator >= this.minStopSamples) {
-        stopRateBps = Math.round((numerator / denominator) * 10_000);
+    try {
+      const stats = await this.computeCampaignStopRate(campaign);
+      if (stats.sampleCount >= this.minStopSamples) {
+        stopRateBps = stats.stopRateBps;
         if (stopRateBps > this.maxStopRateBps && currentCampaign.riskDial !== "lockdown") {
           currentCampaign = await this.store.setRiskDial(campaign.id, "lockdown", false);
           stopSpikeTriggeredLockdown = true;
@@ -379,13 +479,16 @@ export class MarketingAutopilotDaemon {
 
     if (
       currentCampaign.riskDial !== "lockdown" &&
+      !pressure.paused &&
       this.store.listBanditArms &&
-      this.store.upsertBanditArm
+      (this.store.updateBanditArmsBatch || this.store.upsertBanditArm)
     ) {
       try {
         const storedArms = await this.store.listBanditArms(campaign.id);
         if (storedArms.length > 0) {
-          const allocatorArms = storedArms.map((a) => toAllocatorArm(a, currentCampaign));
+          const allocatorArms = storedArms.map((arm) =>
+            toAllocatorBanditArm(arm, currentCampaign),
+          );
           const remainingCents = Math.max(
             0,
             currentCampaign.monthlyBudgetCents -
@@ -403,30 +506,50 @@ export class MarketingAutopilotDaemon {
             weeksElapsed: applyWeeklyDecay ? 1 / 7 : 0,
           });
 
+          const batchUpdates: BanditArmBatchUpdate[] = [];
           for (const updated of result.arms) {
-            const orig = storedArms.find((a) => a.id === updated.id || a.armKey === updated.armKey);
+            const orig = storedArms.find(
+              (a) => a.id === updated.id || a.armKey === updated.armKey,
+            );
             const mappedStatus: BanditArm["status"] =
               updated.state === "halted_safety" || updated.state === "auto_killed"
                 ? "killed"
                 : updated.state === "paused_low_roi"
                   ? "paused"
                   : "active";
-            await this.store.upsertBanditArm({
-              id: orig?.id ?? updated.id,
-              campaignId: campaign.id,
-              armKey: updated.armKey,
-              label: updated.label,
-              track: orig?.track ?? updated.track,
-              alpha: updated.alpha,
-              beta: updated.beta,
-              weight: Number((updated.allocatedShareBps / 10_000).toFixed(4)),
-              spendCents: updated.spentCents,
-              signups: updated.verifiedT2Joins,
-              stopEvents: updated.stopCount,
-              totalContacts: updated.exposures,
-              status: mappedStatus,
-            });
+            const weight = Number((updated.allocatedShareBps / 10_000).toFixed(4));
+            if (orig && this.store.updateBanditArmsBatch) {
+              batchUpdates.push({
+                id: orig.id,
+                alpha: updated.alpha,
+                beta: updated.beta,
+                weight,
+                status: mappedStatus,
+              });
+            } else if (this.store.upsertBanditArm) {
+              await this.store.upsertBanditArm({
+                id: orig?.id ?? updated.id,
+                campaignId: campaign.id,
+                armKey: updated.armKey,
+                label: updated.label,
+                track: orig?.track ?? updated.track,
+                desireLane: orig?.desireLane ?? updated.desireLane ?? null,
+                alpha: updated.alpha,
+                beta: updated.beta,
+                weight,
+                spendCents: updated.spentCents,
+                signups: updated.verifiedT2Joins,
+                verifiedOutcomes: updated.verifiedT3Matches,
+                stopEvents: updated.stopCount,
+                totalContacts: updated.exposures,
+                status: mappedStatus,
+              });
+            }
             banditArmsRebalanced += 1;
+          }
+
+          if (batchUpdates.length > 0 && this.store.updateBanditArmsBatch) {
+            await this.store.updateBanditArmsBatch(batchUpdates);
           }
 
           this.emit("bandit_rebalanced", {
@@ -440,7 +563,7 @@ export class MarketingAutopilotDaemon {
       }
     }
 
-    if (currentCampaign.riskDial !== "lockdown" && this.runCampaignTick) {
+    if (currentCampaign.riskDial !== "lockdown" && !pressure.paused && this.runCampaignTick) {
       try {
         await this.runCampaignTick(currentCampaign);
         customTickExecuted = true;
@@ -454,6 +577,8 @@ export class MarketingAutopilotDaemon {
       slug: campaign.slug,
       stopRateBps,
       stopSpikeTriggeredLockdown,
+      queuePressurePaused: pressure.paused,
+      queuePressureReason: pressure.reason,
       banditArmsRebalanced,
       customTickExecuted,
     };

@@ -385,6 +385,38 @@ export const ZIPS: readonly ZipCentroid[] = [
   { zip: "90806", market: "la", area: "Long Beach / Wrigley", lat: 33.8054, lon: -118.1877 },
   { zip: "90813", market: "la", area: "Long Beach / Westside", lat: 33.7823, lon: -118.1968 },
   { zip: "90814", market: "la", area: "Long Beach / Bluff Heights", lat: 33.7716, lon: -118.1436 },
+  { zip: "60601", market: "chicago", area: "The Loop / Millennium Park", lat: 41.8858, lon: -87.6229 },
+  { zip: "60602", market: "chicago", area: "The Loop", lat: 41.8832, lon: -87.6290 },
+  { zip: "60605", market: "chicago", area: "South Loop / Museum Campus", lat: 41.8675, lon: -87.6244 },
+  { zip: "60606", market: "chicago", area: "West Loop Gate / The Loop", lat: 41.8825, lon: -87.6374 },
+  { zip: "60607", market: "chicago", area: "West Loop / Fulton Market", lat: 41.8748, lon: -87.6518 },
+  { zip: "60608", market: "chicago", area: "Pilsen", lat: 41.8525, lon: -87.6695 },
+  { zip: "60610", market: "chicago", area: "Old Town / Gold Coast", lat: 41.9039, lon: -87.6365 },
+  { zip: "60611", market: "chicago", area: "Streeterville / River North", lat: 41.8944, lon: -87.6203 },
+  { zip: "60613", market: "chicago", area: "Lakeview / Wrigleyville", lat: 41.9542, lon: -87.6584 },
+  { zip: "60614", market: "chicago", area: "Lincoln Park", lat: 41.9227, lon: -87.6489 },
+  { zip: "60615", market: "chicago", area: "Hyde Park Chicago / Kenwood", lat: 41.8018, lon: -87.5955 },
+  { zip: "60618", market: "chicago", area: "Avondale / North Center", lat: 41.9467, lon: -87.7024 },
+  { zip: "60622", market: "chicago", area: "Wicker Park / Bucktown / Ukrainian Village", lat: 41.9022, lon: -87.6815 },
+  { zip: "60625", market: "chicago", area: "Lincoln Square / Balmoral", lat: 41.9718, lon: -87.7016 },
+  { zip: "60640", market: "chicago", area: "Uptown Chicago / Andersonville", lat: 41.9721, lon: -87.6621 },
+  { zip: "60647", market: "chicago", area: "Logan Square", lat: 41.9209, lon: -87.7024 },
+  { zip: "60654", market: "chicago", area: "River North", lat: 41.8924, lon: -87.6341 },
+  { zip: "60657", market: "chicago", area: "Lakeview / Boystown", lat: 41.9398, lon: -87.6531 },
+  { zip: "60660", market: "chicago", area: "Edgewater Chicago", lat: 41.9904, lon: -87.6652 },
+  { zip: "60661", market: "chicago", area: "West Loop / Greektown", lat: 41.8828, lon: -87.6442 },
+  { zip: "33127", market: "miami", area: "Wynwood", lat: 25.8007, lon: -80.1995 },
+  { zip: "33130", market: "miami", area: "Brickell West", lat: 25.7675, lon: -80.2007 },
+  { zip: "33131", market: "miami", area: "Brickell", lat: 25.7647, lon: -80.1897 },
+  { zip: "33132", market: "miami", area: "Downtown Miami / Bayfront", lat: 25.7834, lon: -80.1867 },
+  { zip: "33133", market: "miami", area: "Coconut Grove", lat: 25.7271, lon: -80.2416 },
+  { zip: "33134", market: "miami", area: "Coral Gables", lat: 25.7498, lon: -80.2610 },
+  { zip: "33135", market: "miami", area: "Little Havana", lat: 25.7655, lon: -80.2314 },
+  { zip: "33136", market: "miami", area: "Downtown Miami / Overtown", lat: 25.7859, lon: -80.2044 },
+  { zip: "33137", market: "miami", area: "Design District / Midtown Miami", lat: 25.8126, lon: -80.1920 },
+  { zip: "33139", market: "miami", area: "South Beach Miami / Miami Beach", lat: 25.7826, lon: -80.1304 },
+  { zip: "33140", market: "miami", area: "Mid-Beach / Miami Beach", lat: 25.8130, lon: -80.1230 },
+  { zip: "33141", market: "miami", area: "North Beach Miami", lat: 25.8535, lon: -80.1255 },
 ];
 
 /**
@@ -425,7 +457,7 @@ export function zipForArea(text: string | undefined, market?: City): ZipCentroid
  * Where a visitor to a market is assumed to meet (downtown core), for multi-city members and travelers
  * whose own zip is in another market. Same convention as the slop world.
  */
-export const MARKET_ANCHOR_ZIP: Record<City, string> = { sf: "94103", nyc: "10003", la: "90026" };
+export const MARKET_ANCHOR_ZIP: Record<City, string> = { sf: "94103", nyc: "10003", la: "90026", chicago: "60607", miami: "33131" };
 
 /** Coarse cell size in degrees (about 1.1 km north-south): the only location the matcher computes on. */
 export const CELL_DEG = 0.01;

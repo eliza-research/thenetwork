@@ -18,7 +18,7 @@ import { makeSlopPack, planFromInput, SLOP_ENGINE_CONFIG, slopProfiles, type Slo
 import type { DeepPartial } from "@thenetwork/engine/src/packs/slop/options.ts";
 import type { AskRecord, EngineInput } from "@thenetwork/engine/src/types.ts";
 import { hash32 } from "@thenetwork/core";
-import type { SlopCity } from "./geo.ts";
+import { SLOP_CITIES, type SlopCity } from "./geo.ts";
 import type { DateActivity } from "./persona.ts";
 import type { SlopAskField, SlopSnapshot } from "./snapshot.ts";
 import type { MatcherContext, SlopAsk, SlopMatcher, SlopProposal } from "./world.ts";
@@ -74,7 +74,7 @@ export function slopEngineMatcher(o: SlopEngineMatcherOptions = {}): SlopMatcher
         o.onStanding(ctx.week, { validity: standings.validity, placed, narrowed });
       }
       debt = r.runLog.exposureDebt;
-      const markets = (cfg.cities ?? ["sf", "nyc", "la"]) as SlopCity[];
+      const markets = (cfg.cities ?? SLOP_CITIES) as SlopCity[];
       const P = slopProfiles(input);
       const proposals: SlopProposal[] = [];
       for (const p of r.proposals) {

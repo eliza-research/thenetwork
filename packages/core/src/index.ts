@@ -32,6 +32,9 @@ export {
   needsPreRecommendOpenCheck, nextVenueStatusOnReport, shouldFetchExternalVenues, venueBudgetFitScore, venueHardEligible, venueRedLinesEligible,
   type GroupVenueRubricInput, type VenueHardEligibilityInput, type VenueRedLinesInput,
 } from "./generated/venueSelection.ts";
+export { maxRelaxStepMin } from "./generated/cityTravel.ts";
+export { followupIsNextDay, maxFollowupDailyCap, maxFollowupReminders } from "./generated/encounterFollowup.ts";
+export { chooseWorkIntroChannel } from "./generated/workIntroChannel.ts";
 export {
   canPivotSuggestion, clampSuggestionScore, computeDensityTier, dateActivityAllowed, maxSuggestionPivots, modeVenueScore,
   nextSuggestionAction, slopNicheHobbyBonus,

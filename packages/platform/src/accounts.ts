@@ -16,7 +16,7 @@
 //    number's sessions end. The phone_changes row (keyed hashes only) is the audit record.
 import { randomUUID } from "node:crypto";
 import { resolveCity } from "../../core/src/cities.ts";
-import type { CityId } from "../../core/src/types.ts";
+import { isCity, LAUNCH_CITIES, type City } from "../../core/src/types.ts";
 import { DAY } from "../../core/src/clock.ts";
 import {
   hasScopedMembership, initial as accountPrivacyInitial, step as stepPrivacy, verifiedPrivacyOwnerMatches,
@@ -59,15 +59,38 @@ const numberChangeRefused = (failure: PhoneChangeFailure): { ok: false; error: N
 /** Base-profile fields a person may share from one app to another. Sensitive classes are not in this list and never will be. */
 export const SHAREABLE_FIELDS = ["first_name", "city", "age_band", "interests"] as const;
 
-/** Resolve a named registered city/region across all registered cities (never a ZIP). */
-export function homeCityOf(value: unknown): CityId | undefined {
+const HOME_CITY_ALIASES: Record<string, City> = {
+  sf: "sf",
+  "san francisco": "sf",
+  "bay area": "sf",
+  "the bay area": "sf",
+  nyc: "nyc",
+  "new york": "nyc",
+  "new york city": "nyc",
+  la: "la",
+  "los angeles": "la",
+  "l.a.": "la",
+  socal: "la",
+  chicago: "chicago",
+  chi: "chicago",
+  chicagoland: "chicago",
+  miami: "miami",
+  "south florida": "miami",
+};
+
+/** Only an explicitly named city/region, never a ZIP or inferred neighborhood. */
+export function homeCityOf(value: unknown): City | undefined {
   if (typeof value !== "string") return undefined;
   const city = value.normalize("NFKC").trim().toLowerCase().replace(/\s+/g, " ");
   if (!city) return undefined;
-  return resolveCity(city);
+  if (isCity(city) && LAUNCH_CITIES.includes(city)) return city;
+  const aliased = HOME_CITY_ALIASES[city];
+  if (aliased) return aliased;
+  const resolved = resolveCity(city);
+  return isCity(resolved) ? resolved : undefined;
 }
 
-export interface HomeInput { homeCity: CityId; neighborhood?: string }
+export interface HomeInput { homeCity: City; neighborhood?: string }
 
 /** An own-home edit cannot carry another member's identity or unrelated profile fields. */
 export function parseHome(body: Record<string, unknown>): HomeInput | undefined {
@@ -84,7 +107,7 @@ export type JoinInput = JoinProfile & ({ age: number; birthDate?: undefined } | 
 
 interface JoinProfile {
   firstName: string;
-  homeCity?: CityId;
+  homeCity?: City;
   neighborhood?: string;
   zip?: string;
   interests?: string[];

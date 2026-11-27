@@ -69,14 +69,16 @@ function seedVenue(v: SeedInput): VenueRecord {
   const openEventEligible =
     v.openEventEligible ??
     (v.walkInGroupCapacity >= 10 && !v.reservationRequired && OPEN_EVENT_CATEGORIES.has(v.category));
+  const ageMin = v.ageMin ?? (v.isBarOnly || isAlcoholCentric ? 21 : 0);
   return {
     ...rest,
+    ageMin,
     public: true,
     status: "active",
     source: "curated",
     lastVerifiedAt: SEED_VERIFIED_AT,
     closureReports: 0,
-    allAges: v.allAges ?? (!v.isBarOnly && !isAlcoholCentric && (v.ageMin ?? 0) <= 13),
+    allAges: v.allAges ?? (!v.isBarOnly && !isAlcoholCentric && ageMin <= 13),
     isAlcoholCentric,
     isSmokeFree: v.isSmokeFree ?? true,
     openEventEligible,

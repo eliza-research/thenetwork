@@ -36,11 +36,18 @@ export function gatheringDeliveryEvent(row: Pick<QueueRow, "id" | "memberId">, p
     revision <= 2_147_483_647 && row.id === gatheringDeliveryId({ id, revision }, row.memberId, prefix)) return { id, revision };
 }
 
-const localStart = new Intl.DateTimeFormat("en-US", {
-  timeZone: "America/New_York", weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit",
-});
+const localStartByTz = new Map<string, Intl.DateTimeFormat>();
 
-export const gatheringLocalStart = (startsAt: Date): string => localStart.format(startsAt);
+export const gatheringLocalStart = (startsAt: Date, tz = "America/New_York"): string => {
+  let fmt = localStartByTz.get(tz);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz, weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit",
+    });
+    localStartByTz.set(tz, fmt);
+  }
+  return fmt.format(startsAt);
+};
 
 function invitationCard(event: ReviewedInvite, id: string): string {
   return attention.withPausePath(`The Network's monthly gathering is ${gatheringLocalStart(event.starts_at)} New York time at ${event.venue_name}. Reply with the line below to reserve a place.\n`

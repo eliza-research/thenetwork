@@ -28,7 +28,7 @@ test.skipIf(!pgAvailable)("persisted proposal activity follows the seeded game r
   }
   try {
     await game.init();
-    const pending = () => game.state().opportunities.filter(o => o.state === "IN_REVIEW");
+    const pending = () => game.state().opportunities.filter(o => o.state === "IN_REVIEW" && !!o.review?.exceptionReason);
     for (let hour = 0; hour < 14 * 24 && pending().length < 2; hour++) {
       expect((await game.control({ type: "step", ms: HOUR })).ok).toBe(true);
     }
@@ -78,7 +78,7 @@ test.skipIf(!pgAvailable)("a probe replacement moves persisted proposal activity
     let replaced: { id: string; out: string; in: string } | undefined;
     for (let hour = 0; hour < 14 * 24 && !replaced; hour++) {
       expect((await game.control({ type: "step", ms: HOUR })).ok).toBe(true);
-      for (const o of game.state().opportunities.filter(o => o.state === "IN_REVIEW")) {
+      for (const o of game.state().opportunities.filter(o => o.state === "IN_REVIEW" && !!o.review?.exceptionReason)) {
         if (tracked.size < 5 && o.alternates.length > 0 && !tracked.has(o.id)) {
           expect((await game.control({ type: "review", oppId: o.id, decision: "approve" })).ok).toBe(true);
           tracked.set(o.id, [...o.participants]);

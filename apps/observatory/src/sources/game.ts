@@ -7,7 +7,10 @@ import { setTimeout as waitForMs } from "node:timers/promises";
 // Everything flows through the same Network pipeline and is scored against the oracle's hidden
 // ground truth; the judge scorer checks the run records for invariants, leaks and minor contacts.
 import { fileAt } from "../../../../packages/core/src/runtime/files.ts";
-import { DAY, HOUR, MIN_MEMBER_AGE, MINUTE, type City, type MemberId, type Proposal, type ScoreComponents } from "@thenetwork/core";
+import {
+  ALL_SEED_VENUES, CITIES, DAY, getCity, HOUR, listCities, MIN_MEMBER_AGE, MINUTE, seedVenuesForCity,
+  type City, type MemberId, type Proposal, type ScoreComponents,
+} from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import { computeMetrics } from "@thenetwork/sim";
 import {
@@ -29,9 +32,10 @@ import { emptyCounters, Store } from "../store.ts";
 import { TakeoverAgent } from "../takeover.ts";
 import type {
   ClockInfo, ConfigChange, ConfigInfo, ControlCommand, ControlResult, GameState, MemberDetail, MemberTimeline, MemberTruth, Mission, NetworkInfo,
-  ObsDelta, ObsMember, ObsMessage, ObsOpportunity, ObsRequest, ObsState, OpportunityDetail, SafetyAction, SafetyInfo, SearchHit, SystemEvent, TimelineEntry,
+  ObsCitySummary, ObsDelta, ObsMember, ObsMessage, ObsOpportunity, ObsRequest, ObsState, ObsVenue, OpportunityDetail, SafetyAction, SafetyInfo, SearchHit, SystemEvent, TimelineEntry,
 } from "../types.ts";
 import { REVIEW_REASONS } from "../types.ts";
+import { obsVenueFromSeed } from "./real.ts";
 import { Listeners, REVIEW_BLOCK_ERRORS, SAFETY_ERRORS, searchPattern, snippet, type DataSource, type ViewOptions } from "./source.ts";
 
 export interface GameOptions {
@@ -48,8 +52,7 @@ export interface GameOptions {
   engine?: GameState["engine"];
   /** The Network under test: "consent" (packages/network, default) or the old "stub". */
   network?: "consent" | "stub";
-  /** "nyc" (default; the launch city) or "all" (SF + NYC). */
-  city?: "nyc" | "all";
+  city?: City | "all";
   /** NYC scenario id (@thenetwork/network/harness SCENARIOS) to play as a level. */
   scenario?: string | null;
   /** 0 (default) = the 500-member synthetic dataset v1; N > 0 = a generated world of N personas. */
@@ -146,7 +149,7 @@ export class GameSource implements DataSource {
     let edges: EdgeRecord[] = [];
     this.personas.clear(); this.profiles.clear(); this.communities.clear();
     if (synthetic) {
-      personas = (await loadPersonas(o.dataDir)).filter(p => o.city === "all" || p.homeCity === "nyc");
+      personas = (await loadPersonas(o.dataDir)).filter(p => o.city === "all" || p.homeCity === o.city);
       const manifest = await fileAt(`${o.dataDir}/manifest.json`).json();
       this.start = manifest.snapshotNow;
       for (const m of await readJsonl<MemberRecord>(`${o.dataDir}/members.jsonl`)) {
@@ -156,7 +159,20 @@ export class GameSource implements DataSource {
       for (const h of await readJsonl<HiddenTruthRecord>(`${o.dataDir}/hidden_truth.jsonl`)) this.communities.set(h.memberId, h.community);
       edges = await readJsonl<EdgeRecord>(`${o.dataDir}/edges.jsonl`);
     } else {
-      personas = generatePersonas({ n: o.personas, seed: o.seed, joinSpreadDays: 7, ...(o.city === "nyc" ? { cityWeights: { nyc: 1, sf: 0 } } : {}) });
+      const cityWeights = o.city === "all"
+        ? undefined
+        : { sf: 0, nyc: 0, la: 0, chicago: 0, miami: 0, [o.city]: 1 };
+      personas = generatePersonas({ n: o.personas, seed: o.seed, joinSpreadDays: 7, ...(cityWeights ? { cityWeights } : {}) });
+      for (let i = 0; i < personas.length; i++) {
+        const p = personas[i]!;
+        if (!p.routine.homeArea) {
+          const hoods = CITIES[p.homeCity]?.neighborhoods ?? [];
+          if (hoods.length) {
+            p.routine.homeArea = hoods[i % hoods.length]!.name;
+            if (!p.routine.workArea) p.routine.workArea = hoods[(i + 2) % hoods.length]!.name;
+          }
+        }
+      }
       this.start = DEFAULT_START;
     }
     // The level's setup may override persona fields (ages, join days), so it runs before the view is built.
@@ -169,10 +185,11 @@ export class GameSource implements DataSource {
     for (const p of personas) this.personas.set(p.id, p);
     this.scenarioIds = cast?.ids ?? {};
 
+    const cityTag = o.city === "all" ? "All cities" : getCity(o.city)?.shortName ?? o.city.toUpperCase();
     const clock: ClockInfo = { now: this.start, start: this.start, end: this.start + o.days * DAY, day: 1, playing: false, speed: SPEEDS.sixHours, waitingForPlayer: false };
     this.store = new Store({
       mode: "game", app: this.app,
-      label: `SIMULATION · ${appBanner(this.app)} · seed ${o.seed}${o.timeAware ? " · time-aware" : ""} · ${synthetic ? `synthetic v1 (${personas.length} ${o.city === "nyc" ? "NYC" : "SF/NYC"})` : `${o.personas} generated personas`} · ${o.network === "consent" ? "consent-first Network" : "stub Network"}${o.scenario ? ` · level: ${o.scenario}` : ""}${minAge > MIN_MEMBER_AGE ? ` · join ${minAge}+` : ""}`,
+      label: `SIMULATION · ${appBanner(this.app)} · seed ${o.seed}${o.timeAware ? " · time-aware" : ""} · ${synthetic ? `synthetic v1 (${personas.length} ${cityTag})` : `${o.personas} generated personas (${cityTag})`} · ${o.network === "consent" ? "consent-first Network" : "stub Network"}${o.scenario ? ` · level: ${o.scenario}` : ""}${minAge > MIN_MEMBER_AGE ? ` · join ${minAge}+` : ""}`,
       dataset: synthetic ? "synthetic-v1" : `generated-${o.personas}`,
       capabilities: { canStep: true, canIntervene: true, hiddenTruth: true, readOnly: false },
     }, clock);
@@ -202,12 +219,13 @@ export class GameSource implements DataSource {
     this.records = [];
     this.judgeHour = -1; this.healthHour = -1;
     this.recent = []; this.stopHistory.clear(); this.inviters.clear(); this.guardFallback.clear(); this.configHistory = [];
+    const runCity: City = o.city === "all" ? "nyc" : o.city;
     this.consent = o.network === "consent" ? new ConsentNetwork({
-      seed: o.seed, inlineJudge: o.judge === "hold-every-item" ? holdEveryItem.inline : simulatedReviewJudge({ exceptions: true }), engine: { cities: ["nyc"] }, ...(o.engine === "off" ? { maxNewPerDay: 0 } : {}),
+      seed: o.seed, inlineJudge: o.judge === "hold-every-item" ? holdEveryItem.inline : simulatedReviewJudge({ exceptions: true }), engine: { cities: [runCity] }, ...(o.engine === "off" ? { maxNewPerDay: 0 } : {}),
       onEngineRun: (log, proposals, at) => {
-        const sum = summarizeRun(log, proposals, { at, city: "nyc", wallMs: Math.round(log.timingsMs.total ?? 0) });
+        const sum = summarizeRun(log, proposals, { at, city: runCity, wallMs: Math.round(log.timingsMs.total ?? 0) });
         this.store.addRun(sum);
-        this.store.pushFeed({ t: at, kind: "engine", text: `engine-v1 · NYC: ${proposals.length} candidates proposed from ${sum.funnel.generated}; the Network gates them (skeptical) and checks availability first` });
+        this.store.pushFeed({ t: at, kind: "engine", text: `engine-v1 · ${runCity.toUpperCase()}: ${proposals.length} candidates proposed from ${sum.funnel.generated}; the Network gates them (skeptical) and checks availability first` });
       },
     }) : undefined;
     this.engine = o.engine === "engine-v1" && !this.consent
@@ -828,6 +846,50 @@ export class GameSource implements DataSource {
 
   /** Cities present (for the UI). */
   cities(): City[] { return [...new Set([...this.personas.values()].map(p => p.homeCity))]; }
+
+  selectedCity(): City | "all" { return this.opts.city; }
+
+  async loadVenues(city?: City): Promise<ObsVenue[]> {
+    const visitsByName = new Map<string, number>();
+    const visitsById = new Map<string, number>();
+    for (const o of this.store?.opps.values() ?? []) {
+      if (o.source === "shadow" || !o.venue) continue;
+      if (o.state === "COMPLETED" || o.state === "FEEDBACK_COLLECTED" || o.state === "SCHEDULED") {
+        visitsByName.set(o.venue.name, (visitsByName.get(o.venue.name) ?? 0) + 1);
+        if (o.venue.id) visitsById.set(o.venue.id, (visitsById.get(o.venue.id) ?? 0) + 1);
+      }
+    }
+    const base = city ? seedVenuesForCity(city) : ALL_SEED_VENUES;
+    return base.map(v => {
+      const obs = obsVenueFromSeed(v);
+      const visits = visitsById.get(v.id) ?? visitsByName.get(v.name) ?? 0;
+      return visits > 0 ? { ...obs, visitCount: visits } : obs;
+    });
+  }
+
+  async loadCities(): Promise<ObsCitySummary[]> {
+    const memberCounts = new Map<string, number>();
+    const oppCounts = new Map<string, number>();
+    for (const m of this.store?.members.values() ?? []) if (!m.declined) memberCounts.set(m.city, (memberCounts.get(m.city) ?? 0) + 1);
+    for (const o of this.store?.opps.values() ?? []) if (o.source !== "shadow") oppCounts.set(o.city, (oppCounts.get(o.city) ?? 0) + 1);
+    return listCities().map(spec => {
+      const venues = seedVenuesForCity(spec.id);
+      return {
+        id: spec.id,
+        name: spec.name,
+        shortName: spec.shortName,
+        tz: spec.tz,
+        center: { ...spec.center },
+        primaryMode: spec.primaryMode,
+        zones: spec.zones.map(z => ({ id: z.id, name: z.name })),
+        neighborhoodCount: spec.neighborhoods.length,
+        memberCount: memberCounts.get(spec.id) ?? 0,
+        opportunityCount: oppCounts.get(spec.id) ?? 0,
+        venueCount: venues.length,
+        activeVenueCount: venues.filter(v => v.status === "active").length,
+      };
+    });
+  }
 }
 
 /** Commands that change the world or the Network: they wait for a running step (idle()). Clock controls and reads do not. */

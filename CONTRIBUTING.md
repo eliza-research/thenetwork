@@ -132,6 +132,8 @@ Put your values in `.env` only. `.env` is in `.gitignore`. [.env.example](.env.e
 | `CLEF_MODEL` | Photo rater model: `clef` (default) or `clef-flash`. | Optional | |
 | `RELAY_CLEF_MODEL` | Relay classifier model: `clef-flash` (default) or `clef`. | Optional | |
 | `CLEF_WEIGHTS_PATH` | A fitted Clef weights file. Unset uses the placeholder weights. A file with no version and provenance is refused, and the backend does not start. | Optional | `pnpm run clef fit` output |
+| `YELP_API_KEY` | Yelp Fusion API v3 key for external venue discovery and live open checks (`packages/platform/src/venue-provider.ts`). Makes no call when empty. | Optional | Yelp Fusion developer portal |
+| `GOOGLE_PLACES_API_KEY` | Google Places API (New) key for external venue discovery and live open checks with minimal FieldMask (`packages/platform/src/venue-provider.ts`). Makes no call when empty. | Optional | Google Cloud console |
 | `OBSERVATORY_PG_PORT`, `OBSERVATORY_PG_DIR` | Port (default 54339) and data folder (default `runs/pg`) of the dev Postgres. The integration and e2e tests use it. | Optional | |
 | `PG_BIN_DIR` | Folder of the Postgres client programs, if they are not on PATH. | Optional | |
 | `REQUIRE_PG` | `1` makes a Postgres test or sim block fail instead of skip when there is no Postgres. CI sets it. | Optional. Set it to prove that no Postgres case skipped. | |

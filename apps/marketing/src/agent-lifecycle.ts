@@ -1,32 +1,58 @@
-// Subscription-connected multi-agent lifecycle coordinator for @thenetwork/marketing (Node 26).
-// Manages the 5 branded agents (Chadwick, Sloane, Peon, Venn, The Operator) and any
-// additional agents connected via ChatGPT, Claude, Gemini, or Surplus subscriptions.
-// Enforces Vibestack-generated canDispatchAgentTurn via ./policy.ts, automatic provider
-// failover on rate limits without bouncing back to tried providers, sanitized CLI env,
-// bounded process output, and core LeakGuard + parseOptOut safety middleware.
-
 import { RealClock } from "../../../packages/core/src/clock.ts";
 import { fenceUntrusted, UNTRUSTED_NOTE } from "../../../packages/core/src/fence.ts";
-import { LeakGuard } from "../../../packages/core/src/guard.ts";
+import type { LeakGuard } from "../../../packages/core/src/guard.ts";
 import { maskPii } from "../../../packages/core/src/pii.ts";
+import {
+  DEFAULT_MODEL,
+  endpointsFor,
+  LLMError,
+  llmFor,
+  type ChatMessage,
+  type FallbackInfo,
+  type LLM,
+  type ResponseInfo,
+} from "../../../packages/core/src/llm.ts";
 import { parseOptOut } from "../../../packages/core/src/replies.ts";
 import { spawnProcess } from "../../../packages/core/src/runtime/process.ts";
 import {
   CANONICAL_MARKETING_AGENTS,
   FALLBACK_PROVIDER_ORDER,
+  marketingLeakAllowlist,
   type CanonicalAgentSpec,
 } from "./constants.ts";
-import { evaluateAgentTurnPolicy } from "./policy.ts";
+import {
+  buildPromptCacheKey,
+  estimateLlmCostMicros,
+  estimateTokens,
+  hashPromptText,
+  PromptCache,
+  tryDeterministicRoute,
+  type DeterministicTaskHint,
+} from "./llm-cache.ts";
+import type { NetworkCoreBridge } from "./network-bridge.ts";
+import {
+  createMarketingLeakGuard,
+  evaluateAgentTurnPolicy,
+  evaluateLlmBudget,
+  isGlobalOptOutText,
+} from "./policy.ts";
 import type { MarketingStore, UpsertAgentInput } from "./store.ts";
 import type {
   AgentAuthMode,
   Clock,
+  DailyLlmUsage,
   HumanPartner,
+  LlmTrajectory,
+  LlmTrajectoryStatus,
   MarketingAgent,
   SubscriptionProvider,
 } from "./types.ts";
 
 export { CANONICAL_MARKETING_AGENTS, type CanonicalAgentSpec };
+
+export const DEFAULT_SURPLUS_MODEL = DEFAULT_MODEL;
+export const DEFAULT_DAILY_TOKEN_CAP = 250_000;
+export const DEFAULT_DAILY_COST_CAP_MICROS = 5_000_000;
 
 export type SubscriptionConnectionMode =
   | AgentAuthMode
@@ -43,6 +69,22 @@ export function normalizeAuthMode(mode: SubscriptionConnectionMode): AgentAuthMo
   return "mcp";
 }
 
+export function modelForProvider(
+  provider: SubscriptionProvider,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  if (provider === "surplus") {
+    return env.MARKETING_SURPLUS_MODEL?.trim() || DEFAULT_SURPLUS_MODEL;
+  }
+  if (provider === "claude") {
+    return env.MARKETING_CLAUDE_MODEL?.trim() || "claude-sonnet";
+  }
+  if (provider === "chatgpt") {
+    return env.MARKETING_CHATGPT_MODEL?.trim() || "codex-cli";
+  }
+  return env.MARKETING_GEMINI_MODEL?.trim() || "gemini-cli";
+}
+
 export interface CliRunResult {
   exitCode: number;
   stdout: string;
@@ -57,6 +99,13 @@ export type CliProcessRunner = (
 export interface ProviderExecutionResponse {
   ok: boolean;
   text: string;
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  costMicros?: number;
+  usageKnown?: boolean;
+  fellBack?: boolean;
+  fallbackNotes?: string[];
   rateLimited?: boolean;
   cooldownMs?: number;
   error?: string;
@@ -66,6 +115,7 @@ export type BrowserSessionRunner = (req: {
   agent: MarketingAgent;
   provider: SubscriptionProvider;
   sessionRef: string;
+  systemPrompt: string;
   prompt: string;
 }) => Promise<ProviderExecutionResponse>;
 
@@ -74,6 +124,7 @@ export type OAuthOrApiRunner = (req: {
   provider: SubscriptionProvider;
   authMode: AgentAuthMode;
   sessionRef: string;
+  systemPrompt: string;
   prompt: string;
 }) => Promise<ProviderExecutionResponse>;
 
@@ -85,7 +136,14 @@ export interface AgentLifecycleOptions {
   cliRunner?: CliProcessRunner;
   browserRunner?: BrowserSessionRunner;
   oauthOrApiRunner?: OAuthOrApiRunner;
+  llmClient?: LLM;
   leakGuard?: LeakGuard;
+  promptCache?: PromptCache;
+  enablePromptCache?: boolean;
+  enableDeterministicRouter?: boolean;
+  dailyTokenCap?: number;
+  dailyCostCapMicros?: number;
+  bridge?: NetworkCoreBridge;
   defaultCooldownMs?: number;
   cliTimeoutMs?: number;
 }
@@ -118,6 +176,12 @@ export interface DispatchTurnOptions {
   lockdown?: boolean;
   allowFailover?: boolean;
   dryRun?: boolean;
+  deterministicTaskHint?: DeterministicTaskHint | null;
+  skipCache?: boolean;
+  cacheTtlMs?: number;
+  maxTokens?: number;
+  temperature?: number;
+  estimatedOutputTokens?: number;
 }
 
 export interface AgentTurnResult {
@@ -125,12 +189,25 @@ export interface AgentTurnResult {
   agent: MarketingAgent;
   providerUsed: SubscriptionProvider;
   failedOverFrom: SubscriptionProvider | null;
+  failoverChain: string[];
   authMode: AgentAuthMode;
+  model: string;
+  promptHash: string;
   outputText: string | null;
+  cached: boolean;
+  deterministicRule: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  costMicros: number;
+  latencyMs: number;
   leakReasons: string[];
   blockedReason?: string;
   dryRun: boolean;
   dispatchedAt: string;
+}
+
+export interface AutopilotTickOptions {
+  forceIdle?: boolean;
 }
 
 export interface AutopilotTickResult {
@@ -142,10 +219,40 @@ export interface AutopilotTickResult {
   dispatched: AgentTurnResult[];
 }
 
+interface RecordLlmTrajectoryInput {
+  agentId?: string | null;
+  campaignId?: string | null;
+  provider: string;
+  model: string;
+  promptHash: string;
+  inputTokens: number;
+  outputTokens: number;
+  cached: boolean;
+  costMicros: number;
+  latencyMs: number;
+  status: LlmTrajectoryStatus;
+  failoverChain?: string | null;
+  leakBlocked: boolean;
+}
+
+interface Pass3StoreMethods {
+  reserveAgentTurn?(
+    agentId: string,
+    nowIso: string,
+  ): Promise<{ reserved: boolean; agent: MarketingAgent; reason?: string }>;
+  recordLlmTrajectory?(input: RecordLlmTrajectoryInput): Promise<LlmTrajectory>;
+  getDailyLlmUsage?(filter?: {
+    agentId?: string;
+    campaignId?: string;
+    dayIso?: string;
+  }): Promise<DailyLlmUsage>;
+}
+
 const DEFAULT_COOLDOWN_MS = 15 * 60_000;
 const DEFAULT_CLI_TIMEOUT_MS = 30_000;
 const CLI_KILL_GRACE_MS = 1_500;
 const MAX_CLI_OUTPUT_BYTES = 1024 * 1024;
+const DEFAULT_ESTIMATED_OUTPUT_TOKENS = 250;
 
 const BASE_CLI_ENV_ALLOWLIST: readonly string[] = [
   "PATH",
@@ -170,19 +277,27 @@ const PROVIDER_CLI_ENV_ALLOWLIST: Record<SubscriptionProvider, readonly string[]
   surplus: [],
 };
 
-const DEFAULT_MARKETING_LEAK_ALLOW: readonly string[] = [
-  "ops-nyc@ntwrk.party",
-  "ntwrk.party",
-  "slop.date",
-  "peon.biz",
-  "friends.help",
-  "go.ntwrk.party",
-  "go.slop.date",
-  "go.peon.biz",
-  "go.friends.help",
-];
+const CANONICAL_BY_PERSONA: ReadonlyMap<string, CanonicalAgentSpec> = new Map(
+  CANONICAL_MARKETING_AGENTS.map((spec) => [spec.personaId, spec]),
+);
 
-/** Builds a minimal non-secret environment for subscription CLI subprocesses. */
+export function resolveSystemPrompt(agent: Pick<MarketingAgent, "personaId" | "displayName" | "appId">): string {
+  const spec = CANONICAL_BY_PERSONA.get(agent.personaId);
+  if (spec) return spec.systemPrompt;
+  return `You are ${agent.displayName}, an 18+ marketing agent for The Network (${agent.appId}). Never contact minors, enforce FTC #Ad disclosure, protect private contacts, and obey STOP immediately.`;
+}
+
+export function buildCliStdinPayload(systemPrompt: string, prompt: string): string {
+  return `<system>\n${systemPrompt}\n</system>\n\n${prompt}`;
+}
+
+export function cliCommandForProvider(provider: SubscriptionProvider): string[] {
+  if (provider === "claude") return ["claude", "-p"];
+  if (provider === "chatgpt") return ["codex", "exec", "-"];
+  if (provider === "gemini") return ["gemini"];
+  throw new Error("Surplus provider uses core llmFor API rather than a CLI subprocess");
+}
+
 export function sanitizeCliEnv(
   provider: SubscriptionProvider,
   env: Record<string, string | undefined>,
@@ -264,13 +379,6 @@ function isRateLimitMessage(text: string): boolean {
   return /\b(429|rate[ -]?limit|quota|too many requests|limit reached|try again later|capacity)\b/i.test(
     text,
   );
-}
-
-function cliCommandForProvider(provider: SubscriptionProvider, prompt: string): string[] {
-  if (provider === "claude") return ["claude", "-p", prompt];
-  if (provider === "chatgpt") return ["codex", "exec", prompt];
-  if (provider === "gemini") return ["gemini", "-p", prompt];
-  return ["codex", "exec", prompt];
 }
 
 async function readBoundedStream(
@@ -372,9 +480,19 @@ export class AgentLifecycleManager {
   private readonly cliRunner: CliProcessRunner;
   private readonly browserRunner?: BrowserSessionRunner;
   private readonly oauthOrApiRunner?: OAuthOrApiRunner;
+  private readonly llmClient?: LLM;
   private readonly leakGuard: LeakGuard;
+  private readonly promptCache: PromptCache;
+  private readonly enablePromptCache: boolean;
+  private readonly enableDeterministicRouter: boolean;
+  private readonly dailyTokenCap: number;
+  private readonly dailyCostCapMicros: number;
+  private readonly bridge?: NetworkCoreBridge;
   private readonly defaultCooldownMs: number;
   private readonly cliTimeoutMs: number;
+
+  private readonly localDailyUsage = new Map<string, DailyLlmUsage>();
+  private readonly lastIdleFingerprint = new Map<string, string>();
 
   constructor(opts: AgentLifecycleOptions) {
     this.store = opts.store;
@@ -384,18 +502,35 @@ export class AgentLifecycleManager {
     this.cliRunner = opts.cliRunner ?? defaultCliRunner;
     this.browserRunner = opts.browserRunner;
     this.oauthOrApiRunner = opts.oauthOrApiRunner;
+    this.llmClient = opts.llmClient;
     this.leakGuard =
       opts.leakGuard ??
-      new LeakGuard({
-        contacts: true,
-        canaryShapes: true,
-        allow: [...DEFAULT_MARKETING_LEAK_ALLOW],
+      createMarketingLeakGuard(this.env, {
+        allow: [...marketingLeakAllowlist([], this.env)],
       });
+    this.promptCache =
+      opts.promptCache ??
+      new PromptCache({
+        clock: this.clock,
+        maxEntries: 512,
+        defaultTtlMs: 30 * 60_000,
+      });
+    this.enablePromptCache = opts.enablePromptCache !== false;
+    this.enableDeterministicRouter = opts.enableDeterministicRouter !== false;
+    this.dailyTokenCap = Math.max(1, Math.floor(opts.dailyTokenCap ?? DEFAULT_DAILY_TOKEN_CAP));
+    this.dailyCostCapMicros = Math.max(
+      1,
+      Math.floor(opts.dailyCostCapMicros ?? DEFAULT_DAILY_COST_CAP_MICROS),
+    );
+    this.bridge = opts.bridge;
     this.defaultCooldownMs = opts.defaultCooldownMs ?? DEFAULT_COOLDOWN_MS;
     this.cliTimeoutMs = opts.cliTimeoutMs ?? DEFAULT_CLI_TIMEOUT_MS;
   }
 
-  /** Ensures all 5 canonical branded agents exist in the store. */
+  getPromptCache(): PromptCache {
+    return this.promptCache;
+  }
+
   async ensureCanonicalRoster(): Promise<MarketingAgent[]> {
     const roster: MarketingAgent[] = [];
     for (const spec of CANONICAL_MARKETING_AGENTS) {
@@ -421,7 +556,6 @@ export class AgentLifecycleManager {
     return roster;
   }
 
-  /** Registers or updates an agent bound to a ChatGPT, Claude, Gemini, or Surplus subscription. */
   async registerAgent(
     input: Omit<UpsertAgentInput, "authMode"> & { authMode?: SubscriptionConnectionMode },
   ): Promise<MarketingAgent> {
@@ -431,7 +565,6 @@ export class AgentLifecycleManager {
     });
   }
 
-  /** Checks agent session health, clears expired cooldowns, and returns remaining daily quota. */
   async heartbeat(agentId: string): Promise<AgentHeartbeatResult> {
     const existing = await this.store.getAgent(agentId);
     if (!existing) throw new Error(`Agent not found: ${agentId}`);
@@ -488,13 +621,6 @@ export class AgentLifecycleManager {
     });
   }
 
-  /**
-   * Dispatches one turn on a subscription-connected agent.
-   * Strictly checks proved marketingPolicy.canDispatchAgentTurn via evaluateAgentTurnPolicy,
-   * respects contact STOP fences (and parses opt-outs on lastMessageText),
-   * runs LeakGuard on output, and fails over across untried backup subscription
-   * providers when rate-limited.
-   */
   async dispatchTurn(
     agentId: string,
     prompt: string,
@@ -502,6 +628,7 @@ export class AgentLifecycleManager {
   ): Promise<AgentTurnResult> {
     const nowMs = this.clock.now();
     const dispatchedAt = new Date(nowMs).toISOString();
+    const utcDay = dispatchedAt.slice(0, 10);
     const dryRun = opts.dryRun ?? this.dryRunDefault;
     let agent = await this.store.getAgent(agentId);
     if (!agent) throw new Error(`Agent not found: ${agentId}`);
@@ -553,10 +680,14 @@ export class AgentLifecycleManager {
         }
         if (opts.targetContact.lastMessageText) {
           const reading = parseOptOut(opts.targetContact.lastMessageText);
-          if (reading.match !== "none") {
+          const globalStop = isGlobalOptOutText(opts.targetContact.lastMessageText);
+          if (reading.match !== "none" || globalStop) {
             targetStopped = true;
             if (targetHumanId) {
-              await this.store.markHumanStopped(targetHumanId, `opt_out_${reading.match}`);
+              await this.store.markHumanStopped(
+                targetHumanId,
+                reading.match !== "none" ? `opt_out_${reading.match}` : "opt_out_global_stop",
+              );
             }
           }
         }
@@ -582,6 +713,11 @@ export class AgentLifecycleManager {
     let activeProvider = agent.provider;
     let failedOverFrom: SubscriptionProvider | null = null;
     const triedProviders = new Set<SubscriptionProvider>([activeProvider]);
+    const failoverChain: string[] = [activeProvider];
+
+    const systemPrompt = resolveSystemPrompt(agent);
+    const initialModel = modelForProvider(activeProvider, this.env);
+    const promptHash = hashPromptText(systemPrompt, prompt);
 
     if (!policyDecision.allowed) {
       const onlyRateLimited =
@@ -594,6 +730,7 @@ export class AgentLifecycleManager {
         failedOverFrom = activeProvider;
         activeProvider = backup;
         triedProviders.add(backup);
+        failoverChain.push(backup);
         agent = await this.store.updateAgent(agent.id, {
           provider: backup,
           failoverProvider: failedOverFrom,
@@ -606,8 +743,17 @@ export class AgentLifecycleManager {
           agent,
           providerUsed: activeProvider,
           failedOverFrom: null,
+          failoverChain,
           authMode: agent.authMode,
+          model: initialModel,
+          promptHash,
           outputText: null,
+          cached: false,
+          deterministicRule: null,
+          inputTokens: 0,
+          outputTokens: 0,
+          costMicros: 0,
+          latencyMs: 0,
           leakReasons: [],
           blockedReason: policyDecision.reason ?? "policy_blocked",
           dryRun,
@@ -621,7 +767,227 @@ export class AgentLifecycleManager {
       untrustedContext: opts.untrustedContext,
     });
 
-    let exec = await this.executeProvider(agent, activeProvider, fencedPrompt, dryRun);
+    if (this.enableDeterministicRouter && opts.deterministicTaskHint) {
+      const routed = tryDeterministicRoute({
+        prompt,
+        personaId: agent.personaId,
+        taskHint: opts.deterministicTaskHint,
+      });
+      if (routed && routed.handled) {
+        const leakReasons = this.leakGuard.check(routed.outputText);
+        const leakBlocked = leakReasons.length > 0;
+        await this.recordTrajectory(utcDay, {
+          agentId: agent.id,
+          campaignId: opts.campaignId ?? null,
+          provider: "deterministic",
+          model: routed.rule,
+          promptHash,
+          inputTokens: 0,
+          outputTokens: 0,
+          cached: true,
+          costMicros: 0,
+          latencyMs: 0,
+          status: leakBlocked ? "leak_blocked" : "cached",
+          failoverChain: null,
+          leakBlocked,
+        });
+        if (leakBlocked) {
+          return {
+            ok: false,
+            agent,
+            providerUsed: activeProvider,
+            failedOverFrom,
+            failoverChain,
+            authMode: agent.authMode,
+            model: routed.rule,
+            promptHash,
+            outputText: null,
+            cached: false,
+            deterministicRule: routed.rule,
+            inputTokens: 0,
+            outputTokens: 0,
+            costMicros: 0,
+            latencyMs: 0,
+            leakReasons,
+            blockedReason: "leak_guard_blocked",
+            dryRun,
+            dispatchedAt,
+          };
+        }
+        return {
+          ok: true,
+          agent,
+          providerUsed: activeProvider,
+          failedOverFrom,
+          failoverChain,
+          authMode: agent.authMode,
+          model: routed.rule,
+          promptHash,
+          outputText: routed.outputText,
+          cached: false,
+          deterministicRule: routed.rule,
+          inputTokens: 0,
+          outputTokens: 0,
+          costMicros: 0,
+          latencyMs: 0,
+          leakReasons: [],
+          dryRun,
+          dispatchedAt,
+        };
+      }
+    }
+
+    const activeModel = modelForProvider(activeProvider, this.env);
+    const cacheKey = buildPromptCacheKey({
+      personaId: agent.personaId,
+      provider: activeProvider,
+      model: activeModel,
+      systemPrompt,
+      prompt: fencedPrompt,
+    });
+
+    if (this.enablePromptCache && !opts.skipCache) {
+      const cached = this.promptCache.get(cacheKey);
+      if (cached) {
+        const leakReasons = this.leakGuard.check(cached.text);
+        if (leakReasons.length === 0) {
+          await this.recordTrajectory(utcDay, {
+            agentId: agent.id,
+            campaignId: opts.campaignId ?? null,
+            provider: activeProvider,
+            model: cached.model,
+            promptHash,
+            inputTokens: 0,
+            outputTokens: 0,
+            cached: true,
+            costMicros: 0,
+            latencyMs: 0,
+            status: "cached",
+            failoverChain: failoverChain.length > 1 ? failoverChain.join("->") : null,
+            leakBlocked: false,
+          });
+          return {
+            ok: true,
+            agent,
+            providerUsed: activeProvider,
+            failedOverFrom,
+            failoverChain,
+            authMode: agent.authMode,
+            model: cached.model,
+            promptHash,
+            outputText: cached.text,
+            cached: true,
+            deterministicRule: null,
+            inputTokens: 0,
+            outputTokens: 0,
+            costMicros: 0,
+            latencyMs: 0,
+            leakReasons: [],
+            dryRun,
+            dispatchedAt,
+          };
+        }
+        this.promptCache.delete(cacheKey);
+      }
+    }
+
+    const estimatedInputTokens = estimateTokens(`${systemPrompt}\n${fencedPrompt}`);
+    const estimatedOutputTokens = Math.max(
+      1,
+      Math.floor(opts.estimatedOutputTokens ?? DEFAULT_ESTIMATED_OUTPUT_TOKENS),
+    );
+    const estimatedTotalTokens = estimatedInputTokens + estimatedOutputTokens;
+    const estimatedCostMicros = dryRun
+      ? 0
+      : estimateLlmCostMicros({
+          model: activeModel,
+          inputTokens: estimatedInputTokens,
+          outputTokens: estimatedOutputTokens,
+        });
+
+    const dailyUsage = await this.getDailyUsage(utcDay, agent.id, opts.campaignId ?? null);
+    const budgetDecision = evaluateLlmBudget({
+      tokensUsedToday: dailyUsage.totalTokens,
+      estimatedTokens: estimatedTotalTokens,
+      dailyTokenCap: this.dailyTokenCap,
+      costMicrosToday: dailyUsage.costMicros,
+      estimatedCostMicros,
+      dailyCostCapMicros: this.dailyCostCapMicros,
+    });
+
+    if (!budgetDecision.allowed) {
+      await this.recordTrajectory(utcDay, {
+        agentId: agent.id,
+        campaignId: opts.campaignId ?? null,
+        provider: activeProvider,
+        model: activeModel,
+        promptHash,
+        inputTokens: 0,
+        outputTokens: 0,
+        cached: false,
+        costMicros: 0,
+        latencyMs: 0,
+        status: "budget_blocked",
+        failoverChain: failoverChain.length > 1 ? failoverChain.join("->") : null,
+        leakBlocked: false,
+      });
+      return {
+        ok: false,
+        agent,
+        providerUsed: activeProvider,
+        failedOverFrom,
+        failoverChain,
+        authMode: agent.authMode,
+        model: activeModel,
+        promptHash,
+        outputText: null,
+        cached: false,
+        deterministicRule: null,
+        inputTokens: 0,
+        outputTokens: 0,
+        costMicros: 0,
+        latencyMs: 0,
+        leakReasons: [],
+        blockedReason: budgetDecision.reason ?? "llm_budget_exceeded",
+        dryRun,
+        dispatchedAt,
+      };
+    }
+
+    const reserved = await this.reserveTurnAtomic(agent, {
+      dispatchedAt,
+      campaignId: opts.campaignId ?? null,
+      targetHumanId,
+      targetStopped,
+      lockdown,
+    });
+    agent = reserved.agent;
+    if (!reserved.reserved) {
+      return {
+        ok: false,
+        agent,
+        providerUsed: activeProvider,
+        failedOverFrom,
+        failoverChain,
+        authMode: agent.authMode,
+        model: activeModel,
+        promptHash,
+        outputText: null,
+        cached: false,
+        deterministicRule: null,
+        inputTokens: 0,
+        outputTokens: 0,
+        costMicros: 0,
+        latencyMs: 0,
+        leakReasons: [],
+        blockedReason: reserved.reason ?? "policy_blocked",
+        dryRun,
+        dispatchedAt,
+      };
+    }
+
+    const callStartMs = this.clock.now();
+    let exec = await this.executeProvider(agent, activeProvider, systemPrompt, fencedPrompt, dryRun, opts);
     while (!exec.ok && exec.rateLimited && allowFailover) {
       const backup = this.pickBackupProvider(
         { ...agent, provider: activeProvider },
@@ -632,14 +998,37 @@ export class AgentLifecycleManager {
       const prevProvider = activeProvider;
       activeProvider = backup;
       triedProviders.add(backup);
+      failoverChain.push(backup);
       agent = await this.store.updateAgent(agent.id, {
         provider: backup,
         failoverProvider: prevProvider,
         status: "idle",
         cooldownUntil: null,
       });
-      exec = await this.executeProvider(agent, activeProvider, fencedPrompt, dryRun);
+      exec = await this.executeProvider(agent, activeProvider, systemPrompt, fencedPrompt, dryRun, opts);
     }
+
+    if (exec.fallbackNotes && exec.fallbackNotes.length > 0) {
+      for (const note of exec.fallbackNotes) {
+        if (!failoverChain.includes(note)) failoverChain.push(note);
+      }
+    }
+
+    const latencyMs = Math.max(0, this.clock.now() - callStartMs);
+    const resolvedModel = exec.model ?? modelForProvider(activeProvider, this.env);
+    const actualInputTokens = exec.inputTokens ?? (exec.ok ? estimatedInputTokens : 0);
+    const actualOutputTokens = exec.outputTokens ?? (exec.ok ? estimateTokens(exec.text) : 0);
+    const actualCostMicros = dryRun
+      ? 0
+      : (exec.costMicros ??
+        (exec.ok
+          ? estimateLlmCostMicros({
+              model: resolvedModel,
+              inputTokens: actualInputTokens,
+              outputTokens: actualOutputTokens,
+            })
+          : 0));
+    const failoverChainStr = failoverChain.length > 1 ? failoverChain.join("->") : null;
 
     if (!exec.ok) {
       if (exec.rateLimited) {
@@ -651,13 +1040,37 @@ export class AgentLifecycleManager {
           cooldownUntil,
         });
       }
+      await this.recordTrajectory(utcDay, {
+        agentId: agent.id,
+        campaignId: opts.campaignId ?? null,
+        provider: activeProvider,
+        model: resolvedModel,
+        promptHash,
+        inputTokens: actualInputTokens,
+        outputTokens: actualOutputTokens,
+        cached: false,
+        costMicros: actualCostMicros,
+        latencyMs,
+        status: "error",
+        failoverChain: failoverChainStr,
+        leakBlocked: false,
+      });
       return {
         ok: false,
         agent,
         providerUsed: activeProvider,
         failedOverFrom,
+        failoverChain,
         authMode: agent.authMode,
+        model: resolvedModel,
+        promptHash,
         outputText: null,
+        cached: false,
+        deterministicRule: null,
+        inputTokens: actualInputTokens,
+        outputTokens: actualOutputTokens,
+        costMicros: actualCostMicros,
+        latencyMs,
         leakReasons: [],
         blockedReason: exec.rateLimited ? "rate_limited" : (exec.error ?? "provider_error"),
         dryRun,
@@ -667,13 +1080,46 @@ export class AgentLifecycleManager {
 
     const leakReasons = this.leakGuard.check(exec.text);
     if (leakReasons.length > 0) {
+      await this.recordTrajectory(utcDay, {
+        agentId: agent.id,
+        campaignId: opts.campaignId ?? null,
+        provider: activeProvider,
+        model: resolvedModel,
+        promptHash,
+        inputTokens: actualInputTokens,
+        outputTokens: actualOutputTokens,
+        cached: false,
+        costMicros: actualCostMicros,
+        latencyMs,
+        status: "leak_blocked",
+        failoverChain: failoverChainStr,
+        leakBlocked: true,
+      });
+      await this.reportBridgeCost(
+        agent,
+        activeProvider,
+        resolvedModel,
+        actualInputTokens + actualOutputTokens,
+        actualCostMicros,
+        exec.usageKnown === true,
+        dryRun,
+      );
       return {
         ok: false,
         agent,
         providerUsed: activeProvider,
         failedOverFrom,
+        failoverChain,
         authMode: agent.authMode,
+        model: resolvedModel,
+        promptHash,
         outputText: null,
+        cached: false,
+        deterministicRule: null,
+        inputTokens: actualInputTokens,
+        outputTokens: actualOutputTokens,
+        costMicros: actualCostMicros,
+        latencyMs,
         leakReasons,
         blockedReason: "leak_guard_blocked",
         dryRun,
@@ -681,42 +1127,91 @@ export class AgentLifecycleManager {
       };
     }
 
-    const consumed = await this.store.consumeAgentTurn({
+    if (this.enablePromptCache && !opts.skipCache) {
+      const finalCacheKey = buildPromptCacheKey({
+        personaId: agent.personaId,
+        provider: activeProvider,
+        model: resolvedModel,
+        systemPrompt,
+        prompt,
+      });
+      this.promptCache.set(
+        finalCacheKey,
+        {
+          promptHash,
+          provider: activeProvider,
+          model: resolvedModel,
+          text: exec.text,
+        },
+        opts.cacheTtlMs,
+      );
+      if (finalCacheKey !== cacheKey) {
+        this.promptCache.set(
+          cacheKey,
+          {
+            promptHash,
+            provider: activeProvider,
+            model: resolvedModel,
+            text: exec.text,
+          },
+          opts.cacheTtlMs,
+        );
+      }
+    }
+
+    const trajectoryStatus: LlmTrajectoryStatus =
+      failedOverFrom !== null || exec.fellBack ? "fallback" : "ok";
+    await this.recordTrajectory(utcDay, {
       agentId: agent.id,
       campaignId: opts.campaignId ?? null,
-      targetHumanId,
-      targetStopped,
-      lockdown,
+      provider: activeProvider,
+      model: resolvedModel,
+      promptHash,
+      inputTokens: actualInputTokens,
+      outputTokens: actualOutputTokens,
+      cached: false,
+      costMicros: actualCostMicros,
+      latencyMs,
+      status: trajectoryStatus,
+      failoverChain: failoverChainStr,
+      leakBlocked: false,
     });
-    if (!consumed.allowed) {
-      return {
-        ok: false,
-        agent: consumed.agent,
-        providerUsed: activeProvider,
-        failedOverFrom,
-        authMode: agent.authMode,
-        outputText: null,
-        leakReasons: [],
-        blockedReason: consumed.reason ?? "policy_blocked",
-        dryRun,
-        dispatchedAt,
-      };
-    }
+    await this.reportBridgeCost(
+      agent,
+      activeProvider,
+      resolvedModel,
+      actualInputTokens + actualOutputTokens,
+      actualCostMicros,
+      exec.usageKnown === true,
+      dryRun,
+    );
 
     return {
       ok: true,
-      agent: consumed.agent,
+      agent,
       providerUsed: activeProvider,
       failedOverFrom,
-      authMode: consumed.agent.authMode,
+      failoverChain,
+      authMode: agent.authMode,
+      model: resolvedModel,
+      promptHash,
       outputText: exec.text,
+      cached: false,
+      deterministicRule: null,
+      inputTokens: actualInputTokens,
+      outputTokens: actualOutputTokens,
+      costMicros: actualCostMicros,
+      latencyMs,
       leakReasons: [],
       dryRun,
       dispatchedAt,
     };
   }
 
-  async runAutopilotTick(campaignId: string): Promise<AutopilotTickResult> {
+  async runAutopilotTick(
+    campaignId: string,
+    opts: AutopilotTickOptions = {},
+  ): Promise<AutopilotTickResult> {
     const checkedAt = new Date(this.clock.now()).toISOString();
     const campaign = await this.store.getCampaign(campaignId);
     if (!campaign) throw new Error(`Campaign not found: ${campaignId}`);
@@ -754,8 +1249,28 @@ export class AgentLifecycleManager {
     }
 
     const openTasks = (await this.store.listTasks({ campaignId })).filter(
-      (t) => t.status === "drafted" || t.status === "posted_or_emailed" || t.status === "applicant_screened",
+      (t) =>
+        t.status === "drafted" ||
+        t.status === "posted_or_emailed" ||
+        t.status === "applicant_screened",
     );
+
+    if (openTasks.length === 0 && !opts.forceIdle) {
+      const idleFingerprint = `${campaign.id}:${campaign.updatedAt}:${campaign.riskDial}:${checkedAt.slice(0, 10)}`;
+      if (this.lastIdleFingerprint.get(campaignId) === idleFingerprint) {
+        return {
+          campaignId,
+          skipped: true,
+          skipReason: "idle_no_state_change",
+          checkedAt,
+          heartbeats,
+          dispatched: [],
+        };
+      }
+      this.lastIdleFingerprint.set(campaignId, idleFingerprint);
+    } else if (openTasks.length > 0) {
+      this.lastIdleFingerprint.delete(campaignId);
+    }
 
     const dispatched: AgentTurnResult[] = [];
     const maxPerTick =
@@ -791,6 +1306,114 @@ export class AgentLifecycleManager {
     };
   }
 
+  private async reserveTurnAtomic(
+    agent: MarketingAgent,
+    ctx: {
+      dispatchedAt: string;
+      campaignId: string | null;
+      targetHumanId: string | null;
+      targetStopped: boolean;
+      lockdown: boolean;
+    },
+  ): Promise<{ reserved: boolean; agent: MarketingAgent; reason?: string }> {
+    const ext = this.store as MarketingStore & Pass3StoreMethods;
+    if (typeof ext.reserveAgentTurn === "function") {
+      return ext.reserveAgentTurn(agent.id, ctx.dispatchedAt);
+    }
+    const consumed = await this.store.consumeAgentTurn({
+      agentId: agent.id,
+      campaignId: ctx.campaignId,
+      targetHumanId: ctx.targetHumanId,
+      targetStopped: ctx.targetStopped,
+      lockdown: ctx.lockdown,
+    });
+    return {
+      reserved: consumed.allowed,
+      agent: consumed.agent,
+      ...(consumed.reason ? { reason: consumed.reason } : {}),
+    };
+  }
+
+  private async getDailyUsage(
+    dayIso: string,
+    agentId: string,
+    campaignId: string | null,
+  ): Promise<DailyLlmUsage> {
+    const ext = this.store as MarketingStore & Pass3StoreMethods;
+    if (typeof ext.getDailyLlmUsage === "function") {
+      return ext.getDailyLlmUsage({ dayIso });
+    }
+    const existing = this.localDailyUsage.get(dayIso);
+    if (existing) return existing;
+    const blank: DailyLlmUsage = {
+      day: dayIso,
+      calls: 0,
+      cachedCalls: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      costMicros: 0,
+      leakBlockedCalls: 0,
+      budgetBlockedCalls: 0,
+    };
+    void agentId;
+    void campaignId;
+    return blank;
+  }
+
+  private async recordTrajectory(dayIso: string, entry: RecordLlmTrajectoryInput): Promise<void> {
+    const ext = this.store as MarketingStore & Pass3StoreMethods;
+    if (typeof ext.recordLlmTrajectory === "function") {
+      await ext.recordLlmTrajectory(entry);
+    }
+    const prev = this.localDailyUsage.get(dayIso) ?? {
+      day: dayIso,
+      calls: 0,
+      cachedCalls: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      costMicros: 0,
+      leakBlockedCalls: 0,
+      budgetBlockedCalls: 0,
+    };
+    const next: DailyLlmUsage = {
+      day: dayIso,
+      calls: prev.calls + 1,
+      cachedCalls: prev.cachedCalls + (entry.cached ? 1 : 0),
+      inputTokens: prev.inputTokens + entry.inputTokens,
+      outputTokens: prev.outputTokens + entry.outputTokens,
+      totalTokens: prev.totalTokens + entry.inputTokens + entry.outputTokens,
+      costMicros: prev.costMicros + entry.costMicros,
+      leakBlockedCalls: prev.leakBlockedCalls + (entry.leakBlocked ? 1 : 0),
+      budgetBlockedCalls: prev.budgetBlockedCalls + (entry.status === "budget_blocked" ? 1 : 0),
+    };
+    this.localDailyUsage.set(dayIso, next);
+  }
+
+  private async reportBridgeCost(
+    agent: MarketingAgent,
+    provider: SubscriptionProvider,
+    model: string,
+    totalTokens: number,
+    costMicros: number,
+    usageKnown: boolean,
+    dryRun: boolean,
+  ): Promise<void> {
+    if (!this.bridge || dryRun || costMicros <= 0) return;
+    await this.bridge
+      .recordOperationalCost({
+        appId: agent.appId,
+        provider,
+        kind: "llm",
+        quantity: totalTokens,
+        costUsd: costMicros / 1_000_000,
+        estimated: !usageKnown,
+        detail: { personaId: agent.personaId, model },
+      })
+      .catch(() => false);
+  }
+
   private pickBackupProvider(
     agent: MarketingAgent,
     tried: ReadonlySet<SubscriptionProvider>,
@@ -810,32 +1433,180 @@ export class AgentLifecycleManager {
     return null;
   }
 
-  private async executeProvider(
+  private async executeSurplusProvider(
     agent: MarketingAgent,
-    provider: SubscriptionProvider,
+    systemPrompt: string,
     prompt: string,
-    dryRun: boolean,
+    opts: DispatchTurnOptions,
   ): Promise<ProviderExecutionResponse> {
-    if (dryRun) {
+    const model = modelForProvider("surplus", this.env);
+    const messages: ChatMessage[] = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: prompt },
+    ];
+
+    if (this.llmClient) {
+      try {
+        const text = await this.llmClient.chat(messages, {
+          maxTokens: opts.maxTokens ?? 700,
+          temperature: opts.temperature ?? 0.4,
+        });
+        const inputTokens = estimateTokens(`${systemPrompt}\n${prompt}`);
+        const outputTokens = estimateTokens(text);
+        return {
+          ok: true,
+          text,
+          model,
+          inputTokens,
+          outputTokens,
+          costMicros: estimateLlmCostMicros({ model, inputTokens, outputTokens }),
+          usageKnown: false,
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const rateLimited =
+          (err instanceof LLMError && err.detail.status === 429) || isRateLimitMessage(msg);
+        return {
+          ok: false,
+          text: "",
+          model,
+          rateLimited,
+          error: msg,
+        };
+      }
+    }
+
+    if (this.oauthOrApiRunner) {
+      return this.oauthOrApiRunner({
+        agent,
+        provider: "surplus",
+        authMode: agent.authMode,
+        sessionRef: agent.sessionRef,
+        systemPrompt,
+        prompt,
+      });
+    }
+
+    if (endpointsFor("surplus", this.env).length === 0) {
       return {
-        ok: true,
-        text: `[dry-run:${provider}/${agent.authMode}:${agent.personaId}] ${prompt.slice(0, 180)}`,
+        ok: false,
+        text: "",
+        model,
+        rateLimited: false,
+        error: "surplus_api_key_missing",
       };
     }
 
+    let lastResponse: ResponseInfo | null = null;
+    const fallbackNotes: string[] = [];
+    const client = llmFor("surplus", model, {
+      clock: this.clock,
+      timeoutMs: this.cliTimeoutMs,
+      onResponse: (info: ResponseInfo) => {
+        lastResponse = info;
+      },
+      onFallback: (info: FallbackInfo) => {
+        fallbackNotes.push(`${info.from}->${info.to}`);
+      },
+    });
+
+    try {
+      const text = await client.chat(messages, {
+        maxTokens: opts.maxTokens ?? 700,
+        temperature: opts.temperature ?? 0.4,
+      });
+      const resp = lastResponse as ResponseInfo | null;
+      const inputTokens =
+        resp && resp.usage.promptTokens > 0
+          ? resp.usage.promptTokens
+          : estimateTokens(`${systemPrompt}\n${prompt}`);
+      const outputTokens =
+        resp && resp.usage.completionTokens > 0
+          ? resp.usage.completionTokens
+          : estimateTokens(text);
+      const costMicros =
+        resp && resp.costMicro > 0
+          ? Math.round(resp.costMicro)
+          : estimateLlmCostMicros({ model, inputTokens, outputTokens });
+      return {
+        ok: true,
+        text,
+        model: resp?.model ?? model,
+        inputTokens,
+        outputTokens,
+        costMicros,
+        usageKnown: Boolean(resp?.costKnown),
+        fellBack: fallbackNotes.length > 0,
+        fallbackNotes,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const rateLimited =
+        (err instanceof LLMError && err.detail.status === 429) || isRateLimitMessage(msg);
+      return {
+        ok: false,
+        text: "",
+        model,
+        rateLimited,
+        fallbackNotes,
+        error: msg,
+      };
+    }
+  }
+
+  private async executeProvider(
+    agent: MarketingAgent,
+    provider: SubscriptionProvider,
+    systemPrompt: string,
+    prompt: string,
+    dryRun: boolean,
+    opts: DispatchTurnOptions,
+  ): Promise<ProviderExecutionResponse> {
+    const model = modelForProvider(provider, this.env);
+    if (dryRun) {
+      const text = `[dry-run:${provider}/${agent.authMode}:${agent.personaId}] ${prompt.slice(0, 180)}`;
+      return {
+        ok: true,
+        text,
+        model,
+        inputTokens: estimateTokens(`${systemPrompt}\n${prompt}`),
+        outputTokens: estimateTokens(text),
+        costMicros: 0,
+        usageKnown: false,
+      };
+    }
+
+    if (provider === "surplus") {
+      return this.executeSurplusProvider(agent, systemPrompt, prompt, opts);
+    }
+
     if (agent.authMode === "cli") {
-      const cmd = cliCommandForProvider(provider, prompt);
+      const cmd = cliCommandForProvider(provider);
+      const stdin = buildCliStdinPayload(systemPrompt, prompt);
       const res = await this.cliRunner(cmd, {
+        stdin,
         timeoutMs: this.cliTimeoutMs,
         env: sanitizeCliEnv(provider, this.env),
       });
       if (res.exitCode === 0) {
-        return { ok: true, text: res.stdout.trim() || "(ok)" };
+        const text = res.stdout.trim() || "(ok)";
+        const inputTokens = estimateTokens(stdin);
+        const outputTokens = estimateTokens(text);
+        return {
+          ok: true,
+          text,
+          model,
+          inputTokens,
+          outputTokens,
+          costMicros: estimateLlmCostMicros({ model, inputTokens, outputTokens }),
+          usageKnown: false,
+        };
       }
       const combined = `${res.stderr} ${res.stdout}`.trim();
       return {
         ok: false,
         text: "",
+        model,
         rateLimited: isRateLimitMessage(combined),
         error: combined || `cli_exit_${res.exitCode}`,
       };
@@ -846,6 +1617,7 @@ export class AgentLifecycleManager {
         return {
           ok: false,
           text: "",
+          model,
           error: `browser_profile runner not attached for session ${agent.sessionRef}`,
         };
       }
@@ -853,6 +1625,7 @@ export class AgentLifecycleManager {
         agent,
         provider,
         sessionRef: agent.sessionRef,
+        systemPrompt,
         prompt,
       });
     }
@@ -861,6 +1634,7 @@ export class AgentLifecycleManager {
       return {
         ok: false,
         text: "",
+        model,
         error: `${agent.authMode} runner not attached for provider ${provider}`,
       };
     }
@@ -869,6 +1643,7 @@ export class AgentLifecycleManager {
       provider,
       authMode: agent.authMode,
       sessionRef: agent.sessionRef,
+      systemPrompt,
       prompt,
     });
   }

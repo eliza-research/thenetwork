@@ -19,8 +19,8 @@ import { distanceBand } from "./zips.ts";
 const SLOP_PACK_VERSION = "slop-pack-2.0.0";
 
 export const SLOP_ENGINE_CONFIG: EngineConfigInput = {
-  cities: ["sf", "nyc", "la"],
-  timezones: { sf: "America/Los_Angeles", nyc: "America/New_York", la: "America/Los_Angeles" },
+  cities: ["sf", "nyc", "la", "chicago", "miami"],
+  timezones: { sf: "America/Los_Angeles", nyc: "America/New_York", la: "America/Los_Angeles", chicago: "America/Chicago", miami: "America/New_York" },
   windowDays: 7, minOverlapHours: 3, ageMin: 18,
   budgets: { normal: { limit: 2, periodDays: 7 }, open: { limit: 2, periodDays: 7 }, receiving: { limit: 2, periodDays: 7 } },
   thresholds: { byState: { open: 0, normal: 0, quiet: 0, receiving: 0 }, byCategory: { romance: 0, help: 0, growth: 0 }, useByGenerator: false, exploration: 0 },

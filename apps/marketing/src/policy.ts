@@ -2,6 +2,8 @@
 // Every policy and device safety decision delegates directly to the Vibestack/Dafny-proved
 // generated cores in packages/core/src/generated/marketingPolicy.ts and marketingDevice.ts.
 
+import { createHmac } from "node:crypto";
+import { appKeys, brandFor } from "../../../packages/core/src/generated/brandIdentity.ts";
 import {
   canDispatchDeviceStep,
   deviceBatteryMax,
@@ -21,10 +23,20 @@ import {
   canAuthorizeTaskSpend,
   canDispatchAgentTurn,
   canSendOutreach,
+  coldCooldownDays,
   consumerLifetimeBonusCapCents,
+  contactCooldownAllowed,
+  contactSafetyEligible,
+  llmBudgetWithinCaps,
+  maxColdTouches30d,
+  maxOpTouchesPerDay,
+  maxUnansweredCold,
   mvnoBonusCapCents,
+  queuePressurePaused,
   w9AnnualThresholdCents,
 } from "../../../packages/core/src/generated/marketingPolicy.ts";
+import { LeakGuard, setLeakLabelKey, type LeakOptions } from "../../../packages/core/src/guard.ts";
+import { keywordKey, optOutPhrase, parseOptOut } from "../../../packages/core/src/replies.ts";
 import { DEFAULT_BANDIT_MAX_CPA_CENTS, DEFAULT_DAILY_OUTREACH_CAP } from "./constants.ts";
 import type {
   Campaign,
@@ -579,4 +591,253 @@ export function evaluateDeviceActionPolicy(
               ? `battery_or_thermal_unsafe (battery=${device.batteryPct}% needs ${deviceBatteryMin}..${deviceBatteryMax}%, temp=${device.tempC}C needs ${deviceTempMinC}..${deviceTempMaxC}C)`
               : `warmup_cap_reached (${device.dailyActionsUsed}/${cap} on day ${device.warmupDay})`;
   return { allowed: false, leasedByOther, needsTakeover, reason };
+}
+
+export interface LlmBudgetPolicyInput {
+  tokensUsedToday: number;
+  estimatedTokens: number;
+  dailyTokenCap: number;
+  costMicrosToday: number;
+  estimatedCostMicros: number;
+  dailyCostCapMicros: number;
+}
+
+export interface LlmBudgetPolicyDecision {
+  allowed: boolean;
+  reason?: string;
+}
+
+export function evaluateLlmBudget(input: LlmBudgetPolicyInput): LlmBudgetPolicyDecision {
+  const {
+    tokensUsedToday,
+    estimatedTokens,
+    dailyTokenCap,
+    costMicrosToday,
+    estimatedCostMicros,
+    dailyCostCapMicros,
+  } = input;
+  const values = [
+    tokensUsedToday,
+    estimatedTokens,
+    dailyTokenCap,
+    costMicrosToday,
+    estimatedCostMicros,
+    dailyCostCapMicros,
+  ];
+  if (!values.every((v) => Number.isSafeInteger(v))) {
+    return { allowed: false, reason: "invalid_llm_budget_value" };
+  }
+  const allowed = llmBudgetWithinCaps(
+    tokensUsedToday,
+    estimatedTokens,
+    dailyTokenCap,
+    costMicrosToday,
+    estimatedCostMicros,
+    dailyCostCapMicros,
+  );
+  if (allowed) return { allowed: true };
+  if (tokensUsedToday < 0 || estimatedTokens < 0 || dailyTokenCap <= 0) {
+    return { allowed: false, reason: "invalid_token_cap" };
+  }
+  if (tokensUsedToday + estimatedTokens > dailyTokenCap) {
+    return { allowed: false, reason: "daily_token_cap_exceeded" };
+  }
+  if (costMicrosToday < 0 || estimatedCostMicros < 0 || dailyCostCapMicros <= 0) {
+    return { allowed: false, reason: "invalid_cost_cap" };
+  }
+  return { allowed: false, reason: "daily_cost_cap_exceeded" };
+}
+
+export interface QueuePressurePolicyInput {
+  lineRestricted: boolean;
+  reviewOverdue: number;
+  reviewOpen: number;
+  reviewBacklogLimit: number;
+  outboundWaiting: number;
+  outboundBacklogLimit: number;
+}
+
+export interface QueuePressurePolicyDecision {
+  paused: boolean;
+  reason?: string;
+}
+
+export function evaluateQueuePressure(input: QueuePressurePolicyInput): QueuePressurePolicyDecision {
+  const {
+    lineRestricted,
+    reviewOverdue,
+    reviewOpen,
+    reviewBacklogLimit,
+    outboundWaiting,
+    outboundBacklogLimit,
+  } = input;
+  const paused = queuePressurePaused(
+    lineRestricted,
+    reviewOverdue,
+    reviewOpen,
+    reviewBacklogLimit,
+    outboundWaiting,
+    outboundBacklogLimit,
+  );
+  if (!paused) return { paused: false };
+  const reason = lineRestricted
+    ? "platform_line_restricted"
+    : reviewOverdue > 0
+      ? "platform_review_overdue"
+      : reviewOpen >= reviewBacklogLimit
+        ? "platform_review_backlog_limit"
+        : "platform_outbound_backlog_limit";
+  return { paused: true, reason };
+}
+
+export interface ContactHygienePolicyInput {
+  isStopped: boolean;
+  isBanned: boolean;
+  isKnownMinor: boolean;
+  lockdown: boolean;
+  isCold: boolean;
+  isQuietHours: boolean;
+  daysSinceCold: number;
+  coldTouches30d: number;
+  unansweredCold: number;
+  opTouchesToday: number;
+}
+
+export interface ContactHygienePolicyDecision {
+  allowed: boolean;
+  reason?: string;
+}
+
+export function evaluateContactHygiene(
+  input: ContactHygienePolicyInput,
+): ContactHygienePolicyDecision {
+  const safetyOk = contactSafetyEligible(
+    input.isStopped,
+    input.isBanned,
+    input.isKnownMinor,
+    input.lockdown,
+  );
+  if (!safetyOk) {
+    const reason = input.isKnownMinor
+      ? "contact_known_minor"
+      : input.isStopped
+        ? "contact_stopped"
+        : input.isBanned
+          ? "contact_banned"
+          : "campaign_lockdown";
+    return { allowed: false, reason };
+  }
+  const cooldownOk = contactCooldownAllowed(
+    input.isCold,
+    input.isQuietHours,
+    input.daysSinceCold,
+    input.coldTouches30d,
+    input.unansweredCold,
+    input.opTouchesToday,
+  );
+  if (cooldownOk) return { allowed: true };
+  if (input.isCold) {
+    if (input.isQuietHours) return { allowed: false, reason: "quiet_hours_cold_blocked" };
+    if (input.daysSinceCold < coldCooldownDays) {
+      return { allowed: false, reason: "cold_cooldown_window_active" };
+    }
+    if (input.coldTouches30d >= maxColdTouches30d || input.coldTouches30d < 0) {
+      return { allowed: false, reason: "cold_30d_cap_reached" };
+    }
+    if (input.unansweredCold >= maxUnansweredCold || input.unansweredCold < 0) {
+      return { allowed: false, reason: "cold_unanswered_streak_cap" };
+    }
+  }
+  return {
+    allowed: false,
+    reason:
+      input.opTouchesToday >= maxOpTouchesPerDay || input.opTouchesToday < 0
+        ? "operational_daily_touch_cap_reached"
+        : "contact_cooldown_blocked",
+  };
+}
+
+export function createMarketingLeakGuard(
+  env: Record<string, string | undefined> = process.env,
+  extraOptions: LeakOptions = {},
+): LeakGuard {
+  const labelKey = env.LEAK_LABEL_KEY;
+  if (labelKey && new TextEncoder().encode(labelKey).length >= 32) {
+    setLeakLabelKey(labelKey);
+  }
+  const brandDomains = appKeys.flatMap((key) => {
+    const domain = brandFor(key).domain;
+    return [domain, `https://${domain}`];
+  });
+  const mergedAllow = [...new Set([...brandDomains, ...(extraOptions.allow ?? [])])];
+  return new LeakGuard({
+    contacts: true,
+    canaryShapes: true,
+    ...extraOptions,
+    allow: mergedAllow,
+  });
+}
+
+const E164_STRICT = /^\+[1-9]\d{6,14}$/;
+const NANP_10 = /^[2-9]\d{2}[2-9]\d{6}$/;
+
+export function normalizeE164Phone(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("+")) {
+    const compacted = `+${trimmed.slice(1).replace(/[\s().-]+/g, "")}`;
+    return E164_STRICT.test(compacted) ? compacted : null;
+  }
+  const digits = trimmed.replace(/\D+/g, "");
+  if (digits.length === 10 && NANP_10.test(digits)) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1") && NANP_10.test(digits.slice(1))) {
+    return `+${digits}`;
+  }
+  return null;
+}
+
+export function keyedContactHash(
+  kind: "phone" | "email" | "handle",
+  raw: string,
+  env: Record<string, string | undefined> = process.env,
+): string | null {
+  let normalized: string | null;
+  if (kind === "phone") {
+    normalized = normalizeE164Phone(raw);
+  } else if (kind === "email") {
+    const clean = raw.trim().toLowerCase();
+    normalized = clean.includes("@") && !/\s/.test(clean) ? clean : null;
+  } else {
+    const clean = raw.trim().toLowerCase().replace(/^@+/, "");
+    normalized = clean.length > 0 ? clean : null;
+  }
+  if (!normalized) return null;
+  const key =
+    env.PLATFORM_HASH_KEY ||
+    env.MARKETING_CONTACT_HASH_KEY ||
+    "marketing-dev-hash-key";
+  return createHmac("sha256", key).update(`${kind}:${normalized}`).digest("hex");
+}
+
+const GLOBAL_OPT_OUT_KEYS = new Set([
+  "STOP",
+  "STOP ALL",
+  "STOPALL",
+  "UNSUBSCRIBE",
+  "CANCEL",
+  "END",
+  "QUIT",
+  "REVOKE",
+  "OPTOUT",
+  "OPT OUT",
+]);
+
+export function isGlobalOptOutText(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  const key = keywordKey(trimmed);
+  if (GLOBAL_OPT_OUT_KEYS.has(key) || /^S+T+O+P+$/.test(key)) return true;
+  if (optOutPhrase(trimmed)) return true;
+  const parsed = parseOptOut(trimmed);
+  return parsed.match !== "none" && parsed.scope === "all";
 }

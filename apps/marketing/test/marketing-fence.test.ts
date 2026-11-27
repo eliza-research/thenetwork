@@ -62,8 +62,8 @@ describe("Pass 2 marketing prompt fencing, phone_hash suppression & city density
     });
 
     const receivedPrompts: string[] = [];
-    const cliRunner: CliProcessRunner = (cmd) => {
-      receivedPrompts.push(cmd[cmd.length - 1] ?? "");
+    const cliRunner: CliProcessRunner = (cmd, opts) => {
+      receivedPrompts.push(opts.stdin ?? cmd[cmd.length - 1] ?? "");
       return Promise.resolve({
         exitCode: 0,
         stdout: "Safe draft ready for review.",

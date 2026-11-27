@@ -37,6 +37,7 @@ import { codePage, consentPage, consentsPage, messagePage, phonePage, phoneSendE
 import { DEFAULT_SCOPES, MemoryOAuthStore, samePendingAuthPage, type AssistantGrantCandidate, type AuthCode, type AuthRequest, type ClientAuthMethod, type Grant, type BrowserGrantRemoval, type OAuthClient, type OAuthStore, type Scope, SCOPES, scopesOn, type Token } from "./store.ts";
 import { callTool, canCallTool, checkArgs, checkGrantOwner, connectionOf, TOOL_NAMES, TOOL_SCOPE, tokenCovers, type ToolName, toolDefs, toolInstructions } from "./tools.ts";
 import { cookieValue, isLoopbackHost, json, pkceS256, randomId, randomToken, readForm, readJson, safeEqual, sha256hex, validChallenge, validVerifier } from "./util.ts";
+import { isCity } from "../../core/src/types.ts";
 
 export const LATEST_PROTOCOL = "2026-07-28";
 export const MODERN_PROTOCOLS = ["2026-07-28"] as const;
@@ -759,7 +760,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     };
     if (decision === "open") return showSignup(undefined, await signupPrefillFor(c, r, who));
     const sentCity = form.get("homeCity");
-    const sent: SignupPrefill = { firstName: (form.get("firstName") ?? "").slice(0, 50), ...(sentCity === "nyc" || sentCity === "sf" ? { homeCity: sentCity } : {}) };
+    const sent: SignupPrefill = { firstName: (form.get("firstName") ?? "").slice(0, 50), ...(isCity(sentCity) ? { homeCity: sentCity } : {}) };
 
     const version = form.get("consentVersion");
     const offered = offerHandoff(browserSignupJoinAllowed(true, exactForm, form.get("smsConsent") === "yes", version === enrollment.consent.version));

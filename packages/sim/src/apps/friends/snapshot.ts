@@ -17,7 +17,7 @@
 //   fact            verify:liveness:<r>, verify:age:<r>  agent_private (r: pass, fail or pending; info.ts VERIFY_PASS)
 //   fact            safety:<cue>                         agent_private, inferred
 //   Intent          category "social", "meet people nearby to do things with"
-import { DAY, canBeMatched, earliestDayKeyOf, latestDayKeyOf, type Edge, type Facet, type Intent, type Member, type MemberId, type Presence, type WorldSnapshot } from "@thenetwork/core";
+import { CITY_TZ, DAY, canBeMatched, earliestDayKeyOf, latestDayKeyOf, type City, type Edge, type Facet, type Intent, type Member, type MemberId, type Presence, type WorldSnapshot } from "@thenetwork/core";
 import { ageOnDay } from "../../../../core/src/generated/memberAge.ts";
 import { teenFriendCandidate, teenPartnerAge, teenReady } from "../../../../core/src/generated/friendIntroAge.ts";
 import { teenFriendApp } from "../../../../core/src/generated/matchLane.ts";
@@ -33,15 +33,13 @@ import { h01 } from "../../coins.ts";
 import { FRIENDS_WORLD_DATE, FRIENDS_WORLD_START, NYC_TZ, SLOTS, hoodOf, type FriendsPersona, type FriendsSlot, type RichnessTier } from "./persona.ts";
 
 
-/** Local instant of `hour` on day `dayOffset` (0 = Monday) of week `week`. */
-export function weekTime(week: number, dayOffset: number, hour: number): number {
+export function weekTime(week: number, dayOffset: number, hour: number, tz = NYC_TZ): number {
   const base = new Date(Date.UTC(FRIENDS_WORLD_DATE.y, FRIENDS_WORLD_DATE.m - 1, FRIENDS_WORLD_DATE.d + week * 7 + dayOffset));
-  return fromLocal(base.getUTCFullYear(), base.getUTCMonth() + 1, base.getUTCDate(), hour, NYC_TZ);
+  return fromLocal(base.getUTCFullYear(), base.getUTCMonth() + 1, base.getUTCDate(), hour, tz);
 }
-/** Instant of a weekly slot (index into SLOTS) in week `week`. */
-export function slotTime(week: number, slot: number): number {
+export function slotTime(week: number, slot: number, tz = NYC_TZ): number {
   const s = SLOT_TIME[SLOTS[slot]!];
-  return weekTime(week, (s.day + 6) % 7, s.hour);
+  return weekTime(week, (s.day + 6) % 7, s.hour, tz);
 }
 /** Day number (since the world start) of a slot. */
 export const slotDay = (week: number, slot: number) => week * 7 + ((SLOT_TIME[SLOTS[slot]!].day + 6) % 7);
@@ -65,6 +63,7 @@ export interface FriendsNetworkState {
   /** When each member was last sent a new-plan invite. */
   lastPlannedAt: Map<MemberId, number>;
   teenStop: boolean;
+  city?: City;
 }
 
 interface TeenView {
@@ -192,10 +191,10 @@ export function friendsFacetsOf(p: FriendsPersona, joinedAt: number, week: numbe
   return out;
 }
 
-export function friendsMemberOf(p: FriendsPersona, joinedAt: number, view: TeenView): Member {
+export function friendsMemberOf(p: FriendsPersona, joinedAt: number, view: TeenView, city: City = p.city ?? "nyc"): Member {
   const S = p.stated, adult = canBeMatched(view.age);
   return {
-    id: p.id, name: p.name, homeCity: "nyc", state: "normal",
+    id: p.id, name: p.name, homeCity: city, state: "normal",
     prefs: {
       categoriesOptIn: adult || view.ready ? ["social", "hobby"] : ["social"], quietHours: [22, 8], romanceOptIn: false,
       formats: ["small_group", "one_to_one"], maxTravelMinutes: KNOWS[p.hidden.richness].tolerance ? S.maxTravel : 40, onlyWhenAsked: false,
@@ -206,19 +205,24 @@ export function friendsMemberOf(p: FriendsPersona, joinedAt: number, view: TeenV
   };
 }
 
-export function emptyFriendsState(teenStop = false): FriendsNetworkState {
-  return { now: FRIENDS_WORLD_START, week: 0, interactions: [], feedback: [], safetyHolds: [], edges: [], crews: [], offered: [], outcomes: [], checkIns: new Map(), lastPlannedAt: new Map(), teenStop };
+export function emptyFriendsState(teenStop = false, city?: City): FriendsNetworkState {
+  const tz = city ? CITY_TZ[city] : NYC_TZ;
+  const start = city && city !== "nyc" ? fromLocal(FRIENDS_WORLD_DATE.y, FRIENDS_WORLD_DATE.m, FRIENDS_WORLD_DATE.d, 0, tz) : FRIENDS_WORLD_START;
+  return { now: start, week: 0, interactions: [], feedback: [], safetyHolds: [], edges: [], crews: [], offered: [], outcomes: [], checkIns: new Map(), lastPlannedAt: new Map(), teenStop, ...(city && city !== "nyc" ? { city } : {}) };
 }
 
 export function buildFriendsSnapshot(personas: readonly FriendsPersona[], state: FriendsNetworkState): FriendsSnapshot {
   const members: Member[] = [], facets: Facet[] = [], intents: Intent[] = [], presence: Presence[] = [];
-  const joinedAt = FRIENDS_WORLD_START;
+  const city: City = state.city ?? personas[0]?.city ?? "nyc";
+  const tz = CITY_TZ[city];
+  const joinedAt = city === "nyc" ? FRIENDS_WORLD_START : fromLocal(FRIENDS_WORLD_DATE.y, FRIENDS_WORLD_DATE.m, FRIENDS_WORLD_DATE.d, 0, tz);
   for (const p of personas) {
+    const pCity = p.city ?? city;
     const view = teenViewOf(p, state);
-    members.push(friendsMemberOf(p, joinedAt, view));
+    members.push(friendsMemberOf(p, joinedAt, view, pCity));
     facets.push(...friendsFacetsOf(p, joinedAt, state.week, view));
     if (canBeMatched(view.age) || view.ready) intents.push({ id: `${p.id}:friends`, memberId: p.id, category: "social", objective: "meet people nearby to do things with", horizonDays: 365, status: "active", createdAt: joinedAt });
-    presence.push({ memberId: p.id, city: "nyc", type: "home", areas: [hoodOf(p.stated.home).name, ...p.stated.often.map(h => hoodOf(h).name)] });
+    presence.push({ memberId: p.id, city: pCity, type: "home", areas: [hoodOf(p.stated.home, pCity).name, ...p.stated.often.map(h => hoodOf(h, pCity).name)] });
   }
   return {
     now: state.now, members, facets, intents, presence, edges: state.edges.map(e => ({ ...e })), recentProposals: [],

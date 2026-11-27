@@ -155,7 +155,7 @@ describe.skipIf(!pgAvailable)("0098+0100 five-city venues, external events, matc
     if (url) await dropDb(url);
   });
 
-  test("0001..0100 migrates cleanly and idempotently; verifies city launch_status, 4 NYC networks, 10 personas (no throttled), and 75 bulk-seeded venues", async () => {
+  test("0001..0100 migrates cleanly and idempotently; verifies city launch_status, 20 app-city networks, 10 personas (no throttled), and 75 bulk-seeded venues", async () => {
     await migrate(url, { lockTimeout: "5s" });
 
     const cities = (await sql`
@@ -174,8 +174,16 @@ describe.skipIf(!pgAvailable)("0098+0100 five-city venues, external events, matc
     `.then(() => "ok", e => String(e.message));
     expect(badLaunchStatus).not.toBe("ok");
 
-    const networks = ((await sql`select id from platform.networks order by id`) as Array<{ id: string }>).map(r => r.id);
-    expect(networks).toEqual(["friends:nyc", "ntwrk:nyc", "peon:nyc", "slop:nyc"]);
+    const networks = (await sql`select id, matching_enabled from platform.networks order by id`) as Array<{
+      id: string;
+      matching_enabled: boolean;
+    }>;
+    expect(networks.map(r => `${r.id}:${r.matching_enabled}`)).toEqual([
+      "friends:chicago:false", "friends:la:false", "friends:miami:false", "friends:nyc:true", "friends:sf:false",
+      "ntwrk:chicago:false", "ntwrk:la:false", "ntwrk:miami:false", "ntwrk:nyc:true", "ntwrk:sf:false",
+      "peon:chicago:false", "peon:la:false", "peon:miami:false", "peon:nyc:true", "peon:sf:false",
+      "slop:chicago:false", "slop:la:false", "slop:miami:false", "slop:nyc:true", "slop:sf:false",
+    ]);
 
     const personas = (await sql`
       select id, city, gender, first_name, human_operated, status, daily_outbound_cap

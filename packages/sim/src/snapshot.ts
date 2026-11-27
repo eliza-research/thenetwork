@@ -2,7 +2,7 @@
 // capture). This is what an Engine receives; it never includes hidden truth, except that
 // private disclosures are present as agent_private facets (that is realistic: members tell
 // the agent things in confidence) so engines can be tested for privacy leaks.
-import { DAY, HOUR, canBeMatched, parseReply, type Category, type City, type Edge, type Facet, type Intent, type Member, type MemberId, type OpportunityKind, type Presence, type Proposal, type WorldSnapshot } from "@thenetwork/core";
+import { CITY_IDS, CITY_TZ, DAY, HOUR, canBeMatched, parseReply, type Category, type City, type Edge, type Facet, type Intent, type Member, type MemberId, type OpportunityKind, type Presence, type Proposal, type WorldSnapshot } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import { matchingHistoryOutcome } from "../../core/src/generated/matchingHistory.ts";
 import { intentHorizonDays, intentRecordTiming, type Persona } from "./persona.ts";
@@ -300,18 +300,26 @@ function romancePrefFacet(p: Persona, jt: number, n: number): Facet {
  * interests most common among the city's adult members (a city has listings for what its people
  * like; the engine sees only title, time, place and tags). Deterministic.
  */
+const EVE_UTC_HOUR_BY_TZ: Record<string, number> = {
+  "America/Los_Angeles": 26,
+  "America/Chicago": 24,
+  "America/New_York": 23,
+};
+
 export function publicEvents(snap: Pick<WorldSnapshot, "now" | "members" | "facets">, perWeek: number): SimEvent[] {
   const events: SimEvent[] = [];
-  for (const city of ["sf", "nyc"] as const) {
+  for (const city of CITY_IDS) {
     const ids = new Set(snap.members.filter(m => m.homeCity === city && m.age >= 18).map(m => m.id));
+    if (ids.size === 0) continue;
     const counts = new Map<string, number>();
     for (const f of snap.facets) if (ids.has(f.memberId) && f.kind === "interest" && f.tags[0]) counts.set(f.tags[0], (counts.get(f.tags[0]) ?? 0) + 1);
     const tags = [...counts.entries()].sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : 1)).map(([t]) => t);
     const week = Math.floor(snap.now / (7 * DAY));
+    const eveHour = EVE_UTC_HOUR_BY_TZ[CITY_TZ[city]] ?? 23;
     for (let w = 0; w < 2; w++) for (let k = 0; k < perWeek; k++) {
       const tag = tags[(k + (week + w) * perWeek) % Math.max(1, tags.length)];
       if (!tag) continue;
-      const start = (week + w) * 7 * DAY + ((k % 6) + 1) * DAY + (city === "sf" ? 26 : 23) * HOUR; // ~7pm local
+      const start = (week + w) * 7 * DAY + ((k % 6) + 1) * DAY + eveHour * HOUR; // ~7pm local
       if (start < snap.now) continue;
       events.push({ id: `ev:${city}:${week + w}:${k}`, title: `${tag.replace(/_/g, " ")} night`, city, start, end: start + 3 * HOUR, tags: [tag], category: "social" });
     }

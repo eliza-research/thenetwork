@@ -28,6 +28,8 @@
     "typecheck": "tsc --noEmit -p . && tsc --noEmit -p sites/tsconfig.json && tsc --noEmit -p apps/observatory/tsconfig.json && tsc --noEmit -p apps/observatory/deploy && corepack pnpm@10.24.0 --filter @thenetwork/site --filter @thenetwork/ui run typecheck && tsc --noEmit -p apps/marketing/tsconfig.json",
     "marketing": "node --import tsx --env-file-if-exists=.env apps/marketing/src/server.ts",
     "marketing:cli": "node --import tsx --env-file-if-exists=.env apps/marketing/src/cli.ts",
+    "marketing:sim": "node --import tsx --env-file-if-exists=.env --conditions eliza-source scripts/sim.ts --only marketing",
+    "marketing:test": "node --env-file-if-exists=.env node_modules/vitest/vitest.mjs run --project integration apps/marketing/test/",
     "observatory": "corepack pnpm@10.24.0 run design:build && node --import tsx --env-file-if-exists=.env apps/observatory/src/server.ts",
     "observatory:db": "node --import tsx --env-file-if-exists=.env packages/db/dev-pg.ts up && node --import tsx --env-file-if-exists=.env apps/observatory/db/seed.ts --from-sim --days 14",
     "db:migrate": "node --import tsx --env-file-if-exists=.env packages/db/migrate.ts",

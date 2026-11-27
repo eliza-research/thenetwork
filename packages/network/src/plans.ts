@@ -6,10 +6,10 @@
 // MVP light touch (growth doc section 3): public places only (parks, libraries, plazas, markets,
 // museums, courts), never a member's home, and no money through the Network (everyone pays their
 // own way). Volunteer shifts are activities at public parks.
-import { fromLocal, HOUR, localParts, type MemberId } from "@thenetwork/core";
+import { fromLocal, HOUR, localParts, seedVenuesForCity, type City, type MemberId } from "@thenetwork/core";
 import { plans, type AttentionLedgerEntry } from "@thenetwork/engine";
 import { weeklyCheckinEvidenceMs, weeklyWindowCandidate } from "../../core/src/generated/planFormation.ts";
-import { VENUES, venueAgeMin, type Venue as GeoVenue } from "./geo.ts";
+import { seedVenueToGeoVenue, VENUES, venueAgeMin, type Venue as GeoVenue } from "./geo.ts";
 import { NY } from "./outreach.ts";
 
 export type PlanVenue = plans.Venue;
@@ -43,6 +43,34 @@ export const PLAN_VENUES: PlanVenue[] = VENUES.map(v => ({
 })).filter(v => v.activities.length > 0);
 
 export const PLAN_VENUE_AGES: plans.VenueAges = plans.venueAgesIn(PLAN_VENUES);
+
+export function planVenuesForCity(city: City): PlanVenue[] {
+  if (city === "nyc") return PLAN_VENUES;
+  return seedVenuesForCity(city)
+    .filter(v => v.status === "active" && v.public)
+    .map(raw => {
+      const v = seedVenueToGeoVenue(raw);
+      return {
+        id: v.id,
+        city,
+        area: v.neighborhood,
+        name: v.name,
+        activities: [...new Set(v.tags.flatMap(t => TAG_ACTIVITIES[t] ?? []))].filter(a => plans.activityById.has(a)),
+        priceTier: Math.min(3, raw.priceTier) as 0 | 1 | 2 | 3,
+        ageMin: (raw.ageMin ?? 0) > 0 ? (raw.ageMin ?? 0) : venueAgeMin(v),
+        hours: HOURS[v.kind],
+        public: true as const,
+        source: "curated" as const,
+        allAges: v.allAges,
+        adultPlans: v.adultPlans,
+      };
+    })
+    .filter(v => v.activities.length > 0);
+}
+
+export function planVenueAgesForCity(city: City): plans.VenueAges {
+  return city === "nyc" ? PLAN_VENUE_AGES : plans.venueAgesIn(planVenuesForCity(city));
+}
 
 /** Local hours of each part of the day in a stated window ("Saturday evening" = 17:00-22:00). */
 const PARTS: Record<string, [number, number]> = { morning: [9, 12], afternoon: [12, 17], evening: [17, 22] };

@@ -14,7 +14,7 @@ import { fenceUntrusted, maskPii, tryChatJson, UNTRUSTED_NOTE, type ChatMessage,
 import { pickedTimes, probeReplyReading } from "../../core/src/generated/probeReply.ts";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import type { ConsentWhy, TimeOption } from "./classify.ts";
-import { NEIGHBORHOODS } from "./geo.ts";
+import { allNeighborhoods } from "./geo.ts";
 
 /** What the LLM read from one message (validated). */
 export interface Understood {
@@ -34,7 +34,7 @@ export type Understand = (body: string, ctx: UnderstandContext) => Promise<Under
 const DESIRE_IDS = new Set(DESIRES.map(d => d.id));
 const INTEREST_TAGS = new Set(INTERESTS.map(i => i.tag));
 const SKILL_TAGS = new Set(SKILLS.map(s => s.tag));
-const AREAS = new Set(NEIGHBORHOODS.map(n => n.name));
+const AREAS = new Set(allNeighborhoods().map(n => n.name));
 /** Longest member text sent to the model. Longer texts use the offline reading only. */
 export const MAX_UNDERSTAND_CHARS = 1200;
 

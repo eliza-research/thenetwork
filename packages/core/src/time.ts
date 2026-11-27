@@ -7,7 +7,13 @@ import type { City } from "./types.ts";
 
 export { withinQuietHours };
 
-export const CITY_TZ: Record<City, string> = { sf: "America/Los_Angeles", nyc: "America/New_York", la: "America/Los_Angeles" };
+export const CITY_TZ: Record<City, string> = {
+  sf: "America/Los_Angeles",
+  nyc: "America/New_York",
+  la: "America/Los_Angeles",
+  chicago: "America/Chicago",
+  miami: "America/New_York",
+};
 
 const dynamicCityTimezones = new Map<string, string>([
   ["sf", "America/Los_Angeles"],

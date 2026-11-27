@@ -3,8 +3,8 @@
 // accepted times), and the pack's weekly planner (packs/friends/planner.ts, built on the shared plans
 // planner) returns crew sessions, crew offers, "same table again" repeats and new plans, which map
 // one-to-one onto harness proposals. Reads only the snapshot.
-import type { MemberId } from "@thenetwork/core";
-import { DAY, canBeMatched } from "@thenetwork/core";
+import type { City, MemberId } from "@thenetwork/core";
+import { CITY_TZ, DAY, canBeMatched } from "@thenetwork/core";
 import { runEngine } from "@thenetwork/engine/src/engine.ts";
 import type { EngineProposal } from "@thenetwork/engine/src/types.ts";
 import { resolveConfig } from "@thenetwork/engine/src/config.ts";
@@ -12,7 +12,7 @@ import { localEmbed } from "@thenetwork/engine/src/embed.ts";
 import { activityAllAges, venueAllAges } from "@thenetwork/engine/src/packs/network/activities.ts";
 import { localParts } from "@thenetwork/core";
 import {
-  DEFAULT_FRIENDS_POLICY, FRIENDS_PLANS, SLOT_TIME, friendsInfo, friendsPack, hood, planFriendsWeek,
+  DEFAULT_FRIENDS_POLICY, FRIENDS_PLANS, SLOT_TIME, friendsInfo, friendsPack, hoodForCity, planFriendsWeek,
   type FriendsPlan, type FriendsPolicy,
 } from "@thenetwork/engine/src/packs/friends/index.ts";
 import type { PlanEvidence } from "@thenetwork/engine/src/plans.ts";
@@ -22,12 +22,11 @@ import { World } from "@thenetwork/engine/src/world.ts";
 import { FRIEND_ACTIVITIES, SLOTS } from "./persona.ts";
 import { slotTime, type FriendsSnapshot } from "./snapshot.ts";
 import { NYC_TZ } from "./persona.ts";
-import { VENUES, rosterAge, teenSlotAllowed, type FriendsMatcher, type FriendsProposal } from "./world.ts";
+import { friendsVenuesForCity, rosterAge, teenSlotAllowed, type FriendsMatcher, type FriendsProposal } from "./world.ts";
 import { teenShape } from "../../teen.ts";
 
-/** Weekly slot index of an instant (local weekday and hour; nearest template hour). */
-export function slotIndexOf(t: number): number {
-  const lp = localParts(t, NYC_TZ);
+export function slotIndexOf(t: number, tz = NYC_TZ): number {
+  const lp = localParts(t, tz);
   const day = (lp.weekday + 1) % 7;
   let best = -1, bd = Infinity;
   SLOTS.forEach((s, k) => { const st = SLOT_TIME[s]; if (st.day !== day) return; const d = Math.abs(st.hour - lp.hour); if (d < bd) { bd = d; best = k; } });
@@ -44,18 +43,17 @@ export function engineInputOf(s: FriendsSnapshot): EngineInput {
 const TEEN_SLOTS = (["sat_am", "sat_pm", "sun_am", "sun_pm"] as const).map(s => SLOTS.indexOf(s));
 const TEEN_ACTIVITIES = new Map<string, (typeof FRIEND_ACTIVITIES)[number]>();
 for (const a of FRIEND_ACTIVITIES) if (activityAllAges(a) && a.dayparts.includes("weekend_day")) for (const t of a.tags) if (!TEEN_ACTIVITIES.has(t)) TEEN_ACTIVITIES.set(t, a);
-const TEEN_VENUES = VENUES.filter(venueAllAges);
-
 const teenOptions = (durationMin: number): number[] => TEEN_SLOTS.filter(k => teenSlotAllowed(k, durationMin));
 
-function teenVenueOf(activityId: string, homeArea: string | undefined) {
-  const home = hood(homeArea);
+function teenVenueOf(activityId: string, homeArea: string | undefined, city: City = "nyc") {
+  const home = hoodForCity(city, homeArea);
   if (!home) return undefined;
-  const at = TEEN_VENUES.filter(v => v.activities.includes(activityId));
-  return at.find(v => hood(v.area)?.id === home.id) ?? at.find(v => hood(v.area)?.zone === home.zone);
+  const at = friendsVenuesForCity(city).filter(v => venueAllAges(v) && v.activities.includes(activityId));
+  return at.find(v => hoodForCity(city, v.area)?.id === home.id) ?? at.find(v => hoodForCity(city, v.area)?.zone === home.zone);
 }
 
 export function teenProposalOf(p: EngineProposal, s: FriendsSnapshot): FriendsProposal | null {
+  const city: City = s.members[0]?.homeCity ?? "nyc";
   const pair = p.participants.length === 2;
   const shape: Omit<FriendsProposal, "activity" | "venueHood" | "options"> = {
     kind: pair ? "partner" : "plan", invited: [...p.participants], alternates: [...p.alternates], quorum: pair ? 2 : 3, category: p.category,
@@ -66,8 +64,8 @@ export function teenProposalOf(p: EngineProposal, s: FriendsSnapshot): FriendsPr
   const activity = tag ? TEEN_ACTIVITIES.get(tag) : undefined;
   const options = activity ? teenOptions(activity.durationMin) : [];
   const first = [...p.participants].sort()[0];
-  const venue = activity ? teenVenueOf(activity.id, s.presence.find(x => x.memberId === first && x.type === "home")?.areas[0]) : undefined;
-  const venueHood = venue ? hood(venue.area) : undefined;
+  const venue = activity ? teenVenueOf(activity.id, s.presence.find(x => x.memberId === first && x.type === "home")?.areas[0], city) : undefined;
+  const venueHood = venue ? hoodForCity(city, venue.area) : undefined;
   if (activity && options.length && venue && venueHood) return { ...shape, activity: activity.id, venueHood: venueHood.id, venueId: venue.id, options };
   return teenShape("friends", [...p.participants, ...p.alternates], shape).laneOk ? null : { ...shape, activity: p.anchor?.id ?? "", venueHood: "", options: [] };
 }
@@ -101,8 +99,9 @@ export function friendsTeenMatcher(base: FriendsMatcher = friendsPackMatcher()):
   };
 }
 
-/** Availability evidence from the snapshot: standing slots, this week's check-in, accepted and attended times. */
 export function evidenceOf(w: World, s: FriendsSnapshot): Map<MemberId, PlanEvidence> {
+  const city: City = s.members[0]?.homeCity ?? "nyc";
+  const tz = CITY_TZ[city];
   const info = friendsInfo(w);
   const hist = new Map<MemberId, { at: number; outcome: "accepted" | "attended" | "declined_time" }[]>();
   for (const r of s.interactions) if (r.outcome === "completed") for (const id of r.participants) { if (!hist.has(id)) hist.set(id, []); hist.get(id)!.push({ at: r.at, outcome: "attended" }); }
@@ -110,10 +109,10 @@ export function evidenceOf(w: World, s: FriendsSnapshot): Map<MemberId, PlanEvid
   for (const id of w.ids) {
     const fi = info.get(id)!;
     const ci = s.checkIns[id];
-    const ev: PlanEvidence = { memberId: id, tz: NYC_TZ, quietHours: [22, 8], standing: fi.standing, history: hist.get(id) ?? [] };
+    const ev: PlanEvidence = { memberId: id, tz, quietHours: [22, 8], standing: fi.standing, history: hist.get(id) ?? [] };
     if (ci) {
       const weekStart = s.now - 9 * 3600_000;
-      ev.stated = { windows: ci.map(sl => { const t = slotTime(s.week, SLOTS.indexOf(sl)); return { start: t - 30 * 60_000, end: t + 4 * 3600_000 }; }), at: s.now, until: weekStart + 7 * DAY };
+      ev.stated = { windows: ci.map(sl => { const t = slotTime(s.week, SLOTS.indexOf(sl), tz); return { start: t - 30 * 60_000, end: t + 4 * 3600_000 }; }), at: s.now, until: weekStart + 7 * DAY };
     }
     if (!ev.standing?.length && !ev.history?.length && !ev.stated) continue;
     out.set(id, ev);
@@ -123,10 +122,11 @@ export function evidenceOf(w: World, s: FriendsSnapshot): Map<MemberId, PlanEvid
 
 const PLAN_GENERATOR: Record<FriendsPlan["source"], string> = { new: "plan", partner: "plan", repeat: "friends_repeat", crew_session: "crew", crew_offer: "crew" };
 
-export function planToProposal(p: FriendsPlan): FriendsProposal | null {
-  const options = [...new Set(p.options.map(o => slotIndexOf(o.start)).filter(k => k >= 0))];
+export function planToProposal(p: FriendsPlan, city: City = "nyc"): FriendsProposal | null {
+  const tz = CITY_TZ[city];
+  const options = [...new Set(p.options.map(o => slotIndexOf(o.start, tz)).filter(k => k >= 0))];
   if (!options.length) return null;
-  const vh = hood(p.place.area);
+  const vh = hoodForCity(city, p.place.area);
   if (!vh) return null;
   const seats = [...p.invited, ...p.alternates, ...(p.hostId !== undefined ? [p.hostId] : [])];
   return {
@@ -146,21 +146,22 @@ export function friendsPackMatcher(o: { policy?: Partial<FriendsPolicy>; pcfg?: 
     name: o.name ?? "friends-pack",
     propose(ctx) {
       const s = ctx.snapshot;
-      const w = new World(engineInputOf(s), resolveConfig({ seed: ctx.week + 1 }), localEmbed, friendsPack);
+      const city: City = s.members[0]?.homeCity ?? "nyc";
+      const tz = CITY_TZ[city];
+      const w = new World(engineInputOf(s), resolveConfig({ seed: ctx.week + 1, ...(city !== "nyc" ? { cities: [city] } : {}) }), localEmbed, friendsPack);
       const lastPlannedAt = new Map(Object.entries(s.lastPlannedAt));
-      const week = planFriendsWeek(w, { now: s.now, tz: NYC_TZ, evidence: evidenceOf(w, s), venues: VENUES, crews: s.crews.filter(c => !c.handedOff), outcomes: s.outcomes, offered: s.offered, lastPlannedAt }, pol, pcfg);
+      const week = planFriendsWeek(w, { now: s.now, city, tz, evidence: evidenceOf(w, s), venues: friendsVenuesForCity(city), crews: s.crews.filter(c => !c.handedOff), outcomes: s.outcomes, offered: s.offered, lastPlannedAt }, pol, pcfg);
       const out: FriendsProposal[] = [];
-      for (const p of week.sessions) { const x = planToProposal(p); if (x) out.push(x); }
-      for (const { crew, first } of week.offers) { const x = planToProposal(first); if (x) out.push({ ...x, kind: "crew_offer", crew }); }
-      for (const p of week.repeats) { const x = planToProposal(p); if (x) out.push(x); }
+      for (const p of week.sessions) { const x = planToProposal(p, city); if (x) out.push(x); }
+      for (const { crew, first } of week.offers) { const x = planToProposal(first, city); if (x) out.push({ ...x, kind: "crew_offer", crew }); }
+      for (const p of week.repeats) { const x = planToProposal(p, city); if (x) out.push(x); }
       for (const p of week.plans) {
-        const x = planToProposal(p);
+        const x = planToProposal(p, city);
         if (!x) continue;
-        // Open table: the alternates are asked at the same time; the first yes-sayers fill the seats.
         if (pol.openTable && !p.partner) out.push({ ...x, invited: [...x.invited, ...x.alternates], alternates: [], maxSeats: p.size.max, split: pol.split });
         else out.push(x);
       }
-      for (const p of week.partners) { const x = planToProposal(p); if (x) out.push(x); }
+      for (const p of week.partners) { const x = planToProposal(p, city); if (x) out.push(x); }
       return out;
     },
   };

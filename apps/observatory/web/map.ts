@@ -1,23 +1,42 @@
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { memberPoint, NEIGHBORHOOD, VENUES } from "@thenetwork/network/geo";
+import { ALL_SEED_VENUES, CITIES, findNeighborhood, getCity, listCities } from "../../../packages/core/src/cities.ts";
+import type { City } from "../../../packages/core/src/types.ts";
+import { NEIGHBORHOOD, SF_NEIGHBORHOOD, VENUES as LEGACY_NYC_VENUES } from "@thenetwork/network/geo";
 import type { ObsMember } from "../src/types.ts";
 import { EDGE_STYLE, memberPaint, oppInk, type Palette, readPalette } from "./graph.ts";
 import { memberTooltipText, textNode } from "./safe.ts";
 import { observeMapSize } from "./map-size.ts";
-import { focusKey, OPEN, store } from "./store.ts";
+import { focusKey, memberGeoPoint, OPEN, store } from "./store.ts";
 import { pickMember } from "./ui.tsx";
 
-const NYC: L.LatLngExpression = [40.73, -73.95];
 const MEETING_STATES = new Set(["SCHEDULED", "COMPLETED", "FEEDBACK_COLLECTED"]);
 
-/**
- * The Network on a map of New York, drawn with Leaflet on OpenStreetMap tiles (attribution required; the tiles are
- * darkened in dark mode by the `[data-map] .tiles-dark` rule in styles.css). Members stand at their home neighborhoods,
- * with their relationships, open opportunities as dashed lines, meetings at their public venues, and every venue the
- * Network can suggest. The borough filter hides members; the members filter and the focus dim them; a focus change flies
- * to a member, or fits an opportunity or a neighborhood, once. Colors come from the design-system CSS variables at each update.
- */
+function cityCenter(city: City): L.LatLngExpression {
+  const c = (getCity(city) ?? CITIES.nyc).center;
+  return [c.lat, c.lng];
+}
+
+function resolveNeighborhoodCenter(area: string, city?: City): L.LatLngExpression | undefined {
+  if (city === "nyc") {
+    const legacy = NEIGHBORHOOD.get(area);
+    if (legacy) return [legacy.lat, legacy.lng];
+  } else if (city === "sf") {
+    const legacySf = SF_NEIGHBORHOOD.get(area);
+    if (legacySf) return [legacySf.lat, legacySf.lng];
+  }
+  if (city) {
+    const hit = findNeighborhood(city, area);
+    if (hit) return [hit.lat, hit.lng];
+  }
+  for (const spec of listCities()) {
+    const hit = findNeighborhood(spec.id, area);
+    if (hit) return [hit.lat, hit.lng];
+  }
+  const legacy = NEIGHBORHOOD.get(area) ?? SF_NEIGHBORHOOD.get(area);
+  return legacy ? [legacy.lat, legacy.lng] : undefined;
+}
+
 export class MapView {
   private map: L.Map;
   private renderer = L.canvas({ padding: 0.3 });
@@ -27,27 +46,27 @@ export class MapView {
   private oppLayer = L.layerGroup();
   private venueLayer = L.layerGroup();
   private meetLayer = L.layerGroup();
-  private venues: L.CircleMarker[] = [];
+  private venues: { marker: L.CircleMarker; active: boolean }[] = [];
   private venueInk = "";
+  private venueKey = "";
   private oppVersion = "";
   private edgeKey = "";
   private lastFocusKey = "";
   private lastBorough = "all";
+  private lastCity: City;
   private raf = 0;
   private last = 0;
   private stopObservingSize: () => void;
 
   constructor(el: HTMLElement) {
-    this.map = L.map(el, { zoomControl: true, preferCanvas: true, attributionControl: true }).setView(NYC, 12);
+    this.lastCity = store.activeCity();
+    this.map = L.map(el, { zoomControl: true, preferCanvas: true, attributionControl: true }).setView(cityCenter(this.lastCity), 12);
     L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19, className: "tiles-dark",
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     }).addTo(this.map);
     this.edgeLayer.addTo(this.map); this.oppLayer.addTo(this.map); this.meetLayer.addTo(this.map); this.venueLayer.addTo(this.map);
-    for (const v of VENUES) {
-      this.venues.push(L.circleMarker([v.lat, v.lng], { renderer: this.renderer, radius: 3.5, weight: 1, fillOpacity: 0.25 })
-        .bindTooltip(textNode(`${v.name} · ${v.neighborhood}`), { direction: "top" }).addTo(this.venueLayer));
-    }
+    this.syncVenues(readPalette());
     if (store.pendingFly) { this.map.setView([store.pendingFly.lat, store.pendingFly.lng], 15); store.pendingFly = null; this.lastFocusKey = focusKey(store.ui.focus); }
     this.stopObservingSize = observeMapSize(el, () => {
       this.map.invalidateSize({ animate: false, debounceMoveend: true });
@@ -62,12 +81,33 @@ export class MapView {
     if (m) this.map.flyTo(this.point(m), Math.max(this.map.getZoom(), 14), { duration: 0.6 });
   }
 
-  /** Fly to a venue or any lat/lng (the opportunity view's venue link). */
   flyTo(lat: number, lng: number) { this.map.flyTo([lat, lng], Math.max(this.map.getZoom(), 15), { duration: 0.6 }); }
 
   private point(m: ObsMember): L.LatLngExpression {
-    const p = memberPoint(m.id, m.area, m.city);
+    const p = memberGeoPoint(m.id, m.city, m.area);
     return [p.lat, p.lng];
+  }
+
+  private syncVenues(ink: Palette) {
+    const live = store.venuesList;
+    const key = live.length ? `live:${live.length}:${store.selectedCity}` : `seed:${ALL_SEED_VENUES.length}:${store.selectedCity}`;
+    if (key !== this.venueKey) {
+      this.venueKey = key;
+      this.venueInk = "";
+      this.venueLayer.clearLayers();
+      this.venues = [];
+      const list = live.length
+        ? live
+        : ALL_SEED_VENUES.map(v => ({ id: v.id, name: v.name, city: v.city, neighborhood: v.neighborhood, lat: v.lat, lng: v.lng, status: v.status }));
+      for (const v of list) {
+        if (store.selectedCity !== "all" && v.city !== store.selectedCity) continue;
+        const active = v.status === "active";
+        const marker = L.circleMarker([v.lat, v.lng], { renderer: this.renderer, radius: 3.5, weight: 1, fillOpacity: 0.25 })
+          .bindTooltip(textNode(`${v.name} · ${v.neighborhood}`), { direction: "top" }).addTo(this.venueLayer);
+        this.venues.push({ marker, active });
+      }
+    }
+    this.restyleVenues(ink);
   }
 
   private frame = (t: number) => {
@@ -77,7 +117,6 @@ export class MapView {
     this.sync();
   };
 
-  /** On a focus change: fly to a member, or fit the bounds of an opportunity or neighborhood, once. */
   private followFocus() {
     const f = store.ui.focus, key = focusKey(f);
     if (key === this.lastFocusKey || (f && !store.members.size)) return;
@@ -89,10 +128,11 @@ export class MapView {
       const o = store.opps.get(f.id);
       for (const id of [...(o?.participants ?? []), ...(o?.alternates ?? [])]) { const m = store.members.get(id); if (m) pts.push(this.point(m)); }
       if (o?.venue) pts.push([o.venue.lat, o.venue.lng]);
+      if (o?.backupVenue) pts.push([o.backupVenue.lat, o.backupVenue.lng]);
     } else {
       for (const m of store.members.values()) if (m.area === f.id) pts.push(this.point(m));
-      const n = NEIGHBORHOOD.get(f.id);
-      if (!pts.length && n) pts.push([n.lat, n.lng]);
+      const n = resolveNeighborhoodCenter(f.id, store.activeCity());
+      if (!pts.length && n) pts.push(n);
     }
     if (pts.length === 1) this.map.flyTo(pts[0]!, Math.max(this.map.getZoom(), 14), { duration: 0.6 });
     else if (pts.length > 1) this.map.flyToBounds(L.latLngBounds(pts), { padding: [60, 60], maxZoom: 15, duration: 0.6 });
@@ -106,8 +146,13 @@ export class MapView {
     const busy = store.busy();
     const bright = store.focusSet();
     const ink = readPalette();
-    this.restyleVenues(ink);
+    this.syncVenues(ink);
     this.followFocus();
+    const curCity = store.activeCity();
+    if (curCity !== this.lastCity) {
+      this.lastCity = curCity;
+      if (!f) this.map.flyTo(cityCenter(curCity), 12, { duration: 0.6 });
+    }
     if (ui.filters.borough !== this.lastBorough && store.members.size) {
       this.lastBorough = ui.filters.borough;
       const pts = [...store.members.values()].filter(m => store.inBorough(m)).map(m => this.point(m));
@@ -145,7 +190,7 @@ export class MapView {
       });
       mk.setRadius(3 + Math.min(5, Math.sqrt(m.counters.meetings * 2 + m.counters.accepted)));
     }
-    const edgeKey = `${store.graphTick}|${JSON.stringify(ui.edgeTypes)}|${ui.filters.borough}|${focusKey(f)}|${this.venueInk}`;
+    const edgeKey = `${store.graphTick}|${JSON.stringify(ui.edgeTypes)}|${store.selectedCity}|${ui.filters.borough}|${focusKey(f)}|${this.venueInk}`;
     if (pinsMoved || edgeKey !== this.edgeKey) {
       this.edgeKey = edgeKey;
       this.edgeLayer.clearLayers();
@@ -161,19 +206,19 @@ export class MapView {
         L.polyline([this.point(a), this.point(b)], { renderer: this.renderer, color: ink[st.ink], weight: strong ? st.width * 2 : st.width, opacity: strong ? 0.9 : Math.min(0.9, st.alpha * 2.2), dashArray: st.dash?.join(" "), interactive: false }).addTo(this.edgeLayer);
       }
     }
-    const oppVersion = `${store.version}|${ui.showOpps}|${JSON.stringify(ui.filters)}|${focusKey(f)}|${Math.floor(store.now() / 3_600_000)}|${this.venueInk}`;
+    const oppVersion = `${store.version}|${store.selectedCity}|${ui.showOpps}|${JSON.stringify(ui.filters)}|${focusKey(f)}|${Math.floor(store.now() / 3_600_000)}|${this.venueInk}`;
     if (pinsMoved || oppVersion !== this.oppVersion) {
       this.oppVersion = oppVersion;
       this.oppLayer.clearLayers(); this.meetLayer.clearLayers();
-      const meetings = new Map<string, { lat: number; lng: number; name: string; n: number; upcoming: number; opps: string[] }>();
+      const meetings = new Map<string, { lat: number; lng: number; name: string; neighborhood?: string; n: number; upcoming: number; opps: string[] }>();
       for (const o of store.opps.values()) {
         const ms = o.participants.map(id => store.members.get(id)).filter((x): x is ObsMember => !!x);
         if (ms.length < 2 || !store.matchOpp(o)) continue;
         const focused = f?.kind === "opportunity" && f.id === o.id;
         const faded = !!bright && !focused && !o.participants.some(id => bright.has(id));
         if (o.venue && MEETING_STATES.has(o.state)) {
-          const k = o.venue.name;
-          const cur = meetings.get(k) ?? { ...o.venue, n: 0, upcoming: 0, opps: [] };
+          const k = o.venue.id ?? o.venue.name;
+          const cur = meetings.get(k) ?? { lat: o.venue.lat, lng: o.venue.lng, name: o.venue.name, neighborhood: o.venue.neighborhood, n: 0, upcoming: 0, opps: [] };
           cur.n++; cur.opps.push(o.id); if (o.state === "SCHEDULED") cur.upcoming++;
           meetings.set(k, cur);
           if (ui.showOpps && o.state === "SCHEDULED") for (const m of ms) L.polyline([this.point(m), [o.venue.lat, o.venue.lng]], { renderer: this.renderer, color: ink.ok, weight: focused ? 3 : 1.5, opacity: faded ? 0.15 : 0.8, interactive: false }).addTo(this.oppLayer);
@@ -191,19 +236,24 @@ export class MapView {
           .bindTooltip(textNode(`${v.name}: ${v.n} meeting${v.n > 1 ? "s" : ""}${v.upcoming ? ` (${v.upcoming} upcoming)` : ""}`), { direction: "top" });
         mk.on("click", () => {
           if (v.opps.length === 1) { store.focus({ kind: "opportunity", id: v.opps[0]! }); return; }
-          const venue = VENUES.find(x => x.name === v.name);
-          if (venue) store.focus({ kind: "neighborhood", id: venue.neighborhood });
+          const areaName = v.neighborhood
+            ?? store.venuesList.find(x => x.name === v.name)?.neighborhood
+            ?? ALL_SEED_VENUES.find(x => x.name === v.name)?.neighborhood
+            ?? LEGACY_NYC_VENUES.find(x => x.name === v.name)?.neighborhood;
+          if (areaName) store.focus({ kind: "neighborhood", id: areaName });
         });
         mk.addTo(this.meetLayer);
       }
     }
   }
 
-  /** Gives the venue markers the warn ink again when the brand colors change, and records the colors that the layers were drawn with. */
   private restyleVenues(ink: Palette) {
     const key = JSON.stringify(ink);
     if (key === this.venueInk) return;
     this.venueInk = key;
-    for (const v of this.venues) v.setStyle({ color: ink.warn, fillColor: ink.warn });
+    for (const v of this.venues) {
+      const color = v.active ? ink.warn : ink.destructive;
+      v.marker.setStyle({ color, fillColor: color });
+    }
   }
 }

@@ -98,6 +98,8 @@ export interface Job {
 
 export interface PeonGenOptions {
   seed: number; perCity?: number; jobsPerCity?: number; minorShare?: number; fakeShare?: number; weeks?: number;
+  /** Optional markets to populate (defaults to ["nyc", "sf"] to preserve pinned baselines). */
+  cities?: readonly City[];
   /**
    * Planted circles and standing (planted.ts) for candidates: an adult candidate's job family is
    * the circle topic (the industry cluster) and seniority follows the planted standing. Off by
@@ -121,7 +123,24 @@ const AREA_BY_RACE: Record<City, Record<RaceGroup, Record<string, number>>> = {
     c: { san_francisco: 0.15, oakland: 0.2, east_bay: 0.2, peninsula: 0.1, south_bay: 0.35 },
     d: { san_francisco: 0.3, oakland: 0.1, east_bay: 0.1, peninsula: 0.2, south_bay: 0.3 },
   },
-  la: { a: {}, b: {}, c: {}, d: {} }, // the hiring world does not model LA yet
+  la: {
+    a: { westside: 0.35, central_la: 0.25, eastside: 0.20, dtla: 0.20 },
+    b: { westside: 0.20, central_la: 0.30, eastside: 0.20, dtla: 0.30 },
+    c: { westside: 0.15, central_la: 0.25, eastside: 0.35, dtla: 0.25 },
+    d: { westside: 0.30, central_la: 0.30, eastside: 0.15, dtla: 0.25 },
+  },
+  chicago: {
+    a: { loop_west_loop: 0.30, river_north: 0.25, wicker_logan: 0.20, lincoln_lakeview: 0.20, hyde_park: 0.05 },
+    b: { loop_west_loop: 0.20, river_north: 0.10, wicker_logan: 0.15, lincoln_lakeview: 0.10, hyde_park: 0.45 },
+    c: { loop_west_loop: 0.20, river_north: 0.10, wicker_logan: 0.40, lincoln_lakeview: 0.15, hyde_park: 0.15 },
+    d: { loop_west_loop: 0.35, river_north: 0.25, wicker_logan: 0.15, lincoln_lakeview: 0.15, hyde_park: 0.10 },
+  },
+  miami: {
+    a: { brickell_downtown: 0.30, wynwood_midtown: 0.20, coral_gables_grove: 0.25, miami_beach: 0.25 },
+    b: { brickell_downtown: 0.25, wynwood_midtown: 0.35, coral_gables_grove: 0.25, miami_beach: 0.15 },
+    c: { brickell_downtown: 0.30, wynwood_midtown: 0.20, coral_gables_grove: 0.35, miami_beach: 0.15 },
+    d: { brickell_downtown: 0.35, wynwood_midtown: 0.25, coral_gables_grove: 0.20, miami_beach: 0.20 },
+  },
 };
 const FIRST: Record<Sex, Record<RaceGroup, string[]>> = {
   f: { a: ["Emily", "Hannah", "Claire", "Megan"], b: ["Aaliyah", "Imani", "Keisha", "Nia"], c: ["Maria", "Lucia", "Valeria", "Ximena"], d: ["Mei", "Priya", "Yuna", "Linh"] },
@@ -143,7 +162,7 @@ export function generatePeonPopulation(o: PeonGenOptions): PeonPopulation {
   requireSimulationCount(jobsPerCity, "Peon jobs per city", 0);
   const candidates: Candidate[] = [], companies: Company[] = [], jobs: Job[] = [];
   const sealed = new Map<MemberId, Sealed>();
-  const cities: City[] = ["nyc", "sf"];
+  const cities: readonly City[] = o.cities && o.cities.length > 0 ? o.cities : ["nyc", "sf"];
   // Planted: minor and fake flags come from a per-candidate fork, so eligibility is known before the
   // candidate loop. The default path keeps its shared stream unchanged.
   const flags = o.planted ? new Map(cities.flatMap(market => [...Array(perCity).keys()].map(i => {

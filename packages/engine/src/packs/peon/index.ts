@@ -34,7 +34,8 @@ export const PEON_PACK_VERSION = `peon-pack-0.4.0+slate.${Object.values(SLATE).j
  * days); job seats are "open" (a weekly slate capped per job in selection.ts, not an interruption budget).
  */
 export const PEON_ENGINE_CONFIG: EngineConfigInput = {
-  cities: ["sf", "nyc"],
+  cities: ["sf", "nyc", "la", "chicago", "miami"],
+  timezones: { sf: "America/Los_Angeles", nyc: "America/New_York", la: "America/Los_Angeles", chicago: "America/Chicago", miami: "America/New_York" },
   budgets: {
     open: { limit: 1000, periodDays: 7 }, normal: { limit: 3, periodDays: 7 }, quiet: { limit: 1, periodDays: 7 },
     receiving: { limit: 3, periodDays: 7 }, paused: { limit: 0, periodDays: 7 },

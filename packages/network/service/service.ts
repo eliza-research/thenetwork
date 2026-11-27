@@ -7,7 +7,7 @@ import { createHash, createSecretKey, hkdfSync, randomUUID, timingSafeEqual } fr
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { isDeepStrictEqual } from "node:util";
 import {
-  DAY, getCityIds, isMinor, judgeLLM, judgeModelOf, LLMBudget, normalizeLumaWebhookEvent, providerKeyPresent, RealClock, recommenderLLM, verifyLumaWebhookSignature,
+  DAY, getCityIds, isMinor, judgeLLM, judgeModelOf, LAUNCH_CITIES, LLMBudget, normalizeLumaWebhookEvent, providerKeyPresent, RealClock, recommenderLLM, verifyLumaWebhookSignature,
   type City, type CityId, type Clock, type Intent, type LLM, type MemberId, type PersonaHealthStatus, type VenueStatus,
 } from "@thenetwork/core";
 import { modelReviewJudge, REVIEW_JUDGE_REVIEWER, type ReviewJudge } from "../../engine/src/reviewJudge.ts";
@@ -179,6 +179,7 @@ import type { AuditEntry, RoleGrant, StaffRole, StaffUser } from "../../../apps/
 import { PgMeetupStore, type ExternalEventStatus } from "./meetup-store.ts";
 
 /** The homes a conversation can have; each belongs to exactly one network of an app (runtimeForHome). */
+export const CONVERSATION_CITIES: readonly City[] = LAUNCH_CITIES;
 const conversationCities = (): readonly CityId[] => getCityIds();
 
 export { NetworkRuntime } from "./runtime.ts";
@@ -505,7 +506,7 @@ export class NetworkService implements RuntimeHost {
     if (this.calendarScheduling && calendarSecret && [...this.tokens.keys(), ...(this.consoleToken ? [this.consoleToken] : [])].some(t => safeEqual(t, calendarSecret)))
       throw new Error("NETWORK_CALENDAR_FREE_BUSY_SECRET must differ from console and staff tokens");
     const specs = o.networks?.length ? o.networks : [{ id: o.id ?? "ntwrk:nyc" }];
-    // Each network's tick holds one connection for its advisory lock and needs more inside it: size the pool from the network count.
+    // Each parallel network tick holds one advisory-lock connection plus a worker connection, so keep at least 2 * specs.length + 4 to prevent pool self-deadlock.
     this.sql = new SQL({ url: o.url, max: Math.max(8, 2 * specs.length + 4), connection: { application_name: `network-service:${this.instance}` } });
     this.meetup = new PgMeetupStore(this.sql);
     const profileReview = profileReviewFromEnv(this.env, () => this.clock.now());
@@ -848,7 +849,7 @@ export class NetworkService implements RuntimeHost {
   static async fromDatabase(o: Omit<ServiceOptions, "networks" | "apps" | "id">): Promise<NetworkService> {
     const sql = new SQL({ url: o.url, max: 1 });
     try {
-      const nets = await sql`select id, matching_enabled from platform.networks order by (app_id = 'ntwrk') desc, id`;
+      const nets = await sql`select id, matching_enabled from platform.networks order by (app_id = 'ntwrk') desc, matching_enabled desc, (city = 'nyc') desc, id`;
       const rows = await sql`select id, name, domain, min_join_age, min_match_age, join_mode from platform.apps`;
       const apps = { ...APPS };
       for (const r of rows as any[]) if (isAppId(r.id)) apps[r.id as AppId] = { ...APPS[r.id as AppId], name: r.name, domain: r.domain, minJoinAge: r.min_join_age, minMatchAge: r.min_match_age, joinMode: r.join_mode };
@@ -857,10 +858,9 @@ export class NetworkService implements RuntimeHost {
   }
 
   // ------------------------------------------------------------------ the networks
-  /** The first network: The Network's (ntwrk) when it runs here. The single-network API below uses it. */
+  /** The first network: The Network's (ntwrk) primary network when it runs here. The single-network API below uses it. */
   get main(): NetworkRuntime {
-    const all = [...this.runtimes.values()];
-    return all.find(r => r.app.id === "ntwrk") ?? all[0]!;
+    return this.runtimeFor("ntwrk") ?? this.runtimes.values().next().value!;
   }
   get net() { return this.main.net; }
   get pg() { return this.main.pg; }
@@ -869,10 +869,20 @@ export class NetworkService implements RuntimeHost {
   get lastTick() { return this.main.lastTick; }
   /** Address to member of The Network (the first network). */
   memberOf = (address: string): MemberId | undefined => this.main.memberOf(address);
-  /** The network of an app (and a city; default its first network here). */
+  /** The network of an app (and a city; default its primary network: matching-allowed NYC, else matching-allowed, else NYC, else first). */
   runtimeFor(app: AppId, city?: string): NetworkRuntime | undefined {
-    for (const r of this.runtimes.values()) if (r.app.id === app && (city === undefined || r.city === city)) return r;
-    return undefined;
+    if (city !== undefined) {
+      for (const r of this.runtimes.values()) if (r.app.id === app && r.city === city) return r;
+      return undefined;
+    }
+    let best: NetworkRuntime | undefined;
+    let bestRank = -1;
+    for (const r of this.runtimes.values()) {
+      if (r.app.id !== app) continue;
+      const rank = (r.matchingAllowed ? 2 : 0) + (r.city === "nyc" ? 1 : 0);
+      if (rank > bestRank) { best = r; bestRank = rank; }
+    }
+    return best;
   }
   /** A registered home owns its conversation; an unserved home uses this app's existing default. */
   runtimeForHome(app: AppId, homeCity: string): NetworkRuntime | undefined {

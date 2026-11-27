@@ -1,4 +1,4 @@
-import { CITY_TZ, fromLocal, temporaryPresenceWindow, type City } from "@thenetwork/core";
+import { CITY_TZ, fromLocal, isCity, resolveCity, temporaryPresenceWindow, type City } from "@thenetwork/core";
 import {
   decideTravelEntry, presenceWindowsOverlap, samePresenceWindow, travelEntryReplyAllowed, type PresenceWindow,
 } from "../../core/src/generated/travelPresence.ts";
@@ -7,7 +7,13 @@ import { homeCityOf, type Accounts } from "../../platform/src/accounts.ts";
 import { memberCommandOwner, type MemberCommandOwner } from "./member-command.ts";
 import { presenceOf } from "./snapshot.ts";
 
-const CITY_NAME: Record<City, string> = { nyc: "New York City", sf: "San Francisco", la: "Los Angeles" };
+const CITY_NAME: Record<City, string> = {
+  nyc: "New York City",
+  sf: "San Francisco",
+  la: "Los Angeles",
+  chicago: "Chicago",
+  miami: "Miami",
+};
 const EMPTY_WINDOW: PresenceWindow = { from: 0, to: 0 };
 type TravelCommand = { city: City; dates?: { from: string; to: string; window: PresenceWindow } };
 
@@ -20,16 +26,11 @@ function localMidnight(input: string, city: City): number | undefined {
 /** A direct first-person travel statement. Only exact dates are eligible to write. */
 export function travelPresenceCommand(text: string): TravelCommand | undefined {
   const line = text.trim().replace(/[.!]$/, "").replace(/[^\S\n]+/g, " ");
-  const declaration = /^(?:i will|i['’]ll) be in (new york city|new york|nyc|san francisco|sf|los angeles|la)(?: (.*))?$/i.exec(line);
+  const declaration = /^(?:i will|i['’]ll) be in (new york city|new york|nyc|san francisco|sf|los angeles|la|chicago|chi|miami|mia)(?: (.*))?$/i.exec(line);
   if (!declaration) return;
   const named = declaration[1]!.toLowerCase();
-  const resolved = homeCityOf(named);
-  const city: City | undefined =
-    resolved === "nyc" || resolved === "sf" || resolved === "la"
-      ? resolved
-      : named === "la" || named === "los angeles"
-        ? "la"
-        : undefined;
+  const resolved = homeCityOf(named) ?? resolveCity(named);
+  const city: City | undefined = isCity(resolved) ? resolved : undefined;
   if (!city) return;
   const dates = /^from ([1-9]\d{3}-\d{2}-\d{2}) (?:until|to) ([1-9]\d{3}-\d{2}-\d{2})$/i.exec(declaration[2] ?? "");
   if (!dates) return { city };

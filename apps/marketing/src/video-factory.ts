@@ -1,4 +1,7 @@
 import { LeakGuard } from "../../../packages/core/src/guard.ts";
+import { requireCityPack } from "./city-registry.ts";
+import { BRAND_DOMAINS, marketingLeakAllowlist } from "./constants.ts";
+import { defaultDesireLaneForApp, type DesireLaneId } from "./desire-lanes.ts";
 import type { BrandAppId, PersonaId } from "./types.ts";
 
 export const VIDEO_FACTORY_STAGES = [
@@ -21,6 +24,7 @@ export interface PersonaVideoBible {
   readonly personaId: PersonaId;
   readonly displayName: string;
   readonly appId: BrandAppId;
+  readonly defaultDesireLane: DesireLaneId;
   readonly domain: string;
   readonly accentToken: string;
   readonly visualIdentity: string;
@@ -37,6 +41,8 @@ export interface VideoScriptManifest {
   readonly id: string;
   readonly personaId: PersonaId;
   readonly appId: BrandAppId;
+  readonly desireLane?: DesireLaneId;
+  readonly city?: string;
   readonly productionTier: VideoProductionTier;
   readonly title: string;
   readonly durationSec: number;
@@ -55,6 +61,8 @@ export interface VideoAsset {
   readonly campaignId: string;
   readonly personaId: PersonaId;
   readonly appId: BrandAppId;
+  readonly desireLane: DesireLaneId;
+  readonly city?: string;
   readonly productionTier: VideoProductionTier;
   readonly stage: VideoStage;
   readonly script: VideoScriptManifest;
@@ -118,18 +126,6 @@ export interface WeeklyVideoPacingReport {
   readonly avgCostPerVideoCents: number;
 }
 
-const APPROVED_MARKETING_DOMAINS: readonly string[] = [
-  "ntwrk.party",
-  "slop.date",
-  "peon.biz",
-  "friends.help",
-  "go.ntwrk.party",
-  "go.slop.date",
-  "go.peon.biz",
-  "go.friends.help",
-  "ops-nyc@ntwrk.party",
-];
-
 const GLOBAL_FORBIDDEN_SCRIPT_PATTERNS: ReadonlyArray<{
   readonly code: string;
   readonly pattern: RegExp;
@@ -152,7 +148,7 @@ const GLOBAL_FORBIDDEN_SCRIPT_PATTERNS: ReadonlyArray<{
   },
   {
     code: "forbidden_gimmick_hardware",
-    pattern: /\b(wearable\s*billboard|portable\s*receipt\s*printer|thermal\s*printer\s*citation)\b/i,
+    pattern: /\b(wearable\s*billboard|led\s*backpack|led\s*vest|qr\s*backpack|portable\s*receipt\s*printer|thermal\s*printer\s*citation|smart\s*glasses)\b/i,
     message: "Hardware gimmicks are disallowed; keep formats to real humans, QR fliers, and clean screen UI.",
   },
 ];
@@ -160,27 +156,21 @@ const GLOBAL_FORBIDDEN_SCRIPT_PATTERNS: ReadonlyArray<{
 const VENN_ROMANCE_FRAMING_PATTERN =
   /\b(hot\s*singles|hookup|blind\s*date|romantic\s*match|situationship|dating\s*app|swipe\s*right|find\s*a\s*girlfriend|find\s*a\s*boyfriend)\b/i;
 
-const BRAND_DOMAINS: Record<BrandAppId, string> = {
-  slop: "slop.date",
-  peon: "peon.biz",
-  friends: "friends.help",
-  ntwrk: "ntwrk.party",
-};
-
 export const PERSONA_VIDEO_BIBLES: Readonly<Record<PersonaId, PersonaVideoBible>> = {
   chadwick: {
     personaId: "chadwick",
     displayName: "Chadwick",
     appId: "slop",
-    domain: "slop.date",
+    defaultDesireLane: "soulmate_dating",
+    domain: BRAND_DOMAINS.slop,
     accentToken: "slop-chartreuse",
     visualIdentity:
       "Stylized matte acid-chartreuse 3D felt heart-creature puppet in Remotion PIP corner + handheld 9:16 selfie-cam clips.",
-    voiceProfile: "Crisp NYC cadence, fast-talking blunt wingman with dry warmth.",
-    defaultVoiceId: "voice-chadwick-nyc-v1",
+    voiceProfile: "Crisp, fast-talking blunt wingman with dry warmth and zero cringe.",
+    defaultVoiceId: "voice-chadwick-v1",
     audioSting: "imessage-swoosh-06s",
     comedicAngle:
-      "Roasting NYC dating-app humiliation rituals, fish photos, dry late-night texts, and endless swipe fatigue.",
+      "Roasting swipe-app burnout, three-week pen-pal chats, and late-night texting habits.",
     primaryCtaKeyword: "SLOP",
     forbiddenPatterns: [/\b(peon\.biz|friends\.help|ntwrk\.party)\b/i],
     safetyRules: [
@@ -194,15 +184,16 @@ export const PERSONA_VIDEO_BIBLES: Readonly<Record<PersonaId, PersonaVideoBible>
     personaId: "sloane",
     displayName: "Sloane",
     appId: "slop",
-    domain: "slop.date",
+    defaultDesireLane: "soulmate_dating",
+    domain: BRAND_DOMAINS.slop,
     accentToken: "slop-chartreuse",
     visualIdentity:
-      "Expressive stylized 2D/3D illustrated bestie avatar on stark B&W with fake iMessage and dossier stamp UI renders.",
-    voiceProfile: "Dry, razor-sharp Lower East Side bestie with deadpan timing.",
-    defaultVoiceId: "voice-sloane-les-v1",
+      "Expressive stylized 2D/3D illustrated bestie avatar on stark B&W with clean iMessage and dossier stamp UI renders.",
+    voiceProfile: "Dry, observant, sharp-witted friend with calm deadpan timing.",
+    defaultVoiceId: "voice-sloane-v1",
     audioSting: "imessage-swoosh-06s",
     comedicAngle:
-      "Forensic red-flag case files, situationship relapse prevention, and roasting endless pen-pal matches.",
+      "Forensic dating-app case files, unsent late-night drafts, and rescuing adults from endless pen-pal matches.",
     primaryCtaKeyword: "SLOP",
     forbiddenPatterns: [/\b(peon\.biz|friends\.help|ntwrk\.party)\b/i],
     safetyRules: [
@@ -216,7 +207,8 @@ export const PERSONA_VIDEO_BIBLES: Readonly<Record<PersonaId, PersonaVideoBible>
     personaId: "peon",
     displayName: "Peon",
     appId: "peon",
-    domain: "peon.biz",
+    defaultDesireLane: "money_work",
+    domain: BRAND_DOMAINS.peon,
     accentToken: "peon-orange",
     visualIdentity:
       "Animated talking safety-orange necktie cubicle puppet paired with Remotion screen parodies of corporate job posts.",
@@ -240,15 +232,16 @@ export const PERSONA_VIDEO_BIBLES: Readonly<Record<PersonaId, PersonaVideoBible>
     personaId: "venn",
     displayName: "Venn",
     appId: "friends",
-    domain: "friends.help",
+    defaultDesireLane: "ideal_friends",
+    domain: BRAND_DOMAINS.friends,
     accentToken: "friends-green",
     visualIdentity:
       "Animated forest-and-bright-green overlapping Venn-circle puppet with carabiner + dead group-chat UI interventions.",
-    voiceProfile: "Bright, relentlessly encouraging NYC social director.",
+    voiceProfile: "Warm, grounded social director who actually gets plans onto calendars.",
     defaultVoiceId: "voice-venn-social-v1",
     audioSting: "bicycle-bell-06s",
     comedicAngle:
-      "Exposing the 'we should hang soon!' lie, rescuing 20s-30s adults from couch-rot, and 3+3 hedonic clique seating.",
+      "Exposing the 'we should hang soon!' lie, reviving stale plans, and seating 3-to-6-person groups that actually click.",
     primaryCtaKeyword: "FRIENDS",
     forbiddenPatterns: [
       /\b(slop\.date|peon\.biz|ntwrk\.party)\b/i,
@@ -264,11 +257,12 @@ export const PERSONA_VIDEO_BIBLES: Readonly<Record<PersonaId, PersonaVideoBible>
     personaId: "operator",
     displayName: "The Operator",
     appId: "ntwrk",
-    domain: "ntwrk.party",
+    defaultDesireLane: "elite_serendipity",
+    domain: BRAND_DOMAINS.ntwrk,
     accentToken: "network-ink",
     visualIdentity:
-      "Pure monochrome Host Grotesk kinetic typography, minimalist 3-bubble iMessage cinema, and B&W NYC architectural B-roll.",
-    voiceProfile: "Calm, whisper-authority mid-Atlantic concierge.",
+      "Pure monochrome Host Grotesk kinetic typography, minimalist 3-bubble iMessage cinema, and B&W city architectural B-roll.",
+    voiceProfile: "Calm, understated concierge with quiet authority.",
     defaultVoiceId: "voice-operator-mono-v1",
     audioSting: "cello-pluck-06s",
     comedicAngle:
@@ -288,22 +282,21 @@ export const STARTER_COMEDY_SCRIPTS: readonly VideoScriptManifest[] = [
     id: "script-chadwick-01",
     personaId: "chadwick",
     appId: "slop",
+    desireLane: "soulmate_dating",
     productionTier: 1,
-    title: "The Murray Hill Fish Intervention",
-    durationSec: 29,
-    hookText: "I had to fire my client Marcus this morning. Look at photo number one.",
+    title: "The 400-Swipe Receipt",
+    durationSec: 28,
+    hookText: "I pulled my client's screen-time receipt for dating apps this week. Eleven hours. Zero dates.",
     visualBeats: [
-      "Remotion synthetic profile showing huge bass photo.",
-      "Zoom on cliché prompt: 'girls who don't take themselves too seriously'.",
-      "Group photo of six identical guys in fleece vests.",
-      "Cut to clean slop.date double-opt-in confirmation bubble.",
+      "Clean receipt graphic printing: 412 swipes, 9 matches, 6 'hey how was your weekend', 0 actual coffees.",
+      "Chadwick stamps the receipt DENIED in chartreuse.",
+      "Cut to one quiet double-opt-in confirmation card for Thursday drinks.",
     ],
     dialogue:
-      "A bass from 2021. A cliché prompt that reads like a restraining order. And a group photo of six identical guys named Connor. Who am I matching, the whole lacrosse team?",
+      "You spent a part-time job swiping through strangers just to ask six people how their weekend was and never meet one of them.",
     punchline:
-      "I deleted the swipe apps, had his own AI answer three real questions about what he actually does in Brooklyn, and booked him Thursday drinks with a graphic designer who loves jazz.",
-    ctaText:
-      "Comment SLOP for the 1-line AI prompt or visit go.slop.date (18+ NYC).",
+      "Delete the slot machine. Tell your AI what you actually want, wait for both sides to say yes, and show up Thursday in West Village.",
+    ctaText: "Comment SLOP or visit go.slop.date (18+).",
     sponsored: false,
     ftcDisclosureText: null,
     estimatedRenderCents: 85,
@@ -312,21 +305,21 @@ export const STARTER_COMEDY_SCRIPTS: readonly VideoScriptManifest[] = [
     id: "script-chadwick-02",
     personaId: "chadwick",
     appId: "slop",
+    desireLane: "soulmate_dating",
     productionTier: 2,
     title: "11:42 PM 'wyd' Emergency Intercept",
-    durationSec: 28,
+    durationSec: 27,
     hookText: "PUT THE THUMB DOWN. DO NOT HIT SEND ON 'WYD.'",
     visualBeats: [
-      "Fake incoming FaceTime call card: YOUR AI MATCHMAKER (URGENT).",
+      "Fake incoming call card: YOUR AI MATCHMAKER (URGENT).",
       "Split screen showing draft 'hey wyd' at 11:42 PM.",
-      "Draft auto-clears and swaps to confirmed Friday 7:30 PM bar invite.",
+      "Draft clears and swaps to confirmed Friday 7:30 PM bar invite.",
     ],
     dialogue:
-      "It is 11:42 PM on a Thursday. You are not mysterious, you are bored in the East Village eating dry pretzels. Sending 'wyd' revokes your dating privileges.",
+      "It is 11:42 PM on a Thursday. You are not mysterious, you are bored in East Village eating dry pretzels. Sending 'wyd' revokes your dating privileges.",
     punchline:
-      "Stop texting three-week pen pals and show up to a confirmed West Village bar when both sides say yes.",
-    ctaText:
-      "Paste Read https://slop.date/SKILL.md into your AI or scan go.slop.date (18+).",
+      "Stop texting three-week pen pals and show up to a real West Village table when both sides say yes.",
+    ctaText: "Visit go.slop.date or comment SLOP (18+).",
     sponsored: false,
     ftcDisclosureText: null,
     estimatedRenderCents: 310,
@@ -335,22 +328,22 @@ export const STARTER_COMEDY_SCRIPTS: readonly VideoScriptManifest[] = [
     id: "script-sloane-01",
     personaId: "sloane",
     appId: "slop",
+    desireLane: "soulmate_dating",
     productionTier: 2,
     title: "Matchmaker Case File #19: The 3-Podcast Guy",
     durationSec: 29,
     hookText:
-      "People ask why my AI matchmaker sends one match a week. Let me show you who I just blocked.",
+      "People ask why my AI matchmaker sends one intro a week. Let me show you who I filtered out.",
     visualBeats: [
-      "Stark B&W dossier stamped CASE FILE #19 — REJECTED.",
-      "Red stamps on '33 | Still figuring it out', 'hosts 3 podcasts', 'splits time FiDi/Bali'.",
-      "Clean warm confirmation for Tuesday wine in Cobble Hill.",
+      "Stark B&W dossier stamped CASE FILE #19 — PASSED.",
+      "Red stamps on '33 | Still figuring it out', 'hosts 3 podcasts', 'never suggests a time'.",
+      "Clean warm confirmation for Tuesday wine in Williamsburg.",
     ],
     dialogue:
-      "Thirty-three and still figuring out his goals—sir, you are not a stealth startup. Three podcasts is not a hobby, it is a cry for an editor.",
+      "Thirty-three and still figuring out his goals — sir, you are not a stealth startup. Three podcasts is not a hobby, it is a cry for an editor.",
     punchline:
-      "Meanwhile I quietly found you a 31-year-old architect in Cobble Hill who reads physical books and already confirmed Tuesday wine.",
-    ctaText:
-      "Comment SLOP for the 1-line Claude or ChatGPT prompt at slop.date (18+ free).",
+      "Meanwhile I quietly found you a 31-year-old architect in Williamsburg who reads physical books and already confirmed Tuesday wine.",
+    ctaText: "Comment SLOP or head to go.slop.date (18+ free).",
     sponsored: false,
     ftcDisclosureText: null,
     estimatedRenderCents: 320,
@@ -359,21 +352,21 @@ export const STARTER_COMEDY_SCRIPTS: readonly VideoScriptManifest[] = [
     id: "script-sloane-02",
     personaId: "sloane",
     appId: "slop",
+    desireLane: "soulmate_dating",
     productionTier: 1,
-    title: "Situationship Relapse Audit",
-    durationSec: 28,
-    hookText:
-      "Wait what if I text Jake happy belated birthday—his birthday was in August? It is November. I am turning off your Wi-Fi.",
+    title: "The Unsent Draft",
+    durationSec: 27,
+    hookText: "You are about to text someone 'hope you are well' after four months of silence. Put the phone down.",
     visualBeats: [
-      "Rapid-fire Remotion synthetic iMessage exchange.",
-      "Punchy captions encouraging re-read loop.",
-      "Chartreuse confirmation card showing one double-opt-in match.",
+      "Clean Remotion synthetic text thread with blinking cursor on 'hey random question...'.",
+      "Sloane quietly locks the draft and swaps in one verified Thursday intro.",
+      "Minimal chartreuse confirmation card: both sides opted in.",
     ],
     dialogue:
-      "He viewed my story though. Bestie, he views his dentist's stories—he has a thumb. Last time he planned a date he asked for a streaming login.",
+      "You do not actually miss him — you just hate the idea of starting from zero on another app. That is why you keep recycling old threads.",
     punchline:
-      "No swiping on 400 strangers to get over Jake. Tell your AI Read https://slop.date/SKILL.md—just one real date when both sides say yes.",
-    ctaText: "Tag the friend who needs this intervention and comment SLOP (18+).",
+      "No swiping through 400 strangers to move on. One vetted double-opt-in intro when someone genuinely fits.",
+    ctaText: "Send this to the friend with a draft open. Comment SLOP or visit go.slop.date (18+).",
     sponsored: false,
     ftcDisclosureText: null,
     estimatedRenderCents: 80,
@@ -382,6 +375,7 @@ export const STARTER_COMEDY_SCRIPTS: readonly VideoScriptManifest[] = [
     id: "script-peon-01",
     personaId: "peon",
     appId: "peon",
+    desireLane: "money_work",
     productionTier: 1,
     title: "Translating Corporate Posts Into English",
     durationSec: 29,
@@ -392,9 +386,9 @@ export const STARTER_COMEDY_SCRIPTS: readonly VideoScriptManifest[] = [
       "Feed crumples into clean peon.biz double-opt-in intro card.",
     ],
     dialogue:
-      "Fast-paced family wearing many hats means zero docs. Competitive comp means vibes. Entry-level rockstar with 8 years of Kubernetes—Kubernetes is barely twelve.",
+      "Fast-paced family wearing many hats means zero docs. Competitive comp means vibes. Entry-level rockstar with 8 years of Kubernetes — Kubernetes is barely twelve.",
     punchline:
-      "Stop applying into ATS black holes. Tell your AI Read https://peon.biz/SKILL.md and get reviewed warm intros straight to hiring teams.",
+      "Stop applying into ATS black holes. Get reviewed double-opt-in intros straight to real hiring teams.",
     ctaText: "Candidates never pay a cent. Comment PEON or visit go.peon.biz.",
     sponsored: false,
     ftcDisclosureText: null,
@@ -404,6 +398,7 @@ export const STARTER_COMEDY_SCRIPTS: readonly VideoScriptManifest[] = [
     id: "script-peon-02",
     personaId: "peon",
     appId: "peon",
+    desireLane: "money_work",
     productionTier: 2,
     title: "Getting Hired Without Touching Easy Apply",
     durationSec: 28,
@@ -412,12 +407,12 @@ export const STARTER_COMEDY_SCRIPTS: readonly VideoScriptManifest[] = [
     visualBeats: [
       "Puppet shredding 347 automated Sunday-3AM rejection emails.",
       "Giant orange buzzer labeled NO 7-ROUND TRIVIA.",
-      "Double-opt-in founder coffee intro confirmed in SoHo.",
+      "Double-opt-in founder coffee intro confirmed in SoHo / Nolita.",
     ],
     dialogue:
-      "Dan sent 347 Easy Applies and got 347 bot rejections. So I took his real shipped work, paired him with two SoHo founders, and sent one text.",
+      "Dan sent 347 Easy Applies and got 347 bot rejections. So I took his real shipped work, paired him with two SoHo / Nolita founders, and sent one text.",
     punchline: "Zero cover letters. Zero re-typing your own PDF into broken portals.",
-    ctaText: "Drop your worst application horror story and comment PEON for peon.biz/SKILL.md.",
+    ctaText: "Drop your worst application story and comment PEON or visit go.peon.biz.",
     sponsored: false,
     ftcDisclosureText: null,
     estimatedRenderCents: 330,
@@ -426,21 +421,21 @@ export const STARTER_COMEDY_SCRIPTS: readonly VideoScriptManifest[] = [
     id: "script-venn-01",
     personaId: "venn",
     appId: "friends",
+    desireLane: "ideal_friends",
     productionTier: 1,
     title: "The 'We Should Hang Out Soon' Lie Detector",
-    durationSec: 29,
+    durationSec: 28,
     hookText: "STOP SAYING 'WE SHOULD TOTALLY HANG OUT SOON.' YOU ARE LYING TO EACH OTHER.",
     visualBeats: [
-      "Green Venn puppet kicks open dead group chat titled NYC Brunch Soon!! (4 months stale).",
+      "Green Venn puppet opens dead group chat titled Brunch Soon!! (4 months stale).",
       "Circles three classic excuses in bright green.",
-      "Thursday 7 PM Brooklyn dumpling table locks in for 4 real people.",
+      "Thursday 7 PM Williamsburg dumpling table locks in for 4 real people.",
     ],
     dialogue:
       "It has been 118 days. Nobody is grabbing coffee. You are 27 on a Friday staring at a ceiling fan eating cold leftovers.",
     punchline:
-      "So I matched you with three Brooklyn locals who like climbing and cheap dumplings and booked a public table Thursday at 7.",
-    ctaText:
-      "Comment FRIENDS for friends.help/SKILL.md—or bring 2 friends to match your trio.",
+      "So I matched you with three Williamsburg locals who like climbing and cheap dumplings and put a public table on the calendar Thursday at 7.",
+    ctaText: "Comment FRIENDS or visit go.friends.help — solo or bring 2 friends.",
     sponsored: false,
     ftcDisclosureText: null,
     estimatedRenderCents: 85,
@@ -449,19 +444,20 @@ export const STARTER_COMEDY_SCRIPTS: readonly VideoScriptManifest[] = [
     id: "script-venn-02",
     personaId: "venn",
     appId: "friends",
+    desireLane: "ideal_friends",
     productionTier: 2,
-    title: "How Hedonic Math Seats a 6-Person Dinner",
+    title: "Why Dinner With Six Strangers Usually Flops",
     durationSec: 28,
-    hookText: "Everyone thinks making adult friends is random. Wrong. It is hedonic game theory.",
+    hookText: "Most stranger dinners fail before the appetizers arrive because nobody thought about the mix.",
     visualBeats: [
-      "Venn puppet mapping 6 dinner seats on a green-string corkboard.",
-      "Cards slam onto seats: 1 yapper, 1 dry introvert, 2 warm anchors, 1 local guide, 1 newcomer.",
-      "Green stamp: FREE TO JOIN — PUBLIC NYC VENUE.",
+      "Venn puppet arranging 6 seats on a clean green tabletop diagram.",
+      "Cards land on seats: one storyteller, one sharp listener, two neighborhood regulars, two people new in town.",
+      "Green stamp: FREE TO JOIN — PUBLIC VENUE.",
     ],
     dialogue:
-      "Most dinner apps toss six random strangers together and pray. We score the weakest link at the table so every seat clicks.",
-    punchline: "Zero subscription fee. Just real 3-to-6-person plans at public NYC spots.",
-    ctaText: "Which seat are you? Comment 1-6 and visit go.friends.help.",
+      "Random seating puts six quiet people at one table and six people talking over each other at the next. We match the whole table so nobody feels like the odd seat out.",
+    punchline: "Zero subscription fee. Just 3-to-6-person plans at real neighborhood spots in New York City.",
+    ctaText: "Which seat are you? Comment FRIENDS or visit go.friends.help.",
     sponsored: false,
     ftcDisclosureText: null,
     estimatedRenderCents: 325,
@@ -470,6 +466,7 @@ export const STARTER_COMEDY_SCRIPTS: readonly VideoScriptManifest[] = [
     id: "script-operator-01",
     personaId: "operator",
     appId: "ntwrk",
+    desireLane: "elite_serendipity",
     productionTier: 1,
     title: "The $5,000 Networking Club vs. One Text",
     durationSec: 30,
@@ -482,9 +479,8 @@ export const STARTER_COMEDY_SCRIPTS: readonly VideoScriptManifest[] = [
     dialogue:
       "And you spent two hours holding lukewarm wine in a hotel ballroom dodging pitches.",
     punchline:
-      "Thursday, 8pm, West Village. Six seats: a biotech founder, a Pulitzer finalist, a pastry chef, a robotics researcher, a documentary director, and you. Zero pitching.",
-    ctaText:
-      "ntwrk.party — Invite-only on web. Ask someone inside or paste Read https://ntwrk.party/SKILL.md.",
+      "Thursday, 8pm, West Village. Six seats: people actually building things in New York City. Zero pitching. Both sides opt in before anyone meets.",
+    ctaText: "ntwrk.party — Invite-only on web. Ask someone inside.",
     sponsored: false,
     ftcDisclosureText: null,
     estimatedRenderCents: 95,
@@ -493,14 +489,41 @@ export const STARTER_COMEDY_SCRIPTS: readonly VideoScriptManifest[] = [
     id: "script-operator-02",
     personaId: "operator",
     appId: "ntwrk",
+    desireLane: "elite_serendipity",
+    productionTier: 1,
+    title: "What Do You Actually Want?",
+    durationSec: 29,
+    hookText: "Most people can list ten apps on their phone and still cannot name who they want to meet this year.",
+    visualBeats: [
+      "Monochrome typography beats: THE RIGHT WORK. REAL FRIENDS. SOMEONE YOU ACTUALLY WANT TO BE WITH.",
+      "Quiet evening street B-roll in New York City transitioning into a single text thread.",
+      "Clean card: ONE NETWORK. CITY BY CITY. DOUBLE OPT-IN.",
+    ],
+    dialogue:
+      "You do not need another feed. You need the right co-founder, a better table on Thursday night, or the one introduction that changes your year.",
+    punchline:
+      "We are building New York City first, then city by city — quietly connecting people to exactly what they want in life.",
+    ctaText: "ntwrk.party — Reviewed. Private. Double opt-in.",
+    sponsored: false,
+    ftcDisclosureText: null,
+    estimatedRenderCents: 110,
+  },
+];
+
+export const EXTENDED_COMEDY_SCRIPTS: readonly VideoScriptManifest[] = [
+  {
+    id: "script-operator-03",
+    personaId: "operator",
+    appId: "ntwrk",
+    desireLane: "cofounder_venture",
     productionTier: 3,
-    title: "I Know a Guy (NYC Edition)",
+    title: "I Know a Guy",
     durationSec: 29,
     hookText:
       "At 2:14 PM Tuesday, a founder texted that she needed a hardware acoustics engineer before Friday.",
     visualBeats: [
-      "Moody B&W rainy SoHo sidewalk shot.",
-      "Minimalist 5-node network graph lighting up 2 hops across Brooklyn and Manhattan.",
+      "Moody B&W rainy SoHo / Nolita sidewalk shot.",
+      "Minimalist 5-node network graph lighting up 2 hops across New York City.",
       "Timestamp cards: 2:14 PM ASK -> 2:19 PM MATCH -> 2:41 PM DOUBLE OPT-IN -> 4:00 PM COFFEE.",
     ],
     dialogue:
@@ -512,6 +535,50 @@ export const STARTER_COMEDY_SCRIPTS: readonly VideoScriptManifest[] = [
     estimatedRenderCents: 850,
   },
 ];
+
+export function localizeVideoScriptForCity(
+  script: VideoScriptManifest,
+  cityCode: string,
+): VideoScriptManifest {
+  const pack = requireCityPack(cityCode);
+  const primaryHood = pack.corridors[0]?.neighborhood ?? pack.label;
+  const secondHood = pack.corridors[1]?.neighborhood ?? primaryHood;
+  const thirdHood = pack.corridors[2]?.neighborhood ?? secondHood;
+  const fourthHood = pack.corridors[3]?.neighborhood ?? primaryHood;
+
+  if (pack.code === "nyc") {
+    return {
+      ...script,
+      city: pack.code,
+      visualBeats: [...script.visualBeats],
+    };
+  }
+
+  const swapText = (text: string): string =>
+    text
+      .replace(/New York City/g, pack.label)
+      .replace(/West Village/g, primaryHood)
+      .replace(/SoHo \/ Nolita/g, secondHood)
+      .replace(/Williamsburg/g, thirdHood)
+      .replace(/East Village/g, fourthHood);
+
+  return {
+    ...script,
+    id: `${script.id}-${pack.code}`,
+    city: pack.code,
+    title: swapText(script.title),
+    hookText: swapText(script.hookText),
+    visualBeats: script.visualBeats.map(swapText),
+    dialogue: swapText(script.dialogue),
+    punchline: swapText(script.punchline),
+    ctaText: swapText(script.ctaText),
+  };
+}
+
+export function buildStarterScriptsForCity(cityCode: string): VideoScriptManifest[] {
+  const pack = requireCityPack(cityCode);
+  return STARTER_COMEDY_SCRIPTS.map((script) => localizeVideoScriptForCity(script, pack.code));
+}
 
 export function lintVideoScript(
   script: VideoScriptManifest,
@@ -591,7 +658,7 @@ export function lintVideoScript(
     new LeakGuard({
       contacts: true,
       canaryShapes: true,
-      allow: [...APPROVED_MARKETING_DOMAINS],
+      allow: [...marketingLeakAllowlist()],
     });
   const leakReasons = guard.check(combinedText);
   for (const reason of leakReasons) {
@@ -649,6 +716,8 @@ export function createVideoAssetFromScript(
     campaignId,
     personaId: script.personaId,
     appId: script.appId,
+    desireLane: script.desireLane ?? defaultDesireLaneForApp(script.appId),
+    city: script.city,
     productionTier: script.productionTier,
     stage: "script",
     script,

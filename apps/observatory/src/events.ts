@@ -4,9 +4,8 @@
 // in both modes. The Network's feedback and "learned" logs (a member's words and private facts) are
 // not stored as events, and leak-guard reasons keep only their kind. One exception, as before:
 // feedback_given keeps the feedback text in its payload; describe() never shows it.
-import type { MemberId } from "@thenetwork/core";
+import { CITY_TZ, getCity, isCity, type City, type MemberId, type RunRecord } from "@thenetwork/core";
 import { requestEventView } from "../../../packages/core/src/generated/requestResultView.ts";
-import type { RunRecord } from "@thenetwork/core";
 import { desireById } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { SLOT_KINDS, URGENT_REPORTS, type SendKind } from "@thenetwork/network";
 import { describeBookingStart } from "../../../packages/network/src/rescheduling.ts";
@@ -124,9 +123,20 @@ function subjectOf(row: EventRow): MemberId | undefined {
 
 export const toMs = (at: EventRow["at"]) => (typeof at === "number" ? at : new Date(at).getTime());
 const human = (s: unknown) => String(s ?? "").replace(/_/g, " ");
-const NY_TIME = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", hour: "numeric", minute: "2-digit" });
-/** "Thu 12:00 PM" in New York (the Network's send times are New York times). */
-const nyTime = (t: unknown) => (typeof t === "number" && Number.isFinite(t) ? NY_TIME.format(t) : "later");
+const CITY_TIME_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
+function timeFormatterFor(city?: unknown): { fmt: Intl.DateTimeFormat; label: string } {
+  const c: City = isCity(city) ? city : "nyc";
+  const spec = getCity(c);
+  const tz = spec?.tz ?? CITY_TZ[c] ?? CITY_TZ.nyc;
+  let fmt = CITY_TIME_FORMATTERS.get(tz);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", hour: "numeric", minute: "2-digit" });
+    CITY_TIME_FORMATTERS.set(tz, fmt);
+  }
+  const label = c === "nyc" ? "New York" : (spec?.name ?? "New York");
+  return { fmt, label };
+}
+const cityTime = (t: unknown, city?: unknown) => (typeof t === "number" && Number.isFinite(t) ? timeFormatterFor(city).fmt.format(t) : "later");
 /** Picked time keys ("a", "c"), or "none". */
 const picks = (p: unknown) => (Array.isArray(p) ? (p.length ? p.join(", ") : "none") : undefined);
 /** Availability tags ("evening:Tue") as words ("Tue evening"). */
@@ -212,8 +222,8 @@ export function describe(row: EventRow, name: (id: string) => string = id => id)
     case "time_answer": { const pk = picks(p.picked); text = `${name(p.memberId)}: other times offered · picked ${pk ?? "none"}`; if (pk) detail.picked = pk; break; }
     case "send_deferred":
       // Interruptions (probes, asks, the weekly check-in) wait for the member's send window; logistics only for quiet hours (network.md 6.4).
-      text = `${human(p.kind)} waits for ${p.kind === "probe" || SLOT_KINDS.has(p.kind as SendKind) ? "their send window" : "quiet hours to end"} (until ${nyTime(p.until)} New York)`;
-      keep("kind", "until"); break;
+      text = `${human(p.kind)} waits for ${p.kind === "probe" || SLOT_KINDS.has(p.kind as SendKind) ? "their send window" : "quiet hours to end"} (until ${cityTime(p.until, p.city)} ${timeFormatterFor(p.city).label})`;
+      keep("kind", "until", "city"); break;
     case "gate_reason": {
       const who = Array.isArray(p.members) ? (p.members as string[]).map(name).join(" + ") : "";
       text = `Engine proposal${who ? ` for ${who}` : ""} not started: ${human(p.reason)}`; keep("reason", "proposalKey"); break;
@@ -231,7 +241,7 @@ export function describe(row: EventRow, name: (id: string) => string = id => id)
     case "probe_closed": text = `Check closed: ${human(p.reason ?? "not sent")}`; keep("reason"); break;
     case "proposal_skipped": text = `Not sent: ${human(p.reason)}`; severity = "warn"; keep("reason"); break;
     case "opportunity_closed": text = `Closed: ${human(p.reason)}`; keep("reason"); break;
-    case "venue": text = `Venue: ${p.venue}`; keep("venue", "meetingAt"); break;
+    case "venue": text = `Venue: ${p.venue}`; keep("venue", "venueId", "backupVenueId", "neighborhood", "meetingAt"); break;
     case "request": text = `Asked for ${requestLabel(p)}`; keep("kind", "category", "desireId"); break;
     case "request_result": {
       const view = requestEventView(typeof p.outcome === "string" ? p.outcome : "");
