@@ -1,10 +1,12 @@
 import { orElseIsThreat } from "./generated/trustLevel.ts";
 
-const OR_ELSE = String.raw`\bor else\b`;
-const TERMINAL_TAIL = String.raw`\s*[.!?…,;:)]*\s*$`;
-const HARMFUL_TAIL = String.raw`\s+(?:\b(?:you|u)(?:'ll| will| would)\s+(?:regret|be sorry|pay for)\b`
-  + String.raw`|\b(?:i|we|he|she|they)(?:'ll| will| would|'m gonna| am going to)\s+`
-  + String.raw`(?:make (?:you|them) (?:sorry|regret|pay)|show up (?:at|outside) (?:your|their|her|his) (?:home|place|work|office|door))\b)`;
+const APOS = "['’ʼ]";
+const OR_ELSE = String.raw`(?<!(?:^|\s)["“][^"”\n]{0,80})\bor\s+else\b`;
+const TERMINAL_TAIL = String.raw`(?:[\s.!?…,;:)]*$|[ \t]*(?:\.(?!\.)|[!?])+[ \t]+|[ \t]*[\r\n]+)`;
+const SUBJECT_CONSEQUENCE = String.raw`(?:you|u)(?:${APOS}?ll|\s+will|\s+would|(?:${APOS}?re|\s+are)?\s+(?:going\s+to|gonna))\s+(?:regret|be\s+sorry(?!\s+(?:you|u|i|we|he|she|they)\b)|pay\s+for)\b`;
+const ACTOR_FUTURE = String.raw`(?:i(?:${APOS}?ll|\s+will|\s+would|(?:${APOS}?m|\s+am)\s+(?:going\s+to|gonna)|\s+gonna)|(?:we|they)(?:${APOS}?ll|\s+will|\s+would|(?:${APOS}?re|\s+are)\s+(?:going\s+to|gonna)|\s+gonna)|(?:he|she)(?:${APOS}?ll|\s+will|\s+would|(?:${APOS}?s|\s+is)\s+(?:going\s+to|gonna)|\s+gonna))`;
+const ACTOR_HARM = String.raw`(?:make\s+(?:you|u|him|her|them)\s+(?:sorry|regret|pay)\b|(?:come\s+)?show\s+up\s+(?:at|outside)\s+(?:your|ur|their|her|his)\s+(?:home|house|place|apartment|apt|building|work|office|job|door)\b|(?:hurt|ruin|doxx?)\s+(?:you|u|him|her|them)\b)`;
+const HARMFUL_TAIL = String.raw`\s+(?:\b${SUBJECT_CONSEQUENCE}|\b${ACTOR_FUTURE}\s+${ACTOR_HARM})`;
 
 /** Terminal intimidation or a stated harmful consequence after “or else”. */
 export const OR_ELSE_THREAT = OR_ELSE + "(?=" + TERMINAL_TAIL + "|" + HARMFUL_TAIL + ")";
