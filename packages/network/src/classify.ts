@@ -819,7 +819,7 @@ export function publicPlanLocation(text: string, exactOrCity: boolean | CityId =
 /** Words that say where the sender is based ("I live in", "based in", "I'm around"). */
 const HOME_CTX = /\b(i live|i'?m living|living in|live in|based (in|out of)|i'?m (in|around|near|over in|up in|out in|down in|by)|im (in|around|near)|i'?m from|my (place|apartment|apt|neighborhood|hood) is|home is|i stay in|my area is|i'?m mostly (in|around)|around .* most of the week)\b/;
 /** Where a neighborhood is not home: "used to live in", "work in the", "moved from". Each can take "the". */
-const NOT_HOME = /\b(used to live(?: in)?|moved (?:away )?from|grew up in|work(ing)? in|office (is )?in|commute to|visiting|not in|never been to|far from)(?: the)?\s*$/;
+const NOT_HOME = /\b(used to live(?: in)?|moved (?:away )?from|moved out of|left|grew up in|work(ing)? in|office (is )?in|commute to|visiting|not in|never been to|far from)(?: the)?\s*$/;
 
 const RED_LINE_NEG_BEFORE = /\b(?:not|never|no longer|don't|do not|doesn't|does not|without needing|no need for)\s+(?:really\s+|strictly\s+|keep\s+|eat\s+|need\s+|use\s+|have\s+)?$/i;
 const RED_LINE_RULES: readonly [string, RegExp, boolean?][] = [
@@ -911,45 +911,49 @@ export function areaOf(text: string, city?: CityId): { area?: string; unknown?: 
 }
 
 /** The sender states their own residence ("I moved to", "I live in", "I'm in … now"). A bare "I'm in/near/around" states where the sender is now, not a home move. */
-const RESIDENCE_CUE = /\b(i\s+(?:just\s+)?(?:moved|relocated)|i\s+(?:now\s+)?(?:live|stay)|i'?m\s+(?:now\s+)?(?:living|based)|i'?m\s+now\s+(?:in|around|near|over in|up in|out in|down in)|i\s+am\s+(?:now\s+)?(?:living|based)|i\s+am\s+now\s+(?:in|around|near)|im\s+(?:living|based)|my\s+(?:place|apartment|apt|home|neighborhood|hood|area)\s+is|home\s+is|based\s+(?:in|out of)|living\s+in)\b|(?:^|[,;]\s*)(?:just\s+)?moved\s+(?:back\s+)?to\b/;
+const RESIDENCE_CUE = /\b(i\s+(?:just\s+)?(?:moved|relocated)|i\s+(?:now\s+)?(?:live|stay)|i'?m\s+(?:now\s+)?(?:living|based)|i'?m\s+now\s+(?:in|around|near|over in|up in|out in|down in)|i\s+am\s+(?:now\s+)?(?:living|based)|i\s+am\s+now\s+(?:in|around|near)|im\s+(?:living|based)|my\s+(?:new\s+)?(?:place|apartment|apt|home|neighborhood|hood|area)\s+is|home\s+is|based\s+(?:in|out of)|living\s+in)\b|(?:^|[,;]\s*)(?:just\s+)?moved\s+(?:back\s+)?to\b/;
 /** A residence cue that is hypothetical, negated, or about someone else never moves the sender. */
-const RESIDENCE_BLOCK = /\b(if|would|wish|maybe|might|thinking|planning|hoping|not|never|n't|no longer|used to|visiting|friend|roommate|he|she|they)\b/;
+const RESIDENCE_BLOCK = /\b(if|should|could|can|would|wish|maybe|might|thinking|planning|hoping|whether|not|never|n't|no longer|used to|visiting|friend|roommate|he|she|they)\b/;
+const RESIDENCE_TAIL_BLOCK = /\b(left|moved away|moved out|no longer|not anymore|back then|formerly|used to)\b/;
 
 /** The neighborhood the sender states as their own residence, for a member-initiated text. */
 export function residenceAreaOf(text: string, city?: CityId): string | undefined {
   const t = normText(text).replace(/\bst\.\s*/g, "st ").replace(/\bft\.\s*(?=greene\b)/g, "ft ");
   const normalizedCity = city?.trim().toLowerCase();
-  const stated = (sentence: string, at: number): boolean => {
+  const stated = (sentence: string, at: number, end = at): boolean => {
     const prefix = sentence.slice(0, at);
-    return !NOT_HOME.test(prefix) && !RESIDENCE_BLOCK.test(prefix) && !quoteStillOpen(prefix) && RESIDENCE_CUE.test(prefix);
+    const tail = sentence.slice(end);
+    const question = /\?\s*$/.test(sentence.trim()) && !/,\s*(?:anyone|can|could|would|find|looking|want|need|help)\b/.test(sentence);
+    const pastDeparture = RESIDENCE_TAIL_BLOCK.test(tail) || (/\b(?:19|20)\d{2}\b/.test(tail) && /\b(then|later|after|left|away|no longer)\b/.test(tail));
+    return !question && !pastDeparture && !NOT_HOME.test(prefix) && !RESIDENCE_BLOCK.test(prefix) && !quoteStillOpen(prefix) && RESIDENCE_CUE.test(prefix);
   };
   if (normalizedCity && normalizedCity !== "nyc") {
     const cityAliases = cityLocationsFor(normalizedCity).aliases;
     for (const s of sentencesOf(t)) {
-      let best: { at: number; name: string } | undefined;
+      const candidates: { at: number; end: number; name: string }[] = [];
       for (const [rx, name] of cityAliases) {
         const m = rx.exec(s.text);
         if (!m || NOT_HOME.test(s.text.slice(0, m.index))) continue;
-        if (!best || m.index < best.at) best = { at: m.index, name };
+        candidates.push({ at: m.index, end: m.index + m[0].length, name });
       }
-      if (best && stated(s.text, best.at)) return best.name;
+      for (const candidate of candidates.sort((a, b) => a.at - b.at)) if (stated(s.text, candidate.at, candidate.end)) return candidate.name;
       const found = findNeighborhood(normalizedCity as City, s.text);
       if (found) {
         const idx = s.text.indexOf(found.name.toLowerCase());
-        if (idx >= 0 && stated(s.text, idx)) return found.name;
+        if (idx >= 0 && stated(s.text, idx, idx + found.name.length)) return found.name;
       }
     }
     return undefined;
   }
   for (const s of sentencesOf(t)) {
-    let best: { at: number; name: string } | undefined;
+    const candidates: { at: number; end: number; name: string }[] = [];
     for (const [rx, name] of ALL_AREA_ALIASES) {
       const m = rx.exec(s.text);
       if (!m || NOT_HOME.test(s.text.slice(0, m.index)) || !AREA_NAMES.has(name)) continue;
       if (name === "Chelsea" && !/\b(in|near|around|by|from|to|of|at)\s*$/.test(s.text.slice(0, m.index)) && !(/^\W*$/.test(s.text.slice(0, m.index)) && /^\s*(?:$|[,.!]|area\b|near\b|by\b|side\b)/.test(s.text.slice(m.index + m[0].length)))) continue;
-      if (!best || m.index < best.at) best = { at: m.index, name };
+      candidates.push({ at: m.index, end: m.index + m[0].length, name });
     }
-    if (best && stated(s.text, best.at)) return best.name;
+    for (const candidate of candidates.sort((a, b) => a.at - b.at)) if (stated(s.text, candidate.at, candidate.end)) return candidate.name;
   }
   return undefined;
 }

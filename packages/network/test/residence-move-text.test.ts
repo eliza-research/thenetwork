@@ -14,8 +14,10 @@ describe("residence move texted after onboarding", () => {
     await w.onboard("a", "b");
     expect(areaOf(w, "a")).toBe("Greenpoint");
 
+    const from = w.mark();
     await w.say("a", "I moved to Astoria.");
     expect(areaOf(w, "a")).toBe("Astoria");
+    expect(w.to("a", from).map(s => s.body).join(" ")).toMatch(/home area to Astoria/);
 
     await w.say("a", "My friend lives in Bay Ridge.");
     expect(areaOf(w, "a")).toBe("Astoria");
@@ -46,5 +48,17 @@ describe("residence move texted after onboarding", () => {
 
     await w.say("a", "I'm now in Astoria.");
     expect(areaOf(w, "a")).toBe("Astoria");
+
+    await w.say("a", "I moved to Bay Ridge in 2015 and then left.");
+    expect(areaOf(w, "a")).toBe("Astoria");
+
+    await w.say("a", "Should I live in Bay Ridge?");
+    expect(areaOf(w, "a")).toBe("Astoria");
+
+    await w.say("a", "My new apartment is in Bushwick.");
+    expect(areaOf(w, "a")).toBe("Bushwick");
+
+    await w.say("a", "I moved out of Bushwick, I live in Bay Ridge now.");
+    expect(areaOf(w, "a")).toBe("Bay Ridge");
   });
 });

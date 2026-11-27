@@ -2670,6 +2670,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     m.area = area;
     m.areaUnknown = false;
     this.dirty = true;
+    this.send(m, `Got it — I updated your home area to ${area}.`, { type: "info" }, "reply");
     this.ctx.log("learned", { memberId: m.id, interests: [], skills: [], desires: [], area });
   }
 
