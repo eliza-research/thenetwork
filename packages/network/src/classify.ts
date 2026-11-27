@@ -910,6 +910,50 @@ export function areaOf(text: string, city?: CityId): { area?: string; unknown?: 
   return {};
 }
 
+/** The sender states their own residence ("I moved to", "I live in", "I'm in … now"). */
+const RESIDENCE_CUE = /\b(i\s+(?:just\s+)?(?:moved|relocated)|i\s+(?:now\s+)?(?:live|stay)|i'?m\s+(?:now\s+)?(?:living|based|in|around|near|over in|up in|out in|down in)|i\s+am\s+(?:now\s+)?(?:living|based|in|around|near)|im\s+(?:living|based|in)|my\s+(?:place|apartment|apt|home|neighborhood|hood|area)\s+is|home\s+is|based\s+(?:in|out of)|living\s+in)\b|(?:^|[,;]\s*)(?:just\s+)?moved\s+(?:back\s+)?to\b/;
+/** A residence cue that is hypothetical, negated, or about someone else never moves the sender. */
+const RESIDENCE_BLOCK = /\b(if|would|wish|maybe|might|thinking|planning|hoping|not|never|n't|no longer|used to|visiting|friend|roommate|he|she|they)\b/;
+
+/** The neighborhood the sender states as their own residence, for a member-initiated text. */
+export function residenceAreaOf(text: string, city?: CityId): string | undefined {
+  const t = normText(text).replace(/\bst\.\s*/g, "st ").replace(/\bft\.\s*(?=greene\b)/g, "ft ");
+  const normalizedCity = city?.trim().toLowerCase();
+  const stated = (sentence: string, at: number): boolean => {
+    const prefix = sentence.slice(0, at);
+    return !NOT_HOME.test(prefix) && !RESIDENCE_BLOCK.test(prefix) && !quoteStillOpen(prefix) && RESIDENCE_CUE.test(prefix);
+  };
+  if (normalizedCity && normalizedCity !== "nyc") {
+    const cityAliases = cityLocationsFor(normalizedCity).aliases;
+    for (const s of sentencesOf(t)) {
+      let best: { at: number; name: string } | undefined;
+      for (const [rx, name] of cityAliases) {
+        const m = rx.exec(s.text);
+        if (!m || NOT_HOME.test(s.text.slice(0, m.index))) continue;
+        if (!best || m.index < best.at) best = { at: m.index, name };
+      }
+      if (best && stated(s.text, best.at)) return best.name;
+      const found = findNeighborhood(normalizedCity as City, s.text);
+      if (found) {
+        const idx = s.text.indexOf(found.name.toLowerCase());
+        if (idx >= 0 && stated(s.text, idx)) return found.name;
+      }
+    }
+    return undefined;
+  }
+  for (const s of sentencesOf(t)) {
+    let best: { at: number; name: string } | undefined;
+    for (const [rx, name] of ALL_AREA_ALIASES) {
+      const m = rx.exec(s.text);
+      if (!m || NOT_HOME.test(s.text.slice(0, m.index)) || !AREA_NAMES.has(name)) continue;
+      if (name === "Chelsea" && !/\b(in|near|around|by|from|to|of|at)\s*$/.test(s.text.slice(0, m.index)) && !(/^\W*$/.test(s.text.slice(0, m.index)) && /^\s*(?:$|[,.!]|area\b|near\b|by\b|side\b)/.test(s.text.slice(m.index + m[0].length)))) continue;
+      if (!best || m.index < best.at) best = { at: m.index, name };
+    }
+    if (best && stated(s.text, best.at)) return best.name;
+  }
+  return undefined;
+}
+
 /** Facet tags a member reveals when answering onboarding questions or asking for something. Never guesses. */
 export function extractProfile(body: string, city?: CityId): Profile {
   const t = normText(body);

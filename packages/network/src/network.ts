@@ -165,7 +165,7 @@ import { draftUsesMatchingSlot, newMatchCategoryAllowed, newMatchParticipationAl
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS, type DesireDef } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
 import { birthdayRecorded, minorNoticeFor, minorScopeNoticeDue, scopeNoticeTurnOpens, soloTeenApp, statedAgeNow, teenBirthDateContradicted, type MinorNotice } from "../../core/src/generated/textEnrollment.ts";
-import { ageAnswer, agesStated, availabilityTags, birthDateAnswer, birthDateStated, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, extractRedLineTags, feedbackOf, isCompleteParticipationRefusal, isNamedProbeTime, isProbeCounterTime, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, plansPlaceQuestionFor, plansPlaceQuestionForCity, publicPlanLocation, sentencesOf, statedAge, unclearBirthDateAnswer, type Classified, type TimeOption } from "./classify.ts";
+import { ageAnswer, agesStated, availabilityTags, birthDateAnswer, birthDateStated, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, extractRedLineTags, feedbackOf, isCompleteParticipationRefusal, isNamedProbeTime, isProbeCounterTime, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, plansPlaceQuestionFor, plansPlaceQuestionForCity, publicPlanLocation, residenceAreaOf, sentencesOf, statedAge, unclearBirthDateAnswer, type Classified, type TimeOption } from "./classify.ts";
 import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import {
   directInviteVouch, inviteReviewContactToken, inviteReviewReference, inviteVouchEvidence, inviteVouchRisk, isMemberInvitationLink,
@@ -2136,6 +2136,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (this.opts.onboardingRequests && c.kind === "people_request" && c.desireId && c.category !== "social" && !m.minor) this.openRequest(m, c, { quiet: true });
       return;
     }
+    this.learnResidence(m, body);
     if (!isRequest && m.stage !== "active") this.activate(m); // onboarding stalled; carry on
     if (isRequest && m.stage !== "active") { this.activate(m); m.awaiting = undefined; }
     if (c.kind === "people_request" && (!m.minor || this.teenAdmitted(m.id))) return this.openRequest(m, c, {});
@@ -2659,6 +2660,17 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   private minorNoticeText(m: MemberState): string {
     return this.copy.minorScopeNotice(this.minorNoticeKind(m));
+  }
+
+  /** A residence the member states in their own text replaces the stored area the engine reads. */
+  private learnResidence(m: MemberState, body: string) {
+    const area = residenceAreaOf(body, this.networkCity());
+    if (!area || area === m.area || !(NEIGHBORHOOD.has(area) || findCityNeighborhood(area, this.networkCity()))) return;
+    m.learned.area = area;
+    m.area = area;
+    m.areaUnknown = false;
+    this.dirty = true;
+    this.ctx.log("learned", { memberId: m.id, interests: [], skills: [], desires: [], area });
   }
 
   private learnFrom(m: MemberState, body: string, reasons: readonly string[] = []) {
