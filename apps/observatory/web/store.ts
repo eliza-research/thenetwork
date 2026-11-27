@@ -278,6 +278,7 @@ class ObsStore {
   constructor() {
     if (typeof window !== "undefined") {
       this.browserFocusDepth = this.readBrowserFocusDepth();
+      if (typeof (history.state as { obsDepth?: number } | null)?.obsDepth !== "number") this.writeBrowserFocusDepth(0);
       window.addEventListener("popstate", () => this.onPopState());
     }
   }
@@ -849,9 +850,16 @@ class ObsStore {
   private readBrowserFocusDepth() {
     return (history.state as { obsDepth?: number } | null)?.obsDepth ?? 0;
   }
+  private writeBrowserFocusDepth(depth: number) {
+    try {
+      const state = history.state as Record<string, unknown> | null;
+      history.replaceState({ ...(state && typeof state === "object" ? state : {}), obsDepth: depth }, "", location.pathname + location.search + location.hash);
+    } catch { return; }
+  }
   private pushHash(f: Focus) {
     try {
-      const depth = this.readBrowserFocusDepth() + 1;
+      const rawDepth = (history.state as { obsDepth?: number } | null)?.obsDepth;
+      const depth = (typeof rawDepth === "number" ? rawDepth : this.browserFocusDepth) + 1;
       history.pushState({ obsDepth: depth }, "", location.pathname + location.search + hashOf(f, this.app));
       this.browserFocusDepth = depth;
     } catch { return; }
@@ -861,6 +869,7 @@ class ObsStore {
     this.appBackTarget = undefined;
     const rawDepth = (history.state as { obsDepth?: number } | null)?.obsDepth;
     const depth = typeof rawDepth === "number" ? rawDepth : this.browserFocusDepth + 1;
+    if (typeof rawDepth !== "number") this.writeBrowserFocusDepth(depth);
     const stepsBack = this.browserFocusDepth - depth;
     this.browserFocusDepth = depth;
     const page = parsePage(), app = parseApp();

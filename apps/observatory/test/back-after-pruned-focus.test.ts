@@ -124,3 +124,70 @@ test("browser Back after reload does not make the newer subject a prior focus", 
     restore();
   }
 });
+
+test("browser Back onto a typed entry after opening another subject keeps the earlier subject as the prior focus", async () => {
+  const window = new Window({ url: "http://localhost/#n=Harlem" });
+  const restore = installDom(window, {
+    window, document: window.document, navigator: window.navigator, location: window.location,
+    history: window.history, localStorage: window.localStorage, sessionStorage: window.sessionStorage,
+  });
+  history.replaceState({ obsDepth: 1 }, "", "#n=Harlem");
+  const { store: singleton } = await import("../web/store.ts");
+  const Store = singleton.constructor as new () => typeof singleton;
+  const store = new Store();
+  const back = vi.spyOn(window.history, "back").mockImplementation(() => {});
+  try {
+    store.me = { id: "fixture", roles: ["admin"], grants: [{ role: "admin", app: "*" }], via: "token" } as typeof store.me;
+    store.focus({ kind: "neighborhood", id: "Chelsea" });
+    history.replaceState(null, "", "#n=East%20Harlem");
+    window.dispatchEvent(new window.PopStateEvent("popstate", { state: null }));
+    expect(store.ui.focus).toEqual({ kind: "neighborhood", id: "East Harlem" });
+    expect(store.focusHistory.map(f => f?.id)).toEqual(["Harlem", "Chelsea"]);
+    const typedState = history.state;
+
+    store.focus({ kind: "neighborhood", id: "Washington Heights" });
+    expect(store.focusHistory.map(f => f?.id)).toEqual(["Harlem", "Chelsea", "East Harlem"]);
+    history.replaceState(typedState, "", "#n=East%20Harlem");
+    window.dispatchEvent(new window.PopStateEvent("popstate", { state: typedState }));
+    expect(store.ui.focus).toEqual({ kind: "neighborhood", id: "East Harlem" });
+    expect(store.focusHistory.map(f => f?.id)).toEqual(["Harlem", "Chelsea"]);
+
+    store.back();
+    expect(back).toHaveBeenCalledTimes(1);
+    history.replaceState({ obsDepth: 2 }, "", "#n=Chelsea");
+    window.dispatchEvent(new window.PopStateEvent("popstate", { state: { obsDepth: 2 } }));
+    expect(store.ui.focus).toEqual({ kind: "neighborhood", id: "Chelsea" });
+    expect(store.focusHistory.map(f => f?.id)).toEqual(["Harlem"]);
+  } finally {
+    back.mockRestore();
+    store.disconnect();
+    await window.happyDOM.close();
+    restore();
+  }
+});
+
+test("browser Back after a reload on a typed entry does not make the newer subject a prior focus", async () => {
+  const window = new Window({ url: "http://localhost/#n=East%20Harlem" });
+  const restore = installDom(window, {
+    window, document: window.document, navigator: window.navigator, location: window.location,
+    history: window.history, localStorage: window.localStorage, sessionStorage: window.sessionStorage,
+  });
+  const { store: singleton } = await import("../web/store.ts");
+  const Store = singleton.constructor as new () => typeof singleton;
+  const store = new Store();
+  try {
+    store.me = { id: "fixture", roles: ["admin"], grants: [{ role: "admin", app: "*" }], via: "token" } as typeof store.me;
+    expect(store.ui.focus).toEqual({ kind: "neighborhood", id: "East Harlem" });
+    const typedState = history.state;
+    store.focus({ kind: "neighborhood", id: "Washington Heights" });
+    expect(store.focusHistory.map(f => f?.id)).toEqual(["East Harlem"]);
+    history.replaceState(typedState, "", "#n=East%20Harlem");
+    window.dispatchEvent(new window.PopStateEvent("popstate", { state: typedState }));
+    expect(store.ui.focus).toEqual({ kind: "neighborhood", id: "East Harlem" });
+    expect(store.focusHistory).toEqual([]);
+  } finally {
+    store.disconnect();
+    await window.happyDOM.close();
+    restore();
+  }
+});
