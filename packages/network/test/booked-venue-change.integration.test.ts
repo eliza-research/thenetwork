@@ -63,6 +63,21 @@ test("a venue-change request with a place objection still keeps the booking", as
   }
 });
 
+test("a booked reply with a refusal word but no place request keeps the booking", async () => {
+  const keeps = [
+    "Yes, please don't go ahead without me.",
+    "Don't start without me!",
+    "Can't wait. I'm done with exams by then",
+    "I'm in. Not meeting anyone else that day",
+  ];
+  for (const text of keeps) {
+    const { w, booking } = await booked();
+    await w.say("a", text);
+    expect(booking().stage).toBe("scheduled");
+    expect(w.log("booked_cancelled")).toEqual([]);
+  }
+});
+
 test("a refusal that names another place still cancels the booking", async () => {
   const refusals = [
     "No thanks, I'd rather meet someone else somewhere else",

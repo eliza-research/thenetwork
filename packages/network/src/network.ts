@@ -2022,7 +2022,8 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (venueObj && this.handleBookedVenueObjection(m, o, body, venueObj, now)) return;
         // spec/opportunityLifecycle.md, "A number-swap refusal does not decline the booked meeting"
         const venueChange = venueChangeKeepsBooking(bookingText);
-        const declines = !venueChange && (bookedTextDeclines(bookingText, cancellation !== undefined || c.kind === "cancel" || yn === "no") || declinesBookedAttendance(bookingText));
+        const venueContext = VENUE_TARGET.test(bookingText) || VENUE_SWAP_INTENT_RX.test(bookingText);
+        const declines = !venueChange && (bookedTextDeclines(bookingText, cancellation !== undefined || c.kind === "cancel" || yn === "no") || (venueContext && declinesBookedAttendance(bookingText)));
         const confirms = !venueChange && (yn === "yes" || c.kind === "ack");
         if (checkIn && (declines || confirms)) {
           const receipt = this.ctx.initialInviteReceipt?.(bookedReminderKey("day-of-checkin", o.id, m.id, checkIn.revision));
