@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { HOUR } from "@thenetwork/core";
-import { PLAN_VENUES } from "../src/plans.ts";
+import { PLAN_VENUES, planVenuesForCity } from "../src/plans.ts";
 import { describeBookingStart, localBookingStart, rescheduleNoticeCurrent, rescheduleOfferKey, rescheduleUpdateKey } from "../src/rescheduling.ts";
 import { Mini } from "./mini.ts";
 
@@ -89,4 +89,34 @@ test("decline and expiry keep the original booking and invalidate queued offers"
   expect(booking()).toMatchObject({ meetingAt: originalAt, stage: "scheduled" });
   expect(booking().reschedule).toBeUndefined();
   expect(w.log("meeting_rescheduled")).toEqual([]);
+});
+
+test("a member outside New York reschedules with the New York starts the format copy names", async () => {
+  const w = new Mini([], { city: "sf", engine: { cities: ["sf"] }, plans: false });
+  for (const [id, name, area] of [["s1", "Ana Diaz", "Mission"], ["s2", "Ben Ito", "Hayes Valley"]] as const) {
+    w.members.push({
+      id, name, homeCity: "sf", state: "normal", joinedAt: w.clock.now(), age: 30, unansweredProactive: 0,
+      prefs: { categoriesOptIn: ["social", "hobby"], quietHours: [23, 7], romanceOptIn: false, formats: ["one_to_one", "small_group"], maxTravelMinutes: 45, onlyWhenAsked: false },
+    });
+    w.presence.push({ memberId: id, city: "sf", type: "home", areas: [area] });
+    for (const tag of ["climbing", "hiking"]) w.facets.push({ id: `${id}:interest:${tag}`, memberId: id, kind: "interest", value: tag, tags: [tag], scope: "matchable", provenance: "said", confidence: 0.9, validFrom: w.clock.now(), source: "chat", observedAt: w.clock.now(), inferred: false, confirmedByMember: true });
+    w.intents.push({ id: `${id}:want:0`, memberId: id, objective: "find climbing partners", category: "hobby", horizonDays: 60, status: "active", createdAt: w.clock.now() });
+  }
+  await w.onboard("s1", "s2");
+  const id = w.propose(["s1", "s2"]);
+  await w.answerProbes(["s1", "s2"]);
+  expect(w.meetings).toHaveLength(1);
+  const state = w.net.exportState();
+  const o = state.opps.find(item => item.id === id)!;
+  expect(o.stage).toBe("scheduled");
+  const venue = planVenuesForCity("sf")[0]!;
+  Object.assign(o, { meetingAt: originalAt, venue: venue.name, venueArea: venue.area });
+  w.net.importState(state);
+  const booking = () => w.net.exportState().opps.find(item => item.id === id)!;
+
+  await w.say("s1", request);
+  expect(booking().reschedule, JSON.stringify({ replies: w.to("s1").map(s => s.body), refusals: w.log("send_refused") })).toMatchObject({ originalAt, proposedAt });
+  const offer = w.to("s2").find(message => message.body.includes("Reply RESCHEDULE YES"))?.body;
+  expect(offer).toContain(describeBookingStart(proposedAt));
+  expect(offer).toContain("New York time");
 });

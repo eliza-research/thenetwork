@@ -1675,7 +1675,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const eligibleReply = !c.pastAbsence || pendingReply?.kind === "feedback";
     const aw = pendingReply?.kind === "interview" || eligibleReply ? pendingReply : undefined;
     const tz = this.cityTz();
-    const reschedule = this.memberReply && !msg.reaction ? parseRescheduleCommand(body, tz) : undefined;
+    const reschedule = this.memberReply && !msg.reaction ? parseRescheduleCommand(body) : undefined;
     if (reschedule) return this.handleMeetingReschedule(m, reschedule, msg.id, msg.signedReceivedAt ?? msg.ts, now);
     const directBookingReply = this.memberReply && !msg.reaction;
     const bookingText = directBookingReply ? body : "";
@@ -2013,10 +2013,9 @@ export class ConsentNetwork implements NetworkUnderTest {
         expiresAt, roster, offered: [], accepted: [],
       };
       o.reschedule = draft;
-      const tz = this.cityTz();
       for (const id of roster) {
         const recipient = this.member(id), key = rescheduleOfferKey(draft, id);
-        this.send(recipient, this.copy.rescheduleOffer(describeBookingStart(draft.originalAt, tz), describeBookingStart(draft.proposedAt, tz), rescheduleMemberRef(draft, id)),
+        this.send(recipient, this.copy.rescheduleOffer(describeBookingStart(draft.originalAt), describeBookingStart(draft.proposedAt), rescheduleMemberRef(draft, id)),
           { type: "scheduling", proposalId: o.id }, "scheduling", { about: roster, key, hook: { t: "reschedule_offer", oppId: o.id, key } });
       }
       return;
@@ -2076,7 +2075,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx.log("meeting_rescheduled", { oppId: o.id, revision: o.scheduleRevision, previousAt: draft.originalAt, at: draft.proposedAt, changedAt: now });
     for (const id of draft.roster) {
       const key = rescheduleUpdateKey(o.id, o.scheduleRevision, id);
-      this.send(this.member(id), this.copy.rescheduleUpdated(describeBookingStart(draft.proposedAt, tz)), {
+      this.send(this.member(id), this.copy.rescheduleUpdated(describeBookingStart(draft.proposedAt)), {
         type: "scheduling", proposalId: o.id, bookingUpdate: { at: draft.proposedAt, revision: o.scheduleRevision },
       },
         "scheduling", { about: draft.roster, key, hook: { t: "reschedule_updated", oppId: o.id, key } });
