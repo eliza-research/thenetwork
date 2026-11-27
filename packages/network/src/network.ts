@@ -7651,12 +7651,14 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   private resolveCrew(offer: CrewOffer) {
     offer.resolved = true;
+    // spec/models/plan_crew.md, resolveCrew: a yes counts only from a member who may still take a seat
+    const yes = offer.yes.filter(id => { const m = this.members.get(id); return !!m && this.planSeatOk(m, undefined, { busyOk: true }); });
     // spec/opportunityLifecycle.md, "A minor signal ends the recurring plans that the minor knows"
-    const formed = this.recurrenceOk(this.opps.get(offer.planId), offer.crew.members) ? plans.crewOptIn(offer.crew, offer.yes, this.pcfg) : undefined;
+    const formed = this.recurrenceOk(this.opps.get(offer.planId), offer.crew.members) ? plans.crewOptIn(offer.crew, yes, this.pcfg) : undefined;
     const a = plans.activityById.get(offer.crew.activityId)!;
-    this.ctx.log(formed ? "crew_formed" : "crew_not_formed", { crewId: offer.crew.id, yes: offer.yes.length, offered: offer.offered.length });
+    this.ctx.log(formed ? "crew_formed" : "crew_not_formed", { crewId: offer.crew.id, yes: yes.length, offered: offer.offered.length });
     if (formed) { this.crews.push(formed); this.plansCounters.crewsFormed++; }
-    for (const id of offer.yes) {
+    for (const id of yes) {
       const m = this.members.get(id);
       if (m && !this.knownMinor(id)) this.send(m, formed ? copy.crewFormed(a.label) : copy.crewNotFormed, { type: "info" }, "info");
     }
