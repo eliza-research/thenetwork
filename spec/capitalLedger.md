@@ -104,16 +104,22 @@ pure def capitalPeriodRoom(remaining: int): int = if (remaining <= 0) 0 else rem
 pure def lawCapitalPeriodRoomIsNonnegative(remaining: int): bool = capitalPeriodRoom(remaining) >= 0
 ```
 
-### A vouch credit waits for eligibility inside its value window
+### A vouch credit does not back-fill ineligible time
 
-A voucher earns the vouch credit when the invitee is active, has creditable value inside the value window, has no safety flag, and both the invitee and the voucher are eligible. If the invitee completes the activation and value conditions while either member is ineligible, the ledger writes no vouch entry then. When an age update makes the ineligible member eligible again inside the value window, the ledger checks the same vouch again and writes the credit if the conditions still hold. A safety flag, a removal, a taken stake, or the end of the value window stops the credit. The credit is written at most once for one invitee.
+A voucher earns the vouch credit when the invitee is active, has creditable value inside the value window, has no safety flag, and both the invitee and the voucher are eligible. Value received while the invitee or the voucher is ineligible does not count toward the vouch. When eligibility returns, accrual starts from then: a later activation or later creditable value can complete the vouch, but an age update writes no credit for activation and value completed while either member was ineligible. A safety flag, a removal, a taken stake, or the end of the value window stops the credit. The credit is written at most once for one invitee.
 
 ```quint
-pure def vouchCreditMayEarn(qualified: bool, credited: bool, stakeTaken: bool, withinWindow: bool, inviteeEligible: bool, voucherEligible: bool, voucherRemoved: bool): bool =
-  qualified and not(credited) and not(stakeTaken) and withinWindow and inviteeEligible and voucherEligible and not(voucherRemoved)
+pure def vouchValueCounts(inviteeEligible: bool, voucherEligible: bool, inviteeRemoved: bool, voucherRemoved: bool): bool =
+  inviteeEligible and voucherEligible and not(inviteeRemoved) and not(voucherRemoved)
 
-pure def lawVouchCreditAtMostOnce(qualified: bool, stakeTaken: bool, withinWindow: bool, inviteeEligible: bool, voucherEligible: bool, voucherRemoved: bool): bool =
-  not(vouchCreditMayEarn(qualified, true, stakeTaken, withinWindow, inviteeEligible, voucherEligible, voucherRemoved))
+pure def vouchCreditMayEarn(activated: bool, valueCounted: bool, safetyFlagged: bool, removed: bool, credited: bool, stakeTaken: bool, withinWindow: bool, inviteeEligible: bool, voucherEligible: bool, voucherRemoved: bool): bool =
+  activated and valueCounted and not(safetyFlagged) and not(removed) and not(credited) and not(stakeTaken) and withinWindow and inviteeEligible and voucherEligible and not(voucherRemoved)
+
+pure def lawVouchCreditAtMostOnce(activated: bool, valueCounted: bool, safetyFlagged: bool, removed: bool, stakeTaken: bool, withinWindow: bool, inviteeEligible: bool, voucherEligible: bool, voucherRemoved: bool): bool =
+  not(vouchCreditMayEarn(activated, valueCounted, safetyFlagged, removed, true, stakeTaken, withinWindow, inviteeEligible, voucherEligible, voucherRemoved))
+
+pure def lawVouchValueWhileIneligibleDoesNotCount(inviteeRemoved: bool, voucherRemoved: bool): bool =
+  not(vouchValueCounts(false, true, inviteeRemoved, voucherRemoved)) and not(vouchValueCounts(true, false, inviteeRemoved, voucherRemoved))
 ```
 
 ### A vouch stake waits when the voucher is ineligible at removal
