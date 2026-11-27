@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 import { Mini } from "./mini.ts";
+import { explicitBookingCancellation } from "../src/network.ts";
 import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 const climber = { id: "a", name: "Alice Able", age: 30, interests: ["climbing"] };
@@ -53,5 +54,22 @@ test("an attendance refusal naming a time that cannot be read leaves the booking
   await x.say("a", "I can't make Saturday 13:00 PM");
   expect(x.net.exportState().opps.find(o => o.id === oppId)!.stage).toBe("scheduled");
   expect(x.sent.slice(before).filter(s => s.to === "a").map(s => s.body).some(body => body.includes("Which meeting should I cancel?"))).toBe(true);
+  expect(x.sent.slice(before).filter(s => s.to === "b")).toHaveLength(0);
+});
+
+test("a bare clock time matches the booked start at either reading", async () => {
+  expect(explicitBookingCancellation("I can't make it Saturday at 7:00")).toEqual({ day: "saturday", time: "07:00", altTime: "19:00" });
+  expect(explicitBookingCancellation("I can't make it Saturday at 19:00")).toEqual({ day: "saturday", time: "19:00" });
+  const { x, oppId } = await bookedPair();
+  await x.say("a", "I can't make it Saturday at 10:00");
+  expect(x.net.exportState().opps.find(o => o.id === oppId)!.stage).toBe("closed");
+});
+
+test("a bare clock time matching neither reading leaves the booking", async () => {
+  const { x, oppId } = await bookedPair();
+  const before = x.sent.length;
+  await x.say("a", "I can't make it Saturday at 10:30");
+  expect(x.net.exportState().opps.find(o => o.id === oppId)!.stage).toBe("scheduled");
+  expect(x.sent.slice(before).filter(s => s.to === "a").map(s => s.body)).toContain("I couldn't find a matching upcoming meeting.");
   expect(x.sent.slice(before).filter(s => s.to === "b")).toHaveLength(0);
 });

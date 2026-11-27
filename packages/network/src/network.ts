@@ -700,7 +700,7 @@ const ATTENDANCE_DAY_CANCEL = /^(?:sorry[, ]+)?(?:i )?(?:cancel|(?:can'?t|cannot
 const ATTENDANCE_DAY_TIME_CANCEL = /^(?:sorry[, ]+)?(?:i )?(?:can'?t|cannot|won'?t be able to) (?:make it|make|come|attend)\s+(today|tonight|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?: at)?(?: (\d{1,2})(?::(\d{2}))?\s*(am|pm)| (\d{1,2}):(\d{2}))(?: anymore)?(?:, sorry)?[.!]?$/i;
 const QUALIFIED_ATTENDANCE = /^(?:sorry[, ]+)?(?:i )?(?:can'?t|cannot|won'?t|will not)\b[^.;!?]*\b(?:if|unless|assuming|in case)\b/i;
 const KEEP_BOOKING = /^(?:please )?(?:(?:i|we) (?:don'?t|do not) need to|(?:there(?: is|'s) )?no need to|(?:don'?t|do not)) (?:cancel|call off|call it off)\b[^.;!?]*(?:[.!]*)$/i;
-type BookingCancellation = { localStart?: string; day?: string; time?: string; needsExactStart?: boolean };
+type BookingCancellation = { localStart?: string; altLocalStart?: string; day?: string; time?: string; altTime?: string; needsExactStart?: boolean };
 
 export function explicitBookingCancellation(text: string): BookingCancellation | undefined {
   const command = text.trim().replace(/[‘’ʼ`´]/g, "'").replace(/\s+/g, " ");
@@ -713,7 +713,11 @@ export function explicitBookingCancellation(text: string): BookingCancellation |
     if (attendanceDayTime[4] && Number(attendanceDayTime[2]) >= 1 && Number(attendanceDayTime[2]) <= 12 && Number(attendanceDayTime[3] ?? "00") <= 59) {
       const hour = Number(attendanceDayTime[2]) % 12 + (attendanceDayTime[4].toLowerCase() === "pm" ? 12 : 0);
       time = `${two(hour)}:${attendanceDayTime[3] ?? "00"}`;
-    } else if (attendanceDayTime[5] && Number(attendanceDayTime[5]) <= 23 && Number(attendanceDayTime[6]) <= 59) time = `${two(Number(attendanceDayTime[5]))}:${attendanceDayTime[6]}`;
+    } else if (attendanceDayTime[5] && Number(attendanceDayTime[5]) <= 23 && Number(attendanceDayTime[6]) <= 59) {
+      const bareHour = Number(attendanceDayTime[5]);
+      time = `${two(bareHour)}:${attendanceDayTime[6]}`;
+      if (bareHour >= 1 && bareHour <= 12) return { day: attendanceDayTime[1]!.toLowerCase(), time: `${two(bareHour % 12)}:${attendanceDayTime[6]}`, altTime: `${two(bareHour % 12 + 12)}:${attendanceDayTime[6]}` };
+    }
     if (!time) return { needsExactStart: true };
     return { day: attendanceDayTime[1]!.toLowerCase(), time };
   }
@@ -1644,7 +1648,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const bookingText = directBookingReply ? body : "";
     const namedCancellation = explicitBookingCancellation(bookingText);
     const cancelDay = namedCancellation?.day ? bookingCancellationDay(namedCancellation.day, msg.signedReceivedAt ?? msg.ts) : undefined;
-    const cancellation = namedCancellation?.time && cancelDay ? { ...namedCancellation, localStart: `${cancelDay} ${namedCancellation.time}` } : namedCancellation;
+    const cancellation = namedCancellation?.time && cancelDay ? { ...namedCancellation, localStart: `${cancelDay} ${namedCancellation.time}`, ...(namedCancellation.altTime ? { altLocalStart: `${cancelDay} ${namedCancellation.altTime}` } : {}) } : namedCancellation;
     // spec/opportunityLifecycle.md, "An explicit cancellation selects the named upcoming meeting"
     if (cancellation?.needsExactStart) {
       this.send(m, this.copy.bookingStartToCancel, { type: "info" }, "reply");
@@ -1900,7 +1904,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       const startAt = o.meetingAt;
       if (!upcomingCancellationEligible(opportunityLifecycle(o), o.participants.includes(m.id),
         o.status.get(m.id) === "yes", startAt !== undefined && Number.isFinite(startAt), startAt ?? 0, now)) continue;
-      if (request.localStart !== undefined && localBookingStart(startAt!) !== request.localStart) continue;
+      if (request.localStart !== undefined && localBookingStart(startAt!) !== request.localStart && localBookingStart(startAt!) !== request.altLocalStart) continue;
       if (date !== undefined && nyParts(startAt!).day !== date) continue;
       matches.push(o);
       if (matches.length === 2) break;
