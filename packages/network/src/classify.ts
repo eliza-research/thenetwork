@@ -1735,14 +1735,27 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
       : ((Number(bound[2]) % 12) + (bound[4] === "pm" ? 12 : 0)) * 60 + Number(bound[3] ?? 0);
     const satisfies = (slot: (typeof offered)[number]) => slot.minute === undefined
       || (bound[1] === "after" ? slot.minute > minute : slot.minute >= minute);
-    const violating = offered.filter(slot => !satisfies(slot)).map(slot => slot.key);
-    if (!violating.length) continue;
     let segFrom = 0;
     for (const m of t.slice(0, at).matchAll(/[.,;!?\n]|\bbut\b/g)) segFrom = m.index! + m[0].length;
     const segEndRel = t.slice(end).search(/[.!?\n]/);
     const segment = t.slice(segFrom, segEndRel < 0 ? t.length : end + segEndRel);
-    if (/\b(?:until|till|before|by|to)\s+(?:\d{1,2}(?::[0-5]\d)?\s*[ap]m|noon|midnight)\b|\bno later than\b/.test(segment)
-      || /\b(?:at work|i work|working|booked|shift|meeting|plans|away|busy|unavailable)\b/.test(segment)) {
+    const clockMinute = (hour: string | undefined, mins: string | undefined, meridiem: string | undefined, word: string | undefined) => word
+      ? (word === "noon" ? 12 * 60 : 0)
+      : ((Number(hour) % 12) + (meridiem === "pm" ? 12 : 0)) * 60 + Number(mins ?? 0);
+    const upperMatch = /\b(until|till|before|by|to)\s+(?:(\d{1,2})(?::([0-5]\d))?\s*([ap]m)|(noon|midnight))\b/.exec(segment);
+    const noLaterMatch = upperMatch ? null : /\bno later than\s+(?:(\d{1,2})(?::([0-5]\d))?\s*([ap]m)|(noon|midnight))\b/.exec(segment);
+    const upperMinute = upperMatch ? clockMinute(upperMatch[2], upperMatch[3], upperMatch[4], upperMatch[5])
+      : noLaterMatch ? clockMinute(noLaterMatch[1], noLaterMatch[2], noLaterMatch[3], noLaterMatch[4]) : undefined;
+    const upperInclusive = upperMatch ? upperMatch[1] === "by" : noLaterMatch !== null;
+    const violating = offered.filter(slot => !satisfies(slot)
+      || (upperMinute !== undefined && slot.minute !== undefined
+        && (upperInclusive ? slot.minute > upperMinute : slot.minute >= upperMinute))).map(slot => slot.key);
+    if (!violating.length) continue;
+    const freeStated = [...segment.matchAll(/\b(?:free|available)\b/g)]
+      .some(m => !/\b(?:not|never|n't)\b/.test(segment.slice(Math.max(0, m.index! - 16), m.index!)));
+    const boundAccepted = /\bworks\b/.test(segment) || /\bwork\b/.test(segment.slice(end - segFrom))
+      || /\bcan\s+(?:do|make)\b/.test(segment) || /\bany\s?time\b|\banything\b|\bany\s+day\b/.test(segment) || freeStated;
+    if (!boundAccepted) {
       lowerBoundBlocked = true;
       continue;
     }

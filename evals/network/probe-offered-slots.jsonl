@@ -386,17 +386,26 @@
 {"text":"option b after 12pm works","answer":"unclear","keys":[]}
 {"text":"the first one after 6pm works","answer":"yes","keys":["a"]}
 {"text":"the second works after 12pm","answer":"unclear","keys":[]}
-{"text":"From noon until 4pm works","answer":"unclear","keys":[]}
-{"text":"From 1pm until 4pm works","answer":"unclear","keys":[]}
-{"text":"From 12pm, before 4pm works","answer":"unclear","keys":[]}
+{"text":"From noon until 4pm works","answer":"yes","keys":["c"]}
+{"text":"From 1pm until 4pm works","answer":"yes","keys":["c"]}
+{"text":"From 12pm, before 4pm works","answer":"yes","keys":["c"]}
 {"text":"Yes but I work from 6pm","answer":"unclear","keys":[]}
 {"text":"Yes, I'm at work from 1pm","answer":"unclear","keys":[]}
 {"text":"Yes but I'm booked from noon","answer":"unclear","keys":[]}
-{"text":"from 12pm works until 4pm","answer":"unclear","keys":[]}
+{"text":"from 12pm works until 4pm","answer":"yes","keys":["c"]}
 {"text":"sure, I'm away from 1pm on","answer":"unclear","keys":[]}
 {"text":"yes, though I'm on shift from 1pm","answer":"unclear","keys":[]}
 {"text":"Yes, but after 6pm I have a meeting","answer":"unclear","keys":[]}
-{"text":"after 1pm until 4pm works","answer":"unclear","keys":[]}
-{"text":"after 12pm and before 3pm works","answer":"unclear","keys":[]}
+{"text":"after 1pm until 4pm works","answer":"yes","keys":["c"]}
+{"text":"after 12pm and before 3pm works","answer":"yes","keys":["c"]}
 {"text":"after 6pm works","labels":["Thursday 6pm","Thursday 6:01pm","Friday 5:59pm"],"answer":"yes","keys":["b"]}
 {"text":"from 6pm works","labels":["Thursday 6pm","Thursday 6:01pm","Friday 5:59pm"],"answer":"yes","keys":["a"]}
+{"text":"Sure, I'm tied up from 6pm.","answer":"unclear","keys":[]}
+{"text":"Ok but I've got practice from 6pm.","answer":"unclear","keys":[]}
+{"text":"Sounds good, I'm at the gym from 1pm.","answer":"unclear","keys":[]}
+{"text":"I'm in class from 12pm onwards.","answer":"unclear","keys":[]}
+{"text":"Yeah, but I'm driving from 1pm.","answer":"unclear","keys":[]}
+{"text":"Yes, though after 1pm I'm babysitting.","answer":"unclear","keys":[]}
+{"text":"Great, but I teach after 5pm.","answer":"unclear","keys":[]}
+{"text":"Yes, I'm at rehearsal from 6pm.","answer":"unclear","keys":[]}
+{"text":"Sure, but I'm coaching from 1pm.","answer":"unclear","keys":[]}
