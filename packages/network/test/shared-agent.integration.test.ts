@@ -6,7 +6,7 @@ import {afterAll, beforeAll, expect, test, vi} from "vitest";
 import {createHash, randomUUID} from "node:crypto";
 import {SQL} from "../../core/src/runtime/postgres.ts";
 import type { CapitalEvent } from "../../capital/src/index.ts";
-import {SimClock, MINUTE, DAY} from "@thenetwork/core";
+import {CITY_TZ, SimClock, MINUTE, DAY, fromLocal} from "@thenetwork/core";
 import {applySchema, DEV_PG_PORT} from "../../db/dev-pg.ts";
 import {APPS, type AppInfo} from "../../platform/src/apps.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
@@ -1736,22 +1736,40 @@ test("a signed age with months projects the minor's age to other app memberships
 
 // spec/travelPresence.md, "Tell the Network my travel dates"; spec/product/stories.md F26
 test("a corrected return date replaces the saved trip instead of leaving the old end in matching", async () => {
-  const phone = "+12125550190", app = APPS.friends;
+  const phone = "+12125550190", otherPhone = "+12125550189", app = APPS.friends;
   const joined = await service.accounts.join(app, { e164: phone, personId: null }, {
     firstName: "Noor", age: 34, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
   });
   if (!joined.ok) throw new Error(`Travel correction fixture signup failed: ${joined.error}`);
-  const trips = () => sql`select city, from_at, to_at from network.presence
-    where app_id=${app.id} and member_id=${joined.membership.memberId} and type='temporary' order by from_at, to_at`;
+  const otherJoined = await service.accounts.join(app, { e164: otherPhone, personId: null }, {
+    firstName: "Mina", age: 31, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+  });
+  if (!otherJoined.ok) throw new Error(`Travel correction other-member signup failed: ${otherJoined.error}`);
+  const date = (offset: number) => new Date(clock.now() + offset * DAY).toISOString().slice(0, 10);
+  const at = (value: string) => new Date(fromLocal(Number(value.slice(0, 4)), Number(value.slice(5, 7)), Number(value.slice(8, 10)), 0, CITY_TZ.sf));
+  const start = date(7), end = date(11), shortenedEnd = date(9), extendedEnd = date(10), shiftedStart = date(8);
+  const statement = (from: string, to: string) => `I will be in San Francisco from ${from} until ${to}.`;
+  const tripsFor = (memberId: string) => sql`select city, from_at, to_at from network.presence
+    where app_id=${app.id} and member_id=${memberId} and type='temporary' order by from_at, to_at`;
+  const trips = () => tripsFor(joined.membership.memberId);
+  const otherTrips = () => tripsFor(otherJoined.membership.memberId);
   const declare = (id: string, text: string) => post(turn(id, phone, text, app.id));
-  expect((await (await declare("travel-correct-save", "I will be in San Francisco from 2026-10-31 until 2026-11-04.")).json()).replies[0]).toContain("Saved in friends.help");
-  expect(await trips()).toEqual([expect.objectContaining({ city: "sf", to_at: new Date("2026-11-04T08:00:00Z") })]);
-  expect((await (await declare("travel-correct-shorten", "I will be in San Francisco from 2026-10-31 until 2026-11-02.")).json()).replies[0]).toContain("until 2026-11-02");
-  expect(await trips()).toEqual([expect.objectContaining({ city: "sf", from_at: new Date("2026-10-31T07:00:00Z"), to_at: new Date("2026-11-02T08:00:00Z") })]);
-  expect((await (await declare("travel-correct-extend", "I will be in San Francisco from 2026-10-31 until 2026-11-03.")).json()).replies[0]).toContain("until 2026-11-03");
-  expect(await trips()).toEqual([expect.objectContaining({ city: "sf", to_at: new Date("2026-11-03T08:00:00Z") })]);
-  expect((await (await declare("travel-correct-overlap", "I will be in San Francisco from 2026-11-02 until 2026-11-05.")).json()).replies[0]).toContain("Saved in friends.help");
+  const declareOther = (id: string, text: string) => post(turn(id, otherPhone, text, app.id));
+  expect((await (await declareOther("travel-correct-other-save", statement(start, end))).json()).replies[0]).toContain("Saved in friends.help");
+  expect((await (await declare("travel-correct-save", statement(start, end))).json()).replies[0]).toContain("Saved in friends.help");
+  expect(await trips()).toEqual([{ city: "sf", from_at: at(start), to_at: at(end) }]);
+  expect(await otherTrips()).toEqual([{ city: "sf", from_at: at(start), to_at: at(end) }]);
+  expect((await (await declare("travel-correct-shorten", statement(start, shortenedEnd))).json()).replies[0]).toContain(`until ${shortenedEnd}`);
+  expect(await trips()).toEqual([{ city: "sf", from_at: at(start), to_at: at(shortenedEnd) }]);
+  expect(await otherTrips()).toEqual([{ city: "sf", from_at: at(start), to_at: at(end) }]);
+  expect((await (await declare("travel-correct-extend", statement(start, extendedEnd))).json()).replies[0]).toContain(`until ${extendedEnd}`);
+  expect(await trips()).toEqual([{ city: "sf", from_at: at(start), to_at: at(extendedEnd) }]);
+  expect((await (await declare("travel-correct-shift-start", statement(shiftedStart, extendedEnd))).json()).replies[0]).toContain(`from ${shiftedStart} until ${extendedEnd}`);
+  expect(await trips()).toEqual([{ city: "sf", from_at: at(shiftedStart), to_at: at(extendedEnd) }]);
+  expect(await otherTrips()).toEqual([{ city: "sf", from_at: at(start), to_at: at(end) }]);
+  expect((await (await declare("travel-correct-overlap", statement(date(9), date(12)))).json()).replies[0]).toContain("Saved in friends.help");
   expect(await trips()).toHaveLength(2);
-  expect((await (await declare("travel-correct-separate", "I will be in San Francisco from 2026-11-10 until 2026-11-12.")).json()).replies[0]).toContain("Saved in friends.help");
+  expect((await (await declare("travel-correct-separate", statement(date(17), date(19)))).json()).replies[0]).toContain("Saved in friends.help");
   expect(await trips()).toHaveLength(3);
+  expect(await otherTrips()).toEqual([{ city: "sf", from_at: at(start), to_at: at(end) }]);
 }, 60_000);
