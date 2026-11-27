@@ -737,8 +737,11 @@ const NOT_A_NAME = /^(?:yes|yeah|yep|yup|no|nope|nah|sure|ok|okay|maybe|thanks|t
 const MEMBER_ASK = /\?|\b(looking for|i'?d (really )?(like|love)|i want|i need|can you|could you|help me|find me|anything (come|came) up|still hoping)\b/i;
 /** A later check-in report is about someone: a pronoun or the date (lateCheckInReport). "My boss was rude" is not. */
 const ABOUT_SOMEONE = /\b(he|she|they|him|her|them|his|hers|their|my date|the date|our date)\b/i;
-/** A bare acknowledgement ("thx", "ok") answers logistics, not an earlier unsolicited message. */
-const ACK_ONLY = /^(?:ok(?:ay)?|k|kk|thx|thanks?(?: you)?|ty|cool|great|nice|perfect|got it|sounds good|will do|see you(?: then| there)?|yep|yup|sure|[\s.!,:;)(-]|\p{Extended_Pictographic})+$/iu;
+/** A bare acknowledgement ("thx", "ok") answers logistics, not an earlier unsolicited message.
+ * The k-run is matched atomically ((?=(k+))\1): with plain "k|kk" alternatives a long
+ * run of k's followed by a non-ack char backtracked exponentially (ReDoS). Only the
+ * k alternative can match at a k, so consuming the whole run at once changes nothing. */
+const ACK_ONLY = /^(?:ok(?:ay)?|(?=(k+))\1|thx|thanks?(?: you)?|ty|cool|great|nice|perfect|got it|sounds good|will do|see you(?: then| there)?|yep|yup|sure|[\s.!,:;)(-]|\p{Extended_Pictographic})+$/iu;
 
 const BOOKING_CANCEL = /^(?:please )?(?:cancel|call off) (?:my|the|this|our) (?:meeting|date|plan|booking)(?: on (\d{4}-\d{2}-\d{2}) at ((?:[01]\d|2[0-3]):[0-5]\d))?(?: please)?[.!]?$/i;
 const EXACT_ATTENDANCE_CANCEL = /^(?:sorry[, ]+)?(?:i )?(?:can'?t|cannot|won'?t be able to) (?:make it to|attend) (?:my|the|this|our) (?:meeting|date|plan|booking) on (\d{4}-\d{2}-\d{2}) at ((?:[01]\d|2[0-3]):[0-5]\d)(?: anymore)?(?:, sorry)?[.!]?$/i;

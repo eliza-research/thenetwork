@@ -1010,7 +1010,7 @@ function consentScan(body: string): Consent & { separateYes?: boolean } {
         if (/^sure/.test(word) && /\b(?:not|un|i'?m|im|make|be)\s*$/.test(before)) { if (/\bnot\s*$/.test(before)) hedge = true; }
         // "Great" and the like are a yes only at the start of their clause ("great!", "perfect, see you then"):
         // "this is great timing" describes the moment, not an answer.
-        else if (/^(?:great|perfect|awesome|amazing)$/.test(word) && !/^[\s\W]*(?:(?:oh|ok|okay|so|just|really|yes|yeah|yep|that'?s|thats|is|it'?s|its)\s+)*$/.test(before)) { /* a description, not an answer */ }
+        else if (/^(?:great|perfect|awesome|amazing)$/.test(word) && !/^[\s\W]*(?:(?:oh|ok|okay|so|just|really|yes|yeah|yep|that'?s|is|it'?s)\s+)*$/.test(before)) { /* a description, not an answer */ }
         else if (AFFIRM_NEG_BEFORE.test(before)) refusalAt = Math.min(refusalAt, at + am.index);
         else if (/^down/.test(word) && /\bfeel(?:ing)?\s*$/.test(before)) { /* "feeling down" */ }
         else affirmAt = Math.min(affirmAt, at + am.index);
