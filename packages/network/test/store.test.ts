@@ -164,6 +164,14 @@ test("bounded help holds a home request privately and refuses an out-of-scope ta
   w.restart();
   await w.say("requester", "I still need help moving a couch from my apartment.");
   expect(cases()).toMatchObject([{ events: [{ kind: "home_entry_help", points: 0 }] }]);
+  const unlabelled = ["Find someone to babysit my kid on Saturday.", "Find someone to watch my 6 year old on Saturday.",
+    "Find someone to pick my two kids up from school.", "Find a climber to babysit my kid on Saturday."];
+  const declined: string[] = [];
+  for (const request of unlabelled) {
+    await w.say("requester", request);
+    if (w.sent.at(-1)?.body.includes("won't look for it")) declined.push(request);
+  }
+  expect(declined).toEqual(unlabelled);
   for (const task of ["babysit my child", "watch my 6 y.o. Saturday", "pick my two kids up"]) {
     await w.say("requester", "Find someone to help move a couch and " + task + ".");
     expect(w.sent.at(-1)?.body).toContain("won't look for it");
@@ -172,6 +180,8 @@ test("bounded help holds a home request privately and refuses an out-of-scope ta
   expect(w.net.reviewQueue()).toEqual([]);
   expect(w.net.exportState().requests).toEqual([]);
   expect(w.sent.slice(mark).every(m => m.to === "requester")).toBe(true);
+  await w.say("requester", "Find playdates for my kid near my home.");
+  expect(w.net.exportState().requests).toMatchObject([{ category: "social", desireId: "parent_friends" }]);
 }, T);
 
 test("bounded help rechecks an older home request when it would retry", async () => {

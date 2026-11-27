@@ -80,7 +80,7 @@ import { gatheringRepeatMayAnswer, gatheringRepeatMayBook, gatheringRepeatMaySta
 import { gatheringPriorityIsolated, gatheringPriorityNewcomer } from "../../core/src/generated/monthlyGatheringRsvp.ts";
 import type { GatheringNoticeKind } from "../../core/src/generated/monthlyGatheringNotices.ts";
 import { boundedHelpRoute, openHomeHelpCase } from "../../core/src/generated/boundedHelp.ts";
-import { isHomeEntry, riskTerms } from "../../engine/src/filters.ts";
+import { isHomeEntry, namesSafetyRisk, riskTerms } from "../../engine/src/filters.ts";
 import { bookedNeedsSyntheticAcceptance, bookedOccupies, bookedRecordOccupies, closeUnbookedItems, peonAcceptedHistoryAt, peonFeedbackRetainsAcceptance } from "../../core/src/generated/peonCapacity.ts";
 import { hireAnswerAllowed, hireClosedProbeReply, hireContactAllowed, hireProbeWasDeclined, managerQuestionDeadline, managerQuestionMayOpen } from "../../core/src/generated/peonHireDispatch.ts";
 import { initial as initialPlanDispatch, pendingPlanInviteDecision, planInvitationOpen, planProbeReplyCurrent, planTurnDue, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
@@ -3754,10 +3754,10 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /** Give a home-entry request to safety staff before it can become a contact. */
-  private routeBoundedHelp(m: MemberState, text: string, quiet: boolean): boolean {
+  private routeBoundedHelp(m: MemberState, text: string, quiet: boolean, help = true): boolean {
     const cfg = resolveConfig(this.effectiveEngineConfig());
-    const homeEntry = isHomeEntry(cfg, text);
-    const route = boundedHelpRoute(riskTerms(cfg, text).length > 0, homeEntry);
+    const homeEntry = help && isHomeEntry(cfg, text);
+    const route = boundedHelpRoute(help ? riskTerms(cfg, text).length > 0 : namesSafetyRisk(text), homeEntry);
     if (route === "SearchPublicHelp") return false;
     const prompt = homeEntry && !quiet ? this.opts.homeHelpIntakePrompt?.(m.id) : undefined;
     if (route === "ReviewHomeEntryHelp" && canBeMatched(this.ageOf(m))) {
@@ -3803,7 +3803,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   private openRequest(m: MemberState, c: Classified, o: { quiet?: boolean }) {
-    if (c.category === "help" && this.allowedCategories.has("help") && this.routeBoundedHelp(m, c.text ?? "", !!o.quiet)) return;
+    if (this.allowedCategories.has("help") && this.routeBoundedHelp(m, c.text ?? "", !!o.quiet, c.category === "help")) return;
     if (!this.standingAddGate(m, { desireId: c.desireId, category: c.category, tags: c.tags }, true, !!o.quiet)) return;
     const now = this.now();
     const canSearch = this.trust.ok(m.id) && !this.reportHeld(m.id);

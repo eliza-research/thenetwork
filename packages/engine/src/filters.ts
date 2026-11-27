@@ -218,6 +218,11 @@ export function riskTerms(cfg: EngineConfig, text: string): string[] {
   }
   return out;
 }
+const SAFETY_RES = SAFETY_RISK_PATTERNS.map(p => new RegExp(p));
+export function namesSafetyRisk(text: string): boolean {
+  const norm = text.toLowerCase().replace(/_/g, " ").replace(/[\u2018\u2019]/g, "'");
+  return SAFETY_RES.some(re => re.test(norm));
+}
 const HOME_RES = HOME_ENTRY_PATTERNS.map(p => new RegExp(p));
 export function isHomeEntry(cfg: EngineConfig, text: string): boolean {
   const low = ` ${text.toLowerCase().replace(/_/g, " ").replace(/[\u2018\u2019]/g, "'")} `;
