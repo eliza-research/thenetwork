@@ -189,6 +189,12 @@ export const HOME_ENTRY_PATTERNS: readonly string[] = [
   "\\b(move|moving|movers?)\\b", "\\bcome over\\b",
 ];
 
+const SAFETY_RES = SAFETY_RISK_PATTERNS.map(p => new RegExp(p));
+const CHILD_TASK_RES = [
+  ...SAFETY_RES.filter((_, i) => SAFETY_RISK_PATTERNS[i]!.includes(CHILD)),
+  new RegExp(`\\b(baby[\\s-]?sit\\w*|driv(e|ing))\\b(\\W+\\w+){0,3}?\\W+(my|our|your|their|his|her)\\s+${CHILD}`),
+];
+const normalized = (text: string) => text.toLowerCase().replace(/_/g, " ").replace(/[\u2018\u2019]/g, "'");
 const riskCache = new WeakMap<EngineConfig, RegExp[]>();
 const escapeRe = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 function riskMatchers(cfg: EngineConfig): RegExp[] {
@@ -198,7 +204,7 @@ function riskMatchers(cfg: EngineConfig): RegExp[] {
       // Whole words / phrases only (plural allowed; "-" or "_" may stand for a space).
       ...cfg.highRiskTerms.map(t => new RegExp(`\\b${escapeRe(t.toLowerCase().replace(/_/g, " ")).replace(/ /g, "[\\s-]+")}(s|es)?\\b`)),
       ...(cfg.highRiskPatterns ?? []).map(p => new RegExp(p)),
-      ...SAFETY_RISK_PATTERNS.map(p => new RegExp(p)),
+      ...SAFETY_RES,
     ];
     riskCache.set(cfg, rs);
   }
@@ -210,7 +216,7 @@ function riskMatchers(cfg: EngineConfig): RegExp[] {
  * kids" or "lend a hand" pass while "babysit my kids" or "lend me cash" do not.
  */
 export function riskTerms(cfg: EngineConfig, text: string): string[] {
-  const norm = text.toLowerCase().replace(/_/g, " ").replace(/[\u2018\u2019]/g, "'");
+  const norm = normalized(text);
   const out: string[] = [];
   for (const re of riskMatchers(cfg)) {
     const m = norm.match(re);
@@ -218,14 +224,13 @@ export function riskTerms(cfg: EngineConfig, text: string): string[] {
   }
   return out;
 }
-const SAFETY_RES = SAFETY_RISK_PATTERNS.map(p => new RegExp(p));
-export function namesSafetyRisk(text: string): boolean {
-  const norm = text.toLowerCase().replace(/_/g, " ").replace(/[\u2018\u2019]/g, "'");
-  return SAFETY_RES.some(re => re.test(norm));
+export function asksChildCare(text: string): boolean {
+  const norm = normalized(text);
+  return CHILD_TASK_RES.some(re => re.test(norm));
 }
 const HOME_RES = HOME_ENTRY_PATTERNS.map(p => new RegExp(p));
 export function isHomeEntry(cfg: EngineConfig, text: string): boolean {
-  const low = ` ${text.toLowerCase().replace(/_/g, " ").replace(/[\u2018\u2019]/g, "'")} `;
+  const low = ` ${normalized(text)} `;
   if (cfg.homeEntryTerms.some(t => low.includes(` ${t} `) || low.includes(` ${t}.`) || low.includes(` ${t},`))) return true;
   return HOME_RES.some(re => re.test(low));
 }

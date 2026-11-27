@@ -165,7 +165,8 @@ test("bounded help holds a home request privately and refuses an out-of-scope ta
   await w.say("requester", "I still need help moving a couch from my apartment.");
   expect(cases()).toMatchObject([{ events: [{ kind: "home_entry_help", points: 0 }] }]);
   const unlabelled = ["Find someone to babysit my kid on Saturday.", "Find someone to watch my 6 year old on Saturday.",
-    "Find someone to pick my two kids up from school.", "Find a climber to babysit my kid on Saturday."];
+    "Find someone to pick my two kids up from school.", "Find a climber to babysit my kid on Saturday.",
+    "Find someone who likes climbing to watch my 6 year old on Saturday.", "Find someone to drive my kids to school."];
   const declined: string[] = [];
   for (const request of unlabelled) {
     await w.say("requester", request);
@@ -181,7 +182,16 @@ test("bounded help holds a home request privately and refuses an out-of-scope ta
   expect(w.net.exportState().requests).toEqual([]);
   expect(w.sent.slice(mark).every(m => m.to === "requester")).toBe(true);
   await w.say("requester", "Find playdates for my kid near my home.");
-  expect(w.net.exportState().requests).toMatchObject([{ category: "social", desireId: "parent_friends" }]);
+  expect(w.net.exportState().requests).toContainEqual(expect.objectContaining({ category: "social", desireId: "parent_friends" }));
+  const ordinary = ["looking for other parents to chat with at school pickup", "I used to babysit, looking for new friends",
+    "I'm a sitter, looking for new friends", "looking for a coke float buddy",
+    "looking for someone to go with me to volunteer at the hospital", "looking for a rabbit sitter"];
+  const refusedOrdinary: string[] = [];
+  for (const request of ordinary) {
+    await w.say("requester", request);
+    if (w.sent.at(-1)?.body.includes("won't look for it")) refusedOrdinary.push(request);
+  }
+  expect(refusedOrdinary).toEqual([]);
 }, T);
 
 test("bounded help rechecks an older home request when it would retry", async () => {

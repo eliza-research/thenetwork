@@ -80,7 +80,7 @@ import { gatheringRepeatMayAnswer, gatheringRepeatMayBook, gatheringRepeatMaySta
 import { gatheringPriorityIsolated, gatheringPriorityNewcomer } from "../../core/src/generated/monthlyGatheringRsvp.ts";
 import type { GatheringNoticeKind } from "../../core/src/generated/monthlyGatheringNotices.ts";
 import { boundedHelpRoute, openHomeHelpCase } from "../../core/src/generated/boundedHelp.ts";
-import { isHomeEntry, namesSafetyRisk, riskTerms } from "../../engine/src/filters.ts";
+import { asksChildCare, isHomeEntry, riskTerms } from "../../engine/src/filters.ts";
 import { bookedNeedsSyntheticAcceptance, bookedOccupies, bookedRecordOccupies, closeUnbookedItems, peonAcceptedHistoryAt, peonFeedbackRetainsAcceptance } from "../../core/src/generated/peonCapacity.ts";
 import { hireAnswerAllowed, hireClosedProbeReply, hireContactAllowed, hireProbeWasDeclined, managerQuestionDeadline, managerQuestionMayOpen } from "../../core/src/generated/peonHireDispatch.ts";
 import { initial as initialPlanDispatch, pendingPlanInviteDecision, planInvitationOpen, planProbeReplyCurrent, planTurnDue, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
@@ -3757,7 +3757,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   private routeBoundedHelp(m: MemberState, text: string, quiet: boolean, help = true): boolean {
     const cfg = resolveConfig(this.effectiveEngineConfig());
     const homeEntry = help && isHomeEntry(cfg, text);
-    const route = boundedHelpRoute(help ? riskTerms(cfg, text).length > 0 : namesSafetyRisk(text), homeEntry);
+    const route = boundedHelpRoute(help ? riskTerms(cfg, text).length > 0 : asksChildCare(text), homeEntry);
     if (route === "SearchPublicHelp") return false;
     const prompt = homeEntry && !quiet ? this.opts.homeHelpIntakePrompt?.(m.id) : undefined;
     if (route === "ReviewHomeEntryHelp" && canBeMatched(this.ageOf(m))) {
