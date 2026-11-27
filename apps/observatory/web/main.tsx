@@ -109,7 +109,6 @@ function ConsoleTopBar({ nav }: { nav: ConsoleNav }) {
   const s = useStore();
   const c = s.clock;
   const canStep = !!s.env?.capabilities.canStep;
-  // A simulation clock belongs to one workspace, not the All Apps summary.
   const showTransport = !canStep || onAppPage(nav);
   const b = s.page.kind === "app" ? banner(s.env) : { text: `ALL APPS · ${s.mode === "real" ? "real data" : "simulation"}`, title: "Every app you hold a role for" };
   const me = s.me;

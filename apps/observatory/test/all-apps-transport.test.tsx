@@ -8,7 +8,6 @@ vi.mock("../web/map.ts", () => ({
   MapView: class { destroy() {} },
 }));
 
-// spec/consoleNavigation.md, "The app switcher opens one app or the all-apps page"
 test("simulation time controls only operate in the named app workspace", async () => {
   const window = new Window({ url: "http://localhost/" });
   const restore = installDom(window, {
