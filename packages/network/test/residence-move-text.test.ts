@@ -28,5 +28,23 @@ describe("residence move texted after onboarding", () => {
 
     await w.say("a", "I live in Bay Ridge now.");
     expect(areaOf(w, "a")).toBe("Bay Ridge");
+
+    await w.say("a", "I'm in Soho right now, anyone free for coffee?");
+    expect(areaOf(w, "a")).toBe("Bay Ridge");
+
+    await w.say("a", "I'm in Williamsburg tonight for a show.");
+    expect(areaOf(w, "a")).toBe("Bay Ridge");
+
+    await w.say("a", "I'm near Bushwick this afternoon.");
+    expect(areaOf(w, "a")).toBe("Bay Ridge");
+
+    await w.say("a", "I'm around Greenpoint after 6pm.");
+    expect(areaOf(w, "a")).toBe("Bay Ridge");
+
+    await w.say("a", "I'm in Astoria for dinner.");
+    expect(areaOf(w, "a")).toBe("Bay Ridge");
+
+    await w.say("a", "I'm now in Astoria.");
+    expect(areaOf(w, "a")).toBe("Astoria");
   });
 });

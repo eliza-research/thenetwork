@@ -910,8 +910,8 @@ export function areaOf(text: string, city?: CityId): { area?: string; unknown?: 
   return {};
 }
 
-/** The sender states their own residence ("I moved to", "I live in", "I'm in … now"). */
-const RESIDENCE_CUE = /\b(i\s+(?:just\s+)?(?:moved|relocated)|i\s+(?:now\s+)?(?:live|stay)|i'?m\s+(?:now\s+)?(?:living|based|in|around|near|over in|up in|out in|down in)|i\s+am\s+(?:now\s+)?(?:living|based|in|around|near)|im\s+(?:living|based|in)|my\s+(?:place|apartment|apt|home|neighborhood|hood|area)\s+is|home\s+is|based\s+(?:in|out of)|living\s+in)\b|(?:^|[,;]\s*)(?:just\s+)?moved\s+(?:back\s+)?to\b/;
+/** The sender states their own residence ("I moved to", "I live in", "I'm in … now"). A bare "I'm in/near/around" states where the sender is now, not a home move. */
+const RESIDENCE_CUE = /\b(i\s+(?:just\s+)?(?:moved|relocated)|i\s+(?:now\s+)?(?:live|stay)|i'?m\s+(?:now\s+)?(?:living|based)|i'?m\s+now\s+(?:in|around|near|over in|up in|out in|down in)|i\s+am\s+(?:now\s+)?(?:living|based)|i\s+am\s+now\s+(?:in|around|near)|im\s+(?:living|based)|my\s+(?:place|apartment|apt|home|neighborhood|hood|area)\s+is|home\s+is|based\s+(?:in|out of)|living\s+in)\b|(?:^|[,;]\s*)(?:just\s+)?moved\s+(?:back\s+)?to\b/;
 /** A residence cue that is hypothetical, negated, or about someone else never moves the sender. */
 const RESIDENCE_BLOCK = /\b(if|would|wish|maybe|might|thinking|planning|hoping|not|never|n't|no longer|used to|visiting|friend|roommate|he|she|they)\b/;
 
