@@ -928,10 +928,12 @@ function parseDetSubject(words: string[], i: number): ClauseSubject | null {
   let bestStrength = -1;
   for (let headIndex = i + 1; headIndex <= Math.min(i + 3, words.length - 1); headIndex++) {
     const core = words.slice(i + 1, headIndex + 1);
-    if (!core.every(isCoreWord)) continue;
+    if (!core.every(isCoreWord) || isAdverbWord(words[headIndex] ?? "")) continue;
     const end = consumePostmodifiers(words, headIndex + 1);
     const relative = /^(?:which|who|that|i|we|he|she|they)$/.test(words[end] ?? "");
-    const strength = relative ? 1 : predicateStrength(words, end);
+    let probe = end;
+    while (isAdverbWord(words[probe] ?? "")) probe++;
+    const strength = relative ? 1 : predicateStrength(words, probe);
     if (strength === 0) continue;
     const candidate: ClauseSubject = { scope: subjectScopeForHead(words[headIndex] ?? "", det), start: i, end, headIndex, head: words[headIndex] ?? "", det, aux: false, subordinate: false };
     if (strength > bestStrength || (strength === bestStrength && best && headIndex > best.headIndex)) { best = candidate; bestStrength = strength; }
@@ -1043,7 +1045,11 @@ function isContentClause(words: string[], clause: FoundClause): boolean {
     const content = complementWords.filter(w => !isAdverbWord(w));
     if (HEDGE_ADJECTIVES.has(content[0] ?? "")) return false;
     if (content[0] === "being" && HEDGE_ADJECTIVES.has(content[1] ?? "")) return false;
+    const negated = words.slice(subject.start, predicate.complement + 4).some(w => w === "not" || w === "never" || w.endsWith("n't"));
+    const goingAt = content.findIndex(w => w === "going" || w === "gonna");
+    if (negated && goingAt >= 0 && /^(?:lie|say|admit)$/.test(content[goingAt + (content[goingAt] === "going" ? 2 : 1)] ?? "")) return false;
   }
+  if (/^(?:it|that|this)$/.test(subject.head) && subject.det === "" && predicate.copula && pronounAbstractComplement(complementWords)) return false;
   const participant = /\b(?:me|us|him|her|them|we|i|he|she|they|my|our|his|her|their|mine|ours)\b/.test(words.slice(predicate.index).join(" "));
   if (/^(?:it|that|this)$/.test(subject.head) && subject.det === "" && !predicate.copula && predicate.tense === "present") {
     const argument = words.slice(predicate.index + 1).filter(w => !/^(?:up|out|off|on|all)$/.test(w));
@@ -1051,7 +1057,7 @@ function isContentClause(words: string[], clause: FoundClause): boolean {
     if (!participant) return false;
   }
   if (!predicate.copula) {
-    const speechAt = words.findIndex((w, at) => at >= predicate.index && /^(?:say|says|said|tell|tells|told|admit|admits|admitted)$/.test(w));
+    const speechAt = words.findIndex((w, at) => at >= predicate.index && /^(?:say|says|said|tell|tells|told|admit|admits|admitted|lie|lies|lied)$/.test(w));
     if (speechAt >= 0) {
       const argument = words.slice(speechAt + 1).filter(w => !/^(?:up|out|off|on)$/.test(w));
       if (!argument.length || argument.every(w => /^(?:it|all|that|this)$/.test(w))) return false;
@@ -1059,9 +1065,18 @@ function isContentClause(words: string[], clause: FoundClause): boolean {
   }
   if (subject.scope === "other") {
     if (/^(?:my|his|her|their|our)$/.test(subject.det)) return true;
+    if (!predicate.copula && predicate.tense === "past") return true;
     return participant;
   }
   return true;
+}
+function pronounAbstractComplement(complementWords: string[]): boolean {
+  const kind = predicateKind(complementWords.join(" "));
+  if (kind === "positive" || kind === "complaint") return false;
+  const core = complementWords.filter(w => isCoreWord(w));
+  const head = core[core.length - 1] ?? "";
+  const det = complementWords.find(w => isDeterminer(w)) ?? "";
+  return subjectScopeForHead(head, det) === "other" && (!!det || /^(?:truth|life|pity|shame|answer|fact|story|thing|deal|case|way|point|reality)$/.test(head));
 }
 function hasContentClause(clause: string): boolean {
   const words = wordsOf(clause);
@@ -1085,6 +1100,8 @@ function complaintAboutMeeting(clause: string): boolean {
       if (subjectScopeForHead(words[at + 1] ?? "", det) !== "other") return true;
       continue;
     }
+    const inSubject = clauses.find(c => at >= c.subject.start && at < c.predicate.index);
+    if (inSubject && inSubject.subject.scope === "other") continue;
     const governing = [...clauses].reverse().find(c => c.subject.start <= at && at >= c.predicate.index);
     if (!governing) return true;
     if (governing.subject.scope === "other") continue;
@@ -1141,7 +1158,9 @@ function laterClauseKind(c: string): "complaint" | "unclassified" | null {
   if (copula) {
     const first = wordsOf(clause)[0] ?? "";
     if (/^(?:which|who)$/.test(first) || isSubordinator(first)) return null;
-    if (subjectOf(wordsOf(clause))?.scope === "other") return "unclassified";
+    const copulaSubject = subjectOf(wordsOf(clause));
+    if (copulaSubject?.scope === "other") return "unclassified";
+    if (copulaSubject && /^(?:it|that|this)$/.test(copulaSubject.head) && copulaSubject.det === "" && pronounAbstractComplement(wordsOf(copula[2] ?? ""))) return null;
     const kind = predicateKind(copula[2] ?? "");
     if (kind === "complaint") return "complaint";
     if (kind === "unclassified") return "unclassified";
