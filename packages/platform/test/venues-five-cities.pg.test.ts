@@ -239,7 +239,7 @@ describe.skipIf(!pgAvailable)("5-city venues, sufficiency cutoff, open checks, f
       lng: -87.6278,
       category: "coffee_shop",
       public: true,
-      status: "Active",
+      status: "active",
       priceTier: 1,
       ageMin: 0,
       isBarOnly: false,
@@ -326,7 +326,7 @@ describe.skipIf(!pgAvailable)("5-city venues, sufficiency cutoff, open checks, f
       startMs: SAT_15_SF,
       mode: "date",
     };
-    const beforeVenues = await listVenues(sql, { city: "sf", status: "Active" });
+    const beforeVenues = await listVenues(sql, { city: "sf", status: "active" });
     const beforeRanked = rankVenuesForMatch(beforeVenues, sfRequest, nowMs);
     expect(beforeRanked.length).toBeGreaterThanOrEqual(2);
     const topId = beforeRanked[0]!.venue.id;
@@ -415,7 +415,7 @@ describe.skipIf(!pgAvailable)("5-city venues, sufficiency cutoff, open checks, f
     const nowMs = WED_14_SF;
     await sql`update platform.venues set status = 'active', closure_reports = 0, verified_open_at = ${new Date(nowMs)} where city = 'sf'`;
 
-    const sfVenues = await listVenues(sql, { city: "sf", status: "Active" });
+    const sfVenues = await listVenues(sql, { city: "sf", status: "active" });
 
     const drinkerRanked = rankVenuesForMatch(sfVenues, {
       city: "sf",

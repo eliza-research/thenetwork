@@ -47,7 +47,7 @@ export const PLAN_VENUE_AGES: plans.VenueAges = plans.venueAgesIn(PLAN_VENUES);
 export function planVenuesForCity(city: City): PlanVenue[] {
   if (city === "nyc") return PLAN_VENUES;
   return seedVenuesForCity(city)
-    .filter(v => v.status === "Active" && v.public)
+    .filter(v => v.status === "active" && v.public)
     .map(raw => {
       const v = seedVenueToGeoVenue(raw);
       return {
@@ -57,7 +57,7 @@ export function planVenuesForCity(city: City): PlanVenue[] {
         name: v.name,
         activities: [...new Set(v.tags.flatMap(t => TAG_ACTIVITIES[t] ?? []))].filter(a => plans.activityById.has(a)),
         priceTier: Math.min(3, raw.priceTier) as 0 | 1 | 2 | 3,
-        ageMin: raw.ageMin > 0 ? raw.ageMin : venueAgeMin(v),
+        ageMin: (raw.ageMin ?? 0) > 0 ? (raw.ageMin ?? 0) : venueAgeMin(v),
         hours: HOURS[v.kind],
         public: true as const,
         source: "curated" as const,

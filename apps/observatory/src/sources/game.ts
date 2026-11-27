@@ -886,7 +886,7 @@ export class GameSource implements DataSource {
         memberCount: memberCounts.get(spec.id) ?? 0,
         opportunityCount: oppCounts.get(spec.id) ?? 0,
         venueCount: venues.length,
-        activeVenueCount: venues.filter(v => v.status === "Active").length,
+        activeVenueCount: venues.filter(v => v.status === "active").length,
       };
     });
   }

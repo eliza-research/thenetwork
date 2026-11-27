@@ -474,7 +474,7 @@ export class MeetupCoordinator {
     if (parsed.state === "venue_closed") {
       this.host.venues.quarantineVenue(meetup.activeVenueId, senderId, nowMs);
       const backup = meetup.backupVenueId ? this.host.venues.getVenue(meetup.backupVenueId) : undefined;
-      const canPivot = evaluateBackupPivot(true, !!backup && backup.status === "Active", meetup.pivoted);
+      const canPivot = evaluateBackupPivot(true, !!backup && backup.status === "active", meetup.pivoted);
       if (canPivot && backup) {
         meetup.activeVenueId = backup.id;
         meetup.pivoted = true;

@@ -287,8 +287,8 @@ export async function runFiveCitySuite(
       {
         name: "T-75m brief, T-15m arrival relay, and met check-in pass through MeetupCoordinator",
         pass:
-          briefPhase === "PreBrief" &&
-          arrPhase === "ActiveArrival" &&
+          briefPhase === "pre_brief" &&
+          arrPhase === "active_arrival" &&
           briefSent &&
           arrRelays.some(m => /green jacket/i.test(m.body)) &&
           metAfter,
@@ -1013,7 +1013,7 @@ export async function runFiveCitySuite(
     for (let k = 0; k < 20; k++) {
       const callsBefore = provider.searchCalls;
       const p = await vm.pickForMatchAsync(req, startMs - HOUR);
-      if (provider.searchCalls > callsBefore || shouldFetchExternalVenues(p.candidates.length, 10, 50)) {
+      if (provider.searchCalls > callsBefore || shouldFetchExternalVenues(p.candidates.length)) {
         extraCalls++;
       }
     }
@@ -1107,7 +1107,7 @@ export async function runFiveCitySuite(
       {
         name: "closed top venue quarantined to ClosedTemporary and replaced by #2",
         pass:
-          quarantined.status === "ClosedTemporary" &&
+          quarantined.status === "closed_temporary" &&
           !!fallbackPick.primary &&
           fallbackPick.primary.venue.id !== topVenue.id &&
           !fallbackPick.candidates.some(c => c.venue.id === topVenue.id),
@@ -1180,14 +1180,14 @@ export async function runFiveCitySuite(
     const pivotMsgs = h.sent.slice(beforePivot).filter(s => s.body.includes(backup.name));
     const updatedPrimary = h.net.venues.getVenue(primary.id)!;
     const meetupAfter = h.net.meetups.getMeetup("nyc-s8-meetup")!;
-    const secondPivot = evaluateBackupPivot(true, true, meetupAfter.pivoted);
+    const secondPivot = evaluateBackupPivot(true, true, startMs - 10 * MINUTE, startMs, meetupAfter.pivoted);
 
     invariants.canaryLeaks += h.scanCanaries([a, b]);
 
     const checks: ScenarioCheck[] = [
       {
-        name: "arrival closure text quarantines primary to SuspectClosed in VenueManager",
-        pass: updatedPrimary.status === "SuspectClosed" && updatedPrimary.closureReports === 1,
+        name: "arrival closure text quarantines primary to suspect_closed in VenueManager",
+        pass: updatedPrimary.status === "suspect_closed" && updatedPrimary.closureReports === 1,
         detail: `status=${updatedPrimary.status}, reports=${updatedPrimary.closureReports}`,
       },
       {
@@ -1247,13 +1247,13 @@ export async function runFiveCitySuite(
 
     const checks: ScenarioCheck[] = [
       {
-        name: "1st report via feedbackOf transitions Active -> SuspectClosed and excludes venue",
-        pass: fb1.venue?.venueClosed === true && after1.status === "SuspectClosed" && !rankedAfter1.some(c => c.venue.id === target0.id),
+        name: "1st report via feedbackOf transitions active -> suspect_closed and excludes venue",
+        pass: fb1.venue?.venueClosed === true && after1.status === "suspect_closed" && !rankedAfter1.some(c => c.venue.id === target0.id),
         detail: `status=${after1.status}, recCount=${rankedAfter1.filter(c => c.venue.id === target0.id).length}`,
       },
       {
-        name: "2nd report transitions SuspectClosed -> ClosedPermanent and never recommends again",
-        pass: fb2.venue?.venueClosed === true && after2.status === "ClosedPermanent" && after2.closureReports === 2 && !rankedAfter2.some(c => c.venue.id === target0.id),
+        name: "2nd report transitions suspect_closed -> closed_permanent and never recommends again",
+        pass: fb2.venue?.venueClosed === true && after2.status === "closed_permanent" && after2.closureReports === 2 && !rankedAfter2.some(c => c.venue.id === target0.id),
         detail: `status=${after2.status}, reports=${after2.closureReports}`,
       },
     ];
@@ -1381,10 +1381,10 @@ export async function runFiveCitySuite(
     await h.say(b.id, "Got it, see you at 7!", "brief_ack");
     await h.advanceTo(startMs, 15 * MINUTE);
     await h.say(a.id, "I'm here by the front counter!", "arrived_on_time");
-    const d5 = evaluateNoShow({ minutesSinceArrival: 5, partnerCheckedIn: false, pingedLate: false, notifiedWaiting: false });
-    const d12 = evaluateNoShow({ minutesSinceArrival: 12, partnerCheckedIn: false, pingedLate: false, notifiedWaiting: false });
-    const d18 = evaluateNoShow({ minutesSinceArrival: 18, partnerCheckedIn: false, pingedLate: true, notifiedWaiting: false });
-    const d22 = evaluateNoShow({ minutesSinceArrival: 22, partnerCheckedIn: false, pingedLate: true, notifiedWaiting: true });
+    const d5 = evaluateNoShow(startMs + 5 * MINUTE, startMs, true, false, false, false);
+    const d12 = evaluateNoShow(startMs + 12 * MINUTE, startMs, true, false, false, false);
+    const d18 = evaluateNoShow(startMs + 18 * MINUTE, startMs, true, false, true, false);
+    const d22 = evaluateNoShow(startMs + 22 * MINUTE, startMs, true, false, true, true);
 
     const beforeT12 = h.mark();
     await h.advanceTo(startMs + 13 * MINUTE, 2 * MINUTE);
@@ -1402,8 +1402,8 @@ export async function runFiveCitySuite(
 
     const checks: ScenarioCheck[] = [
       {
-        name: "generated noShowDecision: T+5m NoAction -> T+12m PingLate -> T+18m NotifyWaiting -> T+22m NoAction",
-        pass: d5 === "NoAction" && d12 === "PingLate" && d18 === "NotifyWaiting" && d22 === "NoAction",
+        name: "generated noShowDecision: T+5m none -> T+12m ping_late -> T+18m notify_waiting -> T+22m none",
+        pass: d5 === "none" && d12 === "ping_late" && d18 === "notify_waiting" && d22 === "none",
         detail: `T+5=${d5}, T+12=${d12}, T+18=${d18}, T+22=${d22}`,
       },
       {
@@ -1501,12 +1501,12 @@ export async function runFiveCitySuite(
         senderConfirmed: true,
         recipientConfirmed: true,
         blocked: false,
-        optedOut: false,
+        senderOptedOut: false,
+        recipientOptedOut: false,
         nowMs: arrMs + idx * 1000,
         startMs,
-        senderMet: false,
-        leakClean: r.decision === "pass",
-        safetyClean: coordRes.relayedTo.length > 0,
+        alreadyMet: false,
+        passedSafetyAndLeakCheck: r.decision === "pass" && coordRes.relayedTo.length > 0,
       });
       if (r.decision !== "pass" && coordRes.relayedTo.length === 0 && !allowed) {
         invariants.blockedOrHeldSafetyItems++;
@@ -1847,12 +1847,12 @@ export async function runFiveCitySuite(
           senderConfirmed: true,
           recipientConfirmed: true,
           blocked: false,
-          optedOut: false,
+          senderOptedOut: false,
+          recipientOptedOut: false,
           nowMs: startMs - 10 * MINUTE,
           startMs,
-          senderMet: false,
-          leakClean: true,
-          safetyClean: true,
+          alreadyMet: false,
+          passedSafetyAndLeakCheck: true,
         });
         if (arrOk) {
           invariants.teenRelayContact++;
@@ -1882,7 +1882,7 @@ export async function runFiveCitySuite(
         ).candidates;
         soloMinorChecks++;
         for (const c of soloVenues) {
-          if (c.venue.isBarOnly || !c.venue.alcoholOptional || c.venue.ageMin > 13 || !c.venue.public) {
+          if (c.venue.isBarOnly || !c.venue.alcoholOptional || (c.venue.ageMin ?? 0) > 13 || !c.venue.public) {
             invariants.minorBarRecs++;
             invariants.teenPlaceContact++;
           }
@@ -1978,9 +1978,9 @@ export async function runFiveCitySuite(
     const friendsOptedOutAfterLeave = hFriends.net.memberList().find(x => x.id === m.id)?.optedOut === true;
 
     const slopFuAfterLeave = evaluateFollowupSend({ optedOut: optedOutFor("slop"), isQuietHours: false, dailyProactiveCount: 0, remindersSent: 0 });
-    const slopRelayAfterLeave = evaluateArrivalRelay({ senderAge: peer.age, recipientAge: m.age, senderConfirmed: true, recipientConfirmed: true, blocked: false, optedOut: optedOutFor("slop"), nowMs: startMs - 10 * MINUTE, startMs, senderMet: false, leakClean: true, safetyClean: true });
+    const slopRelayAfterLeave = evaluateArrivalRelay({ senderAge: peer.age, recipientAge: m.age, senderConfirmed: true, recipientConfirmed: true, blocked: false, senderOptedOut: false, recipientOptedOut: optedOutFor("slop"), nowMs: startMs - 10 * MINUTE, startMs, alreadyMet: false, passedSafetyAndLeakCheck: true });
     const friendsFuAfterLeave = evaluateFollowupSend({ optedOut: optedOutFor("friends"), isQuietHours: false, dailyProactiveCount: 0, remindersSent: 0 });
-    const friendsRelayAfterLeave = evaluateArrivalRelay({ senderAge: peer.age, recipientAge: m.age, senderConfirmed: true, recipientConfirmed: true, blocked: false, optedOut: optedOutFor("friends"), nowMs: startMs - 10 * MINUTE, startMs, senderMet: false, leakClean: true, safetyClean: true });
+    const friendsRelayAfterLeave = evaluateArrivalRelay({ senderAge: peer.age, recipientAge: m.age, senderConfirmed: true, recipientConfirmed: true, blocked: false, senderOptedOut: false, recipientOptedOut: optedOutFor("friends"), nowMs: startMs - 10 * MINUTE, startMs, alreadyMet: false, passedSafetyAndLeakCheck: true });
 
     // Part B: "STOP" -> halts ALL apps
     const stopReading = parseOptOut("STOP", { apps: knownApps });
@@ -1992,7 +1992,7 @@ export async function runFiveCitySuite(
     const friendsOptedOutAfterStop = hFriends.net.memberList().find(x => x.id === m.id)?.optedOut === true;
     const slopAfterStop = evaluateFollowupSend({ optedOut: optedOutFor("slop"), isQuietHours: false, dailyProactiveCount: 0, remindersSent: 0 });
     const friendsAfterStop = evaluateFollowupSend({ optedOut: optedOutFor("friends"), isQuietHours: false, dailyProactiveCount: 0, remindersSent: 0 });
-    const friendsRelayAfterStop = evaluateArrivalRelay({ senderAge: peer.age, recipientAge: m.age, senderConfirmed: true, recipientConfirmed: true, blocked: false, optedOut: optedOutFor("friends"), nowMs: startMs - 10 * MINUTE, startMs, senderMet: false, leakClean: true, safetyClean: true });
+    const friendsRelayAfterStop = evaluateArrivalRelay({ senderAge: peer.age, recipientAge: m.age, senderConfirmed: true, recipientConfirmed: true, blocked: false, senderOptedOut: false, recipientOptedOut: optedOutFor("friends"), nowMs: startMs - 10 * MINUTE, startMs, alreadyMet: false, passedSafetyAndLeakCheck: true });
 
     invariants.canaryLeaks += hSlop.scanCanaries([m, peer]) + hFriends.scanCanaries([m, peer]);
 

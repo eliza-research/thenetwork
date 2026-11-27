@@ -202,7 +202,7 @@ export function slopVenue(
       : VENUES.filter(v => v.adultPlans).map(v => ({ id: v.id, name: v.name, neighborhood: v.neighborhood, lat: v.lat, lng: v.lng, tags: v.tags })))
     : (opts?.venues ? opts.venues.filter(v => v.city === city) : seedVenuesForCity(city))
       .filter(v => {
-        if (v.status !== "Active" || !v.public) return false;
+        if (v.status !== "active" || !v.public) return false;
         if (dark && !v.indoor) return false;
         if (opts?.nonDrinker && (v.isBarOnly || !v.alcoholOptional)) return false;
         if (opts?.maxBudgetTier !== undefined && v.priceTier > opts.maxBudgetTier) return false;

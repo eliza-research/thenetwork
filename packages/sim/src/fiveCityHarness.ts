@@ -491,7 +491,7 @@ export function generateFiveCityPopulation(seed = 42, perCity = 30): {
     const tz = CITY_TZ[city];
     EVENT_TEMPLATES.forEach((tpl, idx) => {
       const venue =
-        cityVenues.find(v => tpl.categories.includes(v.category) && !v.isBarOnly && v.ageMin <= 13) ??
+        cityVenues.find(v => tpl.categories.includes(v.category) && !v.isBarOnly && (v.ageMin ?? 0) <= 13) ??
         cityVenues.find(v => !v.isBarOnly)!;
       const day = 27 + (idx % 4);
       const startMs = fromLocal(2026, 11, day, tpl.hour, tz);

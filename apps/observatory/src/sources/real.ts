@@ -1244,7 +1244,7 @@ export class RealSource implements DataSource {
         memberCount: memberCounts.get(spec.id) ?? 0,
         opportunityCount: oppCounts.get(spec.id) ?? 0,
         venueCount: vc ? vc.total : (sql ? 0 : fallbackVenues.length),
-        activeVenueCount: vc ? vc.active : (sql ? 0 : fallbackVenues.filter(v => v.status === "Active").length),
+        activeVenueCount: vc ? vc.active : (sql ? 0 : fallbackVenues.filter(v => v.status === "active").length),
       });
     }
     for (const c of dbCities ?? []) {
@@ -1358,15 +1358,15 @@ export function toCoreVenueStatus(raw: unknown): VenueStatus {
   switch (String(raw ?? "").toLowerCase()) {
     case "suspect_closed":
     case "suspectclosed":
-      return "SuspectClosed";
+      return "suspect_closed";
     case "closed_temporary":
     case "closedtemporary":
-      return "ClosedTemporary";
+      return "closed_temporary";
     case "closed_permanent":
     case "closedpermanent":
-      return "ClosedPermanent";
+      return "closed_permanent";
     default:
-      return "Active";
+      return "active";
   }
 }
 
@@ -1431,21 +1431,21 @@ export function obsVenueFromRow(r: any): ObsVenue {
 }
 
 export function obsVenueFromSeed(v: VenueRecord): ObsVenue {
-  const groupScore = groupVenueRubricScore(
-    v.separateChecks,
-    v.walkInGroupCapacity,
-    v.noiseLevel,
-    v.liveMusicAtNight,
-    v.alcoholOptional,
-    v.servesVegetarian,
-    v.servesVegan,
-    v.safetyScore ?? 8,
-    v.indoor,
-    v.weatherSensitive,
-    v.arrivalLandmark.trim().length > 0,
-    v.transitScore ?? 4
-  );
-  const dateScore = Math.min(100, Math.max(40, Math.round((v.yelpRating ?? 4.3) * 18 + (v.noiseLevel === "Conversational" ? 12 : 4))));
+  const groupScore = groupVenueRubricScore({
+    separateChecks: v.separateChecks,
+    walkInCapacity: v.walkInGroupCapacity,
+    noiseLevel: v.noiseLevel,
+    liveMusicAtNight: v.liveMusicAtNight,
+    alcoholOptional: v.alcoholOptional,
+    servesVegetarian: v.servesVegetarian,
+    servesVegan: v.servesVegan,
+    safetyScore: v.safetyScore ?? 8,
+    indoor: v.indoor,
+    weatherSensitive: v.weatherSensitive,
+    hasArrivalLandmark: v.arrivalLandmark.trim().length > 0,
+    transitScore: v.transitScore ?? 4,
+  });
+  const dateScore = Math.min(100, Math.max(40, Math.round((v.yelpRating ?? 4.3) * 18 + (v.noiseLevel === "conversational" ? 12 : 4))));
   return {
     id: v.id,
     city: v.city,
