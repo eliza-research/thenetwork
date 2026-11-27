@@ -1815,11 +1815,10 @@ function removeBoundOfferDates(text: string, options: readonly TimeOption[]): st
     const at = match.index!, end = at + match[0].length;
     let bound = options.length === 1;
     if (!bound) {
-      const adjacent = mentions.filter(mention => (mention.end <= at && /^\s*$/.test(text.slice(mention.end, at)))
-        || (mention.at >= end && /^\s+(?:at\s+)?$/.test(text.slice(end, mention.at))));
+      const adjacent = mentions.filter(mention => (mention.end <= at && /^[\s,()[\]]*(?:the[\s,()[\]]*)?$/.test(text.slice(mention.end, at)))
+        || (mention.at >= end && /^[\s,()[\]]*(?:(?:at|the)[\s,()[\]]*)?$/.test(text.slice(end, mention.at))));
       bound = candidates.some(slot => adjacent.length > 0
-        && adjacent.every(mention => (!mention.day || mention.day === slot.day) && (mention.minute === undefined || mention.minute === slot.minute))
-        && adjacent.some(mention => mention.day === slot.day || mention.minute === slot.minute));
+        && adjacent.every(mention => (!mention.day || mention.day === slot.day) && (mention.minute === undefined || mention.minute === slot.minute)));
     }
     if (bound) spans.push([at, end]);
   }

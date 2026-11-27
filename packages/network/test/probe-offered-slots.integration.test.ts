@@ -15,6 +15,7 @@ const friday = { label: "Friday 7pm", start: Date.UTC(2026, 9, 16, 23) };
 const saturday = { label: "Saturday 11am", start: Date.UTC(2026, 9, 17, 15) };
 const earlierSaturday = { label: "Saturday 10am", start: Date.UTC(2026, 9, 17, 14) };
 const sunday = { label: "Sunday 2pm", start: Date.UTC(2026, 9, 18, 18) };
+const saturdayLate = { label: "Saturday 11pm", start: Date.UTC(2026, 9, 18, 3) };
 const three = [thursday, saturday, sunday];
 const weekend = [saturday.start, sunday.start];
 const clarifyTime = "Which of the offered times work for you? Reply with the letters or the times.";
@@ -128,6 +129,24 @@ const scenarios: Scenario[] = [
     slots: three, text: "Sunday at 2 may be best for me.", picked: [sunday.start] },
   { scene: "a single offered time with its matching date books that time",
     slots: [saturday], text: "Yes! See you on the 17th", picked: [saturday.start] },
+  { scene: "a weekday before a comma and its matching date books that time",
+    slots: three, text: "Saturday, the 17th works.", picked: [saturday.start] },
+  { scene: "a date with its matching weekday in brackets books that time",
+    slots: three, text: "The 17th (Saturday) works.", picked: [saturday.start] },
+  { scene: "a comma weekday after a date-only re-ask books that time",
+    slots: three, text: "The 17th works.", picked: [],
+    followUp: { text: "Saturday, the 17th works.", picked: [saturday.start] } },
+  { scene: "a bracketed weekday after a date-only re-ask books that time",
+    slots: three, text: "The 17th works.", picked: [],
+    followUp: { text: "The 17th (Saturday) works.", picked: [saturday.start] } },
+  { scene: "a weekday with a date in another month asks again",
+    slots: three, text: "Saturday 17 November works.", picked: [] },
+  { scene: "a weekday and date with another time's clock asks again",
+    slots: three, text: "Saturday the 17th at 2pm works.", picked: [] },
+  { scene: "another weekday with a date and its matching clock asks again",
+    slots: three, text: "Sunday the 17th at 11am works.", picked: [] },
+  { scene: "a late weekday with its matching date books that time",
+    slots: [thursday, saturdayLate, sunday], text: "Saturday the 17th works.", picked: [saturdayLate.start] },
   { scene: "a reported day does not add a choice to the sender's own answer",
     slots: three, text: "Saturday works. Ana said, Sunday.", picked: [saturday.start] },
   { scene: "a reported day alone does not book any offered time",
