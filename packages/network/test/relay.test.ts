@@ -348,6 +348,11 @@ test.each([
   "Send him my number. Let me think it over first.",
   "Send him my number. Hmm idk.",
   "Send him my number. Lol nevermind he's weird.",
+  "Give him my number, should he ask.",
+  "Give Ari my number should Ari ask.",
+  "Give him my number in the event that he asks.",
+  "Give him my number, assuming he asks.",
+  "Give him my number as soon as he asks.",
 ])("a trailing condition cannot arm or complete a signed number swap: %s", async text => {
   const id = "conditional-swap-" + randomUUID();
   await resetSwapMatch(id);
@@ -455,6 +460,11 @@ test.each([
   "My number is off limits, send Ari my number",
   "I can't believe it, “send Ari my number”",
   "I would not send Ari my number. I can still make Saturday.",
+  "Give Ari my phone charger",
+  "Give Ari my email password",
+  "He can have my number one spot in line",
+  "He can have my number?",
+  "She can have my phone number, please?",
 ])("the relay does not send a private item after %s", async (text) => {
   const id = "refused-share-" + randomUUID();
   const before = await sharesQueued();
@@ -703,7 +713,7 @@ test.each([
   { text: "Tell Ari I am running late. Don't send my number.", body: "I am running late.", decision: "pass", withdraws: true },
   { text: "Tell Ari: “I am running late.” Don't send my number.", body: "“I am running late.”", decision: "pass", withdraws: true },
   { text: "Tell Ari: “I am running late.” Don't send my number because I changed my mind.", body: "“I am running late.”", decision: "pass", withdraws: true },
-  { text: "Tell Ari: I am running late. Don't send my number.", body: "I am running late. Don't send my number.", decision: "pass" },
+  { text: "Tell Ari: I am running late. Don't send my number.", body: "I am running late. Don't send my number.", decision: "pass", withdraws: true },
   { text: "Tell Ari I am running late. Please send Ari my number. Don't send my number.", body: "I am running late.", decision: "pass", withdraws: true },
   { text: "Tell Ari: “I am running late.” Please send Ari my number. Don't send my number.", body: "“I am running late.”", decision: "pass", withdraws: true },
   { text: "Tell Sam I am running late. Please send Ari my number. Don't send my number.", body: null, decision: "block", withdraws: true },
@@ -712,8 +722,8 @@ test.each([
   { text: "Tell Ari I am running late. Please send Ari my number. Never mind.", body: null, decision: "none" },
   { text: "Tell Ari I am running late. Don't send it. Please send Ari my number.", body: null, decision: "none", withdraws: true },
   { text: "Tell Ari I am running late. Show him this. Please send Ari my number. Don't send my number.", body: null, decision: "none", withdraws: true },
-  { text: "Tell Ari:\nDon't send my number.", body: "Don't send my number.", decision: "pass" },
-  { text: "Tell Ari this exact text:\nDon't send my number.", body: "this exact text:\nDon't send my number.", decision: "pass" },
+  { text: "Tell Ari:\nDon't send my number.", body: "Don't send my number.", decision: "pass", withdraws: true },
+  { text: "Tell Ari this exact text:\nDon't send my number.", body: "this exact text:\nDon't send my number.", decision: "pass", withdraws: true },
 ])("a signed relay envelope applies only an authored withdrawal: $text", async ({ text, body, decision, withdraws }) => {
   const id = "relay-envelope-withdrawal-" + randomUUID();
   const pair = ++envelopeWithdrawalPair;
