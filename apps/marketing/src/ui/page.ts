@@ -8,6 +8,14 @@ export interface CommandCenterHtmlOptions {
   title?: string;
 }
 
+export const COMMAND_CENTER_SLOTS = {
+  backpressureBanner: "slot-core-backpressure",
+  cityExpansionStrip: "slot-city-expansion",
+  desireOutcomeMatrix: "slot-desire-outcomes",
+  llmBurnGauge: "slot-llm-burn",
+  simulatorPanel: "slot-dry-run-sim",
+} as const;
+
 export function commandCenterSecurityHeaders(opts?: { nonce?: string }): Record<string, string> {
   const noncePart = opts?.nonce ? ` 'nonce-${opts.nonce}'` : "";
   return {
@@ -32,7 +40,7 @@ export function commandCenterSecurityHeaders(opts?: { nonce?: string }): Record<
 }
 
 export function renderCommandCenterHtml(opts?: CommandCenterHtmlOptions): string {
-  const title = opts?.title ?? "The Network — Marketing";
+  const title = opts?.title ?? "The Network — Global Growth Command Center";
   const inline = Boolean(opts?.inlineAssets);
   const nonceAttr = opts?.nonce ? ` nonce="${escHtml(opts.nonce)}"` : "";
 
@@ -55,8 +63,8 @@ export function renderCommandCenterHtml(opts?: CommandCenterHtmlOptions): string
   ${styleTag}
 </head>
 <body>
-  <div id="app" role="application" aria-label="Marketing Command Center"></div>
-  <noscript><p>JavaScript is required to open the Marketing Command Center.</p></noscript>
+  <div id="app" role="application" aria-label="Global Growth Command Center" data-surface="global-city-growth"></div>
+  <noscript><p>JavaScript is required to open the Global Growth Command Center.</p></noscript>
   ${scriptTag}
 </body>
 </html>`;

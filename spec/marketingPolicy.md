@@ -455,6 +455,174 @@ pure def lawStopFenceBlocksAgentAndOutreach(
 ): bool =
   not(canDispatchAgentTurn(agentPaused, rateLimited, sessionHealthy, turnsToday, dailyTurnCap, true, lockdown))
     and not(canSendOutreach(true, targetBanned, lockdown, sentToday, dailyOutreachCap))
+```
+
+## Story: Enforce daily LLM budgets, queue backpressure, and cross-surface contact hygiene
+
+> As an operator, I want every marketing LLM call, paid intake wave, and outbound contact touch to stay inside daily token and cost ceilings, pause when platform review or outbound queues back up, and block minors, stopped or banned contacts, quiet-hours cold touches, and spam streaks.
+
+### Daily LLM calls stay within token and cost ceilings
+
+A marketing LLM call may proceed only when prior daily tokens and estimated call tokens are non-negative, the daily token ceiling is positive, their sum stays at or below `dailyTokenCap`, prior daily cost and estimated call cost in microdollars are non-negative, the daily cost ceiling is positive, and their sum stays at or below `dailyCostCapMicros`.
+
+```quint
+pure def llmBudgetWithinCaps(
+  tokensUsedToday: int,
+  estimatedTokens: int,
+  dailyTokenCap: int,
+  costMicrosToday: int,
+  estimatedCostMicros: int,
+  dailyCostCapMicros: int
+): bool =
+  tokensUsedToday >= 0
+    and estimatedTokens >= 0
+    and dailyTokenCap > 0
+    and tokensUsedToday + estimatedTokens <= dailyTokenCap
+    and costMicrosToday >= 0
+    and estimatedCostMicros >= 0
+    and dailyCostCapMicros > 0
+    and costMicrosToday + estimatedCostMicros <= dailyCostCapMicros
+
+pure def lawTokenCapBlocksLlm(
+  tokensUsedToday: int,
+  estimatedTokens: int,
+  dailyTokenCap: int,
+  costMicrosToday: int,
+  estimatedCostMicros: int,
+  dailyCostCapMicros: int
+): bool =
+  (tokensUsedToday + estimatedTokens > dailyTokenCap) implies not(llmBudgetWithinCaps(
+    tokensUsedToday, estimatedTokens, dailyTokenCap, costMicrosToday, estimatedCostMicros, dailyCostCapMicros
+  ))
+
+pure def lawCostCapBlocksLlm(
+  tokensUsedToday: int,
+  estimatedTokens: int,
+  dailyTokenCap: int,
+  costMicrosToday: int,
+  estimatedCostMicros: int,
+  dailyCostCapMicros: int
+): bool =
+  (costMicrosToday + estimatedCostMicros > dailyCostCapMicros) implies not(llmBudgetWithinCaps(
+    tokensUsedToday, estimatedTokens, dailyTokenCap, costMicrosToday, estimatedCostMicros, dailyCostCapMicros
+  ))
+```
+
+### Paid acquisition pauses when platform queues or messaging lines are under pressure
+
+Paid intake pauses whenever a platform messaging line is restricted, any review item is overdue (`reviewOverdue > 0`), open review items reach or pass `reviewBacklogLimit`, or waiting outbound messages reach or pass `outboundBacklogLimit`.
+
+```quint
+pure def queuePressurePaused(
+  lineRestricted: bool,
+  reviewOverdue: int,
+  reviewOpen: int,
+  reviewBacklogLimit: int,
+  outboundWaiting: int,
+  outboundBacklogLimit: int
+): bool =
+  lineRestricted
+    or reviewOverdue > 0
+    or reviewOpen >= reviewBacklogLimit
+    or outboundWaiting >= outboundBacklogLimit
+
+pure def lawLineRestrictedPausesPaid(
+  reviewOverdue: int,
+  reviewOpen: int,
+  reviewBacklogLimit: int,
+  outboundWaiting: int,
+  outboundBacklogLimit: int
+): bool =
+  queuePressurePaused(true, reviewOverdue, reviewOpen, reviewBacklogLimit, outboundWaiting, outboundBacklogLimit)
+
+pure def lawOverdueReviewPausesPaid(
+  lineRestricted: bool,
+  reviewOverdue: int,
+  reviewOpen: int,
+  reviewBacklogLimit: int,
+  outboundWaiting: int,
+  outboundBacklogLimit: int
+): bool =
+  (reviewOverdue > 0) implies queuePressurePaused(
+    lineRestricted, reviewOverdue, reviewOpen, reviewBacklogLimit, outboundWaiting, outboundBacklogLimit
+  )
+```
+
+### Cross-surface contact safety and cooldowns block minors, opt-outs, bans, quiet hours, and spam streaks
+
+A person may be contacted by marketing only when they are not stopped, not banned, not a known minor (`isKnownMinor == false`), and lockdown is off. Cold outreach also requires non-quiet hours, at least 14 days since the prior cold touch (`coldCooldownDays`), fewer than 2 cold touches in 30 days (`maxColdTouches30d`), and fewer than 2 unanswered cold touches (`maxUnansweredCold`). Operational follow-ups require fewer than 3 touches today (`maxOpTouchesPerDay`).
+
+```quint
+pure val coldCooldownDays: int = 14
+pure val maxColdTouches30d: int = 2
+pure val maxUnansweredCold: int = 2
+pure val maxOpTouchesPerDay: int = 3
+
+pure def contactSafetyEligible(
+  isStopped: bool,
+  isBanned: bool,
+  isKnownMinor: bool,
+  lockdown: bool
+): bool =
+  not(isStopped)
+    and not(isBanned)
+    and not(isKnownMinor)
+    and not(lockdown)
+
+pure def lawKnownMinorNeverContacted(
+  isStopped: bool,
+  isBanned: bool,
+  lockdown: bool
+): bool =
+  not(contactSafetyEligible(isStopped, isBanned, true, lockdown))
+
+pure def lawStoppedNeverContacted(
+  isBanned: bool,
+  isKnownMinor: bool,
+  lockdown: bool
+): bool =
+  not(contactSafetyEligible(true, isBanned, isKnownMinor, lockdown))
+
+pure def contactCooldownAllowed(
+  isCold: bool,
+  isQuietHours: bool,
+  daysSinceCold: int,
+  coldTouches30d: int,
+  unansweredCold: int,
+  opTouchesToday: int
+): bool =
+  if (isCold) (
+    not(isQuietHours)
+      and daysSinceCold >= coldCooldownDays
+      and coldTouches30d >= 0
+      and coldTouches30d < maxColdTouches30d
+      and unansweredCold >= 0
+      and unansweredCold < maxUnansweredCold
+  ) else (
+    opTouchesToday >= 0 and opTouchesToday < maxOpTouchesPerDay
+  )
+
+pure def lawColdCooldownBlocksEarlyTouch(
+  isQuietHours: bool,
+  daysSinceCold: int,
+  coldTouches30d: int,
+  unansweredCold: int,
+  opTouchesToday: int
+): bool =
+  (daysSinceCold < coldCooldownDays) implies not(contactCooldownAllowed(
+    true, isQuietHours, daysSinceCold, coldTouches30d, unansweredCold, opTouchesToday
+  ))
+
+pure def lawUnansweredStreakStopsCold(
+  isQuietHours: bool,
+  daysSinceCold: int,
+  coldTouches30d: int,
+  unansweredCold: int,
+  opTouchesToday: int
+): bool =
+  (unansweredCold >= maxUnansweredCold) implies not(contactCooldownAllowed(
+    true, isQuietHours, daysSinceCold, coldTouches30d, unansweredCold, opTouchesToday
+  ))
 
 pure val tierValues = Set(0, 1, 2, 3, 4)
 pure val amountCentsValues = Set(-10, 0, 100, 200, 400, 500)
@@ -476,4 +644,19 @@ pure val turnsTodayValues = Set(-1, 0, 1, 2)
 pure val dailyTurnCapValues = Set(0, 2)
 pure val sentTodayValues = Set(-1, 0, 1, 2)
 pure val dailyOutreachCapValues = Set(0, 2)
+pure val tokensUsedTodayValues = Set(-1, 0, 800, 1000)
+pure val estimatedTokensValues = Set(-1, 0, 200, 300)
+pure val dailyTokenCapValues = Set(0, 1000)
+pure val costMicrosTodayValues = Set(-1, 0, 400, 500)
+pure val estimatedCostMicrosValues = Set(-1, 0, 100, 200)
+pure val dailyCostCapMicrosValues = Set(0, 500)
+pure val reviewOverdueValues = Set(0, 1, 2)
+pure val reviewOpenValues = Set(0, 10, 20)
+pure val reviewBacklogLimitValues = Set(10, 20)
+pure val outboundWaitingValues = Set(0, 50, 100)
+pure val outboundBacklogLimitValues = Set(50, 100)
+pure val daysSinceColdValues = Set(0, 7, 13, 14, 30)
+pure val coldTouches30dValues = Set(-1, 0, 1, 2)
+pure val unansweredColdValues = Set(-1, 0, 1, 2)
+pure val opTouchesTodayValues = Set(-1, 0, 2, 3)
 ```

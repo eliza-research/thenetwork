@@ -1,8 +1,8 @@
-# The Network Growth, Street-Team, Creator & Automated Marketing Strategy
+# The Network Global City-by-City Growth, Street-Team, Creator & Automated Marketing Strategy
 
-- **Scope:** NYC-first autonomous acquisition and Business Development (BD) strategy for `slop.date`, `ntwrk.party`, `peon.biz`, `friends.help`, and `eliza.app`, engineered with built-in legal and vendor configurations across all seven supported metros (`nyc`, `sf`, `la`, `chicago`, `miami`, `austin`, `london`).
-- **Operating Principle:** Put in a credit card and it runs. All hiring, vendor outreach, creator sourcing, proof verification, contextual bandit budget rebalancing, anti-fraud vetting, BD contracting, VIP outreach, short-form video scripting, and payout release execute automatically inside `apps/marketing` with zero internal team street labor.
-- **Companion Documents:** [README.md](README.md) · [PRD.md](PRD.md) · [NYC-STREET-TEAMS-AND-AGENCIES.md](NYC-STREET-TEAMS-AND-AGENCIES.md) · [SLOP-CASH-INTEGRATION.md](SLOP-CASH-INTEGRATION.md)
+- **Scope:** City-by-city global autonomous acquisition and Business Development (BD) strategy launching in New York City (`nyc`) first across all four core apps (`slop.date`, `ntwrk.party`, `peon.biz`, `friends.help`) and `eliza.app`, powered by declarative `CityPack` configs (`nyc`, `sf`, `la`, `chicago`, `miami`, `austin`, `london`, plus runtime `registerCityPack()`) and the Universal `DesireLane` taxonomy (`money_work`, `ideal_friends`, `soulmate_dating`, `elite_serendipity`, plus 8 extensible life-desire lanes).
+- **Operating Principle:** Put in a credit card and it runs — safely. All hiring, vendor outreach, creator sourcing, proof verification, contextual bandit rebalancing, anti-fraud vetting, BD contracting, VIP outreach, short-form video scripting, and payout release execute automatically inside `apps/marketing` with zero internal street labor, bounded by Dafny-proved spend/LLM/contact-hygiene caps, core platform backpressure (`queuePressurePaused`), and offline simulation gates (`pnpm run sim --only marketing`).
+- **Companion Documents:** [README.md](README.md) · [CITY-LAUNCH-PLAYBOOK.md](CITY-LAUNCH-PLAYBOOK.md) · [PRD.md](PRD.md) · [NYC-STREET-TEAMS-AND-AGENCIES.md](NYC-STREET-TEAMS-AND-AGENCIES.md) · [SLOP-CASH-INTEGRATION.md](SLOP-CASH-INTEGRATION.md)
 
 ---
 
@@ -57,7 +57,7 @@ No single channel must reach `K > 1.0` alone. Four compounding loops stack on to
 
 | Persona | App & Surface | Primary -> Failover | Voice & Visual Identity | Owned Growth Loops | Hard Safety Rules |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Chadwick** | `ntwrk.party` / `slop.date` | `chatgpt` -> `claude` | Acid Chartreuse `#dcf24a` on `#141414`; chaotic NYC wingman | NYC launches, street-interview briefs, singles-bar activations, `nycmarketcap.lol`, dating-app comedy shorts | Never reveals Clef scores; 18+ only for hiring/dating; mandatory AI disclosure |
+| **Chadwick** | `slop.date` (`soulmate_dating`) | `chatgpt` -> `claude` | Acid Chartreuse `#dcf24a` on `#141414`; blunt anti-swipe wingman | City launches, street-interview briefs, singles-bar activations, `nycmarketcap.lol`, dating-app comedy shorts | Never reveals Clef scores; 18+ only for hiring/dating; mandatory AI disclosure |
 | **Sloane** | `slop.date` | `claude` -> `chatgpt` | Acid Chartreuse `#dcf24a` on stark B&W; sharp LES bestie | Female-audience creator briefs, Nominate-a-Friend cards, forensic red-flag video shorts, Sunday dinner curation | 100% gender-neutral pricing/bounties; zero facial-geometry scans |
 | **Peon** | `peon.biz` | `gemini` -> `claude` | Safety Orange `#f59a3c`; deadpan anti-LinkedIn fixer | GitHub/arXiv/Form-D/HN builder outreach, VC portfolio pacts, Ghost-Job video parodies, MCP/ClawHub registries | Strict `slop` != `peon` data air-gap (zero dating/Clef signal access) |
 | **Venn** | `friends.help` | `claude` -> `gemini` | Forest & bright green Venn rings; energetic NYC social director | Ticket-funded neighborhood dinners, Luma host `afterparty` matching, 3+3 clique videos, run-club & newcomer intercepts | `ROMANCE_FRAMING` filter active; public commercial venues only |
@@ -217,13 +217,14 @@ All plays run with zero gimmicky hardware and feed directly into `SOLO_KINDLING`
 
 ---
 
-## 6. 7-Metro Replication Playbook (`cities.ts`)
+## 6. City-by-City Global Expansion & Universal Desire Graph (`city-registry.ts`, `desire-lanes.ts`)
 
-Once NYC proves repeatable unit economics (`>= 450` verified 18+ NYC adults in Month 1, direct CPA trending `<= $12`, `0` safety/minor/leak violations, `STOP < 3%`), `apps/marketing/src/cities.ts` already encodes full corridors, transit keywords, discovery endpoints, vendor presets, and statutory labor/flier guardrails for all **7 supported metros** (`nyc`, `sf`, `la`, `chicago`, `miami`, `austin`, `london`):
+Once NYC proves repeatable unit economics (`>= 450` verified 18+ NYC adults in Month 1, direct CPA trending `<= $12`, `0` safety/minor/leak violations, `STOP < 3%`), `apps/marketing/src/city-registry.ts` and `city-launch-engine.ts` replicate the launch into any metro via declarative `CityPack` configs (7 built-in metros: `nyc`, `sf`, `la`, `chicago`, `miami`, `austin`, `london`, plus any new city registered via `registerCityPack()` or `marketing.city_packs` with zero code forks — see [CITY-LAUNCH-PLAYBOOK.md](CITY-LAUNCH-PLAYBOOK.md)):
 
-1. **Pre-Activation Readiness Gate (`canActivateCityExpansion`):** Non-primary cities accumulate traffic in `SOLO_KINDLING` until they meet both verified 18+ Stage-2 waitlist adults and signed partner venue thresholds.
-2. **Code-Enforced Local Legal Guardrails (`checkCityHiringCompliance`):**
-   - **San Francisco (`sf`) & Los Angeles (`la`):** **CA AB5 W-2 hard gate** — blocks direct `1099_direct` hourly street-team hiring automatically; requires `w2_agency` staffing plus `CA Civ Code § 3344` commercial releases.
+1. **5-Stage Launch Readiness & Core Platform Sync (`evaluateCityStageReadiness`):** Cities progress through `researching -> waitlist_kindling -> liquidity_seeding -> live_matching -> scaling`. `platformActive` derives automatically from `packages/core/src/cities.ts`, and `NetworkCoreBridge` (`supply_demand_k5` + `queuePressurePaused`) pauses cold acquisition automatically if core review or outbound queues build backlog.
+2. **Universal Desire & Experience Taxonomy (`desire-lanes.ts`):** Every campaign, discovery lead, BD partner, VIP prospect, bandit arm, video script, and attribution event tags a `DesireLane` — starting with the 4 launch pillars (`money_work`, `ideal_friends`, `soulmate_dating`, `elite_serendipity`) and expanding seamlessly into 8 life-desire lanes (`cofounder_venture`, `investors_patrons`, `mentorship_mastery`, `creative_collab`, `sport_wellness_crew`, `shared_living_home`, `travel_expedition`, `bespoke_irl_experience`) while preserving the `slop != peon` air-gap.
+3. **Code-Enforced Local Legal Guardrails (`checkCityHiringCompliance`):**
+   - **San Francisco (`sf`) & Los Angeles (`la`):** **CA AB5 W-2 hard gate** — blocks direct `1099_direct` hourly street-team hiring automatically; auto-routes starter tasks to `agency_booking` plus `CA Civ Code § 3344` commercial releases.
    - **London (`london`):** **UK EPA 1990 Schedule 3A hard gate** — blocks street fliering automatically unless a valid borough Free Printed Matter Distribution Licence reference (`boroughLicenceRef`) is provided and UK PAYE/agency compliance is met.
    - **Chicago (`chicago`), Miami (`miami`), Austin (`austin`):** Enforces IL Freelance Worker Protection Act & `765 ILCS 1075`, Miami Beach Ch. 46 commercial handbill restrictions & `FL Stat. § 540.08`, and Austin right-of-way rules.
-3. **Uniform Formal Governance:** Every city inherits the exact same **19 Dafny-proved obligations** (`spec/marketingPolicy.md` + `spec/marketingDevice.md`) and **9 Quint safety invariants** (`spec/models/marketing_campaign.md`) automatically.
+4. **Uniform Formal Governance & Offline Simulation:** Every city inherits the exact same **27 Dafny-proved obligations** (`spec/marketingPolicy.md` + `spec/marketingDevice.md`), whole-flow Quint invariants (`spec/models/marketing_campaign.md`), cross-schema `contact_fence` + contact-hygiene cooldowns, LLM `PromptCache` + daily token/cost caps, and the offline 30-day deterministic simulator gate (`pnpm run sim --only marketing`).

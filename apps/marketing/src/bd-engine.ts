@@ -5,15 +5,28 @@ import {
   RENTAHUMAN_BUYER_FEE_RATE,
   RENTAHUMAN_MCP_ENDPOINT,
 } from "./constants.ts";
-import { evaluateBdDealBounds } from "./policy.ts";
+import {
+  buildBdVenueCandidate,
+  type BdVenueCandidateOptions,
+  type NetworkCoreBridge,
+} from "./network-bridge.ts";
+import {
+  evaluateBdDealBounds,
+  evaluateContactHygiene,
+  keyedContactHash,
+} from "./policy.ts";
+import type { MarketingStore } from "./store.ts";
 import type {
   AppId,
   BdDeal,
   BdDealStage,
+  BdVenueCandidate,
   Clock,
   QrBatch,
   QrBatchAssigneeType,
 } from "./types.ts";
+
+export { buildBdVenueCandidate };
 
 export const BD_PIPELINE_STAGES: readonly BdDealStage[] = [
   "prospect",
@@ -135,13 +148,67 @@ function sanitizeBatchSegment(raw: string): string {
     .slice(0, 18);
 }
 
+export const MAX_DTMF_CHALLENGES = 500;
+
 export class BdPipelineEngine {
   private readonly clock: Clock;
   private readonly maxVenueOfferCents: number;
+  private readonly dtmfChallenges = new Map<string, DtmfCallbackChallenge>();
+  private readonly maxDtmfChallenges: number;
 
-  constructor(opts?: { readonly clock?: Clock; readonly maxVenueOfferCents?: number }) {
+  constructor(opts?: {
+    readonly clock?: Clock;
+    readonly maxVenueOfferCents?: number;
+    readonly maxDtmfChallenges?: number;
+  }) {
     this.clock = opts?.clock ?? new RealClock();
     this.maxVenueOfferCents = opts?.maxVenueOfferCents ?? DEFAULT_MAX_VENUE_OFFER_CENTS;
+    this.maxDtmfChallenges = Math.max(1, opts?.maxDtmfChallenges ?? MAX_DTMF_CHALLENGES);
+  }
+
+  pruneExpiredDtmfChallenges(): number {
+    const nowMs = this.clock.now();
+    let removed = 0;
+    for (const [dealId, challenge] of this.dtmfChallenges.entries()) {
+      const expMs = Date.parse(challenge.expiresAtIso);
+      if (!Number.isFinite(expMs) || nowMs > expMs) {
+        this.dtmfChallenges.delete(dealId);
+        removed += 1;
+      }
+    }
+    return removed;
+  }
+
+  getDtmfChallenge(dealId: string): DtmfCallbackChallenge | null {
+    this.pruneExpiredDtmfChallenges();
+    return this.dtmfChallenges.get(dealId) ?? null;
+  }
+
+  get activeDtmfChallengeCount(): number {
+    this.pruneExpiredDtmfChallenges();
+    return this.dtmfChallenges.size;
+  }
+
+  verifyStoredDtmfPin(
+    dealId: string,
+    submittedPin: string,
+  ): { readonly verified: boolean; readonly reason?: string } {
+    const challenge = this.getDtmfChallenge(dealId);
+    if (!challenge) {
+      return { verified: false, reason: "dtmf_challenge_missing_or_expired" };
+    }
+    const res = this.verifyDtmfPin(challenge, submittedPin);
+    if (res.verified) {
+      this.dtmfChallenges.delete(dealId);
+    }
+    return res;
+  }
+
+  toVenueCandidate(deal: BdDeal, opts?: BdVenueCandidateOptions): BdVenueCandidate | null {
+    return buildBdVenueCandidate(deal, {
+      ...opts,
+      nowIso: opts?.nowIso ?? new Date(this.clock.now()).toISOString(),
+    });
   }
 
   evaluateBounds(
@@ -219,17 +286,30 @@ export class BdPipelineEngine {
     const expectedPin = String(numeric).padStart(4, "0");
     const pinHash = sha256Hex(`${dealId}:${expectedPin}`);
 
+    const challenge: DtmfCallbackChallenge = {
+      dealId,
+      businessPhone: cleanPhone,
+      pinHash,
+      issuedAtIso,
+      expiresAtIso,
+      callbackWindowNote:
+        "15-second automated Twilio SIP verification to public Google Maps business landline (14:00-16:15 local pre-service window only).",
+    };
+
+    this.pruneExpiredDtmfChallenges();
+    if (this.dtmfChallenges.has(dealId)) {
+      this.dtmfChallenges.delete(dealId);
+    }
+    while (this.dtmfChallenges.size >= this.maxDtmfChallenges) {
+      const oldestKey = this.dtmfChallenges.keys().next().value;
+      if (oldestKey === undefined) break;
+      this.dtmfChallenges.delete(oldestKey);
+    }
+    this.dtmfChallenges.set(dealId, challenge);
+
     return {
       expectedPin,
-      challenge: {
-        dealId,
-        businessPhone: cleanPhone,
-        pinHash,
-        issuedAtIso,
-        expiresAtIso,
-        callbackWindowNote:
-          "15-second automated Twilio SIP verification to public Google Maps business landline (14:00-16:15 local pre-service window only).",
-      },
+      challenge,
     };
   }
 
@@ -397,4 +477,143 @@ export class BdPipelineEngine {
       },
     };
   }
+}
+
+export interface BdOutreachGateInput {
+  readonly deal: Pick<BdDeal, "id" | "campaignId" | "contactEmail" | "businessPhone">;
+  readonly store: MarketingStore;
+  readonly bridge?: NetworkCoreBridge;
+  readonly clock?: Clock;
+  readonly lockdown?: boolean;
+  readonly isCold?: boolean;
+  readonly isQuietHours?: boolean;
+  readonly env?: Record<string, string | undefined>;
+}
+
+export interface BdOutreachGateResult {
+  readonly allowed: boolean;
+  readonly reason?: string;
+  readonly contactHash?: string;
+}
+
+export async function gateBdOutreach(input: BdOutreachGateInput): Promise<BdOutreachGateResult> {
+  const env = input.env ?? process.env;
+  const clock = input.clock ?? input.store.clock ?? new RealClock();
+  const emailHash = input.deal.contactEmail
+    ? keyedContactHash("email", input.deal.contactEmail, env)
+    : null;
+  const phoneHash = input.deal.businessPhone
+    ? keyedContactHash("phone", input.deal.businessPhone, env)
+    : null;
+  const contactHash = emailHash ?? phoneHash;
+  if (!contactHash) {
+    return { allowed: false, reason: "missing_bd_contact_address" };
+  }
+
+  const suppression =
+    (emailHash ? await input.store.isContactSuppressed(emailHash) : null) ??
+    (phoneHash ? await input.store.isContactSuppressed(phoneHash) : null);
+
+  let bridgeBanned = false;
+  let bridgeStopped = false;
+  let bridgeMinor = false;
+  let bridgeReason: string | undefined;
+  if (input.bridge) {
+    const verdict = await input.bridge.checkContactFence({
+      phone: input.deal.businessPhone ?? null,
+      phoneHash,
+      email: input.deal.contactEmail ?? null,
+    });
+    if (!verdict.allowed) {
+      bridgeBanned =
+        verdict.banned || verdict.recycledHold || (!verdict.globallyStopped && !verdict.knownMinor);
+      bridgeStopped = verdict.globallyStopped;
+      bridgeMinor = verdict.knownMinor;
+      bridgeReason = verdict.reason;
+    }
+  }
+
+  const isKnownMinor = Boolean(suppression?.isMinor) || bridgeMinor;
+  const isStopped =
+    bridgeStopped || Boolean(suppression && suppression.reason.includes("stop"));
+  const isBanned =
+    bridgeBanned ||
+    Boolean(suppression && !suppression.isMinor && !suppression.reason.includes("stop"));
+
+  const stats = await input.store.getContactTouchpointStats(contactHash, clock.now());
+  const hygiene = evaluateContactHygiene({
+    isStopped,
+    isBanned,
+    isKnownMinor,
+    lockdown: Boolean(input.lockdown),
+    isCold: input.isCold ?? true,
+    isQuietHours: Boolean(input.isQuietHours),
+    daysSinceCold: stats.daysSinceLastCold,
+    coldTouches30d: stats.coldTouches30d,
+    unansweredCold: stats.unansweredColdStreak,
+    opTouchesToday: stats.opTouchesToday,
+  });
+
+  if (!hygiene.allowed) {
+    return {
+      allowed: false,
+      reason: bridgeReason ?? hygiene.reason,
+      contactHash,
+    };
+  }
+  return { allowed: true, contactHash };
+}
+
+export async function recordBdOutreachTouch(
+  store: MarketingStore,
+  input: {
+    readonly contactHash: string;
+    readonly campaignId?: string | null;
+    readonly isCold?: boolean;
+    readonly answered?: boolean;
+  },
+): Promise<void> {
+  await store.recordContactTouchpoint({
+    contactHash: input.contactHash,
+    campaignId: input.campaignId ?? null,
+    surface: "bd",
+    isCold: input.isCold ?? true,
+    answered: input.answered ?? false,
+  });
+}
+
+export async function syncVenueClosuresFromBridge(
+  store: MarketingStore,
+  bridge: NetworkCoreBridge,
+  opts: { readonly city?: string; readonly campaignId?: string } = {},
+): Promise<{ readonly checked: number; readonly flaggedDealIds: string[] }> {
+  const closures = await bridge.getVenueClosureSignals(opts.city);
+  if (closures.length === 0) {
+    return { checked: 0, flaggedDealIds: [] };
+  }
+  const deals = await store.listBdDeals({
+    campaignId: opts.campaignId,
+    city: opts.city,
+    limit: 500,
+  });
+  const closureMap = new Map(
+    closures.map((c) => [`${c.city.trim().toLowerCase()}:${c.name.trim().toLowerCase()}`, c]),
+  );
+  const flaggedDealIds: string[] = [];
+  for (const deal of deals) {
+    if (deal.stage === "closed_lost") continue;
+    const key = `${deal.city.trim().toLowerCase()}:${deal.venueName.trim().toLowerCase()}`;
+    const signal = closureMap.get(key);
+    if (!signal) continue;
+    const tag = `[platform_venue_closure:${signal.status}:${signal.closureReports}]`;
+    const nextNotes = deal.notes?.includes(tag)
+      ? deal.notes
+      : [deal.notes, tag].filter(Boolean).join(" ");
+    await store.updateBdDeal(deal.id, {
+      notes: nextNotes,
+      ...(signal.status === "closed_permanent" ? { stage: "closed_lost" } : {}),
+    });
+    flaggedDealIds.push(deal.id);
+  }
+  return { checked: closures.length, flaggedDealIds };
 }

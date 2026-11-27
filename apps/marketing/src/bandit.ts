@@ -1,5 +1,6 @@
 import { Rng } from "../../../packages/core/src/rng.ts";
-import type { AppId, RiskDial } from "./types.ts";
+import { evaluateBanditArmEligibility } from "./policy.ts";
+import type { AppId, BanditArm as StoredBanditArm, Campaign, RiskDial } from "./types.ts";
 
 export type BanditTrack =
   | "street_fliering"
@@ -11,6 +12,18 @@ export type BanditTrack =
   | "vip_salon"
   | "video_factory"
   | "organic_play";
+
+export const VALID_BANDIT_TRACKS: ReadonlySet<string> = new Set<BanditTrack>([
+  "street_fliering",
+  "creator_video",
+  "event_activation",
+  "print_qr",
+  "agency_reserve",
+  "bd_venue",
+  "vip_salon",
+  "video_factory",
+  "organic_play",
+]);
 
 export type BanditArmState =
   | "active"
@@ -28,6 +41,7 @@ export interface BanditArm {
   readonly playCode: string | null;
   readonly city: string;
   readonly appId: AppId;
+  readonly desireLane?: string | null;
   readonly alpha: number;
   readonly beta: number;
   readonly decayGamma: number;
@@ -43,6 +57,63 @@ export interface BanditArm {
   readonly state: BanditArmState;
   readonly killReason: string | null;
   readonly updatedAt: string;
+}
+
+export type StoredBanditArmLike = StoredBanditArm & {
+  readonly verifiedOutcomes?: number;
+  readonly desireLane?: string | null;
+  readonly city?: string;
+  readonly appId?: AppId;
+  readonly targetCpaCents?: number;
+};
+
+export function toBanditTrack(track: string): BanditTrack {
+  return VALID_BANDIT_TRACKS.has(track) ? (track as BanditTrack) : "organic_play";
+}
+
+export function toAllocatorBanditArm(
+  arm: StoredBanditArmLike,
+  campaign: Pick<
+    Campaign,
+    "city" | "appId" | "monthlyBudgetCents" | "spentCents" | "reservedCents"
+  >,
+): BanditArm {
+  const allocatedShareBps = Math.max(0, Math.min(10_000, Math.round(arm.weight * 10_000)));
+  const remaining = Math.max(
+    0,
+    campaign.monthlyBudgetCents - campaign.spentCents - campaign.reservedCents,
+  );
+  return {
+    id: arm.id,
+    campaignId: arm.campaignId,
+    armKey: arm.armKey,
+    label: arm.label,
+    track: toBanditTrack(arm.track),
+    playCode: null,
+    city: arm.city ?? campaign.city,
+    appId: arm.appId ?? campaign.appId,
+    desireLane: arm.desireLane ?? null,
+    alpha: Math.max(0.01, arm.alpha),
+    beta: Math.max(0.01, arm.beta),
+    decayGamma: 0.92,
+    exposures: Math.max(0, arm.totalContacts),
+    verifiedT2Joins: Math.max(0, arm.signups),
+    verifiedT3Matches: Math.max(0, Math.floor(arm.verifiedOutcomes ?? 0)),
+    stopCount: Math.max(0, arm.stopEvents),
+    ftcFailCount: 0,
+    spentCents: Math.max(0, arm.spendCents),
+    targetCpaCents: Math.max(1, Math.round(arm.targetCpaCents ?? 858)),
+    allocatedShareBps,
+    allocatedCents: Math.round((remaining * allocatedShareBps) / 10_000),
+    state:
+      arm.status === "killed"
+        ? "auto_killed"
+        : arm.status === "paused"
+          ? "paused_low_roi"
+          : "active",
+    killReason: null,
+    updatedAt: arm.updatedAt,
+  };
 }
 
 export interface BanditObservation {
@@ -103,6 +174,9 @@ export interface BanditRebalanceInput {
 export interface BanditArmDecision {
   readonly armId: string;
   readonly armKey: string;
+  readonly city?: string;
+  readonly desireLane?: string | null;
+  readonly track?: BanditTrack;
   readonly previousShareBps: number;
   readonly nextShareBps: number;
   readonly allocatedCents: number;
@@ -213,14 +287,23 @@ export function evaluateArmKillRules(
   }
 
   const stopRate = observedStopRate(arm);
-  if (
-    arm.exposures >= policy.minExposuresBeforeStopKill &&
-    stopRate > policy.hardStopRateKill
-  ) {
-    return {
-      state: "halted_safety",
-      killReason: `stop_rate_exceeded (${(stopRate * 100).toFixed(2)}% > ${(policy.hardStopRateKill * 100).toFixed(1)}%)`,
-    };
+  const stopRateBps = Math.round(stopRate * 10_000);
+  const maxStopRateBps = Math.round(policy.hardStopRateKill * 10_000);
+  const maxAllowedCpa = Math.round(arm.targetCpaCents * policy.maxCpaMultiplierKill);
+
+  if (arm.exposures >= policy.minExposuresBeforeStopKill) {
+    const stopEligibility = evaluateBanditArmEligibility({
+      cpaCents: 0,
+      maxCpaCents: maxAllowedCpa,
+      stopRateBps,
+      maxStopRateBps,
+    });
+    if (!stopEligibility.eligible) {
+      return {
+        state: "halted_safety",
+        killReason: `stop_rate_exceeded (${(stopRate * 100).toFixed(2)}% > ${(policy.hardStopRateKill * 100).toFixed(1)}%)`,
+      };
+    }
   }
 
   if (
@@ -228,17 +311,20 @@ export function evaluateArmKillRules(
     activeHealthyCount > 1
   ) {
     const cpa = observedCpaCents(arm);
-    const maxAllowedCpa = Math.round(arm.targetCpaCents * policy.maxCpaMultiplierKill);
-    if (cpa !== null && cpa > maxAllowedCpa) {
+    const effectiveCpa = cpa !== null ? cpa : arm.spentCents;
+    const cpaEligibility = evaluateBanditArmEligibility({
+      cpaCents: effectiveCpa,
+      maxCpaCents: maxAllowedCpa,
+      stopRateBps: 0,
+      maxStopRateBps,
+    });
+    if (!cpaEligibility.eligible) {
       return {
         state: "auto_killed",
-        killReason: `cpa_exceeded_2_5x_target (${cpa}c > ${maxAllowedCpa}c)`,
-      };
-    }
-    if (cpa === null && arm.spentCents > maxAllowedCpa) {
-      return {
-        state: "auto_killed",
-        killReason: `zero_joins_after_${arm.exposures}_exposures_and_${arm.spentCents}c_spend`,
+        killReason:
+          cpa !== null
+            ? `cpa_exceeded_2_5x_target (${cpa}c > ${maxAllowedCpa}c)`
+            : `zero_joins_after_${arm.exposures}_exposures_and_${arm.spentCents}c_spend`,
       };
     }
   }
@@ -335,20 +421,24 @@ function distributeLargestRemainder(
   return out;
 }
 
-export function createDefaultNycBanditArms(
+export function createDefaultCityBanditArms(
   campaignId: string,
+  city: string,
   updatedAtIso: string,
 ): BanditArm[] {
+  const code = city.trim().toLowerCase() || "nyc";
+  const upper = code.toUpperCase();
   return [
     {
       id: `${campaignId}:street_fliering`,
       campaignId,
       armKey: "street_fliering",
-      label: "Direct Street Teams (CL + RentAHuman)",
+      label: `Direct Street Teams (${upper})`,
       track: "street_fliering",
-      playCode: "NYC-TRACK-A",
-      city: "nyc",
+      playCode: `${upper}-TRACK-A`,
+      city: code,
       appId: "all",
+      desireLane: "ideal_friends",
       alpha: 2,
       beta: 8,
       decayGamma: 0.92,
@@ -371,9 +461,10 @@ export function createDefaultNycBanditArms(
       armKey: "creator_video",
       label: "Street-Interview Creators (YT/TT/IG)",
       track: "creator_video",
-      playCode: "NYC-TRACK-B",
-      city: "nyc",
+      playCode: `${upper}-TRACK-B`,
+      city: code,
       appId: "slop",
+      desireLane: "soulmate_dating",
       alpha: 2,
       beta: 8,
       decayGamma: 0.92,
@@ -394,11 +485,12 @@ export function createDefaultNycBanditArms(
       id: `${campaignId}:event_activation`,
       campaignId,
       armKey: "event_activation",
-      label: "NYC Event & Venue Activators",
+      label: `${upper} Event & Venue Activators`,
       track: "event_activation",
-      playCode: "NYC-TRACK-C",
-      city: "nyc",
+      playCode: `${upper}-TRACK-C`,
+      city: code,
       appId: "friends",
+      desireLane: "ideal_friends",
       alpha: 2,
       beta: 8,
       decayGamma: 0.92,
@@ -421,9 +513,10 @@ export function createDefaultNycBanditArms(
       armKey: "print_qr",
       label: "Serialized 4x6 QR Flier Print",
       track: "print_qr",
-      playCode: "NYC-TRACK-D",
-      city: "nyc",
+      playCode: `${upper}-TRACK-D`,
+      city: code,
       appId: "all",
+      desireLane: "money_work",
       alpha: 2,
       beta: 8,
       decayGamma: 0.92,
@@ -444,11 +537,12 @@ export function createDefaultNycBanditArms(
       id: `${campaignId}:agency_reserve`,
       campaignId,
       armKey: "agency_reserve",
-      label: "W-2 NYC Agency Surge Reserve",
+      label: `W-2 ${upper} Agency Surge Reserve`,
       track: "agency_reserve",
-      playCode: "NYC-TRACK-E",
-      city: "nyc",
+      playCode: `${upper}-TRACK-E`,
+      city: code,
       appId: "all",
+      desireLane: "elite_serendipity",
       alpha: 1,
       beta: 4,
       decayGamma: 0.92,
@@ -468,6 +562,18 @@ export function createDefaultNycBanditArms(
   ];
 }
 
+export function createDefaultNycBanditArms(
+  campaignId: string,
+  updatedAtIso: string,
+): BanditArm[] {
+  const arms = createDefaultCityBanditArms(campaignId, "nyc", updatedAtIso);
+  return arms.map((arm) =>
+    arm.track === "street_fliering"
+      ? { ...arm, label: "Direct Street Teams (CL + RentAHuman)" }
+      : arm,
+  );
+}
+
 export function computeBanditAllocations(
   input: BanditRebalanceInput,
 ): BanditRebalanceResult {
@@ -485,19 +591,22 @@ export function computeBanditAllocations(
       allocatedCents: 0,
       updatedAt: input.nowIso,
     }));
-    const decisions: BanditArmDecision[] = lockedArms.map((arm) => ({
-      armId: arm.id,
-      armKey: arm.armKey,
-      previousShareBps: arm.allocatedShareBps,
+    const decisions: BanditArmDecision[] = input.arms.map((origArm) => ({
+      armId: origArm.id,
+      armKey: origArm.armKey,
+      city: origArm.city,
+      desireLane: origArm.desireLane ?? null,
+      track: origArm.track,
+      previousShareBps: origArm.allocatedShareBps,
       nextShareBps: 0,
       allocatedCents: 0,
       sampledPosterior: 0,
       efficiencyScore: 0,
-      observedCpaCents: observedCpaCents(arm),
-      stopRate: observedStopRate(arm),
+      observedCpaCents: observedCpaCents(origArm),
+      stopRate: observedStopRate(origArm),
       bucket: "locked",
-      state: arm.state,
-      killReason: input.riskDial === "lockdown" ? "campaign_lockdown" : arm.killReason,
+      state: origArm.state,
+      killReason: input.riskDial === "lockdown" ? "campaign_lockdown" : origArm.killReason,
     }));
     return {
       campaignId: input.campaignId,
@@ -571,14 +680,16 @@ export function computeBanditAllocations(
   >();
 
   for (const arm of evaluated) {
-    const armRng = rootRng.fork(arm.armKey);
+    const armRng = rootRng.fork(arm.city, arm.desireLane ?? "all", arm.track, arm.armKey);
     const posterior = sampleBeta(armRng, arm.alpha, arm.beta);
     const cpa = observedCpaCents(arm);
     const unitCostUsd = Math.max(0.5, (cpa ?? arm.targetCpaCents) / 100);
     const qualityRatio =
       arm.verifiedT2Joins > 0
         ? 1 + (arm.verifiedT3Matches * (policy.t3QualityWeight - 1)) / arm.verifiedT2Joins
-        : 1;
+        : arm.verifiedT3Matches > 0
+          ? policy.t3QualityWeight
+          : 1;
     const efficiency = (posterior * qualityRatio) / unitCostUsd;
     sampledByKey.set(arm.armKey, {
       posterior,
@@ -732,6 +843,9 @@ export function computeBanditAllocations(
     decisions.push({
       armId: arm.id,
       armKey: arm.armKey,
+      city: arm.city,
+      desireLane: arm.desireLane ?? null,
+      track: arm.track,
       previousShareBps: arm.allocatedShareBps,
       nextShareBps,
       allocatedCents,

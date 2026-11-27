@@ -12,6 +12,7 @@ import type {
   Clock,
   PhoneLineType,
 } from "./types.ts";
+import { HttpValidationError, validatePublicHttpsUrl } from "./validation.ts";
 
 export const VESTING_HOLD_MS = {
   tier0: 0,
@@ -135,32 +136,6 @@ const KNOWN_SOCIAL_VIDEO_HOSTS: readonly string[] = [
   "twitter.com",
 ];
 
-function isPrivateOrLoopbackHost(hostname: string): boolean {
-  const h = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
-  if (
-    h === "localhost" ||
-    h === "0.0.0.0" ||
-    h === "::1" ||
-    h.endsWith(".localhost") ||
-    h.endsWith(".local") ||
-    h.endsWith(".internal")
-  ) {
-    return true;
-  }
-  if (/^127\./.test(h) || /^10\./.test(h) || /^169\.254\./.test(h) || /^192\.168\./.test(h)) {
-    return true;
-  }
-  const m172 = /^172\.(\d{1,3})\./.exec(h);
-  if (m172) {
-    const second = Number.parseInt(m172[1] ?? "0", 10);
-    if (second >= 16 && second <= 31) return true;
-  }
-  if (/^(fc|fd|fe8|fe9|fea|feb)/i.test(h) || h.startsWith("::ffff:127.")) {
-    return true;
-  }
-  return false;
-}
-
 export function hashMediaBytes(data: Uint8Array | string): string {
   return createHash("sha256").update(data).digest("hex");
 }
@@ -231,56 +206,43 @@ export function validatePublicVideoUrl(
       reason: "missing_video_url",
     };
   }
-  let parsed: URL;
+
   try {
-    parsed = new URL(rawUrl.trim());
-  } catch {
+    const normalizedUrl = validatePublicHttpsUrl(rawUrl, "videoUrl");
+    const parsed = new URL(normalizedUrl);
+    const host = parsed.hostname.toLowerCase();
     return {
-      valid: false,
-      normalizedUrl: null,
-      host: null,
-      knownSocialPlatform: false,
-      reason: "malformed_video_url",
-    };
-  }
-
-  if (parsed.protocol !== "https:") {
-    return {
-      valid: false,
-      normalizedUrl: null,
-      host: parsed.hostname || null,
-      knownSocialPlatform: false,
-      reason: "https_required",
-    };
-  }
-
-  const host = parsed.hostname.toLowerCase();
-  if (!host || !host.includes(".") || isPrivateOrLoopbackHost(host)) {
-    return {
-      valid: false,
-      normalizedUrl: null,
-      host: host || null,
-      knownSocialPlatform: false,
-      reason: "private_or_invalid_host_blocked",
-    };
-  }
-
-  if (parsed.username || parsed.password) {
-    return {
-      valid: false,
-      normalizedUrl: null,
+      valid: true,
+      normalizedUrl,
       host,
+      knownSocialPlatform: KNOWN_SOCIAL_VIDEO_HOSTS.includes(host),
+    };
+  } catch (err) {
+    let parsedHost: string | null;
+    try {
+      parsedHost = new URL(rawUrl.trim()).hostname.toLowerCase() || null;
+    } catch {
+      parsedHost = null;
+    }
+    const code = err instanceof HttpValidationError ? err.code : "INVALID_URL";
+    const reason =
+      code === "REQUIRED_FIELD"
+        ? "missing_video_url"
+        : code === "INVALID_URL_SCHEME"
+          ? "https_required"
+          : code === "INVALID_URL_AUTH"
+            ? "credentials_in_url_forbidden"
+            : code === "SSRF_PRIVATE_HOST"
+              ? "private_or_invalid_host_blocked"
+              : "malformed_video_url";
+    return {
+      valid: false,
+      normalizedUrl: null,
+      host: parsedHost,
       knownSocialPlatform: false,
-      reason: "credentials_in_url_forbidden",
+      reason,
     };
   }
-
-  return {
-    valid: true,
-    normalizedUrl: parsed.toString(),
-    host,
-    knownSocialPlatform: KNOWN_SOCIAL_VIDEO_HOSTS.includes(host),
-  };
 }
 
 export function evaluateTripleFtc(input: TripleFtcCheckInput): TripleFtcCheckResult {
@@ -333,14 +295,13 @@ export function detectSybilCluster(
   const linkBucket = (bucket: Map<string, number[]>): void => {
     for (const indices of bucket.values()) {
       if (indices.length < 2) continue;
-      for (let i = 0; i < indices.length; i += 1) {
-        for (let j = i + 1; j < indices.length; j += 1) {
-          const a = indices[i];
-          const b = indices[j];
-          if (a === undefined || b === undefined) continue;
-          adj.get(a)?.add(b);
-          adj.get(b)?.add(a);
-        }
+      const hub = indices[0];
+      if (hub === undefined) continue;
+      for (let i = 1; i < indices.length; i += 1) {
+        const peer = indices[i];
+        if (peer === undefined || peer === hub) continue;
+        adj.get(hub)?.add(peer);
+        adj.get(peer)?.add(hub);
       }
     }
   };
@@ -401,8 +362,8 @@ export function detectSybilCluster(
     const comp: number[] = [];
     const queue: number[] = [i];
     visited.add(i);
-    while (queue.length > 0) {
-      const cur = queue.shift();
+    for (let head = 0; head < queue.length; head += 1) {
+      const cur = queue[head];
       if (cur === undefined) break;
       comp.push(cur);
       for (const nxt of adj.get(cur) ?? []) {
@@ -444,11 +405,25 @@ export function detectSybilCluster(
       (s) => s.size >= 2,
     );
 
+    const subnetPersons = new Map<string, Set<string>>();
+    for (const c of compClaims) {
+      const sub = c.subnetPrefix?.trim();
+      if (sub) {
+        const set = subnetPersons.get(sub) ?? new Set<string>();
+        set.add(c.personKey);
+        subnetPersons.set(sub, set);
+      }
+    }
+    const denseSubnetCluster = Array.from(subnetPersons.values()).some((s) => s.size >= 3);
+
     const reasons: string[] = [];
     if (uniquePersons.length >= 3 && paidShare > 0.5 && organicConductance < 0.35) {
       reasons.push(
         `high_density_low_conductance_ring (size=${uniquePersons.length}, paidShare=${paidShare.toFixed(2)}, organicConductance=${organicConductance.toFixed(2)})`,
       );
+    }
+    if (denseSubnetCluster && organicConductance < 0.35) {
+      reasons.push("shared_subnet_sybil_cluster");
     }
     if (mediaCollisions > 0) {
       reasons.push(`duplicate_media_hash_collisions (${mediaCollisions})`);
