@@ -471,6 +471,11 @@ export {
 } from "./sse.ts";
 export * from "./validation.ts";
 export * from "./ui/index.ts";
+export * from "./compliance-runtime.ts";
+export * from "./adapters/social.ts";
+export * from "./adapters/ads.ts";
+export * from "./analytics-bridge.ts";
+export * from "./game-session.ts";
 export {
   createMarketingServer,
   seedNycLaunch,

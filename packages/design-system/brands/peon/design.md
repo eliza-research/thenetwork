@@ -70,6 +70,12 @@ build does not read this prose. To change a token, write the change as a list in
 | `info` | oklch(0.5 0.13 255) | oklch(0.82 0.09 253) |
 | `inverse` | oklch(0.16 0 0) | oklch(0.96 0 0) |
 | `inverse-foreground` | oklch(0.985 0 0) | oklch(0.15 0 0) |
+| `chart-1` | oklch(0.47 0.17 262) | oklch(0.76 0.14 262) |
+| `chart-2` | oklch(0.47 0.2 302) | oklch(0.75 0.17 302) |
+| `chart-3` | oklch(0.5 0.19 342) | oklch(0.75 0.17 342) |
+| `chart-4` | oklch(0.48 0.14 226) | oklch(0.79 0.13 226) |
+| `chart-5` | oklch(0.36 0.1 280) | oklch(0.64 0.12 280) |
+| `chart-6` | oklch(0.46 0.03 250) | oklch(0.74 0.03 250) |
 
 | Token | Value |
 | --- | --- |

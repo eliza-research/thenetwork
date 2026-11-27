@@ -17,6 +17,7 @@ export const meta: ComponentMeta<DrawerTabsProps> = {
   examples: {
     Collapsed: { nav: { ...initial, viewer, queues, drawerOpen: false } },
     "Real data": { nav: { ...initial, viewer: { ...viewer, mode: "RealMode", simRole: false }, queues: { ...queues, reviewItems: false } } },
+    Expanded: { nav: { ...initial, viewer, queues, wantedTab: "MetricsTab" }, defaultSize: "expanded" },
   },
   play: {
     Default: async ({ args, canvasElement }: Context) => {
@@ -27,6 +28,9 @@ export const meta: ComponentMeta<DrawerTabsProps> = {
       await expect(canvas.getByText("Review queue")).toBeTruthy();
       await userEvent.click(review);
       await expect(args.onChooseTab).toHaveBeenCalledWith("ReviewTab");
+      const tall = canvas.getByRole("button", { name: "Expanded drawer height" });
+      await userEvent.click(tall);
+      await expect(args.onSizeChange).toHaveBeenCalledWith("expanded");
       const collapse = canvas.getByRole("button", { name: "Collapse" });
       await expect(collapse.getAttribute("aria-expanded")).toBe("true");
       await userEvent.click(collapse);
@@ -43,6 +47,11 @@ export const meta: ComponentMeta<DrawerTabsProps> = {
     },
     "Real data": async ({ canvasElement }: Context) => {
       await expect(within(canvasElement).queryByRole("tab", { name: /^Game/ })).toBeNull();
+    },
+    Expanded: async ({ canvasElement }: Context) => {
+      const canvas = within(canvasElement);
+      const tall = canvas.getByRole("button", { name: "Expanded drawer height" });
+      await expect(tall.getAttribute("aria-pressed")).toBe("true");
     },
   },
 };

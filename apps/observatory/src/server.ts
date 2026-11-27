@@ -1,7 +1,11 @@
 #!/usr/bin/env -S node --import=tsx
 import { randomBytes } from "node:crypto";
 import { parseArgs } from "node:util";
-import { CITY_IDS, isCity, type City } from "@thenetwork/core";
+import { CITY_IDS, isCity, type City, type TrajectoryKind, type TrajectoryQuery, type TrajectoryStatus } from "@thenetwork/core";
+import type { UnifiedChaosRule } from "@thenetwork/sim";
+import {
+  exportAnalyticsPayload, normalizeSliceQuery, normalizeTimeSeriesGranularity, parseAnalyticsFilter, validateReadOnlyAnalyticsSql,
+} from "./analytics.ts";
 import { serveHttp, type HttpServer as Server, type ServerWebSocket } from "../../../packages/core/src/runtime/http.ts";
 import { buildWebRoutes } from "./web-assets.ts";
 import { initial as initialRoute, staffMemberAccess, staffRevealMinutesAccepted, staffStepAdmitted, staffStepRoles, step as stepStaffRoute, type StaffStep } from "../../../packages/core/src/generated/staffPermissions.ts";
@@ -106,12 +110,19 @@ interface WsData { app: AppId; user: StaffUser; cls: ViewClass; truth: boolean }
 const SIM: readonly StaffRole[] = ["reviewer", "safety", "engineer"];
 export const CONTROL_ROLES: Readonly<Record<ControlCommand["type"], readonly StaffRole[]>> = {
   play: SIM, pause: SIM, speed: SIM, step: SIM, propose: SIM, takeover: SIM, reply: SIM, say: SIM, god: SIM, peek: SIM, lens: ["safety"], check_scenario: SIM,
+  set_response_mode: SIM, set_llm_budget: SIM, trigger_chaos: SIM, clear_chaos: SIM, trigger_world_event: SIM, teen_stop: ["safety"],
   review: ["reviewer"], matching: [], reset: [],
   refresh: ["reviewer", "safety", "analyst"], shadow_run: ["analyst"],
 };
 const LAB_ROLES: readonly StaffRole[] = ["analyst", "engineer"];
+const ANALYTICS_ROLES: readonly StaffRole[] = ["analyst", "safety", "reviewer", "engineer"];
+const TRAJECTORY_ROLES: readonly StaffRole[] = ["analyst", "safety", "engineer"];
+const SQL_ROLES: readonly StaffRole[] = ["analyst", "engineer"];
 const QUIET = new Set(["play", "pause", "speed", "step", "refresh"]);
-const GAME_ONLY = new Set(["play", "pause", "speed", "step", "propose", "takeover", "reply", "say", "god", "peek", "lens", "check_scenario", "reset"]);
+const GAME_ONLY = new Set([
+  "play", "pause", "speed", "step", "propose", "takeover", "reply", "say", "god", "peek", "lens", "check_scenario", "reset",
+  "set_response_mode", "set_llm_budget", "trigger_chaos", "clear_chaos", "trigger_world_event", "teen_stop",
+]);
 
 const LOCAL_DB_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 const remoteDb = (url: string) => { try { return !LOCAL_DB_HOSTS.has(new URL(url).hostname.toLowerCase()); } catch { return true; } };
@@ -530,7 +541,20 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         }
         return json({ mode, apps: out });
       }),
-      "/api/levels": global(async () => json(realOnly ? [] : (await import("@thenetwork/network/harness")).SCENARIOS.map(x => ({ id: x.id, title: x.title, description: x.description, days: x.days })))),
+      "/api/levels": global(async () => {
+        if (realOnly) return json([]);
+        const [{ SCENARIOS }, { UNIFIED_SCENARIOS }] = await Promise.all([
+          import("@thenetwork/network/harness"),
+          import("@thenetwork/sim"),
+        ]);
+        return json([
+          ...SCENARIOS.map(x => ({ id: x.id, title: x.title, description: x.description, days: x.days, kind: "scenario" as const })),
+          ...UNIFIED_SCENARIOS.map(x => ({
+            id: x.id, title: x.title, description: x.description, days: x.days, kind: "unified" as const,
+            cities: [...x.cities], defaultSpeed: x.defaultSpeed, defaultResponseMode: x.defaultResponseMode,
+          })),
+        ]);
+      }),
       "/api/mode": {
         GET: global(() => json({ mode, realOnly, realConfigured: !!(opts.real?.url ?? process.env.NETWORK_DATABASE_URL ?? process.env.DATABASE_URL) })),
         POST: global(async (req, u) => {
@@ -891,6 +915,180 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         if (no) return no;
         return json(await (await source(mode, app)).search(q));
       }, ["safety"]),
+      "/api/analytics/funnel": guard(async (req, u, app, seen) => {
+        const no = await record(u, app, { action: "read_analytics", targetType: "analytics", targetId: "funnel", ok: true }, seen);
+        if (no) return no;
+        const src = await source(seen, app);
+        if (!src.analyticsFunnel) return json({ error: "analytics unavailable" }, 503);
+        const filter = parseAnalyticsFilter(new URL(req.url), app);
+        return json(await src.analyticsFunnel(filter));
+      }, ANALYTICS_ROLES),
+      "/api/analytics/cohorts": guard(async (req, u, app, seen) => {
+        const no = await record(u, app, { action: "read_analytics", targetType: "analytics", targetId: "cohorts", ok: true }, seen);
+        if (no) return no;
+        const src = await source(seen, app);
+        if (!src.analyticsCohorts) return json({ error: "analytics unavailable" }, 503);
+        const filter = parseAnalyticsFilter(new URL(req.url), app);
+        return json(await src.analyticsCohorts(filter));
+      }, ANALYTICS_ROLES),
+      "/api/analytics/timeseries": guard(async (req, u, app, seen) => {
+        const no = await record(u, app, { action: "read_analytics", targetType: "analytics", targetId: "timeseries", ok: true }, seen);
+        if (no) return no;
+        const src = await source(seen, app);
+        if (!src.analyticsTimeSeries) return json({ error: "analytics unavailable" }, 503);
+        const url = new URL(req.url);
+        const granularity = normalizeTimeSeriesGranularity(url.searchParams.get("granularity"));
+        const filter = parseAnalyticsFilter(url, app);
+        return json(await src.analyticsTimeSeries(granularity, filter));
+      }, ANALYTICS_ROLES),
+      "/api/analytics/heatmap": guard(async (req, u, app, seen) => {
+        const no = await record(u, app, { action: "read_analytics", targetType: "analytics", targetId: "heatmap", ok: true }, seen);
+        if (no) return no;
+        const src = await source(seen, app);
+        if (!src.analyticsHeatmap) return json({ error: "analytics unavailable" }, 503);
+        const filter = parseAnalyticsFilter(new URL(req.url), app);
+        return json(await src.analyticsHeatmap(filter));
+      }, ANALYTICS_ROLES),
+      "/api/analytics/anomalies": guard(async (req, u, app, seen) => {
+        const no = await record(u, app, { action: "read_analytics", targetType: "analytics", targetId: "anomalies", ok: true }, seen);
+        if (no) return no;
+        const src = await source(seen, app);
+        if (!src.analyticsAnomalies) return json({ error: "analytics unavailable" }, 503);
+        const filter = parseAnalyticsFilter(new URL(req.url), app);
+        return json(await src.analyticsAnomalies(filter));
+      }, ANALYTICS_ROLES),
+      "/api/analytics/slice": {
+        POST: guard(async (req, u, app, seen) => {
+          const parsed = await readJsonBody<Record<string, unknown>>(req, {});
+          if (parsed instanceof Response) return parsed;
+          const body = parsed.body;
+          const format = body.format === "csv" ? "csv" : "json";
+          if (typeof body.sql === "string") {
+            if (!allowed(u, SQL_ROLES, app, seen)) {
+              const no = await record(u, app, { action: "read_analytics_sql", targetType: "analytics", ok: false, detail: { refused: "forbidden" } }, seen);
+              return no ?? forbidden(`SQL analytics needs ${["admin", ...SQL_ROLES].join(" or ")} for ${app}`);
+            }
+            const check = validateReadOnlyAnalyticsSql(body.sql);
+            if (!check.ok) {
+              const no = await record(u, app, { action: "read_analytics_sql", targetType: "analytics", ok: false, detail: { refused: check.code } }, seen);
+              return no ?? json({ ok: false, error: check.error, code: check.code }, 400);
+            }
+            const no = await record(u, app, { action: "read_analytics_sql", targetType: "analytics", ok: true, detail: { length: check.sql.length } }, seen);
+            if (no) return no;
+            const src = await source(seen, app);
+            if (!src.analyticsSql) return json({ ok: false, error: "SQL analytics unavailable" }, 503);
+            const result = await src.analyticsSql(check.sql);
+            if (format === "csv") {
+              const exp = exportAnalyticsPayload(result, "csv");
+              return new Response(exp.body, { status: 200, headers: { ...SECURITY_HEADERS, "content-type": exp.contentType } });
+            }
+            return json(result);
+          }
+          const norm = normalizeSliceQuery(body, app);
+          if (!norm.ok) return json({ ok: false, error: norm.error, code: "bad_slice_query" }, 400);
+          const no = await record(u, app, { action: "read_analytics_slice", targetType: "analytics", ok: true, detail: { metric: norm.query.metric, format } }, seen);
+          if (no) return no;
+          const src = await source(seen, app);
+          if (!src.analyticsSlice) return json({ ok: false, error: "analytics unavailable" }, 503);
+          const result = await src.analyticsSlice(norm.query);
+          if (format === "csv") {
+            const exp = exportAnalyticsPayload(result, "csv");
+            return new Response(exp.body, { status: 200, headers: { ...SECURITY_HEADERS, "content-type": exp.contentType } });
+          }
+          return json(result);
+        }, ANALYTICS_ROLES),
+      },
+      "/api/trajectories": guard(async (req, u, app, seen) => {
+        const no = await record(u, app, { action: "read_trajectories", targetType: "trajectory", ok: true }, seen);
+        if (no) return no;
+        const src = await source(seen, app);
+        if (!src.trajectories) return json({ traces: [], hotTail: [], driver: "memory" });
+        const sp = new URL(req.url).searchParams;
+        const query: TrajectoryQuery = {
+          appId: app,
+          ...(sp.get("kind") ? { kind: sp.get("kind") as TrajectoryKind } : {}),
+          ...(sp.get("status") ? { status: sp.get("status") as TrajectoryStatus } : {}),
+          ...(sp.get("flag") ? { flag: sp.get("flag")! } : {}),
+          ...(sp.get("entityId") ? { entityId: sp.get("entityId")! } : {}),
+          ...(sp.get("traceId") ? { traceId: sp.get("traceId")! } : {}),
+          limit: Math.min(200, Math.max(1, Number(sp.get("limit")) || 50)),
+        };
+        const allowPayload = allowed(u, ["safety"], app, seen);
+        return json(await src.trajectories(query, { allowPayload }));
+      }, TRAJECTORY_ROLES),
+      "/api/trajectories/:traceId": guard(async (req, u, app, seen) => {
+        let traceId: string;
+        try { traceId = decodeURIComponent(req.params.traceId!); } catch { return json({ error: "invalid traceId" }, 400); }
+        if (!traceId || traceId.length > 200) return json({ error: "invalid traceId" }, 400);
+        const no = await record(u, app, { action: "read_trajectory", targetType: "trajectory", targetId: traceId, ok: true }, seen);
+        if (no) return no;
+        const src = await source(seen, app);
+        if (!src.trajectoryDetail) return json({ traceId, manifest: null, spans: [] });
+        const allowPayload = allowed(u, ["safety"], app, seen);
+        const decrypt = new URL(req.url).searchParams.get("decrypt") !== "0" && allowPayload;
+        return json(await src.trajectoryDetail(traceId, { decrypt, allowPayload }));
+      }, TRAJECTORY_ROLES),
+      "/api/mocks/traffic": guard(async (req, u, app, seen) => {
+        if (realOnly || seen !== "game") return json({ ok: false, error: "mock services are off in real mode", code: "real_only" }, 403);
+        const no = await record(u, app, { action: "read_mock_traffic", targetType: "mock", ok: true }, seen);
+        if (no) return no;
+        const src = await source(seen, app);
+        if (!src.mockTraffic) return json({ ok: false, error: "mock services unavailable", code: "real_only" }, 403);
+        const sp = new URL(req.url).searchParams;
+        const statusNum = sp.get("status") !== null ? Number(sp.get("status")) : undefined;
+        const limitNum = sp.get("limit") !== null ? Number(sp.get("limit")) : undefined;
+        return json(await src.mockTraffic({
+          ...(sp.get("service") ? { service: sp.get("service")! } : {}),
+          ...(statusNum !== undefined && Number.isFinite(statusNum) ? { status: statusNum } : {}),
+          ...(limitNum !== undefined && Number.isFinite(limitNum) ? { limit: limitNum } : {}),
+        }));
+      }, SIM),
+      "/api/mocks/chaos": {
+        GET: guard(async (_req, u, app, seen) => {
+          if (realOnly || seen !== "game") return json({ ok: false, error: "mock chaos is off in real mode", code: "real_only" }, 403);
+          const no = await record(u, app, { action: "read_mock_chaos", targetType: "mock", ok: true }, seen);
+          if (no) return no;
+          const src = await source(seen, app);
+          const rules = src.mockChaos ? await src.mockChaos() : [];
+          return json({ rules });
+        }, SIM),
+        POST: guard(async (req, u, app, seen) => {
+          if (realOnly || seen !== "game") return json({ ok: false, error: "mock chaos is off in real mode", code: "real_only" }, 403);
+          const parsed = await readJsonBody<{ rule?: UnifiedChaosRule } & Partial<UnifiedChaosRule>>(req, {});
+          if (parsed instanceof Response) return parsed;
+          const raw = (parsed.body.rule ?? parsed.body) as Partial<UnifiedChaosRule>;
+          if (!raw || typeof raw.id !== "string" || !raw.id.trim() || typeof raw.service !== "string" || !raw.fault || typeof raw.fault !== "object") {
+            return json({ ok: false, error: "chaos rule requires id, service, and fault", code: "invalid_chaos" }, 400);
+          }
+          const rule: UnifiedChaosRule = {
+            id: raw.id.trim(),
+            service: raw.service.trim(),
+            ...(raw.pathPattern ? { pathPattern: raw.pathPattern } : {}),
+            probability: typeof raw.probability === "number" && Number.isFinite(raw.probability) ? Math.max(0, Math.min(1, raw.probability)) : 1,
+            fault: raw.fault,
+            enabled: raw.enabled !== false,
+          };
+          const no = await record(u, app, { action: "write_mock_chaos", targetType: "mock", targetId: rule.id, ok: true, detail: { service: rule.service, fault: rule.fault.kind } }, seen);
+          if (no) return no;
+          const src = await source(seen, app);
+          if (!src.addMockChaos) return json({ ok: false, error: "mock chaos unavailable", code: "real_only" }, 403);
+          const rules = await src.addMockChaos(rule);
+          return json({ ok: true, rule, rules });
+        }, SIM),
+      },
+      "/api/mocks/chaos/:id": {
+        DELETE: guard(async (req, u, app, seen) => {
+          if (realOnly || seen !== "game") return json({ ok: false, error: "mock chaos is off in real mode", code: "real_only" }, 403);
+          let id: string;
+          try { id = decodeURIComponent(req.params.id!); } catch { return json({ ok: false, error: "invalid chaos rule id" }, 400); }
+          const no = await record(u, app, { action: "delete_mock_chaos", targetType: "mock", targetId: id, ok: true }, seen);
+          if (no) return no;
+          const src = await source(seen, app);
+          if (!src.deleteMockChaos) return json({ ok: false, error: "mock chaos unavailable", code: "real_only" }, 403);
+          const rules = await src.deleteMockChaos(id === "all" ? undefined : id);
+          return json({ ok: true, rules });
+        }, SIM),
+      },
       "/api/runs/diff": guard(async (req, _u, app) => {
         const q = new URL(req.url).searchParams;
         const runs = (await source(mode, app)).state().engineRuns;
@@ -1042,7 +1240,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
   };
 }
 
-const AUDIT_FIELDS = new Set(["oppId", "memberId", "promptId", "decision", "reason", "on", "speed", "ms", "action", "participants", "category", "swapOut", "revision", "secondsSpent", "auto", "city", "seed", "engine", "personas", "days", "network", "scenario"]);
+const AUDIT_FIELDS = new Set(["oppId", "memberId", "promptId", "decision", "reason", "on", "speed", "ms", "action", "participants", "category", "swapOut", "revision", "secondsSpent", "auto", "city", "seed", "engine", "personas", "days", "network", "scenario", "mode", "maxCostUsd", "maxRequests", "id", "event", "stop", "timeAware", "judge", "responseMode"]);
 const AUDIT_TEXTS = new Set(["text", "objective", "note", "why"]);
 const auditValue = (v: unknown): unknown =>
   typeof v === "string" ? v.slice(0, 200) : typeof v === "number" || typeof v === "boolean" || v === null ? v

@@ -21,6 +21,13 @@ import {
   spawnProcess,
 } from "../../../../packages/core/src/runtime/process.ts";
 import {
+  evaluateComplianceGate,
+} from "../../../../packages/core/src/pacing/compliance.ts";
+import {
+  isDeployedEnvironment,
+  resolveRuntimeEnvironment,
+} from "../compliance-runtime.ts";
+import {
   deriveDeviceTelemetryStatus,
   deriveWarmupStage,
   evaluateDeviceActionPolicy,
@@ -1345,6 +1352,30 @@ export class DeviceBridge {
 
     const liveAllowed = this.isLiveDeviceEnabled() && context.dryRun !== true;
     const effectiveDryRun = !liveAllowed;
+
+    if (isDeployedEnvironment(this.env)) {
+      const gate = evaluateComplianceGate({
+        mode: "device_farm_social_automation",
+        env: resolveRuntimeEnvironment(this.env),
+      });
+      if (!gate.allowed) {
+        return {
+          ok: false,
+          executed: false,
+          dryRun: effectiveDryRun,
+          status: "blocked_safety",
+          deviceId: device.id,
+          serialOrUdid: device.serialOrUdid,
+          platform: device.platform,
+          action,
+          commandPreview: `${action.kind} (compliance blocked)`,
+          output: null,
+          reason: `${gate.code}: ${gate.reason}`,
+          safetyInput,
+          executedAt,
+        };
+      }
+    }
 
     const validationError = validateDeviceAction(device.serialOrUdid, action);
     if (validationError) {

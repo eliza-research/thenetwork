@@ -186,9 +186,46 @@ importers:
 
   apps/marketing:
     dependencies:
+      '@tailwindcss/postcss':
+        specifier: ^4.3.5
+        version: 4.3.5
       '@thenetwork/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@thenetwork/design-system':
+        specifier: workspace:*
+        version: link:../../packages/design-system
+      '@thenetwork/mock-services':
+        specifier: workspace:*
+        version: link:../../packages/mock-services
+      '@thenetwork/sim':
+        specifier: workspace:*
+        version: link:../../packages/sim
+      '@thenetwork/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
+      postcss:
+        specifier: 8.5.33
+        version: 8.5.33
+      react:
+        specifier: 'catalog:'
+        version: 19.3.1
+      react-dom:
+        specifier: 'catalog:'
+        version: 19.3.1(react@19.3.1)
+      tailwindcss:
+        specifier: 'catalog:'
+        version: 4.3.5
+    devDependencies:
+      '@types/react':
+        specifier: 'catalog:'
+        version: 19.3.0
+      '@types/react-dom':
+        specifier: 'catalog:'
+        version: 19.3.0(@types/react@19.3.0)
 
   apps/observatory:
     dependencies:
@@ -204,6 +241,9 @@ importers:
       '@thenetwork/engine':
         specifier: workspace:*
         version: link:../../packages/engine
+      '@thenetwork/mock-services':
+        specifier: workspace:*
+        version: link:../../packages/mock-services
       '@thenetwork/network':
         specifier: workspace:*
         version: link:../../packages/network
@@ -362,6 +402,15 @@ importers:
       '@types/react-dom':
         specifier: 'catalog:'
         version: 19.3.0(@types/react@19.3.0)
+
+  packages/mock-services:
+    dependencies:
+      '@thenetwork/blooio':
+        specifier: workspace:*
+        version: link:../blooio
+      '@thenetwork/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/network:
     dependencies:

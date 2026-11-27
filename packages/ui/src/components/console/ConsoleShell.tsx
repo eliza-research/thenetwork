@@ -36,7 +36,7 @@ export function ConsoleShell({ view, topBar, filterBar, stage, inspector, drawer
       {topBar}
       {workspace ? filterBar : null}
       <main className="flex min-h-0 flex-1 flex-col md:flex-row">
-        <div className="relative min-h-64 min-w-0 flex-1" hidden={!workspace}>
+        <div className="relative isolate z-0 min-h-0 min-w-0 flex-1 overflow-hidden" hidden={!workspace}>
           {stage}
         </div>
         {workspace ? <aside className="flex max-h-full flex-col gap-4 overflow-y-auto border-t border-border p-4 md:w-96 md:shrink-0 md:border-t-0 md:border-l">{inspector}</aside> : null}

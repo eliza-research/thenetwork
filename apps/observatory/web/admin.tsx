@@ -106,11 +106,13 @@ import {
   typeReportNote,
 } from "../../../packages/core/src/generated/consoleWorkspace.ts";
 import type { ReportPhase } from "../../../packages/core/src/generated/safetyCase.ts";
+import { Alert } from "../../../packages/ui/src/components/Alert.tsx";
 import { Button } from "../../../packages/ui/src/components/Button.tsx";
 import { Checkbox } from "../../../packages/ui/src/components/Checkbox.tsx";
 import { Disclosure } from "../../../packages/ui/src/components/Disclosure.tsx";
 import { Input } from "../../../packages/ui/src/components/Input.tsx";
 import { Label } from "../../../packages/ui/src/components/Label.tsx";
+import { Select, SelectItem } from "../../../packages/ui/src/components/Select.tsx";
 import { TableRow } from "../../../packages/ui/src/components/Table.tsx";
 import { AuditQuery, AuditRow, auditColumns } from "../../../packages/ui/src/components/console/AuditRow.tsx";
 import { CaseCard } from "../../../packages/ui/src/components/console/CaseCard.tsx";
@@ -122,15 +124,15 @@ import { HeldItemCard } from "../../../packages/ui/src/components/console/HeldIt
 import { InspectorSection } from "../../../packages/ui/src/components/console/InspectorSection.tsx";
 import { Kpi } from "../../../packages/ui/src/components/console/Kpi.tsx";
 import { KpiGrid } from "../../../packages/ui/src/components/console/KpiGrid.tsx";
+import { MeterBars, type MeterRow } from "../../../packages/ui/src/components/console/MeterBars.tsx";
 import { ReportCard } from "../../../packages/ui/src/components/console/ReportCard.tsx";
 import { RequestRow, requestColumns, requestSegmentOptions } from "../../../packages/ui/src/components/console/RequestRow.tsx";
 import { Segments } from "../../../packages/ui/src/components/console/Segments.tsx";
 import { StatusMark, type StatusTone } from "../../../packages/ui/src/components/console/StatusMark.tsx";
 import { StatusRow } from "../../../packages/ui/src/components/console/StatusRow.tsx";
-import { MemberLink, OpportunityLink } from "../../../packages/ui/src/components/console/SubjectLink.tsx";
-import type { AuditEntry, BiasReportView, ConfigInfo, DiffNum, EngineRunSummary, HeldQueue, HeldText, LabArm, LabRun, ObsOpportunity, ObsRequest, ObsSafetyCase, RunDiff, SafetyAction, SafetyInfo, SafetyReport, ScoreMetric } from "../src/types.ts";
-import { store, useStore } from "./store.ts";
-import { dur, humanize, num, pct, stamp } from "./ui.tsx";
+import type { AuditEntry, BiasReportView, ConfigInfo, DiffNum, EngineRunSummary, HeldQueue, HeldText, LabArm, LabRun, ObsRequest, ObsSafetyCase, ObsVenue, RunDiff, SafetyAction, SafetyInfo, SafetyReport, ScoreMetric } from "../src/types.ts";
+import { store, useStore, type CityOpsRow, type ExternalEventRow } from "./store.ts";
+import { dur, humanize, MemberLink as Member, num, OppLink as Opportunity, pct, stamp } from "./ui.tsx";
 
 type Fetched<T> = { data?: T; status?: number; error?: string };
 
@@ -159,19 +161,7 @@ function useViewer(mode: WorkMode): Workspace {
   return receiveViewer(initial, mode, s.can("safety"), s.isAdmin(), s.can("analyst"), s.canSim(), false);
 }
 
-/** The work mode of a safety answer: the Network service bans and holds, and any acting mode clears a minor signal. */
 const safetyMode = (canBan: boolean, canAct: boolean): WorkMode => (canBan ? "RealWithService" : canAct ? (store.mode === "real" ? "RealWithService" : "SimulatedWorld") : "RealWithoutService");
-
-/** A member name that opens the member. */
-function Member({ id, first = false, children }: { id: string; first?: boolean; children?: ReactNode }) {
-  const m = store.members.get(id);
-  return <MemberLink onOpen={() => store.focus({ kind: "member", id })}>{children ?? (m ? (first ? m.name.split(" ")[0] : m.name) : id)}</MemberLink>;
-}
-
-/** An opportunity reference that opens the opportunity. */
-function Opportunity({ o, children }: { o: ObsOpportunity; children?: ReactNode }) {
-  return <OpportunityLink onOpen={() => store.focus({ kind: "opportunity", id: o.id })}>{children ?? store.oppTitle(o)}</OpportunityLink>;
-}
 
 const grid = "grid gap-6 lg:grid-cols-2";
 const quiet = "text-sm text-muted-foreground";
@@ -620,14 +610,237 @@ export function Config() {
         </InspectorSection>
         <InspectorSection title="Settings in force">
           <Disclosure summary={`Network options (${Object.keys(c.network).length})`}>
-            <dl className="grid grid-cols-2 gap-x-3 gap-y-1">{Object.entries(c.network).map(([k, v]) => <div className="contents" key={k}><dt className="text-muted-foreground">{k}</dt><dd>{String(v)}</dd></div>)}</dl>
+            <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm">{Object.entries(c.network).map(([k, v]) => <div className="contents" key={k}><dt className="text-muted-foreground">{humanize(k)}</dt><dd className="tabular-nums">{String(v)}</dd></div>)}</dl>
           </Disclosure>
-          <Disclosure summary="Outreach numbers"><pre className="font-mono text-sm whitespace-pre-wrap">{JSON.stringify(c.outreach, null, 1)}</pre></Disclosure>
+          <Disclosure summary="Outreach policy">
+            <OutreachPolicyView outreach={c.outreach} />
+          </Disclosure>
         </InspectorSection>
       </div>
+      {s.mode === "real" && s.canAct() && <CityOpsConsole />}
       <GatheringConsole />
       {panelAllowed("AuditPanel", viewer.staff) && <AuditLog />}
     </div>
+  );
+}
+
+const outreachColumns: DataColumn[] = [{ key: "setting", label: "Policy setting" }, { key: "value", label: "Value", numeric: true }];
+
+function flattenPolicy(obj: Record<string, unknown>, prefix = ""): { key: string; label: string; value: string; numValue?: number }[] {
+  const rows: { key: string; label: string; value: string; numValue?: number }[] = [];
+  for (const [k, v] of Object.entries(obj)) {
+    const full = prefix ? `${prefix}.${k}` : k;
+    const label = full.split(".").map(part => humanize(part.replace(/([A-Z])/g, "_$1"))).join(" · ");
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      rows.push(...flattenPolicy(v as Record<string, unknown>, full));
+    } else if (typeof v === "number") {
+      rows.push({ key: full, label, value: Number.isInteger(v) ? num(v) : v.toFixed(2), numValue: v });
+    } else if (Array.isArray(v)) {
+      rows.push({ key: full, label, value: v.map(String).join(", ") || "none" });
+    } else {
+      rows.push({ key: full, label, value: String(v ?? "–") });
+    }
+  }
+  return rows;
+}
+
+function OutreachPolicyView({ outreach }: { outreach: Record<string, unknown> }) {
+  const rows = flattenPolicy(outreach);
+  const ratioRows: MeterRow[] = rows
+    .filter(r => r.numValue !== undefined && r.numValue > 0 && r.numValue <= 1)
+    .map(r => ({ key: r.key, label: r.label, value: r.numValue!, tone: "primary" }));
+  return (
+    <div className="flex flex-col gap-3">
+      {ratioRows.length > 0 && <MeterBars aria-label="Outreach ratios" rows={ratioRows} ranked={false} max={1} format={v => pct(v)} />}
+      <DataTable columns={outreachColumns} empty="No outreach settings.">
+        {rows.map(r => (
+          <TableRow key={r.key}>
+            <DataCell>{r.label}</DataCell>
+            <DataCell numeric>{r.value}</DataCell>
+          </TableRow>
+        ))}
+      </DataTable>
+    </div>
+  );
+}
+
+export function TeenIntrosSwitch() {
+  const s = useStore();
+  const [stopped, setStopped] = useState<boolean>(!!s.game?.unified?.teenStop);
+  const [confirming, setConfirming] = useState(false);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (s.mode === "game" && s.game?.unified?.teenStop !== undefined) setStopped(!!s.game.unified.teenStop);
+  }, [s.mode, s.game?.unified?.teenStop]);
+  if (!s.can("safety") || !s.canAct()) return null;
+  const nextOn = stopped;
+  const submit = async () => {
+    setBusy(true);
+    setError("");
+    const trimmed = reason.trim();
+    const res = s.mode === "real"
+      ? await store.teenIntrosSwitch(nextOn, trimmed || undefined)
+      : { data: await store.controlRaw({ type: "teen_stop", stop: !nextOn, reason: trimmed || undefined }), status: 200 };
+    setBusy(false);
+    const ok = res.data?.ok !== false && (!("status" in res) || res.status === 200);
+    if (ok) {
+      setStopped(!nextOn);
+      setConfirming(false);
+      setReason("");
+      store.toast(nextOn ? "Teen introductions resumed" : "Teen introductions stopped globally", nextOn ? "good" : "info");
+    } else {
+      setError(("error" in res && res.error) || res.data?.error || "Could not update teen introductions switch");
+    }
+  };
+  return (
+    <InspectorSection title="Teen introductions kill switch">
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        <StatusMark tone={stopped ? "destructive" : "ok"} label={stopped ? "Stopped (single-player only)" : "Active (friendship lanes)"} showLabel />
+        <FactLine parts={["Applies to friends.help and ntwrk Friend lane", "Audited"]} />
+      </div>
+      {!confirming ? (
+        <div>
+          <Button variant={stopped ? "outline" : "destructive"} size="sm" onClick={() => setConfirming(true)}>
+            {stopped ? "Resume teen introductions" : "Stop teen introductions"}
+          </Button>
+        </div>
+      ) : (
+        <form className="flex flex-wrap items-center gap-2" onSubmit={e => { e.preventDefault(); void submit(); }}>
+          <Input className="min-w-48 flex-1" aria-label="Reason for teen introductions change" placeholder="Reason (logged in staff audit)…" value={reason} onChange={e => setReason(e.target.value)} />
+          <Button variant={stopped ? "primary" : "destructive"} size="sm" type="submit" disabled={busy}>
+            Confirm {stopped ? "resume" : "stop"}
+          </Button>
+          <Button variant="ghost" size="sm" type="button" onClick={() => { setConfirming(false); setError(""); }}>Cancel</Button>
+        </form>
+      )}
+      {error && <Alert variant="destructive">{error}</Alert>}
+    </InspectorSection>
+  );
+}
+
+const cityColumns: DataColumn[] = [
+  { key: "city", label: "City" },
+  { key: "active", label: "Active", numeric: true },
+  { key: "venues", label: "Venues", numeric: true },
+  { key: "opps", label: "Open opps", numeric: true },
+  { key: "matching", label: "Matching" },
+];
+
+const venueColumns: DataColumn[] = [
+  { key: "name", label: "Venue" },
+  { key: "area", label: "Area" },
+  { key: "status", label: "Status" },
+  { key: "action", label: "Action", hideLabel: true },
+];
+
+const externalEventColumns: DataColumn[] = [
+  { key: "title", label: "Event" },
+  { key: "when", label: "When" },
+  { key: "status", label: "Status" },
+  { key: "action", label: "Action", hideLabel: true },
+];
+
+function CityOpsConsole() {
+  const s = useStore();
+  const [sub, setSub] = useState<"cities" | "venues" | "events">("cities");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const cityArg = s.selectedCity === "all" ? undefined : s.selectedCity;
+  const citiesRes = useFetch<{ ok?: boolean; cities?: CityOpsRow[]; error?: string }>(() => store.staffCities(cityArg), `${s.app}|${cityArg}|cities`);
+  const venuesRes = useFetch<{ ok?: boolean; venues?: ObsVenue[]; error?: string }>(() => store.staffVenues(cityArg, statusFilter), `${s.app}|${cityArg}|${statusFilter}|venues`);
+  const eventsRes = useFetch<{ ok?: boolean; events?: ExternalEventRow[]; error?: string }>(() => store.staffExternalEvents(cityArg, statusFilter), `${s.app}|${cityArg}|${statusFilter}|events`);
+
+  const setVenue = async (id: string, status: string) => {
+    const r = await store.updateVenueStatus(id, status, "Console venue status update");
+    if (r.data?.ok !== false && r.status === 200) { store.toast(`Venue updated to ${status}`, "good"); venuesRes.reload(); }
+    else store.toast(r.error ?? r.data?.error ?? "Could not update venue", "bad");
+  };
+  const reviewEvent = async (id: string, decision: "approve" | "reject") => {
+    const r = await store.reviewExternalEvent(id, decision, `Console event ${decision}`);
+    if (r.data?.ok !== false && r.status === 200) { store.toast(`Event ${decision}d`, "good"); eventsRes.reload(); }
+    else store.toast(r.error ?? r.data?.error ?? "Could not review event", "bad");
+  };
+
+  return (
+    <InspectorSection
+      title="City ops, venues & external events"
+      action={
+        <div className="flex flex-wrap items-center gap-2">
+          <Segments
+            aria-label="City operations view"
+            value={sub}
+            onValueChange={v => setSub(v as "cities" | "venues" | "events")}
+            options={[{ value: "cities", label: "Cities" }, { value: "venues", label: "Venues" }, { value: "events", label: "External events" }]}
+          />
+          {sub !== "cities" && (
+            <Select className="h-8 w-32" aria-label="Status filter" value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="active">Active</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+              <SelectItem value="paused">Paused</SelectItem>
+            </Select>
+          )}
+        </div>
+      }
+    >
+      {sub === "cities" && (
+        <StatusRow view={panelView("ConfigPanel", answerOf(citiesRes, !!citiesRes.data?.cities), citiesRes.data?.cities?.length ?? 0)} error={citiesRes.error ?? citiesRes.data?.error} empty="No city ops rows.">
+          <DataTable columns={cityColumns}>
+            {(citiesRes.data?.cities ?? []).map(c => (
+              <TableRow key={c.city}>
+                <DataCell>{c.name ?? c.city.toUpperCase()}</DataCell>
+                <DataCell numeric>{c.activeMembers !== undefined ? num(c.activeMembers) : "–"}</DataCell>
+                <DataCell numeric>{c.venuesActive !== undefined ? num(c.venuesActive) : "–"}</DataCell>
+                <DataCell numeric>{c.openOpps !== undefined ? num(c.openOpps) : "–"}</DataCell>
+                <DataCell><StatusMark tone={c.matchingEnabled ? "ok" : "warn"} label={c.matchingEnabled ? "on" : (c.status ?? "off")} showLabel /></DataCell>
+              </TableRow>
+            ))}
+          </DataTable>
+        </StatusRow>
+      )}
+      {sub === "venues" && (
+        <StatusRow view={panelView("ConfigPanel", answerOf(venuesRes, !!venuesRes.data?.venues), venuesRes.data?.venues?.length ?? 0)} error={venuesRes.error ?? venuesRes.data?.error} empty="No venues match.">
+          <DataTable columns={venueColumns}>
+            {(venuesRes.data?.venues ?? []).slice(0, 60).map(v => (
+              <TableRow key={v.id}>
+                <DataCell>{v.name}</DataCell>
+                <DataCell muted>{v.neighborhood}</DataCell>
+                <DataCell><StatusMark tone={v.status === "active" ? "ok" : "warn"} label={humanize(v.status)} showLabel /></DataCell>
+                <DataCell>
+                  <div className="flex items-center gap-1">
+                    {v.status !== "active" && <Button variant="outline" size="sm" onClick={() => void setVenue(v.id, "active")}>Activate</Button>}
+                    {v.status === "active" && <Button variant="ghost" size="sm" onClick={() => void setVenue(v.id, "paused")}>Pause</Button>}
+                  </div>
+                </DataCell>
+              </TableRow>
+            ))}
+          </DataTable>
+        </StatusRow>
+      )}
+      {sub === "events" && (
+        <StatusRow view={panelView("ConfigPanel", answerOf(eventsRes, !!eventsRes.data?.events), eventsRes.data?.events?.length ?? 0)} error={eventsRes.error ?? eventsRes.data?.error} empty="No external events.">
+          <DataTable columns={externalEventColumns}>
+            {(eventsRes.data?.events ?? []).slice(0, 60).map(ev => (
+              <TableRow key={ev.id}>
+                <DataCell>
+                  <span>{ev.title}</span>
+                  {ev.allAges && <span className="ml-2 text-xs text-ok">all-ages</span>}
+                </DataCell>
+                <DataCell muted>{ev.startsAt ? stamp(ev.startsAt) : "–"}</DataCell>
+                <DataCell><StatusMark tone={ev.status === "approved" ? "ok" : ev.status === "rejected" ? "destructive" : "warn"} label={humanize(ev.status)} showLabel /></DataCell>
+                <DataCell>
+                  <div className="flex items-center gap-1">
+                    {ev.status !== "approved" && <Button variant="outline" size="sm" onClick={() => void reviewEvent(ev.id, "approve")}>Approve</Button>}
+                    {ev.status !== "rejected" && <Button variant="ghost" size="sm" onClick={() => void reviewEvent(ev.id, "reject")}>Reject</Button>}
+                  </div>
+                </DataCell>
+              </TableRow>
+            ))}
+          </DataTable>
+        </StatusRow>
+      )}
+    </InspectorSection>
   );
 }
 

@@ -22,6 +22,12 @@ export const meta: ComponentMeta<KpiProps> = {
     Clickable: { onSelect: fn() },
     Static: { onSelect: undefined },
     "Own tone word": { tone: "warn", toneLabel: "Due soon" },
+    "With trend": {
+      delta: { value: "+18%", tone: "ok" },
+      sparkline: [6, 8, 7, 10, 11, 12],
+      target: 10,
+      onSelect: undefined,
+    },
   },
   play: {
     Default: selects,
@@ -32,6 +38,10 @@ export const meta: ComponentMeta<KpiProps> = {
       await expect(canvas.getByText("In review")).toBeTruthy();
     },
     "Own tone word": marked("Due soon"),
+    "With trend": async ({ canvasElement }: Context) => {
+      await expect(within(canvasElement).getByText("+18%")).toBeTruthy();
+      await expect(canvasElement.querySelector("polyline")).not.toBeNull();
+    },
     "tone ok": marked("Good"),
     "tone warn": marked("Warning"),
     "tone destructive": marked("Alert"),

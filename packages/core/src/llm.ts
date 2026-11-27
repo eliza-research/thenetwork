@@ -17,6 +17,9 @@
 // Optional per-client hooks (ClientOptions) let callers such as evals add request params, observe
 // usage/cost and supply their own transport (e.g. a response cache) without patching global fetch.
 import { RealClock, type Clock } from "./clock.ts";
+import { findLeaks } from "./guard.ts";
+import { maskPii } from "./pii.ts";
+import type { TrajectoryApp, TrajectoryEntityType, TrajectorySpan } from "./trajectory/types.ts";
 
 export interface ChatMessage { role: "system" | "user" | "assistant"; content: string }
 export interface ChatOptions {
@@ -114,6 +117,30 @@ export class LLMBudget {
   }
 }
 
+export interface TrajectorySpanMeta {
+  app?: TrajectoryApp;
+  city?: string;
+  traceId?: string;
+  parentSpanId?: string;
+  entityType?: TrajectoryEntityType;
+  entityId?: string;
+  personId?: string;
+  isMinor?: boolean;
+  name?: string;
+}
+
+export type TrajectorySpanRecorder = (span: TrajectorySpan) => void;
+
+let globalTrajectoryRecorder: TrajectorySpanRecorder | undefined;
+
+export function setGlobalTrajectoryRecorder(recorder: TrajectorySpanRecorder | undefined): void {
+  globalTrajectoryRecorder = recorder;
+}
+
+export function getGlobalTrajectoryRecorder(): TrajectorySpanRecorder | undefined {
+  return globalTrajectoryRecorder;
+}
+
 export interface ClientOptions {
   /** Extra JSON body params merged into every request (e.g. { reasoning_effort: "medium" }). */
   extraBody?: Record<string, unknown>;
@@ -121,6 +148,8 @@ export interface ClientOptions {
   onResponse?: (info: ResponseInfo) => void;
   /** Called on every provider fallback (also logged with console.warn). Exceptions thrown here are ignored. */
   onFallback?: (info: FallbackInfo) => void;
+  onTrajectorySpan?: TrajectorySpanRecorder;
+  trajectoryMeta?: TrajectorySpanMeta;
   /** Transport override (defaults to global fetch). Used by evals for a disk cache; never patch globals. */
   fetch?: (url: string, init: RequestInit) => Promise<Response>;
   /** Per-request timeout in ms (default 60 s, or LLM_TIMEOUT_MS; 0 disables). A timeout counts as a retryable error. */
@@ -235,6 +264,52 @@ const warnOnce = (key: string, msg: string) => { if (!warned.has(key)) { warned.
 const realClock = new RealClock();
 const RETRYABLE_STATUS = (s: number) => s === 408 || s === 429 || s >= 500;
 
+const LLM_SENSITIVE_KEYS = new Set([
+  "authorization", "cookie", "password", "secret", "token", "apikey", "api_key",
+  "access_token", "refresh_token", "phone", "e164", "email", "birth_date", "birthdate", "ssn",
+]);
+
+function randomHex(bytes: number): string {
+  const buf = new Uint8Array(bytes);
+  globalThis.crypto.getRandomValues(buf);
+  let out = "";
+  for (const b of buf) out += b.toString(16).padStart(2, "0");
+  return out;
+}
+
+function scrubLlmPayload(value: unknown, depth = 0): { value: unknown; leakDetected: boolean } {
+  if (depth > 8) return { value: "[truncated]", leakDetected: false };
+  if (typeof value === "string") {
+    const leaks = findLeaks(value);
+    return { value: maskPii(value), leakDetected: leaks.length > 0 };
+  }
+  if (Array.isArray(value)) {
+    let leakDetected = false;
+    const out = value.map(item => {
+      const cleaned = scrubLlmPayload(item, depth + 1);
+      if (cleaned.leakDetected) leakDetected = true;
+      return cleaned.value;
+    });
+    return { value: out, leakDetected };
+  }
+  if (value !== null && typeof value === "object") {
+    let leakDetected = false;
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (LLM_SENSITIVE_KEYS.has(k.toLowerCase())) {
+        out[k] = "[redacted]";
+        leakDetected = true;
+        continue;
+      }
+      const cleaned = scrubLlmPayload(v, depth + 1);
+      if (cleaned.leakDetected) leakDetected = true;
+      out[k] = cleaned.value;
+    }
+    return { value: out, leakDetected };
+  }
+  return { value, leakDetected: false };
+}
+
 async function chatCompletions(
   endpoints: Endpoint[], model: string, messages: ChatMessage[], opts: ChatOptions,
   bodyFor: BodyFor, defaultMax: number, maxCap: number, hooks: ClientOptions,
@@ -248,7 +323,71 @@ async function chatCompletions(
   const callerSignals = [opts.signal, hooks.signal].filter((s): s is AbortSignal => !!s);
   const signal = callerSignals.length > 1 ? AbortSignal.any(callerSignals) : callerSignals[0];
   const eps = (opts.fallback ?? hooks.fallback ?? true) ? endpoints : endpoints.slice(0, 1);
-  const emit = (info: ResponseInfo) => { try { hooks.onResponse?.(info); } catch { /* observer errors never break calls */ } };
+  let fellBack = false;
+  let traceId: string | undefined;
+  const emitTrajectory = (info: ResponseInfo) => {
+    const local = hooks.onTrajectorySpan;
+    const globalRec = globalTrajectoryRecorder;
+    if (!local && !globalRec) return;
+    try {
+      const meta = hooks.trajectoryMeta;
+      traceId ??= meta?.traceId ?? `llm-${clock.now().toString(36)}-${randomHex(4)}`;
+      const spanId = `sp-${randomHex(6)}`;
+      let provider = info.baseUrl;
+      try { provider = new URL(info.baseUrl).host; } catch {}
+      const durationMs = Math.max(0, Math.round(info.latencyMs));
+      const startedAt = Math.max(0, Math.round(clock.now() - durationMs));
+      const rawChoice = info.data?.choices?.[0]?.message?.content;
+      const scrubbed = scrubLlmPayload({
+        request: info.request,
+        ...(rawChoice !== undefined ? { response: rawChoice } : {}),
+        ...(info.error ? { error: info.error } : {}),
+      });
+      const flags: string[] = [];
+      if (fellBack) flags.push("provider_fallback");
+      if (scrubbed.leakDetected) flags.push("pii_scrubbed");
+      if (!info.ok) flags.push("llm_error");
+      const span: TrajectorySpan = {
+        schemaVersion: 1,
+        traceId,
+        spanId,
+        ...(meta?.parentSpanId ? { parentSpanId: meta.parentSpanId } : {}),
+        app: meta?.app ?? "shared",
+        ...(meta?.city ? { city: meta.city } : {}),
+        kind: "llm",
+        name: meta?.name ?? "llm.chat_completions",
+        startedAt,
+        durationMs,
+        ...(meta?.entityType ? { entityType: meta.entityType } : {}),
+        ...(meta?.entityId ? { entityId: meta.entityId } : {}),
+        ...(meta?.personId ? { personId: meta.personId } : {}),
+        ...(meta?.isMinor !== undefined ? { isMinor: meta.isMinor } : {}),
+        status: info.ok ? (fellBack ? "fallback" : "ok") : "error",
+        metrics: {
+          model: info.model,
+          provider,
+          inputTokens: info.usage.promptTokens,
+          outputTokens: info.usage.completionTokens,
+          reasoningTokens: info.usage.reasoningTokens,
+          costMicros: Math.round(info.costMicro),
+        },
+        tags: {
+          attempt: info.attempt,
+          regrows: info.regrows,
+          status: info.status,
+          ...(info.finishReason ? { finishReason: info.finishReason } : {}),
+        },
+        ...(flags.length ? { flags } : {}),
+        payload: scrubbed.value as Record<string, unknown>,
+      };
+      try { local?.(span); } catch {}
+      try { globalRec?.(span); } catch {}
+    } catch {}
+  };
+  const emit = (info: ResponseInfo) => {
+    try { hooks.onResponse?.(info); } catch { /* observer errors never break calls */ }
+    emitTrajectory(info);
+  };
   const remaining = () => deadlineAt - clock.now();
   const deadlineError = (host: string, why: string) =>
     new LLMError("deadline", `${host} ${why}: call deadline of ${deadlineMs} ms reached (after ${retries} retries)`, { host, retries });
@@ -266,6 +405,7 @@ async function chatCompletions(
         const to = new URL(eps[e + 1]!.baseUrl).host;
         console.warn(`[llm] ${host} failed (${why}); falling back to ${to}`);
         try { hooks.onFallback?.({ model, from: host, to, reason: why, attempt }); } catch { /* observer errors never break calls */ }
+        fellBack = true;
         e++;
         return;
       }

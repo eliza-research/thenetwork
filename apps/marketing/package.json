@@ -10,6 +10,20 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@thenetwork/core": "workspace:*"
+    "@tailwindcss/postcss": "^4.3.5",
+    "@thenetwork/core": "workspace:*",
+    "@thenetwork/design-system": "workspace:*",
+    "@thenetwork/mock-services": "workspace:*",
+    "@thenetwork/sim": "workspace:*",
+    "@thenetwork/ui": "workspace:*",
+    "esbuild": "0.28.2",
+    "postcss": "8.5.33",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "tailwindcss": "catalog:"
+  },
+  "devDependencies": {
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:"
   }
 }

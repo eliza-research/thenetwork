@@ -2,8 +2,24 @@ import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/postcss";
-import { build } from "esbuild";
+import { build, type Plugin } from "esbuild";
 import postcss from "postcss";
+
+const serverOnlyCoreStub: Plugin = {
+  name: "server-only-core-stub",
+  setup(b) {
+    b.onResolve({ filter: /^\.\/(trajectory|pacing)\/index\.ts$/ }, args => {
+      if (args.importer.replace(/\\/g, "/").endsWith("/packages/core/src/index.ts")) {
+        return { path: args.path, namespace: "server-only-stub", sideEffects: false };
+      }
+      return undefined;
+    });
+    b.onLoad({ filter: /.*/, namespace: "server-only-stub" }, () => ({
+      contents: "export {};",
+      loader: "js",
+    }));
+  },
+};
 
 const web = new URL("../web/", import.meta.url);
 const stylesheet = fileURLToPath(new URL("styles.css", web));
@@ -25,6 +41,7 @@ export async function buildWebRoutes(development: boolean): Promise<Record<strin
       target: "es2022",
       minify: !development,
       loader: { ".png": "dataurl" },
+      plugins: [serverOnlyCoreStub],
     }),
     readFile(stylesheet, "utf8").then(source => postcss([tailwindcss({ base: fileURLToPath(web), optimize: !development })])
       .process(source, { from: stylesheet })),

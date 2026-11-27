@@ -8,14 +8,22 @@ import { setTimeout as waitForMs } from "node:timers/promises";
 // ground truth; the judge scorer checks the run records for invariants, leaks and minor contacts.
 import { fileAt } from "../../../../packages/core/src/runtime/files.ts";
 import {
-  ALL_SEED_VENUES, CITIES, CITY_IDS, DAY, getCity, HOUR, listCities, MIN_MEMBER_AGE, MINUTE, seedVenuesForCity,
-  type City, type MemberId, type Proposal, type ScoreComponents,
+  ALL_SEED_VENUES, BufferedTrajectoryWriter, CITIES, CITY_IDS, DAY, getCity, HOUR, listCities, LLMBudget, MemoryTrajectoryBlobStore, MemoryTrajectoryKeyRing,
+  MemoryTrajectoryManifestStore, MIN_MEMBER_AGE, MINUTE, seedVenuesForCity,
+  type AnalyticsFilter, type City, type CohortMatrix, type FunnelEvent, type FunnelResult, type MemberId, type OutreachHeatmap, type OutreachTelemetryRecord,
+  type Proposal, type ScoreComponents, type SliceQuery, type SliceResult, type TrajectoryQuery, type TrajectorySpan,
 } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
-import { computeMetrics } from "@thenetwork/sim";
+import { startMockServices, type MockServicesServer } from "@thenetwork/mock-services";
 import {
-  DEFAULT_START, generatePersonas, PolicyPersonaAgent, StubNetwork, World, type Persona,
+  computeMetrics, DEFAULT_START, DualResponseEngine, generatePersonas, PolicyPersonaAgent, StubNetwork, UNIFIED_SCENARIO_MAP, UnifiedSimCoordinator, World,
+  type Persona, type ResponseMode, type SimSpeedPreset, type SimStepPreset, type UnifiedChaosRule, type UnifiedFunnelEvent, type UnifiedScenarioId,
 } from "@thenetwork/sim";
+import {
+  buildAnalyticsEngineFromState, computeAnomalies, computeTimeSeries, redactHotTailForRole, redactTraceDetailForRole, scrubSqlRows, validateReadOnlyAnalyticsSql,
+  type MockTrafficEntry, type MockTrafficResponse, type ObservatoryAnomaliesResponse, type ObservatorySqlResult, type ObservatoryTimeSeriesResponse,
+  type ObservatoryTraceDetailResponse, type ObservatoryTrajectoriesResponse,
+} from "../analytics.ts";
 import { loadPersonas } from "../../../../scripts/synthetic/load.ts";
 import { DATA_DIR, readJsonl, type EdgeRecord, type HiddenTruthRecord, type MemberRecord } from "../../../../scripts/synthetic/common.ts";
 import { CapturingEngine, summarizeRun } from "../engineCapture.ts";
@@ -70,6 +78,8 @@ export interface GameOptions {
   pushMs?: number;
   /** Play-loop tick in wall ms (default 100). */
   tickMs?: number;
+  responseMode?: ResponseMode;
+  populationScale?: number;
 }
 
 const ZERO: ScoreComponents = {
@@ -77,7 +87,35 @@ const ZERO: ScoreComponents = {
   interruptionCost: 0, load: 0, repetition: 0, socialRisk: 0, confidence: 0,
 };
 export const SPEEDS = { hour: HOUR, sixHours: 6 * HOUR, day: DAY, twoDays: 2 * DAY } as const;
+export const SPEED_PRESETS: Readonly<Record<Exclude<SimSpeedPreset, "paused">, number>> = {
+  "1x": 1_000,
+  "10x": 10_000,
+  "60x": MINUTE,
+  "360x": 6 * MINUTE,
+  "1000x": 1_000_000,
+  turbo: DAY,
+};
 const MAX_STRIKES = 3;
+
+function isUnifiedScenarioId(id: string | null | undefined): id is UnifiedScenarioId {
+  return typeof id === "string" && Object.hasOwn(UNIFIED_SCENARIO_MAP, id);
+}
+
+function mapUnifiedFunnelStage(stage: UnifiedFunnelEvent["stage"]): FunnelEvent["stage"] | undefined {
+  switch (stage) {
+    case "outreach_sent": return "outreach_sent";
+    case "link_click": return "link_click";
+    case "site_visit":
+    case "qr_scan": return "site_visit";
+    case "signup_started": return "cta_triggered";
+    case "signup_verified_adult":
+    case "signup_minor_restricted": return "signup_verified";
+    case "first_match_accepted": return "first_proposal";
+    case "irl_meeting_confirmed": return "first_irl_meeting";
+    case "second_meetup_retained": return "retained_d30";
+    default: return undefined;
+  }
+}
 
 interface Profile { bio?: string; occupation?: string; neighborhood?: string; pronouns?: string; availability?: string; datasetJoinedAt?: number }
 
@@ -104,7 +142,7 @@ export class GameSource implements DataSource {
   private strikeIds = new Set<string>();
   private proposalSeq = 0;
   private pendingReset = false;
-  private opts: Required<Omit<GameOptions, "dataDir" | "scenario">> & { dataDir: string; scenario: string | null };
+  private opts: Required<Omit<GameOptions, "dataDir" | "scenario" | "populationScale">> & { dataDir: string; scenario: string | null; populationScale?: number };
   private freeDays: number;
   readonly app: AppId;
   /** Sim hour of the last judge run (the scorer runs at most once per sim hour). */
@@ -128,6 +166,21 @@ export class GameSource implements DataSource {
   private healthHour = -1;
   /** The Network panel as last pushed. */
   private lastNetwork = "";
+  private responseEngine!: DualResponseEngine;
+  private speedPreset: Exclude<SimSpeedPreset, "paused"> = "60x";
+  private teenStop = false;
+  private chaosRules = new Map<string, UnifiedChaosRule>();
+  private mockServer?: MockServicesServer;
+  private mockStarting?: Promise<MockServicesServer>;
+  private unified?: UnifiedSimCoordinator;
+  private unifiedFunnelEvents: FunnelEvent[] = [];
+  private unifiedOutreach: OutreachTelemetryRecord[] = [];
+  private trajectoryBlob = new MemoryTrajectoryBlobStore();
+  private trajectoryManifest = new MemoryTrajectoryManifestStore();
+  private trajectoryKeyRing = new MemoryTrajectoryKeyRing("obs-game-trajectory-master-key-0123456789");
+  private trajectoryWriter?: BufferedTrajectoryWriter;
+  private spanSeq = 0;
+  private cachedAnalytics?: { version: number; bundle: ReturnType<typeof buildAnalyticsEngineFromState> };
 
   constructor(opts: GameOptions = {}) {
     this.app = opts.app ?? DEFAULT_APP;
@@ -136,7 +189,7 @@ export class GameSource implements DataSource {
       seed: opts.seed ?? 1, days: opts.days ?? 60, engine: opts.engine ?? "engine-v1", personas: opts.personas ?? 0,
       dataDir: opts.dataDir ?? DATA_DIR, sparksPerDay: opts.sparksPerDay ?? 6, pushMs: opts.pushMs ?? 250, tickMs: opts.tickMs ?? 100,
       network: opts.network ?? "consent", city: opts.city ?? "nyc", scenario: opts.scenario ?? null, judge: opts.judge ?? "stand-in",
-      timeAware: opts.timeAware ?? false,
+      timeAware: opts.timeAware ?? false, responseMode: opts.responseMode ?? "canned", populationScale: opts.populationScale,
     };
     this.freeDays = opts.days ?? 60;
   }
@@ -215,10 +268,51 @@ export class GameSource implements DataSource {
     }
 
     const persona = cast?.joinText ? new ScriptedJoinAgent(this.start, cast.joinText) : new PolicyPersonaAgent(this.start, o.timeAware ? { timeAware: true } : undefined);
-    this.takeover = new TakeoverAgent(persona, this.start, () => { this.store.clock.waitingForPlayer = true; this.push(); });
+    this.responseEngine = new DualResponseEngine({
+      mode: o.responseMode,
+      budget: new LLMBudget({ maxCostMicro: 500_000, maxRequests: 500 }),
+      seed: o.seed,
+      allowLinks: ["https://ntwrk.party", "https://go.ntwrk.party"],
+      onTurn: turn => {
+        this.recordTrajectorySpan({
+          schemaVersion: 1,
+          traceId: `game-${this.app}-s${o.seed}-day-${this.dayIndex() + 1}`,
+          spanId: `turn-${++this.spanSeq}`,
+          app: this.app,
+          kind: "llm",
+          name: `response.${turn.surface}`,
+          startedAt: turn.ts,
+          durationMs: turn.latencyMs,
+          entityType: "member",
+          entityId: turn.actorId,
+          status: turn.leakBlocked ? "leak_blocked" : turn.source === "canned_fallback" ? "fallback" : "ok",
+          metrics: { costMicros: turn.costMicro },
+          tags: { surface: turn.surface, source: turn.source },
+          payload: { cacheKey: turn.cacheKey, ...(turn.fallbackReason ? { fallbackReason: turn.fallbackReason } : {}) },
+        });
+      },
+    });
+    const dualPersona = this.responseEngine.asPersonaAgent(this.start, o.timeAware ? { timeAware: true } : undefined);
+    const adaptivePersona = {
+      get mode(): "policy" | "llm" {
+        return this.responseMode === "canned" ? persona.mode : dualPersona.mode;
+      },
+      responseMode: o.responseMode,
+      respond: (ctx: Parameters<typeof persona.respond>[0], msg: Parameters<typeof persona.respond>[1]) =>
+        this.responseEngine.mode === "canned" ? persona.respond(ctx, msg) : dualPersona.respond(ctx, msg),
+      initiative: (ctx: Parameters<typeof persona.initiative>[0]) =>
+        this.responseEngine.mode === "canned" ? persona.initiative(ctx) : dualPersona.initiative(ctx),
+      joinMessage: (ctx: Parameters<typeof persona.joinMessage>[0]) => persona.joinMessage(ctx),
+    };
+    this.takeover = new TakeoverAgent(adaptivePersona, this.start, () => { this.store.clock.waitingForPlayer = true; this.push(); });
     this.records = [];
     this.judgeHour = -1; this.healthHour = -1;
     this.recent = []; this.stopHistory.clear(); this.inviters.clear(); this.guardFallback.clear(); this.configHistory = [];
+    this.unifiedFunnelEvents = []; this.unifiedOutreach = []; this.chaosRules.clear(); this.teenStop = false; this.speedPreset = "60x"; this.cachedAnalytics = undefined;
+    this.trajectoryBlob = new MemoryTrajectoryBlobStore();
+    this.trajectoryManifest = new MemoryTrajectoryManifestStore();
+    this.trajectoryKeyRing = new MemoryTrajectoryKeyRing("obs-game-trajectory-master-key-0123456789");
+    this.spanSeq = 0;
     const activeCities: City[] = o.city === "all"
       ? (() => {
           const present = [...new Set(personas.map(p => p.homeCity))];
@@ -233,6 +327,22 @@ export class GameSource implements DataSource {
         const sum = summarizeRun(log, proposals, { at, ...(runCity ? { city: runCity } : {}), wallMs: Math.round(log.timingsMs.total ?? 0) });
         this.store.addRun(sum);
         this.store.pushFeed({ t: at, kind: "engine", text: `engine-v1 · ${runCityLabel}: ${proposals.length} candidates proposed from ${sum.funnel.generated}; the Network gates them (skeptical) and checks availability first` });
+        this.recordTrajectorySpan({
+          schemaVersion: 1,
+          traceId: `run-${sum.id}`,
+          spanId: `match-${++this.spanSeq}`,
+          app: this.app,
+          ...(runCity ? { city: runCity } : {}),
+          kind: "match_run",
+          name: "engine.match_run",
+          startedAt: at,
+          durationMs: sum.wallMs,
+          entityType: "run",
+          entityId: sum.id,
+          status: "ok",
+          tags: { generated: sum.funnel.generated, selected: sum.funnel.selected, proposals: proposals.length },
+          payload: { funnel: sum.funnel, byGenerator: sum.byGenerator },
+        });
       },
     }) : undefined;
     this.engine = o.engine === "engine-v1" && !this.consent
@@ -262,8 +372,21 @@ export class GameSource implements DataSource {
       actions: cast?.actions,
       onRecord: r => this.onRecord(r),
     });
+    this.trajectoryWriter = new BufferedTrajectoryWriter({
+      blobStore: this.trajectoryBlob,
+      manifestStore: this.trajectoryManifest,
+      keyRing: this.trajectoryKeyRing,
+      clock: this.world.clock,
+      workerId: `obs-game-${this.app}`,
+      flushIntervalMs: 0,
+    });
     this.store.truth = Object.fromEntries(personas.map(p => [p.id, truthOf(p)]));
     await this.world.begin();
+    if (isUnifiedScenarioId(o.scenario)) {
+      await this.initUnifiedScenario(o.scenario);
+    } else {
+      this.unified = undefined;
+    }
     this.store.pushFeed({ t: this.start, kind: "game", text: `World ready: ${personas.length} members, ${this.store.edges.size} known connections. Press play.` });
     this.refreshGame();
     this.timers.push(setInterval(() => this.loop(), this.opts.tickMs));
@@ -271,14 +394,121 @@ export class GameSource implements DataSource {
     this.draining = false;
   }
 
+  private async ensureMockServer(): Promise<MockServicesServer> {
+    if (this.mockServer) return this.mockServer;
+    this.mockStarting ??= startMockServices({ port: 0, hostname: "127.0.0.1", seed: this.opts.seed, startMs: this.start })
+      .then(handle => {
+        this.mockServer = handle;
+        this.mockStarting = undefined;
+        return handle;
+      })
+      .catch(err => {
+        this.mockStarting = undefined;
+        throw err;
+      });
+    return this.mockStarting;
+  }
+
+  private async initUnifiedScenario(scenarioId: UnifiedScenarioId) {
+    const mock = await this.ensureMockServer();
+    const scale = this.opts.populationScale ?? (scenarioId === "high_volume_stress" ? 0.04 : 0.15);
+    this.unified = new UnifiedSimCoordinator({
+      scenario: scenarioId,
+      seed: this.opts.seed,
+      app: this.app,
+      startMs: this.start,
+      mockBaseUrl: mock.url,
+      responseMode: this.responseEngine.mode,
+      llmBudget: this.responseEngine.getBudget(),
+      populationScale: scale,
+      onFunnelEvent: ev => {
+        const mapped = mapUnifiedFunnelStage(ev.stage);
+        if (mapped) {
+          this.unifiedFunnelEvents.push({
+            eventId: `uf-${ev.seq}`,
+            occurredAt: ev.ts,
+            appId: this.app,
+            city: ev.city,
+            stage: mapped,
+            actorKey: ev.memberId ?? ev.actorId ?? `u-${ev.seq}`,
+            channel: ev.platform,
+            campaignId: ev.armId,
+            desireLane: ev.desireLane,
+            isAdultVerified: ev.isAdultVerified,
+            ...(ev.costCents !== undefined ? { spendCents: ev.costCents } : {}),
+          });
+        }
+        const dt = new Date(ev.ts);
+        const dow = (dt.getUTCDay() + 6) % 7;
+        const hour = dt.getUTCHours();
+        if (ev.stage === "outreach_sent" || ev.stage === "prospect_reply" || ev.stage === "link_click" || ev.stage === "opt_out_stop" || ev.stage === "signup_verified_adult") {
+          this.unifiedOutreach.push({
+            occurredAt: ev.ts,
+            appId: this.app,
+            city: ev.city,
+            channel: ev.platform,
+            campaignId: ev.armId,
+            templateId: ev.armId,
+            personaId: this.app,
+            desireLane: ev.desireLane,
+            localDayOfWeek: dow,
+            localHour: hour,
+            sent: ev.stage === "outreach_sent" ? 1 : 0,
+            delivered: ev.stage === "outreach_sent" ? 1 : 0,
+            clicked: ev.stage === "link_click" ? 1 : 0,
+            replied: ev.stage === "prospect_reply" ? 1 : 0,
+            converted: ev.stage === "signup_verified_adult" ? 1 : 0,
+            stopped: ev.stage === "opt_out_stop" ? 1 : 0,
+            bounced: 0,
+            rateLimited429: 0,
+          });
+        }
+      },
+      onTrajectorySpan: sp => {
+        this.recordTrajectorySpan({
+          schemaVersion: 1,
+          traceId: sp.traceId,
+          spanId: sp.spanId,
+          app: this.app,
+          ...(sp.city ? { city: sp.city } : {}),
+          kind: sp.kind === "marketing_http" ? "outreach" : sp.kind === "chaos_shock" ? "safety" : "sim_record",
+          name: `unified.${sp.kind}`,
+          startedAt: sp.ts,
+          durationMs: sp.latencyMs,
+          ...(sp.actorId ? { entityType: "member", entityId: sp.actorId } : {}),
+          status: sp.status === "blocked" ? "leak_blocked" : sp.status,
+          metrics: { costMicros: sp.costMicro },
+          payload: sp.detail,
+        });
+      },
+    });
+    await this.unified.init();
+  }
+
+  recordTrajectorySpan(span: TrajectorySpan): void {
+    this.trajectoryWriter?.record(span);
+  }
+
+  async shredTrajectoryPerson(personId: string): Promise<void> {
+    await this.trajectoryWriter?.flush();
+    await this.trajectoryWriter?.shredPerson(personId);
+    await this.trajectoryKeyRing.shredPerson(personId);
+  }
+
   async dispose() {
     this.draining = true;
     for (const t of this.timers) clearInterval(t);
     this.timers = [];
-    this.store.clock.playing = false;
+    if (this.store) this.store.clock.playing = false;
     const advancing = this.advancing;
     await this.takeover?.releaseAll();
     await advancing?.catch(() => {});
+    await this.trajectoryWriter?.shutdown().catch(() => {});
+    this.trajectoryWriter = undefined;
+    if (this.mockStarting) await this.mockStarting.catch(() => {});
+    await this.mockServer?.stop(true).catch(() => {});
+    this.mockServer = undefined;
+    this.unified = undefined;
   }
 
   private onRecord(r: RunRecord) {
@@ -290,8 +520,40 @@ export class GameSource implements DataSource {
     } else if (r.type === "network_log") {
       const d = r.detail as Record<string, any>;
       if (r.kind === "send_refused") this.recent.push({ t: r.t, key: `send_refused:${d.reason}` });
-      else if (r.kind === "guard_blocked") { this.recent.push({ t: r.t, key: "guard_blocked" }); if (d.fallback) this.guardFallback.add(`${d.memberId}@${r.t}`); }
+      else if (r.kind === "guard_blocked") {
+        this.recent.push({ t: r.t, key: "guard_blocked" });
+        if (d.fallback) this.guardFallback.add(`${d.memberId}@${r.t}`);
+        this.recordTrajectorySpan({
+          schemaVersion: 1,
+          traceId: `guard-${d.memberId ?? "sys"}-${r.t}`,
+          spanId: `guard-${++this.spanSeq}`,
+          app: this.app,
+          kind: "safety",
+          name: "leak_guard.blocked",
+          startedAt: r.t,
+          durationMs: 0,
+          ...(typeof d.memberId === "string" ? { entityType: "member", entityId: d.memberId } : {}),
+          status: "leak_blocked",
+          flags: ["leak_blocked"],
+          payload: { fallback: Boolean(d.fallback), reasons: Array.isArray(d.reasons) ? d.reasons : [] },
+        });
+      }
       else if (r.kind === "review_expired") this.recent.push({ t: r.t, key: "review_expired" });
+      else if (r.kind === "review_decision") {
+        this.recordTrajectorySpan({
+          schemaVersion: 1,
+          traceId: `review-${d.oppId ?? this.spanSeq}`,
+          spanId: `rev-${++this.spanSeq}`,
+          app: this.app,
+          kind: "review_judge",
+          name: `review.${String(d.decision ?? "decide")}`,
+          startedAt: r.t,
+          durationMs: 0,
+          ...(typeof d.oppId === "string" ? { entityType: "opportunity", entityId: d.oppId } : {}),
+          status: d.decision === "reject" ? "flagged" : "ok",
+          payload: { decision: String(d.decision ?? ""), ...(typeof d.reason === "string" ? { reason: d.reason } : {}) },
+        });
+      }
       else if (r.kind === "invite" && d.from) this.inviters.add(d.from);
     }
     if (r.type === "persona" && !this.store.member(r.persona.id)) this.addSpawned(r.persona.id);
@@ -397,9 +659,35 @@ export class GameSource implements DataSource {
   }
 
   private advance(target: number): Promise<void> {
+    const before = this.world.clock.now();
     const run = (async () => {
-      await this.world.advanceTo(target);
-      this.syncClock();
+      const totalDelta = target - before;
+      const chunked = totalDelta > 2 * HOUR;
+      if (chunked) {
+        this.store.clock.busy = "stepping";
+        this.push();
+      }
+      try {
+        if (chunked) {
+          let cursor = before;
+          while (cursor < target && !this.draining) {
+            cursor = Math.min(target, cursor + 2 * HOUR);
+            await this.world.advanceTo(cursor);
+            this.syncClock();
+            this.push();
+            if (cursor < target) await new Promise<void>(resolve => setImmediate(resolve));
+          }
+        } else {
+          await this.world.advanceTo(target);
+        }
+        if (this.unified && !this.draining) {
+          const step: SimStepPreset | undefined = totalDelta >= DAY ? "+1d" : totalDelta >= 6 * HOUR ? "+6h" : totalDelta >= HOUR ? "+1h" : totalDelta >= 15 * MINUTE ? "+15m" : undefined;
+          if (step) await this.unified.step(step).catch(() => {});
+        }
+        this.syncClock();
+      } finally {
+        if (chunked && this.store.clock.busy === "stepping") this.store.clock.busy = undefined;
+      }
     })();
     this.advancing = run.finally(() => { this.advancing = null; });
     return this.advancing;
@@ -488,11 +776,22 @@ export class GameSource implements DataSource {
         return joinedAt !== undefined && welcomeMissionRecentAttendee(joinedAt, at);
       },
     }, this.missions);
+    const unifiedSnap = this.unified?.getSnapshot();
     return {
       sparksLeft: Math.max(0, this.opts.sparksPerDay - (this.sparksUsed.get(this.dayIndex()) ?? 0)), sparksPerDay: this.opts.sparksPerDay,
       strikes: this.strikeIds.size, maxStrikes: MAX_STRIKES, over: this.over(), lensUsed: this.lensUsed, peeks: this.peeks,
       engine: this.opts.engine, scores, missions: this.missions, prompts: this.takeover?.prompts() ?? [],
       controlled: [...(this.takeover?.controlled ?? [])],
+      unified: {
+        ...(isUnifiedScenarioId(this.opts.scenario) ? { scenarioId: this.opts.scenario } : {}),
+        responseMode: this.responseEngine?.mode ?? this.opts.responseMode,
+        speedPreset: this.speedPreset,
+        responseStats: unifiedSnap?.responseStats ?? this.responseEngine.getStats(),
+        ...(unifiedSnap ? { scorecard: unifiedSnap.scorecard, backpressure: unifiedSnap.backpressure, httpSummary: unifiedSnap.httpSummary } : {}),
+        activeChaos: unifiedSnap ? unifiedSnap.activeChaos : [...this.chaosRules.values()].filter(r => r.enabled),
+        ...(this.mockServer ? { mockBaseUrl: this.mockServer.url } : {}),
+        teenStop: this.teenStop,
+      },
     };
   }
 
@@ -689,7 +988,15 @@ export class GameSource implements DataSource {
         case "play": if (this.over()) return { ok: false, error: "game over: reset to play again" }; c.playing = true; break;
         case "pause": c.playing = false; break;
         case "speed": {
-          if (!Number.isFinite(cmd.speed)) return { ok: false, error: "speed must be a finite number", code: "invalid_speed" };
+          if (typeof cmd.speed === "string" && Object.hasOwn(SPEED_PRESETS, cmd.speed)) {
+            const preset = cmd.speed as Exclude<SimSpeedPreset, "paused">;
+            this.speedPreset = preset;
+            c.speed = SPEED_PRESETS[preset];
+            this.responseEngine.setSpeedRatio(preset === "turbo" ? 86_400 : Number(preset.replace("x", "")) || 60);
+            if (this.unified) await this.unified.dispatchCommand({ type: "set_speed", preset });
+            break;
+          }
+          if (typeof cmd.speed !== "number" || !Number.isFinite(cmd.speed)) return { ok: false, error: "speed must be a finite number", code: "invalid_speed" };
           c.speed = Math.max(MINUTE, Math.min(7 * DAY, cmd.speed));
           break;
         }
@@ -747,15 +1054,98 @@ export class GameSource implements DataSource {
           await this.dispose();
           const scenario = cmd.scenario === undefined ? this.opts.scenario : cmd.scenario;
           const level = scenario ? SCENARIOS.find(x => x.id === scenario) : undefined;
+          const unifiedPreset = isUnifiedScenarioId(scenario) ? UNIFIED_SCENARIO_MAP[scenario] : undefined;
           Object.assign(this.opts, {
-            seed: cmd.seed ?? this.opts.seed, engine: cmd.engine ?? this.opts.engine,
-            personas: cmd.personas ?? this.opts.personas, days: cmd.days ?? (scenario ? level?.days ?? this.opts.days : this.freeDays),
-            network: cmd.network ?? this.opts.network, scenario,
+            seed: cmd.seed ?? this.opts.seed,
+            engine: cmd.engine ?? this.opts.engine,
+            personas: cmd.personas ?? this.opts.personas,
+            days: cmd.days ?? (scenario ? level?.days ?? unifiedPreset?.days ?? this.opts.days : this.freeDays),
+            network: cmd.network ?? this.opts.network,
+            city: cmd.city ?? (unifiedPreset ? (unifiedPreset.cities.length > 1 ? "all" : unifiedPreset.cities[0] ?? this.opts.city) : this.opts.city),
+            timeAware: cmd.timeAware ?? this.opts.timeAware,
+            judge: cmd.judge ?? this.opts.judge,
+            responseMode: cmd.responseMode ?? unifiedPreset?.defaultResponseMode ?? this.opts.responseMode,
+            scenario,
           });
           this.sparksUsed.clear(); this.lensUsed = false; this.peeks = 0; this.extraPoints = {};
           this.missions = []; this.strikeIds.clear(); this.proposalSeq = 0;
           await this.init();
           this.pendingReset = true;
+          break;
+        }
+        case "set_response_mode": {
+          if (cmd.mode !== "canned" && cmd.mode !== "hybrid" && cmd.mode !== "llm") {
+            return { ok: false, error: "mode must be canned, hybrid, or llm", code: "invalid_response_mode" };
+          }
+          this.opts.responseMode = cmd.mode;
+          this.responseEngine.setMode(cmd.mode);
+          if (this.unified) await this.unified.dispatchCommand({ type: "set_response_mode", mode: cmd.mode });
+          this.store.pushFeed({ t: c.now, kind: "config", text: `Simulation response mode switched to ${cmd.mode}.` });
+          break;
+        }
+        case "set_llm_budget": {
+          if (cmd.maxCostUsd !== undefined && (!Number.isFinite(cmd.maxCostUsd) || cmd.maxCostUsd < 0)) {
+            return { ok: false, error: "maxCostUsd must be a non-negative finite number", code: "invalid_budget" };
+          }
+          if (cmd.maxRequests !== undefined && (!Number.isFinite(cmd.maxRequests) || cmd.maxRequests < 0)) {
+            return { ok: false, error: "maxRequests must be a non-negative finite number", code: "invalid_budget" };
+          }
+          this.responseEngine.setBudgetLimits({ maxCostUsd: cmd.maxCostUsd, maxRequests: cmd.maxRequests });
+          if (this.unified) await this.unified.dispatchCommand({ type: "set_llm_budget", maxCostUsd: cmd.maxCostUsd, maxRequests: cmd.maxRequests });
+          break;
+        }
+        case "trigger_chaos": {
+          if (!cmd.rule || typeof cmd.rule.id !== "string" || !cmd.rule.id.trim() || typeof cmd.rule.service !== "string") {
+            return { ok: false, error: "chaos rule requires id, service, and fault", code: "invalid_chaos" };
+          }
+          await this.addMockChaos(cmd.rule);
+          this.store.pushFeed({ t: c.now, kind: "scenario", text: `Chaos injected on ${cmd.rule.service}: ${cmd.rule.fault.kind} (${cmd.rule.id}).`, severity: "warn" });
+          break;
+        }
+        case "clear_chaos": {
+          await this.deleteMockChaos(cmd.id);
+          this.store.pushFeed({ t: c.now, kind: "scenario", text: cmd.id ? `Chaos rule ${cmd.id} cleared.` : "All active chaos rules cleared." });
+          break;
+        }
+        case "trigger_world_event": {
+          const valid = new Set(["viral_mention", "sybil_ring_attack", "minor_wave", "venue_closure", "opt_out"]);
+          if (!valid.has(cmd.event)) return { ok: false, error: `unknown world event ${cmd.event}`, code: "invalid_event" };
+          const targetCity = cmd.city ?? (this.opts.city === "all" ? "nyc" : this.opts.city);
+          if (this.unified) {
+            await this.unified.dispatchCommand({ type: "trigger_world_event", event: cmd.event, city: targetCity });
+          } else if (cmd.event === "opt_out") {
+            const joined = [...this.store.members.values()].find(m => m.joined && m.state !== "opted_out");
+            if (joined) {
+              this.world.act({ do: "opt_out", persona: joined.id });
+              await this.settle();
+            }
+          }
+          this.recordTrajectorySpan({
+            schemaVersion: 1,
+            traceId: `event-${cmd.event}-${c.now}`,
+            spanId: `ev-${++this.spanSeq}`,
+            app: this.app,
+            city: targetCity,
+            kind: "safety",
+            name: `world_event.${cmd.event}`,
+            startedAt: c.now,
+            durationMs: 0,
+            status: "ok",
+            payload: { event: cmd.event, city: targetCity },
+          });
+          this.store.pushFeed({ t: c.now, kind: "scenario", text: `World event triggered: ${cmd.event.replace(/_/g, " ")} (${targetCity.toUpperCase()}).`, severity: cmd.event === "viral_mention" ? "good" : "warn" });
+          break;
+        }
+        case "teen_stop": {
+          if (typeof cmd.stop !== "boolean") return { ok: false, error: "stop must be true or false", code: "invalid_teen_stop" };
+          this.teenStop = cmd.stop;
+          const who = actor ?? "player";
+          if (this.consent) {
+            if (cmd.stop) this.consent.stopTeenIntros(who);
+            else this.consent.resumeTeenIntros(who);
+          }
+          if (this.unified) await this.unified.dispatchCommand({ type: "teen_stop", stop: cmd.stop, actor: who });
+          this.store.pushFeed({ t: c.now, kind: "config", text: cmd.stop ? "Teen introductions stopped across app." : "Teen introductions resumed.", severity: cmd.stop ? "warn" : "info" });
           break;
         }
         case "review": {
@@ -897,10 +1287,168 @@ export class GameSource implements DataSource {
       };
     });
   }
+
+  private analyticsBundle() {
+    const version = this.store.version;
+    if (this.cachedAnalytics && this.cachedAnalytics.version === version) {
+      return this.cachedAnalytics.bundle;
+    }
+    this.syncClock();
+    const state = this.store.snapshot(this.refreshGame());
+    const unifiedSafety = this.unified?.getScorecard().safety;
+    const bundle = buildAnalyticsEngineFromState(state, this.app, {
+      funnelEvents: this.unifiedFunnelEvents,
+      outreach: this.unifiedOutreach,
+      ...(unifiedSafety ? {
+        safety: {
+          canaryLeaks: unifiedSafety.canaryLeaks,
+          teenViolationContacts: unifiedSafety.teenRuleViolations,
+        },
+      } : {}),
+      nowMs: state.clock.now,
+    });
+    this.cachedAnalytics = { version, bundle };
+    return bundle;
+  }
+
+  async analyticsFunnel(filter: AnalyticsFilter): Promise<FunnelResult> {
+    return this.analyticsBundle().engine.computeFunnel({ ...filter, appId: this.app });
+  }
+
+  async analyticsCohorts(filter: AnalyticsFilter): Promise<CohortMatrix> {
+    return this.analyticsBundle().engine.computeCohortMatrix({ ...filter, appId: this.app });
+  }
+
+  async analyticsTimeSeries(granularity: "hour" | "day" | "week", filter: AnalyticsFilter): Promise<ObservatoryTimeSeriesResponse> {
+    const bundle = this.analyticsBundle();
+    return computeTimeSeries(bundle.engine, this.state(), granularity, { ...filter, appId: this.app });
+  }
+
+  async analyticsHeatmap(filter: AnalyticsFilter): Promise<OutreachHeatmap> {
+    return this.analyticsBundle().engine.computeOutreachHeatmap({ ...filter, appId: this.app });
+  }
+
+  async analyticsAnomalies(filter: AnalyticsFilter = {}): Promise<ObservatoryAnomaliesResponse> {
+    const bundle = this.analyticsBundle();
+    const state = this.state();
+    const ts = computeTimeSeries(bundle.engine, state, "day", { ...filter, appId: this.app });
+    return computeAnomalies(ts, bundle.safety, bundle.intentDemand, state.clock.now);
+  }
+
+  async analyticsSlice(query: SliceQuery): Promise<SliceResult> {
+    return this.analyticsBundle().engine.slice({ ...query, filter: { ...query.filter, appId: this.app } });
+  }
+
+  async analyticsSql(sqlText: string): Promise<ObservatorySqlResult> {
+    const check = validateReadOnlyAnalyticsSql(sqlText);
+    if (!check.ok) throw new Error(check.error);
+    const s = this.state();
+    const summaryRows: Record<string, unknown>[] = s.members.slice(0, 50).map(m => ({
+      member_id: m.id,
+      city: m.city,
+      state: m.state,
+      joined: m.joined,
+      meetings: m.counters.meetings,
+      proposals: m.counters.proposals,
+    }));
+    return scrubSqlRows(summaryRows, 500);
+  }
+
+  async trajectories(query: TrajectoryQuery, opts: { allowPayload?: boolean } = {}): Promise<ObservatoryTrajectoriesResponse> {
+    await this.trajectoryWriter?.flush().catch(() => {});
+    const scoped: TrajectoryQuery = { ...query, appId: this.app, limit: Math.min(200, Math.max(1, query.limit ?? 50)) };
+    const traces = await this.trajectoryManifest.query(scoped);
+    const hotTail = this.trajectoryWriter
+      ? redactHotTailForRole(
+        this.trajectoryWriter.tailHot({
+          app: this.app,
+          ...(scoped.traceId ? { traceId: scoped.traceId } : {}),
+          ...(scoped.entityId ? { entityId: scoped.entityId } : {}),
+          ...(scoped.kind ? { kind: scoped.kind } : {}),
+          ...(scoped.status ? { status: scoped.status } : {}),
+          limit: scoped.limit,
+        }),
+        Boolean(opts.allowPayload),
+      )
+      : [];
+    return { traces, hotTail, driver: this.trajectoryBlob.kind };
+  }
+
+  async trajectoryDetail(traceId: string, opts: { decrypt?: boolean; allowPayload?: boolean } = {}): Promise<ObservatoryTraceDetailResponse> {
+    await this.trajectoryWriter?.flush().catch(() => {});
+    const manifest = await this.trajectoryManifest.getByTraceId(this.app, traceId);
+    const allowPayload = Boolean(opts.allowPayload);
+    const decrypt = Boolean(opts.decrypt && allowPayload);
+    let spans = this.trajectoryWriter
+      ? await this.trajectoryWriter.readTrace(this.app, traceId, {
+        decrypt,
+        ...(manifest ? { objectKey: manifest.objectKey, byteOffset: manifest.byteOffset, byteLength: manifest.byteLength } : {}),
+      })
+      : [];
+    if (spans.length === 0 && this.trajectoryWriter) {
+      const tail = this.trajectoryWriter.tailHot({ app: this.app, traceId, limit: 200 });
+      spans = tail.map(s => {
+        const { payload, personId: _p, isMinor, ...rest } = s;
+        const canShow = allowPayload && !isMinor && payload !== undefined;
+        return { ...rest, ...(canShow ? { payload } : {}), payloadState: canShow ? "plain" as const : "redacted" as const };
+      });
+    }
+    return {
+      traceId,
+      manifest: manifest ?? null,
+      spans: redactTraceDetailForRole(spans, allowPayload),
+    };
+  }
+
+  async mockTraffic(filter: { service?: string; status?: number; limit?: number } = {}): Promise<MockTrafficResponse> {
+    const mock = await this.ensureMockServer();
+    const params = new URLSearchParams();
+    if (filter.service) params.set("service", filter.service);
+    if (filter.status !== undefined) params.set("status", String(filter.status));
+    if (filter.limit !== undefined) params.set("limit", String(Math.min(500, Math.max(1, filter.limit))));
+    const res = await fetch(`${mock.url}/_mock/traffic${params.size ? `?${params.toString()}` : ""}`);
+    const data = (await res.json().catch(() => ({}))) as { entries?: MockTrafficEntry[] };
+    const entries = Array.isArray(data.entries) ? data.entries : [];
+    const byService: Record<string, number> = {};
+    const byStatus: Record<string, number> = {};
+    for (const e of entries) {
+      byService[e.service] = (byService[e.service] ?? 0) + 1;
+      const stKey = String(e.status);
+      byStatus[stKey] = (byStatus[stKey] ?? 0) + 1;
+    }
+    return { entries, stats: { total: entries.length, byService, byStatus }, baseUrl: mock.url };
+  }
+
+  async mockChaos(): Promise<UnifiedChaosRule[]> {
+    return [...this.chaosRules.values()];
+  }
+
+  async addMockChaos(rule: UnifiedChaosRule): Promise<UnifiedChaosRule[]> {
+    const normalized: UnifiedChaosRule = { ...rule, enabled: rule.enabled !== false };
+    this.chaosRules.set(normalized.id, normalized);
+    const mock = await this.ensureMockServer();
+    await fetch(`${mock.url}/_mock/chaos`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(normalized),
+    }).catch(() => {});
+    if (this.unified) await this.unified.dispatchCommand({ type: "trigger_chaos", rule: normalized });
+    return [...this.chaosRules.values()];
+  }
+
+  async deleteMockChaos(id?: string): Promise<UnifiedChaosRule[]> {
+    if (id) this.chaosRules.delete(id);
+    else this.chaosRules.clear();
+    if (this.mockServer) {
+      const target = id ? `${this.mockServer.url}/_mock/chaos/${encodeURIComponent(id)}` : `${this.mockServer.url}/_mock/chaos`;
+      await fetch(target, { method: "DELETE" }).catch(() => {});
+    }
+    if (this.unified) await this.unified.dispatchCommand({ type: "clear_chaos", ...(id ? { id } : {}) });
+    return [...this.chaosRules.values()];
+  }
 }
 
-/** Commands that change the world or the Network: they wait for a running step (idle()). Clock controls and reads do not. */
-const WAITS_FOR_WORLD = new Set<ControlCommand["type"]>(["review", "matching", "propose", "say", "god", "check_scenario"]);
+const WAITS_FOR_WORLD = new Set<ControlCommand["type"]>(["review", "matching", "propose", "say", "god", "check_scenario", "trigger_world_event", "teen_stop"]);
 
 /** Why an item is no longer waiting for review, from what the console shows now. */
 function notInReview(o: ObsOpportunity | undefined): string {

@@ -2,6 +2,12 @@
 // Default window 21:00-09:00 local: the PRD's "not after 9pm" example, inside Blooio's suggested 8am-8pm-ish
 // sending window for new conversations. Replies to a member's own message and compliance replies are exempt.
 import { CITY_TZ as CORE_CITY_TZ, cityTimezone, withinQuietHours } from "@thenetwork/core";
+import { applyQuietHoursSpread } from "../../core/src/pacing/jitter.ts";
+
+export interface QuietSpreadOptions {
+  key: string;
+  windowMs?: number;
+}
 
 export interface QuietWindow {
   /** Local hour (0-23) quiet hours start. */
@@ -36,15 +42,17 @@ export function isQuietAt(ms: number, tz: string, w: QuietWindow = DEFAULT_QUIET
 }
 
 /** The first instant at or after `ms` that is outside quiet hours (minute precision, DST-safe by re-checking). */
-export function nextAllowedAt(ms: number, tz: string, w: QuietWindow = DEFAULT_QUIET): number {
+export function nextAllowedAt(ms: number, tz: string, w: QuietWindow = DEFAULT_QUIET, spread?: QuietSpreadOptions): number {
   if (!isQuietAt(ms, tz, w)) return ms;
   const mins = localMinutes(ms, tz);
   const end = w.endHour * 60;
   const until = mins < end ? end - mins : 24 * 60 - mins + end;
-  // Align to the start of the minute, jump, then nudge across any DST hour shift.
   let t = ms - (ms % 60_000) + until * 60_000;
   for (let i = 0; i < 8 && isQuietAt(t, tz, w); i++) t += 15 * 60_000;
-  while (t - 60_000 > ms && !isQuietAt(t - 60_000, tz, w)) t -= 60_000; // pull back if DST made us overshoot
+  while (t - 60_000 > ms && !isQuietAt(t - 60_000, tz, w)) t -= 60_000;
+  if (spread && spread.windowMs && spread.windowMs > 0) {
+    return applyQuietHoursSpread(t, spread.key, spread.windowMs);
+  }
   return t;
 }
 

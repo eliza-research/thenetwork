@@ -295,6 +295,9 @@ export class PgNetworkCoreBridge implements NetworkCoreBridge {
       (e164 ? keyedContactHash("phone", e164, this.env) : null);
     const emailHash = input.email ? keyedContactHash("email", input.email, this.env) : null;
 
+    const rawEnv = (this.env.MARKETING_ENV ?? this.env.NODE_ENV ?? "dev").trim().toLowerCase();
+    const failClosedOnMissingBridge = rawEnv === "production" || rawEnv === "staging";
+
     if (!phoneHash && !e164) {
       if (emailHash) {
         try {
@@ -317,14 +320,16 @@ export class PgNetworkCoreBridge implements NetworkCoreBridge {
             };
           }
         } catch (err) {
-          if (!isPgUndefinedObjectError(err)) {
+          if (!isPgUndefinedObjectError(err) || failClosedOnMissingBridge) {
             return {
               allowed: false,
               banned: false,
               globallyStopped: false,
               knownMinor: false,
               recycledHold: false,
-              reason: "bridge_error_fail_closed",
+              reason: isPgUndefinedObjectError(err)
+                ? "bridge_unavailable_fail_closed"
+                : "bridge_error_fail_closed",
               source: "platform_pg",
             };
           }
@@ -369,7 +374,7 @@ export class PgNetworkCoreBridge implements NetworkCoreBridge {
         source: "platform_pg",
       };
     } catch (err) {
-      if (isPgUndefinedObjectError(err)) {
+      if (isPgUndefinedObjectError(err) && !failClosedOnMissingBridge) {
         return {
           allowed: true,
           banned: false,
@@ -385,7 +390,9 @@ export class PgNetworkCoreBridge implements NetworkCoreBridge {
         globallyStopped: false,
         knownMinor: false,
         recycledHold: false,
-        reason: "bridge_error_fail_closed",
+        reason: isPgUndefinedObjectError(err)
+          ? "bridge_unavailable_fail_closed"
+          : "bridge_error_fail_closed",
         source: "platform_pg",
       };
     }

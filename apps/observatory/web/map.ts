@@ -4,7 +4,7 @@ import { ALL_SEED_VENUES, CITIES, findNeighborhood, getCity, listCities } from "
 import type { City } from "../../../packages/core/src/types.ts";
 import { NEIGHBORHOOD, SF_NEIGHBORHOOD, VENUES as LEGACY_NYC_VENUES } from "@thenetwork/network/geo";
 import type { ObsMember } from "../src/types.ts";
-import { EDGE_STYLE, memberPaint, oppInk, type Palette, readPalette } from "./graph.ts";
+import { EDGE_STYLE, memberPaint, oppInk, PULSE_INK, type Palette, readPalette } from "./graph.ts";
 import { memberTooltipText, textNode } from "./safe.ts";
 import { observeMapSize } from "./map-size.ts";
 import { focusKey, memberGeoPoint, OPEN, store } from "./store.ts";
@@ -38,6 +38,8 @@ function resolveNeighborhoodCenter(area: string, city?: City): L.LatLngExpressio
 }
 
 export class MapView {
+  private el: HTMLElement;
+  private destroyed = false;
   private map: L.Map;
   private renderer = L.canvas({ padding: 0.3 });
   private members = new Map<string, L.CircleMarker>();
@@ -46,6 +48,8 @@ export class MapView {
   private oppLayer = L.layerGroup();
   private venueLayer = L.layerGroup();
   private meetLayer = L.layerGroup();
+  private pulseLayer = L.layerGroup();
+  private activePulses: { marker: L.CircleMarker; t0: number; big: boolean }[] = [];
   private venues: { marker: L.CircleMarker; active: boolean }[] = [];
   private venueInk = "";
   private venueKey = "";
@@ -59,29 +63,41 @@ export class MapView {
   private stopObservingSize: () => void;
 
   constructor(el: HTMLElement) {
+    this.el = el;
     this.lastCity = store.activeCity();
     this.map = L.map(el, { zoomControl: true, preferCanvas: true, attributionControl: true }).setView(cityCenter(this.lastCity), 12);
     L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19, className: "tiles-dark",
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     }).addTo(this.map);
-    this.edgeLayer.addTo(this.map); this.oppLayer.addTo(this.map); this.meetLayer.addTo(this.map); this.venueLayer.addTo(this.map);
+    this.edgeLayer.addTo(this.map); this.oppLayer.addTo(this.map); this.meetLayer.addTo(this.map); this.venueLayer.addTo(this.map); this.pulseLayer.addTo(this.map);
     this.syncVenues(readPalette());
     if (store.pendingFly) { this.map.setView([store.pendingFly.lat, store.pendingFly.lng], 15); store.pendingFly = null; this.lastFocusKey = focusKey(store.ui.focus); }
     this.stopObservingSize = observeMapSize(el, () => {
-      this.map.invalidateSize({ animate: false, debounceMoveend: true });
+      if (this.canDraw()) this.map.invalidateSize({ animate: false, debounceMoveend: true });
     });
     this.raf = requestAnimationFrame(this.frame);
   }
 
-  destroy() { cancelAnimationFrame(this.raf); this.stopObservingSize(); this.map.remove(); }
+  private canDraw(): boolean {
+    return !this.destroyed && this.el.isConnected && !this.el.hidden && this.el.clientWidth > 0 && this.el.clientHeight > 0;
+  }
+
+  destroy() {
+    this.destroyed = true;
+    cancelAnimationFrame(this.raf);
+    this.stopObservingSize();
+    this.activePulses = [];
+    this.map.remove();
+  }
 
   focus(id: string) {
+    if (!this.canDraw()) return;
     const m = store.members.get(id);
     if (m) this.map.flyTo(this.point(m), Math.max(this.map.getZoom(), 14), { duration: 0.6 });
   }
 
-  flyTo(lat: number, lng: number) { this.map.flyTo([lat, lng], Math.max(this.map.getZoom(), 15), { duration: 0.6 }); }
+  flyTo(lat: number, lng: number) { if (this.canDraw()) this.map.flyTo([lat, lng], Math.max(this.map.getZoom(), 15), { duration: 0.6 }); }
 
   private point(m: ObsMember): L.LatLngExpression {
     const p = memberGeoPoint(m.id, m.city, m.area);
@@ -110,8 +126,54 @@ export class MapView {
     this.restyleVenues(ink);
   }
 
+  private stepPulses(now: number) {
+    if (store.pulses.length) {
+      const ink = readPalette();
+      for (const f of store.pulses.splice(0)) {
+        const inkKey = PULSE_INK[f.severity ?? "info"];
+        const color = ink[inkKey] || ink.primary;
+        const big = f.kind === "outcome" || f.kind === "meeting" || f.kind === "game" || f.kind === "block";
+        for (const id of (f.members ?? []).slice(0, 6)) {
+          const m = store.members.get(id);
+          if (!m || !store.inBorough(m)) continue;
+          if (f.kind === "join" && this.activePulses.length >= 60) continue;
+          const marker = L.circleMarker(this.point(m), {
+            renderer: this.renderer,
+            radius: 5,
+            color,
+            weight: big ? 2.5 : 1.5,
+            opacity: 0.9,
+            fill: false,
+            interactive: false,
+          }).addTo(this.pulseLayer);
+          this.activePulses.push({ marker, t0: now, big });
+        }
+      }
+      if (this.activePulses.length > 160) {
+        const drop = this.activePulses.splice(0, this.activePulses.length - 160);
+        for (const p of drop) this.pulseLayer.removeLayer(p.marker);
+      }
+    }
+    if (!this.activePulses.length) return;
+    const keep: { marker: L.CircleMarker; t0: number; big: boolean }[] = [];
+    for (const p of this.activePulses) {
+      const age = (now - p.t0) / (p.big ? 1400 : 900);
+      if (age >= 1) {
+        this.pulseLayer.removeLayer(p.marker);
+        continue;
+      }
+      p.marker.setRadius(5 + age * (p.big ? 24 : 13));
+      p.marker.setStyle({ opacity: Math.max(0, (1 - age) * 0.9) });
+      keep.push(p);
+    }
+    this.activePulses = keep;
+  }
+
   private frame = (t: number) => {
+    if (this.destroyed) return;
     this.raf = requestAnimationFrame(this.frame);
+    if (!this.canDraw()) return;
+    this.stepPulses(t);
     if (t - this.last < 250) return;
     this.last = t;
     this.sync();
@@ -252,7 +314,7 @@ export class MapView {
     if (key === this.venueInk) return;
     this.venueInk = key;
     for (const v of this.venues) {
-      const color = v.active ? ink.warn : ink.destructive;
+      const color = v.active ? ink["chart-6"] : ink.muted;
       v.marker.setStyle({ color, fillColor: color });
     }
   }

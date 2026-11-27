@@ -61,3 +61,6 @@ export {
   type ContactExternalProspectInput, type ExternalSourcingTriggerInput, type InviteExternalProspectInput,
   type ProspectRetentionInput, type ReconsiderExternalProspectInput, type RouteMatchmakerPersonaInput,
 } from "./generated/externalMatchmaker.ts";
+export * from "./trajectory/index.ts";
+export * from "./analytics/index.ts";
+export * from "./pacing/index.ts";

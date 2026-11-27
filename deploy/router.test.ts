@@ -8,7 +8,7 @@ import { build } from "esbuild";
 import { parse as parseToml } from "smol-toml";
 import { parse as parseYaml } from "yaml";
 import { PROXY_HEADERS, proxySignature, verifyProxyHeaders } from "../packages/platform/src/proxy.ts";
-import { handle, isBackendPath, MAX_BODY_BYTES, RETIRED_SITE_PATHS, RETIRED_SIGNUP_PATHS, RUN_WORKER_FIRST, UNKNOWN_IP, UPDATE_HANDOFF_PATHS, type Env } from "./router.ts";
+import { handle, isBackendPath, MAX_BODY_BYTES, MAX_TELEMETRY_BODY_BYTES, RETIRED_SITE_PATHS, RETIRED_SIGNUP_PATHS, RUN_WORKER_FIRST, TELEMETRY_PATHS, UNKNOWN_IP, UPDATE_HANDOFF_PATHS, type Env, type ExecutionContextLike } from "./router.ts";
 
 const SECRET = "test-proxy-secret";
 const NOW = Date.UTC(2026, 9, 8, 15, 0, 0);
@@ -94,7 +94,7 @@ describe("which paths reach the backend", () => {
     // Backend patterns forward. Local routing also requires the Worker.
     for (const pat of RUN_WORKER_FIRST) {
       const sample = pat.endsWith("*") ? pat.slice(0, -1) + "x" : pat;
-      expect(isBackendPath(sample), pat).toBe(![...RETIRED_SITE_PATHS, ...RETIRED_SIGNUP_PATHS, ...UPDATE_HANDOFF_PATHS].includes(pat));
+      expect(isBackendPath(sample), pat).toBe(![...RETIRED_SITE_PATHS, ...RETIRED_SIGNUP_PATHS, ...UPDATE_HANDOFF_PATHS, ...TELEMETRY_PATHS].includes(pat));
     }
   });
 });
@@ -340,7 +340,122 @@ test("peon.biz keeps its browser join page: the join paths are static files, for
 
 test("an app id that is not known fails closed on every path the Worker decides", async () => {
   const { env, seen, assets, run } = setup(); env.APP_ID = "unknown-app";
-  for (const path of ["/api/app", "/join", "/settings"]) expect((await run(path)).status).toBe(503);
+  for (const path of ["/api/app", "/join", "/settings", "/_t", "/r/abc"]) expect((await run(path)).status).toBe(503);
   expect(await (await run("/")).text()).toBe("asset");
   expect(seen).toHaveLength(0); expect(assets).toEqual(["/"]);
+});
+
+describe("first-party telemetry /_t and shortlink /r/*", () => {
+  test("/_t accepts same-origin allowlisted JSON, strips raw IP via rotating visitHash, returns 204 without backend load", async () => {
+    const pipelineEvents: Record<string, unknown>[] = [];
+    const aePoints: Array<{ blobs?: string[]; doubles?: number[]; indexes?: string[] }> = [];
+    const pending: Promise<unknown>[] = [];
+    const ctx: ExecutionContextLike = { waitUntil(p) { pending.push(p); } };
+    const { env, seen, assets } = setup({
+      ANALYTICS_ENGINE: { writeDataPoint(pt) { aePoints.push(pt); } },
+      TELEMETRY_PIPELINE: { send(evts) { pipelineEvents.push(...evts); } },
+      TELEMETRY_SALT: "telemetry-salt-test",
+    });
+
+    const makeReq = () =>
+      new Request("https://slop.date/_t", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://slop.date",
+          "sec-fetch-site": "same-origin",
+          "cf-connecting-ip": "203.0.113.42",
+          "user-agent": "Mozilla/5.0",
+        },
+        body: JSON.stringify({
+          event: "page_view",
+          path: "/",
+          utmSource: "ig",
+          utmCampaign: "nyc_launch",
+          qrBatch: "COAST-SOHO-001",
+        }),
+      });
+    const res = await handle(makeReq(), env, (async () => { throw new Error("backend must not be called"); }) as unknown as typeof fetch, () => NOW, ctx);
+    await Promise.all(pending);
+
+    expect(res.status).toBe(204);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("content-security-policy")).toBe("default-src 'none'; frame-ancestors 'none'");
+    expect(seen).toEqual([]);
+    expect(assets).toEqual([]);
+    expect(aePoints).toHaveLength(1);
+    expect(pipelineEvents).toHaveLength(1);
+    const ev = pipelineEvents[0]!;
+    expect(ev.app).toBe("slop");
+    expect(ev.event).toBe("page_view");
+    expect(ev.utmSource).toBe("ig");
+    expect(typeof ev.visitHash).toBe("string");
+    expect(String(ev.visitHash)).toHaveLength(32);
+    expect(JSON.stringify(ev)).not.toContain("203.0.113.42");
+
+    const nextDayPending: Promise<unknown>[] = [];
+    const nextDayCtx: ExecutionContextLike = { waitUntil(p) { nextDayPending.push(p); } };
+    await handle(makeReq(), env, fetch, () => NOW + 86_400_000, nextDayCtx);
+    await Promise.all(nextDayPending);
+    expect(pipelineEvents[1]!.visitHash).not.toBe(pipelineEvents[0]!.visitHash);
+  });
+
+  test("/_t enforces same-origin, 2KB limit, method, and zero-PII schema", async () => {
+    const { run } = setup();
+    expect((await run("/_t", { method: "GET" })).status).toBe(405);
+    expect((await run("/_t", {
+      method: "POST",
+      headers: { "sec-fetch-site": "cross-site", "content-type": "application/json" },
+      body: JSON.stringify({ event: "page_view" }),
+    })).status).toBe(403);
+    expect((await run("/_t", {
+      method: "POST",
+      headers: { origin: "https://evil.example", "content-type": "application/json" },
+      body: JSON.stringify({ event: "page_view" }),
+    })).status).toBe(403);
+    expect((await run("/_t", {
+      method: "POST",
+      headers: { origin: "https://slop.date", "content-type": "application/json" },
+      body: JSON.stringify({ event: "page_view", utmCampaign: "x".repeat(MAX_TELEMETRY_BODY_BYTES + 10) }),
+    })).status).toBe(413);
+    expect((await run("/_t", {
+      method: "POST",
+      headers: { origin: "https://slop.date", "content-type": "application/json" },
+      body: JSON.stringify({ event: "page_view", phone: "+12125550199" }),
+    })).status).toBe(400);
+    expect((await run("/_t", {
+      method: "POST",
+      headers: { origin: "https://slop.date", "content-type": "application/json" },
+      body: JSON.stringify({ event: "page_view", ref: "user@example.com" }),
+    })).status).toBe(400);
+  });
+
+  test("/r/* redirects safely with 302, logs qr_scan/link_click, and blocks open redirects", async () => {
+    const pipelineEvents: Record<string, unknown>[] = [];
+    const pending: Promise<unknown>[] = [];
+    const ctx: ExecutionContextLike = { waitUntil(p) { pending.push(p); } };
+    const { env } = setup({
+      TELEMETRY_PIPELINE: { send(evts) { pipelineEvents.push(...evts); } },
+      SHORTLINK_TARGETS: {
+        vip_nyc: "/join?utm_source=vip",
+        bad_open: "https://evil.example/phish",
+      },
+    });
+
+    const qrRes = await handle(new Request("https://slop.date/r/COAST-SOHO-001", { headers: { "cf-connecting-ip": "198.51.100.7" } }), env, fetch, () => NOW, ctx);
+    await Promise.all(pending);
+    expect(qrRes.status).toBe(302);
+    expect(qrRes.headers.get("location")).toBe("/?qr=COAST-SOHO-001");
+    expect(pipelineEvents[0]?.event).toBe("qr_scan");
+    expect(JSON.stringify(pipelineEvents[0])).not.toContain("198.51.100.7");
+
+    const openRedirect = await handle(new Request("https://slop.date/r/abc?to=//evil.example"), env, fetch, () => NOW, ctx);
+    expect(openRedirect.status).toBe(400);
+    const badMapped = await handle(new Request("https://slop.date/r/bad_open"), env, fetch, () => NOW, ctx);
+    expect(badMapped.status).toBe(400);
+    const badSlug = await handle(new Request("https://slop.date/r/bad/nested"), env, fetch, () => NOW, ctx);
+    expect(badSlug.status).toBe(404);
+    const badMethod = await handle(new Request("https://slop.date/r/COAST-SOHO-001", { method: "POST" }), env, fetch, () => NOW, ctx);
+    expect(badMethod.status).toBe(405);
+  });
 });

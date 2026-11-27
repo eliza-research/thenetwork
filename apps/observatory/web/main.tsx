@@ -11,16 +11,16 @@ import { getCity, listCities } from "../../../packages/core/src/cities.ts";
 import { NEIGHBORHOODS } from "@thenetwork/network/geo";
 import {
   Alert, AppSwitcher, BrandMark, Button, ConsoleShell, DataCell, DataTable, FilterBar, FilterBarFocus, Input, Legend, LegendItem, ModeIndicator, Popover, PopoverContent,
-  PopoverTrigger, ProposeTray, SearchBox, Segments, Select, SelectItem, SignInNotice, Spinner, TableRow, Toast, Toaster, TopBar,
-  type DataColumn, type FilterBarItem,
+  PopoverTrigger, ProposeTray, SearchBox, Segments, Select, SelectItem, SignInNotice, SimControlBar, Spinner, TableRow, Toast, Toaster, TopBar,
+  type DataColumn, type FilterBarItem, type SimResponseMode, type SimSpeed,
 } from "@thenetwork/ui";
 import { ntwrkBrand } from "../../../packages/core/src/generated/brandIdentity.ts";
 import {
-  backShown, canTypeQuery, type ConsoleNav, conversationSearchShown, type HitGroups, hitGroups, modeSwitchShown, searchShown, switcherShown, tabNow, viewFor,
+  backShown, canTypeQuery, type ConsoleNav, conversationSearchShown, filterApplies, type HitGroups, hitGroups, modeSwitchShown, searchShown, switcherShown, tabNow, viewFor,
 } from "../../../packages/core/src/generated/consoleNavigation.ts";
 import { canReceiveProposalAnswer, canSubmitProposal, groupProposal, initial as initialWorkspace, proposalFormShown, receiveProposalAnswer, submitProposal, trayShown, type TrayPhase } from "../../../packages/core/src/generated/consoleWorkspace.ts";
 import { signInView } from "../../../packages/core/src/generated/staffSignIn.ts";
-import type { EnvInfo, Mode, SearchHit } from "../src/types.ts";
+import type { EnvInfo, MemberTimeline, Mode, SearchHit } from "../src/types.ts";
 import { AppPage } from "./apps.tsx";
 import { Drawer } from "./drawer.tsx";
 import { EDGE_STYLE, GraphView } from "./graph.ts";
@@ -32,7 +32,25 @@ import {
 } from "./store.ts";
 import { consoleNav, humanize, localDate, localTime, NAV_FILTER, pickMember, staffSignIn, staffView, stamp } from "./ui.tsx";
 
-const SPEEDS: [string, number][] = [["1h/s", HOUR], ["6h/s", 6 * HOUR], ["1d/s", DAY], ["2d/s", 2 * DAY]];
+type SimStep = "15m" | "1h" | "1d";
+const MINUTE = 60_000;
+const STEP_MS: Record<SimStep, number> = { "15m": 15 * MINUTE, "1h": HOUR, "1d": DAY };
+const SPEED_TO_PRESET = (speed: number): SimSpeed => {
+  if (speed <= 60_000) return "1x";
+  if (speed <= 600_000) return "10x";
+  if (speed <= HOUR) return "60x";
+  if (speed <= 6 * HOUR) return "360x";
+  if (speed <= DAY) return "1000x";
+  return "turbo";
+};
+const CHAOS_PRESETS: readonly { id: string; label: string; service: string; fault: Record<string, unknown> }[] = [
+  { id: "blooio_429", label: "Blooio 429 burst", service: "blooio", fault: { kind: "rate_limit_spike", multiplier: 3, retryAfterSec: 30 } },
+  { id: "blooio_reply_only", label: "Blooio reply-only pause", service: "blooio", fault: { kind: "blooio_safety", action: "reply_only" } },
+  { id: "meta_shadowban", label: "Social shadowban wave", service: "social", fault: { kind: "shadowban_wave", reachMultiplier: 0.25 } },
+  { id: "email_bounce", label: "Email bounce storm", service: "email", fault: { kind: "email_bounce_storm", hardBounceRate: 0.18, spamComplaintRate: 0.04 } },
+  { id: "turnstile_captcha", label: "Turnstile CAPTCHA wave", service: "turnstile", fault: { kind: "captcha_wave", probability: 0.5 } },
+  { id: "llm_latency", label: "LLM latency spike", service: "llm", fault: { kind: "latency", medianMs: 2400, sigma: 0.6 } },
+];
 const CATEGORIES: Category[] = ["social", "professional", "hobby", "help", "romance", "growth", "events"];
 const TOAST_VARIANT = { info: "info", good: "ok", bad: "destructive" } as const;
 
@@ -109,6 +127,7 @@ function ConsoleTopBar({ nav }: { nav: ConsoleNav }) {
   const s = useStore();
   const c = s.clock;
   const canStep = !!s.env?.capabilities.canStep;
+  const simBar = canStep && s.canSim() && s.page.kind === "app";
   const b = s.page.kind === "app" ? banner(s.env) : { text: `ALL APPS · ${s.mode === "real" ? "real data" : "simulation"}`, title: "Every app you hold a role for" };
   const me = s.me;
   const onApp = searchShown(nav);
@@ -122,7 +141,7 @@ function ConsoleTopBar({ nav }: { nav: ConsoleNav }) {
       )}
       {onApp && <Search nav={nav} />}
       {me && (
-        <span className="text-sm whitespace-nowrap text-muted-foreground" title={`${me.id} · ${me.via === "sso" ? "single sign-on" : "token"} · ${(me.grants ?? []).map(g => `${g.role}@${g.app}`).join(", ")}`}>
+        <span className="hidden text-sm whitespace-nowrap text-muted-foreground lg:inline" title={`${me.id} · ${me.via === "sso" ? "single sign-on" : "token"} · ${(me.grants ?? []).map(g => `${g.role}@${g.app}`).join(", ")}`}>
           {(s.rolesHere().length ? s.rolesHere() : me.roles).join(" · ")}
         </span>
       )}
@@ -130,47 +149,97 @@ function ConsoleTopBar({ nav }: { nav: ConsoleNav }) {
     </>
   );
   return (
-    <TopBar brand={<ConsoleBrand />} end={end}>
-      {switcherShown(nav) && (
-        <AppSwitcher page={nav.page} app={s.app} apps={s.apps().map(a => ({ id: a.id, title: a.domain }))} onSelectApp={id => store.setApp(id)} onOpenAllApps={() => store.setApp("all")} />
-      )}
-      {modeSwitchShown(nav) && (
-        <Segments aria-label="Mode" value={s.mode} onValueChange={v => store.setMode(v as Mode)} options={[{ value: "game", label: "Game" }, { value: "real", label: "Real" }]} />
-      )}
-      <ModeIndicator mode={nav.viewer.mode} label={b.text} details={b.title} connected={s.connected} />
-      {c && <span className="text-sm font-semibold whitespace-nowrap tabular-nums">{canStep ? `Day ${c.day} · ` : ""}{localDate(c.now)} · {localTime(c.now)}</span>}
-      <Transport />
-    </TopBar>
+    <div className="flex flex-col">
+      <TopBar brand={<ConsoleBrand />} end={end}>
+        {switcherShown(nav) && (
+          <AppSwitcher page={nav.page} app={s.app} apps={s.apps().map(a => ({ id: a.id, title: a.domain }))} onSelectApp={id => store.setApp(id)} onOpenAllApps={() => store.setApp("all")} />
+        )}
+        {modeSwitchShown(nav) && (
+          <Segments aria-label="Mode" value={s.mode} onValueChange={v => store.setMode(v as Mode)} options={[{ value: "game", label: "Game" }, { value: "real", label: "Real" }]} />
+        )}
+        <ModeIndicator mode={nav.viewer.mode} label={b.text} details={b.title} connected={s.connected} />
+        {!simBar && c && <span className="text-sm font-semibold whitespace-nowrap tabular-nums">{canStep ? `Day ${c.day} · ` : ""}{localDate(c.now)} · {localTime(c.now)}</span>}
+        {!simBar && <Transport />}
+        {simBar && c?.busy && <span className="animate-pulse text-sm whitespace-nowrap text-primary">{c.busy}…</span>}
+        {simBar && c?.waitingForPlayer && <span className="animate-pulse text-sm whitespace-nowrap text-warn">waiting for you</span>}
+      </TopBar>
+      {simBar && <GameSimBar />}
+    </div>
+  );
+}
+
+interface LevelOption { id: string; title: string; kind?: string }
+
+function GameSimBar() {
+  const s = useStore();
+  const c = s.clock;
+  const g = s.game;
+  const u = g?.unified;
+  const [scenarios, setScenarios] = useState<LevelOption[]>([]);
+  const [stepping, setStepping] = useState(false);
+  useEffect(() => {
+    store.getJSON<LevelOption[]>("/api/levels").then(rows => setScenarios(Array.isArray(rows) ? rows : [])).catch(() => {});
+  }, [s.app]);
+  if (!c) return null;
+  const speed: SimSpeed = (u?.speedPreset as SimSpeed | undefined) ?? SPEED_TO_PRESET(c.speed);
+  const responseMode: SimResponseMode = u?.responseMode ?? "canned";
+  const spent = u?.responseStats?.spentUsd ?? 0;
+  const limit = u?.responseStats?.budgetCapUsd ?? 5;
+  const activeChaosIds = new Set((u?.activeChaos ?? []).filter(r => r.enabled).map(r => r.id));
+  const score = g?.scores.find(x => x.source === "player")?.points ?? 0;
+  const j = s.judge();
+  const violations = (j?.invariants ?? s.stats?.invariantViolations ?? 0) + (j?.canaryLeaks ?? 0) + (j?.minorContacts ?? 0);
+  const scenarioId = u?.scenarioId ?? s.network?.scenario?.id ?? "free";
+  const allScenarios = [{ id: "free", label: "Free play" }, ...scenarios.map(x => ({ id: x.id, label: x.kind === "unified" ? `★ ${x.title}` : x.title }))];
+  const chaosOptions = CHAOS_PRESETS.map(p => ({ id: p.id, label: p.label, active: activeChaosIds.has(p.id) }));
+  const busyLabel = stepping ? "Stepping…" : c.busy ? `${c.busy}…` : undefined;
+  const runStep = async (step: SimStep) => {
+    if (stepping || c.busy) return;
+    setStepping(true);
+    try { await store.control({ type: "step", ms: STEP_MS[step] }); }
+    finally { setStepping(false); }
+  };
+  return (
+    <SimControlBar
+      running={c.playing}
+      onToggleRun={() => void store.control({ type: c.playing ? "pause" : "play" })}
+      onStep={step => void runStep(step)}
+      speed={speed}
+      onSpeedChange={next => void store.controlRaw({ type: "speed", speed: next })}
+      scenarios={allScenarios}
+      scenarioId={scenarioId}
+      onScenarioChange={id => void store.control({ type: "reset", scenario: id === "free" ? null : id, network: "consent" })}
+      responseMode={responseMode}
+      onResponseModeChange={mode => void store.controlRaw({ type: "set_response_mode", mode })}
+      budgetSpentUsd={spent}
+      budgetLimitUsd={limit}
+      chaosOptions={chaosOptions}
+      onTriggerChaos={id => {
+        const preset = CHAOS_PRESETS.find(p => p.id === id);
+        if (!preset) return;
+        if (activeChaosIds.has(id)) {
+          void store.controlRaw({ type: "clear_chaos", id });
+        } else {
+          void store.controlRaw({ type: "trigger_chaos", rule: { id: preset.id, service: preset.service, probability: 1, fault: preset.fault, enabled: true } });
+        }
+      }}
+      score={score}
+      safetyViolations={violations}
+      simTimeLabel={busyLabel ? `Day ${c.day} · ${busyLabel}` : `Day ${c.day} · ${localDate(c.now)} · ${localTime(c.now)}`}
+    />
   );
 }
 
 const icon = { "aria-hidden": true, viewBox: "0 0 16 16", className: "size-4" } as const;
 
-/** Play, step and speed in the simulated world; refresh and the shadow run on real data. */
 function Transport() {
   const s = useStore();
   const c = s.clock, env = s.env;
   if (!env) return null;
   const busy = c?.busy ? <span className="animate-pulse text-sm whitespace-nowrap text-primary">{c.busy}…</span> : null;
-  if (env.capabilities.canStep && c) {
-    if (!s.canSim()) return busy;
-    return (
-      <div className="flex flex-wrap items-center gap-2">
-        <Button size="icon" aria-label={c.playing ? "Pause" : "Play"} title="Play or pause (space)" onClick={() => store.control({ type: c.playing ? "pause" : "play" })}>
-          <svg {...icon} fill="currentColor">{c.playing ? <path d="M4 3h3v10H4zM9 3h3v10H9z" /> : <path d="M4 2.5v11L13 8z" />}</svg>
-        </Button>
-        <Button variant="outline" size="sm" title="Step one hour (n)" onClick={() => store.control({ type: "step", ms: HOUR })}>+1h</Button>
-        <Button variant="outline" size="sm" title="Step one day (d)" onClick={() => store.control({ type: "step", ms: DAY })}>+1d</Button>
-        <Select className="h-8 w-24" aria-label="Speed" value={String(c.speed)} onValueChange={v => store.control({ type: "speed", speed: Number(v) })}>
-          {SPEEDS.map(([l, v]) => <SelectItem key={l} value={String(v)}>{l}</SelectItem>)}
-        </Select>
-        {busy}
-        {c.waitingForPlayer && <span className="animate-pulse text-sm whitespace-nowrap text-warn">waiting for you</span>}
-      </div>
-    );
-  }
+  if (env.capabilities.canStep && c) return busy;
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex items-center gap-2">
       <Button variant="outline" size="icon" title="Refresh" aria-label="Refresh" onClick={() => store.control({ type: "refresh" })}>
         <svg {...icon} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 8a5 5 0 1 1-1.5-3.5M13 2v3h-3" /></svg>
       </Button>
@@ -213,7 +282,7 @@ function searchHits(query: string, groups: HitGroups): Hit[] {
   for (const spec of listCities()) {
     for (const n of spec.neighborhoods) {
       const k = n.name.toLowerCase();
-      if (seenPlaces.has(k)) continue;
+      if (seenPlaces.has(k) || n.name.split("/").some(p => seenPlaces.has(p.trim().toLowerCase()))) continue;
       seenPlaces.add(k);
       const zoneName = spec.zones.find(z => z.id === n.zone)?.name ?? spec.shortName;
       allPlaces.push({ name: n.name, meta: `${spec.shortName} · ${zoneName}` });
@@ -311,10 +380,10 @@ function HelpPopover({ nav }: { nav: ConsoleNav }) {
         </DataTable>
         <p className="text-muted-foreground">
           {s.ui.view === "map"
-            ? "● member at home · small faint dot = public venue · green circle = meetings · red = hold · amber = watch · dotted line = in review"
-            : "◆ under 18 · thin ring = busy · amber ring = you · double-click to fit"}
+            ? "● member (community palette) · teal dot = active venue · green circle = meetings · red = hold · amber = watch · violet dotted line = in review · animated ring = live event"
+            : "◆ under 18 · thin ring = busy · amber ring = controlled · violet dotted arc = in review · double-click to fit"}
         </p>
-        <p className="text-muted-foreground">Fact border: green shareable · blue matchable · red agent private</p>
+        <p className="text-muted-foreground">Fact mark: green shareable · blue matchable · amber opportunity · red agent private</p>
       </PopoverContent>
     </Popover>
   );
@@ -348,9 +417,19 @@ function ConsoleFilterBar({ nav }: { nav: ConsoleNav }) {
   const focus = s.ui.focus;
   const o = focus?.kind === "opportunity" ? s.opps.get(focus.id) : undefined;
   const label = !focus ? null : focus.kind === "member" ? s.name(focus.id) : o ? `${s.oppTitle(o)} · ${humanize(o.kind)}` : focus.id;
+  const activeTab = tabNow(nav);
+  const anyApplies = !nav.drawerOpen || items.some(it => filterApplies(activeTab, it.filterKey));
+  if (!anyApplies) {
+    if (label === null) return null;
+    return (
+      <div className="flex items-center border-b border-border bg-background px-4 py-1.5">
+        <FilterBarFocus label={label} backShown={backShown(nav)} onBack={() => store.back()} onClear={() => store.clearFocus()} />
+      </div>
+    );
+  }
   return (
     <FilterBar
-      drawerOpen={nav.drawerOpen} tab={tabNow(nav)} items={items}
+      drawerOpen={nav.drawerOpen} tab={activeTab} items={items}
       focus={label === null ? undefined : <FilterBarFocus label={label} backShown={backShown(nav)} onBack={() => store.back()} onClear={() => store.clearFocus()} />}
       onReset={s.filtersChanged() ? () => store.resetFilters() : undefined}
     />
@@ -379,7 +458,7 @@ function MapStage() {
     store.stage = m;
     return () => { m.destroy(); if (store.stage === m) store.stage = null; };
   }, []);
-  return <div ref={ref} data-map className="absolute inset-0 isolate bg-muted" aria-label={`Map of members in ${getCity(s.activeCity())?.name ?? "New York City"}`} />;
+  return <div ref={ref} data-map className="absolute inset-0 z-0 isolate overflow-hidden bg-muted" aria-label={`Map of members in ${getCity(s.activeCity())?.name ?? "New York City"}`} />;
 }
 
 function GraphCanvas() {
@@ -490,27 +569,54 @@ function Prompts() {
   const s = useStore();
   const prompts = s.game?.prompts ?? [];
   const [text, setText] = useState("");
+  const [thread, setThread] = useState<MemberTimeline | null>(null);
   const p = prompts[0];
+  useEffect(() => {
+    if (!p) { setThread(null); return; }
+    let live = true;
+    void store.timeline(p.memberId).then(r => { if (live) setThread(r.data ?? null); });
+    return () => { live = false; };
+  }, [p?.memberId, p?.id]);
   if (!p) return null;
   const m = s.members.get(p.memberId);
-  const first = m?.name.split(" ")[0];
+  const first = m?.name.split(" ")[0] ?? p.memberId;
   const reply = (t?: string, auto?: boolean) => { store.control({ type: "reply", promptId: p.id, text: t, auto }); setText(""); };
   const quick = p.type === "proposal" ? ["Yes, I'm in!", "No thanks, not right now."]
     : p.type === "feedback_request" ? ["It was great, would meet again.", "It was fine.", "Not a good fit honestly."]
     : p.type === "reminder" || p.type === "scheduling" ? ["Sounds good, see you then.", "Sorry, I can't make it."]
     : ["Thanks!"];
+  const recentMessages = (thread?.entries ?? [])
+    .filter((e): e is Extract<MemberTimeline["entries"][number], { kind: "message" }> => e.kind === "message" && e.message.id !== p.messageId)
+    .slice(-5);
   return (
-    <div role="dialog" aria-label={`Message for ${m?.name}`} className="absolute top-4 right-4 z-20 flex w-full max-w-sm flex-col gap-2 rounded-lg border border-border bg-popover p-3 text-sm text-popover-foreground shadow-lg">
-      <p className="text-muted-foreground"><span className="font-semibold text-foreground">As {first}</span> · paused{prompts.length > 1 ? ` · ${prompts.length} waiting` : ""}</p>
-      <div className="flex flex-col gap-1 rounded-md bg-muted p-2">
-        <span className="text-muted-foreground">The Network{p.type ? ` · ${humanize(p.type)}` : ""}</span>
-        <span className="break-words whitespace-pre-wrap">{p.body}</span>
+    <div role="dialog" aria-label={`Message for ${m?.name ?? p.memberId}`} className="absolute top-4 right-4 z-20 flex w-full max-w-sm flex-col gap-2.5 rounded-lg border border-border bg-popover p-3 text-sm text-popover-foreground shadow-lg">
+      <div className="flex items-center justify-between gap-2 border-b border-border pb-2">
+        <div className="flex flex-col">
+          <span className="font-semibold text-foreground">{m?.name ?? p.memberId}</span>
+          <span className="text-xs text-muted-foreground">Takeover · paused{prompts.length > 1 ? ` · ${prompts.length} waiting` : ""}</span>
+        </div>
+        <Button variant="ghost" size="sm" onClick={() => store.focus({ kind: "member", id: p.memberId })}>Inspect</Button>
       </div>
-      <div className="flex flex-wrap gap-2">{quick.map(q => <Button key={q} variant="outline" size="sm" onClick={() => reply(q)}>{q}</Button>)}</div>
+      <div className="flex max-h-56 flex-col gap-2 overflow-y-auto pr-1">
+        {recentMessages.map(entry => {
+          const outbound = entry.message.direction === "outbound";
+          return (
+            <div key={entry.message.id} className={outbound ? "mr-6 flex flex-col gap-0.5 rounded-lg bg-muted px-2.5 py-1.5" : "ml-6 flex flex-col gap-0.5 rounded-lg bg-primary px-2.5 py-1.5 text-primary-foreground"}>
+              <span className={outbound ? "text-xs text-muted-foreground" : "text-xs text-primary-foreground/80"}>{outbound ? "Network" : first} · {stamp(entry.message.ts)}</span>
+              <span className="break-words whitespace-pre-wrap">{entry.message.body}</span>
+            </div>
+          );
+        })}
+        <div className="mr-4 flex flex-col gap-0.5 rounded-lg border border-primary/40 bg-muted px-2.5 py-2">
+          <span className="text-xs font-medium text-primary">Network{p.type ? ` · ${humanize(p.type)}` : ""} · now</span>
+          <span className="break-words whitespace-pre-wrap text-foreground">{p.body}</span>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-1.5">{quick.map(q => <Button key={q} variant="outline" size="sm" onClick={() => reply(q)}>{q}</Button>)}</div>
       <form className="flex flex-wrap gap-2" onSubmit={e => { e.preventDefault(); if (text.trim()) reply(text); }}>
-        <Input className="min-w-40 flex-1" autoFocus aria-label={`Reply as ${first}`} placeholder={`Reply as ${first}…`} value={text} onChange={e => setText(e.target.value)} />
-        <Button type="submit">Send</Button>
-        <Button variant="ghost" title="Let the persona's own policy answer" onClick={() => reply(undefined, true)}>Let them decide</Button>
+        <Input className="min-w-40 flex-1" autoFocus aria-label={`Reply as ${first}`} placeholder={`Text as ${first}…`} value={text} onChange={e => setText(e.target.value)} />
+        <Button type="submit" size="sm">Send</Button>
+        <Button variant="ghost" size="sm" title="Let the persona's own policy answer" onClick={() => reply(undefined, true)}>Let them decide</Button>
       </form>
     </div>
   );

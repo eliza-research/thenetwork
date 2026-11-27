@@ -13,6 +13,7 @@
     "@thenetwork/core": "workspace:*",
     "@thenetwork/design-system": "workspace:*",
     "@thenetwork/engine": "workspace:*",
+    "@thenetwork/mock-services": "workspace:*",
     "@thenetwork/network": "workspace:*",
     "@thenetwork/sim": "workspace:*",
     "@thenetwork/ui": "workspace:*",

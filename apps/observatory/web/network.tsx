@@ -10,7 +10,7 @@ import {
 import { panelStaffOf } from "./ops.tsx";
 import { store, useStore } from "./store.ts";
 
-interface Level { id: string; title: string; description: string; days: number }
+interface Level { id: string; title: string; description: string; days: number; kind?: "scenario" | "unified" }
 
 /**
  * The analysis panels of the game tab, from the store: the viewer through `panelStaffOf`, then the game through the generated `receiveGame`.
@@ -60,7 +60,7 @@ export function Levels() {
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {levels.map(l => (
             <Button key={l.id} variant={current?.id === l.id ? "secondary" : "outline"} aria-current={current?.id === l.id || undefined} className={choice} title={l.description} onClick={() => reset(l.id)}>
-              <span className="font-semibold">{l.title}</span>
+              <span className="font-semibold">{l.title}{l.kind === "unified" ? " · full-system" : ""}</span>
               <span className="line-clamp-2 text-muted-foreground">{l.description}</span>
               <span>{l.days} days</span>
             </Button>

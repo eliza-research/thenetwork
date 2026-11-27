@@ -1,22 +1,42 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { gzipSync } from "node:zlib";
 import { RealClock } from "../../../packages/core/src/clock.ts";
 import { adultParticipantAge } from "../../../packages/core/src/generated/marketingPolicy.ts";
 import { setLeakLabelKey } from "../../../packages/core/src/guard.ts";
 import { serveHttp, type HttpServer } from "../../../packages/core/src/runtime/http.ts";
 import { checkBackendHealth } from "../../../packages/core/src/vibe/backendHealthShell.js";
+import type {
+  AnalyticsFilter,
+  AttributionModel,
+  SliceDimension,
+  SliceGranularity,
+  SliceMetric,
+} from "../../../packages/core/src/analytics/types.ts";
+import type {
+  TrajectoryApp,
+  TrajectoryKind,
+  TrajectoryStatus,
+} from "../../../packages/core/src/trajectory/types.ts";
+import {
+  AdAdapterRegistry,
+} from "./adapters/ads.ts";
 import {
   createPaidAdapterRegistry,
   type PaidAdapterRegistry,
 } from "./adapters/paid.ts";
+import {
+  SocialAdapterRegistry,
+} from "./adapters/social.ts";
 import {
   AgentLifecycleManager,
   DEFAULT_DAILY_COST_CAP_MICROS,
   DEFAULT_DAILY_TOKEN_CAP,
   type CliProcessRunner,
 } from "./agent-lifecycle.ts";
+import {
+  MarketingAnalyticsRuntime,
+} from "./analytics-bridge.ts";
 import {
   AntiFraudEngine,
   detectSybilCluster,
@@ -45,6 +65,10 @@ import {
   type CityStageReadinessResult,
 } from "./city-registry.ts";
 import {
+  isDeployedEnvironment,
+  MarketingComplianceRuntime,
+} from "./compliance-runtime.ts";
+import {
   DEFAULT_MARKETING_HOST,
   DEFAULT_MARKETING_PORT,
   SUPPORTED_SUBSCRIPTION_PROVIDERS,
@@ -70,6 +94,9 @@ import {
   type DiscoverySource,
 } from "./discovery.ts";
 import {
+  MarketingGameSession,
+} from "./game-session.ts";
+import {
   createNetworkCoreBridge,
   type NetworkCoreBridge,
 } from "./network-bridge.ts";
@@ -84,7 +111,9 @@ import {
 } from "./nyc-seed.ts";
 import {
   evaluateLlmBudget,
+  isGlobalOptOutText,
   keyedContactHash,
+  normalizeE164Phone,
   PolicyViolationError,
 } from "./policy.ts";
 import {
@@ -117,11 +146,8 @@ import type {
   VideoAssetStage,
 } from "./types.ts";
 import {
-  commandCenterSecurityHeaders,
-  loadHostGroteskFont,
-  renderCommandCenterCss,
-  renderCommandCenterHtml,
-  renderCommandCenterJs,
+  buildMarketingAssets,
+  type PrecompressedMarketingAsset,
 } from "./ui/index.ts";
 import {
   HttpValidationError,
@@ -173,6 +199,9 @@ export interface MarketingServerOptions {
   bridge?: NetworkCoreBridge;
   deviceBridge?: DeviceBridge;
   paidAdapters?: PaidAdapterRegistry;
+  socialAdapters?: SocialAdapterRegistry;
+  adAdapters?: AdAdapterRegistry;
+  compliance?: MarketingComplianceRuntime;
   discoveryFetch?: typeof fetch;
   cliRunner?: CliProcessRunner;
   env?: NodeJS.ProcessEnv;
@@ -185,31 +214,6 @@ export async function seedNycLaunch(store: MarketingStore): Promise<NycSeedResul
   return seedCityLaunch(store, "nyc");
 }
 
-interface PrecompressedAsset {
-  readonly contentType: string;
-  readonly raw: Buffer;
-  readonly gzipped: Buffer;
-  readonly etag: string;
-  readonly cacheControl: string;
-}
-
-function buildPrecompressedAsset(
-  content: string | Uint8Array,
-  contentType: string,
-  cacheControl: string,
-): PrecompressedAsset {
-  const raw = typeof content === "string" ? Buffer.from(content, "utf8") : Buffer.from(content);
-  const gzipped = gzipSync(raw);
-  const hash = createHash("sha256").update(raw).digest("hex").slice(0, 16);
-  return {
-    contentType,
-    raw,
-    gzipped,
-    etag: `"${hash}"`,
-    cacheControl,
-  };
-}
-
 function etagMatches(ifNoneMatch: string | null, etag: string): boolean {
   if (!ifNoneMatch) return false;
   const clean = (s: string) => s.trim().replace(/^W\//, "");
@@ -220,7 +224,7 @@ function etagMatches(ifNoneMatch: string | null, etag: string): boolean {
   });
 }
 
-function servePrecompressedAsset(request: Request, asset: PrecompressedAsset): Response {
+function servePrecompressedAsset(request: Request, asset: PrecompressedMarketingAsset): Response {
   const headers: Record<string, string> = {
     "Content-Type": asset.contentType,
     "Cache-Control": asset.cacheControl,
@@ -239,6 +243,71 @@ function servePrecompressedAsset(request: Request, asset: PrecompressedAsset): R
     });
   }
   return new Response(new Uint8Array(asset.raw), { status: 200, headers });
+}
+
+function parseAnalyticsFilter(searchParams: URLSearchParams): AnalyticsFilter {
+  const rawApp = searchParams.get("appId")?.trim();
+  const appId =
+    rawApp === "slop" || rawApp === "peon" || rawApp === "friends" || rawApp === "ntwrk" || rawApp === "all"
+      ? rawApp
+      : undefined;
+  const city = searchParams.get("city")?.trim().toLowerCase() || undefined;
+  const desireLane = searchParams.get("desireLane")?.trim() || undefined;
+  const channel = searchParams.get("channel")?.trim() || undefined;
+  const campaignId = searchParams.get("campaignId")?.trim() || undefined;
+  const fromRaw = searchParams.get("fromMs");
+  const toRaw = searchParams.get("toMs");
+  const fromMs = fromRaw !== null && Number.isFinite(Number(fromRaw)) ? Number(fromRaw) : undefined;
+  const toMs = toRaw !== null && Number.isFinite(Number(toRaw)) ? Number(toRaw) : undefined;
+  return { appId, city, desireLane, channel, campaignId, fromMs, toMs };
+}
+
+const MAX_PUBLIC_BODY_BYTES = 65_536;
+const MAX_BEACON_BATCH_SIZE = 100;
+const VALID_BRAND_APPS = new Set<BrandAppId>(["slop", "peon", "friends", "ntwrk"]);
+
+function parseBrandAppId(raw: unknown, fallback: BrandAppId): BrandAppId {
+  if (typeof raw === "string" && VALID_BRAND_APPS.has(raw as BrandAppId)) {
+    return raw as BrandAppId;
+  }
+  return fallback;
+}
+
+async function readBoundedText(request: Request, maxBytes = MAX_PUBLIC_BODY_BYTES): Promise<string> {
+  const declared = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    throw new HttpValidationError(413, "PAYLOAD_TOO_LARGE", `Request body exceeds ${maxBytes} bytes.`);
+  }
+  const buf = new Uint8Array(await request.arrayBuffer());
+  if (buf.byteLength > maxBytes) {
+    throw new HttpValidationError(413, "PAYLOAD_TOO_LARGE", `Request body exceeds ${maxBytes} bytes.`);
+  }
+  return new TextDecoder().decode(buf);
+}
+
+function verifyWebhookHmac(
+  rawBody: string,
+  headerValue: string | null,
+  secret: string | undefined,
+  failClosedWithoutSecret: boolean,
+): boolean {
+  const cleanSecret = secret?.trim();
+  if (!cleanSecret) return !failClosedWithoutSecret;
+  if (!headerValue?.trim()) return false;
+  const expectedHex = createHmac("sha256", cleanSecret).update(rawBody, "utf8").digest("hex");
+  const expectedB64 = createHmac("sha256", cleanSecret).update(rawBody, "utf8").digest("base64");
+  const candidates = headerValue
+    .split(/[\s,]+/)
+    .map((part) => part.replace(/^(?:sha256=|v1,)/i, "").trim())
+    .filter(Boolean);
+  for (const candidate of candidates) {
+    const candBuf = Buffer.from(candidate, "utf8");
+    const hexBuf = Buffer.from(expectedHex, "utf8");
+    const b64Buf = Buffer.from(expectedB64, "utf8");
+    if (candBuf.length === hexBuf.length && timingSafeEqual(candBuf, hexBuf)) return true;
+    if (candBuf.length === b64Buf.length && timingSafeEqual(candBuf, b64Buf)) return true;
+  }
+  return false;
 }
 
 function timingSafeBearerMatch(header: string | null, expectedToken: string): boolean {
@@ -314,17 +383,24 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
   daemon: MarketingAutopilotDaemon;
   eventHub: MarketingEventHub;
   bridge: NetworkCoreBridge;
+  compliance: MarketingComplianceRuntime;
+  analytics: MarketingAnalyticsRuntime;
+  gameSession: MarketingGameSession;
   stop: () => Promise<void>;
 }> {
   const env = opts.env ?? process.env;
   const clock = opts.clock ?? opts.store.clock ?? new RealClock();
-  const port = opts.port ?? Number(env.MARKETING_PORT || DEFAULT_MARKETING_PORT);
+  const port = opts.port ?? Number(env.MARKETING_PORT || env.PORT || DEFAULT_MARKETING_PORT);
   const hostname = opts.hostname ?? DEFAULT_MARKETING_HOST;
   const token = resolveBearerToken(opts.token, env.MARKETING_TOKEN);
 
   if (env.LEAK_LABEL_KEY && new TextEncoder().encode(env.LEAK_LABEL_KEY).length >= 32) {
     setLeakLabelKey(env.LEAK_LABEL_KEY);
   }
+
+  const compliance =
+    opts.compliance ?? new MarketingComplianceRuntime({ env, clock });
+  const analytics = new MarketingAnalyticsRuntime({ store: opts.store, clock, env });
 
   const bridge =
     opts.bridge ??
@@ -335,12 +411,18 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
     });
   const deviceBridge = opts.deviceBridge ?? new DeviceBridge({ clock, env });
   const paidAdapters =
-    opts.paidAdapters ?? createPaidAdapterRegistry({ clock, env, store: opts.store });
+    opts.paidAdapters ??
+    createPaidAdapterRegistry({ clock, env, store: opts.store, compliance });
+  const socialAdapters =
+    opts.socialAdapters ?? new SocialAdapterRegistry({ env, clock, compliance });
+  const adAdapters =
+    opts.adAdapters ?? new AdAdapterRegistry({ env, clock, compliance });
   const agentManager = new AgentLifecycleManager({
     store: opts.store,
     clock,
     env,
     bridge,
+    trajectoryWriter: analytics.trajectoryWriter,
     cliRunner: opts.cliRunner,
     dryRun: opts.cliRunner ? false : undefined,
   });
@@ -349,6 +431,9 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
     clock,
     env,
     paidAdapters,
+    socialAdapters,
+    compliance,
+    trajectoryWriter: analytics.trajectoryWriter,
     bridge,
   });
   const slopCashBridge = new SlopCashBridge({
@@ -361,21 +446,25 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
   const bdEngine = new BdPipelineEngine({ clock });
   const vipEngine = new VipDiscoveryEngine({ clock });
   const eventHub = new MarketingEventHub({ clock });
+  const gameSession = new MarketingGameSession({
+    clock,
+    env,
+    externalTrajectoryWriter: analytics.trajectoryWriter,
+    onFunnelEvent: (ev) => {
+      analytics.ingestSimFunnelEvent(ev);
+    },
+    onUpdate: (state) => {
+      eventHub.publish("sim", {
+        scenarioId: state.scenarioId,
+        simDay: state.snapshot.simDay,
+        playing: state.snapshot.playing,
+        score: state.snapshot.score,
+        safetyViolations: state.snapshot.safetyViolations,
+      });
+    },
+  });
 
-  const cssAsset = buildPrecompressedAsset(
-    renderCommandCenterCss(),
-    "text/css; charset=utf-8",
-    "public, max-age=300, must-revalidate",
-  );
-  const jsAsset = buildPrecompressedAsset(
-    renderCommandCenterJs(),
-    "application/javascript; charset=utf-8",
-    "public, max-age=300, must-revalidate",
-  );
-  const rawFont = loadHostGroteskFont();
-  const fontAsset = rawFont
-    ? buildPrecompressedAsset(rawFont, "font/woff2", "public, max-age=86400, must-revalidate")
-    : null;
+  const webAssets = await buildMarketingAssets(env.NODE_ENV !== "production");
 
   let serving = true;
 
@@ -399,33 +488,49 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
   const dailyCostCapMicros =
     Number(env.MARKETING_DAILY_COST_CAP_MICROS) || DEFAULT_DAILY_COST_CAP_MICROS;
 
+  const buildCompliancePayload = async () => {
+    const auditEntries = await opts.store.listOperatorAudit(25);
+    const snap = compliance.getComplianceSnapshot(auditEntries);
+    const gatesWithStatus: Record<string, Record<string, unknown>> = {};
+    for (const [mode, decision] of Object.entries(snap.gates)) {
+      gatesWithStatus[mode] = {
+        ...decision,
+        mode,
+        status: decision.tier,
+      };
+    }
+    return {
+      env: snap.env,
+      liveBillingEnabled: snap.liveBillingEnabled,
+      mockModeActive: snap.mockModeActive,
+      mockBaseUrl: snap.mockBaseUrl,
+      gates: gatesWithStatus,
+      breakers: snap.breakers,
+      aimd: snap.aimd,
+      audit: auditEntries,
+      auditRecent: auditEntries,
+    };
+  };
+
   const buildCitiesPayload = async () => {
-    const [overrides, deals, events, signals] = await Promise.all([
+    const cached = await analytics.cache.get<unknown[]>("cities_payload");
+    if (cached) return cached;
+    const [overrides, cityAggs, signals] = await Promise.all([
       opts.store.listCityPacksOverrides(),
-      opts.store.listBdDeals({ limit: 500 }),
-      opts.store.listAttributionEvents({ limit: 1_000 }),
+      opts.store.getCityReadinessAggregates(),
       bridge.getDemandAndPressure().catch(() => []),
     ]);
     const overrideByCode = new Map(overrides.map((o) => [o.code, o]));
-    return listCityPacks().map((pack) => {
+    const aggByCity = new Map(cityAggs.map((a) => [a.city, a]));
+    const result = listCityPacks().map((pack) => {
       const override = overrideByCode.get(pack.code);
-      const cityDeals = deals.filter(
-        (d) =>
-          d.city === pack.code &&
-          (d.stage === "contracted" ||
-            d.stage === "kit_shipped" ||
-            d.stage === "live" ||
-            d.stage === "audited"),
-      );
-      const verifiedWaitlistAdults = events
-        .filter((e) => e.city === pack.code && e.eventKind === "signup_verified_adult")
-        .reduce((sum, e) => sum + e.count, 0);
+      const agg = aggByCity.get(pack.code);
       const citySignals = signals.filter((s) => s.city === pack.code);
       const activeAdults = citySignals.reduce((sum, s) => sum + s.activeAdultBucket, 0);
       const reviewSlaHealthy = !citySignals.some((s) => s.overdueReviewCount > 0);
       const readiness: CityStageReadinessResult = evaluateCityStageReadiness(pack, {
-        verifiedWaitlistAdults,
-        signedVenues: cityDeals.length,
+        verifiedWaitlistAdults: agg?.verifiedSignups ?? 0,
+        signedVenues: agg?.dealsLive ?? 0,
         activeAdults,
         reviewSlaHealthy,
         safetyViolations: 0,
@@ -436,18 +541,16 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
         readiness,
       };
     });
+    await analytics.cache.set("cities_payload", result, 5_000);
+    return result;
   };
 
   const buildDesireLanesPayload = async () => {
+    const cached = await analytics.cache.get<{ lanes: ReturnType<typeof listDesireLanes>; metrics: Record<string, unknown> }>("desire_lanes_payload");
+    if (cached) return cached;
     const lanes = listDesireLanes();
-    const [campaigns, tasks, arms, deals, vips, videos] = await Promise.all([
-      opts.store.listCampaigns({ limit: 500 }),
-      opts.store.listTasks({ limit: 1_000 }),
-      opts.store.listBanditArms({ limit: 500 }),
-      opts.store.listBdDeals({ limit: 500 }),
-      opts.store.listVipProspects({ limit: 500 }),
-      opts.store.listVideoAssets({ limit: 500 }),
-    ]);
+    const aggs = await opts.store.getDesireLaneAggregates();
+    const aggByLane = new Map(aggs.map((a) => [a.lane, a]));
     const metrics: Record<
       string,
       {
@@ -461,43 +564,33 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
       }
     > = {};
     for (const lane of lanes) {
+      const agg = aggByLane.get(lane.id);
       metrics[lane.id] = {
-        campaigns: 0,
-        tasks: 0,
-        banditArms: 0,
-        verifiedOutcomes: 0,
-        bdDeals: 0,
-        vipProspects: 0,
-        videos: 0,
+        campaigns: agg?.campaigns ?? 0,
+        tasks: agg?.tasks ?? 0,
+        banditArms: agg?.arms ?? 0,
+        verifiedOutcomes: agg?.verifiedOutcomes ?? 0,
+        bdDeals: agg?.deals ?? 0,
+        vipProspects: agg?.vips ?? 0,
+        videos: agg?.videos ?? 0,
       };
     }
-    const ensure = (id: string) => {
-      if (!metrics[id]) {
-        metrics[id] = {
-          campaigns: 0,
-          tasks: 0,
-          banditArms: 0,
-          verifiedOutcomes: 0,
-          bdDeals: 0,
-          vipProspects: 0,
-          videos: 0,
+    for (const agg of aggs) {
+      if (!metrics[agg.lane]) {
+        metrics[agg.lane] = {
+          campaigns: agg.campaigns,
+          tasks: agg.tasks,
+          banditArms: agg.arms,
+          verifiedOutcomes: agg.verifiedOutcomes,
+          bdDeals: agg.deals,
+          vipProspects: agg.vips,
+          videos: agg.videos,
         };
       }
-      return metrics[id];
-    };
-    for (const c of campaigns) if (c.desireLane) ensure(c.desireLane).campaigns += 1;
-    for (const t of tasks) if (t.desireLane) ensure(t.desireLane).tasks += 1;
-    for (const a of arms) {
-      if (a.desireLane) {
-        const m = ensure(a.desireLane);
-        m.banditArms += 1;
-        m.verifiedOutcomes += a.verifiedOutcomes ?? 0;
-      }
     }
-    for (const d of deals) if (d.desireLane) ensure(d.desireLane).bdDeals += 1;
-    for (const v of vips) if (v.desireLane) ensure(v.desireLane).vipProspects += 1;
-    for (const v of videos) if (v.desireLane) ensure(v.desireLane).videos += 1;
-    return { lanes, metrics };
+    const payload = { lanes, metrics };
+    await analytics.cache.set("desire_lanes_payload", payload, 5_000);
+    return payload;
   };
 
   const buildLlmUsagePayload = async (filter?: {
@@ -506,6 +599,7 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
     dayIso?: string;
   }) => {
     const usage = await opts.store.getDailyLlmUsage(filter);
+    const cacheStats = agentManager.getCacheStats();
     const budgetDecision = evaluateLlmBudget({
       tokensUsedToday: usage.totalTokens,
       estimatedTokens: 0,
@@ -517,6 +611,8 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
     return {
       usage,
       caps: { dailyTokenCap, dailyCostCapMicros },
+      deterministicSkips: cacheStats.deterministicSkips,
+      cacheStats,
       budgetDecision,
     };
   };
@@ -586,25 +682,450 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
       }
 
       if (method === "GET" && path === "/") {
-        return new Response(renderCommandCenterHtml(), {
+        return new Response(webAssets.html, {
           status: 200,
-          headers: commandCenterSecurityHeaders(),
+          headers: webAssets.securityHeaders(),
         });
       }
 
       if (method === "GET" && (path === "/assets/app.css" || path === "/app.css")) {
-        return servePrecompressedAsset(request, cssAsset);
+        return servePrecompressedAsset(request, webAssets.css);
       }
 
       if (method === "GET" && (path === "/assets/app.js" || path === "/app.js")) {
-        return servePrecompressedAsset(request, jsAsset);
+        return servePrecompressedAsset(request, webAssets.js);
       }
 
       if (method === "GET" && path === "/fonts/host-grotesk.woff2") {
-        if (!fontAsset) {
+        if (!webAssets.font) {
           return new Response("Not found", { status: 404 });
         }
-        return servePrecompressedAsset(request, fontAsset);
+        return servePrecompressedAsset(request, webAssets.font);
+      }
+
+      const deployedEnv = isDeployedEnvironment(env);
+
+      if ((method === "POST" || method === "GET") && path === "/api/unsubscribe") {
+        try {
+          let tokenParam = url.searchParams.get("token")?.trim() ?? "";
+          if (!tokenParam && method === "POST") {
+            const rawText = await readBoundedText(request, MAX_PUBLIC_BODY_BYTES);
+            const ct = request.headers.get("content-type") ?? "";
+            if (ct.includes("application/json")) {
+              const parsed: unknown = rawText.trim() ? JSON.parse(rawText) : {};
+              if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+                const body = parsed as Record<string, unknown>;
+                tokenParam = typeof body.token === "string" ? body.token.trim() : "";
+              }
+            } else {
+              const form = new URLSearchParams(rawText);
+              tokenParam = form.get("token")?.trim() ?? "";
+            }
+          }
+          const verified = compliance.verifyUnsubscribeToken(tokenParam);
+          if (!verified.ok) {
+            return jsonResponse({ ok: false, error: verified.reason }, 400);
+          }
+          const { contactKey, channel } = verified.payload;
+          const isEmail = contactKey.includes("@");
+          const normalizedPhone = isEmail ? null : normalizeE164Phone(contactKey);
+          const contactHash =
+            (isEmail ? keyedContactHash("email", contactKey, env) : null) ??
+            (normalizedPhone ? keyedContactHash("phone", normalizedPhone, env) : null) ??
+            contactKey;
+          if (isEmail) {
+            compliance.suppression.suppress({
+              kind: "email",
+              value: contactKey,
+              scope: "global",
+              reason: "rfc8058_unsubscribe",
+              source: channel,
+            });
+          } else if (normalizedPhone) {
+            compliance.suppression.suppress({
+              kind: "phone",
+              value: normalizedPhone,
+              scope: "global",
+              reason: "rfc8058_unsubscribe",
+              source: channel,
+            });
+          } else {
+            compliance.suppression.suppress({
+              kind: "handle",
+              value: contactKey,
+              scope: "global",
+              reason: "rfc8058_unsubscribe",
+              source: channel,
+            });
+          }
+          const suppression = await opts.store.recordContactSuppression({
+            contactHash,
+            reason: "rfc8058_unsubscribe",
+            sourceChannel: channel,
+            isMinor: false,
+          });
+          const cancelledCount = await opts.store.cancelPendingOutreachForContact({
+            contactHashes: [contactHash, contactKey, ...(normalizedPhone ? [normalizedPhone] : [])],
+            contactEmail: isEmail ? contactKey : null,
+            reason: "rfc8058_unsubscribe",
+          });
+          await opts.store.recordOperatorAudit({
+            actor: "recipient_unsubscribe",
+            action: "contact_unsubscribed",
+            targetType: "contact_suppression",
+            targetId: contactHash,
+            detail: { channel, cancelledOutreach: cancelledCount },
+          });
+          analytics.invalidateCache();
+          eventHub.publish("compliance", {
+            action: "unsubscribe",
+            contactHash,
+            cancelledCount,
+          });
+          return jsonResponse({
+            ok: true,
+            suppressed: true,
+            contactHash: suppression.contactHash,
+            cancelledOutreach: cancelledCount,
+          });
+        } catch (err) {
+          return mapErrorToResponse(err);
+        }
+      }
+
+      if (method === "POST" && path.startsWith("/api/webhooks/")) {
+        try {
+          const rawText = await readBoundedText(request, MAX_PUBLIC_BODY_BYTES);
+          let payload: Record<string, unknown> = {};
+          if (rawText.trim()) {
+            const parsed: unknown = JSON.parse(rawText);
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+              payload = parsed as Record<string, unknown>;
+            }
+          }
+
+          const emailWebhookMatch = /^\/api\/webhooks\/email\/([^/]+)$/.exec(path);
+          if (emailWebhookMatch?.[1]) {
+            const provider = decodeURIComponent(emailWebhookMatch[1]).toLowerCase();
+            const sigHeader =
+              request.headers.get("svix-signature") ??
+              request.headers.get("x-webhook-signature") ??
+              request.headers.get("x-postmark-signature");
+            if (
+              !verifyWebhookHmac(
+                rawText,
+                sigHeader,
+                env.RESEND_WEBHOOK_SECRET ?? env.MARKETING_WEBHOOK_SECRET,
+                deployedEnv,
+              )
+            ) {
+              return jsonResponse({ error: "Invalid webhook signature" }, 401);
+            }
+            const rawEventType =
+              typeof payload.type === "string"
+                ? payload.type
+                : typeof payload.event === "string"
+                  ? payload.event
+                  : "delivered";
+            const eventType = rawEventType.toLowerCase();
+            const dataObj =
+              payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
+                ? (payload.data as Record<string, unknown>)
+                : payload;
+            const recipientEmail =
+              typeof dataObj.to === "string"
+                ? dataObj.to
+                : Array.isArray(dataObj.to) && typeof dataObj.to[0] === "string"
+                  ? dataObj.to[0]
+                  : typeof dataObj.email === "string"
+                    ? dataObj.email
+                    : null;
+            const messageId =
+              typeof dataObj.email_id === "string"
+                ? dataObj.email_id
+                : typeof dataObj.message_id === "string"
+                  ? dataObj.message_id
+                  : null;
+            const isBounce = eventType.includes("bounce");
+            const isComplaint = eventType.includes("complain") || eventType.includes("spam");
+            const isReply = eventType.includes("repl");
+            const isClick = eventType.includes("click");
+            const nowMs = clock.now();
+            const d = new Date(nowMs);
+
+            compliance.recordHttpOutcome(`paid:email:${provider}`, {
+              ok: !isBounce && !isComplaint,
+              status: isBounce || isComplaint ? 550 : 200,
+              hardBounce: isBounce,
+              spamComplaint: isComplaint,
+              stopped: isComplaint,
+            });
+
+            if (recipientEmail && (isBounce || isComplaint)) {
+              const emailHash = keyedContactHash("email", recipientEmail, env) ?? recipientEmail;
+              compliance.suppression.suppress({
+                kind: "email",
+                value: recipientEmail,
+                scope: "global",
+                reason: isComplaint ? "spam_complaint_webhook" : "hard_bounce_webhook",
+                source: provider,
+              });
+              await opts.store.recordContactSuppression({
+                contactHash: emailHash,
+                reason: isComplaint ? "spam_complaint_webhook" : "hard_bounce_webhook",
+                sourceChannel: provider,
+                isMinor: false,
+              });
+              await opts.store.cancelPendingOutreachForContact({ contactHash: emailHash });
+            }
+
+            if (messageId) {
+              const msgs = await opts.store.listOutreachMessages({ limit: 500 });
+              const found = msgs.find((m) => m.externalRef === messageId);
+              if (found) {
+                const nextStatus = isBounce
+                  ? "bounced"
+                  : isReply
+                    ? "replied"
+                    : eventType.includes("deliver")
+                      ? "delivered"
+                      : found.status;
+                if (nextStatus !== found.status) {
+                  await opts.store.updateOutreachStatus(found.id, nextStatus, found.externalRef);
+                }
+              }
+            }
+
+            analytics.ingestOutreachTelemetry({
+              occurredAt: nowMs,
+              appId: "ntwrk",
+              city: "nyc",
+              channel: "email",
+              localDayOfWeek: d.getUTCDay(),
+              localHour: d.getUTCHours(),
+              sent: 0,
+              delivered: eventType.includes("deliver") ? 1 : 0,
+              clicked: isClick ? 1 : 0,
+              replied: isReply ? 1 : 0,
+              converted: 0,
+              stopped: isComplaint ? 1 : 0,
+              bounced: isBounce ? 1 : 0,
+              rateLimited429: 0,
+            });
+            eventHub.publish("outreach", { action: "webhook_email", provider, eventType });
+            return jsonResponse({ ok: true, provider, eventType });
+          }
+
+          const socialWebhookMatch = /^\/api\/webhooks\/social\/([^/]+)$/.exec(path);
+          if (socialWebhookMatch?.[1]) {
+            const platform = decodeURIComponent(socialWebhookMatch[1]).toLowerCase();
+            const sigHeader = request.headers.get("x-webhook-signature");
+            if (!verifyWebhookHmac(rawText, sigHeader, env.MARKETING_WEBHOOK_SECRET, deployedEnv)) {
+              return jsonResponse({ error: "Invalid webhook signature" }, 401);
+            }
+            const text = typeof payload.text === "string" ? payload.text : "";
+            const senderHandle =
+              typeof payload.handle === "string"
+                ? payload.handle
+                : typeof payload.sender === "string"
+                  ? payload.sender
+                  : "unknown";
+            const isStop = isGlobalOptOutText(text) || payload.event === "stop";
+            const nowMs = clock.now();
+            const d = new Date(nowMs);
+            if (isStop) {
+              const handleHash = keyedContactHash("handle", `${platform}:${senderHandle}`, env) ?? `${platform}:${senderHandle}`;
+              compliance.suppression.suppress({
+                kind: "handle",
+                value: senderHandle,
+                platform,
+                scope: "global",
+                reason: "social_stop_webhook",
+                source: platform,
+              });
+              await opts.store.recordContactSuppression({
+                contactHash: handleHash,
+                reason: "social_stop_webhook",
+                sourceChannel: platform,
+                isMinor: false,
+              });
+              await opts.store.cancelPendingOutreachForContact({ contactHash: handleHash });
+              compliance.recordHttpOutcome(`social:${platform}`, { ok: true, stopped: true });
+            }
+            analytics.ingestOutreachTelemetry({
+              occurredAt: nowMs,
+              appId: "ntwrk",
+              city: typeof payload.city === "string" ? payload.city : "nyc",
+              channel: platform,
+              localDayOfWeek: d.getUTCDay(),
+              localHour: d.getUTCHours(),
+              sent: 0,
+              delivered: 0,
+              clicked: 0,
+              replied: isStop ? 0 : 1,
+              converted: 0,
+              stopped: isStop ? 1 : 0,
+              bounced: 0,
+              rateLimited429: 0,
+            });
+            eventHub.publish("outreach", { action: "webhook_social", platform, isStop });
+            return jsonResponse({ ok: true, platform, isStop });
+          }
+
+          if (path === "/api/webhooks/dub") {
+            const sigHeader = request.headers.get("dub-signature") ?? request.headers.get("x-webhook-signature");
+            if (!verifyWebhookHmac(rawText, sigHeader, env.DUB_WEBHOOK_SECRET ?? env.MARKETING_WEBHOOK_SECRET, deployedEnv)) {
+              return jsonResponse({ error: "Invalid webhook signature" }, 401);
+            }
+            const batchCode =
+              typeof payload.qrBatchCode === "string"
+                ? payload.qrBatchCode.trim()
+                : typeof payload.slug === "string"
+                  ? payload.slug.trim()
+                  : null;
+            const city = typeof payload.city === "string" ? payload.city.trim().toLowerCase() : "nyc";
+            const appId = parseBrandAppId(payload.appId, "ntwrk");
+            const campaignId =
+              typeof payload.campaignId === "string" && payload.campaignId.trim()
+                ? payload.campaignId.trim()
+                : (await opts.store.listCampaigns({ status: "active", limit: 1 }))[0]?.id;
+            if (batchCode) {
+              await opts.store.incrementQrBatchStats(batchCode, { scans: 1 });
+            }
+            if (campaignId) {
+              await opts.store.recordAttributionEvent({
+                campaignId,
+                qrBatchCode: batchCode,
+                eventKind: batchCode ? "qr_scan" : "link_click",
+                city,
+                appId,
+                count: 1,
+                metadata: { source: "dub_webhook", slug: batchCode ?? "" },
+              });
+            }
+            analytics.ingestFunnelEvent({
+              eventId: `dub-${clock.now()}`,
+              actorKey: typeof payload.visitorId === "string" ? payload.visitorId : `dub-${clock.now()}`,
+              stage: "link_click",
+              occurredAt: clock.now(),
+              appId,
+              city,
+              channel: batchCode ? "qr" : "shortlink",
+              campaignId,
+            });
+            eventHub.publish("attribution", { action: "webhook_dub", batchCode, city });
+            return jsonResponse({ ok: true, batchCode });
+          }
+
+          if (path === "/api/webhooks/luma") {
+            const sigHeader = request.headers.get("x-luma-signature") ?? request.headers.get("x-webhook-signature");
+            if (!verifyWebhookHmac(rawText, sigHeader, env.LUMA_WEBHOOK_SECRET ?? env.MARKETING_WEBHOOK_SECRET, deployedEnv)) {
+              return jsonResponse({ error: "Invalid webhook signature" }, 401);
+            }
+            const city = typeof payload.city === "string" ? payload.city.trim().toLowerCase() : "nyc";
+            const appId = parseBrandAppId(payload.appId, "friends");
+            const campaignId =
+              typeof payload.campaignId === "string" && payload.campaignId.trim()
+                ? payload.campaignId.trim()
+                : (await opts.store.listCampaigns({ status: "active", limit: 1 }))[0]?.id;
+            if (campaignId) {
+              await opts.store.recordAttributionEvent({
+                campaignId,
+                eventKind: "cta_triggered",
+                city,
+                appId,
+                count: 1,
+                metadata: {
+                  source: "luma_webhook",
+                  eventId: typeof payload.eventId === "string" ? payload.eventId : "",
+                },
+              });
+            }
+            analytics.ingestFunnelEvent({
+              eventId: `luma-${clock.now()}`,
+              actorKey: typeof payload.guestId === "string" ? payload.guestId : `luma-${clock.now()}`,
+              stage: "cta_triggered",
+              occurredAt: clock.now(),
+              appId,
+              city,
+              channel: "luma",
+              campaignId,
+            });
+            eventHub.publish("attribution", { action: "webhook_luma", city });
+            return jsonResponse({ ok: true, source: "luma" });
+          }
+
+          if (path === "/api/webhooks/beacon") {
+            const sigHeader = request.headers.get("x-webhook-signature");
+            if (!verifyWebhookHmac(rawText, sigHeader, env.MARKETING_WEBHOOK_SECRET, deployedEnv)) {
+              return jsonResponse({ error: "Invalid webhook signature" }, 401);
+            }
+            const eventsList = Array.isArray(payload.events)
+              ? (payload.events as Record<string, unknown>[])
+              : [payload];
+            if (eventsList.length > MAX_BEACON_BATCH_SIZE) {
+              return jsonResponse(
+                { error: `Beacon batch exceeds maximum of ${MAX_BEACON_BATCH_SIZE} events.`, code: "BATCH_TOO_LARGE" },
+                400,
+              );
+            }
+            const defaultCampaignId = (await opts.store.listCampaigns({ status: "active", limit: 1 }))[0]?.id;
+            let recorded = 0;
+            for (const item of eventsList) {
+              const city = typeof item.city === "string" ? item.city.trim().toLowerCase() : "nyc";
+              const appId = parseBrandAppId(item.appId, "ntwrk");
+              const rawEventName =
+                typeof item.event === "string"
+                  ? item.event
+                  : typeof item.eventKind === "string"
+                    ? item.eventKind
+                    : "site_visit";
+              const eventName = rawEventName.toLowerCase();
+              const eventKind =
+                eventName === "cta_triggered" || eventName === "cta_click"
+                  ? "cta_triggered"
+                  : eventName === "signup_started"
+                    ? "signup_started"
+                    : "site_visit";
+              const campaignId =
+                typeof item.campaignId === "string" && item.campaignId.trim()
+                  ? item.campaignId.trim()
+                  : defaultCampaignId;
+              if (campaignId) {
+                await opts.store.recordAttributionEvent({
+                  campaignId,
+                  qrBatchCode: typeof item.qrBatchCode === "string" ? item.qrBatchCode : null,
+                  eventKind,
+                  city,
+                  appId,
+                  count: 1,
+                  metadata: {
+                    source: "beacon",
+                    utmSource: typeof item.utmSource === "string" ? item.utmSource : "",
+                    utmCampaign: typeof item.utmCampaign === "string" ? item.utmCampaign : "",
+                  },
+                });
+              }
+              analytics.ingestFunnelEvent({
+                eventId: `beacon-${clock.now()}-${recorded}`,
+                actorKey: typeof item.visitorId === "string" ? item.visitorId : `beacon-${clock.now()}-${recorded}`,
+                stage: eventKind === "cta_triggered" || eventKind === "signup_started" ? "cta_triggered" : "site_visit",
+                occurredAt: clock.now(),
+                appId,
+                city,
+                channel: typeof item.utmSource === "string" && item.utmSource ? item.utmSource : "web",
+                campaignId,
+              });
+              recorded += 1;
+            }
+            eventHub.publish("analytics", { action: "webhook_beacon", recorded });
+            return jsonResponse({ ok: true, recorded });
+          }
+
+          return jsonResponse({ error: `Unknown webhook route: ${path}` }, 404);
+        } catch (err) {
+          return mapErrorToResponse(err);
+        }
       }
 
       if (path.startsWith("/api/")) {
@@ -620,19 +1141,23 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
           return eventHub.createStreamResponse(request.signal);
         }
 
-        // Overview & Coalesced Ops Summary
         if (method === "GET" && path === "/api/overview") {
           const campaignId = url.searchParams.get("campaignId") ?? undefined;
-          const [overview, banditArms] = await Promise.all([
+          const [overview, banditArms, compliancePayload] = await Promise.all([
             opts.store.getOverview(campaignId),
             opts.store.listBanditArms(campaignId ? { campaignId, limit: 100 } : { limit: 100 }),
+            buildCompliancePayload(),
           ]);
           return jsonResponse({
             ...overview,
+            tracks: NYC_MONTH1_BUDGET_TRACKS,
             banditArms,
             daemon: daemon.getStatus(),
             adapters: paidAdapters.listStatus(),
+            socialAdapters: socialAdapters.getStatus(),
+            adAdapters: adAdapters.getStatus(),
             slopCash: slopCashBridge.status(),
+            compliance: compliancePayload,
             directory: {
               agencies: VETTED_NYC_AGENCIES.length,
               platforms: SELF_SERVICE_PLATFORMS.length,
@@ -642,7 +1167,7 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
         }
         if (method === "GET" && path === "/api/ops-summary") {
           const campaignId = url.searchParams.get("campaignId") ?? undefined;
-          const [overview, banditArms, cities, desireLanes, llmUsage, corePressure] =
+          const [overview, banditArms, cities, desireLanes, llmUsage, corePressure, compliancePayload] =
             await Promise.all([
               opts.store.getOverview(campaignId),
               opts.store.listBanditArms(campaignId ? { campaignId, limit: 100 } : { limit: 100 }),
@@ -650,20 +1175,189 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
               buildDesireLanesPayload(),
               buildLlmUsagePayload({ campaignId }),
               buildCorePressurePayload(),
+              buildCompliancePayload(),
             ]);
           return jsonResponse({
             overview: {
               ...overview,
+              tracks: NYC_MONTH1_BUDGET_TRACKS,
               banditArms,
               daemon: daemon.getStatus(),
               adapters: paidAdapters.listStatus(),
+              socialAdapters: socialAdapters.getStatus(),
+              adAdapters: adAdapters.getStatus(),
               slopCash: slopCashBridge.status(),
+              compliance: compliancePayload,
             },
             cities,
             desireLanes,
             llmUsage,
             corePressure,
+            compliance: compliancePayload,
           });
+        }
+
+        if (method === "GET" && path === "/api/compliance") {
+          return jsonResponse(await buildCompliancePayload());
+        }
+        const breakerResetMatch = /^\/api\/compliance\/breakers\/([^/]+)\/reset$/.exec(path);
+        if (method === "POST" && breakerResetMatch?.[1]) {
+          const scope = decodeURIComponent(breakerResetMatch[1]);
+          const snapshot = compliance.resetBreaker(scope);
+          await opts.store.recordOperatorAudit({
+            actor: "operator",
+            action: "breaker_reset",
+            targetType: "circuit_breaker",
+            targetId: scope,
+            detail: { state: snapshot.state },
+          });
+          eventHub.publish("compliance", { action: "breaker_reset", scope });
+          return jsonResponse({ ok: true, scope, snapshot });
+        }
+
+        if (method === "GET" && path === "/api/analytics/funnel") {
+          const filter = parseAnalyticsFilter(url.searchParams);
+          return jsonResponse(await analytics.getFunnel(filter));
+        }
+        if (method === "GET" && path === "/api/analytics/cohorts") {
+          const filter = parseAnalyticsFilter(url.searchParams);
+          return jsonResponse(await analytics.getCohorts(filter));
+        }
+        if (method === "GET" && path === "/api/analytics/attribution") {
+          const filter = parseAnalyticsFilter(url.searchParams);
+          const rawModel = url.searchParams.get("model")?.trim() ?? "last_touch";
+          const model: AttributionModel =
+            rawModel === "first_touch" || rawModel === "linear" ? rawModel : "last_touch";
+          return jsonResponse(await analytics.getAttribution(model, filter));
+        }
+        if (method === "GET" && path === "/api/analytics/heatmap") {
+          const filter = parseAnalyticsFilter(url.searchParams);
+          return jsonResponse(await analytics.getHeatmap(filter));
+        }
+        if (method === "GET" && path === "/api/analytics/timeseries") {
+          const filter = parseAnalyticsFilter(url.searchParams);
+          const rawGran = url.searchParams.get("granularity")?.trim() ?? "day";
+          const granularity: "hour" | "day" | "week" =
+            rawGran === "hour" || rawGran === "week" ? rawGran : "day";
+          return jsonResponse(await analytics.getTimeSeries(granularity, filter));
+        }
+        if (method === "GET" && path === "/api/analytics/anomalies") {
+          const filter = parseAnalyticsFilter(url.searchParams);
+          return jsonResponse(await analytics.getAnomalies(filter));
+        }
+        if ((method === "POST" || method === "GET") && path === "/api/analytics/slice") {
+          const raw = method === "POST" ? await readJsonBody(request) : {};
+          const metricRaw =
+            typeof raw.metric === "string"
+              ? raw.metric
+              : url.searchParams.get("metric") ?? "site_visits";
+          const metric = metricRaw as SliceMetric;
+          const granRaw =
+            typeof raw.granularity === "string"
+              ? raw.granularity
+              : url.searchParams.get("granularity") ?? "day";
+          const granularity: SliceGranularity =
+            granRaw === "hour" || granRaw === "week" || granRaw === "total" ? granRaw : "day";
+          const groupByRaw = Array.isArray(raw.groupBy)
+            ? raw.groupBy.map(String)
+            : (url.searchParams.get("groupBy")?.split(",").filter(Boolean) ?? []);
+          const groupBy = groupByRaw.slice(0, 2) as SliceDimension[];
+          const formatRaw =
+            typeof raw.format === "string"
+              ? raw.format
+              : url.searchParams.get("format") ?? "json";
+          const filter =
+            raw.filter && typeof raw.filter === "object"
+              ? (raw.filter as AnalyticsFilter)
+              : parseAnalyticsFilter(url.searchParams);
+          const result = await analytics.querySlice({ metric, granularity, groupBy, filter });
+          if (formatRaw === "csv") {
+            return new Response(analytics.exportSliceCsv(result), {
+              status: 200,
+              headers: {
+                "Content-Type": "text/csv; charset=utf-8",
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+              },
+            });
+          }
+          return jsonResponse(result);
+        }
+
+        if (method === "GET" && path === "/api/trajectories") {
+          const limitRaw = Number(url.searchParams.get("limit") ?? 50);
+          const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(200, Math.round(limitRaw)) : 50;
+          const appId = (url.searchParams.get("appId")?.trim() || undefined) as TrajectoryApp | undefined;
+          const kind = (url.searchParams.get("kind")?.trim() || undefined) as TrajectoryKind | undefined;
+          const status = (url.searchParams.get("status")?.trim() || undefined) as TrajectoryStatus | undefined;
+          const flag = url.searchParams.get("flag")?.trim() || undefined;
+          const [apiTraj, simTraj] = await Promise.all([
+            analytics.listTrajectories({ appId, kind, status, flag, limit }),
+            gameSession.isInitialized()
+              ? gameSession.listSimTrajectories(limit)
+              : Promise.resolve({ traces: [], hotTail: [] }),
+          ]);
+          const seen = new Set<string>();
+          const traces = [...apiTraj.traces, ...simTraj.traces]
+            .filter((t) => {
+              if (seen.has(t.traceId)) return false;
+              seen.add(t.traceId);
+              return true;
+            })
+            .sort((a, b) => b.startedAt - a.startedAt)
+            .slice(0, limit);
+          const hotTail = [...apiTraj.hotTail, ...simTraj.hotTail]
+            .sort((a, b) => b.startedAt - a.startedAt)
+            .slice(0, limit);
+          return jsonResponse({ traces, hotTail, driver: apiTraj.driver });
+        }
+        const trajectoryDetailMatch = /^\/api\/trajectories\/([^/]+)$/.exec(path);
+        if (method === "GET" && trajectoryDetailMatch?.[1]) {
+          const traceId = decodeURIComponent(trajectoryDetailMatch[1]);
+          const decrypt = url.searchParams.get("decrypt") === "1" || url.searchParams.get("decrypt") === "true";
+          const apiDetail = await analytics.readTrace(traceId, decrypt);
+          if (apiDetail.spans.length > 0 || apiDetail.manifest) {
+            return jsonResponse(apiDetail);
+          }
+          if (gameSession.isInitialized()) {
+            const simDetail = await gameSession.readSimTrace(traceId, decrypt);
+            return jsonResponse({ traceId, ...simDetail });
+          }
+          return jsonResponse({ traceId, manifest: null, spans: [] });
+        }
+
+        if (path === "/api/sim/state" || path === "/api/sim/command" || path.startsWith("/api/sim/mock/")) {
+          if (deployedEnv) {
+            return jsonResponse(
+              {
+                error: "Interactive simulation routes are disabled in staging/production.",
+                code: "SIM_DISABLED_IN_DEPLOYED_ENV",
+              },
+              403,
+            );
+          }
+        }
+        if (method === "GET" && path === "/api/sim/state") {
+          return jsonResponse(await gameSession.getState());
+        }
+        if (method === "POST" && path === "/api/sim/command") {
+          const raw = await readJsonBody(request);
+          const res = await gameSession.dispatchCommand(raw);
+          return jsonResponse(res, res.ok ? 200 : 400);
+        }
+        if (method === "GET" && path === "/api/sim/mock/traffic") {
+          const service = url.searchParams.get("service")?.trim() || undefined;
+          const statusRaw = url.searchParams.get("status");
+          const status = statusRaw !== null && Number.isFinite(Number(statusRaw)) ? Number(statusRaw) : undefined;
+          const limitRaw = Number(url.searchParams.get("limit") ?? 60);
+          const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(500, Math.round(limitRaw)) : 60;
+          return jsonResponse(gameSession.getMockTraffic({ service, status, limit }));
+        }
+        const mockStateMatch = /^\/api\/sim\/mock\/state\/([^/]+)$/.exec(path);
+        if (method === "GET" && mockStateMatch?.[1]) {
+          const service = decodeURIComponent(mockStateMatch[1]);
+          const state = await gameSession.getMockServiceState(service);
+          return jsonResponse({ service, state });
         }
 
         // Multi-city launch seeding (POST /api/seed/:city, including /api/seed/nyc)
@@ -706,6 +1400,7 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
               agencies: pack.vendors.vettedAgencies,
               platforms: pack.vendors.platforms,
               printers: pack.vendors.printers,
+              tracks: NYC_MONTH1_BUDGET_TRACKS,
               connectors: pack.discovery.openDataConnectors,
               corridors: pack.corridors,
             });
@@ -764,6 +1459,15 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
             sourceChannel: body.sourceChannel,
             isMinor: body.isMinor,
           });
+          await opts.store.cancelPendingOutreachForContact({ contactHash: resolvedHash, reason: body.reason });
+          await opts.store.recordOperatorAudit({
+            actor: "operator",
+            action: "contact_suppressed",
+            targetType: "contact_suppression",
+            targetId: suppression.contactHash,
+            detail: { reason: body.reason, isMinor: body.isMinor },
+          });
+          analytics.invalidateCache();
           eventHub.publish("human", {
             action: "suppressed",
             contactHash: suppression.contactHash,
@@ -775,6 +1479,16 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
           return jsonResponse(await buildCorePressurePayload());
         }
         if (method === "POST" && path === "/api/simulate/launch") {
+          const rl = compliance.checkRouteRateLimit("simulate_launch", 30, 60_000, 10);
+          if (!rl.allowed) {
+            return new Response(JSON.stringify({ error: "Rate limit exceeded", retryAfterMs: rl.retryAfterMs }), {
+              status: 429,
+              headers: {
+                "Content-Type": "application/json; charset=utf-8",
+                "Retry-After": String(Math.max(1, Math.ceil(rl.retryAfterMs / 1000))),
+              },
+            });
+          }
           const body = parseSimRequest(await readJsonBody(request));
           const days = Math.min(30, body.days ?? (body.quick ? 10 : 30));
           const seeds = (body.seeds ?? [11]).slice(0, 4);
@@ -808,6 +1522,14 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
           const id = decodeURIComponent(riskDialMatch[1]);
           const body = parseRiskDialUpdate(await readJsonBody(request));
           const campaign = await opts.store.setRiskDial(id, body.riskDial, body.billingArmed);
+          await opts.store.recordOperatorAudit({
+            actor: "operator",
+            action: "risk_dial_changed",
+            targetType: "campaign",
+            targetId: campaign.id,
+            detail: { riskDial: campaign.riskDial, billingArmed: campaign.billingArmed },
+          });
+          analytics.invalidateCache();
           eventHub.publish("campaign", {
             action: "risk_dial",
             id: campaign.id,
@@ -1070,6 +1792,15 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
           const raw = await readJsonBody(request);
           const reason = typeof raw.reason === "string" && raw.reason.trim() ? raw.reason.trim() : "operator_stop";
           const human = await opts.store.markHumanStopped(id, reason);
+          await opts.store.cancelPendingOutreachForContact({ humanIds: [human.id], reason });
+          await opts.store.recordOperatorAudit({
+            actor: "operator",
+            action: "human_stopped",
+            targetType: "human",
+            targetId: human.id,
+            detail: { reason },
+          });
+          analytics.invalidateCache();
           eventHub.publish("human", { action: "stopped", id: human.id });
           return jsonResponse({ human });
         }
@@ -1745,6 +2476,16 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
           return jsonResponse({ message }, blocked ? 403 : 201);
         }
         if (method === "POST" && path === "/api/outreach/dispatch") {
+          const rl = compliance.checkRouteRateLimit("outreach_dispatch", 60, 60_000, 20);
+          if (!rl.allowed) {
+            return new Response(JSON.stringify({ error: "Rate limit exceeded", retryAfterMs: rl.retryAfterMs }), {
+              status: 429,
+              headers: {
+                "Content-Type": "application/json; charset=utf-8",
+                "Retry-After": String(Math.max(1, Math.ceil(rl.retryAfterMs / 1000))),
+              },
+            });
+          }
           const raw = await readJsonBody(request);
           let campaignId = typeof raw.campaignId === "string" && raw.campaignId.trim() ? raw.campaignId.trim() : undefined;
           if (!campaignId) {
@@ -1756,12 +2497,22 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
             dailyOutreachCap: typeof raw.dailyOutreachCap === "number" ? raw.dailyOutreachCap : undefined,
             dryRun: typeof raw.dryRun === "boolean" ? raw.dryRun : undefined,
           });
+          analytics.invalidateCache();
           eventHub.publish("outreach", { action: "dispatched", campaignId, sent: result.sent });
           return jsonResponse(result);
         }
 
-        // Tier-1 $0 Open-Web Multi-City Discovery (POST /api/discovery & /api/discovery/nyc alias)
         if (method === "POST" && (path === "/api/discovery" || path === "/api/discovery/nyc")) {
+          const rl = compliance.checkRouteRateLimit("discovery", 60, 60_000, 20);
+          if (!rl.allowed) {
+            return new Response(JSON.stringify({ error: "Rate limit exceeded", retryAfterMs: rl.retryAfterMs }), {
+              status: 429,
+              headers: {
+                "Content-Type": "application/json; charset=utf-8",
+                "Retry-After": String(Math.max(1, Math.ceil(rl.retryAfterMs / 1000))),
+              },
+            });
+          }
           const raw = await readJsonBody(request);
           const parsed = parseDiscoveryRequest(raw);
           const targetCity = parsed.city ?? "nyc";
@@ -1772,6 +2523,7 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
           const result = await discoverCityLeads({
             fetchImpl: opts.discoveryFetch,
             clock,
+            env,
             city: targetCity,
             limitPerSource: parsed.limitPerSource,
             redditSubreddits: parsed.redditSubreddits,
@@ -1947,9 +2699,14 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
     daemon,
     eventHub,
     bridge,
+    compliance,
+    analytics,
+    gameSession,
     stop: async () => {
       serving = false;
       await daemon.stop();
+      await gameSession.stop();
+      await analytics.shutdown();
       eventHub.closeAll();
       await server.stop(true);
     },
@@ -1979,7 +2736,7 @@ if (isDirectEntry) {
   const started = await createMarketingServer({
     store,
     clock,
-    port: Number(process.env.MARKETING_PORT || DEFAULT_MARKETING_PORT),
+    port: Number(process.env.MARKETING_PORT || process.env.PORT || DEFAULT_MARKETING_PORT),
     hostname: process.env.MARKETING_HOST || DEFAULT_MARKETING_HOST,
   });
 
