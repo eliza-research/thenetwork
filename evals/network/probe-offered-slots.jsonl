@@ -354,3 +354,13 @@
 {"text":"Saturday works whenever","answer":"yes","keys":["b"]}
 {"text":"Saturday works when it suits you","answer":"yes","keys":["b"]}
 {"text":"Last time was great, Saturday works","answer":"yes","keys":["b"]}
+{"text":"No pressure Thursday works","answer":"yes","keys":["a"]}
+{"text":"No doubt Thursday works","answer":"yes","keys":["a"]}
+{"text":"No stress Saturday works","answer":"yes","keys":["b"]}
+{"text":"No biggie Sunday works","answer":"yes","keys":["c"]}
+{"text":"Sounds good, no pressure either","answer":"yes","keys":["a","b","c"]}
+{"text":"yes! no pressure on my side either","answer":"yes","keys":["a","b","c"]}
+{"text":"Count me in, no doubt either","answer":"yes","keys":["a","b","c"]}
+{"text":"No pressure Thursday doesn't work","answer":"unclear","keys":[]}
+{"text":"No, Thursday works","answer":"unclear","keys":[]}
+{"text":"No doubt, Saturday doesn't work, Thursday works","answer":"yes","keys":["a"]}
