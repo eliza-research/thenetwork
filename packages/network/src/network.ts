@@ -3189,7 +3189,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         }
         for (const e of matches) this.applyStandingKeep(m, e, causeId);
         const kept = this.standingEntries(m, now).find(e => e.key === selected.key);
-        return reply(kept && kept.endsAt !== null ? STANDING_COPY.kept(selected.summary, kept.endsAt) : STANDING_COPY.resumed(summaries));
+        return reply(kept && kept.endsAt !== null ? STANDING_COPY.kept(selected.summary, kept.endsAt, this.memberZone(m.id)) : STANDING_COPY.resumed(summaries));
       }
       default:
         return reply(STANDING_COPY.already(selected.summary, selected.phase === "IntentPaused" ? "paused" : "on"));
