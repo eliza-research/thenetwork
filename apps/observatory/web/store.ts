@@ -1180,8 +1180,7 @@ class ObsStore {
   }
 
   /**
-   * Opportunities the review judge held for staff, soonest deadline first (filters: borough, members, origin).
-   * An item that still waits for the judge is not a staff queue item (spec/staffReview.md).
+   * Opportunities waiting for review, soonest deadline first (filters: borough, members, origin).
    * An opportunity focus selects its card but does not narrow the list, so j/k can step through it.
    */
   reviewPending(): Opp[] {

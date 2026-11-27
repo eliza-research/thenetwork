@@ -1,11 +1,3 @@
-// The staff review queue lists only the items the review judge held
-// (spec/staffReview.md; spec/models/review_desk.md: "The page queue shows
-// only held items"). An item that still waits for the judge (IN_REVIEW with
-// no exception reason) cannot be approved or re-rolled by staff
-// (spec/automatedReview.md: staff approve only a held item; the service
-// refuses with not_held_for_staff), so it must not appear in the Pending
-// list or offer review actions in its detail. It still belongs to the
-// pipeline Review column, which groups by state.
 import { serveHttp } from "../../../packages/core/src/runtime/http.ts";
 import { DAY } from "@thenetwork/core";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -75,12 +67,20 @@ test("pending queue and detail actions cover only judge-held items; the pipeline
   store.me = { id: "staff", roles: ["admin"], grants: [{ role: "admin", app: "*" }], via: "token" } as typeof store.me;
   (store as unknown as { clock: unknown }).clock = { now: NOW, start: 0, day: 1, playing: false, speed: 0, waitingForPlayer: false };
   (store as unknown as { env: unknown }).env = { mode: "game", app: "ntwrk", label: "SIMULATION", dataset: "synthetic", capabilities: { canStep: false, canIntervene: false, hiddenTruth: false, readOnly: false } };
+  (store as unknown as { stats: unknown }).stats = {
+    members: 3, joined: 3, byCity: { nyc: 3 }, byState: { joined: 3 }, messages: 0, inbound: 0, outbound: 0,
+    proactive: 0, proposals: 0, proposalsBySource: {}, oppsByState: {}, invites: 0, accepts: 0, declines: 0,
+    meetingsScheduled: 0, meetingsHeld: 0, attended: 0, noShows: 0, cancelledWithNotice: 0,
+    enjoymentSum: 0, enjoymentN: 0, blocks: 0, optOuts: 0, adversarialAttempts: 0, invariantViolations: 0,
+    errors: 0, compatible: 0, unsafe: 0, oracleJudged: 0, edgesByType: {},
+  };
   store.members.clear(); store.opps.clear(); store.feed = [];
   for (const m of [member("m1", "Maya Rao"), member("m2", "Jon Park"), member("m3", "Leo Diaz")]) store.members.set(m.id, m);
   store.opps.set(awaiting.id, awaiting); store.opps.set(held.id, held);
   const drawerText = () => drawerBox.textContent ?? "";
   const inspectorText = () => inspectorBox.textContent ?? "";
   const approveButton = () => [...inspectorBox.querySelectorAll("button")].find(b => (b.textContent ?? "").trim() === "Approve");
+  const inReviewKpiText = () => [...inspectorBox.querySelectorAll("button")].find(b => (b.textContent ?? "").includes("In review"))?.textContent ?? "";
   try {
     await act(async () => {
       store.setUI({ drawer: "review", drawerOpen: true, reviewView: "pending", focus: null });
@@ -91,16 +91,22 @@ test("pending queue and detail actions cover only judge-held items; the pipeline
     await act(async () => { await sleep(60); });
     expect(drawerText()).toContain("Maya + Leo");
     expect(drawerText()).not.toContain("Maya + Jon");
-    // The awaiting item's detail offers no staff decision the service would refuse.
+    expect(drawerText()).toContain("Review1 waiting");
+    expect(drawerText()).not.toContain("Review2 waiting");
+    expect(inReviewKpiText()).toContain("1In review");
+    expect(inReviewKpiText()).not.toContain("2In review");
+    expect(store.nav().queues.reviewItems).toBe(true);
+    store.opps.delete(held.id);
+    expect(store.nav().queues.reviewItems).toBe(false);
+    store.opps.set(held.id, held);
+    expect(store.nav().queues.reviewItems).toBe(true);
     await act(async () => { store.focus({ kind: "opportunity", id: "oppAwaiting" }); await sleep(20); });
     await wait(() => inspectorText().includes("In review"), "awaiting detail");
     await act(async () => { await sleep(60); });
     expect(approveButton()).toBeUndefined();
-    // The held item's detail still offers the decision.
     await act(async () => { store.focus({ kind: "opportunity", id: "oppHeld" }); await sleep(20); });
     await wait(() => !!approveButton(), "held detail Approve");
     expect(approveButton()).toBeTruthy();
-    // The pipeline groups by state, so both items stay in the Review column.
     await act(async () => { store.setUI({ drawer: "pipeline", drawerOpen: true }); await sleep(60); });
     await wait(() => drawerText().includes("Maya + Jon") && drawerText().includes("Maya + Leo"), "both pipeline cards");
     expect(drawerText()).toContain("Maya + Jon");
