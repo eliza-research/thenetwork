@@ -1266,8 +1266,10 @@ const DIRECT_SHORT_DAY_REFUSAL = new RegExp(
 const RESTATED_CLOCK_PART = new RegExp(String.raw`^(?:morning|afternoon|evening|night)(?:\s+(?:on\s+)?(?:${DAY_TOKEN}))?$`);
 
 const LEADING_TIME_REFUSAL = /(?:\b(?:i'?m|i am|im|we'?re|we are)\s+(?:not\s+(?:free|available)|busy|unavailable|booked(?:\s+up)?|slammed|swamped|out(?:\s+of\s+town)?|away|working)\s+(?:on\s+)?|\bi\s+have\s+plans\s+(?:on\s+)?)$/;
+const LEADING_REFUSAL_PART_LIMIT = /^\s*(?:(?:until|till|before|after)\s+(?:\d{1,2}(?::[0-5]\d)?\s*(?:[ap]m)?|noon|midnight)\b|during the day\b)/;
 
-function leadingTimeRefusalAt(t: string, at: number): number {
+function leadingTimeRefusalAt(t: string, at: number, end?: number): number {
+  if (end !== undefined && LEADING_REFUSAL_PART_LIMIT.test(t.slice(end))) return -1;
   let from = 0;
   for (const m of t.slice(0, at).matchAll(/[.,;!?\n]|\bbut\b/g)) from = m.index! + m[0].length;
   const match = LEADING_TIME_REFUSAL.exec(t.slice(from, at));
@@ -1275,7 +1277,7 @@ function leadingTimeRefusalAt(t: string, at: number): number {
 }
 
 function probeTimeIsRefused(text: string, at: number, end: number): boolean {
-  return negatedAt(text, at, end - at) || leadingTimeRefusalAt(text, at) >= 0;
+  return negatedAt(text, at, end - at) || leadingTimeRefusalAt(text, at, end) >= 0;
 }
 
 function completeProbeTimeMentions(text: string, recoverTrailingPair: boolean, memberChoiceAt: (at: number) => boolean, dayLists: readonly ProbeSpan[]): TimeMention[] {
@@ -1570,7 +1572,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     const tail = t.slice(end);
     const refusal = REFUSES_OFFERED_TIME.exec(tail)?.[0];
     if (!refusal) {
-      const leadAt = leadingTimeRefusalAt(t, at);
+      const leadAt = leadingTimeRefusalAt(t, at, end);
       if (leadAt < 0) return;
       const clause = clauseAt(t, at, end - at);
       if (/\bif\b/.test(clause) || COND_RX.test(clause)) conditionalTimeRefusal = true;

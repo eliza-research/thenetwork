@@ -374,3 +374,8 @@
 {"text": "We're busy Thursday, Saturday works", "answer": "yes", "keys": ["b"]}
 {"text": "If I'm busy Thursday, Saturday works", "answer": "unclear", "keys": []}
 {"text": "I'm free Thursday", "answer": "yes", "keys": ["a"]}
+{"text":"I'm working Thursday until 5, 7 works","answer":"yes","keys":["a"]}
+{"text":"I'm working Thursday until 5. 7 works","answer":"yes","keys":["a"]}
+{"text":"I'm working Sunday until noon, 2 works","answer":"yes","keys":["b","c"]}
+{"text":"I'm working Thursday if needed, Saturday works","answer":"unclear","keys":[]}
+{"text":"I'm working Thursday if possible, Saturday works","answer":"unclear","keys":[]}
