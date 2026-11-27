@@ -38,13 +38,30 @@ export function peonLeadBits(w: World, c: Candidate, me: MemberId): string[] | u
   return keep(summarySentences(s.cand, s.job), EMPLOYER_FALLBACK);
 }
 
+function formatSkillList(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? "";
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`;
+}
+
+function mustHaveSentence(checks: ReturnType<typeof mustChecks>): string {
+  if (!checks.length) return "Matches your posted role criteria.";
+  const met = checks.filter(x => x.status === "met").map(x => human(x.skill));
+  const partial = checks.filter(x => x.status === "partial").map(x => human(x.skill));
+  const missing = checks.filter(x => x.status === "missing").map(x => human(x.skill));
+  if (met.length === checks.length) return `Matches ${formatSkillList(met)} (${met.length} of ${checks.length} must-haves).`;
+  const notes: string[] = [];
+  if (partial.length) notes.push(`partial on ${formatSkillList(partial)}`);
+  if (missing.length) notes.push(`${formatSkillList(missing)} not listed yet`);
+  const lead = met.length ? `Matches ${formatSkillList(met)}` : "No listed must-have matches yet";
+  return `${lead} (${met.length} of ${checks.length} must-haves; ${notes.join("; ")}).`;
+}
+
 function summarySentences(cand: CandidateProfile, job: JobProfile): string[] {
   const checks = mustChecks(cand, job, true);
-  const met = checks.filter(x => x.status === "met").length;
-  const marks = checks.map(x => `${human(x.skill)} ${x.status === "met" ? "yes" : x.status === "partial" ? "partial" : "no"}`).join(", ");
   return [
     "A candidate who opted in.",
-    `Meets ${met} of ${checks.length} must-haves (${marks}).`,
+    mustHaveSentence(checks),
     "Within your pay range.",
     ...(cand.startWeeks !== undefined ? [`Can start in ${cand.startWeeks} week${cand.startWeeks === 1 ? "" : "s"}.`] : []),
   ];

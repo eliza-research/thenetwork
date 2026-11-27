@@ -23,7 +23,13 @@ export function travelPresenceCommand(text: string): TravelCommand | undefined {
   const declaration = /^(?:i will|i['’]ll) be in (new york city|new york|nyc|san francisco|sf|los angeles|la)(?: (.*))?$/i.exec(line);
   if (!declaration) return;
   const named = declaration[1]!.toLowerCase();
-  const city = homeCityOf(named) ?? (named === "la" || named === "los angeles" ? "la" : undefined);
+  const resolved = homeCityOf(named);
+  const city: City | undefined =
+    resolved === "nyc" || resolved === "sf" || resolved === "la"
+      ? resolved
+      : named === "la" || named === "los angeles"
+        ? "la"
+        : undefined;
   if (!city) return;
   const dates = /^from ([1-9]\d{3}-\d{2}-\d{2}) (?:until|to) ([1-9]\d{3}-\d{2}-\d{2})$/i.exec(declaration[2] ?? "");
   if (!dates) return { city };

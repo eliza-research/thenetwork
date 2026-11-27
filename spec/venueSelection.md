@@ -71,7 +71,7 @@ pure val travelMinutesValues = Set(List(), List(5, 15), List(10, 25), List(-1, 1
 
 ### Require public active open venues that honor age, all-ages teen rules, diet, mobility, budget, and group walk-in rules
 
-Every recommended venue must be public, active, verified open with at least 90 minutes buffer (120 minutes for groups of 3 or more), within budget and travel ceilings, and neither visited nor rejected. When a minor is present, the venue must be all-ages (`venueAllAges`, not bar-only, alcohol-optional, age minimum at most 13), and multi-person rosters require `teenFriendAllowed` and at most 6 people. Groups of 3 or more require no reservation, separate checks, sufficient walk-in capacity, and no live night music.
+Every recommended venue must be public, active, verified open with at least 90 minutes buffer (120 minutes for groups of 3 or more), within budget and travel ceilings, and neither visited nor rejected. When a minor is present, the venue must be all-ages (`venueAllAges`, not bar-only, alcohol-optional, age minimum at most 13), and multi-person rosters require `teenFriendAllowed` and at most 6 people. Groups of 3 or more require separate checks, sufficient walk-in capacity, no live night music, and either no reservation required or a confirmed reservation (`hasReservation`).
 
 ```quint
 type VenueHardEligibilityInput = {
@@ -100,6 +100,7 @@ type VenueHardEligibilityInput = {
   openBufferMin: int,
   groupSize: int,
   reservationRequired: bool,
+  hasReservation: bool,
   separateChecks: bool,
   walkInCapacity: int,
   isNightLiveMusic: bool,
@@ -127,7 +128,7 @@ pure def venueHardEligible(v: VenueHardEligibilityInput): bool =
     and isWithinTravelLimit(v.maxTravelMin, v.travelLimitMin)
     and v.verifiedOpen
     and (if (v.groupSize >= 3) v.openBufferMin >= 120 else v.openBufferMin >= 90)
-    and (v.groupSize < 3 or (not(v.reservationRequired) and v.separateChecks and v.walkInCapacity >= v.groupSize and not(v.isNightLiveMusic)))
+    and (v.groupSize < 3 or ((not(v.reservationRequired) or v.hasReservation) and v.separateChecks and v.walkInCapacity >= v.groupSize and not(v.isNightLiveMusic)))
     and not(v.isOutdoorOnly and v.badWeatherOrAfterDark)
 
 pure def lawNoPrivateHomeRecommended(v: VenueHardEligibilityInput): bool =
@@ -152,13 +153,16 @@ pure def lawBudgetCeilingRespected(v: VenueHardEligibilityInput): bool =
 pure def lawRecommendedMustBeVerifiedOpen(v: VenueHardEligibilityInput): bool =
   venueHardEligible(v) implies (v.verifiedOpen and (if (v.groupSize >= 3) v.openBufferMin >= 120 else v.openBufferMin >= 90))
 
+pure def lawGroupReservationRequirementHonored(v: VenueHardEligibilityInput): bool =
+  (venueHardEligible(v) and v.groupSize >= 3 and v.reservationRequired) implies v.hasReservation
+
 pure val vValues = Set(
   {
     isPublic: true, venueStatus: "active", minParticipantAge: 28, venueAgeMin: 0, venueAllAges: true, teenFriendAllowed: false,
     anyNonDrinker: false, isBarOnly: false, alcoholOptional: true, anyVegetarian: true, servesVegetarian: true,
     anyVegan: false, servesVegan: true, anyWheelchairNeeded: false, wheelchairAccessible: true,
     anyVisited: false, anyRejected: false, priceTier: 2, maxBudgetTier: 2, maxTravelMin: 15, travelLimitMin: 25,
-    verifiedOpen: true, openBufferMin: 120, groupSize: 2, reservationRequired: false, separateChecks: true,
+    verifiedOpen: true, openBufferMin: 120, groupSize: 2, reservationRequired: false, hasReservation: false, separateChecks: true,
     walkInCapacity: 8, isNightLiveMusic: false, isOutdoorOnly: false, badWeatherOrAfterDark: false
   },
   {
@@ -166,7 +170,7 @@ pure val vValues = Set(
     anyNonDrinker: false, isBarOnly: false, alcoholOptional: true, anyVegetarian: false, servesVegetarian: true,
     anyVegan: false, servesVegan: true, anyWheelchairNeeded: false, wheelchairAccessible: true,
     anyVisited: false, anyRejected: false, priceTier: 1, maxBudgetTier: 2, maxTravelMin: 10, travelLimitMin: 25,
-    verifiedOpen: true, openBufferMin: 120, groupSize: 2, reservationRequired: false, separateChecks: true,
+    verifiedOpen: true, openBufferMin: 120, groupSize: 2, reservationRequired: false, hasReservation: false, separateChecks: true,
     walkInCapacity: 8, isNightLiveMusic: false, isOutdoorOnly: false, badWeatherOrAfterDark: false
   },
   {
@@ -174,7 +178,7 @@ pure val vValues = Set(
     anyNonDrinker: true, isBarOnly: false, alcoholOptional: true, anyVegetarian: false, servesVegetarian: true,
     anyVegan: false, servesVegan: true, anyWheelchairNeeded: false, wheelchairAccessible: true,
     anyVisited: false, anyRejected: false, priceTier: 1, maxBudgetTier: 2, maxTravelMin: 12, travelLimitMin: 25,
-    verifiedOpen: true, openBufferMin: 120, groupSize: 4, reservationRequired: false, separateChecks: true,
+    verifiedOpen: true, openBufferMin: 120, groupSize: 4, reservationRequired: false, hasReservation: false, separateChecks: true,
     walkInCapacity: 10, isNightLiveMusic: false, isOutdoorOnly: false, badWeatherOrAfterDark: false
   },
   {
@@ -182,8 +186,24 @@ pure val vValues = Set(
     anyNonDrinker: true, isBarOnly: true, alcoholOptional: false, anyVegetarian: false, servesVegetarian: false,
     anyVegan: false, servesVegan: false, anyWheelchairNeeded: false, wheelchairAccessible: true,
     anyVisited: false, anyRejected: false, priceTier: 2, maxBudgetTier: 2, maxTravelMin: 12, travelLimitMin: 25,
-    verifiedOpen: true, openBufferMin: 120, groupSize: 2, reservationRequired: false, separateChecks: true,
+    verifiedOpen: true, openBufferMin: 120, groupSize: 2, reservationRequired: false, hasReservation: false, separateChecks: true,
     walkInCapacity: 6, isNightLiveMusic: false, isOutdoorOnly: false, badWeatherOrAfterDark: false
+  },
+  {
+    isPublic: true, venueStatus: "active", minParticipantAge: 28, venueAgeMin: 0, venueAllAges: true, teenFriendAllowed: false,
+    anyNonDrinker: false, isBarOnly: false, alcoholOptional: true, anyVegetarian: false, servesVegetarian: true,
+    anyVegan: false, servesVegan: true, anyWheelchairNeeded: false, wheelchairAccessible: true,
+    anyVisited: false, anyRejected: false, priceTier: 2, maxBudgetTier: 3, maxTravelMin: 12, travelLimitMin: 25,
+    verifiedOpen: true, openBufferMin: 120, groupSize: 4, reservationRequired: true, hasReservation: true, separateChecks: true,
+    walkInCapacity: 8, isNightLiveMusic: false, isOutdoorOnly: false, badWeatherOrAfterDark: false
+  },
+  {
+    isPublic: true, venueStatus: "active", minParticipantAge: 28, venueAgeMin: 0, venueAllAges: true, teenFriendAllowed: false,
+    anyNonDrinker: false, isBarOnly: false, alcoholOptional: true, anyVegetarian: false, servesVegetarian: true,
+    anyVegan: false, servesVegan: true, anyWheelchairNeeded: false, wheelchairAccessible: true,
+    anyVisited: false, anyRejected: false, priceTier: 2, maxBudgetTier: 3, maxTravelMin: 12, travelLimitMin: 25,
+    verifiedOpen: true, openBufferMin: 120, groupSize: 4, reservationRequired: true, hasReservation: false, separateChecks: true,
+    walkInCapacity: 8, isNightLiveMusic: false, isOutdoorOnly: false, badWeatherOrAfterDark: false
   }
 )
 ```

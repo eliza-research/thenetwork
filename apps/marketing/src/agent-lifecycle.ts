@@ -6,7 +6,9 @@
 // bounded process output, and core LeakGuard + parseOptOut safety middleware.
 
 import { RealClock } from "../../../packages/core/src/clock.ts";
+import { fenceUntrusted, UNTRUSTED_NOTE } from "../../../packages/core/src/fence.ts";
 import { LeakGuard } from "../../../packages/core/src/guard.ts";
+import { maskPii } from "../../../packages/core/src/pii.ts";
 import { parseOptOut } from "../../../packages/core/src/replies.ts";
 import { spawnProcess } from "../../../packages/core/src/runtime/process.ts";
 import {
@@ -99,14 +101,20 @@ export interface AgentHeartbeatResult {
 
 export interface TargetContactRef {
   id?: string;
+  displayLabel?: string;
+  role?: string;
+  city?: string;
+  phoneHash?: string | null;
   stopped?: boolean;
   banned?: boolean;
   lastMessageText?: string;
+  notes?: string;
 }
 
 export interface DispatchTurnOptions {
   campaignId?: string | null;
   targetContact?: HumanPartner | TargetContactRef | null;
+  untrustedContext?: Record<string, string | null | undefined> | string | null;
   lockdown?: boolean;
   allowFailover?: boolean;
   dryRun?: boolean;
@@ -191,6 +199,65 @@ export function sanitizeCliEnv(
     }
   }
   return clean;
+}
+
+export function buildFencedAgentPrompt(
+  prompt: string,
+  opts: {
+    targetContact?: HumanPartner | TargetContactRef | null;
+    untrustedContext?: Record<string, string | null | undefined> | string | null;
+  } = {},
+): string {
+  const blocks: string[] = [];
+  const contact = opts.targetContact;
+  if (contact) {
+    const label = contact.displayLabel?.trim();
+    if (label) {
+      blocks.push(fenceUntrusted(maskPii(label), "contact_label"));
+    }
+    if ("lastMessageText" in contact && typeof contact.lastMessageText === "string") {
+      const msg = contact.lastMessageText.trim();
+      if (msg) {
+        blocks.push(fenceUntrusted(maskPii(msg), "contact_message"));
+      }
+    }
+    if ("notes" in contact && typeof contact.notes === "string") {
+      const notes = contact.notes.trim();
+      if (notes) {
+        blocks.push(fenceUntrusted(maskPii(notes), "contact_notes"));
+      }
+    }
+  }
+
+  const ctx = opts.untrustedContext;
+  if (typeof ctx === "string") {
+    const trimmed = ctx.trim();
+    if (trimmed) {
+      blocks.push(fenceUntrusted(maskPii(trimmed), "external_context"));
+    }
+  } else if (ctx && typeof ctx === "object") {
+    for (const [key, value] of Object.entries(ctx)) {
+      if (typeof value !== "string") continue;
+      const trimmed = value.trim();
+      if (!trimmed) continue;
+      blocks.push(fenceUntrusted(maskPii(trimmed), `external_${key}`));
+    }
+  }
+
+  const hasFencedBlock = blocks.length > 0 || prompt.includes("<<<UNTRUSTED ");
+  if (!hasFencedBlock) {
+    return prompt;
+  }
+
+  const parts: string[] = [];
+  if (!prompt.includes(UNTRUSTED_NOTE)) {
+    parts.push(UNTRUSTED_NOTE);
+  }
+  parts.push(prompt);
+  if (blocks.length > 0) {
+    parts.push(...blocks);
+  }
+  return parts.join("\n\n");
 }
 
 function isRateLimitMessage(text: string): boolean {
@@ -454,17 +521,31 @@ export class AgentLifecycleManager {
     const lockdown = Boolean(opts.lockdown || campaign?.riskDial === "lockdown");
 
     let targetHumanId: string | null = null;
+    let targetPhoneHash: string | null = null;
     let targetStopped = false;
+    let resolvedTargetContact: HumanPartner | TargetContactRef | null = opts.targetContact ?? null;
+
     if (opts.targetContact) {
       if ("handleOrEmailHmac" in opts.targetContact) {
         targetHumanId = opts.targetContact.id;
         targetStopped = opts.targetContact.stopped || opts.targetContact.banned;
       } else {
         targetHumanId = opts.targetContact.id ?? null;
+        if (typeof opts.targetContact.phoneHash === "string" && opts.targetContact.phoneHash.trim()) {
+          targetPhoneHash = opts.targetContact.phoneHash.trim();
+        }
         if (targetHumanId) {
           const persisted = await this.store.getHuman(targetHumanId);
-          if (persisted && (persisted.stopped || persisted.banned)) {
-            targetStopped = true;
+          if (persisted) {
+            if (persisted.stopped || persisted.banned) {
+              targetStopped = true;
+            }
+            resolvedTargetContact = {
+              ...opts.targetContact,
+              displayLabel: opts.targetContact.displayLabel ?? persisted.displayLabel,
+              role: opts.targetContact.role ?? persisted.role,
+              city: opts.targetContact.city ?? persisted.city,
+            };
           }
         }
         if (opts.targetContact.stopped || opts.targetContact.banned) {
@@ -478,6 +559,14 @@ export class AgentLifecycleManager {
               await this.store.markHumanStopped(targetHumanId, `opt_out_${reading.match}`);
             }
           }
+        }
+      }
+      if (!targetPhoneHash && targetHumanId && this.store.getHumanPhoneHash) {
+        targetPhoneHash = await this.store.getHumanPhoneHash(targetHumanId);
+      }
+      if (!targetStopped && targetPhoneHash && this.store.isPhoneHashSuppressed) {
+        if (await this.store.isPhoneHashSuppressed(targetPhoneHash)) {
+          targetStopped = true;
         }
       }
     }
@@ -527,7 +616,12 @@ export class AgentLifecycleManager {
       }
     }
 
-    let exec = await this.executeProvider(agent, activeProvider, prompt, dryRun);
+    const fencedPrompt = buildFencedAgentPrompt(prompt, {
+      targetContact: resolvedTargetContact,
+      untrustedContext: opts.untrustedContext,
+    });
+
+    let exec = await this.executeProvider(agent, activeProvider, fencedPrompt, dryRun);
     while (!exec.ok && exec.rateLimited && allowFailover) {
       const backup = this.pickBackupProvider(
         { ...agent, provider: activeProvider },
@@ -544,7 +638,7 @@ export class AgentLifecycleManager {
         status: "idle",
         cooldownUntil: null,
       });
-      exec = await this.executeProvider(agent, activeProvider, prompt, dryRun);
+      exec = await this.executeProvider(agent, activeProvider, fencedPrompt, dryRun);
     }
 
     if (!exec.ok) {
@@ -673,7 +767,7 @@ export class AgentLifecycleManager {
 
       const task = openTasks[dispatched.length];
       const prompt = task
-        ? `[Campaign ${campaign.slug} | ${campaign.city}] Advance task "${task.title}" (${task.taskKind}, status=${task.status}) while obeying 18+, FTC #Ad, and STOP rules.`
+        ? `${UNTRUSTED_NOTE}\n\n[Campaign ${campaign.slug} | ${campaign.city}] Advance task (${task.taskKind}, status=${task.status}) while obeying 18+, FTC #Ad, and STOP rules.\n\n${fenceUntrusted(maskPii(task.title), "task_title")}`
         : `[Campaign ${campaign.slug} | ${campaign.city}] Prepare next ${hb.agent.displayName} (${hb.agent.appId}) zero-cost ${campaign.city.toUpperCase()} discovery and outreach draft.`;
 
       const targetHuman = task?.assigneeHumanId

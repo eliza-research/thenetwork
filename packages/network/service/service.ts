@@ -6,7 +6,10 @@ import { profileSuggestionDisconnectEndpoint, type SuggestionRevokedOwnerResolve
 import { createHash, createSecretKey, hkdfSync, randomUUID, timingSafeEqual } from "node:crypto";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { isDeepStrictEqual } from "node:util";
-import { DAY, isMinor, judgeLLM, judgeModelOf, LLMBudget, providerKeyPresent, RealClock, recommenderLLM, type Clock, type City, type Intent, type LLM, type MemberId } from "@thenetwork/core";
+import {
+  DAY, getCityIds, isMinor, judgeLLM, judgeModelOf, LLMBudget, normalizeLumaWebhookEvent, providerKeyPresent, RealClock, recommenderLLM, verifyLumaWebhookSignature,
+  type City, type CityId, type Clock, type Intent, type LLM, type MemberId, type PersonaHealthStatus, type VenueStatus,
+} from "@thenetwork/core";
 import { modelReviewJudge, REVIEW_JUDGE_REVIEWER, type ReviewJudge } from "../../engine/src/reviewJudge.ts";
 import { engineJudgeLimitsFromEnv, llmSpentMicros, ReviewJudgeWorker, reviewJudgeLimitsFromEnv } from "./review-judge.ts";
 import { pendingReportReplyNames, storedInviterCurrent, type ActionResult, type AgentStandingResult, type NetworkOptions, type NetworkState, type PendingReportChoice, type ReviewDecision, type ReviewOptions, type StandingView } from "../src/network.ts";
@@ -173,9 +176,10 @@ import { serviceTokenGrants } from "./line-staff-boot.ts";
 import { serviceStaffStep } from "../../../apps/observatory/src/staffSteps.ts";
 import { staffStepActorAccepted, staffStepAdmitted, staffStepRoles, type StepActor } from "../../core/src/generated/staffPermissions.ts";
 import type { AuditEntry, RoleGrant, StaffRole, StaffUser } from "../../../apps/observatory/src/types.ts";
+import { PgMeetupStore, type ExternalEventStatus } from "./meetup-store.ts";
 
 /** The homes a conversation can have; each belongs to exactly one network of an app (runtimeForHome). */
-const CONVERSATION_CITIES: readonly City[] = ["nyc", "sf", "la"];
+const conversationCities = (): readonly CityId[] => getCityIds();
 
 export { NetworkRuntime } from "./runtime.ts";
 type Row = Record<string, unknown>;
@@ -184,6 +188,7 @@ const MAX_BODY_BYTES = 256 * 1024;
 export const CONTEXT_UNAVAILABLE_REPLY = "Sorry, I can't help with that right now. Please try again later.";
 const contextUnavailableReply = (id: string): CollectedReply => ({id: `sys:${id}:context`, body: CONTEXT_UNAVAILABLE_REPLY, kind: "reply"});
 export const WEBHOOK_PATH = "/webhooks/blooio";
+export const LUMA_WEBHOOK_PATH = "/webhooks/luma";
 /**
  * STOP, START, HELP and "leave <app>" have one owner: this service, inside the signed turn
  * (POST /internal/turn) or the legacy webhook. The handled turn reports the change as `consent`, and the
@@ -209,8 +214,8 @@ export function turnSecretProblem(env: Record<string, string | undefined> = proc
 }
 /** The tables the service needs (pnpm run db:migrate). */
 const REQUIRED_TABLES = [
-  ...["members", "channel_identities", "facets", "intents", "presence", "edges", "messages", "events", "matching_runs", "staff_audit", "network_state", "opportunities", "review_items", "requests", "bounded_home_help", "bounded_home_help_consent", "bounded_home_help_venue", "monthly_gatherings", "monthly_gathering_rsvps", "monthly_gathering_invitation_reviews", "monthly_gathering_invitees", "monthly_gathering_grouping_reviews", "monthly_gathering_group_members", "monthly_gathering_attendance", "monthly_gathering_followup_choices", "review_judgments", "review_judge_requests"].map(t => `network.${t}`),
-  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "staff_safety_holds", "report_safety_carryovers", "app_lines", "share_grants", "eliza_notices", "member_invitations", "member_invitation_reviews", "expected_member_invitations", "expected_invitation_contacts", "outbound_recipient_window", "seed_invitation_batches", "seed_invitations", "seed_invitation_attributions", "profile_fact_edit_drafts", "calendar_invites"].map(t => `platform.${t}`),
+  ...["members", "channel_identities", "facets", "intents", "presence", "edges", "messages", "events", "matching_runs", "staff_audit", "network_state", "opportunities", "review_items", "requests", "bounded_home_help", "bounded_home_help_consent", "bounded_home_help_venue", "monthly_gatherings", "monthly_gathering_rsvps", "monthly_gathering_invitation_reviews", "monthly_gathering_invitees", "monthly_gathering_grouping_reviews", "monthly_gathering_group_members", "monthly_gathering_attendance", "monthly_gathering_followup_choices", "review_judgments", "review_judge_requests", "venue_visits", "venue_rejections", "meetup_arrivals"].map(t => `network.${t}`),
+  ...["apps", "cities", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "staff_safety_holds", "report_safety_carryovers", "app_lines", "share_grants", "eliza_notices", "member_invitations", "member_invitation_reviews", "expected_member_invitations", "expected_invitation_contacts", "outbound_recipient_window", "seed_invitation_batches", "seed_invitations", "seed_invitation_attributions", "profile_fact_edit_drafts", "calendar_invites", "venues", "venue_api_cache", "venue_concurrent_holds", "matchmaker_personas", "external_events", "external_event_rsvps", "external_prospects", "external_prospect_suppressions", "external_sourcing_tickets"].map(t => `platform.${t}`),
 ];
 /** The dev-only key for keyed phone hashes (the platform's own default). Production needs PLATFORM_HASH_KEY. */
 const DEV_HASH_KEY = "dev-only-platform-hash-key";
@@ -278,6 +283,8 @@ export interface ServiceOptions {
   webhookSecret?: string;
   /** One app's line: /webhooks/blooio/<app> with <APP>_BLOOIO_WEBHOOK_SECRET. Without a secret that path answers 503. */
   webhookSecrets?: Partial<Record<AppId, string>>;
+  /** Luma external event webhook signing secret (LUMA_WEBHOOK_SECRET). Without it /webhooks/luma answers 503. */
+  lumaWebhookSecret?: string;
   /** network.staff_audit sink. Default: PgAudit on `auditUrl` or `url`. */
   audit?: AuditSink;
   auditUrl?: string;
@@ -357,7 +364,7 @@ const joinSuffixKind = (segment: string, head: string, appWords: readonly string
  * only in a short answer: one name at most, and filler words ("Sam, 29", "Kim 16"). In a sentence
  * ("Sounds good, 7 works for me") it is not an age.
  */
-export function parseJoinText(text: string, appWords: readonly string[], nameOk: boolean, dayKey: number): { age?: number; birthDate?: number; unclearDate?: UnclearBirthDate; name?: string; homeCity?: City; invalidHome?: boolean } {
+export function parseJoinText(text: string, appWords: readonly string[], nameOk: boolean, dayKey: number): { age?: number; birthDate?: number; unclearDate?: UnclearBirthDate; name?: string; homeCity?: CityId; invalidHome?: boolean } {
   const found = birthDateIn(text.normalize("NFKC").trim(), dayKey);
   const t = found.rest;
   const homes = [...t.matchAll(/(?:\b(?:my home(?: city)?(?: is| in|:)?|i live in|i am based in|i'm based in)|(?:^|[.!?;,]\s*)(?:home(?: city)?(?: is| in|:)?|based in))\s+([^.!?;,\n]+)/gi)];
@@ -392,6 +399,7 @@ class RouteAuthorityExpiredError extends Error {}
 
 export class NetworkService implements RuntimeHost {
   readonly sql: SQL;
+  readonly meetup: PgMeetupStore;
   readonly profileSuggestions: ProfileSuggestions;
   private readonly suggestionIdentity?: SuggestionIdentityResolver;
   private readonly suggestionAuthorization?: SuggestionAuthorization;
@@ -420,6 +428,7 @@ export class NetworkService implements RuntimeHost {
   private readonly consoleToken?: string;
   private readonly secret?: string;
   private readonly secrets: Partial<Record<AppId, string>>;
+  private readonly lumaWebhookSecret?: string;
   private readonly hashKey: string;
   private readonly expectedInvitations: ExpectedMemberInvitations;
   private readonly seedInvitations: SeedInvitations;
@@ -469,6 +478,7 @@ export class NetworkService implements RuntimeHost {
     this.secret = o.webhookSecret;
     this.consoleToken = o.consoleToken || undefined;
     this.secrets = o.webhookSecrets ?? {};
+    this.lumaWebhookSecret = o.lumaWebhookSecret ?? this.env.LUMA_WEBHOOK_SECRET;
     this.cap = o.personDailyCap ?? PERSON_DAILY_CAP;
     const turnProblem = turnSecretProblem(this.env);
     if (turnProblem) throw new Error(turnProblem);
@@ -497,6 +507,7 @@ export class NetworkService implements RuntimeHost {
     const specs = o.networks?.length ? o.networks : [{ id: o.id ?? "ntwrk:nyc" }];
     // Each network's tick holds one connection for its advisory lock and needs more inside it: size the pool from the network count.
     this.sql = new SQL({ url: o.url, max: Math.max(8, 2 * specs.length + 4), connection: { application_name: `network-service:${this.instance}` } });
+    this.meetup = new PgMeetupStore(this.sql);
     const profileReview = profileReviewFromEnv(this.env, () => this.clock.now());
     this.suggestionIdentity = o.profileSuggestionIdentity ?? profileReview.profileSuggestionIdentity;
     this.suggestionAuthorization = o.profileSuggestionAuthorization ?? profileReview.profileSuggestionAuthorization;
@@ -558,7 +569,7 @@ export class NetworkService implements RuntimeHost {
       // The homes this network owns (runtimeForHome): its own city, and for the app's first network
       // every home that no network of the app serves.
       const mine = ids.filter(x => x.split(":")[0] === app);
-      const cities = CONVERSATION_CITIES.filter(c => (mine.find(x => x.split(":")[1] === c) ?? mine[0]) === id);
+      const cities = conversationCities().filter(c => (mine.find(x => x.split(":")[1] === c) ?? mine[0]) === id);
       this.runtimes.set(id, new NetworkRuntime(this, { id, app: this.apps[app], city, cities, matchingAllowed: spec.matchingEnabled ?? true, network, calendarScheduling: this.calendarScheduling, adapter: o.adapter }));
     }
     this.photoBaseUrl = o.photoBaseUrl ?? this.env.PHOTO_VIEW_BASE_URL ?? undefined;
@@ -936,11 +947,14 @@ export class NetworkService implements RuntimeHost {
     const entry = this.engineBudgets.get(app);
     if (!entry) return;
     const day = dayOf(this.clock.now());
-    entry.budget.spentMicro = await llmSpentMicros(this.sql, app, day, "engine_judge");
-    if (entry.day !== day) {
-      entry.budget.requests = 0;
-      entry.day = day;
-    }
+    const [spentMicro, reqRows] = await Promise.all([
+      llmSpentMicros(this.sql, app, day, "engine_judge"),
+      this.sql<{ n: number }[]>`select count(*)::int as n from network.cost_ledger
+        where app_id = ${app} and day = ${day} and kind = 'llm' and detail->>'purpose' = 'engine_judge'`,
+    ]);
+    entry.budget.spentMicro = spentMicro;
+    entry.budget.requests = Number(reqRows[0]?.n ?? 0);
+    entry.day = day;
   }
 
   /**
@@ -1059,6 +1073,9 @@ export class NetworkService implements RuntimeHost {
     await this.inbox.purge(this.clock.now() - inboxKeepMs).catch(e => this.log(`[purge] inbox failed: ${(e as Error).message}`));
     await this.lineAdapter()?.purge?.().catch(e => { this.log(`[purge] line counters failed: ${(e as Error).message}`); return 0; });
     await this.photos.sweep().catch(e => this.log(`[purge] photos failed: ${(e as Error).message}`));
+    await this.meetup.purgeExpiredProspects(this.clock.now()).catch(e => this.log(`[purge] expired prospects failed: ${(e as Error).message}`));
+    await this.meetup.releaseExpiredVenueHolds(this.clock.now()).catch(e => this.log(`[purge] venue holds failed: ${(e as Error).message}`));
+    await this.meetup.sweepExternalEventT24Quorum(this.clock.now()).catch(e => this.log(`[purge] external event T-24h sweep failed: ${(e as Error).message}`));
     await this.reconcileAges().catch(e => this.log(`[purge] age reconcile failed: ${(e as Error).message}`));
     if (n) this.log(`[purge] removed ${n} expired platform row(s)`);
     return n;
@@ -3043,7 +3060,7 @@ export class NetworkService implements RuntimeHost {
     if (answer.phase === "RefuseAge") return declineAge(false);
     if (answer.phase === "AskForHome") return requestHome();
     if (answer.phase === "AskForAge") {
-      await this.people.putPending({ phoneHash: key, kind: "join", app: app.id, name: name ?? null, age: null, ...(homeCity ? { homeCity } : {}), at: t });
+      await this.people.putPending({ phoneHash: key, kind: "join", app: app.id, name: name ?? null, age: null, ...(homeCity ? { homeCity: homeCity as City } : {}), at: t });
       const { count } = await this.people.hit(`join_ask:${app.id}:${key}`, DAY, t);
       const again = said.unclearDate ? c.birthdayWhich(said.unclearDate.monthFirst, said.unclearDate.dayFirst) : ask;
       if (count <= 3) await this.direct(rt, ev.from, again, `sys:${rowId}`, "reply");
@@ -3058,7 +3075,7 @@ export class NetworkService implements RuntimeHost {
     if (ageCheck.phase === "RefuseAge") return declineAge(true);
     if (ageCheck.phase === "AskForHome") return requestHome();
     if (ageCheck.phase === "AskForName") {
-      await this.people.putPending({ phoneHash: key, kind: "join", app: app.id, name: null, age, birthDate: birthDate ?? null, ...(homeCity ? { homeCity } : {}), at: t });
+      await this.people.putPending({ phoneHash: key, kind: "join", app: app.id, name: null, age, birthDate: birthDate ?? null, ...(homeCity ? { homeCity: homeCity as City } : {}), at: t });
       await this.direct(rt, ev.from, c.joinNeedName, `sys:${rowId}`, "reply");
       return "join_asked";
     }
@@ -4278,6 +4295,10 @@ export class NetworkService implements RuntimeHost {
     if (url.pathname === RELAY_PATH) return relayEndpoint({ sql: this.sql, clock: this.clock, secret: this.env.SERVICE_TURN_SECRET, routePolicy: this.routePolicy, accounts: this.accounts, photoRequest: input => this.photoRelayFlow.relay(input), runtimeFor: app => this.runtimeFor(app), runtimeOfMember: (app, memberId) => this.runtimeOfMember(app, memberId), hookFor: this.relayHookFor }, req);
     let path = url.pathname.replace(/\/+$/, "") || "/";
     try {
+      if (path === LUMA_WEBHOOK_PATH) {
+        if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
+        return this.lumaWebhook(req);
+      }
       if (path === WEBHOOK_PATH || path.startsWith(`${WEBHOOK_PATH}/`)) {
         if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
         const appPart = path.slice(WEBHOOK_PATH.length + 1);
@@ -4497,6 +4518,89 @@ export class NetworkService implements RuntimeHost {
         await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_turn_watch", mode: "real", ok: true, app: rt.app.id });
         return json({ ok: true, ...await turnWatchMetrics(this.sql, this.clock.now()) });
       }
+      if (path === "/ops/cities") {
+        if (req.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405);
+        const city = url.searchParams.get("city")?.trim() || undefined;
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_city_ops", mode: "real", ok: true, app: rt.app.id, ...(city ? { detail: { city } } : {}) });
+        return json({ ok: true, cities: await this.meetup.cityReadinessSnapshot(city) });
+      }
+      if (path === "/venues") {
+        if (req.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405);
+        const city = url.searchParams.get("city")?.trim() || undefined;
+        const rawStatus = url.searchParams.get("status")?.trim() || undefined;
+        const validVenueStatuses = new Set<VenueStatus>(["active", "suspect_closed", "closed_temporary", "closed_permanent"]);
+        if (rawStatus !== undefined && !validVenueStatuses.has(rawStatus as VenueStatus)) return json({ ok: false, error: "invalid_status" }, 400);
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_venues", mode: "real", ok: true, app: rt.app.id, detail: { ...(city ? { city } : {}), ...(rawStatus ? { status: rawStatus } : {}) } });
+        return json({ ok: true, venues: await this.meetup.listVenues(city, rawStatus as VenueStatus | undefined) });
+      }
+      const venueStatusPath = path.match(/^\/venues\/([^/]+)\/status$/);
+      if (venueStatusPath) {
+        if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
+        let venueId: string;
+        try { venueId = decodeURIComponent(venueStatusPath[1]!); } catch { return json({ ok: false, error: "invalid_id" }, 400); }
+        const b = await body(req) as Record<string, unknown> | undefined;
+        const status = b?.status;
+        const reason = typeof b?.reason === "string" ? b.reason.trim().slice(0, 500) : undefined;
+        const validVenueStatuses = new Set<VenueStatus>(["active", "suspect_closed", "closed_temporary", "closed_permanent"]);
+        if (!venueId || venueId.length > 200 || typeof status !== "string" || !validVenueStatuses.has(status as VenueStatus)) {
+          return json({ ok: false, error: "invalid_venue_status" }, 400);
+        }
+        const updated = await this.meetup.updateVenueStatus(venueId, status as VenueStatus, reason);
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "update_venue_status", targetType: "case", targetId: venueId, mode: "real", ok: !!updated, app: rt.app.id, ...(reason ? { reason } : {}), detail: { status } });
+        return updated ? json({ ok: true, venue: updated.venue }) : json({ ok: false, error: "not_found" }, 404);
+      }
+      if (path === "/external-events") {
+        if (req.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405);
+        const city = url.searchParams.get("city")?.trim() || undefined;
+        const rawStatus = url.searchParams.get("status")?.trim() || undefined;
+        const validEventStatuses = new Set<ExternalEventStatus>(["draft", "pending_review", "published", "active", "completed", "cancelled_no_anchor", "cancelled_low_quorum", "cancelled"]);
+        if (rawStatus !== undefined && !validEventStatuses.has(rawStatus as ExternalEventStatus)) return json({ ok: false, error: "invalid_status" }, 400);
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_external_events", mode: "real", ok: true, app: rt.app.id, detail: { ...(city ? { city } : {}), ...(rawStatus ? { status: rawStatus } : {}) } });
+        return json({ ok: true, events: await this.meetup.listExternalEvents(city, rawStatus as ExternalEventStatus | undefined) });
+      }
+      const externalEventReviewPath = path.match(/^\/external-events\/([^/]+)\/review$/);
+      if (externalEventReviewPath) {
+        if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
+        let eventId: string;
+        try { eventId = decodeURIComponent(externalEventReviewPath[1]!); } catch { return json({ ok: false, error: "invalid_id" }, 400); }
+        const b = await body(req) as Record<string, unknown> | undefined;
+        const approved = typeof b?.approved === "boolean" ? b.approved : b?.decision === "approve" ? true : b?.decision === "reject" ? false : undefined;
+        const publish = b?.publish === true;
+        if (!eventId || eventId.length > 200 || approved === undefined) return json({ ok: false, error: "invalid_review" }, 400);
+        const reviewed = await this.meetup.reviewExternalEvent(eventId, approved, user.id);
+        if (!reviewed) {
+          await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "review_external_event", targetType: "case", targetId: eventId, mode: "real", ok: false, app: rt.app.id, detail: { approved } });
+          return json({ ok: false, error: "not_found" }, 404);
+        }
+        let published: Awaited<ReturnType<PgMeetupStore["publishExternalEvent"]>> | undefined;
+        if (approved && publish) published = await this.meetup.publishExternalEvent(eventId, this.clock.now());
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "review_external_event", targetType: "case", targetId: eventId, mode: "real", ok: true, app: rt.app.id, detail: { approved, publish, published: published?.ok ?? false } });
+        return json({ ok: true, event: published?.ok ? published.event : reviewed.event, ...(published && !published.ok ? { publishError: published.reason } : {}) });
+      }
+      if (path === "/matchmakers") {
+        if (req.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405);
+        if (rt.app.id === "peon") return json({ ok: false, code: "forbidden", error: "matchmakers unavailable on peon" }, 403);
+        const city = url.searchParams.get("city")?.trim() || undefined;
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_matchmakers", mode: "real", ok: true, app: rt.app.id, ...(city ? { detail: { city } } : {}) });
+        return json({ ok: true, personas: await this.meetup.listMatchmakerPersonas(city, rt.app.id) });
+      }
+      const matchmakerStatusPath = path.match(/^\/matchmakers\/([^/]+)\/status$/);
+      if (matchmakerStatusPath) {
+        if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
+        if (rt.app.id === "peon") return json({ ok: false, code: "forbidden", error: "matchmakers unavailable on peon" }, 403);
+        let personaId: string;
+        try { personaId = decodeURIComponent(matchmakerStatusPath[1]!); } catch { return json({ ok: false, error: "invalid_id" }, 400); }
+        const b = await body(req) as Record<string, unknown> | undefined;
+        const status = b?.status;
+        const reason = typeof b?.reason === "string" ? b.reason.trim().slice(0, 500) : undefined;
+        const validPersonaStatuses = new Set<PersonaHealthStatus>(["active", "degraded", "suspended"]);
+        if (!personaId || personaId.length > 200 || typeof status !== "string" || !validPersonaStatuses.has(status as PersonaHealthStatus)) {
+          return json({ ok: false, error: "invalid_matchmaker_status" }, 400);
+        }
+        const updated = await this.meetup.updateMatchmakerPersonaStatus(personaId, status as PersonaHealthStatus, reason, rt.app.id);
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "update_matchmaker_status", targetType: "case", targetId: personaId, mode: "real", ok: !!updated, app: rt.app.id, ...(reason ? { reason } : {}), detail: { status } });
+        return updated ? json({ ok: true, persona: updated.persona, preservedOffAppTickets: updated.preservedOffAppTickets }) : json({ ok: false, error: "not_found" }, 404);
+      }
       if (path === "/inbound/resolve") {
         if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
         const b = await body(req) as Record<string, any> | undefined;
@@ -4658,6 +4762,48 @@ export class NetworkService implements RuntimeHost {
 
   /** The console's token may name the signed-in staff member (X-Network-Staff-Id); any other token may not. */
   private reviewerOfRecord(req: Request, user: StaffUser): { user: StaffUser; actor: StepActor } { return reviewerOfRecord(req, user, this.consoleToken); }
+
+  /** POST /webhooks/luma: verify HMAC-SHA256 signature on raw body, normalize, and persist adult-screened RSVPs. */
+  private async lumaWebhook(req: Request): Promise<Response> {
+    if (!this.lumaWebhookSecret) return json({ ok: false, error: "luma_webhook_secret_missing" }, 503);
+    const bytes = await readCapped(req, MAX_BODY_BYTES);
+    if (bytes === "too_large") return json({ ok: false, error: "payload_too_large" }, 413);
+    const raw = new TextDecoder().decode(bytes);
+    const sigHeader = req.headers.get("x-luma-signature") ?? req.headers.get("luma-signature");
+    const tsHeader = req.headers.get("x-luma-timestamp");
+    const valid = await verifyLumaWebhookSignature(this.lumaWebhookSecret, raw, sigHeader, {
+      ...(tsHeader !== null ? { timestampHeader: tsHeader, nowMs: this.clock.now() } : {}),
+    });
+    if (!valid) return json({ ok: false, error: "invalid_signature" }, 401);
+    let payload: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return json({ ok: false, error: "invalid_json" }, 400);
+      payload = parsed as Record<string, unknown>;
+    } catch {
+      return json({ ok: false, error: "invalid_json" }, 400);
+    }
+    const normalized = normalizeLumaWebhookEvent(payload, new Date(this.clock.now()).toISOString());
+    if (normalized.kind === "ignored") return json({ ok: true, kind: "ignored", rawType: normalized.rawType });
+    const event = await this.meetup.findExternalEventByExternalId("luma", normalized.eventExternalId);
+    if (!event) return json({ ok: false, error: "event_not_found" }, 404);
+    if (normalized.kind === "cancellation") {
+      await this.sql`update platform.external_events set status = 'cancelled', updated_at = ${new Date(this.clock.now())} where id = ${event.id}`;
+      return json({ ok: true, kind: "cancellation", eventId: event.id });
+    }
+    const rsvpResult = await this.meetup.recordExternalEventRsvp({
+      eventId: event.id,
+      platform: "luma",
+      guestExternalId: normalized.guestExternalId,
+      firstName: normalized.firstName,
+      confirmedAdult18Plus: normalized.confirmedAdult18Plus,
+      answeredScreeningQuestion: normalized.answeredScreeningQuestion,
+      screeningAnswer: normalized.screeningAnswerText,
+      requestedStatus: normalized.status,
+      nowMs: this.clock.now(),
+    });
+    return json({ ok: true, kind: "rsvp", eventId: event.id, result: rsvpResult });
+  }
 
   /** POST /webhooks/blooio[/:app]: verify the signature on the raw body (the prototype's rules), parse, handle. 401 never retries; 500 asks Blooio to retry. */
   private async webhook(req: Request, secret: string | undefined, app?: AppId): Promise<Response> {

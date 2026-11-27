@@ -24,6 +24,7 @@
 //   peon      peon.biz: seeds 13-16, 8 weeks; the official gates block
 //   peon-seats peon job postings to seats to hiring managers through the ConsentNetwork (#9): intake, routing, double opt-in, exclusions, restart, close
 //   friends   friends.help: seeds 5-8, 8 weeks, 400 personas; the official gates block
+//   meetup    5-city meetup setup, red-line venue selection, Top-1 + 3-pivot flow, external events & matchmakers, panic exit & no-show recovery (seeds 13-16, 4 weeks, 200 personas)
 //   safety    slop.date photos (adults only, consent, rater), bans on every rejoin path, report -> hold -> ban, the reviewer
 //             of record, SLA alerts and the bias monitor; its Postgres scenarios block when the dev Postgres runs, else tracked
 //   ops       monitoring, alerts, cost, the console's deploy guards and image contents; on the dev Postgres (tracked):
@@ -55,6 +56,7 @@ const BLOCKS: Record<string, (b: Block, o: Opts) => Promise<void>> = {
   peon: async (b, o) => (await import("./sim/peon.ts")).peonBlock(b, o),
   "peon-seats": async (b) => (await import("./sim/peon-seats.ts")).peonSeatsBlock(b),
   friends: async (b, o) => (await import("./sim/friends.ts")).friendsBlock(b, o),
+  meetup: async (b, o) => (await import("./sim/meetup.ts")).meetupBlock(b, o),
   pipeline: async (b) => (await import("./sim/pipeline.ts")).pipelineBlock(b),
   "pipeline-slop": async (b) => (await import("./sim/pipeline-slop.ts")).pipelineSlopBlock(b),
   safety: async (b) => (await import("./sim/safety.ts")).safetyBlock(b),
@@ -63,7 +65,7 @@ const BLOCKS: Record<string, (b: Block, o: Opts) => Promise<void>> = {
   audit: async (b) => (await import("./sim/audit.ts")).auditBlock(b),
   capital: async (b, o) => (await import("./sim/capital.ts")).capitalBlock(b, o),
 };
-const DEFAULT = ["evals", "onboard", "network", "matching", "slop", "relay", "peon", "peon-seats", "friends", "clef", "safety", "ops", "pipeline", "pipeline-slop", "audit"];
+const DEFAULT = ["evals", "onboard", "network", "matching", "slop", "relay", "peon", "peon-seats", "friends", "meetup", "clef", "safety", "ops", "pipeline", "pipeline-slop", "audit"];
 
 const argv = process.argv.slice(2);
 const values = (k: string) => argv.flatMap((x, i) => (x === `--${k}` ? (argv[i + 1] ?? "").split(",") : x.startsWith(`--${k}=`) ? x.slice(k.length + 3).split(",") : []));

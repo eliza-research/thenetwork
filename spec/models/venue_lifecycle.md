@@ -66,7 +66,8 @@ module venue_lifecycle {
     safetyScore: int,         // 0..10
     transitScore: int,        // 0..5
     priceTier: int,           // 0..4 ($..$$$$)
-    groupSuitable: bool,      // separate checks, no reservation required, conversational
+    groupSuitable: bool,      // separate checks, conversational
+    reservationRequired: bool,
     openEventEligible: bool,  // mega food hall / large walk-in space eligible up to 15
     walkInCapacity: int,      // physical walk-in capacity in a 2h window
     concurrentHeadcount: int, // currently booked Network headcount in overlapping 2h window
@@ -125,6 +126,7 @@ module venue_lifecycle {
     forGroup: bool,
     isTeenFriendRoster: bool,
     groupSize: int,
+    reservationRequired: bool,
     hasReservation: bool,
     openEventEligible: bool,
     groupSuitable: bool,
@@ -169,6 +171,7 @@ module venue_lifecycle {
     transitScore: int,
     priceTier: int,
     groupSuitable: bool,
+    reservationRequired: bool,
     openEventEligible: bool,
     walkInCapacity: int,
     travelMin: int,
@@ -193,6 +196,7 @@ module venue_lifecycle {
     transitScore: transitScore,
     priceTier: priceTier,
     groupSuitable: groupSuitable,
+    reservationRequired: reservationRequired,
     openEventEligible: openEventEligible,
     walkInCapacity: walkInCapacity,
     concurrentHeadcount: 0,
@@ -286,7 +290,7 @@ module venue_lifecycle {
       (not(hasReservation) and not(vn.openEventEligible)) implies groupSize <= UNRESERVED_STD_GROUP_CAP,
       vn.openEventEligible implies groupSize <= OPEN_EVENT_GROUP_CAP,
       vn.concurrentHeadcount + groupSize <= vn.walkInCapacity,
-      forGroup implies (vn.groupSuitable and groupSize >= 3),
+      forGroup implies (vn.groupSuitable and (not(vn.reservationRequired) or hasReservation) and groupSize >= 3),
       not(forGroup) implies groupSize == 2,
       vn.travelMin <= travelLimitFor(forGroup),
     }
@@ -296,15 +300,15 @@ module venue_lifecycle {
   action init = all {
     now' = 0,
     venues' = Map(
-      "v_cafe"    -> mkVenue(true,  true,  true,  false, true,  false, true,  true,  true,  true,  9, 5, 1, true,  false, 8,  15, 0),
-      "v_hall"    -> mkVenue(true,  true,  true,  false, true,  false, true,  true,  true,  true,  8, 4, 2, true,  true,  15, 20, 0),
-      "v_brewery" -> mkVenue(true,  true,  false, false, true,  true,  false, false, true,  true,  8, 4, 2, true,  true,  12, 16, 0),
-      "v_bar"     -> mkVenue(true,  true,  false, true,  false, true,  false, false, false, false, 7, 4, 2, false, false, 4,  15, 0),
-      "v_dim"     -> mkVenue(true,  true,  false, false, true,  false, true,  true,  true,  true,  5, 2, 1, true,  false, 6,  12, 0),
-      "v_upscale" -> mkVenue(true,  true,  true,  false, true,  false, true,  false, true,  true,  9, 4, 4, false, false, 4,  18, 0),
-      "v_home"    -> mkVenue(true,  false, false, false, true,  false, true,  true,  true,  true,  9, 5, 0, true,  false, 10, 10, 0),
-      "v_ext1"    -> mkVenue(false, true,  true,  false, true,  false, true,  true,  true,  true,  8, 4, 1, true,  false, 10, 12, -1),
-      "v_ext2"    -> mkVenue(false, true,  true,  false, true,  false, true,  true,  true,  true,  8, 4, 2, true,  true,  14, 22, -1),
+      "v_cafe"    -> mkVenue(true,  true,  true,  false, true,  false, true,  true,  true,  true,  9, 5, 1, true,  false, false, 8,  15, 0),
+      "v_hall"    -> mkVenue(true,  true,  true,  false, true,  false, true,  true,  true,  true,  8, 4, 2, true,  false, true,  15, 20, 0),
+      "v_brewery" -> mkVenue(true,  true,  false, false, true,  true,  false, false, true,  true,  8, 4, 2, true,  false, true,  12, 16, 0),
+      "v_bar"     -> mkVenue(true,  true,  false, true,  false, true,  false, false, false, false, 7, 4, 2, false, false, false, 4,  15, 0),
+      "v_dim"     -> mkVenue(true,  true,  false, false, true,  false, true,  true,  true,  true,  5, 2, 1, true,  false, false, 6,  12, 0),
+      "v_upscale" -> mkVenue(true,  true,  true,  false, true,  false, true,  false, true,  true,  9, 4, 4, true,  true,  false, 6,  18, 0),
+      "v_home"    -> mkVenue(true,  false, false, false, true,  false, true,  true,  true,  true,  9, 5, 0, true,  false, false, 10, 10, 0),
+      "v_ext1"    -> mkVenue(false, true,  true,  false, true,  false, true,  true,  true,  true,  8, 4, 1, true,  false, false, 10, 12, -1),
+      "v_ext2"    -> mkVenue(false, true,  true,  false, true,  false, true,  true,  true,  true,  8, 4, 2, true,  false, true,  14, 22, -1),
     ),
     members' = Map(
       "m1" -> {
@@ -475,6 +479,7 @@ module venue_lifecycle {
       forGroup: forGroup,
       isTeenFriendRoster: isTeenFriendRoster,
       groupSize: groupSize,
+      reservationRequired: vn.reservationRequired,
       hasReservation: hasReservation,
       openEventEligible: vn.openEventEligible,
       groupSuitable: vn.groupSuitable,
@@ -892,9 +897,14 @@ module venue_lifecycle {
     VENUES.forall(v => venues.get(v).closureReports > 0 implies venues.get(v).status != "active")
 
   // spec/venueSelection.md venueHardEligible: every recommended venue has a fresh verified-open check with buffer,
-  // satisfies group suitability when recommended for a group, and stays within the travel bound.
+  // satisfies group suitability and reservation requirements when recommended for a group, and stays within the travel bound.
   val recommendedMustBeVerifiedOpen =
-    recHistory.forall(e => e.verifiedFresh and e.openBufferOk and (e.forGroup implies e.groupSuitable) and e.travelMin <= e.travelLimit) and
+    recHistory.forall(e =>
+      e.verifiedFresh and
+      e.openBufferOk and
+      (e.forGroup implies (e.groupSuitable and (not(e.reservationRequired) or e.hasReservation))) and
+      e.travelMin <= e.travelLimit
+    ) and
     (recommendedVenue != "" implies isFreshOpen(venues.get(recommendedVenue), now))
 
   val safety = and {
@@ -1091,6 +1101,20 @@ module venue_lifecycle {
     init
       .then(advanceClock(25))
       .then(recommendVenue("v_cafe", false, false, 2, false, 14, true))
+      .fail()
+
+  run reservedGroupAllowedTest =
+    init
+      .then(updateMemberPrefs("m1", false, false, false, false, false, false, 4))
+      .then(updateMemberPrefs("m2", false, false, false, false, false, false, 4))
+      .then(recommendVenue("v_upscale", true, false, 5, true, 14, true))
+      .expect(recommendedVenue == "v_upscale" and recommendedMustBeVerifiedOpen and safety)
+
+  run unreservedReservationVenueRejectedTest =
+    init
+      .then(updateMemberPrefs("m1", false, false, false, false, false, false, 4))
+      .then(updateMemberPrefs("m2", false, false, false, false, false, false, 4))
+      .then(recommendVenue("v_upscale", true, false, 5, false, 14, true))
       .fail()
 }
 ```

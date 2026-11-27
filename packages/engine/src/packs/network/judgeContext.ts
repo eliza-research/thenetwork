@@ -27,7 +27,13 @@ export type Visibility = "public" | "compact" | "matchable" | "private";
 
 // ---- shared pieces ------------------------------------------------------------------------------
 
-const r1 = (x: number) => Math.round(x * 10) / 10;
+const bucketDays = (days: number): number => {
+  const d = Math.round(days) || 0;
+  if (Math.abs(d) <= 7) return d;
+  if (Math.abs(d) <= 30) return Math.round(d / 7) * 7;
+  return Math.round(d / 30) * 30;
+};
+const bucketAgeDays = (days: number): number => bucketDays(Math.max(0, days));
 const CONNECTOR_ROLE = "connector (introduces the others, does not attend)";
 
 /** Pseudonymous refs: participants in order, then the connector. */
@@ -40,9 +46,9 @@ function refsFor(ids: MemberId[]): { refs: Record<string, MemberId>; refOf: Map<
 
 const presenceOf = (p: Presence, now: number) => ({
   city: p.city, type: p.type, areas: [...p.areas],
-  ...(p.from !== undefined ? { from_day: r1((p.from - now) / DAY) } : {}), ...(p.to !== undefined ? { to_day: r1((p.to - now) / DAY) } : {}),
+  ...(p.from !== undefined ? { from_day: bucketDays((p.from - now) / DAY) } : {}), ...(p.to !== undefined ? { to_day: bucketDays((p.to - now) / DAY) } : {}),
 });
-const joinedDaysAgo = (joinedAt: number, now: number) => Math.max(0, Math.round((now - joinedAt) / DAY));
+const joinedDaysAgo = (joinedAt: number, now: number) => bucketAgeDays((now - joinedAt) / DAY);
 const roleOf = (id: MemberId, c: { via?: MemberId; roles: Record<MemberId, string> }) => (id === c.via ? CONNECTOR_ROLE : c.roles[id] ?? "peer");
 const everyone = (c: { participants: MemberId[]; via?: MemberId }) => [...c.participants, ...(c.via ? [c.via] : [])];
 
@@ -146,7 +152,7 @@ export function buildPublicView(snap: WorldSnapshot, cfg: ScreenConfig, o: Publi
   return {
     configuration: {
       kind: cfg.kind, category: cfg.category, objective: scrub(cfg.objective), city: cfg.city,
-      window_days: { from: r1((cfg.window.start - now) / DAY), to: r1((cfg.window.end - now) / DAY) },
+      window_days: { from: bucketDays((cfg.window.start - now) / DAY), to: bucketDays((cfg.window.end - now) / DAY) },
     },
     people, relationships, refs,
   };
@@ -249,7 +255,7 @@ export function summarizeConnectedSources(x: unknown, now: number): unknown {
     "facets", "facetCount", "facet_count", "observations", "observationCount", "lastSyncedAt", "observedAt", "connectedAt", "since", "scopes", "richness"]);
   const clean = (v: unknown, k: string): unknown => {
     if (typeof v === "boolean") return v;
-    if (typeof v === "number") return /At$|^since$/.test(k) && v > 1e11 ? `${Math.round((now - v) / DAY)} days ago` : v;
+    if (typeof v === "number") return /At$|^since$/.test(k) && v > 1e11 ? `${bucketAgeDays((now - v) / DAY)} days ago` : v;
     if (typeof v === "string") return v.length <= 40 && !/[@/]|https?:|www\./i.test(v) ? v : undefined;
     if (Array.isArray(v)) { const a = v.map(e => clean(e, k)).filter(e => e !== undefined); return a.length ? a.slice(0, 10) : undefined; }
     return undefined;
@@ -280,7 +286,7 @@ export function buildDeepContext(w: World, c: Candidate, o: DeepContextOptions =
   const ids = everyone(c);
   const { refs, refOf, scrub } = refsFor(ids);
   const now = w.now;
-  const daysAgo = (t: number) => r1((now - t) / DAY);
+  const daysAgo = (t: number) => bucketAgeDays((now - t) / DAY);
   const window = c.window ?? { start: now, end: now + w.cfg.windowDays * DAY };
   const anchorIntent = c.anchor?.type === "intent" ? w.intentById.get(c.anchor.id) : undefined;
   const snap = w.input;
@@ -294,12 +300,13 @@ export function buildDeepContext(w: World, c: Candidate, o: DeepContextOptions =
       .map(f => {
         const x = f as FacetX;
         const at = typeof x.observedAt === "number" ? x.observedAt : f.validFrom;
-        const age = at !== undefined ? Math.max(0, Math.round((now - at) / DAY)) : undefined;
+        const rawAge = at !== undefined ? Math.max(0, Math.round((now - at) / DAY)) : undefined;
+        const age = rawAge !== undefined ? bucketAgeDays(rawAge) : undefined;
         return {
           field: f.kind, value: scrub(f.value), visibility: f.scope === "shareable" ? "shareable" as const : "do_not_quote" as const,
           basis: basisOf(f), ...(typeof x.source === "string" ? { source: x.source } : {}),
           confidence: Math.round(f.confidence * 100) / 100,
-          ...(age !== undefined ? { age_days: age } : {}), ...(age !== undefined && age > STALE_DAYS ? { older_than_180_days: true } : {}),
+          ...(age !== undefined ? { age_days: age } : {}), ...(rawAge !== undefined && rawAge > STALE_DAYS ? { older_than_180_days: true } : {}),
           ...(v3 && isHypothesis(f) ? { hypothesis: true } : {}),
         };
       })
@@ -327,7 +334,7 @@ export function buildDeepContext(w: World, c: Candidate, o: DeepContextOptions =
       intents: mi.intents.map(it => ({
         objective: scrub(it.objective), category: it.category,
         ...(it.details ? { details: scrub(it.details) } : {}), ...(it.desiredPeople ? { desired_people: scrub(it.desiredPeople) } : {}),
-        created_days_ago: daysAgo(it.createdAt), expires_in_days: r1((standingIntentDeadline(it) - now) / DAY),
+        created_days_ago: daysAgo(it.createdAt), expires_in_days: bucketDays((standingIntentDeadline(it) - now) / DAY),
         ...(anchorIntent?.id === it.id ? { anchors_this: true } : {}),
       })),
       presence: mi.presence.map(p => presenceOf(p, now)),
@@ -382,7 +389,7 @@ export function buildDeepContext(w: World, c: Candidate, o: DeepContextOptions =
     context: {
       configuration: {
         kind: c.kind, category: c.category, format: c.format, objective: scrub(c.objective), city: c.city ?? "unknown",
-        window_days: { from: r1((window.start - now) / DAY), to: r1((window.end - now) / DAY) },
+        window_days: { from: bucketDays((window.start - now) / DAY), to: bucketDays((window.end - now) / DAY) },
         hard_filters: "Enforced by code before and after you (age 18+ for everyone in any role, blocks, safety holds, category and romance opt-ins, budgets). You cannot override them.",
       },
       people, pairs,

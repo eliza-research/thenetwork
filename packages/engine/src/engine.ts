@@ -144,7 +144,7 @@ async function runJudgmentPasses(
       ? xs.filter(s => targetKeys.has(s.c.key))
       : [...xs.filter(s => s.c.participants.length <= 2).slice(0, k), ...xs.filter(s => s.c.participants.length > 2).slice(0, gk)];
 
-  let pool = byScore(nextScored.filter(s => (!s.reason || s.reason === "below_threshold") && (J.reviewCandidate?.(s.c) ?? true)));
+  let pool = byScore(nextScored.filter(s => s.eligible && (J.reviewCandidate?.(s.c) ?? true)));
   if (judgment.phase === "Screening" && screen) {
     const sc = cfg.judge.screen;
     const toScreen = pickTop(pool, sc.topK, sc.groupTopK).map(s => s.c);

@@ -129,6 +129,7 @@ create table if not exists marketing.humans (
   city                 text not null default 'nyc',
   neighborhood         text,
   email                text,
+  phone_hash           text,
   handle               text,
   profile_url          text,
   age_years            smallint check (age_years is null or (age_years >= 0 and age_years <= 120)),
@@ -156,6 +157,10 @@ create index if not exists marketing_humans_stopped_idx
   on marketing.humans (stopped) where stopped = true;
 create index if not exists marketing_humans_banned_idx
   on marketing.humans (banned) where banned = true;
+alter table marketing.humans
+  add column if not exists phone_hash text;
+create index if not exists marketing_humans_phone_hash_idx
+  on marketing.humans (phone_hash) where phone_hash is not null;
 
 -- 6. Tasks (street fliering shifts, event activations, creator videos, agency bookings, print orders, OSS dev bounties)
 create table if not exists marketing.tasks (

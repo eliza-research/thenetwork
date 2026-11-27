@@ -69,13 +69,15 @@ export function parseVerdict(raw: unknown, refs: Record<string, MemberId>): Judg
     if (typeof t === "string" && t.trim()) why[refs[ref]!] = t.trim().slice(0, 400);
     else if (whyObj && verdict !== "no") f.errs.push(`why.${ref} missing`);
   }
+  const reasoningFirst = f.reasoningFirst();
+  if (reasoning && verdict && !reasoningFirst) f.errs.push("reasoning must appear before verdict");
   f.done("judge verdict schema: ", "; ");
   return {
     fit: n.fit!, mutualValue: n.mutual_value!, capacityRealism: n.capacity_realism!, timing: n.timing!,
     socialComfort: n.social_comfort!, redFlags: n.red_flags!, certainty: n.certainty!,
     dealbreaker: o.dealbreaker, dealbreakerReason: typeof o.dealbreaker_reason === "string" ? o.dealbreaker_reason : undefined, why,
     reasoning, citedFacts: f.citedFacts(), verdict, matchProbability: mp,
-    reasoningFirst: f.reasoningFirst(),
+    reasoningFirst,
   };
 }
 

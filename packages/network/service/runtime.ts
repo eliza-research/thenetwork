@@ -24,7 +24,7 @@ import { calendarBridgeOwnerAllowed, calendarSchedulingPurpose } from "../../cor
 import type { CalendarSchedulingObservation, CalendarSchedulingOwner } from "../../core/src/svc/calendar-scheduling.ts";
 import { schedulingCalendarMembers, type CalendarSchedulingBridge, type CalendarSchedulingTarget } from "./calendar-scheduling.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
-import type { City, Clock, MemberId, WorldSnapshot } from "@thenetwork/core";
+import type { City, CityId, Clock, MemberId, VenueRecord, WorldSnapshot } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import type { InitialInviteReceipt, NetworkContext, SimMessage } from "@thenetwork/core";
 import { matchingDisabledByRegistry, startupPlan, tickRepairsProjection, tickRunsFollowup } from "../../core/src/generated/runtimeUnit.ts";
@@ -95,6 +95,10 @@ import { summarizeRun } from "../../../apps/observatory/src/engineCapture.ts";
 import type { JobPosting } from "../src/jobs.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
 import { savePosting } from "./postings.ts";
+import {
+  PgMeetupStore, recordVenueRejection, recordVenueVisit, reserveVenueConcurrentHold, upsertMeetupArrival,
+  type MeetupArrivalInput, type MemberVenueHistory,
+} from "./meetup-store.ts";
 
 type Row = Record<string, unknown>;
 interface GatheringRepeatMessage { id: string; opportunity_id: string; type: string; body: string }
@@ -151,13 +155,18 @@ export interface Unit {
   teenBars: { memberId: MemberId; reason: "older_than_stated"; at: number }[];
   teenPairs: [MemberId, MemberId][];
   recordedAges?: (RecordedMemberAge & { memberId: MemberId })[];
+  venueVisits: { venueId: string; memberId: MemberId; opportunityId: string | null; visitedAt: number; sentiment?: string; issues?: string[]; closedReport?: boolean }[];
+  venueRejections: { venueId: string; memberId: MemberId; reason: string; rejectedAt: number }[];
+  venueHolds: { venueId: string; opportunityId: string; headcount: number; windowStart: number; windowEnd: number }[];
+  meetupArrivals: MeetupArrivalInput[];
 }
 type StatedAge = { memberId: MemberId; age: number; birthDate?: number };
-const newUnit = (): Unit => ({ standingIntents: [], sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set(), postings: [], ages: [], minorSignals: [], teenBars: [], teenPairs: [] });
+const newUnit = (): Unit => ({ standingIntents: [], sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set(), postings: [], ages: [], minorSignals: [], teenBars: [], teenPairs: [], venueVisits: [], venueRejections: [], venueHolds: [], meetupArrivals: [] });
 
 /** What the service gives each runtime: the shared connection and clock, and the checks that span apps. */
 export interface RuntimeHost {
   sql: SQL;
+  meetup?: PgMeetupStore;
   clock: Clock;
   instance: string;
   log: (line: string) => void;
@@ -199,7 +208,7 @@ export interface RuntimeOptions {
    * The homes whose conversations this network owns (runtimeForHome). Matching stays in the network's
    * own city unless the app's wiring sets its markets: owning a conversation is not a matching market.
    */
-  cities: readonly City[];
+  cities: readonly CityId[];
   matchingAllowed: boolean;
   network?: Omit<NetworkOptions, "store" | "onEngineRun" | "app">;
   calendarScheduling?: CalendarSchedulingBridge;
@@ -210,9 +219,10 @@ export class NetworkRuntime {
   readonly id: string;
   readonly app: AppInfo;
   readonly city: string;
-  readonly cities: readonly City[];
+  readonly cities: readonly CityId[];
   readonly net: ConsentNetwork;
   readonly pg: PgStore;
+  readonly meetup: PgMeetupStore;
   readonly store: NetworkStore;
   readonly view: StateView;
   readonly adapter: ChannelAdapter;
@@ -225,6 +235,9 @@ export class NetworkRuntime {
   private readonly calendarScheduling?: CalendarSchedulingBridge;
   private readonly calendarViews = new AsyncLocalStorage<ReadonlyMap<MemberId, CalendarSchedulingObservation>>();
   private snap?: WorldSnapshot;
+  private activeVenues: VenueRecord[] = [];
+  private memberVenueHistory = new Map<MemberId, MemberVenueHistory>();
+  private concurrentHeadcounts: Record<string, number> = {};
   private joinedInviteeNames = new Map<string, string>();
   private initialInviteReceipts = new Map<string, InitialInviteReceipt>();
   private addrToMember = new Map<string, MemberId>();
@@ -262,12 +275,14 @@ export class NetworkRuntime {
   constructor(private readonly host: RuntimeHost, o: RuntimeOptions) {
     this.id = o.id; this.app = o.app; this.city = o.city; this.cities = o.cities; this.matchingAllowed = o.matchingAllowed;
     this.pg = new PgStore(host.sql, o.id);
+    this.meetup = host.meetup ?? new PgMeetupStore(host.sql);
     this.view = new StateView(o.id);
     this.store = this.serviceStore();
-    this.wiring = appWiring(o.app.id);
+    this.wiring = appWiring(o.app.id, o.city, { venues: () => this.activeVenues });
     this.calendarScheduling = o.network?.calendarFreeBusy ? undefined : o.calendarScheduling;
     const w = this.wiring;
-    this.engineConfig = { cities: o.cities.filter(c => c === o.city), ...w.engine, ...o.network?.engine };
+    const engineCities = o.cities.filter((c): c is City => c === o.city && (c === "sf" || c === "nyc" || c === "la"));
+    this.engineConfig = { cities: engineCities, ...w.engine, ...o.network?.engine };
     this.net = new ConsentNetwork({
       matchingEnabled: false,
       // The app's pack and the engine config it was tuned with (options may override single fields).
@@ -868,6 +883,7 @@ export class NetworkRuntime {
       load: async () => {
         this.unit = newUnit();
         await this.refresh();
+        await this.hydrateVenueContext().catch(e => this.host.log(`[meetup] venue context hydration skipped (${this.id}): ${(e as Error).message}`));
         const state = await this.loadState(true);
         await this.scoped(tx => this.view.load(tx));
         this.net.setGatheringRepeatSources([]);
@@ -1058,6 +1074,36 @@ export class NetworkRuntime {
         this.initialInviteReceipts.set(row.id, { kind: "not_sent" });
       }
     }
+  }
+
+  /** Hydrate active venues, member visit/rejection history, and cross-app concurrent holds for this unit. */
+  async hydrateVenueContext(windowStart?: number, windowEnd?: number): Promise<{
+    venues: readonly VenueRecord[];
+    memberVenueHistory: ReadonlyMap<MemberId, MemberVenueHistory>;
+    concurrentHeadcountByVenue: Record<string, number>;
+  }> {
+    const now = this.clock.now();
+    const start = windowStart ?? now;
+    const end = windowEnd ?? now + 4 * 3_600_000;
+    const memberIds = this.snap?.members.map(m => m.id) ?? [];
+    const [venues, history] = await Promise.all([
+      this.meetup.listActiveVenues(this.city),
+      memberIds.length ? this.meetup.listMemberVenueHistory(this.app.id, memberIds) : Promise.resolve(new Map<string, MemberVenueHistory>()),
+    ]);
+    const headcounts = venues.length
+      ? await this.meetup.activeVenueConcurrentHeadcounts(venues.map(v => v.id), start, end)
+      : {};
+    this.activeVenues = venues;
+    this.memberVenueHistory = history;
+    this.concurrentHeadcounts = headcounts;
+    const mapped = new Map<MemberId, { visited: readonly string[]; rejected: readonly string[] }>();
+    for (const [id, h] of history) mapped.set(id, { visited: h.visitedVenueIds, rejected: h.rejectedVenueIds });
+    this.net.setVenueRuntimeContext({
+      venues,
+      memberVenueHistory: mapped,
+      concurrentHeadcountByVenue: headcounts,
+    });
+    return { venues, memberVenueHistory: history, concurrentHeadcountByVenue: headcounts };
   }
 
   /** The snapshot and the address book, read fresh for every unit (inside the lock), in one app-scoped transaction. */
@@ -1310,7 +1356,8 @@ export class NetworkRuntime {
       for (const row of rows as Row[]) personIds.set(row.member_id as string, row.id as string);
     }
     const named = new Set<string>([...u.sends.map(s => s.memberId), ...(u.inbound ? [u.inbound.member_id as string] : []),
-      ...u.standingIntents.map(change => change.memberId), ...u.blocks.flat(), ...u.optOut.keys(), ...u.postings.map(p => p.managerId)]);
+      ...u.standingIntents.map(change => change.memberId), ...u.blocks.flat(), ...u.optOut.keys(), ...u.postings.map(p => p.managerId),
+      ...u.venueVisits.map(v => v.memberId), ...u.venueRejections.map(r => r.memberId), ...u.meetupArrivals.map(a => a.memberId)]);
     const known = new Set<string>();
     if (named.size) for (const r of await tx`select id from network.members where app_id = ${app} and id in ${tx([...named])}`) known.add(r.id);
     const ok = (id: string) => known.has(id) && !u.forget.has(id);
@@ -1434,6 +1481,31 @@ export class NetworkRuntime {
     for (const r of u.runs) await tx`insert into network.matching_runs ${tx(r)} on conflict (id) do nothing`;
     // Job postings: the intent and its tagged facets on the manager (postings.ts); never for a member this unit forgets.
     for (const p of u.postings) if (ok(p.managerId)) await savePosting(tx, app, p);
+    for (const visit of u.venueVisits) {
+      if (ok(visit.memberId)) {
+        await recordVenueVisit(tx, app, visit.venueId, visit.memberId, visit.opportunityId, visit.visitedAt, {
+          ...(visit.sentiment ? { sentiment: visit.sentiment } : {}),
+          ...(visit.issues ? { issues: visit.issues } : {}),
+          ...(visit.closedReport !== undefined ? { closedReport: visit.closedReport } : {}),
+        });
+      }
+    }
+    for (const rej of u.venueRejections) {
+      if (ok(rej.memberId)) await recordVenueRejection(tx, app, rej.venueId, rej.memberId, rej.reason, rej.rejectedAt);
+    }
+    for (const hold of u.venueHolds) {
+      await reserveVenueConcurrentHold(tx, {
+        venueId: hold.venueId,
+        appId: app,
+        opportunityId: hold.opportunityId,
+        headcount: hold.headcount,
+        windowStart: hold.windowStart,
+        windowEnd: hold.windowEnd,
+      });
+    }
+    for (const arrival of u.meetupArrivals) {
+      if (ok(arrival.memberId)) await upsertMeetupArrival(tx, app, arrival);
+    }
     for (const [id, out] of u.optOut) if (ok(id)) {
       await tx`update network.members set opted_out = ${out} where app_id = ${app} and id = ${id}`;
       if (out) await this.host.homeHelpRecipientStopped?.(tx, app, id);
@@ -1466,6 +1538,9 @@ export class NetworkRuntime {
       await tx`delete from platform.profile_suggestion_batches where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.intents where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.presence where app_id = ${app} and member_id = ${id}`;
+      await tx`delete from network.venue_visits where app_id = ${app} and member_id = ${id}`;
+      await tx`delete from network.venue_rejections where app_id = ${app} and member_id = ${id}`;
+      await tx`delete from network.meetup_arrivals where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.edges where app_id = ${app} and (from_id = ${id} or to_id = ${id})`;
       await tx`delete from network.channel_identities where app_id = ${app} and member_id = ${id}`;
       await tx`delete from platform.member_invitations where app_id=${app} and (inviter_member_id=${id} or redeemed_member_id=${id})`;

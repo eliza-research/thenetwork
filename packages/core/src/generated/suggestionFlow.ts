@@ -59,32 +59,41 @@ export function lawSlopDensityTierThresholds(qualifiedLocalCount: number): boole
   return (!(qualifiedLocalCount >= 3) || computeDensityTier("slop", qualifiedLocalCount) === "dense") && (!(qualifiedLocalCount >= 1 && qualifiedLocalCount <= 2) || computeDensityTier("slop", qualifiedLocalCount) === "medium") && (!(qualifiedLocalCount <= 0) || computeDensityTier("slop", qualifiedLocalCount) === "sparse");
 }
 
-/** Story: Route local supply by density and enforce date activity red lines / Exclude alcohol, high-walking, and after-dark date activities when red lines apply (spec/suggestionFlow.md) */
+/** Story: Route local supply by density and enforce date activity red lines / Exclude alcohol, high-walking, loud, and after-dark date activities when red lines apply (spec/suggestionFlow.md) */
 //@ pure
-export function dateActivityAllowed(activityKind: string, anyStrictSober: boolean, anyNonDrinker: boolean, anyLowWalking: boolean, anyDaytimeOnly: boolean, isAfterDark: boolean): boolean {
+export function dateActivityAllowed(activityKind: string, anyStrictSober: boolean, anyNonDrinker: boolean, anyLowWalking: boolean, anyLowNoise: boolean, anyDaytimeOnly: boolean, isAfterDark: boolean): boolean {
   const local_0 = activityKind === "drinks" || activityKind === "wine_bar" || activityKind === "cocktail" || activityKind === "bar" || activityKind === "brewery";
-  return local_0 && (anyStrictSober || anyNonDrinker) ? false : ((activityKind === "hike" || activityKind === "long_walk") && anyLowWalking ? false : (activityKind === "outdoor_night_walk" && anyDaytimeOnly ? false : (anyDaytimeOnly && isAfterDark ? false : true)));
+  const local_1 = activityKind === "hike" || activityKind === "long_walk" || activityKind === "climbing" || activityKind === "walk";
+  const local_2 = activityKind === "live_music" || activityKind === "comedy";
+  return local_0 && (anyStrictSober || anyNonDrinker) ? false : (local_1 && anyLowWalking ? false : (local_2 && (anyLowNoise || anyDaytimeOnly) ? false : (activityKind === "outdoor_night_walk" && anyDaytimeOnly ? false : (anyDaytimeOnly && isAfterDark ? false : true))));
 }
 
-/** Story: Route local supply by density and enforce date activity red lines / Exclude alcohol, high-walking, and after-dark date activities when red lines apply (spec/suggestionFlow.md) */
+/** Story: Route local supply by density and enforce date activity red lines / Exclude alcohol, high-walking, loud, and after-dark date activities when red lines apply (spec/suggestionFlow.md) */
 //@ pure
-export function lawSoberOrNonDrinkerNeverGetsDrinksActivity(anyStrictSober: boolean, anyNonDrinker: boolean, anyLowWalking: boolean, anyDaytimeOnly: boolean, isAfterDark: boolean): boolean {
+export function lawSoberOrNonDrinkerNeverGetsDrinksActivity(anyStrictSober: boolean, anyNonDrinker: boolean, anyLowWalking: boolean, anyLowNoise: boolean, anyDaytimeOnly: boolean, isAfterDark: boolean): boolean {
   //@ ensures \result === true
-  return !(anyStrictSober || anyNonDrinker) || (!dateActivityAllowed("drinks", anyStrictSober, anyNonDrinker, anyLowWalking, anyDaytimeOnly, isAfterDark) && !dateActivityAllowed("wine_bar", anyStrictSober, anyNonDrinker, anyLowWalking, anyDaytimeOnly, isAfterDark) && !dateActivityAllowed("cocktail", anyStrictSober, anyNonDrinker, anyLowWalking, anyDaytimeOnly, isAfterDark));
+  return !(anyStrictSober || anyNonDrinker) || (!dateActivityAllowed("drinks", anyStrictSober, anyNonDrinker, anyLowWalking, anyLowNoise, anyDaytimeOnly, isAfterDark) && !dateActivityAllowed("wine_bar", anyStrictSober, anyNonDrinker, anyLowWalking, anyLowNoise, anyDaytimeOnly, isAfterDark) && !dateActivityAllowed("cocktail", anyStrictSober, anyNonDrinker, anyLowWalking, anyLowNoise, anyDaytimeOnly, isAfterDark));
 }
 
-/** Story: Route local supply by density and enforce date activity red lines / Exclude alcohol, high-walking, and after-dark date activities when red lines apply (spec/suggestionFlow.md) */
+/** Story: Route local supply by density and enforce date activity red lines / Exclude alcohol, high-walking, loud, and after-dark date activities when red lines apply (spec/suggestionFlow.md) */
 //@ pure
-export function lawLowWalkingForbidsHike(anyStrictSober: boolean, anyNonDrinker: boolean, anyDaytimeOnly: boolean, isAfterDark: boolean): boolean {
+export function lawLowWalkingForbidsHike(anyStrictSober: boolean, anyNonDrinker: boolean, anyLowNoise: boolean, anyDaytimeOnly: boolean, isAfterDark: boolean): boolean {
   //@ ensures \result === true
-  return !dateActivityAllowed("hike", anyStrictSober, anyNonDrinker, true, anyDaytimeOnly, isAfterDark);
+  return !dateActivityAllowed("hike", anyStrictSober, anyNonDrinker, true, anyLowNoise, anyDaytimeOnly, isAfterDark) && !dateActivityAllowed("climbing", anyStrictSober, anyNonDrinker, true, anyLowNoise, anyDaytimeOnly, isAfterDark) && !dateActivityAllowed("walk", anyStrictSober, anyNonDrinker, true, anyLowNoise, anyDaytimeOnly, isAfterDark);
 }
 
-/** Story: Route local supply by density and enforce date activity red lines / Exclude alcohol, high-walking, and after-dark date activities when red lines apply (spec/suggestionFlow.md) */
+/** Story: Route local supply by density and enforce date activity red lines / Exclude alcohol, high-walking, loud, and after-dark date activities when red lines apply (spec/suggestionFlow.md) */
 //@ pure
-export function lawDaytimeOnlyForbidsAfterDark(activityKind: string, anyStrictSober: boolean, anyNonDrinker: boolean, anyLowWalking: boolean): boolean {
+export function lawLowNoiseOrDaytimeForbidsLoudActivities(anyStrictSober: boolean, anyNonDrinker: boolean, anyLowWalking: boolean, anyLowNoise: boolean, anyDaytimeOnly: boolean, isAfterDark: boolean): boolean {
   //@ ensures \result === true
-  return !dateActivityAllowed(activityKind, anyStrictSober, anyNonDrinker, anyLowWalking, true, true);
+  return !(anyLowNoise || anyDaytimeOnly) || (!dateActivityAllowed("live_music", anyStrictSober, anyNonDrinker, anyLowWalking, anyLowNoise, anyDaytimeOnly, isAfterDark) && !dateActivityAllowed("comedy", anyStrictSober, anyNonDrinker, anyLowWalking, anyLowNoise, anyDaytimeOnly, isAfterDark));
+}
+
+/** Story: Route local supply by density and enforce date activity red lines / Exclude alcohol, high-walking, loud, and after-dark date activities when red lines apply (spec/suggestionFlow.md) */
+//@ pure
+export function lawDaytimeOnlyForbidsAfterDark(activityKind: string, anyStrictSober: boolean, anyNonDrinker: boolean, anyLowWalking: boolean, anyLowNoise: boolean): boolean {
+  //@ ensures \result === true
+  return !dateActivityAllowed(activityKind, anyStrictSober, anyNonDrinker, anyLowWalking, anyLowNoise, true, true);
 }
 
 /** Story: Score venues with mode-specific weights / Compute a bounded 0..100 score with capped niche-hobby bonus on dates (spec/suggestionFlow.md) */
@@ -96,34 +105,34 @@ export function slopNicheHobbyBonus(bothShareHighHobbyAffinity: boolean, bothOpt
 /** Story: Score venues with mode-specific weights / Compute a bounded 0..100 score with capped niche-hobby bonus on dates (spec/suggestionFlow.md) */
 //@ pure
 export function modeVenueScore(m: ModeVenueScoreInput): number {
-  const local_1 = clampSuggestionScore(m.activityFit, 0, 100);
-  const local_2 = clampSuggestionScore(m.groupRubric, 0, 100);
-  const local_3 = clampSuggestionScore(m.dateVibeFit, 0, 100);
-  const local_4 = clampSuggestionScore(m.personaScore, 0, 100);
-  const local_5 = clampSuggestionScore(m.travelScore, 0, 100);
-  const local_6 = clampSuggestionScore(m.budgetFit, 0, 100);
-  const local_7 = clampSuggestionScore(m.safetyAcoustics, 0, 100);
-  const local_8 = clampSuggestionScore(m.midpointBonus, 0, 10);
-  const local_9 = quotient_suggestionFlow(exact_suggestionFlow(exact_suggestionFlow(exact_suggestionFlow(exact_suggestionFlow(exact_suggestionFlow(35 * local_1) + exact_suggestionFlow(30 * local_2)) + exact_suggestionFlow(15 * local_5)) + exact_suggestionFlow(10 * local_6)) + exact_suggestionFlow(10 * local_4)), 100);
-  const local_10 = quotient_suggestionFlow(exact_suggestionFlow(exact_suggestionFlow(exact_suggestionFlow(exact_suggestionFlow(exact_suggestionFlow(30 * local_3) + exact_suggestionFlow(25 * local_4)) + exact_suggestionFlow(20 * local_5)) + exact_suggestionFlow(15 * local_6)) + exact_suggestionFlow(10 * local_7)), 100);
-  const local_11 = slopNicheHobbyBonus(m.bothShareHighHobbyAffinity, m.bothOptedIntoActivityDates, m.nicheHobbyBonus);
-  return m.scoreMode === "friends" ? clampSuggestionScore(exact_suggestionFlow(local_9 + local_8), 0, 100) : clampSuggestionScore(exact_suggestionFlow(exact_suggestionFlow(local_10 + local_11) + local_8), 0, 100);
+  const local_3 = clampSuggestionScore(m.activityFit, 0, 100);
+  const local_4 = clampSuggestionScore(m.groupRubric, 0, 100);
+  const local_5 = clampSuggestionScore(m.dateVibeFit, 0, 100);
+  const local_6 = clampSuggestionScore(m.personaScore, 0, 100);
+  const local_7 = clampSuggestionScore(m.travelScore, 0, 100);
+  const local_8 = clampSuggestionScore(m.budgetFit, 0, 100);
+  const local_9 = clampSuggestionScore(m.safetyAcoustics, 0, 100);
+  const local_10 = clampSuggestionScore(m.midpointBonus, 0, 10);
+  const local_11 = quotient_suggestionFlow(exact_suggestionFlow(exact_suggestionFlow(exact_suggestionFlow(exact_suggestionFlow(exact_suggestionFlow(35 * local_3) + exact_suggestionFlow(30 * local_4)) + exact_suggestionFlow(15 * local_7)) + exact_suggestionFlow(10 * local_8)) + exact_suggestionFlow(10 * local_6)), 100);
+  const local_12 = quotient_suggestionFlow(exact_suggestionFlow(exact_suggestionFlow(exact_suggestionFlow(exact_suggestionFlow(exact_suggestionFlow(30 * local_5) + exact_suggestionFlow(25 * local_6)) + exact_suggestionFlow(20 * local_7)) + exact_suggestionFlow(15 * local_8)) + exact_suggestionFlow(10 * local_9)), 100);
+  const local_13 = slopNicheHobbyBonus(m.bothShareHighHobbyAffinity, m.bothOptedIntoActivityDates, m.nicheHobbyBonus);
+  return m.scoreMode === "friends" ? clampSuggestionScore(exact_suggestionFlow(local_11 + local_10), 0, 100) : clampSuggestionScore(exact_suggestionFlow(exact_suggestionFlow(local_12 + local_13) + local_10), 0, 100);
 }
 
 /** Story: Score venues with mode-specific weights / Compute a bounded 0..100 score with capped niche-hobby bonus on dates (spec/suggestionFlow.md) */
 //@ pure
 export function lawNicheHobbyBonusRequiresMutualOptInAndCap(bothShareHighHobbyAffinity: boolean, bothOptedIntoActivityDates: boolean, requestedBonus: number): boolean {
   //@ ensures \result === true
-  const local_12 = slopNicheHobbyBonus(bothShareHighHobbyAffinity, bothOptedIntoActivityDates, requestedBonus);
-  return local_12 >= 0 && local_12 <= 15 && (!(!(bothShareHighHobbyAffinity && bothOptedIntoActivityDates)) || local_12 === 0);
+  const local_14 = slopNicheHobbyBonus(bothShareHighHobbyAffinity, bothOptedIntoActivityDates, requestedBonus);
+  return local_14 >= 0 && local_14 <= 15 && (!(!(bothShareHighHobbyAffinity && bothOptedIntoActivityDates)) || local_14 === 0);
 }
 
 /** Story: Score venues with mode-specific weights / Compute a bounded 0..100 score with capped niche-hobby bonus on dates (spec/suggestionFlow.md) */
 //@ pure
 export function lawModeVenueScoreBounded(m: ModeVenueScoreInput): boolean {
   //@ ensures \result === true
-  const local_13 = modeVenueScore(m);
-  return local_13 >= 0 && local_13 <= 100;
+  const local_15 = modeVenueScore(m);
+  return local_15 >= 0 && local_15 <= 100;
 }
 
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */

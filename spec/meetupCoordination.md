@@ -217,7 +217,7 @@ pure val aValues = Set(
 
 ### Schedule follow-ups outside quiet hours and enforce opt-out and daily caps
 
-Daytime endings (`7..16`) follow up two hours later the same day; early endings (`0..6`) follow up at 9:30 AM same day; evening endings (`> 16`) follow up at 9:30 AM the next day. No follow-up sends during quiet hours, outside `9..19`, after opt-out, after response, at or above 3 daily proactive messages, or at or above 2 attempts.
+Daytime endings (`7..16`) follow up two hours later the same day (preserving the ending minute in `computeFollowupLocalSlot`); early endings (`0..6`) follow up at 9:30 AM same day; evening endings (`> 16`) follow up at 9:30 AM the next day. No follow-up sends during quiet hours, outside `9..19`, after opt-out, after response, at or above 3 daily proactive messages, or at or above 2 attempts.
 
 ```quint
 type FollowupSlot = {
@@ -243,6 +243,15 @@ pure def computeFollowupLocalHour(eventEndLocalHour: int): FollowupSlot =
   else
     { localHour: eventEndLocalHour + 2, localMinute: 0, nextDay: false }
 
+pure def computeFollowupLocalSlot(eventEndLocalHour: int, eventEndLocalMinute: int): FollowupSlot =
+  val safeMinute = if (eventEndLocalMinute >= 0 and eventEndLocalMinute < 60) eventEndLocalMinute else 0
+  if (eventEndLocalHour > 16)
+    { localHour: 9, localMinute: 30, nextDay: true }
+  else if (eventEndLocalHour < 7)
+    { localHour: 9, localMinute: 30, nextDay: false }
+  else
+    { localHour: eventEndLocalHour + 2, localMinute: safeMinute, nextDay: false }
+
 pure def canSendFollowup(f: FollowupSendInput): bool =
   not(f.optedOut)
     and not(f.inQuietHours)
@@ -259,11 +268,17 @@ pure def lawFollowupSlotAlwaysInSafeDayHours(eventEndLocalHour: int): bool =
   (eventEndLocalHour >= 0 and eventEndLocalHour <= 23) implies
     (slot.localHour >= 9 and slot.localHour < 20 and (slot.localMinute == 0 or slot.localMinute == 30))
 
+pure def lawFollowupLocalSlotAlwaysInSafeDayHours(eventEndLocalHour: int, eventEndLocalMinute: int): bool =
+  val slot = computeFollowupLocalSlot(eventEndLocalHour, eventEndLocalMinute)
+  (eventEndLocalHour >= 0 and eventEndLocalHour <= 23 and eventEndLocalMinute >= 0 and eventEndLocalMinute < 60) implies
+    (slot.localHour >= 9 and slot.localHour < 20 and slot.localMinute >= 0 and slot.localMinute < 60)
+
 pure def lawFollowupNeverDuringQuietHoursOrOverCap(f: FollowupSendInput): bool =
   canSendFollowup(f) implies
     (not(f.optedOut) and not(f.inQuietHours) and f.localHour >= 9 and f.localHour < 20 and f.dailyProactiveCount < 3 and f.remindersSent < 2 and not(f.alreadyResponded))
 
 pure val eventEndLocalHourValues = Set(0, 6, 7, 12, 16, 17, 21, 23)
+pure val eventEndLocalMinuteValues = Set(0, 15, 30, 50, 59)
 pure val fValues = Set(
   { optedOut: false, inQuietHours: false, localHour: 10, dailyProactiveCount: 1, remindersSent: 0, alreadyResponded: false },
   { optedOut: true, inQuietHours: false, localHour: 10, dailyProactiveCount: 0, remindersSent: 0, alreadyResponded: false },

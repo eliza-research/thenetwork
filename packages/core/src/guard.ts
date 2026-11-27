@@ -370,7 +370,9 @@ const SENSITIVE_WORDS = (
   // immigration and legal
   "undocumented asylum refugee deported deportation daca arrested felony felon prison incarcerated parole probation convicted " +
   // religion
-  "muslim jewish christian mormon atheist catholic hindu buddhist sikh"
+  "muslim jewish christian mormon atheist catholic hindu buddhist sikh " +
+  // dietary and allergens
+  "halal kosher celiac allergy allergic anaphylaxis peanut peanuts shellfish"
 ).split(" ");
 const SENSITIVE_PHRASES = ["eating disorder", "self harm", "trying to conceive", "in recovery", "laid off", "chronic illness",
   "sex work", "sex worker", "domestic violence", "sexual assault", "mental health", "hiv positive", "on probation", "on parole"];

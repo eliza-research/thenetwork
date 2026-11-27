@@ -14,6 +14,11 @@ export function isLateArrivalPairBooking(booking: { kind: OpportunityKind; parti
   return lateArrivalIsPair(booking.kind === "group", !!booking.plan && !booking.plan.partner, new Set(booking.participants).size);
 }
 
+/** Panic exit or pair block immediately halts late-arrival notices before admission or dispatch. */
+export function isLateArrivalAdmitted(opts: { panicTriggered?: boolean; blocked?: boolean }): boolean {
+  return !opts.panicTriggered && !opts.blocked;
+}
+
 /** Accept an explicit report, leaving named requests to the existing relay conversation. */
 export function isLateArrivalReport(body: string): boolean {
   return /^(?:(?:i['’]m|i am) )?running late[.!]?$/i.test(body.trim());

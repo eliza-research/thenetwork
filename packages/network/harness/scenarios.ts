@@ -5,7 +5,7 @@
 // (invites, newcomers, a bad invitee), and logistics (travel).
 //   node --import tsx --env-file-if-exists=.env --conditions=eliza-source packages/network/harness/scenarios.ts [scenario_id]
 import { fileAt } from "../../core/src/runtime/files.ts";
-import { DAY, earliestDayKeyOf, HOUR, UNDER_MIN_AGE_DECLINE, type AppId, type MemberId, type Proposal } from "@thenetwork/core";
+import { DAY, earliestDayKeyOf, HOUR, MINUTE, seedVenuesForCity, UNDER_MIN_AGE_DECLINE, type AppId, type MemberId, type PrimaryBackupVenuePick, type Proposal, type VenueRecord } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import { PolicyPersonaAgent, World, desireById, type Persona, type PersonaContext, type WorldAction } from "@thenetwork/sim";
 import { DATA_DIR } from "../../../scripts/synthetic/common.ts";
@@ -663,7 +663,98 @@ export const SCENARIOS: NetScenario[] = [
       ];
     },
   }))(new Set()),
+  ((state: {
+    pick?: PrimaryBackupVenuePick;
+    barBlocked?: boolean;
+    pickedAllowed?: boolean;
+    arrivalBeforePanic?: boolean;
+    arrivalAfterPanic?: boolean;
+    panicResult?: { haltedMatches: string[]; cancelledSwaps: number; notice: string };
+  }): NetScenario => ({
+    id: "meetup_redlines_and_panic_exit", title: "Red-line venue selection and panic exit", days: 3,
+    description: "An NYC member with strict_sober and halal red lines is matched for an evening date: pickVenueWithRedLines chooses a verified non-alcohol-centric halal-friendly spot (rejecting bars). Inside the T-15m arrival window, arrival relay is allowed until relayPanicExit halts messaging and opens a panic_exit safety event.",
+    setup(ps, s) {
+      delete state.pick;
+      delete state.barBlocked;
+      delete state.pickedAllowed;
+      delete state.arrivalBeforePanic;
+      delete state.arrivalAfterPanic;
+      delete state.panicResult;
+      const aList = adults(ps).filter(p => p.joinDay === 0 && p.homeCity === "nyc");
+      const mA = nth(aList, 5);
+      const mB = nth(aList, 12);
+      mA.routine.homeArea = "West Village";
+      mB.routine.homeArea = "Flatiron / Union Square";
+      const meetingAt = at(s, 1, 19);
+      const arrivalCheckAt = meetingAt - 15 * MINUTE;
+      return {
+        ids: { memberA: mA.id, memberB: mB.id },
+        actions: [],
+        steps: [
+          {
+            at: arrivalCheckAt,
+            run: (net: ConsentNetwork) => {
+              const memberOverrides = { [mA.id]: { strictSober: true, drinksAlcohol: false, halal: true } };
+              const pick = net.pickVenueWithRedLines([mA.id, mB.id], meetingAt, { city: "nyc", mode: "date", memberOverrides });
+              state.pick = pick;
+              const nycVenues = seedVenuesForCity("nyc");
+              const barVenue: VenueRecord | undefined = nycVenues.find(v => v.isBarOnly || v.isAlcoholCentric || !v.halalFriendly);
+              // Inject strict_sober + halal facets onto memberA for venuePassesRedLines check
+              const st = net.exportState();
+              st.opps.push({
+                id: MEETUP_PANIC_OPP, origin: "engine", kind: "intro", category: "social",
+                objective: "coffee meetup", detail: "coffee meetup",
+                participants: [mA.id, mB.id], alternates: [], primed: [],
+                status: [[mA.id, "yes"], [mB.id, "yes"]], explanations: {},
+                stage: "scheduled", deadline: meetingAt, createdAt: at(s, 1, 10), score: 0.8,
+                components: NO_COMPONENTS, generator: "scenario", exploration: false, sameDay: false,
+                contacted: [mA.id, mB.id], reminded: [], tags: [], replacements: 0, feedbackFrom: [],
+                meetingAt, venueId: pick.primary?.venue.id, venue: pick.primary?.venue.name,
+                venueArea: pick.primary?.venue.neighborhood, bookedTold: [mA.id, mB.id],
+              });
+              net.importState(st);
+              state.barBlocked = Boolean(barVenue && !pick.candidates.some(c => c.venue.id === barVenue.id));
+              state.pickedAllowed = Boolean(
+                pick.primary &&
+                !pick.primary.venue.isBarOnly &&
+                !pick.primary.venue.isAlcoholCentric &&
+                pick.primary.venue.alcoholOptional &&
+                pick.primary.venue.halalFriendly === true
+              );
+              state.arrivalBeforePanic = net.canRelayArrivalForMeetup(MEETUP_PANIC_OPP, mA.id, mB.id, true);
+              state.panicResult = net.relayPanicExit(mA.id, MEETUP_PANIC_OPP);
+              state.arrivalAfterPanic = net.canRelayArrivalForMeetup(MEETUP_PANIC_OPP, mA.id, mB.id, true);
+            },
+          },
+        ],
+      };
+    },
+    check(ctx) {
+      const mA = ctx.ids.memberA!;
+      const panicLogs = logs(ctx.records, "relay_panic_exit").filter(l => l.detail.memberId === mA);
+      const hasSafetyEvent = ctx.net.safetyCases().some(sc => sc.memberId === mA && sc.events.some(e => e.kind === "panic_exit"));
+      const allCandidatesSafe = (state.pick?.candidates ?? []).every(
+        cand => !cand.venue.isBarOnly && !cand.venue.isAlcoholCentric && cand.venue.alcoholOptional && cand.venue.halalFriendly === true
+      );
+      return [
+        c("pickVenueWithRedLines selected a verified non-alcohol-centric halal-friendly NYC venue",
+          Boolean(state.pick?.primary) && state.pickedAllowed === true && allCandidatesSafe,
+          state.pick?.primary ? `${state.pick.primary.venue.id} (${state.pick.candidates.length} candidates)` : "none"),
+        c("bars and non-halal NYC venues were excluded from all candidates",
+          state.barBlocked === true && (state.pick?.candidates.length ?? 0) > 0,
+          `${state.pick?.candidates.length ?? 0} safe candidates`),
+        c("arrival relay allowed inside T-15m window before panic exit and halted immediately after",
+          state.arrivalBeforePanic === true && state.arrivalAfterPanic === false && Boolean(state.panicResult?.notice),
+          `before=${String(state.arrivalBeforePanic)}, after=${String(state.arrivalAfterPanic)}`),
+        c("relayPanicExit logged relay_panic_exit and recorded panic_exit safety case",
+          panicLogs.length >= 1 && hasSafetyEvent,
+          `logs=${panicLogs.length}, safetyCase=${String(hasSafetyEvent)}`),
+      ];
+    },
+  }))({}),
 ];
+
+const MEETUP_PANIC_OPP = "meetup-redlines-panic-opp";
 
 const JUDGE_FLAG_OPP = "judge-flag-staff-approves";
 const JUDGE_EXPIRES_OPP = "judge-flag-expires-unsent";

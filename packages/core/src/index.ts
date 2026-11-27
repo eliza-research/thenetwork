@@ -23,6 +23,7 @@ export { withinMutualRadius } from "./dating-radius.ts";
 export { sharedDatingMarket } from "./generated/datingRadius.ts";
 export { temporaryPresenceWindow } from "./travel-presence.ts";
 export * from "./cities.ts";
+export * from "./smsCopy.ts";
 export * from "./venues.ts";
 export * from "./externalEvents.ts";
 export * from "./externalMatchmaker.ts";
@@ -38,7 +39,7 @@ export {
 } from "./generated/suggestionFlow.ts";
 export {
   anchorFailoverDecision, canAttendEventOrCoattend, canRelayArrivalSafe, canSendFollowup, computeFollowupLocalHour,
-  meetupPhase, noShowDecision, shouldPivotToBackupV2, shouldQuarantineVenue,
+  computeFollowupLocalSlot, meetupPhase, noShowDecision, shouldPivotToBackupV2, shouldQuarantineVenue,
   type AnchorFailoverInput, type ArrivalRelaySafeInput, type FollowupSendInput, type FollowupSlot,
 } from "./generated/meetupCoordination.ts";
 export {
@@ -49,8 +50,8 @@ export {
 } from "./generated/externalEventBridge.ts";
 export {
   canContactExternalProspect, canInviteExternalProspectToNetwork, canReadExternalProspectInApp, canReconsiderExternalProspect,
-  genderMan, genderNonbinary, genderUnknown, genderWoman, matchmakerAppFriends, matchmakerAppNtwrk, matchmakerAppPeon,
-  matchmakerAppSlop, matchmakerPersonaFemale, matchmakerPersonaMale, personaStatusActive, personaStatusDegraded,
+  effectivePersonaOutboundCap, genderMan, genderNonbinary, genderUnknown, genderWoman, matchmakerAppFriends, matchmakerAppNtwrk,
+  matchmakerAppPeon, matchmakerAppSlop, matchmakerPersonaFemale, matchmakerPersonaMale, personaStatusActive, personaStatusDegraded,
   personaStatusSuspended, prospectConsentBanned, prospectConsentDeclined, prospectConsentFutureOptin, prospectConsentNone,
   prospectConsentSingleOnly, prospectConsentSmsLogistics, prospectConsentStopped, prospectRetentionDecision,
   routeMatchmakerPersona, shouldTriggerExternalSourcing,

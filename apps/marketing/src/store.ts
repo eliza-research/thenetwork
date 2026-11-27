@@ -3,7 +3,7 @@
 // wraps every critical state transition in Postgres sql.begin(...) + SELECT ... FOR UPDATE,
 // and implements full Memory + Pg CRUD across all 17 marketing.* tables.
 
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { RealClock } from "../../../packages/core/src/clock.ts";
 import { warmupDailyCap } from "../../../packages/core/src/generated/marketingDevice.ts";
 import { isOssDevBounty } from "../../../packages/core/src/generated/marketingPolicy.ts";
@@ -233,6 +233,8 @@ export interface UpsertChannelAccountInput {
 export interface UpsertHumanInput {
   id?: string;
   handleOrEmailHmac: string;
+  phoneHash?: string | null;
+  phoneE164?: string | null;
   displayLabel: string;
   channel: OutreachChannel;
   role: HumanRole;
@@ -313,6 +315,7 @@ export interface CreateOutreachInput {
   campaignId: string;
   agentId: string;
   humanId: string;
+  phoneHash?: string | null;
   channelAccountId?: string | null;
   channel: OutreachChannel;
   tier: ImplementationTier;
@@ -657,6 +660,8 @@ export interface MarketingStore {
   upsertHuman(input: UpsertHumanInput): Promise<HumanPartner>;
   getHuman(id: string): Promise<HumanPartner | null>;
   getHumanByHmac(handleOrEmailHmac: string): Promise<HumanPartner | null>;
+  getHumanPhoneHash?(id: string): Promise<string | null>;
+  isPhoneHashSuppressed?(phoneHash: string): Promise<boolean>;
   listHumans(
     filter?: { city?: string; role?: HumanRole; stopped?: boolean } & PaginationFilter,
   ): Promise<HumanPartner[]>;
@@ -950,6 +955,89 @@ function isPgUniqueViolation(err: unknown): boolean {
   return code === "23505";
 }
 
+export function normalizeMarketingPhoneE164(phone: string | null | undefined): string | null {
+  if (typeof phone !== "string") return null;
+  const trimmed = phone.trim();
+  if (trimmed.length === 0 || trimmed.length > 40) return null;
+  if (/[^0-9+().\-\s]/.test(trimmed)) return null;
+  const hasPlus = trimmed.startsWith("+");
+  const digits = trimmed.replace(/\D/g, "");
+  if (hasPlus) {
+    if (digits.length < 10 || digits.length > 15) return null;
+    return `+${digits}`;
+  }
+  if (digits.length === 10 && /^[2-9]\d{2}[2-9]\d{6}$/.test(digits)) {
+    return `+1${digits}`;
+  }
+  if (digits.length === 11 && digits.startsWith("1") && /^[2-9]\d{2}[2-9]\d{6}$/.test(digits.slice(1))) {
+    return `+${digits}`;
+  }
+  return null;
+}
+
+export function computeMarketingPhoneHash(
+  phoneOrE164: string,
+  hashKey: string | undefined = process.env.PLATFORM_HASH_KEY,
+): string | null {
+  const key = hashKey?.trim();
+  if (!key) return null;
+  const normalized = normalizeMarketingPhoneE164(phoneOrE164);
+  if (!normalized) return null;
+  return createHmac("sha256", key).update(normalized).digest("hex");
+}
+
+function resolveHumanPhoneHash(
+  input: Pick<UpsertHumanInput, "phoneHash" | "phoneE164" | "handleOrEmailHmac">,
+  hashKey?: string,
+): string | null {
+  const explicit = typeof input.phoneHash === "string" ? input.phoneHash.trim() : "";
+  if (explicit.length > 0) return explicit;
+  const effectiveKey = hashKey ?? process.env.PLATFORM_HASH_KEY;
+  if (input.phoneE164) {
+    const hashed = computeMarketingPhoneHash(input.phoneE164, effectiveKey);
+    if (hashed) return hashed;
+  }
+  const fromContactKey = computeMarketingPhoneHash(input.handleOrEmailHmac, effectiveKey);
+  if (fromContactKey) return fromContactKey;
+  return null;
+}
+
+export async function isGloballySuppressedPhoneHash(
+  sql: SQL,
+  phoneHash: string | null | undefined,
+): Promise<boolean> {
+  const hash = typeof phoneHash === "string" ? phoneHash.trim() : "";
+  if (!hash) return false;
+
+  const fnCheck = firstRow(await sql`
+    select exists (
+      select 1
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'platform'
+        and p.proname = 'is_suppressed_phone_hash'
+        and p.pronargs = 1
+        and has_function_privilege(p.oid, 'EXECUTE')
+    ) as has_fn
+  `);
+  if (asBool(fnCheck?.has_fn)) {
+    const res = firstRow(await sql`
+      select platform.is_suppressed_phone_hash(${hash}) as suppressed
+    `);
+    return asBool(res?.suppressed);
+  }
+
+  const fallback = firstRow(await sql`
+    select exists (
+      select 1
+      from marketing.humans
+      where phone_hash = ${hash}
+        and (stopped or banned)
+    ) as suppressed
+  `);
+  return asBool(fallback?.suppressed);
+}
+
 // ============================================================================
 // MemoryMarketingStore
 // ============================================================================
@@ -957,12 +1045,16 @@ function isPgUniqueViolation(err: unknown): boolean {
 export class MemoryMarketingStore implements MarketingStore {
   readonly clock: Clock;
   private readonly idGen: () => string;
+  private readonly hashKey?: string;
+  private readonly externalSuppressedPhoneHashes = new Set<string>();
+  private readonly isExternalPhoneHashSuppressed?: (phoneHash: string) => Promise<boolean> | boolean;
 
   private readonly campaigns = new Map<string, Campaign>();
   private readonly agents = new Map<string, MarketingAgent>();
   private readonly devices = new Map<string, DeviceNode>();
   private readonly channels = new Map<string, ChannelAccount>();
   private readonly humans = new Map<string, HumanPartner>();
+  private readonly humanPhoneHashes = new Map<string, string>();
   private readonly tasks = new Map<string, MarketingTask>();
   private readonly proofs = new Map<string, ProofSubmission>();
   private readonly outreach = new Map<string, OutreachMessage>();
@@ -977,9 +1069,23 @@ export class MemoryMarketingStore implements MarketingStore {
   private readonly videoAssets = new Map<string, VideoAsset>();
   private readonly antifraudClaims = new Map<string, AntiFraudClaim>();
 
-  constructor(opts: { clock?: Clock; idGen?: () => string } = {}) {
+  constructor(
+    opts: {
+      clock?: Clock;
+      idGen?: () => string;
+      hashKey?: string;
+      isExternalPhoneHashSuppressed?: (phoneHash: string) => Promise<boolean> | boolean;
+    } = {},
+  ) {
     this.clock = opts.clock ?? new RealClock();
     this.idGen = opts.idGen ?? defaultId;
+    this.hashKey = opts.hashKey;
+    this.isExternalPhoneHashSuppressed = opts.isExternalPhoneHashSuppressed;
+  }
+
+  suppressExternalPhoneHash(phoneHash: string): void {
+    const trimmed = phoneHash.trim();
+    if (trimmed) this.externalSuppressedPhoneHashes.add(trimmed);
   }
 
   close(): Promise<void> {
@@ -1170,13 +1276,15 @@ export class MemoryMarketingStore implements MarketingStore {
     return Promise.resolve({ ...next });
   }
 
-  consumeAgentTurn(input: ConsumeAgentTurnInput): Promise<ConsumeAgentTurnResult> {
+  async consumeAgentTurn(input: ConsumeAgentTurnInput): Promise<ConsumeAgentTurnResult> {
     const agent = this.agents.get(input.agentId);
-    if (!agent) return Promise.reject(new Error(`Agent not found: ${input.agentId}`));
+    if (!agent) throw new Error(`Agent not found: ${input.agentId}`);
     const campaign = input.campaignId ? this.campaigns.get(input.campaignId) ?? null : null;
     const human = input.targetHumanId ? this.humans.get(input.targetHumanId) ?? null : null;
+    const phoneHash = human ? this.humanPhoneHashes.get(human.id) ?? null : null;
+    const phoneSuppressed = phoneHash ? await this.isPhoneHashSuppressed(phoneHash) : false;
 
-    const targetStopped = Boolean(input.targetStopped || human?.stopped || human?.banned);
+    const targetStopped = Boolean(input.targetStopped || human?.stopped || human?.banned || phoneSuppressed);
     const lockdown = Boolean(input.lockdown || campaign?.riskDial === "lockdown");
     const decision = evaluateAgentTurnPolicy({
       agent,
@@ -1186,7 +1294,7 @@ export class MemoryMarketingStore implements MarketingStore {
     });
 
     if (!decision.allowed) {
-      return Promise.resolve({ allowed: false, agent: { ...agent }, reason: decision.reason });
+      return { allowed: false, agent: { ...agent }, reason: decision.reason };
     }
 
     const updated: MarketingAgent = {
@@ -1195,7 +1303,7 @@ export class MemoryMarketingStore implements MarketingStore {
       updatedAt: isoNow(this.clock),
     };
     this.agents.set(updated.id, updated);
-    return Promise.resolve({ allowed: true, agent: { ...updated } });
+    return { allowed: true, agent: { ...updated } };
   }
 
   recordAgentTurn(input: ConsumeAgentTurnInput): Promise<ConsumeAgentTurnResult> {
@@ -1391,12 +1499,14 @@ export class MemoryMarketingStore implements MarketingStore {
     return Promise.resolve(count);
   }
 
-  recordDeviceAction(input: RecordDeviceActionInput): Promise<DeviceActionReceipt> {
+  async recordDeviceAction(input: RecordDeviceActionInput): Promise<DeviceActionReceipt> {
     const device = this.devices.get(input.deviceId);
-    if (!device) return Promise.reject(new Error(`Device not found: ${input.deviceId}`));
+    if (!device) throw new Error(`Device not found: ${input.deviceId}`);
     const human = input.targetHumanId ? this.humans.get(input.targetHumanId) ?? null : null;
+    const phoneHash = human ? this.humanPhoneHashes.get(human.id) ?? null : null;
+    const phoneSuppressed = phoneHash ? await this.isPhoneHashSuppressed(phoneHash) : false;
     const nowMs = this.clock.now();
-    const targetStopped = Boolean(input.targetStopped || human?.stopped || human?.banned);
+    const targetStopped = Boolean(input.targetStopped || human?.stopped || human?.banned || phoneSuppressed);
 
     const decision = evaluateDeviceActionPolicy({
       device,
@@ -1513,6 +1623,10 @@ export class MemoryMarketingStore implements MarketingStore {
       createdAt: existing?.createdAt ?? isoNow(this.clock),
     };
     this.humans.set(human.id, human);
+    const resolvedPhoneHash = resolveHumanPhoneHash(input, this.hashKey);
+    if (resolvedPhoneHash) {
+      this.humanPhoneHashes.set(human.id, resolvedPhoneHash);
+    }
     return Promise.resolve({ ...human });
   }
 
@@ -1526,6 +1640,25 @@ export class MemoryMarketingStore implements MarketingStore {
       if (h.handleOrEmailHmac === handleOrEmailHmac) return Promise.resolve({ ...h });
     }
     return Promise.resolve(null);
+  }
+
+  getHumanPhoneHash(id: string): Promise<string | null> {
+    return Promise.resolve(this.humanPhoneHashes.get(id) ?? null);
+  }
+
+  async isPhoneHashSuppressed(phoneHash: string): Promise<boolean> {
+    const hash = phoneHash.trim();
+    if (!hash) return false;
+    if (this.externalSuppressedPhoneHashes.has(hash)) return true;
+    if (this.isExternalPhoneHashSuppressed && (await this.isExternalPhoneHashSuppressed(hash))) {
+      return true;
+    }
+    for (const [id, storedHash] of this.humanPhoneHashes.entries()) {
+      if (storedHash !== hash) continue;
+      const h = this.humans.get(id);
+      if (h && (h.stopped || h.banned)) return true;
+    }
+    return false;
   }
 
   listHumans(
@@ -1901,18 +2034,21 @@ export class MemoryMarketingStore implements MarketingStore {
     });
   }
 
-  createOutreachMessage(input: CreateOutreachInput): Promise<OutreachMessage> {
+  async createOutreachMessage(input: CreateOutreachInput): Promise<OutreachMessage> {
     const campaign = this.campaigns.get(input.campaignId);
-    if (!campaign) return Promise.reject(new Error(`Campaign not found: ${input.campaignId}`));
+    if (!campaign) throw new Error(`Campaign not found: ${input.campaignId}`);
     const human = this.humans.get(input.humanId);
-    if (!human) return Promise.reject(new Error(`Human not found: ${input.humanId}`));
+    if (!human) throw new Error(`Human not found: ${input.humanId}`);
     const account = input.channelAccountId ? this.channels.get(input.channelAccountId) ?? null : null;
+
+    const phoneHash = input.phoneHash?.trim() || this.humanPhoneHashes.get(human.id) || null;
+    const globallySuppressed = phoneHash ? await this.isPhoneHashSuppressed(phoneHash) : false;
 
     const sentToday = account ? account.sentToday : human.dailySendsToday;
     const dailyOutreachCap =
       input.dailyOutreachCap ?? account?.dailyOutreachCap ?? DEFAULT_DAILY_OUTREACH_CAP;
     const decision = evaluateOutreachPolicy({
-      human,
+      human: globallySuppressed ? { ...human, stopped: true } : human,
       lockdown: campaign.riskDial === "lockdown",
       leakCheckPass: input.leakCheckPass,
       sentToday,
@@ -1951,7 +2087,7 @@ export class MemoryMarketingStore implements MarketingStore {
       }
     }
 
-    return Promise.resolve({ ...msg });
+    return { ...msg };
   }
 
   listOutreachMessages(
@@ -1972,23 +2108,25 @@ export class MemoryMarketingStore implements MarketingStore {
     return Promise.resolve(paginateArray(list, filter));
   }
 
-  updateOutreachStatus(
+  async updateOutreachStatus(
     id: string,
     status: OutreachStatus,
     externalRef?: string | null,
     dailyOutreachCap?: number,
   ): Promise<OutreachMessage> {
     const existing = this.outreach.get(id);
-    if (!existing) return Promise.reject(new Error(`Outreach message not found: ${id}`));
+    if (!existing) throw new Error(`Outreach message not found: ${id}`);
 
     if (status === "sent" || status === "delivered") {
       const campaign = this.campaigns.get(existing.campaignId);
       const human = this.humans.get(existing.humanId);
       if (!campaign || !human) {
-        return Promise.reject(new Error("Missing campaign or human for outreach send"));
+        throw new Error("Missing campaign or human for outreach send");
       }
+      const phoneHash = this.humanPhoneHashes.get(human.id) ?? null;
+      const globallySuppressed = phoneHash ? await this.isPhoneHashSuppressed(phoneHash) : false;
       const decision = evaluateOutreachPolicy({
-        human,
+        human: globallySuppressed ? { ...human, stopped: true } : human,
         lockdown: campaign.riskDial === "lockdown",
         leakCheckPass: existing.leakCheckPass,
         dailyOutreachCap: dailyOutreachCap ?? DEFAULT_DAILY_OUTREACH_CAP,
@@ -1999,7 +2137,7 @@ export class MemoryMarketingStore implements MarketingStore {
           status: decision.blockedStatus ?? "blocked_policy",
         };
         this.outreach.set(id, blocked);
-        return Promise.resolve({ ...blocked });
+        return { ...blocked };
       }
       if (existing.status !== "sent" && existing.status !== "delivered") {
         this.humans.set(human.id, {
@@ -2016,7 +2154,7 @@ export class MemoryMarketingStore implements MarketingStore {
       externalRef: externalRef !== undefined ? externalRef : existing.externalRef,
     };
     this.outreach.set(id, updated);
-    return Promise.resolve({ ...updated });
+    return { ...updated };
   }
 
   recordAttributionEvent(input: CreateAttributionEventInput): Promise<AttributionEvent> {
@@ -2835,15 +2973,17 @@ export class PgMarketingStore implements MarketingStore {
   readonly clock: Clock;
   private readonly owned: boolean;
   private readonly idGen: () => string;
+  private readonly hashKey?: string;
 
   constructor(
     db: string | SQL,
-    opts: { clock?: Clock; idGen?: () => string } = {},
+    opts: { clock?: Clock; idGen?: () => string; hashKey?: string } = {},
   ) {
     this.owned = typeof db === "string";
     this.sql = typeof db === "string" ? new SQL({ url: db, max: 4 }) : db;
     this.clock = opts.clock ?? new RealClock();
     this.idGen = opts.idGen ?? defaultId;
+    this.hashKey = opts.hashKey;
   }
 
   async close(): Promise<void> {
@@ -3494,9 +3634,13 @@ export class PgMarketingStore implements MarketingStore {
       let targetStopped = Boolean(input.targetStopped);
       if (input.targetHumanId) {
         const hr = firstRow(
-          await tx`select stopped, banned from marketing.humans where id = ${input.targetHumanId}`,
+          await tx`select stopped, banned, phone_hash from marketing.humans where id = ${input.targetHumanId}`,
         );
         if (hr && (asBool(hr.stopped) || asBool(hr.banned))) targetStopped = true;
+        const phoneHash = asOptStr(hr?.phone_hash);
+        if (!targetStopped && phoneHash && (await isGloballySuppressedPhoneHash(tx, phoneHash))) {
+          targetStopped = true;
+        }
       }
 
       const nowMs = this.clock.now();
@@ -3726,9 +3870,13 @@ export class PgMarketingStore implements MarketingStore {
       let targetStopped = Boolean(input.targetStopped);
       if (input.targetHumanId) {
         const hr = firstRow(
-          await tx`select stopped, banned from marketing.humans where id = ${input.targetHumanId}`,
+          await tx`select stopped, banned, phone_hash from marketing.humans where id = ${input.targetHumanId}`,
         );
         if (hr && (asBool(hr.stopped) || asBool(hr.banned))) targetStopped = true;
+        const phoneHash = asOptStr(hr?.phone_hash);
+        if (!targetStopped && phoneHash && (await isGloballySuppressedPhoneHash(tx, phoneHash))) {
+          targetStopped = true;
+        }
       }
 
       const nowMs = this.clock.now();
@@ -3828,17 +3976,18 @@ export class PgMarketingStore implements MarketingStore {
     const unstop = input.unstop === true;
     const incomingStopped = unstop ? false : Boolean(input.stopped);
     const incomingBanned = Boolean(input.banned);
+    const phoneHash = resolveHumanPhoneHash(input, this.hashKey);
     const meta = JSON.stringify({ channel: input.channel });
 
     // C-04: Atomic SQL ON CONFLICT preserves youngest age reading and STOP/ban fence.
     const rows = await this.sql`
       insert into marketing.humans (
-        id, contact_key, display_name, role, source_channel, city,
+        id, contact_key, display_name, role, source_channel, city, phone_hash,
         age_years, age_verified, stopped, stop_reason, banned,
         daily_sends_today, last_contacted_at, metadata, created_at, updated_at
       ) values (
         ${id}, ${input.handleOrEmailHmac}, ${input.displayLabel},
-        ${input.role}, ${input.channel}, ${input.city ?? "nyc"},
+        ${input.role}, ${input.channel}, ${input.city ?? "nyc"}, ${phoneHash},
         ${incomingAge}, ${isAdultReading(incomingAge)},
         ${incomingStopped}, ${unstop ? null : (input.stopReason ?? null)}, ${incomingBanned},
         ${input.dailySendsToday ?? 0},
@@ -3849,6 +3998,7 @@ export class PgMarketingStore implements MarketingStore {
         display_name = excluded.display_name,
         role = excluded.role,
         city = excluded.city,
+        phone_hash = coalesce(excluded.phone_hash, marketing.humans.phone_hash),
         age_years = case
           when marketing.humans.age_years is null then excluded.age_years
           when excluded.age_years is null then marketing.humans.age_years
@@ -3887,6 +4037,16 @@ export class PgMarketingStore implements MarketingStore {
     const rows = await this.sql`select * from marketing.humans where contact_key = ${handleOrEmailHmac}`;
     const r = firstRow(rows);
     return r ? this.mapHuman(r) : null;
+  }
+
+  async getHumanPhoneHash(id: string): Promise<string | null> {
+    const rows = await this.sql`select phone_hash from marketing.humans where id = ${id}`;
+    const r = firstRow(rows);
+    return r ? asOptStr(r.phone_hash) : null;
+  }
+
+  async isPhoneHashSuppressed(phoneHash: string): Promise<boolean> {
+    return isGloballySuppressedPhoneHash(this.sql, phoneHash);
   }
 
   async listHumans(
@@ -4498,8 +4658,12 @@ export class PgMarketingStore implements MarketingStore {
       const sentToday = account ? account.sentToday : human.dailySendsToday;
       const dailyOutreachCap =
         input.dailyOutreachCap ?? account?.dailyOutreachCap ?? DEFAULT_DAILY_OUTREACH_CAP;
+      const phoneHash = input.phoneHash?.trim() || asOptStr(hr.phone_hash);
+      const globallySuppressed = phoneHash
+        ? await isGloballySuppressedPhoneHash(tx, phoneHash)
+        : false;
       const decision = evaluateOutreachPolicy({
-        human,
+        human: globallySuppressed ? { ...human, stopped: true } : human,
         lockdown: asStr(cr.risk_dial) === "lockdown",
         leakCheckPass: input.leakCheckPass,
         sentToday,
@@ -4594,8 +4758,12 @@ export class PgMarketingStore implements MarketingStore {
         );
         if (!cr || !hr) throw new Error("Missing campaign or human for outreach send");
         const human = this.mapHuman(hr);
+        const phoneHash = asOptStr(hr.phone_hash);
+        const globallySuppressed = phoneHash
+          ? await isGloballySuppressedPhoneHash(tx, phoneHash)
+          : false;
         const decision = evaluateOutreachPolicy({
-          human,
+          human: globallySuppressed ? { ...human, stopped: true } : human,
           lockdown: asStr(cr.risk_dial) === "lockdown",
           leakCheckPass: existing.leakCheckPass,
           dailyOutreachCap: dailyOutreachCap ?? DEFAULT_DAILY_OUTREACH_CAP,

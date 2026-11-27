@@ -15,7 +15,8 @@
 //    to someone is refused, the consent history and the age floor move with the person, and the old
 //    number's sessions end. The phone_changes row (keyed hashes only) is the audit record.
 import { randomUUID } from "node:crypto";
-import type { City } from "../../core/src/types.ts";
+import { resolveCity } from "../../core/src/cities.ts";
+import type { CityId } from "../../core/src/types.ts";
 import { DAY } from "../../core/src/clock.ts";
 import {
   hasScopedMembership, initial as accountPrivacyInitial, step as stepPrivacy, verifiedPrivacyOwnerMatches,
@@ -58,16 +59,15 @@ const numberChangeRefused = (failure: PhoneChangeFailure): { ok: false; error: N
 /** Base-profile fields a person may share from one app to another. Sensitive classes are not in this list and never will be. */
 export const SHAREABLE_FIELDS = ["first_name", "city", "age_band", "interests"] as const;
 
-/** Only an explicitly named city/region, never a ZIP or inferred neighborhood. */
-export function homeCityOf(value: unknown): Extract<City, "nyc" | "sf"> | undefined {
+/** Resolve a named registered city/region across all registered cities (never a ZIP). */
+export function homeCityOf(value: unknown): CityId | undefined {
   if (typeof value !== "string") return undefined;
   const city = value.normalize("NFKC").trim().toLowerCase().replace(/\s+/g, " ");
-  if (["nyc", "new york", "new york city"].includes(city)) return "nyc";
-  if (["sf", "san francisco", "bay area", "the bay area"].includes(city)) return "sf";
-  return undefined;
+  if (!city) return undefined;
+  return resolveCity(city);
 }
 
-export interface HomeInput { homeCity: Extract<City, "nyc" | "sf">; neighborhood?: string }
+export interface HomeInput { homeCity: CityId; neighborhood?: string }
 
 /** An own-home edit cannot carry another member's identity or unrelated profile fields. */
 export function parseHome(body: Record<string, unknown>): HomeInput | undefined {
@@ -84,7 +84,7 @@ export type JoinInput = JoinProfile & ({ age: number; birthDate?: undefined } | 
 
 interface JoinProfile {
   firstName: string;
-  homeCity?: Extract<City, "nyc" | "sf">;
+  homeCity?: CityId;
   neighborhood?: string;
   zip?: string;
   interests?: string[];

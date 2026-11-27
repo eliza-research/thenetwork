@@ -145,6 +145,7 @@ const TICK_MS = 60_000;
 const MAX_PUBLIC_BODY_BYTES = 9 * 1024 * 1024;
 
 export const isBlooioWebhookPath = (path: string) => path === "/webhooks/blooio" || path.startsWith("/webhooks/blooio/");
+export const isLumaWebhookPath = (path: string) => path === "/webhooks/luma";
 
 export async function serveService(svc: NetworkService, o: { host: string; port: number; apiPort: number; blooioWebhook: boolean; log?: (s: string) => void }) {
   const log = o.log ?? console.log;
@@ -153,7 +154,7 @@ export async function serveService(svc: NetworkService, o: { host: string; port:
     : svc.fetch(req);
   // Bodies are checked before they are read (audit network-service-17): webhooks 256 KB, the public API 9 MB for photos.
   const server = await serveHttp({ hostname: o.host, port: o.port, fetch, maxRequestBodySize: 256 * 1024 });
-  log(`listening on http://${o.host}:${server.port} (${o.blooioWebhook ? "POST /webhooks/blooio[/:app], " : ""}GET /health, GET /review, POST /review/:oppId, POST /safety/lift, POST /safety/close, POST /matching; ?app= or /apps/:app/...)`);
+  log(`listening on http://${o.host}:${server.port} (${o.blooioWebhook ? "POST /webhooks/blooio[/:app], " : ""}POST /webhooks/luma, GET /health, GET /review, POST /review/:oppId, GET/POST /venues, GET/POST /external-events, GET/POST /matchmakers, GET /ops/cities, POST /safety/lift, POST /safety/close, POST /matching; ?app= or /apps/:app/...)`);
   // The server is passed on: the client IP for the rate limits is the socket address unless a trusted proxy header is configured.
   const api = await serveHttp({ hostname: o.host, port: o.apiPort, fetch: (req, server) => svc.publicFetch(req, server), maxRequestBodySize: MAX_PUBLIC_BODY_BYTES });
   log(`public API on http://${o.host}:${api.port}/api/* (the app comes from the Host header)`);
