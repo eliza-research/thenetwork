@@ -33,6 +33,26 @@ export function lawBareTextRefusalNeedsPermanence(permanentEnding: boolean): boo
   return textRefusalStops(false, permanentEnding) === permanentEnding;
 }
 
+/** Story: Stop texts across apps and resume an app / A refusal bounded by a clock time does not stop the shared line (spec/carrierConsent.md) */
+//@ pure
+export function refusalStopsLine(hasRefusal: boolean, timeBounded: boolean): boolean {
+  return hasRefusal && !timeBounded;
+}
+
+/** Story: Stop texts across apps and resume an app / A refusal bounded by a clock time does not stop the shared line (spec/carrierConsent.md) */
+//@ pure
+export function lawTimeBoundedRefusalCannotStop(hasRefusal: boolean): boolean {
+  //@ ensures \result === true
+  return !refusalStopsLine(hasRefusal, true);
+}
+
+/** Story: Stop texts across apps and resume an app / A refusal bounded by a clock time does not stop the shared line (spec/carrierConsent.md) */
+//@ pure
+export function lawUnboundedRefusalStillStops(hasRefusal: boolean): boolean {
+  //@ ensures \result === true
+  return refusalStopsLine(hasRefusal, false) === hasRefusal;
+}
+
 /** Story: Stop texts across apps and resume an app / Direct repeated and permanent refusals stop the shared line (spec/carrierConsent.md) */
 //@ pure
 export function sharedLineStopStatementStops(direct: boolean, repeated: boolean, permanent: boolean): boolean {

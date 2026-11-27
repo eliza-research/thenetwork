@@ -1,4 +1,4 @@
-import { coordinatedStopClause, matchesSpokenAppDomain, sharedLineStopStatementStops, stopWordAllowsCourtesy, textRefusalStops, type StopConjunct } from "./generated/carrierConsent.ts";
+import { coordinatedStopClause, matchesSpokenAppDomain, refusalStopsLine, sharedLineStopStatementStops, stopWordAllowsCourtesy, textRefusalStops, type StopConjunct } from "./generated/carrierConsent.ts";
 import { participationWithdrawalReading } from "./generated/probeReply.ts";
 
 // Member reply understanding (audit 2026-10-08 network-consent-2, plugin-prototypes-12).
@@ -499,6 +499,20 @@ function readsTextRefusal(clause: string): boolean {
   return match !== null && textRefusalStops(match[1] !== undefined, match[2] !== undefined);
 }
 
+const TIME_BOUNDED_REFUSAL = /\b(?:don't|do not|dont|never|stop|quit|cease|no more|no)\s+(?:text|message|contact|msg|sms|send|texting|messaging|contacting|sending|write to|email|texts|messages|msgs)(?:\s+(?:me|us))?(?:\s+(?:texts?|messages?|msgs?))?\s+(?:after|before)\s+\d{1,2}(?:\s*\d{2})?\s*(?:am|pm)\b/g;
+
+function clauseRefusalStops(clause: string, refuses: (value: string) => boolean): boolean {
+  const hasRefusal = refuses(clause);
+  TIME_BOUNDED_REFUSAL.lastIndex = 0;
+  const timeBounded = hasRefusal && !refuses(clause.replace(TIME_BOUNDED_REFUSAL, " "));
+  return refusalStopsLine(hasRefusal, timeBounded);
+}
+
+function onlyTimeBoundedRefusal(clause: string, refuses: (value: string) => boolean): boolean {
+  TIME_BOUNDED_REFUSAL.lastIndex = 0;
+  return TIME_BOUNDED_REFUSAL.test(clause) && !refuses(clause.replace(TIME_BOUNDED_REFUSAL, " "));
+}
+
 // A negated STOP applies to its own clause. It must not suppress another explicit STOP.
 const NEGATED_OPT_OUT = /\b(?:(?:don't|dont|do not|never|won't|wont|can't|cant|cannot|not)\s+(?:want (?:you )?to\s+)?)\b(?:stop|quit|cease|unsubscribe|remove|delete|lose|opt)\b|\bstop (?:by|at|in|over|for|on by)\b/;
 const REPORTED_OR_INSTRUCTIONAL_STOP = /\b(?:said|says|told|asked) (?:me )?(?:to )?["']?(?:stop|quit|cease|unsubscribe|remove|delete|lose|opt out)\b|\bhow (?:do|can) i (?:stop|quit|cease|unsubscribe|remove|delete|lose|opt out)\b/;
@@ -634,9 +648,11 @@ export function parseOptOut(text: string, o: { apps?: readonly string[] } = {}):
   })) return { match: "likely", scope: "app", lang };
   const clauses = optOutClauses(raw, norm, clause => readsTextRefusal(clause)
     || LIKELY_EN.exec(clause)?.index === 0 || LIKELY_ES.exec(clause)?.index === 0);
-  if (clauses.some(clause => readsTextRefusal(clause) || LIKELY_EN.test(clause) || LIKELY_ES.test(clause))) return { match: "likely", scope: "all", lang };
-  if (clauses.length === 1 && clauses[0] === t && courtesyLang && !/\?\s*$/.test(raw.trim())) return { match: "likely", scope: "all", lang };
-  if (clauses.length === 1 && clauses[0] === t && (/^(?:stop|unsubscribe|para|basta)\b/.test(t) || /\b(?:stop|unsubscribe)$/.test(t)) && !/\?\s*$/.test(raw.trim())) return { match: "likely", scope: "all", lang };
+  if (clauses.some(clause => clauseRefusalStops(clause, value => readsTextRefusal(value) || LIKELY_EN.test(value) || LIKELY_ES.test(value)))) return { match: "likely", scope: "all", lang };
+  const boundedOnly = clauses.length === 1
+    && onlyTimeBoundedRefusal(clauses[0]!, value => readsTextRefusal(value) || LIKELY_EN.test(value) || LIKELY_ES.test(value));
+  if (!boundedOnly && clauses.length === 1 && clauses[0] === t && courtesyLang && !/\?\s*$/.test(raw.trim())) return { match: "likely", scope: "all", lang };
+  if (!boundedOnly && clauses.length === 1 && clauses[0] === t && (/^(?:stop|unsubscribe|para|basta)\b/.test(t) || /\b(?:stop|unsubscribe)$/.test(t)) && !/\?\s*$/.test(raw.trim())) return { match: "likely", scope: "all", lang };
   return { match: "none", scope: "all", lang };
 }
 
@@ -767,6 +783,6 @@ export function optOutPhrase(text: string, isLeave: (text: string) => boolean = 
   const startsStop = (clause: string) => !isLeave(clause)
     && (readsTextRefusal(clause) || OPT_OUT_EN.some(r => r.exec(clause)?.index === 0) || OPT_OUT_ES.some(r => r.exec(clause)?.index === 0));
   return optOutClauses(text, norm, startsStop, isLeave).some(clause =>
-    readsTextRefusal(clause) || OPT_OUT_EN.some(r => r.test(clause)) || OPT_OUT_ES.some(r => r.test(clause)),
+    clauseRefusalStops(clause, value => readsTextRefusal(value) || OPT_OUT_EN.some(r => r.test(value)) || OPT_OUT_ES.some(r => r.test(value))),
   );
 }

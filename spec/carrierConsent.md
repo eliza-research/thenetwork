@@ -31,6 +31,21 @@ pure def lawBareTextRefusalNeedsPermanence(permanentEnding: bool): bool =
   textRefusalStops(false, permanentEnding) == permanentEnding
 ```
 
+### A refusal bounded by a clock time does not stop the shared line
+
+A direct refusal that names a clock bound, such as "don't text me after 10 pm" or "don't text me before 7 am", limits when texts may arrive. It sets quiet hours and does not stop the shared line. A refusal with no clock bound still stops the line. A separate unbounded refusal in the same message still stops it. The text reader identifies the clock bound.
+
+```quint
+pure def refusalStopsLine(hasRefusal: bool, timeBounded: bool): bool =
+  hasRefusal and not(timeBounded)
+
+pure def lawTimeBoundedRefusalCannotStop(hasRefusal: bool): bool =
+  not(refusalStopsLine(hasRefusal, true))
+
+pure def lawUnboundedRefusalStillStops(hasRefusal: bool): bool =
+  refusalStopsLine(hasRefusal, false) == hasRefusal
+```
+
 ### Direct repeated and permanent refusals stop the shared line
 
 Recognize a direct first-person repeat such as “I told you to stop” and an explicitly permanent refusal such as “I never want to hear from you again”. The reader checks the whole message and keeps its quote and question markers. A full quotation, a question, a third-person report, a temporary limit, or a named topic or app supplies no global STOP through this rule.

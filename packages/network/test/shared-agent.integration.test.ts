@@ -325,6 +325,29 @@ test("signed travel stores one coarse trip in the routed app and never guesses m
   expect(await lockedReplay.json()).toEqual({ error: "turn_travel_account_changed", retryable: false });
 }, 60_000);
 
+// spec/product/stories.md F20, "Text controls change permission before later sends"
+test("a quiet hours text updates the saved quiet hours", async () => {
+  const phone = "+12125550190", app = APPS.friends;
+  await joinFriendsByText(phone, "quiet-hours");
+  const quiet = async () => {
+    const [row] = await sql`select m.prefs from network.members m
+      join platform.phone_identities ph on ph.person_id=m.person_id
+      where ph.e164=${phone} and m.app_id=${app.id}`;
+    return row.prefs.quietHours;
+  };
+  expect(await quiet()).toEqual([21, 9]);
+  const say = (id: string, text: string) => { clock.advance(MINUTE); return post(turn(id, phone, text, "friends")); };
+  const later = await say("quiet-after-10", "Please don't text me after 10 pm");
+  expect(((await later.json()).replies as string[]).join(" ")).toContain("22:00");
+  expect(await quiet()).toEqual([22, 9]);
+  const earlier = await say("quiet-before-7", "don't text me before 7 am");
+  expect(((await earlier.json()).replies as string[]).join(" ")).toContain("07:00");
+  expect(await quiet()).toEqual([22, 7]);
+  const quoted = await say("quiet-quoted", "my sister said \"don't text me after 8 pm\"");
+  expect((((await quoted.json()).replies ?? []) as string[]).join(" ")).not.toContain("Quiet hours are");
+  expect(await quiet()).toEqual([22, 7]);
+}, 60_000);
+
 test("a saved travel window keeps its exact signed reply after the runtime stops", async () => {
   const phone = "+12125550173", app = APPS.friends;
   const joined = await service.accounts.join(app, { e164: phone, personId: null }, {
