@@ -289,7 +289,7 @@ export function gates(a: ArmResult, random: ArmResult): Gate[] {
     { name: `Min group dates/member-month vs overall (${fair.minGroup})`, value: fair.min, target: ">= 0.7x", pass: fair.min >= 0.7 },
     { name: `Same, feasible members only (${fairF.minGroup})`, value: fairF.min, target: ">= 0.7x", pass: fairF.min >= 0.7 },
     { name: "Back-outs at reveal", value: M(m => m.backoutRate), target: "< 10%", pass: M(m => m.backoutRate) < 0.1 },
-    { name: "Dates per member-month vs random", value: M(m => m.datesPerMemberMonth) / M(m => m.datesPerMemberMonth, random), target: ">= 0.9x", pass: M(m => m.datesPerMemberMonth) / M(m => m.datesPerMemberMonth, random) >= 0.9 },
+    { name: "Dates per member-month vs random", value: M(m => m.datesPerMemberMonth) / M(m => m.datesPerMemberMonth, random), target: ">= 0.9x", pass: M(m => m.datesPerMemberMonth, random) > 0 && M(m => m.datesPerMemberMonth) / M(m => m.datesPerMemberMonth, random) >= 0.9 },
     { name: "Stated-filter violations", value: M(m => m.filterViolations), target: "= 0", pass: a.metrics.every(m => m.filterViolations === 0) },
   ];
 }
@@ -325,7 +325,7 @@ export function gates3(a: ArmResult, random: ArmResult): Gate[] {
     { name: `Same, feasible members (${fairF.minGroup})`, value: fairF.min, target: ">= 0.7x", pass: fairF.min >= 0.7 },
     ...((g => [{ name: `Lowest stated identity group proposals per member vs overall (${g.minGroup})`, value: g.min, target: ">= 0.7x", pass: g.min >= 0.7 }])(identityRatios(a))),
     { name: "Back-outs at reveal", value: M(m => m.backoutRate), target: "< 10%", pass: M(m => m.backoutRate) < 0.1 },
-    { name: "Dates per member-month vs random", value: M(m => m.datesPerMemberMonth) / M(m => m.datesPerMemberMonth, random), target: ">= 0.9x", pass: M(m => m.datesPerMemberMonth) / M(m => m.datesPerMemberMonth, random) >= 0.9 },
+    { name: "Dates per member-month vs random", value: M(m => m.datesPerMemberMonth) / M(m => m.datesPerMemberMonth, random), target: ">= 0.9x", pass: M(m => m.datesPerMemberMonth, random) > 0 && M(m => m.datesPerMemberMonth) / M(m => m.datesPerMemberMonth, random) >= 0.9 },
     // Iteration 5: no rating quintile under 0.85x the overall date rate (pooled over seeds).
     ...((q => (q ? [{ name: `Lowest rating quintile dates vs overall (${q.min.dates.group})`, value: q.min.dates.ratio, target: ">= 0.85x", pass: q.min.dates.ratio >= 0.85 }] : []))(armBias(a).quintile)),
   ];
