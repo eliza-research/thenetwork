@@ -287,6 +287,8 @@ export interface JudgeStats { invariants: number; canaryLeaks: number; minorCont
 export interface ScoreLine {
   source: string; label: string; points: number; proposals: number; accepted: number; declined: number;
   meetings: number; showRate: number; meanEnjoyment: number; precision: number; unsafe: number; perProposal: number;
+  /** Participant slots with a final attendance outcome. Omitted by older snapshots. */
+  attendanceSamples?: number;
 }
 export interface Mission { id: string; title: string; description: string; done: boolean; progress: string; doneAt?: number }
 export interface PlayerPrompt {

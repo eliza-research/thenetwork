@@ -522,12 +522,14 @@ function Game() {
           { key: "player", label: "Player", hideLabel: true },
           { key: "points", label: "points", numeric: true, title: "+10 per yes · −2 per no · +100 × enjoyment per meeting · −15 per no-show · −150 per unsafe intro (minor, adversarial, exes, romance mismatch) · −25 per oracle peek" },
           { key: "perProposal", label: "per proposal", numeric: true }, { key: "proposals", label: "proposals", numeric: true }, { key: "accepted", label: "said yes", numeric: true },
-          { key: "meetings", label: "meetings", numeric: true }, { key: "enjoyment", label: "enjoyment", numeric: true }, { key: "precision", label: "precision", numeric: true }, { key: "unsafe", label: "unsafe", numeric: true },
+          { key: "meetings", label: "meetings", numeric: true },
+          { key: "showRate", label: "show rate", numeric: true, title: "Attended share of participant slots with an attendance outcome, including no-shows and cancellations with notice" }, { key: "enjoyment", label: "enjoyment", numeric: true }, { key: "precision", label: "precision", numeric: true }, { key: "unsafe", label: "unsafe", numeric: true },
         ]}>
           {g.scores.map(r => (
             <TableRow key={r.source} className={cn(r.source === "player" && "bg-accent text-accent-foreground")}>
               <DataCell><span className="flex items-center gap-2"><b className="font-semibold">{r.label}</b>{r.source === "player" && g.lensUsed ? <StatusMark tone="warn" label="assisted" showLabel /> : null}</span></DataCell>
               <DataCell numeric>{num(r.points)}</DataCell><DataCell numeric>{r.perProposal.toFixed(1)}</DataCell><DataCell numeric>{r.proposals}</DataCell><DataCell numeric>{r.accepted}</DataCell><DataCell numeric>{r.meetings}</DataCell>
+              <DataCell numeric>{(r.attendanceSamples ?? r.showRate) > 0 ? pct(r.showRate) : "–"}</DataCell>
               <DataCell numeric>{r.meetings ? pct(r.meanEnjoyment) : "–"}</DataCell><DataCell numeric>{r.proposals ? pct(r.precision) : "–"}</DataCell><DataCell numeric className={cn(r.unsafe && "text-destructive")}>{r.unsafe}</DataCell>
             </TableRow>
           ))}

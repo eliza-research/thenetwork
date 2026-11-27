@@ -55,7 +55,7 @@ export function scoreboard(opps: Iterable<ObsOpportunity>, extra: Record<string,
     const r = (x: number) => Math.round(x * 1000) / 1000;
     return {
       source, label: LABELS[source] ?? source, points, proposals: list.length, accepted, declined, meetings,
-      showRate: r(slots ? attended / slots : 0), meanEnjoyment: r(enjN ? enj / enjN : 0), precision: r(judged ? compatible / judged : 0),
+      showRate: r(slots ? attended / slots : 0), attendanceSamples: slots, meanEnjoyment: r(enjN ? enj / enjN : 0), precision: r(judged ? compatible / judged : 0),
       unsafe, perProposal: r(list.length ? points / list.length : 0),
     };
   }).sort((a, b) => (a.source === "player" ? -1 : b.source === "player" ? 1 : b.points - a.points));
