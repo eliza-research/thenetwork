@@ -234,9 +234,9 @@ export class VenueManager {
     if (this.provider?.checkOpen) {
       const maxChecks = 3;
       for (let attempt = 0; attempt < maxChecks && pick.primary; attempt++) {
-        const ageMinutes = Math.floor((nowMs - pick.primary.venue.lastVerifiedAt) / MINUTE);
+        const ageHours = Math.floor((nowMs - pick.primary.venue.lastVerifiedAt) / (60 * MINUTE));
         const isWeekend = request.isWeekendOrHoliday ?? false;
-        if (!pick.primary.needsOpenCheck && !needsPreRecommendOpenCheck(ageMinutes, isWeekend)) break;
+        if (!pick.primary.needsOpenCheck && !needsPreRecommendOpenCheck(ageHours, isWeekend)) break;
         this.openCheckCount++;
         const rawStatus = await this.provider.checkOpen(pick.primary.venue, nowMs);
         const providerCode = normalizeProviderCode(rawStatus) ?? "ProviderOpen";
