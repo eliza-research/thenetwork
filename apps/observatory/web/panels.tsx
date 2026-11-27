@@ -738,7 +738,7 @@ function BookedPlanView({ o, b }: { o: Opp; b: BookedPlan }) {
   const now = s.now();
   return (
     <>
-      <div className="text-sm">Booked for {stamp(b.at)}{o.venue ? <> at <VenueLink venue={o.venue} /></> : null}. Each member can say they can't within {b.optOutHours} h; silence is a yes.</div>
+      <div className="text-sm">Booked for {stamp(b.at, o.city)}{o.venue ? <> at <VenueLink venue={o.venue} /></> : null}. Each member can say they can't within {b.optOutHours} h; silence is a yes.</div>
       {o.participants.map(x => {
         const told = b.told[x], off = b.cancelled[x];
         const closes = told === undefined ? undefined : Math.min(told + b.optOutHours * 3_600_000, b.at);
