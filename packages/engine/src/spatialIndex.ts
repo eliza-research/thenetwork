@@ -276,7 +276,9 @@ function resolveMemberCoords(m: Member, presence: readonly Presence[], allFacets
         coords.push({ lat: zDirect.lat, lon: zDirect.lon });
         continue;
       }
-      const nh = findNeighborhood(p.city, area) ?? (p.city === "nyc" ? hood(area) : undefined);
+      const nh = p.city === "nyc"
+        ? (hood(area) ?? findNeighborhood("nyc", area))
+        : findNeighborhood(p.city, area);
       if (nh) {
         coords.push({ lat: nh.lat, lon: nh.lng });
         continue;

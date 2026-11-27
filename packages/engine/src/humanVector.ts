@@ -689,7 +689,9 @@ function compileAdultVector(
   const rawHomeArea = homePresence?.areas[0];
   const citySpec = getCity(homeCity);
   const homeNeighborhood = rawHomeArea
-    ? (findNeighborhood(homeCity, rawHomeArea) ?? (homeCity === "nyc" ? hood(rawHomeArea) : undefined))
+    ? (homeCity === "nyc"
+      ? (hood(rawHomeArea) ?? findNeighborhood("nyc", rawHomeArea))
+      : findNeighborhood(homeCity, rawHomeArea))
     : undefined;
   const homeCoord = homeNeighborhood
     ? { lat: homeNeighborhood.lat, lon: homeNeighborhood.lng }

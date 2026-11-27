@@ -175,7 +175,7 @@ export function startTicks(svc: NetworkService, log: (s: string) => void = conso
     if (!busy.has("inbox")) inbox = worker("inbox", () => svc.inboxTick());
     await inbox;
     await judging;
-    await svc.refreshEngineBudgets();
+    await svc.refreshEngineBudgets?.();
     await Promise.all([...svc.runtimes.values()].map(rt => worker(rt.id, async () => {
       if (!(await rt.tick())) log(`${rt.id}: tick skipped: another instance holds the lock`);
     })));

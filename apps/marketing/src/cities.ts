@@ -1,4 +1,4 @@
-import { getCity, LAUNCH_CITIES, type LaunchCity } from "@thenetwork/core";
+import { getCity, LAUNCH_CITIES } from "@thenetwork/core";
 import type { BrandAppId } from "./types.ts";
 
 const LAUNCH_CITY_SET = new Set<string>(LAUNCH_CITIES);
@@ -7,7 +7,7 @@ function coreLaunchMeta(
   code: string,
   fallback: { readonly label: string; readonly timezone: string },
 ): { readonly label: string; readonly timezone: string; readonly isPrimaryLaunch: boolean } {
-  const spec = LAUNCH_CITY_SET.has(code) ? getCity(code as LaunchCity) : undefined;
+  const spec = LAUNCH_CITY_SET.has(code) ? getCity(code) : undefined;
   if (spec) {
     return {
       label: spec.name,

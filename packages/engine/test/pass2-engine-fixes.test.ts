@@ -74,6 +74,8 @@ describe("Pass 2 engine fixes", () => {
       { id: "mia-midtown", city: "miami", area: "Midtown", expected: findNeighborhood("miami", "Midtown")! },
       { id: "nyc-astoria", city: "nyc", area: "Astoria", expected: hood("Astoria")! },
       { id: "nyc-harlem", city: "nyc", area: "Harlem", expected: hood("Harlem")! },
+      { id: "nyc-bushwick", city: "nyc", area: "Bushwick", expected: hood("Bushwick")! },
+      { id: "nyc-flatiron", city: "nyc", area: "Flatiron", expected: findNeighborhood("nyc", "Flatiron")! },
     ];
 
     const dim = localEmbed("dim").length;
@@ -102,6 +104,8 @@ describe("Pass 2 engine fixes", () => {
       { id: "m-la-center", city: "la", maxTravel: 15 },
       { id: "m-miami", city: "miami", area: "Brickell", maxTravel: 20 },
       { id: "m-nyc", city: "nyc", area: "Astoria", maxTravel: 60 },
+      { id: "m-nyc-bushwick", city: "nyc", area: "Bushwick", maxTravel: 45 },
+      { id: "m-nyc-flatiron", city: "nyc", area: "Flatiron", maxTravel: 30 },
       { id: "m-chi", city: "chicago", area: "Wicker Park", maxTravel: 55 },
     ];
 
@@ -144,6 +148,18 @@ describe("Pass 2 engine fixes", () => {
     const astoria = hood("Astoria")!;
     expect(nycVec.horizontal.geoAndTime.homeH3).toBe(latLonToHex(astoria.lat, astoria.lng, 6).key);
     expect(nycVec.horizontal.geoAndTime.transitMode).toBe("transit");
+
+    const nycBushwickVec = humanVectorOf(w, "m-nyc-bushwick")!;
+    const bushwick = hood("Bushwick")!;
+    const coarseWilliamsburg = findNeighborhood("nyc", "Bushwick")!;
+    expect(nycBushwickVec.horizontal.geoAndTime.homeH3).toBe(latLonToHex(bushwick.lat, bushwick.lng, 6).key);
+    expect(nycBushwickVec.horizontal.geoAndTime.homeH3).not.toBe(
+      latLonToHex(coarseWilliamsburg.lat, coarseWilliamsburg.lng, 6).key,
+    );
+
+    const nycFlatironVec = humanVectorOf(w, "m-nyc-flatiron")!;
+    const flatiron = findNeighborhood("nyc", "Flatiron")!;
+    expect(nycFlatironVec.horizontal.geoAndTime.homeH3).toBe(latLonToHex(flatiron.lat, flatiron.lng, 6).key);
 
     const chiVec = humanVectorOf(w, "m-chi")!;
     const wicker = findNeighborhood("chicago", "Wicker Park")!;

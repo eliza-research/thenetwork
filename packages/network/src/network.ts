@@ -1425,15 +1425,17 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** What the LLM reader made of the message being handled (undefined without a reader, or when it failed). */
   private understood?: Understood;
 
+  private static readonly BARE_CONSENT_RE = /^(?:yes|yeah|yep|yup|ya|no|nope|nah|ok|okay|sure)[.!?]*$/i;
+
   /** The LLM reader on one message, with what the Network asked last. Never throws; undefined fails closed to the offline rules. */
   private async understandSafely(msg: InboundMessage): Promise<Understood | undefined> {
     const fn = this.opts.understand;
     if (!fn || msg.keyword || msg.reaction || !msg.body?.trim()) return undefined;
     const m = this.members.get(msg.memberId);
     if (!m || m.stage === "new" || m.optedOut || m.account || !this.trust.ok(m.id) || this.reportHeld(m.id)) return undefined;
-    if (consentOf(msg.body).why !== "none") return undefined;
     const aw = m.awaiting;
     const options = aw?.kind === "probe" && aw.oppId ? this.opps.get(aw.oppId)?.offered?.[m.id] : undefined;
+    if (ConsentNetwork.BARE_CONSENT_RE.test(msg.body.trim())) return undefined;
     try { return await fn(msg.body, { city: this.networkCity(), ...(aw ? { awaiting: aw.kind } : {}), ...(options?.length ? { options } : {}) }); } catch { return undefined; }
   }
 
