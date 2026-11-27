@@ -749,10 +749,10 @@ export function bookedTextDeclines(body: string, ordinaryDecline: boolean): bool
 }
 
 const VENUE_CHANGE = /\b(?:meet|go|move|switch|change|pick|choose|find)\b[^.!?]*\b(?:somewhere (?:else|closer)|someplace (?:else|closer)|another (?:place|spot|venue|location)|different (?:place|spot|venue|location)|other (?:place|spot|venue|location))\b|\b(?:another|different|other) (?:place|spot|venue|location)\b[^.!?]*\binstead\b/i;
+const VENUE_REFUSAL = /\b(?:cancel (?:it|this|the meeting|our meeting)|call (?:it|this) off|i'?m out|i am out|count me out|won'?t be there|will not be there|not coming|can'?t (?:make it|come|attend)|cannot (?:make it|come|attend)|without me|someone else|somebody else|rather not meet|don'?t want to meet|do not want to meet)\b/i;
 
-/** A request to meet at another place keeps the booking: it declines the place, not attendance. */
 export function venueChangeKeepsBooking(body: string): boolean {
-  return VENUE_CHANGE.test(body) && !declinesAttendanceAlongsideSwap(body);
+  return VENUE_CHANGE.test(body) && !declinesAttendanceAlongsideSwap(body) && !VENUE_REFUSAL.test(body);
 }
 
 const PHASE_BY_STAGE = { review: "InReview", probing: "Probing", scheduled: "Scheduled", done: "Done", closed: "Closed" } as const;

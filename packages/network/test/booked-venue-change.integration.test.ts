@@ -48,3 +48,19 @@ test("a place objection with no alternative still cancels the booking", async ()
   expect(booking().stage).toBe("closed");
   expect(w.log("booked_cancelled")).toHaveLength(1);
 });
+
+test("a refusal that names another place still cancels the booking", async () => {
+  const refusals = [
+    "No thanks, I'd rather meet someone else somewhere else",
+    "Cancel it, we can meet somewhere else some other time",
+    "I won't be there, go somewhere else without me",
+    "No. Find a different place with someone else.",
+    "I'm out. Choose another venue with someone else",
+  ];
+  for (const text of refusals) {
+    const { w, booking } = await booked();
+    await w.say("a", text);
+    expect(booking().stage).toBe("closed");
+    expect(w.log("booked_cancelled")).toHaveLength(1);
+  }
+});
