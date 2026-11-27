@@ -91,7 +91,7 @@ test("decline and expiry keep the original booking and invalidate queued offers"
   expect(w.log("meeting_rescheduled")).toEqual([]);
 });
 
-test("a member outside New York reschedules with the New York starts the format copy names", async () => {
+test("a member outside New York reschedules with the starts their booking message shows", async () => {
   const w = new Mini([], { city: "sf", engine: { cities: ["sf"] }, plans: false });
   for (const [id, name, area] of [["s1", "Ana Diaz", "Mission"], ["s2", "Ben Ito", "Hayes Valley"]] as const) {
     w.members.push({
@@ -115,8 +115,11 @@ test("a member outside New York reschedules with the New York starts the format 
   const booking = () => w.net.exportState().opps.find(item => item.id === id)!;
 
   await w.say("s1", request);
+  expect(booking().reschedule).toBeUndefined();
+  const cityRequest = `RESCHEDULE ${localBookingStart(originalAt, "America/Los_Angeles")} TO ${localBookingStart(proposedAt, "America/Los_Angeles")}`;
+  await w.say("s1", cityRequest);
   expect(booking().reschedule, JSON.stringify({ replies: w.to("s1").map(s => s.body), refusals: w.log("send_refused") })).toMatchObject({ originalAt, proposedAt });
   const offer = w.to("s2").find(message => message.body.includes("Reply RESCHEDULE YES"))?.body;
-  expect(offer).toContain(describeBookingStart(proposedAt));
-  expect(offer).toContain("New York time");
+  expect(offer).toContain(describeBookingStart(proposedAt, "America/Los_Angeles"));
+  expect(offer).not.toContain("New York");
 });

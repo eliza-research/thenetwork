@@ -97,13 +97,13 @@ export function copyFor(b: CopyBrand) {
   whichBookingToCancel: "I found more than one upcoming meeting. Which one should I cancel? Use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its New York date and 24-hour time.",
   noBookingToCancel: "I couldn't find a matching upcoming meeting.",
   whichBookingToReschedule: "More than one booking has that start. Which meeting did you mean?",
-  rescheduleFormat: "Use RESCHEDULE YYYY-MM-DD HH:MM TO YYYY-MM-DD HH:MM with the old and proposed New York starts in 24-hour time.",
+  rescheduleFormat: "Use RESCHEDULE YYYY-MM-DD HH:MM TO YYYY-MM-DD HH:MM with the old and proposed starts in 24-hour time, as shown in your meeting message.",
   rescheduleUnavailable: "I couldn't apply that time change.",
   reschedulePending: "The time change needs everyone's acceptance.",
   rescheduleDeclined: "Thanks. I closed that time change request.",
   rescheduleOffer: (original: string, proposed: string, ref: string) =>
-    `Could your meeting move from ${original} to ${proposed}, New York time? The original booking stays until everyone agrees. Reply RESCHEDULE YES ${ref} or RESCHEDULE NO ${ref}.`,
-  rescheduleUpdated: (proposed: string) => `Everyone agreed. Your meeting is now ${proposed}, New York time, at the same place.`,
+    `Could your meeting move from ${original} to ${proposed}? The original booking stays until everyone agrees. Reply RESCHEDULE YES ${ref} or RESCHEDULE NO ${ref}.`,
+  rescheduleUpdated: (proposed: string) => `Everyone agreed. Your meeting is now ${proposed}, at the same place.`,
   /** A probe reply that was neither a clear yes nor a clear no (a condition, a maybe): asked once more. */
   probeClarify: "Just to check: is that a yes or a no? Either is fine.",
   probeTimeClarify: "Which of the offered times work for you? Reply with the letters or the times.",

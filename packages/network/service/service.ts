@@ -105,6 +105,7 @@ import { CostLedger, costRatesFromEnv, dayOf, PgCostSink } from "./cost.ts";
 import { BlooioAdapter, collectedReplyGuard, originalBookingNoticeStale, type ChannelAdapter, type DirectKind, type Outbound } from "./channel.ts";
 import { peerOpportunityContactRestricted } from "./peer-opportunity-admission.ts";
 import { parseRescheduleCommand, RESCHEDULE_QUEUE_PREFIX } from "../src/rescheduling.ts";
+import { tzForCity } from "../src/outreach.ts";
 import { interruptionFeedbackAnswer } from "../src/interruption-feedback.ts";
 import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, stagingSiteOrigins, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { Accounts, homeCityOf, joinProfileText, JoinReviewRequired, type AccountHooks, type EnrollmentReferral, type HomeInput, type JoinHookContext, type MemberHookContext, type TeenAgeFacts, type Who } from "../../platform/src/accounts.ts";
@@ -2679,7 +2680,7 @@ export class NetworkService implements RuntimeHost {
       }
       return keyword || systemReply ? "handled" as const : disposition;
     }, !fromAssistant && !kw && !calendarPreferenceCommand(ev.text) && this.inboundTurn()?.memberId === memberId
-      ? { kind: "member", memberId, reschedule: parseRescheduleCommand(ev.text) } : undefined);
+      ? { kind: "member", memberId, reschedule: parseRescheduleCommand(ev.text, tzForCity(rt.city)) } : undefined);
   }
 
   private async cofounderIntentOwner(tx: SQL, rt: NetworkRuntime, memberId: MemberId, e164: string): Promise<boolean> {
