@@ -5,6 +5,8 @@
 export interface PresenceWindow { from: number; to: number }
 /** Story: Tell the Network my travel dates / A signed travel statement saves only the member's own dates in that app (spec/travelPresence.md) */
 export type TravelEntry = "TravelUnavailable" | "TravelNeedsDates" | "TravelDateConflict" | "TravelAlreadySaved" | "TravelSave";
+/** Story: Tell the Network my travel dates / A signed start correction moves one saved trip start (spec/travelPresence.md) */
+export type TravelStartCorrection = "TravelStartUnavailable" | "TravelStartNone" | "TravelStartMove";
 
 
 /** Story: Use my travel dates for matching / A temporary presence needs both dates in order (spec/travelPresence.md) */
@@ -101,4 +103,24 @@ export function lawUnavailableTravelNeverSaves(hasDates: boolean, window: Presen
 export function lawRepeatedTravelDoesNotSave(window: PresenceWindow, now: number, conflict: boolean): boolean {
   //@ ensures \result === true
   return decideTravelEntry(true, true, window, now, conflict, true) !== "TravelSave";
+}
+
+/** Story: Tell the Network my travel dates / A signed start correction moves one saved trip start (spec/travelPresence.md) */
+//@ pure
+export function decideTravelStartCorrection(authorized: boolean, matchingTrips: number, startPrecedesEnd: boolean): TravelStartCorrection {
+  return !authorized ? "TravelStartUnavailable" : (matchingTrips > 0 && startPrecedesEnd ? "TravelStartMove" : "TravelStartNone");
+}
+
+/** Story: Tell the Network my travel dates / A signed start correction moves one saved trip start (spec/travelPresence.md) */
+//@ pure
+export function lawStartCorrectionMovesOneOnlyWhenSaved(authorized: boolean, matchingTrips: number, startPrecedesEnd: boolean): boolean {
+  //@ ensures \result === true
+  return !(decideTravelStartCorrection(authorized, matchingTrips, startPrecedesEnd) === "TravelStartMove") || (authorized && matchingTrips > 0 && startPrecedesEnd);
+}
+
+/** Story: Tell the Network my travel dates / A signed start correction moves one saved trip start (spec/travelPresence.md) */
+//@ pure
+export function lawUnauthorizedStartCorrectionChangesNothing(matchingTrips: number, startPrecedesEnd: boolean): boolean {
+  //@ ensures \result === true
+  return decideTravelStartCorrection(false, matchingTrips, startPrecedesEnd) === "TravelStartUnavailable";
 }

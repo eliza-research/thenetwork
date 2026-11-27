@@ -96,3 +96,25 @@ pure val firstValues = windowValues
 pure val secondValues = windowValues
 pure val presenceValues = windowValues
 ```
+
+### A signed start correction moves one saved trip start
+
+The signed conversation identifies the app and checks that the phone still belongs to the active member there, as for a save. Without that binding, the command produces no write or reply. A correction naming a saved trip's city, its new start weekday, and the start weekday it replaces moves only the earliest current or future saved trip to that city whose start falls on the replaced weekday, keeping that trip's end date. The new start is the named weekday in the same week as the saved start, read in the trip city's time zone. A start that would not precede the trip's end changes nothing. A later trip, a trip to another city, another member's trip, and a trip that has ended all stay. The reply names the corrected trip with its dates, with the end date excluded. When no such trip is saved, the reply says so and nothing changes. This command changes no consent, account status, home location, or matching markets.
+
+```quint
+type TravelStartCorrection = TravelStartUnavailable | TravelStartNone | TravelStartMove
+
+pure def decideTravelStartCorrection(authorized: bool, matchingTrips: int, startPrecedesEnd: bool): TravelStartCorrection =
+  if (not(authorized)) TravelStartUnavailable
+  else if (matchingTrips > 0 and startPrecedesEnd) TravelStartMove
+  else TravelStartNone
+
+pure def lawStartCorrectionMovesOneOnlyWhenSaved(authorized: bool, matchingTrips: int, startPrecedesEnd: bool): bool =
+  decideTravelStartCorrection(authorized, matchingTrips, startPrecedesEnd) == TravelStartMove implies (authorized and matchingTrips > 0 and startPrecedesEnd)
+
+pure def lawUnauthorizedStartCorrectionChangesNothing(matchingTrips: int, startPrecedesEnd: bool): bool =
+  decideTravelStartCorrection(false, matchingTrips, startPrecedesEnd) == TravelStartUnavailable
+
+pure val matchingTripsValues = Set(-1, 0, 1, 2)
+pure val startPrecedesEndValues = Set(true, false)
+```

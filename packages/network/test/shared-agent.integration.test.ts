@@ -325,6 +325,52 @@ test("signed travel stores one coarse trip in the routed app and never guesses m
   expect(await lockedReplay.json()).toEqual({ error: "turn_travel_account_changed", retryable: false });
 }, 60_000);
 
+// spec/travelPresence.md, "Tell the Network my travel dates"
+test("a trip start correction text moves the saved trip start", async () => {
+  const phone = "+12125550180", app = APPS.friends;
+  await service.accounts.invite(app, phone);
+  const person = (await service.accounts.personFor(phone))!;
+  const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
+    firstName: "Ari", age: 29, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+  });
+  expect(joined.ok).toBe(true);
+  const otherPhone = "+12125550186";
+  await service.accounts.invite(app, otherPhone);
+  const otherPerson = (await service.accounts.personFor(otherPhone))!;
+  const otherJoined = await service.accounts.join(app, { e164: otherPhone, personId: otherPerson.id }, {
+    firstName: "Bea", age: 30, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+  });
+  expect(otherJoined.ok).toBe(true);
+  const declare = (id: string, text: string, from = phone) => post(turn(id, from, text, "friends"));
+  const trips = (from = phone) => sql`select p.city, p.from_at, p.to_at from network.presence p
+    join network.members m on m.app_id=p.app_id and m.id=p.member_id
+    join platform.phone_identities ph on ph.person_id=m.person_id
+    where ph.e164=${from} and p.type='temporary' order by p.from_at`;
+  const saved = await declare("travel-start-save", "I will be in Chicago from 2026-10-29 until 2026-11-02.");
+  expect((await saved.json()).replies[0]).toContain("Saved in friends.help");
+  expect((await (await declare("travel-start-other-save", "I will be in Chicago from 2026-10-29 until 2026-11-02.", otherPhone)).json()).replies[0]).toContain("Saved in friends.help");
+  const corrected = await declare("travel-start-correct", "my Chicago trip starts Friday, not Thursday");
+  const reply = (await corrected.json()).replies[0] as string;
+  expect(reply).toContain("Chicago");
+  expect(reply).toContain("2026-10-30");
+  expect(await trips()).toEqual([expect.objectContaining({
+    city: "chicago", from_at: new Date("2026-10-30T05:00:00Z"), to_at: new Date("2026-11-02T06:00:00Z"),
+  })]);
+  expect(await trips(otherPhone)).toEqual([expect.objectContaining({
+    city: "chicago", from_at: new Date("2026-10-29T05:00:00Z"), to_at: new Date("2026-11-02T06:00:00Z"),
+  })]);
+  expect((await (await declare("travel-start-save-later", "I will be in Chicago from 2026-11-05 until 2026-11-09.")).json()).replies[0]).toContain("Saved in friends.help");
+  const correctedLater = await declare("travel-start-correct-later", "my Chicago trip starts Friday, not Thursday");
+  expect((await correctedLater.json()).replies[0]).toContain("2026-11-06");
+  expect(await trips()).toEqual([
+    expect.objectContaining({ city: "chicago", from_at: new Date("2026-10-30T05:00:00Z"), to_at: new Date("2026-11-02T06:00:00Z") }),
+    expect.objectContaining({ city: "chicago", from_at: new Date("2026-11-06T06:00:00Z"), to_at: new Date("2026-11-09T06:00:00Z") }),
+  ]);
+  const noMatch = await declare("travel-start-correct-none", "my Miami trip starts Friday, not Thursday");
+  expect((await noMatch.json()).replies[0]).toContain("No saved Miami trip");
+  expect(await trips()).toHaveLength(2);
+}, 60_000);
+
 test("a saved travel window keeps its exact signed reply after the runtime stops", async () => {
   const phone = "+12125550173", app = APPS.friends;
   const joined = await service.accounts.join(app, { e164: phone, personId: null }, {
