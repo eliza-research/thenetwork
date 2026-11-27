@@ -105,6 +105,22 @@ describe("name change texted after onboarding", () => {
     await w.say("a", "Correction: my name is spelled Jon, not John.");
     expect(nameOf(w, "a")?.first).toBe("Cyd");
 
+    for (const text of [
+      "My name is still Quinn.", "My name is missing from the invite.", "My name is showing wrong in the app.",
+      "My name is listed twice.", "My name is hard to pronounce.", "My name is pretty common.", "My name is Spanish.",
+      "I go by bike.", "I go by bus.", "I go by car.", "I go by subway.",
+      "Call me Weds.", "Call me Pls.", "Call me Tmw.", "Call me Rn.",
+    ]) {
+      await w.say("a", text);
+      expect(nameOf(w, "a")?.first).toBe("Cyd");
+    }
+
+    await w.say("a", "My name is Quinn.");
+    expect(nameOf(w, "a")?.first).toBe("Quinn");
+
+    await w.say("a", "I go by Lee.");
+    expect(nameOf(w, "a")?.first).toBe("Lee");
+
     await w.say("a", "call me ari");
     expect(nameOf(w, "a")?.first).toBe("Ari");
     expect(nameOf(w, "a")?.name).toBe("Ari Diaz");
